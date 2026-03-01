@@ -1,0 +1,35 @@
+# Contributing
+
+## Development
+
+Install the pinned toolchain and run the repository checks through Task:
+
+```console
+mise trust
+mise install
+mise exec -- task format-check lint test build
+```
+
+Use Oxfmt and Oxlint for TypeScript. Use `gofmt`, `goimports`, `go vet`,
+`staticcheck`, and `govulncheck` for Go. Generated files are committed and must
+not drift from their source contracts.
+
+## Engineering Rules
+
+- Prefer the smallest design that completes the current phase.
+- Reuse authoritative domain services, generated contracts, schema-derived
+  types, and shared fixtures instead of creating parallel implementations.
+- Use a maintained library instead of hand-rolling a capability. Ask before
+  introducing a custom implementation when the tradeoff is unclear.
+- Keep portable core packages independent of hosted protocol and domain types.
+- Derive TypeScript database types from the Drizzle schema rather than
+  maintaining handwritten equivalents.
+- Add tests for behavior, boundaries, and regressions. Do not add tautological
+  tests solely to increase test counts.
+
+## Dependencies And Notices
+
+Every dependency must have a compatible license and a clear purpose. Direct
+runtime dependencies that require attribution must add their notices to
+`NOTICE`; generated release archives must include `LICENSE`, `NOTICE`, and the
+dependency notice report.
