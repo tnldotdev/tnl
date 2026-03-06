@@ -1,0 +1,94 @@
+version: "3"
+
+tasks:
+  generate:
+    desc: Regenerate all committed artifacts
+    deps: [go:generate, ts:generate]
+
+  format:
+    desc: Format all source files
+    deps: [go:format, ts:format]
+
+  format-check:
+    desc: Check formatting without changing files
+    deps: [go:format-check, ts:format-check]
+
+  lint:
+    desc: Run static analysis
+    deps: [go:lint, go:vulncheck, ts:lint]
+
+  test:
+    desc: Run all tests
+    deps: [go:test, ts:test]
+
+  build:
+    desc: Build all packages and commands
+    deps: [go:build, ts:build]
+
+  check-types:
+    desc: Check TypeScript types
+    deps: [ts:check-types]
+
+  go:generate:
+    cmds:
+      - go generate ./...
+
+  go:format:
+    cmds:
+      - |
+        files="$(git ls-files --cached --others --exclude-standard -- '*.go')"
+        test -z "$files" || goimports -w $files
+
+  go:format-check:
+    cmds:
+      - |
+        files="$(git ls-files --cached --others --exclude-standard -- '*.go')"
+        test -z "$files" || test -z "$(gofmt -l $files)"
+      - |
+        files="$(git ls-files --cached --others --exclude-standard -- '*.go')"
+        test -z "$files" || test -z "$(goimports -l $files)"
+
+  go:lint:
+    cmds:
+      - go vet ./...
+      - staticcheck ./...
+
+  go:vulncheck:
+    cmds:
+      - govulncheck ./...
+
+  go:test:
+    cmds:
+      - go test ./...
+
+  go:build:
+    cmds:
+      - go build ./cmd/...
+
+  ts:generate:
+    cmds:
+      - pnpm generate
+
+  ts:format:
+    cmds:
+      - pnpm format
+
+  ts:format-check:
+    cmds:
+      - pnpm format:check
+
+  ts:check-types:
+    cmds:
+      - pnpm check-types
+
+  ts:lint:
+    cmds:
+      - pnpm lint
+
+  ts:test:
+    cmds:
+      - pnpm test
+
+  ts:build:
+    cmds:
+      - pnpm build

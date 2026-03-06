@@ -1,0 +1,23 @@
+{
+  "name": "tnl",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc --build",
+    "check-types": "tsc --build --noEmit",
+    "format": "oxfmt --write package.json pnpm-workspace.yaml tsconfig.json tsconfig.base.json .oxfmtrc.json .oxlintrc.json packages",
+    "format:check": "oxfmt --check package.json pnpm-workspace.yaml tsconfig.json tsconfig.base.json .oxfmtrc.json .oxlintrc.json packages",
+    "generate": "pnpm --recursive --if-present run generate",
+    "lint": "oxlint packages",
+    "test": "pnpm --recursive --if-present run test"
+  },
+  "devDependencies": {
+    "oxfmt": "0.65.0",
+    "oxlint": "1.80.0",
+    "typescript": "7.0.2"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@11.24.0"
+}
