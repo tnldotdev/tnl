@@ -5,6 +5,7 @@
 node_modules/
 coverage/
 dist/
+docs/adr/
 *.tsbuildinfo
 /tnl
 /tnld
