@@ -5,8 +5,8 @@
   "scripts": {
     "build": "tsc --build",
     "check-types": "tsc --build --noEmit",
-    "format": "oxfmt --write package.json pnpm-workspace.yaml tsconfig.json tsconfig.base.json .oxfmtrc.json .oxlintrc.json packages",
-    "format:check": "oxfmt --check package.json pnpm-workspace.yaml tsconfig.json tsconfig.base.json .oxfmtrc.json .oxlintrc.json packages",
+    "format": "oxfmt --write package.json pnpm-workspace.yaml Taskfile.yml tsconfig.json tsconfig.base.json .oxfmtrc.json .oxlintrc.json .github packages",
+    "format:check": "oxfmt --check package.json pnpm-workspace.yaml Taskfile.yml tsconfig.json tsconfig.base.json .oxfmtrc.json .oxlintrc.json .github packages",
     "generate": "pnpm --recursive --if-present run generate",
     "lint": "oxlint packages",
     "test": "pnpm --recursive --if-present run test"
