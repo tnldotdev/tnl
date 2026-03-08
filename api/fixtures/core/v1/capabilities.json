@@ -1,0 +1,13 @@
+{
+  "protocol_versions": [1],
+  "anonymous_public": false,
+  "hostname_authorization": ["local_claim"],
+  "transport": {
+    "type": "tailcat",
+    "version": 1,
+    "relay_profile": "default"
+  },
+  "acme": {
+    "profile": "tlsserver"
+  }
+}

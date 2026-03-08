@@ -1,0 +1,137 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "lowercase",
+      "context": "hostname",
+      "input": "Example.COM",
+      "canonical": "example.com"
+    },
+    {
+      "name": "terminal dot",
+      "context": "hostname",
+      "input": "example.com.",
+      "canonical": "example.com"
+    },
+    {
+      "name": "valid A-label",
+      "context": "hostname",
+      "input": "XN--BCHER-KVA.example",
+      "canonical": "xn--bcher-kva.example"
+    },
+    {
+      "name": "maximum label",
+      "context": "hostname",
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example",
+      "canonical": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example"
+    },
+    {
+      "name": "maximum hostname",
+      "context": "hostname",
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "canonical": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    {
+      "name": "empty",
+      "context": "hostname",
+      "input": "",
+      "error": "empty"
+    },
+    {
+      "name": "two terminal dots",
+      "context": "hostname",
+      "input": "example.com..",
+      "error": "invalid_syntax"
+    },
+    {
+      "name": "unicode",
+      "context": "hostname",
+      "input": "b\u00fccher.example",
+      "error": "non_ascii"
+    },
+    {
+      "name": "wildcard",
+      "context": "hostname",
+      "input": "*.example.com",
+      "error": "invalid_syntax"
+    },
+    {
+      "name": "IP literal",
+      "context": "hostname",
+      "input": "127.0.0.1",
+      "error": "ip_literal"
+    },
+    {
+      "name": "underscore",
+      "context": "hostname",
+      "input": "bad_name.example",
+      "error": "invalid_syntax"
+    },
+    {
+      "name": "empty label",
+      "context": "hostname",
+      "input": "bad..example",
+      "error": "invalid_syntax"
+    },
+    {
+      "name": "URL",
+      "context": "hostname",
+      "input": "https://example.com",
+      "error": "invalid_syntax"
+    },
+    {
+      "name": "embedded port",
+      "context": "hostname",
+      "input": "example.com:443",
+      "error": "invalid_syntax"
+    },
+    {
+      "name": "label too long",
+      "context": "hostname",
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example",
+      "error": "label_too_long"
+    },
+    {
+      "name": "hostname too long",
+      "context": "hostname",
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "error": "hostname_too_long"
+    },
+    {
+      "name": "invalid A-label",
+      "context": "hostname",
+      "input": "xn--a.example",
+      "error": "invalid_alabel"
+    },
+    {
+      "name": "authority without port",
+      "context": "authority",
+      "input": "Example.COM",
+      "canonical": "example.com"
+    },
+    {
+      "name": "authority with port",
+      "context": "authority",
+      "input": "Example.COM:443",
+      "canonical": "example.com"
+    },
+    {
+      "name": "authority invalid port",
+      "context": "authority",
+      "input": "example.com:https",
+      "error": "invalid_port"
+    },
+    {
+      "name": "authority port out of range",
+      "context": "authority",
+      "input": "example.com:65536",
+      "error": "invalid_port"
+    },
+    {
+      "name": "authority IP literal",
+      "context": "authority",
+      "input": "[::1]:443",
+      "error": "ip_literal"
+    }
+  ]
+}
