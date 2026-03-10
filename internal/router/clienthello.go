@@ -7,6 +7,8 @@ import (
 	"io"
 	"net"
 	"time"
+
+	"golang.org/x/crypto/cryptobyte"
 )
 
 const (
@@ -114,24 +116,20 @@ func inspectClientHello(reader io.Reader) (ClientHello, error) {
 }
 
 func parseClientHello(body []byte) (string, bool, error) {
-	cursor := byteCursor(body)
-	if !cursor.skip(2 + 32) {
+	cursor := cryptobyte.String(body)
+	var sessionID, cipherSuites, compressionMethods cryptobyte.String
+	if !cursor.Skip(2+32) ||
+		!cursor.ReadUint8LengthPrefixed(&sessionID) || len(sessionID) > 32 ||
+		!cursor.ReadUint16LengthPrefixed(&cipherSuites) || len(cipherSuites) < 2 || len(cipherSuites)%2 != 0 ||
+		!cursor.ReadUint8LengthPrefixed(&compressionMethods) || len(compressionMethods) == 0 {
 		return "", false, clientHelloError(ErrorMalformedClientHello)
 	}
-	sessionID, sessionOK := cursor.vector8()
-	cipherSuites, ciphersOK := cursor.vector16()
-	compressionMethods, compressionOK := cursor.vector8()
-	if !sessionOK || len(sessionID) > 32 ||
-		!ciphersOK || len(cipherSuites) < 2 || len(cipherSuites)%2 != 0 ||
-		!compressionOK || len(compressionMethods) == 0 {
-		return "", false, clientHelloError(ErrorMalformedClientHello)
-	}
-	if len(cursor) == 0 {
+	if cursor.Empty() {
 		return "", false, clientHelloError(ErrorMissingSNI)
 	}
 
-	extensions, ok := cursor.vector16()
-	if !ok || len(cursor) != 0 {
+	var extensions cryptobyte.String
+	if !cursor.ReadUint16LengthPrefixed(&extensions) || !cursor.Empty() {
 		return "", false, clientHelloError(ErrorMalformedClientHello)
 	}
 
@@ -139,10 +137,10 @@ func parseClientHello(body []byte) (string, bool, error) {
 	offersACME := false
 	seenSNI := false
 	seenALPN := false
-	for len(extensions) > 0 {
-		extensionType, typeOK := extensions.uint16()
-		extension, extensionOK := extensions.vector16()
-		if !typeOK || !extensionOK {
+	for !extensions.Empty() {
+		var extensionType uint16
+		var extension cryptobyte.String
+		if !extensions.ReadUint16(&extensionType) || !extensions.ReadUint16LengthPrefixed(&extension) {
 			return "", false, clientHelloError(ErrorMalformedClientHello)
 		}
 
@@ -178,20 +176,17 @@ func parseClientHello(body []byte) (string, bool, error) {
 	return serverName, offersACME, nil
 }
 
-func parseServerName(data byteCursor) (string, error) {
-	names, ok := data.vector16()
-	if !ok || len(data) != 0 {
+func parseServerName(data cryptobyte.String) (string, error) {
+	var names cryptobyte.String
+	if !data.ReadUint16LengthPrefixed(&names) || !data.Empty() {
 		return "", clientHelloError(ErrorMalformedClientHello)
 	}
 
 	var serverName string
-	for len(names) > 0 {
-		nameType, ok := names.uint8()
-		if !ok {
-			return "", clientHelloError(ErrorMalformedClientHello)
-		}
-		name, ok := names.vector16()
-		if !ok || len(name) == 0 {
+	for !names.Empty() {
+		var nameType uint8
+		var name cryptobyte.String
+		if !names.ReadUint8(&nameType) || !names.ReadUint16LengthPrefixed(&name) || name.Empty() {
 			return "", clientHelloError(ErrorMalformedClientHello)
 		}
 		if nameType == 0 {
@@ -207,69 +202,21 @@ func parseServerName(data byteCursor) (string, error) {
 	return serverName, nil
 }
 
-func parseALPN(data byteCursor) (bool, error) {
-	protocolsData, ok := data.vector16()
-	if !ok || len(data) != 0 || len(protocolsData) == 0 {
+func parseALPN(data cryptobyte.String) (bool, error) {
+	var protocols cryptobyte.String
+	if !data.ReadUint16LengthPrefixed(&protocols) || !data.Empty() || protocols.Empty() {
 		return false, clientHelloError(ErrorMalformedClientHello)
 	}
 
 	offersACME := false
-	for len(protocolsData) > 0 {
-		protocol, ok := protocolsData.vector8()
-		if !ok || len(protocol) == 0 {
+	for !protocols.Empty() {
+		var protocol cryptobyte.String
+		if !protocols.ReadUint8LengthPrefixed(&protocol) || protocol.Empty() {
 			return false, clientHelloError(ErrorMalformedClientHello)
 		}
 		offersACME = offersACME || bytes.Equal(protocol, []byte(acmeTLSALPN))
 	}
 	return offersACME, nil
-}
-
-type byteCursor []byte
-
-func (c *byteCursor) take(length int) (byteCursor, bool) {
-	if length < 0 || len(*c) < length {
-		return nil, false
-	}
-	value := (*c)[:length]
-	*c = (*c)[length:]
-	return value, true
-}
-
-func (c *byteCursor) skip(length int) bool {
-	_, ok := c.take(length)
-	return ok
-}
-
-func (c *byteCursor) uint8() (uint8, bool) {
-	value, ok := c.take(1)
-	if !ok {
-		return 0, false
-	}
-	return value[0], true
-}
-
-func (c *byteCursor) uint16() (uint16, bool) {
-	value, ok := c.take(2)
-	if !ok {
-		return 0, false
-	}
-	return binary.BigEndian.Uint16(value), true
-}
-
-func (c *byteCursor) vector8() (byteCursor, bool) {
-	length, ok := c.uint8()
-	if !ok {
-		return nil, false
-	}
-	return c.take(int(length))
-}
-
-func (c *byteCursor) vector16() (byteCursor, bool) {
-	length, ok := c.uint16()
-	if !ok {
-		return nil, false
-	}
-	return c.take(int(length))
 }
 
 func clientHelloError(code ClientHelloErrorCode) error {
