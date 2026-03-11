@@ -1,5 +1,8 @@
 version: "3"
 
+env:
+  GOFLAGS: -tags=ts_omit_ssh
+
 tasks:
   generate:
     desc: Regenerate all committed artifacts
