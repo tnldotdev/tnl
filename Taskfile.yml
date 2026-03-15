@@ -73,6 +73,36 @@ tasks:
     cmds:
       - go test ./...
 
+  go:bench-tailcat-capacity:
+    desc: Run the opt-in Tailcat route-capacity matrix
+    vars:
+      ROUTES: '{{default "1,10,100" .ROUTES}}'
+      PATH_MODE: '{{default "any" .PATH_MODE}}'
+      PARALLEL: '{{default "8" .PARALLEL}}'
+    env:
+      TNL_TEST_TAILCAT_CAPACITY: "1"
+      TNL_TEST_TAILCAT_ROUTES: "{{.ROUTES}}"
+      TNL_TEST_TAILCAT_PATH: "{{.PATH_MODE}}"
+      TNL_TEST_TAILCAT_PARALLEL: "{{.PARALLEL}}"
+    cmds:
+      - go test -v ./internal/tailtransport -run='^$' -bench='^BenchmarkTailcatCapacity$' -benchtime=1x -count=1 -timeout=90m
+
+  go:bench-tailcat-churn:
+    desc: Run opt-in Tailcat lifecycle churn (default 100 cycles)
+    vars:
+      CYCLES: '{{default "100x" .CYCLES}}'
+      PARALLEL: '{{default "8" .PARALLEL}}'
+    env:
+      TNL_TEST_TAILCAT_CAPACITY: "1"
+      TNL_TEST_TAILCAT_PARALLEL: "{{.PARALLEL}}"
+    cmds:
+      - go test -v ./internal/tailtransport -run='^$' -bench='^BenchmarkTailcatChurn$' -benchtime={{.CYCLES}} -count=1 -timeout=5h
+
+  go:bench-tailcat-fly:
+    desc: Run the Mac-to-Fly Tailcat capacity ramp
+    cmds:
+      - ./scripts/bench-tailcat-fly.sh
+
   go:build:
     cmds:
       - go build ./cmd/...
