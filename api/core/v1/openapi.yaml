@@ -1,0 +1,127 @@
+openapi: 3.1.0
+info:
+  title: tnl core API
+  version: 1.0.0
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+servers:
+  - url: https://control.tnl.dev
+paths:
+  /v1/capabilities:
+    get:
+      operationId: getCapabilities
+      summary: Describe supported core behavior
+      security: []
+      responses:
+        "200":
+          description: Core capabilities
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Capabilities"
+        "429":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+components:
+  responses:
+    Problem:
+      description: Request failed
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+  schemas:
+    Capabilities:
+      type: object
+      additionalProperties: false
+      required:
+        - protocol_versions
+        - anonymous_public
+        - hostname_authorization
+        - transport
+        - acme
+      properties:
+        protocol_versions:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: integer
+            enum: [1]
+        anonymous_public:
+          type: boolean
+        hostname_authorization:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+            enum: [local_claim, external_assertion]
+        transport:
+          $ref: "#/components/schemas/TransportCapabilities"
+        acme:
+          $ref: "#/components/schemas/AcmeCapabilities"
+    TransportCapabilities:
+      type: object
+      additionalProperties: false
+      required: [type, version, relay_profile]
+      properties:
+        type:
+          type: string
+          const: tailcat
+        version:
+          type: integer
+          const: 1
+        relay_profile:
+          type: string
+          pattern: ^[a-z0-9][a-z0-9-]{0,62}$
+    AcmeCapabilities:
+      type: object
+      additionalProperties: false
+      required: [profile]
+      properties:
+        profile:
+          type: string
+          pattern: ^[a-z0-9][a-z0-9-]{0,62}$
+    Problem:
+      type: object
+      additionalProperties: false
+      required: [type, title, status, code, request_id, details]
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+          minLength: 1
+          maxLength: 128
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        code:
+          type: string
+          enum:
+            - invalid_argument
+            - unauthenticated
+            - permission_denied
+            - not_found
+            - name_unavailable
+            - state_conflict
+            - idempotency_conflict
+            - credential_replayed
+            - rate_limited
+            - precondition_failed
+            - temporarily_unavailable
+            - internal
+        request_id:
+          type: string
+          pattern: ^req_[A-Za-z0-9]+$
+        details:
+          type: object
+          maxProperties: 16

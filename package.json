@@ -5,16 +5,23 @@
   "scripts": {
     "build": "tsc --build",
     "check-types": "tsc --build --noEmit",
-    "format": "oxfmt --write package.json pnpm-workspace.yaml Taskfile.yml tsconfig.json tsconfig.base.json .oxfmtrc.json .oxlintrc.json .github packages",
-    "format:check": "oxfmt --check package.json pnpm-workspace.yaml Taskfile.yml tsconfig.json tsconfig.base.json .oxfmtrc.json .oxlintrc.json .github packages",
+    "format": "oxfmt --write package.json pnpm-workspace.yaml Taskfile.yml tsconfig.json tsconfig.base.json .oxfmtrc.json .oxlintrc.json .github api packages/*/package.json packages/*/tsconfig.json packages/*/src/*.ts packages/*/test/*.ts",
+    "format:check": "oxfmt --check package.json pnpm-workspace.yaml Taskfile.yml tsconfig.json tsconfig.base.json .oxfmtrc.json .oxlintrc.json .github api packages/*/package.json packages/*/tsconfig.json packages/*/src/*.ts packages/*/test/*.ts",
     "generate": "pnpm --recursive --if-present run generate",
-    "lint": "oxlint packages",
+    "lint": "oxlint packages/*/src/*.ts packages/*/test/*.ts",
+    "lint:contracts": "redocly lint api/core/v1/openapi.yaml api/hosted/v1/openapi.yaml",
     "test": "pnpm --recursive --if-present run test"
   },
   "devDependencies": {
+    "@redocly/cli": "2.49.0",
+    "@types/node": "26.4.0",
+    "@types/tr46": "5.0.1",
+    "ajv": "8.20.0",
+    "openapi-typescript": "7.13.0",
     "oxfmt": "0.65.0",
     "oxlint": "1.80.0",
-    "typescript": "7.0.2"
+    "typescript": "5.9.3",
+    "vitest": "4.1.11"
   },
   "engines": {
     "node": ">=24"
