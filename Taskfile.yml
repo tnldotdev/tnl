@@ -73,6 +73,13 @@ tasks:
     cmds:
       - go test ./...
 
+  go:test-integration:
+    desc: Run opt-in Go integration tests
+    env:
+      TNL_TEST_INTEGRATION: "1"
+    cmds:
+      - go test -race -v ./... -run='^TestIntegration' -count=1 -timeout=5m
+
   go:bench-tailcat-capacity:
     desc: Run the opt-in Tailcat route-capacity matrix
     vars:
