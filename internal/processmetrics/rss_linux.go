@@ -1,6 +1,6 @@
 //go:build linux
 
-package tailtransport
+package processmetrics
 
 import (
 	"fmt"

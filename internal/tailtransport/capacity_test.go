@@ -10,7 +10,6 @@ import (
 	"net"
 	"os"
 	"runtime"
-	"runtime/metrics"
 	"slices"
 	"strconv"
 	"strings"
@@ -18,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/0xcadams/tnl/internal/processmetrics"
 	"tailscale.com/derp/derpserver"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tailcfg"
@@ -44,14 +44,7 @@ type benchmarkLease struct {
 	conn   net.Conn
 }
 
-type resourceSnapshot struct {
-	heapAlloc  int64
-	sys        int64
-	rss        int64
-	goRoutines int64
-	openFDs    int64
-	userCPU    float64
-}
+type resourceSnapshot = processmetrics.Snapshot
 
 func BenchmarkTailcatCapacity(b *testing.B) {
 	if os.Getenv(capacityOptIn) != "1" {
@@ -300,10 +293,24 @@ func roundTripBytes(conn net.Conn, total int) error {
 	return nil
 }
 
+func closeBenchmarkStream(ctx context.Context, conn net.Conn) error {
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = conn.SetDeadline(deadline)
+	}
+	closeWriter, ok := conn.(interface{ CloseWrite() error })
+	if !ok {
+		return errors.New("stream does not support CloseWrite")
+	}
+	writeErr := closeWriter.CloseWrite()
+	_, readErr := io.Copy(io.Discard, conn)
+	closeErr := conn.Close()
+	return errors.Join(writeErr, readErr, closeErr)
+}
+
 func (l *benchmarkLease) shutdown(ctx context.Context) error {
 	var errs []error
 	if l.conn != nil {
-		errs = append(errs, l.conn.Close())
+		errs = append(errs, closeBenchmarkStream(ctx, l.conn))
 		l.conn = nil
 	}
 	errs = append(errs, l.dialer.Drain(ctx), l.server.Drain(ctx), l.dialer.Close(), l.server.Close())
@@ -461,26 +468,7 @@ func settledResources() resourceSnapshot {
 }
 
 func readResources() resourceSnapshot {
-	var memory runtime.MemStats
-	runtime.ReadMemStats(&memory)
-	return resourceSnapshot{
-		heapAlloc:  int64(memory.HeapAlloc),
-		sys:        int64(memory.Sys),
-		rss:        currentRSS(),
-		goRoutines: int64(runtime.NumGoroutine()),
-		openFDs:    openFDCount(),
-		userCPU:    runtimeMetric("/cpu/classes/user:cpu-seconds"),
-	}
-}
-
-func openFDCount() int64 {
-	for _, path := range []string{"/proc/self/fd", "/dev/fd"} {
-		entries, err := os.ReadDir(path)
-		if err == nil {
-			return int64(len(entries))
-		}
-	}
-	return -1
+	return processmetrics.Read()
 }
 
 func logDERPDiagnostics(b *testing.B, server *derpserver.Server, phase string) {
@@ -532,15 +520,6 @@ func expvarString(name string) string {
 	return variable.String()
 }
 
-func runtimeMetric(name string) float64 {
-	sample := []metrics.Sample{{Name: name}}
-	metrics.Read(sample)
-	if sample[0].Value.Kind() != metrics.KindFloat64 {
-		return 0
-	}
-	return sample[0].Value.Float64()
-}
-
 func reportLatency(b *testing.B, name string, samples []time.Duration) {
 	b.Helper()
 	for _, percentile := range []int{50, 95, 99} {
@@ -557,28 +536,28 @@ func durationPercentile(samples []time.Duration, percentile int) time.Duration {
 
 func reportPerRoute(b *testing.B, name string, before, after resourceSnapshot, routes int) {
 	b.Helper()
-	b.ReportMetric(float64(after.heapAlloc-before.heapAlloc)/float64(routes), name+"_heap_B/route")
-	b.ReportMetric(float64(after.sys-before.sys)/float64(routes), name+"_sys_B/route")
-	b.ReportMetric(float64(after.goRoutines-before.goRoutines)/float64(routes), name+"_goroutines/route")
-	if before.openFDs >= 0 && after.openFDs >= 0 {
-		b.ReportMetric(float64(after.openFDs-before.openFDs)/float64(routes), name+"_fds/route")
+	b.ReportMetric(float64(after.HeapAlloc-before.HeapAlloc)/float64(routes), name+"_heap_B/route")
+	b.ReportMetric(float64(after.Sys-before.Sys)/float64(routes), name+"_sys_B/route")
+	b.ReportMetric(float64(after.Goroutines-before.Goroutines)/float64(routes), name+"_goroutines/route")
+	if before.OpenFDs >= 0 && after.OpenFDs >= 0 {
+		b.ReportMetric(float64(after.OpenFDs-before.OpenFDs)/float64(routes), name+"_fds/route")
 	}
-	if before.rss >= 0 && after.rss >= 0 {
-		b.ReportMetric(float64(after.rss-before.rss)/float64(routes), name+"_rss_B/route")
+	if before.RSS >= 0 && after.RSS >= 0 {
+		b.ReportMetric(float64(after.RSS-before.RSS)/float64(routes), name+"_rss_B/route")
 	}
 }
 
 func reportResiduals(b *testing.B, before, after resourceSnapshot) {
 	b.Helper()
-	b.ReportMetric(float64(after.heapAlloc-before.heapAlloc), "residual_heap_B")
-	b.ReportMetric(float64(after.sys-before.sys), "residual_sys_B")
-	b.ReportMetric(float64(after.goRoutines-before.goRoutines), "residual_goroutines")
-	b.ReportMetric(after.userCPU-before.userCPU, "user_cpu_seconds")
-	if before.openFDs >= 0 && after.openFDs >= 0 {
-		b.ReportMetric(float64(after.openFDs-before.openFDs), "residual_fds")
+	b.ReportMetric(float64(after.HeapAlloc-before.HeapAlloc), "residual_heap_B")
+	b.ReportMetric(float64(after.Sys-before.Sys), "residual_sys_B")
+	b.ReportMetric(float64(after.Goroutines-before.Goroutines), "residual_goroutines")
+	b.ReportMetric(after.UserCPU-before.UserCPU, "user_cpu_seconds")
+	if before.OpenFDs >= 0 && after.OpenFDs >= 0 {
+		b.ReportMetric(float64(after.OpenFDs-before.OpenFDs), "residual_fds")
 	}
-	if before.rss >= 0 && after.rss >= 0 {
-		b.ReportMetric(float64(after.rss-before.rss), "residual_rss_B")
+	if before.RSS >= 0 && after.RSS >= 0 {
+		b.ReportMetric(float64(after.RSS-before.RSS), "residual_rss_B")
 	}
 }
 
@@ -593,16 +572,16 @@ func enforceBudgets(b *testing.B, routes int, before, ready, after resourceSnaps
 	if durationPercentile(shutdown, 95) > 5*time.Second {
 		b.Errorf("shutdown p95 exceeds 5s")
 	}
-	if delta := after.heapAlloc - before.heapAlloc; delta > residualHeapBudget {
+	if delta := after.HeapAlloc - before.HeapAlloc; delta > residualHeapBudget {
 		b.Errorf("residual heap is %d bytes; budget is %d bytes", delta, residualHeapBudget)
 	}
-	if delta := after.goRoutines - before.goRoutines; delta > 16 {
+	if delta := after.Goroutines - before.Goroutines; delta > 16 {
 		b.Errorf("residual goroutines is %d; budget is 16", delta)
 	}
-	if before.openFDs >= 0 && after.openFDs-before.openFDs > 16 {
-		b.Errorf("residual file descriptors is %d; budget is 16", after.openFDs-before.openFDs)
+	if before.OpenFDs >= 0 && after.OpenFDs-before.OpenFDs > 16 {
+		b.Errorf("residual file descriptors is %d; budget is 16", after.OpenFDs-before.OpenFDs)
 	}
-	if routes >= 10 && (ready.heapAlloc-before.heapAlloc)/int64(routes) > 8*1024*1024 {
+	if routes >= 10 && (ready.HeapAlloc-before.HeapAlloc)/int64(routes) > 8*1024*1024 {
 		b.Errorf("idle heap exceeds 8 MiB per route")
 	}
 }

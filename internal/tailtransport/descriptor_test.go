@@ -20,7 +20,7 @@ func TestEndpointConnBlob(t *testing.T) {
 		RelayProfile:    "test",
 	}
 
-	blob, err := endpoint.connBlob(map[string]*tailcfg.DERPRegion{"test": region})
+	blob, err := connBlob(endpoint, map[string]*tailcfg.DERPRegion{"test": region})
 	if err != nil {
 		t.Fatalf("connBlob: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestEndpointConnBlobRejectsInvalidDescriptor(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := test.endpoint.connBlob(test.profiles); err == nil {
+			if _, err := connBlob(test.endpoint, test.profiles); err == nil {
 				t.Fatal("connBlob unexpectedly succeeded")
 			}
 		})
@@ -71,7 +71,7 @@ func TestEndpointConnBlobRejectsUnusableRelay(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			endpoint := Endpoint{Version: descriptorVersion, ServerPublicKey: validKey, RelayProfile: "test"}
 			profiles := map[string]*tailcfg.DERPRegion{"test": {RegionID: 1, Nodes: []*tailcfg.DERPNode{test.node}}}
-			if _, err := endpoint.connBlob(profiles); err == nil {
+			if _, err := connBlob(endpoint, profiles); err == nil {
 				t.Fatal("connBlob unexpectedly succeeded")
 			}
 		})
