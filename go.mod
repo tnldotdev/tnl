@@ -7,14 +7,14 @@ require (
 	github.com/letsencrypt/challtestsrv v1.4.2
 	github.com/pires/go-proxyproto v0.15.0
 	github.com/pressly/goose/v3 v3.27.3
-	github.com/tailscale/tailcat v0.0.0-20260829004439-da4144d1a31a
+	github.com/tailscale/tailcat v0.0.0-20260829071113-5c384806af3c
 	golang.org/x/crypto v0.55.0
 	golang.org/x/net v0.58.0
 	modernc.org/sqlite v1.57.0
 	tailscale.com v1.101.0-pre.0.20260720143344-246c82a658b3
 )
 
-replace github.com/tailscale/tailcat => github.com/0xcadams/tailcat v0.0.0-20260829004439-da4144d1a31a
+replace github.com/tailscale/tailcat => github.com/0xcadams/tailcat v0.0.0-20260829071113-5c384806af3c
 
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
