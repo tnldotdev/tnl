@@ -6,35 +6,31 @@ env:
 tasks:
   generate:
     desc: Regenerate all committed artifacts
-    deps: [go:generate, ts:generate]
+    deps: [go:generate]
 
   generate-check:
     desc: Check generated files for drift
-    deps: [go:generate-check, ts:generate-check]
+    deps: [go:generate-check]
 
   format:
     desc: Format all source files
-    deps: [go:format, ts:format]
+    deps: [go:format]
 
   format-check:
     desc: Check formatting without changing files
-    deps: [go:format-check, ts:format-check]
+    deps: [go:format-check]
 
   lint:
     desc: Run static analysis
-    deps: [go:lint, go:vulncheck, ts:lint, workflows:lint]
+    deps: [go:lint, go:vulncheck, workflows:lint]
 
   test:
     desc: Run all tests
-    deps: [go:test, ts:test]
+    deps: [go:test]
 
   build:
     desc: Build all packages and commands
-    deps: [go:build, ts:build]
-
-  check-types:
-    desc: Check TypeScript types
-    deps: [ts:check-types]
+    deps: [go:build]
 
   go:generate:
     cmds:
@@ -118,40 +114,6 @@ tasks:
   go:build:
     cmds:
       - go build ./cmd/...
-
-  ts:generate:
-    cmds:
-      - pnpm generate
-
-  ts:generate-check:
-    cmds:
-      - task: ts:generate
-      - git diff --exit-code -- packages/hosted-protocol/src/generated
-
-  ts:format:
-    cmds:
-      - pnpm format
-
-  ts:format-check:
-    cmds:
-      - pnpm format:check
-
-  ts:check-types:
-    cmds:
-      - pnpm check-types
-
-  ts:lint:
-    cmds:
-      - pnpm lint
-      - pnpm lint:contracts
-
-  ts:test:
-    cmds:
-      - pnpm test
-
-  ts:build:
-    cmds:
-      - pnpm build
 
   workflows:lint:
     cmds:

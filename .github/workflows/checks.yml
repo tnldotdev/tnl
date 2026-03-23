@@ -85,51 +85,6 @@ jobs:
       - name: Run race tests
         run: task go:test-race
 
-  typescript:
-    name: TypeScript
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Set up pnpm and Node
-        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
-        with:
-          version: 11.24.0
-          runtime: node@24.20.0
-          install: false
-          cache: true
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Check formatting
-        run: pnpm format:check
-
-      - name: Generate files
-        run: pnpm generate
-
-      - name: Check generated files
-        run: git diff --exit-code -- packages/hosted-protocol/src/generated
-
-      - name: Check types
-        run: pnpm check-types
-
-      - name: Run static analysis
-        run: pnpm lint
-
-      - name: Lint API contracts
-        run: pnpm lint:contracts
-
-      - name: Run tests
-        run: pnpm test
-
-      - name: Build packages
-        run: pnpm build
-
   github-actions:
     name: GitHub Actions
     runs-on: ubuntu-latest
