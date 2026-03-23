@@ -11,7 +11,7 @@
     },
     "server_public_key": {
       "type": "string",
-      "pattern": "^nodekey:[A-Za-z0-9]+$"
+      "pattern": "^nodekey:[0-9a-f]{64}$"
     },
     "relay_profile": {
       "type": "string",
