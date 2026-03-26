@@ -30,7 +30,7 @@ import (
 )
 
 const (
-	maxRoutes          = 1000
+	maxRoutes          = 2000
 	cleanupTimeout     = 30 * time.Second
 	serverDrainTimeout = 5 * time.Second
 )
@@ -58,42 +58,41 @@ func main() {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	mux.Handle("/v1/run", agent.authorize(http.HandlerFunc(agent.handleRun)))
 	server := &http.Server{Addr: *listen, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
-	serveErr := make(chan error, 1)
-	go func() {
-		serveErr <- server.ListenAndServe()
-	}()
 	log.Printf("tailbench agent ready on %s using public DERP region %d", *listen, *regionID)
-	select {
-	case err := <-serveErr:
-		if errors.Is(err, http.ErrServerClosed) {
-			err = nil
-		}
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
-		defer cancel()
-		result := agent.shutdown(cleanupCtx)
-		shutdownErr := server.Shutdown(cleanupCtx)
-		if result.drainErr != nil {
-			log.Printf("forced close after drain: %v", result.drainErr)
-		}
-		if err := errors.Join(err, shutdownErr, result.closeErr); err != nil {
-			log.Fatal(err)
-		}
-	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
-		defer cancel()
-		result := agent.shutdown(shutdownCtx)
-		shutdownErr := server.Shutdown(shutdownCtx)
-		err := <-serveErr
-		if errors.Is(err, http.ErrServerClosed) {
-			err = nil
-		}
-		if result.drainErr != nil {
-			log.Printf("forced close after drain: %v", result.drainErr)
-		}
-		if err := errors.Join(shutdownErr, result.closeErr, err); err != nil {
-			log.Fatal(err)
-		}
+	if err := serveAgent(ctx, server, agent); err != nil {
+		log.Fatal(err)
 	}
+}
+
+func serveAgent(ctx context.Context, server *http.Server, agent *agent) error {
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- server.ListenAndServe() }()
+
+	serverStopped := false
+	var listenerErr error
+	select {
+	case listenerErr = <-serveErr:
+		serverStopped = true
+	case <-ctx.Done():
+	}
+
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
+	defer cancel()
+	result := agent.shutdown(cleanupCtx)
+	shutdownErr := server.Shutdown(cleanupCtx)
+	if shutdownErr != nil {
+		shutdownErr = errors.Join(shutdownErr, server.Close())
+	}
+	if !serverStopped {
+		listenerErr = <-serveErr
+	}
+	if errors.Is(listenerErr, http.ErrServerClosed) {
+		listenerErr = nil
+	}
+	if result.drainErr != nil {
+		log.Printf("forced close after drain: %v", result.drainErr)
+	}
+	return errors.Join(listenerErr, shutdownErr, result.closeErr)
 }
 
 type runState uint8
@@ -127,6 +126,11 @@ type runCompletion struct {
 	result closeResult
 }
 
+var (
+	errAgentStopping    = errors.New("agent is shutting down")
+	errRunAlreadyActive = errors.New("run already active")
+)
+
 func (a *agent) authorize(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		scheme, provided, ok := strings.Cut(r.Header.Get("Authorization"), " ")
@@ -159,7 +163,7 @@ func (a *agent) createRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(request.ClientPublicKeys) == 0 || len(request.ClientPublicKeys) > maxRoutes {
-		http.Error(w, "route count must be between 1 and 1000", http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("route count must be between 1 and %d", maxRoutes), http.StatusBadRequest)
 		return
 	}
 	clientKeys := make([]key.NodePublic, len(request.ClientPublicKeys))
@@ -170,32 +174,25 @@ func (a *agent) createRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	a.mu.Lock()
-	if a.stopping {
-		a.mu.Unlock()
-		http.Error(w, "agent is shutting down", http.StatusServiceUnavailable)
+	createCtx, completion, err := a.beginCreate(r.Context())
+	if errors.Is(err, errAgentStopping) {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
-	if a.state != runIdle {
-		a.mu.Unlock()
-		http.Error(w, "run already active", http.StatusConflict)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
-	createCtx, cancel := context.WithCancel(r.Context())
-	completion := &runCompletion{done: make(chan struct{})}
-	a.state = runCreating
-	a.cancel = cancel
-	a.completion = completion
-	a.mu.Unlock()
 
-	before := readResources()
+	before := processmetrics.Read()
 	servers := make([]*tailtransport.Server, len(request.ClientPublicKeys))
 	endpoints := make([]tailtransport.Endpoint, len(request.ClientPublicKeys))
-	err := parallel(len(servers), 8, func(index int) error {
+	profiles := map[string]*tailcfg.DERPRegion{tailbench.RelayProfile: a.region}
+	err = parallel(len(servers), 8, func(index int) error {
 		server, err := tailtransport.NewServer(tailtransport.ServerConfig{
 			AllowedClient: clientKeys[index],
 			RelayProfile:  tailbench.RelayProfile,
-			Profiles:      map[string]*tailcfg.DERPRegion{tailbench.RelayProfile: a.region},
+			Profiles:      profiles,
 			Handler: func(conn net.Conn) {
 				_, _ = io.Copy(conn, conn)
 			},
@@ -219,30 +216,15 @@ func (a *agent) createRun(w http.ResponseWriter, r *http.Request) {
 		err = createCtx.Err()
 	}
 
-	a.mu.Lock()
-	closing := a.state == runClosing
-	if err == nil && !closing {
-		a.state = runActive
-		a.cancel = nil
-		a.servers = servers
-		close(completion.done)
-		a.completion = nil
-		a.mu.Unlock()
-		writeJSON(w, tailbench.CreateRunResponse{Endpoints: endpoints, Before: before, Ready: readResources()})
+	if err == nil && a.activateRun(completion, servers) {
+		writeJSON(w, tailbench.CreateRunResponse{Endpoints: endpoints, Before: before, Ready: processmetrics.Read()})
 		return
 	}
-	a.mu.Unlock()
 
 	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), cleanupTimeout)
 	result := closeServers(cleanupCtx, servers)
 	cleanupCancel()
-	a.mu.Lock()
-	a.state = runIdle
-	a.cancel = nil
-	completion.result = result
-	close(completion.done)
-	a.completion = nil
-	a.mu.Unlock()
+	a.completeRun(completion, result)
 
 	if err == nil {
 		err = context.Canceled
@@ -260,7 +242,7 @@ func (a *agent) deleteRun(w http.ResponseWriter, r *http.Request) {
 	}
 	runtime.GC()
 	runtime.GC()
-	response := tailbench.CloseRunResponse{After: readResources(), ForcedCloses: result.forced}
+	response := tailbench.CloseRunResponse{After: processmetrics.Read(), ForcedCloses: result.forced}
 	if result.drainErr != nil {
 		response.DrainError = result.drainErr.Error()
 	}
@@ -295,17 +277,67 @@ func (a *agent) closeRun(ctx context.Context) closeResult {
 		a.mu.Unlock()
 
 		result := closeServers(ctx, servers)
-		a.mu.Lock()
-		a.state = runIdle
-		completion.result = result
-		close(completion.done)
-		a.completion = nil
-		a.mu.Unlock()
+		a.completeRun(completion, result)
 		return result
 	default:
 		a.mu.Unlock()
 		panic("invalid tailbench run state")
 	}
+}
+
+func (a *agent) beginCreate(parent context.Context) (context.Context, *runCompletion, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.stopping {
+		return nil, nil, errAgentStopping
+	}
+	if a.state != runIdle {
+		return nil, nil, errRunAlreadyActive
+	}
+	ctx, cancel := context.WithCancel(parent)
+	completion := &runCompletion{done: make(chan struct{})}
+	a.state = runCreating
+	a.cancel = cancel
+	a.completion = completion
+	return ctx, completion, nil
+}
+
+func (a *agent) activateRun(completion *runCompletion, servers []*tailtransport.Server) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.completion != completion {
+		panic("mismatched tailbench run completion")
+	}
+	if a.state == runClosing {
+		return false
+	}
+	if a.state != runCreating {
+		panic("invalid tailbench run activation")
+	}
+	a.state = runActive
+	a.cancel()
+	a.cancel = nil
+	a.servers = servers
+	close(completion.done)
+	a.completion = nil
+	return true
+}
+
+func (a *agent) completeRun(completion *runCompletion, result closeResult) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.completion != completion || a.state != runCreating && a.state != runClosing {
+		panic("invalid tailbench run completion")
+	}
+	if a.cancel != nil {
+		a.cancel()
+	}
+	a.state = runIdle
+	a.cancel = nil
+	a.servers = nil
+	completion.result = result
+	close(completion.done)
+	a.completion = nil
 }
 
 func (a *agent) shutdown(ctx context.Context) closeResult {
@@ -369,10 +401,6 @@ func parallel(count, limit int, run func(int) error) error {
 		failures = append(failures, err)
 	}
 	return errors.Join(failures...)
-}
-
-func readResources() tailbench.Resources {
-	return processmetrics.Read()
 }
 
 func writeJSON(w http.ResponseWriter, value any) {

@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/0xcadams/tnl/internal/processmetrics"
 	"github.com/0xcadams/tnl/internal/tailbench"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
@@ -99,11 +100,12 @@ func runFlyCapacityTier(b *testing.B, config capacityConfig, region *tailcfg.DER
 	}
 
 	startup := make([]time.Duration, routeCount)
+	profiles := map[string]*tailcfg.DERPRegion{tailbench.RelayProfile: region}
 	err = runParallel(routeCount, config.parallel, func(index int) error {
 		endpoint := remote.Endpoints[index]
 		dialer, err := NewDialer(DialerConfig{
 			Endpoint: endpoint,
-			Profiles: map[string]*tailcfg.DERPRegion{tailbench.RelayProfile: region},
+			Profiles: profiles,
 			Key:      keys[index],
 			Logf:     logger.Discard,
 		})
@@ -152,7 +154,7 @@ func runFlyCapacityTier(b *testing.B, config capacityConfig, region *tailcfg.DER
 	if err != nil {
 		b.Fatal(err)
 	}
-	ready := readResources()
+	ready := processmetrics.Read()
 
 	b.Logf("transferring %d bytes per stream", config.transferSize)
 	transferStarted := time.Now()
@@ -212,8 +214,9 @@ func runFlyCapacityTier(b *testing.B, config capacityConfig, region *tailcfg.DER
 	reportLatency(b, "client_shutdown", shutdown)
 	b.ReportMetric(float64(agentShutdown)/float64(time.Millisecond), "agent_shutdown_ms")
 	reportPerRoute(b, "client_ready", before, ready, routeCount)
-	reportResiduals(b, before, after)
-	reportAgentResources(b, remote.Before, remote.Ready, remoteClosed.After, routeCount)
+	reportResiduals(b, "", before, after)
+	reportPerRoute(b, "agent", remote.Before, remote.Ready, routeCount)
+	reportResiduals(b, "agent_", remote.Before, remoteClosed.After)
 	directRoutes := 0
 	for _, direct := range directPaths {
 		if direct {
@@ -271,18 +274,4 @@ func (a *flyAgent) request(method string, body, response any) error {
 		return fmt.Errorf("agent %s: %s: %s", method, result.Status, bytes.TrimSpace(message))
 	}
 	return json.NewDecoder(result.Body).Decode(response)
-}
-
-func reportAgentResources(b *testing.B, before, ready, after tailbench.Resources, routes int) {
-	b.Helper()
-	b.ReportMetric(float64(ready.HeapAlloc-before.HeapAlloc)/float64(routes), "agent_heap_B/route")
-	b.ReportMetric(float64(ready.Sys-before.Sys)/float64(routes), "agent_sys_B/route")
-	b.ReportMetric(float64(ready.Goroutines-before.Goroutines)/float64(routes), "agent_goroutines/route")
-	b.ReportMetric(float64(ready.OpenFDs-before.OpenFDs)/float64(routes), "agent_fds/route")
-	if before.RSS >= 0 && ready.RSS >= 0 {
-		b.ReportMetric(float64(ready.RSS-before.RSS)/float64(routes), "agent_rss_B/route")
-	}
-	b.ReportMetric(float64(after.HeapAlloc-before.HeapAlloc), "agent_residual_heap_B")
-	b.ReportMetric(float64(after.Goroutines-before.Goroutines), "agent_residual_goroutines")
-	b.ReportMetric(float64(after.OpenFDs-before.OpenFDs), "agent_residual_fds")
 }
