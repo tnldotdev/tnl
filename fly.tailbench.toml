@@ -2,3 +2,7 @@ primary_region = "sjc"
 
 [build]
   dockerfile = "Dockerfile.tailbench"
+
+[metrics]
+  port = 8080
+  path = "/metrics"

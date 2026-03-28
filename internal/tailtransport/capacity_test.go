@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/0xcadams/tnl/internal/processmetrics"
+	"github.com/0xcadams/tnl/internal/tailbench"
 	"tailscale.com/derp/derpserver"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tailcfg"
@@ -87,7 +88,7 @@ func BenchmarkTailcatChurn(b *testing.B) {
 			return err
 		}
 		defer lease.forceClose()
-		lease.conn, _, err = openBenchmarkStream(ctx, lease.dialer)
+		lease.conn, _, err = tailbench.OpenEchoStream(ctx, lease.dialer.Open)
 		if err != nil {
 			return err
 		}
@@ -158,7 +159,7 @@ func runCapacityTier(b *testing.B, config capacityConfig, region *tailcfg.DERPRe
 	err = runParallel(routeCount, config.parallel, func(index int) error {
 		ctx, cancel := context.WithTimeout(context.Background(), operationTimeout)
 		defer cancel()
-		conn, latency, err := openBenchmarkStream(ctx, leases[index].dialer)
+		conn, latency, err := tailbench.OpenEchoStream(ctx, leases[index].dialer.Open)
 		leases[index].conn = conn
 		firstByte[index] = latency
 		return err
@@ -197,7 +198,7 @@ func runCapacityTier(b *testing.B, config capacityConfig, region *tailcfg.DERPRe
 		if deadline, ok := ctx.Deadline(); ok {
 			_ = leases[index].conn.SetDeadline(deadline)
 		}
-		err := roundTripBytes(leases[index].conn, config.transferSize)
+		err := tailbench.RoundTripBytes(leases[index].conn, config.transferSize)
 		_ = leases[index].conn.SetDeadline(time.Time{})
 		return err
 	})
@@ -254,61 +255,10 @@ func startBenchmarkLease(ctx context.Context, region *tailcfg.DERPRegion) (*benc
 	return &benchmarkLease{server: server, dialer: dialer}, nil
 }
 
-func openBenchmarkStream(ctx context.Context, dialer *Dialer) (net.Conn, time.Duration, error) {
-	startedAt := time.Now()
-	conn, err := dialer.Open(ctx)
-	if err != nil {
-		return nil, 0, fmt.Errorf("dial: %w", err)
-	}
-	if deadline, ok := ctx.Deadline(); ok {
-		_ = conn.SetDeadline(deadline)
-	}
-	if _, err := conn.Write([]byte{1}); err != nil {
-		conn.Close()
-		return nil, 0, fmt.Errorf("first-byte write: %w", err)
-	}
-	var response [1]byte
-	if _, err := io.ReadFull(conn, response[:]); err != nil {
-		conn.Close()
-		return nil, 0, fmt.Errorf("first-byte read: %w", err)
-	}
-	_ = conn.SetDeadline(time.Time{})
-	return conn, time.Since(startedAt), nil
-}
-
-func roundTripBytes(conn net.Conn, total int) error {
-	buffer := make([]byte, min(total, 16*1024))
-	for remaining := total; remaining > 0; {
-		chunk := min(remaining, len(buffer))
-		if _, err := conn.Write(buffer[:chunk]); err != nil {
-			return err
-		}
-		if _, err := io.ReadFull(conn, buffer[:chunk]); err != nil {
-			return err
-		}
-		remaining -= chunk
-	}
-	return nil
-}
-
-func closeBenchmarkStream(ctx context.Context, conn net.Conn) error {
-	if deadline, ok := ctx.Deadline(); ok {
-		_ = conn.SetDeadline(deadline)
-	}
-	closeWriter, ok := conn.(interface{ CloseWrite() error })
-	if !ok {
-		return errors.New("stream does not support CloseWrite")
-	}
-	writeErr := closeWriter.CloseWrite()
-	_, readErr := io.Copy(io.Discard, conn)
-	closeErr := conn.Close()
-	return errors.Join(writeErr, readErr, closeErr)
-}
-
 func (l *benchmarkLease) shutdown(ctx context.Context) error {
 	var errs []error
 	if l.conn != nil {
-		errs = append(errs, closeBenchmarkStream(ctx, l.conn))
+		errs = append(errs, tailbench.CloseEchoStream(ctx, l.conn))
 		l.conn = nil
 	}
 	errs = append(errs, l.dialer.Drain(ctx), l.server.Drain(ctx), l.dialer.Close(), l.server.Close())

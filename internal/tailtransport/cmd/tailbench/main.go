@@ -21,6 +21,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/0xcadams/tnl/internal/observability"
 	"github.com/0xcadams/tnl/internal/processmetrics"
 	"github.com/0xcadams/tnl/internal/tailbench"
 	"github.com/0xcadams/tnl/internal/tailtransport"
@@ -30,7 +31,8 @@ import (
 )
 
 const (
-	maxRoutes          = 2000
+	defaultMaxRoutes   = 2000
+	defaultMaxRuntime  = 2 * time.Hour
 	cleanupTimeout     = 30 * time.Second
 	serverDrainTimeout = 5 * time.Second
 )
@@ -38,9 +40,11 @@ const (
 func main() {
 	listen := flag.String("listen", "[::]:8080", "private control listen address")
 	regionID := flag.Int("region", 302, "public Tailcat DERP region")
+	maxRoutes := flag.Int("max-routes", envInt("TNL_TAILBENCH_MAX_ROUTES", defaultMaxRoutes), "hard route limit for a worker")
+	maxRuntime := flag.Duration("max-runtime", envDuration("TNL_TAILBENCH_MAX_RUNTIME", defaultMaxRuntime), "maximum process lifetime")
 	flag.Parse()
-	if flag.NArg() != 1 || flag.Arg(0) != "agent" {
-		log.Fatal("usage: tailbench [flags] agent")
+	if flag.NArg() != 1 {
+		log.Fatal("usage: tailbench [flags] agent|client|controller|self")
 	}
 	token := os.Getenv("TNL_TAILBENCH_TOKEN")
 	if token == "" {
@@ -49,24 +53,86 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	if *maxRuntime > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, *maxRuntime)
+		defer cancel()
+	}
+	if *maxRoutes <= 0 {
+		log.Fatal("max-routes must be positive")
+	}
+
+	switch flag.Arg(0) {
+	case "controller":
+		if err := runController(ctx, *listen, token); err != nil {
+			log.Fatal(err)
+		}
+		return
+	case "client":
+		region, err := tailbench.PublicRegion(ctx, *regionID)
+		if err != nil {
+			log.Fatal(err)
+		}
+		result, err := runClient(ctx, token, region, os.Getenv("TNL_TAILBENCH_SERVER_URL"))
+		if err != nil {
+			log.Fatal(err)
+		}
+		if err := logResult(result); err != nil {
+			log.Fatal(err)
+		}
+		return
+	case "self":
+		region, err := tailbench.PublicRegion(ctx, *regionID)
+		if err != nil {
+			log.Fatal(err)
+		}
+		result, err := runSelf(ctx, *listen, token, region, *maxRoutes)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if err := logResult(result); err != nil {
+			log.Fatal(err)
+		}
+		<-ctx.Done()
+		return
+	case "agent":
+	default:
+		log.Fatal("usage: tailbench [flags] agent|client|controller|self")
+	}
+
 	region, err := tailbench.PublicRegion(ctx, *regionID)
 	if err != nil {
 		log.Fatal(err)
 	}
-	agent := &agent{token: token, region: region}
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
-	mux.Handle("/v1/run", agent.authorize(http.HandlerFunc(agent.handleRun)))
-	server := &http.Server{Addr: *listen, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	server, agent := newAgentServer(*listen, token, region, *maxRoutes)
 	log.Printf("tailbench agent ready on %s using public DERP region %d", *listen, *regionID)
 	if err := serveAgent(ctx, server, agent); err != nil {
 		log.Fatal(err)
 	}
 }
 
+func newAgentServer(listen, token string, region *tailcfg.DERPRegion, maxRoutes int) (*http.Server, *agent) {
+	metrics := observability.New("worker")
+	metrics.SetWorkerCapacity(maxRoutes)
+	agent := &agent{token: token, region: region, maxRoutes: maxRoutes, metrics: metrics}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	mux.Handle("GET /metrics", metrics.Handler())
+	mux.Handle("/v1/run", agent.authorize(http.HandlerFunc(agent.handleRun)))
+	return &http.Server{Addr: listen, Handler: mux, ReadHeaderTimeout: 5 * time.Second}, agent
+}
+
 func serveAgent(ctx context.Context, server *http.Server, agent *agent) error {
+	listener, err := net.Listen("tcp", server.Addr)
+	if err != nil {
+		return err
+	}
+	return serveAgentListener(ctx, server, agent, listener)
+}
+
+func serveAgentListener(ctx context.Context, server *http.Server, agent *agent, listener net.Listener) error {
 	serveErr := make(chan error, 1)
-	go func() { serveErr <- server.ListenAndServe() }()
+	go func() { serveErr <- server.Serve(listener) }()
 
 	serverStopped := false
 	var listenerErr error
@@ -95,6 +161,15 @@ func serveAgent(ctx context.Context, server *http.Server, agent *agent) error {
 	return errors.Join(listenerErr, shutdownErr, result.closeErr)
 }
 
+func logResult(result tailbench.ClientRunResult) error {
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		return err
+	}
+	log.Printf("TAILBENCH_RESULT %s", encoded)
+	return nil
+}
+
 type runState uint8
 
 const (
@@ -113,6 +188,9 @@ type agent struct {
 	cancel     context.CancelFunc
 	completion *runCompletion
 	servers    []*tailtransport.Server
+	maxRoutes  int
+	metrics    *observability.Metrics
+	streams    atomic.Int64
 }
 
 type closeResult struct {
@@ -162,7 +240,14 @@ func (a *agent) createRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
+	maxRoutes := a.maxRoutes
+	if maxRoutes == 0 {
+		maxRoutes = defaultMaxRoutes
+	}
 	if len(request.ClientPublicKeys) == 0 || len(request.ClientPublicKeys) > maxRoutes {
+		if a.metrics != nil {
+			a.metrics.IncCapacityRejection("routes")
+		}
 		http.Error(w, fmt.Sprintf("route count must be between 1 and %d", maxRoutes), http.StatusBadRequest)
 		return
 	}
@@ -185,6 +270,9 @@ func (a *agent) createRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	before := processmetrics.Read()
+	if a.metrics != nil {
+		a.metrics.SetRoutes("provisioning", len(request.ClientPublicKeys))
+	}
 	servers := make([]*tailtransport.Server, len(request.ClientPublicKeys))
 	endpoints := make([]tailtransport.Endpoint, len(request.ClientPublicKeys))
 	profiles := map[string]*tailcfg.DERPRegion{tailbench.RelayProfile: a.region}
@@ -193,10 +281,8 @@ func (a *agent) createRun(w http.ResponseWriter, r *http.Request) {
 			AllowedClient: clientKeys[index],
 			RelayProfile:  tailbench.RelayProfile,
 			Profiles:      profiles,
-			Handler: func(conn net.Conn) {
-				_, _ = io.Copy(conn, conn)
-			},
-			Logf: logger.Discard,
+			Handler:       a.handleStream,
+			Logf:          logger.Discard,
 		})
 		if err != nil {
 			return err
@@ -220,6 +306,9 @@ func (a *agent) createRun(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, tailbench.CreateRunResponse{Endpoints: endpoints, Before: before, Ready: processmetrics.Read()})
 		return
 	}
+	if a.metrics != nil {
+		a.metrics.IncTailcatFailure("start", "failed")
+	}
 
 	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), cleanupTimeout)
 	result := closeServers(cleanupCtx, servers)
@@ -236,6 +325,9 @@ func (a *agent) deleteRun(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), cleanupTimeout)
 	defer cancel()
 	result := a.closeRun(ctx)
+	if a.metrics != nil && result.forced > 0 {
+		a.metrics.AddTailcatForcedCloses(result.forced)
+	}
 	if result.closeErr != nil {
 		http.Error(w, fmt.Sprintf("close routes: %v", result.closeErr), http.StatusInternalServerError)
 		return
@@ -318,6 +410,11 @@ func (a *agent) activateRun(completion *runCompletion, servers []*tailtransport.
 	a.cancel()
 	a.cancel = nil
 	a.servers = servers
+	if a.metrics != nil {
+		a.metrics.SetRoutes("provisioning", 0)
+		a.metrics.SetWorkerRoutes(len(servers))
+		a.metrics.SetRoutes("active", len(servers))
+	}
 	close(completion.done)
 	a.completion = nil
 	return true
@@ -335,6 +432,12 @@ func (a *agent) completeRun(completion *runCompletion, result closeResult) {
 	a.state = runIdle
 	a.cancel = nil
 	a.servers = nil
+	if a.metrics != nil {
+		a.metrics.SetRoutes("provisioning", 0)
+		a.metrics.SetRoutes("active", 0)
+		a.metrics.SetWorkerRoutes(0)
+		a.metrics.SetWorkerDraining(a.stopping)
+	}
 	completion.result = result
 	close(completion.done)
 	a.completion = nil
@@ -343,8 +446,29 @@ func (a *agent) completeRun(completion *runCompletion, result closeResult) {
 func (a *agent) shutdown(ctx context.Context) closeResult {
 	a.mu.Lock()
 	a.stopping = true
+	if a.metrics != nil {
+		a.metrics.SetWorkerDraining(true)
+	}
 	a.mu.Unlock()
 	return a.closeRun(ctx)
+}
+
+func (a *agent) handleStream(conn net.Conn) {
+	active := a.streams.Add(1)
+	if a.metrics != nil {
+		a.metrics.SetStreams(int(active))
+	}
+	defer func() {
+		active := a.streams.Add(-1)
+		if a.metrics != nil {
+			a.metrics.SetStreams(int(active))
+		}
+	}()
+	count, _ := io.Copy(conn, conn)
+	if a.metrics != nil {
+		a.metrics.AddForwardedBytes("ingress", count)
+		a.metrics.AddForwardedBytes("egress", count)
+	}
 }
 
 func closeServers(ctx context.Context, servers []*tailtransport.Server) closeResult {
@@ -417,4 +541,28 @@ func init() {
 			log.Printf("invalid GOMAXPROCS %q", value)
 		}
 	}
+}
+
+func envInt(name string, fallback int) int {
+	value := os.Getenv(name)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		log.Fatalf("invalid %s %q", name, value)
+	}
+	return parsed
+}
+
+func envDuration(name string, fallback time.Duration) time.Duration {
+	value := os.Getenv(name)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := time.ParseDuration(value)
+	if err != nil {
+		log.Fatalf("invalid %s %q", name, value)
+	}
+	return parsed
 }
