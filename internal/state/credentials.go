@@ -11,7 +11,7 @@ import (
 	"github.com/0xcadams/tnl/internal/credentials"
 )
 
-// ErrAccessCredentialNotFound indicates that a credential ID does not exist.
+// ErrAccessCredentialNotFound indicates that no credential matched the requested owner and ID.
 var ErrAccessCredentialNotFound = errors.New("state: access credential not found")
 
 // Principal is a standalone core identity.
@@ -97,16 +97,17 @@ func AuthenticateAccessCredential(
 	return principal, nil
 }
 
-// RevokeAccessCredential revokes a credential by its nonsecret lookup ID.
+// RevokeAccessCredential revokes a credential owned by principalID.
 func RevokeAccessCredential(
 	ctx context.Context,
 	db *sql.DB,
+	principalID string,
 	credentialID credentials.CredentialID,
 	revokedAt time.Time,
 ) error {
 	result, err := db.ExecContext(ctx, `UPDATE access_credentials
 		SET revoked_at = COALESCE(revoked_at, ?)
-		WHERE id = ?`, revokedAt.Unix(), credentialID.String())
+		WHERE id = ? AND principal_id = ?`, revokedAt.Unix(), credentialID.String(), principalID)
 	if err != nil {
 		return fmt.Errorf("state: revoke access credential: %w", err)
 	}

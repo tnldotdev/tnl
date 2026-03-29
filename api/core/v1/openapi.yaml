@@ -59,10 +59,53 @@ paths:
           $ref: "#/components/responses/Problem"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/auth/credentials/{id}:
+    delete:
+      operationId: revokeAccessCredential
+      summary: Revoke an access credential owned by the authenticated principal
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/CredentialID"
+      responses:
+        "204":
+          description: Access credential revoked
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: tnl access token
   responses:
     Problem:
       description: Request failed
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    BearerProblem:
+      description: Bearer authentication failed
+      headers:
+        WWW-Authenticate:
+          schema:
+            type: string
+            const: Bearer
       content:
         application/problem+json:
           schema:
@@ -141,14 +184,16 @@ components:
           maxLength: 128
           pattern: '^tnl_access_[A-Za-z0-9_-]{21}[AQgw]\.[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$'
         credential_id:
-          type: string
-          pattern: ^[A-Za-z0-9_-]{22}$
+          $ref: "#/components/schemas/CredentialID"
         token_type:
           type: string
           const: Bearer
         expires_at:
           type: string
           format: date-time
+    CredentialID:
+      type: string
+      pattern: ^[A-Za-z0-9_-]{21}[AQgw]$
     Problem:
       type: object
       additionalProperties: false

@@ -14,12 +14,15 @@ import (
 
 	"github.com/0xcadams/tnl/internal/auth"
 	"github.com/0xcadams/tnl/internal/credentials"
+	"github.com/0xcadams/tnl/internal/state"
 	"github.com/0xcadams/tnl/pkg/protocol/corev1"
 )
 
 const (
 	capabilitiesPath     = "/v1/capabilities"
 	tokenExchangePath    = "/v1/auth/token"
+	credentialsPath      = "/v1/auth/credentials/"
+	authorizationHeader  = "Authorization"
 	requestIDHeader      = "X-Request-ID"
 	maxCredentialBytes   = 128
 	maxJSONRequestBytes  = 16 << 10
@@ -32,19 +35,21 @@ var (
 	errUnsupportedMediaType = errors.New("api: unsupported media type")
 )
 
-// TokenExchanger exchanges a bootstrap token without exposing storage to HTTP.
-type TokenExchanger interface {
+// AuthService implements authentication flows without exposing storage to HTTP.
+type AuthService interface {
 	Exchange(context.Context, credentials.BootstrapToken) (auth.IssuedAccessToken, error)
+	Authenticate(context.Context, credentials.AccessToken) (state.Principal, error)
+	Revoke(context.Context, state.Principal, credentials.CredentialID) error
 }
 
 type handler struct {
 	capabilities corev1.Capabilities
-	tokens       TokenExchanger
+	auth         AuthService
 }
 
 // NewHandler creates the core API handler without binding a listener.
-func NewHandler(capabilities corev1.Capabilities, tokens TokenExchanger) http.Handler {
-	return &handler{capabilities: capabilities, tokens: tokens}
+func NewHandler(capabilities corev1.Capabilities, auth AuthService) http.Handler {
+	return &handler{capabilities: capabilities, auth: auth}
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -57,7 +62,12 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case tokenExchangePath:
 		h.serveTokenExchange(w, r, requestID)
 	default:
-		writeProblem(w, requestID, http.StatusNotFound, corev1.NotFound, "Not found", "not-found")
+		credentialID, ok := strings.CutPrefix(r.URL.Path, credentialsPath)
+		if ok && credentialID != "" && !strings.Contains(credentialID, "/") {
+			h.serveCredentialRevocation(w, r, requestID, credentialID)
+			return
+		}
+		writeNotFound(w, requestID)
 	}
 }
 
@@ -100,11 +110,11 @@ func (h *handler) serveTokenExchange(w http.ResponseWriter, r *http.Request, req
 		)
 		return
 	}
-	if h.tokens == nil {
+	if h.auth == nil {
 		writeInternalProblem(w, requestID)
 		return
 	}
-	issued, err := h.tokens.Exchange(r.Context(), credentials.BootstrapToken(request.BootstrapToken))
+	issued, err := h.auth.Exchange(r.Context(), credentials.BootstrapToken(request.BootstrapToken))
 	if errors.Is(err, auth.ErrUnauthenticated) {
 		writeProblem(
 			w, requestID, http.StatusUnauthorized, corev1.Unauthenticated,
@@ -127,6 +137,64 @@ func (h *handler) serveTokenExchange(w http.ResponseWriter, r *http.Request, req
 		return
 	}
 	writeJSON(w, http.StatusOK, "application/json", body)
+}
+
+func (h *handler) serveCredentialRevocation(
+	w http.ResponseWriter,
+	r *http.Request,
+	requestID string,
+	credentialIDValue string,
+) {
+	if r.Method != http.MethodDelete {
+		writeMethodNotAllowed(w, requestID, http.MethodDelete)
+		return
+	}
+	if h.auth == nil {
+		writeInternalProblem(w, requestID)
+		return
+	}
+	token, ok := bearerToken(r.Header)
+	if !ok {
+		writeUnauthenticated(w, requestID)
+		return
+	}
+	principal, err := h.auth.Authenticate(r.Context(), token)
+	if errors.Is(err, auth.ErrUnauthenticated) {
+		writeUnauthenticated(w, requestID)
+		return
+	}
+	if err != nil {
+		writeInternalProblem(w, requestID)
+		return
+	}
+	credentialID, err := credentials.ParseCredentialID(credentialIDValue)
+	if err != nil {
+		writeProblem(
+			w, requestID, http.StatusBadRequest, corev1.InvalidArgument,
+			"Invalid request", "invalid-request",
+		)
+		return
+	}
+	if err := h.auth.Revoke(r.Context(), principal, credentialID); errors.Is(err, auth.ErrCredentialNotFound) {
+		writeNotFound(w, requestID)
+		return
+	} else if err != nil {
+		writeInternalProblem(w, requestID)
+		return
+	}
+	writeNoContent(w)
+}
+
+func bearerToken(header http.Header) (credentials.AccessToken, bool) {
+	values := header.Values(authorizationHeader)
+	if len(values) != 1 || len(values[0]) > len("Bearer ")+maxCredentialBytes {
+		return "", false
+	}
+	scheme, token, ok := strings.Cut(values[0], " ")
+	if !ok || !strings.EqualFold(scheme, "Bearer") || token == "" || strings.ContainsAny(token, " \t") {
+		return "", false
+	}
+	return credentials.AccessToken(token), true
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, value any) error {
@@ -214,6 +282,18 @@ func writeInternalProblem(w http.ResponseWriter, requestID string) {
 	)
 }
 
+func writeUnauthenticated(w http.ResponseWriter, requestID string) {
+	w.Header().Set("WWW-Authenticate", "Bearer")
+	writeProblem(
+		w, requestID, http.StatusUnauthorized, corev1.Unauthenticated,
+		"Unauthenticated", "unauthenticated",
+	)
+}
+
+func writeNotFound(w http.ResponseWriter, requestID string) {
+	writeProblem(w, requestID, http.StatusNotFound, corev1.NotFound, "Not found", "not-found")
+}
+
 func writeMethodNotAllowed(w http.ResponseWriter, requestID, allow string) {
 	w.Header().Set("Allow", allow)
 	writeProblem(
@@ -228,4 +308,10 @@ func writeJSON(w http.ResponseWriter, status int, contentType string, body []byt
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(status)
 	_, _ = w.Write(body)
+}
+
+func writeNoContent(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusNoContent)
 }
