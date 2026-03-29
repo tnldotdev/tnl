@@ -26,7 +26,7 @@ func TestAccessCredentialLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Principal{ID: "principal", DisplayName: "Principal", Email: "principal@example.com"}
-	if err := CreatePrincipalAndAccessCredential(
+	if err := CreateAccessCredential(
 		context.Background(), db, want, lookupID, hash, now, expiresAt,
 	); err != nil {
 		t.Fatal(err)
@@ -45,7 +45,9 @@ func TestAccessCredentialLifecycle(t *testing.T) {
 	}
 
 	var storedHash []byte
-	if err := db.QueryRow("SELECT secret_hash FROM access_credentials WHERE id = ?", lookupID).Scan(&storedHash); err != nil {
+	if err := db.QueryRow(
+		"SELECT secret_hash FROM access_credentials WHERE id = ?", lookupID.String(),
+	).Scan(&storedHash); err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(storedHash, hash[:]) {
@@ -64,12 +66,14 @@ func TestAccessCredentialLifecycle(t *testing.T) {
 		t.Fatalf("repeat revocation: %v", err)
 	}
 	assertInvalidAccessCredential(t, db, lookupID, hash, now)
-	if err := RevokeAccessCredential(context.Background(), db, "missing", now); !errors.Is(err, ErrAccessCredentialNotFound) {
+	if err := RevokeAccessCredential(
+		context.Background(), db, credentials.CredentialID("missing"), now,
+	); !errors.Is(err, ErrAccessCredentialNotFound) {
 		t.Fatalf("missing revocation error = %v", err)
 	}
 }
 
-func TestCreatePrincipalAndAccessCredentialRollsBack(t *testing.T) {
+func TestCreateAccessCredentialRollsBack(t *testing.T) {
 	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
@@ -81,13 +85,13 @@ func TestCreatePrincipalAndAccessCredentialRollsBack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := CreatePrincipalAndAccessCredential(
+	if err := CreateAccessCredential(
 		context.Background(), db, Principal{ID: "first"}, lookupID, hash, now, now.Add(time.Hour),
 	); err != nil {
 		t.Fatal(err)
 	}
-	if err := CreatePrincipalAndAccessCredential(
-		context.Background(), db, Principal{ID: "rolled-back"}, "different", hash, now, now.Add(time.Hour),
+	if err := CreateAccessCredential(
+		context.Background(), db, Principal{ID: "rolled-back"}, credentials.CredentialID("different"), hash, now, now.Add(time.Hour),
 	); err == nil {
 		t.Fatal("duplicate secret hash succeeded")
 	}
@@ -104,12 +108,12 @@ func TestCreatePrincipalAndAccessCredentialRollsBack(t *testing.T) {
 func assertInvalidAccessCredential(
 	t *testing.T,
 	db *sql.DB,
-	lookupID string,
+	credentialID credentials.CredentialID,
 	hash credentials.SecretHash,
 	now time.Time,
 ) {
 	t.Helper()
-	if _, err := AuthenticateAccessCredential(context.Background(), db, lookupID, hash, now); !errors.Is(err, credentials.ErrInvalidAccessToken) {
+	if _, err := AuthenticateAccessCredential(context.Background(), db, credentialID, hash, now); !errors.Is(err, credentials.ErrInvalidAccessToken) {
 		t.Fatalf("authentication error = %v", err)
 	}
 }

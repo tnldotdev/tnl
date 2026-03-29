@@ -21,16 +21,16 @@ type Principal struct {
 	Email       string
 }
 
-// CreatePrincipalAndAccessCredential stores both records atomically.
-func CreatePrincipalAndAccessCredential(
+// CreateAccessCredential ensures the principal and stores its credential atomically.
+func CreateAccessCredential(
 	ctx context.Context,
 	db *sql.DB,
 	principal Principal,
-	lookupID string,
+	credentialID credentials.CredentialID,
 	secretHash credentials.SecretHash,
 	issuedAt, expiresAt time.Time,
 ) error {
-	if strings.TrimSpace(principal.ID) == "" || strings.TrimSpace(lookupID) == "" {
+	if strings.TrimSpace(principal.ID) == "" || strings.TrimSpace(credentialID.String()) == "" {
 		return errors.New("state: principal and credential IDs are required")
 	}
 	if !expiresAt.After(issuedAt) {
@@ -44,14 +44,15 @@ func CreatePrincipalAndAccessCredential(
 	defer tx.Rollback()
 
 	if _, err := tx.ExecContext(ctx, `INSERT INTO principals
-		(id, display_name, email, created_at) VALUES (?, ?, ?, ?)`,
+		(id, display_name, email, created_at) VALUES (?, ?, ?, ?)
+		ON CONFLICT (id) DO NOTHING`,
 		principal.ID, principal.DisplayName, principal.Email, issuedAt.Unix()); err != nil {
-		return fmt.Errorf("state: create principal: %w", err)
+		return fmt.Errorf("state: ensure principal: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO access_credentials
 		(id, principal_id, secret_hash, created_at, expires_at)
 		VALUES (?, ?, ?, ?, ?)`,
-		lookupID, principal.ID, secretHash[:], issuedAt.Unix(), expiresAt.Unix()); err != nil {
+		credentialID.String(), principal.ID, secretHash[:], issuedAt.Unix(), expiresAt.Unix()); err != nil {
 		return fmt.Errorf("state: create access credential: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -64,7 +65,7 @@ func CreatePrincipalAndAccessCredential(
 func AuthenticateAccessCredential(
 	ctx context.Context,
 	db *sql.DB,
-	lookupID string,
+	credentialID credentials.CredentialID,
 	candidate credentials.SecretHash,
 	now time.Time,
 ) (Principal, error) {
@@ -76,7 +77,7 @@ func AuthenticateAccessCredential(
 		p.id, p.display_name, p.email, c.secret_hash, c.expires_at, c.revoked_at
 		FROM access_credentials c
 		JOIN principals p ON p.id = c.principal_id
-		WHERE c.id = ?`, lookupID).Scan(
+		WHERE c.id = ?`, credentialID.String()).Scan(
 		&principal.ID,
 		&principal.DisplayName,
 		&principal.Email,
@@ -97,10 +98,15 @@ func AuthenticateAccessCredential(
 }
 
 // RevokeAccessCredential revokes a credential by its nonsecret lookup ID.
-func RevokeAccessCredential(ctx context.Context, db *sql.DB, credentialID string, revokedAt time.Time) error {
+func RevokeAccessCredential(
+	ctx context.Context,
+	db *sql.DB,
+	credentialID credentials.CredentialID,
+	revokedAt time.Time,
+) error {
 	result, err := db.ExecContext(ctx, `UPDATE access_credentials
 		SET revoked_at = COALESCE(revoked_at, ?)
-		WHERE id = ?`, revokedAt.Unix(), credentialID)
+		WHERE id = ?`, revokedAt.Unix(), credentialID.String())
 	if err != nil {
 		return fmt.Errorf("state: revoke access credential: %w", err)
 	}
