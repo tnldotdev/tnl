@@ -26,8 +26,8 @@ func TestOpen(t *testing.T) {
 	if err := db.QueryRow("SELECT MAX(version_id) FROM goose_db_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 1 {
-		t.Fatalf("schema version = %d, want 1", version)
+	if version != 2 {
+		t.Fatalf("schema version = %d, want 2", version)
 	}
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
@@ -48,7 +48,7 @@ func TestOpenRejectsNewerSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec("INSERT INTO goose_db_version (version_id, is_applied) VALUES (2, 1)"); err != nil {
+	if _, err := db.Exec("INSERT INTO goose_db_version (version_id, is_applied) VALUES (3, 1)"); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {

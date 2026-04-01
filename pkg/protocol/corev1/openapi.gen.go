@@ -88,6 +88,57 @@ func (e ProblemCode) Valid() bool {
 	}
 }
 
+// Defines values for RouteState.
+const (
+	Active RouteState = "active"
+)
+
+// Valid indicates whether the value is a known member of the RouteState enum.
+func (e RouteState) Valid() bool {
+	switch e {
+	case Active:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RouteLeaseStatus.
+const (
+	Pending  RouteLeaseStatus = "pending"
+	Ready    RouteLeaseStatus = "ready"
+	Starting RouteLeaseStatus = "starting"
+)
+
+// Valid indicates whether the value is a known member of the RouteLeaseStatus enum.
+func (e RouteLeaseStatus) Valid() bool {
+	switch e {
+	case Pending:
+		return true
+	case Ready:
+		return true
+	case Starting:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for TailcatDescriptorVersion.
+const (
+	TailcatDescriptorVersionN1 TailcatDescriptorVersion = 1
+)
+
+// Valid indicates whether the value is a known member of the TailcatDescriptorVersion enum.
+func (e TailcatDescriptorVersion) Valid() bool {
+	switch e {
+	case TailcatDescriptorVersionN1:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for TokenExchangeResponseTokenType.
 const (
 	Bearer TokenExchangeResponseTokenType = "Bearer"
@@ -138,9 +189,14 @@ type AcmeCapabilities struct {
 	Profile string `json:"profile"`
 }
 
+// AcquireLeaseRequest defines model for AcquireLeaseRequest.
+type AcquireLeaseRequest struct {
+	RouteToken string `json:"route_token"`
+}
+
 // Capabilities defines model for Capabilities.
 type Capabilities struct {
-	Acme                  AcmeCapabilities                    `json:"acme"`
+	Acme                  *AcmeCapabilities                   `json:"acme,omitempty"`
 	AnonymousPublic       bool                                `json:"anonymous_public"`
 	HostnameAuthorization []CapabilitiesHostnameAuthorization `json:"hostname_authorization"`
 	ProtocolVersions      []CapabilitiesProtocolVersions      `json:"protocol_versions"`
@@ -153,8 +209,33 @@ type CapabilitiesHostnameAuthorization string
 // CapabilitiesProtocolVersions defines model for Capabilities.ProtocolVersions.
 type CapabilitiesProtocolVersions int
 
+// CreateRouteRequest defines model for CreateRouteRequest.
+type CreateRouteRequest struct {
+	DisplayTarget string `json:"display_target"`
+	Hostname      string `json:"hostname"`
+	RouteToken    string `json:"route_token"`
+}
+
 // CredentialID defines model for CredentialID.
 type CredentialID = string
+
+// HeartbeatResponse defines model for HeartbeatResponse.
+type HeartbeatResponse struct {
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// LeaseGenerationRequest defines model for LeaseGenerationRequest.
+type LeaseGenerationRequest struct {
+	Generation int `json:"generation"`
+}
+
+// LeaseSetup defines model for LeaseSetup.
+type LeaseSetup struct {
+	IngressPublicKey string     `json:"ingress_public_key"`
+	Lease            RouteLease `json:"lease"`
+	LeaseToken       string     `json:"lease_token"`
+	Route            Route      `json:"route"`
+}
 
 // Problem defines model for Problem.
 type Problem struct {
@@ -168,6 +249,48 @@ type Problem struct {
 
 // ProblemCode defines model for Problem.Code.
 type ProblemCode string
+
+// RegisterTransportRequest defines model for RegisterTransportRequest.
+type RegisterTransportRequest struct {
+	Endpoint   TailcatDescriptor `json:"endpoint"`
+	Generation int               `json:"generation"`
+}
+
+// Route defines model for Route.
+type Route struct {
+	CreatedAt     time.Time  `json:"created_at"`
+	DisplayTarget string     `json:"display_target"`
+	Generation    int        `json:"generation"`
+	Hostname      string     `json:"hostname"`
+	Id            string     `json:"id"`
+	State         RouteState `json:"state"`
+}
+
+// RouteState defines model for Route.State.
+type RouteState string
+
+// RouteLease defines model for RouteLease.
+type RouteLease struct {
+	CreatedAt  time.Time        `json:"created_at"`
+	ExpiresAt  time.Time        `json:"expires_at"`
+	Generation int              `json:"generation"`
+	Id         string           `json:"id"`
+	RouteId    string           `json:"route_id"`
+	Status     RouteLeaseStatus `json:"status"`
+}
+
+// RouteLeaseStatus defines model for RouteLease.Status.
+type RouteLeaseStatus string
+
+// TailcatDescriptor defines model for TailcatDescriptor.
+type TailcatDescriptor struct {
+	RelayProfile    string                   `json:"relay_profile"`
+	ServerPublicKey string                   `json:"server_public_key"`
+	Version         TailcatDescriptorVersion `json:"version"`
+}
+
+// TailcatDescriptorVersion defines model for TailcatDescriptor.Version.
+type TailcatDescriptorVersion int
 
 // TokenExchangeRequest defines model for TokenExchangeRequest.
 type TokenExchangeRequest struct {
@@ -198,8 +321,26 @@ type TransportCapabilitiesType string
 // TransportCapabilitiesVersion defines model for TransportCapabilities.Version.
 type TransportCapabilitiesVersion int
 
+// RouteID defines model for RouteID.
+type RouteID = string
+
 // BearerProblem defines model for BearerProblem.
 type BearerProblem = Problem
 
 // ExchangeBootstrapTokenJSONRequestBody defines body for ExchangeBootstrapToken for application/json ContentType.
 type ExchangeBootstrapTokenJSONRequestBody = TokenExchangeRequest
+
+// CreateRouteJSONRequestBody defines body for CreateRoute for application/json ContentType.
+type CreateRouteJSONRequestBody = CreateRouteRequest
+
+// HeartbeatRouteLeaseJSONRequestBody defines body for HeartbeatRouteLease for application/json ContentType.
+type HeartbeatRouteLeaseJSONRequestBody = LeaseGenerationRequest
+
+// AcquireRouteLeaseJSONRequestBody defines body for AcquireRouteLease for application/json ContentType.
+type AcquireRouteLeaseJSONRequestBody = AcquireLeaseRequest
+
+// MarkRouteReadyJSONRequestBody defines body for MarkRouteReady for application/json ContentType.
+type MarkRouteReadyJSONRequestBody = LeaseGenerationRequest
+
+// RegisterRouteTransportJSONRequestBody defines body for RegisterRouteTransport for application/json ContentType.
+type RegisterRouteTransportJSONRequestBody = RegisterTransportRequest
