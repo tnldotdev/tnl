@@ -1,7 +1,10 @@
 package publication
 
 import (
+	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -12,33 +15,40 @@ import (
 	"net/http"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/0xcadams/tnl/internal/agent"
 	"github.com/0xcadams/tnl/internal/localproxy"
 	"github.com/0xcadams/tnl/internal/naming"
 	"github.com/0xcadams/tnl/internal/proxyproto"
 	"github.com/0xcadams/tnl/internal/tailtransport"
+	"golang.org/x/crypto/acme"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
 	"tailscale.com/types/logger"
 )
 
 type RouteConfig struct {
-	Hostname      string
-	Target        string
-	Certificate   tls.Certificate
-	AllowedClient key.NodePublic
-	RelayProfile  string
-	Profiles      map[string]*tailcfg.DERPRegion
-	Logf          logger.Logf
+	Hostname          string
+	Target            string
+	Certificate       tls.Certificate
+	StrictCertificate bool
+	AllowedClient     key.NodePublic
+	RelayProfile      string
+	Profiles          map[string]*tailcfg.DERPRegion
+	Logf              logger.Logf
 }
 
 type Route struct {
-	hostname string
-	tls      *tls.Config
-	queue    *routeListener
-	http     *http.Server
-	tailcat  *tailtransport.Server
+	hostname          string
+	strictCertificate bool
+	tls               *tls.Config
+	certificate       atomic.Pointer[tls.Certificate]
+	challenges        agent.TLSALPNChallenges
+	queue             *routeListener
+	http              *http.Server
+	tailcat           *tailtransport.Server
 
 	mu        sync.Mutex
 	started   bool
@@ -52,27 +62,19 @@ func NewRoute(config RouteConfig) (*Route, error) {
 	if err != nil || hostname != config.Hostname {
 		return nil, errors.New("agent: route hostname must be canonical")
 	}
-	if err := validateCertificate(config.Certificate, hostname); err != nil {
-		return nil, err
-	}
 	handler, err := localproxy.New(config.Target, hostname)
 	if err != nil {
 		return nil, err
 	}
 	queue := newRouteListener()
 	route := &Route{
-		hostname: hostname,
-		queue:    queue,
+		hostname:          hostname,
+		strictCertificate: config.StrictCertificate,
+		queue:             queue,
 		tls: &tls.Config{
 			MinVersion:             tls.VersionTLS12,
-			NextProtos:             []string{"http/1.1"},
+			NextProtos:             []string{"http/1.1", acme.ALPNProto},
 			SessionTicketsDisabled: true,
-			GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
-				if hello == nil || hello.ServerName != hostname {
-					return nil, errors.New("agent: TLS SNI does not match route")
-				}
-				return &config.Certificate, nil
-			},
 		},
 		http: &http.Server{
 			Handler:           handler,
@@ -82,6 +84,12 @@ func NewRoute(config RouteConfig) (*Route, error) {
 			ErrorLog:          log.New(io.Discard, "", 0),
 		},
 		httpDone: make(chan error, 1),
+	}
+	route.tls.GetCertificate = route.getCertificate
+	if len(config.Certificate.Certificate) != 0 || config.Certificate.PrivateKey != nil {
+		if err := route.InstallCertificate(config.Certificate); err != nil {
+			return nil, err
+		}
 	}
 	tailcat, err := tailtransport.NewServer(tailtransport.ServerConfig{
 		AllowedClient: config.AllowedClient,
@@ -95,6 +103,68 @@ func NewRoute(config RouteConfig) (*Route, error) {
 	}
 	route.tailcat = tailcat
 	return route, nil
+}
+
+func (r *Route) InstallChallenge(challenge agent.TLSALPNChallenge) error {
+	if challenge.Hostname != r.hostname {
+		return errors.New("agent: TLS-ALPN challenge hostname does not match route")
+	}
+	return r.challenges.Install(challenge)
+}
+
+func (r *Route) RemoveChallenge(id string) bool { return r.challenges.Remove(id) }
+
+func (r *Route) InstallCertificate(certificate tls.Certificate) error {
+	if err := validateCertificate(certificate, r.hostname, r.strictCertificate); err != nil {
+		return err
+	}
+	copy := certificate
+	r.certificate.Store(&copy)
+	return nil
+}
+
+func (r *Route) VerifyCertificate(expected tls.Certificate) error {
+	if len(expected.Certificate) == 0 {
+		return errors.New("agent: expected application certificate is empty")
+	}
+	serverConnection, clientConnection := net.Pipe()
+	defer serverConnection.Close()
+	defer clientConnection.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	serverResult := make(chan error, 1)
+	go func() {
+		server := tls.Server(serverConnection, r.tls.Clone())
+		serverResult <- server.HandshakeContext(ctx)
+	}()
+	client := tls.Client(clientConnection, &tls.Config{
+		ServerName: r.hostname, MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"},
+		InsecureSkipVerify: true, // This probes selection and key usability; the core validated the chain.
+	})
+	clientErr := client.HandshakeContext(ctx)
+	serverErr := <-serverResult
+	peers := client.ConnectionState().PeerCertificates
+	if clientErr != nil || serverErr != nil {
+		return fmt.Errorf("agent: verify installed application certificate handshake: %w", errors.Join(clientErr, serverErr))
+	}
+	if len(peers) == 0 || !bytes.Equal(peers[0].Raw, expected.Certificate[0]) {
+		return errors.New("agent: installed application certificate does not match expected leaf")
+	}
+	return nil
+}
+
+func (r *Route) getCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+	if hello == nil || hello.ServerName != r.hostname {
+		return nil, errors.New("agent: TLS SNI does not match route")
+	}
+	if len(hello.SupportedProtos) == 1 && hello.SupportedProtos[0] == acme.ALPNProto {
+		return r.challenges.GetCertificate(hello)
+	}
+	certificate := r.certificate.Load()
+	if certificate == nil {
+		return nil, errors.New("agent: application certificate is not installed")
+	}
+	return certificate, nil
 }
 
 func (r *Route) Start(ctx context.Context) (tailtransport.Endpoint, error) {
@@ -168,6 +238,10 @@ func (r *Route) handle(connection net.Conn) {
 		return
 	}
 	_ = secured.SetDeadline(time.Time{})
+	if secured.ConnectionState().NegotiatedProtocol == acme.ALPNProto {
+		_ = tracked.Close()
+		return
+	}
 	if !r.queue.enqueue(secured) {
 		_ = secured.Close()
 		return
@@ -175,7 +249,7 @@ func (r *Route) handle(connection net.Conn) {
 	<-tracked.done
 }
 
-func validateCertificate(certificate tls.Certificate, hostname string) error {
+func validateCertificate(certificate tls.Certificate, hostname string, strict bool) error {
 	if len(certificate.Certificate) == 0 || certificate.PrivateKey == nil {
 		return errors.New("agent: application certificate and private key are required")
 	}
@@ -189,6 +263,29 @@ func validateCertificate(certificate tls.Certificate, hostname string) error {
 	}
 	if err := leaf.VerifyHostname(hostname); err != nil {
 		return fmt.Errorf("agent: application certificate does not match route: %w", err)
+	}
+	if !strict {
+		return nil
+	}
+	if len(leaf.DNSNames) != 1 || leaf.DNSNames[0] != hostname || len(leaf.EmailAddresses) != 0 ||
+		len(leaf.IPAddresses) != 0 || len(leaf.URIs) != 0 || leaf.IsCA ||
+		leaf.NotBefore.After(time.Now().Add(5*time.Minute)) || !leaf.NotAfter.After(time.Now()) {
+		return errors.New("agent: application certificate identity or validity is invalid")
+	}
+	serverAuth := false
+	for _, usage := range leaf.ExtKeyUsage {
+		serverAuth = serverAuth || usage == x509.ExtKeyUsageServerAuth || usage == x509.ExtKeyUsageAny
+	}
+	if !serverAuth {
+		return errors.New("agent: application certificate is not valid for TLS servers")
+	}
+	privateKey, ok := certificate.PrivateKey.(*ecdsa.PrivateKey)
+	if !ok || privateKey.Curve != elliptic.P256() {
+		return errors.New("agent: application certificate requires an ECDSA P-256 key")
+	}
+	publicDER, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
+	if err != nil || !bytes.Equal(publicDER, leaf.RawSubjectPublicKeyInfo) {
+		return errors.New("agent: application certificate key does not match leaf")
 	}
 	return nil
 }

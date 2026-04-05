@@ -55,6 +55,21 @@ func TestCertificateRateLimitResponse(t *testing.T) {
 	}
 }
 
+func TestCertificateStateResponseIsNotALeaseConflict(t *testing.T) {
+	response := httptest.NewRecorder()
+	writeCertificateError(response, "req_test", certificates.ErrInvalidState)
+	if response.Code != http.StatusPreconditionFailed {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusPreconditionFailed)
+	}
+	var problem corev1.Problem
+	if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil {
+		t.Fatal(err)
+	}
+	if problem.Code != corev1.PreconditionFailed {
+		t.Fatalf("code = %q", problem.Code)
+	}
+}
+
 func TestRequestIDGeneration(t *testing.T) {
 	handler := NewHandler(fixtureCapabilities(t), nil)
 	pattern := regexp.MustCompile(`^req_[A-Za-z0-9]+$`)

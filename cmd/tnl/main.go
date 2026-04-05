@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/0xcadams/tnl/internal/clientstate"
 	"github.com/0xcadams/tnl/internal/config"
 	"github.com/0xcadams/tnl/internal/coreclient"
 	"github.com/0xcadams/tnl/internal/credentials"
@@ -30,8 +31,9 @@ type publishCommand struct {
 	AccessToken  string `name:"access-token" env:"TNL_ACCESS_TOKEN" required:"" help:"Core API access token."`
 	Hostname     string `name:"hostname" env:"TNL_HOSTNAME" required:"" help:"Public route hostname."`
 	Target       string `name:"target" env:"TNL_TARGET" required:"" help:"Literal-loopback HTTP target."`
-	CertFile     string `name:"cert-file" env:"TNL_CERT_FILE" type:"path" required:"" help:"Application TLS certificate file."`
-	KeyFile      string `name:"key-file" env:"TNL_KEY_FILE" type:"path" required:"" help:"Application TLS private key file."`
+	CertFile     string `name:"cert-file" env:"TNL_CERT_FILE" type:"path" help:"Application TLS certificate file; overrides automatic certificates."`
+	KeyFile      string `name:"key-file" env:"TNL_KEY_FILE" type:"path" help:"Application TLS private key file; overrides automatic certificates."`
+	StateDir     string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent route keys and certificates."`
 	RelayMapFile string `name:"relay-map-file" env:"TNL_RELAY_MAP_FILE" type:"path" required:"" help:"Approved DERP map JSON file."`
 }
 
@@ -111,9 +113,8 @@ func runPublish(ctx context.Context, flags publishCommand, output io.Writer) err
 	if _, _, err := credentials.ParseAccessToken(accessToken); err != nil {
 		return errors.New("invalid access token")
 	}
-	certificate, err := tls.LoadX509KeyPair(flags.CertFile, flags.KeyFile)
-	if err != nil {
-		return fmt.Errorf("load application certificate: %w", err)
+	if flags.CertFile == "" != (flags.KeyFile == "") {
+		return errors.New("certificate and key files must be configured together")
 	}
 	profiles, err := config.LoadRelayProfiles(flags.RelayMapFile)
 	if err != nil {
@@ -134,8 +135,34 @@ func runPublish(ctx context.Context, flags publishCommand, output io.Writer) err
 	if profiles[profile] == nil {
 		return fmt.Errorf("core requires relay profile %q, which is absent from the relay map", profile)
 	}
+	var certificate tls.Certificate
+	var clientState *clientstate.Store
+	acmeProfile := ""
+	if flags.CertFile != "" {
+		certificate, err = tls.LoadX509KeyPair(flags.CertFile, flags.KeyFile)
+		if err != nil {
+			return fmt.Errorf("load application certificate: %w", err)
+		}
+	} else {
+		if capabilities.Acme == nil || capabilities.Acme.Profile == "" {
+			return errors.New("core does not support automatic certificates; certificate and key files are required")
+		}
+		stateDir := flags.StateDir
+		if stateDir == "" {
+			stateDir, err = clientstate.DefaultDir()
+			if err != nil {
+				return err
+			}
+		}
+		clientState, err = clientstate.New(stateDir, flags.CoreURL)
+		if err != nil {
+			return err
+		}
+		acmeProfile = capabilities.Acme.Profile
+	}
 	return publication.RunPublic(ctx, publication.PublicConfig{
 		Core: client, Hostname: flags.Hostname, Target: flags.Target, Certificate: certificate,
+		State: clientState, ACMEProfile: acmeProfile,
 		RelayProfile: profile, Profiles: profiles, Logf: log.Printf,
 		OnReady: func(publicURL string) { fmt.Fprintln(output, publicURL) },
 	})

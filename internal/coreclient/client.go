@@ -4,6 +4,7 @@ package coreclient
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,14 +21,17 @@ import (
 )
 
 const (
-	maxResponseBytes      = 64 << 10
-	defaultRequestTimeout = 20 * time.Second
+	maxResponseBytes        = 64 << 10
+	defaultRequestTimeout   = 20 * time.Second
+	challengeRequestTimeout = 150 * time.Second
 )
 
 var (
-	ErrUnauthenticated = errors.New("coreclient: unauthenticated")
-	ErrStateConflict   = errors.New("coreclient: state conflict")
-	ErrUnavailable     = errors.New("coreclient: temporarily unavailable")
+	ErrUnauthenticated  = errors.New("coreclient: unauthenticated")
+	ErrStateConflict    = errors.New("coreclient: state conflict")
+	ErrCertificateState = errors.New("coreclient: certificate precondition failed")
+	ErrRateLimited      = errors.New("coreclient: rate limited")
+	ErrUnavailable      = errors.New("coreclient: temporarily unavailable")
 )
 
 type Client struct {
@@ -46,7 +50,7 @@ func New(server string, httpClient *http.Client, access credentials.AccessToken)
 		return nil, errors.New("coreclient: server must not contain a path")
 	}
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 30 * time.Second}
+		httpClient = &http.Client{}
 	}
 	base.Path = ""
 	return &Client{base: base, http: httpClient, access: access, timeout: defaultRequestTimeout}, nil
@@ -120,14 +124,79 @@ func (c *Client) DeleteRoute(ctx context.Context, routeID string) error {
 	return err
 }
 
+func (c *Client) CreateCertificateOrder(
+	ctx context.Context,
+	routeID string,
+	generation uint64,
+	leaseToken credentials.LeaseToken,
+	profile string,
+	csrDER []byte,
+) (corev1.CertificateOrder, error) {
+	return request[corev1.CertificateOrder](ctx, c, http.MethodPost, "/v1/certs/orders", leaseToken.String(), corev1.CreateCertificateOrderRequest{
+		RouteId: routeID, Generation: int(generation), Profile: profile,
+		Csr: base64.RawURLEncoding.EncodeToString(csrDER),
+	})
+}
+
+func (c *Client) CertificateOrder(
+	ctx context.Context,
+	orderID string,
+	leaseToken credentials.LeaseToken,
+) (corev1.CertificateOrder, error) {
+	return request[corev1.CertificateOrder](ctx, c, http.MethodGet, certificateOrderPath(orderID, ""), leaseToken.String(), nil)
+}
+
+func (c *Client) CertificateChallengeReady(
+	ctx context.Context,
+	orderID string,
+	leaseToken credentials.LeaseToken,
+) (corev1.CertificateOrder, error) {
+	return requestWithTimeout[corev1.CertificateOrder](
+		ctx, c, challengeRequestTimeout, http.MethodPost,
+		certificateOrderPath(orderID, "challenge-ready"), leaseToken.String(), nil,
+	)
+}
+
+func (c *Client) CertificateChallengeRemoved(
+	ctx context.Context,
+	orderID string,
+	leaseToken credentials.LeaseToken,
+) error {
+	_, err := request[struct{}](ctx, c, http.MethodPost, certificateOrderPath(orderID, "challenge-removed"), leaseToken.String(), nil)
+	return err
+}
+
+func (c *Client) CertificateInstalled(
+	ctx context.Context,
+	routeID string,
+	generation uint64,
+	orderID string,
+	leaseToken credentials.LeaseToken,
+) error {
+	_, err := request[struct{}](ctx, c, http.MethodPost, routePath(routeID, "certificate-installed"), leaseToken.String(), corev1.CertificateInstalledRequest{
+		Generation: int(generation), OrderId: orderID,
+	})
+	return err
+}
+
 func request[T any](
 	ctx context.Context,
 	client *Client,
 	method, path, token string,
 	requestBody any,
 ) (T, error) {
+	return requestWithTimeout[T](ctx, client, client.timeout, method, path, token, requestBody)
+}
+
+func requestWithTimeout[T any](
+	ctx context.Context,
+	client *Client,
+	timeout time.Duration,
+	method, path, token string,
+	requestBody any,
+) (T, error) {
 	var zero T
-	requestCtx, cancel := context.WithTimeout(ctx, client.timeout)
+	requestCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	var body io.Reader
 	if requestBody != nil {
@@ -161,7 +230,7 @@ func request[T any](
 		return zero, errors.New("coreclient: response exceeds limit")
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return zero, responseError(response.StatusCode, payload)
+		return zero, responseError(response.StatusCode, response.Header, payload)
 	}
 	if len(payload) == 0 {
 		return zero, nil
@@ -178,7 +247,7 @@ func request[T any](
 	return result, nil
 }
 
-func responseError(status int, payload []byte) error {
+func responseError(status int, header http.Header, payload []byte) error {
 	var problem corev1.Problem
 	if json.Unmarshal(payload, &problem) != nil {
 		return fmt.Errorf("coreclient: HTTP %d", status)
@@ -188,12 +257,26 @@ func responseError(status int, payload []byte) error {
 		return ErrUnauthenticated
 	case corev1.StateConflict:
 		return ErrStateConflict
+	case corev1.PreconditionFailed:
+		return ErrCertificateState
+	case corev1.RateLimited:
+		seconds, err := strconv.ParseInt(header.Get("Retry-After"), 10, 64)
+		if err != nil || seconds < 1 {
+			seconds = 1
+		}
+		seconds = min(seconds, int64((24*time.Hour)/time.Second))
+		return &RateLimitError{RetryAfter: time.Duration(seconds) * time.Second}
 	case corev1.TemporarilyUnavailable:
 		return ErrUnavailable
 	default:
 		return &ProblemError{Status: status, Problem: problem}
 	}
 }
+
+type RateLimitError struct{ RetryAfter time.Duration }
+
+func (e *RateLimitError) Error() string { return "coreclient: rate limited" }
+func (e *RateLimitError) Unwrap() error { return ErrRateLimited }
 
 type ProblemError struct {
 	Status  int
@@ -206,6 +289,14 @@ func (e *ProblemError) Error() string {
 
 func routePath(routeID, operation string) string {
 	path := "/v1/routes/" + url.PathEscape(routeID)
+	if strings.TrimSpace(operation) != "" {
+		path += "/" + operation
+	}
+	return path
+}
+
+func certificateOrderPath(orderID, operation string) string {
+	path := "/v1/certs/orders/" + url.PathEscape(orderID)
 	if strings.TrimSpace(operation) != "" {
 		path += "/" + operation
 	}

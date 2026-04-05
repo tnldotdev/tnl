@@ -124,6 +124,28 @@ func (s *store) findBoundJob(ctx context.Context, routeID string, generation uin
 		WHERE route_id = ? AND generation = ? AND csr_hash = ?`, routeID, generation, csrHash[:]))
 }
 
+func (s *store) findResumableJob(ctx context.Context, routeID string, csrHash [32]byte, now time.Time) (Job, error) {
+	return scanJob(s.db.QueryRowContext(ctx, jobSelect+`
+		WHERE route_id = ? AND csr_hash = ? AND certificate_pem IS NULL
+		AND state NOT IN ('succeeded', 'invalid', 'blocked', 'canceled')
+		AND (order_expires_at IS NULL OR order_expires_at > ?)
+		AND (challenge_expires_at IS NULL OR challenge_expires_at > ?)
+		ORDER BY created_at DESC LIMIT 1`, routeID, csrHash[:], now.Unix(), now.Unix()))
+}
+
+func (s *store) rebindJob(ctx context.Context, id string, generation uint64) (Job, error) {
+	now := time.Unix(s.now().Unix(), 0).UTC()
+	result, err := s.db.ExecContext(ctx, `UPDATE certificate_jobs SET generation = ?, updated_at = ? WHERE id = ?`,
+		generation, now.Unix(), id)
+	if err != nil {
+		return Job{}, fmt.Errorf("certificates: rebind job: %w", err)
+	}
+	if err := requireRow(result); err != nil {
+		return Job{}, err
+	}
+	return s.getJob(ctx, id)
+}
+
 func (s *store) allowJobCreation(
 	ctx context.Context,
 	routeID string,

@@ -724,7 +724,7 @@ func writeCertificateError(w http.ResponseWriter, requestID string, err error) {
 	case errors.Is(err, certificates.ErrNotFound):
 		writeNotFound(w, requestID)
 	case errors.Is(err, certificates.ErrInvalidState):
-		writeProblem(w, requestID, http.StatusConflict, corev1.StateConflict, "State conflict", "state-conflict")
+		writeProblem(w, requestID, http.StatusPreconditionFailed, corev1.PreconditionFailed, "Precondition failed", "precondition-failed")
 	case errors.Is(err, certificates.ErrRateLimited):
 		var limit *certificates.RateLimitError
 		if errors.As(err, &limit) {
