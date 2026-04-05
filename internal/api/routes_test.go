@@ -3,14 +3,17 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/0xcadams/tnl/internal/auth"
+	"github.com/0xcadams/tnl/internal/certificates"
 	"github.com/0xcadams/tnl/internal/credentials"
 	"github.com/0xcadams/tnl/internal/routes"
 	"github.com/0xcadams/tnl/internal/state"
@@ -85,6 +88,77 @@ func TestRouteAPILifecycle(t *testing.T) {
 	routeRequest[struct{}](t, handler, issued.Token.String(), http.MethodDelete, routesPath+"/"+created.Route.Id, nil, http.StatusNoContent)
 }
 
+func TestCertificateAPIRequiresBoundCurrentLease(t *testing.T) {
+	db, err := state.Open(context.Background(), filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	bootstrap, err := credentials.NewBootstrapToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	authService, err := auth.NewService(db, bootstrap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	issued, err := authService.Exchange(context.Background(), bootstrap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := routes.NewStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	coordinator, err := routes.NewCoordinator(context.Background(), store, "boot")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = coordinator.Close() })
+	certificates := &apiCertificateService{}
+	handler := NewHandlerWithServices(fixtureCapabilities(t), authService, coordinator, certificates)
+	routeToken, _, _, err := credentials.NewRouteToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := routeRequest[corev1.LeaseSetup](t, handler, issued.Token.String(), http.MethodPost, routesPath, corev1.CreateRouteRequest{
+		Hostname: "route.example", DisplayTarget: "localhost:3000", RouteToken: routeToken.String(),
+	}, http.StatusCreated)
+	request := corev1.CreateCertificateOrderRequest{
+		RouteId: created.Route.Id, Generation: 1, Profile: "tlsserver",
+		Csr: base64.RawURLEncoding.EncodeToString([]byte("csr")),
+	}
+	order := routeRequest[corev1.CertificateOrder](
+		t, handler, created.LeaseToken, http.MethodPost, certificateOrdersPath, request, http.StatusCreated,
+	)
+	if order.RouteId != created.Route.Id || order.State != corev1.WaitingForChallenge || order.Challenge == nil {
+		t.Fatalf("certificate order = %#v", order)
+	}
+	wrongToken, _, _, err := credentials.NewLeaseToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	routeRequest[corev1.Problem](
+		t, handler, wrongToken.String(), http.MethodGet, certificateOrdersPath+"/"+order.Id, nil, http.StatusUnauthorized,
+	)
+	advanced := routeRequest[corev1.CertificateOrder](
+		t, handler, created.LeaseToken, http.MethodPost,
+		certificateOrdersPath+"/"+order.Id+"/challenge-ready", nil, http.StatusOK,
+	)
+	if advanced.State != corev1.WaitingForInstall || advanced.CertificatePem == nil {
+		t.Fatalf("advanced order = %#v", advanced)
+	}
+	routeRequest[struct{}](
+		t, handler, created.LeaseToken, http.MethodPost,
+		certificateOrdersPath+"/"+order.Id+"/challenge-removed", nil, http.StatusNoContent,
+	)
+	routeRequest[struct{}](
+		t, handler, created.LeaseToken, http.MethodPost,
+		routesPath+"/"+created.Route.Id+"/certificate-installed",
+		corev1.CertificateInstalledRequest{Generation: 1, OrderId: order.Id}, http.StatusNoContent,
+	)
+}
+
 func routeRequest[T any](
 	t *testing.T,
 	handler http.Handler,
@@ -137,3 +211,48 @@ func (apiOwnedRoute) Open(context.Context) (net.Conn, error) {
 }
 func (apiOwnedRoute) Drain(context.Context) error { return nil }
 func (apiOwnedRoute) Close() error                { return nil }
+
+type apiCertificateService struct{ job certificates.Job }
+
+func (s *apiCertificateService) Create(
+	_ context.Context,
+	routeID string,
+	generation uint64,
+	profile string,
+	_ []byte,
+) (certificates.Job, error) {
+	now := time.Now().UTC()
+	s.job = certificates.Job{
+		ID: "cert_0123456789abcdef0123456789abcdef", RouteID: routeID, Generation: generation,
+		Hostname: "route.example", Profile: profile, State: certificates.StateWaitingChallenge,
+		ChallengeURL: "challenge", ChallengeExpires: now.Add(time.Hour), CreatedAt: now, UpdatedAt: now,
+	}
+	return s.job, nil
+}
+
+func (s *apiCertificateService) Get(context.Context, string) (certificates.Job, error) {
+	return s.job, nil
+}
+
+func (s *apiCertificateService) ChallengeReady(context.Context, string) (certificates.Job, error) {
+	s.job.State = certificates.StateWaitingForInstall
+	s.job.CertificatePEM = []byte("certificate")
+	return s.job, nil
+}
+
+func (s *apiCertificateService) ChallengeRemoved(context.Context, string) (certificates.Job, error) {
+	s.job.ChallengeRemoved = time.Now().UTC()
+	return s.job, nil
+}
+
+func (s *apiCertificateService) Installed(
+	_ context.Context,
+	_, routeID string,
+	generation uint64,
+) (certificates.Job, error) {
+	if routeID != s.job.RouteID || generation != s.job.Generation || s.job.ChallengeRemoved.IsZero() {
+		return certificates.Job{}, certificates.ErrInvalidState
+	}
+	s.job.State = certificates.StateSucceeded
+	return s.job, nil
+}

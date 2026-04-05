@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/0xcadams/tnl/internal/auth"
+	"github.com/0xcadams/tnl/internal/certificates"
 	"github.com/0xcadams/tnl/internal/credentials"
 	"github.com/0xcadams/tnl/internal/state"
 	"github.com/0xcadams/tnl/pkg/protocol/corev1"
@@ -39,6 +40,18 @@ func TestCapabilities(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("capabilities = %#v, want %#v", got, want)
+	}
+}
+
+func TestCertificateRateLimitResponse(t *testing.T) {
+	response := httptest.NewRecorder()
+	writeCertificateError(response, "req_test", &certificates.RateLimitError{RetryAt: time.Now().Add(90 * time.Second)})
+	if response.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusTooManyRequests)
+	}
+	retryAfter, err := time.ParseDuration(response.Header().Get("Retry-After") + "s")
+	if err != nil || retryAfter < 80*time.Second || retryAfter > 90*time.Second {
+		t.Fatalf("Retry-After = %q", response.Header().Get("Retry-After"))
 	}
 }
 

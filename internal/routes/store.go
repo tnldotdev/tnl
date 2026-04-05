@@ -342,6 +342,16 @@ func (s *Store) AuthenticateLease(
 		&serverPublicKey, &relayProfile, &storedHash, &createdAt, &lastHeartbeat, &expiresAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
+		var known int
+		knownErr := s.db.QueryRowContext(
+			ctx, `SELECT 1 FROM route_leases WHERE credential_id = ?`, credentialID.String(),
+		).Scan(&known)
+		if errors.Is(knownErr, sql.ErrNoRows) {
+			return Lease{}, ErrUnauthenticated
+		}
+		if knownErr != nil {
+			return Lease{}, fmt.Errorf("routes: identify lease credential: %w", knownErr)
+		}
 		return Lease{}, ErrStaleLease
 	}
 	if err != nil {

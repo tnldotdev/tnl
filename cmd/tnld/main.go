@@ -13,11 +13,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/0xcadams/tnl/internal/api"
 	"github.com/0xcadams/tnl/internal/auth"
+	"github.com/0xcadams/tnl/internal/certificates"
 	"github.com/0xcadams/tnl/internal/config"
 	"github.com/0xcadams/tnl/internal/credentials"
 	"github.com/0xcadams/tnl/internal/ingress"
@@ -142,6 +144,24 @@ func (d *daemon) startCore(
 		return nil, nil, err
 	}
 	go monitorRoutes(ctx, d.coordinator, metrics)
+	var certificateService api.CertificateService
+	if cfg.ACMEEnabled() {
+		control := new(certificateControl)
+		certificateService = control
+		go control.initialize(ctx, d.db, certificates.Config{
+			DirectoryURL: cfg.ACMEDirectoryURL,
+			Email:        cfg.ACMEEmail,
+			AcceptTerms:  cfg.ACMEAcceptTerms,
+			Profile:      cfg.ACMEProfile,
+			Probe: func(probeCtx context.Context, job certificates.Job) error {
+				active, ok := d.coordinator.LookupChallenge(job.Hostname)
+				if !ok || active.RouteID != job.RouteID || active.Generation != job.Generation {
+					return errors.New("assigned challenge route is unavailable")
+				}
+				return certificates.ProbeTLSALPN(probeCtx, active.Backend, job)
+			},
+		}, report)
+	}
 
 	var hub *workersession.Hub
 	if cfg.Mode == config.TNLDModeStandalone {
@@ -177,7 +197,12 @@ func (d *daemon) startCore(
 	if err != nil {
 		return nil, nil, fmt.Errorf("load control certificate: %w", err)
 	}
-	handler := api.NewHandlerWithRoutes(capabilities(cfg.RelayProfile), authService, d.coordinator)
+	handler := api.NewHandlerWithServices(
+		capabilities(cfg.RelayProfile, cfg.ACMEProfile, cfg.ACMEEnabled()),
+		authService,
+		d.coordinator,
+		certificateService,
+	)
 	if hub != nil {
 		mux := http.NewServeMux()
 		mux.Handle(workerv1.Endpoint, hub)
@@ -209,14 +234,21 @@ func (d *daemon) startCore(
 	if err != nil {
 		return nil, nil, fmt.Errorf("listen for public ingress: %w", err)
 	}
-	d.ingress, err = ingress.New(publicListener, ingress.Config{
+	ingressConfig := ingress.Config{
 		Lookup: func(hostname string) (worker.RouteBackend, bool) {
 			route, ok := d.coordinator.Lookup(hostname)
 			return route.Backend, ok
 		},
 		RequireProxyHeader: cfg.RequireProxyHeader, MaxConnections: cfg.PublicConnLimit,
 		MaxRouteConnections: cfg.RouteConnLimit, Metrics: metrics, OnError: report,
-	})
+	}
+	if cfg.ACMEEnabled() {
+		ingressConfig.LookupChallenge = func(hostname string) (worker.RouteBackend, bool) {
+			route, ok := d.coordinator.LookupChallenge(hostname)
+			return route.Backend, ok
+		}
+	}
+	d.ingress, err = ingress.New(publicListener, ingressConfig)
 	if err != nil {
 		_ = publicListener.Close()
 		return nil, nil, err
@@ -227,6 +259,83 @@ func (d *daemon) startCore(
 		close(ingressDone)
 	}()
 	return controlDone, ingressDone, nil
+}
+
+type certificateControl struct {
+	service atomic.Pointer[certificates.Service]
+}
+
+func (c *certificateControl) initialize(
+	ctx context.Context,
+	db *sql.DB,
+	config certificates.Config,
+	onError func(error),
+) {
+	for {
+		service, err := certificates.New(ctx, db, config)
+		if err == nil {
+			c.service.Store(service)
+			return
+		}
+		onError(fmt.Errorf("initialize automatic certificates: %w", err))
+		timer := time.NewTimer(30 * time.Second)
+		select {
+		case <-ctx.Done():
+			_ = timer.Stop()
+			return
+		case <-timer.C:
+		}
+	}
+}
+
+func (c *certificateControl) Create(
+	ctx context.Context,
+	routeID string,
+	generation uint64,
+	profile string,
+	csrDER []byte,
+) (certificates.Job, error) {
+	service := c.service.Load()
+	if service == nil {
+		return certificates.Job{}, certificates.ErrUnavailable
+	}
+	return service.Create(ctx, routeID, generation, profile, csrDER)
+}
+
+func (c *certificateControl) Get(ctx context.Context, id string) (certificates.Job, error) {
+	service := c.service.Load()
+	if service == nil {
+		return certificates.Job{}, certificates.ErrUnavailable
+	}
+	return service.Get(ctx, id)
+}
+
+func (c *certificateControl) ChallengeReady(ctx context.Context, id string) (certificates.Job, error) {
+	service := c.service.Load()
+	if service == nil {
+		return certificates.Job{}, certificates.ErrUnavailable
+	}
+	return service.ChallengeReady(ctx, id)
+}
+
+func (c *certificateControl) ChallengeRemoved(ctx context.Context, id string) (certificates.Job, error) {
+	service := c.service.Load()
+	if service == nil {
+		return certificates.Job{}, certificates.ErrUnavailable
+	}
+	return service.ChallengeRemoved(ctx, id)
+}
+
+func (c *certificateControl) Installed(
+	ctx context.Context,
+	id, routeID string,
+	generation uint64,
+) (certificates.Job, error) {
+	service := c.service.Load()
+	if service == nil {
+		return certificates.Job{}, certificates.ErrUnavailable
+	}
+	return service.Installed(ctx, id, routeID, generation)
 }
 
 func startWorker(ctx context.Context, cfg config.TNLD, metrics *observability.Metrics) (<-chan error, error) {
@@ -339,14 +448,18 @@ func relayProfiles(cfg config.TNLD) (map[string]*tailcfg.DERPRegion, error) {
 	return profiles, nil
 }
 
-func capabilities(relayProfile string) corev1.Capabilities {
-	return corev1.Capabilities{
+func capabilities(relayProfile, acmeProfile string, acmeEnabled bool) corev1.Capabilities {
+	result := corev1.Capabilities{
 		ProtocolVersions:      []corev1.CapabilitiesProtocolVersions{corev1.CapabilitiesProtocolVersionsN1},
 		HostnameAuthorization: []corev1.CapabilitiesHostnameAuthorization{corev1.LocalClaim},
 		Transport: corev1.TransportCapabilities{
 			Type: corev1.Tailcat, Version: corev1.TransportCapabilitiesVersionN1, RelayProfile: relayProfile,
 		},
 	}
+	if acmeEnabled {
+		result.Acme = &corev1.AcmeCapabilities{Profile: acmeProfile}
+	}
+	return result
 }
 
 func newBootEpoch() (string, error) {
