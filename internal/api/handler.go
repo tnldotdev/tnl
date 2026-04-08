@@ -86,12 +86,12 @@ func NewHandler(capabilities corev1.Capabilities, auth AuthService) http.Handler
 	return NewHandlerWithRoutes(capabilities, auth, nil)
 }
 
-// NewHandlerWithRoutes creates the complete core API handler without binding a listener.
+// NewHandlerWithRoutes enables route endpoints.
 func NewHandlerWithRoutes(capabilities corev1.Capabilities, auth AuthService, routeService RouteService) http.Handler {
 	return NewHandlerWithServices(capabilities, auth, routeService, nil)
 }
 
-// NewHandlerWithServices creates the complete core API handler without binding a listener.
+// NewHandlerWithServices enables route and certificate endpoints.
 func NewHandlerWithServices(
 	capabilities corev1.Capabilities,
 	auth AuthService,
@@ -728,6 +728,7 @@ func writeCertificateError(w http.ResponseWriter, requestID string, err error) {
 	case errors.Is(err, certificates.ErrRateLimited):
 		var limit *certificates.RateLimitError
 		if errors.As(err, &limit) {
+			// Round up so clients never retry before the stored deadline.
 			seconds := max(1, int((time.Until(limit.RetryAt)+time.Second-1)/time.Second))
 			w.Header().Set("Retry-After", strconv.Itoa(seconds))
 		}

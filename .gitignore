@@ -10,4 +10,5 @@ docs/adr/
 *.tsbuildinfo
 /tnl
 /tnld
-/tailbench
+/tnlbench
+/bench-results/

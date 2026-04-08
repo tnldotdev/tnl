@@ -139,6 +139,7 @@ func (s *Server) handle(public net.Conn) error {
 		return nil
 	}
 	backend, ok := s.config.Lookup(hello.ServerName)
+	// Challenge lookup replaces ordinary routing to prevent fallback.
 	if hello.ACMETLSALPN && s.config.LookupChallenge != nil {
 		backend, ok = s.config.LookupChallenge(hello.ServerName)
 	}
@@ -208,6 +209,7 @@ func (s *Server) admit(connection net.Conn) bool {
 		return false
 	}
 	s.connections[connection] = struct{}{}
+	// Register before launch so Drain cannot miss an accepted handler.
 	s.active.Add(1)
 	return true
 }

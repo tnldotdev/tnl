@@ -39,21 +39,22 @@ tasks:
   go:generate-check:
     cmds:
       - task: go:generate
+      - go test ./pkg/protocol/workerv1 -run='^TestControlSchemaTracksMessageTypes$'
       - git diff --exit-code -- pkg/protocol
 
   go:format:
     cmds:
       - |
-        files="$(git ls-files --cached --others --exclude-standard -- '*.go')"
+        files="$(git ls-files --cached --others --exclude-standard -- '*.go' | while IFS= read -r file; do test ! -f "$file" || printf '%s\n' "$file"; done)"
         test -z "$files" || goimports -w $files
 
   go:format-check:
     cmds:
       - |
-        files="$(git ls-files --cached --others --exclude-standard -- '*.go')"
+        files="$(git ls-files --cached --others --exclude-standard -- '*.go' | while IFS= read -r file; do test ! -f "$file" || printf '%s\n' "$file"; done)"
         test -z "$files" || test -z "$(gofmt -l $files)"
       - |
-        files="$(git ls-files --cached --others --exclude-standard -- '*.go')"
+        files="$(git ls-files --cached --others --exclude-standard -- '*.go' | while IFS= read -r file; do test ! -f "$file" || printf '%s\n' "$file"; done)"
         test -z "$files" || test -z "$(goimports -l $files)"
 
   go:lint:
@@ -81,40 +82,10 @@ tasks:
     cmds:
       - go test -race -v ./internal/tailtransport ./internal/publication -run='^TestIntegration' -count=1 -timeout=5m
 
-  go:bench-tailcat-capacity:
-    desc: Run the opt-in Tailcat route-capacity matrix
-    vars:
-      ROUTES: '{{default "1,10,100" .ROUTES}}'
-      PATH_MODE: '{{default "any" .PATH_MODE}}'
-      PARALLEL: '{{default "8" .PARALLEL}}'
-    env:
-      TNL_TEST_TAILCAT_CAPACITY: "1"
-      TNL_TEST_TAILCAT_ROUTES: "{{.ROUTES}}"
-      TNL_TEST_TAILCAT_PATH: "{{.PATH_MODE}}"
-      TNL_TEST_TAILCAT_PARALLEL: "{{.PARALLEL}}"
+  go:bench-fly:
+    desc: Benchmark complete single-node and HA route paths on Fly
     cmds:
-      - go test -v ./internal/tailtransport -run='^$' -bench='^BenchmarkTailcatCapacity$' -benchtime=1x -count=1 -timeout=90m
-
-  go:bench-tailcat-churn:
-    desc: Run opt-in Tailcat lifecycle churn (default 100 cycles)
-    vars:
-      CYCLES: '{{default "100x" .CYCLES}}'
-      PARALLEL: '{{default "8" .PARALLEL}}'
-    env:
-      TNL_TEST_TAILCAT_CAPACITY: "1"
-      TNL_TEST_TAILCAT_PARALLEL: "{{.PARALLEL}}"
-    cmds:
-      - go test -v ./internal/tailtransport -run='^$' -bench='^BenchmarkTailcatChurn$' -benchtime={{.CYCLES}} -count=1 -timeout=5h
-
-  go:bench-tailcat-fly:
-    desc: Run the Mac-to-Fly Tailcat capacity ramp
-    cmds:
-      - ./scripts/bench-tailcat-fly.sh
-
-  go:bench-tailcat-fly-autoscale:
-    desc: Run the sharded Fly Tailcat autoscaling benchmark
-    cmds:
-      - ./scripts/bench-tailcat-fly-autoscale.sh
+      - ./scripts/bench-fly.sh
 
   go:build:
     cmds:

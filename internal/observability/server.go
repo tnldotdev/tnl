@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// Server is a running private metrics listener.
+// Server is a running metrics listener.
 type Server struct {
 	listener net.Listener
 	server   *http.Server

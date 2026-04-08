@@ -247,6 +247,7 @@ func (s *Service) ChallengeReady(ctx context.Context, id string) (Job, error) {
 		_ = s.store.saveJob(ctx, job)
 		return Job{}, fmt.Errorf("%w: routed TLS-ALPN probe: %v", ErrUnavailable, err)
 	}
+	// The probe may outlive this route generation.
 	if err := s.ensureCurrent(ctx, job); err != nil {
 		return Job{}, err
 	}
@@ -305,7 +306,7 @@ func (s *Service) Installed(ctx context.Context, id, routeID string, generation 
 }
 
 func (s *Service) createOrder(ctx context.Context, job Job) (Job, error) {
-	// Without the response URL, another request could create a second order.
+	// A missing response URL makes blind retries risk duplicate orders.
 	if job.OrderAttempts != 0 {
 		job.State = StateBlocked
 		job.LastError = "ACME order creation outcome is ambiguous; refusing to create a duplicate order"
@@ -517,6 +518,7 @@ func (s *Service) advance(ctx context.Context, job Job) (Job, error) {
 }
 
 func (s *Service) createOrderFailure(ctx context.Context, job Job, cause error) (Job, error) {
+	// Only explicit retryable rejections clear the duplicate-order fence.
 	var limited *legoacme.RateLimitedError
 	if errors.As(cause, &limited) {
 		job.OrderAttempts = 0

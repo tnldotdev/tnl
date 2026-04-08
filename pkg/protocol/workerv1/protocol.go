@@ -106,6 +106,7 @@ func (m Message) Validate() error {
 			return err
 		}
 	}
+	// Message is a closed tagged union; variants reject unrelated fields.
 	switch m.Type {
 	case Hello:
 		if m.Capacity <= 0 || m.Route != nil || m.Endpoint != nil || m.ClientPrivateKey != "" || m.Code != "" {

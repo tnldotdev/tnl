@@ -1,4 +1,4 @@
-// Package workersession carries RouteOwner operations over authenticated WSS.
+// Package workersession carries RouteOwner operations over bearer-authenticated WebSockets.
 package workersession
 
 import (
