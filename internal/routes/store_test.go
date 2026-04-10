@@ -18,7 +18,7 @@ func TestRouteLeaseLifecycle(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	now := time.Unix(1_700_000_000, 0).UTC()
-	store, err := NewStore(db)
+	store, err := NewStore(db, "example")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,6 +34,9 @@ func TestRouteLeaseLifecycle(t *testing.T) {
 
 	routeToken, _, _, err := credentials.NewRouteToken()
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ClaimHostname(context.Background(), "owner", "route", "route-test"); err != nil {
 		t.Fatal(err)
 	}
 	created, err := store.Create(context.Background(), "owner", "Route.Example.", "localhost:3000", "boot-1", routeToken)
@@ -117,5 +120,105 @@ func TestRouteLeaseLifecycle(t *testing.T) {
 	}
 	if routes, err := store.List(context.Background(), "owner"); err != nil || len(routes) != 0 {
 		t.Fatalf("list after delete = %#v, %v", routes, err)
+	}
+}
+
+func TestStoreObservesHealthOperationsExactlyOnce(t *testing.T) {
+	type observation struct {
+		operation StoreOperation
+		duration  time.Duration
+		err       error
+	}
+	var observations []observation
+	ctx := context.Background()
+	db, err := state.Open(ctx, filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec(`INSERT INTO principals (id, display_name, email, created_at)
+		VALUES ('owner', 'Owner', '', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(db, "example", StoreConfig{
+		ObserveOperation: func(operation StoreOperation, duration time.Duration, err error) {
+			observations = append(observations, observation{operation: operation, duration: duration, err: err})
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ClaimHostname(ctx, "owner", "route", "observer-test"); err != nil {
+		t.Fatal(err)
+	}
+	routeToken, _, _, err := credentials.NewRouteToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := store.Create(ctx, "owner", "route.example", "localhost:3000", "boot", routeToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, err := store.AuthenticateLease(ctx, created.Route.ID, 1, created.LeaseToken, "boot")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RegisterTransport(ctx, lease, "nodekey:server", "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Ready(ctx, lease); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Heartbeat(ctx, lease); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := store.Acquire(ctx, "owner", created.Route.ID, "boot", routeToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Expire(ctx, replacement.Route.ID, replacement.Lease.Generation); err != nil {
+		t.Fatal(err)
+	}
+	claims, err := store.ListHostnameClaims(ctx, "owner")
+	if err != nil || len(claims) != 1 {
+		t.Fatalf("claims = %#v, %v", claims, err)
+	}
+	if err := store.ReleaseHostnameClaim(ctx, "owner", claims[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AuthenticateLease(
+		ctx, replacement.Route.ID, replacement.Lease.Generation, replacement.LeaseToken, "boot",
+	); !errors.Is(err, ErrStaleLease) {
+		t.Fatalf("expired lease error = %v", err)
+	}
+
+	want := []StoreOperation{
+		StoreOperationHostnameClaim,
+		StoreOperationRouteCreate,
+		StoreOperationLeaseAuthenticate,
+		StoreOperationTransportRegister,
+		StoreOperationRouteReady,
+		StoreOperationLeaseHeartbeat,
+		StoreOperationRouteAcquire,
+		StoreOperationLeaseExpire,
+		StoreOperationHostnameRelease,
+		StoreOperationLeaseAuthenticate,
+	}
+	if len(observations) != len(want) {
+		t.Fatalf("observations = %#v, want %d", observations, len(want))
+	}
+	for index, operation := range want {
+		if observations[index].operation != operation {
+			t.Fatalf("observation %d operation = %q, want %q", index, observations[index].operation, operation)
+		}
+		if observations[index].duration < 0 {
+			t.Fatalf("observation %d duration = %v", index, observations[index].duration)
+		}
+		if index < len(want)-1 && observations[index].err != nil {
+			t.Fatalf("observation %d error = %v", index, observations[index].err)
+		}
+	}
+	if !errors.Is(observations[len(observations)-1].err, ErrStaleLease) {
+		t.Fatalf("terminal observation error = %v", observations[len(observations)-1].err)
 	}
 }

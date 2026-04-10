@@ -66,7 +66,7 @@ func TestIntegrationAutomaticCertificatePublicationRestartAndRenewal(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	routeStore, err := routes.NewStore(database)
+	routeStore, err := routes.NewStore(database, "tnl.test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,6 +150,9 @@ func TestIntegrationAutomaticCertificatePublicationRestartAndRenewal(t *testing.
 		controlServer.URL, controlServer.Client(), credentials.AccessToken(issued.AccessToken),
 	)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.ClaimHostname(ctx, "route", "pebble-integration"); err != nil {
 		t.Fatal(err)
 	}
 

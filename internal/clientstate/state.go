@@ -38,8 +38,10 @@ var (
 )
 
 type Store struct {
-	routesDir string
-	locksDir  string
+	routesDir      string
+	locksDir       string
+	selectionsPath string
+	releasesPath   string
 }
 
 type Lock struct {
@@ -147,7 +149,11 @@ func New(root, serverOrigin string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Store{routesDir: routes, locksDir: locks}, nil
+	return &Store{
+		routesDir: routes, locksDir: locks,
+		selectionsPath: filepath.Join(server, "hostname-selections.json"),
+		releasesPath:   filepath.Join(server, "hostname-releases.json"),
+	}, nil
 }
 
 func (s *Store) LockHostname(hostname string) (*Lock, error) {

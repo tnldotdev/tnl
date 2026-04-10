@@ -20,14 +20,16 @@ import (
 )
 
 type WorkerConfig struct {
-	URL        string
-	Token      credentials.WorkerToken
-	Owner      worker.RouteOwner
-	HTTPClient *http.Client
-	MaxStreams int
-	DrainTime  time.Duration
-	RouteTime  time.Duration
-	OnError    func(error)
+	URL                   string
+	Token                 credentials.WorkerToken
+	Owner                 worker.RouteOwner
+	HTTPClient            *http.Client
+	MaxStreams            int
+	DrainTime             time.Duration
+	RouteTime             time.Duration
+	OnError               func(error)
+	OnSessionEstablished  func(SessionRole)
+	OnSessionDisconnected func(SessionRole, DisconnectReason)
 }
 
 func RunWorker(ctx context.Context, config WorkerConfig) error {
@@ -85,6 +87,15 @@ func RunWorker(ctx context.Context, config WorkerConfig) error {
 		return errors.New("workersession: edge rejected hello")
 	}
 	_ = control.SetDeadline(time.Time{})
+	reason := DisconnectInternal
+	if config.OnSessionEstablished != nil {
+		config.OnSessionEstablished(RoleWorker)
+	}
+	defer func() {
+		if config.OnSessionDisconnected != nil {
+			config.OnSessionDisconnected(RoleWorker, reason)
+		}
+	}()
 
 	running := &workerSession{
 		config: config, session: session, control: control,
@@ -95,10 +106,17 @@ func RunWorker(ctx context.Context, config WorkerConfig) error {
 	go func() { errC <- running.acceptLoop() }()
 	select {
 	case <-ctx.Done():
+		reason = DisconnectShutdown
 		return running.shutdown()
 	case err := <-errC:
 		_ = config.Owner.Close()
-		if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
+		shuttingDown := ctx.Err() != nil
+		if shuttingDown {
+			reason = DisconnectShutdown
+		} else {
+			reason = disconnectReason(err)
+		}
+		if shuttingDown || errors.Is(err, net.ErrClosed) {
 			return nil
 		}
 		return err

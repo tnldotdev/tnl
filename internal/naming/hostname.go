@@ -11,6 +11,9 @@ import (
 type ErrorCode string
 
 const (
+	MaxLabelBytes    = 63
+	MaxHostnameBytes = 253
+
 	ErrorEmpty           ErrorCode = "empty"
 	ErrorNonASCII        ErrorCode = "non_ascii"
 	ErrorInvalidSyntax   ErrorCode = "invalid_syntax"
@@ -46,7 +49,7 @@ func CanonicalizeHostname(input string) (string, error) {
 	if net.ParseIP(hostname) != nil {
 		return "", invalid(ErrorIPLiteral)
 	}
-	if len(hostname) > 253 {
+	if len(hostname) > MaxHostnameBytes {
 		return "", invalid(ErrorHostnameTooLong)
 	}
 
@@ -54,7 +57,7 @@ func CanonicalizeHostname(input string) (string, error) {
 		if label == "" || label[0] == '-' || label[len(label)-1] == '-' {
 			return "", invalid(ErrorInvalidSyntax)
 		}
-		if len(label) > 63 {
+		if len(label) > MaxLabelBytes {
 			return "", invalid(ErrorLabelTooLong)
 		}
 		for _, character := range label {

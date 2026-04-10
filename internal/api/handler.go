@@ -30,9 +30,12 @@ const (
 	credentialsPath        = "/v1/auth/credentials/"
 	certificateOrdersPath  = "/v1/certs/orders"
 	certificateOrderPrefix = "/v1/certs/orders/"
+	hostnameClaimsPath     = "/v1/hostname-claims"
+	hostnameClaimPrefix    = "/v1/hostname-claims/"
 	routesPath             = "/v1/routes"
 	routePathPrefix        = "/v1/routes/"
 	authorizationHeader    = "Authorization"
+	idempotencyKeyHeader   = "Idempotency-Key"
 	requestIDHeader        = "X-Request-ID"
 	maxCredentialBytes     = 128
 	maxJSONRequestBytes    = 20 << 10
@@ -44,7 +47,62 @@ var (
 	errInvalidJSON          = errors.New("api: invalid JSON request")
 	errResponseTooLarge     = errors.New("api: JSON response exceeds limit")
 	errUnsupportedMediaType = errors.New("api: unsupported media type")
+	errAuthServiceMissing   = errors.New("api: auth service is not configured")
+	errRouteServiceMissing  = errors.New("api: route service is not configured")
+	errCertServiceMissing   = errors.New("api: certificate service is not configured")
 )
+
+// Operation is a stable, low-cardinality API operation.
+type Operation string
+
+const (
+	OperationUnknown                     Operation = "unknown"
+	OperationCapabilitiesGet             Operation = "capabilities.get"
+	OperationTokenExchange               Operation = "auth.token.exchange"
+	OperationCredentialRevoke            Operation = "auth.credential.revoke"
+	OperationHostnameClaimsList          Operation = "hostname_claims.list"
+	OperationHostnameClaimCreate         Operation = "hostname_claims.create"
+	OperationHostnameClaimRelease        Operation = "hostname_claims.release"
+	OperationRoutesList                  Operation = "routes.list"
+	OperationRouteCreate                 Operation = "routes.create"
+	OperationRouteDelete                 Operation = "routes.delete"
+	OperationRouteLeaseAcquire           Operation = "routes.lease.acquire"
+	OperationRouteTransportRegister      Operation = "routes.transport.register"
+	OperationRouteHeartbeat              Operation = "routes.heartbeat"
+	OperationRouteReady                  Operation = "routes.ready"
+	OperationCertificateOrderCreate      Operation = "certificate_orders.create"
+	OperationCertificateOrderGet         Operation = "certificate_orders.get"
+	OperationCertificateChallengeReady   Operation = "certificate_orders.challenge_ready"
+	OperationCertificateChallengeRemoved Operation = "certificate_orders.challenge_removed"
+	OperationCertificateInstalled        Operation = "certificate_orders.installed"
+)
+
+// RequestResult classifies an API response by its final HTTP status.
+type RequestResult string
+
+const (
+	RequestSuccess     RequestResult = "success"
+	RequestClientError RequestResult = "client_error"
+	RequestServerError RequestResult = "server_error"
+)
+
+// Observer receives one completed observation for every API request.
+// Implementations must be safe for concurrent use.
+type Observer interface {
+	ObserveRequest(operation Operation, result RequestResult, duration time.Duration)
+}
+
+// ErrorReporter receives unexpected internal errors without request credentials or bodies.
+// Implementations must be safe for concurrent use.
+type ErrorReporter interface {
+	ReportError(err error, requestID string, operation Operation)
+}
+
+// HandlerConfig configures production request observation and error reporting.
+type HandlerConfig struct {
+	Observer      Observer
+	ErrorReporter ErrorReporter
+}
 
 // AuthService implements authentication flows without exposing storage to HTTP.
 type AuthService interface {
@@ -53,8 +111,11 @@ type AuthService interface {
 	Revoke(context.Context, state.Principal, credentials.CredentialID) error
 }
 
-// RouteService implements fenced route transitions without exposing storage to HTTP.
+// RouteService implements hostname claims and fenced route transitions.
 type RouteService interface {
+	ClaimHostname(context.Context, string, string, string) (routes.HostnameClaim, error)
+	ListHostnameClaimsPage(context.Context, string, string) ([]routes.HostnameClaim, string, error)
+	ReleaseHostnameClaim(context.Context, string, string) error
 	Create(context.Context, string, string, string, credentials.RouteToken) (routes.LeaseSetup, error)
 	Acquire(context.Context, string, string, credentials.RouteToken) (routes.LeaseSetup, error)
 	RegisterTransport(context.Context, string, uint64, credentials.LeaseToken, string, string) error
@@ -75,10 +136,12 @@ type CertificateService interface {
 }
 
 type handler struct {
-	capabilities corev1.Capabilities
-	auth         AuthService
-	routes       RouteService
-	certificates CertificateService
+	capabilities  corev1.Capabilities
+	auth          AuthService
+	routes        RouteService
+	certificates  CertificateService
+	observer      Observer
+	errorReporter ErrorReporter
 }
 
 // NewHandler creates the core API handler without binding a listener.
@@ -86,35 +149,80 @@ func NewHandler(capabilities corev1.Capabilities, auth AuthService) http.Handler
 	return NewHandlerWithRoutes(capabilities, auth, nil)
 }
 
-// NewHandlerWithRoutes enables route endpoints.
+// NewHandlerWithRoutes enables hostname-claim and route endpoints.
 func NewHandlerWithRoutes(capabilities corev1.Capabilities, auth AuthService, routeService RouteService) http.Handler {
 	return NewHandlerWithServices(capabilities, auth, routeService, nil)
 }
 
-// NewHandlerWithServices enables route and certificate endpoints.
+// NewHandlerWithServices enables hostname-claim, route, and certificate endpoints.
 func NewHandlerWithServices(
 	capabilities corev1.Capabilities,
 	auth AuthService,
 	routeService RouteService,
 	certificateService CertificateService,
 ) http.Handler {
-	return &handler{capabilities: capabilities, auth: auth, routes: routeService, certificates: certificateService}
+	return NewHandlerWithServicesAndConfig(capabilities, auth, routeService, certificateService, HandlerConfig{})
+}
+
+// NewHandlerWithServicesAndConfig enables all API services and production observability hooks.
+func NewHandlerWithServicesAndConfig(
+	capabilities corev1.Capabilities,
+	auth AuthService,
+	routeService RouteService,
+	certificateService CertificateService,
+	config HandlerConfig,
+) http.Handler {
+	return &handler{
+		capabilities:  capabilities,
+		auth:          auth,
+		routes:        routeService,
+		certificates:  certificateService,
+		observer:      config.Observer,
+		errorReporter: config.ErrorReporter,
+	}
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
 	requestID := requestID(r)
 	w.Header().Set(requestIDHeader, requestID)
+	if h.observer == nil && h.errorReporter == nil {
+		h.serveHTTP(w, r, requestID)
+		return
+	}
 
+	wrapper := &observedResponseWriter{
+		ResponseWriter: w,
+		reporter:       h.errorReporter,
+		requestID:      requestID,
+		operation:      operationForRequest(r.Method, r.URL.Path),
+	}
+	if h.observer != nil {
+		defer func() {
+			h.observer.ObserveRequest(wrapper.operation, resultForStatus(wrapper.status), time.Since(started))
+		}()
+	}
+	h.serveHTTP(wrapper, r, requestID)
+}
+
+func (h *handler) serveHTTP(w http.ResponseWriter, r *http.Request, requestID string) {
 	switch r.URL.Path {
 	case capabilitiesPath:
 		h.serveCapabilities(w, r, requestID)
 	case tokenExchangePath:
 		h.serveTokenExchange(w, r, requestID)
+	case hostnameClaimsPath:
+		h.serveHostnameClaims(w, r, requestID)
 	case routesPath:
 		h.serveRoutes(w, r, requestID)
 	case certificateOrdersPath:
 		h.serveCertificateOrders(w, r, requestID)
 	default:
+		claimID, ok := strings.CutPrefix(r.URL.Path, hostnameClaimPrefix)
+		if ok && validHostnameClaimID(claimID) {
+			h.serveHostnameClaim(w, r, requestID, claimID)
+			return
+		}
 		credentialID, ok := strings.CutPrefix(r.URL.Path, credentialsPath)
 		if ok && credentialID != "" && !strings.Contains(credentialID, "/") {
 			h.serveCredentialRevocation(w, r, requestID, credentialID)
@@ -132,6 +240,200 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+type observedResponseWriter struct {
+	http.ResponseWriter
+	reporter  ErrorReporter
+	requestID string
+	operation Operation
+	status    int
+	reported  bool
+}
+
+func (w *observedResponseWriter) WriteHeader(status int) {
+	if w.status != 0 {
+		return
+	}
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *observedResponseWriter) Write(body []byte) (int, error) {
+	if w.status == 0 {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(body)
+}
+
+func (w *observedResponseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
+func (w *observedResponseWriter) report(err error) {
+	if err == nil || w.reporter == nil || w.reported {
+		return
+	}
+	w.reported = true
+	w.reporter.ReportError(err, w.requestID, w.operation)
+}
+
+func operationForRequest(method, path string) Operation {
+	switch path {
+	case capabilitiesPath:
+		if method == http.MethodGet {
+			return OperationCapabilitiesGet
+		}
+	case tokenExchangePath:
+		if method == http.MethodPost {
+			return OperationTokenExchange
+		}
+	case hostnameClaimsPath:
+		switch method {
+		case http.MethodGet:
+			return OperationHostnameClaimsList
+		case http.MethodPost:
+			return OperationHostnameClaimCreate
+		}
+	case routesPath:
+		switch method {
+		case http.MethodGet:
+			return OperationRoutesList
+		case http.MethodPost:
+			return OperationRouteCreate
+		}
+	case certificateOrdersPath:
+		if method == http.MethodPost {
+			return OperationCertificateOrderCreate
+		}
+	}
+
+	if claimID, ok := strings.CutPrefix(path, hostnameClaimPrefix); ok &&
+		validHostnameClaimID(claimID) && method == http.MethodDelete {
+		return OperationHostnameClaimRelease
+	}
+	if credentialID, ok := strings.CutPrefix(path, credentialsPath); ok && credentialID != "" &&
+		!strings.Contains(credentialID, "/") && method == http.MethodDelete {
+		return OperationCredentialRevoke
+	}
+	if _, routeOperation, ok := routePath(path); ok {
+		switch {
+		case routeOperation == "" && method == http.MethodDelete:
+			return OperationRouteDelete
+		case routeOperation == "leases" && method == http.MethodPost:
+			return OperationRouteLeaseAcquire
+		case routeOperation == "transport" && method == http.MethodPost:
+			return OperationRouteTransportRegister
+		case routeOperation == "heartbeat" && method == http.MethodPost:
+			return OperationRouteHeartbeat
+		case routeOperation == "ready" && method == http.MethodPost:
+			return OperationRouteReady
+		case routeOperation == "certificate-installed" && method == http.MethodPost:
+			return OperationCertificateInstalled
+		}
+	}
+	if _, certificateOperation, ok := certificateOrderPath(path); ok {
+		switch {
+		case certificateOperation == "" && method == http.MethodGet:
+			return OperationCertificateOrderGet
+		case certificateOperation == "challenge-ready" && method == http.MethodPost:
+			return OperationCertificateChallengeReady
+		case certificateOperation == "challenge-removed" && method == http.MethodPost:
+			return OperationCertificateChallengeRemoved
+		}
+	}
+	return OperationUnknown
+}
+
+func resultForStatus(status int) RequestResult {
+	switch {
+	case status >= http.StatusInternalServerError:
+		return RequestServerError
+	case status >= http.StatusBadRequest:
+		return RequestClientError
+	default:
+		return RequestSuccess
+	}
+}
+
+func (h *handler) serveHostnameClaims(w http.ResponseWriter, r *http.Request, requestID string) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		writeMethodNotAllowed(w, requestID, http.MethodGet+", "+http.MethodPost)
+		return
+	}
+	principal, ok := h.authenticate(w, r, requestID)
+	if !ok {
+		return
+	}
+	if h.routes == nil {
+		writeInternalError(w, requestID, errRouteServiceMissing)
+		return
+	}
+	if r.Method == http.MethodGet {
+		query := r.URL.Query()
+		cursor := ""
+		if len(query) != 0 {
+			values, ok := query["cursor"]
+			if !ok || len(query) != 1 || len(values) != 1 || !validHostnameClaimID(values[0]) {
+				writeInvalidRequest(w, requestID)
+				return
+			}
+			cursor = values[0]
+		}
+		claims, next, err := h.routes.ListHostnameClaimsPage(r.Context(), principal.ID, cursor)
+		if err != nil {
+			writeRouteError(w, requestID, err)
+			return
+		}
+		response := corev1.HostnameClaimPage{Claims: make([]corev1.HostnameClaim, 0, len(claims))}
+		for _, claim := range claims {
+			response.Claims = append(response.Claims, hostnameClaimResponse(claim))
+		}
+		if next != "" {
+			response.NextCursor = &next
+		}
+		writeModel(w, requestID, http.StatusOK, response)
+		return
+	}
+	requestKey := r.Header.Get(idempotencyKeyHeader)
+	if requestKey == "" || strings.TrimSpace(requestKey) != requestKey || len(requestKey) > 128 {
+		writeInvalidRequest(w, requestID)
+		return
+	}
+	var request corev1.CreateHostnameClaimRequest
+	if !decodeRequest(w, r, requestID, &request) {
+		return
+	}
+	label := ""
+	if request.Label != nil {
+		label = *request.Label
+	}
+	claim, err := h.routes.ClaimHostname(r.Context(), principal.ID, label, requestKey)
+	if err != nil {
+		writeRouteError(w, requestID, err)
+		return
+	}
+	writeModel(w, requestID, http.StatusCreated, hostnameClaimResponse(claim))
+}
+
+func (h *handler) serveHostnameClaim(w http.ResponseWriter, r *http.Request, requestID, claimID string) {
+	if r.Method != http.MethodDelete {
+		writeMethodNotAllowed(w, requestID, http.MethodDelete)
+		return
+	}
+	principal, ok := h.authenticate(w, r, requestID)
+	if !ok {
+		return
+	}
+	if h.routes == nil {
+		writeInternalError(w, requestID, errRouteServiceMissing)
+		return
+	}
+	if err := h.routes.ReleaseHostnameClaim(r.Context(), principal.ID, claimID); err != nil {
+		writeRouteError(w, requestID, err)
+		return
+	}
+	writeNoContent(w)
+}
+
 func (h *handler) serveCapabilities(w http.ResponseWriter, r *http.Request, requestID string) {
 	if r.Method != http.MethodGet {
 		writeMethodNotAllowed(w, requestID, http.MethodGet)
@@ -140,7 +442,7 @@ func (h *handler) serveCapabilities(w http.ResponseWriter, r *http.Request, requ
 
 	body, err := marshalJSON(h.capabilities)
 	if err != nil {
-		writeInternalProblem(w, requestID)
+		writeInternalError(w, requestID, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, "application/json", body)
@@ -163,7 +465,7 @@ func (h *handler) serveTokenExchange(w http.ResponseWriter, r *http.Request, req
 		return
 	}
 	if h.auth == nil {
-		writeInternalProblem(w, requestID)
+		writeInternalError(w, requestID, errAuthServiceMissing)
 		return
 	}
 	issued, err := h.auth.Exchange(r.Context(), credentials.BootstrapToken(request.BootstrapToken))
@@ -175,7 +477,7 @@ func (h *handler) serveTokenExchange(w http.ResponseWriter, r *http.Request, req
 		return
 	}
 	if err != nil {
-		writeInternalProblem(w, requestID)
+		writeInternalError(w, requestID, err)
 		return
 	}
 	body, err := marshalJSON(corev1.TokenExchangeResponse{
@@ -185,7 +487,7 @@ func (h *handler) serveTokenExchange(w http.ResponseWriter, r *http.Request, req
 		TokenType:    corev1.Bearer,
 	})
 	if err != nil {
-		writeInternalProblem(w, requestID)
+		writeInternalError(w, requestID, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, "application/json", body)
@@ -217,7 +519,7 @@ func (h *handler) serveCredentialRevocation(
 		writeNotFound(w, requestID)
 		return
 	} else if err != nil {
-		writeInternalProblem(w, requestID)
+		writeInternalError(w, requestID, err)
 		return
 	}
 	writeNoContent(w)
@@ -233,7 +535,7 @@ func (h *handler) serveRoutes(w http.ResponseWriter, r *http.Request, requestID 
 		return
 	}
 	if h.routes == nil {
-		writeInternalProblem(w, requestID)
+		writeInternalError(w, requestID, errRouteServiceMissing)
 		return
 	}
 	if r.Method == http.MethodGet {
@@ -277,7 +579,7 @@ func (h *handler) serveRoute(
 	requestID, routeID, operation string,
 ) {
 	if h.routes == nil {
-		writeInternalProblem(w, requestID)
+		writeInternalError(w, requestID, errRouteServiceMissing)
 		return
 	}
 	switch operation {
@@ -315,8 +617,12 @@ func (h *handler) serveCertificateOrders(w http.ResponseWriter, r *http.Request,
 		writeMethodNotAllowed(w, requestID, http.MethodPost)
 		return
 	}
-	if h.routes == nil || h.certificates == nil {
-		writeInternalProblem(w, requestID)
+	if h.routes == nil {
+		writeInternalError(w, requestID, errRouteServiceMissing)
+		return
+	}
+	if h.certificates == nil {
+		writeInternalError(w, requestID, errCertServiceMissing)
 		return
 	}
 	token, ok := leaseBearer(r.Header)
@@ -355,8 +661,12 @@ func (h *handler) serveCertificateOrder(
 	r *http.Request,
 	requestID, orderID, operation string,
 ) {
-	if h.routes == nil || h.certificates == nil {
-		writeInternalProblem(w, requestID)
+	if h.routes == nil {
+		writeInternalError(w, requestID, errRouteServiceMissing)
+		return
+	}
+	if h.certificates == nil {
+		writeInternalError(w, requestID, errCertServiceMissing)
 		return
 	}
 	wantMethod := http.MethodPost
@@ -409,7 +719,7 @@ func (h *handler) serveCertificateInstalled(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if h.certificates == nil {
-		writeInternalProblem(w, requestID)
+		writeInternalError(w, requestID, errCertServiceMissing)
 		return
 	}
 	token, ok := leaseBearer(r.Header)
@@ -561,7 +871,7 @@ func leaseBearer(header http.Header) (credentials.LeaseToken, bool) {
 
 func (h *handler) authenticate(w http.ResponseWriter, r *http.Request, requestID string) (state.Principal, bool) {
 	if h.auth == nil {
-		writeInternalProblem(w, requestID)
+		writeInternalError(w, requestID, errAuthServiceMissing)
 		return state.Principal{}, false
 	}
 	token, ok := bearerToken(r.Header)
@@ -575,7 +885,7 @@ func (h *handler) authenticate(w http.ResponseWriter, r *http.Request, requestID
 		return state.Principal{}, false
 	}
 	if err != nil {
-		writeInternalProblem(w, requestID)
+		writeInternalError(w, requestID, err)
 		return state.Principal{}, false
 	}
 	return principal, true
@@ -620,6 +930,15 @@ func validCertificateOrderID(value string) bool {
 	return err == nil
 }
 
+func validHostnameClaimID(value string) bool {
+	const prefix = "claim_"
+	if len(value) != len(prefix)+32 || !strings.HasPrefix(value, prefix) {
+		return false
+	}
+	_, err := hex.DecodeString(value[len(prefix):])
+	return err == nil
+}
+
 func decodeRequest(w http.ResponseWriter, r *http.Request, requestID string, value any) bool {
 	if err := decodeJSON(w, r, value); err != nil {
 		status, title, problemType := http.StatusBadRequest, "Invalid request", "invalid-request"
@@ -640,6 +959,12 @@ func routeResponse(route routes.Route) corev1.Route {
 	return corev1.Route{
 		Id: route.ID, Hostname: route.Hostname, DisplayTarget: route.DisplayTarget,
 		State: corev1.RouteState(route.State), Generation: int(route.Generation), CreatedAt: route.CreatedAt,
+	}
+}
+
+func hostnameClaimResponse(claim routes.HostnameClaim) corev1.HostnameClaim {
+	return corev1.HostnameClaim{
+		Id: claim.ID, Hostname: claim.Hostname, Irreversible: claim.Irreversible, CreatedAt: claim.CreatedAt,
 	}
 }
 
@@ -690,7 +1015,7 @@ func certificateOrderResponse(job certificates.Job) corev1.CertificateOrder {
 func writeModel(w http.ResponseWriter, requestID string, status int, value any) {
 	body, err := marshalJSON(value)
 	if err != nil {
-		writeInternalProblem(w, requestID)
+		writeInternalError(w, requestID, err)
 		return
 	}
 	writeJSON(w, status, "application/json", body)
@@ -709,11 +1034,15 @@ func writeRouteError(w http.ResponseWriter, requestID string, err error) {
 	case errors.Is(err, routes.ErrNoWorkerCapacity):
 		writeProblem(w, requestID, http.StatusServiceUnavailable, corev1.TemporarilyUnavailable, "Temporarily unavailable", "temporarily-unavailable")
 	default:
+		if errors.Is(err, routes.ErrInvalidArgument) {
+			writeInvalidRequest(w, requestID)
+			return
+		}
 		if _, ok := naming.ErrorCodeOf(err); ok {
 			writeProblem(w, requestID, http.StatusBadRequest, corev1.InvalidArgument, "Invalid request", "invalid-request")
 			return
 		}
-		writeInternalProblem(w, requestID)
+		writeInternalError(w, requestID, err)
 	}
 }
 
@@ -736,7 +1065,7 @@ func writeCertificateError(w http.ResponseWriter, requestID string, err error) {
 	case errors.Is(err, certificates.ErrUnavailable):
 		writeProblem(w, requestID, http.StatusServiceUnavailable, corev1.TemporarilyUnavailable, "Temporarily unavailable", "temporarily-unavailable")
 	default:
-		writeInternalProblem(w, requestID)
+		writeInternalError(w, requestID, err)
 	}
 }
 
@@ -831,6 +1160,13 @@ func writeInternalProblem(w http.ResponseWriter, requestID string) {
 		w, requestID, http.StatusInternalServerError, corev1.Internal,
 		"Internal server error", "internal",
 	)
+}
+
+func writeInternalError(w http.ResponseWriter, requestID string, err error) {
+	if reporter, ok := w.(interface{ report(error) }); ok {
+		reporter.report(err)
+	}
+	writeInternalProblem(w, requestID)
 }
 
 func writeUnauthenticated(w http.ResponseWriter, requestID string) {
