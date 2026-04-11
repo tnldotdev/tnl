@@ -43,6 +43,7 @@ type cli struct {
 	RelayMapFile   string        `name:"relay-map-file" env:"TNL_BENCH_RELAY_MAP_FILE" type:"path" required:"" help:"DERP map JSON file."`
 	HostnameSuffix string        `name:"hostname-suffix" env:"TNL_BENCH_HOSTNAME_SUFFIX" required:"" help:"Suffix below which benchmark routes are created."`
 	MetricsURLs    []string      `name:"metrics-url" env:"TNL_BENCH_METRICS_URLS" help:"Private worker metrics URL; repeat for each worker."`
+	EdgeMetricsURL string        `name:"edge-metrics-url" env:"TNL_BENCH_EDGE_METRICS_URL" help:"Private edge metrics URL used for failure evidence."`
 	Routes         int           `name:"routes" env:"TNL_BENCH_ROUTES" default:"1" help:"Routes to activate."`
 	ExpectedRoutes int           `name:"expected-routes" env:"TNL_BENCH_EXPECTED_ROUTES" help:"Aggregate worker route count used to coordinate driver shards; defaults to routes."`
 	DriverIndex    int           `name:"driver-index" env:"TNL_BENCH_DRIVER_INDEX" help:"Zero-based index of this driver shard."`
@@ -91,10 +92,22 @@ func (c cli) Validate() error {
 		return errors.New("hostname suffix must be canonical")
 	}
 	for _, rawURL := range c.MetricsURLs {
-		parsed, err := url.Parse(rawURL)
-		if err != nil || parsed.Scheme != "http" || parsed.Host == "" || parsed.User != nil {
+		if err := validateMetricsURL(rawURL); err != nil {
 			return fmt.Errorf("invalid metrics URL %q", rawURL)
 		}
+	}
+	if c.EdgeMetricsURL != "" {
+		if err := validateMetricsURL(c.EdgeMetricsURL); err != nil {
+			return fmt.Errorf("invalid edge metrics URL %q", c.EdgeMetricsURL)
+		}
+	}
+	return nil
+}
+
+func validateMetricsURL(rawURL string) error {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme != "http" || parsed.Host == "" || parsed.User != nil {
+		return errors.New("metrics URL must be an HTTP URL without credentials")
 	}
 	return nil
 }
@@ -107,14 +120,20 @@ func (c cli) expectedRoutes() int {
 }
 
 type routeProcess struct {
-	hostname string
-	routeID  string
-	cancel   context.CancelFunc
-	done     chan error
+	hostname   string
+	routeID    string
+	claimID    string
+	claimOwner hostnameClaimOwner
+	cancel     context.CancelFunc
+	done       chan error
 }
 
 type routeCleaner interface {
 	DeleteRoute(context.Context, string) error
+}
+
+type hostnameClaimOwner interface {
+	ReleaseHostnameClaim(context.Context, string) error
 }
 
 type timingSummary struct {
@@ -124,12 +143,24 @@ type timingSummary struct {
 }
 
 type workerSample struct {
-	Worker     int     `json:"worker"`
-	Routes     int     `json:"routes"`
-	Capacity   int     `json:"capacity"`
-	RSSBytes   float64 `json:"rss_bytes"`
-	Goroutines int     `json:"goroutines"`
-	OpenFDs    int     `json:"open_fds"`
+	Worker                               int     `json:"worker"`
+	Routes                               int     `json:"routes"`
+	Capacity                             int     `json:"capacity"`
+	RSSBytes                             float64 `json:"rss_bytes"`
+	Goroutines                           int     `json:"goroutines"`
+	OpenFDs                              int     `json:"open_fds"`
+	MaxFDs                               int     `json:"max_fds"`
+	TailcatProcessFileLimitStartFailures int     `json:"tailcat_process_file_limit_start_failures,omitempty"`
+	TailcatSystemFileLimitStartFailures  int     `json:"tailcat_system_file_limit_start_failures,omitempty"`
+}
+
+type failureEvidence struct {
+	EvidenceSchemaVersion int                `json:"evidence_schema_version"`
+	Kind                  string             `json:"kind"`
+	Workers               []workerSample     `json:"workers,omitempty"`
+	WorkerError           string             `json:"worker_error,omitempty"`
+	Edge                  map[string]float64 `json:"edge,omitempty"`
+	EdgeError             string             `json:"edge_error,omitempty"`
 }
 
 type result struct {
@@ -218,6 +249,10 @@ func run(ctx context.Context, flags cli) (result, error) {
 	if capabilities.Transport.Type != corev1.Tailcat || capabilities.Transport.Version != corev1.TransportCapabilitiesVersionN1 {
 		return result{}, errors.New("core does not advertise Tailcat transport version 1")
 	}
+	hostnameSuffix, err := benchmarkHostnameSuffix(capabilities, flags.HostnameSuffix)
+	if err != nil {
+		return result{}, err
+	}
 	profiles, err := config.LoadRelayProfiles(flags.RelayMapFile)
 	if err != nil {
 		return result{}, err
@@ -225,7 +260,11 @@ func run(ctx context.Context, flags cli) (result, error) {
 	if profiles[capabilities.Transport.RelayProfile] == nil {
 		return result{}, fmt.Errorf("relay profile %q is absent from the relay map", capabilities.Transport.RelayProfile)
 	}
-	applicationCertificates, applicationRoots, err := benchmarkCertificates(flags.HostnameSuffix, flags.Routes)
+	hostnames := make([]string, flags.Routes)
+	for index := range hostnames {
+		hostnames[index] = benchmarkHostname(flags.DriverIndex, index, hostnameSuffix)
+	}
+	applicationCertificates, applicationRoots, err := benchmarkCertificates(hostnames)
 	if err != nil {
 		return result{}, err
 	}
@@ -240,9 +279,10 @@ func run(ctx context.Context, flags cli) (result, error) {
 	defer origin.Close()
 
 	processes, activation, err := activateRoutes(
-		ctx, flags, core, profiles, capabilities.Transport.RelayProfile, origin.URL, applicationCertificates,
+		ctx, flags, core, profiles, capabilities.Transport.RelayProfile, origin.URL, hostnames, applicationCertificates,
 	)
 	if err != nil {
+		writeFailureEvidence(flags)
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 		_, _ = cleanupRoutes(cleanupCtx, flags, core, processes)
@@ -257,11 +297,13 @@ func run(ctx context.Context, flags cli) (result, error) {
 			_, _ = cleanupRoutes(cleanupCtx, flags, core, processes)
 		}
 	}()
+	// Barriers keep faster shards from entering the next phase early.
 	if err := waitDriverBarrier(ctx, flags, "activated"); err != nil {
 		return result{}, err
 	}
 	readyWorkers, err := waitWorkerRoutes(ctx, flags.MetricsURLs, flags.expectedRoutes())
 	if err != nil {
+		writeFailureEvidence(flags)
 		return result{}, err
 	}
 	fmt.Fprintln(os.Stderr, "tnlbench: worker route count ready")
@@ -302,6 +344,7 @@ func activateRoutes(
 	core *coreclient.Client,
 	profiles map[string]*tailcfg.DERPRegion,
 	relayProfile, target string,
+	hostnames []string,
 	certificates []tls.Certificate,
 ) ([]*routeProcess, []time.Duration, error) {
 	processes := make([]*routeProcess, flags.Routes)
@@ -310,7 +353,7 @@ func activateRoutes(
 		duration time.Duration
 		err      error
 	}, flags.Routes)
-	// A slot covers activation only; successful routes keep serving after release.
+	// Acquire before timing; the slot ends at readiness while publication continues.
 	semaphore := make(chan struct{}, flags.Parallel)
 	for index := 0; index < flags.Routes; index++ {
 		select {
@@ -320,7 +363,7 @@ func activateRoutes(
 		}
 		routeCtx, cancel := context.WithCancel(ctx)
 		process := &routeProcess{
-			hostname: fmt.Sprintf("r%05d.%s", index, flags.HostnameSuffix), cancel: cancel, done: make(chan error, 1),
+			hostname: hostnames[index], claimOwner: core, cancel: cancel, done: make(chan error, 1),
 		}
 		processes[index] = process
 		go func(index int, process *routeProcess) {
@@ -336,12 +379,32 @@ func activateRoutes(
 					}{index: index, duration: time.Since(started), err: err}
 				})
 			}
-			err := publication.RunPublic(routeCtx, publication.PublicConfig{
-				Core: core, Hostname: process.hostname, Target: target, Certificate: certificates[index],
-				RelayProfile: relayProfile, Profiles: profiles, Logf: logger.Discard,
-				OnRoute: func(routeID string) { process.routeID = routeID },
-				OnReady: func(string) { signalResult(nil) },
-			})
+			claim, err := core.ClaimHostname(
+				routeCtx, benchmarkRouteLabel(flags.DriverIndex, index), benchmarkClaimRequestKey(flags.DriverIndex, index),
+			)
+			if err != nil {
+				err = fmt.Errorf("claim hostname: %w", err)
+			} else {
+				process.claimID = claim.Id
+				if claim.Id == "" || claim.Hostname != process.hostname {
+					err = errors.New("core returned an unexpected hostname claim")
+				}
+			}
+			ready := false
+			if err == nil {
+				err = publication.RunPublic(routeCtx, publication.PublicConfig{
+					Core: core, Hostname: process.hostname, Target: target, Certificate: certificates[index],
+					RelayProfile: relayProfile, Profiles: profiles, Logf: logger.Discard,
+					OnRoute: func(routeID string) { process.routeID = routeID },
+					OnReady: func(string) {
+						ready = true
+						signalResult(nil)
+					},
+				})
+				if ready && routeCtx.Err() == nil {
+					fmt.Fprintf(os.Stderr, "tnlbench: route %d publisher exited after readiness: %v\n", index, err)
+				}
+			}
 			signalResult(err)
 			process.done <- err
 			close(process.done)
@@ -390,6 +453,7 @@ func loadRoutes(
 	}
 	results := make(chan requestResult, len(processes))
 	semaphore := make(chan struct{}, flags.Parallel)
+	// Batch throughput includes queueing; request latency starts after admission.
 	startedAll := time.Now()
 	for index, process := range processes {
 		semaphore <- struct{}{}
@@ -442,7 +506,7 @@ func loadRoutes(
 }
 
 func cleanupRoutes(ctx context.Context, flags cli, core routeCleaner, processes []*routeProcess) ([]time.Duration, error) {
-	// Measure every teardown completion from one common start.
+	// Stop all publishers before deleting routes and releasing their claims.
 	started := time.Now()
 	for _, process := range processes {
 		if process != nil {
@@ -466,20 +530,18 @@ func cleanupRoutes(ctx context.Context, flags cli, core routeCleaner, processes 
 		}
 	}
 
-	type deleteResult struct {
-		duration time.Duration
-		err      error
+	type cleanupResult struct {
+		index int
+		err   error
 	}
-	results := make(chan deleteResult, len(processes))
+	results := make(chan cleanupResult, len(processes))
 	semaphore := make(chan struct{}, flags.Parallel)
 	count := 0
-	timings := make([]time.Duration, 0, len(processes))
 	for index, process := range processes {
 		if process == nil {
 			continue
 		}
 		if routeIDs[index] == "" {
-			timings = append(timings, time.Since(started))
 			continue
 		}
 		count++
@@ -490,13 +552,50 @@ func cleanupRoutes(ctx context.Context, flags cli, core routeCleaner, processes 
 			if deleteErr := core.DeleteRoute(ctx, routeID); deleteErr != nil {
 				err = fmt.Errorf("delete route %d: %w", index, deleteErr)
 			}
-			results <- deleteResult{duration: time.Since(started), err: err}
+			results <- cleanupResult{index: index, err: err}
 		}(index, routeIDs[index])
 	}
 	for range count {
 		result := <-results
-		timings = append(timings, result.duration)
 		cleanupErr = errors.Join(cleanupErr, result.err)
+	}
+
+	completed := make([]time.Duration, len(processes))
+	count = 0
+	for index, process := range processes {
+		if process == nil || process.claimID == "" {
+			continue
+		}
+		if process.claimOwner == nil {
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("release hostname claim %d: missing owner", index))
+			completed[index] = time.Since(started)
+			continue
+		}
+		count++
+		semaphore <- struct{}{}
+		go func(index int, process *routeProcess) {
+			defer func() { <-semaphore }()
+			var err error
+			if releaseErr := process.claimOwner.ReleaseHostnameClaim(ctx, process.claimID); releaseErr != nil {
+				err = fmt.Errorf("release hostname claim %d: %w", index, releaseErr)
+			}
+			completed[index] = time.Since(started)
+			results <- cleanupResult{index: index, err: err}
+		}(index, process)
+	}
+	for range count {
+		result := <-results
+		cleanupErr = errors.Join(cleanupErr, result.err)
+	}
+	timings := make([]time.Duration, 0, len(processes))
+	for index, process := range processes {
+		if process == nil {
+			continue
+		}
+		if completed[index] == 0 {
+			completed[index] = time.Since(started)
+		}
+		timings = append(timings, completed[index])
 	}
 	return timings, cleanupErr
 }
@@ -524,6 +623,7 @@ func waitWorkerRoutes(ctx context.Context, metricsURLs []string, want int) ([]wo
 			lastTotal = total
 			maxTotal = max(maxTotal, total)
 			lastErr = nil
+			// Allow activation overshoot across shards, but require exact zero after teardown.
 			if valid && (total == want || want > 0 && total > want) {
 				return samples, nil
 			}
@@ -549,39 +649,106 @@ func waitWorkerRoutes(ctx context.Context, metricsURLs []string, want int) ([]wo
 }
 
 func sampleWorkers(ctx context.Context, metricsURLs []string) ([]workerSample, error) {
-	client := &http.Client{Timeout: 5 * time.Second}
 	samples := make([]workerSample, len(metricsURLs))
 	for index, metricsURL := range metricsURLs {
-		request, err := http.NewRequestWithContext(ctx, http.MethodGet, metricsURL, nil)
+		values, err := sampleMetrics(ctx, metricsURL)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("metrics worker %d: %w", index, err)
 		}
-		response, err := client.Do(request)
-		if err != nil {
-			return nil, err
-		}
-		body, readErr := io.ReadAll(io.LimitReader(response.Body, 2<<20))
-		_ = response.Body.Close()
-		if readErr != nil {
-			return nil, readErr
-		}
-		if response.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("metrics worker %d: HTTP %d", index, response.StatusCode)
-		}
-		values := parseMetrics(string(body))
 		samples[index] = workerSample{
 			Worker: index, Routes: int(values["tnl_worker_routes_active"]),
 			Capacity: int(values["tnl_worker_route_capacity"]), RSSBytes: values["process_resident_memory_bytes"],
 			Goroutines: int(values["go_goroutines"]), OpenFDs: int(values["process_open_fds"]),
+			MaxFDs:                               int(values["process_max_fds"]),
+			TailcatProcessFileLimitStartFailures: int(values[`tnl_tailcat_failures_total{operation="start",reason="process_file_limit"}`]),
+			TailcatSystemFileLimitStartFailures:  int(values[`tnl_tailcat_failures_total{operation="start",reason="system_file_limit"}`]),
 		}
 	}
 	return samples, nil
 }
 
+func sampleMetrics(ctx context.Context, metricsURL string) (map[string]float64, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, metricsURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	response, err := (&http.Client{Timeout: 5 * time.Second}).Do(request)
+	if err != nil {
+		return nil, err
+	}
+	body, readErr := io.ReadAll(io.LimitReader(response.Body, 2<<20))
+	closeErr := response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HTTP %d", response.StatusCode)
+	}
+	if readErr != nil || closeErr != nil {
+		return nil, errors.Join(readErr, closeErr)
+	}
+	return parseMetrics(string(body)), nil
+}
+
+func writeFailureEvidence(flags cli) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	evidence := failureEvidence{EvidenceSchemaVersion: 1, Kind: "server_metrics"}
+	workers, err := sampleWorkers(ctx, flags.MetricsURLs)
+	if err != nil {
+		evidence.WorkerError = err.Error()
+	} else {
+		evidence.Workers = workers
+	}
+	if flags.EdgeMetricsURL != "" {
+		values, err := sampleMetrics(ctx, flags.EdgeMetricsURL)
+		if err != nil {
+			evidence.EdgeError = err.Error()
+		} else {
+			evidence.Edge = make(map[string]float64)
+			for name, value := range values {
+				if strings.HasPrefix(name, "tnl_") || name == "process_open_fds" || name == "process_max_fds" {
+					evidence.Edge[name] = value
+				}
+			}
+		}
+	}
+	if err := json.NewEncoder(os.Stderr).Encode(evidence); err != nil {
+		fmt.Fprintf(os.Stderr, "tnlbench: encode failure evidence: %v\n", err)
+	}
+}
+
+func benchmarkHostnameSuffix(capabilities corev1.Capabilities, configured string) (string, error) {
+	localClaim := false
+	for _, authorization := range capabilities.HostnameAuthorization {
+		localClaim = localClaim || authorization == corev1.LocalClaim
+	}
+	if !localClaim || capabilities.LocalClaim == nil || capabilities.LocalClaim.Suffix == "" {
+		return "", errors.New("core does not advertise local hostname claims")
+	}
+	suffix, err := naming.CanonicalizeHostname(capabilities.LocalClaim.Suffix)
+	if err != nil || suffix != capabilities.LocalClaim.Suffix {
+		return "", errors.New("core advertises an invalid local hostname claim suffix")
+	}
+	if suffix != configured {
+		return "", fmt.Errorf("core local hostname claim suffix %q does not match configured suffix %q", suffix, configured)
+	}
+	return suffix, nil
+}
+
+func benchmarkRouteLabel(driverIndex, routeIndex int) string {
+	return fmt.Sprintf("tnlbench-d%d-r%d", driverIndex, routeIndex)
+}
+
+func benchmarkHostname(driverIndex, routeIndex int, suffix string) string {
+	return benchmarkRouteLabel(driverIndex, routeIndex) + "." + suffix
+}
+
+func benchmarkClaimRequestKey(driverIndex, routeIndex int) string {
+	return "claim_" + benchmarkRouteLabel(driverIndex, routeIndex)
+}
+
 func parseMetrics(body string) map[string]float64 {
 	values := make(map[string]float64)
 	for line := range strings.SplitSeq(body, "\n") {
-		if line == "" || strings.HasPrefix(line, "#") || strings.Contains(line, "{") {
+		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
 		fields := strings.Fields(line)
@@ -610,6 +777,7 @@ func summarize(samples []time.Duration) timingSummary {
 }
 
 func percentileIndex(length, percentile int) int {
+	// Use nearest-rank percentiles so every result is an observed sample.
 	index := (length*percentile + 99) / 100
 	if index <= 0 {
 		return 0
