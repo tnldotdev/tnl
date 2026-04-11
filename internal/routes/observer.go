@@ -18,6 +18,17 @@ const (
 
 type StoreObserver func(operation StoreOperation, duration time.Duration, err error)
 
+type CoordinatorStage string
+
+const (
+	CoordinatorStageTransportRouteLockWait CoordinatorStage = "transport_route_lock_wait"
+	CoordinatorStageTransportWorkerAttach  CoordinatorStage = "transport_worker_attach"
+	CoordinatorStageReadyRouteLockWait     CoordinatorStage = "ready_route_lock_wait"
+	CoordinatorStageReadyPublish           CoordinatorStage = "ready_publish"
+	CoordinatorStageHeartbeatRouteLockWait CoordinatorStage = "heartbeat_route_lock_wait"
+	CoordinatorStageHeartbeatStateUpdate   CoordinatorStage = "heartbeat_state_update"
+)
+
 type HeartbeatResult string
 
 const (
@@ -41,6 +52,7 @@ type CoordinatorConfig struct {
 	ObserveHeartbeat               func(HeartbeatResult)
 	ObserveRouteRemoval            func(RouteRemovalReason)
 	ObserveWorkerCapacityRejection func()
+	ObserveStage                   func(CoordinatorStage, time.Duration)
 }
 
 type HealthStats struct {

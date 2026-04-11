@@ -31,6 +31,7 @@ type Metrics struct {
 	apiRequestDuration *prometheus.HistogramVec
 	sqliteDuration     *prometheus.HistogramVec
 	sqliteErrors       *prometheus.CounterVec
+	coordinatorStage   *prometheus.HistogramVec
 	routeHeartbeats    *prometheus.CounterVec
 	routeRemovals      *prometheus.CounterVec
 	routeLeaseMinimum  *prometheus.GaugeVec
@@ -109,6 +110,11 @@ func New(mode string) *Metrics {
 			Name: "tnl_sqlite_errors_total",
 			Help: "SQLite and database-context errors by operation and stable reason.",
 		}, []string{"operation", "reason"}),
+		coordinatorStage: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "tnl_route_coordinator_stage_duration_seconds",
+			Help:    "Route coordinator duration by bounded internal stage.",
+			Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10},
+		}, []string{"stage"}),
 		routeHeartbeats: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "tnl_route_lease_heartbeats_total",
 			Help: "Route lease heartbeat attempts by result.",
@@ -154,6 +160,7 @@ func New(mode string) *Metrics {
 		metrics.apiRequestDuration,
 		metrics.sqliteDuration,
 		metrics.sqliteErrors,
+		metrics.coordinatorStage,
 		metrics.routeHeartbeats,
 		metrics.routeRemovals,
 		metrics.routeLeaseMinimum,
@@ -240,6 +247,11 @@ func (m *Metrics) ObserveSQLiteOperation(operation string, duration time.Duratio
 	if reason, ok := sqliteErrorReason(err); ok {
 		m.sqliteErrors.WithLabelValues(operation, reason).Inc()
 	}
+}
+
+// ObserveRouteCoordinatorStage records a bounded coordinator stage duration.
+func (m *Metrics) ObserveRouteCoordinatorStage(stage string, duration time.Duration) {
+	m.coordinatorStage.WithLabelValues(stage).Observe(duration.Seconds())
 }
 
 func sqliteErrorReason(err error) (string, bool) {
