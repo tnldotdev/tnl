@@ -6,36 +6,32 @@ import (
 	"io"
 	"net"
 	"testing"
-	"time"
+	"testing/synctest"
 )
 
 func TestStreamRegistryDrainWaitsForOpen(t *testing.T) {
-	registry := newStreamRegistry()
-	if err := registry.beginOpen(); err != nil {
-		t.Fatalf("beginOpen: %v", err)
-	}
-
-	drained := make(chan error, 1)
-	go func() { drained <- registry.drain(context.Background()) }()
-	for {
-		err := registry.beginOpen()
-		if errors.Is(err, errDraining) {
-			break
+	synctest.Test(t, func(t *testing.T) {
+		registry := newStreamRegistry()
+		if err := registry.beginOpen(); err != nil {
+			t.Fatalf("beginOpen: %v", err)
 		}
-		if err != nil {
-			t.Fatalf("beginOpen while waiting for drain: %v", err)
-		}
-		registry.finishOpen(nil, errors.New("canceled test open"))
-	}
 
-	local, peer := net.Pipe()
-	t.Cleanup(func() { peer.Close() })
-	if conn, err := registry.finishOpen(local, nil); conn != nil || !errors.Is(err, errDraining) {
-		t.Fatalf("finishOpen = %v, %v; want nil, errDraining", conn, err)
-	}
-	if err := <-drained; err != nil {
-		t.Fatalf("drain: %v", err)
-	}
+		drained := make(chan error, 1)
+		go func() { drained <- registry.drain(context.Background()) }()
+		synctest.Wait()
+		if err := registry.beginOpen(); !errors.Is(err, errDraining) {
+			t.Fatalf("beginOpen while draining = %v; want errDraining", err)
+		}
+
+		local, peer := net.Pipe()
+		defer peer.Close()
+		if conn, err := registry.finishOpen(local, nil); conn != nil || !errors.Is(err, errDraining) {
+			t.Fatalf("finishOpen = %v, %v; want nil, errDraining", conn, err)
+		}
+		if err := <-drained; err != nil {
+			t.Fatalf("drain: %v", err)
+		}
+	})
 }
 
 func TestStreamRegistryDrainDeadlineClosesStreams(t *testing.T) {
@@ -73,33 +69,36 @@ func TestTrackedConnForwardsHalfClose(t *testing.T) {
 }
 
 func TestStreamRegistryConcurrentCloseWaits(t *testing.T) {
-	registry := newStreamRegistry()
-	closeStarted := make(chan struct{})
-	unblockClose := make(chan struct{})
-	conn := &blockingCloseConn{closeStarted: closeStarted, unblockClose: unblockClose}
-	if _, err := registry.track(conn); err != nil {
-		t.Fatalf("track: %v", err)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		registry := newStreamRegistry()
+		closeStarted := make(chan struct{})
+		unblockClose := make(chan struct{})
+		conn := &blockingCloseConn{closeStarted: closeStarted, unblockClose: unblockClose}
+		if _, err := registry.track(conn); err != nil {
+			t.Fatalf("track: %v", err)
+		}
 
-	firstDone := make(chan struct{})
-	go func() {
-		registry.close()
-		close(firstDone)
-	}()
-	<-closeStarted
-	secondDone := make(chan struct{})
-	go func() {
-		registry.close()
-		close(secondDone)
-	}()
-	select {
-	case <-secondDone:
-		t.Fatal("concurrent close returned before stream close completed")
-	case <-time.After(10 * time.Millisecond):
-	}
-	close(unblockClose)
-	<-firstDone
-	<-secondDone
+		firstDone := make(chan struct{})
+		go func() {
+			registry.close()
+			close(firstDone)
+		}()
+		<-closeStarted
+		secondDone := make(chan struct{})
+		go func() {
+			registry.close()
+			close(secondDone)
+		}()
+		synctest.Wait()
+		select {
+		case <-secondDone:
+			t.Fatal("concurrent close returned before stream close completed")
+		default:
+		}
+		close(unblockClose)
+		<-firstDone
+		<-secondDone
+	})
 }
 
 type halfCloseConn struct {
