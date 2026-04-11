@@ -32,6 +32,10 @@ tasks:
     desc: Build all packages and commands
     deps: [go:build]
 
+  package:
+    desc: Build a local release snapshot
+    deps: [release:snapshot]
+
   go:generate:
     cmds:
       - go generate ./...
@@ -80,7 +84,7 @@ tasks:
     env:
       TNL_TEST_INTEGRATION: "1"
     cmds:
-      - go test -race -v ./internal/tailtransport ./internal/publication -run='^TestIntegration' -count=1 -timeout=5m
+      - go test -race -v ./internal/controltls ./internal/tailtransport ./internal/publication -run='^TestIntegration' -count=1 -timeout=5m
 
   go:bench-fly:
     desc: Benchmark complete single-node and HA route paths on Fly
@@ -90,6 +94,11 @@ tasks:
   go:build:
     cmds:
       - go build ./cmd/...
+
+  release:snapshot:
+    desc: Build release archives, checksums, and SBOMs without publishing or signing
+    cmds:
+      - goreleaser release --snapshot --clean --skip=sign
 
   workflows:lint:
     cmds:

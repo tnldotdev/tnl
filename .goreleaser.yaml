@@ -1,0 +1,102 @@
+version: 2
+
+project_name: tnl
+
+before:
+  hooks:
+    - go mod download
+
+builds:
+  - id: tnl
+    main: ./cmd/tnl
+    binary: tnl
+    env:
+      - CGO_ENABLED=0
+      - GOFLAGS=-tags=ts_omit_ssh
+    flags:
+      - -mod=readonly
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/0xcadams/tnl/internal/buildinfo.Version={{ .Version }}
+      - -X github.com/0xcadams/tnl/internal/buildinfo.Commit={{ .FullCommit }}
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+  - id: tnld
+    main: ./cmd/tnld
+    binary: tnld
+    env:
+      - CGO_ENABLED=0
+      - GOFLAGS=-tags=ts_omit_ssh
+    flags:
+      - -mod=readonly
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/0xcadams/tnl/internal/buildinfo.Version={{ .Version }}
+      - -X github.com/0xcadams/tnl/internal/buildinfo.Commit={{ .FullCommit }}
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: release
+    ids:
+      - tnl
+      - tnld
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - NOTICE
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+sboms:
+  - id: archives
+    artifacts: archive
+    documents:
+      - "{{ .ArtifactName }}.spdx.json"
+    cmd: syft
+    args:
+      - ${artifact}
+      - --output
+      - spdx-json=${document}
+
+signs:
+  - id: checksums
+    artifacts: checksum
+    cmd: cosign
+    signature: ${artifact}.sigstore.json
+    args:
+      - sign-blob
+      - --bundle=${signature}
+      - ${artifact}
+      - --yes
+
+release:
+  draft: true
+  replace_existing_draft: true
+  prerelease: auto
+  preflight:
+    fail_on_error: true
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
