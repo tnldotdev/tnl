@@ -2,70 +2,44 @@ package tailtransport
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"io"
 	"net"
-	"net/http"
-	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
 
 	"github.com/tailscale/tailcat"
-	"tailscale.com/derp/derpserver"
-	"tailscale.com/net/stun/stuntest"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
-	"tailscale.com/types/logger"
-	"tailscale.com/types/nettype"
 )
 
 func TestLeaseTransport(t *testing.T) {
 	region := runTestDERP(t)
 	clientKey := key.NewNode()
-	handlerResult := make(chan error, 1)
-	server, err := NewServer(ServerConfig{
-		AllowedClient: clientKey.Public(),
-		RelayProfile:  "test",
-		Profiles:      map[string]*tailcfg.DERPRegion{"test": region},
-		Handler: func(conn net.Conn) {
-			request, err := io.ReadAll(conn)
-			if err == nil && string(request) != "hello" {
-				err = errors.New("unexpected request")
-			}
-			if err == nil {
-				_, err = conn.Write([]byte("goodbye"))
-			}
-			handlerResult <- err
-		},
-		Logf: logger.Discard,
-	})
-	if err != nil {
-		t.Fatalf("NewServer: %v", err)
-	}
-	t.Cleanup(func() { server.Close() })
-
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	endpoint, err := server.Start(ctx)
-	if err != nil {
-		t.Fatalf("server Start: %v", err)
-	}
-	dialer, err := NewDialer(DialerConfig{
-		Endpoint: endpoint,
-		Profiles: map[string]*tailcfg.DERPRegion{"test": region},
-		Key:      clientKey,
-		Logf:     logger.Discard,
+	handlerResult := make(chan error, 1)
+	server, endpoint, err := startTestServer(ctx, region, clientKey.Public(), func(conn net.Conn) {
+		request, err := io.ReadAll(conn)
+		if err == nil && string(request) != "hello" {
+			err = errors.New("unexpected request")
+		}
+		if err == nil {
+			_, err = conn.Write([]byte("goodbye"))
+		}
+		handlerResult <- err
 	})
 	if err != nil {
-		t.Fatalf("NewDialer: %v", err)
+		t.Fatalf("startTestServer: %v", err)
+	}
+	t.Cleanup(func() { server.Close() })
+	dialer, err := startTestDialer(ctx, region, endpoint, clientKey)
+	if err != nil {
+		t.Fatalf("startTestDialer: %v", err)
 	}
 	t.Cleanup(func() { dialer.Close() })
-	if err := dialer.Start(ctx); err != nil {
-		t.Fatalf("dialer Start: %v", err)
-	}
 
 	conn, err := dialer.Open(ctx)
 	if err != nil {
@@ -108,38 +82,48 @@ func TestLeaseTransport(t *testing.T) {
 	}
 }
 
-func TestLeaseTransportRejectsUnauthorizedClient(t *testing.T) {
+func TestLeaseReplacementRejectsOldKey(t *testing.T) {
 	region := runTestDERP(t)
-	server, err := NewServer(ServerConfig{
-		AllowedClient: key.NewNode().Public(),
-		RelayProfile:  "test",
-		Profiles:      map[string]*tailcfg.DERPRegion{"test": region},
-		Handler:       func(net.Conn) {},
-		Logf:          logger.Discard,
-	})
-	if err != nil {
-		t.Fatalf("NewServer: %v", err)
-	}
-	t.Cleanup(func() { server.Close() })
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	oldKey := key.NewNode()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	endpoint, err := server.Start(ctx)
+
+	oldServer, oldEndpoint, err := startTestServer(ctx, region, oldKey.Public(), func(conn net.Conn) { conn.Close() })
 	if err != nil {
-		t.Fatalf("server Start: %v", err)
+		t.Fatalf("start old server: %v", err)
 	}
-	dialer, err := NewDialer(DialerConfig{
-		Endpoint: endpoint,
-		Profiles: map[string]*tailcfg.DERPRegion{"test": region},
-		Key:      key.NewNode(),
-		Logf:     logger.Discard,
-	})
+	t.Cleanup(func() { oldServer.Close() })
+	oldDialer, err := startTestDialer(ctx, region, oldEndpoint, oldKey)
 	if err != nil {
-		t.Fatalf("NewDialer: %v", err)
+		t.Fatalf("start old dialer: %v", err)
 	}
-	t.Cleanup(func() { dialer.Close() })
-	if err := dialer.Start(ctx); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("dialer Start = %v; want context deadline exceeded", err)
+	t.Cleanup(func() { oldDialer.Close() })
+	if err := oldDialer.Close(); err != nil {
+		t.Fatalf("close old dialer: %v", err)
+	}
+	if err := oldServer.Close(); err != nil {
+		t.Fatalf("close old server: %v", err)
+	}
+
+	newKey := key.NewNode()
+	newServer, newEndpoint, err := startTestServer(ctx, region, newKey.Public(), func(conn net.Conn) { conn.Close() })
+	if err != nil {
+		t.Fatalf("start replacement server: %v", err)
+	}
+	t.Cleanup(func() { newServer.Close() })
+
+	staleCtx, staleCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer staleCancel()
+	if staleDialer, err := startTestDialer(staleCtx, region, newEndpoint, oldKey); staleDialer != nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("old key against replacement = %v, %v; want nil, context deadline exceeded", staleDialer, err)
+	}
+	newDialer, err := startTestDialer(ctx, region, newEndpoint, newKey)
+	if err != nil {
+		t.Fatalf("start replacement dialer: %v", err)
+	}
+	t.Cleanup(func() { newDialer.Close() })
+	if err := newDialer.Close(); err != nil {
+		t.Fatalf("close replacement dialer: %v", err)
 	}
 }
 
@@ -266,6 +250,26 @@ func TestDialerStartLifecycle(t *testing.T) {
 	}
 	if got := factories.Load(); got != 0 {
 		t.Fatalf("client factories = %d; want 0", got)
+	}
+}
+
+func TestDialerOpenNormalizesTypedNil(t *testing.T) {
+	dialer := newTestDialer(t)
+	wantErr := errors.New("dial failed")
+	dialer.newClient = func(*tailcat.Client) tailcatClient {
+		return &fakeTailcatClient{
+			dial: func(context.Context, uint16) (net.Conn, error) {
+				var conn *net.TCPConn
+				return conn, wantErr
+			},
+		}
+	}
+	if err := dialer.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { dialer.Close() })
+	if conn, err := dialer.Open(context.Background()); conn != nil || !errors.Is(err, wantErr) {
+		t.Fatalf("Open = %v, %v; want nil, %v", conn, err, wantErr)
 	}
 }
 
@@ -511,40 +515,4 @@ func (s *fakeTailcatServer) Close() error {
 		return nil
 	}
 	return s.close()
-}
-
-func runTestDERP(t *testing.T) *tailcfg.DERPRegion {
-	t.Helper()
-	d := derpserver.New(key.NewNode(), logger.Discard)
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	httpsrv := httptest.NewUnstartedServer(derpserver.Handler(d))
-	httpsrv.Listener.Close()
-	httpsrv.Listener = ln
-	httpsrv.Config.TLSNextProto = make(map[string]func(*http.Server, *tls.Conn, http.Handler))
-	httpsrv.StartTLS()
-	stunAddr, stunCleanup := stuntest.ServeWithPacketListener(t, nettype.Std{})
-	t.Cleanup(func() {
-		httpsrv.CloseClientConnections()
-		httpsrv.Close()
-		d.Close()
-		stunCleanup()
-	})
-	return &tailcfg.DERPRegion{
-		RegionID:   1,
-		RegionCode: "test",
-		Nodes: []*tailcfg.DERPNode{{
-			Name:             "test",
-			RegionID:         1,
-			HostName:         "127.0.0.1",
-			IPv4:             "127.0.0.1",
-			IPv6:             "none",
-			STUNPort:         stunAddr.Port,
-			DERPPort:         ln.Addr().(*net.TCPAddr).Port,
-			InsecureForTests: true,
-			STUNTestIP:       "127.0.0.1",
-		}},
-	}
 }

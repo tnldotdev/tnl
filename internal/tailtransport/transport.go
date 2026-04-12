@@ -406,6 +406,10 @@ func (d *Dialer) Open(ctx context.Context) (net.Conn, error) {
 		return d.streams.finishOpen(nil, err)
 	}
 	conn, err := d.client.DialTCPPort(operationCtx, leaseTCPPort)
+	if err != nil {
+		// gVisor dial failures can surface as a net.Conn containing a typed nil.
+		conn = nil
+	}
 	return d.streams.finishOpen(conn, operationError(operationCtx, err))
 }
 
