@@ -228,6 +228,38 @@ func TestCoordinatorAcceptsOnlyExactTransportReplay(t *testing.T) {
 	}
 }
 
+func TestCoordinatorRouteLocksArePerRoute(t *testing.T) {
+	coordinator, _ := newCoordinatorFixture(t)
+	unlockFirst := coordinator.lockRoute("first")
+
+	second := make(chan func(), 1)
+	go func() { second <- coordinator.lockRoute("second") }()
+	select {
+	case unlockSecond := <-second:
+		unlockSecond()
+	case <-time.After(time.Second):
+		unlockFirst()
+		t.Fatal("different route shared lock")
+	}
+
+	same := make(chan func(), 1)
+	go func() { same <- coordinator.lockRoute("first") }()
+	select {
+	case unlockSame := <-same:
+		unlockSame()
+		unlockFirst()
+		t.Fatal("same route acquired lock twice")
+	case <-time.After(25 * time.Millisecond):
+	}
+	unlockFirst()
+	select {
+	case unlockSame := <-same:
+		unlockSame()
+	case <-time.After(time.Second):
+		t.Fatal("same route lock was not released")
+	}
+}
+
 func TestCoordinatorRejectsChangedTransportBeforeAssignment(t *testing.T) {
 	capacityRejections := 0
 	coordinator, _ := newCoordinatorFixture(t, CoordinatorConfig{
