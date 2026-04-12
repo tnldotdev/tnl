@@ -190,6 +190,19 @@ func TestStateRejectsWritableAncestor(t *testing.T) {
 	}
 }
 
+func TestStateAllowsStickyWritableAncestor(t *testing.T) {
+	parent := filepath.Join(t.TempDir(), "shared")
+	if err := os.Mkdir(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(parent, os.ModeSticky|0o777); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(filepath.Join(parent, "state"), "https://core.example"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestConcurrentStoreInitialization(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "state")
 	var wait sync.WaitGroup

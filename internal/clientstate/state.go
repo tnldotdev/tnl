@@ -496,7 +496,9 @@ func validateTrustedAncestors(path string) error {
 		if err != nil {
 			return fmt.Errorf("clientstate: inspect state directory ancestor: %w", err)
 		}
-		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() || info.Mode().Perm()&0o022 != 0 {
+		writable := info.Mode().Perm()&0o022 != 0
+		sticky := info.Mode()&os.ModeSticky != 0
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() || writable && !sticky {
 			return errors.New("clientstate: state directory has an untrusted writable ancestor")
 		}
 		stat, ok := info.Sys().(*syscall.Stat_t)
