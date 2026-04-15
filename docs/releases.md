@@ -1,6 +1,6 @@
-# TNL Releases
+# tnl Releases
 
-TNL releases provide combined `tnl` and `tnld` archives for macOS and Linux on
+tnl releases provide combined `tnl` and `tnld` archives for macOS and Linux on
 amd64 and arm64, plus a multi-platform `tnld` image in GHCR. Releases before
 1.0 are standalone previews and may include forward-only state migrations.
 

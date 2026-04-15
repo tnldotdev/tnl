@@ -2,7 +2,7 @@
 
 A public URL for localhost.
 
-TNL is a standalone-preview tunnel service. `tnld` owns the control API,
+tnl is a standalone-preview tunnel service. `tnld` owns the control API,
 hostname claims, public TLS ingress, and durable SQLite state. `tnl` claims a
 hostname and carries public connections to one literal-loopback HTTP service.
 

@@ -1,4 +1,4 @@
-// Package coreclient is the bounded client for the TNL core API.
+// Package coreclient is the bounded client for the tnl core API.
 package coreclient
 
 import (

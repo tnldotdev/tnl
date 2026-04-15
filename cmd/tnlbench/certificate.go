@@ -32,7 +32,7 @@ func benchmarkCertificates(hostnames []string) ([]tls.Certificate, *x509.CertPoo
 	}
 	now := time.Now()
 	caTemplate := &x509.Certificate{
-		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "TNL benchmark CA"},
+		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "tnl benchmark CA"},
 		NotBefore: now.Add(-time.Minute), NotAfter: now.Add(24 * time.Hour), IsCA: true,
 		BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
 	}

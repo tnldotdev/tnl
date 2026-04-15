@@ -46,7 +46,7 @@ func New(mode string) *Metrics {
 	registry := prometheus.NewRegistry()
 	info := prometheus.NewGauge(prometheus.GaugeOpts{
 		Name:        "tnl_info",
-		Help:        "Information about the running TNL process.",
+		Help:        "Information about the running tnl process.",
 		ConstLabels: prometheus.Labels{"mode": mode},
 	})
 	info.Set(1)

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://tnl.dev/schemas/worker/v1/control.json",
-  "title": "TNL worker control message v1",
+  "title": "tnl worker control message v1",
   "oneOf": [
     {"$ref": "#/$defs/hello"},
     {"$ref": "#/$defs/accepted"},
