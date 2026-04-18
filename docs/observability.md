@@ -28,7 +28,7 @@ The main availability signals are:
   `tnl_route_lease_min_seconds_remaining{state}`, and
   `tnl_route_removals_total{reason}` for lease and route continuity.
 - `tnl_route_coordinator_stage_duration_seconds{stage}` for distinguishing
-  striped route-lock waits, worker attachment, publication, and state updates.
+  per-route lock waits, worker attachment, publication, and state updates.
 
 Labels use bounded values. Route IDs, hostnames, principals, workers, request
 IDs, errors, and SQL text are deliberately excluded from metric labels.

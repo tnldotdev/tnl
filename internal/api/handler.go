@@ -1166,6 +1166,13 @@ func writeInternalError(w http.ResponseWriter, requestID string, err error) {
 	if reporter, ok := w.(interface{ report(error) }); ok {
 		reporter.report(err)
 	}
+	if state.IsDatabaseContention(err) {
+		writeProblem(
+			w, requestID, http.StatusServiceUnavailable, corev1.TemporarilyUnavailable,
+			"Temporarily unavailable", "temporarily-unavailable",
+		)
+		return
+	}
 	writeInternalProblem(w, requestID)
 }
 
