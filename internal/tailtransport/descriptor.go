@@ -5,22 +5,19 @@ import (
 	"fmt"
 	"net/netip"
 
+	"github.com/0xcadams/tnl/pkg/protocol/transportv1"
 	"github.com/tailscale/tailcat"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
 )
 
-const descriptorVersion = 1
+const descriptorVersion = transportv1.TailcatDescriptorVersion
 
 // Endpoint is the trusted subset of Tailcat connection information exchanged
 // between the hosted service and an agent.
-type Endpoint struct {
-	Version         int    `json:"version"`
-	ServerPublicKey string `json:"server_public_key"`
-	RelayProfile    string `json:"relay_profile"`
-}
+type Endpoint = transportv1.TailcatDescriptor
 
-func (e Endpoint) connBlob(profiles map[string]*tailcfg.DERPRegion) (tailcat.ConnBlob, error) {
+func connBlob(e Endpoint, profiles map[string]*tailcfg.DERPRegion) (tailcat.ConnBlob, error) {
 	if e.Version != descriptorVersion {
 		return "", fmt.Errorf("unsupported tailcat descriptor version %d", e.Version)
 	}

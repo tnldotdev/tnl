@@ -57,7 +57,7 @@ MiB idle Go heap per route and 2.3 MiB with one active stream per route.
 
 ## Budgets
 
-- No startup, path, stream, transfer, drain, or close failures.
+- No startup, stream, transfer, or close failures.
 - Startup p95 at most 15 seconds.
 - First-byte p95 at most 2 seconds.
 - Shutdown p95 at most 5 seconds.
@@ -70,10 +70,38 @@ descriptors, latency percentiles, throughput, path, and cleanup residuals. Linux
 runs also report current RSS. Absolute production budgets remain provisional
 until ingress, agents, and DERP run in separate processes or hosts.
 
+DERP reachability is the availability baseline. Direct-path convergence is
+reported separately and does not fail a Fly run. Agent drain timeouts fall back
+to a bounded forced close and are reported as `agent_forced_closes`.
+
 ## Fly Runs
 
-The same Task targets are suitable for a temporary Fly Machine. A small runner
-can create a machine at a selected size, check out an exact commit, run one
-benchmark command, save stdout with the machine metadata, and always destroy the
-machine. Keep that orchestration separate from the benchmark so local and Fly
-runs exercise identical code.
+The Fly task runs Tailcat clients on the Mac against Tailcat servers on a
+temporary private Fly Machine. Both sides use public DERP/STUN region 302; the
+control API is reached through `fly proxy` and is not exposed publicly.
+
+Prerequisites are an authenticated `fly` CLI with access to the `tnl`
+organization, the repository Go toolchain, and outbound access to public
+DERP/STUN:
+
+```console
+mise exec -- task go:bench-tailcat-fly
+```
+
+Defaults are organization `tnl`, region `sjc`, Machine size `performance-8x`,
+eight concurrent operations, direct then forced-DERP modes, and route tiers
+`1,10,100,250,500,1000`. Override them through the task environment:
+
+```console
+ORG=tnl REGION=sjc AGENT_SIZE=performance-4x ROUTES=1,10 MODES=direct PARALLEL=4 LOCAL_PORT=18081 mise exec -- task go:bench-tailcat-fly
+```
+
+Each mode gets a fresh Machine. The benchmark stops at the first failed tier,
+and the script's exit trap destroys the Machine and temporary
+Fly app on success, failure, or interruption. Output separates client shutdown
+percentiles from agent shutdown time and reports client and agent resource
+residuals independently.
+
+The baseline 250-route forced-DERP tier passed three consecutive Fly runs with
+zero forced closes. Client shutdown p95 was 34-48 ms, agent shutdown was
+221-226 ms, and residual resources stayed within budget.

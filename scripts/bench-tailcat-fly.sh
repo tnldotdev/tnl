@@ -110,6 +110,8 @@ for mode in "${mode_list[@]}"; do
   if ! env "${benchmark_env[@]}" go test -v ./internal/tailtransport -run='^$' -bench='^BenchmarkTailcatFly$' -benchtime=1x -count=1 -timeout=90m; then
     status=1
     fly logs --app "${app}" --machine "${machine_id}" --no-tail || true
+    cleanup_machine
+    break
   fi
   cleanup_machine
 done

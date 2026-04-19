@@ -3,6 +3,7 @@ package tailtransport
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"sync"
 
@@ -288,13 +289,16 @@ func (s *Server) Drain(ctx context.Context) error {
 	}
 	defer done()
 	if err := s.streams.drain(operationCtx); err != nil {
-		return operationError(operationCtx, err)
+		return fmt.Errorf("drain streams: %w", operationError(operationCtx, err))
 	}
 	err = s.server.DrainTCP(operationCtx)
 	if err == nil {
 		err = operationCtx.Err()
 	}
-	return operationError(operationCtx, err)
+	if err != nil {
+		return fmt.Errorf("drain tailcat TCP: %w", operationError(operationCtx, err))
+	}
+	return nil
 }
 
 // Close terminally stops the server, cancels context-aware calls, and waits for
@@ -345,7 +349,7 @@ func NewDialer(config DialerConfig) (*Dialer, error) {
 	if config.Key.IsZero() {
 		return nil, errors.New("tailtransport: missing client key")
 	}
-	blob, err := config.Endpoint.connBlob(config.Profiles)
+	blob, err := connBlob(config.Endpoint, config.Profiles)
 	if err != nil {
 		return nil, err
 	}

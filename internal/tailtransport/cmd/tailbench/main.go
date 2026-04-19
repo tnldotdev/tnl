@@ -17,9 +17,11 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
+	"github.com/0xcadams/tnl/internal/processmetrics"
 	"github.com/0xcadams/tnl/internal/tailbench"
 	"github.com/0xcadams/tnl/internal/tailtransport"
 	"tailscale.com/tailcfg"
@@ -27,7 +29,11 @@ import (
 	"tailscale.com/types/logger"
 )
 
-const maxRoutes = 1000
+const (
+	maxRoutes          = 1000
+	cleanupTimeout     = 30 * time.Second
+	serverDrainTimeout = 5 * time.Second
+)
 
 func main() {
 	listen := flag.String("listen", "[::]:8080", "private control listen address")
@@ -52,31 +58,79 @@ func main() {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	mux.Handle("/v1/run", agent.authorize(http.HandlerFunc(agent.handleRun)))
 	server := &http.Server{Addr: *listen, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	serveErr := make(chan error, 1)
 	go func() {
-		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		_ = server.Shutdown(shutdownCtx)
-		agent.closeRun(shutdownCtx)
+		serveErr <- server.ListenAndServe()
 	}()
 	log.Printf("tailbench agent ready on %s using public DERP region %d", *listen, *regionID)
-	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		log.Fatal(err)
+	select {
+	case err := <-serveErr:
+		if errors.Is(err, http.ErrServerClosed) {
+			err = nil
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
+		defer cancel()
+		result := agent.shutdown(cleanupCtx)
+		shutdownErr := server.Shutdown(cleanupCtx)
+		if result.drainErr != nil {
+			log.Printf("forced close after drain: %v", result.drainErr)
+		}
+		if err := errors.Join(err, shutdownErr, result.closeErr); err != nil {
+			log.Fatal(err)
+		}
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
+		defer cancel()
+		result := agent.shutdown(shutdownCtx)
+		shutdownErr := server.Shutdown(shutdownCtx)
+		err := <-serveErr
+		if errors.Is(err, http.ErrServerClosed) {
+			err = nil
+		}
+		if result.drainErr != nil {
+			log.Printf("forced close after drain: %v", result.drainErr)
+		}
+		if err := errors.Join(shutdownErr, result.closeErr, err); err != nil {
+			log.Fatal(err)
+		}
 	}
 }
 
+type runState uint8
+
+const (
+	runIdle runState = iota
+	runCreating
+	runActive
+	runClosing
+)
+
 type agent struct {
-	mu      sync.Mutex
-	token   string
-	region  *tailcfg.DERPRegion
-	servers []*tailtransport.Server
-	before  tailbench.Resources
+	mu         sync.Mutex
+	token      string
+	region     *tailcfg.DERPRegion
+	stopping   bool
+	state      runState
+	cancel     context.CancelFunc
+	completion *runCompletion
+	servers    []*tailtransport.Server
+}
+
+type closeResult struct {
+	forced   int
+	drainErr error
+	closeErr error
+}
+
+type runCompletion struct {
+	done   chan struct{}
+	result closeResult
 }
 
 func (a *agent) authorize(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		provided := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if subtle.ConstantTimeCompare([]byte(provided), []byte(a.token)) != 1 {
+		scheme, provided, ok := strings.Cut(r.Header.Get("Authorization"), " ")
+		if !ok || scheme != "Bearer" || subtle.ConstantTimeCompare([]byte(provided), []byte(a.token)) != 1 {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -108,23 +162,38 @@ func (a *agent) createRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "route count must be between 1 and 1000", http.StatusBadRequest)
 		return
 	}
+	clientKeys := make([]key.NodePublic, len(request.ClientPublicKeys))
+	for index, encoded := range request.ClientPublicKeys {
+		if err := clientKeys[index].UnmarshalText([]byte(encoded)); err != nil || clientKeys[index].IsZero() {
+			http.Error(w, "invalid client public key", http.StatusBadRequest)
+			return
+		}
+	}
 
 	a.mu.Lock()
-	defer a.mu.Unlock()
-	if len(a.servers) != 0 {
+	if a.stopping {
+		a.mu.Unlock()
+		http.Error(w, "agent is shutting down", http.StatusServiceUnavailable)
+		return
+	}
+	if a.state != runIdle {
+		a.mu.Unlock()
 		http.Error(w, "run already active", http.StatusConflict)
 		return
 	}
-	a.before = readResources()
+	createCtx, cancel := context.WithCancel(r.Context())
+	completion := &runCompletion{done: make(chan struct{})}
+	a.state = runCreating
+	a.cancel = cancel
+	a.completion = completion
+	a.mu.Unlock()
+
+	before := readResources()
 	servers := make([]*tailtransport.Server, len(request.ClientPublicKeys))
-	endpoints := make([]tailbench.Endpoint, len(request.ClientPublicKeys))
+	endpoints := make([]tailtransport.Endpoint, len(request.ClientPublicKeys))
 	err := parallel(len(servers), 8, func(index int) error {
-		var clientKey key.NodePublic
-		if err := clientKey.UnmarshalText([]byte(request.ClientPublicKeys[index])); err != nil || clientKey.IsZero() {
-			return errors.New("invalid client public key")
-		}
 		server, err := tailtransport.NewServer(tailtransport.ServerConfig{
-			AllowedClient: clientKey,
+			AllowedClient: clientKeys[index],
 			RelayProfile:  tailbench.RelayProfile,
 			Profiles:      map[string]*tailcfg.DERPRegion{tailbench.RelayProfile: a.region},
 			Handler: func(conn net.Conn) {
@@ -135,7 +204,7 @@ func (a *agent) createRun(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(createCtx, 30*time.Second)
 		defer cancel()
 		endpoint, err := server.Start(ctx)
 		if err != nil {
@@ -143,53 +212,132 @@ func (a *agent) createRun(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		servers[index] = server
-		endpoints[index] = tailbench.Endpoint{
-			Version:         endpoint.Version,
-			ServerPublicKey: endpoint.ServerPublicKey,
-			RelayProfile:    endpoint.RelayProfile,
-		}
+		endpoints[index] = endpoint
 		return nil
 	})
-	if err != nil {
-		closeServers(context.Background(), servers)
-		http.Error(w, fmt.Sprintf("start routes: %v", err), http.StatusInternalServerError)
+	if err == nil {
+		err = createCtx.Err()
+	}
+
+	a.mu.Lock()
+	closing := a.state == runClosing
+	if err == nil && !closing {
+		a.state = runActive
+		a.cancel = nil
+		a.servers = servers
+		close(completion.done)
+		a.completion = nil
+		a.mu.Unlock()
+		writeJSON(w, tailbench.CreateRunResponse{Endpoints: endpoints, Before: before, Ready: readResources()})
 		return
 	}
-	a.servers = servers
-	writeJSON(w, tailbench.CreateRunResponse{Endpoints: endpoints, Before: a.before, Ready: readResources()})
+	a.mu.Unlock()
+
+	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), cleanupTimeout)
+	result := closeServers(cleanupCtx, servers)
+	cleanupCancel()
+	a.mu.Lock()
+	a.state = runIdle
+	a.cancel = nil
+	completion.result = result
+	close(completion.done)
+	a.completion = nil
+	a.mu.Unlock()
+
+	if err == nil {
+		err = context.Canceled
+	}
+	http.Error(w, fmt.Sprintf("start routes: %v", errors.Join(err, result.drainErr, result.closeErr)), http.StatusInternalServerError)
 }
 
 func (a *agent) deleteRun(w http.ResponseWriter, r *http.Request) {
-	if err := a.closeRun(r.Context()); err != nil {
-		http.Error(w, fmt.Sprintf("close routes: %v", err), http.StatusInternalServerError)
+	ctx, cancel := context.WithTimeout(r.Context(), cleanupTimeout)
+	defer cancel()
+	result := a.closeRun(ctx)
+	if result.closeErr != nil {
+		http.Error(w, fmt.Sprintf("close routes: %v", result.closeErr), http.StatusInternalServerError)
 		return
 	}
 	runtime.GC()
 	runtime.GC()
-	writeJSON(w, tailbench.CloseRunResponse{After: readResources()})
+	response := tailbench.CloseRunResponse{After: readResources(), ForcedCloses: result.forced}
+	if result.drainErr != nil {
+		response.DrainError = result.drainErr.Error()
+	}
+	writeJSON(w, response)
 }
 
-func (a *agent) closeRun(ctx context.Context) error {
+func (a *agent) closeRun(ctx context.Context) closeResult {
 	a.mu.Lock()
-	defer a.mu.Unlock()
-	servers := a.servers
-	a.servers = nil
-	return closeServers(ctx, servers)
+	switch a.state {
+	case runIdle:
+		a.mu.Unlock()
+		return closeResult{}
+	case runCreating:
+		a.state = runClosing
+		a.cancel()
+		fallthrough
+	case runClosing:
+		completion := a.completion
+		a.mu.Unlock()
+		select {
+		case <-completion.done:
+			return completion.result
+		case <-ctx.Done():
+			return closeResult{closeErr: ctx.Err()}
+		}
+	case runActive:
+		a.state = runClosing
+		servers := a.servers
+		a.servers = nil
+		completion := &runCompletion{done: make(chan struct{})}
+		a.completion = completion
+		a.mu.Unlock()
+
+		result := closeServers(ctx, servers)
+		a.mu.Lock()
+		a.state = runIdle
+		completion.result = result
+		close(completion.done)
+		a.completion = nil
+		a.mu.Unlock()
+		return result
+	default:
+		a.mu.Unlock()
+		panic("invalid tailbench run state")
+	}
 }
 
-func closeServers(ctx context.Context, servers []*tailtransport.Server) error {
-	return parallel(len(servers), 8, func(index int) error {
+func (a *agent) shutdown(ctx context.Context) closeResult {
+	a.mu.Lock()
+	a.stopping = true
+	a.mu.Unlock()
+	return a.closeRun(ctx)
+}
+
+func closeServers(ctx context.Context, servers []*tailtransport.Server) closeResult {
+	var forced atomic.Int64
+	var drainMu sync.Mutex
+	var drainErrs []error
+	closeErr := parallel(len(servers), 8, func(index int) error {
 		server := servers[index]
 		if server == nil {
 			return nil
 		}
-		drainCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		drainCtx, cancel := context.WithTimeout(ctx, serverDrainTimeout)
 		defer cancel()
 		drainErr := server.Drain(drainCtx)
+		if drainErr != nil {
+			forced.Add(1)
+			drainMu.Lock()
+			drainErrs = append(drainErrs, fmt.Errorf("route %d: %w", index, drainErr))
+			drainMu.Unlock()
+		}
 		closeErr := server.Close()
 		servers[index] = nil
-		return errors.Join(drainErr, closeErr)
+		return closeErr
 	})
+	return closeResult{forced: int(forced.Load()), drainErr: errors.Join(drainErrs...), closeErr: closeErr}
 }
 
 func parallel(count, limit int, run func(int) error) error {
@@ -224,36 +372,7 @@ func parallel(count, limit int, run func(int) error) error {
 }
 
 func readResources() tailbench.Resources {
-	var memory runtime.MemStats
-	runtime.ReadMemStats(&memory)
-	return tailbench.Resources{
-		HeapAlloc:  memory.HeapAlloc,
-		Sys:        memory.Sys,
-		RSS:        currentRSS(),
-		Goroutines: runtime.NumGoroutine(),
-		OpenFDs:    openFDs(),
-	}
-}
-
-func currentRSS() int64 {
-	data, err := os.ReadFile("/proc/self/statm")
-	if err != nil {
-		return -1
-	}
-	var totalPages, residentPages int64
-	if _, err := fmt.Sscan(string(data), &totalPages, &residentPages); err != nil {
-		return -1
-	}
-	return residentPages * int64(os.Getpagesize())
-}
-
-func openFDs() int {
-	for _, path := range []string{"/proc/self/fd", "/dev/fd"} {
-		if entries, err := os.ReadDir(path); err == nil {
-			return len(entries)
-		}
-	}
-	return -1
+	return processmetrics.Read()
 }
 
 func writeJSON(w http.ResponseWriter, value any) {
