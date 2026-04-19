@@ -2,12 +2,14 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"strings"
@@ -164,6 +166,45 @@ func TestUnknownRouteErrorIsReportedOnceAndSanitized(t *testing.T) {
 
 	assertUnexpectedErrorReport(t, reporter, wrapped, underlying, "req_routefailure", OperationRoutesList)
 	assertSanitizedInternalProblem(t, response, "req_routefailure", "credential-do-not-report", wrapped.Error())
+}
+
+func TestDatabaseContentionIsTemporarilyUnavailable(t *testing.T) {
+	db, err := sql.Open(
+		"sqlite",
+		"file:"+filepath.ToSlash(filepath.Join(t.TempDir(), "contention.db"))+"?_busy_timeout=1&_txlock=immediate",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec("CREATE TABLE values_table (value INTEGER)"); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = tx.Rollback() })
+	if _, err := tx.Exec("INSERT INTO values_table VALUES (1)"); err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec("INSERT INTO values_table VALUES (2)")
+	if !state.IsDatabaseContention(err) {
+		t.Fatalf("expected database contention, got %v", err)
+	}
+
+	response := httptest.NewRecorder()
+	writeInternalError(response, "req_contention", err)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusServiceUnavailable)
+	}
+	var problem corev1.Problem
+	if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil {
+		t.Fatal(err)
+	}
+	if problem.Code != corev1.TemporarilyUnavailable {
+		t.Fatalf("problem code = %q, want %q", problem.Code, corev1.TemporarilyUnavailable)
+	}
 }
 
 func TestCertificateRateLimitResponse(t *testing.T) {
