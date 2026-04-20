@@ -36,11 +36,14 @@ an opaque route by SNI.
 - A Linux host with Docker Engine and Docker Compose v2.
 - A canonical route suffix such as `apps.example.com`.
 - An approved Tailscale DERP map JSON file smaller than 1 MiB. Its selected
-  region must have a unique `RegionCode` matching `TNLD_RELAY_PROFILE`.
+  region must be smaller than 64 KiB and have a unique `RegionCode` matching
+  `TNLD_RELAY_PROFILE`.
 - The matching `tnl` release on each client.
 
-Use the same reviewed relay map on the daemon and clients. Do not accept a map
-from the control API or another untrusted source.
+Install the reviewed relay map only on the daemon. Clients fetch the selected
+region from the control API. The endpoint is unauthenticated so workers can
+bootstrap; do not include credentials or unnecessary private metadata in the
+map.
 
 ## Configure Compose
 
@@ -114,9 +117,9 @@ Internet.
 
 ## Enroll A Client
 
-Install and verify a release archive as described in
-[Releases](releases.md). Copy the approved relay map to the client, then
-exchange the bootstrap token:
+Install and verify a release archive as described in [Releases](releases.md),
+then exchange the bootstrap token. The approved relay map remains on the daemon,
+and clients fetch its selected region from the core API:
 
 ```console
 export TNL_CORE_URL=https://core.example.com
@@ -129,9 +132,7 @@ unset TNL_BOOTSTRAP_TOKEN
 Publish one literal-loopback HTTP target:
 
 ```console
-tnl public http://127.0.0.1:3000 \
-  --host=demo \
-  --relay-map-file=derp-map.json
+tnl public http://127.0.0.1:3000 --host=demo
 ```
 
 The command remains in the foreground and prints readiness and shutdown events

@@ -62,10 +62,28 @@ func (c *Client) Capabilities(ctx context.Context) (corev1.Capabilities, error) 
 	return request[corev1.Capabilities](ctx, c, http.MethodGet, "/v1/capabilities", "", nil)
 }
 
+func (c *Client) RelayMap(ctx context.Context) ([]byte, error) {
+	data, err := request[json.RawMessage](ctx, c, http.MethodGet, "/v1/transport/relay-map", "", nil)
+	return []byte(data), err
+}
+
 func (c *Client) Exchange(ctx context.Context, token credentials.BootstrapToken) (corev1.TokenExchangeResponse, error) {
 	return request[corev1.TokenExchangeResponse](ctx, c, http.MethodPost, "/v1/auth/token", "", corev1.TokenExchangeRequest{
 		BootstrapToken: token.String(),
 	})
+}
+
+func (c *Client) ExchangeExternal(ctx context.Context, token string) (corev1.TokenExchangeResponse, error) {
+	return request[corev1.TokenExchangeResponse](ctx, c, http.MethodPost, "/v1/auth/external", "", corev1.ExternalTokenExchangeRequest{
+		AccessToken: token,
+	})
+}
+
+func (c *Client) RevokeAccessCredential(ctx context.Context, credentialID string) error {
+	_, err := request[struct{}](
+		ctx, c, http.MethodDelete, "/v1/auth/credentials/"+url.PathEscape(credentialID), c.access.String(), nil,
+	)
+	return err
 }
 
 func (c *Client) CreateRoute(ctx context.Context, requestBody corev1.CreateRouteRequest) (corev1.LeaseSetup, error) {

@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"sync"
@@ -24,6 +25,7 @@ import (
 	"github.com/0xcadams/tnl/internal/certificates"
 	"github.com/0xcadams/tnl/internal/config"
 	"github.com/0xcadams/tnl/internal/controltls"
+	"github.com/0xcadams/tnl/internal/coreclient"
 	"github.com/0xcadams/tnl/internal/credentials"
 	"github.com/0xcadams/tnl/internal/ingress"
 	"github.com/0xcadams/tnl/internal/observability"
@@ -137,7 +139,28 @@ func (d *daemon) startCore(
 	cfg config.TNLD,
 	metrics *observability.Metrics,
 ) (<-chan error, <-chan error, error) {
-	authService, err := auth.NewService(d.db, credentials.BootstrapToken(cfg.BootstrapToken))
+	profiles, err := relayProfiles(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	relayMap, err := config.SelectedRelayMap(profiles, cfg.RelayProfile)
+	if err != nil {
+		return nil, nil, err
+	}
+	var externalVerifier auth.ExternalVerifier
+	if cfg.ExternalAuthEnabled() {
+		externalVerifier, err = auth.NewIntrospectionVerifier(auth.IntrospectionConfig{
+			URL: cfg.ExternalAuthIntrospectURL, Issuer: cfg.ExternalAuthIssuer,
+			RequiredScope: cfg.ExternalAuthScope,
+			WorkloadToken: credentials.WorkloadToken(cfg.ExternalAuthToken),
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	authService, err := auth.NewServiceWithExternal(
+		d.db, credentials.BootstrapToken(cfg.BootstrapToken), externalVerifier,
+	)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -195,10 +218,6 @@ func (d *daemon) startCore(
 
 	var hub *workersession.Hub
 	if cfg.Mode == config.TNLDModeStandalone {
-		profiles, err := relayProfiles(cfg)
-		if err != nil {
-			return nil, nil, err
-		}
 		owner, err := worker.NewEngine(worker.EngineConfig{
 			Capacity: cfg.WorkerCapacity, Profiles: profiles, Logf: log.Printf,
 			OnTailcatFailure: metrics.IncTailcatFailure,
@@ -242,11 +261,11 @@ func (d *daemon) startCore(
 	}
 	apiMetrics := coreAPIObserver{metrics: metrics}
 	handler := api.NewHandlerWithServicesAndConfig(
-		capabilities(cfg.RouteSuffix, cfg.RelayProfile, cfg.ACMEProfile, cfg.ACMEEnabled()),
+		capabilities(cfg),
 		authService,
 		d.coordinator,
 		certificateService,
-		api.HandlerConfig{Observer: apiMetrics, ErrorReporter: apiMetrics},
+		api.HandlerConfig{Observer: apiMetrics, ErrorReporter: apiMetrics, RelayMap: relayMap},
 	)
 	if hub != nil {
 		mux := http.NewServeMux()
@@ -381,7 +400,15 @@ func (c *certificateControl) Installed(
 }
 
 func startWorker(ctx context.Context, cfg config.TNLD, metrics *observability.Metrics) (<-chan error, error) {
-	profiles, err := relayProfiles(cfg)
+	workerURL, err := url.Parse(cfg.WorkerURL)
+	if err != nil {
+		return nil, err
+	}
+	coreScheme := "https"
+	if workerURL.Scheme == "ws" {
+		coreScheme = "http"
+	}
+	core, err := coreclient.New((&url.URL{Scheme: coreScheme, Host: workerURL.Host}).String(), nil, "")
 	if err != nil {
 		return nil, err
 	}
@@ -389,22 +416,39 @@ func startWorker(ctx context.Context, cfg config.TNLD, metrics *observability.Me
 	if _, err := credentials.ParseWorkerToken(token); err != nil {
 		return nil, fmt.Errorf("configure worker token: %w", err)
 	}
-	// Each session gets a fresh engine because disconnect closes its owner.
-	newOwner := func() (worker.RouteOwner, error) {
-		return worker.NewEngine(worker.EngineConfig{
-			Capacity: cfg.WorkerCapacity, Profiles: profiles, Logf: log.Printf,
-			OnTailcatFailure: metrics.IncTailcatFailure,
-		})
-	}
-	owner, err := newOwner()
-	if err != nil {
-		return nil, err
-	}
 	done := make(chan error, 1)
 	go func() {
 		defer close(done)
 		backoff := workerReconnectMin
 		for {
+			relayMap, relayErr := core.RelayMap(ctx)
+			if relayErr != nil {
+				if ctx.Err() != nil {
+					done <- nil
+					return
+				}
+				report(fmt.Errorf("read edge relay map: %w", relayErr))
+				if !waitWorkerReconnect(ctx, backoff) {
+					done <- nil
+					return
+				}
+				backoff = min(backoff*2, workerReconnectMax)
+				continue
+			}
+			profiles, relayErr := config.DecodeRelayProfiles(relayMap)
+			if relayErr != nil {
+				done <- relayErr
+				return
+			}
+			// Each session gets a fresh map and engine because disconnect closes its owner.
+			owner, ownerErr := worker.NewEngine(worker.EngineConfig{
+				Capacity: cfg.WorkerCapacity, Profiles: profiles, Logf: log.Printf,
+				OnTailcatFailure: metrics.IncTailcatFailure,
+			})
+			if ownerErr != nil {
+				done <- ownerErr
+				return
+			}
 			sessionCtx, cancelSession := context.WithCancel(ctx)
 			go monitorWorker(sessionCtx, owner, metrics)
 			started := time.Now()
@@ -433,23 +477,25 @@ func startWorker(ctx context.Context, cfg config.TNLD, metrics *observability.Me
 			if time.Since(started) >= workerReconnectReset {
 				backoff = workerReconnectMin
 			}
-			timer := time.NewTimer(backoff)
-			select {
-			case <-ctx.Done():
-				_ = timer.Stop()
+			if !waitWorkerReconnect(ctx, backoff) {
 				done <- nil
 				return
-			case <-timer.C:
 			}
 			backoff = min(backoff*2, workerReconnectMax)
-			owner, err = newOwner()
-			if err != nil {
-				done <- err
-				return
-			}
 		}
 	}()
 	return done, nil
+}
+
+func waitWorkerReconnect(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 func (d *daemon) shutdown(timeout time.Duration) error {
@@ -495,23 +541,30 @@ func relayProfiles(cfg config.TNLD) (map[string]*tailcfg.DERPRegion, error) {
 	if err != nil {
 		return nil, err
 	}
-	if cfg.Mode == config.TNLDModeStandalone && profiles[cfg.RelayProfile] == nil {
+	if profiles[cfg.RelayProfile] == nil {
 		return nil, fmt.Errorf("relay profile %q is absent from the relay map", cfg.RelayProfile)
 	}
 	return profiles, nil
 }
 
-func capabilities(routeSuffix, relayProfile, acmeProfile string, acmeEnabled bool) corev1.Capabilities {
+func capabilities(cfg config.TNLD) corev1.Capabilities {
 	result := corev1.Capabilities{
 		ProtocolVersions:      []corev1.CapabilitiesProtocolVersions{corev1.CapabilitiesProtocolVersionsN1},
 		HostnameAuthorization: []corev1.CapabilitiesHostnameAuthorization{corev1.LocalClaim},
-		LocalClaim:            &corev1.LocalClaimCapabilities{Suffix: routeSuffix},
+		LocalClaim:            &corev1.LocalClaimCapabilities{Suffix: cfg.RouteSuffix},
 		Transport: corev1.TransportCapabilities{
-			Type: corev1.Tailcat, Version: corev1.TransportCapabilitiesVersionN1, RelayProfile: relayProfile,
+			Type: corev1.Tailcat, Version: corev1.TransportCapabilitiesVersionN1, RelayProfile: cfg.RelayProfile,
 		},
 	}
-	if acmeEnabled {
-		result.Acme = &corev1.AcmeCapabilities{Profile: acmeProfile}
+	if cfg.ExternalAuthEnabled() {
+		result.DeviceAuthorization = &corev1.DeviceAuthorizationCapabilities{
+			Issuer: cfg.ExternalAuthIssuer, ClientId: cfg.ExternalAuthClientID,
+			Scope: cfg.ExternalAuthScope, DeviceAuthorizationEndpoint: cfg.ExternalAuthDeviceURL,
+			TokenEndpoint: cfg.ExternalAuthTokenURL,
+		}
+	}
+	if cfg.ACMEEnabled() {
+		result.Acme = &corev1.AcmeCapabilities{Profile: cfg.ACMEProfile}
 	}
 	return result
 }

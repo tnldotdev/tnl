@@ -54,9 +54,22 @@ metrics, and backup requirements.
 
 ## Publish
 
-Exchange the deployment bootstrap token on a client, then remove it from the
-client environment. Keep the returned access token and the approved relay map
-private to that client:
+A core that advertises browser login can save a revocable access credential in
+the client's private state directory:
+
+```console
+export TNL_CORE_URL=https://core.example.com
+tnl auth login
+tnl public 3000 --host=demo
+```
+
+The command prints the account URL and one-time code to approve. Use
+`tnl auth logout` to revoke and remove the saved credential.
+
+For a self-hosted core without browser login, exchange its deployment bootstrap
+token on the client, then remove it from the environment. Keep the returned
+access token private to that client. In both flows, the client fetches the
+deployment's selected relay region from the core API:
 
 ```console
 export TNL_CORE_URL=https://core.example.com
@@ -65,13 +78,13 @@ export TNL_BOOTSTRAP_TOKEN
 export TNL_ACCESS_TOKEN="$(tnl auth exchange)"
 unset TNL_BOOTSTRAP_TOKEN
 
-tnl public 3000 \
-  --host=demo \
-  --relay-map-file=derp-map.json
+tnl public 3000 --host=demo
 ```
 
-Access tokens expire after 30 days. Re-exchange the bootstrap token before a
-later client restart or hostname administration operation when necessary.
+Bootstrap-issued access tokens expire after 30 days. Browser-issued credentials
+expire at the earlier of 30 days and the external account session. Authenticate
+again before a later client restart or hostname administration operation when
+necessary.
 
 With automatic certificates enabled, the route becomes available at
 `https://demo.apps.example.com`. Omit `--host` to allocate a stable random name

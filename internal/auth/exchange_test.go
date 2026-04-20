@@ -139,6 +139,94 @@ func TestTokenExchangeConcurrentFirstUse(t *testing.T) {
 	}
 }
 
+func TestExternalExchangeUsesStablePrincipalAndBoundsExpiry(t *testing.T) {
+	db, err := state.Open(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	now := time.Date(2026, time.August, 30, 12, 0, 0, 0, time.UTC)
+	identity := ExternalIdentity{
+		Issuer: "https://account.example", Subject: "user-123", ExpiresAt: now.Add(60 * 24 * time.Hour),
+	}
+	service, err := NewServiceWithExternal(db, "", externalVerifierFunc(func(context.Context, string) (ExternalIdentity, error) {
+		return identity, nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.now = func() time.Time { return now }
+
+	issued, err := service.ExchangeExternal(context.Background(), "device-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if issued.ExpiresAt != now.Add(AccessTokenLifetime) {
+		t.Fatalf("expiry = %v, want %v", issued.ExpiresAt, now.Add(AccessTokenLifetime))
+	}
+	principal, err := service.Authenticate(context.Background(), issued.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(principal.ID, "principal_external_") || principal.DisplayName != "" || principal.Email != "" {
+		t.Fatalf("principal = %#v", principal)
+	}
+	if repeated, err := service.ExchangeExternal(context.Background(), "device-session"); !errors.Is(err, ErrUnauthenticated) || repeated != (IssuedAccessToken{}) {
+		t.Fatalf("repeated external exchange = %#v, error = %v", repeated, err)
+	}
+}
+
+func TestExternalExchangeConsumesBearerOnceAcrossConcurrentRequests(t *testing.T) {
+	db, err := state.Open(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	now := time.Date(2026, time.August, 30, 12, 0, 0, 0, time.UTC)
+	service, err := NewServiceWithExternal(db, "", externalVerifierFunc(func(context.Context, string) (ExternalIdentity, error) {
+		return ExternalIdentity{
+			Issuer: "https://account.example", Subject: "user-123", ExpiresAt: now.Add(time.Hour),
+		}, nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.now = func() time.Time { return now }
+
+	const attempts = 8
+	results := make(chan error, attempts)
+	for range attempts {
+		go func() {
+			_, err := service.ExchangeExternal(context.Background(), "one-time-device-session")
+			results <- err
+		}()
+	}
+	succeeded := 0
+	for range attempts {
+		err := <-results
+		if err == nil {
+			succeeded++
+			continue
+		}
+		if !errors.Is(err, ErrUnauthenticated) {
+			t.Fatalf("exchange error = %v", err)
+		}
+	}
+	if succeeded != 1 {
+		t.Fatalf("successful exchanges = %d, want 1", succeeded)
+	}
+	_, accessCredentials := stateCounts(t, db)
+	if accessCredentials != 1 {
+		t.Fatalf("access credentials = %d, want 1", accessCredentials)
+	}
+}
+
+type externalVerifierFunc func(context.Context, string) (ExternalIdentity, error)
+
+func (f externalVerifierFunc) Verify(ctx context.Context, token string) (ExternalIdentity, error) {
+	return f(ctx, token)
+}
+
 func newTestService(t *testing.T) (*sql.DB, credentials.BootstrapToken, *Service) {
 	t.Helper()
 	db, err := state.Open(context.Background(), t.TempDir())

@@ -212,6 +212,7 @@ launch_edge() {
     --port 443:4443/tcp \
     --file-local "/etc/tnl/control.crt=${temp_dir}/control.crt" \
     --file-local "/etc/tnl/control.key=${temp_dir}/control.key" \
+    --file-local "/etc/tnl/relay.json=${temp_dir}/relay.json" \
     --env TNLD_MODE=edge \
     --env TNLD_STATE_DIR=/tmp/tnl-state \
     --env 'TNLD_METRICS_LISTEN=[::]:9090' \
@@ -223,6 +224,7 @@ launch_edge() {
     --env TNLD_CONTROL_CERT_FILE=/etc/tnl/control.crt \
     --env TNLD_CONTROL_KEY_FILE=/etc/tnl/control.key \
     --env "TNLD_BOOTSTRAP_TOKEN=${bootstrap_token}" \
+    --env TNLD_RELAY_MAP_FILE=/etc/tnl/relay.json \
     --env "TNLD_RELAY_PROFILE=${relay_profile}" \
     --env "TNLD_WORKER_TOKEN=${worker_token}" \
     --env "TNL_NOFILE_LIMIT=${nofile_limit}"
@@ -236,12 +238,10 @@ launch_workers() {
       --app "${app}" --name "${name}" --region "${region}" --vm-size "${worker_size}" \
       --detach --restart no \
       --file-local "/etc/tnl/control-ca.crt=${temp_dir}/control-ca.crt" \
-      --file-local "/etc/tnl/relay.json=${temp_dir}/relay.json" \
       --env TNLD_MODE=worker \
       --env 'TNLD_METRICS_LISTEN=[::]:9090' \
       --env "TNLD_WORKER_URL=wss://${app}.fly.dev/internal/v1/worker" \
       --env "TNLD_WORKER_TOKEN=${worker_token}" \
-      --env TNLD_RELAY_MAP_FILE=/etc/tnl/relay.json \
       --env "TNLD_WORKER_CAPACITY=${worker_capacity}" \
       --env SSL_CERT_FILE=/etc/tnl/control-ca.crt \
       --env "TNL_NOFILE_LIMIT=${nofile_limit}" \
@@ -302,7 +302,6 @@ run_tier() {
       --env "TNL_BENCH_BOOTSTRAP_TOKEN=${bootstrap_token}" \
       --env TNL_BENCH_CONTROL_CA_FILE=/etc/tnl/control-ca.crt \
       --env "TNL_BENCH_PUBLIC_ADDRESS=${app}.fly.dev:443" \
-      --env TNL_BENCH_RELAY_MAP_FILE=/etc/tnl/relay.json \
       --env "TNL_BENCH_HOSTNAME_SUFFIX=${run_id}.bench.test" \
       --env "TNL_BENCH_METRICS_URLS=${metrics_csv}" \
       --env "TNL_BENCH_EDGE_METRICS_URL=${edge_metrics_url}" \

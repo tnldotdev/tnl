@@ -246,6 +246,7 @@ type AcquireLeaseRequest struct {
 type Capabilities struct {
 	Acme                  *AcmeCapabilities                   `json:"acme,omitempty"`
 	AnonymousPublic       bool                                `json:"anonymous_public"`
+	DeviceAuthorization   *DeviceAuthorizationCapabilities    `json:"device_authorization,omitempty"`
 	HostnameAuthorization []CapabilitiesHostnameAuthorization `json:"hostname_authorization"`
 	LocalClaim            *LocalClaimCapabilities             `json:"local_claim,omitempty"`
 	ProtocolVersions      []CapabilitiesProtocolVersions      `json:"protocol_versions"`
@@ -316,6 +317,20 @@ type CreateRouteRequest struct {
 
 // CredentialID defines model for CredentialID.
 type CredentialID = string
+
+// DeviceAuthorizationCapabilities defines model for DeviceAuthorizationCapabilities.
+type DeviceAuthorizationCapabilities struct {
+	ClientId                    string `json:"client_id"`
+	DeviceAuthorizationEndpoint string `json:"device_authorization_endpoint"`
+	Issuer                      string `json:"issuer"`
+	Scope                       string `json:"scope"`
+	TokenEndpoint               string `json:"token_endpoint"`
+}
+
+// ExternalTokenExchangeRequest defines model for ExternalTokenExchangeRequest.
+type ExternalTokenExchangeRequest struct {
+	AccessToken string `json:"access_token"`
+}
 
 // HeartbeatResponse defines model for HeartbeatResponse.
 type HeartbeatResponse struct {
@@ -459,6 +474,9 @@ type ListHostnameClaimsParams struct {
 type CreateHostnameClaimParams struct {
 	IdempotencyKey string `json:"Idempotency-Key"`
 }
+
+// ExchangeExternalTokenJSONRequestBody defines body for ExchangeExternalToken for application/json ContentType.
+type ExchangeExternalTokenJSONRequestBody = ExternalTokenExchangeRequest
 
 // ExchangeBootstrapTokenJSONRequestBody defines body for ExchangeBootstrapToken for application/json ContentType.
 type ExchangeBootstrapTokenJSONRequestBody = TokenExchangeRequest

@@ -30,6 +30,7 @@ import (
 	"github.com/0xcadams/tnl/internal/worker"
 	"github.com/0xcadams/tnl/internal/workersession"
 	"github.com/0xcadams/tnl/pkg/protocol/corev1"
+	"github.com/0xcadams/tnl/pkg/protocol/workerv1"
 	"tailscale.com/tailcfg"
 )
 
@@ -166,12 +167,6 @@ func TestWorkerReconnectsWithFreshOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewServer(hub)
-	defer server.Close()
-	defer hub.Close()
-
-	directory := t.TempDir()
-	relayFile := filepath.Join(directory, "relay.json")
 	relayData, err := json.Marshal(tailcfg.DERPMap{Regions: map[int]*tailcfg.DERPRegion{1: {
 		RegionID: 1, RegionCode: "test", Nodes: []*tailcfg.DERPNode{{
 			Name: "test", RegionID: 1, HostName: "derp.invalid", DERPPort: 443,
@@ -180,14 +175,29 @@ func TestWorkerReconnectsWithFreshOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(relayFile, relayData, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	mux := http.NewServeMux()
+	mux.Handle(workerv1.Endpoint, hub)
+	var relayRequests atomic.Int32
+	mux.HandleFunc("/v1/transport/relay-map", func(response http.ResponseWriter, _ *http.Request) {
+		if relayRequests.Add(1) == 1 {
+			response.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write(relayData)
+	})
+	server := httptest.NewTLSServer(mux)
+	defer server.Close()
+	defer hub.Close()
+	previousTransport := http.DefaultTransport
+	http.DefaultTransport = server.Client().Transport
+	t.Cleanup(func() { http.DefaultTransport = previousTransport })
+
 	ctx, cancel := context.WithCancel(context.Background())
 	done, err := startWorker(ctx, config.TNLD{
-		Mode: config.TNLDModeWorker, WorkerURL: "ws" + strings.TrimPrefix(server.URL, "http"),
+		Mode: config.TNLDModeWorker, WorkerURL: "wss" + strings.TrimPrefix(server.URL, "https") + workerv1.Endpoint,
 		WorkerToken: token.String(), WorkerCapacity: 2, WorkerStreamLimit: 10,
-		RelayMapFile: relayFile, DrainTimeout: time.Second,
+		DrainTimeout: time.Second,
 	}, observability.New("worker"))
 	if err != nil {
 		cancel()
@@ -200,6 +210,9 @@ func TestWorkerReconnectsWithFreshOwner(t *testing.T) {
 			cancel()
 			t.Fatal("worker did not reconnect")
 		}
+	}
+	if relayRequests.Load() < 3 {
+		t.Fatalf("relay map requests = %d, want at least 3", relayRequests.Load())
 	}
 	cancel()
 	select {

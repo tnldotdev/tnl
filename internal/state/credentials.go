@@ -11,8 +11,12 @@ import (
 	"github.com/0xcadams/tnl/internal/credentials"
 )
 
-// ErrAccessCredentialNotFound indicates that no credential matched the requested owner and ID.
-var ErrAccessCredentialNotFound = errors.New("state: access credential not found")
+var (
+	// ErrAccessCredentialNotFound indicates that no credential matched the requested owner and ID.
+	ErrAccessCredentialNotFound = errors.New("state: access credential not found")
+	// ErrExternalTokenAlreadyExchanged indicates that an upstream bearer was already consumed.
+	ErrExternalTokenAlreadyExchanged = errors.New("state: external token already exchanged")
+)
 
 // Principal is a standalone core identity.
 type Principal struct {
@@ -30,6 +34,36 @@ func CreateAccessCredential(
 	secretHash credentials.SecretHash,
 	issuedAt, expiresAt time.Time,
 ) error {
+	return createAccessCredential(ctx, db, principal, credentialID, secretHash, issuedAt, expiresAt, nil)
+}
+
+// CreateExternalAccessCredential consumes one upstream bearer and stores its access credential atomically.
+func CreateExternalAccessCredential(
+	ctx context.Context,
+	db *sql.DB,
+	principal Principal,
+	credentialID credentials.CredentialID,
+	secretHash credentials.SecretHash,
+	issuedAt, expiresAt time.Time,
+	externalTokenHash []byte,
+) error {
+	if len(externalTokenHash) != 32 {
+		return errors.New("state: external token hash is invalid")
+	}
+	return createAccessCredential(
+		ctx, db, principal, credentialID, secretHash, issuedAt, expiresAt, externalTokenHash,
+	)
+}
+
+func createAccessCredential(
+	ctx context.Context,
+	db *sql.DB,
+	principal Principal,
+	credentialID credentials.CredentialID,
+	secretHash credentials.SecretHash,
+	issuedAt, expiresAt time.Time,
+	externalTokenHash []byte,
+) error {
 	if strings.TrimSpace(principal.ID) == "" || strings.TrimSpace(credentialID.String()) == "" {
 		return errors.New("state: principal and credential IDs are required")
 	}
@@ -45,9 +79,29 @@ func CreateAccessCredential(
 
 	if _, err := tx.ExecContext(ctx, `INSERT INTO principals
 		(id, display_name, email, created_at) VALUES (?, ?, ?, ?)
-		ON CONFLICT (id) DO NOTHING`,
+		ON CONFLICT (id) DO UPDATE SET display_name = excluded.display_name, email = excluded.email`,
 		principal.ID, principal.DisplayName, principal.Email, issuedAt.Unix()); err != nil {
 		return fmt.Errorf("state: ensure principal: %w", err)
+	}
+	if externalTokenHash != nil {
+		if _, err := tx.ExecContext(ctx,
+			"DELETE FROM external_token_exchanges WHERE expires_at <= ?", issuedAt.Unix(),
+		); err != nil {
+			return fmt.Errorf("state: expire external token exchanges: %w", err)
+		}
+		result, err := tx.ExecContext(ctx, `INSERT INTO external_token_exchanges
+			(token_hash, consumed_at, expires_at) VALUES (?, ?, ?)
+			ON CONFLICT (token_hash) DO NOTHING`, externalTokenHash, issuedAt.Unix(), expiresAt.Unix())
+		if err != nil {
+			return fmt.Errorf("state: consume external token: %w", err)
+		}
+		inserted, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("state: count consumed external tokens: %w", err)
+		}
+		if inserted == 0 {
+			return ErrExternalTokenAlreadyExchanged
+		}
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO access_credentials
 		(id, principal_id, secret_hash, created_at, expires_at)

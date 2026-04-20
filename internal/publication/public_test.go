@@ -157,6 +157,9 @@ func TestHeartbeatLeaseStartsImmediately(t *testing.T) {
 }
 
 func TestRunPublicReacquiresAfterHeartbeatFence(t *testing.T) {
+	previousRelayCheck := relayCheckInterval
+	relayCheckInterval = time.Millisecond
+	t.Cleanup(func() { relayCheckInterval = previousRelayCheck })
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -185,17 +188,28 @@ func TestRunPublicReacquiresAfterHeartbeatFence(t *testing.T) {
 		createErrors:    []error{nil},
 		createSetups:    []corev1.LeaseSetup{setup(1, firstLease)},
 		acquired:        setup(2, secondLease),
-		heartbeatErrors: []error{coreclient.ErrStateConflict, nil},
+		heartbeatErrors: []error{nil, nil},
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	var generations []uint64
+	profileLoads := 0
 	err = RunPublic(ctx, PublicConfig{
 		Core: core, Hostname: "route.example", Target: "http://" + listener.Addr().String(),
 		Certificate:  routeTestCertificate(t, "route.example"),
 		RelayProfile: "test", Profiles: map[string]*tailcfg.DERPRegion{"test": {
 			RegionID: 1, Nodes: []*tailcfg.DERPNode{{RegionID: 1, HostName: "derp.example"}},
 		}},
+		LoadProfiles: func(context.Context) (map[string]*tailcfg.DERPRegion, error) {
+			profileLoads++
+			hostname := "old-derp.example"
+			if profileLoads > 1 {
+				hostname = "new-derp.example"
+			}
+			return map[string]*tailcfg.DERPRegion{"test": {
+				RegionID: 1, Nodes: []*tailcfg.DERPNode{{RegionID: 1, HostName: hostname}},
+			}}, nil
+		},
 		DrainTime: time.Millisecond,
 		OnLeaseReady: func(_ string, generation uint64) error {
 			generations = append(generations, generation)
@@ -208,8 +222,9 @@ func TestRunPublicReacquiresAfterHeartbeatFence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if core.acquireCalls != 1 || len(generations) != 1 || generations[0] != 2 {
-		t.Fatalf("acquire calls = %d, generations = %v", core.acquireCalls, generations)
+	if core.acquireCalls != 1 || profileLoads < 3 || len(generations) != 2 ||
+		generations[0] != 1 || generations[1] != 2 {
+		t.Fatalf("acquire calls = %d, profile loads = %d, generations = %v", core.acquireCalls, profileLoads, generations)
 	}
 }
 
