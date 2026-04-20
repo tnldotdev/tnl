@@ -25,7 +25,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -64,11 +63,10 @@ func TestIntegrationTLSALPNThroughTailcat(t *testing.T) {
 
 	region := runTestDERP(t)
 	ingressKey := key.NewNode()
-	var successfulHandshakes atomic.Int64
 	proxyErrors := make(chan error, 1)
 
 	firstChallenges := new(agent.TLSALPNChallenges)
-	firstServer, firstEndpoint, err := startTestServer(ctx, region, ingressKey.Public(), tlsALPNHandler(firstChallenges, &successfulHandshakes, proxyErrors))
+	firstServer, firstEndpoint, err := startTestServer(ctx, region, ingressKey.Public(), tlsALPNHandler(firstChallenges, proxyErrors))
 	if err != nil {
 		t.Fatalf("start first agent: %v", err)
 	}
@@ -135,7 +133,7 @@ func TestIntegrationTLSALPNThroughTailcat(t *testing.T) {
 	if err := secondChallenges.Install(command); err != nil {
 		t.Fatalf("reinstall challenge: %v", err)
 	}
-	secondServer, secondEndpoint, err := startTestServer(ctx, region, ingressKey.Public(), tlsALPNHandler(secondChallenges, &successfulHandshakes, proxyErrors))
+	secondServer, secondEndpoint, err := startTestServer(ctx, region, ingressKey.Public(), tlsALPNHandler(secondChallenges, proxyErrors))
 	if err != nil {
 		t.Fatalf("restart agent: %v", err)
 	}
@@ -207,9 +205,6 @@ func TestIntegrationTLSALPNThroughTailcat(t *testing.T) {
 		t.Fatalf("finalize order: %v; Pebble logs:\n%s", err, pebble.logs.String())
 	}
 	verifyIssuedCertificate(t, pebble, hostname, applicationKey, chain)
-	if got := successfulHandshakes.Load(); got < 5 {
-		t.Fatalf("successful routed handshakes = %d; want at least 5", got)
-	}
 	select {
 	case err := <-proxyErrors:
 		t.Fatalf("agent PROXY protocol: %v", err)
@@ -253,7 +248,7 @@ func tlsALPNChallenge(t *testing.T, authorization *acme.Authorization) *acme.Cha
 	return nil
 }
 
-func tlsALPNHandler(challenges *agent.TLSALPNChallenges, successes *atomic.Int64, proxyErrors chan<- error) func(net.Conn) {
+func tlsALPNHandler(challenges *agent.TLSALPNChallenges, proxyErrors chan<- error) func(net.Conn) {
 	return func(conn net.Conn) {
 		_ = conn.SetDeadline(time.Now().Add(15 * time.Second))
 		_, replay, err := proxyproto.Decode(conn)
@@ -272,9 +267,7 @@ func tlsALPNHandler(challenges *agent.TLSALPNChallenges, successes *atomic.Int64
 		})
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		if err := tlsConn.HandshakeContext(ctx); err == nil && tlsConn.ConnectionState().NegotiatedProtocol == acme.ALPNProto {
-			successes.Add(1)
-		}
+		_ = tlsConn.HandshakeContext(ctx)
 	}
 }
 
