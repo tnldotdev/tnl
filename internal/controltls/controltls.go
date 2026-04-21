@@ -5,16 +5,13 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"path/filepath"
 	"sync"
-	"time"
 
 	"github.com/0xcadams/tnl/internal/naming"
 	"golang.org/x/crypto/acme"
@@ -27,41 +24,14 @@ type Config struct {
 	DirectoryURL string
 	Email        string
 	AcceptTerms  bool
-	CertFile     string
-	KeyFile      string
 	HTTPClient   *http.Client
 }
 
-// New returns control TLS configured for either a manual keypair or managed ACME.
+// New returns control TLS configured with managed ACME.
 func New(config Config) (*tls.Config, error) {
 	hostname, err := naming.CanonicalizeHostname(config.Hostname)
 	if err != nil || hostname != config.Hostname {
 		return nil, errors.New("controltls: hostname must be canonical")
-	}
-	if config.CertFile == "" != (config.KeyFile == "") {
-		return nil, errors.New("controltls: certificate and key files must be configured together")
-	}
-	if config.CertFile != "" {
-		certificate, err := tls.LoadX509KeyPair(config.CertFile, config.KeyFile)
-		if err != nil {
-			return nil, fmt.Errorf("controltls: load certificate: %w", err)
-		}
-		leaf, err := x509.ParseCertificate(certificate.Certificate[0])
-		if err != nil {
-			return nil, fmt.Errorf("controltls: parse certificate: %w", err)
-		}
-		if err := leaf.VerifyHostname(hostname); err != nil {
-			return nil, fmt.Errorf("controltls: certificate does not match hostname: %w", err)
-		}
-		if leaf.NotBefore.After(time.Now().Add(5*time.Minute)) || !leaf.NotAfter.After(time.Now()) {
-			return nil, errors.New("controltls: certificate is not currently valid")
-		}
-		certificate.Leaf = leaf
-		return &tls.Config{
-			Certificates: []tls.Certificate{certificate},
-			MinVersion:   tls.VersionTLS13,
-			NextProtos:   []string{"h2", "http/1.1"},
-		}, nil
 	}
 	if config.StateDir == "" || config.DirectoryURL == "" || config.Email == "" {
 		return nil, errors.New("controltls: state, ACME directory, and email are required")

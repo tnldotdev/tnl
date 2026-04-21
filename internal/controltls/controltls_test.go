@@ -2,21 +2,12 @@ package controltls
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/tls"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
 	"errors"
 	"io"
-	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -82,30 +73,6 @@ func TestACMEHTTPClientRestoresOrderLocation(t *testing.T) {
 	}
 }
 
-func TestManualCertificate(t *testing.T) {
-	directory := t.TempDir()
-	certificateFile, keyFile := writeCertificate(t, directory, "control.example")
-	config, err := New(Config{
-		Hostname: "control.example", CertFile: certificateFile, KeyFile: keyFile,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(config.Certificates) != 1 || config.Certificates[0].Leaf == nil {
-		t.Fatal("manual certificate was not loaded")
-	}
-}
-
-func TestManualCertificateRejectsWrongHostname(t *testing.T) {
-	directory := t.TempDir()
-	certificateFile, keyFile := writeCertificate(t, directory, "other.example")
-	if _, err := New(Config{
-		Hostname: "control.example", CertFile: certificateFile, KeyFile: keyFile,
-	}); err == nil {
-		t.Fatal("New succeeded")
-	}
-}
-
 func TestIntegrationAutomaticControlCertificate(t *testing.T) {
 	pebblePath := integrationtest.RequirePebble(t)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -162,34 +129,4 @@ func TestIntegrationAutomaticControlCertificate(t *testing.T) {
 	if response.StatusCode != http.StatusOK || string(body) != "ready" {
 		t.Fatalf("control response = %s %q", response.Status, body)
 	}
-}
-
-func writeCertificate(t *testing.T, directory, hostname string) (string, string) {
-	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	template := &x509.Certificate{
-		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: hostname}, DNSNames: []string{hostname},
-		NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(time.Hour),
-		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-	}
-	certificate, err := x509.CreateCertificate(rand.Reader, template, template, key.Public(), key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	encodedKey, err := x509.MarshalPKCS8PrivateKey(key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	certificateFile := filepath.Join(directory, "control.crt")
-	keyFile := filepath.Join(directory, "control.key")
-	if err := os.WriteFile(certificateFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate}), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: encodedKey}), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return certificateFile, keyFile
 }
