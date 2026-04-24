@@ -122,35 +122,26 @@ func TestParseTNLDRejectsInvalidInput(t *testing.T) {
 	}
 }
 
-func TestTNLDValidateExternalAuthentication(t *testing.T) {
-	workloadToken, _, err := credentials.NewWorkloadToken()
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestTNLDValidateOIDC(t *testing.T) {
 	config, err := ParseTNLD([]string{"--state-dir", "/state"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	config.ExternalAuthIssuer = "https://account.example"
-	config.ExternalAuthDeviceURL = "https://account.example/api/auth/device/code"
-	config.ExternalAuthTokenURL = "https://account.example/api/auth/device/token"
-	config.ExternalAuthClientID = "tnl-cli"
-	config.ExternalAuthScope = "tnl:core"
-	config.ExternalAuthIntrospectURL = "https://account.example/v1/auth/introspect"
-	config.ExternalAuthToken = workloadToken.String()
+	config.OIDCIssuer = "https://account.example"
+	config.OIDCClientID = "tnl-cli"
 	if err := config.Validate(); err != nil {
-		t.Fatalf("valid external authentication: %v", err)
+		t.Fatalf("valid OIDC: %v", err)
 	}
 
-	foreignEndpoint := config
-	foreignEndpoint.ExternalAuthIntrospectURL = "https://attacker.example/introspect"
-	if err := foreignEndpoint.Validate(); err == nil {
-		t.Fatal("foreign introspection origin accepted")
+	incomplete := config
+	incomplete.OIDCClientID = ""
+	if err := incomplete.Validate(); err == nil {
+		t.Fatal("incomplete OIDC configuration accepted")
 	}
-	multipleScopes := config
-	multipleScopes.ExternalAuthScope = "openid tnl:core"
-	if err := multipleScopes.Validate(); err == nil {
-		t.Fatal("multiple external scopes accepted as one required scope")
+	invalidIssuer := config
+	invalidIssuer.OIDCIssuer = "http://account.example"
+	if err := invalidIssuer.Validate(); err == nil {
+		t.Fatal("insecure OIDC issuer accepted")
 	}
 }
 
@@ -166,8 +157,8 @@ func TestTNLDValidateACME(t *testing.T) {
 	if err := valid.Validate(); err != nil {
 		t.Fatalf("valid ACME config: %v", err)
 	}
-	if got := valid.ControlHostname(); got != "core.example.com" {
-		t.Fatalf("ControlHostname = %q", got)
+	if got := valid.ServerHostname(); got != "tnl.example.com" {
+		t.Fatalf("ServerHostname = %q", got)
 	}
 	if got := valid.RouteSuffix(); got != "apps.example.com" {
 		t.Fatalf("RouteSuffix = %q", got)

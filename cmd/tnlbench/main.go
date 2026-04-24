@@ -24,11 +24,11 @@ import (
 	"time"
 
 	"github.com/0xcadams/tnl/internal/config"
-	"github.com/0xcadams/tnl/internal/coreclient"
 	"github.com/0xcadams/tnl/internal/credentials"
 	"github.com/0xcadams/tnl/internal/naming"
 	"github.com/0xcadams/tnl/internal/publication"
-	"github.com/0xcadams/tnl/pkg/protocol/corev1"
+	"github.com/0xcadams/tnl/internal/serverclient"
+	"github.com/0xcadams/tnl/pkg/protocol/serverv1"
 	"github.com/alecthomas/kong"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/logger"
@@ -36,9 +36,9 @@ import (
 
 type cli struct {
 	Topology       string        `name:"topology" env:"TNL_BENCH_TOPOLOGY" enum:"single-node,ha" required:"" help:"Deployment topology under test."`
-	CoreURL        string        `name:"core-url" env:"TNL_BENCH_CORE_URL" required:"" help:"Core HTTPS origin."`
-	BootstrapToken string        `name:"bootstrap-token" env:"TNL_BENCH_BOOTSTRAP_TOKEN" required:"" help:"Core bootstrap token."`
-	ControlCAFile  string        `name:"control-ca-file" env:"TNL_BENCH_CONTROL_CA_FILE" type:"path" help:"Optional PEM CA for the core endpoint; system roots are used when omitted."`
+	ServerURL      string        `name:"server" env:"TNL_BENCH_SERVER" required:"" help:"Server HTTPS origin."`
+	LoginToken     string        `name:"login-token" env:"TNL_BENCH_LOGIN_TOKEN" required:"" help:"Server login token."`
+	ControlCAFile  string        `name:"control-ca-file" env:"TNL_BENCH_CONTROL_CA_FILE" type:"path" help:"Optional PEM CA for the server endpoint; system roots are used when omitted."`
 	PublicAddress  string        `name:"public-address" env:"TNL_BENCH_PUBLIC_ADDRESS" required:"" help:"Public ingress host:port to dial."`
 	HostnameSuffix string        `name:"hostname-suffix" env:"TNL_BENCH_HOSTNAME_SUFFIX" required:"" help:"Suffix below which benchmark routes are created."`
 	MetricsURLs    []string      `name:"metrics-url" env:"TNL_BENCH_METRICS_URLS" help:"Private worker metrics URL; repeat for each worker."`
@@ -221,40 +221,40 @@ func run(ctx context.Context, flags cli) (result, error) {
 	controlHTTP := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{
 		RootCAs: controlRoots, MinVersion: tls.VersionTLS13,
 	}}, Timeout: 30 * time.Second}
-	anonymous, err := coreclient.New(flags.CoreURL, controlHTTP, "")
+	anonymous, err := serverclient.New(flags.ServerURL, controlHTTP, "")
 	if err != nil {
 		return result{}, err
 	}
-	bootstrap := credentials.BootstrapToken(flags.BootstrapToken)
-	if _, err := credentials.ParseBootstrapToken(bootstrap); err != nil {
-		return result{}, errors.New("invalid bootstrap token")
+	login := credentials.LoginToken(flags.LoginToken)
+	if _, err := credentials.ParseLoginToken(login); err != nil {
+		return result{}, errors.New("invalid login token")
 	}
-	issued, err := anonymous.Exchange(ctx, bootstrap)
+	issued, err := anonymous.Exchange(ctx, login)
 	if err != nil {
-		return result{}, fmt.Errorf("exchange bootstrap token: %w", err)
+		return result{}, fmt.Errorf("exchange login token: %w", err)
 	}
 	access := credentials.AccessToken(issued.AccessToken)
 	if _, _, err := credentials.ParseAccessToken(access); err != nil {
-		return result{}, errors.New("core returned invalid access token")
+		return result{}, errors.New("server returned invalid access token")
 	}
-	core, err := coreclient.New(flags.CoreURL, controlHTTP, access)
+	server, err := serverclient.New(flags.ServerURL, controlHTTP, access)
 	if err != nil {
 		return result{}, err
 	}
-	capabilities, err := core.Capabilities(ctx)
+	capabilities, err := server.Capabilities(ctx)
 	if err != nil {
 		return result{}, fmt.Errorf("read capabilities: %w", err)
 	}
-	if capabilities.Transport.Type != corev1.Tailcat || capabilities.Transport.Version != corev1.TransportCapabilitiesVersionN1 {
-		return result{}, errors.New("core does not advertise Tailcat transport version 1")
+	if capabilities.Transport.Type != serverv1.Tailcat || capabilities.Transport.Version != serverv1.TransportCapabilitiesVersionN1 {
+		return result{}, errors.New("server does not advertise Tailcat transport version 1")
 	}
 	hostnameSuffix, err := benchmarkHostnameSuffix(capabilities, flags.HostnameSuffix)
 	if err != nil {
 		return result{}, err
 	}
-	relayMap, err := core.RelayMap(ctx)
+	relayMap, err := server.RelayMap(ctx)
 	if err != nil {
-		return result{}, fmt.Errorf("read core relay map: %w", err)
+		return result{}, fmt.Errorf("read server relay map: %w", err)
 	}
 	profiles, err := config.DecodeRelayProfiles(relayMap)
 	if err != nil {
@@ -282,13 +282,13 @@ func run(ctx context.Context, flags cli) (result, error) {
 	defer origin.Close()
 
 	processes, activation, err := activateRoutes(
-		ctx, flags, core, profiles, capabilities.Transport.RelayProfile, origin.URL, hostnames, applicationCertificates,
+		ctx, flags, server, profiles, capabilities.Transport.RelayProfile, origin.URL, hostnames, applicationCertificates,
 	)
 	if err != nil {
 		writeFailureEvidence(flags)
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
-		_, _ = cleanupRoutes(cleanupCtx, flags, core, processes)
+		_, _ = cleanupRoutes(cleanupCtx, flags, server, processes)
 		return result{}, err
 	}
 	fmt.Fprintln(os.Stderr, "tnlbench: activation complete")
@@ -297,7 +297,7 @@ func run(ctx context.Context, flags cli) (result, error) {
 		if !cleaned {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
-			_, _ = cleanupRoutes(cleanupCtx, flags, core, processes)
+			_, _ = cleanupRoutes(cleanupCtx, flags, server, processes)
 		}
 	}()
 	// Barriers keep faster shards from entering the next phase early.
@@ -321,7 +321,7 @@ func run(ctx context.Context, flags cli) (result, error) {
 	if err := waitDriverBarrier(ctx, flags, "loaded"); err != nil {
 		return result{}, err
 	}
-	teardown, err := cleanupRoutes(ctx, flags, core, processes)
+	teardown, err := cleanupRoutes(ctx, flags, server, processes)
 	if err != nil {
 		return result{}, err
 	}
@@ -344,7 +344,7 @@ func run(ctx context.Context, flags cli) (result, error) {
 func activateRoutes(
 	ctx context.Context,
 	flags cli,
-	core *coreclient.Client,
+	server *serverclient.Client,
 	profiles map[string]*tailcfg.DERPRegion,
 	relayProfile, target string,
 	hostnames []string,
@@ -366,7 +366,7 @@ func activateRoutes(
 		}
 		routeCtx, cancel := context.WithCancel(ctx)
 		process := &routeProcess{
-			hostname: hostnames[index], claimOwner: core, cancel: cancel, done: make(chan error, 1),
+			hostname: hostnames[index], claimOwner: server, cancel: cancel, done: make(chan error, 1),
 		}
 		processes[index] = process
 		go func(index int, process *routeProcess) {
@@ -382,7 +382,7 @@ func activateRoutes(
 					}{index: index, duration: time.Since(started), err: err}
 				})
 			}
-			claim, err := core.ClaimHostname(
+			claim, err := server.ClaimHostname(
 				routeCtx, benchmarkRouteLabel(flags.DriverIndex, index), benchmarkClaimRequestKey(flags.DriverIndex, index),
 			)
 			if err != nil {
@@ -390,13 +390,13 @@ func activateRoutes(
 			} else {
 				process.claimID = claim.Id
 				if claim.Id == "" || claim.Hostname != process.hostname {
-					err = errors.New("core returned an unexpected hostname claim")
+					err = errors.New("server returned an unexpected hostname claim")
 				}
 			}
 			ready := false
 			if err == nil {
 				err = publication.RunPublic(routeCtx, publication.PublicConfig{
-					Core: core, Hostname: process.hostname, Target: target, Certificate: certificates[index],
+					Server: server, Hostname: process.hostname, Target: target, Certificate: certificates[index],
 					RelayProfile: relayProfile, Profiles: profiles, Logf: logger.Discard,
 					OnRoute: func(routeID string) { process.routeID = routeID },
 					OnReady: func(string) {
@@ -508,7 +508,7 @@ func loadRoutes(
 	return firstByte, total, time.Since(startedAll), nil
 }
 
-func cleanupRoutes(ctx context.Context, flags cli, core routeCleaner, processes []*routeProcess) ([]time.Duration, error) {
+func cleanupRoutes(ctx context.Context, flags cli, server routeCleaner, processes []*routeProcess) ([]time.Duration, error) {
 	// Stop all publishers before deleting routes and releasing their claims.
 	started := time.Now()
 	for _, process := range processes {
@@ -552,7 +552,7 @@ func cleanupRoutes(ctx context.Context, flags cli, core routeCleaner, processes 
 		go func(index int, routeID string) {
 			defer func() { <-semaphore }()
 			var err error
-			if deleteErr := core.DeleteRoute(ctx, routeID); deleteErr != nil {
+			if deleteErr := server.DeleteRoute(ctx, routeID); deleteErr != nil {
 				err = fmt.Errorf("delete route %d: %w", index, deleteErr)
 			}
 			results <- cleanupResult{index: index, err: err}
@@ -718,20 +718,20 @@ func writeFailureEvidence(flags cli) {
 	}
 }
 
-func benchmarkHostnameSuffix(capabilities corev1.Capabilities, configured string) (string, error) {
+func benchmarkHostnameSuffix(capabilities serverv1.Capabilities, configured string) (string, error) {
 	localClaim := false
 	for _, authorization := range capabilities.HostnameAuthorization {
-		localClaim = localClaim || authorization == corev1.LocalClaim
+		localClaim = localClaim || authorization == serverv1.LocalClaim
 	}
 	if !localClaim || capabilities.LocalClaim == nil || capabilities.LocalClaim.Suffix == "" {
-		return "", errors.New("core does not advertise local hostname claims")
+		return "", errors.New("server does not advertise local hostname claims")
 	}
 	suffix, err := naming.CanonicalizeHostname(capabilities.LocalClaim.Suffix)
 	if err != nil || suffix != capabilities.LocalClaim.Suffix {
-		return "", errors.New("core advertises an invalid local hostname claim suffix")
+		return "", errors.New("server advertises an invalid local hostname claim suffix")
 	}
 	if suffix != configured {
-		return "", fmt.Errorf("core local hostname claim suffix %q does not match configured suffix %q", suffix, configured)
+		return "", fmt.Errorf("server local hostname claim suffix %q does not match configured suffix %q", suffix, configured)
 	}
 	return suffix, nil
 }

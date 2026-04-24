@@ -22,14 +22,15 @@ import (
 	"github.com/0xcadams/tnl/internal/auth"
 	"github.com/0xcadams/tnl/internal/certificates"
 	"github.com/0xcadams/tnl/internal/clientstate"
-	"github.com/0xcadams/tnl/internal/coreclient"
 	"github.com/0xcadams/tnl/internal/credentials"
 	"github.com/0xcadams/tnl/internal/ingress"
 	"github.com/0xcadams/tnl/internal/routes"
-	corestate "github.com/0xcadams/tnl/internal/state"
+	"github.com/0xcadams/tnl/internal/serverclient"
+	serverstate "github.com/0xcadams/tnl/internal/state"
+	"github.com/0xcadams/tnl/internal/state/statedb"
 	"github.com/0xcadams/tnl/internal/testutil/integrationtest"
 	"github.com/0xcadams/tnl/internal/worker"
-	"github.com/0xcadams/tnl/pkg/protocol/corev1"
+	"github.com/0xcadams/tnl/pkg/protocol/serverv1"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/logger"
 )
@@ -53,16 +54,16 @@ func TestIntegrationAutomaticCertificatePublicationRestartAndRenewal(t *testing.
 	region := integrationtest.DERP(t)
 	profiles := map[string]*tailcfg.DERPRegion{"test": region}
 
-	database, err := corestate.Open(ctx, t.TempDir())
+	database, err := serverstate.Open(ctx, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	bootstrap, err := credentials.NewBootstrapToken()
+	login, err := credentials.NewLoginToken()
 	if err != nil {
 		t.Fatal(err)
 	}
-	authService, err := auth.NewService(database, bootstrap)
+	authService, err := auth.NewService(database, login)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,27 +127,27 @@ func TestIntegrationAutomaticCertificatePublicationRestartAndRenewal(t *testing.
 	if err != nil {
 		t.Fatalf("initialize certificate service: %v; Pebble logs:\n%s", err, pebble.Logs())
 	}
-	capabilities := corev1.Capabilities{
-		ProtocolVersions:      []corev1.CapabilitiesProtocolVersions{corev1.CapabilitiesProtocolVersionsN1},
-		HostnameAuthorization: []corev1.CapabilitiesHostnameAuthorization{corev1.LocalClaim},
-		Transport: corev1.TransportCapabilities{
-			Type: corev1.Tailcat, Version: corev1.TransportCapabilitiesVersionN1, RelayProfile: "test",
+	capabilities := serverv1.Capabilities{
+		ProtocolVersions:      []serverv1.CapabilitiesProtocolVersions{serverv1.CapabilitiesProtocolVersionsN1},
+		HostnameAuthorization: []serverv1.CapabilitiesHostnameAuthorization{serverv1.LocalClaim},
+		Transport: serverv1.TransportCapabilities{
+			Type: serverv1.Tailcat, Version: serverv1.TransportCapabilitiesVersionN1, RelayProfile: "test",
 		},
-		Acme: &corev1.AcmeCapabilities{Profile: "tlsserver"},
+		Acme: &serverv1.AcmeCapabilities{Profile: "tlsserver"},
 	}
 	controlServer := httptest.NewTLSServer(api.NewHandlerWithServices(
 		capabilities, authService, coordinator, certificateService,
 	))
 	defer controlServer.Close()
-	anonymous, err := coreclient.New(controlServer.URL, controlServer.Client(), "")
+	anonymous, err := serverclient.New(controlServer.URL, controlServer.Client(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	issued, err := anonymous.Exchange(ctx, bootstrap)
+	issued, err := anonymous.Exchange(ctx, login)
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, err := coreclient.New(
+	client, err := serverclient.New(
 		controlServer.URL, controlServer.Client(), credentials.AccessToken(issued.AccessToken),
 	)
 	if err != nil {
@@ -171,7 +172,7 @@ func TestIntegrationAutomaticCertificatePublicationRestartAndRenewal(t *testing.
 		t.Fatal(err)
 	}
 	publicationConfig := PublicConfig{
-		Core: client, Hostname: hostname, Target: origin.URL, State: agentState, ACMEProfile: "tlsserver",
+		Server: client, Hostname: hostname, Target: origin.URL, State: agentState, ACMEProfile: "tlsserver",
 		RelayProfile: "test", Profiles: profiles, DrainTime: 5 * time.Second, Logf: logger.Discard,
 	}
 	firstRun := startIntegrationPublication(ctx, publicationConfig)
@@ -270,38 +271,37 @@ func TestIntegrationAutomaticCertificatePublicationRestartAndRenewal(t *testing.
 
 func assertPersistedPublication(t *testing.T, database *sql.DB, routeID string, wantJobs int) {
 	t.Helper()
-	var leaseStatus, jobState string
-	if err := database.QueryRow(`SELECT status FROM route_leases WHERE route_id = ? ORDER BY generation DESC LIMIT 1`, routeID).Scan(&leaseStatus); err != nil {
+	queries := statedb.New(database)
+	leaseStatus, err := queries.GetLatestRouteLeaseStatus(context.Background(), routeID)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if leaseStatus != "ready" {
 		t.Fatalf("lease status = %q", leaseStatus)
 	}
-	var installedAt, challengeRemovedAt sql.NullInt64
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		if err := database.QueryRow(`SELECT state, installed_at, challenge_removed_at FROM certificate_jobs WHERE route_id = ? ORDER BY generation DESC LIMIT 1`, routeID).Scan(
-			&jobState, &installedAt, &challengeRemovedAt,
-		); err != nil {
+		job, err := queries.GetLatestCertificateJobState(context.Background(), routeID)
+		if err != nil {
 			t.Fatal(err)
 		}
-		if jobState == certificates.StateSucceeded && installedAt.Valid && challengeRemovedAt.Valid {
+		if job.State == certificates.StateSucceeded && job.InstalledAt.Valid && job.ChallengeRemovedAt.Valid {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("certificate job = %q, installed = %v, challenge removed = %v", jobState, installedAt.Valid, challengeRemovedAt.Valid)
+			t.Fatalf("certificate job = %q, installed = %v, challenge removed = %v", job.State, job.InstalledAt.Valid, job.ChallengeRemovedAt.Valid)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	var jobs int
-	if err := database.QueryRow(`SELECT COUNT(*) FROM certificate_jobs WHERE route_id = ?`, routeID).Scan(&jobs); err != nil {
+	jobs, err := queries.CountCertificateJobsByRoute(context.Background(), routeID)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if jobs != wantJobs {
+	if jobs != int64(wantJobs) {
 		t.Fatalf("certificate jobs = %d, want %d", jobs, wantJobs)
 	}
-	var accountKID string
-	if err := database.QueryRow(`SELECT kid FROM acme_accounts LIMIT 1`).Scan(&accountKID); err != nil {
+	accountKID, err := queries.GetAnyACMEAccountKID(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
 	if accountKID == "" {
@@ -395,11 +395,15 @@ func forceRenewalDue(
 	if err := os.WriteFile(currentPath, contents, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	result, err := database.Exec(`UPDATE certificate_jobs SET renew_at = ? WHERE id = ? AND route_id = ?`, due.Unix(), orderID, routeID)
+	changed, err := statedb.New(database).SetCertificateRenewalDue(context.Background(), statedb.SetCertificateRenewalDueParams{
+		RenewAt: due.Unix(),
+		ID:      orderID,
+		RouteID: routeID,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if changed, err := result.RowsAffected(); err != nil || changed != 1 {
+	if changed != 1 {
 		t.Fatalf("force renewal rows = %d, error = %v", changed, err)
 	}
 }

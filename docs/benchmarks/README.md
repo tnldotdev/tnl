@@ -19,7 +19,7 @@ configured Fly organization, and a DNS/ACME test environment. Set:
 
 - `DOMAIN` to a dedicated benchmark base domain.
 - `DNS_HOOK` to an executable that accepts the base domain and generated
-  `<app>.fly.dev` target, then updates `core.<domain>` and `*.apps.<domain>` to
+  `<app>.fly.dev` target, then updates `tnl.<domain>` and `*.apps.<domain>` to
   route to that target. The hook must wait until the records are observable.
 - `ACME_DIRECTORY_URL` and `ACME_EMAIL` for an ACME service that supports
   TLS-ALPN-01 and the `tlsserver` profile.

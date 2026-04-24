@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/coreclient"
+	"github.com/0xcadams/tnl/internal/serverclient"
 )
 
 func TestPublicOutputNDJSONLifecycle(t *testing.T) {
@@ -27,7 +27,7 @@ func TestPublicOutputNDJSONLifecycle(t *testing.T) {
 	if err := output.ready("https://demo.example", 2); err != nil {
 		t.Fatal(err)
 	}
-	if err := output.failed(&coreclient.RateLimitError{RetryAfter: time.Second}); err != nil {
+	if err := output.failed(&serverclient.RateLimitError{RetryAfter: time.Second}); err != nil {
 		t.Fatal(err)
 	}
 	if err := output.stopped(); err != nil {

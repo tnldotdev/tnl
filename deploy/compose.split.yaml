@@ -36,7 +36,7 @@ services:
     environment:
       TNLD_MODE: worker
       TNLD_METRICS_LISTEN: 0.0.0.0:9090
-      TNLD_WORKER_URL: wss://core.${TNLD_DOMAIN:?set TNLD_DOMAIN}/internal/v1/worker
+      TNLD_WORKER_URL: wss://tnl.${TNLD_DOMAIN:?set TNLD_DOMAIN}/internal/v1/worker
       TNLD_WORKER_TOKEN: ${TNLD_WORKER_TOKEN:?set TNLD_WORKER_TOKEN to the output of tnld token worker}
       TNLD_WORKER_CAPACITY: ${TNLD_WORKER_CAPACITY:-500}
       TNLD_WORKER_STREAM_LIMIT: ${TNLD_WORKER_STREAM_LIMIT:-4096}

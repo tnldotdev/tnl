@@ -14,7 +14,7 @@ Use `gofmt`, `goimports`, `go vet`, `staticcheck`, and `govulncheck` for Go.
 Generated files are committed and must not drift from their source contracts.
 
 The hosted TypeScript application is maintained separately from this public
-core repository. Shared contracts and fixtures remain authoritative under
+server repository. Shared contracts and fixtures remain authoritative under
 `api`.
 
 ## Engineering Rules
@@ -24,7 +24,7 @@ core repository. Shared contracts and fixtures remain authoritative under
   types, and shared fixtures instead of creating parallel implementations.
 - Use a maintained library instead of hand-rolling a capability. Ask before
   introducing a custom implementation when the tradeoff is unclear.
-- Keep portable core packages independent of hosted protocol and domain types.
+- Keep portable server packages independent of hosted protocol and domain types.
 - Add tests for behavior, boundaries, and regressions. Do not add tautological
   tests solely to increase test counts.
 

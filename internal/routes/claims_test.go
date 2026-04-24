@@ -11,6 +11,7 @@ import (
 
 	"github.com/0xcadams/tnl/internal/credentials"
 	"github.com/0xcadams/tnl/internal/state"
+	"github.com/0xcadams/tnl/internal/state/statedb"
 )
 
 func TestStoreHostnameClaimQuotaConfig(t *testing.T) {
@@ -66,11 +67,10 @@ func TestHostnameClaimLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
+	queries := statedb.New(db)
 	now := time.Unix(1_700_000_000, 0).UTC()
-	if _, err := db.Exec(`INSERT INTO principals (id, display_name, email, created_at) VALUES
-		('owner', 'Owner', '', ?), ('other', 'Other', '', ?)`, now.Unix(), now.Unix()); err != nil {
-		t.Fatal(err)
-	}
+	upsertTestPrincipal(t, ctx, queries, "owner", "Owner", now.Unix())
+	upsertTestPrincipal(t, ctx, queries, "other", "Other", now.Unix())
 	store, err := NewStore(db, "example")
 	if err != nil {
 		t.Fatal(err)
@@ -92,8 +92,8 @@ func TestHostnameClaimLifecycle(t *testing.T) {
 	if err != nil || alias.ID != claim.ID {
 		t.Fatalf("aliased claim = %#v, %v", alias, err)
 	}
-	var exactRequests int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM hostname_claim_requests WHERE claim_id = ?`, claim.ID).Scan(&exactRequests); err != nil {
+	exactRequests, err := queries.CountClaimRequestsByClaim(ctx, claim.ID)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if exactRequests != 2 {
@@ -163,10 +163,8 @@ func TestRouteCreationRequiresOwnedClaim(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	if _, err := db.Exec(`INSERT INTO principals (id, display_name, email, created_at)
-		VALUES ('owner', 'Owner', '', 1)`); err != nil {
-		t.Fatal(err)
-	}
+	queries := statedb.New(db)
+	upsertTestPrincipal(t, ctx, queries, "owner", "Owner", 1)
 	store, err := NewStore(db, "example")
 	if err != nil {
 		t.Fatal(err)
@@ -187,14 +185,15 @@ func TestExistingClaimBypassesNewActiveQuota(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	if _, err := db.Exec(`INSERT INTO principals (id, display_name, email, created_at)
-		VALUES ('owner', 'Owner', '', 1)`); err != nil {
-		t.Fatal(err)
-	}
+	queries := statedb.New(db)
+	upsertTestPrincipal(t, ctx, queries, "owner", "Owner", 1)
 	for index := range DefaultMaxActiveHostnameClaims {
-		if _, err := db.Exec(`INSERT INTO hostname_claims
-			(id, principal_id, hostname, irreversible, created_at) VALUES (?, 'owner', ?, 1, 1)`,
-			fmt.Sprintf("claim_%032x", index), fmt.Sprintf("route%d.example", index)); err != nil {
+		if _, err := queries.InsertClaim(ctx, statedb.InsertClaimParams{
+			ID:          fmt.Sprintf("claim_%032x", index),
+			PrincipalID: "owner",
+			Hostname:    fmt.Sprintf("route%d.example", index),
+			CreatedAt:   1,
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -230,10 +229,8 @@ func TestHostnameClaimActiveLimitOverride(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	if _, err := db.Exec(`INSERT INTO principals (id, display_name, email, created_at)
-		VALUES ('owner', 'Owner', '', 1)`); err != nil {
-		t.Fatal(err)
-	}
+	queries := statedb.New(db)
+	upsertTestPrincipal(t, ctx, queries, "owner", "Owner", 1)
 	store, err := NewStore(db, "example", StoreConfig{
 		MaxActiveHostnameClaims:  2,
 		MaxHostnameClaimRequests: 4,
@@ -269,13 +266,15 @@ func TestClaimRequestLimitStillAllowsKnownReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	if _, err := db.Exec(`INSERT INTO principals (id, display_name, email, created_at)
-		VALUES ('owner', 'Owner', '', 1)`); err != nil {
-		t.Fatal(err)
-	}
+	queries := statedb.New(db)
+	upsertTestPrincipal(t, ctx, queries, "owner", "Owner", 1)
 	claimID := "claim_0123456789abcdef0123456789abcdef"
-	if _, err := db.Exec(`INSERT INTO hostname_claims
-		(id, principal_id, hostname, irreversible, created_at) VALUES (?, 'owner', 'route.example', 0, 1)`, claimID); err != nil {
+	if _, err := queries.InsertClaim(ctx, statedb.InsertClaimParams{
+		ID:          claimID,
+		PrincipalID: "owner",
+		Hostname:    "route.example",
+		CreatedAt:   1,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	const requestLimit = 2
@@ -290,10 +289,15 @@ func TestClaimRequestLimitStillAllowsKnownReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	txQueries := queries.WithTx(tx)
 	for index := range requestLimit {
-		if _, err := tx.Exec(`INSERT INTO hostname_claim_requests
-			(principal_id, request_key, requested_label, claim_id, created_at)
-			VALUES ('owner', ?, 'route', ?, 1)`, fmt.Sprintf("request-%04d", index), claimID); err != nil {
+		if err := txQueries.InsertClaimRequest(ctx, statedb.InsertClaimRequestParams{
+			PrincipalID:    "owner",
+			RequestKey:     fmt.Sprintf("request-%04d", index),
+			RequestedLabel: "route",
+			ClaimID:        claimID,
+			CreatedAt:      1,
+		}); err != nil {
 			_ = tx.Rollback()
 			t.Fatal(err)
 		}
@@ -307,8 +311,8 @@ func TestClaimRequestLimitStillAllowsKnownReplay(t *testing.T) {
 	if _, err := store.ClaimHostname(ctx, "owner", "route", "new-request"); !errors.Is(err, ErrInvalidState) {
 		t.Fatalf("new request at limit error = %v", err)
 	}
-	var requests int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM hostname_claim_requests WHERE principal_id = 'owner'`).Scan(&requests); err != nil {
+	requests, err := queries.CountClaimRequests(ctx, "owner")
+	if err != nil {
 		t.Fatal(err)
 	}
 	if requests != requestLimit {
@@ -328,10 +332,8 @@ func TestHostnameClaimObserverReportsValidationAndReleaseErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	if _, err := db.Exec(`INSERT INTO principals (id, display_name, email, created_at)
-		VALUES ('owner', 'Owner', '', 1)`); err != nil {
-		t.Fatal(err)
-	}
+	queries := statedb.New(db)
+	upsertTestPrincipal(t, ctx, queries, "owner", "Owner", 1)
 	store, err := NewStore(db, "example", StoreConfig{
 		ObserveOperation: func(operation StoreOperation, _ time.Duration, err error) {
 			observations = append(observations, observation{operation: operation, err: err})
@@ -371,5 +373,24 @@ func TestHostnameClaimObserverReportsValidationAndReleaseErrors(t *testing.T) {
 	if !errors.Is(observations[0].err, ErrInvalidArgument) || observations[1].err != nil ||
 		observations[2].err != nil || !errors.Is(observations[3].err, ErrNotFound) {
 		t.Fatalf("observation errors = %#v", observations)
+	}
+}
+
+func upsertTestPrincipal(
+	t *testing.T,
+	ctx context.Context,
+	queries *statedb.Queries,
+	principalID string,
+	displayName string,
+	createdAt int64,
+) {
+	t.Helper()
+	if err := queries.UpsertPrincipal(ctx, statedb.UpsertPrincipalParams{
+		PrincipalID: principalID,
+		DisplayName: displayName,
+		Email:       "",
+		CreatedAt:   createdAt,
+	}); err != nil {
+		t.Fatal(err)
 	}
 }

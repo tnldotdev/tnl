@@ -9,6 +9,7 @@ import (
 
 	"github.com/0xcadams/tnl/internal/credentials"
 	"github.com/0xcadams/tnl/internal/state"
+	"github.com/0xcadams/tnl/internal/state/statedb"
 )
 
 func TestRouteLeaseLifecycle(t *testing.T) {
@@ -17,20 +18,15 @@ func TestRouteLeaseLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
+	queries := statedb.New(db)
 	now := time.Unix(1_700_000_000, 0).UTC()
 	store, err := NewStore(db, "example")
 	if err != nil {
 		t.Fatal(err)
 	}
 	store.now = func() time.Time { return now }
-	if _, err := db.Exec(`INSERT INTO principals (id, display_name, email, created_at)
-		VALUES ('owner', 'Owner', '', ?)`, now.Unix()); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`INSERT INTO principals (id, display_name, email, created_at)
-		VALUES ('other', 'Other', '', ?)`, now.Unix()); err != nil {
-		t.Fatal(err)
-	}
+	upsertTestPrincipal(t, context.Background(), queries, "owner", "Owner", now.Unix())
+	upsertTestPrincipal(t, context.Background(), queries, "other", "Other", now.Unix())
 
 	routeToken, _, _, err := credentials.NewRouteToken()
 	if err != nil {
@@ -136,10 +132,8 @@ func TestStoreObservesHealthOperationsExactlyOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	if _, err := db.Exec(`INSERT INTO principals (id, display_name, email, created_at)
-		VALUES ('owner', 'Owner', '', 1)`); err != nil {
-		t.Fatal(err)
-	}
+	queries := statedb.New(db)
+	upsertTestPrincipal(t, ctx, queries, "owner", "Owner", 1)
 	store, err := NewStore(db, "example", StoreConfig{
 		ObserveOperation: func(operation StoreOperation, duration time.Duration, err error) {
 			observations = append(observations, observation{operation: operation, duration: duration, err: err})

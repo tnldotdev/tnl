@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -97,6 +98,11 @@ type currentFile struct {
 	Installed      bool      `json:"installed"`
 }
 
+type selectedServerFile struct {
+	Version int    `json:"version"`
+	Server  string `json:"server"`
+}
+
 func DefaultDir() (string, error) {
 	root, err := os.UserConfigDir()
 	if err != nil {
@@ -106,33 +112,13 @@ func DefaultDir() (string, error) {
 }
 
 func New(root, serverOrigin string) (*Store, error) {
-	if strings.TrimSpace(root) == "" {
-		return nil, errors.New("clientstate: state directory is required")
-	}
-	origin, err := url.Parse(serverOrigin)
-	if err != nil || origin.Scheme != "https" || origin.Host == "" || origin.User != nil ||
-		origin.RawQuery != "" || origin.Fragment != "" || origin.Path != "" && origin.Path != "/" {
-		return nil, errors.New("clientstate: server must be an HTTPS origin")
-	}
-	origin.Path = ""
-	digest := sha256.Sum256([]byte(origin.String()))
-	root, err = filepath.Abs(root)
-	if err != nil {
-		return nil, fmt.Errorf("clientstate: resolve state directory: %w", err)
-	}
-	if info, statErr := os.Lstat(root); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
-		return nil, errors.New("clientstate: state directory must not be a symlink")
-	} else if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
-		return nil, fmt.Errorf("clientstate: inspect state directory: %w", statErr)
-	}
-	root, err = canonicalPath(root)
+	serverOrigin, err := CanonicalServer(serverOrigin)
 	if err != nil {
 		return nil, err
 	}
-	if err := validateTrustedAncestors(filepath.Dir(root)); err != nil {
-		return nil, err
-	}
-	if err := ensurePrivateDir(root); err != nil {
+	digest := sha256.Sum256([]byte(serverOrigin))
+	root, err = prepareRoot(root)
+	if err != nil {
 		return nil, err
 	}
 	servers, err := privateSubdir(root, "servers")
@@ -157,6 +143,91 @@ func New(root, serverOrigin string) (*Store, error) {
 		releasesPath:    filepath.Join(server, "hostname-releases.json"),
 		credentialsPath: filepath.Join(server, "access-credential.json"),
 	}, nil
+}
+
+// CanonicalServer validates and normalizes a tnl server origin.
+func CanonicalServer(value string) (string, error) {
+	origin, err := url.Parse(value)
+	if err != nil || origin.Scheme != "https" || origin.Host == "" || origin.User != nil ||
+		origin.RawQuery != "" || origin.Fragment != "" || origin.Path != "" && origin.Path != "/" {
+		return "", errors.New("clientstate: server must be an HTTPS origin")
+	}
+	hostname := strings.ToLower(origin.Hostname())
+	if hostname == "" {
+		return "", errors.New("clientstate: server must be an HTTPS origin")
+	}
+	port := origin.Port()
+	if port == "" || port == "443" {
+		if strings.Contains(hostname, ":") {
+			origin.Host = "[" + hostname + "]"
+		} else {
+			origin.Host = hostname
+		}
+	} else {
+		origin.Host = net.JoinHostPort(hostname, port)
+	}
+	origin.Path = ""
+	return origin.String(), nil
+}
+
+// SavedServer returns the server selected by the last successful login.
+func SavedServer(root string) (string, bool, error) {
+	root, err := prepareRoot(root)
+	if err != nil {
+		return "", false, err
+	}
+	var stored selectedServerFile
+	found, err := readJSON(filepath.Join(root, "selected-server.json"), &stored)
+	if err != nil || !found {
+		return "", found, err
+	}
+	server, err := CanonicalServer(stored.Server)
+	if err != nil || stored.Version != stateVersion || server != stored.Server {
+		return "", true, errors.New("clientstate: selected server is invalid")
+	}
+	return server, true, nil
+}
+
+// SaveServer records the server only after a successful login.
+func SaveServer(root, server string) error {
+	server, err := CanonicalServer(server)
+	if err != nil {
+		return err
+	}
+	root, err = prepareRoot(root)
+	if err != nil {
+		return err
+	}
+	return writeJSON(filepath.Join(root, "selected-server.json"), selectedServerFile{
+		Version: stateVersion,
+		Server:  server,
+	})
+}
+
+func prepareRoot(root string) (string, error) {
+	if strings.TrimSpace(root) == "" {
+		return "", errors.New("clientstate: state directory is required")
+	}
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return "", fmt.Errorf("clientstate: resolve state directory: %w", err)
+	}
+	if info, statErr := os.Lstat(root); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+		return "", errors.New("clientstate: state directory must not be a symlink")
+	} else if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+		return "", fmt.Errorf("clientstate: inspect state directory: %w", statErr)
+	}
+	root, err = canonicalPath(root)
+	if err != nil {
+		return "", err
+	}
+	if err := validateTrustedAncestors(filepath.Dir(root)); err != nil {
+		return "", err
+	}
+	if err := ensurePrivateDir(root); err != nil {
+		return "", err
+	}
+	return root, nil
 }
 
 func (s *Store) LockHostname(hostname string) (*Lock, error) {

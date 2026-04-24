@@ -23,78 +23,74 @@ var (
 	localPrincipal        = state.Principal{ID: "principal_local", DisplayName: "Local operator"}
 )
 
-// IssuedAccessToken is the successful result of a bootstrap exchange.
+// IssuedAccessToken is the successful result of a login exchange.
 type IssuedAccessToken struct {
 	Token        credentials.AccessToken
 	CredentialID credentials.CredentialID
 	ExpiresAt    time.Time
 }
 
-// Service implements standalone bootstrap and access credential flows.
+// Service implements standalone login and access credential flows.
 type Service struct {
-	db        *sql.DB
-	bootstrap *credentials.BootstrapVerifier
-	external  ExternalVerifier
-	now       func() time.Time
+	db    *sql.DB
+	login *credentials.LoginVerifier
+	oidc  OIDCVerifier
+	now   func() time.Time
 }
 
-// NewService parses bootstrap once so the service does not retain the raw token.
-func NewService(db *sql.DB, bootstrap credentials.BootstrapToken) (*Service, error) {
-	return NewServiceWithExternal(db, bootstrap, nil)
+// NewService parses login once so the service does not retain the raw token.
+func NewService(db *sql.DB, login credentials.LoginToken) (*Service, error) {
+	return NewServiceWithOIDC(db, login, nil)
 }
 
-func NewServiceWithExternal(
+func NewServiceWithOIDC(
 	db *sql.DB,
-	bootstrap credentials.BootstrapToken,
-	external ExternalVerifier,
+	login credentials.LoginToken,
+	oidc OIDCVerifier,
 ) (*Service, error) {
 	if db == nil {
 		return nil, errors.New("auth: nil state database")
 	}
-	var verifier *credentials.BootstrapVerifier
-	if bootstrap != "" {
-		parsed, err := credentials.ParseBootstrapToken(bootstrap)
+	var verifier *credentials.LoginVerifier
+	if login != "" {
+		parsed, err := credentials.ParseLoginToken(login)
 		if err != nil {
-			return nil, fmt.Errorf("auth: configure bootstrap token: %w", err)
+			return nil, fmt.Errorf("auth: configure login token: %w", err)
 		}
 		verifier = &parsed
 	}
-	if verifier == nil && external == nil {
+	if verifier == nil && oidc == nil {
 		return nil, errors.New("auth: no authentication method configured")
 	}
-	return &Service{db: db, bootstrap: verifier, external: external, now: time.Now}, nil
+	return &Service{db: db, login: verifier, oidc: oidc, now: time.Now}, nil
 }
 
 // Exchange issues a new access credential for the stable local principal.
 func (s *Service) Exchange(
 	ctx context.Context,
-	bootstrap credentials.BootstrapToken,
+	login credentials.LoginToken,
 ) (IssuedAccessToken, error) {
-	if s.bootstrap == nil || !s.bootstrap.Matches(bootstrap) {
+	if s.login == nil || !s.login.Matches(login) {
 		return IssuedAccessToken{}, ErrUnauthenticated
 	}
 	return s.issue(ctx, localPrincipal, s.now().Add(AccessTokenLifetime), nil)
 }
 
-func (s *Service) ExchangeExternal(ctx context.Context, token string) (IssuedAccessToken, error) {
-	if s.external == nil {
+func (s *Service) ExchangeOIDC(ctx context.Context, token string) (IssuedAccessToken, error) {
+	if s.oidc == nil {
 		return IssuedAccessToken{}, ErrUnauthenticated
 	}
-	identity, err := s.external.Verify(ctx, token)
+	identity, err := s.oidc.Verify(ctx, token)
 	if err != nil {
 		return IssuedAccessToken{}, err
 	}
 	digest := sha256.Sum256([]byte(identity.Issuer + "\x00" + identity.Subject))
 	principal := state.Principal{
-		ID: "principal_external_" + hex.EncodeToString(digest[:]),
-	}
-	expiresAt := identity.ExpiresAt
-	if limit := s.now().Add(AccessTokenLifetime); limit.Before(expiresAt) {
-		expiresAt = limit
+		ID: "principal_oidc_" + hex.EncodeToString(digest[:]),
 	}
 	tokenHash := sha256.Sum256([]byte(token))
-	issued, err := s.issue(ctx, principal, expiresAt, tokenHash[:])
-	if errors.Is(err, state.ErrExternalTokenAlreadyExchanged) {
+	issued, err := s.issueOIDC(ctx, principal, s.now().Add(AccessTokenLifetime), tokenHash[:], identity.ExpiresAt)
+	if errors.Is(err, state.ErrOIDCAssertionAlreadyExchanged) {
 		return IssuedAccessToken{}, ErrUnauthenticated
 	}
 	return issued, err
@@ -104,7 +100,17 @@ func (s *Service) issue(
 	ctx context.Context,
 	principal state.Principal,
 	expiresAt time.Time,
-	externalTokenHash []byte,
+	assertionHash []byte,
+) (IssuedAccessToken, error) {
+	return s.issueOIDC(ctx, principal, expiresAt, assertionHash, time.Time{})
+}
+
+func (s *Service) issueOIDC(
+	ctx context.Context,
+	principal state.Principal,
+	expiresAt time.Time,
+	assertionHash []byte,
+	assertionExpiresAt time.Time,
 ) (IssuedAccessToken, error) {
 	token, credentialID, hash, err := credentials.NewAccessToken()
 	if err != nil {
@@ -116,11 +122,11 @@ func (s *Service) issue(
 		return IssuedAccessToken{}, ErrUnauthenticated
 	}
 	var storeErr error
-	if externalTokenHash == nil {
+	if assertionHash == nil {
 		storeErr = state.CreateAccessCredential(ctx, s.db, principal, credentialID, hash, issuedAt, expiresAt)
 	} else {
-		storeErr = state.CreateExternalAccessCredential(
-			ctx, s.db, principal, credentialID, hash, issuedAt, expiresAt, externalTokenHash,
+		storeErr = state.CreateOIDCAccessCredential(
+			ctx, s.db, principal, credentialID, hash, issuedAt, expiresAt, assertionHash, assertionExpiresAt,
 		)
 	}
 	if storeErr != nil {

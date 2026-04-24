@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/0xcadams/tnl/internal/credentials"
+	"github.com/0xcadams/tnl/internal/state/statedb"
 )
 
 func TestAccessCredentialLifecycle(t *testing.T) {
@@ -44,13 +45,11 @@ func TestAccessCredentialLifecycle(t *testing.T) {
 		t.Fatalf("principal = %#v, want %#v", got, want)
 	}
 
-	var storedHash []byte
-	if err := db.QueryRow(
-		"SELECT secret_hash FROM access_credentials WHERE id = ?", lookupID.String(),
-	).Scan(&storedHash); err != nil {
+	stored, err := statedb.New(db).GetAccessCredential(context.Background(), lookupID.String())
+	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(storedHash, hash[:]) {
+	if !bytes.Equal(stored.SecretHash, hash[:]) {
 		t.Fatal("stored secret hash differs")
 	}
 
@@ -129,8 +128,8 @@ func TestCreateAccessCredentialRollsBack(t *testing.T) {
 		t.Fatal("duplicate secret hash succeeded")
 	}
 
-	var count int
-	if err := db.QueryRow("SELECT COUNT(*) FROM principals WHERE id = 'rolled-back'").Scan(&count); err != nil {
+	count, err := statedb.New(db).CountPrincipalByID(context.Background(), "rolled-back")
+	if err != nil {
 		t.Fatal(err)
 	}
 	if count != 0 {

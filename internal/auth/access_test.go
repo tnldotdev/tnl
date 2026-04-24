@@ -11,14 +11,14 @@ import (
 )
 
 func TestServiceAuthenticatesAndRevokesAccessCredentials(t *testing.T) {
-	_, bootstrap, service := newTestService(t)
+	_, login, service := newTestService(t)
 	now := time.Date(2026, time.August, 29, 12, 0, 0, 0, time.UTC)
 	service.now = func() time.Time { return now }
-	first, err := service.Exchange(context.Background(), bootstrap)
+	first, err := service.Exchange(context.Background(), login)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := service.Exchange(context.Background(), bootstrap)
+	second, err := service.Exchange(context.Background(), login)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,10 +45,10 @@ func TestServiceAuthenticatesAndRevokesAccessCredentials(t *testing.T) {
 }
 
 func TestServiceHidesAccessCredentialRejectionReason(t *testing.T) {
-	_, bootstrap, service := newTestService(t)
+	_, login, service := newTestService(t)
 	now := time.Date(2026, time.August, 29, 12, 0, 0, 0, time.UTC)
 	service.now = func() time.Time { return now }
-	issued, err := service.Exchange(context.Background(), bootstrap)
+	issued, err := service.Exchange(context.Background(), login)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestServiceHidesAccessCredentialRejectionReason(t *testing.T) {
 	incorrectSecret = incorrectSecret[:len(incorrectSecret)-1] + last
 	for name, token := range map[string]credentials.AccessToken{
 		"malformed":    "invalid",
-		"wrong class":  credentials.AccessToken(bootstrap),
+		"wrong class":  credentials.AccessToken(login),
 		"unknown":      other,
 		"wrong secret": credentials.AccessToken(incorrectSecret),
 	} {
@@ -83,8 +83,8 @@ func TestServiceHidesAccessCredentialRejectionReason(t *testing.T) {
 }
 
 func TestServiceHidesCredentialOwnership(t *testing.T) {
-	_, bootstrap, service := newTestService(t)
-	issued, err := service.Exchange(context.Background(), bootstrap)
+	_, login, service := newTestService(t)
+	issued, err := service.Exchange(context.Background(), login)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,8 +113,8 @@ func TestServiceHidesCredentialOwnership(t *testing.T) {
 }
 
 func TestServiceDoesNotExposeAccessTokenOnStorageFailure(t *testing.T) {
-	db, bootstrap, service := newTestService(t)
-	issued, err := service.Exchange(context.Background(), bootstrap)
+	db, login, service := newTestService(t)
+	issued, err := service.Exchange(context.Background(), login)
 	if err != nil {
 		t.Fatal(err)
 	}

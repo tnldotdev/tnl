@@ -39,6 +39,7 @@ jobs:
         run: |
           go install github.com/go-task/task/v3/cmd/task@v3.53.1
           go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0
+          go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
           go install golang.org/x/tools/cmd/goimports@v0.49.0
           go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
           go install honnef.co/go/tools/cmd/staticcheck@v0.8.1

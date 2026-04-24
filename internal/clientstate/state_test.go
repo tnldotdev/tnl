@@ -21,7 +21,7 @@ import (
 const testRouteID = "route_0123456789abcdef0123456789abcdef"
 
 func TestRouteStatePersistsPendingAndCurrentMaterial(t *testing.T) {
-	store, err := New(filepath.Join(t.TempDir(), "state"), "https://core.example")
+	store, err := New(filepath.Join(t.TempDir(), "state"), "https://server.example")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,11 +107,11 @@ func TestStateRejectsSymlinksAndPublicFiles(t *testing.T) {
 	if err := os.Symlink(real, link); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := New(link, "https://core.example"); err == nil {
+	if _, err := New(link, "https://server.example"); err == nil {
 		t.Fatal("symlink state root accepted")
 	}
 
-	store, err := New(filepath.Join(parent, "private"), "https://core.example")
+	store, err := New(filepath.Join(parent, "private"), "https://server.example")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestStateRejectsSymlinksAndPublicFiles(t *testing.T) {
 }
 
 func TestStateLocksHostnameBeforeRouteTakeover(t *testing.T) {
-	store, err := New(filepath.Join(t.TempDir(), "state"), "https://core.example")
+	store, err := New(filepath.Join(t.TempDir(), "state"), "https://server.example")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestStateDoesNotChmodAnExistingPublicRoot(t *testing.T) {
 	if err := os.Mkdir(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := New(root, "https://core.example"); err == nil {
+	if _, err := New(root, "https://server.example"); err == nil {
 		t.Fatal("public state root accepted")
 	}
 	info, err := os.Stat(root)
@@ -187,7 +187,7 @@ func TestStateRejectsWritableAncestor(t *testing.T) {
 	if err := os.Chmod(parent, 0o777); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := New(filepath.Join(parent, "state"), "https://core.example"); err == nil {
+	if _, err := New(filepath.Join(parent, "state"), "https://server.example"); err == nil {
 		t.Fatal("state root beneath writable ancestor accepted")
 	}
 }
@@ -200,13 +200,13 @@ func TestStateAllowsStickyWritableAncestor(t *testing.T) {
 	if err := os.Chmod(parent, os.ModeSticky|0o777); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := New(filepath.Join(parent, "state"), "https://core.example"); err != nil {
+	if _, err := New(filepath.Join(parent, "state"), "https://server.example"); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestAccessCredentialPersistsPrivatelyAndCanBeRemoved(t *testing.T) {
-	store, err := New(filepath.Join(t.TempDir(), "state"), "https://core.example")
+	store, err := New(filepath.Join(t.TempDir(), "state"), "https://server.example")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +239,7 @@ func TestAccessCredentialPersistsPrivatelyAndCanBeRemoved(t *testing.T) {
 }
 
 func TestAccessCredentialLockSerializesUpdates(t *testing.T) {
-	store, err := New(filepath.Join(t.TempDir(), "state"), "https://core.example")
+	store, err := New(filepath.Join(t.TempDir(), "state"), "https://server.example")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +270,7 @@ func TestConcurrentStoreInitialization(t *testing.T) {
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			_, err := New(root, "https://core.example")
+			_, err := New(root, "https://server.example")
 			errorsFound <- err
 		}()
 	}

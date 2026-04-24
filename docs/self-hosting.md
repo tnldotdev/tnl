@@ -11,7 +11,7 @@ names:
 
 | Purpose | Name | Listener |
 | --- | --- | --- |
-| Control API | `core.example.com` | TCP 443 |
+| Server API | `tnl.example.com` | TCP 443 |
 | Public routes | `*.apps.example.com` | TCP 443 |
 
 Create A and, when applicable, AAAA records for both names. The wildcard must
@@ -33,7 +33,7 @@ Prerequisites:
 
 - A Linux host with Docker Engine and Docker Compose v2.
 - A verified, digest-pinned tnl image.
-- DNS for `core.<domain>` and `*.apps.<domain>`.
+- DNS for `tnl.<domain>` and `*.apps.<domain>`.
 - An ACME service that supports TLS-ALPN-01 and the configured application
   certificate profile.
 
@@ -66,7 +66,7 @@ Start the daemon and inspect the control endpoint:
 docker compose pull
 docker compose up -d
 docker compose logs --no-log-prefix tnld
-curl --fail --silent --show-error https://core.example.com/v1/capabilities
+curl --fail --silent --show-error https://tnl.example.com/v1/capabilities
 ```
 
 The capabilities response proves that the control endpoint is serving. Before
@@ -79,20 +79,19 @@ loopback-only port mapping. Never expose metrics directly to the Internet.
 
 ## Enroll A Client
 
-On first startup, `tnld` creates a bootstrap token in its state volume. Retrieve
+On first startup, `tnld` creates a login token in its state volume. Retrieve
 it without printing it in daemon logs or storing it in `.env`:
 
 ```console
-docker compose exec tnld tnld bootstrap-token --state-dir /var/lib/tnl
+docker compose exec tnld tnld login-token --state-dir /var/lib/tnl
 ```
 
 Install and verify a release archive as described in [Releases](releases.md),
-then log in. Browser authorization is preferred when the core advertises it;
-otherwise `tnl login` prompts for the bootstrap token:
+then log in. Browser authorization is preferred when the server advertises it;
+otherwise `tnl login` prompts for the login token:
 
 ```console
-export TNL_CORE_URL=https://core.example.com
-tnl login
+tnl login https://tnl.example.com
 tnl public http://127.0.0.1:3000 --host=demo
 ```
 
@@ -115,30 +114,18 @@ Access credentials expire after 30 days at most. Existing lease-token
 heartbeats can continue, but a later client restart or hostname command may
 require `tnl login` again.
 
-## External Browser Authentication
+## OIDC Login
 
-To prefer browser/device login over bootstrap enrollment, configure all of the
-following daemon values:
+To enable browser login through an OpenID Connect provider, configure:
 
-- `TNLD_EXTERNAL_AUTH_ISSUER`
-- `TNLD_EXTERNAL_AUTH_DEVICE_URL`
-- `TNLD_EXTERNAL_AUTH_TOKEN_URL`
-- `TNLD_EXTERNAL_AUTH_CLIENT_ID`
-- `TNLD_EXTERNAL_AUTH_SCOPE`
-- `TNLD_EXTERNAL_AUTH_INTROSPECTION_URL`
-- `TNLD_EXTERNAL_AUTH_INTROSPECTION_TOKEN`
+- `TNLD_OIDC_ISSUER`: the provider's exact HTTPS issuer.
+- `TNLD_OIDC_CLIENT_ID`: a public client that supports the device authorization
+  grant and `openid` scope.
 
-The device, token, and introspection endpoints must share the exact HTTPS origin
-declared by the issuer. Generate the introspection workload credential on the
-trusted service that validates external tokens:
-
-```console
-tnld token workload
-```
-
-Store that credential as a secret on both services. When external
-authentication is advertised, `tnl login` opens the device flow by default;
-use `tnl login --bootstrap` only for operator recovery.
+The provider must publish standard discovery metadata and sign ID tokens with
+RS256. The server verifies tokens locally. When OIDC login is available,
+`tnl login` uses it by default; pass `--token` with the server's login token for
+operator recovery.
 
 ## Split Edge And Workers
 
@@ -151,10 +138,10 @@ tnld token worker
 docker compose --file compose.split.yaml pull
 docker compose --file compose.split.yaml up -d --scale worker=2
 docker compose --file compose.split.yaml exec edge \
-  tnld bootstrap-token --state-dir /var/lib/tnl
+  tnld login-token --state-dir /var/lib/tnl
 ```
 
-The worker connects outbound to `wss://core.<domain>/internal/v1/worker`, so no
+The worker connects outbound to `wss://tnl.<domain>/internal/v1/worker`, so no
 worker ingress port is required. Keep at least one worker running and size
 `TNLD_WORKER_CAPACITY` for the intended fixed pool.
 
@@ -188,7 +175,7 @@ docker compose start tnld
 
 ## State And Recovery
 
-`tnld` stores SQLite files, ACME account and certificate data, the bootstrap
+`tnld` stores SQLite files, ACME account and certificate data, the login
 token, and the pinned relay region under `/var/lib/tnl`. The default Compose
 project keeps that directory in the `tnl_tnld-state` named volume.
 
@@ -197,19 +184,19 @@ restart it. Copying only `tnld.db` omits required files; copying a live database
 can lose WAL transactions or produce an inconsistent backup. See
 [Releases](releases.md) for backup, restore, upgrade, and rollback commands.
 
-Treat backups and bootstrap tokens as secrets. Test restoration regularly on an
+Treat backups and login tokens as secrets. Test restoration regularly on an
 isolated host and encrypt backups at rest. `tnld` takes an exclusive state lock
 and refuses to start a second state-owning process on the same directory.
 
-To rotate the bootstrap token, stop the state owner and run:
+To rotate the login token, stop the state owner and run:
 
 ```console
 docker compose stop tnld
-docker compose run --rm tnld bootstrap-token --state-dir /var/lib/tnl --rotate
+docker compose run --rm tnld login-token --state-dir /var/lib/tnl --rotate
 docker compose start tnld
 ```
 
-Rotation invalidates the old bootstrap credential but does not revoke access
+Rotation invalidates the old login credential but does not revoke access
 tokens already issued from it. Use `tnl logout` from enrolled clients to revoke
 their current access tokens.
 

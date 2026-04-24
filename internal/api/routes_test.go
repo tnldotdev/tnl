@@ -18,7 +18,7 @@ import (
 	"github.com/0xcadams/tnl/internal/routes"
 	"github.com/0xcadams/tnl/internal/state"
 	"github.com/0xcadams/tnl/internal/worker"
-	"github.com/0xcadams/tnl/pkg/protocol/corev1"
+	"github.com/0xcadams/tnl/pkg/protocol/serverv1"
 	"tailscale.com/types/key"
 )
 
@@ -28,15 +28,15 @@ func TestRouteAPILifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	bootstrap, err := credentials.NewBootstrapToken()
+	login, err := credentials.NewLoginToken()
 	if err != nil {
 		t.Fatal(err)
 	}
-	authService, err := auth.NewService(db, bootstrap)
+	authService, err := auth.NewService(db, login)
 	if err != nil {
 		t.Fatal(err)
 	}
-	issued, err := authService.Exchange(context.Background(), bootstrap)
+	issued, err := authService.Exchange(context.Background(), login)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,29 +58,29 @@ func TestRouteAPILifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	created := routeRequest[corev1.LeaseSetup](t, handler, issued.Token.String(), http.MethodPost, routesPath, corev1.CreateRouteRequest{
+	created := routeRequest[serverv1.LeaseSetup](t, handler, issued.Token.String(), http.MethodPost, routesPath, serverv1.CreateRouteRequest{
 		Hostname: "route.example", DisplayTarget: "localhost:3000", RouteToken: routeToken.String(),
 	}, http.StatusCreated)
 	if created.Route.Generation != 1 || created.Lease.Generation != 1 {
 		t.Fatalf("created setup = %#v", created)
 	}
 	serverKey := key.NewNode().Public().String()
-	routeRequest[struct{}](t, handler, created.LeaseToken, http.MethodPost, routesPath+"/"+created.Route.Id+"/transport", corev1.RegisterTransportRequest{
+	routeRequest[struct{}](t, handler, created.LeaseToken, http.MethodPost, routesPath+"/"+created.Route.Id+"/transport", serverv1.RegisterTransportRequest{
 		Generation: 1,
-		Endpoint: corev1.TailcatDescriptor{
-			Version: corev1.TailcatDescriptorVersionN1, ServerPublicKey: serverKey, RelayProfile: "default",
+		Endpoint: serverv1.TailcatDescriptor{
+			Version: serverv1.TailcatDescriptorVersionN1, ServerPublicKey: serverKey, RelayProfile: "default",
 		},
 	}, http.StatusNoContent)
-	routeRequest[struct{}](t, handler, created.LeaseToken, http.MethodPost, routesPath+"/"+created.Route.Id+"/ready", corev1.LeaseGenerationRequest{Generation: 1}, http.StatusNoContent)
-	heartbeat := routeRequest[corev1.HeartbeatResponse](t, handler, created.LeaseToken, http.MethodPost, routesPath+"/"+created.Route.Id+"/heartbeat", corev1.LeaseGenerationRequest{Generation: 1}, http.StatusOK)
+	routeRequest[struct{}](t, handler, created.LeaseToken, http.MethodPost, routesPath+"/"+created.Route.Id+"/ready", serverv1.LeaseGenerationRequest{Generation: 1}, http.StatusNoContent)
+	heartbeat := routeRequest[serverv1.HeartbeatResponse](t, handler, created.LeaseToken, http.MethodPost, routesPath+"/"+created.Route.Id+"/heartbeat", serverv1.LeaseGenerationRequest{Generation: 1}, http.StatusOK)
 	if heartbeat.ExpiresAt.IsZero() {
 		t.Fatal("heartbeat omitted expiry")
 	}
-	listed := routeRequest[[]corev1.Route](t, handler, issued.Token.String(), http.MethodGet, routesPath, nil, http.StatusOK)
+	listed := routeRequest[[]serverv1.Route](t, handler, issued.Token.String(), http.MethodGet, routesPath, nil, http.StatusOK)
 	if len(listed) != 1 || listed[0].Id != created.Route.Id {
 		t.Fatalf("listed routes = %#v", listed)
 	}
-	replacement := routeRequest[corev1.LeaseSetup](t, handler, issued.Token.String(), http.MethodPost, routesPath+"/"+created.Route.Id+"/leases", corev1.AcquireLeaseRequest{
+	replacement := routeRequest[serverv1.LeaseSetup](t, handler, issued.Token.String(), http.MethodPost, routesPath+"/"+created.Route.Id+"/leases", serverv1.AcquireLeaseRequest{
 		RouteToken: routeToken.String(),
 	}, http.StatusCreated)
 	if replacement.Lease.Generation != 2 {
@@ -95,15 +95,15 @@ func TestCertificateAPIRequiresBoundCurrentLease(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	bootstrap, err := credentials.NewBootstrapToken()
+	login, err := credentials.NewLoginToken()
 	if err != nil {
 		t.Fatal(err)
 	}
-	authService, err := auth.NewService(db, bootstrap)
+	authService, err := auth.NewService(db, login)
 	if err != nil {
 		t.Fatal(err)
 	}
-	issued, err := authService.Exchange(context.Background(), bootstrap)
+	issued, err := authService.Exchange(context.Background(), login)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,31 +123,31 @@ func TestCertificateAPIRequiresBoundCurrentLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	created := routeRequest[corev1.LeaseSetup](t, handler, issued.Token.String(), http.MethodPost, routesPath, corev1.CreateRouteRequest{
+	created := routeRequest[serverv1.LeaseSetup](t, handler, issued.Token.String(), http.MethodPost, routesPath, serverv1.CreateRouteRequest{
 		Hostname: "route.example", DisplayTarget: "localhost:3000", RouteToken: routeToken.String(),
 	}, http.StatusCreated)
-	request := corev1.CreateCertificateOrderRequest{
+	request := serverv1.CreateCertificateOrderRequest{
 		RouteId: created.Route.Id, Generation: 1, Profile: "tlsserver",
 		Csr: base64.RawURLEncoding.EncodeToString([]byte("csr")),
 	}
-	order := routeRequest[corev1.CertificateOrder](
+	order := routeRequest[serverv1.CertificateOrder](
 		t, handler, created.LeaseToken, http.MethodPost, certificateOrdersPath, request, http.StatusCreated,
 	)
-	if order.RouteId != created.Route.Id || order.State != corev1.WaitingForChallenge || order.Challenge == nil {
+	if order.RouteId != created.Route.Id || order.State != serverv1.WaitingForChallenge || order.Challenge == nil {
 		t.Fatalf("certificate order = %#v", order)
 	}
 	wrongToken, _, _, err := credentials.NewLeaseToken()
 	if err != nil {
 		t.Fatal(err)
 	}
-	routeRequest[corev1.Problem](
+	routeRequest[serverv1.Problem](
 		t, handler, wrongToken.String(), http.MethodGet, certificateOrdersPath+"/"+order.Id, nil, http.StatusUnauthorized,
 	)
-	advanced := routeRequest[corev1.CertificateOrder](
+	advanced := routeRequest[serverv1.CertificateOrder](
 		t, handler, created.LeaseToken, http.MethodPost,
 		certificateOrdersPath+"/"+order.Id+"/challenge-ready", nil, http.StatusOK,
 	)
-	if advanced.State != corev1.WaitingForInstall || advanced.CertificatePem == nil {
+	if advanced.State != serverv1.WaitingForInstall || advanced.CertificatePem == nil {
 		t.Fatalf("advanced order = %#v", advanced)
 	}
 	routeRequest[struct{}](
@@ -157,7 +157,7 @@ func TestCertificateAPIRequiresBoundCurrentLease(t *testing.T) {
 	routeRequest[struct{}](
 		t, handler, created.LeaseToken, http.MethodPost,
 		routesPath+"/"+created.Route.Id+"/certificate-installed",
-		corev1.CertificateInstalledRequest{Generation: 1, OrderId: order.Id}, http.StatusNoContent,
+		serverv1.CertificateInstalledRequest{Generation: 1, OrderId: order.Id}, http.StatusNoContent,
 	)
 }
 
@@ -194,10 +194,10 @@ func routeRequest[T any](
 	return result
 }
 
-func claimRequest(t *testing.T, handler http.Handler, token, label string) corev1.HostnameClaim {
+func claimRequest(t *testing.T, handler http.Handler, token, label string) serverv1.HostnameClaim {
 	t.Helper()
 	var body bytes.Buffer
-	if err := json.NewEncoder(&body).Encode(corev1.CreateHostnameClaimRequest{Label: &label}); err != nil {
+	if err := json.NewEncoder(&body).Encode(serverv1.CreateHostnameClaimRequest{Label: &label}); err != nil {
 		t.Fatal(err)
 	}
 	request := httptest.NewRequest(http.MethodPost, hostnameClaimsPath, &body)
@@ -209,7 +209,7 @@ func claimRequest(t *testing.T, handler http.Handler, token, label string) corev
 	if response.Code != http.StatusCreated {
 		t.Fatalf("claim status = %d, body = %s", response.Code, response.Body.String())
 	}
-	var claim corev1.HostnameClaim
+	var claim serverv1.HostnameClaim
 	if err := json.NewDecoder(response.Body).Decode(&claim); err != nil {
 		t.Fatal(err)
 	}

@@ -1,2 +1,2 @@
-// Package api serves the core HTTP API.
+// Package api serves the tnl server HTTP API.
 package api

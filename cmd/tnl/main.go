@@ -18,13 +18,13 @@ import (
 	"github.com/0xcadams/tnl/internal/buildinfo"
 	"github.com/0xcadams/tnl/internal/clientstate"
 	"github.com/0xcadams/tnl/internal/config"
-	"github.com/0xcadams/tnl/internal/coreclient"
 	"github.com/0xcadams/tnl/internal/credentials"
-	"github.com/0xcadams/tnl/internal/deviceauth"
 	"github.com/0xcadams/tnl/internal/localproxy"
 	"github.com/0xcadams/tnl/internal/naming"
+	"github.com/0xcadams/tnl/internal/oidclogin"
 	"github.com/0xcadams/tnl/internal/publication"
-	"github.com/0xcadams/tnl/pkg/protocol/corev1"
+	"github.com/0xcadams/tnl/internal/serverclient"
+	"github.com/0xcadams/tnl/pkg/protocol/serverv1"
 	"github.com/alecthomas/kong"
 	"golang.org/x/term"
 	"tailscale.com/tailcfg"
@@ -33,15 +33,15 @@ import (
 type cli struct {
 	Public  publicCommand `cmd:"" help:"Publish one local HTTP service."`
 	Host    hostCommand   `cmd:"" help:"Manage self-hosted public names."`
-	Login   loginCommand  `cmd:"" help:"Authenticate to a core API."`
+	Login   loginCommand  `cmd:"" help:"Authenticate to a tnl server."`
 	Logout  logoutCommand `cmd:"" help:"Revoke and remove the saved access token."`
 	Version struct{}      `cmd:"" help:"Print release version information."`
 }
 
 type publicCommand struct {
 	Target      string `arg:"" name:"target" required:"" help:"Local port or literal-loopback HTTP origin."`
-	CoreURL     string `name:"core-url" env:"TNL_CORE_URL" required:"" help:"tnl core HTTPS origin."`
-	AccessToken string `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Core API access token; defaults to the saved login."`
+	ServerURL   string `name:"server" env:"TNL_SERVER" help:"tnl server HTTPS origin; defaults to the saved server."`
+	AccessToken string `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Server access token; defaults to the saved login."`
 	Host        string `name:"host" env:"TNL_HOST" help:"Requested single-label public name; omit for a random name."`
 	Output      string `name:"output" enum:"human,ndjson" default:"human" help:"Output format: ${enum}."`
 	StateDir    string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent route state."`
@@ -53,27 +53,28 @@ type hostCommand struct {
 }
 
 type hostListCommand struct {
-	CoreURL     string `name:"core-url" env:"TNL_CORE_URL" required:"" help:"tnl core HTTPS origin."`
-	AccessToken string `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Core API access token; defaults to the saved login."`
+	ServerURL   string `name:"server" env:"TNL_SERVER" help:"tnl server HTTPS origin; defaults to the saved server."`
+	AccessToken string `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Server access token; defaults to the saved login."`
 	StateDir    string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent client state."`
 }
 
 type hostReleaseCommand struct {
 	Hostname    string `arg:"" name:"hostname" required:"" help:"Exact hostname to release."`
-	CoreURL     string `name:"core-url" env:"TNL_CORE_URL" required:"" help:"tnl core HTTPS origin."`
-	AccessToken string `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Core API access token; defaults to the saved login."`
+	ServerURL   string `name:"server" env:"TNL_SERVER" help:"tnl server HTTPS origin; defaults to the saved server."`
+	AccessToken string `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Server access token; defaults to the saved login."`
 	StateDir    string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent route state."`
 }
 
 type loginCommand struct {
-	CoreURL   string `name:"core-url" env:"TNL_CORE_URL" required:"" help:"tnl core HTTPS origin."`
+	Server    string `arg:"" name:"server" optional:"" help:"tnl server HTTPS origin."`
+	ServerURL string `name:"server" env:"TNL_SERVER" help:"tnl server HTTPS origin; defaults to the saved server."`
 	StateDir  string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent client state."`
-	Bootstrap bool   `name:"bootstrap" help:"Use the deployment bootstrap token even when device login is available."`
+	Token     bool   `name:"token" help:"Use the local login token even when OIDC is available."`
 }
 
 type logoutCommand struct {
-	CoreURL  string `name:"core-url" env:"TNL_CORE_URL" required:"" help:"tnl core HTTPS origin."`
-	StateDir string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent client state."`
+	ServerURL string `name:"server" env:"TNL_SERVER" help:"tnl server HTTPS origin; defaults to the saved server."`
+	StateDir  string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent client state."`
 }
 
 func main() {
@@ -119,34 +120,40 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 }
 
 func runLogin(ctx context.Context, flags loginCommand, input io.Reader, output, errorOutput io.Writer) error {
-	core, err := coreclient.New(flags.CoreURL, nil, "")
+	serverValue := flags.Server
+	if serverValue == "" {
+		serverValue = flags.ServerURL
+	}
+	serverURL, stateRoot, err := resolveServer(flags.StateDir, serverValue)
 	if err != nil {
 		return err
 	}
-	capabilities, err := core.Capabilities(ctx)
+	server, err := serverclient.New(serverURL, nil, "")
 	if err != nil {
-		return fmt.Errorf("read core capabilities: %w", err)
+		return err
 	}
-	device := capabilities.DeviceAuthorization
-	useDevice := device != nil && !flags.Bootstrap
-	var externalToken string
-	var bootstrap credentials.BootstrapToken
-	if useDevice {
-		externalToken, err = deviceauth.Login(ctx, deviceauth.Config{
-			Issuer:                      device.Issuer,
-			DeviceAuthorizationEndpoint: device.DeviceAuthorizationEndpoint,
-			TokenEndpoint:               device.TokenEndpoint, ClientID: device.ClientId, Scope: device.Scope,
+	capabilities, err := server.Capabilities(ctx)
+	if err != nil {
+		return fmt.Errorf("read server capabilities: %w", err)
+	}
+	oidcCapabilities := capabilities.Oidc
+	useOIDC := oidcCapabilities != nil && !flags.Token
+	var idToken string
+	var login credentials.LoginToken
+	if useOIDC {
+		idToken, err = oidclogin.Login(ctx, oidclogin.Config{
+			Issuer: oidcCapabilities.Issuer, ClientID: oidcCapabilities.ClientId,
 		}, output)
 		if err != nil {
 			return err
 		}
 	} else {
-		bootstrap, err = readBootstrapToken(input, errorOutput)
+		login, err = readLoginToken(input, errorOutput)
 		if err != nil {
 			return err
 		}
 	}
-	state, err := openClientState(flags.StateDir, flags.CoreURL)
+	state, err := clientstate.New(stateRoot, serverURL)
 	if err != nil {
 		return err
 	}
@@ -159,39 +166,39 @@ func runLogin(ctx context.Context, flags loginCommand, input io.Reader, output, 
 	if err != nil {
 		return err
 	}
-	var issued corev1.TokenExchangeResponse
-	if useDevice {
-		issued, err = core.ExchangeExternal(ctx, externalToken)
+	var issued serverv1.TokenExchangeResponse
+	if useOIDC {
+		issued, err = server.ExchangeOIDC(ctx, idToken)
 		if err != nil {
-			return fmt.Errorf("exchange external login: %w", err)
+			return fmt.Errorf("exchange OIDC login: %w", err)
 		}
 	} else {
-		issued, err = core.Exchange(ctx, bootstrap)
+		issued, err = server.Exchange(ctx, login)
 		if err != nil {
-			return fmt.Errorf("exchange bootstrap token: %w", err)
+			return fmt.Errorf("exchange login token: %w", err)
 		}
 	}
 	access := credentials.AccessToken(issued.AccessToken)
 	credentialID, _, err := credentials.ParseAccessToken(access)
 	if err != nil {
-		return errors.New("core returned invalid access credential")
+		return errors.New("server returned invalid access credential")
 	}
 	cleanup := func() {
-		if client, cleanupErr := coreclient.New(flags.CoreURL, nil, access); cleanupErr == nil {
+		if client, cleanupErr := serverclient.New(serverURL, nil, access); cleanupErr == nil {
 			_ = client.RevokeAccessCredential(ctx, credentialID.String())
 		}
 	}
 	if credentialID.String() != issued.CredentialId || !issued.ExpiresAt.After(time.Now()) {
 		cleanup()
-		return errors.New("core returned invalid access credential")
+		return errors.New("server returned invalid access credential")
 	}
 	if hadPrevious && previous.CredentialID != credentialID {
-		previousClient, previousErr := coreclient.New(flags.CoreURL, nil, previous.Token)
+		previousClient, previousErr := serverclient.New(serverURL, nil, previous.Token)
 		if previousErr == nil {
 			previousErr = previousClient.RevokeAccessCredential(ctx, previous.CredentialID.String())
 		}
-		if previousErr != nil && !errors.Is(previousErr, coreclient.ErrUnauthenticated) &&
-			!errors.Is(previousErr, coreclient.ErrNotFound) {
+		if previousErr != nil && !errors.Is(previousErr, serverclient.ErrUnauthenticated) &&
+			!errors.Is(previousErr, serverclient.ErrNotFound) {
 			cleanup()
 			return fmt.Errorf("revoke previous access credential: %w", previousErr)
 		}
@@ -202,42 +209,50 @@ func runLogin(ctx context.Context, flags loginCommand, input io.Reader, output, 
 		cleanup()
 		return errors.Join(err, state.RemoveAccessCredential())
 	}
+	if err := clientstate.SaveServer(stateRoot, serverURL); err != nil {
+		cleanup()
+		return errors.Join(err, state.RemoveAccessCredential())
+	}
 	_, err = fmt.Fprintf(output, "Authenticated until %s\n", issued.ExpiresAt.UTC().Format(time.RFC3339))
 	return err
 }
 
-func readBootstrapToken(input io.Reader, output io.Writer) (credentials.BootstrapToken, error) {
+func readLoginToken(input io.Reader, output io.Writer) (credentials.LoginToken, error) {
 	if file, ok := input.(*os.File); ok && term.IsTerminal(int(file.Fd())) {
-		if _, err := fmt.Fprint(output, "Bootstrap token: "); err != nil {
+		if _, err := fmt.Fprint(output, "Login token: "); err != nil {
 			return "", err
 		}
 		data, err := term.ReadPassword(int(file.Fd()))
 		_, _ = fmt.Fprintln(output)
 		if err != nil {
-			return "", fmt.Errorf("read bootstrap token: %w", err)
+			return "", fmt.Errorf("read login token: %w", err)
 		}
-		return parseBootstrapInput(data)
+		return parseLoginInput(data)
 	}
 	data, err := io.ReadAll(io.LimitReader(input, 257))
 	if err != nil {
-		return "", fmt.Errorf("read bootstrap token: %w", err)
+		return "", fmt.Errorf("read login token: %w", err)
 	}
 	if len(data) > 256 {
-		return "", errors.New("bootstrap token input is too large")
+		return "", errors.New("login token input is too large")
 	}
-	return parseBootstrapInput(data)
+	return parseLoginInput(data)
 }
 
-func parseBootstrapInput(data []byte) (credentials.BootstrapToken, error) {
-	token := credentials.BootstrapToken(strings.TrimSpace(string(data)))
-	if _, err := credentials.ParseBootstrapToken(token); err != nil {
-		return "", errors.New("invalid bootstrap token")
+func parseLoginInput(data []byte) (credentials.LoginToken, error) {
+	token := credentials.LoginToken(strings.TrimSpace(string(data)))
+	if _, err := credentials.ParseLoginToken(token); err != nil {
+		return "", errors.New("invalid login token")
 	}
 	return token, nil
 }
 
 func runLogout(ctx context.Context, flags logoutCommand, output io.Writer) error {
-	state, err := openClientState(flags.StateDir, flags.CoreURL)
+	serverURL, _, err := resolveServer(flags.StateDir, flags.ServerURL)
+	if err != nil {
+		return err
+	}
+	state, err := openClientState(flags.StateDir, serverURL)
 	if err != nil {
 		return err
 	}
@@ -253,13 +268,13 @@ func runLogout(ctx context.Context, flags logoutCommand, output io.Writer) error
 	if !found {
 		return errors.New("no saved login")
 	}
-	core, err := coreclient.New(flags.CoreURL, nil, stored.Token)
+	server, err := serverclient.New(serverURL, nil, stored.Token)
 	if err != nil {
 		return err
 	}
-	revokeErr := core.RevokeAccessCredential(ctx, stored.CredentialID.String())
-	if revokeErr != nil && !errors.Is(revokeErr, coreclient.ErrUnauthenticated) &&
-		!errors.Is(revokeErr, coreclient.ErrNotFound) {
+	revokeErr := server.RevokeAccessCredential(ctx, stored.CredentialID.String())
+	if revokeErr != nil && !errors.Is(revokeErr, serverclient.ErrUnauthenticated) &&
+		!errors.Is(revokeErr, serverclient.ErrNotFound) {
 		return revokeErr
 	}
 	if err := state.RemoveAccessCredential(); err != nil {
@@ -291,29 +306,33 @@ func runPublic(ctx context.Context, flags publicCommand, stdout, stderr io.Write
 	if err := localproxy.Preflight(ctx, target); err != nil {
 		return fail(err)
 	}
-	state, err := openClientState(flags.StateDir, flags.CoreURL)
+	serverURL, _, err := resolveServer(flags.StateDir, flags.ServerURL)
 	if err != nil {
 		return fail(err)
 	}
-	client, err := authenticatedClient(flags.CoreURL, flags.AccessToken, state)
+	state, err := openClientState(flags.StateDir, serverURL)
+	if err != nil {
+		return fail(err)
+	}
+	client, err := authenticatedClient(serverURL, flags.AccessToken, state)
 	if err != nil {
 		return fail(err)
 	}
 	capabilities, err := client.Capabilities(ctx)
 	if err != nil {
-		return fail(fmt.Errorf("read core capabilities: %w", err))
+		return fail(fmt.Errorf("read server capabilities: %w", err))
 	}
-	if capabilities.Transport.Type != corev1.Tailcat || capabilities.Transport.Version != corev1.TransportCapabilitiesVersionN1 {
-		return fail(errors.New("core does not support tailcat transport version 1"))
+	if capabilities.Transport.Type != serverv1.Tailcat || capabilities.Transport.Version != serverv1.TransportCapabilitiesVersionN1 {
+		return fail(errors.New("server does not support tailcat transport version 1"))
 	}
 	if capabilities.LocalClaim == nil || capabilities.LocalClaim.Suffix == "" {
-		return fail(errors.New("core does not support self-hosted hostname claims"))
+		return fail(errors.New("server does not support self-hosted hostname claims"))
 	}
 	profile := capabilities.Transport.RelayProfile
 	var publicationState *clientstate.Store
 	acmeProfile := ""
 	if capabilities.Acme == nil || capabilities.Acme.Profile == "" {
-		return fail(errors.New("core does not support automatic certificates"))
+		return fail(errors.New("server does not support automatic certificates"))
 	}
 	publicationState = state
 	acmeProfile = capabilities.Acme.Profile
@@ -323,13 +342,13 @@ func runPublic(ctx context.Context, flags publicCommand, stdout, stderr io.Write
 	}
 	logger := log.New(stderr, "tnl: ", 0)
 	err = publication.RunPublic(ctx, publication.PublicConfig{
-		Core: client, Hostname: hostname, Target: target,
+		Server: client, Hostname: hostname, Target: target,
 		State: publicationState, ACMEProfile: acmeProfile,
 		RelayProfile: profile, Logf: logger.Printf,
 		LoadProfiles: func(ctx context.Context) (map[string]*tailcfg.DERPRegion, error) {
 			relayMap, err := client.RelayMap(ctx)
 			if err != nil {
-				return nil, fmt.Errorf("read core relay map: %w", err)
+				return nil, fmt.Errorf("read server relay map: %w", err)
 			}
 			return config.DecodeRelayProfiles(relayMap)
 		},
@@ -342,15 +361,18 @@ func runPublic(ctx context.Context, flags publicCommand, stdout, stderr io.Write
 }
 
 func runHostList(ctx context.Context, flags hostListCommand, output io.Writer) error {
+	serverURL, _, err := resolveServer(flags.StateDir, flags.ServerURL)
+	if err != nil {
+		return err
+	}
 	var state *clientstate.Store
 	if flags.AccessToken == "" {
-		var err error
-		state, err = openClientState(flags.StateDir, flags.CoreURL)
+		state, err = openClientState(flags.StateDir, serverURL)
 		if err != nil {
 			return err
 		}
 	}
-	client, err := authenticatedClient(flags.CoreURL, flags.AccessToken, state)
+	client, err := authenticatedClient(serverURL, flags.AccessToken, state)
 	if err != nil {
 		return err
 	}
@@ -377,7 +399,11 @@ func runHostRelease(ctx context.Context, flags hostReleaseCommand, output io.Wri
 	if err != nil {
 		return err
 	}
-	state, err := openClientState(flags.StateDir, flags.CoreURL)
+	serverURL, _, err := resolveServer(flags.StateDir, flags.ServerURL)
+	if err != nil {
+		return err
+	}
+	state, err := openClientState(flags.StateDir, serverURL)
 	if err != nil {
 		return err
 	}
@@ -386,7 +412,7 @@ func runHostRelease(ctx context.Context, flags hostReleaseCommand, output io.Wri
 		return err
 	}
 	defer lock.Close()
-	client, err := authenticatedClient(flags.CoreURL, flags.AccessToken, state)
+	client, err := authenticatedClient(serverURL, flags.AccessToken, state)
 	if err != nil {
 		return err
 	}
@@ -421,7 +447,7 @@ func runHostRelease(ctx context.Context, flags hostReleaseCommand, output io.Wri
 			return err
 		}
 	}
-	if err := client.ReleaseHostnameClaim(ctx, claimID); err != nil && !errors.Is(err, coreclient.ErrNotFound) {
+	if err := client.ReleaseHostnameClaim(ctx, claimID); err != nil && !errors.Is(err, serverclient.ErrNotFound) {
 		return err
 	}
 	if err := state.RemoveHostnameSelection(hostname); err != nil {
@@ -438,7 +464,7 @@ func runHostRelease(ctx context.Context, flags hostReleaseCommand, output io.Wri
 
 func claimPublicHostname(
 	ctx context.Context,
-	client *coreclient.Client,
+	client *serverclient.Client,
 	state *clientstate.Store,
 	target, label, suffix string,
 ) (string, error) {
@@ -490,21 +516,21 @@ func claimPublicHostname(
 	return hostname, nil
 }
 
-func validateClaimHostname(claim corev1.HostnameClaim, suffix string) (string, error) {
+func validateClaimHostname(claim serverv1.HostnameClaim, suffix string) (string, error) {
 	canonicalSuffix, suffixErr := naming.CanonicalizeHostname(suffix)
 	hostname, err := naming.CanonicalizeHostname(claim.Hostname)
 	label, found := strings.CutSuffix(hostname, "."+suffix)
 	if suffixErr != nil || canonicalSuffix != suffix || err != nil || hostname != claim.Hostname ||
 		!found || label == "" || strings.Contains(label, ".") || claim.Id == "" {
-		return "", errors.New("core returned an invalid hostname claim")
+		return "", errors.New("server returned an invalid hostname claim")
 	}
 	return hostname, nil
 }
 
 func authenticatedClient(
-	coreURL, tokenValue string,
+	serverURL, tokenValue string,
 	state *clientstate.Store,
-) (*coreclient.Client, error) {
+) (*serverclient.Client, error) {
 	if tokenValue == "" {
 		if state == nil {
 			return nil, errors.New("not authenticated; run tnl login")
@@ -522,18 +548,41 @@ func authenticatedClient(
 	if _, _, err := credentials.ParseAccessToken(token); err != nil {
 		return nil, errors.New("invalid access token")
 	}
-	return coreclient.New(coreURL, nil, token)
+	return serverclient.New(serverURL, nil, token)
 }
 
-func openClientState(root, coreURL string) (*clientstate.Store, error) {
-	if root == "" {
-		var err error
-		root, err = clientstate.DefaultDir()
-		if err != nil {
-			return nil, err
-		}
+func resolveServer(root, value string) (string, string, error) {
+	root, err := clientStateRoot(root)
+	if err != nil {
+		return "", "", err
 	}
-	return clientstate.New(root, coreURL)
+	if value != "" {
+		server, err := clientstate.CanonicalServer(value)
+		return server, root, err
+	}
+	server, found, err := clientstate.SavedServer(root)
+	if err != nil {
+		return "", "", err
+	}
+	if !found {
+		return "", "", errors.New("server is required; run tnl login SERVER or use --server")
+	}
+	return server, root, nil
+}
+
+func openClientState(root, serverURL string) (*clientstate.Store, error) {
+	root, err := clientStateRoot(root)
+	if err != nil {
+		return nil, err
+	}
+	return clientstate.New(root, serverURL)
+}
+
+func clientStateRoot(root string) (string, error) {
+	if root != "" {
+		return root, nil
+	}
+	return clientstate.DefaultDir()
 }
 
 func randomRequestKey() (string, error) {
