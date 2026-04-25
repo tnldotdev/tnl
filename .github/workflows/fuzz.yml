@@ -19,9 +19,19 @@ env:
 
 jobs:
   fuzz:
-    name: Go fuzz
+    name: Go fuzz (${{ matrix.name }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: router
+            package: ./internal/router
+            target: FuzzInspectClientHello
+          - name: proxy protocol
+            package: ./internal/proxyproto
+            target: FuzzDecode
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -32,11 +42,11 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache: false
+          cache: true
 
       - name: Run fuzz tests
         env:
           FUZZ_TIME: ${{ github.event_name == 'schedule' && '5m' || '15s' }}
-        run: |
-          go test ./internal/router -run='^$' -fuzz=. -fuzztime="$FUZZ_TIME"
-          go test ./internal/proxyproto -run='^$' -fuzz=. -fuzztime="$FUZZ_TIME"
+          PACKAGE: ${{ matrix.package }}
+          TARGET: ${{ matrix.target }}
+        run: go test "$PACKAGE" -run='^$' -fuzz="^${TARGET}$" -fuzztime="$FUZZ_TIME"
