@@ -1,0 +1,189 @@
+openapi: 3.1.0
+info:
+  title: tnl route export API
+  version: 1.0.0
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+servers:
+  - url: https://receiver.example
+paths:
+  /v1/routes/{route_id}/lifecycle-events:
+    post:
+      operationId: ingestRouteLifecycleEvent
+      summary: Ingest one ordered route lifecycle event
+      security:
+        - serviceToken: []
+      parameters:
+        - $ref: "#/components/parameters/RouteID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RouteLifecycleEvent"
+      responses:
+        "204":
+          description: Event accepted
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "413":
+          $ref: "#/components/responses/Problem"
+        "415":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/routes/{route_id}/usage-snapshots:
+    post:
+      operationId: ingestRouteUsageSnapshot
+      summary: Ingest one revision of a route usage bucket
+      security:
+        - serviceToken: []
+      parameters:
+        - $ref: "#/components/parameters/RouteID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RouteUsageSnapshot"
+      responses:
+        "204":
+          description: Snapshot accepted
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "413":
+          $ref: "#/components/responses/Problem"
+        "415":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+components:
+  securitySchemes:
+    serviceToken:
+      type: http
+      scheme: bearer
+      bearerFormat: tnl service token
+  parameters:
+    RouteID:
+      name: route_id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^route_[0-9a-f]{32}$
+  responses:
+    Problem:
+      description: Request failed
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+  schemas:
+    PositiveInteger:
+      type: string
+      pattern: ^[1-9][0-9]{0,18}$
+    UnsignedInteger:
+      type: string
+      pattern: ^(0|[1-9][0-9]{0,18})$
+    RouteLifecycleEvent:
+      type: object
+      additionalProperties: false
+      required: [event_id, generation, sequence, occurred_at, transition]
+      properties:
+        event_id:
+          type: string
+          pattern: ^event_[0-9a-f]{32}$
+        generation:
+          $ref: "#/components/schemas/PositiveInteger"
+        sequence:
+          $ref: "#/components/schemas/PositiveInteger"
+        occurred_at:
+          type: string
+          format: date-time
+        transition:
+          type: string
+          enum: [generation_started, ready, disconnected, deleted]
+    RouteUsageSnapshot:
+      type: object
+      additionalProperties: false
+      required:
+        - generation
+        - resolution
+        - bucket_start
+        - revision
+        - source_through
+        - connections_opened
+        - connection_nanoseconds
+        - ingress_bytes
+        - egress_bytes
+        - complete
+      properties:
+        generation:
+          $ref: "#/components/schemas/PositiveInteger"
+        resolution:
+          type: string
+          enum: [minute, hour]
+        bucket_start:
+          type: string
+          format: date-time
+        revision:
+          $ref: "#/components/schemas/PositiveInteger"
+        source_through:
+          type: string
+          format: date-time
+        connections_opened:
+          $ref: "#/components/schemas/UnsignedInteger"
+        connection_nanoseconds:
+          $ref: "#/components/schemas/UnsignedInteger"
+        ingress_bytes:
+          $ref: "#/components/schemas/UnsignedInteger"
+        egress_bytes:
+          $ref: "#/components/schemas/UnsignedInteger"
+        complete:
+          type: boolean
+    Problem:
+      type: object
+      additionalProperties: false
+      required: [type, title, status, code, request_id, details]
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+          minLength: 1
+          maxLength: 128
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        code:
+          type: string
+          enum:
+            - invalid_argument
+            - unauthenticated
+            - not_found
+            - state_conflict
+            - idempotency_conflict
+            - temporarily_unavailable
+            - internal
+        request_id:
+          type: string
+          pattern: ^req_[A-Za-z0-9-]+$
+        details:
+          type: object
+          maxProperties: 16

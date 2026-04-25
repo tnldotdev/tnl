@@ -51,6 +51,8 @@ type TNLD struct {
 	RelayProfile             string        `name:"relay-profile" env:"TNLD_RELAY_PROFILE" help:"DERP region code selected from a custom relay map."`
 	WorkerURL                string        `name:"worker-url" env:"TNLD_WORKER_URL" help:"Worker-mode WSS edge URL."`
 	WorkerToken              string        `name:"worker-token" env:"TNLD_WORKER_TOKEN" help:"Edge-to-worker authentication token."`
+	ExportURL                string        `name:"export-url" env:"TNLD_EXPORT_URL" help:"Compatible route export receiver base URL."`
+	ExportToken              string        `name:"export-token" env:"TNLD_EXPORT_TOKEN" help:"Service token for the route export receiver."`
 	WorkerCapacity           int           `name:"worker-capacity" env:"TNLD_WORKER_CAPACITY" default:"500" help:"Hard route capacity for this worker."`
 	WorkerStreamLimit        int           `name:"worker-stream-limit" env:"TNLD_WORKER_STREAM_LIMIT" default:"4096" help:"Maximum multiplexed streams per worker session."`
 	PublicConnLimit          int           `name:"public-connection-limit" env:"TNLD_PUBLIC_CONNECTION_LIMIT" default:"20000" help:"Maximum concurrent public connections."`
@@ -148,6 +150,24 @@ func (c TNLD) Validate() error {
 	if c.Mode == TNLDModeWorker && c.WorkerURL == "" {
 		return errors.New("worker mode requires a worker URL")
 	}
+	if (c.ExportURL == "") != (c.ExportToken == "") {
+		return errors.New("export URL and token must be configured together")
+	}
+	if c.ExportURL != "" {
+		if !c.Mode.UsesState() {
+			return errors.New("worker mode cannot export route usage")
+		}
+		if _, err := credentials.ParseServiceToken(credentials.ServiceToken(c.ExportToken)); err != nil {
+			return errors.New("export token is invalid")
+		}
+		exportURL, err := url.Parse(c.ExportURL)
+		if err != nil || exportURL.Host == "" || exportURL.User != nil || exportURL.RawQuery != "" || exportURL.Fragment != "" {
+			return errors.New("export URL must be an HTTPS base URL or a loopback HTTP base URL")
+		}
+		if exportURL.Scheme != "https" && (exportURL.Scheme != "http" || !isLoopbackHost(exportURL.Hostname())) {
+			return errors.New("export URL must be an HTTPS base URL or a loopback HTTP base URL")
+		}
+	}
 	if c.WorkerURL != "" {
 		if c.Mode != TNLDModeWorker {
 			return errors.New("worker URL is valid only in worker mode")
@@ -165,6 +185,14 @@ func (c TNLD) Validate() error {
 		}
 	}
 	return nil
+}
+
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	address := net.ParseIP(host)
+	return address != nil && address.IsLoopback()
 }
 
 func (c TNLD) OIDCEnabled() bool {

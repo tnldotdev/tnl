@@ -66,6 +66,7 @@ type StoreConfig struct {
 	MaxActiveHostnameClaims  int
 	MaxHostnameClaimRequests int
 	ObserveOperation         StoreObserver
+	LifecycleRecorder        LifecycleRecorder
 }
 
 type Store struct {
@@ -77,6 +78,7 @@ type Store struct {
 	maxActiveHostnameClaims  int
 	maxHostnameClaimRequests int
 	observeOperation         StoreObserver
+	lifecycleRecorder        LifecycleRecorder
 }
 
 func NewStore(db *sql.DB, routeSuffix string, configs ...StoreConfig) (*Store, error) {
@@ -122,6 +124,7 @@ func NewStore(db *sql.DB, routeSuffix string, configs ...StoreConfig) (*Store, e
 		maxActiveHostnameClaims:  config.MaxActiveHostnameClaims,
 		maxHostnameClaimRequests: config.MaxHostnameClaimRequests,
 		observeOperation:         config.ObserveOperation,
+		lifecycleRecorder:        config.LifecycleRecorder,
 	}, nil
 }
 
@@ -186,6 +189,9 @@ func (s *Store) Create(
 		// Recreate in place, rotating credentials and fencing the old agent.
 		existing := routeFromDB(existingRoute)
 		generation := existing.Generation + 1
+		if err := s.recordLifecycle(ctx, queries, existing.ID, existing.Generation, now, LifecycleDisconnected); err != nil {
+			return Provisioning{}, err
+		}
 		count, err := queries.RotateRouteCredential(ctx, statedb.RotateRouteCredentialParams{
 			CredentialID: routeCredentialID.String(),
 			SecretHash:   routeHash[:],
@@ -223,6 +229,9 @@ func (s *Store) Create(
 			ExpiresAt:    expiresAt.Unix(),
 		}); err != nil {
 			return Provisioning{}, fmt.Errorf("routes: create replacement lease: %w", err)
+		}
+		if err := s.recordLifecycle(ctx, queries, existing.ID, generation, now, LifecycleGenerationStarted); err != nil {
+			return Provisioning{}, err
 		}
 		if err := tx.Commit(); err != nil {
 			return Provisioning{}, fmt.Errorf("routes: commit route replacement: %w", err)
@@ -266,6 +275,9 @@ func (s *Store) Create(
 		ExpiresAt:    expiresAt.Unix(),
 	}); err != nil {
 		return Provisioning{}, fmt.Errorf("routes: create lease: %w", err)
+	}
+	if err := s.recordLifecycle(ctx, queries, routeID, 1, now, LifecycleGenerationStarted); err != nil {
+		return Provisioning{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return Provisioning{}, fmt.Errorf("routes: commit create: %w", err)
@@ -316,6 +328,9 @@ func (s *Store) Acquire(
 		return Provisioning{}, ErrInvalidState
 	}
 	generation := route.Generation + 1
+	if err := s.recordLifecycle(ctx, queries, routeID, route.Generation, now, LifecycleDisconnected); err != nil {
+		return Provisioning{}, err
+	}
 	if err := queries.ExpireRouteLeases(ctx, routeID); err != nil {
 		return Provisioning{}, fmt.Errorf("routes: expire previous lease: %w", err)
 	}
@@ -340,6 +355,9 @@ func (s *Store) Acquire(
 		ExpiresAt:    expiresAt.Unix(),
 	}); err != nil {
 		return Provisioning{}, fmt.Errorf("routes: create replacement lease: %w", err)
+	}
+	if err := s.recordLifecycle(ctx, queries, routeID, generation, now, LifecycleGenerationStarted); err != nil {
+		return Provisioning{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return Provisioning{}, fmt.Errorf("routes: commit acquire: %w", err)
@@ -486,7 +504,25 @@ func (s *Store) Ready(ctx context.Context, lease Lease) (err error) {
 	if err != nil {
 		return fmt.Errorf("routes: mark ready: %w", err)
 	}
-	count, err := s.queries.ReadyRouteLease(ctx, statedb.ReadyRouteLeaseParams{
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("routes: begin ready: %w", err)
+	}
+	defer tx.Rollback()
+	queries := s.queries.WithTx(tx)
+	status, err := queries.GetRouteLeaseStatus(ctx, statedb.GetRouteLeaseStatusParams{
+		LeaseID: lease.ID, RouteID: lease.RouteID, Generation: dbGeneration,
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrInvalidState
+	}
+	if err != nil {
+		return fmt.Errorf("routes: read ready state: %w", err)
+	}
+	if status == "ready" {
+		return nil
+	}
+	count, err := queries.ReadyRouteLease(ctx, statedb.ReadyRouteLeaseParams{
 		LeaseID:    lease.ID,
 		RouteID:    lease.RouteID,
 		Generation: dbGeneration,
@@ -494,7 +530,16 @@ func (s *Store) Ready(ctx context.Context, lease Lease) (err error) {
 	if err != nil {
 		return fmt.Errorf("routes: mark ready: %w", err)
 	}
-	return requireCount(count, ErrInvalidState)
+	if err := requireCount(count, ErrInvalidState); err != nil {
+		return err
+	}
+	if err := s.recordLifecycle(ctx, queries, lease.RouteID, lease.Generation, s.now().UTC(), LifecycleReady); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("routes: commit ready: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) Heartbeat(ctx context.Context, lease Lease) (expiresAt time.Time, err error) {
@@ -526,8 +571,27 @@ func (s *Store) InvalidateOtherBoots(ctx context.Context, bootEpoch string) erro
 	if strings.TrimSpace(bootEpoch) == "" {
 		return errors.New("routes: boot epoch is required")
 	}
-	if err := s.queries.InvalidateOtherBootRouteLeases(ctx, bootEpoch); err != nil {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("routes: begin old boot invalidation: %w", err)
+	}
+	defer tx.Rollback()
+	queries := s.queries.WithTx(tx)
+	leases, err := queries.ListOtherBootRouteLeases(ctx, bootEpoch)
+	if err != nil {
+		return fmt.Errorf("routes: list old boot leases: %w", err)
+	}
+	if err := queries.InvalidateOtherBootRouteLeases(ctx, bootEpoch); err != nil {
 		return fmt.Errorf("routes: invalidate old boot leases: %w", err)
+	}
+	now := s.now().UTC()
+	for _, lease := range leases {
+		if err := s.recordLifecycle(ctx, queries, lease.RouteID, uint64(lease.Generation), now, LifecycleDisconnected); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("routes: commit old boot invalidation: %w", err)
 	}
 	return nil
 }
@@ -539,14 +603,29 @@ func (s *Store) Expire(ctx context.Context, routeID string, generation uint64) (
 	if err != nil {
 		return fmt.Errorf("routes: expire lease: %w", err)
 	}
-	count, err := s.queries.ExpireRouteLease(ctx, statedb.ExpireRouteLeaseParams{
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("routes: begin expire lease: %w", err)
+	}
+	defer tx.Rollback()
+	queries := s.queries.WithTx(tx)
+	count, err := queries.ExpireRouteLease(ctx, statedb.ExpireRouteLeaseParams{
 		RouteID:    routeID,
 		Generation: dbGeneration,
 	})
 	if err != nil {
 		return fmt.Errorf("routes: expire lease: %w", err)
 	}
-	return requireCount(count, ErrStaleLease)
+	if err := requireCount(count, ErrStaleLease); err != nil {
+		return err
+	}
+	if err := s.recordLifecycle(ctx, queries, routeID, generation, s.now().UTC(), LifecycleDisconnected); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("routes: commit expire lease: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) List(ctx context.Context, principalID string) ([]Route, error) {
@@ -569,6 +648,13 @@ func (s *Store) Delete(ctx context.Context, principalID, routeID string) error {
 	}
 	defer tx.Rollback()
 	queries := s.queries.WithTx(tx)
+	generation, err := queries.GetRouteGeneration(ctx, routeID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("routes: read deleted route: %w", err)
+	}
 	count, err := queries.DeleteActiveRoute(ctx, statedb.DeleteActiveRouteParams{
 		DeletedAt:   now.Unix(),
 		RouteID:     routeID,
@@ -588,6 +674,12 @@ func (s *Store) Delete(ctx context.Context, principalID, routeID string) error {
 	}
 	if err := queries.ExpireRouteLeases(ctx, routeID); err != nil {
 		return fmt.Errorf("routes: expire deleted route: %w", err)
+	}
+	if err := s.recordLifecycle(ctx, queries, routeID, uint64(generation), now, LifecycleDisconnected); err != nil {
+		return err
+	}
+	if err := s.recordLifecycle(ctx, queries, routeID, uint64(generation), now, LifecycleDeleted); err != nil {
+		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("routes: commit delete: %w", err)
@@ -667,4 +759,23 @@ func (s *Store) observe(operation StoreOperation, started time.Time, err error) 
 	if s.observeOperation != nil {
 		s.observeOperation(operation, time.Since(started), err)
 	}
+}
+
+func (s *Store) recordLifecycle(
+	ctx context.Context,
+	queries *statedb.Queries,
+	routeID string,
+	generation uint64,
+	occurredAt time.Time,
+	transition LifecycleTransition,
+) error {
+	if s.lifecycleRecorder == nil {
+		return nil
+	}
+	if err := s.lifecycleRecorder.RecordLifecycle(ctx, queries, LifecycleChange{
+		RouteID: routeID, Generation: generation, OccurredAt: occurredAt, Transition: transition,
+	}); err != nil {
+		return fmt.Errorf("routes: record lifecycle: %w", err)
+	}
+	return nil
 }

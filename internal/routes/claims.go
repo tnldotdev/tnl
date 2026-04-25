@@ -203,6 +203,10 @@ func (s *Store) ReleaseHostnameClaim(ctx context.Context, principalID, claimID s
 	}
 	defer tx.Rollback()
 	queries := s.queries.WithTx(tx)
+	routes, err := queries.ListActiveClaimRouteGenerations(ctx, claimID)
+	if err != nil {
+		return fmt.Errorf("routes: list released routes: %w", err)
+	}
 	// Tombstone the claim and revoke all route authority in one transaction.
 	count, err := queries.TombstoneClaim(ctx, statedb.TombstoneClaimParams{
 		TombstonedAt: now.Unix(),
@@ -229,6 +233,15 @@ func (s *Store) ReleaseHostnameClaim(ctx context.Context, principalID, claimID s
 	}
 	if err := queries.ExpireClaimRouteLeases(ctx, claimID); err != nil {
 		return fmt.Errorf("routes: expire released routes: %w", err)
+	}
+	for _, route := range routes {
+		generation := uint64(route.Generation)
+		if err := s.recordLifecycle(ctx, queries, route.ID, generation, now, LifecycleDisconnected); err != nil {
+			return err
+		}
+		if err := s.recordLifecycle(ctx, queries, route.ID, generation, now, LifecycleDeleted); err != nil {
+			return err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("routes: commit hostname release: %w", err)

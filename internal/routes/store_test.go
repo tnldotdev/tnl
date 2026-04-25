@@ -3,6 +3,7 @@ package routes
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -20,7 +21,8 @@ func TestRouteLeaseLifecycle(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	queries := statedb.New(db)
 	now := time.Unix(1_700_000_000, 0).UTC()
-	store, err := NewStore(db, "example")
+	recorder := &testLifecycleRecorder{seen: make(map[string]struct{})}
+	store, err := NewStore(db, "example", StoreConfig{LifecycleRecorder: recorder})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,6 +118,54 @@ func TestRouteLeaseLifecycle(t *testing.T) {
 	}
 	if routes, err := store.List(context.Background(), "owner"); err != nil || len(routes) != 0 {
 		t.Fatalf("list after delete = %#v, %v", routes, err)
+	}
+	wantTransitions := []LifecycleTransition{
+		LifecycleGenerationStarted,
+		LifecycleReady,
+		LifecycleDisconnected,
+		LifecycleGenerationStarted,
+		LifecycleDisconnected,
+		LifecycleGenerationStarted,
+		LifecycleDisconnected,
+		LifecycleDeleted,
+	}
+	wantGenerations := []uint64{1, 1, 1, 2, 2, 3, 3, 3}
+	if len(recorder.changes) != len(wantTransitions) {
+		t.Fatalf("lifecycle changes = %#v", recorder.changes)
+	}
+	for index, change := range recorder.changes {
+		if change.RouteID != created.Route.ID || change.Generation != wantGenerations[index] || change.Transition != wantTransitions[index] {
+			t.Fatalf("lifecycle change %d = %#v", index, change)
+		}
+	}
+}
+
+func TestLifecycleFailureRollsBackRouteMutation(t *testing.T) {
+	ctx := t.Context()
+	db, err := state.Open(ctx, filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	queries := statedb.New(db)
+	upsertTestPrincipal(t, ctx, queries, "owner", "Owner", 1)
+	recordErr := errors.New("record lifecycle")
+	store, err := NewStore(db, "example", StoreConfig{LifecycleRecorder: failingLifecycleRecorder{err: recordErr}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ClaimHostname(ctx, "owner", "route", "rollback-test"); err != nil {
+		t.Fatal(err)
+	}
+	routeToken, _, _, err := credentials.NewRouteToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Create(ctx, "owner", "route.example", "localhost:3000", "boot", routeToken); !errors.Is(err, recordErr) {
+		t.Fatalf("Create error = %v", err)
+	}
+	if routes, err := store.List(ctx, "owner"); err != nil || len(routes) != 0 {
+		t.Fatalf("routes after rollback = %#v, %v", routes, err)
 	}
 }
 
@@ -215,4 +265,25 @@ func TestStoreObservesHealthOperationsExactlyOnce(t *testing.T) {
 	if !errors.Is(observations[len(observations)-1].err, ErrStaleLease) {
 		t.Fatalf("terminal observation error = %v", observations[len(observations)-1].err)
 	}
+}
+
+type testLifecycleRecorder struct {
+	changes []LifecycleChange
+	seen    map[string]struct{}
+}
+
+func (r *testLifecycleRecorder) RecordLifecycle(_ context.Context, _ *statedb.Queries, change LifecycleChange) error {
+	key := change.RouteID + "/" + string(change.Transition) + "/" + fmt.Sprint(change.Generation)
+	if _, ok := r.seen[key]; ok {
+		return nil
+	}
+	r.seen[key] = struct{}{}
+	r.changes = append(r.changes, change)
+	return nil
+}
+
+type failingLifecycleRecorder struct{ err error }
+
+func (r failingLifecycleRecorder) RecordLifecycle(context.Context, *statedb.Queries, LifecycleChange) error {
+	return r.err
 }

@@ -22,23 +22,34 @@ type Result struct {
 }
 
 func Copy(left, right net.Conn) (Result, error) {
+	return CopyObserved(left, right, nil, nil)
+}
+
+func CopyObserved(
+	left, right net.Conn,
+	onLeftToRight, onRightToLeft func(int64),
+) (Result, error) {
 	type copyResult struct {
 		leftToRight bool
 		bytes       int64
 		err         error
 	}
 	results := make(chan copyResult, 2)
-	copyDirection := func(destination, source net.Conn, leftToRight bool) {
+	copyDirection := func(destination, source net.Conn, leftToRight bool, observe func(int64)) {
 		buffer := buffers.Get().(*[]byte)
-		count, err := io.CopyBuffer(destination, source, *buffer)
+		writer := io.Writer(destination)
+		if observe != nil {
+			writer = observedWriter{Writer: destination, observe: observe}
+		}
+		count, err := io.CopyBuffer(writer, source, *buffer)
 		buffers.Put(buffer)
 		if closer, ok := destination.(interface{ CloseWrite() error }); ok {
 			err = errors.Join(err, closer.CloseWrite())
 		}
 		results <- copyResult{leftToRight: leftToRight, bytes: count, err: normalize(err)}
 	}
-	go copyDirection(right, left, true)
-	go copyDirection(left, right, false)
+	go copyDirection(right, left, true, onLeftToRight)
+	go copyDirection(left, right, false, onRightToLeft)
 
 	first := <-results
 	if first.err != nil {
@@ -55,6 +66,19 @@ func Copy(left, right net.Conn) (Result, error) {
 		}
 	}
 	return result, errors.Join(first.err, second.err)
+}
+
+type observedWriter struct {
+	io.Writer
+	observe func(int64)
+}
+
+func (w observedWriter) Write(data []byte) (int, error) {
+	written, err := w.Writer.Write(data)
+	if written > 0 {
+		w.observe(int64(written))
+	}
+	return written, err
 }
 
 func normalize(err error) error {

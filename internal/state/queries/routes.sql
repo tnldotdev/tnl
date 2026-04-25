@@ -179,7 +179,14 @@ SET status = 'ready'
 WHERE id = sqlc.arg(lease_id)
     AND route_id = sqlc.arg(route_id)
     AND generation = sqlc.arg(generation)
-    AND status IN ('starting', 'ready');
+    AND status = 'starting';
+
+-- name: GetRouteLeaseStatus :one
+SELECT status
+FROM route_leases
+WHERE id = sqlc.arg(lease_id)
+    AND route_id = sqlc.arg(route_id)
+    AND generation = sqlc.arg(generation);
 
 -- name: HeartbeatRouteLease :execrows
 UPDATE route_leases
@@ -195,6 +202,12 @@ WHERE id = sqlc.arg(lease_id)
 UPDATE route_leases
 SET status = 'expired'
 WHERE boot_epoch != sqlc.arg(boot_epoch) AND status != 'expired';
+
+-- name: ListOtherBootRouteLeases :many
+SELECT route_id, generation
+FROM route_leases
+WHERE boot_epoch != sqlc.arg(boot_epoch) AND status != 'expired'
+ORDER BY route_id, generation;
 
 -- name: ExpireRouteLease :execrows
 UPDATE route_leases
@@ -222,3 +235,14 @@ WHERE id = sqlc.arg(route_id)
 UPDATE route_credentials
 SET revoked_at = COALESCE(revoked_at, CAST(sqlc.arg(revoked_at) AS INTEGER))
 WHERE route_id = sqlc.arg(route_id);
+
+-- name: GetRouteGeneration :one
+SELECT generation
+FROM routes
+WHERE id = sqlc.arg(route_id);
+
+-- name: ListActiveClaimRouteGenerations :many
+SELECT id, generation
+FROM routes
+WHERE claim_id = sqlc.arg(claim_id) AND state = 'active'
+ORDER BY id;
