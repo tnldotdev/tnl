@@ -4,6 +4,19 @@ tnl releases provide combined `tnl` and `tnld` archives for macOS and Linux on
 amd64 and arm64, plus a multi-platform `tnld` image in GHCR. Releases before
 1.0 are standalone previews and may include forward-only state migrations.
 
+## Install With Homebrew
+
+Stable releases are available from the `0xcadams/tap` Homebrew tap:
+
+```console
+brew install 0xcadams/tap/tnl
+```
+
+The formula installs both `tnl` and `tnld` and verifies the selected release
+archive's SHA-256 checksum. Homebrew does not verify the release's Sigstore
+bundle or GitHub provenance; use the manual process below when those checks are
+required.
+
 ## Verify A Release
 
 Download all assets for the selected tag before checking the checksum file.
@@ -178,9 +191,11 @@ downgrade.
 
 ## Maintainer Runbook
 
-The `release` GitHub environment should require approval. Enable immutable
-releases, tag protection, GitHub Packages, and artifact attestations before the
-first release.
+The `release` GitHub environment should require approval. The `homebrew`
+environment must provide a `HOMEBREW_TAP_TOKEN` secret containing a fine-grained
+GitHub token with Contents read/write access to `0xcadams/homebrew-tap`. Enable
+immutable releases, tag protection, GitHub Packages, and artifact attestations
+before the first release.
 
 From a clean, fully verified `main` commit:
 
@@ -193,4 +208,5 @@ The tag must be an annotated signature that GitHub verifies and must point
 directly to a commit reachable from `main`; the workflow enforces both
 conditions. After environment approval it builds signed archives and SBOMs,
 pushes and signs the versioned image, attaches its digest, and publishes the
-release. Review the completed release and never move or reuse a release tag.
+release. Stable tags then update `Formula/tnl.rb` in the Homebrew tap. Review
+the completed release and never move or reuse a release tag.

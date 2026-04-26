@@ -92,7 +92,7 @@ func main() {
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	var flags cli
-	parser, err := kong.New(&flags, kong.Name("tnl"), kong.Description("A public URL for localhost."))
+	parser, err := kong.New(&flags, kong.Name("tnl"), kong.Description("public urls for localhost."))
 	if err != nil {
 		return err
 	}
