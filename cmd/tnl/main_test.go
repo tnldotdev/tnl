@@ -20,6 +20,7 @@ import (
 	"github.com/0xcadams/tnl/internal/credentials"
 	"github.com/0xcadams/tnl/internal/serverclient"
 	"github.com/0xcadams/tnl/pkg/protocol/serverv1"
+	"github.com/alecthomas/kong"
 )
 
 func TestVersionCommand(t *testing.T) {
@@ -29,6 +30,34 @@ func TestVersionCommand(t *testing.T) {
 	}
 	if output.String() != "tnl devel\n" || errors.Len() != 0 {
 		t.Fatalf("stdout = %q, stderr = %q", output.String(), errors.String())
+	}
+}
+
+func TestPublicNameOption(t *testing.T) {
+	t.Setenv("TNL_NAME", "env-name")
+	var flags cli
+	parser, err := kong.New(&flags)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := parser.Parse([]string{"public", "3000", "--name", "flag-name"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Command() != "public <target>" || flags.Public.Name != "flag-name" {
+		t.Fatalf("command = %q, name = %q", parsed.Command(), flags.Public.Name)
+	}
+
+	var envFlags cli
+	envParser, err := kong.New(&envFlags)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := envParser.Parse([]string{"public", "3000"}); err != nil {
+		t.Fatal(err)
+	}
+	if envFlags.Public.Name != "env-name" {
+		t.Fatalf("environment name = %q", envFlags.Public.Name)
 	}
 }
 

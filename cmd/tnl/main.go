@@ -42,7 +42,7 @@ type publicCommand struct {
 	Target      string `arg:"" name:"target" required:"" help:"Local port or literal-loopback HTTP origin."`
 	ServerURL   string `name:"server" env:"TNL_SERVER" help:"tnl server HTTPS origin; defaults to the saved server."`
 	AccessToken string `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Server access token; defaults to the saved login."`
-	Host        string `name:"host" env:"TNL_HOST" help:"Requested single-label public name; omit for a random name."`
+	Name        string `name:"name" env:"TNL_NAME" help:"Requested single-label public name; omit for a random name."`
 	Output      string `name:"output" enum:"human,ndjson" default:"human" help:"Output format: ${enum}."`
 	StateDir    string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent route state."`
 }
@@ -336,7 +336,7 @@ func runPublic(ctx context.Context, flags publicCommand, stdout, stderr io.Write
 	}
 	publicationState = state
 	acmeProfile = capabilities.Acme.Profile
-	hostname, err := claimPublicHostname(ctx, client, state, target, flags.Host, capabilities.LocalClaim.Suffix)
+	hostname, err := claimPublicHostname(ctx, client, state, target, flags.Name, capabilities.LocalClaim.Suffix)
 	if err != nil {
 		return fail(err)
 	}

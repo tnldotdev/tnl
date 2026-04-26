@@ -158,14 +158,14 @@ The implemented standalone path works as follows:
     its durable outbox when configured.
 
 Current automatic hostname behavior is intentionally temporary: omitting
-`--host` creates a lower-case base32 label, and the client remembers that claim
-for the local target. Explicit `--host` accepts one label under the configured
+`--name` creates a lower-case base32 label, and the client remembers that claim
+for the local target. Explicit `--name` accepts one label under the configured
 route suffix. Both claims are durable until released and tombstoned.
 
-The target removes `--host` in favor of `--name` and changes automatic
-publication to an ephemeral two-word name. The product has not launched, so no
-flag alias, state migration, or compatibility path is required for this
-prelaunch behavior.
+`--name` is the only explicit publication naming flag; no compatibility alias
+is retained. Phase 2 changes automatic publication to an ephemeral two-word
+name. The product has not launched, so no state migration or compatibility path
+is required for this prelaunch behavior.
 
 ## Implemented Hosted Foundation
 
@@ -422,10 +422,10 @@ $ tnl public 3000 --name demo
 https://demo.apps.example.com
 ```
 
-`--name` replaces `--host`; no compatibility alias is retained. Generated
-persistent bases and child-name authority remain hosted accounts features. Core
-self-hosting initially supports ephemeral generated exact names and durable
-explicit exact names, not local team bases.
+`--name` is the only explicit publication naming flag; no compatibility alias
+is retained. Generated persistent bases and child-name authority remain hosted
+accounts features. Core self-hosting initially supports ephemeral generated
+exact names and durable explicit exact names, not local team bases.
 
 Hosted `--name` accepts an exact hostname already authorized by an owned
 persistent base:
@@ -665,7 +665,7 @@ Deliverables:
   digest, and compatibility tests together.
 - Keep core contracts authoritative and changes additive across deployment
   boundaries.
-- Replace the `--host` CLI flag with `--name` everywhere, with no alias.
+- Use `--name` as the only explicit publication naming flag.
 - Set the product tagline everywhere to `public urls for localhost.`
 - Add independent control-hostname and route-suffix configuration while keeping
   `TNLD_DOMAIN` only as self-hosted shorthand.

@@ -92,7 +92,7 @@ otherwise `tnl login` prompts for the login token:
 
 ```console
 tnl login https://tnl.example.com
-tnl public http://127.0.0.1:3000 --host=demo
+tnl public http://127.0.0.1:3000 --name=demo
 ```
 
 The publication command stays in the foreground and obtains the application
@@ -100,7 +100,7 @@ certificate automatically. It prints lifecycle messages to stderr; use
 `--output=ndjson` for bounded machine-readable events on stdout. A second
 interrupt exits immediately.
 
-The route becomes `https://demo.apps.example.com`. Omit `--host` for a stable
+The route becomes `https://demo.apps.example.com`. Omit `--name` for a stable
 random label. Manage durable claims with:
 
 ```console

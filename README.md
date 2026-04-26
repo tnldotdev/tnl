@@ -63,7 +63,7 @@ the client's private state directory:
 
 ```console
 tnl login https://tnl.example.com
-tnl public 3000 --host=demo
+tnl public 3000 --name=demo
 ```
 
 The command prints the account URL and one-time code to approve. Use
@@ -76,14 +76,14 @@ deployment's pinned relay region from the server API:
 
 ```console
 tnl login https://tnl.example.com
-tnl public 3000 --host=demo
+tnl public 3000 --name=demo
 ```
 
 Access credentials expire after 30 days. Authenticate again before a later
 client restart or hostname administration operation when necessary.
 
 With automatic certificates enabled, the route becomes available at
-`https://demo.apps.example.com`. Omit `--host` to allocate a stable random name
+`https://demo.apps.example.com`. Omit `--name` to allocate a stable random name
 for that local target. Use `tnl host list` to list active claims and
 `tnl host release HOSTNAME` to permanently release and tombstone one.
 
