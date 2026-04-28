@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/credentials"
-	"github.com/0xcadams/tnl/internal/naming"
-	"github.com/0xcadams/tnl/internal/state/statedb"
+	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/state/statedb"
 )
 
 const (
@@ -21,6 +21,9 @@ const (
 	DefaultMaxActiveHostnameClaims  = 128
 	DefaultMaxHostnameClaimRequests = 1024
 	maximumHostnameClaimQuota       = 100_000
+	reservedPrincipalID             = "principal_tnl_reserved_names"
+	MaximumChildDepth               = 8
+	EphemeralReacquisitionWindow    = 5 * time.Minute
 )
 
 var (
@@ -31,6 +34,7 @@ var (
 	ErrUnauthenticated = errors.New("routes: unauthenticated")
 	ErrStaleLease      = errors.New("routes: stale lease")
 	ErrInvalidState    = errors.New("routes: invalid state")
+	ErrUnavailable     = errors.New("routes: temporarily unavailable")
 )
 
 type Route struct {
@@ -65,8 +69,11 @@ type Provisioning struct {
 type StoreConfig struct {
 	MaxActiveHostnameClaims  int
 	MaxHostnameClaimRequests int
+	ReservedRouteNames       []string
 	ObserveOperation         StoreObserver
 	LifecycleRecorder        LifecycleRecorder
+	VerificationSuffix       string
+	DomainVerifier           DomainVerifier
 }
 
 type Store struct {
@@ -77,8 +84,11 @@ type Store struct {
 	leaseLifetime            time.Duration
 	maxActiveHostnameClaims  int
 	maxHostnameClaimRequests int
+	reservedRouteNames       map[string]struct{}
 	observeOperation         StoreObserver
 	lifecycleRecorder        LifecycleRecorder
+	verificationSuffix       string
+	domainVerifier           DomainVerifier
 }
 
 func NewStore(db *sql.DB, routeSuffix string, configs ...StoreConfig) (*Store, error) {
@@ -115,7 +125,7 @@ func NewStore(db *sql.DB, routeSuffix string, configs ...StoreConfig) (*Store, e
 	if err != nil || canonical != routeSuffix || len(canonical) > naming.MaxHostnameBytes-naming.MaxLabelBytes-1 {
 		return nil, errors.New("routes: route suffix must be canonical and leave room for one DNS label")
 	}
-	return &Store{
+	store := &Store{
 		db:                       db,
 		queries:                  statedb.New(db),
 		routeSuffix:              routeSuffix,
@@ -123,9 +133,87 @@ func NewStore(db *sql.DB, routeSuffix string, configs ...StoreConfig) (*Store, e
 		leaseLifetime:            LeaseLifetime,
 		maxActiveHostnameClaims:  config.MaxActiveHostnameClaims,
 		maxHostnameClaimRequests: config.MaxHostnameClaimRequests,
+		reservedRouteNames:       make(map[string]struct{}, len(config.ReservedRouteNames)),
 		observeOperation:         config.ObserveOperation,
 		lifecycleRecorder:        config.LifecycleRecorder,
-	}, nil
+		verificationSuffix:       config.VerificationSuffix,
+		domainVerifier:           config.DomainVerifier,
+	}
+	if config.VerificationSuffix != "" {
+		verificationSuffix, err := naming.CanonicalizeHostname(config.VerificationSuffix)
+		if err != nil || verificationSuffix != config.VerificationSuffix {
+			return nil, errors.New("routes: verification suffix must be canonical")
+		}
+		store.verificationSuffix = verificationSuffix
+	}
+	if (store.verificationSuffix == "") != (store.domainVerifier == nil) {
+		return nil, errors.New("routes: domain verification configuration is incomplete")
+	}
+	if err := store.seedReservedRouteNames(config.ReservedRouteNames); err != nil {
+		return nil, err
+	}
+	return store, nil
+}
+
+func (s *Store) seedReservedRouteNames(names []string) error {
+	if len(names) == 0 {
+		return nil
+	}
+	ctx := context.Background()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("routes: begin route reservation: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO principals (id, display_name, email, created_at)
+		VALUES (?1, 'tnl reserved names', '', 0)
+		ON CONFLICT (id) DO NOTHING`, reservedPrincipalID); err != nil {
+		return fmt.Errorf("routes: create reservation principal: %w", err)
+	}
+	queries := s.queries.WithTx(tx)
+	for _, name := range names {
+		canonical, err := naming.CanonicalizeHostname(name)
+		if err != nil || canonical != name || strings.Contains(name, ".") {
+			return fmt.Errorf("routes: invalid reserved route name %q", name)
+		}
+		if _, exists := s.reservedRouteNames[name]; exists {
+			continue
+		}
+		hostname := name + "." + s.routeSuffix
+		existing, err := queries.GetClaimByHostname(ctx, hostname)
+		if err == nil {
+			if existing.PrincipalID != reservedPrincipalID {
+				return fmt.Errorf("routes: reserved route name %q is already owned", name)
+			}
+			s.reservedRouteNames[name] = struct{}{}
+			continue
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("routes: read route reservation %q: %w", name, err)
+		}
+		id, err := newID("claim")
+		if err != nil {
+			return err
+		}
+		result, err := tx.ExecContext(ctx, `
+			INSERT INTO hostname_claims (
+				id, principal_id, hostname, created_at, kind, state, source, irreversible
+			) VALUES (?1, ?2, ?3, 0, 'reserved', 'reserved', 'configured', 1)
+			ON CONFLICT (hostname) DO NOTHING`, id, reservedPrincipalID, hostname)
+		if err != nil {
+			return fmt.Errorf("routes: reserve route name %q: %w", name, err)
+		}
+		count, err := result.RowsAffected()
+		if err != nil || count != 1 {
+			return fmt.Errorf("routes: reserve route name %q: concurrent conflict", name)
+		}
+		s.reservedRouteNames[name] = struct{}{}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("routes: commit route reservations: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) Create(
@@ -135,7 +223,7 @@ func (s *Store) Create(
 ) (provisioning Provisioning, err error) {
 	started := time.Now()
 	defer func() { s.observe(StoreOperationRouteCreate, started, err) }()
-	hostname, err = s.canonicalHostname(hostname)
+	hostname, err = s.canonicalRouteHostname(hostname)
 	if err != nil {
 		return Provisioning{}, err
 	}
@@ -169,19 +257,27 @@ func (s *Store) Create(
 	defer tx.Rollback()
 	queries := s.queries.WithTx(tx)
 	// Claim ownership and irreversibility commit with route creation or rotation.
-	claim, err := queries.GetRouteClaimByHostname(ctx, hostname)
+	claim, err := queries.GetAuthorizingRouteClaim(ctx, statedb.GetAuthorizingRouteClaimParams{
+		PrincipalID: principalID,
+		Hostname:    hostname,
+	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return Provisioning{}, ErrNameUnavailable
 	} else if err != nil {
 		return Provisioning{}, fmt.Errorf("routes: read hostname claim: %w", err)
 	}
-	if claim.PrincipalID != principalID || claim.TombstonedAt.Valid {
+	if claim.PrincipalID != principalID ||
+		(claim.Kind == NameKindPersistentManaged || claim.Kind == NameKindPersistentCustom) && claim.State != NameStateActive ||
+		claim.Kind == NameKindEphemeral && (claim.State != NameStateHeld && claim.State != NameStateActive) ||
+		claim.Kind == NameKindEphemeral && claim.Hostname != hostname ||
+		claim.Kind != NameKindPersistentManaged && claim.Kind != NameKindPersistentCustom && claim.Kind != NameKindEphemeral {
 		return Provisioning{}, ErrNameUnavailable
 	}
-	if err := queries.MarkRouteClaimIrreversible(ctx, claim.ID); err != nil {
-		return Provisioning{}, fmt.Errorf("routes: mark hostname irreversible: %w", err)
+	depth, authorized := naming.ChildDepth(hostname, claim.Hostname)
+	if !authorized || depth > MaximumChildDepth {
+		return Provisioning{}, ErrInvalidArgument
 	}
-	existingRoute, err := queries.GetActiveRouteByClaim(ctx, claim.ID)
+	existingRoute, err := queries.GetActiveRouteByHostname(ctx, hostname)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return Provisioning{}, fmt.Errorf("routes: check existing route: %w", err)
 	}
@@ -256,6 +352,17 @@ func (s *Store) Create(
 		CreatedAt:     now.Unix(),
 	}); err != nil {
 		return Provisioning{}, fmt.Errorf("routes: create route: %w", err)
+	}
+	if claim.Kind == NameKindEphemeral {
+		count, err := queries.BindEphemeralClaim(ctx, statedb.BindEphemeralClaimParams{
+			ActivatedAt: now.Unix(), RouteID: routeID, ClaimID: claim.ID, PrincipalID: principalID,
+		})
+		if err != nil {
+			return Provisioning{}, fmt.Errorf("routes: bind ephemeral name: %w", err)
+		}
+		if err := requireCount(count, ErrInvalidState); err != nil {
+			return Provisioning{}, err
+		}
 	}
 	if err := queries.InsertRouteCredential(ctx, statedb.InsertRouteCredentialParams{
 		CredentialID: routeCredentialID.String(),
@@ -675,6 +782,11 @@ func (s *Store) Delete(ctx context.Context, principalID, routeID string) error {
 	if err := queries.ExpireRouteLeases(ctx, routeID); err != nil {
 		return fmt.Errorf("routes: expire deleted route: %w", err)
 	}
+	if err := queries.BurnEphemeralClaimByRoute(ctx, statedb.BurnEphemeralClaimByRouteParams{
+		ReleasedAt: now.Unix(), RouteID: routeID,
+	}); err != nil {
+		return fmt.Errorf("routes: burn ephemeral name: %w", err)
+	}
 	if err := s.recordLifecycle(ctx, queries, routeID, uint64(generation), now, LifecycleDisconnected); err != nil {
 		return err
 	}
@@ -685,6 +797,42 @@ func (s *Store) Delete(ctx context.Context, principalID, routeID string) error {
 		return fmt.Errorf("routes: commit delete: %w", err)
 	}
 	return nil
+}
+
+func (s *Store) CleanupAbandonedEphemeral(ctx context.Context, now time.Time) ([]string, error) {
+	cutoff := now.Add(-EphemeralReacquisitionWindow)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("routes: begin ephemeral cleanup: %w", err)
+	}
+	defer tx.Rollback()
+	queries := s.queries.WithTx(tx)
+	if err := queries.BurnAbandonedEphemeralHolds(ctx, statedb.BurnAbandonedEphemeralHoldsParams{
+		ReleasedAt: now.Unix(), CreatedBefore: cutoff.Unix(),
+	}); err != nil {
+		return nil, fmt.Errorf("routes: burn abandoned holds: %w", err)
+	}
+	abandoned, err := queries.ListAbandonedEphemeralRoutes(ctx, cutoff.Unix())
+	if err != nil {
+		return nil, fmt.Errorf("routes: list abandoned ephemeral routes: %w", err)
+	}
+	removed := make([]string, 0, len(abandoned))
+	for _, route := range abandoned {
+		routeIDs, err := s.stopClaimRoutes(ctx, queries, route.ClaimID, now)
+		if err != nil {
+			return nil, err
+		}
+		if err := queries.BurnEphemeralClaimByRoute(ctx, statedb.BurnEphemeralClaimByRouteParams{
+			ReleasedAt: now.Unix(), RouteID: route.RouteID,
+		}); err != nil {
+			return nil, fmt.Errorf("routes: burn abandoned ephemeral name: %w", err)
+		}
+		removed = append(removed, routeIDs...)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("routes: commit ephemeral cleanup: %w", err)
+	}
+	return removed, nil
 }
 
 func readRouteCredential(

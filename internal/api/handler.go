@@ -9,18 +9,19 @@ import (
 	"errors"
 	"io"
 	"mime"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/auth"
-	"github.com/0xcadams/tnl/internal/certificates"
-	"github.com/0xcadams/tnl/internal/credentials"
-	"github.com/0xcadams/tnl/internal/naming"
-	"github.com/0xcadams/tnl/internal/routes"
-	"github.com/0xcadams/tnl/internal/state"
-	"github.com/0xcadams/tnl/pkg/protocol/serverv1"
+	"github.com/tnldotdev/tnl/internal/auth"
+	"github.com/tnldotdev/tnl/internal/certificates"
+	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/routes"
+	"github.com/tnldotdev/tnl/internal/state"
+	"github.com/tnldotdev/tnl/pkg/protocol/serverv1"
 	"golang.org/x/time/rate"
 	"tailscale.com/types/key"
 )
@@ -35,6 +36,8 @@ const (
 	certificateOrderPrefix = "/v1/certs/orders/"
 	hostnameClaimsPath     = "/v1/hostname-claims"
 	hostnameClaimPrefix    = "/v1/hostname-claims/"
+	domainClaimsPath       = "/v1/domain-claims"
+	domainClaimPrefix      = "/v1/domain-claims/"
 	routesPath             = "/v1/routes"
 	routePathPrefix        = "/v1/routes/"
 	authorizationHeader    = "Authorization"
@@ -68,6 +71,11 @@ const (
 	OperationHostnameClaimsList          Operation = "hostname_claims.list"
 	OperationHostnameClaimCreate         Operation = "hostname_claims.create"
 	OperationHostnameClaimRelease        Operation = "hostname_claims.release"
+	OperationDomainChallengeCreate       Operation = "domain_challenges.create"
+	OperationDomainChallengeGet          Operation = "domain_challenges.get"
+	OperationDomainChallengeVerify       Operation = "domain_challenges.verify"
+	OperationDomainClaimsList            Operation = "domain_claims.list"
+	OperationDomainClaimRelease          Operation = "domain_claims.release"
 	OperationRoutesList                  Operation = "routes.list"
 	OperationRouteCreate                 Operation = "routes.create"
 	OperationRouteDelete                 Operation = "routes.delete"
@@ -105,9 +113,11 @@ type ErrorReporter interface {
 
 // HandlerConfig configures production request observation and error reporting.
 type HandlerConfig struct {
-	Observer      Observer
-	ErrorReporter ErrorReporter
-	RelayMap      []byte
+	Observer         Observer
+	ErrorReporter    ErrorReporter
+	RelayMap         []byte
+	DNSReady         func() bool
+	IngressAddresses func() []string
 }
 
 // AuthService implements authentication flows without exposing storage to HTTP.
@@ -123,7 +133,10 @@ type OIDCAuthService interface {
 
 // RouteService implements hostname claims and fenced route transitions.
 type RouteService interface {
-	ClaimHostname(context.Context, string, string, string) (routes.HostnameClaim, error)
+	ClaimName(context.Context, string, string, string, string) (routes.HostnameClaim, error)
+	CreateDomainChallenge(context.Context, string, string, string) (routes.DomainChallenge, error)
+	GetDomainChallenge(context.Context, string, string) (routes.DomainChallenge, error)
+	VerifyDomainChallenge(context.Context, string, string) (routes.HostnameClaim, error)
 	ListHostnameClaimsPage(context.Context, string, string) ([]routes.HostnameClaim, string, error)
 	ReleaseHostnameClaim(context.Context, string, string) error
 	Create(context.Context, string, string, string, credentials.RouteToken) (routes.LeaseSetup, error)
@@ -146,14 +159,16 @@ type CertificateService interface {
 }
 
 type handler struct {
-	capabilities  serverv1.Capabilities
-	auth          AuthService
-	routes        RouteService
-	certificates  CertificateService
-	observer      Observer
-	errorReporter ErrorReporter
-	relayMap      []byte
-	oidcLimit     *rate.Limiter
+	capabilities     serverv1.Capabilities
+	auth             AuthService
+	routes           RouteService
+	certificates     CertificateService
+	observer         Observer
+	errorReporter    ErrorReporter
+	relayMap         []byte
+	dnsReady         func() bool
+	ingressAddresses func() []string
+	oidcLimit        *rate.Limiter
 }
 
 // NewHandler creates the server API handler without binding a listener.
@@ -189,14 +204,16 @@ func NewHandlerWithServicesAndConfig(
 		oidcLimit = rate.NewLimiter(rate.Limit(5), 20)
 	}
 	return &handler{
-		capabilities:  capabilities,
-		auth:          auth,
-		routes:        routeService,
-		certificates:  certificateService,
-		observer:      config.Observer,
-		errorReporter: config.ErrorReporter,
-		relayMap:      append([]byte(nil), config.RelayMap...),
-		oidcLimit:     oidcLimit,
+		capabilities:     capabilities,
+		auth:             auth,
+		routes:           routeService,
+		certificates:     certificateService,
+		observer:         config.Observer,
+		errorReporter:    config.ErrorReporter,
+		relayMap:         append([]byte(nil), config.RelayMap...),
+		dnsReady:         config.DNSReady,
+		ingressAddresses: config.IngressAddresses,
+		oidcLimit:        oidcLimit,
 	}
 }
 
@@ -235,11 +252,17 @@ func (h *handler) serveHTTP(w http.ResponseWriter, r *http.Request, requestID st
 		h.serveOIDCExchange(w, r, requestID)
 	case hostnameClaimsPath:
 		h.serveHostnameClaims(w, r, requestID)
+	case domainClaimsPath:
+		h.serveDomainClaims(w, r, requestID)
 	case routesPath:
 		h.serveRoutes(w, r, requestID)
 	case certificateOrdersPath:
 		h.serveCertificateOrders(w, r, requestID)
 	default:
+		if challengeID, operation, ok := domainClaimPath(r.URL.Path); ok {
+			h.serveDomainClaim(w, r, requestID, challengeID, operation)
+			return
+		}
 		claimID, ok := strings.CutPrefix(r.URL.Path, hostnameClaimPrefix)
 		if ok && validHostnameClaimID(claimID) {
 			h.serveHostnameClaim(w, r, requestID, claimID)
@@ -323,6 +346,13 @@ func operationForRequest(method, path string) Operation {
 		case http.MethodPost:
 			return OperationHostnameClaimCreate
 		}
+	case domainClaimsPath:
+		switch method {
+		case http.MethodGet:
+			return OperationDomainClaimsList
+		case http.MethodPost:
+			return OperationDomainChallengeCreate
+		}
 	case routesPath:
 		switch method {
 		case http.MethodGet:
@@ -339,6 +369,19 @@ func operationForRequest(method, path string) Operation {
 	if claimID, ok := strings.CutPrefix(path, hostnameClaimPrefix); ok &&
 		validHostnameClaimID(claimID) && method == http.MethodDelete {
 		return OperationHostnameClaimRelease
+	}
+	if _, domainOperation, ok := domainClaimPath(path); ok {
+		if domainOperation == "" {
+			switch method {
+			case http.MethodGet:
+				return OperationDomainChallengeGet
+			case http.MethodDelete:
+				return OperationDomainClaimRelease
+			}
+		}
+		if domainOperation == "verify" && method == http.MethodPost {
+			return OperationDomainChallengeVerify
+		}
 	}
 	if credentialID, ok := strings.CutPrefix(path, credentialsPath); ok && credentialID != "" &&
 		!strings.Contains(credentialID, "/") && method == http.MethodDelete {
@@ -432,11 +475,11 @@ func (h *handler) serveHostnameClaims(w http.ResponseWriter, r *http.Request, re
 	if !decodeRequest(w, r, requestID, &request) {
 		return
 	}
-	label := ""
-	if request.Label != nil {
-		label = *request.Label
+	name := ""
+	if request.Name != nil {
+		name = *request.Name
 	}
-	claim, err := h.routes.ClaimHostname(r.Context(), principal.ID, label, requestKey)
+	claim, err := h.routes.ClaimName(r.Context(), principal.ID, string(request.Kind), name, requestKey)
 	if err != nil {
 		writeRouteError(w, requestID, err)
 		return
@@ -464,13 +507,171 @@ func (h *handler) serveHostnameClaim(w http.ResponseWriter, r *http.Request, req
 	writeNoContent(w)
 }
 
+func (h *handler) serveDomainClaims(w http.ResponseWriter, r *http.Request, requestID string) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		writeMethodNotAllowed(w, requestID, http.MethodGet+", "+http.MethodPost)
+		return
+	}
+	principal, ok := h.authenticate(w, r, requestID)
+	if !ok {
+		return
+	}
+	if h.routes == nil {
+		writeInternalError(w, requestID, errRouteServiceMissing)
+		return
+	}
+	if r.Method == http.MethodGet {
+		claims, err := h.listActiveDomainClaims(r.Context(), principal.ID)
+		if err != nil {
+			writeRouteError(w, requestID, err)
+			return
+		}
+		response := make([]serverv1.HostnameClaim, 0, len(claims))
+		for _, claim := range claims {
+			response = append(response, hostnameClaimResponse(claim))
+		}
+		writeModel(w, requestID, http.StatusOK, response)
+		return
+	}
+	requestKey := r.Header.Get(idempotencyKeyHeader)
+	if requestKey == "" || strings.TrimSpace(requestKey) != requestKey || len(requestKey) > 128 {
+		writeInvalidRequest(w, requestID)
+		return
+	}
+	var request serverv1.CreateDomainChallengeRequest
+	if !decodeRequest(w, r, requestID, &request) {
+		return
+	}
+	challenge, err := h.routes.CreateDomainChallenge(r.Context(), principal.ID, request.Domain, requestKey)
+	if err != nil {
+		writeRouteError(w, requestID, err)
+		return
+	}
+	writeModel(w, requestID, http.StatusCreated, domainChallengeResponse(challenge))
+}
+
+func (h *handler) serveDomainClaim(
+	w http.ResponseWriter,
+	r *http.Request,
+	requestID, id, operation string,
+) {
+	wantMethod := r.Method
+	switch operation {
+	case "":
+		if r.Method != http.MethodGet && r.Method != http.MethodDelete {
+			writeMethodNotAllowed(w, requestID, http.MethodGet+", "+http.MethodDelete)
+			return
+		}
+	case "verify":
+		wantMethod = http.MethodPost
+	default:
+		writeNotFound(w, requestID)
+		return
+	}
+	if r.Method != wantMethod {
+		writeMethodNotAllowed(w, requestID, wantMethod)
+		return
+	}
+	if (wantMethod == http.MethodDelete && !validHostnameClaimID(id)) ||
+		(wantMethod != http.MethodDelete && !validDomainChallengeID(id)) {
+		writeNotFound(w, requestID)
+		return
+	}
+	principal, ok := h.authenticate(w, r, requestID)
+	if !ok {
+		return
+	}
+	if h.routes == nil {
+		writeInternalError(w, requestID, errRouteServiceMissing)
+		return
+	}
+	if wantMethod == http.MethodDelete {
+		claims, err := h.listActiveDomainClaims(r.Context(), principal.ID)
+		if err != nil {
+			writeRouteError(w, requestID, err)
+			return
+		}
+		found := false
+		for _, claim := range claims {
+			if claim.ID == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			writeRouteError(w, requestID, routes.ErrNotFound)
+			return
+		}
+		if err := h.routes.ReleaseHostnameClaim(r.Context(), principal.ID, id); err != nil {
+			writeRouteError(w, requestID, err)
+			return
+		}
+		writeNoContent(w)
+		return
+	}
+	if operation == "" {
+		challenge, err := h.routes.GetDomainChallenge(r.Context(), principal.ID, id)
+		if err != nil {
+			writeRouteError(w, requestID, err)
+			return
+		}
+		writeModel(w, requestID, http.StatusOK, domainChallengeResponse(challenge))
+		return
+	}
+	claim, err := h.routes.VerifyDomainChallenge(r.Context(), principal.ID, id)
+	if err != nil {
+		writeRouteError(w, requestID, err)
+		return
+	}
+	writeModel(w, requestID, http.StatusOK, hostnameClaimResponse(claim))
+}
+
+func (h *handler) listActiveDomainClaims(ctx context.Context, principalID string) ([]routes.HostnameClaim, error) {
+	result := make([]routes.HostnameClaim, 0)
+	cursor := ""
+	for {
+		claims, next, err := h.routes.ListHostnameClaimsPage(ctx, principalID, cursor)
+		if err != nil {
+			return nil, err
+		}
+		for _, claim := range claims {
+			if claim.Kind == routes.NameKindPersistentCustom && claim.State == routes.NameStateActive {
+				result = append(result, claim)
+			}
+		}
+		if next == "" {
+			return result, nil
+		}
+		cursor = next
+	}
+}
+
 func (h *handler) serveCapabilities(w http.ResponseWriter, r *http.Request, requestID string) {
 	if r.Method != http.MethodGet {
 		writeMethodNotAllowed(w, requestID, http.MethodGet)
 		return
 	}
 
-	body, err := marshalJSON(h.capabilities)
+	capabilities := h.capabilities
+	if h.dnsReady != nil {
+		capabilities.DnsReady = h.dnsReady()
+	}
+	if h.ingressAddresses != nil {
+		capabilities.IngressIpv4 = []string{}
+		capabilities.IngressIpv6 = []string{}
+		for _, value := range h.ingressAddresses() {
+			address := net.ParseIP(value)
+			if address == nil {
+				continue
+			}
+			if address.To4() != nil {
+				capabilities.IngressIpv4 = append(capabilities.IngressIpv4, address.String())
+			} else {
+				capabilities.IngressIpv6 = append(capabilities.IngressIpv6, address.String())
+			}
+		}
+	}
+	body, err := marshalJSON(capabilities)
 	if err != nil {
 		writeInternalError(w, requestID, err)
 		return
@@ -1022,6 +1223,30 @@ func certificateOrderPath(path string) (orderID, operation string, ok bool) {
 	return parts[0], operation, true
 }
 
+func domainClaimPath(path string) (id, operation string, ok bool) {
+	remainder, ok := strings.CutPrefix(path, domainClaimPrefix)
+	if !ok || remainder == "" {
+		return "", "", false
+	}
+	parts := strings.Split(remainder, "/")
+	if len(parts) > 2 || parts[0] == "" || len(parts) == 2 && parts[1] == "" {
+		return "", "", false
+	}
+	if len(parts) == 2 {
+		operation = parts[1]
+	}
+	return parts[0], operation, true
+}
+
+func validDomainChallengeID(value string) bool {
+	const prefix = "domain_"
+	if len(value) != len(prefix)+32 || !strings.HasPrefix(value, prefix) {
+		return false
+	}
+	_, err := hex.DecodeString(value[len(prefix):])
+	return err == nil
+}
+
 func validCertificateOrderID(value string) bool {
 	const prefix = "cert_"
 	if len(value) != len(prefix)+32 || !strings.HasPrefix(value, prefix) {
@@ -1064,9 +1289,41 @@ func routeResponse(route routes.Route) serverv1.Route {
 }
 
 func hostnameClaimResponse(claim routes.HostnameClaim) serverv1.HostnameClaim {
-	return serverv1.HostnameClaim{
-		Id: claim.ID, Hostname: claim.Hostname, Irreversible: claim.Irreversible, CreatedAt: claim.CreatedAt,
+	result := serverv1.HostnameClaim{
+		Id: claim.ID, Hostname: claim.Hostname, Kind: serverv1.HostnameClaimKind(claim.Kind),
+		State: serverv1.HostnameClaimState(claim.State), Source: serverv1.HostnameClaimSource(claim.Source),
+		CreatedAt: claim.CreatedAt,
 	}
+	if !claim.ActivatedAt.IsZero() {
+		result.ActivatedAt = &claim.ActivatedAt
+	}
+	if !claim.ReleasedAt.IsZero() {
+		result.ReleasedAt = &claim.ReleasedAt
+	}
+	return result
+}
+
+func domainChallengeResponse(challenge routes.DomainChallenge) serverv1.DomainChallenge {
+	result := serverv1.DomainChallenge{
+		Id: challenge.ID, Domain: challenge.Domain, VerificationTarget: challenge.VerificationTarget,
+		Apex: challenge.Apex, State: serverv1.DomainChallengeState(challenge.State),
+		Records: make([]serverv1.DNSRecord, 0, len(challenge.Records)), CreatedAt: challenge.CreatedAt,
+	}
+	for _, record := range challenge.Records {
+		result.Records = append(result.Records, serverv1.DNSRecord{
+			Name: record.Name, Type: serverv1.DNSRecordType(record.Type), Value: record.Value,
+		})
+	}
+	if challenge.ClaimID != "" {
+		result.ClaimId = &challenge.ClaimID
+	}
+	if !challenge.VerifiedAt.IsZero() {
+		result.VerifiedAt = &challenge.VerifiedAt
+	}
+	if !challenge.InvalidatedAt.IsZero() {
+		result.InvalidatedAt = &challenge.InvalidatedAt
+	}
+	return result
 }
 
 func leaseSetupResponse(setup routes.LeaseSetup) serverv1.LeaseSetup {
@@ -1132,8 +1389,10 @@ func writeRouteError(w http.ResponseWriter, requestID string, err error) {
 		writeProblem(w, requestID, http.StatusConflict, serverv1.NameUnavailable, "Name unavailable", "name-unavailable")
 	case errors.Is(err, routes.ErrRouteExists), errors.Is(err, routes.ErrStaleLease), errors.Is(err, routes.ErrInvalidState):
 		writeProblem(w, requestID, http.StatusConflict, serverv1.StateConflict, "State conflict", "state-conflict")
-	case errors.Is(err, routes.ErrNoWorkerCapacity):
+	case errors.Is(err, routes.ErrNoWorkerCapacity), errors.Is(err, routes.ErrUnavailable):
 		writeProblem(w, requestID, http.StatusServiceUnavailable, serverv1.TemporarilyUnavailable, "Temporarily unavailable", "temporarily-unavailable")
+	case errors.Is(err, routes.ErrDNSProofPending):
+		writeProblem(w, requestID, http.StatusPreconditionFailed, serverv1.PreconditionFailed, "DNS proof pending", "dns-proof-pending")
 	default:
 		if errors.Is(err, routes.ErrInvalidArgument) {
 			writeInvalidRequest(w, requestID)

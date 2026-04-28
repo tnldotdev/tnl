@@ -1,17 +1,29 @@
--- name: GetRouteClaimByHostname :one
-SELECT id, principal_id, tombstoned_at
+-- name: GetAuthorizingRouteClaim :one
+SELECT id, principal_id, hostname, kind, state, route_binding
 FROM hostname_claims
-WHERE hostname = sqlc.arg(hostname);
+WHERE principal_id = sqlc.arg(principal_id)
+    AND state IN ('held', 'active')
+    AND kind IN ('persistent_managed', 'persistent_custom_domain', 'ephemeral')
+    AND (
+        hostname = sqlc.arg(hostname)
+        OR kind != 'ephemeral' AND sqlc.arg(hostname) LIKE '%.' || hostname
+    )
+ORDER BY length(hostname) DESC
+LIMIT 1;
 
--- name: MarkRouteClaimIrreversible :exec
-UPDATE hostname_claims
-SET irreversible = 1
-WHERE id = sqlc.arg(claim_id);
-
--- name: GetActiveRouteByClaim :one
+-- name: GetActiveRouteByHostname :one
 SELECT routes.*
 FROM routes
-WHERE claim_id = sqlc.arg(claim_id) AND state = 'active';
+WHERE hostname = sqlc.arg(hostname) AND state = 'active';
+
+-- name: BindEphemeralClaim :execrows
+UPDATE hostname_claims
+SET state = 'active', activated_at = CAST(sqlc.arg(activated_at) AS INTEGER), route_binding = CAST(sqlc.arg(route_id) AS TEXT)
+WHERE id = sqlc.arg(claim_id)
+    AND principal_id = sqlc.arg(principal_id)
+    AND kind = 'ephemeral'
+    AND state = 'held'
+    AND route_binding IS NULL;
 
 -- name: RotateRouteCredential :execrows
 UPDATE route_credentials
@@ -231,6 +243,13 @@ WHERE id = sqlc.arg(route_id)
     AND principal_id = sqlc.arg(principal_id)
     AND state = 'active';
 
+-- name: BurnEphemeralClaimByRoute :exec
+UPDATE hostname_claims
+SET state = 'burned', released_at = CAST(sqlc.arg(released_at) AS INTEGER), route_binding = NULL, reason = 'route ended'
+WHERE route_binding = CAST(sqlc.arg(route_id) AS TEXT)
+    AND kind = 'ephemeral'
+    AND state IN ('held', 'active');
+
 -- name: RevokeRouteCredential :exec
 UPDATE route_credentials
 SET revoked_at = COALESCE(revoked_at, CAST(sqlc.arg(revoked_at) AS INTEGER))
@@ -246,3 +265,25 @@ SELECT id, generation
 FROM routes
 WHERE claim_id = sqlc.arg(claim_id) AND state = 'active'
 ORDER BY id;
+
+-- name: ListAbandonedEphemeralRoutes :many
+SELECT hostname_claims.id AS claim_id, routes.id AS route_id
+FROM hostname_claims
+JOIN routes ON routes.claim_id = hostname_claims.id
+WHERE hostname_claims.kind = 'ephemeral'
+    AND hostname_claims.state = 'active'
+    AND routes.state = 'active'
+    AND NOT EXISTS (
+        SELECT 1
+        FROM route_leases
+        WHERE route_leases.route_id = routes.id
+            AND route_leases.expires_at > sqlc.arg(expired_before)
+    )
+ORDER BY routes.id;
+
+-- name: BurnAbandonedEphemeralHolds :exec
+UPDATE hostname_claims
+SET state = 'burned', released_at = CAST(sqlc.arg(released_at) AS INTEGER), reason = 'abandoned hold'
+WHERE kind = 'ephemeral'
+    AND state = 'held'
+    AND created_at <= sqlc.arg(created_before);

@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/credentials"
-	"github.com/0xcadams/tnl/internal/state"
-	"github.com/0xcadams/tnl/internal/state/statedb"
+	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/state"
+	"github.com/tnldotdev/tnl/internal/state/statedb"
 )
 
 func TestRouteLeaseLifecycle(t *testing.T) {

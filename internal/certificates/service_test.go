@@ -18,10 +18,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/state"
-	"github.com/0xcadams/tnl/internal/state/statedb"
 	legoacme "github.com/go-acme/lego/v5/acme"
 	legoapi "github.com/go-acme/lego/v5/acme/api"
+	"github.com/tnldotdev/tnl/internal/state"
+	"github.com/tnldotdev/tnl/internal/state/statedb"
 )
 
 const (

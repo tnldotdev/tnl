@@ -5,7 +5,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/credentials"
 )
 
 type AccessCredential struct {

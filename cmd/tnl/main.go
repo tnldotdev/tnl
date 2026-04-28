@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -15,23 +14,24 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/buildinfo"
-	"github.com/0xcadams/tnl/internal/clientstate"
-	"github.com/0xcadams/tnl/internal/config"
-	"github.com/0xcadams/tnl/internal/credentials"
-	"github.com/0xcadams/tnl/internal/localproxy"
-	"github.com/0xcadams/tnl/internal/naming"
-	"github.com/0xcadams/tnl/internal/oidclogin"
-	"github.com/0xcadams/tnl/internal/publication"
-	"github.com/0xcadams/tnl/internal/serverclient"
-	"github.com/0xcadams/tnl/pkg/protocol/serverv1"
 	"github.com/alecthomas/kong"
+	"github.com/tnldotdev/tnl/internal/buildinfo"
+	"github.com/tnldotdev/tnl/internal/clientstate"
+	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/localproxy"
+	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/oidclogin"
+	"github.com/tnldotdev/tnl/internal/publication"
+	"github.com/tnldotdev/tnl/internal/serverclient"
+	"github.com/tnldotdev/tnl/pkg/protocol/serverv1"
 	"golang.org/x/term"
 	"tailscale.com/tailcfg"
 )
 
 type cli struct {
 	Public  publicCommand `cmd:"" help:"Publish one local HTTP service."`
+	Dev     devCommand    `cmd:"" help:"Run and publish a development server."`
 	Host    hostCommand   `cmd:"" help:"Manage self-hosted public names."`
 	Login   loginCommand  `cmd:"" help:"Authenticate to a tnl server."`
 	Logout  logoutCommand `cmd:"" help:"Revoke and remove the saved access token."`
@@ -48,8 +48,16 @@ type publicCommand struct {
 }
 
 type hostCommand struct {
+	Claim   hostClaimCommand   `cmd:"" help:"Claim a persistent managed base or custom domain."`
 	List    hostListCommand    `cmd:"" help:"List active hostname claims."`
-	Release hostReleaseCommand `cmd:"" help:"Permanently release a hostname claim."`
+	Release hostReleaseCommand `cmd:"" help:"Release a persistent managed base or custom domain."`
+}
+
+type hostClaimCommand struct {
+	Name        string `arg:"" name:"name" optional:"" help:"Managed base name or absolute custom domain; omit to generate a base."`
+	ServerURL   string `name:"server" env:"TNL_SERVER" help:"tnl server HTTPS origin; defaults to the saved server."`
+	AccessToken string `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Server access token; defaults to the saved login."`
+	StateDir    string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent client state."`
 }
 
 type hostListCommand struct {
@@ -85,6 +93,10 @@ func main() {
 		stop() // Restore default handling so a second signal terminates immediately.
 	}()
 	if err := run(ctx, os.Args[1:], os.Stdout, os.Stderr); err != nil && !errors.Is(err, context.Canceled) {
+		var commandErr *childExitError
+		if errors.As(err, &commandErr) {
+			os.Exit(commandErr.code)
+		}
 		fmt.Fprintf(os.Stderr, "tnl: %v\n", err)
 		os.Exit(1)
 	}
@@ -110,10 +122,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	case "public <target>":
 		return runPublic(ctx, flags.Public, stdout, stderr)
+	case "dev <command>":
+		return runDev(ctx, flags.Dev, os.Stdin, stdout, stderr)
+	case "host claim", "host claim [<name>]", "host claim <name>":
+		return runHostClaim(ctx, flags.Host.Claim, stdout)
 	case "host list":
-		return runHostList(ctx, flags.Host.List, stderr)
+		return runHostList(ctx, flags.Host.List, stdout)
 	case "host release <hostname>":
-		return runHostRelease(ctx, flags.Host.Release, stderr)
+		return runHostRelease(ctx, flags.Host.Release, stdout)
 	default:
 		return errors.New("command is required")
 	}
@@ -325,8 +341,8 @@ func runPublic(ctx context.Context, flags publicCommand, stdout, stderr io.Write
 	if capabilities.Transport.Type != serverv1.Tailcat || capabilities.Transport.Version != serverv1.TransportCapabilitiesVersionN1 {
 		return fail(errors.New("server does not support tailcat transport version 1"))
 	}
-	if capabilities.LocalClaim == nil || capabilities.LocalClaim.Suffix == "" {
-		return fail(errors.New("server does not support self-hosted hostname claims"))
+	if capabilities.RouteSuffix == "" || capabilities.MaximumChildDepth != 8 {
+		return fail(errors.New("server does not support the required naming contract"))
 	}
 	profile := capabilities.Transport.RelayProfile
 	var publicationState *clientstate.Store
@@ -336,7 +352,7 @@ func runPublic(ctx context.Context, flags publicCommand, stdout, stderr io.Write
 	}
 	publicationState = state
 	acmeProfile = capabilities.Acme.Profile
-	hostname, err := claimPublicHostname(ctx, client, state, target, flags.Name, capabilities.LocalClaim.Suffix)
+	hostname, err := claimPublicHostname(ctx, client, flags.Name, capabilities)
 	if err != nil {
 		return fail(err)
 	}
@@ -360,20 +376,76 @@ func runPublic(ctx context.Context, flags publicCommand, stdout, stderr io.Write
 	return output.stopped()
 }
 
-func runHostList(ctx context.Context, flags hostListCommand, output io.Writer) error {
-	serverURL, _, err := resolveServer(flags.StateDir, flags.ServerURL)
+func runHostClaim(ctx context.Context, flags hostClaimCommand, output io.Writer) error {
+	client, capabilities, err := namingClient(ctx, flags.StateDir, flags.ServerURL, flags.AccessToken)
 	if err != nil {
 		return err
 	}
-	var state *clientstate.Store
-	if flags.AccessToken == "" {
-		state, err = openClientState(flags.StateDir, serverURL)
+	kind, name, err := classifyClaimName(flags.Name, capabilities.RouteSuffix)
+	if err != nil {
+		return err
+	}
+	requestKey, err := randomRequestKey()
+	if err != nil {
+		return err
+	}
+	if kind == serverv1.CreateHostnameClaimRequestKindPersistentManaged {
+		claim, err := client.ClaimName(ctx, kind, name, requestKey)
 		if err != nil {
 			return err
 		}
+		_, err = fmt.Fprintln(output, claim.Hostname)
+		return err
 	}
-	client, err := authenticatedClient(serverURL, flags.AccessToken, state)
+	if !capabilities.CustomDomainSupport {
+		return errors.New("server does not support custom domains")
+	}
+	challenge, err := client.CreateDomainChallenge(ctx, name, requestKey)
 	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(output, "Add these DNS records:"); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(output); err != nil {
+		return err
+	}
+	for _, record := range challenge.Records {
+		if _, err := fmt.Fprintf(output, "%-32s %-5s %s\n", record.Name, record.Type, record.Value); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintln(output); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(output, "Waiting for DNS..."); err != nil {
+		return err
+	}
+	for {
+		claim, err := client.VerifyDomainChallenge(ctx, challenge.Id)
+		if err == nil {
+			_, err = fmt.Fprintf(output, "Claimed %s\n", claim.Hostname)
+			return err
+		}
+		if !errors.Is(err, serverclient.ErrDNSProofPending) {
+			return err
+		}
+		timer := time.NewTimer(2 * time.Second)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func runHostList(ctx context.Context, flags hostListCommand, output io.Writer) error {
+	client, _, err := namingClient(ctx, flags.StateDir, flags.ServerURL, flags.AccessToken)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(output, "NAME\tTYPE\tSTATE"); err != nil {
 		return err
 	}
 	cursor := ""
@@ -383,7 +455,11 @@ func runHostList(ctx context.Context, flags hostListCommand, output io.Writer) e
 			return err
 		}
 		for _, claim := range claims {
-			if _, err := fmt.Fprintln(output, claim.Hostname); err != nil {
+			typeName := "managed"
+			if claim.Kind == serverv1.HostnameClaimKindPersistentCustomDomain {
+				typeName = "custom"
+			}
+			if _, err := fmt.Fprintf(output, "%s\t%s\t%s\n", claim.Hostname, typeName, claim.State); err != nil {
 				return err
 			}
 		}
@@ -395,123 +471,67 @@ func runHostList(ctx context.Context, flags hostListCommand, output io.Writer) e
 }
 
 func runHostRelease(ctx context.Context, flags hostReleaseCommand, output io.Writer) error {
-	hostname, err := naming.CanonicalizeHostname(flags.Hostname)
+	client, capabilities, err := namingClient(ctx, flags.StateDir, flags.ServerURL, flags.AccessToken)
 	if err != nil {
 		return err
 	}
-	serverURL, _, err := resolveServer(flags.StateDir, flags.ServerURL)
+	claims, err := client.ListHostnameClaims(ctx)
 	if err != nil {
 		return err
 	}
-	state, err := openClientState(flags.StateDir, serverURL)
+	hostname, claimID, err := resolveReleaseName(flags.Hostname, capabilities.RouteSuffix, claims)
 	if err != nil {
 		return err
-	}
-	lock, err := clientstate.LockHostnameContext(ctx, state, "hostname-selections")
-	if err != nil {
-		return err
-	}
-	defer lock.Close()
-	client, err := authenticatedClient(serverURL, flags.AccessToken, state)
-	if err != nil {
-		return err
-	}
-	// Persist release intent before deletion so retries keep the claim ID.
-	pendingID, pending, err := state.PendingHostnameRelease(hostname)
-	if err != nil {
-		return err
-	}
-	claimID := pendingID
-	if !pending {
-		cursor := ""
-		for claimID == "" {
-			claims, next, err := client.ListHostnameClaimsPage(ctx, cursor)
-			if err != nil {
-				return err
-			}
-			for _, claim := range claims {
-				if claim.Hostname == hostname {
-					claimID = claim.Id
-					break
-				}
-			}
-			if next == "" {
-				break
-			}
-			cursor = next
-		}
-		if claimID == "" {
-			return errors.New("hostname claim not found")
-		}
-		if err := state.SaveHostnameRelease(hostname, claimID); err != nil {
-			return err
-		}
 	}
 	if err := client.ReleaseHostnameClaim(ctx, claimID); err != nil && !errors.Is(err, serverclient.ErrNotFound) {
 		return err
 	}
-	if err := state.RemoveHostnameSelection(hostname); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(output, hostname); err != nil {
-		return err
-	}
-	if err := state.ClearHostnameRelease(hostname); err != nil {
-		return err
-	}
-	return nil
+	_, err = fmt.Fprintln(output, hostname)
+	return err
 }
 
 func claimPublicHostname(
 	ctx context.Context,
 	client *serverclient.Client,
-	state *clientstate.Store,
-	target, label, suffix string,
+	name string,
+	capabilities serverv1.Capabilities,
 ) (string, error) {
-	if label != "" {
-		canonical, err := naming.CanonicalizeHostname(label)
-		if err != nil || strings.Contains(canonical, ".") {
-			return "", errors.New("host must be one DNS label")
-		}
-		digest := sha256.Sum256([]byte(canonical))
-		claim, err := client.ClaimHostname(ctx, canonical, "label_"+hex.EncodeToString(digest[:]))
+	if name == "" {
+		requestKey, err := randomRequestKey()
 		if err != nil {
 			return "", err
 		}
-		return validateClaimHostname(claim, suffix)
-	}
-	// Serialize the whole selection flow across processes.
-	lock, err := clientstate.LockHostnameContext(ctx, state, "hostname-selections")
-	if err != nil {
-		return "", err
-	}
-	defer lock.Close()
-	selection, found, err := state.HostnameSelection(target)
-	if err != nil {
-		return "", err
-	}
-	if !found {
-		selection.RequestKey, err = randomRequestKey()
+		claim, err := client.ClaimName(ctx, serverv1.CreateHostnameClaimRequestKindEphemeral, "", requestKey)
 		if err != nil {
 			return "", err
 		}
-		// Save before allocation so retries replay the same request.
-		if err := state.SaveHostnameSelection(target, selection); err != nil {
+		if claim.Kind != serverv1.HostnameClaimKindEphemeral || claim.State != serverv1.HostnameClaimStateHeld {
+			return "", errors.New("server returned an invalid ephemeral name")
+		}
+		return validateClaimHostname(claim, capabilities.RouteSuffix)
+	}
+	claims, err := client.ListHostnameClaims(ctx)
+	if err != nil {
+		return "", err
+	}
+	hostname, base, managed, implicit, err := resolvePublicationName(name, capabilities.RouteSuffix, capabilities.MaximumChildDepth, claims)
+	if err != nil {
+		return "", err
+	}
+	if implicit {
+		requestKey, err := randomRequestKey()
+		if err != nil {
 			return "", err
 		}
-	}
-	claim, err := client.ClaimHostname(ctx, "", selection.RequestKey)
-	if err != nil {
-		return "", err
-	}
-	hostname, err := validateClaimHostname(claim, suffix)
-	if err != nil {
-		return "", err
-	}
-	selection.ClaimID = claim.Id
-	selection.Hostname = hostname
-	if err := state.SaveHostnameSelection(target, selection); err != nil {
-		return "", err
+		claim, err := client.ClaimName(ctx, serverv1.CreateHostnameClaimRequestKindPersistentManaged, base, requestKey)
+		if err != nil {
+			return "", err
+		}
+		if claim.Hostname != hostname || claim.State != serverv1.HostnameClaimStateActive {
+			return "", errors.New("server returned an invalid managed base")
+		}
+	} else if !managed && !capabilities.CustomDomainSupport {
+		return "", errors.New("server does not support custom domains")
 	}
 	return hostname, nil
 }
@@ -525,6 +545,146 @@ func validateClaimHostname(claim serverv1.HostnameClaim, suffix string) (string,
 		return "", errors.New("server returned an invalid hostname claim")
 	}
 	return hostname, nil
+}
+
+func namingClient(
+	ctx context.Context,
+	stateDir, serverValue, accessToken string,
+) (*serverclient.Client, serverv1.Capabilities, error) {
+	serverURL, _, err := resolveServer(stateDir, serverValue)
+	if err != nil {
+		return nil, serverv1.Capabilities{}, err
+	}
+	var state *clientstate.Store
+	if accessToken == "" {
+		state, err = openClientState(stateDir, serverURL)
+		if err != nil {
+			return nil, serverv1.Capabilities{}, err
+		}
+	}
+	client, err := authenticatedClient(serverURL, accessToken, state)
+	if err != nil {
+		return nil, serverv1.Capabilities{}, err
+	}
+	capabilities, err := client.Capabilities(ctx)
+	if err != nil {
+		return nil, serverv1.Capabilities{}, fmt.Errorf("read server capabilities: %w", err)
+	}
+	if capabilities.RouteSuffix == "" || capabilities.MaximumChildDepth != 8 {
+		return nil, serverv1.Capabilities{}, errors.New("server does not support the required naming contract")
+	}
+	return client, capabilities, nil
+}
+
+func classifyClaimName(input, routeSuffix string) (serverv1.CreateHostnameClaimRequestKind, string, error) {
+	if input == "" {
+		return serverv1.CreateHostnameClaimRequestKindPersistentManaged, "", nil
+	}
+	absolute := strings.HasSuffix(input, ".")
+	canonical, err := naming.CanonicalizeHostname(input)
+	if err != nil {
+		return "", "", err
+	}
+	if !absolute && !strings.Contains(canonical, ".") {
+		return serverv1.CreateHostnameClaimRequestKindPersistentManaged, canonical, nil
+	}
+	if naming.IsWithin(canonical, routeSuffix) {
+		depth, _ := naming.ChildDepth(canonical, routeSuffix)
+		if depth != 1 {
+			return "", "", errors.New("managed base must be exactly one label beneath the route suffix")
+		}
+		return serverv1.CreateHostnameClaimRequestKindPersistentManaged, canonical, nil
+	}
+	domain, _, err := naming.CustomDomain(canonical, routeSuffix)
+	if err != nil {
+		return "", "", err
+	}
+	return "", domain, nil
+}
+
+func resolvePublicationName(
+	input, routeSuffix string,
+	maximumDepth int,
+	claims []serverv1.HostnameClaim,
+) (hostname, base string, managed, implicit bool, err error) {
+	absolute := strings.HasSuffix(input, ".")
+	canonical, err := naming.CanonicalizeHostname(input)
+	if err != nil {
+		return "", "", false, false, err
+	}
+	active := func(kind serverv1.HostnameClaimKind, candidate string) bool {
+		for _, claim := range claims {
+			if claim.Kind == kind && claim.State == serverv1.HostnameClaimStateActive && claim.Hostname == candidate {
+				return true
+			}
+		}
+		return false
+	}
+	if !absolute && !naming.IsWithin(canonical, routeSuffix) {
+		for _, claim := range claims {
+			if claim.Kind != serverv1.HostnameClaimKindPersistentCustomDomain || claim.State != serverv1.HostnameClaimStateActive {
+				continue
+			}
+			if depth, ok := naming.ChildDepth(canonical, claim.Hostname); ok {
+				if depth > maximumDepth {
+					return "", "", false, false, errors.New("custom-domain child exceeds maximum depth")
+				}
+				return canonical, claim.Hostname, false, false, nil
+			}
+		}
+	}
+	if absolute && !naming.IsWithin(canonical, routeSuffix) {
+		for _, claim := range claims {
+			if claim.Kind == serverv1.HostnameClaimKindPersistentCustomDomain && claim.State == serverv1.HostnameClaimStateActive {
+				if depth, ok := naming.ChildDepth(canonical, claim.Hostname); ok && depth <= maximumDepth {
+					return canonical, claim.Hostname, false, false, nil
+				}
+			}
+		}
+		return "", "", false, false, errors.New("absolute name is not within an owned custom domain")
+	}
+	if !naming.IsWithin(canonical, routeSuffix) {
+		canonical += "." + routeSuffix
+		canonical, err = naming.CanonicalizeHostname(canonical)
+		if err != nil {
+			return "", "", false, false, err
+		}
+	}
+	if canonical == routeSuffix {
+		return "", "", false, false, errors.New("route suffix cannot be published")
+	}
+	relative, _ := strings.CutSuffix(canonical, "."+routeSuffix)
+	labels := strings.Split(relative, ".")
+	if len(labels) == 0 || len(labels)-1 > maximumDepth {
+		return "", "", false, false, errors.New("managed child exceeds maximum depth")
+	}
+	base = labels[len(labels)-1] + "." + routeSuffix
+	if len(labels) == 1 && !active(serverv1.HostnameClaimKindPersistentManaged, base) {
+		return canonical, labels[0], true, true, nil
+	}
+	if !active(serverv1.HostnameClaimKindPersistentManaged, base) {
+		return "", "", false, false, fmt.Errorf("base %s is not owned", base)
+	}
+	return canonical, base, true, false, nil
+}
+
+func resolveReleaseName(
+	input, routeSuffix string,
+	claims []serverv1.HostnameClaim,
+) (string, string, error) {
+	canonical, err := naming.CanonicalizeHostname(input)
+	if err != nil {
+		return "", "", err
+	}
+	if !strings.HasSuffix(input, ".") && !strings.Contains(canonical, ".") {
+		canonical += "." + routeSuffix
+	}
+	for _, claim := range claims {
+		if claim.Hostname == canonical {
+			return canonical, claim.Id, nil
+		}
+	}
+	return "", "", errors.New("hostname claim not found")
 }
 
 func authenticatedClient(

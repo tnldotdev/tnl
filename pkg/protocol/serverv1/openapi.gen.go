@@ -25,6 +25,24 @@ func (e CapabilitiesHostnameAuthorization) Valid() bool {
 	}
 }
 
+// Defines values for CapabilitiesNameAuthorityType.
+const (
+	Hosted CapabilitiesNameAuthorityType = "hosted"
+	Local  CapabilitiesNameAuthorityType = "local"
+)
+
+// Valid indicates whether the value is a known member of the CapabilitiesNameAuthorityType enum.
+func (e CapabilitiesNameAuthorityType) Valid() bool {
+	switch e {
+	case Hosted:
+		return true
+	case Local:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CapabilitiesProtocolVersions.
 const (
 	CapabilitiesProtocolVersionsN1 CapabilitiesProtocolVersions = 1
@@ -88,6 +106,132 @@ func (e CertificateOrderState) Valid() bool {
 	}
 }
 
+// Defines values for CreateHostnameClaimRequestKind.
+const (
+	CreateHostnameClaimRequestKindEphemeral         CreateHostnameClaimRequestKind = "ephemeral"
+	CreateHostnameClaimRequestKindPersistentManaged CreateHostnameClaimRequestKind = "persistent_managed"
+)
+
+// Valid indicates whether the value is a known member of the CreateHostnameClaimRequestKind enum.
+func (e CreateHostnameClaimRequestKind) Valid() bool {
+	switch e {
+	case CreateHostnameClaimRequestKindEphemeral:
+		return true
+	case CreateHostnameClaimRequestKindPersistentManaged:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DNSRecordType.
+const (
+	A     DNSRecordType = "A"
+	AAAA  DNSRecordType = "AAAA"
+	CNAME DNSRecordType = "CNAME"
+)
+
+// Valid indicates whether the value is a known member of the DNSRecordType enum.
+func (e DNSRecordType) Valid() bool {
+	switch e {
+	case A:
+		return true
+	case AAAA:
+		return true
+	case CNAME:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DomainChallengeState.
+const (
+	Invalidated DomainChallengeState = "invalidated"
+	PendingDns  DomainChallengeState = "pending_dns"
+	Verified    DomainChallengeState = "verified"
+)
+
+// Valid indicates whether the value is a known member of the DomainChallengeState enum.
+func (e DomainChallengeState) Valid() bool {
+	switch e {
+	case Invalidated:
+		return true
+	case PendingDns:
+		return true
+	case Verified:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for HostnameClaimKind.
+const (
+	HostnameClaimKindEphemeral              HostnameClaimKind = "ephemeral"
+	HostnameClaimKindPersistentCustomDomain HostnameClaimKind = "persistent_custom_domain"
+	HostnameClaimKindPersistentManaged      HostnameClaimKind = "persistent_managed"
+)
+
+// Valid indicates whether the value is a known member of the HostnameClaimKind enum.
+func (e HostnameClaimKind) Valid() bool {
+	switch e {
+	case HostnameClaimKindEphemeral:
+		return true
+	case HostnameClaimKindPersistentCustomDomain:
+		return true
+	case HostnameClaimKindPersistentManaged:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for HostnameClaimSource.
+const (
+	Custom    HostnameClaimSource = "custom"
+	Generated HostnameClaimSource = "generated"
+)
+
+// Valid indicates whether the value is a known member of the HostnameClaimSource enum.
+func (e HostnameClaimSource) Valid() bool {
+	switch e {
+	case Custom:
+		return true
+	case Generated:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for HostnameClaimState.
+const (
+	HostnameClaimStateActive        HostnameClaimState = "active"
+	HostnameClaimStateBurned        HostnameClaimState = "burned"
+	HostnameClaimStateHeld          HostnameClaimState = "held"
+	HostnameClaimStateQuarantined   HostnameClaimState = "quarantined"
+	HostnameClaimStateReleasedOwned HostnameClaimState = "released_owned"
+)
+
+// Valid indicates whether the value is a known member of the HostnameClaimState enum.
+func (e HostnameClaimState) Valid() bool {
+	switch e {
+	case HostnameClaimStateActive:
+		return true
+	case HostnameClaimStateBurned:
+		return true
+	case HostnameClaimStateHeld:
+		return true
+	case HostnameClaimStateQuarantined:
+		return true
+	case HostnameClaimStateReleasedOwned:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ProblemCode.
 const (
 	CredentialReplayed     ProblemCode = "credential_replayed"
@@ -138,13 +282,13 @@ func (e ProblemCode) Valid() bool {
 
 // Defines values for RouteState.
 const (
-	Active RouteState = "active"
+	RouteStateActive RouteState = "active"
 )
 
 // Valid indicates whether the value is a known member of the RouteState enum.
 func (e RouteState) Valid() bool {
 	switch e {
-	case Active:
+	case RouteStateActive:
 		return true
 	default:
 		return false
@@ -244,17 +388,30 @@ type AcquireLeaseRequest struct {
 
 // Capabilities defines model for Capabilities.
 type Capabilities struct {
-	Acme                  *AcmeCapabilities                   `json:"acme,omitempty"`
-	AnonymousPublic       bool                                `json:"anonymous_public"`
-	HostnameAuthorization []CapabilitiesHostnameAuthorization `json:"hostname_authorization"`
-	LocalClaim            *LocalClaimCapabilities             `json:"local_claim,omitempty"`
-	Oidc                  *OIDCCapabilities                   `json:"oidc,omitempty"`
-	ProtocolVersions      []CapabilitiesProtocolVersions      `json:"protocol_versions"`
-	Transport             TransportCapabilities               `json:"transport"`
+	Acme                    *AcmeCapabilities                   `json:"acme,omitempty"`
+	AnonymousPublic         bool                                `json:"anonymous_public"`
+	CustomDomainSupport     bool                                `json:"custom_domain_support"`
+	DnsReady                bool                                `json:"dns_ready"`
+	EphemeralNameSupport    bool                                `json:"ephemeral_name_support"`
+	HostedAuthorityEndpoint *string                             `json:"hosted_authority_endpoint,omitempty"`
+	HostnameAuthorization   []CapabilitiesHostnameAuthorization `json:"hostname_authorization"`
+	IngressIpv4             []string                            `json:"ingress_ipv4"`
+	IngressIpv6             []string                            `json:"ingress_ipv6"`
+	LocalClaim              *LocalClaimCapabilities             `json:"local_claim,omitempty"`
+	MaximumChildDepth       int                                 `json:"maximum_child_depth"`
+	NameAuthorityType       CapabilitiesNameAuthorityType       `json:"name_authority_type"`
+	Oidc                    *OIDCCapabilities                   `json:"oidc,omitempty"`
+	PersistentBaseSupport   bool                                `json:"persistent_base_support"`
+	ProtocolVersions        []CapabilitiesProtocolVersions      `json:"protocol_versions"`
+	RouteSuffix             string                              `json:"route_suffix"`
+	Transport               TransportCapabilities               `json:"transport"`
 }
 
 // CapabilitiesHostnameAuthorization defines model for Capabilities.HostnameAuthorization.
 type CapabilitiesHostnameAuthorization string
+
+// CapabilitiesNameAuthorityType defines model for Capabilities.NameAuthorityType.
+type CapabilitiesNameAuthorityType string
 
 // CapabilitiesProtocolVersions defines model for Capabilities.ProtocolVersions.
 type CapabilitiesProtocolVersions int
@@ -303,10 +460,19 @@ type CreateCertificateOrderRequest struct {
 	RouteId    string `json:"route_id"`
 }
 
+// CreateDomainChallengeRequest defines model for CreateDomainChallengeRequest.
+type CreateDomainChallengeRequest struct {
+	Domain string `json:"domain"`
+}
+
 // CreateHostnameClaimRequest defines model for CreateHostnameClaimRequest.
 type CreateHostnameClaimRequest struct {
-	Label *string `json:"label,omitempty"`
+	Kind CreateHostnameClaimRequestKind `json:"kind"`
+	Name *string                        `json:"name,omitempty"`
 }
+
+// CreateHostnameClaimRequestKind defines model for CreateHostnameClaimRequest.Kind.
+type CreateHostnameClaimRequestKind string
 
 // CreateRouteRequest defines model for CreateRouteRequest.
 type CreateRouteRequest struct {
@@ -318,6 +484,33 @@ type CreateRouteRequest struct {
 // CredentialID defines model for CredentialID.
 type CredentialID = string
 
+// DNSRecord defines model for DNSRecord.
+type DNSRecord struct {
+	Name  string        `json:"name"`
+	Type  DNSRecordType `json:"type"`
+	Value string        `json:"value"`
+}
+
+// DNSRecordType defines model for DNSRecord.Type.
+type DNSRecordType string
+
+// DomainChallenge defines model for DomainChallenge.
+type DomainChallenge struct {
+	Apex               bool                 `json:"apex"`
+	ClaimId            *HostnameClaimID     `json:"claim_id,omitempty"`
+	CreatedAt          time.Time            `json:"created_at"`
+	Domain             string               `json:"domain"`
+	Id                 string               `json:"id"`
+	InvalidatedAt      *time.Time           `json:"invalidated_at,omitempty"`
+	Records            []DNSRecord          `json:"records"`
+	State              DomainChallengeState `json:"state"`
+	VerificationTarget string               `json:"verification_target"`
+	VerifiedAt         *time.Time           `json:"verified_at,omitempty"`
+}
+
+// DomainChallengeState defines model for DomainChallenge.State.
+type DomainChallengeState string
+
 // HeartbeatResponse defines model for HeartbeatResponse.
 type HeartbeatResponse struct {
 	ExpiresAt time.Time `json:"expires_at"`
@@ -325,11 +518,24 @@ type HeartbeatResponse struct {
 
 // HostnameClaim defines model for HostnameClaim.
 type HostnameClaim struct {
-	CreatedAt    time.Time       `json:"created_at"`
-	Hostname     string          `json:"hostname"`
-	Id           HostnameClaimID `json:"id"`
-	Irreversible bool            `json:"irreversible"`
+	ActivatedAt *time.Time          `json:"activated_at,omitempty"`
+	CreatedAt   time.Time           `json:"created_at"`
+	Hostname    string              `json:"hostname"`
+	Id          HostnameClaimID     `json:"id"`
+	Kind        HostnameClaimKind   `json:"kind"`
+	ReleasedAt  *time.Time          `json:"released_at,omitempty"`
+	Source      HostnameClaimSource `json:"source"`
+	State       HostnameClaimState  `json:"state"`
 }
+
+// HostnameClaimKind defines model for HostnameClaim.Kind.
+type HostnameClaimKind string
+
+// HostnameClaimSource defines model for HostnameClaim.Source.
+type HostnameClaimSource string
+
+// HostnameClaimState defines model for HostnameClaim.State.
+type HostnameClaimState string
 
 // HostnameClaimID defines model for HostnameClaimID.
 type HostnameClaimID = string
@@ -456,11 +662,19 @@ type TransportCapabilitiesVersion int
 // CertificateOrderID defines model for CertificateOrderID.
 type CertificateOrderID = string
 
+// DomainChallengeID defines model for DomainChallengeID.
+type DomainChallengeID = string
+
 // RouteID defines model for RouteID.
 type RouteID = string
 
 // BearerProblem defines model for BearerProblem.
 type BearerProblem = Problem
+
+// CreateDomainChallengeParams defines parameters for CreateDomainChallenge.
+type CreateDomainChallengeParams struct {
+	IdempotencyKey string `json:"Idempotency-Key"`
+}
 
 // ListHostnameClaimsParams defines parameters for ListHostnameClaims.
 type ListHostnameClaimsParams struct {
@@ -480,6 +694,9 @@ type ExchangeLoginTokenJSONRequestBody = TokenExchangeRequest
 
 // CreateCertificateOrderJSONRequestBody defines body for CreateCertificateOrder for application/json ContentType.
 type CreateCertificateOrderJSONRequestBody = CreateCertificateOrderRequest
+
+// CreateDomainChallengeJSONRequestBody defines body for CreateDomainChallenge for application/json ContentType.
+type CreateDomainChallengeJSONRequestBody = CreateDomainChallengeRequest
 
 // CreateHostnameClaimJSONRequestBody defines body for CreateHostnameClaim for application/json ContentType.
 type CreateHostnameClaimJSONRequestBody = CreateHostnameClaimRequest

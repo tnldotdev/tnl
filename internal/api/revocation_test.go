@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/0xcadams/tnl/internal/auth"
-	"github.com/0xcadams/tnl/internal/credentials"
-	"github.com/0xcadams/tnl/internal/state"
-	"github.com/0xcadams/tnl/pkg/protocol/serverv1"
+	"github.com/tnldotdev/tnl/internal/auth"
+	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/state"
+	"github.com/tnldotdev/tnl/pkg/protocol/serverv1"
 )
 
 func TestCredentialRevocation(t *testing.T) {

@@ -12,13 +12,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/auth"
-	"github.com/0xcadams/tnl/internal/certificates"
-	"github.com/0xcadams/tnl/internal/credentials"
-	"github.com/0xcadams/tnl/internal/routes"
-	"github.com/0xcadams/tnl/internal/state"
-	"github.com/0xcadams/tnl/internal/worker"
-	"github.com/0xcadams/tnl/pkg/protocol/serverv1"
+	"github.com/tnldotdev/tnl/internal/auth"
+	"github.com/tnldotdev/tnl/internal/certificates"
+	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/routes"
+	"github.com/tnldotdev/tnl/internal/state"
+	"github.com/tnldotdev/tnl/internal/worker"
+	"github.com/tnldotdev/tnl/pkg/protocol/serverv1"
 	"tailscale.com/types/key"
 )
 
@@ -87,6 +87,69 @@ func TestRouteAPILifecycle(t *testing.T) {
 		t.Fatalf("replacement setup = %#v", replacement)
 	}
 	routeRequest[struct{}](t, handler, issued.Token.String(), http.MethodDelete, routesPath+"/"+created.Route.Id, nil, http.StatusNoContent)
+}
+
+func TestDomainClaimListAndRelease(t *testing.T) {
+	ctx := context.Background()
+	db, err := state.Open(ctx, filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	login, err := credentials.NewLoginToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	authService, err := auth.NewService(db, login)
+	if err != nil {
+		t.Fatal(err)
+	}
+	issued, err := authService.Exchange(ctx, login)
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, err := authService.Authenticate(ctx, issued.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const claimID = "claim_00000000000000000000000000000001"
+	const managedID = "claim_00000000000000000000000000000002"
+	if _, err := db.ExecContext(ctx, `INSERT INTO hostname_claims
+		(id, principal_id, hostname, created_at, kind, state, source, activated_at)
+		VALUES
+		(?, ?, 'docs.other.com', 1, 'persistent_custom_domain', 'active', 'custom', 1),
+		(?, ?, 'managed.example', 1, 'persistent_managed', 'active', 'custom', 1)`,
+		claimID, principal.ID, managedID, principal.ID); err != nil {
+		t.Fatal(err)
+	}
+	store, err := routes.NewStore(db, "example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	coordinator, err := routes.NewCoordinator(ctx, store, "boot")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = coordinator.Close() })
+	handler := NewHandlerWithRoutes(fixtureCapabilities(t), authService, coordinator)
+	listed := routeRequest[[]serverv1.HostnameClaim](
+		t, handler, issued.Token.String(), http.MethodGet, domainClaimsPath, nil, http.StatusOK,
+	)
+	if len(listed) != 1 || listed[0].Id != claimID {
+		t.Fatalf("domain claims = %#v", listed)
+	}
+	routeRequest[serverv1.Problem](
+		t, handler, issued.Token.String(), http.MethodDelete, domainClaimsPath+"/"+managedID, nil, http.StatusNotFound,
+	)
+	routeRequest[struct{}](
+		t, handler, issued.Token.String(), http.MethodDelete, domainClaimsPath+"/"+claimID, nil, http.StatusNoContent,
+	)
+	listed = routeRequest[[]serverv1.HostnameClaim](
+		t, handler, issued.Token.String(), http.MethodGet, domainClaimsPath, nil, http.StatusOK,
+	)
+	if len(listed) != 0 {
+		t.Fatalf("released domain claims = %#v", listed)
+	}
 }
 
 func TestCertificateAPIRequiresBoundCurrentLease(t *testing.T) {
@@ -197,7 +260,9 @@ func routeRequest[T any](
 func claimRequest(t *testing.T, handler http.Handler, token, label string) serverv1.HostnameClaim {
 	t.Helper()
 	var body bytes.Buffer
-	if err := json.NewEncoder(&body).Encode(serverv1.CreateHostnameClaimRequest{Label: &label}); err != nil {
+	if err := json.NewEncoder(&body).Encode(serverv1.CreateHostnameClaimRequest{
+		Kind: serverv1.CreateHostnameClaimRequestKindPersistentManaged, Name: &label,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	request := httptest.NewRequest(http.MethodPost, hostnameClaimsPath, &body)

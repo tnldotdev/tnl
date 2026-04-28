@@ -2,6 +2,15 @@
   "protocol_versions": [1],
   "anonymous_public": false,
   "hostname_authorization": ["local_claim"],
+  "route_suffix": "example",
+  "name_authority_type": "local",
+  "ephemeral_name_support": true,
+  "persistent_base_support": true,
+  "custom_domain_support": true,
+  "maximum_child_depth": 8,
+  "dns_ready": true,
+  "ingress_ipv4": ["192.0.2.1"],
+  "ingress_ipv6": ["2001:db8::1"],
   "local_claim": {
     "suffix": "example"
   },

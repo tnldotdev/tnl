@@ -21,11 +21,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/clientstate"
-	"github.com/0xcadams/tnl/internal/credentials"
-	"github.com/0xcadams/tnl/internal/serverclient"
-	"github.com/0xcadams/tnl/pkg/protocol/serverv1"
-	"github.com/0xcadams/tnl/pkg/protocol/transportv1"
+	"github.com/tnldotdev/tnl/internal/clientstate"
+	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/serverclient"
+	"github.com/tnldotdev/tnl/pkg/protocol/serverv1"
+	"github.com/tnldotdev/tnl/pkg/protocol/transportv1"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
 )
@@ -223,8 +223,9 @@ func TestRunPublicReacquiresAfterHeartbeatFence(t *testing.T) {
 		t.Fatal(err)
 	}
 	if server.acquireCalls != 1 || profileLoads < 3 || len(generations) != 2 ||
-		generations[0] != 1 || generations[1] != 2 {
-		t.Fatalf("acquire calls = %d, profile loads = %d, generations = %v", server.acquireCalls, profileLoads, generations)
+		generations[0] != 1 || generations[1] != 2 || server.deleteCalls != 1 {
+		t.Fatalf("acquire calls = %d, delete calls = %d, profile loads = %d, generations = %v",
+			server.acquireCalls, server.deleteCalls, profileLoads, generations)
 	}
 }
 
@@ -569,6 +570,7 @@ type publicServerStub struct {
 	acquireCalls    int
 	heartbeatCalls  int
 	heartbeatErrors []error
+	deleteCalls     int
 }
 
 type issuanceServer struct {
@@ -754,6 +756,11 @@ func (c *publicServerStub) CreateRoute(_ context.Context, request serverv1.Creat
 
 func (c *publicServerStub) ListRoutes(context.Context) ([]serverv1.Route, error) {
 	return c.routes, nil
+}
+
+func (c *publicServerStub) DeleteRoute(context.Context, string) error {
+	c.deleteCalls++
+	return nil
 }
 
 func (c *publicServerStub) AcquireLease(

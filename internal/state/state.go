@@ -18,6 +18,9 @@ import (
 
 const databaseName = "tnld.db"
 
+// DatabasePath returns the state database path within dir.
+func DatabasePath(dir string) string { return filepath.Join(dir, databaseName) }
+
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
 
@@ -28,7 +31,7 @@ func Open(ctx context.Context, dir string) (*sql.DB, error) {
 		return nil, err
 	}
 
-	path := filepath.Join(dir, databaseName)
+	path := DatabasePath(dir)
 	db, err := sql.Open("sqlite", dataSourceName(path))
 	if err != nil {
 		return nil, fmt.Errorf("state: open database: %w", err)

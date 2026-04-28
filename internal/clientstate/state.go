@@ -42,8 +42,6 @@ type Store struct {
 	serverDir       string
 	routesDir       string
 	locksDir        string
-	selectionsPath  string
-	releasesPath    string
 	credentialsPath string
 }
 
@@ -139,8 +137,6 @@ func New(root, serverOrigin string) (*Store, error) {
 	}
 	return &Store{
 		serverDir: server, routesDir: routes, locksDir: locks,
-		selectionsPath:  filepath.Join(server, "hostname-selections.json"),
-		releasesPath:    filepath.Join(server, "hostname-releases.json"),
 		credentialsPath: filepath.Join(server, "access-credential.json"),
 	}, nil
 }
