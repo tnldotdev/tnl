@@ -1,23 +1,34 @@
 package localproxy
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
+	"net/url"
+	"strconv"
 	"testing"
+	"time"
 )
 
 func TestProxyForwardsOnlyExactTrustedRequests(t *testing.T) {
 	type received struct {
-		Host      string
-		Forwarded string
-		RealIP    string
+		Host           string
+		Forwarded      string
+		ForwardedHost  string
+		ForwardedProto string
+		RealIP         string
 	}
 	requests := make(chan received, 1)
 	upstream := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		requests <- received{
-			Host: request.Host, Forwarded: request.Header.Get("X-Forwarded-For"), RealIP: request.Header.Get("X-Real-IP"),
+			Host: request.Host, Forwarded: request.Header.Get("X-Forwarded-For"),
+			ForwardedHost:  request.Header.Get("X-Forwarded-Host"),
+			ForwardedProto: request.Header.Get("X-Forwarded-Proto"), RealIP: request.Header.Get("X-Real-IP"),
 		}
 		response.WriteHeader(http.StatusNoContent)
 	}))
@@ -39,7 +50,7 @@ func TestProxyForwardsOnlyExactTrustedRequests(t *testing.T) {
 		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
 	}
 	got := <-requests
-	if got.Host != "route.example" || got.Forwarded != "192.0.2.10" || got.RealIP != "" {
+	if got.Host != "route.example" || got.Forwarded != "192.0.2.10" || got.ForwardedHost != "route.example" || got.ForwardedProto != "https" || got.RealIP != "" {
 		t.Fatalf("upstream request = %#v", got)
 	}
 
@@ -62,6 +73,115 @@ func TestProxyForwardsOnlyExactTrustedRequests(t *testing.T) {
 				t.Fatalf("status = %d", response.Code)
 			}
 		})
+	}
+}
+
+func TestProxyForwardsWebSocketUpgrade(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Connection") != "Upgrade" || request.Header.Get("Upgrade") != "websocket" {
+			http.Error(response, "missing upgrade", http.StatusBadRequest)
+			return
+		}
+		connection, buffer, err := response.(http.Hijacker).Hijack()
+		if err != nil {
+			return
+		}
+		defer connection.Close()
+		_, _ = buffer.WriteString("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\nhot")
+		_ = buffer.Flush()
+	}))
+	defer upstream.Close()
+	handler, err := New(upstream.URL, "route.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	frontend := httptest.NewUnstartedServer(handler)
+	frontend.StartTLS()
+	defer frontend.Close()
+
+	connection, err := tls.Dial("tcp", frontend.Listener.Addr().String(), &tls.Config{
+		ServerName: "route.example", InsecureSkipVerify: true, // Test certificate is self-signed.
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	_, err = io.WriteString(connection, "GET /hmr HTTP/1.1\r\nHost: route.example\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := http.NewRequest(http.MethodGet, "https://route.example/hmr", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(connection)
+	response, err := http.ReadResponse(reader, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("status = %d", response.StatusCode)
+	}
+	payload := make([]byte, len("hot"))
+	if _, err := io.ReadFull(reader, payload); err != nil {
+		t.Fatal(err)
+	}
+	if string(payload) != "hot" {
+		t.Fatalf("payload = %q", payload)
+	}
+}
+
+func TestProxyFlushesStreamingResponses(t *testing.T) {
+	release := make(chan struct{}, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(response, "first\n")
+		response.(http.Flusher).Flush()
+		<-release
+		_, _ = io.WriteString(response, "second\n")
+	}))
+	defer upstream.Close()
+	defer func() {
+		select {
+		case release <- struct{}{}:
+		default:
+		}
+	}()
+	handler, err := New(upstream.URL, "route.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	frontend := httptest.NewTLSServer(handler)
+	defer frontend.Close()
+	client := frontend.Client()
+	client.Timeout = 2 * time.Second
+	client.Transport.(*http.Transport).TLSClientConfig.ServerName = "route.example"
+	client.Transport.(*http.Transport).TLSClientConfig.InsecureSkipVerify = true // Test certificate is self-signed for a different host.
+	request, err := http.NewRequest(http.MethodGet, frontend.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Host = "route.example"
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	first := make([]byte, len("first\n"))
+	if _, err := io.ReadFull(response.Body, first); err != nil {
+		t.Fatal(err)
+	}
+	if string(first) != "first\n" {
+		t.Fatalf("first chunk = %q", first)
+	}
+	release <- struct{}{}
+	second := make([]byte, len("second\n"))
+	if _, err := io.ReadFull(response.Body, second); err != nil {
+		t.Fatal(err)
+	}
+	if string(second) != "second\n" {
+		t.Fatalf("second chunk = %q", second)
 	}
 }
 
@@ -115,4 +235,77 @@ func TestPreflightRequiresAvailableTarget(t *testing.T) {
 	if err := Preflight(context.Background(), upstream.URL); err == nil {
 		t.Fatal("Preflight accepted unavailable target")
 	}
+}
+
+func TestWaitForTargetAllowsDevelopmentServerStartup(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := listener.Addr().String()
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		listener, listenErr := net.Listen("tcp", address)
+		if listenErr != nil {
+			return
+		}
+		defer listener.Close()
+		connection, acceptErr := listener.Accept()
+		if acceptErr == nil {
+			_ = connection.Close()
+		}
+	}()
+	if err := WaitForTarget(ctx, "http://"+address); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func FuzzNormalizeTarget(f *testing.F) {
+	for _, target := range []string{
+		"3000",
+		"03000",
+		"http://127.0.0.1:3000",
+		"HTTP://[0:0:0:0:0:0:0:1]:03000",
+		"http://localhost:3000",
+		"http://127.0.0.1:3000/path",
+		"http://user@127.0.0.1:3000",
+		"http://127.0.0.1:3000#fragment",
+	} {
+		f.Add(target)
+	}
+
+	f.Fuzz(func(t *testing.T, target string) {
+		canonical, err := NormalizeTarget(target)
+		if err != nil {
+			return
+		}
+		roundTrip, err := NormalizeTarget(canonical)
+		if err != nil || roundTrip != canonical {
+			t.Fatalf("canonical target is not idempotent: %q, %v", roundTrip, err)
+		}
+
+		parsed, err := url.Parse(canonical)
+		if err != nil || parsed.Scheme != "http" || parsed.User != nil || parsed.Host == "" ||
+			parsed.Path != "" || parsed.RawPath != "" || parsed.ForceQuery || parsed.RawQuery != "" ||
+			parsed.Fragment != "" || parsed.RawFragment != "" || parsed.Opaque != "" {
+			t.Fatalf("unsafe canonical target %q: %#v, %v", canonical, parsed, err)
+		}
+		address, err := netip.ParseAddr(parsed.Hostname())
+		if err != nil || !address.IsLoopback() || address.Zone() != "" {
+			t.Fatalf("canonical target is not literal loopback: %q", canonical)
+		}
+		port, err := strconv.ParseUint(parsed.Port(), 10, 16)
+		if err != nil || port == 0 {
+			t.Fatalf("canonical target has invalid port: %q", canonical)
+		}
+		want := "http://" + net.JoinHostPort(address.String(), strconv.FormatUint(port, 10))
+		if canonical != want {
+			t.Fatalf("canonical target = %q, want %q", canonical, want)
+		}
+	})
 }

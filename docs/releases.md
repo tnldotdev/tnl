@@ -1,15 +1,16 @@
 # tnl Releases
 
 tnl releases provide combined `tnl` and `tnld` archives for macOS and Linux on
-amd64 and arm64, plus a multi-platform `tnld` image in GHCR. Releases before
-1.0 are standalone previews and may include forward-only state migrations.
+amd64 and arm64, a multi-platform `tnld` image in GHCR, and the official npm
+framework integrations. Releases before 1.0 are standalone previews and may
+include forward-only state migrations.
 
 ## Install With Homebrew
 
-Stable releases are available from the `0xcadams/tap` Homebrew tap:
+Stable releases are available from the `tnldotdev/tap` Homebrew tap:
 
 ```console
-brew install 0xcadams/tap/tnl
+brew install tnldotdev/tap/tnl
 ```
 
 The formula installs both `tnl` and `tnld` and verifies the selected release
@@ -36,7 +37,7 @@ First verify the keyless Sigstore bundle for the checksum manifest. Replace
 export TNL_VERSION=v0.1.0
 cosign verify-blob \
   --bundle checksums.txt.sigstore.json \
-  --certificate-identity "https://github.com/0xcadams/tnl/.github/workflows/release.yml@refs/tags/$TNL_VERSION" \
+  --certificate-identity "https://github.com/tnldotdev/tnl/.github/workflows/release.yml@refs/tags/$TNL_VERSION" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   checksums.txt
 ```
@@ -56,7 +57,7 @@ GitHub CLI is available, verify an archive with:
 
 ```console
 gh attestation verify tnl_0.1.0_linux_amd64.tar.gz \
-  --repo 0xcadams/tnl
+  --repo tnldotdev/tnl
 ```
 
 Extract the archive only after these checks pass:
@@ -84,9 +85,9 @@ The release includes `tnld-image-digest.txt`. Use that digest instead of a
 mutable tag:
 
 ```console
-export TNL_IMAGE='ghcr.io/0xcadams/tnl@sha256:...'
+export TNL_IMAGE='ghcr.io/tnldotdev/tnl@sha256:...'
 cosign verify \
-  --certificate-identity "https://github.com/0xcadams/tnl/.github/workflows/release.yml@refs/tags/$TNL_VERSION" \
+  --certificate-identity "https://github.com/tnldotdev/tnl/.github/workflows/release.yml@refs/tags/$TNL_VERSION" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   "$TNL_IMAGE"
 docker pull "$TNL_IMAGE"
@@ -97,7 +98,7 @@ Verify the GitHub provenance attestation and inspect the attached BuildKit
 SBOM:
 
 ```console
-gh attestation verify "oci://$TNL_IMAGE" --repo 0xcadams/tnl
+gh attestation verify "oci://$TNL_IMAGE" --repo tnldotdev/tnl
 docker buildx imagetools inspect "$TNL_IMAGE" --format '{{ json .SBOM }}'
 ```
 
@@ -108,8 +109,10 @@ license files are available under `/licenses/tnl` in the image filesystem.
 
 ## Pre-1.0 Configuration Changes
 
-Current daemon releases derive `tnl.<domain>` and `apps.<domain>` from one
-`TNLD_DOMAIN` value. Public ingress requires automatic ACME configuration.
+Current daemon releases derive control host `tnl.<domain>` and route suffix
+`<domain>` from `TNLD_DOMAIN`. `TNLD_CONTROL_HOSTNAME` and `TNLD_ROUTE_SUFFIX`
+override those values independently. Public ingress requires automatic ACME
+configuration.
 
 The daemon creates its login token in the state directory. Retrieve it with
 `tnld login-token --state-dir DIR`, and use `tnl login` to save a revocable
@@ -193,9 +196,13 @@ downgrade.
 
 The `release` GitHub environment should require approval. The `homebrew`
 environment must provide a `HOMEBREW_TAP_TOKEN` secret containing a fine-grained
-GitHub token with Contents read/write access to `0xcadams/homebrew-tap`. Enable
+GitHub token with Contents read/write access to `tnldotdev/homebrew-tap`. Enable
 immutable releases, tag protection, GitHub Packages, and artifact attestations
 before the first release.
+
+Configure `release.yml` as the npm trusted publisher for `@tnldotdev/dev`,
+`@tnldotdev/next`, and `@tnldotdev/vite`. The workflow uses npm OIDC and does not
+use an npm token. All three package versions must match the release tag.
 
 From a clean, fully verified `main` commit:
 
@@ -208,5 +215,6 @@ The tag must be an annotated signature that GitHub verifies and must point
 directly to a commit reachable from `main`; the workflow enforces both
 conditions. After environment approval it builds signed archives and SBOMs,
 pushes and signs the versioned image, attaches its digest, and publishes the
-release. Stable tags then update `Formula/tnl.rb` in the Homebrew tap. Review
-the completed release and never move or reuse a release tag.
+release and npm packages. Stable tags then update `Formula/tnl.rb` in the
+Homebrew tap. Review the completed release and never move or reuse a release
+tag.

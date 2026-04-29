@@ -1,0 +1,45 @@
+{
+  "name": "@tnldotdev/vite",
+  "version": "0.1.0",
+  "description": "Safe public development URLs for Vite with tnl.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tnldotdev/tnl.git",
+    "directory": "packages/vite"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "build": "pnpm --filter @tnldotdev/dev build && pnpm run build:self",
+    "build:self": "pnpm run clean && tsc --project tsconfig.json",
+    "clean": "node ../../scripts/clean-package.mjs",
+    "prepack": "pnpm run build"
+  },
+  "dependencies": {
+    "@tnldotdev/dev": "workspace:*"
+  },
+  "devDependencies": {
+    "vite": "8.2.2"
+  },
+  "peerDependencies": {
+    "vite": ">=6.0.0"
+  },
+  "engines": {
+    "node": ">=20.9"
+  }
+}
