@@ -3,24 +3,21 @@ package controltls
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"crypto/tls"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
-	"path/filepath"
 	"sync"
 
-	"github.com/0xcadams/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"golang.org/x/crypto/acme"
 	"golang.org/x/crypto/acme/autocert"
 )
 
 type Config struct {
 	Hostname     string
-	StateDir     string
+	Cache        autocert.Cache
 	DirectoryURL string
 	Email        string
 	AcceptTerms  bool
@@ -33,13 +30,12 @@ func New(config Config) (*tls.Config, error) {
 	if err != nil || hostname != config.Hostname {
 		return nil, errors.New("controltls: hostname must be canonical")
 	}
-	if config.StateDir == "" || config.DirectoryURL == "" || config.Email == "" {
+	if config.Cache == nil || config.DirectoryURL == "" || config.Email == "" {
 		return nil, errors.New("controltls: state, ACME directory, and email are required")
 	}
-	directoryHash := sha256.Sum256([]byte(config.DirectoryURL))
 	manager := &autocert.Manager{
 		Prompt:     func(string) bool { return config.AcceptTerms },
-		Cache:      autocert.DirCache(filepath.Join(config.StateDir, "control-acme", hex.EncodeToString(directoryHash[:]))),
+		Cache:      config.Cache,
 		HostPolicy: autocert.HostWhitelist(hostname),
 		Email:      config.Email,
 		Client: &acme.Client{

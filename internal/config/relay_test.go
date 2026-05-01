@@ -1,12 +1,12 @@
 package config
 
 import (
+	"context"
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/tnldotdev/tnl/internal/state"
 	"tailscale.com/tailcfg"
 )
 
@@ -44,10 +44,15 @@ func TestSelectRelayProfile(t *testing.T) {
 func TestLoadTailcatRelayProfilesUsesPinnedMap(t *testing.T) {
 	directory := t.TempDir()
 	data := []byte(`{"Regions":{"1":{"RegionID":1,"RegionCode":"pinned","Nodes":[{"Name":"pinned","RegionID":1,"HostName":"relay.example","DERPPort":443}]}}}`)
-	if err := os.WriteFile(filepath.Join(directory, pinnedRelayMapName), data, 0o600); err != nil {
+	db, err := state.Open(context.Background(), directory)
+	if err != nil {
 		t.Fatal(err)
 	}
-	profiles, profile, err := LoadTailcatRelayProfiles(t.Context(), directory, false)
+	t.Cleanup(func() { _ = db.Close() })
+	if err := state.WriteRelayMap(t.Context(), db, data); err != nil {
+		t.Fatal(err)
+	}
+	profiles, profile, err := LoadTailcatRelayProfiles(t.Context(), db, false)
 	if err != nil {
 		t.Fatal(err)
 	}

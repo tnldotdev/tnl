@@ -11,13 +11,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/testutil/integrationtest"
+	"github.com/tnldotdev/tnl/internal/state"
+	"github.com/tnldotdev/tnl/internal/testutil/integrationtest"
 	"golang.org/x/crypto/acme"
+	"golang.org/x/crypto/acme/autocert"
 )
 
 func TestAutomaticCertificate(t *testing.T) {
 	config, err := New(Config{
-		Hostname: "control.example", StateDir: t.TempDir(),
+		Hostname: "control.example", Cache: testCache(t, "https://acme.example/directory"),
 		DirectoryURL: "https://acme.example/directory", Email: "operator@example.com", AcceptTerms: true,
 	})
 	if err != nil {
@@ -84,7 +86,7 @@ func TestIntegrationAutomaticControlCertificate(t *testing.T) {
 		t, pebblePath, listener.Addr().(*net.TCPAddr).Port, dnsAddress,
 	)
 	tlsConfig, err := New(Config{
-		Hostname: "control.tnl.test", StateDir: t.TempDir(), DirectoryURL: pebble.DirectoryURL(),
+		Hostname: "control.tnl.test", Cache: testCache(t, pebble.DirectoryURL()), DirectoryURL: pebble.DirectoryURL(),
 		Email: "operator@example.com", AcceptTerms: true, HTTPClient: pebble.HTTPClient(),
 	})
 	if err != nil {
@@ -129,4 +131,14 @@ func TestIntegrationAutomaticControlCertificate(t *testing.T) {
 	if response.StatusCode != http.StatusOK || string(body) != "ready" {
 		t.Fatalf("control response = %s %q", response.Status, body)
 	}
+}
+
+func testCache(t *testing.T, directoryURL string) autocert.Cache {
+	t.Helper()
+	db, err := state.Open(t.Context(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	return state.ControlTLSCache(db, directoryURL)
 }

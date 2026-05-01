@@ -19,24 +19,26 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/api"
-	"github.com/0xcadams/tnl/internal/auth"
-	"github.com/0xcadams/tnl/internal/buildinfo"
-	"github.com/0xcadams/tnl/internal/certificates"
-	"github.com/0xcadams/tnl/internal/config"
-	"github.com/0xcadams/tnl/internal/controltls"
-	"github.com/0xcadams/tnl/internal/credentials"
-	"github.com/0xcadams/tnl/internal/ingress"
-	"github.com/0xcadams/tnl/internal/observability"
-	"github.com/0xcadams/tnl/internal/routeexport"
-	"github.com/0xcadams/tnl/internal/routes"
-	"github.com/0xcadams/tnl/internal/serverclient"
-	"github.com/0xcadams/tnl/internal/state"
-	"github.com/0xcadams/tnl/internal/worker"
-	"github.com/0xcadams/tnl/internal/workersession"
-	"github.com/0xcadams/tnl/pkg/protocol/serverv1"
-	"github.com/0xcadams/tnl/pkg/protocol/workerv1"
 	"github.com/alecthomas/kong"
+	"github.com/tnldotdev/tnl/internal/api"
+	"github.com/tnldotdev/tnl/internal/auth"
+	"github.com/tnldotdev/tnl/internal/backup"
+	"github.com/tnldotdev/tnl/internal/buildinfo"
+	"github.com/tnldotdev/tnl/internal/certificates"
+	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/controltls"
+	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/dnsready"
+	"github.com/tnldotdev/tnl/internal/ingress"
+	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/routeexport"
+	"github.com/tnldotdev/tnl/internal/routes"
+	"github.com/tnldotdev/tnl/internal/serverclient"
+	"github.com/tnldotdev/tnl/internal/state"
+	"github.com/tnldotdev/tnl/internal/worker"
+	"github.com/tnldotdev/tnl/internal/workersession"
+	"github.com/tnldotdev/tnl/pkg/protocol/serverv1"
+	"github.com/tnldotdev/tnl/pkg/protocol/workerv1"
 	"tailscale.com/tailcfg"
 )
 
@@ -89,7 +91,7 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 }
 
 type loginTokenCommand struct {
-	StateDir string `name:"state-dir" env:"TNLD_STATE_DIR" type:"path" required:"" help:"Directory containing persistent daemon state."`
+	StateDir string `name:"state-dir" env:"TNLD_STATE_DIR" type:"path" help:"Directory containing persistent daemon state."`
 	Rotate   bool   `name:"rotate" help:"Replace the login token; the daemon must be stopped."`
 }
 
@@ -102,11 +104,31 @@ func runLoginToken(args []string, stdout io.Writer) error {
 	if _, err := parser.Parse(args); err != nil {
 		return err
 	}
+	if command.StateDir == "" {
+		command.StateDir, err = config.DefaultServerStateDir()
+		if err != nil {
+			return err
+		}
+	}
+	ctx := context.Background()
+	var lock *state.DirectoryLock
+	if command.Rotate {
+		lock, err = state.LockDirectory(command.StateDir)
+		if err != nil {
+			return err
+		}
+		defer lock.Close()
+	}
+	db, err := state.Open(ctx, command.StateDir)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
 	var token credentials.LoginToken
 	if command.Rotate {
-		token, err = state.RotateLoginToken(command.StateDir)
+		token, err = state.RotateLoginToken(ctx, db)
 	} else {
-		token, err = state.ReadLoginToken(command.StateDir)
+		token, err = state.ReadLoginToken(ctx, db)
 	}
 	if err != nil {
 		return err
@@ -116,7 +138,7 @@ func runLoginToken(args []string, stdout io.Writer) error {
 }
 
 type relayCommand struct {
-	StateDir string `name:"state-dir" env:"TNLD_STATE_DIR" type:"path" required:"" help:"Directory containing persistent daemon state."`
+	StateDir string `name:"state-dir" env:"TNLD_STATE_DIR" type:"path" help:"Directory containing persistent daemon state."`
 }
 
 func runRelay(ctx context.Context, args []string, stdout io.Writer) error {
@@ -131,12 +153,23 @@ func runRelay(ctx context.Context, args []string, stdout io.Writer) error {
 	if _, err := parser.Parse(args[1:]); err != nil {
 		return err
 	}
+	if command.StateDir == "" {
+		command.StateDir, err = config.DefaultServerStateDir()
+		if err != nil {
+			return err
+		}
+	}
 	lock, err := state.LockDirectory(command.StateDir)
 	if err != nil {
 		return err
 	}
 	defer lock.Close()
-	_, profile, err := config.LoadTailcatRelayProfiles(ctx, command.StateDir, true)
+	db, err := state.Open(ctx, command.StateDir)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	_, profile, err := config.LoadTailcatRelayProfiles(ctx, db, true)
 	if err != nil {
 		return err
 	}
@@ -146,6 +179,7 @@ func runRelay(ctx context.Context, args []string, stdout io.Writer) error {
 
 type daemon struct {
 	db              *sql.DB
+	backup          *backup.Manager
 	stateLock       *state.DirectoryLock
 	login           credentials.LoginToken
 	metricsServer   *observability.Server
@@ -156,6 +190,7 @@ type daemon struct {
 	workerHub       *workersession.Hub
 	workerDone      <-chan error
 	routeExporter   *routeexport.Exporter
+	dns             *dnsready.Checker
 }
 
 var (
@@ -177,18 +212,37 @@ func serve(ctx context.Context, cfg config.TNLD) error {
 			return err
 		}
 		running.stateLock = stateLock
+		if cfg.BackupURL != "" {
+			running.backup, err = backup.New(state.DatabasePath(cfg.StateDir), cfg.BackupURL)
+			if err != nil {
+				return errors.Join(err, running.shutdown(cfg.DrainTimeout))
+			}
+			restored, err := running.backup.Restore(ctx)
+			if err != nil {
+				return errors.Join(err, running.shutdown(cfg.DrainTimeout))
+			}
+			if restored {
+				log.Print("restored state database from backup")
+			}
+		}
 		db, err := state.Open(ctx, cfg.StateDir)
 		if err != nil {
 			return errors.Join(err, running.shutdown(cfg.DrainTimeout))
 		}
 		running.db = db
-		login, generated, err := state.EnsureLoginToken(cfg.StateDir)
+		login, generated, err := state.EnsureLoginToken(ctx, db)
 		if err != nil {
 			return errors.Join(err, running.shutdown(cfg.DrainTimeout))
 		}
 		running.login = login
 		if generated {
 			log.Print("generated login token; retrieve it with tnld login-token")
+		}
+		if running.backup != nil {
+			if err := running.backup.Start(ctx); err != nil {
+				return errors.Join(err, running.shutdown(cfg.DrainTimeout))
+			}
+			log.Print("state backup replication started")
 		}
 		if err := metrics.RegisterDatabase(db); err != nil {
 			return errors.Join(err, running.shutdown(cfg.DrainTimeout))
@@ -249,7 +303,7 @@ func (d *daemon) startServer(
 	cfg config.TNLD,
 	metrics *observability.Metrics,
 ) (<-chan error, <-chan error, error) {
-	profiles, relayProfile, err := relayProfiles(ctx, cfg)
+	profiles, relayProfile, err := relayProfiles(ctx, cfg, d.db)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -274,6 +328,8 @@ func (d *daemon) startServer(
 	storeConfig := routes.StoreConfig{
 		MaxActiveHostnameClaims:  cfg.MaxActiveHostnameClaims,
 		MaxHostnameClaimRequests: cfg.MaxHostnameClaimRequests,
+		ReservedRouteNames:       cfg.EffectiveReservedRouteNames(),
+		VerificationSuffix:       "domains." + cfg.RouteSuffix(),
 		ObserveOperation: func(operation routes.StoreOperation, duration time.Duration, err error) {
 			metrics.ObserveSQLiteOperation(string(operation), duration, err)
 		},
@@ -281,15 +337,23 @@ func (d *daemon) startServer(
 	if d.routeExporter != nil {
 		storeConfig.LifecycleRecorder = d.routeExporter.Store
 	}
+	dns := d.dns
+	if dns == nil {
+		dns = dnsready.New(cfg.ServerHostname(), cfg.RouteSuffix())
+	}
+	storeConfig.DomainVerifier = dns
 	store, err := routes.NewStore(d.db, cfg.RouteSuffix(), storeConfig)
 	if err != nil {
 		return nil, nil, err
 	}
+	log.Printf("Checking public DNS for *.%s", cfg.RouteSuffix())
+	go dns.Monitor(ctx, log.Printf)
 	bootEpoch, err := newBootEpoch()
 	if err != nil {
 		return nil, nil, err
 	}
 	d.coordinator, err = routes.NewCoordinator(ctx, store, bootEpoch, routes.CoordinatorConfig{
+		PublicationReady: dns.CheckHostname,
 		ObserveHeartbeat: func(result routes.HeartbeatResult) {
 			metrics.ObserveRouteLeaseHeartbeat(string(result))
 		},
@@ -307,16 +371,18 @@ func (d *daemon) startServer(
 		return nil, nil, err
 	}
 	go monitorRoutes(ctx, d.coordinator, metrics)
+	go monitorNameCapacity(ctx, store, metrics)
 	var certificateService api.CertificateService
 	if cfg.ACMEEnabled() {
 		control := new(certificateControl)
 		certificateService = control
 		// Let routing start while ACME initialization retries in the background.
 		go control.initialize(ctx, d.db, certificates.Config{
-			DirectoryURL: cfg.ACMEDirectoryURL,
-			Email:        cfg.ACMEEmail,
-			AcceptTerms:  cfg.ACMEAcceptTerms,
-			Profile:      cfg.ACMEProfile,
+			DirectoryURL:  cfg.ACMEDirectoryURL,
+			Email:         cfg.ACMEEmail,
+			AcceptTerms:   cfg.ACMEAcceptTerms,
+			Profile:       cfg.ACMEProfile,
+			HostnameReady: dns.CheckHostname,
 			Probe: func(probeCtx context.Context, job certificates.Job) error {
 				active, ok := d.coordinator.LookupChallenge(job.Hostname)
 				if !ok || active.RouteID != job.RouteID || active.Generation != job.Generation {
@@ -363,7 +429,7 @@ func (d *daemon) startServer(
 	}
 
 	controlTLS, err := controltls.New(controltls.Config{
-		Hostname: cfg.ServerHostname(), StateDir: cfg.StateDir,
+		Hostname: cfg.ServerHostname(), Cache: state.ControlTLSCache(d.db, cfg.ACMEDirectoryURL),
 		DirectoryURL: cfg.ACMEDirectoryURL, Email: cfg.ACMEEmail, AcceptTerms: cfg.ACMEAcceptTerms,
 	})
 	if err != nil {
@@ -375,7 +441,10 @@ func (d *daemon) startServer(
 		authService,
 		d.coordinator,
 		certificateService,
-		api.HandlerConfig{Observer: apiMetrics, ErrorReporter: apiMetrics, RelayMap: relayMap},
+		api.HandlerConfig{
+			Observer: apiMetrics, ErrorReporter: apiMetrics, RelayMap: relayMap,
+			DNSReady: dns.Ready, IngressAddresses: dns.IngressAddresses,
+		},
 	)
 	if hub != nil {
 		mux := http.NewServeMux()
@@ -434,6 +503,7 @@ func (d *daemon) startServer(
 		ingressDone <- d.ingress.Serve()
 		close(ingressDone)
 	}()
+	log.Printf("Control available at https://%s", cfg.ServerHostname())
 	return controlDone, ingressDone, nil
 }
 
@@ -651,6 +721,13 @@ func (d *daemon) shutdown(timeout time.Duration) error {
 		if err := d.db.Close(); err != nil {
 			result = errors.Join(result, fmt.Errorf("close state: %w", err))
 		}
+		d.db = nil
+	}
+	if d.backup != nil {
+		backupCtx, cancelBackup := context.WithTimeout(context.Background(), min(timeout, 15*time.Second))
+		result = errors.Join(result, d.backup.Close(backupCtx))
+		cancelBackup()
+		d.backup = nil
 	}
 	if d.stateLock != nil {
 		result = errors.Join(result, d.stateLock.Close())
@@ -659,9 +736,9 @@ func (d *daemon) shutdown(timeout time.Duration) error {
 	return result
 }
 
-func relayProfiles(ctx context.Context, cfg config.TNLD) (map[string]*tailcfg.DERPRegion, string, error) {
-	if cfg.RelayProvider == "tailcat" {
-		return config.LoadTailcatRelayProfiles(ctx, cfg.StateDir, false)
+func relayProfiles(ctx context.Context, cfg config.TNLD, db *sql.DB) (map[string]*tailcfg.DERPRegion, string, error) {
+	if cfg.RelayMapFile == "" && cfg.RelayProvider == "tailcat" {
+		return config.LoadTailcatRelayProfiles(ctx, db, false)
 	}
 	profiles, err := config.LoadRelayProfiles(cfg.RelayMapFile)
 	if err != nil {
@@ -678,6 +755,14 @@ func capabilities(cfg config.TNLD, relayProfile string) serverv1.Capabilities {
 	result := serverv1.Capabilities{
 		ProtocolVersions:      []serverv1.CapabilitiesProtocolVersions{serverv1.CapabilitiesProtocolVersionsN1},
 		HostnameAuthorization: []serverv1.CapabilitiesHostnameAuthorization{serverv1.LocalClaim},
+		RouteSuffix:           cfg.RouteSuffix(),
+		NameAuthorityType:     serverv1.Local,
+		EphemeralNameSupport:  true,
+		PersistentBaseSupport: true,
+		CustomDomainSupport:   true,
+		MaximumChildDepth:     routes.MaximumChildDepth,
+		IngressIpv4:           []string{},
+		IngressIpv6:           []string{},
 		LocalClaim:            &serverv1.LocalClaimCapabilities{Suffix: cfg.RouteSuffix()},
 		Transport: serverv1.TransportCapabilities{
 			Type: serverv1.Tailcat, Version: serverv1.TransportCapabilitiesVersionN1, RelayProfile: relayProfile,
@@ -791,6 +876,22 @@ func monitorRoutes(ctx context.Context, coordinator *routes.Coordinator, metrics
 		metrics.SetRouteLeaseMinSecondsRemaining("provisioning", stats.MinimumProvisioningLeaseSeconds)
 		metrics.SetRouteLeaseMinSecondsRemaining("active", stats.MinimumActiveLeaseSeconds)
 		metrics.SetWorkerOwnersConnected(stats.ConnectedOwners)
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func monitorNameCapacity(ctx context.Context, store *routes.Store, metrics *observability.Metrics) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		total, remaining, err := store.FriendlyNameCapacity(ctx)
+		if err == nil {
+			metrics.SetFriendlyNameCapacity(total, remaining)
+		}
 		select {
 		case <-ctx.Done():
 			return

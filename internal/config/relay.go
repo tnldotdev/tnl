@@ -2,23 +2,23 @@ package config
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/tailscale/tailcat"
+	"github.com/tnldotdev/tnl/internal/state"
 	"tailscale.com/tailcfg"
 )
 
 const (
 	maxRelayMapBytes         = 1 << 20
 	maxSelectedRelayMapBytes = 64 << 10
-	pinnedRelayMapName       = "relay-map.json"
 )
 
 func LoadRelayProfiles(path string) (map[string]*tailcfg.DERPRegion, error) {
@@ -60,17 +60,20 @@ func SelectRelayProfile(
 // LoadTailcatRelayProfiles loads the pinned Tailcat region or selects and persists one.
 func LoadTailcatRelayProfiles(
 	ctx context.Context,
-	stateDir string,
+	db *sql.DB,
 	refresh bool,
 ) (map[string]*tailcfg.DERPRegion, string, error) {
-	path := filepath.Join(stateDir, pinnedRelayMapName)
 	if !refresh {
-		profiles, err := LoadRelayProfiles(path)
+		data, err := state.ReadRelayMap(ctx, db)
 		if err == nil {
+			profiles, err := DecodeRelayProfiles(data)
+			if err != nil {
+				return nil, "", err
+			}
 			profile, selectErr := SelectRelayProfile(profiles, "")
 			return profiles, profile, selectErr
 		}
-		if !errors.Is(err, os.ErrNotExist) {
+		if !errors.Is(err, sql.ErrNoRows) {
 			return nil, "", err
 		}
 	}
@@ -96,8 +99,8 @@ func LoadTailcatRelayProfiles(
 	if len(data) > maxSelectedRelayMapBytes {
 		return nil, "", errors.New("selected Tailcat relay region exceeds 64 KiB")
 	}
-	if err := writePinnedRelayMap(stateDir, path, data); err != nil {
-		return nil, "", err
+	if err := state.WriteRelayMap(ctx, db, data); err != nil {
+		return nil, "", fmt.Errorf("persist Tailcat relay map: %w", err)
 	}
 	profiles, err := DecodeRelayProfiles(data)
 	if err != nil {
@@ -173,40 +176,4 @@ func validateRelayRegion(region *tailcfg.DERPRegion) error {
 func validRelayAddress(value string) bool {
 	address, err := netip.ParseAddr(value)
 	return err == nil && !address.IsUnspecified()
-}
-
-func writePinnedRelayMap(stateDir, path string, data []byte) error {
-	file, err := os.CreateTemp(stateDir, ".relay-map-*")
-	if err != nil {
-		return fmt.Errorf("create pinned relay map: %w", err)
-	}
-	temporary := file.Name()
-	defer os.Remove(temporary)
-	if err := file.Chmod(0o600); err != nil {
-		file.Close()
-		return fmt.Errorf("secure pinned relay map: %w", err)
-	}
-	if _, err := file.Write(data); err != nil {
-		file.Close()
-		return fmt.Errorf("write pinned relay map: %w", err)
-	}
-	if err := file.Sync(); err != nil {
-		file.Close()
-		return fmt.Errorf("sync pinned relay map: %w", err)
-	}
-	if err := file.Close(); err != nil {
-		return fmt.Errorf("close pinned relay map: %w", err)
-	}
-	if err := os.Rename(temporary, path); err != nil {
-		return fmt.Errorf("replace pinned relay map: %w", err)
-	}
-	directory, err := os.Open(stateDir)
-	if err != nil {
-		return fmt.Errorf("open relay map directory: %w", err)
-	}
-	defer directory.Close()
-	if err := directory.Sync(); err != nil {
-		return fmt.Errorf("sync relay map directory: %w", err)
-	}
-	return nil
 }

@@ -1,24 +1,27 @@
 package state
 
 import (
+	"context"
 	"errors"
-	"os"
 	"path/filepath"
 	"testing"
 )
 
 func TestLoginTokenLifecycle(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "state")
-	first, generated, err := EnsureLoginToken(directory)
+	db, err := Open(context.Background(), directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	first, generated, err := EnsureLoginToken(t.Context(), db)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !generated || first == "" {
 		t.Fatalf("generated = %t, token = %q", generated, first)
 	}
-	assertMode(t, filepath.Join(directory, loginTokenName), 0o600)
-
-	second, generated, err := EnsureLoginToken(directory)
+	second, generated, err := EnsureLoginToken(t.Context(), db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,28 +29,15 @@ func TestLoginTokenLifecycle(t *testing.T) {
 		t.Fatalf("second token = %q, generated = %t", second, generated)
 	}
 
-	rotated, err := RotateLoginToken(directory)
+	rotated, err := RotateLoginToken(t.Context(), db)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if rotated == first {
 		t.Fatal("rotation preserved the previous token")
 	}
-	if stored, err := ReadLoginToken(directory); err != nil || stored != rotated {
+	if stored, err := ReadLoginToken(t.Context(), db); err != nil || stored != rotated {
 		t.Fatalf("stored token = %q, %v", stored, err)
-	}
-}
-
-func TestLoginTokenRejectsUnsafeFile(t *testing.T) {
-	directory := t.TempDir()
-	if _, _, err := EnsureLoginToken(directory); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(filepath.Join(directory, loginTokenName), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ReadLoginToken(directory); err == nil {
-		t.Fatal("world-readable login token accepted")
 	}
 }
 
