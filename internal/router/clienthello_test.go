@@ -152,10 +152,13 @@ func TestInspectClientHelloRejectsInvalidInput(t *testing.T) {
 }
 
 func FuzzInspectClientHello(f *testing.F) {
-	valid := tlsRecords(buildClientHello(
-		sni("demo.example"),
-	), 7)
-	f.Add(valid)
+	f.Add(tlsRecords(buildClientHello(sni("demo.example")), 7))
+	f.Add(tlsRecords(buildClientHello(sni("demo.example"), alpnExtension(acmeTLSALPN))))
+	f.Add(tlsRecords(buildClientHello(sni("demo.example"), alpnExtension("h2", acmeTLSALPN))))
+	f.Add(tlsRecords(buildClientHello(sni("demo.example"), extension{kind: alpnExt, data: []byte{0, 1, 0}})))
+	f.Add(tlsRecords(buildClientHello(sni("demo.example"), extension{kind: echExt})))
+	f.Add(tlsRecords(buildClientHello(sni("demo.example"), sni("other.example"))))
+	f.Add(tlsRecords(buildClientHello(sni("demo.example")), 1, 2, 3, 4, 5, 6, 7))
 	f.Add([]byte{})
 	f.Add([]byte{handshakeRecord, 3, 1, 0xff, 0xff})
 

@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/state/statedb"
-	"github.com/0xcadams/tnl/pkg/protocol/routeexportv1"
+	"github.com/tnldotdev/tnl/internal/state/statedb"
+	"github.com/tnldotdev/tnl/pkg/protocol/routeexportv1"
 )
 
 const requestTimeout = 10 * time.Second

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/credentials"
 )
 
 func TestServiceAuthenticatesAndRevokesAccessCredentials(t *testing.T) {

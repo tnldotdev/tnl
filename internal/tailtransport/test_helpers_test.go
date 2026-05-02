@@ -5,7 +5,7 @@ import (
 	"net"
 	"testing"
 
-	"github.com/0xcadams/tnl/internal/testutil/integrationtest"
+	"github.com/tnldotdev/tnl/internal/testutil/integrationtest"
 	"tailscale.com/derp/derpserver"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"

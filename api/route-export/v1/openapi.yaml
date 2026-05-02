@@ -3,8 +3,8 @@ info:
   title: tnl route export API
   version: 1.0.0
   license:
-    name: Apache-2.0
-    identifier: Apache-2.0
+    name: MIT
+    identifier: MIT
 jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://receiver.example

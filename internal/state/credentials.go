@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/credentials"
-	"github.com/0xcadams/tnl/internal/state/statedb"
+	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/state/statedb"
 )
 
 var (

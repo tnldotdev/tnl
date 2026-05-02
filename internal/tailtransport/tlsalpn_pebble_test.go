@@ -19,10 +19,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/agent"
-	"github.com/0xcadams/tnl/internal/proxyproto"
-	"github.com/0xcadams/tnl/internal/router"
-	"github.com/0xcadams/tnl/internal/testutil/integrationtest"
+	"github.com/tnldotdev/tnl/internal/agent"
+	"github.com/tnldotdev/tnl/internal/proxyproto"
+	"github.com/tnldotdev/tnl/internal/router"
+	"github.com/tnldotdev/tnl/internal/testutil/integrationtest"
 	"golang.org/x/crypto/acme"
 	"tailscale.com/types/key"
 )

@@ -7,7 +7,7 @@ Install the pinned toolchain and run the repository checks through Task:
 ```console
 mise trust
 mise install
-mise exec -- task format-check lint test build
+mise exec -- task format-check generate-check lint test build
 ```
 
 Use `gofmt`, `goimports`, `go vet`, `staticcheck`, and `govulncheck` for Go.
