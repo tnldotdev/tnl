@@ -5,7 +5,7 @@ import {
   errorMessage,
   nonLoopbackIPv4Addresses,
   occupyLoopbackPort,
-  openTestWebSocket,
+  openTestWebSocketWithMessage,
   requestOnce,
   requestTestServer,
   reserveLoopbackPort,
@@ -13,7 +13,6 @@ import {
   startTestProcess,
   waitForBootstrapRequest,
   waitForProcessExit,
-  waitForWebSocketMessage,
   withProcessEnvironment,
 } from "../dev/test-helper.js";
 import tnl from "./dist/index.js";
@@ -125,12 +124,16 @@ test(
       const client = await requestTestServer(port, { path: "/@vite/client" });
       expect(client.status).toBe(200);
       const token = extractViteWebSocketToken(client.body);
-      const socket = await openTestWebSocket(port, `/?token=${encodeURIComponent(token)}`, {
-        origin: "https://demo.tnl.dev",
-        protocol: "vite-hmr",
-      });
+      const { message: socketMessage, socket } = await openTestWebSocketWithMessage(
+        port,
+        `/?token=${encodeURIComponent(token)}`,
+        {
+          origin: "https://demo.tnl.dev",
+          protocol: "vite-hmr",
+        },
+      );
       onTestFinished(() => socket.close());
-      const message = JSON.parse(await waitForWebSocketMessage(socket)) as { type?: string };
+      const message = JSON.parse(socketMessage) as { type?: string };
       expect(message.type).toBe("connected");
     } catch (error) {
       throw new Error(`${errorMessage(error)}\n${process_.output()}`, { cause: error });
