@@ -359,11 +359,16 @@ func (u *testUsageConnection) Close(at time.Time) {
 
 func (b *holdingBackend) Open(context.Context) (net.Conn, error) {
 	ingress, peer := net.Pipe()
-	close(b.opened)
 	go func() {
 		defer close(b.closed)
-		_, _ = io.Copy(io.Discard, peer)
-		_ = peer.Close()
+		defer peer.Close()
+		_, replay, err := proxyproto.Decode(peer)
+		if err != nil {
+			return
+		}
+		// Decoding the header proves the server has tracked the backend.
+		close(b.opened)
+		_, _ = io.Copy(io.Discard, replay)
 	}()
 	return ingress, nil
 }
