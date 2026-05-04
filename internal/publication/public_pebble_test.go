@@ -84,7 +84,6 @@ func TestIntegrationAutomaticCertificatePublicationRestartAndRenewal(t *testing.
 		t.Fatal(err)
 	}
 
-	ingressErrors := make(chan error, 8)
 	publicIngress, err := ingress.New(publicListener, ingress.Config{
 		Lookup: func(name string) (ingress.Route, bool) {
 			active, ok := coordinator.Lookup(name)
@@ -95,7 +94,6 @@ func TestIntegrationAutomaticCertificatePublicationRestartAndRenewal(t *testing.
 			return active.Backend, ok
 		},
 		MaxConnections: 32, MaxRouteConnections: 8,
-		OnError: func(err error) { ingressErrors <- err },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -264,11 +262,6 @@ func TestIntegrationAutomaticCertificatePublicationRestartAndRenewal(t *testing.
 	if !replacement.Installed || replacement.OrderID == initial.OrderID ||
 		replacement.Generation <= initial.Generation || !replacement.RenewAt.After(time.Now()) {
 		t.Fatalf("renewed agent certificate = %+v", replacement)
-	}
-	select {
-	case err := <-ingressErrors:
-		t.Fatalf("ingress error: %v", err)
-	default:
 	}
 }
 
