@@ -12,7 +12,9 @@
     "pretest": "pnpm build",
     "pretypecheck": "pnpm build",
     "test": "vitest run",
-    "typecheck": "tsc --project packages/dev/type-test.tsconfig.json && tsc --project packages/next/type-test.tsconfig.json && tsc --project packages/vite/type-test.tsconfig.json && tsc --project tsconfig.test.json"
+    "test:ci": "vitest run",
+    "typecheck": "tsc --project packages/dev/type-test.tsconfig.json && tsc --project packages/next/type-test.tsconfig.json && tsc --project packages/vite/type-test.tsconfig.json && tsc --project tsconfig.test.json",
+    "typecheck:ci": "tsc --project packages/dev/type-test.tsconfig.json && tsc --project packages/next/type-test.tsconfig.json && tsc --project packages/vite/type-test.tsconfig.json && tsc --project tsconfig.test.json"
   },
   "devDependencies": {
     "@types/node": "22.19.0",
@@ -29,5 +31,5 @@
   "engines": {
     "node": ">=20.9"
   },
-  "packageManager": "pnpm@11.24.0"
+  "packageManager": "pnpm@11.25.0"
 }

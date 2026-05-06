@@ -57,7 +57,7 @@ and each npm package have independent versions.
 3. For a Go product release, run `task generate-check`, `task format-check`,
    `task lint`, `task test`, `task go:test-race`, `task build`, and `task package`.
 4. For an npm release, run `pnpm install --frozen-lockfile`, `pnpm build`,
-   `pnpm typecheck`, `pnpm test`, `pnpm lint`, `pnpm format:check`, and
+   `pnpm typecheck:ci`, `pnpm test:ci`, `pnpm lint`, `pnpm format:check`, and
    `pnpm run pack`.
 5. Run `node scripts/verify-package-versions.mjs <package> <version>` for each
    selected npm package.
