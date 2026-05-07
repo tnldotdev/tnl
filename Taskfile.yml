@@ -131,4 +131,4 @@ tasks:
   workflows:lint:
     cmds:
       - actionlint
-      - zizmor .github/workflows
+      - zizmor .github
