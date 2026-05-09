@@ -43,6 +43,7 @@ type Store struct {
 	routesDir       string
 	locksDir        string
 	credentialsPath string
+	secrets         secretProtector
 }
 
 type Lock struct {
@@ -51,9 +52,11 @@ type Lock struct {
 }
 
 type Route struct {
-	dir  string
-	lock *os.File
-	once sync.Once
+	dir           string
+	lock          *os.File
+	secretContext string
+	secrets       secretProtector
+	once          sync.Once
 }
 
 type Pending struct {
@@ -135,9 +138,13 @@ func New(root, serverOrigin string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	profileDigest := sha256.Sum256([]byte(root + "\x00" + serverOrigin))
 	return &Store{
 		serverDir: server, routesDir: routes, locksDir: locks,
 		credentialsPath: filepath.Join(server, "access-credential.json"),
+		secrets: newSecretProtector(
+			hex.EncodeToString(profileDigest[:]), filepath.Join(locks, "keychain-initialization.lock"),
+		),
 	}, nil
 }
 
@@ -254,7 +261,10 @@ func (s *Store) OpenRoute(routeID string) (*Route, error) {
 		_ = lock.Close()
 		return nil, err
 	}
-	return &Route{dir: dir, lock: lock.file}, nil
+	return &Route{
+		dir: dir, lock: lock.file, secrets: s.secrets,
+		secretContext: "route-private-key:" + routeID,
+	}, nil
 }
 
 func (r *Route) Close() error {
@@ -283,7 +293,11 @@ func (r *Route) Current(hostname string) (Material, bool, error) {
 		stored.RenewAt.IsZero() || stored.OrderID == "" || stored.Generation == 0 {
 		return Material{}, true, errors.New("clientstate: current certificate metadata is invalid")
 	}
-	certificate, err := certificate(stored.KeyDER, stored.CertificatePEM, hostname)
+	keyDER, err := r.secrets.Open(r.secretContext, stored.KeyDER)
+	if err != nil {
+		return Material{}, true, err
+	}
+	certificate, err := certificate(keyDER, stored.CertificatePEM, hostname)
 	if err != nil {
 		return Material{}, true, err
 	}
@@ -310,7 +324,11 @@ func (r *Route) Pending(hostname string) (Pending, error) {
 		if stored.Version != stateVersion || stored.Hostname != hostname {
 			return Pending{}, errors.New("clientstate: pending certificate metadata is invalid")
 		}
-		key, err := parseKey(stored.KeyDER)
+		keyDER, err := r.secrets.Open(r.secretContext, stored.KeyDER)
+		if err != nil {
+			return Pending{}, err
+		}
+		key, err := parseKey(keyDER)
 		if err != nil {
 			return Pending{}, err
 		}
@@ -319,7 +337,7 @@ func (r *Route) Pending(hostname string) (Pending, error) {
 		}
 		return Pending{
 			Key: key, CSRDER: bytes.Clone(stored.CSRDER), OrderID: stored.OrderID,
-			Generation: stored.Generation, keyDER: bytes.Clone(stored.KeyDER),
+			Generation: stored.Generation, keyDER: keyDER,
 		}, nil
 	}
 
@@ -335,7 +353,11 @@ func (r *Route) Pending(hostname string) (Pending, error) {
 	if err != nil {
 		return Pending{}, fmt.Errorf("clientstate: create application CSR: %w", err)
 	}
-	stored = pendingFile{Version: stateVersion, Hostname: hostname, KeyDER: keyDER, CSRDER: csrDER}
+	protectedKey, err := r.secrets.Seal(r.secretContext, keyDER)
+	if err != nil {
+		return Pending{}, err
+	}
+	stored = pendingFile{Version: stateVersion, Hostname: hostname, KeyDER: protectedKey, CSRDER: csrDER}
 	if err := writeJSON(filepath.Join(r.dir, "pending.json"), stored); err != nil {
 		return Pending{}, err
 	}
@@ -361,8 +383,12 @@ func (r *Route) Commit(
 	if !renewAt.After(installed.Leaf.NotBefore) || !renewAt.Before(installed.Leaf.NotAfter) {
 		return Material{}, errors.New("clientstate: renewal time is outside certificate validity")
 	}
+	protectedKey, err := r.secrets.Seal(r.secretContext, pending.keyDER)
+	if err != nil {
+		return Material{}, err
+	}
 	stored := currentFile{
-		Version: stateVersion, Hostname: hostname, KeyDER: bytes.Clone(pending.keyDER), CSRDER: bytes.Clone(pending.CSRDER),
+		Version: stateVersion, Hostname: hostname, KeyDER: protectedKey, CSRDER: bytes.Clone(pending.CSRDER),
 		CertificatePEM: bytes.Clone(certificatePEM), RenewAt: renewAt.UTC(), OrderID: orderID,
 		Generation: generation,
 	}
@@ -389,8 +415,12 @@ func (r *Route) RecordOrder(hostname string, pending Pending, orderID string, ge
 	if err := validateCSR(pending.CSRDER, pending.Key, hostname); err != nil {
 		return Pending{}, err
 	}
+	protectedKey, err := r.secrets.Seal(r.secretContext, pending.keyDER)
+	if err != nil {
+		return Pending{}, err
+	}
 	stored := pendingFile{
-		Version: stateVersion, Hostname: hostname, KeyDER: pending.keyDER, CSRDER: pending.CSRDER,
+		Version: stateVersion, Hostname: hostname, KeyDER: protectedKey, CSRDER: pending.CSRDER,
 		OrderID: orderID, Generation: generation,
 	}
 	if err := writeJSON(filepath.Join(r.dir, "pending.json"), stored); err != nil {
@@ -443,14 +473,18 @@ func (r *Route) CurrentKey(hostname string) (Pending, error) {
 	if !found || stored.Hostname != hostname || len(stored.KeyDER) == 0 || len(stored.CSRDER) == 0 {
 		return Pending{}, errors.New("clientstate: current certificate key is incomplete")
 	}
-	key, err := parseKey(stored.KeyDER)
+	keyDER, err := r.secrets.Open(r.secretContext, stored.KeyDER)
+	if err != nil {
+		return Pending{}, err
+	}
+	key, err := parseKey(keyDER)
 	if err != nil {
 		return Pending{}, err
 	}
 	if err := validateCSR(stored.CSRDER, key, hostname); err != nil {
 		return Pending{}, err
 	}
-	return Pending{Key: key, CSRDER: bytes.Clone(stored.CSRDER), keyDER: bytes.Clone(stored.KeyDER)}, nil
+	return Pending{Key: key, CSRDER: bytes.Clone(stored.CSRDER), keyDER: keyDER}, nil
 }
 
 func (r *Route) NewPending(hostname string) (Pending, error) {
@@ -588,6 +622,14 @@ func validateTrustedAncestors(path string) error {
 }
 
 func openLock(path, kind string) (*Lock, error) {
+	return openLockOperation(path, kind, unix.LOCK_EX|unix.LOCK_NB)
+}
+
+func openBlockingLock(path, kind string) (*Lock, error) {
+	return openLockOperation(path, kind, unix.LOCK_EX)
+}
+
+func openLockOperation(path, kind string, operation int) (*Lock, error) {
 	descriptor, err := unix.Open(path, unix.O_CREAT|unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("clientstate: open %s lock: %w", kind, err)
@@ -602,9 +644,9 @@ func openLock(path, kind string) (*Lock, error) {
 		_ = file.Close()
 		return nil, fmt.Errorf("clientstate: %s lock: %w", kind, err)
 	}
-	if err := unix.Flock(descriptor, unix.LOCK_EX|unix.LOCK_NB); err != nil {
+	if err := unix.Flock(descriptor, operation); err != nil {
 		_ = file.Close()
-		if errors.Is(err, unix.EWOULDBLOCK) {
+		if operation&unix.LOCK_NB != 0 && errors.Is(err, unix.EWOULDBLOCK) {
 			return nil, ErrLocked
 		}
 		return nil, fmt.Errorf("clientstate: lock %s state: %w", kind, err)

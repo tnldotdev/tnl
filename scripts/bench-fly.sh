@@ -175,7 +175,7 @@ wait_for_server() {
     if curl --fail --silent --show-error \
       --cacert "${temp_dir}/control-ca.crt" \
       --resolve "${server_hostname}:${local_control_port}:127.0.0.1" \
-      "https://${server_hostname}:${local_control_port}/v1/capabilities" >/dev/null; then
+      "https://${server_hostname}:${local_control_port}/v1/ready" >/dev/null; then
       stop_proxy
       return 0
     fi

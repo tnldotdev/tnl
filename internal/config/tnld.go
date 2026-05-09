@@ -24,10 +24,12 @@ import (
 type TNLDMode string
 
 const (
-	TNLDModeStandalone        TNLDMode = "standalone"
-	TNLDModeEdge              TNLDMode = "edge"
-	TNLDModeWorker            TNLDMode = "worker"
-	maximumHostnameClaimQuota          = 100_000
+	TNLDModeStandalone         TNLDMode = "standalone"
+	TNLDModeEdge               TNLDMode = "edge"
+	TNLDModeWorker             TNLDMode = "worker"
+	maximumHostnameClaimQuota           = 100_000
+	minimumAccessTokenLifetime          = 5 * time.Minute
+	maximumAccessTokenLifetime          = 30 * 24 * time.Hour
 )
 
 // UsesState reports whether the mode owns durable server state.
@@ -54,7 +56,8 @@ type TNLD struct {
 	ACMEProfile              string        `name:"acme-profile" env:"TNLD_ACME_PROFILE" default:"tlsserver" help:"ACME certificate profile advertised to agents."`
 	OIDCIssuer               string        `name:"oidc-issuer" env:"TNLD_OIDC_ISSUER" help:"OIDC issuer used for login."`
 	OIDCClientID             string        `name:"oidc-client-id" env:"TNLD_OIDC_CLIENT_ID" help:"OIDC client ID used for login."`
-	RelayProvider            string        `name:"relay-provider" env:"TNLD_RELAY_PROVIDER" default:"tailcat" help:"Hosted relay provider."`
+	AccessTokenLifetime      time.Duration `name:"access-token-lifetime" env:"TNLD_ACCESS_TOKEN_LIFETIME" default:"168h" help:"Lifetime of newly issued access tokens."`
+	RelayProvider            string        `name:"relay-provider" env:"TNLD_RELAY_PROVIDER" help:"Hosted relay provider; set to tailcat to explicitly use Tailcat's public relays."`
 	RelayMapFile             string        `name:"relay-map-file" env:"TNLD_RELAY_MAP_FILE" type:"path" help:"Approved DERP map JSON file."`
 	RelayProfile             string        `name:"relay-profile" env:"TNLD_RELAY_PROFILE" help:"DERP region code selected from a custom relay map."`
 	WorkerURL                string        `name:"worker-url" env:"TNLD_WORKER_URL" help:"Worker-mode WSS edge URL."`
@@ -102,6 +105,9 @@ func (c TNLD) Validate() error {
 	if c.DrainTimeout <= 0 {
 		return errors.New("drain timeout must be positive")
 	}
+	if c.AccessTokenLifetime < minimumAccessTokenLifetime || c.AccessTokenLifetime > maximumAccessTokenLifetime {
+		return fmt.Errorf("access token lifetime must be between %s and %s", minimumAccessTokenLifetime, maximumAccessTokenLifetime)
+	}
 	if c.RelayProfile != "" && !validRelayProfile(c.RelayProfile) {
 		return errors.New("relay profile must contain only lowercase letters, digits, and hyphens")
 	}
@@ -146,6 +152,9 @@ func (c TNLD) Validate() error {
 		}
 		if c.RelayProvider == "" && c.RelayMapFile == "" {
 			return errors.New("control requires a relay provider or custom relay map")
+		}
+		if c.RelayProvider != "" && c.RelayMapFile != "" {
+			return errors.New("relay provider and custom relay map are mutually exclusive")
 		}
 		if c.Mode == TNLDModeEdge && c.WorkerToken == "" {
 			return errors.New("edge control requires a worker token")
@@ -372,7 +381,12 @@ func ParseTNLD(args []string) (TNLD, error) {
 	if _, err := parser.Parse(args); err != nil {
 		return TNLD{}, err
 	}
-	config := TNLD(flags)
+	return ResolveTNLD(TNLD(flags))
+}
+
+// ResolveTNLD applies platform defaults and validates parsed daemon configuration.
+func ResolveTNLD(config TNLD) (TNLD, error) {
+	var err error
 	if config.Mode.UsesState() && config.StateDir == "" {
 		config.StateDir, err = DefaultServerStateDir()
 		if err != nil {

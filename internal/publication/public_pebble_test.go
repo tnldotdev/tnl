@@ -63,7 +63,7 @@ func TestIntegrationAutomaticCertificatePublicationRestartAndRenewal(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	authService, err := auth.NewService(database, login)
+	authService, err := auth.NewService(database, login, auth.DefaultAccessTokenLifetime)
 	if err != nil {
 		t.Fatal(err)
 	}

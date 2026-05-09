@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/credentials"
 )
@@ -13,6 +14,7 @@ func TestParseTNLD(t *testing.T) {
 	t.Setenv("TNLD_DOMAIN", "example.com")
 	t.Setenv("TNLD_ACME_EMAIL", "operator@example.com")
 	t.Setenv("TNLD_ACME_ACCEPT_TERMS", "true")
+	t.Setenv("TNLD_RELAY_PROVIDER", "tailcat")
 
 	config, err := ParseTNLD(nil)
 	if err != nil {
@@ -31,7 +33,7 @@ func TestParseTNLD(t *testing.T) {
 		t.Fatalf("MetricsListen = %q, want 127.0.0.1:9090", config.MetricsListen)
 	}
 	if config.PublicListen != ":443" || config.RelayProvider != "tailcat" {
-		t.Fatalf("public defaults = %q, %q, want :443, tailcat", config.PublicListen, config.RelayProvider)
+		t.Fatalf("public configuration = %q, %q, want :443, tailcat", config.PublicListen, config.RelayProvider)
 	}
 	if config.ACMEDirectoryURL != "https://acme-v02.api.letsencrypt.org/directory" {
 		t.Fatalf("ACMEDirectoryURL = %q", config.ACMEDirectoryURL)
@@ -44,6 +46,9 @@ func TestParseTNLD(t *testing.T) {
 	}
 	if config.MaxHostnameClaimRequests != 1024 {
 		t.Fatalf("MaxHostnameClaimRequests = %d, want 1024", config.MaxHostnameClaimRequests)
+	}
+	if config.AccessTokenLifetime != 7*24*time.Hour {
+		t.Fatalf("AccessTokenLifetime = %s, want 168h", config.AccessTokenLifetime)
 	}
 
 	config, err = ParseTNLD([]string{
@@ -87,6 +92,19 @@ func TestParseTNLDHostnameClaimQuotaEnvironment(t *testing.T) {
 	}
 }
 
+func TestParseTNLDAccessTokenLifetimeEnvironment(t *testing.T) {
+	t.Setenv("TNLD_STATE_DIR", "/state")
+	t.Setenv("TNLD_ACCESS_TOKEN_LIFETIME", "24h")
+
+	config, err := ParseTNLD([]string{"--public-listen", ""})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.AccessTokenLifetime != 24*time.Hour {
+		t.Fatalf("AccessTokenLifetime = %s, want 24h", config.AccessTokenLifetime)
+	}
+}
+
 func TestParseTNLDWorkerDoesNotRequireState(t *testing.T) {
 	t.Setenv("TNLD_STATE_DIR", "")
 	t.Setenv("TNLD_METRICS_LISTEN", "")
@@ -112,6 +130,9 @@ func TestParseTNLDWorkerDoesNotRequireState(t *testing.T) {
 	if config.MetricsListen != "" {
 		t.Fatalf("MetricsListen = %q, want empty", config.MetricsListen)
 	}
+	if config.RelayProvider != "" {
+		t.Fatalf("RelayProvider = %q, want explicit selection", config.RelayProvider)
+	}
 }
 
 func TestParseTNLDRejectsInvalidInput(t *testing.T) {
@@ -130,6 +151,8 @@ func TestParseTNLDRejectsInvalidInput(t *testing.T) {
 		"requests below active":    {"--state-dir", "/state", "--max-active-hostname-claims", "10", "--max-hostname-claim-requests", "9"},
 		"active claims too large":  {"--state-dir", "/state", "--max-active-hostname-claims", "100001", "--max-hostname-claim-requests", "100001"},
 		"claim requests too large": {"--state-dir", "/state", "--max-hostname-claim-requests", "100001"},
+		"short access lifetime":    {"--state-dir", "/state", "--public-listen", "", "--access-token-lifetime", "4m59s"},
+		"long access lifetime":     {"--state-dir", "/state", "--public-listen", "", "--access-token-lifetime", "720h1s"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := ParseTNLD(args); err == nil {
@@ -208,7 +231,8 @@ func TestTNLDValidateACME(t *testing.T) {
 		PublicListen: "127.0.0.1:443", RelayMapFile: "/relay.json", RelayProfile: "default",
 		WorkerCapacity: 1, WorkerStreamLimit: 1, PublicConnLimit: 1, RouteConnLimit: 1, DrainTimeout: 30,
 		MaxActiveHostnameClaims: 128, MaxHostnameClaimRequests: 1024,
-		ACMEDirectoryURL: "https://acme.example/directory", ACMEEmail: "operator@example.com",
+		AccessTokenLifetime: 7 * 24 * time.Hour,
+		ACMEDirectoryURL:    "https://acme.example/directory", ACMEEmail: "operator@example.com",
 		ACMEAcceptTerms: true, ACMEProfile: "tlsserver",
 	}
 	if err := valid.Validate(); err != nil {
@@ -230,8 +254,8 @@ func TestTNLDValidateACME(t *testing.T) {
 	conflictingRelaySource := provider
 	conflictingRelaySource.RelayMapFile = "/relay.json"
 	conflictingRelaySource.RelayProfile = "default"
-	if err := conflictingRelaySource.Validate(); err != nil {
-		t.Fatalf("custom relay map should override the default provider: %v", err)
+	if err := conflictingRelaySource.Validate(); err == nil {
+		t.Fatal("conflicting relay sources succeeded")
 	}
 	missingControlTLS := valid
 	missingControlTLS.ACMEDirectoryURL = ""

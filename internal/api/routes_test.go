@@ -32,7 +32,7 @@ func TestRouteAPILifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	authService, err := auth.NewService(db, login)
+	authService, err := auth.NewService(db, login, auth.DefaultAccessTokenLifetime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestDomainClaimListAndRelease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	authService, err := auth.NewService(db, login)
+	authService, err := auth.NewService(db, login, auth.DefaultAccessTokenLifetime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func TestCertificateAPIRequiresBoundCurrentLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	authService, err := auth.NewService(db, login)
+	authService, err := auth.NewService(db, login, auth.DefaultAccessTokenLifetime)
 	if err != nil {
 		t.Fatal(err)
 	}

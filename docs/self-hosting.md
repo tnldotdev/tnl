@@ -52,6 +52,8 @@ Set these values in `.env`:
 - `TNLD_ACME_DIRECTORY_URL`, `TNLD_ACME_EMAIL`, and
   `TNLD_ACME_ACCEPT_TERMS=true`: the ACME account configuration.
 - `TNLD_ACME_PROFILE`: the profile used for application certificates.
+- `TNLD_ACCESS_TOKEN_LIFETIME`: lifetime of newly issued credentials; defaults
+  to seven days and accepts values from five minutes through 30 days.
 - `TNLD_RELAY_PROVIDER=tailcat`: explicit consent to use Tailcat's hosted public
   relays.
 
@@ -66,12 +68,13 @@ Start the daemon and inspect the control endpoint:
 docker compose pull
 docker compose up -d
 docker compose logs --no-log-prefix tnld
+curl --fail --silent --show-error https://tnl.example.com/v1/health
+curl --fail --silent --show-error https://tnl.example.com/v1/ready
 curl --fail --silent --show-error https://tnl.example.com/v1/capabilities
 ```
 
-The capabilities response proves that the control endpoint is serving. Before
-accepting traffic, inspect logs for certificate errors and publish one complete
-test route.
+Health checks control TLS and HTTP serving. Readiness also checks SQLite.
+Capabilities reports DNS state; publish one test route to verify the full path.
 
 Prometheus metrics listen on container port 9090 and are intentionally not
 published to the host. Attach a private scraper to the Compose network or add a
@@ -93,7 +96,7 @@ otherwise `tnl login` prompts for the login token:
 ```console
 tnl login https://tnl.example.com
 tnl host claim demo
-tnl public http://127.0.0.1:3000 --name=demo
+tnl public localhost:3000 --name=demo
 ```
 
 The publication command stays in the foreground and obtains the application
@@ -113,9 +116,9 @@ tnl logout
 
 Managed release stops its routes and frees active quota, but the base remains
 permanently bound to its original owner and may be reactivated. Access
-credentials expire after 30 days at most. Existing lease-token
-heartbeats can continue, but a later client restart or hostname command may
-require `tnl login` again.
+credentials expire after `TNLD_ACCESS_TOKEN_LIFETIME`, seven days by default.
+Existing lease-token heartbeats can continue, but a later client restart or
+hostname command may require `tnl login` again.
 
 To use a custom domain, run `tnl host claim docs.other.com.`. The command prints
 the exact claim-specific CNAME records, or the apex verification CNAME and
@@ -176,11 +179,11 @@ documented drain policy and workload-specific qualification.
 
 ## Custom Relays
 
-Custom DERP remains available as an advanced override. Remove
-`TNLD_RELAY_PROVIDER`, mount an approved Tailscale DERP map smaller than 1 MiB,
-and set `TNLD_RELAY_MAP_FILE`. If the map contains multiple regions, also set
-`TNLD_RELAY_PROFILE` to the selected `RegionCode`; a single valid region is
-selected automatically.
+Custom DERP is the alternative to Tailcat. Leave `TNLD_RELAY_PROVIDER` unset,
+mount an approved Tailscale DERP map smaller than 1 MiB, and set
+`TNLD_RELAY_MAP_FILE`. Configuring both sources is rejected. If the map contains
+multiple regions, also set `TNLD_RELAY_PROFILE` to the selected `RegionCode`; a
+single valid region is selected automatically.
 
 Only install a reviewed map on the daemon. Clients and workers fetch the
 selected region from the control API. The endpoint is unauthenticated so
@@ -214,6 +217,12 @@ At startup, a state-owning `tnld` restores the newest backup only when
 database. On shutdown it stops mutations and performs a final backup sync before
 releasing the state lock.
 
+Shutdown stops new control requests and public connections, then gives active
+streams 30 seconds by default to finish before closing them. Long-lived
+WebSockets should reconnect after a rollout. If `TNLD_DRAIN_TIMEOUT` is raised,
+raise Compose `stop_grace_period` by the same amount; backup shutdown may use an
+additional 15 seconds.
+
 For a cold standby, keep its state volume empty and do not start it until the
 active edge is stopped or fenced. Start it with the same backup URL and external
 configuration, then verify the restored control endpoint before directing
@@ -238,10 +247,18 @@ tokens already issued from it. Use `tnl logout` from enrolled clients to revoke
 their current access tokens.
 
 Each client stores its access credential, private keys, and certificate state
-under `TNL_STATE_DIR`. Its default is the user
-configuration directory followed by `tnl` (`~/.config/tnl` on typical Linux
-systems and `~/Library/Application Support/tnl` on macOS). Stop every `tnl`
-process before backing up that complete directory.
+under `TNL_STATE_DIR`. Its default is the user configuration directory followed
+by `tnl` (`~/.config/tnl` on typical Linux systems and
+`~/Library/Application Support/tnl` on macOS). Linux protects secret state with
+user-owned directories and `0600` files. On macOS, a profile key in Keychain
+encrypts access tokens and route TLS private keys before they are written to the
+state directory.
+
+Stop every `tnl` process before backing up its complete state directory. A
+macOS state-directory backup is not independently usable: preserve the login
+Keychain through a platform-supported backup and restore to the same canonical
+`TNL_STATE_DIR`. Without the matching Keychain item, reauthenticate and discard
+the affected local route state so `tnl` can create new certificate keys.
 
 ## Operational Boundaries
 

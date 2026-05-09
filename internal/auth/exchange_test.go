@@ -20,11 +20,43 @@ func TestNewServiceRejectsInvalidConfiguration(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	if _, err := NewService(db, "invalid"); !errors.Is(err, credentials.ErrInvalidLoginToken) {
+	if _, err := NewService(db, "invalid", DefaultAccessTokenLifetime); !errors.Is(err, credentials.ErrInvalidLoginToken) {
 		t.Fatalf("invalid login configuration error = %v", err)
 	}
-	if _, err := NewService(nil, "invalid"); err == nil {
+	if _, err := NewService(nil, "invalid", DefaultAccessTokenLifetime); err == nil {
 		t.Fatal("nil state database accepted")
+	}
+	if _, err := NewServiceWithOIDC(db, "", oidcVerifierFunc(func(context.Context, string) (OIDCIdentity, error) {
+		return OIDCIdentity{}, nil
+	}), 0); err == nil {
+		t.Fatal("zero access token lifetime accepted")
+	}
+}
+
+func TestTokenExchangeUsesConfiguredLifetime(t *testing.T) {
+	db, err := state.Open(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	login, err := credentials.NewLoginToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const lifetime = 90 * time.Minute
+	service, err := NewService(db, login, lifetime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+
+	issued, err := service.Exchange(context.Background(), login)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if issued.ExpiresAt != now.Add(lifetime) {
+		t.Fatalf("expiry = %v, want %v", issued.ExpiresAt, now.Add(lifetime))
 	}
 }
 
@@ -44,8 +76,8 @@ func TestTokenExchangeReusesLocalPrincipal(t *testing.T) {
 	if first.Token == second.Token || first.CredentialID == second.CredentialID {
 		t.Fatal("repeated exchange reused access credential")
 	}
-	if first.ExpiresAt != now.Add(AccessTokenLifetime) {
-		t.Fatalf("expiry = %v, want %v", first.ExpiresAt, now.Add(AccessTokenLifetime))
+	if first.ExpiresAt != now.Add(DefaultAccessTokenLifetime) {
+		t.Fatalf("expiry = %v, want %v", first.ExpiresAt, now.Add(DefaultAccessTokenLifetime))
 	}
 
 	credentialID, hash, err := credentials.ParseAccessToken(first.Token)
@@ -91,7 +123,7 @@ func TestTokenExchangeRejectsInvalidWrongClassAndRotatedTokens(t *testing.T) {
 		})
 	}
 
-	rotatedExchange, err := NewService(db, rotated)
+	rotatedExchange, err := NewService(db, rotated, DefaultAccessTokenLifetime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,9 +182,10 @@ func TestOIDCExchangeUsesStablePrincipalAndBoundsExpiry(t *testing.T) {
 	identity := OIDCIdentity{
 		Issuer: "https://account.example", Subject: "user-123", ExpiresAt: now.Add(60 * 24 * time.Hour),
 	}
+	const lifetime = 2 * time.Hour
 	service, err := NewServiceWithOIDC(db, "", oidcVerifierFunc(func(context.Context, string) (OIDCIdentity, error) {
 		return identity, nil
-	}))
+	}), lifetime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,8 +195,8 @@ func TestOIDCExchangeUsesStablePrincipalAndBoundsExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if issued.ExpiresAt != now.Add(AccessTokenLifetime) {
-		t.Fatalf("expiry = %v, want %v", issued.ExpiresAt, now.Add(AccessTokenLifetime))
+	if issued.ExpiresAt != now.Add(lifetime) {
+		t.Fatalf("expiry = %v, want %v", issued.ExpiresAt, now.Add(lifetime))
 	}
 	assertionExpiresAt, err := statedb.New(db).GetOIDCAssertionExpiry(context.Background())
 	if err != nil {
@@ -195,7 +228,7 @@ func TestOIDCExchangeConsumesBearerOnceAcrossConcurrentRequests(t *testing.T) {
 		return OIDCIdentity{
 			Issuer: "https://account.example", Subject: "user-123", ExpiresAt: now.Add(time.Hour),
 		}, nil
-	}))
+	}), DefaultAccessTokenLifetime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +279,7 @@ func newTestService(t *testing.T) (*sql.DB, credentials.LoginToken, *Service) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	exchange, err := NewService(db, login)
+	exchange, err := NewService(db, login, DefaultAccessTokenLifetime)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -48,6 +48,57 @@ func TestCapabilities(t *testing.T) {
 	}
 }
 
+func TestHealthAndReadiness(t *testing.T) {
+	var readinessErr error
+	readiness := func(ctx context.Context) error {
+		deadline, ok := ctx.Deadline()
+		if !ok || time.Until(deadline) <= 0 || time.Until(deadline) > readinessTimeout {
+			t.Fatalf("readiness deadline = %v, %t", deadline, ok)
+		}
+		return readinessErr
+	}
+	handler := NewHandlerWithServicesAndConfig(
+		fixtureCapabilities(t), nil, nil, nil, HandlerConfig{Readiness: readiness},
+	)
+
+	request := httptest.NewRequest(http.MethodGet, healthPath, nil)
+	request.Header.Set(requestIDHeader, "req_health")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || response.Body.String() != `{"status":"ok"}` {
+		t.Fatalf("health status = %d, body = %q", response.Code, response.Body.String())
+	}
+	assertResponseHeaders(t, response, "application/json", "req_health")
+
+	request = httptest.NewRequest(http.MethodGet, readinessPath, nil)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || response.Body.String() != `{"checks":{"state":"ok"},"status":"ready"}` {
+		t.Fatalf("readiness status = %d, body = %q", response.Code, response.Body.String())
+	}
+
+	readinessErr = errors.New("state unavailable")
+	request = httptest.NewRequest(http.MethodGet, readinessPath, nil)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusServiceUnavailable || response.Body.String() != `{"checks":{"state":"failed"},"status":"not_ready"}` {
+		t.Fatalf("failed readiness status = %d, body = %q", response.Code, response.Body.String())
+	}
+}
+
+func TestHealthAndReadinessRequireGET(t *testing.T) {
+	for _, path := range []string{healthPath, readinessPath} {
+		t.Run(path, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, path, nil)
+			response := httptest.NewRecorder()
+			NewHandler(fixtureCapabilities(t), nil).ServeHTTP(response, request)
+			if response.Code != http.StatusMethodNotAllowed || response.Header().Get("Allow") != http.MethodGet {
+				t.Fatalf("status = %d, Allow = %q", response.Code, response.Header().Get("Allow"))
+			}
+		})
+	}
+}
+
 func TestRelayMapReturnsConfiguredSelectedRegion(t *testing.T) {
 	relayMap := []byte(`{"Regions":{"1":{"RegionID":1}}}`)
 	handler := NewHandlerWithServicesAndConfig(
@@ -153,6 +204,12 @@ func TestRequestObservation(t *testing.T) {
 }
 
 func TestOperationNamesAreStableAndDoNotContainResourceIDs(t *testing.T) {
+	if got := operationForRequest(http.MethodGet, healthPath); got != OperationHealthGet {
+		t.Fatalf("health operation = %q", got)
+	}
+	if got := operationForRequest(http.MethodGet, readinessPath); got != OperationReadinessGet {
+		t.Fatalf("readiness operation = %q", got)
+	}
 	const want = "routes.heartbeat"
 	for _, path := range []string{
 		routePathPrefix + "route_first/heartbeat",
@@ -455,7 +512,7 @@ func TestTokenExchangePersistsUsableAccessToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	exchange, err := auth.NewService(db, login)
+	exchange, err := auth.NewService(db, login, auth.DefaultAccessTokenLifetime)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -52,42 +52,78 @@ func main() {
 }
 
 func run(ctx context.Context, args []string, stdout io.Writer) error {
-	if len(args) == 1 && args[0] == "version" {
-		_, err := fmt.Fprintln(stdout, buildinfo.Line("tnld"))
+	var flags tnldCLI
+	parser, err := newTNLDParser(&flags, stdout)
+	if err != nil {
 		return err
 	}
-	if len(args) == 2 && args[0] == "token" {
+	parsed, err := parser.Parse(args)
+	if err != nil {
+		return err
+	}
+	switch parsed.Command() {
+	case "serve":
+		cfg, err := config.ResolveTNLD(config.TNLD(flags.Serve))
+		if err != nil {
+			return err
+		}
+		return serve(ctx, cfg)
+	case "version":
+		_, err := fmt.Fprintln(stdout, buildinfo.Line("tnld"))
+		return err
+	case "token worker", "token service":
 		var value string
-		switch args[1] {
-		case "worker":
+		switch parsed.Command() {
+		case "token worker":
 			token, _, err := credentials.NewWorkerToken()
 			if err != nil {
 				return err
 			}
 			value = token.String()
-		case "service":
+		case "token service":
 			token, _, err := credentials.NewServiceToken()
 			if err != nil {
 				return err
 			}
 			value = token.String()
-		default:
-			return errors.New("token type must be worker or service")
 		}
 		_, err := fmt.Fprintln(stdout, value)
 		return err
+	case "login-token":
+		return runLoginToken(ctx, flags.LoginToken, stdout)
+	case "relay refresh":
+		return runRelayRefresh(ctx, flags.Relay.Refresh, stdout)
+	default:
+		return errors.New("command is required")
 	}
-	if len(args) > 0 && args[0] == "login-token" {
-		return runLoginToken(args[1:], stdout)
-	}
-	if len(args) > 0 && args[0] == "relay" {
-		return runRelay(ctx, args[1:], stdout)
-	}
-	cfg, err := config.ParseTNLD(args)
-	if err != nil {
-		return err
-	}
-	return serve(ctx, cfg)
+}
+
+func newTNLDParser(flags *tnldCLI, output io.Writer) (*kong.Kong, error) {
+	return kong.New(
+		flags,
+		kong.Name("tnld"),
+		kong.Description("tnl server."),
+		kong.Writers(output, output),
+	)
+}
+
+type tnldServeCommand config.TNLD
+
+type tnldCLI struct {
+	Serve      tnldServeCommand  `cmd:"" default:"withargs" help:"Run the tnl server."`
+	Version    struct{}          `cmd:"" help:"Print release version information."`
+	LoginToken loginTokenCommand `cmd:"" help:"Read or rotate the local login token."`
+	Token      tokenCommand      `cmd:"" help:"Generate an internal authentication token."`
+	Relay      relayCommands     `cmd:"" help:"Manage the selected relay region."`
+}
+
+type tokenCommand struct {
+	Worker  struct{} `cmd:"" help:"Generate an edge-to-worker token."`
+	Service struct{} `cmd:"" help:"Generate a route-export service token."`
+}
+
+type relayCommands struct {
+	Refresh relayCommand `cmd:"" help:"Discover and pin the best Tailcat relay region; the daemon must be stopped."`
 }
 
 type loginTokenCommand struct {
@@ -95,22 +131,14 @@ type loginTokenCommand struct {
 	Rotate   bool   `name:"rotate" help:"Replace the login token; the daemon must be stopped."`
 }
 
-func runLoginToken(args []string, stdout io.Writer) error {
-	var command loginTokenCommand
-	parser, err := kong.New(&command, kong.Name("tnld login-token"))
-	if err != nil {
-		return err
-	}
-	if _, err := parser.Parse(args); err != nil {
-		return err
-	}
+func runLoginToken(ctx context.Context, command loginTokenCommand, stdout io.Writer) error {
+	var err error
 	if command.StateDir == "" {
 		command.StateDir, err = config.DefaultServerStateDir()
 		if err != nil {
 			return err
 		}
 	}
-	ctx := context.Background()
 	var lock *state.DirectoryLock
 	if command.Rotate {
 		lock, err = state.LockDirectory(command.StateDir)
@@ -141,18 +169,8 @@ type relayCommand struct {
 	StateDir string `name:"state-dir" env:"TNLD_STATE_DIR" type:"path" help:"Directory containing persistent daemon state."`
 }
 
-func runRelay(ctx context.Context, args []string, stdout io.Writer) error {
-	if len(args) == 0 || args[0] != "refresh" {
-		return errors.New("usage: tnld relay refresh [--state-dir DIR]")
-	}
-	var command relayCommand
-	parser, err := kong.New(&command, kong.Name("tnld relay refresh"))
-	if err != nil {
-		return err
-	}
-	if _, err := parser.Parse(args[1:]); err != nil {
-		return err
-	}
+func runRelayRefresh(ctx context.Context, command relayCommand, stdout io.Writer) error {
+	var err error
 	if command.StateDir == "" {
 		command.StateDir, err = config.DefaultServerStateDir()
 		if err != nil {
@@ -321,7 +339,7 @@ func (d *daemon) startServer(
 			return nil, nil, err
 		}
 	}
-	authService, err := auth.NewServiceWithOIDC(d.db, d.login, oidcVerifier)
+	authService, err := auth.NewServiceWithOIDC(d.db, d.login, oidcVerifier, cfg.AccessTokenLifetime)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -444,6 +462,7 @@ func (d *daemon) startServer(
 		api.HandlerConfig{
 			Observer: apiMetrics, ErrorReporter: apiMetrics, RelayMap: relayMap,
 			DNSReady: dns.Ready, IngressAddresses: dns.IngressAddresses,
+			Readiness: d.db.PingContext,
 		},
 	)
 	if hub != nil {

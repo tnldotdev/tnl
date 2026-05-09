@@ -109,7 +109,7 @@ func New(target, hostname string) (http.Handler, error) {
 // NormalizeTarget validates a local proxy target and returns its canonical HTTP origin.
 func NormalizeTarget(target string) (string, error) {
 	if target == "" || strings.ContainsFunc(target, unicode.IsSpace) {
-		return "", errors.New("localproxy: target must be a bare port or literal loopback HTTP origin")
+		return "", errors.New("localproxy: target must be a bare port, localhost port, or loopback HTTP origin")
 	}
 
 	barePort := true
@@ -121,17 +121,23 @@ func NormalizeTarget(target string) (string, error) {
 	}
 
 	hostname, portText := "127.0.0.1", target
-	if !barePort {
+	localhostName, localhostPort, localhostTarget := strings.Cut(target, ":")
+	if !barePort && localhostTarget && strings.EqualFold(localhostName, "localhost") && !strings.Contains(localhostPort, ":") {
+		portText = localhostPort
+	} else if !barePort {
 		parsed, err := url.Parse(target)
 		if err != nil || !strings.EqualFold(parsed.Scheme, "http") || parsed.User != nil || parsed.Host == "" || parsed.Path != "" || parsed.ForceQuery || parsed.RawQuery != "" || strings.Contains(target, "#") {
-			return "", errors.New("localproxy: target must be a bare port or literal loopback HTTP origin")
+			return "", errors.New("localproxy: target must be a bare port, localhost port, or loopback HTTP origin")
 		}
 		hostname, portText = parsed.Hostname(), parsed.Port()
+		if strings.EqualFold(hostname, "localhost") {
+			hostname = "127.0.0.1"
+		}
 	}
 
 	address, err := netip.ParseAddr(hostname)
 	if err != nil || !address.IsLoopback() || address.Zone() != "" {
-		return "", errors.New("localproxy: target host must be a literal loopback address")
+		return "", errors.New("localproxy: target host must be localhost or a literal loopback address")
 	}
 	port, err := strconv.Atoi(portText)
 	if err != nil || port < 1 || port > 65535 {

@@ -166,6 +166,21 @@ func (e DomainChallengeState) Valid() bool {
 	}
 }
 
+// Defines values for HealthResponseStatus.
+const (
+	HealthResponseStatusOk HealthResponseStatus = "ok"
+)
+
+// Valid indicates whether the value is a known member of the HealthResponseStatus enum.
+func (e HealthResponseStatus) Valid() bool {
+	switch e {
+	case HealthResponseStatusOk:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for HostnameClaimKind.
 const (
 	HostnameClaimKindEphemeral              HostnameClaimKind = "ephemeral"
@@ -280,6 +295,42 @@ func (e ProblemCode) Valid() bool {
 	}
 }
 
+// Defines values for ReadinessChecksState.
+const (
+	ReadinessChecksStateFailed ReadinessChecksState = "failed"
+	ReadinessChecksStateOk     ReadinessChecksState = "ok"
+)
+
+// Valid indicates whether the value is a known member of the ReadinessChecksState enum.
+func (e ReadinessChecksState) Valid() bool {
+	switch e {
+	case ReadinessChecksStateFailed:
+		return true
+	case ReadinessChecksStateOk:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReadinessResponseStatus.
+const (
+	ReadinessResponseStatusNotReady ReadinessResponseStatus = "not_ready"
+	ReadinessResponseStatusReady    ReadinessResponseStatus = "ready"
+)
+
+// Valid indicates whether the value is a known member of the ReadinessResponseStatus enum.
+func (e ReadinessResponseStatus) Valid() bool {
+	switch e {
+	case ReadinessResponseStatusNotReady:
+		return true
+	case ReadinessResponseStatusReady:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for RouteState.
 const (
 	RouteStateActive RouteState = "active"
@@ -297,19 +348,19 @@ func (e RouteState) Valid() bool {
 
 // Defines values for RouteLeaseStatus.
 const (
-	Pending  RouteLeaseStatus = "pending"
-	Ready    RouteLeaseStatus = "ready"
-	Starting RouteLeaseStatus = "starting"
+	RouteLeaseStatusPending  RouteLeaseStatus = "pending"
+	RouteLeaseStatusReady    RouteLeaseStatus = "ready"
+	RouteLeaseStatusStarting RouteLeaseStatus = "starting"
 )
 
 // Valid indicates whether the value is a known member of the RouteLeaseStatus enum.
 func (e RouteLeaseStatus) Valid() bool {
 	switch e {
-	case Pending:
+	case RouteLeaseStatusPending:
 		return true
-	case Ready:
+	case RouteLeaseStatusReady:
 		return true
-	case Starting:
+	case RouteLeaseStatusStarting:
 		return true
 	default:
 		return false
@@ -511,6 +562,14 @@ type DomainChallenge struct {
 // DomainChallengeState defines model for DomainChallenge.State.
 type DomainChallengeState string
 
+// HealthResponse defines model for HealthResponse.
+type HealthResponse struct {
+	Status HealthResponseStatus `json:"status"`
+}
+
+// HealthResponseStatus defines model for HealthResponse.Status.
+type HealthResponseStatus string
+
 // HeartbeatResponse defines model for HeartbeatResponse.
 type HeartbeatResponse struct {
 	ExpiresAt time.Time `json:"expires_at"`
@@ -587,6 +646,23 @@ type Problem struct {
 
 // ProblemCode defines model for Problem.Code.
 type ProblemCode string
+
+// ReadinessChecks defines model for ReadinessChecks.
+type ReadinessChecks struct {
+	State ReadinessChecksState `json:"state"`
+}
+
+// ReadinessChecksState defines model for ReadinessChecks.State.
+type ReadinessChecksState string
+
+// ReadinessResponse defines model for ReadinessResponse.
+type ReadinessResponse struct {
+	Checks ReadinessChecks         `json:"checks"`
+	Status ReadinessResponseStatus `json:"status"`
+}
+
+// ReadinessResponseStatus defines model for ReadinessResponse.Status.
+type ReadinessResponseStatus string
 
 // RegisterTransportRequest defines model for RegisterTransportRequest.
 type RegisterTransportRequest struct {

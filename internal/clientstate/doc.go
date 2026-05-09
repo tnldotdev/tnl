@@ -1,2 +1,2 @@
-// Package clientstate persists agent-owned route keys and certificates.
+// Package clientstate persists client access credentials, route keys, and certificates.
 package clientstate

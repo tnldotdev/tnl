@@ -183,7 +183,7 @@ func TestCredentialRevocationEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service, err := auth.NewService(db, login)
+	service, err := auth.NewService(db, login, auth.DefaultAccessTokenLifetime)
 	if err != nil {
 		t.Fatal(err)
 	}

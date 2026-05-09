@@ -10,6 +10,17 @@ monitor file-descriptor pressure with `process_open_fds` and
 
 ## Service Health
 
+Probe the public control hostname over HTTPS:
+
+```console
+curl --fail https://tnl.example.com/v1/health
+curl --fail https://tnl.example.com/v1/ready
+```
+
+`/v1/health` checks control TLS and HTTP serving. `/v1/ready` additionally runs
+a bounded SQLite check. DNS remains in `/v1/capabilities`; only a test route
+checks DNS, ACME, relay, worker, and agent behavior end to end.
+
 The main availability signals are:
 
 - `tnl_api_requests_total{operation,result}` and
