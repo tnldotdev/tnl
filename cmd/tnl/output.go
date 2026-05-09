@@ -10,20 +10,20 @@ import (
 	"github.com/tnldotdev/tnl/internal/serverclient"
 )
 
-type publicEvent struct {
+type publishEvent struct {
 	SchemaVersion int        `json:"schema_version"`
 	Type          string     `json:"type"`
 	Cursor        uint64     `json:"cursor"`
 	Target        string     `json:"target,omitempty"`
 	URL           string     `json:"url,omitempty"`
-	Generation    uint64     `json:"generation,omitempty"`
+	Version       uint64     `json:"version,omitempty"`
 	Message       string     `json:"message,omitempty"`
 	Retryable     *bool      `json:"retryable,omitempty"`
 	RetryAt       *time.Time `json:"retry_at,omitempty"`
 	Reason        string     `json:"reason,omitempty"`
 }
 
-type publicOutput struct {
+type publishOutput struct {
 	mode    string
 	stdout  io.Writer
 	stderr  io.Writer
@@ -32,21 +32,21 @@ type publicOutput struct {
 	printed bool
 }
 
-func newPublicOutput(mode string, stdout, stderr io.Writer) (*publicOutput, error) {
+func newPublishOutput(mode string, stdout, stderr io.Writer) (*publishOutput, error) {
 	if mode != "human" && mode != "ndjson" {
 		return nil, errors.New("output must be human or ndjson")
 	}
-	return &publicOutput{mode: mode, stdout: stdout, stderr: stderr}, nil
+	return &publishOutput{mode: mode, stdout: stdout, stderr: stderr}, nil
 }
 
-func (o *publicOutput) starting(target string) error {
+func (o *publishOutput) starting(target string) error {
 	if o.mode == "human" {
 		return nil
 	}
-	return o.emit(publicEvent{Type: "starting", Target: target})
+	return o.emit(publishEvent{Type: "starting", Target: target})
 }
 
-func (o *publicOutput) ready(url string, generation uint64) error {
+func (o *publishOutput) ready(url string, version uint64) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if o.mode == "human" {
@@ -57,15 +57,15 @@ func (o *publicOutput) ready(url string, generation uint64) error {
 		_, err := io.WriteString(o.stderr, url+"\n")
 		return err
 	}
-	return o.emitLocked(publicEvent{Type: "ready", URL: url, Generation: generation})
+	return o.emitLocked(publishEvent{Type: "ready", URL: url, Version: version})
 }
 
-func (o *publicOutput) failed(err error) error {
+func (o *publishOutput) failed(err error) error {
 	if o.mode == "human" {
 		return nil
 	}
 	retryable := errors.Is(err, serverclient.ErrUnavailable) || errors.Is(err, serverclient.ErrRateLimited)
-	event := publicEvent{Type: "error", Message: boundedOutputError(err), Retryable: &retryable}
+	event := publishEvent{Type: "error", Message: boundedOutputError(err), Retryable: &retryable}
 	var limited *serverclient.RateLimitError
 	if errors.As(err, &limited) && limited.RetryAfter > 0 {
 		retryAt := time.Now().Add(limited.RetryAfter).UTC()
@@ -74,20 +74,20 @@ func (o *publicOutput) failed(err error) error {
 	return o.emit(event)
 }
 
-func (o *publicOutput) stopped() error {
+func (o *publishOutput) stopped() error {
 	if o.mode == "human" {
 		return nil
 	}
-	return o.emit(publicEvent{Type: "stopped", Reason: "canceled"})
+	return o.emit(publishEvent{Type: "stopped", Reason: "canceled"})
 }
 
-func (o *publicOutput) emit(event publicEvent) error {
+func (o *publishOutput) emit(event publishEvent) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	return o.emitLocked(event)
 }
 
-func (o *publicOutput) emitLocked(event publicEvent) error {
+func (o *publishOutput) emitLocked(event publishEvent) error {
 	// Keep cursor assignment and encoding in one critical section.
 	o.cursor++
 	event.SchemaVersion = 1

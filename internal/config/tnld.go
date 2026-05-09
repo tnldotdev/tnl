@@ -27,7 +27,7 @@ const (
 	TNLDModeStandalone         TNLDMode = "standalone"
 	TNLDModeEdge               TNLDMode = "edge"
 	TNLDModeWorker             TNLDMode = "worker"
-	maximumHostnameClaimQuota           = 100_000
+	maximumHostnameQuota                = 100_000
 	minimumAccessTokenLifetime          = 5 * time.Minute
 	maximumAccessTokenLifetime          = 30 * 24 * time.Hour
 )
@@ -39,37 +39,37 @@ func (m TNLDMode) UsesState() bool {
 
 // TNLD configures the tnl server.
 type TNLD struct {
-	Mode                     TNLDMode      `name:"mode" env:"TNLD_MODE" default:"standalone" enum:"standalone,edge,worker" help:"Process role: ${enum}."`
-	StateDir                 string        `name:"state-dir" env:"TNLD_STATE_DIR" help:"Directory for persistent state; defaults to the platform user-state directory."`
-	BackupURL                string        `name:"backup-url" env:"TNLD_BACKUP_URL" help:"S3 URL for continuous state backup and restore."`
-	MetricsListen            string        `name:"metrics-listen" env:"TNLD_METRICS_LISTEN" default:"127.0.0.1:9090" help:"Private Prometheus listen address; empty disables metrics."`
-	PublicListen             string        `name:"public-listen" env:"TNLD_PUBLIC_LISTEN" default:":443" help:"Public TLS listen address for the control API and routes; empty disables ingress."`
-	Domain                   string        `name:"domain" env:"TNLD_DOMAIN" help:"Canonical domain shorthand; derives tnl.<domain> control and <domain> routes."`
-	ControlHostname          string        `name:"control-hostname" env:"TNLD_CONTROL_HOSTNAME" help:"Canonical control API hostname; overrides --domain derivation."`
-	PublicRouteSuffix        string        `name:"route-suffix" env:"TNLD_ROUTE_SUFFIX" help:"Canonical public route suffix; overrides --domain derivation."`
-	ReservedRouteNames       []string      `name:"reserved-route-name" env:"TNLD_RESERVED_ROUTE_NAMES" help:"Route base unavailable for user claims; repeat for each name."`
-	MaxActiveHostnameClaims  int           `name:"max-active-hostname-claims" env:"TNLD_MAX_ACTIVE_HOSTNAME_CLAIMS" default:"128" help:"Maximum active hostname claims per principal."`
-	MaxHostnameClaimRequests int           `name:"max-hostname-claim-requests" env:"TNLD_MAX_HOSTNAME_CLAIM_REQUESTS" default:"1024" help:"Maximum hostname claim request records per principal."`
-	ACMEDirectoryURL         string        `name:"acme-directory-url" env:"TNLD_ACME_DIRECTORY_URL" default:"https://acme-v02.api.letsencrypt.org/directory" help:"ACME directory URL for automatic control and application certificates."`
-	ACMEEmail                string        `name:"acme-email" env:"TNLD_ACME_EMAIL" help:"ACME account contact email."`
-	ACMEAcceptTerms          bool          `name:"acme-accept-terms" env:"TNLD_ACME_ACCEPT_TERMS" help:"Explicitly accept the ACME directory terms."`
-	ACMEProfile              string        `name:"acme-profile" env:"TNLD_ACME_PROFILE" default:"tlsserver" help:"ACME certificate profile advertised to agents."`
-	OIDCIssuer               string        `name:"oidc-issuer" env:"TNLD_OIDC_ISSUER" help:"OIDC issuer used for login."`
-	OIDCClientID             string        `name:"oidc-client-id" env:"TNLD_OIDC_CLIENT_ID" help:"OIDC client ID used for login."`
-	AccessTokenLifetime      time.Duration `name:"access-token-lifetime" env:"TNLD_ACCESS_TOKEN_LIFETIME" default:"168h" help:"Lifetime of newly issued access tokens."`
-	RelayProvider            string        `name:"relay-provider" env:"TNLD_RELAY_PROVIDER" help:"Hosted relay provider; set to tailcat to explicitly use Tailcat's public relays."`
-	RelayMapFile             string        `name:"relay-map-file" env:"TNLD_RELAY_MAP_FILE" type:"path" help:"Approved DERP map JSON file."`
-	RelayProfile             string        `name:"relay-profile" env:"TNLD_RELAY_PROFILE" help:"DERP region code selected from a custom relay map."`
-	WorkerURL                string        `name:"worker-url" env:"TNLD_WORKER_URL" help:"Worker-mode WSS edge URL."`
-	WorkerToken              string        `name:"worker-token" env:"TNLD_WORKER_TOKEN" help:"Edge-to-worker authentication token."`
-	ExportURL                string        `name:"export-url" env:"TNLD_EXPORT_URL" help:"Compatible route export receiver base URL."`
-	ExportToken              string        `name:"export-token" env:"TNLD_EXPORT_TOKEN" help:"Service token for the route export receiver."`
-	WorkerCapacity           int           `name:"worker-capacity" env:"TNLD_WORKER_CAPACITY" default:"500" help:"Hard route capacity for this worker."`
-	WorkerStreamLimit        int           `name:"worker-stream-limit" env:"TNLD_WORKER_STREAM_LIMIT" default:"4096" help:"Maximum multiplexed streams per worker session."`
-	PublicConnLimit          int           `name:"public-connection-limit" env:"TNLD_PUBLIC_CONNECTION_LIMIT" default:"20000" help:"Maximum concurrent public connections."`
-	RouteConnLimit           int           `name:"route-connection-limit" env:"TNLD_ROUTE_CONNECTION_LIMIT" default:"500" help:"Maximum concurrent public connections per route."`
-	RequireProxyHeader       bool          `name:"require-proxy-header" env:"TNLD_REQUIRE_PROXY_HEADER" help:"Require one trusted outer PROXY v2 header on public ingress."`
-	DrainTimeout             time.Duration `name:"drain-timeout" env:"TNLD_DRAIN_TIMEOUT" default:"30s" help:"Graceful stream drain deadline."`
+	Mode                 TNLDMode      `name:"mode" env:"TNLD_MODE" default:"standalone" enum:"standalone,edge,worker" help:"Process role: ${enum}."`
+	StateDir             string        `name:"state-dir" env:"TNLD_STATE_DIR" help:"Directory for persistent state; defaults to the platform user-state directory."`
+	BackupURL            string        `name:"backup-url" env:"TNLD_BACKUP_URL" help:"S3 URL for continuous state backup and restore."`
+	MetricsListen        string        `name:"metrics-listen" env:"TNLD_METRICS_LISTEN" default:"127.0.0.1:9090" help:"Private Prometheus listen address; empty disables metrics."`
+	PublicListen         string        `name:"public-listen" env:"TNLD_PUBLIC_LISTEN" default:":443" help:"Public TLS listen address for the control API and routes; empty disables ingress."`
+	Domain               string        `name:"domain" env:"TNLD_DOMAIN" help:"Canonical domain shorthand; derives tnl.<domain> control and <domain> routes."`
+	ControlHostname      string        `name:"control-hostname" env:"TNLD_CONTROL_HOSTNAME" help:"Canonical control API hostname; overrides --domain derivation."`
+	PublicHostnameSuffix string        `name:"hostname-suffix" env:"TNLD_HOSTNAME_SUFFIX" help:"Canonical public hostname suffix; overrides --domain derivation."`
+	ReservedRouteNames   []string      `name:"reserved-route-name" env:"TNLD_RESERVED_ROUTE_NAMES" help:"Route base unavailable for user claims; repeat for each name."`
+	MaxActiveHostnames   int           `name:"max-active-hostnames" env:"TNLD_MAX_ACTIVE_HOSTNAMES" default:"128" help:"Maximum active hostnames per identity."`
+	MaxHostnameRequests  int           `name:"max-hostname-requests" env:"TNLD_MAX_HOSTNAME_REQUESTS" default:"1024" help:"Maximum hostname request records per identity."`
+	ACMEDirectoryURL     string        `name:"acme-directory-url" env:"TNLD_ACME_DIRECTORY_URL" default:"https://acme-v02.api.letsencrypt.org/directory" help:"ACME directory URL for automatic control and application certificates."`
+	ACMEEmail            string        `name:"acme-email" env:"TNLD_ACME_EMAIL" help:"ACME account contact email."`
+	ACMEAcceptTerms      bool          `name:"acme-accept-terms" env:"TNLD_ACME_ACCEPT_TERMS" help:"Explicitly accept the ACME directory terms."`
+	ACMEProfile          string        `name:"acme-profile" env:"TNLD_ACME_PROFILE" default:"tlsserver" help:"ACME certificate profile advertised to agents."`
+	OIDCIssuer           string        `name:"oidc-issuer" env:"TNLD_OIDC_ISSUER" help:"OIDC issuer used for login."`
+	OIDCClientID         string        `name:"oidc-client-id" env:"TNLD_OIDC_CLIENT_ID" help:"OIDC client ID used for login."`
+	AccessTokenLifetime  time.Duration `name:"access-token-lifetime" env:"TNLD_ACCESS_TOKEN_LIFETIME" default:"168h" help:"Lifetime of newly issued access tokens."`
+	RelayProvider        string        `name:"relay-provider" env:"TNLD_RELAY_PROVIDER" help:"Hosted relay provider; set to tailcat to explicitly use Tailcat's public relays."`
+	RelayMapFile         string        `name:"relay-map-file" env:"TNLD_RELAY_MAP_FILE" type:"path" help:"Approved DERP map JSON file."`
+	RelayRegion          string        `name:"relay-region" env:"TNLD_RELAY_REGION" help:"DERP region code selected from a custom relay map."`
+	WorkerURL            string        `name:"worker-url" env:"TNLD_WORKER_URL" help:"Worker-mode WSS edge URL."`
+	WorkerToken          string        `name:"worker-token" env:"TNLD_WORKER_TOKEN" help:"Edge-to-worker authentication token."`
+	RouteUsageURL        string        `name:"route-usage-url" env:"TNLD_ROUTE_USAGE_URL" help:"Route usage receiver base URL."`
+	RouteUsageToken      string        `name:"route-usage-token" env:"TNLD_ROUTE_USAGE_TOKEN" help:"Service token for the route usage receiver."`
+	WorkerCapacity       int           `name:"worker-capacity" env:"TNLD_WORKER_CAPACITY" default:"500" help:"Hard route capacity for this worker."`
+	WorkerStreamLimit    int           `name:"worker-stream-limit" env:"TNLD_WORKER_STREAM_LIMIT" default:"4096" help:"Maximum multiplexed streams per worker session."`
+	PublicConnLimit      int           `name:"public-connection-limit" env:"TNLD_PUBLIC_CONNECTION_LIMIT" default:"20000" help:"Maximum concurrent public connections."`
+	RouteConnLimit       int           `name:"route-connection-limit" env:"TNLD_ROUTE_CONNECTION_LIMIT" default:"500" help:"Maximum concurrent public connections per route."`
+	RequireProxyHeader   bool          `name:"require-proxy-header" env:"TNLD_REQUIRE_PROXY_HEADER" help:"Require one trusted outer PROXY v2 header on public ingress."`
+	DrainTimeout         time.Duration `name:"drain-timeout" env:"TNLD_DRAIN_TIMEOUT" default:"30s" help:"Graceful stream drain deadline."`
 }
 
 // Validate rejects values that are present but unusable.
@@ -92,15 +92,15 @@ func (c TNLD) Validate() error {
 	if c.WorkerCapacity <= 0 || c.WorkerStreamLimit <= 0 || c.PublicConnLimit <= 0 || c.RouteConnLimit <= 0 {
 		return errors.New("capacity and connection limits must be positive")
 	}
-	if c.MaxActiveHostnameClaims <= 0 || c.MaxHostnameClaimRequests <= 0 {
-		return errors.New("hostname claim quotas must be positive")
+	if c.MaxActiveHostnames <= 0 || c.MaxHostnameRequests <= 0 {
+		return errors.New("hostname quotas must be positive")
 	}
-	if c.MaxActiveHostnameClaims > maximumHostnameClaimQuota ||
-		c.MaxHostnameClaimRequests > maximumHostnameClaimQuota {
-		return fmt.Errorf("hostname claim quotas must not exceed %d", maximumHostnameClaimQuota)
+	if c.MaxActiveHostnames > maximumHostnameQuota ||
+		c.MaxHostnameRequests > maximumHostnameQuota {
+		return fmt.Errorf("hostname quotas must not exceed %d", maximumHostnameQuota)
 	}
-	if c.MaxHostnameClaimRequests < c.MaxActiveHostnameClaims {
-		return errors.New("hostname claim request quota must be at least the active claim quota")
+	if c.MaxHostnameRequests < c.MaxActiveHostnames {
+		return errors.New("hostname request quota must be at least the active hostname quota")
 	}
 	if c.DrainTimeout <= 0 {
 		return errors.New("drain timeout must be positive")
@@ -108,8 +108,8 @@ func (c TNLD) Validate() error {
 	if c.AccessTokenLifetime < minimumAccessTokenLifetime || c.AccessTokenLifetime > maximumAccessTokenLifetime {
 		return fmt.Errorf("access token lifetime must be between %s and %s", minimumAccessTokenLifetime, maximumAccessTokenLifetime)
 	}
-	if c.RelayProfile != "" && !validRelayProfile(c.RelayProfile) {
-		return errors.New("relay profile must contain only lowercase letters, digits, and hyphens")
+	if c.RelayRegion != "" && !validRelayRegion(c.RelayRegion) {
+		return errors.New("relay region must contain only lowercase letters, digits, and hyphens")
 	}
 	if c.RelayProvider != "" && c.RelayProvider != "tailcat" {
 		return errors.New("relay provider must be tailcat")
@@ -121,7 +121,7 @@ func (c TNLD) Validate() error {
 		return err
 	}
 	if c.ACMEEmail != "" {
-		if !validRelayProfile(c.ACMEProfile) {
+		if !validRelayRegion(c.ACMEProfile) {
 			return errors.New("ACME profile must contain only lowercase letters, digits, and hyphens")
 		}
 		directory, err := url.Parse(c.ACMEDirectoryURL)
@@ -141,8 +141,8 @@ func (c TNLD) Validate() error {
 		if !c.Mode.UsesState() {
 			return errors.New("worker mode cannot serve public ingress")
 		}
-		if c.ServerHostname() == "" || c.RouteSuffix() == "" {
-			return errors.New("control hostname and route suffix are required when ingress is enabled")
+		if c.ServerHostname() == "" || c.HostnameSuffix() == "" {
+			return errors.New("control hostname and hostname suffix are required when ingress is enabled")
 		}
 		if !c.ACMEEnabled() {
 			return errors.New("ACME is required when ingress is enabled")
@@ -168,22 +168,22 @@ func (c TNLD) Validate() error {
 	if c.Mode == TNLDModeWorker && c.WorkerURL == "" {
 		return errors.New("worker mode requires a worker URL")
 	}
-	if (c.ExportURL == "") != (c.ExportToken == "") {
-		return errors.New("export URL and token must be configured together")
+	if (c.RouteUsageURL == "") != (c.RouteUsageToken == "") {
+		return errors.New("route usage URL and token must be configured together")
 	}
-	if c.ExportURL != "" {
+	if c.RouteUsageURL != "" {
 		if !c.Mode.UsesState() {
-			return errors.New("worker mode cannot export route usage")
+			return errors.New("worker mode cannot report route usage")
 		}
-		if _, err := credentials.ParseServiceToken(credentials.ServiceToken(c.ExportToken)); err != nil {
-			return errors.New("export token is invalid")
+		if _, err := credentials.ParseServiceToken(credentials.ServiceToken(c.RouteUsageToken)); err != nil {
+			return errors.New("route usage token is invalid")
 		}
-		exportURL, err := url.Parse(c.ExportURL)
-		if err != nil || exportURL.Host == "" || exportURL.User != nil || exportURL.RawQuery != "" || exportURL.Fragment != "" {
-			return errors.New("export URL must be an HTTPS base URL or a loopback HTTP base URL")
+		routeUsageURL, err := url.Parse(c.RouteUsageURL)
+		if err != nil || routeUsageURL.Host == "" || routeUsageURL.User != nil || routeUsageURL.RawQuery != "" || routeUsageURL.Fragment != "" {
+			return errors.New("route usage URL must be an HTTPS base URL or a loopback HTTP base URL")
 		}
-		if exportURL.Scheme != "https" && (exportURL.Scheme != "http" || !isLoopbackHost(exportURL.Hostname())) {
-			return errors.New("export URL must be an HTTPS base URL or a loopback HTTP base URL")
+		if routeUsageURL.Scheme != "https" && (routeUsageURL.Scheme != "http" || !isLoopbackHost(routeUsageURL.Hostname())) {
+			return errors.New("route usage URL must be an HTTPS base URL or a loopback HTTP base URL")
 		}
 	}
 	if c.WorkerURL != "" {
@@ -249,10 +249,10 @@ func (c TNLD) validateHostnames() error {
 			return errors.New("control hostname must be canonical")
 		}
 	}
-	if suffix := c.RouteSuffix(); suffix != "" {
+	if suffix := c.HostnameSuffix(); suffix != "" {
 		canonical, err := naming.CanonicalizeHostname(suffix)
 		if err != nil || canonical != suffix || len(suffix)+naming.MaxLabelBytes+1 > naming.MaxHostnameBytes {
-			return errors.New("route suffix must be canonical and leave room for a base label")
+			return errors.New("hostname suffix must be canonical and leave room for a base label")
 		}
 	}
 	seen := make(map[string]struct{}, len(c.ReservedRouteNames))
@@ -283,10 +283,10 @@ func (c TNLD) ServerHostname() string {
 	return "tnl." + c.Domain
 }
 
-// RouteSuffix returns the explicit or domain-derived public application suffix.
-func (c TNLD) RouteSuffix() string {
-	if c.PublicRouteSuffix != "" {
-		return c.PublicRouteSuffix
+// HostnameSuffix returns the explicit or domain-derived public application suffix.
+func (c TNLD) HostnameSuffix() string {
+	if c.PublicHostnameSuffix != "" {
+		return c.PublicHostnameSuffix
 	}
 	if c.Domain == "" {
 		return ""
@@ -295,7 +295,7 @@ func (c TNLD) RouteSuffix() string {
 }
 
 // EffectiveReservedRouteNames returns configured reservations plus domains and
-// the control base when the control hostname is directly beneath the route suffix.
+// the control base when the control hostname is directly beneath the hostname suffix.
 func (c TNLD) EffectiveReservedRouteNames() []string {
 	result := make([]string, 0, len(c.ReservedRouteNames)+2)
 	seen := make(map[string]struct{}, len(c.ReservedRouteNames)+2)
@@ -310,15 +310,15 @@ func (c TNLD) EffectiveReservedRouteNames() []string {
 		add(name)
 	}
 	add("domains")
-	hostname, suffix := c.ServerHostname(), c.RouteSuffix()
+	hostname, suffix := c.ServerHostname(), c.HostnameSuffix()
 	if base, found := strings.CutSuffix(hostname, "."+suffix); found && base != "" && !strings.Contains(base, ".") {
 		add(base)
 	}
 	return result
 }
 
-// DefaultServerStateDir returns the native daemon and administration state path.
-func DefaultServerStateDir() (string, error) {
+// DefaultStateDir returns the native daemon and administration state path.
+func DefaultStateDir() (string, error) {
 	var root string
 	var err error
 	if runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
@@ -336,7 +336,7 @@ func DefaultServerStateDir() (string, error) {
 	return filepath.Join(root, "tnl", "server"), nil
 }
 
-func validRelayProfile(profile string) bool {
+func validRelayRegion(profile string) bool {
 	if len(profile) == 0 || len(profile) > 63 || (profile[0] < 'a' || profile[0] > 'z') && (profile[0] < '0' || profile[0] > '9') {
 		return false
 	}
@@ -388,7 +388,7 @@ func ParseTNLD(args []string) (TNLD, error) {
 func ResolveTNLD(config TNLD) (TNLD, error) {
 	var err error
 	if config.Mode.UsesState() && config.StateDir == "" {
-		config.StateDir, err = DefaultServerStateDir()
+		config.StateDir, err = DefaultStateDir()
 		if err != nil {
 			return TNLD{}, err
 		}

@@ -49,19 +49,19 @@ func (q *Queries) DeleteExpiredOIDCAssertions(ctx context.Context, issuedAt int6
 
 const getAccessCredential = `-- name: GetAccessCredential :one
 SELECT
-    p.id AS principal_id,
+    p.id AS identity_id,
     p.display_name,
     p.email,
     c.secret_hash,
     c.expires_at,
     c.revoked_at
 FROM access_credentials AS c
-JOIN principals AS p ON p.id = c.principal_id
+JOIN identities AS p ON p.id = c.identity_id
 WHERE c.id = ?1
 `
 
 type GetAccessCredentialRow struct {
-	PrincipalID string
+	IdentityID  string
 	DisplayName string
 	Email       string
 	SecretHash  []byte
@@ -73,7 +73,7 @@ func (q *Queries) GetAccessCredential(ctx context.Context, credentialID string) 
 	row := q.db.QueryRowContext(ctx, getAccessCredential, credentialID)
 	var i GetAccessCredentialRow
 	err := row.Scan(
-		&i.PrincipalID,
+		&i.IdentityID,
 		&i.DisplayName,
 		&i.Email,
 		&i.SecretHash,
@@ -86,7 +86,7 @@ func (q *Queries) GetAccessCredential(ctx context.Context, credentialID string) 
 const insertAccessCredential = `-- name: InsertAccessCredential :exec
 INSERT INTO access_credentials (
     id,
-    principal_id,
+    identity_id,
     secret_hash,
     created_at,
     expires_at
@@ -101,7 +101,7 @@ INSERT INTO access_credentials (
 
 type InsertAccessCredentialParams struct {
 	CredentialID string
-	PrincipalID  string
+	IdentityID   string
 	SecretHash   []byte
 	CreatedAt    int64
 	ExpiresAt    int64
@@ -110,7 +110,7 @@ type InsertAccessCredentialParams struct {
 func (q *Queries) InsertAccessCredential(ctx context.Context, arg InsertAccessCredentialParams) error {
 	_, err := q.db.ExecContext(ctx, insertAccessCredential,
 		arg.CredentialID,
-		arg.PrincipalID,
+		arg.IdentityID,
 		arg.SecretHash,
 		arg.CreatedAt,
 		arg.ExpiresAt,
@@ -122,25 +122,25 @@ const revokeAccessCredential = `-- name: RevokeAccessCredential :execrows
 UPDATE access_credentials
 SET revoked_at = COALESCE(revoked_at, CAST(?1 AS INTEGER))
 WHERE id = ?2
-  AND principal_id = ?3
+  AND identity_id = ?3
 `
 
 type RevokeAccessCredentialParams struct {
 	RevokedAt    int64
 	CredentialID string
-	PrincipalID  string
+	IdentityID   string
 }
 
 func (q *Queries) RevokeAccessCredential(ctx context.Context, arg RevokeAccessCredentialParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, revokeAccessCredential, arg.RevokedAt, arg.CredentialID, arg.PrincipalID)
+	result, err := q.db.ExecContext(ctx, revokeAccessCredential, arg.RevokedAt, arg.CredentialID, arg.IdentityID)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected()
 }
 
-const upsertPrincipal = `-- name: UpsertPrincipal :exec
-INSERT INTO principals (
+const upsertIdentity = `-- name: UpsertIdentity :exec
+INSERT INTO identities (
     id,
     display_name,
     email,
@@ -156,16 +156,16 @@ ON CONFLICT (id) DO UPDATE SET
     email = excluded.email
 `
 
-type UpsertPrincipalParams struct {
-	PrincipalID string
+type UpsertIdentityParams struct {
+	IdentityID  string
 	DisplayName string
 	Email       string
 	CreatedAt   int64
 }
 
-func (q *Queries) UpsertPrincipal(ctx context.Context, arg UpsertPrincipalParams) error {
-	_, err := q.db.ExecContext(ctx, upsertPrincipal,
-		arg.PrincipalID,
+func (q *Queries) UpsertIdentity(ctx context.Context, arg UpsertIdentityParams) error {
+	_, err := q.db.ExecContext(ctx, upsertIdentity,
+		arg.IdentityID,
 		arg.DisplayName,
 		arg.Email,
 		arg.CreatedAt,

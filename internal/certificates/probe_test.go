@@ -8,38 +8,38 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/agent"
 	"github.com/tnldotdev/tnl/internal/proxyproto"
+	"github.com/tnldotdev/tnl/internal/tlschallenge"
 	"golang.org/x/crypto/acme"
 )
 
 func TestProbeTLSALPN(t *testing.T) {
 	digest := sha256.Sum256([]byte("key authorization"))
 	expiresAt := time.Now().Add(time.Hour)
-	challenge := agent.TLSALPNChallenge{
+	challenge := tlschallenge.TLSALPNChallenge{
 		ID: "challenge", Hostname: testHostname, Digest: digest, ExpiresAt: expiresAt,
 	}
-	var challenges agent.TLSALPNChallenges
+	var challenges tlschallenge.TLSALPNChallenges
 	if err := challenges.Install(challenge); err != nil {
 		t.Fatal(err)
 	}
 	backend := &challengeBackend{t: t, challenges: &challenges}
-	job := Job{
+	issuance := Issuance{
 		Hostname: testHostname, ChallengeURL: challenge.ID,
 		ChallengeDigest: digest, ChallengeExpires: expiresAt,
 	}
-	if err := ProbeTLSALPN(context.Background(), backend, job); err != nil {
+	if err := ProbeTLSALPN(context.Background(), backend, issuance); err != nil {
 		t.Fatal(err)
 	}
-	job.ChallengeDigest[0] ^= 0xff
-	if err := ProbeTLSALPN(context.Background(), backend, job); err == nil {
+	issuance.ChallengeDigest[0] ^= 0xff
+	if err := ProbeTLSALPN(context.Background(), backend, issuance); err == nil {
 		t.Fatal("probe accepted a mismatched challenge digest")
 	}
 }
 
 type challengeBackend struct {
 	t          *testing.T
-	challenges *agent.TLSALPNChallenges
+	challenges *tlschallenge.TLSALPNChallenges
 }
 
 func (b *challengeBackend) Open(context.Context) (net.Conn, error) {

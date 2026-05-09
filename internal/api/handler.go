@@ -27,29 +27,29 @@ import (
 )
 
 const (
-	healthPath             = "/v1/health"
-	readinessPath          = "/v1/ready"
-	capabilitiesPath       = "/v1/capabilities"
-	relayMapPath           = "/v1/transport/relay-map"
-	tokenExchangePath      = "/v1/auth/token"
-	oidcExchangePath       = "/v1/auth/oidc"
-	credentialsPath        = "/v1/auth/credentials/"
-	certificateOrdersPath  = "/v1/certs/orders"
-	certificateOrderPrefix = "/v1/certs/orders/"
-	hostnameClaimsPath     = "/v1/hostname-claims"
-	hostnameClaimPrefix    = "/v1/hostname-claims/"
-	domainClaimsPath       = "/v1/domain-claims"
-	domainClaimPrefix      = "/v1/domain-claims/"
-	routesPath             = "/v1/routes"
-	routePathPrefix        = "/v1/routes/"
-	authorizationHeader    = "Authorization"
-	idempotencyKeyHeader   = "Idempotency-Key"
-	requestIDHeader        = "X-Request-ID"
-	maxCredentialBytes     = 128
-	maxJSONRequestBytes    = 20 << 10
-	maxJSONResponseBytes   = 64 << 10
-	jsonReadTimeout        = 10 * time.Second
-	readinessTimeout       = time.Second
+	healthPath                = "/v1/health"
+	readinessPath             = "/v1/ready"
+	capabilitiesPath          = "/v1/capabilities"
+	relayMapPath              = "/v1/transport/relay-map"
+	tokenExchangePath         = "/v1/auth/token"
+	oidcExchangePath          = "/v1/auth/oidc"
+	credentialsPath           = "/v1/auth/credentials/"
+	certificateIssuancesPath  = "/v1/certificate-issuances"
+	certificateIssuancePrefix = "/v1/certificate-issuances/"
+	hostnamesPath             = "/v1/hostnames"
+	hostnamePrefix            = "/v1/hostnames/"
+	domainVerificationsPath   = "/v1/domain-verifications"
+	domainVerificationPrefix  = "/v1/domain-verifications/"
+	routesPath                = "/v1/routes"
+	routePathPrefix           = "/v1/routes/"
+	authorizationHeader       = "Authorization"
+	idempotencyKeyHeader      = "Idempotency-Key"
+	requestIDHeader           = "X-Request-ID"
+	maxCredentialBytes        = 128
+	maxJSONRequestBytes       = 20 << 10
+	maxJSONResponseBytes      = 64 << 10
+	jsonReadTimeout           = 10 * time.Second
+	readinessTimeout          = time.Second
 )
 
 var (
@@ -73,26 +73,24 @@ const (
 	OperationTokenExchange               Operation = "auth.token.exchange"
 	OperationOIDCTokenExchange           Operation = "auth.oidc.exchange"
 	OperationCredentialRevoke            Operation = "auth.credential.revoke"
-	OperationHostnameClaimsList          Operation = "hostname_claims.list"
-	OperationHostnameClaimCreate         Operation = "hostname_claims.create"
-	OperationHostnameClaimRelease        Operation = "hostname_claims.release"
-	OperationDomainChallengeCreate       Operation = "domain_challenges.create"
-	OperationDomainChallengeGet          Operation = "domain_challenges.get"
-	OperationDomainChallengeVerify       Operation = "domain_challenges.verify"
-	OperationDomainClaimsList            Operation = "domain_claims.list"
-	OperationDomainClaimRelease          Operation = "domain_claims.release"
+	OperationHostnamesList               Operation = "hostnames.list"
+	OperationHostnameAdd                 Operation = "hostnames.add"
+	OperationHostnameRemove              Operation = "hostnames.remove"
+	OperationDomainVerificationCreate    Operation = "domain_verifications.create"
+	OperationDomainVerificationGet       Operation = "domain_verifications.get"
+	OperationDomainVerificationComplete  Operation = "domain_verifications.complete"
 	OperationRoutesList                  Operation = "routes.list"
 	OperationRouteCreate                 Operation = "routes.create"
 	OperationRouteDelete                 Operation = "routes.delete"
-	OperationRouteLeaseAcquire           Operation = "routes.lease.acquire"
+	OperationRouteSessionCreate          Operation = "routes.session.create"
 	OperationRouteTransportRegister      Operation = "routes.transport.register"
 	OperationRouteHeartbeat              Operation = "routes.heartbeat"
 	OperationRouteReady                  Operation = "routes.ready"
-	OperationCertificateOrderCreate      Operation = "certificate_orders.create"
-	OperationCertificateOrderGet         Operation = "certificate_orders.get"
-	OperationCertificateChallengeReady   Operation = "certificate_orders.challenge_ready"
-	OperationCertificateChallengeRemoved Operation = "certificate_orders.challenge_removed"
-	OperationCertificateInstalled        Operation = "certificate_orders.installed"
+	OperationCertificateIssuanceCreate   Operation = "certificate_issuances.create"
+	OperationCertificateIssuanceGet      Operation = "certificate_issuances.get"
+	OperationCertificateChallengeReady   Operation = "certificate_issuances.challenge_ready"
+	OperationCertificateChallengeRemoved Operation = "certificate_issuances.challenge_removed"
+	OperationCertificateInstalled        Operation = "certificate_issuances.installed"
 )
 
 // RequestResult classifies an API response by its final HTTP status.
@@ -129,39 +127,39 @@ type HandlerConfig struct {
 // AuthService implements authentication flows without exposing storage to HTTP.
 type AuthService interface {
 	Exchange(context.Context, credentials.LoginToken) (auth.IssuedAccessToken, error)
-	Authenticate(context.Context, credentials.AccessToken) (state.Principal, error)
-	Revoke(context.Context, state.Principal, credentials.CredentialID) error
+	Authenticate(context.Context, credentials.AccessToken) (state.Identity, error)
+	Revoke(context.Context, state.Identity, credentials.CredentialID) error
 }
 
 type OIDCAuthService interface {
 	ExchangeOIDC(context.Context, string) (auth.IssuedAccessToken, error)
 }
 
-// RouteService implements hostname claims and fenced route transitions.
+// RouteService implements hostnames and fenced route transitions.
 type RouteService interface {
-	ClaimName(context.Context, string, string, string, string) (routes.HostnameClaim, error)
-	CreateDomainChallenge(context.Context, string, string, string) (routes.DomainChallenge, error)
-	GetDomainChallenge(context.Context, string, string) (routes.DomainChallenge, error)
-	VerifyDomainChallenge(context.Context, string, string) (routes.HostnameClaim, error)
-	ListHostnameClaimsPage(context.Context, string, string) ([]routes.HostnameClaim, string, error)
-	ReleaseHostnameClaim(context.Context, string, string) error
-	Create(context.Context, string, string, string, credentials.RouteToken) (routes.LeaseSetup, error)
-	Acquire(context.Context, string, string, credentials.RouteToken) (routes.LeaseSetup, error)
-	RegisterTransport(context.Context, string, uint64, credentials.LeaseToken, string, string) error
-	Ready(context.Context, string, uint64, credentials.LeaseToken) error
-	Heartbeat(context.Context, string, uint64, credentials.LeaseToken) (time.Time, error)
-	AuthorizeLease(context.Context, string, uint64, credentials.LeaseToken) error
+	AddHostname(context.Context, string, string, string, string) (routes.Hostname, error)
+	CreateDomainVerification(context.Context, string, string, string) (routes.DomainVerification, error)
+	GetDomainVerification(context.Context, string, string) (routes.DomainVerification, error)
+	CompleteDomainVerification(context.Context, string, string) (routes.Hostname, error)
+	ListHostnamesPage(context.Context, string, string) ([]routes.Hostname, string, error)
+	RemoveHostname(context.Context, string, string) error
+	Create(context.Context, string, string, string, credentials.RouteToken) (routes.SessionSetup, error)
+	CreateSession(context.Context, string, string, credentials.RouteToken) (routes.SessionSetup, error)
+	RegisterTransport(context.Context, string, uint64, credentials.SessionToken, string, string) error
+	Ready(context.Context, string, uint64, credentials.SessionToken) error
+	Heartbeat(context.Context, string, uint64, credentials.SessionToken) (time.Time, error)
+	AuthorizeSession(context.Context, string, uint64, credentials.SessionToken) error
 	List(context.Context, string) ([]routes.Route, error)
 	Delete(context.Context, string, string) error
 }
 
 // CertificateService implements durable certificate transitions without exposing storage to HTTP.
 type CertificateService interface {
-	Create(context.Context, string, uint64, string, []byte) (certificates.Job, error)
-	Get(context.Context, string) (certificates.Job, error)
-	ChallengeReady(context.Context, string) (certificates.Job, error)
-	ChallengeRemoved(context.Context, string) (certificates.Job, error)
-	Installed(context.Context, string, string, uint64) (certificates.Job, error)
+	Create(context.Context, string, uint64, string, []byte) (certificates.Issuance, error)
+	Get(context.Context, string) (certificates.Issuance, error)
+	ChallengeReady(context.Context, string) (certificates.Issuance, error)
+	ChallengeRemoved(context.Context, string) (certificates.Issuance, error)
+	Installed(context.Context, string, string, uint64) (certificates.Issuance, error)
 }
 
 type handler struct {
@@ -183,12 +181,12 @@ func NewHandler(capabilities serverv1.Capabilities, auth AuthService) http.Handl
 	return NewHandlerWithRoutes(capabilities, auth, nil)
 }
 
-// NewHandlerWithRoutes enables hostname-claim and route endpoints.
+// NewHandlerWithRoutes enables hostname and route endpoints.
 func NewHandlerWithRoutes(capabilities serverv1.Capabilities, auth AuthService, routeService RouteService) http.Handler {
 	return NewHandlerWithServices(capabilities, auth, routeService, nil)
 }
 
-// NewHandlerWithServices enables hostname-claim, route, and certificate endpoints.
+// NewHandlerWithServices enables hostname, route, and certificate endpoints.
 func NewHandlerWithServices(
 	capabilities serverv1.Capabilities,
 	auth AuthService,
@@ -262,22 +260,22 @@ func (h *handler) serveHTTP(w http.ResponseWriter, r *http.Request, requestID st
 		h.serveTokenExchange(w, r, requestID)
 	case oidcExchangePath:
 		h.serveOIDCExchange(w, r, requestID)
-	case hostnameClaimsPath:
-		h.serveHostnameClaims(w, r, requestID)
-	case domainClaimsPath:
-		h.serveDomainClaims(w, r, requestID)
+	case hostnamesPath:
+		h.serveHostnames(w, r, requestID)
+	case domainVerificationsPath:
+		h.serveDomainVerifications(w, r, requestID)
 	case routesPath:
 		h.serveRoutes(w, r, requestID)
-	case certificateOrdersPath:
-		h.serveCertificateOrders(w, r, requestID)
+	case certificateIssuancesPath:
+		h.serveCertificateIssuances(w, r, requestID)
 	default:
-		if challengeID, operation, ok := domainClaimPath(r.URL.Path); ok {
-			h.serveDomainClaim(w, r, requestID, challengeID, operation)
+		if verificationID, operation, ok := domainVerificationPath(r.URL.Path); ok {
+			h.serveDomainVerification(w, r, requestID, verificationID, operation)
 			return
 		}
-		claimID, ok := strings.CutPrefix(r.URL.Path, hostnameClaimPrefix)
-		if ok && validHostnameClaimID(claimID) {
-			h.serveHostnameClaim(w, r, requestID, claimID)
+		hostnameID, ok := strings.CutPrefix(r.URL.Path, hostnamePrefix)
+		if ok && validHostnameID(hostnameID) {
+			h.serveHostname(w, r, requestID, hostnameID)
 			return
 		}
 		credentialID, ok := strings.CutPrefix(r.URL.Path, credentialsPath)
@@ -289,8 +287,8 @@ func (h *handler) serveHTTP(w http.ResponseWriter, r *http.Request, requestID st
 			h.serveRoute(w, r, requestID, routeID, operation)
 			return
 		}
-		if orderID, operation, ok := certificateOrderPath(r.URL.Path); ok {
-			h.serveCertificateOrder(w, r, requestID, orderID, operation)
+		if issuanceID, operation, ok := certificateIssuancePath(r.URL.Path); ok {
+			h.serveCertificateIssuance(w, r, requestID, issuanceID, operation)
 			return
 		}
 		writeNotFound(w, requestID)
@@ -359,19 +357,16 @@ func operationForRequest(method, path string) Operation {
 		if method == http.MethodPost {
 			return OperationOIDCTokenExchange
 		}
-	case hostnameClaimsPath:
+	case hostnamesPath:
 		switch method {
 		case http.MethodGet:
-			return OperationHostnameClaimsList
+			return OperationHostnamesList
 		case http.MethodPost:
-			return OperationHostnameClaimCreate
+			return OperationHostnameAdd
 		}
-	case domainClaimsPath:
-		switch method {
-		case http.MethodGet:
-			return OperationDomainClaimsList
-		case http.MethodPost:
-			return OperationDomainChallengeCreate
+	case domainVerificationsPath:
+		if method == http.MethodPost {
+			return OperationDomainVerificationCreate
 		}
 	case routesPath:
 		switch method {
@@ -380,27 +375,24 @@ func operationForRequest(method, path string) Operation {
 		case http.MethodPost:
 			return OperationRouteCreate
 		}
-	case certificateOrdersPath:
+	case certificateIssuancesPath:
 		if method == http.MethodPost {
-			return OperationCertificateOrderCreate
+			return OperationCertificateIssuanceCreate
 		}
 	}
 
-	if claimID, ok := strings.CutPrefix(path, hostnameClaimPrefix); ok &&
-		validHostnameClaimID(claimID) && method == http.MethodDelete {
-		return OperationHostnameClaimRelease
+	if hostnameID, ok := strings.CutPrefix(path, hostnamePrefix); ok &&
+		validHostnameID(hostnameID) && method == http.MethodDelete {
+		return OperationHostnameRemove
 	}
-	if _, domainOperation, ok := domainClaimPath(path); ok {
+	if _, domainOperation, ok := domainVerificationPath(path); ok {
 		if domainOperation == "" {
-			switch method {
-			case http.MethodGet:
-				return OperationDomainChallengeGet
-			case http.MethodDelete:
-				return OperationDomainClaimRelease
+			if method == http.MethodGet {
+				return OperationDomainVerificationGet
 			}
 		}
-		if domainOperation == "verify" && method == http.MethodPost {
-			return OperationDomainChallengeVerify
+		if domainOperation == "complete" && method == http.MethodPost {
+			return OperationDomainVerificationComplete
 		}
 	}
 	if credentialID, ok := strings.CutPrefix(path, credentialsPath); ok && credentialID != "" &&
@@ -411,8 +403,8 @@ func operationForRequest(method, path string) Operation {
 		switch {
 		case routeOperation == "" && method == http.MethodDelete:
 			return OperationRouteDelete
-		case routeOperation == "leases" && method == http.MethodPost:
-			return OperationRouteLeaseAcquire
+		case routeOperation == "sessions" && method == http.MethodPost:
+			return OperationRouteSessionCreate
 		case routeOperation == "transport" && method == http.MethodPost:
 			return OperationRouteTransportRegister
 		case routeOperation == "heartbeat" && method == http.MethodPost:
@@ -423,10 +415,10 @@ func operationForRequest(method, path string) Operation {
 			return OperationCertificateInstalled
 		}
 	}
-	if _, certificateOperation, ok := certificateOrderPath(path); ok {
+	if _, certificateOperation, ok := certificateIssuancePath(path); ok {
 		switch {
 		case certificateOperation == "" && method == http.MethodGet:
-			return OperationCertificateOrderGet
+			return OperationCertificateIssuanceGet
 		case certificateOperation == "challenge-ready" && method == http.MethodPost:
 			return OperationCertificateChallengeReady
 		case certificateOperation == "challenge-removed" && method == http.MethodPost:
@@ -470,12 +462,12 @@ func (h *handler) serveReadiness(w http.ResponseWriter, r *http.Request, request
 	status := http.StatusOK
 	response := serverv1.ReadinessResponse{
 		Status: serverv1.ReadinessResponseStatusReady,
-		Checks: serverv1.ReadinessChecks{State: serverv1.ReadinessChecksStateOk},
+		Checks: serverv1.ReadinessChecks{Status: serverv1.ReadinessChecksStatusOk},
 	}
 	if h.readiness == nil || h.readiness(ctx) != nil {
 		status = http.StatusServiceUnavailable
 		response.Status = serverv1.ReadinessResponseStatusNotReady
-		response.Checks.State = serverv1.ReadinessChecksStateFailed
+		response.Checks.Status = serverv1.ReadinessChecksStatusFailed
 	}
 	body, err := marshalJSON(response)
 	if err != nil {
@@ -485,12 +477,12 @@ func (h *handler) serveReadiness(w http.ResponseWriter, r *http.Request, request
 	writeJSON(w, status, "application/json", body)
 }
 
-func (h *handler) serveHostnameClaims(w http.ResponseWriter, r *http.Request, requestID string) {
+func (h *handler) serveHostnames(w http.ResponseWriter, r *http.Request, requestID string) {
 	if r.Method != http.MethodGet && r.Method != http.MethodPost {
 		writeMethodNotAllowed(w, requestID, http.MethodGet+", "+http.MethodPost)
 		return
 	}
-	principal, ok := h.authenticate(w, r, requestID)
+	identity, ok := h.authenticate(w, r, requestID)
 	if !ok {
 		return
 	}
@@ -503,20 +495,20 @@ func (h *handler) serveHostnameClaims(w http.ResponseWriter, r *http.Request, re
 		cursor := ""
 		if len(query) != 0 {
 			values, ok := query["cursor"]
-			if !ok || len(query) != 1 || len(values) != 1 || !validHostnameClaimID(values[0]) {
+			if !ok || len(query) != 1 || len(values) != 1 || !validHostnameID(values[0]) {
 				writeInvalidRequest(w, requestID)
 				return
 			}
 			cursor = values[0]
 		}
-		claims, next, err := h.routes.ListHostnameClaimsPage(r.Context(), principal.ID, cursor)
+		hostnames, next, err := h.routes.ListHostnamesPage(r.Context(), identity.ID, cursor)
 		if err != nil {
 			writeRouteError(w, requestID, err)
 			return
 		}
-		response := serverv1.HostnameClaimPage{Claims: make([]serverv1.HostnameClaim, 0, len(claims))}
-		for _, claim := range claims {
-			response.Claims = append(response.Claims, hostnameClaimResponse(claim))
+		response := serverv1.HostnamePage{Hostnames: make([]serverv1.Hostname, 0, len(hostnames))}
+		for _, hostname := range hostnames {
+			response.Hostnames = append(response.Hostnames, hostnameResponse(hostname))
 		}
 		if next != "" {
 			response.NextCursor = &next
@@ -529,7 +521,7 @@ func (h *handler) serveHostnameClaims(w http.ResponseWriter, r *http.Request, re
 		writeInvalidRequest(w, requestID)
 		return
 	}
-	var request serverv1.CreateHostnameClaimRequest
+	var request serverv1.AddHostnameRequest
 	if !decodeRequest(w, r, requestID, &request) {
 		return
 	}
@@ -537,20 +529,20 @@ func (h *handler) serveHostnameClaims(w http.ResponseWriter, r *http.Request, re
 	if request.Name != nil {
 		name = *request.Name
 	}
-	claim, err := h.routes.ClaimName(r.Context(), principal.ID, string(request.Kind), name, requestKey)
+	hostname, err := h.routes.AddHostname(r.Context(), identity.ID, string(request.Kind), name, requestKey)
 	if err != nil {
 		writeRouteError(w, requestID, err)
 		return
 	}
-	writeModel(w, requestID, http.StatusCreated, hostnameClaimResponse(claim))
+	writeModel(w, requestID, http.StatusCreated, hostnameResponse(hostname))
 }
 
-func (h *handler) serveHostnameClaim(w http.ResponseWriter, r *http.Request, requestID, claimID string) {
+func (h *handler) serveHostname(w http.ResponseWriter, r *http.Request, requestID, hostnameID string) {
 	if r.Method != http.MethodDelete {
 		writeMethodNotAllowed(w, requestID, http.MethodDelete)
 		return
 	}
-	principal, ok := h.authenticate(w, r, requestID)
+	identity, ok := h.authenticate(w, r, requestID)
 	if !ok {
 		return
 	}
@@ -558,37 +550,24 @@ func (h *handler) serveHostnameClaim(w http.ResponseWriter, r *http.Request, req
 		writeInternalError(w, requestID, errRouteServiceMissing)
 		return
 	}
-	if err := h.routes.ReleaseHostnameClaim(r.Context(), principal.ID, claimID); err != nil {
+	if err := h.routes.RemoveHostname(r.Context(), identity.ID, hostnameID); err != nil {
 		writeRouteError(w, requestID, err)
 		return
 	}
 	writeNoContent(w)
 }
 
-func (h *handler) serveDomainClaims(w http.ResponseWriter, r *http.Request, requestID string) {
-	if r.Method != http.MethodGet && r.Method != http.MethodPost {
-		writeMethodNotAllowed(w, requestID, http.MethodGet+", "+http.MethodPost)
+func (h *handler) serveDomainVerifications(w http.ResponseWriter, r *http.Request, requestID string) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w, requestID, http.MethodPost)
 		return
 	}
-	principal, ok := h.authenticate(w, r, requestID)
+	identity, ok := h.authenticate(w, r, requestID)
 	if !ok {
 		return
 	}
 	if h.routes == nil {
 		writeInternalError(w, requestID, errRouteServiceMissing)
-		return
-	}
-	if r.Method == http.MethodGet {
-		claims, err := h.listActiveDomainClaims(r.Context(), principal.ID)
-		if err != nil {
-			writeRouteError(w, requestID, err)
-			return
-		}
-		response := make([]serverv1.HostnameClaim, 0, len(claims))
-		for _, claim := range claims {
-			response = append(response, hostnameClaimResponse(claim))
-		}
-		writeModel(w, requestID, http.StatusOK, response)
 		return
 	}
 	requestKey := r.Header.Get(idempotencyKeyHeader)
@@ -596,19 +575,19 @@ func (h *handler) serveDomainClaims(w http.ResponseWriter, r *http.Request, requ
 		writeInvalidRequest(w, requestID)
 		return
 	}
-	var request serverv1.CreateDomainChallengeRequest
+	var request serverv1.CreateDomainVerificationRequest
 	if !decodeRequest(w, r, requestID, &request) {
 		return
 	}
-	challenge, err := h.routes.CreateDomainChallenge(r.Context(), principal.ID, request.Domain, requestKey)
+	challenge, err := h.routes.CreateDomainVerification(r.Context(), identity.ID, request.Domain, requestKey)
 	if err != nil {
 		writeRouteError(w, requestID, err)
 		return
 	}
-	writeModel(w, requestID, http.StatusCreated, domainChallengeResponse(challenge))
+	writeModel(w, requestID, http.StatusCreated, domainVerificationResponse(challenge))
 }
 
-func (h *handler) serveDomainClaim(
+func (h *handler) serveDomainVerification(
 	w http.ResponseWriter,
 	r *http.Request,
 	requestID, id, operation string,
@@ -616,11 +595,11 @@ func (h *handler) serveDomainClaim(
 	wantMethod := r.Method
 	switch operation {
 	case "":
-		if r.Method != http.MethodGet && r.Method != http.MethodDelete {
-			writeMethodNotAllowed(w, requestID, http.MethodGet+", "+http.MethodDelete)
+		if r.Method != http.MethodGet {
+			writeMethodNotAllowed(w, requestID, http.MethodGet)
 			return
 		}
-	case "verify":
+	case "complete":
 		wantMethod = http.MethodPost
 	default:
 		writeNotFound(w, requestID)
@@ -630,12 +609,11 @@ func (h *handler) serveDomainClaim(
 		writeMethodNotAllowed(w, requestID, wantMethod)
 		return
 	}
-	if (wantMethod == http.MethodDelete && !validHostnameClaimID(id)) ||
-		(wantMethod != http.MethodDelete && !validDomainChallengeID(id)) {
+	if !validDomainVerificationID(id) {
 		writeNotFound(w, requestID)
 		return
 	}
-	principal, ok := h.authenticate(w, r, requestID)
+	identity, ok := h.authenticate(w, r, requestID)
 	if !ok {
 		return
 	}
@@ -643,65 +621,21 @@ func (h *handler) serveDomainClaim(
 		writeInternalError(w, requestID, errRouteServiceMissing)
 		return
 	}
-	if wantMethod == http.MethodDelete {
-		claims, err := h.listActiveDomainClaims(r.Context(), principal.ID)
-		if err != nil {
-			writeRouteError(w, requestID, err)
-			return
-		}
-		found := false
-		for _, claim := range claims {
-			if claim.ID == id {
-				found = true
-				break
-			}
-		}
-		if !found {
-			writeRouteError(w, requestID, routes.ErrNotFound)
-			return
-		}
-		if err := h.routes.ReleaseHostnameClaim(r.Context(), principal.ID, id); err != nil {
-			writeRouteError(w, requestID, err)
-			return
-		}
-		writeNoContent(w)
-		return
-	}
 	if operation == "" {
-		challenge, err := h.routes.GetDomainChallenge(r.Context(), principal.ID, id)
+		challenge, err := h.routes.GetDomainVerification(r.Context(), identity.ID, id)
 		if err != nil {
 			writeRouteError(w, requestID, err)
 			return
 		}
-		writeModel(w, requestID, http.StatusOK, domainChallengeResponse(challenge))
+		writeModel(w, requestID, http.StatusOK, domainVerificationResponse(challenge))
 		return
 	}
-	claim, err := h.routes.VerifyDomainChallenge(r.Context(), principal.ID, id)
+	hostname, err := h.routes.CompleteDomainVerification(r.Context(), identity.ID, id)
 	if err != nil {
 		writeRouteError(w, requestID, err)
 		return
 	}
-	writeModel(w, requestID, http.StatusOK, hostnameClaimResponse(claim))
-}
-
-func (h *handler) listActiveDomainClaims(ctx context.Context, principalID string) ([]routes.HostnameClaim, error) {
-	result := make([]routes.HostnameClaim, 0)
-	cursor := ""
-	for {
-		claims, next, err := h.routes.ListHostnameClaimsPage(ctx, principalID, cursor)
-		if err != nil {
-			return nil, err
-		}
-		for _, claim := range claims {
-			if claim.Kind == routes.NameKindPersistentCustom && claim.State == routes.NameStateActive {
-				result = append(result, claim)
-			}
-		}
-		if next == "" {
-			return result, nil
-		}
-		cursor = next
-	}
+	writeModel(w, requestID, http.StatusOK, hostnameResponse(hostname))
 }
 
 func (h *handler) serveCapabilities(w http.ResponseWriter, r *http.Request, requestID string) {
@@ -863,7 +797,7 @@ func (h *handler) serveCredentialRevocation(
 		writeMethodNotAllowed(w, requestID, http.MethodDelete)
 		return
 	}
-	principal, ok := h.authenticate(w, r, requestID)
+	identity, ok := h.authenticate(w, r, requestID)
 	if !ok {
 		return
 	}
@@ -875,7 +809,7 @@ func (h *handler) serveCredentialRevocation(
 		)
 		return
 	}
-	if err := h.auth.Revoke(r.Context(), principal, credentialID); errors.Is(err, auth.ErrCredentialNotFound) {
+	if err := h.auth.Revoke(r.Context(), identity, credentialID); errors.Is(err, auth.ErrCredentialNotFound) {
 		writeNotFound(w, requestID)
 		return
 	} else if err != nil {
@@ -890,7 +824,7 @@ func (h *handler) serveRoutes(w http.ResponseWriter, r *http.Request, requestID 
 		writeMethodNotAllowed(w, requestID, http.MethodGet+", "+http.MethodPost)
 		return
 	}
-	principal, ok := h.authenticate(w, r, requestID)
+	identity, ok := h.authenticate(w, r, requestID)
 	if !ok {
 		return
 	}
@@ -899,7 +833,7 @@ func (h *handler) serveRoutes(w http.ResponseWriter, r *http.Request, requestID 
 		return
 	}
 	if r.Method == http.MethodGet {
-		stored, err := h.routes.List(r.Context(), principal.ID)
+		stored, err := h.routes.List(r.Context(), identity.ID)
 		if err != nil {
 			writeRouteError(w, requestID, err)
 			return
@@ -916,7 +850,7 @@ func (h *handler) serveRoutes(w http.ResponseWriter, r *http.Request, requestID 
 		return
 	}
 	routeToken := credentials.RouteToken(request.RouteToken)
-	if strings.TrimSpace(request.DisplayTarget) == "" || len(request.DisplayTarget) > 256 ||
+	if strings.TrimSpace(request.LocalTarget) == "" || len(request.LocalTarget) > 256 ||
 		len(request.RouteToken) > maxCredentialBytes {
 		writeInvalidRequest(w, requestID)
 		return
@@ -925,12 +859,12 @@ func (h *handler) serveRoutes(w http.ResponseWriter, r *http.Request, requestID 
 		writeInvalidRequest(w, requestID)
 		return
 	}
-	setup, err := h.routes.Create(r.Context(), principal.ID, request.Hostname, request.DisplayTarget, routeToken)
+	setup, err := h.routes.Create(r.Context(), identity.ID, request.Hostname, request.LocalTarget, routeToken)
 	if err != nil {
 		writeRouteError(w, requestID, err)
 		return
 	}
-	writeModel(w, requestID, http.StatusCreated, leaseSetupResponse(setup))
+	writeModel(w, requestID, http.StatusCreated, sessionSetupResponse(setup))
 }
 
 func (h *handler) serveRoute(
@@ -948,17 +882,17 @@ func (h *handler) serveRoute(
 			writeMethodNotAllowed(w, requestID, http.MethodDelete)
 			return
 		}
-		principal, ok := h.authenticate(w, r, requestID)
+		identity, ok := h.authenticate(w, r, requestID)
 		if !ok {
 			return
 		}
-		if err := h.routes.Delete(r.Context(), principal.ID, routeID); err != nil {
+		if err := h.routes.Delete(r.Context(), identity.ID, routeID); err != nil {
 			writeRouteError(w, requestID, err)
 			return
 		}
 		writeNoContent(w)
-	case "leases":
-		h.serveLeaseAcquisition(w, r, requestID, routeID)
+	case "sessions":
+		h.serveSessionAcquisition(w, r, requestID, routeID)
 	case "transport":
 		h.serveTransport(w, r, requestID, routeID)
 	case "heartbeat":
@@ -972,7 +906,7 @@ func (h *handler) serveRoute(
 	}
 }
 
-func (h *handler) serveCertificateOrders(w http.ResponseWriter, r *http.Request, requestID string) {
+func (h *handler) serveCertificateIssuances(w http.ResponseWriter, r *http.Request, requestID string) {
 	if r.Method != http.MethodPost {
 		writeMethodNotAllowed(w, requestID, http.MethodPost)
 		return
@@ -985,41 +919,41 @@ func (h *handler) serveCertificateOrders(w http.ResponseWriter, r *http.Request,
 		writeInternalError(w, requestID, errCertServiceMissing)
 		return
 	}
-	token, ok := leaseBearer(r.Header)
+	token, ok := sessionBearer(r.Header)
 	if !ok {
 		writeUnauthenticated(w, requestID)
 		return
 	}
-	var request serverv1.CreateCertificateOrderRequest
+	var request serverv1.CreateCertificateIssuanceRequest
 	if !decodeRequest(w, r, requestID, &request) {
 		return
 	}
 	csrDER, err := base64.RawURLEncoding.DecodeString(request.Csr)
-	if request.RouteId == "" || request.Generation <= 0 || request.Profile == "" || err != nil ||
+	if request.RouteId == "" || request.Version <= 0 || request.AcmeProfile == "" || err != nil ||
 		base64.RawURLEncoding.EncodeToString(csrDER) != request.Csr {
 		writeInvalidRequest(w, requestID)
 		return
 	}
-	if err := h.routes.AuthorizeLease(
-		r.Context(), request.RouteId, uint64(request.Generation), token,
+	if err := h.routes.AuthorizeSession(
+		r.Context(), request.RouteId, uint64(request.Version), token,
 	); err != nil {
 		writeRouteError(w, requestID, err)
 		return
 	}
-	job, err := h.certificates.Create(
-		r.Context(), request.RouteId, uint64(request.Generation), request.Profile, csrDER,
+	issuance, err := h.certificates.Create(
+		r.Context(), request.RouteId, uint64(request.Version), request.AcmeProfile, csrDER,
 	)
 	if err != nil {
 		writeCertificateError(w, requestID, err)
 		return
 	}
-	writeModel(w, requestID, http.StatusCreated, certificateOrderResponse(job))
+	writeModel(w, requestID, http.StatusCreated, certificateIssuanceResponse(issuance))
 }
 
-func (h *handler) serveCertificateOrder(
+func (h *handler) serveCertificateIssuance(
 	w http.ResponseWriter,
 	r *http.Request,
-	requestID, orderID, operation string,
+	requestID, issuanceID, operation string,
 ) {
 	if h.routes == nil {
 		writeInternalError(w, requestID, errRouteServiceMissing)
@@ -1040,32 +974,32 @@ func (h *handler) serveCertificateOrder(
 		writeMethodNotAllowed(w, requestID, wantMethod)
 		return
 	}
-	token, ok := leaseBearer(r.Header)
+	token, ok := sessionBearer(r.Header)
 	if !ok {
 		writeUnauthenticated(w, requestID)
 		return
 	}
-	job, err := h.certificates.Get(r.Context(), orderID)
+	issuance, err := h.certificates.Get(r.Context(), issuanceID)
 	if err != nil {
 		writeCertificateError(w, requestID, err)
 		return
 	}
-	if err := h.routes.AuthorizeLease(r.Context(), job.RouteID, job.Generation, token); err != nil {
+	if err := h.routes.AuthorizeSession(r.Context(), issuance.RouteID, issuance.Version, token); err != nil {
 		writeRouteError(w, requestID, err)
 		return
 	}
 	switch operation {
 	case "":
-		writeModel(w, requestID, http.StatusOK, certificateOrderResponse(job))
+		writeModel(w, requestID, http.StatusOK, certificateIssuanceResponse(issuance))
 	case "challenge-ready":
-		job, err = h.certificates.ChallengeReady(r.Context(), orderID)
+		issuance, err = h.certificates.ChallengeReady(r.Context(), issuanceID)
 		if err != nil {
 			writeCertificateError(w, requestID, err)
 			return
 		}
-		writeModel(w, requestID, http.StatusOK, certificateOrderResponse(job))
+		writeModel(w, requestID, http.StatusOK, certificateIssuanceResponse(issuance))
 	case "challenge-removed":
-		if _, err := h.certificates.ChallengeRemoved(r.Context(), orderID); err != nil {
+		if _, err := h.certificates.ChallengeRemoved(r.Context(), issuanceID); err != nil {
 			writeCertificateError(w, requestID, err)
 			return
 		}
@@ -1082,7 +1016,7 @@ func (h *handler) serveCertificateInstalled(w http.ResponseWriter, r *http.Reque
 		writeInternalError(w, requestID, errCertServiceMissing)
 		return
 	}
-	token, ok := leaseBearer(r.Header)
+	token, ok := sessionBearer(r.Header)
 	if !ok {
 		writeUnauthenticated(w, requestID)
 		return
@@ -1091,16 +1025,16 @@ func (h *handler) serveCertificateInstalled(w http.ResponseWriter, r *http.Reque
 	if !decodeRequest(w, r, requestID, &request) {
 		return
 	}
-	if request.Generation <= 0 || !validCertificateOrderID(request.OrderId) {
+	if request.Version <= 0 || !validCertificateIssuanceID(request.IssuanceId) {
 		writeInvalidRequest(w, requestID)
 		return
 	}
-	if err := h.routes.AuthorizeLease(r.Context(), routeID, uint64(request.Generation), token); err != nil {
+	if err := h.routes.AuthorizeSession(r.Context(), routeID, uint64(request.Version), token); err != nil {
 		writeRouteError(w, requestID, err)
 		return
 	}
 	if _, err := h.certificates.Installed(
-		r.Context(), request.OrderId, routeID, uint64(request.Generation),
+		r.Context(), request.IssuanceId, routeID, uint64(request.Version),
 	); err != nil {
 		writeCertificateError(w, requestID, err)
 		return
@@ -1108,16 +1042,16 @@ func (h *handler) serveCertificateInstalled(w http.ResponseWriter, r *http.Reque
 	writeNoContent(w)
 }
 
-func (h *handler) serveLeaseAcquisition(w http.ResponseWriter, r *http.Request, requestID, routeID string) {
+func (h *handler) serveSessionAcquisition(w http.ResponseWriter, r *http.Request, requestID, routeID string) {
 	if r.Method != http.MethodPost {
 		writeMethodNotAllowed(w, requestID, http.MethodPost)
 		return
 	}
-	principal, ok := h.authenticate(w, r, requestID)
+	identity, ok := h.authenticate(w, r, requestID)
 	if !ok {
 		return
 	}
-	var request serverv1.AcquireLeaseRequest
+	var request serverv1.CreateRouteSessionRequest
 	if !decodeRequest(w, r, requestID, &request) {
 		return
 	}
@@ -1125,12 +1059,12 @@ func (h *handler) serveLeaseAcquisition(w http.ResponseWriter, r *http.Request, 
 		writeInvalidRequest(w, requestID)
 		return
 	}
-	setup, err := h.routes.Acquire(r.Context(), principal.ID, routeID, credentials.RouteToken(request.RouteToken))
+	setup, err := h.routes.CreateSession(r.Context(), identity.ID, routeID, credentials.RouteToken(request.RouteToken))
 	if err != nil {
 		writeRouteError(w, requestID, err)
 		return
 	}
-	writeModel(w, requestID, http.StatusCreated, leaseSetupResponse(setup))
+	writeModel(w, requestID, http.StatusCreated, sessionSetupResponse(setup))
 }
 
 func (h *handler) serveTransport(w http.ResponseWriter, r *http.Request, requestID, routeID string) {
@@ -1138,7 +1072,7 @@ func (h *handler) serveTransport(w http.ResponseWriter, r *http.Request, request
 		writeMethodNotAllowed(w, requestID, http.MethodPost)
 		return
 	}
-	token, ok := leaseBearer(r.Header)
+	token, ok := sessionBearer(r.Header)
 	if !ok {
 		writeUnauthenticated(w, requestID)
 		return
@@ -1148,15 +1082,15 @@ func (h *handler) serveTransport(w http.ResponseWriter, r *http.Request, request
 		return
 	}
 	var serverKey key.NodePublic
-	if request.Generation <= 0 || request.Endpoint.Version != serverv1.TailcatDescriptorVersionN1 ||
-		serverKey.UnmarshalText([]byte(request.Endpoint.ServerPublicKey)) != nil || serverKey.IsZero() ||
-		request.Endpoint.RelayProfile != h.capabilities.Transport.RelayProfile {
+	if request.Version <= 0 || request.Endpoint.Version != serverv1.TailcatDescriptorVersionN1 ||
+		serverKey.UnmarshalText([]byte(request.Endpoint.PublisherPublicKey)) != nil || serverKey.IsZero() ||
+		request.Endpoint.RelayRegion != h.capabilities.Transport.RelayRegion {
 		writeInvalidRequest(w, requestID)
 		return
 	}
 	err := h.routes.RegisterTransport(
-		r.Context(), routeID, uint64(request.Generation), token,
-		request.Endpoint.ServerPublicKey, request.Endpoint.RelayProfile,
+		r.Context(), routeID, uint64(request.Version), token,
+		request.Endpoint.PublisherPublicKey, request.Endpoint.RelayRegion,
 	)
 	if err != nil {
 		writeRouteError(w, requestID, err)
@@ -1170,20 +1104,20 @@ func (h *handler) serveHeartbeat(w http.ResponseWriter, r *http.Request, request
 		writeMethodNotAllowed(w, requestID, http.MethodPost)
 		return
 	}
-	token, ok := leaseBearer(r.Header)
+	token, ok := sessionBearer(r.Header)
 	if !ok {
 		writeUnauthenticated(w, requestID)
 		return
 	}
-	var request serverv1.LeaseGenerationRequest
+	var request serverv1.RouteVersionRequest
 	if !decodeRequest(w, r, requestID, &request) {
 		return
 	}
-	if request.Generation <= 0 {
+	if request.Version <= 0 {
 		writeInvalidRequest(w, requestID)
 		return
 	}
-	expiresAt, err := h.routes.Heartbeat(r.Context(), routeID, uint64(request.Generation), token)
+	expiresAt, err := h.routes.Heartbeat(r.Context(), routeID, uint64(request.Version), token)
 	if err != nil {
 		writeRouteError(w, requestID, err)
 		return
@@ -1196,20 +1130,20 @@ func (h *handler) serveReady(w http.ResponseWriter, r *http.Request, requestID, 
 		writeMethodNotAllowed(w, requestID, http.MethodPost)
 		return
 	}
-	token, ok := leaseBearer(r.Header)
+	token, ok := sessionBearer(r.Header)
 	if !ok {
 		writeUnauthenticated(w, requestID)
 		return
 	}
-	var request serverv1.LeaseGenerationRequest
+	var request serverv1.RouteVersionRequest
 	if !decodeRequest(w, r, requestID, &request) {
 		return
 	}
-	if request.Generation <= 0 {
+	if request.Version <= 0 {
 		writeInvalidRequest(w, requestID)
 		return
 	}
-	if err := h.routes.Ready(r.Context(), routeID, uint64(request.Generation), token); err != nil {
+	if err := h.routes.Ready(r.Context(), routeID, uint64(request.Version), token); err != nil {
 		writeRouteError(w, requestID, err)
 		return
 	}
@@ -1224,31 +1158,31 @@ func bearerToken(header http.Header) (credentials.AccessToken, bool) {
 	return credentials.AccessToken(token), true
 }
 
-func leaseBearer(header http.Header) (credentials.LeaseToken, bool) {
+func sessionBearer(header http.Header) (credentials.SessionToken, bool) {
 	token, err := credentials.Bearer(header)
-	return credentials.LeaseToken(token), err == nil && len(token) <= maxCredentialBytes
+	return credentials.SessionToken(token), err == nil && len(token) <= maxCredentialBytes
 }
 
-func (h *handler) authenticate(w http.ResponseWriter, r *http.Request, requestID string) (state.Principal, bool) {
+func (h *handler) authenticate(w http.ResponseWriter, r *http.Request, requestID string) (state.Identity, bool) {
 	if h.auth == nil {
 		writeInternalError(w, requestID, errAuthServiceMissing)
-		return state.Principal{}, false
+		return state.Identity{}, false
 	}
 	token, ok := bearerToken(r.Header)
 	if !ok {
 		writeUnauthenticated(w, requestID)
-		return state.Principal{}, false
+		return state.Identity{}, false
 	}
-	principal, err := h.auth.Authenticate(r.Context(), token)
+	identity, err := h.auth.Authenticate(r.Context(), token)
 	if errors.Is(err, auth.ErrUnauthenticated) {
 		writeUnauthenticated(w, requestID)
-		return state.Principal{}, false
+		return state.Identity{}, false
 	}
 	if err != nil {
 		writeInternalError(w, requestID, err)
-		return state.Principal{}, false
+		return state.Identity{}, false
 	}
-	return principal, true
+	return identity, true
 }
 
 func routePath(path string) (routeID, operation string, ok bool) {
@@ -1266,13 +1200,13 @@ func routePath(path string) (routeID, operation string, ok bool) {
 	return parts[0], operation, true
 }
 
-func certificateOrderPath(path string) (orderID, operation string, ok bool) {
-	remainder, ok := strings.CutPrefix(path, certificateOrderPrefix)
+func certificateIssuancePath(path string) (issuanceID, operation string, ok bool) {
+	remainder, ok := strings.CutPrefix(path, certificateIssuancePrefix)
 	if !ok || remainder == "" {
 		return "", "", false
 	}
 	parts := strings.Split(remainder, "/")
-	if len(parts) > 2 || !validCertificateOrderID(parts[0]) || len(parts) == 2 && parts[1] == "" {
+	if len(parts) > 2 || !validCertificateIssuanceID(parts[0]) || len(parts) == 2 && parts[1] == "" {
 		return "", "", false
 	}
 	if len(parts) == 2 {
@@ -1281,8 +1215,8 @@ func certificateOrderPath(path string) (orderID, operation string, ok bool) {
 	return parts[0], operation, true
 }
 
-func domainClaimPath(path string) (id, operation string, ok bool) {
-	remainder, ok := strings.CutPrefix(path, domainClaimPrefix)
+func domainVerificationPath(path string) (id, operation string, ok bool) {
+	remainder, ok := strings.CutPrefix(path, domainVerificationPrefix)
 	if !ok || remainder == "" {
 		return "", "", false
 	}
@@ -1296,8 +1230,8 @@ func domainClaimPath(path string) (id, operation string, ok bool) {
 	return parts[0], operation, true
 }
 
-func validDomainChallengeID(value string) bool {
-	const prefix = "domain_"
+func validDomainVerificationID(value string) bool {
+	const prefix = "verification_"
 	if len(value) != len(prefix)+32 || !strings.HasPrefix(value, prefix) {
 		return false
 	}
@@ -1305,8 +1239,8 @@ func validDomainChallengeID(value string) bool {
 	return err == nil
 }
 
-func validCertificateOrderID(value string) bool {
-	const prefix = "cert_"
+func validCertificateIssuanceID(value string) bool {
+	const prefix = "issuance_"
 	if len(value) != len(prefix)+32 || !strings.HasPrefix(value, prefix) {
 		return false
 	}
@@ -1314,8 +1248,8 @@ func validCertificateOrderID(value string) bool {
 	return err == nil
 }
 
-func validHostnameClaimID(value string) bool {
-	const prefix = "claim_"
+func validHostnameID(value string) bool {
+	const prefix = "hostname_"
 	if len(value) != len(prefix)+32 || !strings.HasPrefix(value, prefix) {
 		return false
 	}
@@ -1341,89 +1275,89 @@ func decodeRequest(w http.ResponseWriter, r *http.Request, requestID string, val
 
 func routeResponse(route routes.Route) serverv1.Route {
 	return serverv1.Route{
-		Id: route.ID, Hostname: route.Hostname, DisplayTarget: route.DisplayTarget,
-		State: serverv1.RouteState(route.State), Generation: int(route.Generation), CreatedAt: route.CreatedAt,
+		Id: route.ID, Hostname: route.Hostname, LocalTarget: route.LocalTarget,
+		Status: serverv1.RouteStatus(route.Status), Version: int(route.Version), CreatedAt: route.CreatedAt,
 	}
 }
 
-func hostnameClaimResponse(claim routes.HostnameClaim) serverv1.HostnameClaim {
-	result := serverv1.HostnameClaim{
-		Id: claim.ID, Hostname: claim.Hostname, Kind: serverv1.HostnameClaimKind(claim.Kind),
-		State: serverv1.HostnameClaimState(claim.State), Source: serverv1.HostnameClaimSource(claim.Source),
-		CreatedAt: claim.CreatedAt,
+func hostnameResponse(hostname routes.Hostname) serverv1.Hostname {
+	result := serverv1.Hostname{
+		Id: hostname.ID, Hostname: hostname.Hostname, Kind: serverv1.HostnameKind(hostname.Kind),
+		Status: serverv1.HostnameStatus(hostname.Status), Source: serverv1.HostnameSource(hostname.Source),
+		CreatedAt: hostname.CreatedAt,
 	}
-	if !claim.ActivatedAt.IsZero() {
-		result.ActivatedAt = &claim.ActivatedAt
+	if !hostname.ActivatedAt.IsZero() {
+		result.ActivatedAt = &hostname.ActivatedAt
 	}
-	if !claim.ReleasedAt.IsZero() {
-		result.ReleasedAt = &claim.ReleasedAt
+	if !hostname.DeactivatedAt.IsZero() {
+		result.DeactivatedAt = &hostname.DeactivatedAt
 	}
 	return result
 }
 
-func domainChallengeResponse(challenge routes.DomainChallenge) serverv1.DomainChallenge {
-	result := serverv1.DomainChallenge{
-		Id: challenge.ID, Domain: challenge.Domain, VerificationTarget: challenge.VerificationTarget,
-		Apex: challenge.Apex, State: serverv1.DomainChallengeState(challenge.State),
-		Records: make([]serverv1.DNSRecord, 0, len(challenge.Records)), CreatedAt: challenge.CreatedAt,
+func domainVerificationResponse(verification routes.DomainVerification) serverv1.DomainVerification {
+	result := serverv1.DomainVerification{
+		Id: verification.ID, Domain: verification.Domain, VerificationTarget: verification.VerificationTarget,
+		Apex: verification.Apex, Status: serverv1.DomainVerificationStatus(verification.Status),
+		Records: make([]serverv1.DNSRecord, 0, len(verification.Records)), CreatedAt: verification.CreatedAt,
 	}
-	for _, record := range challenge.Records {
+	for _, record := range verification.Records {
 		result.Records = append(result.Records, serverv1.DNSRecord{
 			Name: record.Name, Type: serverv1.DNSRecordType(record.Type), Value: record.Value,
 		})
 	}
-	if challenge.ClaimID != "" {
-		result.ClaimId = &challenge.ClaimID
+	if verification.HostnameID != "" {
+		result.HostnameId = &verification.HostnameID
 	}
-	if !challenge.VerifiedAt.IsZero() {
-		result.VerifiedAt = &challenge.VerifiedAt
+	if !verification.VerifiedAt.IsZero() {
+		result.VerifiedAt = &verification.VerifiedAt
 	}
-	if !challenge.InvalidatedAt.IsZero() {
-		result.InvalidatedAt = &challenge.InvalidatedAt
+	if !verification.InvalidatedAt.IsZero() {
+		result.InvalidatedAt = &verification.InvalidatedAt
 	}
 	return result
 }
 
-func leaseSetupResponse(setup routes.LeaseSetup) serverv1.LeaseSetup {
-	return serverv1.LeaseSetup{
+func sessionSetupResponse(setup routes.SessionSetup) serverv1.SessionSetup {
+	return serverv1.SessionSetup{
 		Route: routeResponse(setup.Route),
-		Lease: serverv1.RouteLease{
-			Id: setup.Lease.ID, RouteId: setup.Lease.RouteID, Generation: int(setup.Lease.Generation),
-			Status: serverv1.RouteLeaseStatus(setup.Lease.Status), CreatedAt: setup.Lease.CreatedAt, ExpiresAt: setup.Lease.ExpiresAt,
+		Session: serverv1.RouteSession{
+			Id: setup.Session.ID, RouteId: setup.Session.RouteID, Version: int(setup.Session.Version),
+			Status: serverv1.RouteSessionStatus(setup.Session.Status), CreatedAt: setup.Session.CreatedAt, ExpiresAt: setup.Session.ExpiresAt,
 		},
-		LeaseToken: setup.LeaseToken.String(), IngressPublicKey: setup.IngressPublicKey,
+		SessionToken: setup.SessionToken.String(), WorkerPublicKey: setup.WorkerPublicKey,
 	}
 }
 
-func certificateOrderResponse(job certificates.Job) serverv1.CertificateOrder {
-	response := serverv1.CertificateOrder{
-		Id: job.ID, RouteId: job.RouteID, Generation: int(job.Generation), Hostname: job.Hostname,
-		Profile: job.Profile, State: serverv1.CertificateOrderState(job.State), CreatedAt: job.CreatedAt, UpdatedAt: job.UpdatedAt,
+func certificateIssuanceResponse(issuance certificates.Issuance) serverv1.CertificateIssuance {
+	response := serverv1.CertificateIssuance{
+		Id: issuance.ID, RouteId: issuance.RouteID, Version: int(issuance.Version), Hostname: issuance.Hostname,
+		AcmeProfile: issuance.ACMEProfile, Status: serverv1.CertificateIssuanceStatus(issuance.Status), CreatedAt: issuance.CreatedAt, UpdatedAt: issuance.UpdatedAt,
 	}
-	if challenge := job.Challenge(); challenge != nil {
+	if challenge := issuance.Challenge(); challenge != nil {
 		response.Challenge = &serverv1.CertificateChallenge{
 			Id: challenge.ID, Hostname: challenge.Hostname,
 			Digest: base64.RawURLEncoding.EncodeToString(challenge.Digest[:]), ExpiresAt: challenge.ExpiresAt,
 		}
 	}
-	if len(job.CertificatePEM) != 0 {
-		value := string(job.CertificatePEM)
+	if len(issuance.CertificatePEM) != 0 {
+		value := string(issuance.CertificatePEM)
 		response.CertificatePem = &value
 	}
-	if !job.NotBefore.IsZero() {
-		response.NotBefore = &job.NotBefore
+	if !issuance.NotBefore.IsZero() {
+		response.NotBefore = &issuance.NotBefore
 	}
-	if !job.NotAfter.IsZero() {
-		response.NotAfter = &job.NotAfter
+	if !issuance.NotAfter.IsZero() {
+		response.NotAfter = &issuance.NotAfter
 	}
-	if !job.RenewAt.IsZero() {
-		response.RenewAt = &job.RenewAt
+	if !issuance.RenewAt.IsZero() {
+		response.RenewAt = &issuance.RenewAt
 	}
-	if !job.RetryAt.IsZero() {
-		response.RetryAt = &job.RetryAt
+	if !issuance.RetryAt.IsZero() {
+		response.RetryAt = &issuance.RetryAt
 	}
-	if job.LastError != "" {
-		response.Error = &job.LastError
+	if issuance.LastError != "" {
+		response.Error = &issuance.LastError
 	}
 	return response
 }
@@ -1445,8 +1379,8 @@ func writeRouteError(w http.ResponseWriter, requestID string, err error) {
 		writeNotFound(w, requestID)
 	case errors.Is(err, routes.ErrNameUnavailable):
 		writeProblem(w, requestID, http.StatusConflict, serverv1.NameUnavailable, "Name unavailable", "name-unavailable")
-	case errors.Is(err, routes.ErrRouteExists), errors.Is(err, routes.ErrStaleLease), errors.Is(err, routes.ErrInvalidState):
-		writeProblem(w, requestID, http.StatusConflict, serverv1.StateConflict, "State conflict", "state-conflict")
+	case errors.Is(err, routes.ErrRouteExists), errors.Is(err, routes.ErrStaleSession), errors.Is(err, routes.ErrInvalidStatus):
+		writeProblem(w, requestID, http.StatusConflict, serverv1.StatusConflict, "Status conflict", "status-conflict")
 	case errors.Is(err, routes.ErrNoWorkerCapacity), errors.Is(err, routes.ErrUnavailable):
 		writeProblem(w, requestID, http.StatusServiceUnavailable, serverv1.TemporarilyUnavailable, "Temporarily unavailable", "temporarily-unavailable")
 	case errors.Is(err, routes.ErrDNSProofPending):
@@ -1470,7 +1404,7 @@ func writeCertificateError(w http.ResponseWriter, requestID string, err error) {
 		writeInvalidRequest(w, requestID)
 	case errors.Is(err, certificates.ErrNotFound):
 		writeNotFound(w, requestID)
-	case errors.Is(err, certificates.ErrInvalidState):
+	case errors.Is(err, certificates.ErrInvalidStatus):
 		writeProblem(w, requestID, http.StatusPreconditionFailed, serverv1.PreconditionFailed, "Precondition failed", "precondition-failed")
 	case errors.Is(err, certificates.ErrRateLimited):
 		var limit *certificates.RateLimitError

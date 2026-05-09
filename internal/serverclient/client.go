@@ -29,13 +29,13 @@ const (
 )
 
 var (
-	ErrUnauthenticated  = errors.New("serverclient: unauthenticated")
-	ErrNotFound         = errors.New("serverclient: not found")
-	ErrStateConflict    = errors.New("serverclient: state conflict")
-	ErrCertificateState = errors.New("serverclient: certificate precondition failed")
-	ErrDNSProofPending  = errors.New("serverclient: DNS proof pending")
-	ErrRateLimited      = errors.New("serverclient: rate limited")
-	ErrUnavailable      = errors.New("serverclient: temporarily unavailable")
+	ErrUnauthenticated   = errors.New("serverclient: unauthenticated")
+	ErrNotFound          = errors.New("serverclient: not found")
+	ErrStatusConflict    = errors.New("serverclient: status conflict")
+	ErrCertificateStatus = errors.New("serverclient: certificate precondition failed")
+	ErrDNSProofPending   = errors.New("serverclient: DNS proof pending")
+	ErrRateLimited       = errors.New("serverclient: rate limited")
+	ErrUnavailable       = errors.New("serverclient: temporarily unavailable")
 )
 
 type Client struct {
@@ -89,151 +89,127 @@ func (c *Client) RevokeAccessCredential(ctx context.Context, credentialID string
 	return err
 }
 
-func (c *Client) CreateRoute(ctx context.Context, requestBody serverv1.CreateRouteRequest) (serverv1.LeaseSetup, error) {
-	return request[serverv1.LeaseSetup](ctx, c, http.MethodPost, "/v1/routes", c.access.String(), requestBody)
+func (c *Client) CreateRoute(ctx context.Context, requestBody serverv1.CreateRouteRequest) (serverv1.SessionSetup, error) {
+	return request[serverv1.SessionSetup](ctx, c, http.MethodPost, "/v1/routes", c.access.String(), requestBody)
 }
 
 func (c *Client) ListRoutes(ctx context.Context) ([]serverv1.Route, error) {
 	return request[[]serverv1.Route](ctx, c, http.MethodGet, "/v1/routes", c.access.String(), nil)
 }
 
-func (c *Client) ClaimName(ctx context.Context, kind serverv1.CreateHostnameClaimRequestKind, name, requestKey string) (serverv1.HostnameClaim, error) {
-	requestBody := serverv1.CreateHostnameClaimRequest{Kind: kind}
+func (c *Client) AddHostname(ctx context.Context, kind serverv1.AddHostnameRequestKind, name, requestKey string) (serverv1.Hostname, error) {
+	requestBody := serverv1.AddHostnameRequest{Kind: kind}
 	if name != "" {
 		requestBody.Name = &name
 	}
 	headers := make(http.Header)
 	headers.Set("Idempotency-Key", requestKey)
-	return requestWithTimeout[serverv1.HostnameClaim](
-		ctx, c, c.timeout, http.MethodPost, "/v1/hostname-claims", c.access.String(), requestBody, headers,
+	return requestWithTimeout[serverv1.Hostname](
+		ctx, c, c.timeout, http.MethodPost, "/v1/hostnames", c.access.String(), requestBody, headers,
 	)
 }
 
-func (c *Client) ListHostnameClaims(ctx context.Context) ([]serverv1.HostnameClaim, error) {
-	var claims []serverv1.HostnameClaim
+func (c *Client) ListHostnames(ctx context.Context) ([]serverv1.Hostname, error) {
+	var hostnames []serverv1.Hostname
 	cursor := ""
 	for {
-		page, next, err := c.ListHostnameClaimsPage(ctx, cursor)
+		page, next, err := c.ListHostnamesPage(ctx, cursor)
 		if err != nil {
 			return nil, err
 		}
-		claims = append(claims, page...)
+		hostnames = append(hostnames, page...)
 		if next == "" {
-			return claims, nil
+			return hostnames, nil
 		}
 		cursor = next
 	}
 }
 
-func (c *Client) ListHostnameClaimsPage(
+func (c *Client) ListHostnamesPage(
 	ctx context.Context,
 	cursor string,
-) ([]serverv1.HostnameClaim, string, error) {
+) ([]serverv1.Hostname, string, error) {
 	query := make(url.Values)
 	if cursor != "" {
 		query.Set("cursor", cursor)
 	}
-	page, err := requestWithTimeoutAndQuery[serverv1.HostnameClaimPage](
-		ctx, c, c.timeout, http.MethodGet, "/v1/hostname-claims", c.access.String(), nil, query,
+	page, err := requestWithTimeoutAndQuery[serverv1.HostnamePage](
+		ctx, c, c.timeout, http.MethodGet, "/v1/hostnames", c.access.String(), nil, query,
 	)
 	if err != nil {
 		return nil, "", err
 	}
-	if len(page.Claims) > 100 {
-		return nil, "", errors.New("serverclient: oversized hostname claim page")
+	if len(page.Hostnames) > 100 {
+		return nil, "", errors.New("serverclient: oversized hostname page")
 	}
 	// Strict ordering prevents duplicates and non-advancing pagination.
 	previous := cursor
-	for _, claim := range page.Claims {
-		if !validHostnameClaimID(claim.Id) || claim.Id <= previous {
-			return nil, "", errors.New("serverclient: invalid hostname claim page")
+	for _, hostname := range page.Hostnames {
+		if !validHostnameID(hostname.Id) || hostname.Id <= previous {
+			return nil, "", errors.New("serverclient: invalid hostname page")
 		}
-		previous = claim.Id
+		previous = hostname.Id
 	}
 	next := ""
 	if page.NextCursor != nil {
 		next = *page.NextCursor
-		if len(page.Claims) == 0 || next <= cursor || page.Claims[len(page.Claims)-1].Id != next {
-			return nil, "", errors.New("serverclient: invalid hostname claim cursor")
+		if len(page.Hostnames) == 0 || next <= cursor || page.Hostnames[len(page.Hostnames)-1].Id != next {
+			return nil, "", errors.New("serverclient: invalid hostname cursor")
 		}
 	}
-	return page.Claims, next, nil
+	return page.Hostnames, next, nil
 }
 
-func (c *Client) ReleaseHostnameClaim(ctx context.Context, claimID string) error {
-	_, err := request[struct{}](ctx, c, http.MethodDelete, hostnameClaimPath(claimID), c.access.String(), nil)
+func (c *Client) RemoveHostname(ctx context.Context, hostnameID string) error {
+	_, err := request[struct{}](ctx, c, http.MethodDelete, hostnamePath(hostnameID), c.access.String(), nil)
 	return err
 }
 
-func (c *Client) CreateDomainChallenge(
+func (c *Client) CreateDomainVerification(
 	ctx context.Context,
 	domain, requestKey string,
-) (serverv1.DomainChallenge, error) {
+) (serverv1.DomainVerification, error) {
 	headers := make(http.Header)
 	headers.Set("Idempotency-Key", requestKey)
-	return requestWithTimeout[serverv1.DomainChallenge](
-		ctx, c, c.timeout, http.MethodPost, "/v1/domain-claims", c.access.String(),
-		serverv1.CreateDomainChallengeRequest{Domain: domain}, headers,
+	return requestWithTimeout[serverv1.DomainVerification](
+		ctx, c, c.timeout, http.MethodPost, "/v1/domain-verifications", c.access.String(),
+		serverv1.CreateDomainVerificationRequest{Domain: domain}, headers,
 	)
 }
 
-func (c *Client) DomainChallenge(ctx context.Context, challengeID string) (serverv1.DomainChallenge, error) {
-	return request[serverv1.DomainChallenge](
-		ctx, c, http.MethodGet, domainClaimPath(challengeID, ""), c.access.String(), nil,
+func (c *Client) DomainVerification(ctx context.Context, verificationID string) (serverv1.DomainVerification, error) {
+	return request[serverv1.DomainVerification](
+		ctx, c, http.MethodGet, domainVerificationPath(verificationID, ""), c.access.String(), nil,
 	)
 }
 
-func (c *Client) VerifyDomainChallenge(ctx context.Context, challengeID string) (serverv1.HostnameClaim, error) {
-	return request[serverv1.HostnameClaim](
-		ctx, c, http.MethodPost, domainClaimPath(challengeID, "verify"), c.access.String(), nil,
+func (c *Client) CompleteDomainVerification(ctx context.Context, verificationID string) (serverv1.Hostname, error) {
+	return request[serverv1.Hostname](
+		ctx, c, http.MethodPost, domainVerificationPath(verificationID, "complete"), c.access.String(), nil,
 	)
 }
 
-func (c *Client) ListDomainClaims(ctx context.Context) ([]serverv1.HostnameClaim, error) {
-	claims, err := requestWithTimeout[[]serverv1.HostnameClaim](
-		ctx, c, c.timeout, http.MethodGet, "/v1/domain-claims", c.access.String(), nil, nil,
-	)
-	if err != nil {
-		return nil, err
-	}
-	if len(claims) > 128 {
-		return nil, errors.New("serverclient: oversized domain claim list")
-	}
-	for _, claim := range claims {
-		if !validHostnameClaimID(claim.Id) || claim.Kind != serverv1.HostnameClaimKindPersistentCustomDomain ||
-			claim.State != serverv1.HostnameClaimStateActive {
-			return nil, errors.New("serverclient: invalid domain claim list")
-		}
-	}
-	return claims, nil
-}
-
-func (c *Client) ReleaseDomainClaim(ctx context.Context, claimID string) error {
-	_, err := request[struct{}](ctx, c, http.MethodDelete, domainClaimPath(claimID, ""), c.access.String(), nil)
-	return err
-}
-
-func (c *Client) AcquireLease(
+func (c *Client) CreateRouteSession(
 	ctx context.Context,
 	routeID string,
 	routeToken credentials.RouteToken,
-) (serverv1.LeaseSetup, error) {
-	return request[serverv1.LeaseSetup](ctx, c, http.MethodPost, routePath(routeID, "leases"), c.access.String(), serverv1.AcquireLeaseRequest{RouteToken: routeToken.String()})
+) (serverv1.SessionSetup, error) {
+	return request[serverv1.SessionSetup](ctx, c, http.MethodPost, routePath(routeID, "sessions"), c.access.String(), serverv1.CreateRouteSessionRequest{RouteToken: routeToken.String()})
 }
 
 func (c *Client) RegisterTransport(
 	ctx context.Context,
 	routeID string,
-	generation uint64,
-	leaseToken credentials.LeaseToken,
+	version uint64,
+	sessionToken credentials.SessionToken,
 	endpoint transportv1.TailcatDescriptor,
 ) error {
-	_, err := request[struct{}](ctx, c, http.MethodPost, routePath(routeID, "transport"), leaseToken.String(), serverv1.RegisterTransportRequest{
-		Generation: int(generation),
+	_, err := request[struct{}](ctx, c, http.MethodPost, routePath(routeID, "transport"), sessionToken.String(), serverv1.RegisterTransportRequest{
+		Version: int(version),
 		Endpoint: serverv1.TailcatDescriptor{
-			Version:         serverv1.TailcatDescriptorVersion(endpoint.Version),
-			ServerPublicKey: endpoint.ServerPublicKey,
-			RelayProfile:    endpoint.RelayProfile,
+			Version:            serverv1.TailcatDescriptorVersion(endpoint.Version),
+			PublisherPublicKey: endpoint.PublisherPublicKey,
+			RelayRegion:        endpoint.RelayRegion,
 		},
 	})
 	return err
@@ -242,20 +218,20 @@ func (c *Client) RegisterTransport(
 func (c *Client) Ready(
 	ctx context.Context,
 	routeID string,
-	generation uint64,
-	leaseToken credentials.LeaseToken,
+	version uint64,
+	sessionToken credentials.SessionToken,
 ) error {
-	_, err := request[struct{}](ctx, c, http.MethodPost, routePath(routeID, "ready"), leaseToken.String(), serverv1.LeaseGenerationRequest{Generation: int(generation)})
+	_, err := request[struct{}](ctx, c, http.MethodPost, routePath(routeID, "ready"), sessionToken.String(), serverv1.RouteVersionRequest{Version: int(version)})
 	return err
 }
 
 func (c *Client) Heartbeat(
 	ctx context.Context,
 	routeID string,
-	generation uint64,
-	leaseToken credentials.LeaseToken,
+	version uint64,
+	sessionToken credentials.SessionToken,
 ) (serverv1.HeartbeatResponse, error) {
-	return request[serverv1.HeartbeatResponse](ctx, c, http.MethodPost, routePath(routeID, "heartbeat"), leaseToken.String(), serverv1.LeaseGenerationRequest{Generation: int(generation)})
+	return request[serverv1.HeartbeatResponse](ctx, c, http.MethodPost, routePath(routeID, "heartbeat"), sessionToken.String(), serverv1.RouteVersionRequest{Version: int(version)})
 }
 
 func (c *Client) DeleteRoute(ctx context.Context, routeID string) error {
@@ -263,57 +239,57 @@ func (c *Client) DeleteRoute(ctx context.Context, routeID string) error {
 	return err
 }
 
-func (c *Client) CreateCertificateOrder(
+func (c *Client) CreateCertificateIssuance(
 	ctx context.Context,
 	routeID string,
-	generation uint64,
-	leaseToken credentials.LeaseToken,
+	version uint64,
+	sessionToken credentials.SessionToken,
 	profile string,
 	csrDER []byte,
-) (serverv1.CertificateOrder, error) {
-	return request[serverv1.CertificateOrder](ctx, c, http.MethodPost, "/v1/certs/orders", leaseToken.String(), serverv1.CreateCertificateOrderRequest{
-		RouteId: routeID, Generation: int(generation), Profile: profile,
+) (serverv1.CertificateIssuance, error) {
+	return request[serverv1.CertificateIssuance](ctx, c, http.MethodPost, "/v1/certificate-issuances", sessionToken.String(), serverv1.CreateCertificateIssuanceRequest{
+		RouteId: routeID, Version: int(version), AcmeProfile: profile,
 		Csr: base64.RawURLEncoding.EncodeToString(csrDER),
 	})
 }
 
-func (c *Client) CertificateOrder(
+func (c *Client) CertificateIssuance(
 	ctx context.Context,
-	orderID string,
-	leaseToken credentials.LeaseToken,
-) (serverv1.CertificateOrder, error) {
-	return request[serverv1.CertificateOrder](ctx, c, http.MethodGet, certificateOrderPath(orderID, ""), leaseToken.String(), nil)
+	issuanceID string,
+	sessionToken credentials.SessionToken,
+) (serverv1.CertificateIssuance, error) {
+	return request[serverv1.CertificateIssuance](ctx, c, http.MethodGet, certificateIssuancePath(issuanceID, ""), sessionToken.String(), nil)
 }
 
 func (c *Client) CertificateChallengeReady(
 	ctx context.Context,
-	orderID string,
-	leaseToken credentials.LeaseToken,
-) (serverv1.CertificateOrder, error) {
-	return requestWithTimeout[serverv1.CertificateOrder](
+	issuanceID string,
+	sessionToken credentials.SessionToken,
+) (serverv1.CertificateIssuance, error) {
+	return requestWithTimeout[serverv1.CertificateIssuance](
 		ctx, c, challengeRequestTimeout, http.MethodPost,
-		certificateOrderPath(orderID, "challenge-ready"), leaseToken.String(), nil,
+		certificateIssuancePath(issuanceID, "challenge-ready"), sessionToken.String(), nil,
 	)
 }
 
 func (c *Client) CertificateChallengeRemoved(
 	ctx context.Context,
-	orderID string,
-	leaseToken credentials.LeaseToken,
+	issuanceID string,
+	sessionToken credentials.SessionToken,
 ) error {
-	_, err := request[struct{}](ctx, c, http.MethodPost, certificateOrderPath(orderID, "challenge-removed"), leaseToken.String(), nil)
+	_, err := request[struct{}](ctx, c, http.MethodPost, certificateIssuancePath(issuanceID, "challenge-removed"), sessionToken.String(), nil)
 	return err
 }
 
 func (c *Client) CertificateInstalled(
 	ctx context.Context,
 	routeID string,
-	generation uint64,
-	orderID string,
-	leaseToken credentials.LeaseToken,
+	version uint64,
+	issuanceID string,
+	sessionToken credentials.SessionToken,
 ) error {
-	_, err := request[struct{}](ctx, c, http.MethodPost, routePath(routeID, "certificate-installed"), leaseToken.String(), serverv1.CertificateInstalledRequest{
-		Generation: int(generation), OrderId: orderID,
+	_, err := request[struct{}](ctx, c, http.MethodPost, routePath(routeID, "certificate-installed"), sessionToken.String(), serverv1.CertificateInstalledRequest{
+		Version: int(version), IssuanceId: issuanceID,
 	})
 	return err
 }
@@ -418,13 +394,13 @@ func responseError(status int, header http.Header, payload []byte) error {
 		return ErrUnauthenticated
 	case serverv1.NotFound:
 		return ErrNotFound
-	case serverv1.StateConflict:
-		return ErrStateConflict
+	case serverv1.StatusConflict:
+		return ErrStatusConflict
 	case serverv1.PreconditionFailed:
 		if strings.HasSuffix(problem.Type, "/dns-proof-pending") {
 			return ErrDNSProofPending
 		}
-		return ErrCertificateState
+		return ErrCertificateStatus
 	case serverv1.RateLimited:
 		seconds, err := strconv.ParseInt(header.Get("Retry-After"), 10, 64)
 		if err != nil || seconds < 1 {
@@ -461,23 +437,23 @@ func routePath(routeID, operation string) string {
 	return path
 }
 
-func hostnameClaimPath(claimID string) string {
-	return "/v1/hostname-claims/" + url.PathEscape(claimID)
+func hostnamePath(hostnameID string) string {
+	return "/v1/hostnames/" + url.PathEscape(hostnameID)
 }
 
-func domainClaimPath(challengeID, operation string) string {
-	path := "/v1/domain-claims/" + url.PathEscape(challengeID)
+func domainVerificationPath(verificationID, operation string) string {
+	path := "/v1/domain-verifications/" + url.PathEscape(verificationID)
 	if operation != "" {
 		path += "/" + operation
 	}
 	return path
 }
 
-func validHostnameClaimID(value string) bool {
-	if len(value) != len("claim_")+32 || !strings.HasPrefix(value, "claim_") {
+func validHostnameID(value string) bool {
+	if len(value) != len("hostname_")+32 || !strings.HasPrefix(value, "hostname_") {
 		return false
 	}
-	for _, char := range value[len("claim_"):] {
+	for _, char := range value[len("hostname_"):] {
 		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
 			return false
 		}
@@ -485,8 +461,8 @@ func validHostnameClaimID(value string) bool {
 	return true
 }
 
-func certificateOrderPath(orderID, operation string) string {
-	path := "/v1/certs/orders/" + url.PathEscape(orderID)
+func certificateIssuancePath(issuanceID, operation string) string {
+	path := "/v1/certificate-issuances/" + url.PathEscape(issuanceID)
 	if strings.TrimSpace(operation) != "" {
 		path += "/" + operation
 	}

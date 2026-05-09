@@ -12,9 +12,9 @@ import (
 	"github.com/tnldotdev/tnl/internal/serverclient"
 )
 
-func TestPublicOutputNDJSONLifecycle(t *testing.T) {
+func TestPublishOutputNDJSONLifecycle(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	output, err := newPublicOutput("ndjson", &stdout, &stderr)
+	output, err := newPublishOutput("ndjson", &stdout, &stderr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +39,7 @@ func TestPublicOutputNDJSONLifecycle(t *testing.T) {
 	decoder := json.NewDecoder(&stdout)
 	wantTypes := []string{"starting", "ready", "ready", "error", "stopped"}
 	for index, wantType := range wantTypes {
-		var event publicEvent
+		var event publishEvent
 		if err := decoder.Decode(&event); err != nil {
 			t.Fatal(err)
 		}
@@ -56,9 +56,9 @@ func TestPublicOutputNDJSONLifecycle(t *testing.T) {
 	}
 }
 
-func TestPublicOutputHumanPrintsURLOnce(t *testing.T) {
+func TestPublishOutputHumanPrintsURLOnce(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	output, err := newPublicOutput("human", &stdout, &stderr)
+	output, err := newPublishOutput("human", &stdout, &stderr)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -23,8 +23,8 @@ var (
 )
 
 type RouteRef struct {
-	RouteID    string `json:"route_id"`
-	Generation uint64 `json:"generation"`
+	RouteID string `json:"route_id"`
+	Version uint64 `json:"version"`
 }
 
 type Assignment struct {
@@ -43,14 +43,14 @@ type RouteBackend interface {
 	Open(context.Context) (net.Conn, error)
 }
 
-type OwnedRoute interface {
+type WorkerRoute interface {
 	RouteBackend
 	Drain(context.Context) error
 	Close() error
 }
 
-type RouteOwner interface {
-	Attach(context.Context, Assignment) (OwnedRoute, error)
+type RouteWorker interface {
+	Attach(context.Context, Assignment) (WorkerRoute, error)
 	Capacity() Capacity
 	Drain(context.Context) error
 	Close() error
@@ -58,12 +58,12 @@ type RouteOwner interface {
 
 type EngineConfig struct {
 	Capacity         int
-	Profiles         map[string]*tailcfg.DERPRegion
+	Regions          map[string]*tailcfg.DERPRegion
 	Logf             logger.Logf
 	OnTailcatFailure func(operation, reason string)
 }
 
-type leaseDialer interface {
+type sessionDialer interface {
 	Start(context.Context) error
 	Open(context.Context) (net.Conn, error)
 	Drain(context.Context) error
@@ -72,44 +72,44 @@ type leaseDialer interface {
 
 type Engine struct {
 	capacity         int
-	profiles         map[string]*tailcfg.DERPRegion
+	regions          map[string]*tailcfg.DERPRegion
 	logf             logger.Logf
 	onTailcatFailure func(operation, reason string)
 
 	mu       sync.Mutex
-	routes   map[string]*ownedRoute
+	routes   map[string]*workerRoute
 	draining bool
 	closed   bool
 
-	newDialer func(tailtransport.DialerConfig) (leaseDialer, error)
+	newDialer func(tailtransport.DialerConfig) (sessionDialer, error)
 }
 
 func NewEngine(config EngineConfig) (*Engine, error) {
 	if config.Capacity <= 0 {
 		return nil, errors.New("worker: capacity must be positive")
 	}
-	if len(config.Profiles) == 0 {
-		return nil, errors.New("worker: relay profiles are required")
+	if len(config.Regions) == 0 {
+		return nil, errors.New("worker: relay regions are required")
 	}
 	return &Engine{
 		capacity:         config.Capacity,
-		profiles:         cloneProfiles(config.Profiles),
+		regions:          cloneRegions(config.Regions),
 		logf:             config.Logf,
 		onTailcatFailure: config.OnTailcatFailure,
-		routes:           make(map[string]*ownedRoute),
-		newDialer: func(config tailtransport.DialerConfig) (leaseDialer, error) {
+		routes:           make(map[string]*workerRoute),
+		newDialer: func(config tailtransport.DialerConfig) (sessionDialer, error) {
 			return tailtransport.NewDialer(config)
 		},
 	}, nil
 }
 
-func (e *Engine) Attach(ctx context.Context, assignment Assignment) (OwnedRoute, error) {
+func (e *Engine) Attach(ctx context.Context, assignment Assignment) (WorkerRoute, error) {
 	if err := validateAssignment(assignment); err != nil {
 		return nil, err
 	}
 	dialer, err := e.newDialer(tailtransport.DialerConfig{
 		Endpoint: assignment.Endpoint,
-		Profiles: e.profiles,
+		Regions:  e.regions,
 		Key:      assignment.Key,
 		Logf:     e.logf,
 	})
@@ -118,7 +118,7 @@ func (e *Engine) Attach(ctx context.Context, assignment Assignment) (OwnedRoute,
 		e.reportTailcatFailure("create", assignment.RouteRef, wrappedErr)
 		return nil, wrappedErr
 	}
-	route := &ownedRoute{engine: e, ref: assignment.RouteRef, dialer: dialer}
+	route := &workerRoute{engine: e, ref: assignment.RouteRef, dialer: dialer}
 
 	e.mu.Lock()
 	if e.closed {
@@ -132,10 +132,10 @@ func (e *Engine) Attach(ctx context.Context, assignment Assignment) (OwnedRoute,
 		return nil, ErrDraining
 	}
 	previous := e.routes[assignment.RouteID]
-	if previous != nil && previous.ref.Generation >= assignment.Generation {
+	if previous != nil && previous.ref.Version >= assignment.Version {
 		e.mu.Unlock()
 		_ = dialer.Close()
-		if previous.ref.Generation == assignment.Generation {
+		if previous.ref.Version == assignment.Version {
 			return previous, nil
 		}
 		return nil, ErrStaleAssignment
@@ -145,7 +145,7 @@ func (e *Engine) Attach(ctx context.Context, assignment Assignment) (OwnedRoute,
 		_ = dialer.Close()
 		return nil, ErrAtCapacity
 	}
-	// Install first to fence the prior generation while Start runs unlocked.
+	// Install first to fence the prior version while Start runs unlocked.
 	e.routes[assignment.RouteID] = route
 	e.mu.Unlock()
 
@@ -228,8 +228,8 @@ func (e *Engine) Close() error {
 	return result
 }
 
-func (e *Engine) snapshotLocked() []*ownedRoute {
-	routes := make([]*ownedRoute, 0, len(e.routes))
+func (e *Engine) snapshotLocked() []*workerRoute {
+	routes := make([]*workerRoute, 0, len(e.routes))
 	for _, route := range e.routes {
 		routes = append(routes, route)
 	}
@@ -241,8 +241,8 @@ func (e *Engine) reportTailcatFailure(operation string, ref RouteRef, err error)
 	capacity := e.Capacity()
 	if e.logf != nil {
 		e.logf(
-			"tailcat failure: operation=%s reason=%s route_id=%q generation=%d active=%d limit=%d err=%q",
-			operation, reason, ref.RouteID, ref.Generation, capacity.Active, capacity.Limit, err,
+			"tailcat failure: operation=%s reason=%s route_id=%q version=%d active=%d limit=%d err=%q",
+			operation, reason, ref.RouteID, ref.Version, capacity.Active, capacity.Limit, err,
 		)
 	}
 	if e.onTailcatFailure != nil {
@@ -268,15 +268,15 @@ func tailcatFailureReason(err error) string {
 	return "other"
 }
 
-type ownedRoute struct {
+type workerRoute struct {
 	engine *Engine
 	ref    RouteRef
-	dialer leaseDialer
+	dialer sessionDialer
 	ready  bool
 	once   sync.Once
 }
 
-func (r *ownedRoute) Open(ctx context.Context) (net.Conn, error) {
+func (r *workerRoute) Open(ctx context.Context) (net.Conn, error) {
 	r.engine.mu.Lock()
 	current := r.engine.routes[r.ref.RouteID]
 	ready := current == r && r.ready && !r.engine.draining && !r.engine.closed
@@ -296,11 +296,11 @@ func (r *ownedRoute) Open(ctx context.Context) (net.Conn, error) {
 	return r.dialer.Open(ctx)
 }
 
-func (r *ownedRoute) Drain(ctx context.Context) error {
+func (r *workerRoute) Drain(ctx context.Context) error {
 	return r.dialer.Drain(ctx)
 }
 
-func (r *ownedRoute) Close() error {
+func (r *workerRoute) Close() error {
 	var err error
 	r.once.Do(func() {
 		r.remove()
@@ -309,7 +309,7 @@ func (r *ownedRoute) Close() error {
 	return err
 }
 
-func (r *ownedRoute) remove() {
+func (r *workerRoute) remove() {
 	r.engine.mu.Lock()
 	if r.engine.routes[r.ref.RouteID] == r {
 		delete(r.engine.routes, r.ref.RouteID)
@@ -318,8 +318,8 @@ func (r *ownedRoute) remove() {
 }
 
 func validateAssignment(assignment Assignment) error {
-	if strings.TrimSpace(assignment.RouteID) == "" || assignment.Generation == 0 {
-		return errors.New("worker: route ID and generation are required")
+	if strings.TrimSpace(assignment.RouteID) == "" || assignment.Version == 0 {
+		return errors.New("worker: route ID and version are required")
 	}
 	if assignment.Key.IsZero() {
 		return errors.New("worker: Tailcat key is required")
@@ -327,9 +327,9 @@ func validateAssignment(assignment Assignment) error {
 	return nil
 }
 
-func cloneProfiles(profiles map[string]*tailcfg.DERPRegion) map[string]*tailcfg.DERPRegion {
-	cloned := make(map[string]*tailcfg.DERPRegion, len(profiles))
-	for name, region := range profiles {
+func cloneRegions(regions map[string]*tailcfg.DERPRegion) map[string]*tailcfg.DERPRegion {
+	cloned := make(map[string]*tailcfg.DERPRegion, len(regions))
+	for name, region := range regions {
 		if region != nil {
 			cloned[name] = region.Clone()
 		}

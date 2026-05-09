@@ -26,7 +26,7 @@ func TestAccessCredentialLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := Principal{ID: "principal", DisplayName: "Principal", Email: "principal@example.com"}
+	want := Identity{ID: "identity", DisplayName: "Identity", Email: "identity@example.com"}
 	if err := CreateAccessCredential(
 		context.Background(), db, want, lookupID, hash, now, expiresAt,
 	); err != nil {
@@ -42,7 +42,7 @@ func TestAccessCredentialLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got != want {
-		t.Fatalf("principal = %#v, want %#v", got, want)
+		t.Fatalf("identity = %#v, want %#v", got, want)
 	}
 
 	stored, err := statedb.New(db).GetAccessCredential(context.Background(), lookupID.String())
@@ -84,7 +84,7 @@ func TestRevokeAccessCredentialEnforcesOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	owner := Principal{ID: "principal_owner"}
+	owner := Identity{ID: "identity_owner"}
 	if err := CreateAccessCredential(
 		context.Background(), db, owner, credentialID, hash, now, now.Add(time.Hour),
 	); err != nil {
@@ -92,7 +92,7 @@ func TestRevokeAccessCredentialEnforcesOwnership(t *testing.T) {
 	}
 
 	if err := RevokeAccessCredential(
-		context.Background(), db, "principal_other", credentialID, now,
+		context.Background(), db, "identity_other", credentialID, now,
 	); !errors.Is(err, ErrAccessCredentialNotFound) {
 		t.Fatalf("wrong-owner revocation error = %v", err)
 	}
@@ -118,22 +118,22 @@ func TestCreateAccessCredentialRollsBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := CreateAccessCredential(
-		context.Background(), db, Principal{ID: "first"}, lookupID, hash, now, now.Add(time.Hour),
+		context.Background(), db, Identity{ID: "first"}, lookupID, hash, now, now.Add(time.Hour),
 	); err != nil {
 		t.Fatal(err)
 	}
 	if err := CreateAccessCredential(
-		context.Background(), db, Principal{ID: "rolled-back"}, credentials.CredentialID("different"), hash, now, now.Add(time.Hour),
+		context.Background(), db, Identity{ID: "rolled-back"}, credentials.CredentialID("different"), hash, now, now.Add(time.Hour),
 	); err == nil {
 		t.Fatal("duplicate secret hash succeeded")
 	}
 
-	count, err := statedb.New(db).CountPrincipalByID(context.Background(), "rolled-back")
+	count, err := statedb.New(db).CountIdentityByID(context.Background(), "rolled-back")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if count != 0 {
-		t.Fatalf("rolled-back principals = %d, want 0", count)
+		t.Fatalf("rolled-back identities = %d, want 0", count)
 	}
 }
 

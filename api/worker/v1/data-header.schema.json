@@ -4,9 +4,9 @@
   "title": "tnl worker data stream header v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["route_id", "generation"],
+  "required": ["route_id", "version"],
   "properties": {
     "route_id": {"type": "string", "minLength": 1, "pattern": "^\\S(?:.*\\S)?$"},
-    "generation": {"type": "integer", "minimum": 1}
+    "version": {"type": "integer", "minimum": 1}
   }
 }

@@ -53,13 +53,13 @@ func TestRouteStatePersistsPendingAndCurrentMaterial(t *testing.T) {
 	if !bytes.Equal(pending.CSRDER, firstCSR) {
 		t.Fatal("pending CSR changed across restart")
 	}
-	pending, err = route.RecordOrder("route.example", pending, "cert_pending", 1)
+	pending, err = route.RecordIssuance("route.example", pending, "issuance_pending", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	renewAt := time.Now().Add(30 * 24 * time.Hour).UTC().Truncate(time.Second)
 	material, err := route.Commit(
-		"route.example", pending, signedCertificate(t, pending.Key, "route.example"), renewAt, "cert_current", 1,
+		"route.example", pending, signedCertificate(t, pending.Key, "route.example"), renewAt, "issuance_current", 1,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -71,10 +71,10 @@ func TestRouteStatePersistsPendingAndCurrentMaterial(t *testing.T) {
 	if err != nil || !found || loaded.Certificate.Leaf == nil || !loaded.RenewAt.Equal(renewAt) {
 		t.Fatalf("loaded material = %+v, %v, %v", loaded, found, err)
 	}
-	if loaded.Installed || loaded.OrderID != "cert_current" || loaded.Generation != 1 || !bytes.Equal(loaded.CSRDER, firstCSR) {
+	if loaded.Installed || loaded.IssuanceID != "issuance_current" || loaded.Version != 1 || !bytes.Equal(loaded.CSRDER, firstCSR) {
 		t.Fatalf("loaded durable phase = %+v", loaded)
 	}
-	loaded, err = route.MarkInstalled("route.example", "cert_current", 1)
+	loaded, err = route.MarkInstalled("route.example", "issuance_current", 1)
 	if err != nil || !loaded.Installed {
 		t.Fatalf("installed material = %+v, %v", loaded, err)
 	}
@@ -126,7 +126,7 @@ func TestStateRejectsSymlinksAndPublicFiles(t *testing.T) {
 	}
 	if _, err := route.Commit(
 		"route.example", pending, signedCertificate(t, pending.Key, "route.example"), time.Now().Add(time.Hour),
-		"cert_current", 1,
+		"issuance_current", 1,
 	); err != nil {
 		t.Fatal(err)
 	}

@@ -41,12 +41,12 @@ func TestServiceCertificateLifecycle(t *testing.T) {
 		DirectoryURL: "https://acme.test/directory",
 		Email:        "operator@example.com",
 		AcceptTerms:  true,
-		Profile:      "tlsserver",
+		ACMEProfile:  "tlsserver",
 		Roots:        roots,
-		Probe: func(_ context.Context, job Job) error {
+		Probe: func(_ context.Context, issuance Issuance) error {
 			probeCalls++
-			if job.Hostname != testHostname || job.ChallengeDigest != sha256.Sum256([]byte("key-authorization")) {
-				t.Fatalf("unexpected challenge probe: %+v", job)
+			if issuance.Hostname != testHostname || issuance.ChallengeDigest != sha256.Sum256([]byte("key-authorization")) {
+				t.Fatalf("unexpected challenge probe: %+v", issuance)
 			}
 			return nil
 		},
@@ -62,97 +62,97 @@ func TestServiceCertificateLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	job, err := service.Create(context.Background(), testRouteID, 1, "tlsserver", csrDER)
+	issuance, err := service.Create(context.Background(), testRouteID, 1, "tlsserver", csrDER)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if job.State != StateWaitingChallenge || job.OrderAttempts != 1 || job.Challenge() == nil {
-		t.Fatalf("created job = %+v", job)
+	if issuance.Status != StatusWaitingChallenge || issuance.OrderAttempts != 1 || issuance.Challenge() == nil {
+		t.Fatalf("created issuance = %+v", issuance)
 	}
 	idempotent, err := service.Create(context.Background(), testRouteID, 1, "tlsserver", csrDER)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if idempotent.ID != job.ID || fake.orders != 1 {
-		t.Fatalf("idempotent job ID = %q, orders = %d", idempotent.ID, fake.orders)
+	if idempotent.ID != issuance.ID || fake.orders != 1 {
+		t.Fatalf("idempotent issuance ID = %q, orders = %d", idempotent.ID, fake.orders)
 	}
-	if err := queries.AdvanceRouteGeneration(context.Background(), statedb.AdvanceRouteGenerationParams{
-		Generation: 2,
-		RouteID:    testRouteID,
+	if err := queries.AdvanceRouteVersion(context.Background(), statedb.AdvanceRouteVersionParams{
+		Version: 2,
+		RouteID: testRouteID,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	job, err = service.Create(context.Background(), testRouteID, 2, "tlsserver", csrDER)
+	issuance, err = service.Create(context.Background(), testRouteID, 2, "tlsserver", csrDER)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if job.ID != idempotent.ID || job.Generation != 2 || fake.orders != 1 {
-		t.Fatalf("rebound job = %+v, orders = %d", job, fake.orders)
+	if issuance.ID != idempotent.ID || issuance.Version != 2 || fake.orders != 1 {
+		t.Fatalf("rebound issuance = %+v, orders = %d", issuance, fake.orders)
 	}
-	job.State = StateValidating
-	if err := service.store.saveJob(context.Background(), job); err != nil {
+	issuance.Status = StatusValidating
+	if err := service.store.saveIssuance(context.Background(), issuance); err != nil {
 		t.Fatal(err)
 	}
-	if err := queries.AdvanceRouteGeneration(context.Background(), statedb.AdvanceRouteGenerationParams{
-		Generation: 3,
-		RouteID:    testRouteID,
+	if err := queries.AdvanceRouteVersion(context.Background(), statedb.AdvanceRouteVersionParams{
+		Version: 3,
+		RouteID: testRouteID,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	job, err = service.Create(context.Background(), testRouteID, 3, "tlsserver", csrDER)
+	issuance, err = service.Create(context.Background(), testRouteID, 3, "tlsserver", csrDER)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if job.ID != idempotent.ID || job.Generation != 3 || job.State != StateValidating || fake.orders != 1 {
-		t.Fatalf("processing rebound job = %+v, orders = %d", job, fake.orders)
+	if issuance.ID != idempotent.ID || issuance.Version != 3 || issuance.Status != StatusValidating || fake.orders != 1 {
+		t.Fatalf("processing rebound issuance = %+v, orders = %d", issuance, fake.orders)
 	}
 
-	job, err = service.ChallengeReady(context.Background(), job.ID)
+	issuance, err = service.ChallengeReady(context.Background(), issuance.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if probeCalls != 1 || job.State != StateWaitingForInstall || len(job.CertificatePEM) == 0 ||
-		!job.NotBefore.Equal(now.Add(-time.Hour)) || !job.NotAfter.Equal(now.Add(89*24*time.Hour)) {
-		t.Fatalf("validated job = %+v, probes = %d", job, probeCalls)
+	if probeCalls != 1 || issuance.Status != StatusWaitingForInstall || len(issuance.CertificatePEM) == 0 ||
+		!issuance.NotBefore.Equal(now.Add(-time.Hour)) || !issuance.NotAfter.Equal(now.Add(89*24*time.Hour)) {
+		t.Fatalf("validated issuance = %+v, probes = %d", issuance, probeCalls)
 	}
-	if !job.RenewAt.After(job.NotBefore) || !job.RenewAt.Before(job.NotAfter) {
-		t.Fatalf("renewal time = %v outside validity", job.RenewAt)
+	if !issuance.RenewAt.After(issuance.NotBefore) || !issuance.RenewAt.Before(issuance.NotAfter) {
+		t.Fatalf("renewal time = %v outside validity", issuance.RenewAt)
 	}
-	if _, err := service.Installed(context.Background(), job.ID, testRouteID, 3); !errors.Is(err, ErrInvalidState) {
+	if _, err := service.Installed(context.Background(), issuance.ID, testRouteID, 3); !errors.Is(err, ErrInvalidStatus) {
 		t.Fatalf("install before cleanup error = %v", err)
 	}
-	job, err = service.ChallengeRemoved(context.Background(), job.ID)
+	issuance, err = service.ChallengeRemoved(context.Background(), issuance.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	job, err = service.Installed(context.Background(), job.ID, testRouteID, 3)
+	issuance, err = service.Installed(context.Background(), issuance.ID, testRouteID, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if job.State != StateSucceeded || job.InstalledAt.IsZero() {
-		t.Fatalf("installed job = %+v", job)
+	if issuance.Status != StatusInstalled || issuance.InstalledAt.IsZero() {
+		t.Fatalf("installed issuance = %+v", issuance)
 	}
 	_, replacementCSR := testCSR(t, testHostname, pkix.Name{})
 	if _, err := service.Create(
 		context.Background(), testRouteID, 3, "tlsserver", replacementCSR,
-	); !errors.Is(err, ErrInvalidState) {
+	); !errors.Is(err, ErrInvalidStatus) {
 		t.Fatalf("early replacement error = %v", err)
 	}
-	for generation := 4; generation <= 7; generation++ {
-		if err := queries.AdvanceRouteGeneration(context.Background(), statedb.AdvanceRouteGenerationParams{
-			Generation: int64(generation),
-			RouteID:    testRouteID,
+	for version := 4; version <= 7; version++ {
+		if err := queries.AdvanceRouteVersion(context.Background(), statedb.AdvanceRouteVersionParams{
+			Version: int64(version),
+			RouteID: testRouteID,
 		}); err != nil {
 			t.Fatal(err)
 		}
 		reused, err := service.Create(
-			context.Background(), testRouteID, uint64(generation), "tlsserver", csrDER,
+			context.Background(), testRouteID, uint64(version), "tlsserver", csrDER,
 		)
 		if err != nil {
-			t.Fatalf("reuse at generation %d: %v", generation, err)
+			t.Fatalf("reuse at version %d: %v", version, err)
 		}
-		if reused.State != StateWaitingForInstall || reused.OrderAttempts != 0 || len(reused.CertificatePEM) == 0 {
-			t.Fatalf("reused job at generation %d = %+v", generation, reused)
+		if reused.Status != StatusWaitingForInstall || reused.OrderAttempts != 0 || len(reused.CertificatePEM) == 0 {
+			t.Fatalf("reused issuance at version %d = %+v", version, reused)
 		}
 	}
 }
@@ -175,7 +175,7 @@ func TestServiceRecoversAccountCreationWithPersistedKey(t *testing.T) {
 	}
 	config := Config{
 		DirectoryURL: "https://acme.test/directory", Email: "operator@example.com", AcceptTerms: true,
-		Profile: "tlsserver", Probe: func(context.Context, Job) error { return nil }, Now: func() time.Time { return now },
+		ACMEProfile: "tlsserver", Probe: func(context.Context, Issuance) error { return nil }, Now: func() time.Time { return now },
 		newACME: newClient(&firstPublic),
 	}
 	if _, err := New(context.Background(), db, config); err != nil {
@@ -205,7 +205,7 @@ func TestServiceRequiresExplicitChangedTermsAcceptance(t *testing.T) {
 	fake := &fakeACME{now: now, terms: "https://acme.test/terms/v1"}
 	config := Config{
 		DirectoryURL: "https://acme.test/directory", Email: "operator@example.com", AcceptTerms: true,
-		Profile: "tlsserver", Probe: func(context.Context, Job) error { return nil }, Now: func() time.Time { return now },
+		ACMEProfile: "tlsserver", Probe: func(context.Context, Issuance) error { return nil }, Now: func() time.Time { return now },
 		newACME: func(*http.Client, string, string, crypto.Signer) (acmeClient, error) { return fake, nil },
 	}
 	if _, err := New(context.Background(), db, config); err != nil {
@@ -229,7 +229,7 @@ func TestServiceUpdatesAccountContact(t *testing.T) {
 	fake := &fakeACME{now: now}
 	config := Config{
 		DirectoryURL: "https://acme.test/directory", Email: "operator@example.com", AcceptTerms: true,
-		Profile: "tlsserver", Probe: func(context.Context, Job) error { return nil }, Now: func() time.Time { return now },
+		ACMEProfile: "tlsserver", Probe: func(context.Context, Issuance) error { return nil }, Now: func() time.Time { return now },
 		newACME: func(*http.Client, string, string, crypto.Signer) (acmeClient, error) { return fake, nil },
 	}
 	if _, err := New(context.Background(), db, config); err != nil {
@@ -275,19 +275,19 @@ func TestServiceBlocksAmbiguousOrderCreation(t *testing.T) {
 		}
 		fake.orders = 1
 		restarted := testService(t, db, fake, nil, now.Add(6*time.Second))
-		if _, err := restarted.Create(context.Background(), testRouteID, 1, "tlsserver", csrDER); !errors.Is(err, ErrInvalidState) {
+		if _, err := restarted.Create(context.Background(), testRouteID, 1, "tlsserver", csrDER); !errors.Is(err, ErrInvalidStatus) {
 			t.Fatalf("ambiguous order error = %v", err)
 		}
 		_, csrHash, _, err := validateCSR(csrDER, testHostname)
 		if err != nil {
 			t.Fatal(err)
 		}
-		stored, err := restarted.store.findBoundJob(context.Background(), testRouteID, 1, csrHash)
+		stored, err := restarted.store.findBoundIssuance(context.Background(), testRouteID, 1, csrHash)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if stored.State != StateBlocked || stored.OrderAttempts != 1 || fake.createOrderCalls != 1 || fake.orders != 1 {
-			t.Fatalf("ambiguous job = %+v, calls = %d, remote orders = %d", stored, fake.createOrderCalls, fake.orders)
+		if stored.Status != StatusBlocked || stored.OrderAttempts != 1 || fake.createOrderCalls != 1 || fake.orders != 1 {
+			t.Fatalf("ambiguous issuance = %+v, calls = %d, remote orders = %d", stored, fake.createOrderCalls, fake.orders)
 		}
 	}
 }
@@ -325,20 +325,20 @@ func TestServiceRetriesRejectedOrderCreation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			stored, err := service.store.findBoundJob(context.Background(), testRouteID, 1, csrHash)
+			stored, err := service.store.findBoundIssuance(context.Background(), testRouteID, 1, csrHash)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if stored.State != StateCreatingOrder || stored.OrderAttempts != 0 || !stored.RetryAt.Equal(now.Add(test.delay)) {
-				t.Fatalf("retryable order job = %+v", stored)
+			if stored.Status != StatusCreatingOrder || stored.OrderAttempts != 0 || !stored.RetryAt.Equal(now.Add(test.delay)) {
+				t.Fatalf("retryable order issuance = %+v", stored)
 			}
 			restarted := testService(t, db, fake, nil, now.Add(test.delay+time.Second))
-			job, err := restarted.Create(context.Background(), testRouteID, 1, "tlsserver", csrDER)
+			issuance, err := restarted.Create(context.Background(), testRouteID, 1, "tlsserver", csrDER)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if job.State != StateWaitingChallenge || fake.createOrderCalls != 2 || fake.orders != 1 {
-				t.Fatalf("retried job = %+v, calls = %d, orders = %d", job, fake.createOrderCalls, fake.orders)
+			if issuance.Status != StatusWaitingChallenge || fake.createOrderCalls != 2 || fake.orders != 1 {
+				t.Fatalf("retried issuance = %+v, calls = %d, orders = %d", issuance, fake.createOrderCalls, fake.orders)
 			}
 		})
 	}
@@ -351,23 +351,23 @@ func TestServiceDoesNotReplayAcceptedChallenge(t *testing.T) {
 	chain, roots := testCertificateChain(t, key, testHostname, now)
 	fake := &fakeACME{now: now, certificate: chain}
 	service := testService(t, db, fake, roots, now)
-	job, err := service.Create(context.Background(), testRouteID, 1, "tlsserver", csrDER)
+	issuance, err := service.Create(context.Background(), testRouteID, 1, "tlsserver", csrDER)
 	if err != nil {
 		t.Fatal(err)
 	}
-	job.State = StateValidating
-	if err := service.store.saveJob(context.Background(), job); err != nil {
+	issuance.Status = StatusValidating
+	if err := service.store.saveIssuance(context.Background(), issuance); err != nil {
 		t.Fatal(err)
 	}
 	fake.authorizationStatuses = []string{legoacme.StatusPending, legoacme.StatusValid}
 	fake.challengeStatus = legoacme.StatusProcessing
 	restarted := testService(t, db, fake, roots, now)
-	job, err = restarted.ChallengeReady(context.Background(), job.ID)
+	issuance, err = restarted.ChallengeReady(context.Background(), issuance.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if job.State != StateWaitingForInstall || fake.acceptChallengeCalls != 0 {
-		t.Fatalf("resumed job = %+v, challenge accepts = %d", job, fake.acceptChallengeCalls)
+	if issuance.Status != StatusWaitingForInstall || fake.acceptChallengeCalls != 0 {
+		t.Fatalf("resumed issuance = %+v, challenge accepts = %d", issuance, fake.acceptChallengeCalls)
 	}
 }
 
@@ -386,12 +386,12 @@ func TestServiceResumesPreauthorizedFinalization(t *testing.T) {
 	}
 	fake.finalizeErr = nil
 	service.now = func() time.Time { return now.Add(10 * time.Second) }
-	job, err := service.Create(context.Background(), testRouteID, 1, "tlsserver", csrDER)
+	issuance, err := service.Create(context.Background(), testRouteID, 1, "tlsserver", csrDER)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if job.State != StateWaitingForInstall || job.Challenge() != nil {
-		t.Fatalf("resumed preauthorized job = %+v", job)
+	if issuance.Status != StatusWaitingForInstall || issuance.Challenge() != nil {
+		t.Fatalf("resumed preauthorized issuance = %+v", issuance)
 	}
 }
 
@@ -402,22 +402,22 @@ func TestServiceDoesNotReplayFinalization(t *testing.T) {
 	chain, roots := testCertificateChain(t, key, testHostname, now)
 	fake := &fakeACME{now: now, certificate: chain}
 	service := testService(t, db, fake, roots, now)
-	job, err := service.Create(context.Background(), testRouteID, 1, "tlsserver", csrDER)
+	issuance, err := service.Create(context.Background(), testRouteID, 1, "tlsserver", csrDER)
 	if err != nil {
 		t.Fatal(err)
 	}
-	job.State = StateFinalizing
-	if err := service.store.saveJob(context.Background(), job); err != nil {
+	issuance.Status = StatusFinalizing
+	if err := service.store.saveIssuance(context.Background(), issuance); err != nil {
 		t.Fatal(err)
 	}
 	fake.orderStatuses = []string{legoacme.StatusProcessing, legoacme.StatusValid}
 	restarted := testService(t, db, fake, roots, now)
-	job, err = restarted.Create(context.Background(), testRouteID, 1, "tlsserver", csrDER)
+	issuance, err = restarted.Create(context.Background(), testRouteID, 1, "tlsserver", csrDER)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if job.State != StateWaitingForInstall || fake.finalizeOrderCalls != 0 {
-		t.Fatalf("resumed job = %+v, finalizations = %d", job, fake.finalizeOrderCalls)
+	if issuance.Status != StatusWaitingForInstall || fake.finalizeOrderCalls != 0 {
+		t.Fatalf("resumed issuance = %+v, finalizations = %d", issuance, fake.finalizeOrderCalls)
 	}
 }
 
@@ -468,19 +468,19 @@ func TestStoreRateLimitsActualOrderAttempts(t *testing.T) {
 	}
 	for index := byte(1); index <= 3; index++ {
 		csrHash := [32]byte{index}
-		job, _, err := store.createJob(
+		issuance, _, err := store.createIssuance(
 			context.Background(), testRouteID, 1, testHostname, "tlsserver", []byte{index}, csrHash, [32]byte{index},
 		)
 		if err != nil {
 			t.Fatal(err)
 		}
-		job.State = StateInvalid
-		job.OrderAttempts = 1
-		if err := store.saveJob(context.Background(), job); err != nil {
+		issuance.Status = StatusFailed
+		issuance.OrderAttempts = 1
+		if err := store.saveIssuance(context.Background(), issuance); err != nil {
 			t.Fatal(err)
 		}
 	}
-	err = store.allowJobCreation(context.Background(), testRouteID, 1, [32]byte{4}, now)
+	err = store.allowIssuanceCreation(context.Background(), testRouteID, 1, [32]byte{4}, now)
 	var limit *RateLimitError
 	if !errors.As(err, &limit) || !limit.RetryAt.Equal(now.Add(time.Hour)) {
 		t.Fatalf("rate limit error = %#v", err)
@@ -619,7 +619,7 @@ func testService(t *testing.T, db *sql.DB, fake *fakeACME, roots *x509.CertPool,
 	t.Helper()
 	service, err := New(context.Background(), db, Config{
 		DirectoryURL: "https://acme.test/directory", Email: "operator@example.com", AcceptTerms: true,
-		Profile: "tlsserver", Roots: roots, Probe: func(context.Context, Job) error { return nil },
+		ACMEProfile: "tlsserver", Roots: roots, Probe: func(context.Context, Issuance) error { return nil },
 		Now: func() time.Time { return now },
 		newACME: func(*http.Client, string, string, crypto.Signer) (acmeClient, error) {
 			return fake, nil
@@ -643,29 +643,29 @@ func testDatabase(t *testing.T) *sql.DB {
 	}
 	t.Cleanup(func() { db.Close() })
 	queries := statedb.New(db)
-	if err := queries.UpsertPrincipal(context.Background(), statedb.UpsertPrincipalParams{
-		PrincipalID: "principal",
-		DisplayName: "Principal",
-		Email:       "principal@example.com",
+	if err := queries.UpsertIdentity(context.Background(), statedb.UpsertIdentityParams{
+		IdentityID:  "identity",
+		DisplayName: "Identity",
+		Email:       "identity@example.com",
 		CreatedAt:   1,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.InsertClaim(context.Background(), statedb.InsertClaimParams{
-		ID:          "claim",
-		PrincipalID: "principal",
-		Hostname:    testHostname,
-		CreatedAt:   1,
+	if _, err := queries.InsertHostname(context.Background(), statedb.InsertHostnameParams{
+		ID:         "claim",
+		IdentityID: "identity",
+		Hostname:   testHostname,
+		CreatedAt:  1,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := queries.InsertRoute(context.Background(), statedb.InsertRouteParams{
-		RouteID:       testRouteID,
-		ClaimID:       "claim",
-		PrincipalID:   "principal",
-		Hostname:      testHostname,
-		DisplayTarget: "http://127.0.0.1:3000",
-		CreatedAt:     1,
+		RouteID:     testRouteID,
+		HostnameID:  "claim",
+		IdentityID:  "identity",
+		Hostname:    testHostname,
+		LocalTarget: "http://127.0.0.1:3000",
+		CreatedAt:   1,
 	}); err != nil {
 		t.Fatal(err)
 	}

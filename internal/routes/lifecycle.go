@@ -10,15 +10,15 @@ import (
 type LifecycleTransition string
 
 const (
-	LifecycleGenerationStarted LifecycleTransition = "generation_started"
-	LifecycleReady             LifecycleTransition = "ready"
-	LifecycleDisconnected      LifecycleTransition = "disconnected"
-	LifecycleDeleted           LifecycleTransition = "deleted"
+	LifecycleVersionStarted LifecycleTransition = "version_started"
+	LifecycleReady          LifecycleTransition = "ready"
+	LifecycleDisconnected   LifecycleTransition = "disconnected"
+	LifecycleDeleted        LifecycleTransition = "deleted"
 )
 
 type LifecycleChange struct {
 	RouteID    string
-	Generation uint64
+	Version    uint64
 	OccurredAt time.Time
 	Transition LifecycleTransition
 }

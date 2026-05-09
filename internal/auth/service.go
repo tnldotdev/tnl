@@ -18,9 +18,9 @@ const DefaultAccessTokenLifetime = 7 * 24 * time.Hour
 var (
 	// ErrUnauthenticated hides why a credential was rejected.
 	ErrUnauthenticated = errors.New("auth: unauthenticated")
-	// ErrCredentialNotFound hides whether a credential exists or belongs to another principal.
+	// ErrCredentialNotFound hides whether a credential exists or belongs to another identity.
 	ErrCredentialNotFound = errors.New("auth: credential not found")
-	localPrincipal        = state.Principal{ID: "principal_local", DisplayName: "Local operator"}
+	localIdentity         = state.Identity{ID: "identity_local", DisplayName: "Local operator"}
 )
 
 // IssuedAccessToken is the successful result of a login exchange.
@@ -73,7 +73,7 @@ func NewServiceWithOIDC(
 	}, nil
 }
 
-// Exchange issues a new access credential for the stable local principal.
+// Exchange issues a new access credential for the stable local identity.
 func (s *Service) Exchange(
 	ctx context.Context,
 	login credentials.LoginToken,
@@ -81,23 +81,23 @@ func (s *Service) Exchange(
 	if s.login == nil || !s.login.Matches(login) {
 		return IssuedAccessToken{}, ErrUnauthenticated
 	}
-	return s.issue(ctx, localPrincipal, s.now().Add(s.accessTokenLifetime), nil)
+	return s.issue(ctx, localIdentity, s.now().Add(s.accessTokenLifetime), nil)
 }
 
 func (s *Service) ExchangeOIDC(ctx context.Context, token string) (IssuedAccessToken, error) {
 	if s.oidc == nil {
 		return IssuedAccessToken{}, ErrUnauthenticated
 	}
-	identity, err := s.oidc.Verify(ctx, token)
+	oidcIdentity, err := s.oidc.Verify(ctx, token)
 	if err != nil {
 		return IssuedAccessToken{}, err
 	}
-	digest := sha256.Sum256([]byte(identity.Issuer + "\x00" + identity.Subject))
-	principal := state.Principal{
-		ID: "principal_oidc_" + hex.EncodeToString(digest[:]),
+	digest := sha256.Sum256([]byte(oidcIdentity.Issuer + "\x00" + oidcIdentity.Subject))
+	identity := state.Identity{
+		ID: "identity_oidc_" + hex.EncodeToString(digest[:]),
 	}
 	tokenHash := sha256.Sum256([]byte(token))
-	issued, err := s.issueOIDC(ctx, principal, s.now().Add(s.accessTokenLifetime), tokenHash[:], identity.ExpiresAt)
+	issued, err := s.issueOIDC(ctx, identity, s.now().Add(s.accessTokenLifetime), tokenHash[:], oidcIdentity.ExpiresAt)
 	if errors.Is(err, state.ErrOIDCAssertionAlreadyExchanged) {
 		return IssuedAccessToken{}, ErrUnauthenticated
 	}
@@ -106,16 +106,16 @@ func (s *Service) ExchangeOIDC(ctx context.Context, token string) (IssuedAccessT
 
 func (s *Service) issue(
 	ctx context.Context,
-	principal state.Principal,
+	identity state.Identity,
 	expiresAt time.Time,
 	assertionHash []byte,
 ) (IssuedAccessToken, error) {
-	return s.issueOIDC(ctx, principal, expiresAt, assertionHash, time.Time{})
+	return s.issueOIDC(ctx, identity, expiresAt, assertionHash, time.Time{})
 }
 
 func (s *Service) issueOIDC(
 	ctx context.Context,
-	principal state.Principal,
+	identity state.Identity,
 	expiresAt time.Time,
 	assertionHash []byte,
 	assertionExpiresAt time.Time,
@@ -124,17 +124,17 @@ func (s *Service) issueOIDC(
 	if err != nil {
 		return IssuedAccessToken{}, err
 	}
-	issuedAt := time.Unix(s.now().Unix(), 0).UTC()
-	expiresAt = time.Unix(expiresAt.Unix(), 0).UTC()
+	issuedAt := s.now().UTC()
+	expiresAt = expiresAt.UTC()
 	if !expiresAt.After(issuedAt) {
 		return IssuedAccessToken{}, ErrUnauthenticated
 	}
 	var storeErr error
 	if assertionHash == nil {
-		storeErr = state.CreateAccessCredential(ctx, s.db, principal, credentialID, hash, issuedAt, expiresAt)
+		storeErr = state.CreateAccessCredential(ctx, s.db, identity, credentialID, hash, issuedAt, expiresAt)
 	} else {
 		storeErr = state.CreateOIDCAccessCredential(
-			ctx, s.db, principal, credentialID, hash, issuedAt, expiresAt, assertionHash, assertionExpiresAt,
+			ctx, s.db, identity, credentialID, hash, issuedAt, expiresAt, assertionHash, assertionExpiresAt,
 		)
 	}
 	if storeErr != nil {
@@ -143,32 +143,32 @@ func (s *Service) issueOIDC(
 	return IssuedAccessToken{Token: token, CredentialID: credentialID, ExpiresAt: expiresAt}, nil
 }
 
-// Authenticate resolves a valid access token to its principal.
+// Authenticate resolves a valid access token to its identity.
 func (s *Service) Authenticate(
 	ctx context.Context,
 	token credentials.AccessToken,
-) (state.Principal, error) {
+) (state.Identity, error) {
 	credentialID, hash, err := credentials.ParseAccessToken(token)
 	if err != nil {
-		return state.Principal{}, ErrUnauthenticated
+		return state.Identity{}, ErrUnauthenticated
 	}
-	principal, err := state.AuthenticateAccessCredential(ctx, s.db, credentialID, hash, s.now())
+	identity, err := state.AuthenticateAccessCredential(ctx, s.db, credentialID, hash, s.now())
 	if errors.Is(err, credentials.ErrInvalidAccessToken) {
-		return state.Principal{}, ErrUnauthenticated
+		return state.Identity{}, ErrUnauthenticated
 	}
 	if err != nil {
-		return state.Principal{}, fmt.Errorf("auth: authenticate access credential: %w", err)
+		return state.Identity{}, fmt.Errorf("auth: authenticate access credential: %w", err)
 	}
-	return principal, nil
+	return identity, nil
 }
 
-// Revoke revokes an access credential owned by principal.
+// Revoke revokes an access credential owned by identity.
 func (s *Service) Revoke(
 	ctx context.Context,
-	principal state.Principal,
+	identity state.Identity,
 	credentialID credentials.CredentialID,
 ) error {
-	err := state.RevokeAccessCredential(ctx, s.db, principal.ID, credentialID, s.now())
+	err := state.RevokeAccessCredential(ctx, s.db, identity.ID, credentialID, s.now())
 	if errors.Is(err, state.ErrAccessCredentialNotFound) {
 		return ErrCredentialNotFound
 	}

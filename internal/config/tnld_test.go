@@ -38,14 +38,14 @@ func TestParseTNLD(t *testing.T) {
 	if config.ACMEDirectoryURL != "https://acme-v02.api.letsencrypt.org/directory" {
 		t.Fatalf("ACMEDirectoryURL = %q", config.ACMEDirectoryURL)
 	}
-	if config.ServerHostname() != "tnl.example.com" || config.RouteSuffix() != "example.com" {
-		t.Fatalf("derived hostnames = %q, %q", config.ServerHostname(), config.RouteSuffix())
+	if config.ServerHostname() != "tnl.example.com" || config.HostnameSuffix() != "example.com" {
+		t.Fatalf("derived hostnames = %q, %q", config.ServerHostname(), config.HostnameSuffix())
 	}
-	if config.MaxActiveHostnameClaims != 128 {
-		t.Fatalf("MaxActiveHostnameClaims = %d, want 128", config.MaxActiveHostnameClaims)
+	if config.MaxActiveHostnames != 128 {
+		t.Fatalf("MaxActiveHostnames = %d, want 128", config.MaxActiveHostnames)
 	}
-	if config.MaxHostnameClaimRequests != 1024 {
-		t.Fatalf("MaxHostnameClaimRequests = %d, want 1024", config.MaxHostnameClaimRequests)
+	if config.MaxHostnameRequests != 1024 {
+		t.Fatalf("MaxHostnameRequests = %d, want 1024", config.MaxHostnameRequests)
 	}
 	if config.AccessTokenLifetime != 7*24*time.Hour {
 		t.Fatalf("AccessTokenLifetime = %s, want 168h", config.AccessTokenLifetime)
@@ -55,8 +55,8 @@ func TestParseTNLD(t *testing.T) {
 		"--mode", "edge",
 		"--state-dir", "/from-flag",
 		"--metrics-listen", "[::1]:9091",
-		"--max-active-hostname-claims", "16",
-		"--max-hostname-claim-requests", "32",
+		"--max-active-hostnames", "16",
+		"--max-hostname-requests", "32",
 		"--worker-token", testWorkerToken(t),
 	})
 	if err != nil {
@@ -71,24 +71,24 @@ func TestParseTNLD(t *testing.T) {
 	if config.MetricsListen != "[::1]:9091" {
 		t.Fatalf("MetricsListen = %q, want [::1]:9091", config.MetricsListen)
 	}
-	if config.MaxActiveHostnameClaims != 16 || config.MaxHostnameClaimRequests != 32 {
-		t.Fatalf("hostname claim quotas = %d, %d, want 16, 32",
-			config.MaxActiveHostnameClaims, config.MaxHostnameClaimRequests)
+	if config.MaxActiveHostnames != 16 || config.MaxHostnameRequests != 32 {
+		t.Fatalf("hostname quotas = %d, %d, want 16, 32",
+			config.MaxActiveHostnames, config.MaxHostnameRequests)
 	}
 }
 
-func TestParseTNLDHostnameClaimQuotaEnvironment(t *testing.T) {
+func TestParseTNLDHostnameQuotaEnvironment(t *testing.T) {
 	t.Setenv("TNLD_STATE_DIR", "/state")
-	t.Setenv("TNLD_MAX_ACTIVE_HOSTNAME_CLAIMS", "24")
-	t.Setenv("TNLD_MAX_HOSTNAME_CLAIM_REQUESTS", "48")
+	t.Setenv("TNLD_MAX_ACTIVE_HOSTNAMES", "24")
+	t.Setenv("TNLD_MAX_HOSTNAME_REQUESTS", "48")
 
 	config, err := ParseTNLD([]string{"--public-listen", ""})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.MaxActiveHostnameClaims != 24 || config.MaxHostnameClaimRequests != 48 {
-		t.Fatalf("hostname claim quotas = %d, %d, want 24, 48",
-			config.MaxActiveHostnameClaims, config.MaxHostnameClaimRequests)
+	if config.MaxActiveHostnames != 24 || config.MaxHostnameRequests != 48 {
+		t.Fatalf("hostname quotas = %d, %d, want 24, 48",
+			config.MaxActiveHostnames, config.MaxHostnameRequests)
 	}
 }
 
@@ -139,20 +139,20 @@ func TestParseTNLDRejectsInvalidInput(t *testing.T) {
 	t.Setenv("TNLD_STATE_DIR", "")
 
 	for name, args := range map[string][]string{
-		"empty state directory":    {"--state-dir", "   "},
-		"invalid backup URL":       {"--state-dir", "/state", "--backup-url", "file:///backup"},
-		"unknown flag":             {"--state-dir", "/state", "--unknown"},
-		"unknown mode":             {"--state-dir", "/state", "--mode", "router"},
-		"missing metrics port":     {"--state-dir", "/state", "--metrics-listen", "127.0.0.1"},
-		"invalid metrics port":     {"--state-dir", "/state", "--metrics-listen", "127.0.0.1:nope"},
-		"metrics whitespace":       {"--state-dir", "/state", "--metrics-listen", " 127.0.0.1:9090"},
-		"zero active claims":       {"--state-dir", "/state", "--max-active-hostname-claims", "0"},
-		"negative claim requests":  {"--state-dir", "/state", "--max-hostname-claim-requests", "-1"},
-		"requests below active":    {"--state-dir", "/state", "--max-active-hostname-claims", "10", "--max-hostname-claim-requests", "9"},
-		"active claims too large":  {"--state-dir", "/state", "--max-active-hostname-claims", "100001", "--max-hostname-claim-requests", "100001"},
-		"claim requests too large": {"--state-dir", "/state", "--max-hostname-claim-requests", "100001"},
-		"short access lifetime":    {"--state-dir", "/state", "--public-listen", "", "--access-token-lifetime", "4m59s"},
-		"long access lifetime":     {"--state-dir", "/state", "--public-listen", "", "--access-token-lifetime", "720h1s"},
+		"empty state directory":       {"--state-dir", "   "},
+		"invalid backup URL":          {"--state-dir", "/state", "--backup-url", "file:///backup"},
+		"unknown flag":                {"--state-dir", "/state", "--unknown"},
+		"unknown mode":                {"--state-dir", "/state", "--mode", "router"},
+		"missing metrics port":        {"--state-dir", "/state", "--metrics-listen", "127.0.0.1"},
+		"invalid metrics port":        {"--state-dir", "/state", "--metrics-listen", "127.0.0.1:nope"},
+		"metrics whitespace":          {"--state-dir", "/state", "--metrics-listen", " 127.0.0.1:9090"},
+		"zero active hostnames":       {"--state-dir", "/state", "--max-active-hostnames", "0"},
+		"negative hostname requests":  {"--state-dir", "/state", "--max-hostname-requests", "-1"},
+		"requests below active":       {"--state-dir", "/state", "--max-active-hostnames", "10", "--max-hostname-requests", "9"},
+		"active hostnames too large":  {"--state-dir", "/state", "--max-active-hostnames", "100001", "--max-hostname-requests", "100001"},
+		"hostname requests too large": {"--state-dir", "/state", "--max-hostname-requests", "100001"},
+		"short access lifetime":       {"--state-dir", "/state", "--public-listen", "", "--access-token-lifetime", "4m59s"},
+		"long access lifetime":        {"--state-dir", "/state", "--public-listen", "", "--access-token-lifetime", "720h1s"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := ParseTNLD(args); err == nil {
@@ -185,7 +185,7 @@ func TestTNLDValidateOIDC(t *testing.T) {
 	}
 }
 
-func TestTNLDValidateRouteExport(t *testing.T) {
+func TestTNLDValidateRouteUsage(t *testing.T) {
 	config, err := ParseTNLD([]string{"--state-dir", "/state", "--public-listen", ""})
 	if err != nil {
 		t.Fatal(err)
@@ -194,25 +194,25 @@ func TestTNLDValidateRouteExport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	config.ExportURL = "https://account.example/exports"
-	config.ExportToken = token.String()
+	config.RouteUsageURL = "https://account.example/reports"
+	config.RouteUsageToken = token.String()
 	if err := config.Validate(); err != nil {
-		t.Fatalf("valid HTTPS export: %v", err)
+		t.Fatalf("valid HTTPS route usage configuration: %v", err)
 	}
 
 	loopback := config
-	loopback.ExportURL = "http://127.0.0.1:8080"
+	loopback.RouteUsageURL = "http://127.0.0.1:8080"
 	if err := loopback.Validate(); err != nil {
-		t.Fatalf("valid loopback export: %v", err)
+		t.Fatalf("valid loopback route usage configuration: %v", err)
 	}
 
 	for name, mutate := range map[string]func(*TNLD){
-		"missing token":   func(config *TNLD) { config.ExportToken = "" },
-		"missing URL":     func(config *TNLD) { config.ExportURL = "" },
-		"invalid token":   func(config *TNLD) { config.ExportToken = "invalid" },
-		"insecure remote": func(config *TNLD) { config.ExportURL = "http://account.example" },
-		"URL credentials": func(config *TNLD) { config.ExportURL = "https://user@account.example" },
-		"URL query":       func(config *TNLD) { config.ExportURL = "https://account.example?tenant=one" },
+		"missing token":   func(config *TNLD) { config.RouteUsageToken = "" },
+		"missing URL":     func(config *TNLD) { config.RouteUsageURL = "" },
+		"invalid token":   func(config *TNLD) { config.RouteUsageToken = "invalid" },
+		"insecure remote": func(config *TNLD) { config.RouteUsageURL = "http://account.example" },
+		"URL credentials": func(config *TNLD) { config.RouteUsageURL = "https://user@account.example" },
+		"URL query":       func(config *TNLD) { config.RouteUsageURL = "https://account.example?tenant=one" },
 		"worker mode":     func(config *TNLD) { config.Mode = TNLDModeWorker },
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -228,9 +228,9 @@ func TestTNLDValidateRouteExport(t *testing.T) {
 func TestTNLDValidateACME(t *testing.T) {
 	valid := TNLD{
 		Mode: TNLDModeStandalone, StateDir: "/state", Domain: "example.com",
-		PublicListen: "127.0.0.1:443", RelayMapFile: "/relay.json", RelayProfile: "default",
+		PublicListen: "127.0.0.1:443", RelayMapFile: "/relay.json", RelayRegion: "default",
 		WorkerCapacity: 1, WorkerStreamLimit: 1, PublicConnLimit: 1, RouteConnLimit: 1, DrainTimeout: 30,
-		MaxActiveHostnameClaims: 128, MaxHostnameClaimRequests: 1024,
+		MaxActiveHostnames: 128, MaxHostnameRequests: 1024,
 		AccessTokenLifetime: 7 * 24 * time.Hour,
 		ACMEDirectoryURL:    "https://acme.example/directory", ACMEEmail: "operator@example.com",
 		ACMEAcceptTerms: true, ACMEProfile: "tlsserver",
@@ -241,19 +241,19 @@ func TestTNLDValidateACME(t *testing.T) {
 	if got := valid.ServerHostname(); got != "tnl.example.com" {
 		t.Fatalf("ServerHostname = %q", got)
 	}
-	if got := valid.RouteSuffix(); got != "example.com" {
-		t.Fatalf("RouteSuffix = %q", got)
+	if got := valid.HostnameSuffix(); got != "example.com" {
+		t.Fatalf("HostnameSuffix = %q", got)
 	}
 	provider := valid
 	provider.RelayMapFile = ""
-	provider.RelayProfile = ""
+	provider.RelayRegion = ""
 	provider.RelayProvider = "tailcat"
 	if err := provider.Validate(); err != nil {
 		t.Fatalf("valid relay provider config: %v", err)
 	}
 	conflictingRelaySource := provider
 	conflictingRelaySource.RelayMapFile = "/relay.json"
-	conflictingRelaySource.RelayProfile = "default"
+	conflictingRelaySource.RelayRegion = "default"
 	if err := conflictingRelaySource.Validate(); err == nil {
 		t.Fatal("conflicting relay sources succeeded")
 	}
@@ -272,11 +272,11 @@ func TestTNLDValidateACME(t *testing.T) {
 		"long domain":         func(config *TNLD) { config.Domain = strings.Repeat("a.", 95) + "a" },
 		"missing relay source": func(config *TNLD) {
 			config.RelayMapFile = ""
-			config.RelayProfile = ""
+			config.RelayRegion = ""
 		},
 		"unknown relay provider": func(config *TNLD) {
 			config.RelayMapFile = ""
-			config.RelayProfile = ""
+			config.RelayRegion = ""
 			config.RelayProvider = "other"
 		},
 	} {
@@ -292,14 +292,14 @@ func TestTNLDValidateACME(t *testing.T) {
 
 func TestTNLDHostnameOverridesAndReservations(t *testing.T) {
 	config := TNLD{
-		Domain: "example.com", ControlHostname: "control.service.test", PublicRouteSuffix: "routes.test",
+		Domain: "example.com", ControlHostname: "control.service.test", PublicHostnameSuffix: "routes.test",
 		ReservedRouteNames: []string{"account", "mail"},
 	}
 	if err := config.validateHostnames(); err != nil {
 		t.Fatal(err)
 	}
-	if config.ServerHostname() != "control.service.test" || config.RouteSuffix() != "routes.test" {
-		t.Fatalf("explicit hostnames = %q, %q", config.ServerHostname(), config.RouteSuffix())
+	if config.ServerHostname() != "control.service.test" || config.HostnameSuffix() != "routes.test" {
+		t.Fatalf("explicit hostnames = %q, %q", config.ServerHostname(), config.HostnameSuffix())
 	}
 	reserved := config.EffectiveReservedRouteNames()
 	if strings.Join(reserved, ",") != "account,mail,domains" {

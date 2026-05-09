@@ -29,8 +29,8 @@ import (
 )
 
 const (
-	stateVersion  = 1
-	maxStateBytes = 128 << 10
+	stateSchemaVersion = 2
+	maxStateBytes      = 128 << 10
 )
 
 var (
@@ -62,8 +62,8 @@ type Route struct {
 type Pending struct {
 	Key        *ecdsa.PrivateKey
 	CSRDER     []byte
-	OrderID    string
-	Generation uint64
+	IssuanceID string
+	Version    uint64
 
 	keyDER []byte
 }
@@ -73,35 +73,35 @@ type Material struct {
 	CSRDER      []byte
 	RenewAt     time.Time
 	NotAfter    time.Time
-	OrderID     string
-	Generation  uint64
+	IssuanceID  string
+	Version     uint64
 	Installed   bool
 }
 
 type pendingFile struct {
-	Version    int    `json:"version"`
-	Hostname   string `json:"hostname"`
-	KeyDER     []byte `json:"key_der"`
-	CSRDER     []byte `json:"csr_der"`
-	OrderID    string `json:"order_id,omitempty"`
-	Generation uint64 `json:"generation,omitempty"`
+	SchemaVersion int    `json:"schema_version"`
+	Hostname      string `json:"hostname"`
+	KeyDER        []byte `json:"key_der"`
+	CSRDER        []byte `json:"csr_der"`
+	IssuanceID    string `json:"issuance_id,omitempty"`
+	Version       uint64 `json:"version,omitempty"`
 }
 
 type currentFile struct {
-	Version        int       `json:"version"`
+	SchemaVersion  int       `json:"schema_version"`
 	Hostname       string    `json:"hostname"`
 	KeyDER         []byte    `json:"key_der"`
 	CSRDER         []byte    `json:"csr_der"`
 	CertificatePEM []byte    `json:"certificate_pem"`
 	RenewAt        time.Time `json:"renew_at"`
-	OrderID        string    `json:"order_id"`
-	Generation     uint64    `json:"generation"`
+	IssuanceID     string    `json:"issuance_id"`
+	Version        uint64    `json:"version"`
 	Installed      bool      `json:"installed"`
 }
 
 type selectedServerFile struct {
-	Version int    `json:"version"`
-	Server  string `json:"server"`
+	SchemaVersion int    `json:"schema_version"`
+	Server        string `json:"server"`
 }
 
 func DefaultDir() (string, error) {
@@ -185,7 +185,7 @@ func SavedServer(root string) (string, bool, error) {
 		return "", found, err
 	}
 	server, err := CanonicalServer(stored.Server)
-	if err != nil || stored.Version != stateVersion || server != stored.Server {
+	if err != nil || stored.SchemaVersion != stateSchemaVersion || server != stored.Server {
 		return "", true, errors.New("clientstate: selected server is invalid")
 	}
 	return server, true, nil
@@ -202,8 +202,8 @@ func SaveServer(root, server string) error {
 		return err
 	}
 	return writeJSON(filepath.Join(root, "selected-server.json"), selectedServerFile{
-		Version: stateVersion,
-		Server:  server,
+		SchemaVersion: stateSchemaVersion,
+		Server:        server,
 	})
 }
 
@@ -289,8 +289,8 @@ func (r *Route) Current(hostname string) (Material, bool, error) {
 	if err != nil || !found {
 		return Material{}, found, err
 	}
-	if stored.Version != stateVersion || stored.Hostname != hostname || len(stored.CSRDER) == 0 ||
-		stored.RenewAt.IsZero() || stored.OrderID == "" || stored.Generation == 0 {
+	if stored.SchemaVersion != stateSchemaVersion || stored.Hostname != hostname || len(stored.CSRDER) == 0 ||
+		stored.RenewAt.IsZero() || stored.IssuanceID == "" || stored.Version == 0 {
 		return Material{}, true, errors.New("clientstate: current certificate metadata is invalid")
 	}
 	keyDER, err := r.secrets.Open(r.secretContext, stored.KeyDER)
@@ -309,7 +309,7 @@ func (r *Route) Current(hostname string) (Material, bool, error) {
 	}
 	return Material{
 		Certificate: certificate, CSRDER: bytes.Clone(stored.CSRDER), RenewAt: stored.RenewAt,
-		NotAfter: certificate.Leaf.NotAfter, OrderID: stored.OrderID, Generation: stored.Generation,
+		NotAfter: certificate.Leaf.NotAfter, IssuanceID: stored.IssuanceID, Version: stored.Version,
 		Installed: stored.Installed,
 	}, true, nil
 }
@@ -321,7 +321,7 @@ func (r *Route) Pending(hostname string) (Pending, error) {
 		return Pending{}, err
 	}
 	if found {
-		if stored.Version != stateVersion || stored.Hostname != hostname {
+		if stored.SchemaVersion != stateSchemaVersion || stored.Hostname != hostname {
 			return Pending{}, errors.New("clientstate: pending certificate metadata is invalid")
 		}
 		keyDER, err := r.secrets.Open(r.secretContext, stored.KeyDER)
@@ -336,8 +336,8 @@ func (r *Route) Pending(hostname string) (Pending, error) {
 			return Pending{}, err
 		}
 		return Pending{
-			Key: key, CSRDER: bytes.Clone(stored.CSRDER), OrderID: stored.OrderID,
-			Generation: stored.Generation, keyDER: keyDER,
+			Key: key, CSRDER: bytes.Clone(stored.CSRDER), IssuanceID: stored.IssuanceID,
+			Version: stored.Version, keyDER: keyDER,
 		}, nil
 	}
 
@@ -357,7 +357,7 @@ func (r *Route) Pending(hostname string) (Pending, error) {
 	if err != nil {
 		return Pending{}, err
 	}
-	stored = pendingFile{Version: stateVersion, Hostname: hostname, KeyDER: protectedKey, CSRDER: csrDER}
+	stored = pendingFile{SchemaVersion: stateSchemaVersion, Hostname: hostname, KeyDER: protectedKey, CSRDER: csrDER}
 	if err := writeJSON(filepath.Join(r.dir, "pending.json"), stored); err != nil {
 		return Pending{}, err
 	}
@@ -369,11 +369,11 @@ func (r *Route) Commit(
 	pending Pending,
 	certificatePEM []byte,
 	renewAt time.Time,
-	orderID string,
-	generation uint64,
+	issuanceID string,
+	version uint64,
 ) (Material, error) {
 	if pending.Key == nil || len(pending.keyDER) == 0 || len(pending.CSRDER) == 0 || renewAt.IsZero() ||
-		orderID == "" || generation == 0 {
+		issuanceID == "" || version == 0 {
 		return Material{}, errors.New("clientstate: pending certificate material is incomplete")
 	}
 	installed, err := certificate(pending.keyDER, certificatePEM, hostname)
@@ -388,16 +388,16 @@ func (r *Route) Commit(
 		return Material{}, err
 	}
 	stored := currentFile{
-		Version: stateVersion, Hostname: hostname, KeyDER: protectedKey, CSRDER: bytes.Clone(pending.CSRDER),
-		CertificatePEM: bytes.Clone(certificatePEM), RenewAt: renewAt.UTC(), OrderID: orderID,
-		Generation: generation,
+		SchemaVersion: stateSchemaVersion, Hostname: hostname, KeyDER: protectedKey, CSRDER: bytes.Clone(pending.CSRDER),
+		CertificatePEM: bytes.Clone(certificatePEM), RenewAt: renewAt.UTC(), IssuanceID: issuanceID,
+		Version: version,
 	}
 	if err := writeJSON(filepath.Join(r.dir, "current.json"), stored); err != nil {
 		return Material{}, err
 	}
 	material := Material{
 		Certificate: installed, CSRDER: bytes.Clone(stored.CSRDER), RenewAt: stored.RenewAt,
-		NotAfter: installed.Leaf.NotAfter, OrderID: orderID, Generation: generation,
+		NotAfter: installed.Leaf.NotAfter, IssuanceID: issuanceID, Version: version,
 	}
 	if err := os.Remove(filepath.Join(r.dir, "pending.json")); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return material, fmt.Errorf("clientstate: remove pending certificate: %w", err)
@@ -408,9 +408,9 @@ func (r *Route) Commit(
 	return material, nil
 }
 
-func (r *Route) RecordOrder(hostname string, pending Pending, orderID string, generation uint64) (Pending, error) {
-	if pending.Key == nil || len(pending.keyDER) == 0 || len(pending.CSRDER) == 0 || orderID == "" || generation == 0 {
-		return Pending{}, errors.New("clientstate: pending certificate order is incomplete")
+func (r *Route) RecordIssuance(hostname string, pending Pending, issuanceID string, version uint64) (Pending, error) {
+	if pending.Key == nil || len(pending.keyDER) == 0 || len(pending.CSRDER) == 0 || issuanceID == "" || version == 0 {
+		return Pending{}, errors.New("clientstate: pending certificate issuance is incomplete")
 	}
 	if err := validateCSR(pending.CSRDER, pending.Key, hostname); err != nil {
 		return Pending{}, err
@@ -420,23 +420,23 @@ func (r *Route) RecordOrder(hostname string, pending Pending, orderID string, ge
 		return Pending{}, err
 	}
 	stored := pendingFile{
-		Version: stateVersion, Hostname: hostname, KeyDER: protectedKey, CSRDER: pending.CSRDER,
-		OrderID: orderID, Generation: generation,
+		SchemaVersion: stateSchemaVersion, Hostname: hostname, KeyDER: protectedKey, CSRDER: pending.CSRDER,
+		IssuanceID: issuanceID, Version: version,
 	}
 	if err := writeJSON(filepath.Join(r.dir, "pending.json"), stored); err != nil {
 		return Pending{}, err
 	}
-	pending.OrderID, pending.Generation = orderID, generation
+	pending.IssuanceID, pending.Version = issuanceID, version
 	return pending, nil
 }
 
-func (r *Route) MarkInstalled(hostname, orderID string, generation uint64) (Material, error) {
+func (r *Route) MarkInstalled(hostname, issuanceID string, version uint64) (Material, error) {
 	var stored currentFile
 	found, err := readJSON(filepath.Join(r.dir, "current.json"), &stored)
 	if err != nil {
 		return Material{}, err
 	}
-	if !found || stored.Hostname != hostname || stored.OrderID != orderID || stored.Generation != generation {
+	if !found || stored.Hostname != hostname || stored.IssuanceID != issuanceID || stored.Version != version {
 		return Material{}, errors.New("clientstate: installed certificate does not match current state")
 	}
 	stored.Installed = true
@@ -447,16 +447,16 @@ func (r *Route) MarkInstalled(hostname, orderID string, generation uint64) (Mate
 	return material, err
 }
 
-func (r *Route) RecordCurrentOrder(hostname, orderID string, generation uint64) (Material, error) {
+func (r *Route) RecordCurrentIssuance(hostname, issuanceID string, version uint64) (Material, error) {
 	var stored currentFile
 	found, err := readJSON(filepath.Join(r.dir, "current.json"), &stored)
 	if err != nil {
 		return Material{}, err
 	}
-	if !found || stored.Hostname != hostname || orderID == "" || generation == 0 {
-		return Material{}, errors.New("clientstate: current certificate order is incomplete")
+	if !found || stored.Hostname != hostname || issuanceID == "" || version == 0 {
+		return Material{}, errors.New("clientstate: current certificate issuance is incomplete")
 	}
-	stored.OrderID, stored.Generation, stored.Installed = orderID, generation, false
+	stored.IssuanceID, stored.Version, stored.Installed = issuanceID, version, false
 	if err := writeJSON(filepath.Join(r.dir, "current.json"), stored); err != nil {
 		return Material{}, err
 	}

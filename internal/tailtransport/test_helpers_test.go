@@ -26,8 +26,8 @@ func runTestDERPWithServer(t testing.TB) (*tailcfg.DERPRegion, *derpserver.Serve
 func startTestServer(ctx context.Context, region *tailcfg.DERPRegion, clientKey key.NodePublic, handler func(net.Conn)) (*Server, Endpoint, error) {
 	server, err := NewServer(ServerConfig{
 		AllowedClient: clientKey,
-		RelayProfile:  "test",
-		Profiles:      map[string]*tailcfg.DERPRegion{"test": region},
+		RelayRegion:   "test",
+		Regions:       map[string]*tailcfg.DERPRegion{"test": region},
 		Handler:       handler,
 		Logf:          logger.Discard,
 	})
@@ -45,7 +45,7 @@ func startTestServer(ctx context.Context, region *tailcfg.DERPRegion, clientKey 
 func startTestDialer(ctx context.Context, region *tailcfg.DERPRegion, endpoint Endpoint, clientKey key.NodePrivate) (*Dialer, error) {
 	dialer, err := NewDialer(DialerConfig{
 		Endpoint: endpoint,
-		Profiles: map[string]*tailcfg.DERPRegion{"test": region},
+		Regions:  map[string]*tailcfg.DERPRegion{"test": region},
 		Key:      clientKey,
 		Logf:     logger.Discard,
 	})

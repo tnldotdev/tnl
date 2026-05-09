@@ -21,44 +21,44 @@ const (
 	maxSelectedRelayMapBytes = 64 << 10
 )
 
-func LoadRelayProfiles(path string) (map[string]*tailcfg.DERPRegion, error) {
+func LoadRelayRegions(path string) (map[string]*tailcfg.DERPRegion, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read relay map: %w", err)
 	}
-	return DecodeRelayProfiles(data)
+	return DecodeRelayRegions(data)
 }
 
-// SelectRelayProfile validates and selects one configured relay region.
-func SelectRelayProfile(
-	profiles map[string]*tailcfg.DERPRegion,
+// SelectRelayRegion validates and selects one configured relay region.
+func SelectRelayRegion(
+	regions map[string]*tailcfg.DERPRegion,
 	requested string,
 ) (string, error) {
 	if requested != "" {
-		region := profiles[requested]
+		region := regions[requested]
 		if err := validateRelayRegion(region); err != nil {
-			return "", fmt.Errorf("relay profile %q: %w", requested, err)
+			return "", fmt.Errorf("relay region %q: %w", requested, err)
 		}
 		return requested, nil
 	}
-	if len(profiles) == 1 {
-		for profile, region := range profiles {
+	if len(regions) == 1 {
+		for regionCode, region := range regions {
 			if err := validateRelayRegion(region); err != nil {
-				return "", fmt.Errorf("relay profile %q: %w", profile, err)
+				return "", fmt.Errorf("relay region %q: %w", regionCode, err)
 			}
-			return profile, nil
+			return regionCode, nil
 		}
 	}
-	available := make([]string, 0, len(profiles))
-	for profile := range profiles {
-		available = append(available, profile)
+	available := make([]string, 0, len(regions))
+	for regionCode := range regions {
+		available = append(available, regionCode)
 	}
 	sort.Strings(available)
-	return "", fmt.Errorf("relay profile is required; available profiles: %s", strings.Join(available, ", "))
+	return "", fmt.Errorf("relay region is required; available regions: %s", strings.Join(available, ", "))
 }
 
-// LoadTailcatRelayProfiles loads the pinned Tailcat region or selects and persists one.
-func LoadTailcatRelayProfiles(
+// LoadTailcatRelayRegions loads the pinned Tailcat region or selects and persists one.
+func LoadTailcatRelayRegions(
 	ctx context.Context,
 	db *sql.DB,
 	refresh bool,
@@ -66,12 +66,12 @@ func LoadTailcatRelayProfiles(
 	if !refresh {
 		data, err := state.ReadRelayMap(ctx, db)
 		if err == nil {
-			profiles, err := DecodeRelayProfiles(data)
+			regions, err := DecodeRelayRegions(data)
 			if err != nil {
 				return nil, "", err
 			}
-			profile, selectErr := SelectRelayProfile(profiles, "")
-			return profiles, profile, selectErr
+			regionCode, selectErr := SelectRelayRegion(regions, "")
+			return regions, regionCode, selectErr
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
 			return nil, "", err
@@ -102,14 +102,14 @@ func LoadTailcatRelayProfiles(
 	if err := state.WriteRelayMap(ctx, db, data); err != nil {
 		return nil, "", fmt.Errorf("persist Tailcat relay map: %w", err)
 	}
-	profiles, err := DecodeRelayProfiles(data)
+	regions, err := DecodeRelayRegions(data)
 	if err != nil {
 		return nil, "", err
 	}
-	return profiles, region.RegionCode, nil
+	return regions, region.RegionCode, nil
 }
 
-func DecodeRelayProfiles(data []byte) (map[string]*tailcfg.DERPRegion, error) {
+func DecodeRelayRegions(data []byte) (map[string]*tailcfg.DERPRegion, error) {
 	if len(data) == 0 || len(data) > maxRelayMapBytes {
 		return nil, errors.New("relay map is empty or exceeds 1 MiB")
 	}
@@ -117,26 +117,26 @@ func DecodeRelayProfiles(data []byte) (map[string]*tailcfg.DERPRegion, error) {
 	if err := json.Unmarshal(data, &relayMap); err != nil {
 		return nil, fmt.Errorf("decode relay map: %w", err)
 	}
-	profiles := make(map[string]*tailcfg.DERPRegion, len(relayMap.Regions))
+	regions := make(map[string]*tailcfg.DERPRegion, len(relayMap.Regions))
 	for _, region := range relayMap.Regions {
 		if region == nil || region.RegionCode == "" {
 			return nil, errors.New("relay map contains a region without a code")
 		}
-		if _, exists := profiles[region.RegionCode]; exists {
+		if _, exists := regions[region.RegionCode]; exists {
 			return nil, fmt.Errorf("relay map contains duplicate region code %q", region.RegionCode)
 		}
-		profiles[region.RegionCode] = region.Clone()
+		regions[region.RegionCode] = region.Clone()
 	}
-	if len(profiles) == 0 {
+	if len(regions) == 0 {
 		return nil, errors.New("relay map contains no regions")
 	}
-	return profiles, nil
+	return regions, nil
 }
 
-func SelectedRelayMap(profiles map[string]*tailcfg.DERPRegion, profile string) ([]byte, error) {
-	region := profiles[profile]
+func SelectedRelayMap(regions map[string]*tailcfg.DERPRegion, regionCode string) ([]byte, error) {
+	region := regions[regionCode]
 	if region == nil {
-		return nil, fmt.Errorf("relay profile %q is absent from the relay map", profile)
+		return nil, fmt.Errorf("relay region %q is absent from the relay map", regionCode)
 	}
 	data, err := json.Marshal(tailcfg.DERPMap{
 		Regions: map[int]*tailcfg.DERPRegion{region.RegionID: region.Clone()},
@@ -151,7 +151,7 @@ func SelectedRelayMap(profiles map[string]*tailcfg.DERPRegion, profile string) (
 }
 
 func validateRelayRegion(region *tailcfg.DERPRegion) error {
-	if region == nil || region.RegionID <= 0 || !validRelayProfile(region.RegionCode) || len(region.Nodes) == 0 {
+	if region == nil || region.RegionID <= 0 || !validRelayRegion(region.RegionCode) || len(region.Nodes) == 0 {
 		return errors.New("region is incomplete")
 	}
 	usable := false

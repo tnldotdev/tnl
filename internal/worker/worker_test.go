@@ -17,12 +17,12 @@ import (
 )
 
 func TestEngineOwnsRouteLifecycle(t *testing.T) {
-	engine, err := NewEngine(EngineConfig{Capacity: 1, Profiles: testProfiles()})
+	engine, err := NewEngine(EngineConfig{Capacity: 1, Regions: testRegions()})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var created []*fakeDialer
-	engine.newDialer = func(tailtransport.DialerConfig) (leaseDialer, error) {
+	engine.newDialer = func(tailtransport.DialerConfig) (sessionDialer, error) {
 		dialer := new(fakeDialer)
 		created = append(created, dialer)
 		return dialer, nil
@@ -78,7 +78,7 @@ func TestEngineReportsDialerCreationFailure(t *testing.T) {
 	var logs []string
 	engine, err := NewEngine(EngineConfig{
 		Capacity: 3,
-		Profiles: testProfiles(),
+		Regions:  testRegions(),
 		Logf: func(format string, args ...any) {
 			logs = append(logs, fmt.Sprintf(format, args...))
 		},
@@ -94,7 +94,7 @@ func TestEngineReportsDialerCreationFailure(t *testing.T) {
 		Net: "udp",
 		Err: &os.SyscallError{Syscall: "socket", Err: syscall.EMFILE},
 	}
-	engine.newDialer = func(tailtransport.DialerConfig) (leaseDialer, error) {
+	engine.newDialer = func(tailtransport.DialerConfig) (sessionDialer, error) {
 		return nil, failure
 	}
 	assignment := testAssignment("route-creation-failure", 7)
@@ -113,7 +113,7 @@ func TestEngineReportsDialerCreationFailure(t *testing.T) {
 		"operation=create",
 		"reason=process_file_limit",
 		`route_id="route-creation-failure"`,
-		"generation=7",
+		"version=7",
 		"active=0",
 		"limit=3",
 		"worker: create route dialer",
@@ -122,7 +122,7 @@ func TestEngineReportsDialerCreationFailure(t *testing.T) {
 			t.Errorf("log %q does not contain %q", logs[0], want)
 		}
 	}
-	for _, secret := range []string{assignment.Key.UntypedHexString(), assignment.Endpoint.ServerPublicKey} {
+	for _, secret := range []string{assignment.Key.UntypedHexString(), assignment.Endpoint.PublisherPublicKey} {
 		if strings.Contains(logs[0], secret) {
 			t.Errorf("log contains assignment key material %q", secret)
 		}
@@ -134,7 +134,7 @@ func TestEngineReportsStartFailureAndRemovesRoute(t *testing.T) {
 	var logs []string
 	engine, err := NewEngine(EngineConfig{
 		Capacity: 1,
-		Profiles: testProfiles(),
+		Regions:  testRegions(),
 		Logf: func(format string, args ...any) {
 			logs = append(logs, fmt.Sprintf(format, args...))
 		},
@@ -150,7 +150,7 @@ func TestEngineReportsStartFailureAndRemovesRoute(t *testing.T) {
 		Net: "udp",
 		Err: &os.SyscallError{Syscall: "socket", Err: syscall.ENFILE},
 	}}
-	engine.newDialer = func(tailtransport.DialerConfig) (leaseDialer, error) {
+	engine.newDialer = func(tailtransport.DialerConfig) (sessionDialer, error) {
 		return dialer, nil
 	}
 
@@ -207,15 +207,15 @@ func TestTailcatFailureReasonIsBounded(t *testing.T) {
 	}
 }
 
-func testAssignment(routeID string, generation uint64) Assignment {
+func testAssignment(routeID string, version uint64) Assignment {
 	return Assignment{
-		RouteRef: RouteRef{RouteID: routeID, Generation: generation},
-		Endpoint: tailtransport.Endpoint{Version: 1, ServerPublicKey: key.NewNode().Public().String(), RelayProfile: "test"},
+		RouteRef: RouteRef{RouteID: routeID, Version: version},
+		Endpoint: tailtransport.Endpoint{Version: 1, PublisherPublicKey: key.NewNode().Public().String(), RelayRegion: "test"},
 		Key:      key.NewNode(),
 	}
 }
 
-func testProfiles() map[string]*tailcfg.DERPRegion {
+func testRegions() map[string]*tailcfg.DERPRegion {
 	return map[string]*tailcfg.DERPRegion{"test": {
 		RegionID: 1,
 		Nodes:    []*tailcfg.DERPNode{{RegionID: 1, HostName: "derp.example"}},

@@ -7,18 +7,18 @@ import (
 )
 
 const (
-	StateCreatingOrder      = "creating_order"
-	StateAuthorizing        = "authorizing"
-	StateWaitingChallenge   = "waiting_for_challenge"
-	StateValidating         = "validating"
-	StateReadyToFinalize    = "ready_to_finalize"
-	StateFinalizing         = "finalizing"
-	StateDownloading        = "downloading"
-	StateWaitingForInstall  = "waiting_for_install"
-	StateSucceeded          = "succeeded"
-	StateInvalid            = "invalid"
-	StateBlocked            = "blocked"
-	StateCanceled           = "canceled"
+	StatusCreatingOrder     = "creating_order"
+	StatusAuthorizing       = "authorizing"
+	StatusWaitingChallenge  = "waiting_for_challenge"
+	StatusValidating        = "validating"
+	StatusReadyToFinalize   = "ready_to_finalize"
+	StatusFinalizing        = "finalizing"
+	StatusDownloading       = "downloading"
+	StatusWaitingForInstall = "waiting_for_install"
+	StatusInstalled         = "installed"
+	StatusFailed            = "failed"
+	StatusBlocked           = "blocked"
+	StatusCanceled          = "canceled"
 	tlsALPNChallengeType    = "tls-alpn-01"
 	defaultChallengeTimeout = 10 * time.Minute
 )
@@ -26,7 +26,7 @@ const (
 var (
 	ErrNotFound        = errors.New("certificates: not found")
 	ErrInvalidArgument = errors.New("certificates: invalid argument")
-	ErrInvalidState    = errors.New("certificates: invalid state")
+	ErrInvalidStatus   = errors.New("certificates: invalid status")
 	ErrRateLimited     = errors.New("certificates: rate limited")
 	ErrUnavailable     = errors.New("certificates: temporarily unavailable")
 )
@@ -43,13 +43,13 @@ type Challenge struct {
 	ExpiresAt time.Time
 }
 
-type Job struct {
-	ID         string
-	RouteID    string
-	Generation uint64
-	Hostname   string
-	Profile    string
-	State      string
+type Issuance struct {
+	ID          string
+	RouteID     string
+	Version     uint64
+	Hostname    string
+	ACMEProfile string
+	Status      string
 
 	CSRDER   []byte
 	CSRHash  [sha256.Size]byte
@@ -78,7 +78,7 @@ type Job struct {
 	UpdatedAt        time.Time
 }
 
-func (j Job) Challenge() *Challenge {
+func (j Issuance) Challenge() *Challenge {
 	if j.ChallengeURL == "" || j.ChallengeExpires.IsZero() {
 		return nil
 	}

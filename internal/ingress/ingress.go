@@ -21,9 +21,9 @@ import (
 const defaultOpenTimeout = 10 * time.Second
 
 type Route struct {
-	ID         string
-	Generation uint64
-	Backend    worker.RouteBackend
+	ID      string
+	Version uint64
+	Backend worker.RouteBackend
 }
 
 type LookupFunc func(string) (Route, bool)
@@ -212,7 +212,7 @@ func (s *Server) handle(public net.Conn) error {
 	}
 	var usage UsageConnection
 	if !challenge && s.config.OpenUsage != nil {
-		usage = s.config.OpenUsage(route.ID, route.Generation, time.Now().UTC())
+		usage = s.config.OpenUsage(route.ID, route.Version, time.Now().UTC())
 		defer func() { usage.Close(time.Now().UTC()) }()
 	}
 	replayed := &readerConn{Conn: public, reader: hello.Replay}

@@ -23,17 +23,17 @@ func TestServiceAuthenticatesAndRevokesAccessCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	principal, err := service.Authenticate(context.Background(), first.Token)
+	identity, err := service.Authenticate(context.Background(), first.Token)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if principal != localPrincipal {
-		t.Fatalf("principal = %#v, want %#v", principal, localPrincipal)
+	if identity != localIdentity {
+		t.Fatalf("identity = %#v, want %#v", identity, localIdentity)
 	}
-	if err := service.Revoke(context.Background(), principal, first.CredentialID); err != nil {
+	if err := service.Revoke(context.Background(), identity, first.CredentialID); err != nil {
 		t.Fatal(err)
 	}
-	if err := service.Revoke(context.Background(), principal, first.CredentialID); err != nil {
+	if err := service.Revoke(context.Background(), identity, first.CredentialID); err != nil {
 		t.Fatalf("repeat revocation: %v", err)
 	}
 	if _, err := service.Authenticate(context.Background(), first.Token); !errors.Is(err, ErrUnauthenticated) {
@@ -88,7 +88,7 @@ func TestServiceHidesCredentialOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal, err := service.Authenticate(context.Background(), issued.Token)
+	identity, err := service.Authenticate(context.Background(), issued.Token)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,9 +98,9 @@ func TestServiceHidesCredentialOwnership(t *testing.T) {
 		"wrong owner": issued.CredentialID,
 	} {
 		t.Run(name, func(t *testing.T) {
-			owner := principal
+			owner := identity
 			if name == "wrong owner" {
-				owner.ID = "principal_other"
+				owner.ID = "identity_other"
 			}
 			if err := service.Revoke(context.Background(), owner, target); !errors.Is(err, ErrCredentialNotFound) {
 				t.Fatalf("revocation error = %v", err)

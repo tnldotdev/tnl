@@ -28,7 +28,7 @@ acme_directory_url="${ACME_DIRECTORY_URL:?set ACME_DIRECTORY_URL to the benchmar
 acme_email="${ACME_EMAIL:?set ACME_EMAIL to the benchmark ACME account contact}"
 control_ca_file="${CONTROL_CA_FILE:?set CONTROL_CA_FILE to the ACME issuer root bundle}"
 server_hostname="tnl.${domain}"
-route_suffix="${domain}"
+hostname_suffix="${domain}"
 run_id="$(date -u +%m%d%H%M)-$(openssl rand -hex 2)"
 barrier_token="$(openssl rand -hex 32)"
 app="tnl-bench-${run_id}"
@@ -223,13 +223,13 @@ launch_single_node() {
     --env 'TNLD_METRICS_LISTEN=[::]:9090' \
     --env 'TNLD_PUBLIC_LISTEN=[::]:4443' \
     --env "TNLD_DOMAIN=${domain}" \
-    --env "TNLD_MAX_ACTIVE_HOSTNAME_CLAIMS=${active_claim_limit}" \
-    --env "TNLD_MAX_HOSTNAME_CLAIM_REQUESTS=${claim_request_limit}" \
+    --env "TNLD_MAX_ACTIVE_HOSTNAMES=${active_claim_limit}" \
+    --env "TNLD_MAX_HOSTNAME_REQUESTS=${claim_request_limit}" \
     --env "TNLD_ACME_DIRECTORY_URL=${acme_directory_url}" \
     --env "TNLD_ACME_EMAIL=${acme_email}" \
     --env TNLD_ACME_ACCEPT_TERMS=true \
     --env TNLD_RELAY_MAP_FILE=/etc/tnl/relay.json \
-    --env "TNLD_RELAY_PROFILE=${relay_profile}" \
+    --env "TNLD_RELAY_REGION=${relay_region}" \
     --env "TNLD_WORKER_CAPACITY=${worker_capacity}" \
     --env SSL_CERT_FILE=/etc/tnl/control-ca.crt \
     --env "TNL_NOFILE_LIMIT=${nofile_limit}" \
@@ -251,13 +251,13 @@ launch_edge() {
     --env 'TNLD_METRICS_LISTEN=[::]:9090' \
     --env 'TNLD_PUBLIC_LISTEN=[::]:4443' \
     --env "TNLD_DOMAIN=${domain}" \
-    --env "TNLD_MAX_ACTIVE_HOSTNAME_CLAIMS=${active_claim_limit}" \
-    --env "TNLD_MAX_HOSTNAME_CLAIM_REQUESTS=${claim_request_limit}" \
+    --env "TNLD_MAX_ACTIVE_HOSTNAMES=${active_claim_limit}" \
+    --env "TNLD_MAX_HOSTNAME_REQUESTS=${claim_request_limit}" \
     --env "TNLD_ACME_DIRECTORY_URL=${acme_directory_url}" \
     --env "TNLD_ACME_EMAIL=${acme_email}" \
     --env TNLD_ACME_ACCEPT_TERMS=true \
     --env TNLD_RELAY_MAP_FILE=/etc/tnl/relay.json \
-    --env "TNLD_RELAY_PROFILE=${relay_profile}" \
+    --env "TNLD_RELAY_REGION=${relay_region}" \
     --env "TNLD_WORKER_TOKEN=${worker_token}" \
     --env SSL_CERT_FILE=/etc/tnl/control-ca.crt \
     --env "TNL_NOFILE_LIMIT=${nofile_limit}"
@@ -335,7 +335,7 @@ run_tier() {
       --env "TNL_BENCH_LOGIN_TOKEN=${login_token}" \
       --env TNL_BENCH_CONTROL_CA_FILE=/etc/tnl/control-ca.crt \
       --env "TNL_BENCH_PUBLIC_ADDRESS=${app}.fly.dev:443" \
-      --env "TNL_BENCH_HOSTNAME_SUFFIX=${route_suffix}" \
+      --env "TNL_BENCH_HOSTNAME_SUFFIX=${hostname_suffix}" \
       --env "TNL_BENCH_METRICS_URLS=${metrics_csv}" \
       --env "TNL_BENCH_EDGE_METRICS_URL=${edge_metrics_url}" \
       --env "TNL_BENCH_ROUTES=${count}" \
@@ -416,8 +416,8 @@ worker_token="$(go run ./cmd/tnld token worker)"
 cp "${control_ca_file}" "${temp_dir}/control-ca.crt"
 
 curl --fail --silent --show-error https://tailcat.dev/derpmap.json >"${temp_dir}/relay.json"
-relay_profile="$(jq -r --arg region "${derp_region}" '.Regions[$region].RegionCode // empty' "${temp_dir}/relay.json")"
-if [[ -z "${relay_profile}" ]]; then
+relay_region="$(jq -r --arg region "${derp_region}" '.Regions[$region].RegionCode // empty' "${temp_dir}/relay.json")"
+if [[ -z "${relay_region}" ]]; then
   printf 'DERP region %s is absent from the relay map\n' "${derp_region}" >&2
   exit 2
 fi

@@ -1,5 +1,5 @@
 {
   "version": 1,
-  "server_public_key": "nodekey:0000000000000000000000000000000000000000000000000000000000000001",
-  "relay_profile": "hosted-us-v1"
+  "publisher_public_key": "nodekey:0000000000000000000000000000000000000000000000000000000000000001",
+  "relay_region": "hosted-us-v1"
 }

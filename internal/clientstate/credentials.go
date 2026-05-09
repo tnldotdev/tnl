@@ -15,10 +15,10 @@ type AccessCredential struct {
 }
 
 type accessCredentialFile struct {
-	Version      int       `json:"version"`
-	AccessToken  []byte    `json:"access_token"`
-	CredentialID string    `json:"credential_id"`
-	ExpiresAt    time.Time `json:"expires_at"`
+	SchemaVersion int       `json:"schema_version"`
+	AccessToken   []byte    `json:"access_token"`
+	CredentialID  string    `json:"credential_id"`
+	ExpiresAt     time.Time `json:"expires_at"`
 }
 
 func (s *Store) AccessCredential() (AccessCredential, bool, error) {
@@ -33,7 +33,7 @@ func (s *Store) AccessCredential() (AccessCredential, bool, error) {
 	}
 	token := credentials.AccessToken(plaintext)
 	credentialID, _, err := credentials.ParseAccessToken(token)
-	if err != nil || stored.Version != stateVersion || credentialID.String() != stored.CredentialID ||
+	if err != nil || stored.SchemaVersion != stateSchemaVersion || credentialID.String() != stored.CredentialID ||
 		stored.ExpiresAt.IsZero() {
 		return AccessCredential{}, true, errors.New("clientstate: saved access credential is invalid")
 	}
@@ -50,7 +50,7 @@ func (s *Store) SaveAccessCredential(credential AccessCredential) error {
 		return err
 	}
 	return writeJSON(s.credentialsPath, accessCredentialFile{
-		Version: stateVersion, AccessToken: protected,
+		SchemaVersion: stateSchemaVersion, AccessToken: protected,
 		CredentialID: credential.CredentialID.String(), ExpiresAt: credential.ExpiresAt,
 	})
 }

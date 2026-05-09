@@ -16,35 +16,35 @@ import (
 
 // Metrics owns a process-local Prometheus registry.
 type Metrics struct {
-	registry           *prometheus.Registry
-	routes             *prometheus.GaugeVec
-	workerRoutes       prometheus.Gauge
-	workerCapacity     prometheus.Gauge
-	workerDraining     prometheus.Gauge
-	streams            prometheus.Gauge
-	tailcatPaths       *prometheus.GaugeVec
-	tailcatFailures    *prometheus.CounterVec
-	tailcatForcedClose prometheus.Counter
-	capacityRejections *prometheus.CounterVec
-	nameCapacity       prometheus.Gauge
-	nameRemaining      prometheus.Gauge
-	forwardedBytes     *prometheus.CounterVec
-	apiRequests        *prometheus.CounterVec
-	apiRequestDuration *prometheus.HistogramVec
-	sqliteDuration     *prometheus.HistogramVec
-	sqliteErrors       *prometheus.CounterVec
-	coordinatorStage   *prometheus.HistogramVec
-	routeHeartbeats    *prometheus.CounterVec
-	routeRemovals      *prometheus.CounterVec
-	routeLeaseMinimum  *prometheus.GaugeVec
-	workerOwners       prometheus.Gauge
-	workerSessions     *prometheus.GaugeVec
-	sessionStarts      *prometheus.CounterVec
-	sessionDisconnects *prometheus.CounterVec
-	exportOutbox       *prometheus.GaugeVec
-	exportOldestAge    prometheus.Gauge
-	exportCheckpoints  *prometheus.CounterVec
-	exportDeliveries   *prometheus.CounterVec
+	registry              *prometheus.Registry
+	routes                *prometheus.GaugeVec
+	workerRoutes          prometheus.Gauge
+	workerCapacity        prometheus.Gauge
+	workerDraining        prometheus.Gauge
+	streams               prometheus.Gauge
+	tailcatPaths          *prometheus.GaugeVec
+	tailcatFailures       *prometheus.CounterVec
+	tailcatForcedClose    prometheus.Counter
+	capacityRejections    *prometheus.CounterVec
+	nameCapacity          prometheus.Gauge
+	nameRemaining         prometheus.Gauge
+	forwardedBytes        *prometheus.CounterVec
+	apiRequests           *prometheus.CounterVec
+	apiRequestDuration    *prometheus.HistogramVec
+	sqliteDuration        *prometheus.HistogramVec
+	sqliteErrors          *prometheus.CounterVec
+	coordinatorStage      *prometheus.HistogramVec
+	routeHeartbeats       *prometheus.CounterVec
+	routeRemovals         *prometheus.CounterVec
+	routeSessionMinimum   *prometheus.GaugeVec
+	workersConnected      prometheus.Gauge
+	workerSessions        *prometheus.GaugeVec
+	sessionStarts         *prometheus.CounterVec
+	sessionDisconnects    *prometheus.CounterVec
+	routeUsageOutbox      *prometheus.GaugeVec
+	routeUsageOldestAge   prometheus.Gauge
+	routeUsageCheckpoints *prometheus.CounterVec
+	routeUsageDeliveries  *prometheus.CounterVec
 }
 
 // New constructs an isolated registry for one process role.
@@ -60,8 +60,8 @@ func New(mode string) *Metrics {
 		registry: registry,
 		routes: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "tnl_routes",
-			Help: "Current routes by lifecycle state.",
-		}, []string{"state"}),
+			Help: "Current routes by lifecycle status.",
+		}, []string{"status"}),
 		workerRoutes: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "tnl_worker_routes_active",
 			Help: "Current active routes owned by this worker.",
@@ -130,20 +130,20 @@ func New(mode string) *Metrics {
 			Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10},
 		}, []string{"stage"}),
 		routeHeartbeats: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "tnl_route_lease_heartbeats_total",
-			Help: "Route lease heartbeat attempts by result.",
+			Name: "tnl_route_session_heartbeats_total",
+			Help: "Route session heartbeat attempts by result.",
 		}, []string{"result"}),
 		routeRemovals: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "tnl_route_removals_total",
 			Help: "Route removals by reason.",
 		}, []string{"reason"}),
-		routeLeaseMinimum: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Name: "tnl_route_lease_min_seconds_remaining",
-			Help: "Minimum seconds remaining on a route lease by lifecycle state.",
-		}, []string{"state"}),
-		workerOwners: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "tnl_worker_owners_connected",
-			Help: "Current connected worker owners.",
+		routeSessionMinimum: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "tnl_route_session_min_seconds_remaining",
+			Help: "Minimum seconds remaining on a route session by lifecycle status.",
+		}, []string{"status"}),
+		workersConnected: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "tnl_workers_connected",
+			Help: "Current connected route workers.",
 		}),
 		workerSessions: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "tnl_worker_sessions_active",
@@ -157,21 +157,21 @@ func New(mode string) *Metrics {
 			Name: "tnl_worker_session_disconnects_total",
 			Help: "Disconnected worker sessions by endpoint role and reason.",
 		}, []string{"role", "reason"}),
-		exportOutbox: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Name: "tnl_route_export_outbox_items",
-			Help: "Current queued route export items by bounded kind.",
+		routeUsageOutbox: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "tnl_route_usage_outbox_items",
+			Help: "Current queued route usage items by bounded kind.",
 		}, []string{"kind"}),
-		exportOldestAge: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "tnl_route_export_oldest_item_age_seconds",
-			Help: "Age in seconds of the oldest queued route export item.",
+		routeUsageOldestAge: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "tnl_route_usage_oldest_item_age_seconds",
+			Help: "Age in seconds of the oldest queued route usage item.",
 		}),
-		exportCheckpoints: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "tnl_route_export_checkpoints_total",
+		routeUsageCheckpoints: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "tnl_route_usage_checkpoints_total",
 			Help: "Route usage checkpoints by result.",
 		}, []string{"result"}),
-		exportDeliveries: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "tnl_route_export_deliveries_total",
-			Help: "Route export delivery attempts by bounded kind and result.",
+		routeUsageDeliveries: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "tnl_route_usage_deliveries_total",
+			Help: "Route usage delivery attempts by bounded kind and result.",
 		}, []string{"kind", "result"}),
 	}
 	registry.MustRegister(
@@ -195,15 +195,15 @@ func New(mode string) *Metrics {
 		metrics.coordinatorStage,
 		metrics.routeHeartbeats,
 		metrics.routeRemovals,
-		metrics.routeLeaseMinimum,
-		metrics.workerOwners,
+		metrics.routeSessionMinimum,
+		metrics.workersConnected,
 		metrics.workerSessions,
 		metrics.sessionStarts,
 		metrics.sessionDisconnects,
-		metrics.exportOutbox,
-		metrics.exportOldestAge,
-		metrics.exportCheckpoints,
-		metrics.exportDeliveries,
+		metrics.routeUsageOutbox,
+		metrics.routeUsageOldestAge,
+		metrics.routeUsageCheckpoints,
+		metrics.routeUsageDeliveries,
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 	)
@@ -217,9 +217,9 @@ func (m *Metrics) Handler() http.Handler {
 	return mux
 }
 
-// SetRoutes records the authoritative route count for a lifecycle state.
-func (m *Metrics) SetRoutes(state string, count int) {
-	m.routes.WithLabelValues(state).Set(float64(count))
+// SetRoutes records the authoritative route count for a lifecycle status.
+func (m *Metrics) SetRoutes(status string, count int) {
+	m.routes.WithLabelValues(status).Set(float64(count))
 }
 
 // SetWorkerRoutes records routes currently owned by this worker.
@@ -277,24 +277,24 @@ func (m *Metrics) AddForwardedBytes(direction string, count int64) {
 	m.forwardedBytes.WithLabelValues(direction).Add(float64(count))
 }
 
-// SetRouteExportOutbox records queued export items for a bounded source kind.
-func (m *Metrics) SetRouteExportOutbox(kind string, count int64) {
-	m.exportOutbox.WithLabelValues(kind).Set(float64(count))
+// SetRouteUsageOutbox records queued report items for a bounded source kind.
+func (m *Metrics) SetRouteUsageOutbox(kind string, count int64) {
+	m.routeUsageOutbox.WithLabelValues(kind).Set(float64(count))
 }
 
-// SetRouteExportOldestAge records the age of the oldest queued export item.
-func (m *Metrics) SetRouteExportOldestAge(age time.Duration) {
-	m.exportOldestAge.Set(age.Seconds())
+// SetRouteUsageOldestAge records the age of the oldest queued report item.
+func (m *Metrics) SetRouteUsageOldestAge(age time.Duration) {
+	m.routeUsageOldestAge.Set(age.Seconds())
 }
 
-// ObserveRouteExportCheckpoint records a usage checkpoint result.
-func (m *Metrics) ObserveRouteExportCheckpoint(result string) {
-	m.exportCheckpoints.WithLabelValues(result).Inc()
+// ObserveRouteUsageCheckpoint records a usage checkpoint result.
+func (m *Metrics) ObserveRouteUsageCheckpoint(result string) {
+	m.routeUsageCheckpoints.WithLabelValues(result).Inc()
 }
 
-// ObserveRouteExportDelivery records a delivery result for a bounded source kind.
-func (m *Metrics) ObserveRouteExportDelivery(kind, result string) {
-	m.exportDeliveries.WithLabelValues(kind, result).Inc()
+// ObserveRouteUsageDelivery records a delivery result for a bounded source kind.
+func (m *Metrics) ObserveRouteUsageDelivery(kind, result string) {
+	m.routeUsageDeliveries.WithLabelValues(kind, result).Inc()
 }
 
 // ObserveAPIRequest records a completed request. Operation and result must be bounded producer values.
@@ -358,8 +358,8 @@ func (m *Metrics) RegisterDatabase(db *sql.DB) error {
 	return nil
 }
 
-// ObserveRouteLeaseHeartbeat records a heartbeat result from a bounded producer value.
-func (m *Metrics) ObserveRouteLeaseHeartbeat(result string) {
+// ObserveRouteSessionHeartbeat records a heartbeat result from a bounded producer value.
+func (m *Metrics) ObserveRouteSessionHeartbeat(result string) {
 	m.routeHeartbeats.WithLabelValues(result).Inc()
 }
 
@@ -368,14 +368,14 @@ func (m *Metrics) ObserveRouteRemoval(reason string) {
 	m.routeRemovals.WithLabelValues(reason).Inc()
 }
 
-// SetRouteLeaseMinSecondsRemaining records a lifecycle state from a bounded producer value.
-func (m *Metrics) SetRouteLeaseMinSecondsRemaining(state string, seconds float64) {
-	m.routeLeaseMinimum.WithLabelValues(state).Set(seconds)
+// SetRouteSessionMinSecondsRemaining records a lifecycle status from a bounded producer value.
+func (m *Metrics) SetRouteSessionMinSecondsRemaining(status string, seconds float64) {
+	m.routeSessionMinimum.WithLabelValues(status).Set(seconds)
 }
 
-// SetWorkerOwnersConnected records the number of owners connected to the coordinator.
-func (m *Metrics) SetWorkerOwnersConnected(count int) {
-	m.workerOwners.Set(float64(count))
+// SetWorkersConnected records the number of route workers connected to the coordinator.
+func (m *Metrics) SetWorkersConnected(count int) {
+	m.workersConnected.Set(float64(count))
 }
 
 // ObserveWorkerSessionEstablished records an endpoint role from a bounded producer value.

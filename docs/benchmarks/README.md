@@ -1,6 +1,6 @@
 # Route-Path Benchmark
 
-The Fly benchmark exercises the complete tnl route path, from publication and
+The Fly benchmark exercises the complete tnl route path, from publishing and
 public TLS ingress through Tailcat and the application origin. Tailcat is forced
 through one DERP region so direct peer connectivity cannot affect the result.
 

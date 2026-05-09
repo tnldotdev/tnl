@@ -58,21 +58,21 @@ func TestBenchmarkHostnamesAreUniqueSingleLabelClaims(t *testing.T) {
 
 func TestBenchmarkHostnameSuffix(t *testing.T) {
 	valid := serverv1.Capabilities{
-		HostnameAuthorization: []serverv1.CapabilitiesHostnameAuthorization{serverv1.LocalClaim},
-		LocalClaim:            &serverv1.LocalClaimCapabilities{Suffix: "run.bench.test"},
+		HostnameAuthorization: []serverv1.CapabilitiesHostnameAuthorization{serverv1.LocalHostnames},
+		LocalHostnames:        &serverv1.LocalHostnameCapabilities{Suffix: "run.bench.test"},
 	}
 	if suffix, err := benchmarkHostnameSuffix(valid, "run.bench.test"); err != nil || suffix != "run.bench.test" {
 		t.Fatalf("valid capability = %q, %v", suffix, err)
 	}
 
 	for name, capabilities := range map[string]serverv1.Capabilities{
-		"authorization omitted": {LocalClaim: valid.LocalClaim},
+		"authorization omitted": {LocalHostnames: valid.LocalHostnames},
 		"metadata omitted": {
-			HostnameAuthorization: []serverv1.CapabilitiesHostnameAuthorization{serverv1.LocalClaim},
+			HostnameAuthorization: []serverv1.CapabilitiesHostnameAuthorization{serverv1.LocalHostnames},
 		},
 		"invalid advertised suffix": {
-			HostnameAuthorization: []serverv1.CapabilitiesHostnameAuthorization{serverv1.LocalClaim},
-			LocalClaim:            &serverv1.LocalClaimCapabilities{Suffix: "Run.Bench.Test"},
+			HostnameAuthorization: []serverv1.CapabilitiesHostnameAuthorization{serverv1.LocalHostnames},
+			LocalHostnames:        &serverv1.LocalHostnameCapabilities{Suffix: "Run.Bench.Test"},
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -88,7 +88,7 @@ func TestBenchmarkHostnameSuffix(t *testing.T) {
 
 func TestSummarize(t *testing.T) {
 	got := summarize([]time.Duration{5 * time.Millisecond, time.Millisecond, 3 * time.Millisecond, 2 * time.Millisecond})
-	if got.P50 != 2 || got.P95 != 5 || got.Max != 5 {
+	if got.P50Milliseconds != 2 || got.P95Milliseconds != 5 || got.MaxMilliseconds != 5 {
 		t.Fatalf("summary = %#v", got)
 	}
 }
@@ -167,7 +167,7 @@ func TestCleanupRoutesDeletesCapturedRouteIDs(t *testing.T) {
 		done <- nil
 	}()
 	processes := []*routeProcess{{
-		routeID: "route_a", claimID: "claim_a", claimOwner: cleaner, cancel: cancel, done: done,
+		routeID: "route_a", hostnameID: "hostname_a", hostnameOwner: cleaner, cancel: cancel, done: done,
 	}}
 	timings, err := cleanupRoutes(context.Background(), cli{Parallel: 1}, cleaner, processes)
 	if err != nil {
@@ -179,7 +179,7 @@ func TestCleanupRoutesDeletesCapturedRouteIDs(t *testing.T) {
 	if routeCtx.Err() != context.Canceled {
 		t.Fatal("publisher context was not canceled")
 	}
-	if !slices.Equal(cleaner.events, []string{"stop", "delete:route_a", "release:claim_a"}) {
+	if !slices.Equal(cleaner.events, []string{"stop", "delete:route_a", "remove:hostname_a"}) {
 		t.Fatalf("cleanup events = %v", cleaner.events)
 	}
 }
@@ -189,13 +189,13 @@ func TestCleanupRoutesReleasesClaimWithoutRoute(t *testing.T) {
 	done := make(chan error, 1)
 	done <- errors.New("route creation failed")
 	process := &routeProcess{
-		claimID: "claim_partial", claimOwner: cleaner, cancel: func() {}, done: done,
+		hostnameID: "hostname_partial", hostnameOwner: cleaner, cancel: func() {}, done: done,
 	}
 	_, err := cleanupRoutes(context.Background(), cli{Parallel: 1}, cleaner, []*routeProcess{process})
 	if err == nil || !strings.Contains(err.Error(), "route creation failed") {
 		t.Fatalf("cleanup error = %v", err)
 	}
-	if !slices.Equal(cleaner.events, []string{"release:claim_partial"}) {
+	if !slices.Equal(cleaner.events, []string{"remove:hostname_partial"}) {
 		t.Fatalf("cleanup events = %v", cleaner.events)
 	}
 }
@@ -210,8 +210,8 @@ func (c *cleanerStub) DeleteRoute(_ context.Context, routeID string) error {
 	return nil
 }
 
-func (c *cleanerStub) ReleaseHostnameClaim(_ context.Context, claimID string) error {
-	c.record("release:" + claimID)
+func (c *cleanerStub) RemoveHostname(_ context.Context, hostnameID string) error {
+	c.record("remove:" + hostnameID)
 	return nil
 }
 

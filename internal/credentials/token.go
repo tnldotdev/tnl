@@ -14,7 +14,7 @@ const (
 	accessPrefix  = "tnl_access_"
 	loginPrefix   = "tnl_login_"
 	routePrefix   = "tnl_route_"
-	leasePrefix   = "tnl_lease_"
+	sessionPrefix = "tnl_session_"
 	workerPrefix  = "tnl_worker_"
 	servicePrefix = "tnl_service_"
 	lookupBytes   = 16
@@ -28,25 +28,25 @@ var (
 	ErrInvalidLoginToken = errors.New("invalid login token")
 	// ErrInvalidRouteToken is returned for malformed or rejected route tokens.
 	ErrInvalidRouteToken = errors.New("invalid route token")
-	// ErrInvalidLeaseToken is returned for malformed or rejected lease tokens.
-	ErrInvalidLeaseToken = errors.New("invalid lease token")
+	// ErrInvalidSessionToken is returned for malformed or rejected session tokens.
+	ErrInvalidSessionToken = errors.New("invalid session token")
 	// ErrInvalidWorkerToken is returned for malformed or rejected worker tokens.
 	ErrInvalidWorkerToken = errors.New("invalid worker token")
 	// ErrInvalidServiceToken is returned for malformed service tokens.
 	ErrInvalidServiceToken = errors.New("invalid service token")
 )
 
-// AccessToken authenticates a principal to the tnl server API.
+// AccessToken authenticates a identity to the tnl server API.
 type AccessToken string
 
 // LoginToken authenticates only to the standalone token exchange.
 type LoginToken string
 
-// RouteToken authorizes lease acquisition for one route.
+// RouteToken authorizes session acquisition for one route.
 type RouteToken string
 
-// LeaseToken authorizes operations on one lease generation.
-type LeaseToken string
+// SessionToken authorizes operations on one session version.
+type SessionToken string
 
 // WorkerToken authenticates one worker session to an edge.
 type WorkerToken string
@@ -112,15 +112,15 @@ func ParseRouteToken(token RouteToken) (CredentialID, SecretHash, error) {
 	return parseToken(string(token), routePrefix, ErrInvalidRouteToken)
 }
 
-// NewLeaseToken creates a lease token and its storage values.
-func NewLeaseToken() (LeaseToken, CredentialID, SecretHash, error) {
-	token, lookupID, hash, err := newToken(leasePrefix)
-	return LeaseToken(token), lookupID, hash, err
+// NewSessionToken creates a session token and its storage values.
+func NewSessionToken() (SessionToken, CredentialID, SecretHash, error) {
+	token, lookupID, hash, err := newToken(sessionPrefix)
+	return SessionToken(token), lookupID, hash, err
 }
 
-// ParseLeaseToken validates a lease token and returns its storage lookup values.
-func ParseLeaseToken(token LeaseToken) (CredentialID, SecretHash, error) {
-	return parseToken(string(token), leasePrefix, ErrInvalidLeaseToken)
+// ParseSessionToken validates a session token and returns its storage lookup values.
+func ParseSessionToken(token SessionToken) (CredentialID, SecretHash, error) {
+	return parseToken(string(token), sessionPrefix, ErrInvalidSessionToken)
 }
 
 // NewWorkerToken creates a worker token and its verifier.
@@ -186,8 +186,8 @@ func (t LoginToken) String() string { return string(t) }
 // String returns the serialized route token.
 func (t RouteToken) String() string { return string(t) }
 
-// String returns the serialized lease token.
-func (t LeaseToken) String() string { return string(t) }
+// String returns the serialized session token.
+func (t SessionToken) String() string { return string(t) }
 
 // String returns the serialized worker token.
 func (t WorkerToken) String() string { return string(t) }

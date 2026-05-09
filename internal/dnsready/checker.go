@@ -31,19 +31,19 @@ type ingressSet struct {
 
 // Checker verifies that static route wildcard DNS reaches the control ingress.
 type Checker struct {
-	controlHost string
-	routeSuffix string
-	resolver    resolver
-	state       atomic.Int32
-	ingress     atomic.Pointer[ingressSet]
+	controlHost    string
+	hostnameSuffix string
+	resolver       resolver
+	state          atomic.Int32
+	ingress        atomic.Pointer[ingressSet]
 }
 
-func New(controlHost, routeSuffix string) *Checker {
-	return NewWithResolver(controlHost, routeSuffix, net.DefaultResolver)
+func New(controlHost, hostnameSuffix string) *Checker {
+	return NewWithResolver(controlHost, hostnameSuffix, net.DefaultResolver)
 }
 
-func NewWithResolver(controlHost, routeSuffix string, resolver *net.Resolver) *Checker {
-	return &Checker{controlHost: controlHost, routeSuffix: routeSuffix, resolver: resolver}
+func NewWithResolver(controlHost, hostnameSuffix string, resolver *net.Resolver) *Checker {
+	return &Checker{controlHost: controlHost, hostnameSuffix: hostnameSuffix, resolver: resolver}
 }
 
 // Ready reports the most recently observed readiness state.
@@ -56,7 +56,7 @@ func (c *Checker) Check(ctx context.Context) error {
 	if _, err := rand.Read(material[:]); err != nil {
 		return fmt.Errorf("generate DNS probe name: %w", err)
 	}
-	base := "tnl-dns-" + hex.EncodeToString(material[:]) + "." + c.routeSuffix
+	base := "tnl-dns-" + hex.EncodeToString(material[:]) + "." + c.hostnameSuffix
 	control, err := c.resolver.LookupIPAddr(ctx, c.controlHost)
 	if err != nil {
 		return fmt.Errorf("resolve control hostname %s: %w", c.controlHost, err)

@@ -17,9 +17,9 @@ import (
 	"tailscale.com/types/key"
 )
 
-func TestCoordinatorPublishesOnlyReadyCurrentGeneration(t *testing.T) {
+func TestCoordinatorPublishesOnlyReadyCurrentVersion(t *testing.T) {
 	var removals []RouteRemovalReason
-	coordinator, owner := newCoordinatorFixture(t, CoordinatorConfig{
+	coordinator, worker := newCoordinatorFixture(t, CoordinatorConfig{
 		ObserveRouteRemoval: func(reason RouteRemovalReason) {
 			removals = append(removals, reason)
 		},
@@ -29,11 +29,11 @@ func TestCoordinatorPublishesOnlyReadyCurrentGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := coordinator.Create(context.Background(), "owner", "route.example", "localhost:3000", routeToken)
+	created, err := coordinator.Create(context.Background(), "worker", "route.example", "localhost:3000", routeToken)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created.IngressPublicKey == "" {
+	if created.WorkerPublicKey == "" {
 		t.Fatal("create omitted ingress key")
 	}
 	if _, ok := coordinator.Lookup("route.example"); ok {
@@ -44,73 +44,73 @@ func TestCoordinatorPublishesOnlyReadyCurrentGeneration(t *testing.T) {
 	}
 	serverKey := key.NewNode().Public().String()
 	if err := coordinator.RegisterTransport(
-		context.Background(), created.Route.ID, 1, created.LeaseToken, serverKey, "test",
+		context.Background(), created.Route.ID, 1, created.SessionToken, serverKey, "test",
 	); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := coordinator.Lookup("route.example"); ok {
 		t.Fatal("starting route was published")
 	}
-	if challenge, ok := coordinator.LookupChallenge("route.example"); !ok || challenge.Generation != 1 {
+	if challenge, ok := coordinator.LookupChallenge("route.example"); !ok || challenge.Version != 1 {
 		t.Fatalf("starting challenge route = %#v, %v", challenge, ok)
 	}
-	if err := coordinator.Ready(context.Background(), created.Route.ID, 1, created.LeaseToken); err != nil {
+	if err := coordinator.Ready(context.Background(), created.Route.ID, 1, created.SessionToken); err != nil {
 		t.Fatal(err)
 	}
 	active, ok := coordinator.Lookup("route.example")
-	if !ok || active.Generation != 1 {
+	if !ok || active.Version != 1 {
 		t.Fatalf("active route = %#v, %v", active, ok)
 	}
 
-	replacement, err := coordinator.Acquire(context.Background(), "owner", created.Route.ID, routeToken)
+	replacement, err := coordinator.CreateSession(context.Background(), "worker", created.Route.ID, routeToken)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if replacement.Lease.Generation != 2 {
-		t.Fatalf("replacement generation = %d", replacement.Lease.Generation)
+	if replacement.Session.Version != 2 {
+		t.Fatalf("replacement version = %d", replacement.Session.Version)
 	}
 	if _, ok := coordinator.Lookup("route.example"); ok {
-		t.Fatal("old generation remained published")
+		t.Fatal("old version remained published")
 	}
 	if _, ok := coordinator.LookupChallenge("route.example"); ok {
-		t.Fatal("old generation remained challenge-routable")
+		t.Fatal("old version remained challenge-routable")
 	}
-	if owner.routes[0].closed.Load() != 1 {
-		t.Fatal("old generation was not closed")
+	if worker.routes[0].closed.Load() != 1 {
+		t.Fatal("old version was not closed")
 	}
-	if !slices.Equal(removals, []RouteRemovalReason{RouteRemovalReplaced}) {
+	if !slices.Equal(removals, []RouteRemovalReason{RouteRemovalVersionReplaced}) {
 		t.Fatalf("replacement removals = %v", removals)
 	}
-	if _, err := coordinator.Heartbeat(context.Background(), created.Route.ID, 1, created.LeaseToken); !errors.Is(err, ErrStaleLease) {
+	if _, err := coordinator.Heartbeat(context.Background(), created.Route.ID, 1, created.SessionToken); !errors.Is(err, ErrStaleSession) {
 		t.Fatalf("stale heartbeat error = %v", err)
 	}
 
 	if err := coordinator.RegisterTransport(
-		context.Background(), created.Route.ID, 2, replacement.LeaseToken, serverKey, "test",
+		context.Background(), created.Route.ID, 2, replacement.SessionToken, serverKey, "test",
 	); err != nil {
 		t.Fatal(err)
 	}
-	if err := coordinator.Ready(context.Background(), created.Route.ID, 2, replacement.LeaseToken); err != nil {
+	if err := coordinator.Ready(context.Background(), created.Route.ID, 2, replacement.SessionToken); err != nil {
 		t.Fatal(err)
 	}
-	coordinator.RemoveOwner("local")
-	if !slices.Equal(removals, []RouteRemovalReason{RouteRemovalReplaced, RouteRemovalOwnerDisconnected}) {
-		t.Fatalf("owner removals = %v", removals)
+	coordinator.RemoveWorker("local")
+	if !slices.Equal(removals, []RouteRemovalReason{RouteRemovalVersionReplaced, RouteRemovalWorkerDisconnected}) {
+		t.Fatalf("worker removals = %v", removals)
 	}
 	if _, ok := coordinator.Lookup("route.example"); ok {
-		t.Fatal("route remained published after owner loss")
+		t.Fatal("route remained published after worker loss")
 	}
 	if _, ok := coordinator.LookupChallenge("route.example"); ok {
-		t.Fatal("route remained challenge-routable after owner loss")
+		t.Fatal("route remained challenge-routable after worker loss")
 	}
-	if _, err := coordinator.Heartbeat(context.Background(), created.Route.ID, 2, replacement.LeaseToken); !errors.Is(err, ErrStaleLease) {
-		t.Fatalf("lost-owner heartbeat error = %v", err)
+	if _, err := coordinator.Heartbeat(context.Background(), created.Route.ID, 2, replacement.SessionToken); !errors.Is(err, ErrStaleSession) {
+		t.Fatalf("lost-worker heartbeat error = %v", err)
 	}
 }
 
-func TestCoordinatorExpiresUnrenewedLease(t *testing.T) {
+func TestCoordinatorExpiresUnrenewedSession(t *testing.T) {
 	var removals []RouteRemovalReason
-	coordinator, owner := newCoordinatorFixture(t, CoordinatorConfig{
+	coordinator, worker := newCoordinatorFixture(t, CoordinatorConfig{
 		ObserveRouteRemoval: func(reason RouteRemovalReason) {
 			removals = append(removals, reason)
 		},
@@ -119,56 +119,56 @@ func TestCoordinatorExpiresUnrenewedLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := coordinator.Create(context.Background(), "owner", "route.example", "localhost:3000", routeToken)
+	created, err := coordinator.Create(context.Background(), "worker", "route.example", "localhost:3000", routeToken)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := coordinator.RegisterTransport(
-		context.Background(), created.Route.ID, 1, created.LeaseToken,
+		context.Background(), created.Route.ID, 1, created.SessionToken,
 		key.NewNode().Public().String(), "test",
 	); err != nil {
 		t.Fatal(err)
 	}
-	if err := coordinator.Ready(context.Background(), created.Route.ID, 1, created.LeaseToken); err != nil {
+	if err := coordinator.Ready(context.Background(), created.Route.ID, 1, created.SessionToken); err != nil {
 		t.Fatal(err)
 	}
 
-	coordinator.expireDue(context.Background(), created.Lease.ExpiresAt)
+	coordinator.expireDue(context.Background(), created.Session.ExpiresAt)
 	if _, ok := coordinator.Lookup("route.example"); ok {
 		t.Fatal("expired route remained published")
 	}
-	if owner.routes[0].closed.Load() != 1 {
+	if worker.routes[0].closed.Load() != 1 {
 		t.Fatal("expired route backend was not closed")
 	}
-	if !slices.Equal(removals, []RouteRemovalReason{RouteRemovalLeaseExpired}) {
+	if !slices.Equal(removals, []RouteRemovalReason{RouteRemovalSessionExpired}) {
 		t.Fatalf("expiry removals = %v", removals)
 	}
 	if provisioning, active := coordinator.Stats(); provisioning != 0 || active != 0 {
 		t.Fatalf("stats after expiry = %d provisioning, %d active", provisioning, active)
 	}
 	if _, err := coordinator.Heartbeat(
-		context.Background(), created.Route.ID, 1, created.LeaseToken,
-	); !errors.Is(err, ErrStaleLease) {
+		context.Background(), created.Route.ID, 1, created.SessionToken,
+	); !errors.Is(err, ErrStaleSession) {
 		t.Fatalf("expired heartbeat error = %v", err)
 	}
 }
 
 func TestCoordinatorReclaimsDurableRoute(t *testing.T) {
-	coordinator, owner := newCoordinatorFixture(t)
+	coordinator, worker := newCoordinatorFixture(t)
 	firstToken, _, _, err := credentials.NewRouteToken()
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := coordinator.Create(context.Background(), "owner", "route.example", "localhost:3000", firstToken)
+	first, err := coordinator.Create(context.Background(), "worker", "route.example", "localhost:3000", firstToken)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := coordinator.RegisterTransport(
-		context.Background(), first.Route.ID, 1, first.LeaseToken, key.NewNode().Public().String(), "test",
+		context.Background(), first.Route.ID, 1, first.SessionToken, key.NewNode().Public().String(), "test",
 	); err != nil {
 		t.Fatal(err)
 	}
-	if err := coordinator.Ready(context.Background(), first.Route.ID, 1, first.LeaseToken); err != nil {
+	if err := coordinator.Ready(context.Background(), first.Route.ID, 1, first.SessionToken); err != nil {
 		t.Fatal(err)
 	}
 
@@ -177,39 +177,39 @@ func TestCoordinatorReclaimsDurableRoute(t *testing.T) {
 		t.Fatal(err)
 	}
 	replacement, err := coordinator.Create(
-		context.Background(), "owner", "route.example", "localhost:3001", replacementToken,
+		context.Background(), "worker", "route.example", "localhost:3001", replacementToken,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if replacement.Route.ID != first.Route.ID || replacement.Route.Generation != 2 {
+	if replacement.Route.ID != first.Route.ID || replacement.Route.Version != 2 {
 		t.Fatalf("replacement = %#v", replacement)
 	}
 	if _, ok := coordinator.Lookup("route.example"); ok {
-		t.Fatal("replaced generation remained published")
+		t.Fatal("replaced version remained published")
 	}
-	if owner.routes[0].closed.Load() != 1 {
-		t.Fatal("replaced generation backend was not closed")
+	if worker.routes[0].closed.Load() != 1 {
+		t.Fatal("replaced version backend was not closed")
 	}
-	if _, err := coordinator.Acquire(context.Background(), "owner", first.Route.ID, firstToken); !errors.Is(err, ErrUnauthenticated) {
+	if _, err := coordinator.CreateSession(context.Background(), "worker", first.Route.ID, firstToken); !errors.Is(err, ErrUnauthenticated) {
 		t.Fatalf("rotated route token error = %v", err)
 	}
 }
 
 func TestCoordinatorAcceptsOnlyExactTransportReplay(t *testing.T) {
-	coordinator, owner := newCoordinatorFixture(t)
+	coordinator, worker := newCoordinatorFixture(t)
 	routeToken, _, _, err := credentials.NewRouteToken()
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := coordinator.Create(context.Background(), "owner", "route.example", "localhost:3000", routeToken)
+	created, err := coordinator.Create(context.Background(), "worker", "route.example", "localhost:3000", routeToken)
 	if err != nil {
 		t.Fatal(err)
 	}
 	serverKey := key.NewNode().Public().String()
 	register := func(key, profile string) error {
 		return coordinator.RegisterTransport(
-			context.Background(), created.Route.ID, 1, created.LeaseToken, key, profile,
+			context.Background(), created.Route.ID, 1, created.SessionToken, key, profile,
 		)
 	}
 	if err := register(serverKey, "test"); err != nil {
@@ -218,13 +218,13 @@ func TestCoordinatorAcceptsOnlyExactTransportReplay(t *testing.T) {
 	if err := register(serverKey, "test"); err != nil {
 		t.Fatalf("exact replay error = %v", err)
 	}
-	if len(owner.routes) != 1 {
-		t.Fatalf("attached routes = %d, want 1", len(owner.routes))
+	if len(worker.routes) != 1 {
+		t.Fatalf("attached routes = %d, want 1", len(worker.routes))
 	}
-	if err := register(key.NewNode().Public().String(), "test"); !errors.Is(err, ErrInvalidState) {
+	if err := register(key.NewNode().Public().String(), "test"); !errors.Is(err, ErrInvalidStatus) {
 		t.Fatalf("changed key replay error = %v", err)
 	}
-	if err := register(serverKey, "other"); !errors.Is(err, ErrInvalidState) {
+	if err := register(serverKey, "other"); !errors.Is(err, ErrInvalidStatus) {
 		t.Fatalf("changed profile replay error = %v", err)
 	}
 }
@@ -268,18 +268,18 @@ func TestCoordinatorRejectsChangedTransportBeforeAssignment(t *testing.T) {
 			capacityRejections++
 		},
 	})
-	coordinator.RemoveOwner("local")
+	coordinator.RemoveWorker("local")
 	routeToken, _, _, err := credentials.NewRouteToken()
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := coordinator.Create(context.Background(), "owner", "route.example", "localhost:3000", routeToken)
+	created, err := coordinator.Create(context.Background(), "worker", "route.example", "localhost:3000", routeToken)
 	if err != nil {
 		t.Fatal(err)
 	}
 	serverKey := key.NewNode().Public().String()
 	if err := coordinator.RegisterTransport(
-		context.Background(), created.Route.ID, 1, created.LeaseToken, serverKey, "test",
+		context.Background(), created.Route.ID, 1, created.SessionToken, serverKey, "test",
 	); !errors.Is(err, ErrNoWorkerCapacity) {
 		t.Fatalf("first registration error = %v", err)
 	}
@@ -287,9 +287,9 @@ func TestCoordinatorRejectsChangedTransportBeforeAssignment(t *testing.T) {
 		t.Fatalf("capacity rejections = %d, want 1", capacityRejections)
 	}
 	if err := coordinator.RegisterTransport(
-		context.Background(), created.Route.ID, 1, created.LeaseToken,
+		context.Background(), created.Route.ID, 1, created.SessionToken,
 		key.NewNode().Public().String(), "test",
-	); !errors.Is(err, ErrInvalidState) {
+	); !errors.Is(err, ErrInvalidStatus) {
 		t.Fatalf("changed registration error = %v", err)
 	}
 	if capacityRejections != 1 {
@@ -299,7 +299,7 @@ func TestCoordinatorRejectsChangedTransportBeforeAssignment(t *testing.T) {
 
 func TestCoordinatorReleaseDeactivatesRoute(t *testing.T) {
 	var removals []RouteRemovalReason
-	coordinator, owner := newCoordinatorFixture(t, CoordinatorConfig{
+	coordinator, worker := newCoordinatorFixture(t, CoordinatorConfig{
 		ObserveRouteRemoval: func(reason RouteRemovalReason) {
 			removals = append(removals, reason)
 		},
@@ -308,37 +308,37 @@ func TestCoordinatorReleaseDeactivatesRoute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := coordinator.Create(context.Background(), "owner", "route.example", "localhost:3000", routeToken)
+	created, err := coordinator.Create(context.Background(), "worker", "route.example", "localhost:3000", routeToken)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := coordinator.RegisterTransport(
-		context.Background(), created.Route.ID, 1, created.LeaseToken,
+		context.Background(), created.Route.ID, 1, created.SessionToken,
 		key.NewNode().Public().String(), "test",
 	); err != nil {
 		t.Fatal(err)
 	}
-	if err := coordinator.Ready(context.Background(), created.Route.ID, 1, created.LeaseToken); err != nil {
+	if err := coordinator.Ready(context.Background(), created.Route.ID, 1, created.SessionToken); err != nil {
 		t.Fatal(err)
 	}
-	claims, err := coordinator.ListHostnameClaims(context.Background(), "owner")
-	if err != nil || len(claims) != 1 {
-		t.Fatalf("claims = %#v, %v", claims, err)
+	hostnames, err := coordinator.ListHostnames(context.Background(), "worker")
+	if err != nil || len(hostnames) != 1 {
+		t.Fatalf("hostnames = %#v, %v", hostnames, err)
 	}
-	if err := coordinator.ReleaseHostnameClaim(context.Background(), "owner", claims[0].ID); err != nil {
+	if err := coordinator.RemoveHostname(context.Background(), "worker", hostnames[0].ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := coordinator.Lookup("route.example"); ok {
-		t.Fatal("released route remained published")
+		t.Fatal("removed route remained published")
 	}
-	if owner.routes[0].closed.Load() != 1 {
-		t.Fatal("released route was not closed")
+	if worker.routes[0].closed.Load() != 1 {
+		t.Fatal("removed route was not closed")
 	}
-	if !slices.Equal(removals, []RouteRemovalReason{RouteRemovalClaimReleased}) {
-		t.Fatalf("release removals = %v", removals)
+	if !slices.Equal(removals, []RouteRemovalReason{RouteRemovalHostnameRemoved}) {
+		t.Fatalf("removal reasons = %v", removals)
 	}
-	if _, err := coordinator.Heartbeat(context.Background(), created.Route.ID, 1, created.LeaseToken); !errors.Is(err, ErrStaleLease) {
-		t.Fatalf("released lease error = %v", err)
+	if _, err := coordinator.Heartbeat(context.Background(), created.Route.ID, 1, created.SessionToken); !errors.Is(err, ErrStaleSession) {
+		t.Fatalf("removed session error = %v", err)
 	}
 }
 
@@ -355,21 +355,21 @@ func TestCoordinatorObservesHeartbeatResults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := coordinator.Create(context.Background(), "owner", "route.example", "localhost:3000", routeToken)
+	created, err := coordinator.Create(context.Background(), "worker", "route.example", "localhost:3000", routeToken)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := coordinator.Heartbeat(context.Background(), created.Route.ID, 1, created.LeaseToken); err != nil {
+	if _, err := coordinator.Heartbeat(context.Background(), created.Route.ID, 1, created.SessionToken); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := coordinator.Heartbeat(
-		context.Background(), created.Route.ID, 1, credentials.LeaseToken("invalid"),
+		context.Background(), created.Route.ID, 1, credentials.SessionToken("invalid"),
 	); !errors.Is(err, ErrUnauthenticated) {
 		t.Fatalf("rejected heartbeat error = %v", err)
 	}
 	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := coordinator.Heartbeat(canceled, created.Route.ID, 1, created.LeaseToken); !errors.Is(err, context.Canceled) {
+	if _, err := coordinator.Heartbeat(canceled, created.Route.ID, 1, created.SessionToken); !errors.Is(err, context.Canceled) {
 		t.Fatalf("failed heartbeat error = %v", err)
 	}
 	want := []HeartbeatResult{HeartbeatResultSuccess, HeartbeatResultRejected, HeartbeatResultError}
@@ -392,20 +392,20 @@ func TestCoordinatorObservesStages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := coordinator.Create(context.Background(), "owner", "route.example", "localhost:3000", routeToken)
+	created, err := coordinator.Create(context.Background(), "worker", "route.example", "localhost:3000", routeToken)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := coordinator.RegisterTransport(
-		context.Background(), created.Route.ID, 1, created.LeaseToken,
+		context.Background(), created.Route.ID, 1, created.SessionToken,
 		key.NewNode().Public().String(), "test",
 	); err != nil {
 		t.Fatal(err)
 	}
-	if err := coordinator.Ready(context.Background(), created.Route.ID, 1, created.LeaseToken); err != nil {
+	if err := coordinator.Ready(context.Background(), created.Route.ID, 1, created.SessionToken); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := coordinator.Heartbeat(context.Background(), created.Route.ID, 1, created.LeaseToken); err != nil {
+	if _, err := coordinator.Heartbeat(context.Background(), created.Route.ID, 1, created.SessionToken); err != nil {
 		t.Fatal(err)
 	}
 	for _, stage := range []CoordinatorStage{
@@ -414,7 +414,7 @@ func TestCoordinatorObservesStages(t *testing.T) {
 		CoordinatorStageReadyRouteLockWait,
 		CoordinatorStageReadyPublish,
 		CoordinatorStageHeartbeatRouteLockWait,
-		CoordinatorStageHeartbeatStateUpdate,
+		CoordinatorStageHeartbeatPersistence,
 	} {
 		if observed[stage] != 1 {
 			t.Errorf("stage %q observations = %d, want 1", stage, observed[stage])
@@ -426,20 +426,20 @@ func TestCoordinatorObservesDeletedAndDrainingRemovals(t *testing.T) {
 	for _, test := range []struct {
 		name   string
 		reason RouteRemovalReason
-		remove func(context.Context, *Coordinator, LeaseSetup) error
+		remove func(context.Context, *Coordinator, SessionSetup) error
 	}{
 		{
 			name:   "deleted",
 			reason: RouteRemovalDeleted,
-			remove: func(ctx context.Context, coordinator *Coordinator, created LeaseSetup) error {
-				return coordinator.Delete(ctx, "owner", created.Route.ID)
+			remove: func(ctx context.Context, coordinator *Coordinator, created SessionSetup) error {
+				return coordinator.Delete(ctx, "worker", created.Route.ID)
 			},
 		},
 		{
-			name:   "owner draining",
-			reason: RouteRemovalOwnerDraining,
-			remove: func(ctx context.Context, coordinator *Coordinator, _ LeaseSetup) error {
-				return coordinator.DrainOwner(ctx, "local")
+			name:   "worker draining",
+			reason: RouteRemovalWorkerDraining,
+			remove: func(ctx context.Context, coordinator *Coordinator, _ SessionSetup) error {
+				return coordinator.DrainWorker(ctx, "local")
 			},
 		},
 	} {
@@ -456,17 +456,17 @@ func TestCoordinatorObservesDeletedAndDrainingRemovals(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			created, err := coordinator.Create(context.Background(), "owner", "route.example", "localhost:3000", routeToken)
+			created, err := coordinator.Create(context.Background(), "worker", "route.example", "localhost:3000", routeToken)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if err := coordinator.RegisterTransport(
-				context.Background(), created.Route.ID, 1, created.LeaseToken,
+				context.Background(), created.Route.ID, 1, created.SessionToken,
 				key.NewNode().Public().String(), "test",
 			); err != nil {
 				t.Fatal(err)
 			}
-			if err := coordinator.Ready(context.Background(), created.Route.ID, 1, created.LeaseToken); err != nil {
+			if err := coordinator.Ready(context.Background(), created.Route.ID, 1, created.SessionToken); err != nil {
 				t.Fatal(err)
 			}
 			if err := test.remove(context.Background(), coordinator, created); err != nil {
@@ -487,88 +487,88 @@ func TestCoordinatorHealthStats(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := coordinator.Create(context.Background(), "owner", "route.example", "localhost:3000", routeToken)
+	created, err := coordinator.Create(context.Background(), "worker", "route.example", "localhost:3000", routeToken)
 	if err != nil {
 		t.Fatal(err)
 	}
 	stats := coordinator.HealthStats()
-	if stats.Provisioning != 1 || stats.Active != 0 || stats.ConnectedOwners != 1 ||
-		stats.MinimumProvisioningLeaseSeconds != LeaseLifetime.Seconds() || stats.MinimumActiveLeaseSeconds != 0 {
+	if stats.Provisioning != 1 || stats.Active != 0 || stats.ConnectedWorkers != 1 ||
+		stats.MinimumProvisioningSessionSeconds != SessionLifetime.Seconds() || stats.MinimumActiveSessionSeconds != 0 {
 		t.Fatalf("provisioning health stats = %#v", stats)
 	}
 	if err := coordinator.RegisterTransport(
-		context.Background(), created.Route.ID, 1, created.LeaseToken,
+		context.Background(), created.Route.ID, 1, created.SessionToken,
 		key.NewNode().Public().String(), "test",
 	); err != nil {
 		t.Fatal(err)
 	}
-	if err := coordinator.Ready(context.Background(), created.Route.ID, 1, created.LeaseToken); err != nil {
+	if err := coordinator.Ready(context.Background(), created.Route.ID, 1, created.SessionToken); err != nil {
 		t.Fatal(err)
 	}
 	now = now.Add(10 * time.Second)
 	stats = coordinator.HealthStats()
-	if stats.Provisioning != 0 || stats.Active != 1 || stats.ConnectedOwners != 1 ||
-		stats.MinimumProvisioningLeaseSeconds != 0 || stats.MinimumActiveLeaseSeconds != 35 {
+	if stats.Provisioning != 0 || stats.Active != 1 || stats.ConnectedWorkers != 1 ||
+		stats.MinimumProvisioningSessionSeconds != 0 || stats.MinimumActiveSessionSeconds != 35 {
 		t.Fatalf("active health stats = %#v", stats)
 	}
 }
 
-func newCoordinatorFixture(t *testing.T, configs ...CoordinatorConfig) (*Coordinator, *fakeOwner) {
+func newCoordinatorFixture(t *testing.T, configs ...CoordinatorConfig) (*Coordinator, *fakeWorker) {
 	t.Helper()
 	db, err := state.Open(context.Background(), filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	queries := statedb.New(db)
-	upsertTestPrincipal(t, context.Background(), queries, "owner", "Owner", 1)
+	upsertTestIdentity(t, context.Background(), queries, "worker", "Owner", 1)
 	store, err := NewStore(db, "example")
 	if err != nil {
 		t.Fatal(err)
 	}
-	coordinator, err := NewCoordinator(context.Background(), store, "boot", configs...)
+	coordinator, err := NewCoordinator(context.Background(), store, "instance", configs...)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := coordinator.ClaimHostname(context.Background(), "owner", "route", "coordinator-test"); err != nil {
+	if _, err := coordinator.AddManagedHostname(context.Background(), "worker", "route", "coordinator-test"); err != nil {
 		t.Fatal(err)
 	}
-	owner := &fakeOwner{limit: 2}
-	if err := coordinator.AddOwner("local", owner); err != nil {
+	worker := &fakeWorker{limit: 2}
+	if err := coordinator.AddWorker("local", worker); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
 		_ = coordinator.Close()
 		_ = db.Close()
 	})
-	return coordinator, owner
+	return coordinator, worker
 }
 
-type fakeOwner struct {
+type fakeWorker struct {
 	limit    int
 	draining atomic.Bool
 	closed   atomic.Bool
-	routes   []*fakeOwnedRoute
+	routes   []*fakeWorkerRoute
 }
 
-func (o *fakeOwner) Attach(_ context.Context, assignment worker.Assignment) (worker.OwnedRoute, error) {
+func (o *fakeWorker) Attach(_ context.Context, assignment worker.Assignment) (worker.WorkerRoute, error) {
 	if o.draining.Load() {
 		return nil, worker.ErrDraining
 	}
-	route := &fakeOwnedRoute{ref: assignment.RouteRef}
+	route := &fakeWorkerRoute{ref: assignment.RouteRef}
 	o.routes = append(o.routes, route)
 	return route, nil
 }
 
-func (o *fakeOwner) Capacity() worker.Capacity {
+func (o *fakeWorker) Capacity() worker.Capacity {
 	return worker.Capacity{Active: len(o.routes), Limit: o.limit, Draining: o.draining.Load()}
 }
 
-func (o *fakeOwner) Drain(context.Context) error {
+func (o *fakeWorker) Drain(context.Context) error {
 	o.draining.Store(true)
 	return nil
 }
 
-func (o *fakeOwner) Close() error {
+func (o *fakeWorker) Close() error {
 	o.closed.Store(true)
 	for _, route := range o.routes {
 		_ = route.Close()
@@ -576,20 +576,20 @@ func (o *fakeOwner) Close() error {
 	return nil
 }
 
-type fakeOwnedRoute struct {
+type fakeWorkerRoute struct {
 	ref    worker.RouteRef
 	closed atomic.Int32
 }
 
-func (*fakeOwnedRoute) Open(context.Context) (net.Conn, error) {
+func (*fakeWorkerRoute) Open(context.Context) (net.Conn, error) {
 	local, remote := net.Pipe()
 	_ = remote.Close()
 	return local, nil
 }
 
-func (*fakeOwnedRoute) Drain(context.Context) error { return nil }
+func (*fakeWorkerRoute) Drain(context.Context) error { return nil }
 
-func (r *fakeOwnedRoute) Close() error {
+func (r *fakeWorkerRoute) Close() error {
 	r.closed.Add(1)
 	return nil
 }

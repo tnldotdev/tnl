@@ -14,17 +14,17 @@ import (
 	"tailscale.com/wgengine/filter"
 )
 
-const leaseTCPPort uint16 = 443
+const sessionTCPPort uint16 = 443
 
 var (
 	errAlreadyStarted = errors.New("tailtransport: already started")
 	errNotReady       = errors.New("tailtransport: not ready")
 )
 
-type leaseStatus uint8
+type sessionStatus uint8
 
 const (
-	statusNew leaseStatus = iota
+	statusNew sessionStatus = iota
 	statusStarting
 	statusReady
 	statusDraining
@@ -34,7 +34,7 @@ const (
 
 type lifecycle struct {
 	mu     sync.Mutex
-	status leaseStatus
+	status sessionStatus
 }
 
 type operationGate struct {
@@ -161,11 +161,11 @@ func (l *lifecycle) statusErrorLocked() error {
 	}
 }
 
-// ServerConfig configures the agent side of one lease transport.
+// ServerConfig configures the publisher side of one session transport.
 type ServerConfig struct {
 	AllowedClient key.NodePublic
-	RelayProfile  string
-	Profiles      map[string]*tailcfg.DERPRegion
+	RelayRegion   string
+	Regions       map[string]*tailcfg.DERPRegion
 	Handler       func(net.Conn)
 	Logf          logger.Logf
 }
@@ -173,7 +173,7 @@ type ServerConfig struct {
 // Server accepts streams from one pre-authorized hosted dialer.
 type Server struct {
 	allowedClient key.NodePublic
-	relayProfile  string
+	relayRegion   string
 	region        *tailcfg.DERPRegion
 	handler       func(net.Conn)
 	logf          logger.Logf
@@ -197,7 +197,7 @@ func NewServer(config ServerConfig) (*Server, error) {
 	if config.AllowedClient.IsZero() {
 		return nil, errors.New("tailtransport: missing allowed client key")
 	}
-	region, err := relayRegion(config.RelayProfile, config.Profiles)
+	region, err := relayRegion(config.RelayRegion, config.Regions)
 	if err != nil {
 		return nil, err
 	}
@@ -206,7 +206,7 @@ func NewServer(config ServerConfig) (*Server, error) {
 	}
 	return &Server{
 		allowedClient: config.AllowedClient,
-		relayProfile:  config.RelayProfile,
+		relayRegion:   config.RelayRegion,
 		region:        region,
 		handler:       config.Handler,
 		logf:          config.Logf,
@@ -236,9 +236,9 @@ func (s *Server) Start(ctx context.Context) (Endpoint, error) {
 		Logf:           s.logf,
 		Region:         s.region,
 		AllowedClients: []key.NodePublic{s.allowedClient},
-		ServedTCPPorts: []filter.PortRange{{First: leaseTCPPort, Last: leaseTCPPort}},
+		ServedTCPPorts: []filter.PortRange{{First: sessionTCPPort, Last: sessionTCPPort}},
 		OnTCP: func(port uint16) func(net.Conn) {
-			if port != leaseTCPPort {
+			if port != sessionTCPPort {
 				return nil
 			}
 			return s.handle
@@ -261,7 +261,7 @@ func (s *Server) Start(ctx context.Context) (Endpoint, error) {
 	if err != nil {
 		return zero, operationError(operationCtx, err)
 	}
-	return Endpoint{Version: descriptorVersion, ServerPublicKey: serverKey.Public().String(), RelayProfile: s.relayProfile}, nil
+	return Endpoint{Version: descriptorVersion, PublisherPublicKey: serverKey.Public().String(), RelayRegion: s.relayRegion}, nil
 }
 
 func (s *Server) handle(conn net.Conn) {
@@ -315,15 +315,15 @@ func (s *Server) Close() error {
 	return s.closeErr
 }
 
-// DialerConfig configures the hosted-ingress side of one lease transport.
+// DialerConfig configures the hosted-ingress side of one session transport.
 type DialerConfig struct {
 	Endpoint Endpoint
-	Profiles map[string]*tailcfg.DERPRegion
+	Regions  map[string]*tailcfg.DERPRegion
 	Key      key.NodePrivate
 	Logf     logger.Logf
 }
 
-// Dialer owns one reusable hosted-ingress Tailcat client for a lease.
+// Dialer owns one reusable hosted-ingress Tailcat client for a session.
 type Dialer struct {
 	key        key.NodePrivate
 	logf       logger.Logf
@@ -343,13 +343,13 @@ type tailcatClient interface {
 	Close() error
 }
 
-// NewDialer validates the endpoint against local relay profiles without
+// NewDialer validates the endpoint against local relay regions without
 // starting network activity.
 func NewDialer(config DialerConfig) (*Dialer, error) {
 	if config.Key.IsZero() {
 		return nil, errors.New("tailtransport: missing client key")
 	}
-	blob, err := connBlob(config.Endpoint, config.Profiles)
+	blob, err := connBlob(config.Endpoint, config.Regions)
 	if err != nil {
 		return nil, err
 	}
@@ -363,7 +363,7 @@ func NewDialer(config DialerConfig) (*Dialer, error) {
 	}, nil
 }
 
-// Start establishes connectivity to the lease server. It may be called only
+// Start establishes connectivity to the session server. It may be called only
 // once.
 func (d *Dialer) Start(ctx context.Context) error {
 	if err := d.lifecycle.beginStart(); err != nil {
@@ -393,7 +393,7 @@ func (d *Dialer) Start(ctx context.Context) error {
 	return operationError(operationCtx, err)
 }
 
-// Open creates a TCP stream to the lease server.
+// Open creates a TCP stream to the session server.
 func (d *Dialer) Open(ctx context.Context) (net.Conn, error) {
 	if err := d.lifecycle.ready(); err != nil {
 		return nil, err
@@ -409,7 +409,7 @@ func (d *Dialer) Open(ctx context.Context) (net.Conn, error) {
 	if err := d.lifecycle.ready(); err != nil {
 		return d.streams.finishOpen(nil, err)
 	}
-	conn, err := d.client.DialTCPPort(operationCtx, leaseTCPPort)
+	conn, err := d.client.DialTCPPort(operationCtx, sessionTCPPort)
 	if err != nil {
 		// gVisor dial failures can surface as a net.Conn containing a typed nil.
 		conn = nil
