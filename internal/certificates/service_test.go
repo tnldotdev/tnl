@@ -652,7 +652,7 @@ func testDatabase(t *testing.T) *sql.DB {
 		t.Fatal(err)
 	}
 	if _, err := queries.InsertHostname(context.Background(), statedb.InsertHostnameParams{
-		ID:         "claim",
+		ID:         "hostname",
 		IdentityID: "identity",
 		Hostname:   testHostname,
 		CreatedAt:  1,
@@ -661,7 +661,7 @@ func testDatabase(t *testing.T) *sql.DB {
 	}
 	if err := queries.InsertRoute(context.Background(), statedb.InsertRouteParams{
 		RouteID:     testRouteID,
-		HostnameID:  "claim",
+		HostnameID:  "hostname",
 		IdentityID:  "identity",
 		Hostname:    testHostname,
 		LocalTarget: "http://127.0.0.1:3000",

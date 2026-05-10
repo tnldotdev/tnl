@@ -36,8 +36,8 @@ The main availability signals are:
 - `tnl_tailcat_failures_total{operation,reason}` for Tailcat setup failures,
   including `process_file_limit` and `system_file_limit`.
 - `tnl_route_session_heartbeats_total{result}`,
-  `tnl_route_session_min_seconds_remaining{state}`, and
-  `tnl_route_removals_total{reason}` for lease and route continuity.
+  `tnl_route_session_min_seconds_remaining{status}`, and
+  `tnl_route_removals_total{reason}` for route-session continuity.
 - `tnl_route_coordinator_stage_duration_seconds{stage}` for distinguishing
   per-route lock waits, worker attachment, publishing, and state updates.
 
@@ -67,11 +67,11 @@ increase(tnl_sqlite_errors_total{reason=~"busy|locked"}[10m]) > 0
 tnl_worker_sessions_active{role="edge"} == 0
 increase(tnl_worker_session_disconnects_total{reason!="shutdown"}[10m]) > 3
 increase(tnl_route_removals_total{reason="session_expired"}[10m]) > 0
-tnl_route_session_min_seconds_remaining{state="active"} < 15
+tnl_route_session_min_seconds_remaining{status="active"} < 15
 increase(tnl_capacity_rejections_total{resource="worker_routes"}[5m]) > 0
 ```
 
-Gate the lease-margin query on `tnl_routes{state="active"} > 0`, because the
+Gate the session-margin query on `tnl_routes{status="active"} > 0`, because the
 minimum is zero when no active routes exist. API alerts should require both
 error volume and ratio to avoid paging on one failed request:
 

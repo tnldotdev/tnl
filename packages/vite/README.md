@@ -43,8 +43,8 @@ Or pass it directly:
 tnl dev --name chase.example.com -- pnpm dev
 ```
 
-The signed-in user must own the custom domain or an eligible parent claim.
-Separate users cannot currently share one parent claim.
+The signed-in user must own the custom domain or an eligible parent hostname.
+Separate users cannot currently share one parent hostname.
 
 ## Configuration
 

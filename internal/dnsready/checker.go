@@ -114,7 +114,7 @@ func (c *Checker) IngressAddresses() []string {
 	return result
 }
 
-// CheckDomain verifies exact and wildcard claim-specific CNAME proof and the
+// CheckDomain verifies exact and wildcard domain-verification CNAME proof and the
 // resulting route address. Apex proof uses _tnl because an apex cannot be a CNAME.
 func (c *Checker) CheckDomain(ctx context.Context, domain, target string, apex bool) error {
 	proof := domain

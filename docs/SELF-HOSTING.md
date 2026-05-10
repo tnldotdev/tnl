@@ -106,7 +106,7 @@ interrupt exits immediately.
 
 The route becomes `https://demo.example.com`. Omit `--name` for a fresh friendly
 temporary name on every invocation. A persistent base can authorize its apex and
-descendants up to eight labels deep. Manage persistent claims with:
+descendants up to eight labels deep. Manage persistent hostnames with:
 
 ```console
 tnl host list
@@ -117,13 +117,13 @@ tnl logout
 Managed removal stops its routes and frees active quota, but the base remains
 permanently bound to its original owner and may be reactivated. Access
 credentials expire after `TNLD_ACCESS_TOKEN_LIFETIME`, seven days by default.
-Existing lease-token heartbeats can continue, but a later client restart or
+Existing session-token heartbeats can continue, but a later client restart or
 hostname command may require `tnl login` again.
 
 To use a custom domain, run `tnl host add docs.other.com.`. The command prints
-the exact claim-specific CNAME records, or the apex verification CNAME and
-ingress addresses, then waits for DNS proof. Custom-domain release stops its
-routes and permits another owner to claim it only after fresh proof.
+the exact verification-specific CNAME records, or the apex verification CNAME
+and ingress addresses, then waits for DNS proof. Custom-domain removal stops
+its routes and makes it available to another identity only after fresh proof.
 
 ## OIDC Login
 
@@ -140,7 +140,7 @@ operator recovery.
 
 ## Route Usage
 
-An edge or standalone daemon can export ordered route lifecycle events and
+An edge or standalone daemon can report ordered route lifecycle events and
 minute/hour usage snapshots to a compatible receiver. Generate a dedicated
 credential with `tnld token service`, then configure both values:
 
@@ -148,8 +148,8 @@ credential with `tnld token service`, then configure both values:
   local development.
 - `TNLD_ROUTE_USAGE_TOKEN`: the generated service token.
 
-Leaving both values empty disables export; configuring only one is invalid.
-Worker mode cannot export because it does not own the durable route state. The
+Leaving both values empty disables reporting; configuring only one is invalid.
+Worker mode cannot report usage because it does not own the durable route state. The
 daemon retains an SQLite outbox across restarts and removes an item only after a
 `204 No Content` response.
 
