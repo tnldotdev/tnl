@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/zalando/go-keyring"
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -47,6 +48,10 @@ type keychainSecretProtector struct {
 
 func newSecretProtector(account, lockPath string) secretProtector {
 	return &keychainSecretProtector{account: account, lockPath: lockPath, keyring: systemKeyring{}}
+}
+
+func openBlockingLock(path, kind string) (*Lock, error) {
+	return openLockOperation(path, kind, unix.LOCK_EX)
 }
 
 func (p *keychainSecretProtector) Seal(context string, plaintext []byte) ([]byte, error) {
