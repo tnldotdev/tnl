@@ -44,8 +44,6 @@ type benchmarkLease struct {
 	conn   net.Conn
 }
 
-type resourceSnapshot = processmetrics.Snapshot
-
 func BenchmarkTailcatCapacity(b *testing.B) {
 	if os.Getenv(capacityOptIn) != "1" {
 		b.Skipf("set %s=1 to run the Tailcat capacity benchmark", capacityOptIn)
@@ -104,7 +102,7 @@ func BenchmarkTailcatChurn(b *testing.B) {
 	after := settledResources()
 	reportLatency(b, "startup", startup)
 	reportLatency(b, "shutdown", shutdown)
-	reportResiduals(b, before, after)
+	reportResiduals(b, "", before, after)
 	enforceBudgets(b, b.N, before, after, after, startup, nil, shutdown, 32*1024*1024)
 }
 
@@ -155,7 +153,7 @@ func runCapacityTier(b *testing.B, config capacityConfig, region *tailcfg.DERPRe
 		reportLatency(b, "path_ready", pathReady)
 	}
 	b.Logf("opening %d streams", routeCount)
-	idle := readResources()
+	idle := processmetrics.Read()
 
 	err = runParallel(routeCount, config.parallel, func(index int) error {
 		ctx, cancel := context.WithTimeout(context.Background(), operationTimeout)
@@ -169,7 +167,7 @@ func runCapacityTier(b *testing.B, config capacityConfig, region *tailcfg.DERPRe
 		logDERPDiagnostics(b, derp, "stream open failure")
 		b.Fatal(err)
 	}
-	active := readResources()
+	active := processmetrics.Read()
 	b.Logf("probing path and transferring %d bytes per stream", config.transferSize)
 	directRoutes := 0
 	if config.expectedPath == "any" {
@@ -232,7 +230,7 @@ func runCapacityTier(b *testing.B, config capacityConfig, region *tailcfg.DERPRe
 	reportLatency(b, "shutdown", shutdown)
 	reportPerRoute(b, "idle", before, idle, routeCount)
 	reportPerRoute(b, "active", before, active, routeCount)
-	reportResiduals(b, before, after)
+	reportResiduals(b, "", before, after)
 	b.ReportMetric(float64(transferred)/(1024*1024)/transferTime.Seconds(), "MiB/s")
 	b.ReportMetric(float64(directRoutes), "direct_routes")
 	b.ReportMetric(float64(routeCount-directRoutes), "derp_routes")
@@ -460,14 +458,10 @@ func envOr(name, fallback string) string {
 	return fallback
 }
 
-func settledResources() resourceSnapshot {
+func settledResources() processmetrics.Snapshot {
 	runtime.GC()
 	time.Sleep(settleTime)
 	runtime.GC()
-	return readResources()
-}
-
-func readResources() resourceSnapshot {
 	return processmetrics.Read()
 }
 
@@ -534,7 +528,7 @@ func durationPercentile(samples []time.Duration, percentile int) time.Duration {
 	return ordered[index]
 }
 
-func reportPerRoute(b *testing.B, name string, before, after resourceSnapshot, routes int) {
+func reportPerRoute(b *testing.B, name string, before, after processmetrics.Snapshot, routes int) {
 	b.Helper()
 	b.ReportMetric(float64(after.HeapAlloc-before.HeapAlloc)/float64(routes), name+"_heap_B/route")
 	b.ReportMetric(float64(after.Sys-before.Sys)/float64(routes), name+"_sys_B/route")
@@ -547,21 +541,21 @@ func reportPerRoute(b *testing.B, name string, before, after resourceSnapshot, r
 	}
 }
 
-func reportResiduals(b *testing.B, before, after resourceSnapshot) {
+func reportResiduals(b *testing.B, prefix string, before, after processmetrics.Snapshot) {
 	b.Helper()
-	b.ReportMetric(float64(after.HeapAlloc-before.HeapAlloc), "residual_heap_B")
-	b.ReportMetric(float64(after.Sys-before.Sys), "residual_sys_B")
-	b.ReportMetric(float64(after.Goroutines-before.Goroutines), "residual_goroutines")
-	b.ReportMetric(after.UserCPU-before.UserCPU, "user_cpu_seconds")
+	b.ReportMetric(float64(after.HeapAlloc-before.HeapAlloc), prefix+"residual_heap_B")
+	b.ReportMetric(float64(after.Sys-before.Sys), prefix+"residual_sys_B")
+	b.ReportMetric(float64(after.Goroutines-before.Goroutines), prefix+"residual_goroutines")
+	b.ReportMetric(after.UserCPU-before.UserCPU, prefix+"user_cpu_seconds")
 	if before.OpenFDs >= 0 && after.OpenFDs >= 0 {
-		b.ReportMetric(float64(after.OpenFDs-before.OpenFDs), "residual_fds")
+		b.ReportMetric(float64(after.OpenFDs-before.OpenFDs), prefix+"residual_fds")
 	}
 	if before.RSS >= 0 && after.RSS >= 0 {
-		b.ReportMetric(float64(after.RSS-before.RSS), "residual_rss_B")
+		b.ReportMetric(float64(after.RSS-before.RSS), prefix+"residual_rss_B")
 	}
 }
 
-func enforceBudgets(b *testing.B, routes int, before, ready, after resourceSnapshot, startup, firstByte, shutdown []time.Duration, residualHeapBudget int64) {
+func enforceBudgets(b *testing.B, routes int, before, ready, after processmetrics.Snapshot, startup, firstByte, shutdown []time.Duration, residualHeapBudget int64) {
 	b.Helper()
 	if durationPercentile(startup, 95) > 15*time.Second {
 		b.Errorf("startup p95 exceeds 15s")

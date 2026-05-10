@@ -26,34 +26,28 @@ mise exec -- task go:bench-tailcat-churn
 mise exec -- task go:bench-tailcat-churn CYCLES=10000x
 ```
 
-## Development Baseline
+## Results
 
-Baseline date: 2026-08-28. The machine was an Apple M5 Pro with 15 logical
-cores, 24 GiB memory, macOS 26.6.1, and Go 1.27.0. Each route transferred 64 KiB
-through one active stream. Lifecycle concurrency was eight.
+Baseline date: 2026-08-29. Clients ran on an Apple M5 Pro Mac with 24 GiB memory;
+the agent ran on a `performance-8x` Fly Machine in `sjc`. Both used public
+DERP/STUN region 302. Each route transferred 64 KiB through one stream with eight
+concurrent lifecycle operations.
 
-| Workload | Result | Notes |
+| Forced-DERP routes | Result | Notes |
 | --- | --- | --- |
-| Direct, 1 and 10 routes | Pass | Direct path observed; no residual descriptors or goroutines. |
-| Direct, 100 routes | Unstable | One run passed; another stream open exceeded 30 seconds. |
-| Direct, 500 routes | Fail | All routes started, but 7 did not establish a direct path within 10 seconds. |
-| Direct, 1,000 routes | Incomplete | Multiple stream opens timed out before direct-path diagnostics were added. |
-| Forced DERP, 1, 10, and 500 routes | Pass | No stream, transfer, or cleanup failures. |
-| Forced DERP, 1,000 routes | Budget fail | All traffic passed; retained heap was 590.8 MB against a 557.8 MB budget. |
-| 10,000 lifecycle cycles | Pass | Completed in 146.5 seconds with eight concurrent cycles. |
+| 250 | Pass, three runs | Zero forced closes; agent shutdown 221-226 ms. |
+| 500 | Pass | Zero forced closes. |
+| 1,000 | Pass | Zero forced closes; agent shutdown 796 ms. |
+| 1,500 | Pass | Zero forced closes; agent shutdown 1.24 s and client shutdown p95 71 ms. |
+| 2,000 | Fail | Agent was OOM-killed during route creation at about 15.3 GiB RSS. |
 
-The 10,000-cycle run retained about 1.6 MiB of Go heap and no file descriptors
-or goroutines. Startup p95 was 5.3 ms, with roughly one percent of starts taking
-Tailcat's 10-second readiness retry. Shutdown p95 was 1.7 ms.
+The observed capacity of this topology is 1,500 routes. The 2,000-route boundary
+is agent memory, not DERP traffic or stream teardown: all 1,500 routes started,
+transferred data at 1.98 MiB/s aggregate, and cleaned up within budget.
 
-At 500 direct routes, DERP held all expected 1,000 connections without queue or
-write-error drops. Direct-path preparation caused connection churn and transient
-unknown-destination packets. The forced-DERP control then passed all 500 routes,
-isolating the failure to direct-path discovery in the single-host topology.
-
-The machine handled the 1,000-route forced-DERP workload without a functional
-failure or descriptor/goroutine leak. A 100-route successful run used about 1.3
-MiB idle Go heap per route and 2.3 MiB with one active stream per route.
+The local 10,000-cycle lifecycle run completed in 146.5 seconds, retained about
+1.6 MiB of Go heap, and leaked no descriptors or goroutines. Direct-path
+convergence is tracked separately because routes remain available over DERP.
 
 ## Budgets
 
@@ -90,18 +84,14 @@ mise exec -- task go:bench-tailcat-fly
 
 Defaults are organization `tnl`, region `sjc`, Machine size `performance-8x`,
 eight concurrent operations, direct then forced-DERP modes, and route tiers
-`1,10,100,250,500,1000`. Override them through the task environment:
+`1,10,100,250,500,1000,1500`. Override them through the task environment:
 
 ```console
 ORG=tnl REGION=sjc AGENT_SIZE=performance-4x ROUTES=1,10 MODES=direct PARALLEL=4 LOCAL_PORT=18081 mise exec -- task go:bench-tailcat-fly
 ```
 
 Each mode gets a fresh Machine. The benchmark stops at the first failed tier,
-and the script's exit trap destroys the Machine and temporary
-Fly app on success, failure, or interruption. Output separates client shutdown
-percentiles from agent shutdown time and reports client and agent resource
-residuals independently.
-
-The baseline 250-route forced-DERP tier passed three consecutive Fly runs with
-zero forced closes. Client shutdown p95 was 34-48 ms, agent shutdown was
-221-226 ms, and residual resources stayed within budget.
+and the script's exit trap destroys the Machine and temporary Fly app on
+success, failure, or interruption. Output separates client shutdown percentiles
+from agent shutdown time and reports client and agent resource residuals
+independently. Use `ROUTES=2000 MODES=derp` to reproduce the memory boundary.
