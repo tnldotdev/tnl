@@ -1,0 +1,652 @@
+openapi: 3.1.0
+info:
+  title: tnl authorization authority API
+  version: 1.0.0
+  license:
+    name: MIT
+    identifier: MIT
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+servers:
+  - url: https://authority.example
+paths:
+  /v1/capabilities:
+    get:
+      operationId: getCapabilities
+      summary: Describe authentication, hostname, and authorization policy
+      security: []
+      responses:
+        "200":
+          description: Authorization authority capabilities
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Capabilities"
+        "429":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/hostnames:
+    get:
+      operationId: listHostnames
+      summary: List active hostnames owned by the authenticated identity
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/HostnameID"
+      responses:
+        "200":
+          description: Hostnames
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HostnamePage"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: addHostname
+      summary: Add a managed hostname or allocate a temporary hostname
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddHostnameRequest"
+      responses:
+        "201":
+          description: Hostname added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Hostname"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/hostnames/{id}:
+    delete:
+      operationId: removeHostname
+      summary: Remove an owned persistent hostname
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/HostnameID"
+      responses:
+        "204":
+          description: Hostname removed
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/domain-verifications:
+    post:
+      operationId: createDomainVerification
+      summary: Create a pending custom-domain verification
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDomainVerificationRequest"
+      responses:
+        "201":
+          description: Pending domain verification
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DomainVerification"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/domain-verifications/{id}:
+    get:
+      operationId: getDomainVerification
+      summary: Read an owned custom-domain verification
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/DomainVerificationID"
+      responses:
+        "200":
+          description: Domain verification
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DomainVerification"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/domain-verifications/{id}/complete:
+    post:
+      operationId: completeDomainVerification
+      summary: Verify DNS and activate custom-domain ownership
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/DomainVerificationID"
+      responses:
+        "200":
+          description: Active custom domain
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Hostname"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/authorizations:
+    post:
+      operationId: issueAuthorization
+      summary: Issue a short-lived authorization for a Core operation
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IssueAuthorizationRequest"
+      responses:
+        "201":
+          description: Signed operation authorization
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthorizationEnvelope"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: OAuth access token
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    HostnameID:
+      name: id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/HostnameID"
+    DomainVerificationID:
+      name: id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/DomainVerificationID"
+  responses:
+    Problem:
+      description: Request failed
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    BearerProblem:
+      description: Authentication failed
+      headers:
+        WWW-Authenticate:
+          schema:
+            type: string
+            const: Bearer
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+  schemas:
+    Capabilities:
+      type: object
+      additionalProperties: false
+      required:
+        - authentication_required
+        - oidc
+        - hostname_suffix
+        - hostname_policy
+        - authorization_issuer
+        - authorization_key
+      properties:
+        authentication_required:
+          type: boolean
+          const: true
+        oidc:
+          $ref: "#/components/schemas/OIDCCapabilities"
+        hostname_suffix:
+          type: string
+          minLength: 1
+          maxLength: 189
+        hostname_policy:
+          $ref: "#/components/schemas/HostnamePolicy"
+        authorization_issuer:
+          type: string
+          format: uri
+        authorization_key:
+          $ref: "#/components/schemas/AuthorizationKey"
+    OIDCCapabilities:
+      type: object
+      additionalProperties: false
+      required: [grant_type, issuer, client_id, scopes]
+      properties:
+        grant_type:
+          type: string
+          const: device_code
+        issuer:
+          type: string
+          format: uri
+        client_id:
+          type: string
+          const: tnl-cli
+        scopes:
+          type: array
+          description: Exact OAuth scope set the client must request.
+          minItems: 4
+          maxItems: 4
+          uniqueItems: true
+          items:
+            type: string
+            enum: [openid, offline_access, product, operations]
+    HostnamePolicy:
+      type: object
+      additionalProperties: false
+      required:
+        - temporary_name_support
+        - persistent_base_support
+        - custom_domain_support
+        - maximum_subdomain_depth
+        - maximum_active_persistent_hostnames
+        - maximum_temporary_hostnames_per_utc_day
+      properties:
+        temporary_name_support:
+          type: boolean
+          const: true
+        persistent_base_support:
+          type: boolean
+          const: true
+        custom_domain_support:
+          type: boolean
+          const: true
+        maximum_subdomain_depth:
+          type: integer
+          const: 8
+        maximum_active_persistent_hostnames:
+          type: integer
+          const: 3
+        maximum_temporary_hostnames_per_utc_day:
+          type: integer
+          const: 25
+    AuthorizationKey:
+      type: object
+      additionalProperties: false
+      required: [kid, alg, public_key]
+      properties:
+        kid:
+          type: string
+          minLength: 1
+          maxLength: 128
+        alg:
+          type: string
+          const: EdDSA
+        public_key:
+          type: string
+          description: Unpadded RFC 4648 base64url encoding of the 32-byte Ed25519 public key.
+          pattern: ^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$
+    HostnameID:
+      type: string
+      pattern: ^hostname_[0-9a-f]{32}$
+    AddHostnameRequest:
+      type: object
+      additionalProperties: false
+      required: [kind]
+      properties:
+        kind:
+          type: string
+          enum: [managed, temporary]
+        name:
+          type: string
+          minLength: 1
+          maxLength: 253
+    Hostname:
+      type: object
+      additionalProperties: false
+      required: [id, hostname, kind, status, source, created_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/HostnameID"
+        hostname:
+          type: string
+          minLength: 1
+          maxLength: 253
+        kind:
+          type: string
+          enum: [managed, custom_domain, temporary]
+        status:
+          type: string
+          enum: [pending_route, active, inactive, available, retired]
+        source:
+          type: string
+          enum: [generated, user]
+        created_at:
+          type: string
+          format: date-time
+        activated_at:
+          type: string
+          format: date-time
+        deactivated_at:
+          type: string
+          format: date-time
+    HostnamePage:
+      type: object
+      additionalProperties: false
+      required: [hostnames]
+      properties:
+        hostnames:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/Hostname"
+        next_cursor:
+          $ref: "#/components/schemas/HostnameID"
+    CreateDomainVerificationRequest:
+      type: object
+      additionalProperties: false
+      required: [domain]
+      properties:
+        domain:
+          type: string
+          minLength: 1
+          maxLength: 253
+    DomainVerificationID:
+      type: string
+      pattern: ^verification_[0-9a-f]{32}$
+    DomainVerification:
+      type: object
+      additionalProperties: false
+      required: [id, domain, verification_target, apex, status, records, created_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/DomainVerificationID"
+        domain:
+          type: string
+          minLength: 1
+          maxLength: 253
+        verification_target:
+          type: string
+          minLength: 1
+          maxLength: 253
+        apex:
+          type: boolean
+        status:
+          type: string
+          enum: [pending, verified, invalidated]
+        hostname_id:
+          $ref: "#/components/schemas/HostnameID"
+        records:
+          type: array
+          minItems: 2
+          maxItems: 4
+          items:
+            $ref: "#/components/schemas/DNSRecord"
+        created_at:
+          type: string
+          format: date-time
+        verified_at:
+          type: string
+          format: date-time
+        invalidated_at:
+          type: string
+          format: date-time
+    DNSRecord:
+      type: object
+      additionalProperties: false
+      required: [name, type, value]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        type:
+          type: string
+          enum: [A, AAAA, CNAME]
+        value:
+          type: string
+          minLength: 1
+          maxLength: 255
+    IssueAuthorizationRequest:
+      type: object
+      additionalProperties: false
+      required: [operation, hostname, canonical_request_hash]
+      allOf:
+        - if:
+            properties:
+              operation:
+                const: route.create
+          then:
+            not:
+              anyOf:
+                - properties:
+                    route_id: {}
+                  required: [route_id]
+                - properties:
+                    route_version: {}
+                  required: [route_version]
+        - if:
+            properties:
+              operation:
+                enum: [route_session.create, authorization.renew]
+          then:
+            properties:
+              route_id: {}
+              route_version: {}
+            required: [route_id, route_version]
+      properties:
+        operation:
+          type: string
+          enum: [route.create, route_session.create, authorization.renew]
+        hostname:
+          type: string
+          minLength: 1
+          maxLength: 253
+        route_id:
+          type: string
+          pattern: ^route_[0-9a-f]{32}$
+        route_version:
+          type: integer
+          description: Required for route_session.create and authorization.renew. For route_session.create this is the new session version expected from Core; for authorization.renew this is the current route version.
+          minimum: 1
+          maximum: 2147483647
+        canonical_request_hash:
+          $ref: "#/components/schemas/SHA256Digest"
+        ip_policy_hash:
+          $ref: "#/components/schemas/SHA256Digest"
+    AuthorizationEnvelope:
+      type: object
+      additionalProperties: false
+      required: [authorization, claims]
+      properties:
+        authorization:
+          type: string
+          description: Compact EdDSA JWS with kid and typ=tnl-authorization+jwt protected headers.
+          minLength: 1
+          maxLength: 4096
+        claims:
+          $ref: "#/components/schemas/AuthorizationClaims"
+    AuthorizationClaims:
+      type: object
+      additionalProperties: false
+      required:
+        - version
+        - kid
+        - alg
+        - operation
+        - issuer
+        - receiver
+        - authorization_id
+        - hostname
+        - revision
+        - issued_at
+        - expires_at
+        - retry_id
+        - canonical_request_hash
+      properties:
+        version:
+          type: integer
+          const: 1
+        kid:
+          type: string
+          minLength: 1
+          maxLength: 128
+        alg:
+          type: string
+          const: EdDSA
+        operation:
+          type: string
+          enum: [route.create, route_session.create, authorization.renew]
+        issuer:
+          type: string
+          format: uri
+        receiver:
+          type: string
+          minLength: 1
+          maxLength: 256
+        authorization_id:
+          type: string
+          pattern: ^authorization_[0-9a-f]{32}$
+        hostname:
+          type: string
+          minLength: 1
+          maxLength: 253
+        route_id:
+          type: string
+          pattern: ^route_[0-9a-f]{32}$
+        route_version:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        revision:
+          type: integer
+          description: Monotonic team authorization policy revision; multiple tokens may have the same revision.
+          minimum: 1
+        issued_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        retry_id:
+          type: string
+          pattern: ^retry_[0-9a-f]{32}$
+        canonical_request_hash:
+          $ref: "#/components/schemas/SHA256Digest"
+        ip_policy_hash:
+          $ref: "#/components/schemas/SHA256Digest"
+    SHA256Digest:
+      type: string
+      description: Unpadded RFC 4648 base64url encoding of the 32-byte SHA-256 digest of the RFC 8785 JSON serialization of the Core operation request body before authorization credentials are attached.
+      pattern: ^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$
+    Problem:
+      type: object
+      additionalProperties: false
+      required: [type, title, status, code, request_id, details]
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+          minLength: 1
+          maxLength: 128
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        code:
+          type: string
+          enum:
+            - invalid_argument
+            - unauthenticated
+            - permission_denied
+            - not_found
+            - name_unavailable
+            - status_conflict
+            - idempotency_conflict
+            - precondition_failed
+            - internal
+        request_id:
+          type: string
+          minLength: 1
+          maxLength: 64
+        details:
+          type: object
+          maxProperties: 16

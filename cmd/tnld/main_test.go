@@ -39,28 +39,7 @@ func TestVersionCommand(t *testing.T) {
 	}
 }
 
-func TestTokenCommands(t *testing.T) {
-	for _, tokenType := range []string{"worker", "service"} {
-		t.Run(tokenType, func(t *testing.T) {
-			var output bytes.Buffer
-			if err := run(context.Background(), []string{"token", tokenType}, &output); err != nil {
-				t.Fatal(err)
-			}
-			value := strings.TrimSpace(output.String())
-			var err error
-			if tokenType == "worker" {
-				_, err = credentials.ParseWorkerToken(credentials.WorkerToken(value))
-			} else {
-				_, err = credentials.ParseServiceToken(credentials.ServiceToken(value))
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-		})
-	}
-}
-
-func TestCommandTreeIncludesServeAndAdministration(t *testing.T) {
+func TestCommandTreeOnlyIncludesDaemonCommands(t *testing.T) {
 	var flags tnldCLI
 	parser, err := newTNLDParser(&flags, &bytes.Buffer{})
 	if err != nil {
@@ -70,7 +49,7 @@ func TestCommandTreeIncludesServeAndAdministration(t *testing.T) {
 	for _, command := range parser.Model.Leaves(true) {
 		commands[command.Path()] = true
 	}
-	for _, command := range []string{"serve", "version", "login-token", "token worker", "token service", "relay refresh"} {
+	for _, command := range []string{"serve", "version"} {
 		if !commands[command] {
 			t.Fatalf("command %q missing from help model: %#v", command, commands)
 		}
@@ -82,8 +61,6 @@ func TestCommandTreeIncludesServeAndAdministration(t *testing.T) {
 	}{
 		"default serve":  {args: []string{"--public-listen", ""}, want: "serve"},
 		"explicit serve": {args: []string{"serve", "--public-listen", ""}, want: "serve"},
-		"login token":    {args: []string{"login-token", "--state-dir", "/state"}, want: "login-token"},
-		"relay refresh":  {args: []string{"relay", "refresh", "--state-dir", "/state"}, want: "relay refresh"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var flags tnldCLI
@@ -99,28 +76,6 @@ func TestCommandTreeIncludesServeAndAdministration(t *testing.T) {
 				t.Fatalf("command = %q, want %q", parsed.Command(), test.want)
 			}
 		})
-	}
-}
-
-func TestLoginTokenCommand(t *testing.T) {
-	directory := t.TempDir()
-	db, err := state.Open(t.Context(), directory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	token, _, err := state.EnsureLoginToken(t.Context(), db)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-	var output bytes.Buffer
-	if err := run(context.Background(), []string{"login-token", "--state-dir", directory}, &output); err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.TrimSpace(output.String()); got != token.String() {
-		t.Fatalf("login token = %q", got)
 	}
 }
 
@@ -171,7 +126,7 @@ func TestIntegrationStandaloneControlLifecycle(t *testing.T) {
 		ACMEProfile: "tlsserver", RelayMapFile: relayFile, RelayRegion: "test",
 		WorkerCapacity: 10, WorkerStreamLimit: 10, PublicConnLimit: 10, RouteConnLimit: 5, DrainTimeout: time.Second,
 		MaxActiveHostnames: 128, MaxHostnameRequests: 1024,
-		AccessTokenLifetime: time.Hour,
+		AccessTokenLifetime: time.Hour, RefreshTokenLifetime: 30 * 24 * time.Hour,
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
@@ -180,7 +135,7 @@ func TestIntegrationStandaloneControlLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	running := &daemon{db: db, login: login, dns: dnsready.NewWithResolver("tnl.example", "example", testResolver)}
+	running := &daemon{db: db, login: login, loginRevision: 1, dns: dnsready.NewWithResolver("tnl.example", "example", testResolver)}
 	t.Cleanup(func() { _ = running.shutdown(time.Second) })
 	serverContext, cancelServer := context.WithCancel(context.Background())
 	t.Cleanup(cancelServer)
@@ -215,7 +170,7 @@ func TestIntegrationStandaloneControlLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if lifetime := time.Until(issued.ExpiresAt); lifetime < 59*time.Minute || lifetime > time.Hour {
+	if lifetime := time.Until(issued.AccessExpiresAt); lifetime < 59*time.Minute || lifetime > time.Hour {
 		t.Fatalf("issued access token lifetime = %s, want 1h", lifetime)
 	}
 	client, err := serverclient.New(baseURL, httpClient, credentials.AccessToken(issued.AccessToken))

@@ -76,7 +76,11 @@ func TestClientSeparatesCertificatePreconditionsFromStaleSessions(t *testing.T) 
 		_ = json.NewEncoder(response).Encode(serverv1.Problem{Code: serverv1.PreconditionFailed})
 	}))
 	defer server.Close()
-	client, err := New(server.URL, server.Client(), "")
+	access, _, _, err := credentials.NewAccessToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := New(server.URL, server.Client(), access)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,10 +123,81 @@ func TestRateLimitRetryAfterIsBounded(t *testing.T) {
 	}
 }
 
+func TestValidateControlSessionResponseAcceptsEqualExpirationsAndGrantSet(t *testing.T) {
+	access, _, _, err := credentials.NewAccessToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	refresh, _, _, err := credentials.NewRefreshToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiresAt := time.Now().Add(time.Hour).UTC()
+	stored, err := ValidateControlSessionResponse(serverv1.ControlSessionResponse{
+		SessionId:   "control_session_0123456789abcdef0123456789abcdef",
+		AccessToken: access.String(), AccessExpiresAt: expiresAt,
+		RefreshToken: refresh.String(), RefreshExpiresAt: expiresAt,
+		Grants: []serverv1.Grant{serverv1.Admin, serverv1.Publish},
+	}, "", time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stored.AccessExpiresAt.Equal(stored.RefreshExpiresAt) || len(stored.Grants) != 2 {
+		t.Fatalf("stored session = %#v", stored)
+	}
+	if validGrants([]string{"publish", "publish"}) || validGrants([]string{"admin"}) {
+		t.Fatal("invalid grant set accepted")
+	}
+}
+
 func TestClientMapsNotFound(t *testing.T) {
 	err := responseError(http.StatusNotFound, nil, []byte(`{"code":"not_found"}`))
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("error = %v", err)
+	}
+	err = responseError(http.StatusNotImplemented, nil, []byte(`{"code":"unsupported"}`))
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("unsupported error = %v", err)
+	}
+}
+
+func TestAdminPageValidationRejectsNonAdvancingAndOversizedPages(t *testing.T) {
+	id := serverv1.RouteID("route_00000000000000000000000000000001")
+	page := serverv1.AdminRoutePage{
+		Routes: []serverv1.AdminRoute{{
+			Id: id, Status: serverv1.AdminRouteStatusActive, Version: 1,
+		}},
+		NextCursor: &id,
+	}
+	if err := validateAdminRoutePage(page, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateAdminRoutePage(page, string(id)); err == nil {
+		t.Fatal("non-advancing route page accepted")
+	}
+	page.Routes = make([]serverv1.AdminRoute, 101)
+	if err := validateAdminRoutePage(page, ""); err == nil {
+		t.Fatal("oversized route page accepted")
+	}
+}
+
+func TestRequireAdministrationCapability(t *testing.T) {
+	if err := RequireAdministrationCapability(serverv1.Capabilities{}); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("missing capability error = %v", err)
+	}
+	capabilities := serverv1.Capabilities{Administration: serverv1.AdministrationCapabilities{
+		Version: serverv1.AdministrationCapabilitiesVersionN1,
+		Operations: []serverv1.AdministrationCapabilitiesOperations{
+			serverv1.ServerStatus, serverv1.Routes, serverv1.Hostnames, serverv1.Credentials,
+			serverv1.ControlSessions, serverv1.OperationalSwitches,
+		},
+	}}
+	if err := RequireAdministrationCapability(capabilities); err != nil {
+		t.Fatal(err)
+	}
+	capabilities.Administration.Operations[5] = serverv1.Routes
+	if err := RequireAdministrationCapability(capabilities); err == nil || errors.Is(err, ErrUnsupported) {
+		t.Fatalf("duplicate capability error = %v", err)
 	}
 }
 
@@ -151,7 +226,11 @@ func TestClientPaginatesHostnames(t *testing.T) {
 		}}})
 	}))
 	defer server.Close()
-	client, err := New(server.URL, server.Client(), "")
+	access, _, _, err := credentials.NewAccessToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := New(server.URL, server.Client(), access)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,11 +244,17 @@ func TestClientPaginatesHostnames(t *testing.T) {
 }
 
 func TestClientOIDCAndRelayRequests(t *testing.T) {
-	access, credentialID, _, err := credentials.NewAccessToken()
+	access, _, _, err := credentials.NewAccessToken()
 	if err != nil {
 		t.Fatal(err)
 	}
-	expiresAt := time.Now().Add(time.Hour).UTC()
+	refresh, _, _, err := credentials.NewRefreshToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	accessExpiresAt := time.Now().Add(time.Hour).UTC()
+	refreshExpiresAt := time.Now().Add(24 * time.Hour).UTC()
+	const sessionID = "control_session_0123456789abcdef0123456789abcdef"
 	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.Method + " " + request.URL.Path {
 		case "GET /v1/transport/relay-map":
@@ -182,11 +267,12 @@ func TestClientOIDCAndRelayRequests(t *testing.T) {
 			if body.IdToken != "id-token" {
 				t.Errorf("ID token = %q", body.IdToken)
 			}
-			_ = json.NewEncoder(response).Encode(serverv1.TokenExchangeResponse{
-				AccessToken: access.String(), CredentialId: credentialID.String(),
-				ExpiresAt: expiresAt, TokenType: serverv1.Bearer,
+			_ = json.NewEncoder(response).Encode(serverv1.ControlSessionResponse{
+				SessionId: sessionID, AccessToken: access.String(), AccessExpiresAt: accessExpiresAt,
+				RefreshToken: refresh.String(), RefreshExpiresAt: refreshExpiresAt,
+				Grants: []serverv1.Grant{serverv1.Publish},
 			})
-		case "DELETE /v1/auth/credentials/" + credentialID.String():
+		case "POST /v1/auth/logout":
 			if request.Header.Get("Authorization") != "Bearer "+access.String() {
 				t.Errorf("authorization = %q", request.Header.Get("Authorization"))
 			}
@@ -205,10 +291,10 @@ func TestClientOIDCAndRelayRequests(t *testing.T) {
 		t.Fatalf("relay map = %s, error = %v", relayMap, err)
 	}
 	issued, err := client.ExchangeOIDC(context.Background(), "id-token")
-	if err != nil || issued.AccessToken != access.String() || issued.CredentialId != credentialID.String() {
+	if err != nil || issued.AccessToken != access.String() || issued.SessionId != sessionID {
 		t.Fatalf("issued = %#v, error = %v", issued, err)
 	}
-	if err := client.RevokeAccessCredential(context.Background(), credentialID.String()); err != nil {
+	if err := client.Logout(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -26,6 +26,9 @@ type Metrics struct {
 	tailcatFailures       *prometheus.CounterVec
 	tailcatForcedClose    prometheus.Counter
 	capacityRejections    *prometheus.CounterVec
+	sourceLimiterRejects  prometheus.Counter
+	sourceLimiterEntries  prometheus.Gauge
+	ipAllowlistDenials    prometheus.Counter
 	nameCapacity          prometheus.Gauge
 	nameRemaining         prometheus.Gauge
 	forwardedBytes        *prometheus.CounterVec
@@ -94,6 +97,18 @@ func New(mode string) *Metrics {
 			Name: "tnl_capacity_rejections_total",
 			Help: "Operations rejected because a bounded resource was full.",
 		}, []string{"resource"}),
+		sourceLimiterRejects: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "tnl_source_limiter_rejections_total",
+			Help: "Public connection starts rejected by per-source limiting.",
+		}),
+		sourceLimiterEntries: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "tnl_source_limiter_entries",
+			Help: "Current bounded per-source limiter entries.",
+		}),
+		ipAllowlistDenials: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "tnl_ip_allowlist_denials_total",
+			Help: "Public route connections denied by IP allowlists.",
+		}),
 		nameCapacity: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "tnl_friendly_name_namespace_capacity",
 			Help: "Total usable friendly-name pairs in the reviewed corpus.",
@@ -185,6 +200,9 @@ func New(mode string) *Metrics {
 		metrics.tailcatFailures,
 		metrics.tailcatForcedClose,
 		metrics.capacityRejections,
+		metrics.sourceLimiterRejects,
+		metrics.sourceLimiterEntries,
+		metrics.ipAllowlistDenials,
 		metrics.nameCapacity,
 		metrics.nameRemaining,
 		metrics.forwardedBytes,
@@ -264,6 +282,18 @@ func (m *Metrics) AddTailcatForcedCloses(count int) {
 // IncCapacityRejection records one bounded-resource rejection.
 func (m *Metrics) IncCapacityRejection(resource string) {
 	m.capacityRejections.WithLabelValues(resource).Inc()
+}
+
+func (m *Metrics) IncSourceLimiterRejection() {
+	m.sourceLimiterRejects.Inc()
+}
+
+func (m *Metrics) SetSourceLimiterEntries(entries int) {
+	m.sourceLimiterEntries.Set(float64(entries))
+}
+
+func (m *Metrics) IncIPAllowlistDenial() {
+	m.ipAllowlistDenials.Inc()
 }
 
 // SetFriendlyNameCapacity records total and conservatively remaining allocator capacity.

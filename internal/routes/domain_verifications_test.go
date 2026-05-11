@@ -93,11 +93,11 @@ func TestCustomDomainVerificationLifecycleAndTransfer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = store.Create(ctx, "owner", "a.b.c.d.e.f.g.h.other.com", "localhost:3000", "instance", routeToken)
+	_, err = store.Create(ctx, "owner", "a.b.c.d.e.f.g.h.other.com", "localhost:3000", "instance", routeToken, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Create(ctx, "owner", "x.a.b.c.d.e.f.g.h.other.com", "localhost:3001", "instance", routeToken); !errors.Is(err, ErrInvalidArgument) {
+	if _, err := store.Create(ctx, "owner", "x.a.b.c.d.e.f.g.h.other.com", "localhost:3001", "instance", routeToken, nil); !errors.Is(err, ErrInvalidArgument) {
 		t.Fatalf("ninth-level route error = %v", err)
 	}
 

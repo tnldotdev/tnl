@@ -36,13 +36,25 @@ var (
 	ErrDNSProofPending   = errors.New("serverclient: DNS proof pending")
 	ErrRateLimited       = errors.New("serverclient: rate limited")
 	ErrUnavailable       = errors.New("serverclient: temporarily unavailable")
+	ErrUnsupported       = errors.New("serverclient: unsupported")
 )
 
 type Client struct {
-	base    *url.URL
-	http    *http.Client
-	access  credentials.AccessToken
-	timeout time.Duration
+	base                   *url.URL
+	http                   *http.Client
+	access                 credentials.AccessToken
+	externalAuthentication bool
+	timeout                time.Duration
+}
+
+// NewExternallyAuthenticated creates a client whose HTTP transport supplies authorization.
+func NewExternallyAuthenticated(server string, httpClient *http.Client) (*Client, error) {
+	client, err := New(server, httpClient, "")
+	if err != nil {
+		return nil, err
+	}
+	client.externalAuthentication = true
+	return client, nil
 }
 
 func New(server string, httpClient *http.Client, access credentials.AccessToken) (*Client, error) {
@@ -65,36 +77,59 @@ func (c *Client) Capabilities(ctx context.Context) (serverv1.Capabilities, error
 	return request[serverv1.Capabilities](ctx, c, http.MethodGet, "/v1/capabilities", "", nil)
 }
 
+func (c *Client) ClientIP(ctx context.Context) (serverv1.ClientIPResponse, error) {
+	return request[serverv1.ClientIPResponse](ctx, c, http.MethodGet, "/v1/client-ip", "", nil)
+}
+
 func (c *Client) RelayMap(ctx context.Context) ([]byte, error) {
 	data, err := request[json.RawMessage](ctx, c, http.MethodGet, "/v1/transport/relay-map", "", nil)
 	return []byte(data), err
 }
 
-func (c *Client) Exchange(ctx context.Context, token credentials.LoginToken) (serverv1.TokenExchangeResponse, error) {
-	return request[serverv1.TokenExchangeResponse](ctx, c, http.MethodPost, "/v1/auth/token", "", serverv1.TokenExchangeRequest{
+func (c *Client) Exchange(ctx context.Context, token credentials.LoginToken) (serverv1.ControlSessionResponse, error) {
+	return request[serverv1.ControlSessionResponse](ctx, c, http.MethodPost, "/v1/auth/token", "", serverv1.TokenExchangeRequest{
 		LoginToken: token.String(),
 	})
 }
 
-func (c *Client) ExchangeOIDC(ctx context.Context, token string) (serverv1.TokenExchangeResponse, error) {
-	return request[serverv1.TokenExchangeResponse](ctx, c, http.MethodPost, "/v1/auth/oidc", "", serverv1.OIDCTokenExchangeRequest{
+func (c *Client) ExchangeOIDC(ctx context.Context, token string) (serverv1.ControlSessionResponse, error) {
+	return request[serverv1.ControlSessionResponse](ctx, c, http.MethodPost, "/v1/auth/oidc", "", serverv1.OIDCTokenExchangeRequest{
 		IdToken: token,
 	})
 }
 
-func (c *Client) RevokeAccessCredential(ctx context.Context, credentialID string) error {
-	_, err := request[struct{}](
-		ctx, c, http.MethodDelete, "/v1/auth/credentials/"+url.PathEscape(credentialID), c.access.String(), nil,
-	)
+func (c *Client) Refresh(ctx context.Context, token credentials.RefreshToken) (serverv1.ControlSessionResponse, error) {
+	return request[serverv1.ControlSessionResponse](ctx, c, http.MethodPost, "/v1/auth/refresh", "", serverv1.RefreshControlSessionRequest{
+		RefreshToken: token.String(),
+	})
+}
+
+func (c *Client) Logout(ctx context.Context) error {
+	_, err := requestWithAccess[struct{}](ctx, c, http.MethodPost, "/v1/auth/logout", nil)
+	return err
+}
+
+// LogoutWithAccessToken revokes the session represented by a specific saved access token.
+func (c *Client) LogoutWithAccessToken(ctx context.Context, token credentials.AccessToken) error {
+	_, err := request[struct{}](ctx, c, http.MethodPost, "/v1/auth/logout", token.String(), nil)
 	return err
 }
 
 func (c *Client) CreateRoute(ctx context.Context, requestBody serverv1.CreateRouteRequest) (serverv1.SessionSetup, error) {
-	return request[serverv1.SessionSetup](ctx, c, http.MethodPost, "/v1/routes", c.access.String(), requestBody)
+	return requestWithAccess[serverv1.SessionSetup](ctx, c, http.MethodPost, "/v1/routes", requestBody)
+}
+
+func (c *Client) CreateRouteAuthorized(
+	ctx context.Context,
+	requestBody serverv1.CreateRouteRequest,
+	authorization string,
+) (serverv1.SessionSetup, error) {
+	requestBody.SignedAuthorization = &authorization
+	return request[serverv1.SessionSetup](ctx, c, http.MethodPost, "/v1/routes", "", requestBody)
 }
 
 func (c *Client) ListRoutes(ctx context.Context) ([]serverv1.Route, error) {
-	return request[[]serverv1.Route](ctx, c, http.MethodGet, "/v1/routes", c.access.String(), nil)
+	return requestWithAccess[[]serverv1.Route](ctx, c, http.MethodGet, "/v1/routes", nil)
 }
 
 func (c *Client) AddHostname(ctx context.Context, kind serverv1.AddHostnameRequestKind, name, requestKey string) (serverv1.Hostname, error) {
@@ -104,9 +139,7 @@ func (c *Client) AddHostname(ctx context.Context, kind serverv1.AddHostnameReque
 	}
 	headers := make(http.Header)
 	headers.Set("Idempotency-Key", requestKey)
-	return requestWithTimeout[serverv1.Hostname](
-		ctx, c, c.timeout, http.MethodPost, "/v1/hostnames", c.access.String(), requestBody, headers,
-	)
+	return requestWithAccess[serverv1.Hostname](ctx, c, http.MethodPost, "/v1/hostnames", requestBody, headers)
 }
 
 func (c *Client) ListHostnames(ctx context.Context) ([]serverv1.Hostname, error) {
@@ -133,9 +166,7 @@ func (c *Client) ListHostnamesPage(
 	if cursor != "" {
 		query.Set("cursor", cursor)
 	}
-	page, err := requestWithTimeoutAndQuery[serverv1.HostnamePage](
-		ctx, c, c.timeout, http.MethodGet, "/v1/hostnames", c.access.String(), nil, query,
-	)
+	page, err := requestWithAccessAndQuery[serverv1.HostnamePage](ctx, c, http.MethodGet, "/v1/hostnames", nil, query)
 	if err != nil {
 		return nil, "", err
 	}
@@ -161,7 +192,7 @@ func (c *Client) ListHostnamesPage(
 }
 
 func (c *Client) RemoveHostname(ctx context.Context, hostnameID string) error {
-	_, err := request[struct{}](ctx, c, http.MethodDelete, hostnamePath(hostnameID), c.access.String(), nil)
+	_, err := requestWithAccess[struct{}](ctx, c, http.MethodDelete, hostnamePath(hostnameID), nil)
 	return err
 }
 
@@ -171,30 +202,40 @@ func (c *Client) CreateDomainVerification(
 ) (serverv1.DomainVerification, error) {
 	headers := make(http.Header)
 	headers.Set("Idempotency-Key", requestKey)
-	return requestWithTimeout[serverv1.DomainVerification](
-		ctx, c, c.timeout, http.MethodPost, "/v1/domain-verifications", c.access.String(),
-		serverv1.CreateDomainVerificationRequest{Domain: domain}, headers,
-	)
+	return requestWithAccess[serverv1.DomainVerification](ctx, c, http.MethodPost, "/v1/domain-verifications",
+		serverv1.CreateDomainVerificationRequest{Domain: domain}, headers)
 }
 
 func (c *Client) DomainVerification(ctx context.Context, verificationID string) (serverv1.DomainVerification, error) {
-	return request[serverv1.DomainVerification](
-		ctx, c, http.MethodGet, domainVerificationPath(verificationID, ""), c.access.String(), nil,
-	)
+	return requestWithAccess[serverv1.DomainVerification](ctx, c, http.MethodGet, domainVerificationPath(verificationID, ""), nil)
 }
 
 func (c *Client) CompleteDomainVerification(ctx context.Context, verificationID string) (serverv1.Hostname, error) {
-	return request[serverv1.Hostname](
-		ctx, c, http.MethodPost, domainVerificationPath(verificationID, "complete"), c.access.String(), nil,
-	)
+	return requestWithAccess[serverv1.Hostname](ctx, c, http.MethodPost, domainVerificationPath(verificationID, "complete"), nil)
 }
 
 func (c *Client) CreateRouteSession(
 	ctx context.Context,
 	routeID string,
 	routeToken credentials.RouteToken,
+	allowedIPPrefixes []string,
 ) (serverv1.SessionSetup, error) {
-	return request[serverv1.SessionSetup](ctx, c, http.MethodPost, routePath(routeID, "sessions"), c.access.String(), serverv1.CreateRouteSessionRequest{RouteToken: routeToken.String()})
+	requestBody := serverv1.CreateRouteSessionRequest{RouteToken: routeToken.String()}
+	if allowedIPPrefixes != nil {
+		allowed := serverv1.AllowedIPPrefixes(allowedIPPrefixes)
+		requestBody.AllowedIpPrefixes = &allowed
+	}
+	return requestWithAccess[serverv1.SessionSetup](ctx, c, http.MethodPost, routePath(routeID, "sessions"), requestBody)
+}
+
+func (c *Client) CreateRouteSessionAuthorized(
+	ctx context.Context,
+	routeID string,
+	requestBody serverv1.CreateRouteSessionRequest,
+	authorization string,
+) (serverv1.SessionSetup, error) {
+	requestBody.SignedAuthorization = &authorization
+	return request[serverv1.SessionSetup](ctx, c, http.MethodPost, routePath(routeID, "sessions"), "", requestBody)
 }
 
 func (c *Client) RegisterTransport(
@@ -231,12 +272,136 @@ func (c *Client) Heartbeat(
 	version uint64,
 	sessionToken credentials.SessionToken,
 ) (serverv1.HeartbeatResponse, error) {
-	return request[serverv1.HeartbeatResponse](ctx, c, http.MethodPost, routePath(routeID, "heartbeat"), sessionToken.String(), serverv1.RouteVersionRequest{Version: int(version)})
+	return request[serverv1.HeartbeatResponse](ctx, c, http.MethodPost, routePath(routeID, "heartbeat"), sessionToken.String(), serverv1.HeartbeatRouteSessionRequest{Version: int(version)})
+}
+
+func (c *Client) HeartbeatAuthorized(
+	ctx context.Context,
+	routeID string,
+	version uint64,
+	sessionToken credentials.SessionToken,
+	authorization string,
+) (serverv1.HeartbeatResponse, error) {
+	return request[serverv1.HeartbeatResponse](
+		ctx, c, http.MethodPost, routePath(routeID, "heartbeat"), sessionToken.String(),
+		serverv1.HeartbeatRouteSessionRequest{Version: int(version), SignedAuthorization: &authorization},
+	)
 }
 
 func (c *Client) DeleteRoute(ctx context.Context, routeID string) error {
-	_, err := request[struct{}](ctx, c, http.MethodDelete, routePath(routeID, ""), c.access.String(), nil)
+	_, err := requestWithAccess[struct{}](ctx, c, http.MethodDelete, routePath(routeID, ""), nil)
 	return err
+}
+
+func (c *Client) DeleteRouteAuthorized(
+	ctx context.Context,
+	routeID string,
+	routeToken credentials.RouteToken,
+) error {
+	_, err := request[struct{}](ctx, c, http.MethodDelete, routePath(routeID, ""), routeToken.String(), nil)
+	return err
+}
+
+func requestWithAccess[T any](
+	ctx context.Context,
+	client *Client,
+	method, path string,
+	requestBody any,
+	headers ...http.Header,
+) (T, error) {
+	return requestWithAccessAndQuery[T](ctx, client, method, path, requestBody, nil, headers...)
+}
+
+func requestWithAccessAndQuery[T any](
+	ctx context.Context,
+	client *Client,
+	method, path string,
+	requestBody any,
+	query url.Values,
+	headers ...http.Header,
+) (T, error) {
+	access, err := client.currentAccessToken(ctx)
+	if err != nil {
+		var zero T
+		return zero, err
+	}
+	return requestWithTimeoutAndQuery[T](ctx, client, client.timeout, method, path, access.String(), requestBody, query, headers...)
+}
+
+func (c *Client) currentAccessToken(ctx context.Context) (credentials.AccessToken, error) {
+	if c.externalAuthentication {
+		return "", nil
+	}
+	if c.access == "" {
+		return "", ErrUnauthenticated
+	}
+	return c.access, nil
+}
+
+// ValidateControlSessionResponse validates credentials and fixed session metadata returned by the server.
+func ValidateControlSessionResponse(
+	response serverv1.ControlSessionResponse,
+	expectedSessionID string,
+	expectedRefreshExpiry time.Time,
+) (clientstate.ControlSession, error) {
+	access := credentials.AccessToken(response.AccessToken)
+	refresh := credentials.RefreshToken(response.RefreshToken)
+	if _, _, err := credentials.ParseAccessToken(access); err != nil {
+		return clientstate.ControlSession{}, errors.New("serverclient: server returned an invalid access token")
+	}
+	if _, _, err := credentials.ParseRefreshToken(refresh); err != nil {
+		return clientstate.ControlSession{}, errors.New("serverclient: server returned an invalid refresh token")
+	}
+	if !validControlSessionID(response.SessionId) || expectedSessionID != "" && response.SessionId != expectedSessionID ||
+		!response.AccessExpiresAt.After(time.Now()) || response.RefreshExpiresAt.Before(response.AccessExpiresAt) ||
+		!expectedRefreshExpiry.IsZero() && !response.RefreshExpiresAt.Equal(expectedRefreshExpiry) {
+		return clientstate.ControlSession{}, errors.New("serverclient: server returned an invalid control session")
+	}
+	grants := make([]string, len(response.Grants))
+	for index, grant := range response.Grants {
+		grants[index] = string(grant)
+	}
+	if !validGrants(grants) {
+		return clientstate.ControlSession{}, errors.New("serverclient: server returned invalid grants")
+	}
+	return clientstate.ControlSession{
+		SessionID: response.SessionId, AccessToken: access.String(), AccessExpiresAt: response.AccessExpiresAt,
+		RefreshToken: refresh.String(), RefreshExpiresAt: response.RefreshExpiresAt, Grants: grants,
+	}, nil
+}
+
+func validControlSessionID(value string) bool {
+	const prefix = "control_session_"
+	if len(value) != len(prefix)+32 || !strings.HasPrefix(value, prefix) {
+		return false
+	}
+	for _, character := range value[len(prefix):] {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func validGrants(grants []string) bool {
+	publish, admin := false, false
+	for _, grant := range grants {
+		switch grant {
+		case "publish":
+			if publish {
+				return false
+			}
+			publish = true
+		case "admin":
+			if admin {
+				return false
+			}
+			admin = true
+		default:
+			return false
+		}
+	}
+	return publish && (len(grants) == 1 || admin && len(grants) == 2)
 }
 
 func (c *Client) CreateCertificateIssuance(
@@ -410,6 +575,8 @@ func responseError(status int, header http.Header, payload []byte) error {
 		return &RateLimitError{RetryAfter: time.Duration(seconds) * time.Second}
 	case serverv1.TemporarilyUnavailable:
 		return ErrUnavailable
+	case serverv1.Unsupported:
+		return ErrUnsupported
 	default:
 		return &ProblemError{Status: status, Problem: problem}
 	}

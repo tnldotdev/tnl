@@ -15,15 +15,17 @@ import (
 	"github.com/tnldotdev/tnl/internal/proxyproto"
 	"github.com/tnldotdev/tnl/internal/relay"
 	"github.com/tnldotdev/tnl/internal/router"
+	"github.com/tnldotdev/tnl/internal/sourcelimiter"
 	"github.com/tnldotdev/tnl/internal/worker"
 )
 
 const defaultOpenTimeout = 10 * time.Second
 
 type Route struct {
-	ID      string
-	Version uint64
-	Backend worker.RouteBackend
+	ID                string
+	Version           uint64
+	AllowedIPPrefixes []netip.Prefix
+	Backend           worker.RouteBackend
 }
 
 type LookupFunc func(string) (Route, bool)
@@ -31,6 +33,12 @@ type LookupFunc func(string) (Route, bool)
 type BackendLookupFunc func(string) (worker.RouteBackend, bool)
 
 type UsageConnection interface {
+	PolicyDenied(time.Time)
+	CapacityDenied(time.Time)
+	PublisherOpening(time.Time)
+	PublisherOpened(time.Time)
+	PublisherOpenFailed(time.Time)
+	StreamOpened(time.Time)
 	AddIngress(int64, time.Time)
 	AddEgress(int64, time.Time)
 	Close(time.Time)
@@ -38,6 +46,9 @@ type UsageConnection interface {
 
 type Metrics interface {
 	IncCapacityRejection(string)
+	IncSourceLimiterRejection()
+	SetSourceLimiterEntries(int)
+	IncIPAllowlistDenial()
 	AddForwardedBytes(string, int64)
 	SetStreams(int)
 }
@@ -52,13 +63,14 @@ type Config struct {
 	MaxRouteConnections int
 	OpenTimeout         time.Duration
 	Metrics             Metrics
-	OpenUsage           func(string, uint64, time.Time) UsageConnection
+	OpenUsage           func(string, uint64, netip.Addr, time.Time) UsageConnection
 	OnError             func(error)
 }
 
 type Server struct {
 	listener net.Listener
 	config   Config
+	limiter  *sourcelimiter.Limiter
 
 	mu          sync.Mutex
 	connections map[net.Conn]struct{}
@@ -82,9 +94,20 @@ func New(listener net.Listener, config Config) (*Server, error) {
 	if config.OpenTimeout <= 0 {
 		config.OpenTimeout = defaultOpenTimeout
 	}
+	limiter, err := sourcelimiter.New(sourcelimiter.Config{
+		OnEntriesChanged: func(entries int) {
+			if config.Metrics != nil {
+				config.Metrics.SetSourceLimiterEntries(entries)
+			}
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
 	return &Server{
 		listener:    listener,
 		config:      config,
+		limiter:     limiter,
 		connections: make(map[net.Conn]struct{}),
 		backends:    make(map[net.Conn]struct{}),
 		byRoute:     make(map[string]int),
@@ -151,6 +174,12 @@ func (s *Server) handle(public net.Conn) error {
 	if err != nil {
 		return nil
 	}
+	if !s.limiter.Allow(source.Addr()) {
+		if s.config.Metrics != nil {
+			s.config.Metrics.IncSourceLimiterRejection()
+		}
+		return nil
+	}
 	_ = public.SetReadDeadline(time.Time{})
 	inspected := &readerConn{Conn: public, reader: reader}
 	hello, err := router.InspectClientHello(inspected)
@@ -181,21 +210,54 @@ func (s *Server) handle(public net.Conn) error {
 	if !ok {
 		return nil
 	}
+	var usage UsageConnection
+	if !challenge && s.config.OpenUsage != nil {
+		usage = s.config.OpenUsage(route.ID, route.Version, source.Addr(), time.Now().UTC())
+		if usage != nil {
+			defer func() { usage.Close(time.Now().UTC()) }()
+		}
+	}
+	if !challenge && !ipAllowed(source.Addr(), route.AllowedIPPrefixes) {
+		if s.config.Metrics != nil {
+			s.config.Metrics.IncIPAllowlistDenial()
+		}
+		if usage != nil {
+			usage.PolicyDenied(time.Now().UTC())
+		}
+		return nil
+	}
 	var admitted bool
 	routeID, admitted = s.admitRoute(routeID)
 	if !admitted {
 		if s.config.Metrics != nil {
 			s.config.Metrics.IncCapacityRejection("route_connections")
 		}
+		if usage != nil {
+			usage.CapacityDenied(time.Now().UTC())
+		}
 		return nil
 	}
 	defer s.releaseRoute(routeID)
 
+	if usage != nil {
+		usage.PublisherOpening(time.Now().UTC())
+	}
+	streamOpened := false
+	if usage != nil {
+		defer func() {
+			if !streamOpened {
+				usage.PublisherOpenFailed(time.Now().UTC())
+			}
+		}()
+	}
 	openCtx, cancel := context.WithTimeout(context.Background(), s.config.OpenTimeout)
 	stream, err := backend.Open(openCtx)
 	cancel()
 	if err != nil {
 		return fmt.Errorf("ingress: open route: %w", err)
+	}
+	if usage != nil {
+		usage.PublisherOpened(time.Now().UTC())
 	}
 	if !s.trackBackend(stream) {
 		_ = stream.Close()
@@ -210,10 +272,9 @@ func (s *Server) handle(public net.Conn) error {
 	if err := writeAll(stream, header); err != nil {
 		return fmt.Errorf("ingress: write proxy header: %w", err)
 	}
-	var usage UsageConnection
-	if !challenge && s.config.OpenUsage != nil {
-		usage = s.config.OpenUsage(route.ID, route.Version, time.Now().UTC())
-		defer func() { usage.Close(time.Now().UTC()) }()
+	if usage != nil {
+		usage.StreamOpened(time.Now().UTC())
+		streamOpened = true
 	}
 	replayed := &readerConn{Conn: public, reader: hello.Replay}
 	var observeIngress, observeEgress func(int64)
@@ -375,6 +436,19 @@ func addressPort(address net.Addr) (netip.AddrPort, error) {
 		return netip.AddrPort{}, fmt.Errorf("ingress: parse connection address: %w", err)
 	}
 	return endpoint, nil
+}
+
+func ipAllowed(source netip.Addr, prefixes []netip.Prefix) bool {
+	if len(prefixes) == 0 {
+		return true
+	}
+	source = source.Unmap()
+	for _, prefix := range prefixes {
+		if prefix.Contains(source) {
+			return true
+		}
+	}
+	return false
 }
 
 func tcpAddress(endpoint netip.AddrPort) net.Addr {

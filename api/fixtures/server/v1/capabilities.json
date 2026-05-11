@@ -1,9 +1,15 @@
 {
   "protocol_versions": [1],
-  "anonymous_public": false,
+  "authentication": {
+    "required": true,
+    "methods": ["login_token"]
+  },
+  "administration": {
+    "version": 1,
+    "operations": ["server_status", "routes", "hostnames", "credentials", "control_sessions", "operational_switches"]
+  },
   "hostname_authorization": ["local_hostnames"],
   "hostname_suffix": "example",
-  "name_authority_type": "local",
   "temporary_name_support": true,
   "persistent_base_support": true,
   "custom_domain_support": true,

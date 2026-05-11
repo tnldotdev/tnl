@@ -113,8 +113,9 @@ func (s *store) createIssuance(
 
 func (s *store) routeHostname(ctx context.Context, routeID string, version uint64) (string, error) {
 	hostname, err := s.queries.GetActiveRouteHostname(ctx, statedb.GetActiveRouteHostnameParams{
-		ID:      routeID,
+		RouteID: routeID,
 		Version: int64(version),
+		Now:     sql.NullInt64{Int64: s.now().UnixNano(), Valid: true},
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", ErrInvalidStatus

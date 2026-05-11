@@ -29,7 +29,8 @@ services:
       - no-new-privileges:true
     stop_grace_period: 45s
     environment:
-      TNLD_ACCESS_TOKEN_LIFETIME: 24h
+      TNLD_ACCESS_TOKEN_LIFETIME: 1h
+      TNLD_REFRESH_TOKEN_LIFETIME: 720h
       TNLD_ACME_ACCEPT_TERMS: "true"
       TNLD_ACME_DIRECTORY_URL: https://pebble:14000/dir
       TNLD_ACME_EMAIL: developer@localhost

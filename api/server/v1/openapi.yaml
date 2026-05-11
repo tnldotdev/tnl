@@ -43,6 +43,24 @@ paths:
                 $ref: "#/components/schemas/ReadinessResponse"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/client-ip:
+    get:
+      operationId: getClientIP
+      summary: Return the requesting client's public IP address
+      security: []
+      responses:
+        "200":
+          description: Client IP address
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClientIPResponse"
+        "429":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/capabilities:
     get:
       operationId: getCapabilities
@@ -82,7 +100,7 @@ paths:
   /v1/auth/token:
     post:
       operationId: exchangeLoginToken
-      summary: Exchange a login token for an access token
+      summary: Exchange a login token for a control session
       security: []
       requestBody:
         required: true
@@ -92,11 +110,11 @@ paths:
               $ref: "#/components/schemas/TokenExchangeRequest"
       responses:
         "200":
-          description: Access token issued
+          description: Control session issued
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/TokenExchangeResponse"
+                $ref: "#/components/schemas/ControlSessionResponse"
         "400":
           $ref: "#/components/responses/Problem"
         "401":
@@ -114,7 +132,7 @@ paths:
   /v1/auth/oidc:
     post:
       operationId: exchangeOIDCToken
-      summary: Exchange an OIDC ID token for a tnl access token
+      summary: Exchange an OIDC ID token for a control session
       security: []
       requestBody:
         required: true
@@ -124,11 +142,11 @@ paths:
                 $ref: "#/components/schemas/OIDCTokenExchangeRequest"
       responses:
         "200":
-          description: Access token issued
+          description: Control session issued
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/TokenExchangeResponse"
+                $ref: "#/components/schemas/ControlSessionResponse"
         "400":
           $ref: "#/components/responses/Problem"
         "401":
@@ -143,27 +161,49 @@ paths:
           $ref: "#/components/responses/Problem"
         default:
           $ref: "#/components/responses/Problem"
-  /v1/auth/credentials/{id}:
-    delete:
-      operationId: revokeAccessCredential
-      summary: Revoke an access credential owned by the authenticated identity
-      security:
-        - bearerAuth: []
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            $ref: "#/components/schemas/CredentialID"
+  /v1/auth/refresh:
+    post:
+      operationId: refreshControlSession
+      summary: Rotate a control session's access and refresh tokens
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshControlSessionRequest"
       responses:
-        "204":
-          description: Access credential revoked
+        "200":
+          description: Control session tokens rotated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ControlSessionResponse"
         "400":
           $ref: "#/components/responses/Problem"
         "401":
-          $ref: "#/components/responses/BearerProblem"
-        "404":
           $ref: "#/components/responses/Problem"
+        "413":
+          $ref: "#/components/responses/Problem"
+        "415":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/auth/logout:
+    post:
+      operationId: logoutControlSession
+      summary: Revoke the authenticated control session
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Control session revoked
+        "401":
+          $ref: "#/components/responses/BearerProblem"
         "429":
           $ref: "#/components/responses/Problem"
         "503":
@@ -353,6 +393,7 @@ paths:
       summary: Create or reclaim an owned route with a new session version
       security:
         - bearerAuth: []
+        - {}
       requestBody:
         required: true
         content:
@@ -377,9 +418,10 @@ paths:
   /v1/routes/{id}:
     delete:
       operationId: deleteRoute
-      summary: Delete a route owned by the authenticated identity
+      summary: Delete a route owned by the authenticated identity or route credential
       security:
         - bearerAuth: []
+        - routeAuth: []
       parameters:
         - $ref: "#/components/parameters/RouteID"
       responses:
@@ -397,6 +439,7 @@ paths:
       summary: Create the next route session version
       security:
         - bearerAuth: []
+        - {}
       parameters:
         - $ref: "#/components/parameters/RouteID"
       requestBody:
@@ -460,7 +503,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/RouteVersionRequest"
+              $ref: "#/components/schemas/HeartbeatRouteSessionRequest"
       responses:
         "200":
           description: Route session refreshed
@@ -525,6 +568,400 @@ paths:
         "409":
           $ref: "#/components/responses/Problem"
         "412":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/admin/status:
+    get:
+      operationId: getAdminServerStatus
+      summary: Return self-hosted Core operational status
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Core status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminServerStatus"
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "501":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/admin/routes:
+    get:
+      operationId: listAdminRoutes
+      summary: List Core routes across identities
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: cursor
+          in: query
+          schema:
+            $ref: "#/components/schemas/RouteID"
+      responses:
+        "200":
+          description: Route page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminRoutePage"
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/admin/routes/{id}:
+    get:
+      operationId: getAdminRoute
+      summary: Show one Core route
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RouteID"
+      responses:
+        "200":
+          description: Route
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminRoute"
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/admin/routes/{id}/suspend:
+    post:
+      operationId: suspendAdminRoute
+      summary: Suspend and drain one Core route
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RouteID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SuspendAdminRouteRequest"
+      responses:
+        "200":
+          description: Suspended route
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminRoute"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/admin/routes/{id}/resume:
+    post:
+      operationId: resumeAdminRoute
+      summary: Resume one Core route at a fresh route version
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RouteID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResumeAdminRouteRequest"
+      responses:
+        "200":
+          description: Resumed route
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminRoute"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/admin/hostnames:
+    get:
+      operationId: listAdminHostnames
+      summary: List local Core hostnames across identities
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: cursor
+          in: query
+          schema:
+            $ref: "#/components/schemas/HostnameID"
+      responses:
+        "200":
+          description: Hostname page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminHostnamePage"
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/admin/hostnames/{id}:
+    get:
+      operationId: getAdminHostname
+      summary: Show one local Core hostname
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/HostnameID"
+      responses:
+        "200":
+          description: Hostname
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminHostname"
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: removeAdminHostname
+      summary: Remove a local Core hostname and its routes
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/HostnameID"
+      responses:
+        "204":
+          description: Hostname removed
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/admin/hostnames/{id}/quarantine:
+    post:
+      operationId: quarantineAdminHostname
+      summary: Quarantine a local Core hostname and suspend its routes
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/HostnameID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminReasonRequest"
+      responses:
+        "204":
+          description: Hostname quarantined
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/admin/credentials:
+    get:
+      operationId: listAdminCredentials
+      summary: List nonsecret Core route credentials
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: cursor
+          in: query
+          schema:
+            $ref: "#/components/schemas/CredentialID"
+      responses:
+        "200":
+          description: Credential page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminCredentialPage"
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/admin/credentials/{id}:
+    delete:
+      operationId: revokeAdminCredential
+      summary: Revoke one Core route credential
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/CredentialID"
+      responses:
+        "204":
+          description: Credential revoked
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/admin/control-sessions:
+    get:
+      operationId: listAdminControlSessions
+      summary: List Core control sessions without credentials
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: cursor
+          in: query
+          schema:
+            $ref: "#/components/schemas/ControlSessionID"
+      responses:
+        "200":
+          description: Control-session page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminControlSessionPage"
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/admin/control-sessions/{id}:
+    delete:
+      operationId: revokeAdminControlSession
+      summary: Revoke one Core control session
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/ControlSessionID"
+      responses:
+        "204":
+          description: Control session revoked
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/admin/switches:
+    get:
+      operationId: listAdminSwitches
+      summary: List fixed Core operational switches
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Operational switches
+          content:
+            application/json:
+              schema:
+                type: array
+                minItems: 3
+                maxItems: 3
+                items:
+                  $ref: "#/components/schemas/AdminOperationalSwitch"
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/admin/switches/{name}:
+    put:
+      operationId: setAdminSwitch
+      summary: Set one fixed Core operational switch
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/OperationalSwitchName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetAdminSwitchRequest"
+      responses:
+        "200":
+          description: Updated operational switch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminOperationalSwitch"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        "403":
           $ref: "#/components/responses/Problem"
         default:
           $ref: "#/components/responses/Problem"
@@ -636,14 +1073,17 @@ components:
       type: http
       scheme: bearer
       bearerFormat: tnl session token
+    routeAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: tnl route token
   parameters:
     RouteID:
       name: id
       in: path
       required: true
       schema:
-        type: string
-        pattern: ^route_[0-9a-f]{32}$
+        $ref: "#/components/schemas/RouteID"
     CertificateIssuanceID:
       name: id
       in: path
@@ -703,15 +1143,24 @@ components:
         status:
           type: string
           enum: [ok, failed]
+    ClientIPResponse:
+      type: object
+      additionalProperties: false
+      required: [ip]
+      properties:
+        ip:
+          type: string
+          description: Canonical IPv4 or IPv6 text as returned by net/netip.Addr.String.
+          minLength: 2
+          maxLength: 39
     Capabilities:
       type: object
       additionalProperties: false
       required:
         - protocol_versions
-        - anonymous_public
+        - authentication
         - hostname_authorization
         - hostname_suffix
-        - name_authority_type
         - temporary_name_support
         - persistent_base_support
         - custom_domain_support
@@ -720,6 +1169,7 @@ components:
         - ingress_ipv4
         - ingress_ipv6
         - transport
+        - administration
       properties:
         protocol_versions:
           type: array
@@ -728,8 +1178,8 @@ components:
           items:
             type: integer
             enum: [1]
-        anonymous_public:
-          type: boolean
+        authentication:
+          $ref: "#/components/schemas/AuthenticationCapabilities"
         hostname_authorization:
           type: array
           minItems: 1
@@ -741,9 +1191,6 @@ components:
           type: string
           minLength: 1
           maxLength: 189
-        name_authority_type:
-          type: string
-          enum: [local, hosted]
         temporary_name_support:
           type: boolean
         persistent_base_support:
@@ -754,7 +1201,7 @@ components:
           type: integer
           minimum: 0
           maximum: 8
-        hosted_authority_endpoint:
+        authorization_authority_endpoint:
           type: string
           format: uri
         dns_ready:
@@ -777,10 +1224,28 @@ components:
           $ref: "#/components/schemas/OIDCCapabilities"
         acme:
           $ref: "#/components/schemas/AcmeCapabilities"
+        administration:
+          $ref: "#/components/schemas/AdministrationCapabilities"
+    AdministrationCapabilities:
+      type: object
+      additionalProperties: false
+      required: [version, operations]
+      properties:
+        version:
+          type: integer
+          const: 1
+        operations:
+          type: array
+          minItems: 6
+          maxItems: 6
+          uniqueItems: true
+          items:
+            type: string
+            enum: [server_status, routes, hostnames, credentials, control_sessions, operational_switches]
     OIDCCapabilities:
       type: object
       additionalProperties: false
-      required: [issuer, client_id]
+      required: [issuer, client_id, login_flow]
       properties:
         issuer:
           type: string
@@ -789,6 +1254,24 @@ components:
           type: string
           minLength: 1
           maxLength: 128
+        login_flow:
+          type: string
+          enum: [device_code, authorization_code_pkce]
+    AuthenticationCapabilities:
+      type: object
+      additionalProperties: false
+      required: [required, methods]
+      properties:
+        required:
+          type: boolean
+          const: true
+        methods:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+            enum: [login_token, oidc]
     TransportCapabilities:
       type: object
       additionalProperties: false
@@ -839,27 +1322,63 @@ components:
           type: string
           minLength: 1
           maxLength: 16384
-    TokenExchangeResponse:
+    RefreshControlSessionRequest:
       type: object
       additionalProperties: false
-      required: [access_token, credential_id, token_type, expires_at]
+      required: [refresh_token]
       properties:
+        refresh_token:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^tnl_refresh_[A-Za-z0-9_-]{21}[AQgw]\.[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$'
+    ControlSessionResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - session_id
+        - access_token
+        - access_expires_at
+        - refresh_token
+        - refresh_expires_at
+        - grants
+      properties:
+        session_id:
+          $ref: "#/components/schemas/ControlSessionID"
         access_token:
           type: string
           minLength: 1
           maxLength: 128
           pattern: '^tnl_access_[A-Za-z0-9_-]{21}[AQgw]\.[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$'
-        credential_id:
-          $ref: "#/components/schemas/CredentialID"
-        token_type:
-          type: string
-          const: Bearer
-        expires_at:
+        access_expires_at:
           type: string
           format: date-time
+        refresh_token:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^tnl_refresh_[A-Za-z0-9_-]{21}[AQgw]\.[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$'
+        refresh_expires_at:
+          type: string
+          format: date-time
+        grants:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/Grant"
+    ControlSessionID:
+      type: string
+      pattern: ^control_session_[0-9a-f]{32}$
     CredentialID:
       type: string
-      pattern: ^[A-Za-z0-9_-]{21}[AQgw]$
+      pattern: ^[A-Za-z0-9_-]{22}$
+    RouteID:
+      type: string
+      pattern: ^route_[0-9a-f]{32}$
+    Grant:
+      type: string
+      enum: [publish, admin]
     HostnameID:
       type: string
       pattern: ^hostname_[0-9a-f]{32}$
@@ -997,6 +1516,10 @@ components:
           minLength: 1
           maxLength: 128
           pattern: '^tnl_route_[A-Za-z0-9_-]{21}[AQgw]\.[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$'
+        allowed_ip_prefixes:
+          $ref: "#/components/schemas/AllowedIPPrefixes"
+        signed_authorization:
+          $ref: "#/components/schemas/SignedAuthorizationToken"
     CreateRouteSessionRequest:
       type: object
       additionalProperties: false
@@ -1007,6 +1530,20 @@ components:
           minLength: 1
           maxLength: 128
           pattern: '^tnl_route_[A-Za-z0-9_-]{21}[AQgw]\.[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$'
+        allowed_ip_prefixes:
+          $ref: "#/components/schemas/AllowedIPPrefixes"
+        signed_authorization:
+          $ref: "#/components/schemas/SignedAuthorizationToken"
+    HeartbeatRouteSessionRequest:
+      type: object
+      additionalProperties: false
+      required: [version]
+      properties:
+        version:
+          type: integer
+          minimum: 1
+        signed_authorization:
+          $ref: "#/components/schemas/SignedAuthorizationToken"
     RouteVersionRequest:
       type: object
       additionalProperties: false
@@ -1015,6 +1552,21 @@ components:
         version:
           type: integer
           minimum: 1
+    AllowedIPPrefixes:
+      type: array
+      description: Canonical, masked IPv4 or IPv6 prefixes that replace the route policy for this version. An empty or omitted list allows all source addresses.
+      maxItems: 64
+      uniqueItems: true
+      items:
+        type: string
+        description: Canonical IPv4 or IPv6 prefix text accepted by net/netip.ParsePrefix.
+        minLength: 3
+        maxLength: 43
+    SignedAuthorizationToken:
+      type: string
+      description: Compact EdDSA JWS with kid and typ=tnl-authorization+jwt protected headers.
+      minLength: 1
+      maxLength: 4096
     RegisterTransportRequest:
       type: object
       additionalProperties: false
@@ -1064,6 +1616,267 @@ components:
         created_at:
           type: string
           format: date-time
+    AdminServerStatus:
+      type: object
+      additionalProperties: false
+      required: [mode, started_at, current_time, active_routes, suspended_routes, provisioning_routes, connected_workers]
+      properties:
+        mode:
+          type: string
+          enum: [standalone, edge]
+        started_at:
+          type: string
+          format: date-time
+        current_time:
+          type: string
+          format: date-time
+        active_routes:
+          type: integer
+          minimum: 0
+        suspended_routes:
+          type: integer
+          minimum: 0
+        provisioning_routes:
+          type: integer
+          minimum: 0
+        connected_workers:
+          type: integer
+          minimum: 0
+    AdminRoute:
+      type: object
+      additionalProperties: false
+      required: [id, hostname, local_target, status, version, suspension_revision, created_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/RouteID"
+        hostname:
+          type: string
+          minLength: 1
+          maxLength: 253
+        identity_id:
+          type: string
+          minLength: 1
+          maxLength: 256
+        local_target:
+          type: string
+          minLength: 1
+          maxLength: 256
+        status:
+          type: string
+          enum: [active, suspended, deleted]
+        version:
+          type: integer
+          minimum: 1
+        suspension_revision:
+          type: integer
+          minimum: 0
+        suspension_reason:
+          type: string
+          minLength: 1
+          maxLength: 256
+        suspended_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        deleted_at:
+          type: string
+          format: date-time
+    AdminRoutePage:
+      type: object
+      additionalProperties: false
+      required: [routes]
+      properties:
+        routes:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/AdminRoute"
+        next_cursor:
+          $ref: "#/components/schemas/RouteID"
+    SuspendAdminRouteRequest:
+      type: object
+      additionalProperties: false
+      required: [revision, reason]
+      properties:
+        revision:
+          type: integer
+          minimum: 1
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 256
+    ResumeAdminRouteRequest:
+      type: object
+      additionalProperties: false
+      required: [revision]
+      properties:
+        revision:
+          type: integer
+          minimum: 1
+    AdminReasonRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 256
+    AdminHostname:
+      type: object
+      additionalProperties: false
+      required: [id, hostname, kind, status, source, created_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/HostnameID"
+        identity_id:
+          type: string
+          minLength: 1
+          maxLength: 256
+        hostname:
+          type: string
+          minLength: 1
+          maxLength: 253
+        kind:
+          type: string
+          enum: [managed, custom_domain, temporary]
+        status:
+          type: string
+          enum: [pending_route, active, inactive, available, retired, quarantined]
+        source:
+          type: string
+          pattern: ^(generated|user)$
+        created_at:
+          type: string
+          format: date-time
+        activated_at:
+          type: string
+          format: date-time
+        deactivated_at:
+          type: string
+          format: date-time
+        quarantine_reason:
+          type: string
+          minLength: 1
+          maxLength: 256
+        quarantined_at:
+          type: string
+          format: date-time
+    AdminHostnamePage:
+      type: object
+      additionalProperties: false
+      required: [hostnames]
+      properties:
+        hostnames:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/AdminHostname"
+        next_cursor:
+          $ref: "#/components/schemas/HostnameID"
+    AdminCredential:
+      type: object
+      additionalProperties: false
+      required: [id, route_id, created_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/CredentialID"
+        route_id:
+          $ref: "#/components/schemas/RouteID"
+        created_at:
+          type: string
+          format: date-time
+        revoked_at:
+          type: string
+          format: date-time
+    AdminCredentialPage:
+      type: object
+      additionalProperties: false
+      required: [credentials]
+      properties:
+        credentials:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/AdminCredential"
+        next_cursor:
+          $ref: "#/components/schemas/CredentialID"
+    AdminControlSession:
+      type: object
+      additionalProperties: false
+      required: [id, identity_id, authentication_method, grants, created_at, access_expires_at, refresh_expires_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/ControlSessionID"
+        identity_id:
+          type: string
+          minLength: 1
+          maxLength: 256
+        authentication_method:
+          type: string
+          pattern: ^(login_token|oidc)$
+        grants:
+          type: array
+          minItems: 1
+          maxItems: 2
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/Grant"
+        created_at:
+          type: string
+          format: date-time
+        access_expires_at:
+          type: string
+          format: date-time
+        refresh_expires_at:
+          type: string
+          format: date-time
+        revoked_at:
+          type: string
+          format: date-time
+    AdminControlSessionPage:
+      type: object
+      additionalProperties: false
+      required: [control_sessions]
+      properties:
+        control_sessions:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/AdminControlSession"
+        next_cursor:
+          $ref: "#/components/schemas/ControlSessionID"
+    OperationalSwitchName:
+      type: string
+      enum: [new_routes, new_sessions, certificate_issuance]
+    AdminOperationalSwitch:
+      type: object
+      additionalProperties: false
+      required: [name, enabled, revision, updated_at, updated_by]
+      properties:
+        name:
+          $ref: "#/components/schemas/OperationalSwitchName"
+        enabled:
+          type: boolean
+        revision:
+          type: integer
+          minimum: 1
+        updated_at:
+          type: string
+          format: date-time
+        updated_by:
+          type: string
+          minLength: 1
+          maxLength: 256
+    SetAdminSwitchRequest:
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
     RouteSession:
       type: object
       additionalProperties: false
@@ -1253,6 +2066,7 @@ components:
             - rate_limited
             - precondition_failed
             - temporarily_unavailable
+            - unsupported
             - internal
         request_id:
           type: string

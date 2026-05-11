@@ -1,0 +1,9 @@
+{
+  "registration_id": "registration_0123456789abcdef0123456789abcdef",
+  "route_id": "route_0123456789abcdef0123456789abcdef",
+  "hostname": "demo.example.com",
+  "signing_key_id": "authority-2026-09",
+  "authorization_id": "authorization_0123456789abcdef0123456789abcdef",
+  "created_at": "2026-09-01T12:00:00Z",
+  "retry_id": "retry_0123456789abcdef0123456789abcdef"
+}

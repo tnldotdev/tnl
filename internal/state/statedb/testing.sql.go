@@ -19,12 +19,13 @@ func (q *Queries) ClearACMEAccountKID(ctx context.Context, directoryUrl string) 
 	return err
 }
 
-const countAccessCredentials = `-- name: CountAccessCredentials :one
-SELECT COUNT(*) FROM access_credentials
+const countActiveControlSessions = `-- name: CountActiveControlSessions :one
+SELECT COUNT(*) FROM control_sessions
+WHERE revoked_at IS NULL AND refresh_expires_at > ?1
 `
 
-func (q *Queries) CountAccessCredentials(ctx context.Context) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countAccessCredentials)
+func (q *Queries) CountActiveControlSessions(ctx context.Context, now int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countActiveControlSessions, now)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -36,6 +37,28 @@ SELECT COUNT(*) FROM certificate_issuances WHERE route_id = ?1
 
 func (q *Queries) CountCertificateIssuancesByRoute(ctx context.Context, routeID string) (int64, error) {
 	row := q.db.QueryRowContext(ctx, countCertificateIssuancesByRoute, routeID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countControlSessionRefreshHistory = `-- name: CountControlSessionRefreshHistory :one
+SELECT COUNT(*) FROM control_session_refresh_tokens WHERE session_id = ?1
+`
+
+func (q *Queries) CountControlSessionRefreshHistory(ctx context.Context, sessionID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countControlSessionRefreshHistory, sessionID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countControlSessions = `-- name: CountControlSessions :one
+SELECT COUNT(*) FROM control_sessions
+`
+
+func (q *Queries) CountControlSessions(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countControlSessions)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -76,6 +99,17 @@ func (q *Queries) CountIdentityByID(ctx context.Context, id string) (int64, erro
 	return count, err
 }
 
+const countRouteAuthorizationUses = `-- name: CountRouteAuthorizationUses :one
+SELECT COUNT(*) FROM route_authorization_uses
+`
+
+func (q *Queries) CountRouteAuthorizationUses(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countRouteAuthorizationUses)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const getAnyACMEAccountKID = `-- name: GetAnyACMEAccountKID :one
 SELECT CAST(COALESCE(kid, '') AS TEXT) FROM acme_accounts LIMIT 1
 `
@@ -85,6 +119,61 @@ func (q *Queries) GetAnyACMEAccountKID(ctx context.Context) (string, error) {
 	var column_1 string
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const getControlSession = `-- name: GetControlSession :one
+SELECT id, identity_id, authentication_method, authentication_source_revision, grants, created_at, refresh_expires_at, access_token_id, access_token_hash, access_expires_at, access_token_revoked_at, refresh_token_id, refresh_token_hash, refresh_token_revoked_at, revoked_at FROM control_sessions WHERE id = ?1
+`
+
+func (q *Queries) GetControlSession(ctx context.Context, sessionID string) (ControlSession, error) {
+	row := q.db.QueryRowContext(ctx, getControlSession, sessionID)
+	var i ControlSession
+	err := row.Scan(
+		&i.ID,
+		&i.IdentityID,
+		&i.AuthenticationMethod,
+		&i.AuthenticationSourceRevision,
+		&i.Grants,
+		&i.CreatedAt,
+		&i.RefreshExpiresAt,
+		&i.AccessTokenID,
+		&i.AccessTokenHash,
+		&i.AccessExpiresAt,
+		&i.AccessTokenRevokedAt,
+		&i.RefreshTokenID,
+		&i.RefreshTokenHash,
+		&i.RefreshTokenRevokedAt,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
+const getLatestAdminAuditEvent = `-- name: GetLatestAdminAuditEvent :one
+SELECT actor, request_id, operation, target, occurred_at
+FROM admin_audit_events
+ORDER BY id DESC
+LIMIT 1
+`
+
+type GetLatestAdminAuditEventRow struct {
+	Actor      string
+	RequestID  string
+	Operation  string
+	Target     string
+	OccurredAt int64
+}
+
+func (q *Queries) GetLatestAdminAuditEvent(ctx context.Context) (GetLatestAdminAuditEventRow, error) {
+	row := q.db.QueryRowContext(ctx, getLatestAdminAuditEvent)
+	var i GetLatestAdminAuditEventRow
+	err := row.Scan(
+		&i.Actor,
+		&i.RequestID,
+		&i.Operation,
+		&i.Target,
+		&i.OccurredAt,
+	)
+	return i, err
 }
 
 const getLatestCertificateIssuanceStatus = `-- name: GetLatestCertificateIssuanceStatus :one
@@ -132,6 +221,74 @@ func (q *Queries) GetOIDCAssertionExpiry(ctx context.Context) (int64, error) {
 	var expires_at int64
 	err := row.Scan(&expires_at)
 	return expires_at, err
+}
+
+const getRouteForTesting = `-- name: GetRouteForTesting :one
+SELECT id, hostname_id, identity_id, hostname, local_target, status, version, suspension_revision, suspension_reason, suspended_at, authorization_issuer, authorization_id, authorization_key_id, authorization_retry_id, authorization_revision, authorization_expires_at, authorization_request_hash, authorization_ip_policy_hash, lifecycle_sequence, created_at, deleted_at FROM routes WHERE id = ?1
+`
+
+func (q *Queries) GetRouteForTesting(ctx context.Context, routeID string) (Route, error) {
+	row := q.db.QueryRowContext(ctx, getRouteForTesting, routeID)
+	var i Route
+	err := row.Scan(
+		&i.ID,
+		&i.HostnameID,
+		&i.IdentityID,
+		&i.Hostname,
+		&i.LocalTarget,
+		&i.Status,
+		&i.Version,
+		&i.SuspensionRevision,
+		&i.SuspensionReason,
+		&i.SuspendedAt,
+		&i.AuthorizationIssuer,
+		&i.AuthorizationID,
+		&i.AuthorizationKeyID,
+		&i.AuthorizationRetryID,
+		&i.AuthorizationRevision,
+		&i.AuthorizationExpiresAt,
+		&i.AuthorizationRequestHash,
+		&i.AuthorizationIpPolicyHash,
+		&i.LifecycleSequence,
+		&i.CreatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const listRouteAllowedIPPrefixesForTesting = `-- name: ListRouteAllowedIPPrefixesForTesting :many
+SELECT prefix FROM route_allowed_ip_prefixes
+WHERE route_id = ?1
+    AND route_version = ?2
+ORDER BY position
+`
+
+type ListRouteAllowedIPPrefixesForTestingParams struct {
+	RouteID      string
+	RouteVersion int64
+}
+
+func (q *Queries) ListRouteAllowedIPPrefixesForTesting(ctx context.Context, arg ListRouteAllowedIPPrefixesForTestingParams) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listRouteAllowedIPPrefixesForTesting, arg.RouteID, arg.RouteVersion)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var prefix string
+		if err := rows.Scan(&prefix); err != nil {
+			return nil, err
+		}
+		items = append(items, prefix)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const setACMEAccountEmail = `-- name: SetACMEAccountEmail :exec

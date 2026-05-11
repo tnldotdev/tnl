@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -13,93 +14,121 @@ import (
 	"github.com/tnldotdev/tnl/internal/state"
 )
 
-const DefaultAccessTokenLifetime = 7 * 24 * time.Hour
+const (
+	DefaultAccessTokenLifetime  = time.Hour
+	DefaultRefreshTokenLifetime = 30 * 24 * time.Hour
+)
+
+type Grant string
+
+const (
+	GrantPublish Grant = "publish"
+	GrantAdmin   Grant = "admin"
+)
 
 var (
 	// ErrUnauthenticated hides why a credential was rejected.
 	ErrUnauthenticated = errors.New("auth: unauthenticated")
-	// ErrCredentialNotFound hides whether a credential exists or belongs to another identity.
-	ErrCredentialNotFound = errors.New("auth: credential not found")
-	localIdentity         = state.Identity{ID: "identity_local", DisplayName: "Local operator"}
+	localIdentity      = state.Identity{ID: "identity_local", DisplayName: "Local operator"}
 )
 
-// IssuedAccessToken is the successful result of a login exchange.
-type IssuedAccessToken struct {
-	Token        credentials.AccessToken
-	CredentialID credentials.CredentialID
-	ExpiresAt    time.Time
+// IssuedControlSession is returned after login and refresh exchanges.
+type IssuedControlSession struct {
+	SessionID        string
+	AccessToken      credentials.AccessToken
+	AccessExpiresAt  time.Time
+	RefreshToken     credentials.RefreshToken
+	RefreshExpiresAt time.Time
+	Grants           []Grant
 }
 
-// Service implements standalone login and access credential flows.
+// Principal is the identity, session, and effective grants resolved from an access token.
+type Principal struct {
+	SessionID string
+	Identity  state.Identity
+	Grants    []Grant
+}
+
+func (p Principal) HasGrant(grant Grant) bool {
+	for _, candidate := range p.Grants {
+		if candidate == grant {
+			return true
+		}
+	}
+	return false
+}
+
+type ServiceConfig struct {
+	LoginToken         credentials.LoginToken
+	LoginTokenRevision int64
+	OIDC               OIDCVerifier
+	AccessLifetime     time.Duration
+	RefreshLifetime    time.Duration
+}
+
+// Service implements control-session login, refresh, authentication, and logout.
 type Service struct {
-	db                  *sql.DB
-	login               *credentials.LoginVerifier
-	oidc                OIDCVerifier
-	now                 func() time.Time
-	accessTokenLifetime time.Duration
+	db              *sql.DB
+	login           *credentials.LoginVerifier
+	loginRevision   int64
+	oidc            OIDCVerifier
+	now             func() time.Time
+	accessLifetime  time.Duration
+	refreshLifetime time.Duration
 }
 
-// NewService parses login once so the service does not retain the raw token.
-func NewService(db *sql.DB, login credentials.LoginToken, accessTokenLifetime time.Duration) (*Service, error) {
-	return NewServiceWithOIDC(db, login, nil, accessTokenLifetime)
-}
-
-func NewServiceWithOIDC(
-	db *sql.DB,
-	login credentials.LoginToken,
-	oidc OIDCVerifier,
-	accessTokenLifetime time.Duration,
-) (*Service, error) {
+// NewService validates authentication configuration and retains only a verifier for the login token.
+func NewService(db *sql.DB, config ServiceConfig) (*Service, error) {
 	if db == nil {
 		return nil, errors.New("auth: nil state database")
 	}
-	if accessTokenLifetime <= 0 {
-		return nil, errors.New("auth: access token lifetime must be positive")
+	if config.AccessLifetime <= 0 || config.RefreshLifetime <= 0 || config.RefreshLifetime < config.AccessLifetime {
+		return nil, errors.New("auth: control session lifetimes are invalid")
 	}
 	var verifier *credentials.LoginVerifier
-	if login != "" {
-		parsed, err := credentials.ParseLoginToken(login)
+	if config.LoginToken != "" {
+		parsed, err := credentials.ParseLoginToken(config.LoginToken)
 		if err != nil {
 			return nil, fmt.Errorf("auth: configure login token: %w", err)
 		}
+		if config.LoginTokenRevision < 1 {
+			return nil, errors.New("auth: login token revision is invalid")
+		}
 		verifier = &parsed
 	}
-	if verifier == nil && oidc == nil {
+	if verifier == nil && config.OIDC == nil {
 		return nil, errors.New("auth: no authentication method configured")
 	}
 	return &Service{
-		db: db, login: verifier, oidc: oidc, now: time.Now,
-		accessTokenLifetime: accessTokenLifetime,
+		db: db, login: verifier, loginRevision: config.LoginTokenRevision, oidc: config.OIDC, now: time.Now,
+		accessLifetime: config.AccessLifetime, refreshLifetime: config.RefreshLifetime,
 	}, nil
 }
 
-// Exchange issues a new access credential for the stable local identity.
-func (s *Service) Exchange(
-	ctx context.Context,
-	login credentials.LoginToken,
-) (IssuedAccessToken, error) {
+// Exchange starts a control session for the stable local identity.
+func (s *Service) Exchange(ctx context.Context, login credentials.LoginToken) (IssuedControlSession, error) {
 	if s.login == nil || !s.login.Matches(login) {
-		return IssuedAccessToken{}, ErrUnauthenticated
+		return IssuedControlSession{}, ErrUnauthenticated
 	}
-	return s.issue(ctx, localIdentity, s.now().Add(s.accessTokenLifetime), nil)
+	return s.issue(ctx, localIdentity, state.AuthenticationMethodLoginToken, s.loginRevision,
+		[]Grant{GrantPublish, GrantAdmin}, nil, time.Time{})
 }
 
-func (s *Service) ExchangeOIDC(ctx context.Context, token string) (IssuedAccessToken, error) {
+// ExchangeOIDC starts a publish-only control session for a verified OIDC identity.
+func (s *Service) ExchangeOIDC(ctx context.Context, token string) (IssuedControlSession, error) {
 	if s.oidc == nil {
-		return IssuedAccessToken{}, ErrUnauthenticated
+		return IssuedControlSession{}, ErrUnauthenticated
 	}
 	oidcIdentity, err := s.oidc.Verify(ctx, token)
 	if err != nil {
-		return IssuedAccessToken{}, err
+		return IssuedControlSession{}, err
 	}
 	digest := sha256.Sum256([]byte(oidcIdentity.Issuer + "\x00" + oidcIdentity.Subject))
-	identity := state.Identity{
-		ID: "identity_oidc_" + hex.EncodeToString(digest[:]),
-	}
-	tokenHash := sha256.Sum256([]byte(token))
-	issued, err := s.issueOIDC(ctx, identity, s.now().Add(s.accessTokenLifetime), tokenHash[:], oidcIdentity.ExpiresAt)
+	identity := state.Identity{ID: "identity_oidc_" + hex.EncodeToString(digest[:])}
+	assertionHash := sha256.Sum256([]byte(token))
+	issued, err := s.issue(ctx, identity, state.AuthenticationMethodOIDC, 1, []Grant{GrantPublish}, assertionHash[:], oidcIdentity.ExpiresAt)
 	if errors.Is(err, state.ErrOIDCAssertionAlreadyExchanged) {
-		return IssuedAccessToken{}, ErrUnauthenticated
+		return IssuedControlSession{}, ErrUnauthenticated
 	}
 	return issued, err
 }
@@ -107,73 +136,125 @@ func (s *Service) ExchangeOIDC(ctx context.Context, token string) (IssuedAccessT
 func (s *Service) issue(
 	ctx context.Context,
 	identity state.Identity,
-	expiresAt time.Time,
-	assertionHash []byte,
-) (IssuedAccessToken, error) {
-	return s.issueOIDC(ctx, identity, expiresAt, assertionHash, time.Time{})
-}
-
-func (s *Service) issueOIDC(
-	ctx context.Context,
-	identity state.Identity,
-	expiresAt time.Time,
+	method state.AuthenticationMethod,
+	sourceRevision int64,
+	grants []Grant,
 	assertionHash []byte,
 	assertionExpiresAt time.Time,
-) (IssuedAccessToken, error) {
-	token, credentialID, hash, err := credentials.NewAccessToken()
+) (IssuedControlSession, error) {
+	access, accessID, accessHash, err := credentials.NewAccessToken()
 	if err != nil {
-		return IssuedAccessToken{}, err
+		return IssuedControlSession{}, err
+	}
+	refresh, refreshID, refreshHash, err := credentials.NewRefreshToken()
+	if err != nil {
+		return IssuedControlSession{}, err
+	}
+	sessionID, err := newControlSessionID()
+	if err != nil {
+		return IssuedControlSession{}, err
 	}
 	issuedAt := s.now().UTC()
-	expiresAt = expiresAt.UTC()
-	if !expiresAt.After(issuedAt) {
-		return IssuedAccessToken{}, ErrUnauthenticated
+	accessExpiresAt := issuedAt.Add(s.accessLifetime)
+	refreshExpiresAt := issuedAt.Add(s.refreshLifetime)
+	storedGrants := grantStrings(grants)
+	err = state.CreateControlSession(ctx, s.db, state.ControlSession{
+		ID: sessionID, Identity: identity, AuthenticationMethod: method,
+		AuthenticationSourceRevision: sourceRevision, Grants: storedGrants, CreatedAt: issuedAt,
+		RefreshExpiresAt: refreshExpiresAt, AccessTokenID: accessID, AccessTokenHash: accessHash,
+		AccessExpiresAt: accessExpiresAt, RefreshTokenID: refreshID, RefreshTokenHash: refreshHash,
+	}, assertionHash, assertionExpiresAt)
+	if err != nil {
+		return IssuedControlSession{}, fmt.Errorf("auth: store control session: %w", err)
 	}
-	var storeErr error
-	if assertionHash == nil {
-		storeErr = state.CreateAccessCredential(ctx, s.db, identity, credentialID, hash, issuedAt, expiresAt)
-	} else {
-		storeErr = state.CreateOIDCAccessCredential(
-			ctx, s.db, identity, credentialID, hash, issuedAt, expiresAt, assertionHash, assertionExpiresAt,
-		)
-	}
-	if storeErr != nil {
-		return IssuedAccessToken{}, fmt.Errorf("auth: store access credential: %w", storeErr)
-	}
-	return IssuedAccessToken{Token: token, CredentialID: credentialID, ExpiresAt: expiresAt}, nil
+	return IssuedControlSession{
+		SessionID: sessionID, AccessToken: access, AccessExpiresAt: accessExpiresAt,
+		RefreshToken: refresh, RefreshExpiresAt: refreshExpiresAt, Grants: append([]Grant(nil), grants...),
+	}, nil
 }
 
-// Authenticate resolves a valid access token to its identity.
-func (s *Service) Authenticate(
-	ctx context.Context,
-	token credentials.AccessToken,
-) (state.Identity, error) {
+// Refresh rotates both credentials without changing the session's grants or absolute expiry.
+func (s *Service) Refresh(ctx context.Context, previous credentials.RefreshToken) (IssuedControlSession, error) {
+	previousID, previousHash, err := credentials.ParseRefreshToken(previous)
+	if err != nil {
+		return IssuedControlSession{}, ErrUnauthenticated
+	}
+	access, accessID, accessHash, err := credentials.NewAccessToken()
+	if err != nil {
+		return IssuedControlSession{}, err
+	}
+	refresh, refreshID, refreshHash, err := credentials.NewRefreshToken()
+	if err != nil {
+		return IssuedControlSession{}, err
+	}
+	now := s.now().UTC()
+	rotation, err := state.RotateControlSession(
+		ctx, s.db, previousID, previousHash, accessID, accessHash, now.Add(s.accessLifetime),
+		refreshID, refreshHash, now,
+	)
+	if errors.Is(err, credentials.ErrInvalidRefreshToken) {
+		return IssuedControlSession{}, ErrUnauthenticated
+	}
+	if err != nil {
+		return IssuedControlSession{}, fmt.Errorf("auth: refresh control session: %w", err)
+	}
+	return IssuedControlSession{
+		SessionID: rotation.SessionID, AccessToken: access, AccessExpiresAt: rotation.AccessExpiresAt,
+		RefreshToken: refresh, RefreshExpiresAt: rotation.RefreshExpiresAt, Grants: grantsFromStrings(rotation.Grants),
+	}, nil
+}
+
+// Authenticate resolves a current access token to its identity, session, and effective grants.
+func (s *Service) Authenticate(ctx context.Context, token credentials.AccessToken) (Principal, error) {
 	credentialID, hash, err := credentials.ParseAccessToken(token)
 	if err != nil {
-		return state.Identity{}, ErrUnauthenticated
+		return Principal{}, ErrUnauthenticated
 	}
-	identity, err := state.AuthenticateAccessCredential(ctx, s.db, credentialID, hash, s.now())
+	authenticated, err := state.AuthenticateControlSession(ctx, s.db, credentialID, hash, s.now())
 	if errors.Is(err, credentials.ErrInvalidAccessToken) {
-		return state.Identity{}, ErrUnauthenticated
+		return Principal{}, ErrUnauthenticated
 	}
 	if err != nil {
-		return state.Identity{}, fmt.Errorf("auth: authenticate access credential: %w", err)
+		return Principal{}, fmt.Errorf("auth: authenticate control session: %w", err)
 	}
-	return identity, nil
+	return Principal{
+		SessionID: authenticated.SessionID, Identity: authenticated.Identity,
+		Grants: grantsFromStrings(authenticated.Grants),
+	}, nil
 }
 
-// Revoke revokes an access credential owned by identity.
-func (s *Service) Revoke(
-	ctx context.Context,
-	identity state.Identity,
-	credentialID credentials.CredentialID,
-) error {
-	err := state.RevokeAccessCredential(ctx, s.db, identity.ID, credentialID, s.now())
-	if errors.Is(err, state.ErrAccessCredentialNotFound) {
-		return ErrCredentialNotFound
+// Logout revokes the authenticated control session.
+func (s *Service) Logout(ctx context.Context, principal Principal) error {
+	err := state.RevokeControlSession(ctx, s.db, principal.Identity.ID, principal.SessionID, s.now())
+	if errors.Is(err, state.ErrControlSessionNotFound) {
+		return ErrUnauthenticated
 	}
 	if err != nil {
-		return fmt.Errorf("auth: revoke access credential: %w", err)
+		return fmt.Errorf("auth: logout control session: %w", err)
 	}
 	return nil
+}
+
+func grantStrings(grants []Grant) []string {
+	result := make([]string, len(grants))
+	for index, grant := range grants {
+		result[index] = string(grant)
+	}
+	return result
+}
+
+func grantsFromStrings(grants []string) []Grant {
+	result := make([]Grant, len(grants))
+	for index, grant := range grants {
+		result[index] = Grant(grant)
+	}
+	return result
+}
+
+func newControlSessionID() (string, error) {
+	var material [16]byte
+	if _, err := rand.Read(material[:]); err != nil {
+		return "", fmt.Errorf("auth: generate control session ID: %w", err)
+	}
+	return "control_session_" + hex.EncodeToString(material[:]), nil
 }

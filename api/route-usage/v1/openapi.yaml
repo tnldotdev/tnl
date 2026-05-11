@@ -9,6 +9,33 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://receiver.example
 paths:
+  /v1/routes:
+    post:
+      operationId: registerRoute
+      summary: Register immutable route authorization metadata
+      security:
+        - serviceToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RouteRegistration"
+      responses:
+        "204":
+          description: Route registration accepted
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "413":
+          $ref: "#/components/responses/Problem"
+        "415":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/routes/{route_id}/lifecycle-events:
     post:
       operationId: ingestRouteLifecycleEvent
@@ -99,6 +126,60 @@ components:
     UnsignedInteger:
       type: string
       pattern: ^(0|[1-9][0-9]{0,18})$
+    DurationHistogram:
+      type: object
+      additionalProperties: false
+      description: >-
+        A cumulative duration histogram. cumulative_counts uses fixed inclusive
+        upper bounds of 1ms, 5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s,
+        2.5s, 5s, 10s, 30s, 1m, 5m, 15m, 1h, 6h, 24h, and +Inf, in that order.
+      required: [count, sum_nanoseconds, cumulative_counts]
+      properties:
+        count:
+          $ref: "#/components/schemas/PositiveInteger"
+        sum_nanoseconds:
+          $ref: "#/components/schemas/UnsignedInteger"
+        cumulative_counts:
+          type: array
+          minItems: 20
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/UnsignedInteger"
+    RouteRegistration:
+      type: object
+      additionalProperties: false
+      required:
+        - registration_id
+        - route_id
+        - hostname
+        - signing_key_id
+        - authorization_id
+        - created_at
+        - retry_id
+      properties:
+        registration_id:
+          type: string
+          pattern: ^registration_[0-9a-f]{32}$
+        route_id:
+          type: string
+          pattern: ^route_[0-9a-f]{32}$
+        hostname:
+          type: string
+          minLength: 1
+          maxLength: 253
+        signing_key_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        authorization_id:
+          type: string
+          pattern: ^authorization_[0-9a-f]{32}$
+        created_at:
+          type: string
+          format: date-time
+        retry_id:
+          type: string
+          pattern: ^retry_[0-9a-f]{32}$
     RouteLifecycleEvent:
       type: object
       additionalProperties: false
@@ -126,10 +207,16 @@ components:
         - bucket_start
         - revision
         - observed_through
-        - connections_opened
+        - connection_attempts
+        - policy_denials
+        - capacity_denials
+        - publisher_open_failures
+        - successful_streams
         - connection_nanoseconds
         - ingress_bytes
         - egress_bytes
+        - visitor_network_estimate
+        - visitor_network_hll
         - complete
       properties:
         version:
@@ -145,14 +232,72 @@ components:
         observed_through:
           type: string
           format: date-time
-        connections_opened:
+        connection_attempts:
           $ref: "#/components/schemas/UnsignedInteger"
+          description: Connections counted immediately after an ordinary route match, before policy and capacity checks.
+        policy_denials:
+          $ref: "#/components/schemas/UnsignedInteger"
+          description: Matched attempts rejected by route access policy.
+        capacity_denials:
+          $ref: "#/components/schemas/UnsignedInteger"
+          description: Matched attempts rejected by the route connection limit.
+        publisher_open_failures:
+          $ref: "#/components/schemas/UnsignedInteger"
+          description: Attempts for which opening a publisher stream failed.
+        successful_streams:
+          $ref: "#/components/schemas/UnsignedInteger"
+          description: Publisher streams that entered bidirectional forwarding.
         connection_nanoseconds:
           $ref: "#/components/schemas/UnsignedInteger"
+          description: Wall-clock duration of successful streams, split across the buckets in which time elapsed.
         ingress_bytes:
           $ref: "#/components/schemas/UnsignedInteger"
+          description: Bytes successfully forwarded from visitors to publishers.
         egress_bytes:
           $ref: "#/components/schemas/UnsignedInteger"
+          description: Bytes successfully forwarded from publishers to visitors.
+        publisher_open_latency:
+          allOf:
+            - $ref: "#/components/schemas/DurationHistogram"
+          description: >-
+            Latency of publisher open calls, including failed calls, attributed
+            when the call returns. Absent when the bucket has no observations;
+            absence is undefined and is not a zero-valued observation.
+        time_to_first_publisher_byte:
+          allOf:
+            - $ref: "#/components/schemas/DurationHistogram"
+          description: >-
+            Time from route match until the first publisher byte is forwarded
+            to the visitor, attributed when that byte is written. Absent when
+            the bucket has no observations; absence is undefined and is not a
+            zero-valued observation.
+        successful_connection_duration:
+          allOf:
+            - $ref: "#/components/schemas/DurationHistogram"
+          description: >-
+            End-to-end duration of successful forwarding streams, attributed
+            when a stream closes. Absent when the bucket has no observations;
+            absence is undefined and is not a zero-valued observation.
+        visitor_network_estimate:
+          $ref: "#/components/schemas/UnsignedInteger"
+          description: >-
+            Precision-12 HyperLogLog estimate of distinct visitor networks for
+            this route and bucket. The sketch is shared by route versions, so
+            version snapshots for the same route and bucket carry the same
+            estimate and must not be summed.
+        visitor_network_hll:
+          type: string
+          format: byte
+          description: >-
+            Versioned precision-12 HyperLogLog checkpoint. Decoded bytes start
+            with version 1, precision 12, and an encoding byte. Sparse encoding
+            0 continues with a big-endian uint16 entry count followed by sorted
+            (big-endian uint16 register index, uint8 register value) entries;
+            dense encoding 1 continues with 4096 uint8 registers. Inputs are
+            IPv4 /32 or IPv6 /64 networks HMACed with a route-scoped secret
+            derived daily from the daemon's stable master secret; no source
+            identifier is included. Merge registers by their maximum rather
+            than summing estimates when aggregating snapshots.
         complete:
           type: boolean
     Problem:

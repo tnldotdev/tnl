@@ -78,14 +78,14 @@ func (q *Queries) DeactivateManagedHostname(ctx context.Context, arg DeactivateM
 
 const deleteHostnameRoutes = `-- name: DeleteHostnameRoutes :exec
 UPDATE routes
-SET status = 'deleted', deleted_at = CAST(?1 AS INTEGER)
+SET status = 'deleted', deleted_at = CAST(?1 AS INTEGER), suspended_at = NULL
 WHERE hostname_id = ?2
-    AND status = 'active'
+    AND status IN ('active', 'suspended')
 `
 
 type DeleteHostnameRoutesParams struct {
 	DeletedAt  int64
-	HostnameID string
+	HostnameID sql.NullString
 }
 
 func (q *Queries) DeleteHostnameRoutes(ctx context.Context, arg DeleteHostnameRoutesParams) error {
@@ -104,13 +104,13 @@ WHERE route_id IN (
     AND status != 'expired'
 `
 
-func (q *Queries) ExpireHostnameRouteSessions(ctx context.Context, hostnameID string) error {
+func (q *Queries) ExpireHostnameRouteSessions(ctx context.Context, hostnameID sql.NullString) error {
 	_, err := q.db.ExecContext(ctx, expireHostnameRouteSessions, hostnameID)
 	return err
 }
 
 const getHostnameByHostname = `-- name: GetHostnameByHostname :one
-SELECT hostnames.id, hostnames.identity_id, hostnames.hostname, hostnames.kind, hostnames.status, hostnames.source, hostnames.created_at, hostnames.activated_at, hostnames.deactivated_at
+SELECT hostnames.id, hostnames.identity_id, hostnames.hostname, hostnames.kind, hostnames.status, hostnames.source, hostnames.created_at, hostnames.activated_at, hostnames.deactivated_at, hostnames.quarantine_reason, hostnames.quarantined_at
 FROM hostnames
 WHERE hostname = ?1
 `
@@ -128,12 +128,14 @@ func (q *Queries) GetHostnameByHostname(ctx context.Context, hostname string) (H
 		&i.CreatedAt,
 		&i.ActivatedAt,
 		&i.DeactivatedAt,
+		&i.QuarantineReason,
+		&i.QuarantinedAt,
 	)
 	return i, err
 }
 
 const getHostnameByID = `-- name: GetHostnameByID :one
-SELECT hostnames.id, hostnames.identity_id, hostnames.hostname, hostnames.kind, hostnames.status, hostnames.source, hostnames.created_at, hostnames.activated_at, hostnames.deactivated_at
+SELECT hostnames.id, hostnames.identity_id, hostnames.hostname, hostnames.kind, hostnames.status, hostnames.source, hostnames.created_at, hostnames.activated_at, hostnames.deactivated_at, hostnames.quarantine_reason, hostnames.quarantined_at
 FROM hostnames
 WHERE id = ?1
 `
@@ -151,12 +153,14 @@ func (q *Queries) GetHostnameByID(ctx context.Context, id string) (Hostname, err
 		&i.CreatedAt,
 		&i.ActivatedAt,
 		&i.DeactivatedAt,
+		&i.QuarantineReason,
+		&i.QuarantinedAt,
 	)
 	return i, err
 }
 
 const getHostnameRequest = `-- name: GetHostnameRequest :one
-SELECT hostnames.id, hostnames.identity_id, hostnames.hostname, hostnames.kind, hostnames.status, hostnames.source, hostnames.created_at, hostnames.activated_at, hostnames.deactivated_at, hostname_requests.requested_label, hostname_requests.requested_kind
+SELECT hostnames.id, hostnames.identity_id, hostnames.hostname, hostnames.kind, hostnames.status, hostnames.source, hostnames.created_at, hostnames.activated_at, hostnames.deactivated_at, hostnames.quarantine_reason, hostnames.quarantined_at, hostname_requests.requested_label, hostname_requests.requested_kind
 FROM hostname_requests
 JOIN hostnames ON hostnames.id = hostname_requests.hostname_id
 WHERE hostname_requests.identity_id = CAST(?1 AS TEXT)
@@ -187,6 +191,8 @@ func (q *Queries) GetHostnameRequest(ctx context.Context, arg GetHostnameRequest
 		&i.Hostname.CreatedAt,
 		&i.Hostname.ActivatedAt,
 		&i.Hostname.DeactivatedAt,
+		&i.Hostname.QuarantineReason,
+		&i.Hostname.QuarantinedAt,
 		&i.RequestedLabel,
 		&i.RequestedKind,
 	)
@@ -376,7 +382,7 @@ func (q *Queries) ListActiveRoutesForHostname(ctx context.Context, arg ListActiv
 }
 
 const listHostnamesPage = `-- name: ListHostnamesPage :many
-SELECT hostnames.id, hostnames.identity_id, hostnames.hostname, hostnames.kind, hostnames.status, hostnames.source, hostnames.created_at, hostnames.activated_at, hostnames.deactivated_at
+SELECT hostnames.id, hostnames.identity_id, hostnames.hostname, hostnames.kind, hostnames.status, hostnames.source, hostnames.created_at, hostnames.activated_at, hostnames.deactivated_at, hostnames.quarantine_reason, hostnames.quarantined_at
 FROM hostnames
 WHERE identity_id = CAST(?1 AS TEXT)
     AND (
@@ -413,6 +419,8 @@ func (q *Queries) ListHostnamesPage(ctx context.Context, arg ListHostnamesPagePa
 			&i.CreatedAt,
 			&i.ActivatedAt,
 			&i.DeactivatedAt,
+			&i.QuarantineReason,
+			&i.QuarantinedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -486,7 +494,7 @@ WHERE route_id IN (
 
 type RevokeHostnameRouteCredentialsParams struct {
 	RevokedAt  int64
-	HostnameID string
+	HostnameID sql.NullString
 }
 
 func (q *Queries) RevokeHostnameRouteCredentials(ctx context.Context, arg RevokeHostnameRouteCredentialsParams) error {

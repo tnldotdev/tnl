@@ -4,9 +4,30 @@
   "bucket_start": "2026-08-31T12:34:00Z",
   "revision": "1",
   "observed_through": "2026-08-31T12:35:00Z",
-  "connections_opened": "3",
+  "connection_attempts": "3",
+  "policy_denials": "1",
+  "capacity_denials": "0",
+  "publisher_open_failures": "1",
+  "successful_streams": "1",
   "connection_nanoseconds": "45000000000",
   "ingress_bytes": "1200",
   "egress_bytes": "8400",
+  "publisher_open_latency": {
+    "count": "2",
+    "sum_nanoseconds": "100000000",
+    "cumulative_counts": ["0", "0", "0", "1", "1", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2"]
+  },
+  "time_to_first_publisher_byte": {
+    "count": "1",
+    "sum_nanoseconds": "150000000",
+    "cumulative_counts": ["0", "0", "0", "0", "0", "0", "1", "1", "1", "1", "1", "1", "1", "1", "1", "1", "1", "1", "1", "1"]
+  },
+  "successful_connection_duration": {
+    "count": "1",
+    "sum_nanoseconds": "45000000000",
+    "cumulative_counts": ["0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "1", "1", "1", "1", "1", "1", "1"]
+  },
+  "visitor_network_estimate": "2",
+  "visitor_network_hll": "AQwAAAIAAQEAAgE=",
   "complete": true
 }

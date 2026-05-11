@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/clientauth"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/publisher"
@@ -65,7 +66,14 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		return errors.New("startup timeout must be greater than zero and at most 10 minutes")
 	}
 
-	serverURL, _, err := resolveServer(flags.StateDir, flags.ServerURL)
+	serverURL, stateRoot, err := resolveServer(flags.StateDir, flags.ServerURL)
+	if err != nil {
+		return err
+	}
+	authenticated, err := clientauth.Authenticate(ctx, clientauth.Config{
+		CoreEndpoint: serverURL, StateRoot: stateRoot, AccessToken: flags.AccessToken,
+		Diagnostics: stderr, LoginToken: loginTokenPrompt(stdin, stderr),
+	})
 	if err != nil {
 		return err
 	}
@@ -73,13 +81,10 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	if err != nil {
 		return err
 	}
-	client, err := authenticatedClient(serverURL, flags.AccessToken, state)
+	capabilities := authenticated.CoreCapabilities
+	names, namingCapabilities, err := namingAPI(authenticated)
 	if err != nil {
 		return err
-	}
-	capabilities, err := client.Capabilities(ctx)
-	if err != nil {
-		return fmt.Errorf("read server capabilities: %w", err)
 	}
 	if capabilities.Transport.Type != serverv1.Tailcat || capabilities.Transport.Version != serverv1.TransportCapabilitiesVersionN1 {
 		return errors.New("server does not support tailcat transport version 1")
@@ -90,7 +95,11 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	if capabilities.Acme == nil || capabilities.Acme.AcmeProfile == "" {
 		return errors.New("server does not support automatic certificates")
 	}
-	hostname, err := addPublishHostname(ctx, client, flags.Name, capabilities)
+	hostname, err := addPublishHostname(ctx, names, flags.Name, namingCapabilities)
+	if err != nil {
+		return err
+	}
+	routes, err := routeAPI(authenticated)
 	if err != nil {
 		return err
 	}
@@ -170,11 +179,11 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	publishDone := make(chan error, 1)
 	go func() {
 		publishDone <- publisher.Run(publishCtx, publisher.Config{
-			Server: client, Hostname: hostname, Target: target,
+			Server: routes, Hostname: hostname, Target: target,
 			State: state, ACMEProfile: capabilities.Acme.AcmeProfile,
 			RelayRegion: capabilities.Transport.RelayRegion, Logf: logger.Printf,
 			LoadRegions: func(ctx context.Context) (map[string]*tailcfg.DERPRegion, error) {
-				relayMap, err := client.RelayMap(ctx)
+				relayMap, err := authenticated.Core.RelayMap(ctx)
 				if err != nil {
 					return nil, fmt.Errorf("read server relay map: %w", err)
 				}

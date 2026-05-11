@@ -1,0 +1,21 @@
+{
+  "authorization": "eyJhbGciOiJFZERTQSIsImtpZCI6ImF1dGhvcml0eS0yMDI2LTA5IiwidHlwIjoidG5sLWF1dGhvcml6YXRpb24rand0In0.eyJ2ZXJzaW9uIjoxfQ.signature",
+  "claims": {
+    "version": 1,
+    "kid": "authority-2026-09",
+    "alg": "EdDSA",
+    "operation": "route_session.create",
+    "issuer": "https://authority.example",
+    "receiver": "https://control.example",
+    "authorization_id": "authorization_0123456789abcdef0123456789abcdef",
+    "hostname": "demo.example.com",
+    "route_id": "route_0123456789abcdef0123456789abcdef",
+    "route_version": 2,
+    "revision": 1,
+    "issued_at": "2026-09-01T12:00:00Z",
+    "expires_at": "2026-09-01T13:00:00Z",
+    "retry_id": "retry_0123456789abcdef0123456789abcdef",
+    "canonical_request_hash": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "ip_policy_hash": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA"
+  }
+}

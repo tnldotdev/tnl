@@ -52,6 +52,42 @@ func Open(ctx context.Context, dir string) (*sql.DB, error) {
 	return db, nil
 }
 
+// OpenReadOnly opens an existing state database without creating or migrating state.
+func OpenReadOnly(ctx context.Context, dir string) (*sql.DB, error) {
+	if err := RequireDirectoryOwner(dir); err != nil {
+		return nil, err
+	}
+	path := DatabasePath(dir)
+	if _, err := os.Stat(path); err != nil {
+		return nil, fmt.Errorf("state: stat database: %w", err)
+	}
+	u := &url.URL{Scheme: "file", Path: filepath.ToSlash(path)}
+	query := u.Query()
+	query.Set("mode", "ro")
+	query.Set("_busy_timeout", "5000")
+	query.Set("_foreign_keys", "on")
+	u.RawQuery = query.Encode()
+	db, err := sql.Open("sqlite", u.String())
+	if err != nil {
+		return nil, fmt.Errorf("state: open database read-only: %w", err)
+	}
+	db.SetMaxOpenConns(1)
+	if err := db.PingContext(ctx); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("state: connect database read-only: %w", err)
+	}
+	var version int
+	if err := db.QueryRowContext(ctx, "SELECT COALESCE(MAX(version_id), 0) FROM goose_db_version WHERE is_applied = 1").Scan(&version); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("state: read schema version: %w", err)
+	}
+	if version != 1 {
+		db.Close()
+		return nil, fmt.Errorf("state: unsupported database schema version %d", version)
+	}
+	return db, nil
+}
+
 func prepareDirectory(dir string) (string, error) {
 	if strings.TrimSpace(dir) == "" {
 		return "", errors.New("state: empty directory")

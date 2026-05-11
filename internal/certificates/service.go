@@ -277,6 +277,9 @@ func (s *Service) ChallengeRemoved(ctx context.Context, id string) (Issuance, er
 	if len(issuance.CertificatePEM) == 0 {
 		return Issuance{}, ErrInvalidStatus
 	}
+	if err := s.ensureCurrent(ctx, issuance); err != nil {
+		return Issuance{}, err
+	}
 	issuance.ChallengeRemoved = s.now()
 	issuance.LastError = ""
 	if err := s.store.saveIssuance(ctx, issuance); err != nil {

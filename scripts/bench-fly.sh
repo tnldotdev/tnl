@@ -194,7 +194,7 @@ read_login_token() {
   while ((SECONDS < deadline)); do
     local output
     output="$(fly ssh console --app "${app}" --machine "${machine_id}" \
-      --command '/tnld login-token --state-dir /tmp/tnl-state' 2>/dev/null || true)"
+      --command '/usr/local/bin/tnl admin server login-token --state-dir /tmp/tnl-state' 2>/dev/null || true)"
     while IFS= read -r line; do
       line="${line//$'\r'/}"
       if [[ "${line}" =~ ^tnl_login_[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$ ]]; then
@@ -412,7 +412,7 @@ run_tier() {
 }
 
 mkdir -p "${results_dir}"
-worker_token="$(go run ./cmd/tnld token worker)"
+worker_token="$(go run ./cmd/tnl admin server token worker)"
 cp "${control_ca_file}" "${temp_dir}/control-ca.crt"
 
 curl --fail --silent --show-error https://tailcat.dev/derpmap.json >"${temp_dir}/relay.json"

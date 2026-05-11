@@ -47,8 +47,8 @@ func TestParseTNLD(t *testing.T) {
 	if config.MaxHostnameRequests != 1024 {
 		t.Fatalf("MaxHostnameRequests = %d, want 1024", config.MaxHostnameRequests)
 	}
-	if config.AccessTokenLifetime != 7*24*time.Hour {
-		t.Fatalf("AccessTokenLifetime = %s, want 168h", config.AccessTokenLifetime)
+	if config.AccessTokenLifetime != time.Hour || config.RefreshTokenLifetime != 30*24*time.Hour {
+		t.Fatalf("token lifetimes = %s, %s", config.AccessTokenLifetime, config.RefreshTokenLifetime)
 	}
 
 	config, err = ParseTNLD([]string{
@@ -95,13 +95,14 @@ func TestParseTNLDHostnameQuotaEnvironment(t *testing.T) {
 func TestParseTNLDAccessTokenLifetimeEnvironment(t *testing.T) {
 	t.Setenv("TNLD_STATE_DIR", "/state")
 	t.Setenv("TNLD_ACCESS_TOKEN_LIFETIME", "24h")
+	t.Setenv("TNLD_REFRESH_TOKEN_LIFETIME", "240h")
 
 	config, err := ParseTNLD([]string{"--public-listen", ""})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.AccessTokenLifetime != 24*time.Hour {
-		t.Fatalf("AccessTokenLifetime = %s, want 24h", config.AccessTokenLifetime)
+	if config.AccessTokenLifetime != 24*time.Hour || config.RefreshTokenLifetime != 240*time.Hour {
+		t.Fatalf("token lifetimes = %s, %s", config.AccessTokenLifetime, config.RefreshTokenLifetime)
 	}
 }
 
@@ -153,6 +154,8 @@ func TestParseTNLDRejectsInvalidInput(t *testing.T) {
 		"hostname requests too large": {"--state-dir", "/state", "--max-hostname-requests", "100001"},
 		"short access lifetime":       {"--state-dir", "/state", "--public-listen", "", "--access-token-lifetime", "4m59s"},
 		"long access lifetime":        {"--state-dir", "/state", "--public-listen", "", "--access-token-lifetime", "720h1s"},
+		"refresh below access":        {"--state-dir", "/state", "--public-listen", "", "--access-token-lifetime", "2h", "--refresh-token-lifetime", "1h"},
+		"long refresh lifetime":       {"--state-dir", "/state", "--public-listen", "", "--refresh-token-lifetime", "8760h1s"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := ParseTNLD(args); err == nil {
@@ -169,6 +172,7 @@ func TestTNLDValidateOIDC(t *testing.T) {
 	}
 	config.OIDCIssuer = "https://account.example"
 	config.OIDCClientID = "tnl-cli"
+	config.OIDCLoginFlow = OIDCLoginFlowDeviceCode
 	if err := config.Validate(); err != nil {
 		t.Fatalf("valid OIDC: %v", err)
 	}
@@ -182,6 +186,11 @@ func TestTNLDValidateOIDC(t *testing.T) {
 	invalidIssuer.OIDCIssuer = "http://account.example"
 	if err := invalidIssuer.Validate(); err == nil {
 		t.Fatal("insecure OIDC issuer accepted")
+	}
+	invalidFlow := config
+	invalidFlow.OIDCLoginFlow = "implicit"
+	if err := invalidFlow.Validate(); err == nil {
+		t.Fatal("invalid OIDC login flow accepted")
 	}
 }
 
@@ -231,8 +240,8 @@ func TestTNLDValidateACME(t *testing.T) {
 		PublicListen: "127.0.0.1:443", RelayMapFile: "/relay.json", RelayRegion: "default",
 		WorkerCapacity: 1, WorkerStreamLimit: 1, PublicConnLimit: 1, RouteConnLimit: 1, DrainTimeout: 30,
 		MaxActiveHostnames: 128, MaxHostnameRequests: 1024,
-		AccessTokenLifetime: 7 * 24 * time.Hour,
-		ACMEDirectoryURL:    "https://acme.example/directory", ACMEEmail: "operator@example.com",
+		AccessTokenLifetime: time.Hour, RefreshTokenLifetime: 30 * 24 * time.Hour,
+		ACMEDirectoryURL: "https://acme.example/directory", ACMEEmail: "operator@example.com",
 		ACMEAcceptTerms: true, ACMEProfile: "tlsserver",
 	}
 	if err := valid.Validate(); err != nil {

@@ -9,9 +9,11 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/localproxy"
@@ -37,7 +39,7 @@ var (
 type Server interface {
 	CreateRoute(context.Context, serverv1.CreateRouteRequest) (serverv1.SessionSetup, error)
 	ListRoutes(context.Context) ([]serverv1.Route, error)
-	CreateRouteSession(context.Context, string, credentials.RouteToken) (serverv1.SessionSetup, error)
+	CreateRouteSession(context.Context, string, credentials.RouteToken, []string) (serverv1.SessionSetup, error)
 	DeleteRoute(context.Context, string) error
 	RegisterTransport(context.Context, string, uint64, credentials.SessionToken, transportv1.TailcatDescriptor) error
 	Ready(context.Context, string, uint64, credentials.SessionToken) error
@@ -49,17 +51,18 @@ type Server interface {
 }
 
 type Config struct {
-	Server      Server
-	Hostname    string
-	Target      string
-	Certificate tls.Certificate
-	State       *clientstate.Store
-	ACMEProfile string
-	RelayRegion string
-	Regions     map[string]*tailcfg.DERPRegion
-	LoadRegions func(context.Context) (map[string]*tailcfg.DERPRegion, error)
-	DrainTime   time.Duration
-	Logf        logger.Logf
+	Server            Server
+	Hostname          string
+	Target            string
+	AllowedIPPrefixes []string
+	Certificate       tls.Certificate
+	State             *clientstate.Store
+	ACMEProfile       string
+	RelayRegion       string
+	Regions           map[string]*tailcfg.DERPRegion
+	LoadRegions       func(context.Context) (map[string]*tailcfg.DERPRegion, error)
+	DrainTime         time.Duration
+	Logf              logger.Logf
 	// OnRoute runs after creation or recovery, before activation.
 	OnRoute func(string)
 	// OnReady runs once; OnSessionReady runs for every version and may abort publisher.
@@ -93,6 +96,11 @@ func Run(ctx context.Context, config Config) (result error) {
 	if err := localproxy.Preflight(ctx, config.Target); err != nil {
 		return err
 	}
+	allowedIPPrefixes, err := authorization.CanonicalizeIPPrefixes(config.AllowedIPPrefixes)
+	if err != nil {
+		return fmt.Errorf("publisher: invalid allowed IP prefixes: %w", err)
+	}
+	config.AllowedIPPrefixes = allowedIPPrefixes
 	if config.State != nil {
 		hostLock, err := clientstate.LockHostnameContext(ctx, config.State, hostname)
 		if err != nil {
@@ -107,7 +115,7 @@ func Run(ctx context.Context, config Config) (result error) {
 	if err != nil {
 		return err
 	}
-	setup, err := createOrRecover(ctx, config.Server, hostname, config.Target, routeToken)
+	setup, err := createOrRecover(ctx, config.Server, hostname, config.Target, routeToken, config.AllowedIPPrefixes)
 	if err != nil {
 		return err
 	}
@@ -159,7 +167,7 @@ func Run(ctx context.Context, config Config) (result error) {
 			return err
 		}
 		for {
-			setup, err = config.Server.CreateRouteSession(ctx, routeID, routeToken)
+			setup, err = config.Server.CreateRouteSession(ctx, routeID, routeToken, config.AllowedIPPrefixes)
 			if err == nil {
 				err = refreshRelayRegions(ctx, &config)
 				if err == nil {
@@ -197,11 +205,17 @@ func createOrRecover(
 	server Server,
 	hostname, target string,
 	routeToken credentials.RouteToken,
+	allowedIPPrefixes []string,
 ) (serverv1.SessionSetup, error) {
 	for {
-		setup, err := server.CreateRoute(ctx, serverv1.CreateRouteRequest{
+		request := serverv1.CreateRouteRequest{
 			Hostname: hostname, LocalTarget: target, RouteToken: routeToken.String(),
-		})
+		}
+		if allowedIPPrefixes != nil {
+			allowed := serverv1.AllowedIPPrefixes(slices.Clone(allowedIPPrefixes))
+			request.AllowedIpPrefixes = &allowed
+		}
+		setup, err := server.CreateRoute(ctx, request)
 		if err == nil {
 			return setup, nil
 		}
@@ -211,7 +225,7 @@ func createOrRecover(
 			if listErr == nil {
 				for _, route := range routes {
 					if route.Hostname == hostname && route.LocalTarget == target {
-						setup, sessionErr := server.CreateRouteSession(ctx, route.Id, routeToken)
+						setup, sessionErr := server.CreateRouteSession(ctx, route.Id, routeToken, allowedIPPrefixes)
 						if sessionErr == nil {
 							return setup, nil
 						}

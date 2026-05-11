@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/netip"
 	"os"
 	"os/signal"
 	"strings"
@@ -15,15 +16,19 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
+	"github.com/tnldotdev/tnl/internal/authorityclient"
+	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/buildinfo"
+	"github.com/tnldotdev/tnl/internal/clientauth"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/internal/oidclogin"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/routeclient"
 	"github.com/tnldotdev/tnl/internal/serverclient"
+	"github.com/tnldotdev/tnl/pkg/protocol/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/protocol/serverv1"
 	"golang.org/x/term"
 	"tailscale.com/tailcfg"
@@ -36,17 +41,20 @@ type cli struct {
 	Dev     devCommand     `cmd:"" help:"Run and publish a development server."`
 	Host    hostCommand    `cmd:"" help:"Manage persistent public names."`
 	Login   loginCommand   `cmd:"" help:"Authenticate to a tnl server."`
-	Logout  logoutCommand  `cmd:"" help:"Revoke and remove the saved access token."`
+	Logout  logoutCommand  `cmd:"" help:"Revoke and remove the saved control session."`
+	Admin   adminCommand   `cmd:"" help:"Administer a self-hosted tnl server."`
 	Version struct{}       `cmd:"" help:"Print release version information."`
 }
 
 type publishCommand struct {
-	Target      string `arg:"" name:"target" required:"" help:"Local port, localhost port, or literal-loopback HTTP origin."`
-	ServerURL   string `name:"server" env:"TNL_SERVER" help:"tnl server HTTPS origin; defaults to the selected server or https://control.tnl.dev."`
-	AccessToken string `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Server access token; defaults to the saved login."`
-	Name        string `name:"name" env:"TNL_NAME" help:"Requested single-label public name; omit for a random name."`
-	Output      string `name:"output" enum:"human,ndjson" default:"human" help:"Output format: ${enum}."`
-	StateDir    string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent route state."`
+	Target         string   `arg:"" name:"target" required:"" help:"Local port, localhost port, or literal-loopback HTTP origin."`
+	ServerURL      string   `name:"server" env:"TNL_SERVER" help:"tnl server HTTPS origin; defaults to the selected server or https://control.tnl.dev."`
+	AccessToken    string   `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Server access token; defaults to the saved login."`
+	Name           string   `name:"name" env:"TNL_NAME" help:"Requested single-label public name; omit for a random name."`
+	AllowIP        []string `name:"allow-ip" help:"Allow a visitor IP address or prefix; repeat for each value."`
+	AllowCurrentIP bool     `name:"allow-current-ip" help:"Allow the public IP reported by the tnl server."`
+	Output         string   `name:"output" enum:"human,ndjson" default:"human" help:"Output format: ${enum}."`
+	StateDir       string   `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent route state."`
 }
 
 type hostCommand struct {
@@ -118,7 +126,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	case "login":
 		return runLogin(ctx, flags.Login, os.Stdin, stdout, stderr)
 	case "logout":
-		return runLogout(ctx, flags.Logout, stdout)
+		return runLogout(ctx, flags.Logout, stdout, stderr)
 	case "version":
 		_, err := fmt.Fprintln(stdout, buildinfo.Line("tnl"))
 		return err
@@ -127,11 +135,51 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	case "dev <command>":
 		return runDev(ctx, flags.Dev, os.Stdin, stdout, stderr)
 	case "host add", "host add [<name>]", "host add <name>":
-		return runHostAdd(ctx, flags.Host.Add, stdout)
+		return runHostAdd(ctx, flags.Host.Add, stdout, stderr)
 	case "host list":
-		return runHostList(ctx, flags.Host.List, stdout)
+		return runHostList(ctx, flags.Host.List, stdout, stderr)
 	case "host remove <hostname>":
-		return runHostRemove(ctx, flags.Host.Remove, stdout)
+		return runHostRemove(ctx, flags.Host.Remove, stdout, stderr)
+	case "admin server status":
+		return runAdminServerStatus(ctx, flags.Admin.Server.Status, stdout, stderr)
+	case "admin server login-token":
+		return runAdminLoginToken(ctx, flags.Admin.Server.LoginToken, stdout)
+	case "admin server token worker":
+		return runAdminTokenWorker(stdout)
+	case "admin server token service":
+		return runAdminTokenService(stdout)
+	case "admin server relay refresh":
+		return runAdminRelayRefresh(ctx, flags.Admin.Server.Relay.Refresh, stdout)
+	case "admin routes list":
+		return runAdminRoutesList(ctx, flags.Admin.Routes.List, stdout, stderr)
+	case "admin routes show <route-id>":
+		return runAdminRouteShow(ctx, flags.Admin.Routes.Show, stdout, stderr)
+	case "admin routes suspend <route-id>":
+		return runAdminRouteSuspend(ctx, flags.Admin.Routes.Suspend, stdout, stderr)
+	case "admin routes resume <route-id>":
+		return runAdminRouteResume(ctx, flags.Admin.Routes.Resume, stdout, stderr)
+	case "admin hostnames list":
+		return runAdminHostnamesList(ctx, flags.Admin.Hostnames.List, stdout, stderr)
+	case "admin hostnames show <hostname-id>":
+		return runAdminHostnameShow(ctx, flags.Admin.Hostnames.Show, stdout, stderr)
+	case "admin hostnames remove <hostname-id>":
+		return runAdminHostnameRemove(ctx, flags.Admin.Hostnames.Remove, stdout, stderr)
+	case "admin hostnames quarantine <hostname-id>":
+		return runAdminHostnameQuarantine(ctx, flags.Admin.Hostnames.Quarantine, stdout, stderr)
+	case "admin credentials list":
+		return runAdminCredentialsList(ctx, flags.Admin.Credentials.List, stdout, stderr)
+	case "admin credentials revoke <credential-id>":
+		return runAdminCredentialRevoke(ctx, flags.Admin.Credentials.Revoke, stdout, stderr)
+	case "admin control-sessions list":
+		return runAdminControlSessionsList(ctx, flags.Admin.ControlSessions.List, stdout, stderr)
+	case "admin control-sessions revoke <control-session-id>":
+		return runAdminControlSessionRevoke(ctx, flags.Admin.ControlSessions.Revoke, stdout, stderr)
+	case "admin switches list":
+		return runAdminSwitchesList(ctx, flags.Admin.Switches.List, stdout, stderr)
+	case "admin switches enable <name>":
+		return runAdminSwitchSet(ctx, flags.Admin.Switches.Enable, true, stdout, stderr)
+	case "admin switches disable <name>":
+		return runAdminSwitchSet(ctx, flags.Admin.Switches.Disable, false, stdout, stderr)
 	default:
 		return errors.New("command is required")
 	}
@@ -146,115 +194,39 @@ func runLogin(ctx context.Context, flags loginCommand, input io.Reader, output, 
 	if err != nil {
 		return err
 	}
-	server, err := serverclient.New(serverURL, nil, "")
+	_, err = clientauth.Authenticate(ctx, clientauth.Config{
+		CoreEndpoint: serverURL, StateRoot: stateRoot, Diagnostics: errorOutput,
+		LoginToken: loginTokenPrompt(input, errorOutput), ForceLogin: true, ForceLoginToken: flags.Token,
+	})
 	if err != nil {
 		return err
 	}
-	capabilities, err := server.Capabilities(ctx)
-	if err != nil {
-		return fmt.Errorf("read server capabilities: %w", err)
-	}
-	oidcCapabilities := capabilities.Oidc
-	useOIDC := oidcCapabilities != nil && !flags.Token
-	var idToken string
-	var login credentials.LoginToken
-	if useOIDC {
-		idToken, err = oidclogin.Login(ctx, oidclogin.Config{
-			Issuer: oidcCapabilities.Issuer, ClientID: oidcCapabilities.ClientId,
-		}, output)
-		if err != nil {
-			return err
-		}
-	} else {
-		login, err = readLoginToken(input, errorOutput)
-		if err != nil {
-			return err
-		}
-	}
-	state, err := clientstate.New(stateRoot, serverURL)
-	if err != nil {
-		return err
-	}
-	credentialLock, err := state.LockCredentials()
-	if err != nil {
-		return err
-	}
-	defer credentialLock.Close()
-	previous, hadPrevious, err := state.AccessCredential()
-	if err != nil {
-		return err
-	}
-	var issued serverv1.TokenExchangeResponse
-	if useOIDC {
-		issued, err = server.ExchangeOIDC(ctx, idToken)
-		if err != nil {
-			return fmt.Errorf("exchange OIDC login: %w", err)
-		}
-	} else {
-		issued, err = server.Exchange(ctx, login)
-		if err != nil {
-			return fmt.Errorf("exchange login token: %w", err)
-		}
-	}
-	access := credentials.AccessToken(issued.AccessToken)
-	credentialID, _, err := credentials.ParseAccessToken(access)
-	if err != nil {
-		return errors.New("server returned invalid access credential")
-	}
-	cleanup := func() {
-		if client, cleanupErr := serverclient.New(serverURL, nil, access); cleanupErr == nil {
-			_ = client.RevokeAccessCredential(ctx, credentialID.String())
-		}
-	}
-	if credentialID.String() != issued.CredentialId || !issued.ExpiresAt.After(time.Now()) {
-		cleanup()
-		return errors.New("server returned invalid access credential")
-	}
-	if hadPrevious && previous.CredentialID != credentialID {
-		previousClient, previousErr := serverclient.New(serverURL, nil, previous.Token)
-		if previousErr == nil {
-			previousErr = previousClient.RevokeAccessCredential(ctx, previous.CredentialID.String())
-		}
-		if previousErr != nil && !errors.Is(previousErr, serverclient.ErrUnauthenticated) &&
-			!errors.Is(previousErr, serverclient.ErrNotFound) {
-			cleanup()
-			return fmt.Errorf("revoke previous access credential: %w", previousErr)
-		}
-	}
-	if err := state.SaveAccessCredential(clientstate.AccessCredential{
-		Token: access, CredentialID: credentialID, ExpiresAt: issued.ExpiresAt,
-	}); err != nil {
-		cleanup()
-		return errors.Join(err, state.RemoveAccessCredential())
-	}
-	if err := clientstate.SaveServer(stateRoot, serverURL); err != nil {
-		cleanup()
-		return errors.Join(err, state.RemoveAccessCredential())
-	}
-	_, err = fmt.Fprintf(output, "Authenticated until %s\n", issued.ExpiresAt.UTC().Format(time.RFC3339))
+	_, err = fmt.Fprintln(errorOutput, "Authenticated")
 	return err
 }
 
 func readLoginToken(input io.Reader, output io.Writer) (credentials.LoginToken, error) {
-	if file, ok := input.(*os.File); ok && term.IsTerminal(int(file.Fd())) {
-		if _, err := fmt.Fprint(output, "Login token: "); err != nil {
-			return "", err
-		}
-		data, err := term.ReadPassword(int(file.Fd()))
-		_, _ = fmt.Fprintln(output)
-		if err != nil {
-			return "", fmt.Errorf("read login token: %w", err)
-		}
-		return parseLoginInput(data)
+	file, ok := input.(*os.File)
+	if !ok || !term.IsTerminal(int(file.Fd())) {
+		return "", errors.New("login-token authentication requires an interactive terminal")
 	}
-	data, err := io.ReadAll(io.LimitReader(input, 257))
+	if _, err := fmt.Fprint(output, "Login token: "); err != nil {
+		return "", err
+	}
+	data, err := term.ReadPassword(int(file.Fd()))
+	_, _ = fmt.Fprintln(output)
 	if err != nil {
 		return "", fmt.Errorf("read login token: %w", err)
 	}
-	if len(data) > 256 {
-		return "", errors.New("login token input is too large")
-	}
 	return parseLoginInput(data)
+}
+
+func loginTokenPrompt(input io.Reader, output io.Writer) func() (credentials.LoginToken, error) {
+	file, ok := input.(*os.File)
+	if !ok || !term.IsTerminal(int(file.Fd())) {
+		return nil
+	}
+	return func() (credentials.LoginToken, error) { return readLoginToken(input, output) }
 }
 
 func parseLoginInput(data []byte) (credentials.LoginToken, error) {
@@ -265,37 +237,18 @@ func parseLoginInput(data []byte) (credentials.LoginToken, error) {
 	return token, nil
 }
 
-func runLogout(ctx context.Context, flags logoutCommand, output io.Writer) error {
-	serverURL, _, err := resolveServer(flags.StateDir, flags.ServerURL)
+func runLogout(ctx context.Context, flags logoutCommand, output io.Writer, diagnostics ...io.Writer) error {
+	serverURL, stateRoot, err := resolveServer(flags.StateDir, flags.ServerURL)
 	if err != nil {
 		return err
 	}
-	state, err := openClientState(flags.StateDir, serverURL)
-	if err != nil {
-		return err
+	diagnostic := io.Discard
+	if len(diagnostics) != 0 && diagnostics[0] != nil {
+		diagnostic = diagnostics[0]
 	}
-	credentialLock, err := state.LockCredentials()
-	if err != nil {
-		return err
-	}
-	defer credentialLock.Close()
-	stored, found, err := state.AccessCredential()
-	if err != nil {
-		return err
-	}
-	if !found {
-		return errors.New("no saved login")
-	}
-	server, err := serverclient.New(serverURL, nil, stored.Token)
-	if err != nil {
-		return err
-	}
-	revokeErr := server.RevokeAccessCredential(ctx, stored.CredentialID.String())
-	if revokeErr != nil && !errors.Is(revokeErr, serverclient.ErrUnauthenticated) &&
-		!errors.Is(revokeErr, serverclient.ErrNotFound) {
-		return revokeErr
-	}
-	if err := state.RemoveAccessCredential(); err != nil {
+	if err := clientauth.Logout(ctx, clientauth.Config{
+		CoreEndpoint: serverURL, StateRoot: stateRoot, Diagnostics: diagnostic,
+	}); err != nil {
 		return err
 	}
 	_, err = fmt.Fprintln(output, "Logged out")
@@ -324,21 +277,47 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if err := localproxy.Preflight(ctx, target); err != nil {
 		return fail(err)
 	}
+	allowedIPPrefixes, err := authorization.CanonicalizeIPPrefixes(flags.AllowIP)
+	if err != nil {
+		return fail(fmt.Errorf("invalid --allow-ip: %w", err))
+	}
 	serverURL, _, err := resolveServer(flags.StateDir, flags.ServerURL)
 	if err != nil {
 		return fail(err)
 	}
+	stateRoot, err := clientStateRoot(flags.StateDir)
+	if err != nil {
+		return fail(err)
+	}
+	authenticated, err := clientauth.Authenticate(ctx, clientauth.Config{
+		CoreEndpoint: serverURL, StateRoot: stateRoot, AccessToken: flags.AccessToken,
+		Diagnostics: stderr, LoginToken: loginTokenPrompt(os.Stdin, stderr),
+	})
+	if err != nil {
+		return fail(err)
+	}
+	if flags.AllowCurrentIP {
+		current, err := authenticated.Core.ClientIP(ctx)
+		if err != nil {
+			return fail(fmt.Errorf("read current IP: %w", err))
+		}
+		address, err := netip.ParseAddr(current.Ip)
+		if err != nil || address.Zone() != "" {
+			return fail(errors.New("server returned an invalid current IP"))
+		}
+		effectiveIP := address.Unmap().String()
+		if err := output.currentIP(effectiveIP); err != nil {
+			return err
+		}
+		allowedIPPrefixes, err = authorization.CanonicalizeIPPrefixes(append(allowedIPPrefixes, effectiveIP))
+		if err != nil {
+			return fail(fmt.Errorf("combine allowed IP prefixes: %w", err))
+		}
+	}
+	capabilities := authenticated.CoreCapabilities
 	state, err := openClientState(flags.StateDir, serverURL)
 	if err != nil {
 		return fail(err)
-	}
-	client, err := authenticatedClient(serverURL, flags.AccessToken, state)
-	if err != nil {
-		return fail(err)
-	}
-	capabilities, err := client.Capabilities(ctx)
-	if err != nil {
-		return fail(fmt.Errorf("read server capabilities: %w", err))
 	}
 	if capabilities.Transport.Type != serverv1.Tailcat || capabilities.Transport.Version != serverv1.TransportCapabilitiesVersionN1 {
 		return fail(errors.New("server does not support tailcat transport version 1"))
@@ -354,17 +333,26 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	}
 	publisherState = state
 	acmeProfile = capabilities.Acme.AcmeProfile
-	hostname, err := addPublishHostname(ctx, client, flags.Name, capabilities)
+	names, namingCapabilities, err := namingAPI(authenticated)
+	if err != nil {
+		return fail(err)
+	}
+	hostname, err := addPublishHostname(ctx, names, flags.Name, namingCapabilities)
+	if err != nil {
+		return fail(err)
+	}
+	routes, err := routeAPI(authenticated)
 	if err != nil {
 		return fail(err)
 	}
 	logger := log.New(stderr, "tnl: ", 0)
 	err = publisher.Run(ctx, publisher.Config{
-		Server: client, Hostname: hostname, Target: target,
-		State: publisherState, ACMEProfile: acmeProfile,
+		Server: routes, Hostname: hostname, Target: target,
+		AllowedIPPrefixes: allowedIPPrefixes,
+		State:             publisherState, ACMEProfile: acmeProfile,
 		RelayRegion: profile, Logf: logger.Printf,
 		LoadRegions: func(ctx context.Context) (map[string]*tailcfg.DERPRegion, error) {
-			relayMap, err := client.RelayMap(ctx)
+			relayMap, err := authenticated.Core.RelayMap(ctx)
 			if err != nil {
 				return nil, fmt.Errorf("read server relay map: %w", err)
 			}
@@ -378,8 +366,8 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	return output.stopped()
 }
 
-func runHostAdd(ctx context.Context, flags hostAddCommand, output io.Writer) error {
-	client, capabilities, err := namingClient(ctx, flags.StateDir, flags.ServerURL, flags.AccessToken)
+func runHostAdd(ctx context.Context, flags hostAddCommand, output io.Writer, diagnostics ...io.Writer) error {
+	client, capabilities, err := namingClient(ctx, flags.StateDir, flags.ServerURL, flags.AccessToken, diagnosticOutput(diagnostics))
 	if err != nil {
 		return err
 	}
@@ -429,7 +417,7 @@ func runHostAdd(ctx context.Context, flags hostAddCommand, output io.Writer) err
 			_, err = fmt.Fprintf(output, "Added %s\n", hostname.Hostname)
 			return err
 		}
-		if !errors.Is(err, serverclient.ErrDNSProofPending) {
+		if !errors.Is(err, serverclient.ErrDNSProofPending) && !errors.Is(err, authorityclient.ErrDNSProofPending) {
 			return err
 		}
 		timer := time.NewTimer(2 * time.Second)
@@ -442,8 +430,8 @@ func runHostAdd(ctx context.Context, flags hostAddCommand, output io.Writer) err
 	}
 }
 
-func runHostList(ctx context.Context, flags hostListCommand, output io.Writer) error {
-	client, _, err := namingClient(ctx, flags.StateDir, flags.ServerURL, flags.AccessToken)
+func runHostList(ctx context.Context, flags hostListCommand, output io.Writer, diagnostics ...io.Writer) error {
+	client, _, err := namingClient(ctx, flags.StateDir, flags.ServerURL, flags.AccessToken, diagnosticOutput(diagnostics))
 	if err != nil {
 		return err
 	}
@@ -458,8 +446,11 @@ func runHostList(ctx context.Context, flags hostListCommand, output io.Writer) e
 		}
 		for _, hostname := range hostnames {
 			typeName := "managed"
-			if hostname.Kind == serverv1.HostnameKindCustomDomain {
+			switch hostname.Kind {
+			case serverv1.HostnameKindCustomDomain:
 				typeName = "custom"
+			case serverv1.HostnameKindTemporary:
+				typeName = "temporary"
 			}
 			if _, err := fmt.Fprintf(output, "%s\t%s\t%s\n", hostname.Hostname, typeName, hostname.Status); err != nil {
 				return err
@@ -472,8 +463,8 @@ func runHostList(ctx context.Context, flags hostListCommand, output io.Writer) e
 	}
 }
 
-func runHostRemove(ctx context.Context, flags hostRemoveCommand, output io.Writer) error {
-	client, capabilities, err := namingClient(ctx, flags.StateDir, flags.ServerURL, flags.AccessToken)
+func runHostRemove(ctx context.Context, flags hostRemoveCommand, output io.Writer, diagnostics ...io.Writer) error {
+	client, capabilities, err := namingClient(ctx, flags.StateDir, flags.ServerURL, flags.AccessToken, diagnosticOutput(diagnostics))
 	if err != nil {
 		return err
 	}
@@ -485,7 +476,8 @@ func runHostRemove(ctx context.Context, flags hostRemoveCommand, output io.Write
 	if err != nil {
 		return err
 	}
-	if err := client.RemoveHostname(ctx, hostnameID); err != nil && !errors.Is(err, serverclient.ErrNotFound) {
+	if err := client.RemoveHostname(ctx, hostnameID); err != nil &&
+		!errors.Is(err, serverclient.ErrNotFound) && !errors.Is(err, authorityclient.ErrNotFound) {
 		return err
 	}
 	_, err = fmt.Fprintln(output, hostname)
@@ -494,7 +486,7 @@ func runHostRemove(ctx context.Context, flags hostRemoveCommand, output io.Write
 
 func addPublishHostname(
 	ctx context.Context,
-	client *serverclient.Client,
+	client hostnameAPI,
 	name string,
 	capabilities serverv1.Capabilities,
 ) (string, error) {
@@ -552,25 +544,22 @@ func validateAddManagedHostname(value serverv1.Hostname, suffix string) (string,
 func namingClient(
 	ctx context.Context,
 	stateDir, serverValue, accessToken string,
-) (*serverclient.Client, serverv1.Capabilities, error) {
-	serverURL, _, err := resolveServer(stateDir, serverValue)
+	diagnostics io.Writer,
+) (hostnameAPI, serverv1.Capabilities, error) {
+	serverURL, stateRoot, err := resolveServer(stateDir, serverValue)
 	if err != nil {
 		return nil, serverv1.Capabilities{}, err
 	}
-	var state *clientstate.Store
-	if accessToken == "" {
-		state, err = openClientState(stateDir, serverURL)
-		if err != nil {
-			return nil, serverv1.Capabilities{}, err
-		}
-	}
-	client, err := authenticatedClient(serverURL, accessToken, state)
+	authenticated, err := clientauth.Authenticate(ctx, clientauth.Config{
+		CoreEndpoint: serverURL, StateRoot: stateRoot, AccessToken: accessToken,
+		Diagnostics: diagnostics, LoginToken: loginTokenPrompt(os.Stdin, diagnostics),
+	})
 	if err != nil {
 		return nil, serverv1.Capabilities{}, err
 	}
-	capabilities, err := client.Capabilities(ctx)
+	client, capabilities, err := namingAPI(authenticated)
 	if err != nil {
-		return nil, serverv1.Capabilities{}, fmt.Errorf("read server capabilities: %w", err)
+		return nil, serverv1.Capabilities{}, err
 	}
 	if capabilities.HostnameSuffix == "" || capabilities.MaximumSubdomainDepth != 8 {
 		return nil, serverv1.Capabilities{}, errors.New("server does not support the required naming contract")
@@ -683,34 +672,141 @@ func resolveReleaseName(
 	}
 	for _, hostname := range hostnames {
 		if hostname.Hostname == canonical {
+			if hostname.Kind == serverv1.HostnameKindTemporary {
+				return "", "", errors.New("temporary hostnames are retired with their route and cannot be removed")
+			}
 			return canonical, hostname.Id, nil
 		}
 	}
 	return "", "", errors.New("hostname not found")
 }
 
-func authenticatedClient(
-	serverURL, tokenValue string,
-	state *clientstate.Store,
-) (*serverclient.Client, error) {
-	if tokenValue == "" {
-		if state == nil {
-			return nil, errors.New("not authenticated; run tnl login")
-		}
-		stored, found, err := state.AccessCredential()
-		if err != nil {
-			return nil, err
-		}
-		if !found || !stored.ExpiresAt.After(time.Now()) {
-			return nil, errors.New("not authenticated; run tnl login")
-		}
-		tokenValue = stored.Token.String()
+type hostnameAPI interface {
+	AddHostname(context.Context, serverv1.AddHostnameRequestKind, string, string) (serverv1.Hostname, error)
+	ListHostnames(context.Context) ([]serverv1.Hostname, error)
+	ListHostnamesPage(context.Context, string) ([]serverv1.Hostname, string, error)
+	RemoveHostname(context.Context, string) error
+	CreateDomainVerification(context.Context, string, string) (serverv1.DomainVerification, error)
+	CompleteDomainVerification(context.Context, string) (serverv1.Hostname, error)
+}
+
+type authorityHostnameAPI struct{ client *authorityclient.Client }
+
+func (a authorityHostnameAPI) AddHostname(
+	ctx context.Context,
+	kind serverv1.AddHostnameRequestKind,
+	name, requestKey string,
+) (serverv1.Hostname, error) {
+	hostname, err := a.client.AddHostname(ctx, authorityv1.AddHostnameRequestKind(kind), name, requestKey)
+	return authorityHostname(hostname), err
+}
+
+func (a authorityHostnameAPI) ListHostnames(ctx context.Context) ([]serverv1.Hostname, error) {
+	hostnames, err := a.client.ListHostnames(ctx)
+	if err != nil {
+		return nil, err
 	}
-	token := credentials.AccessToken(tokenValue)
-	if _, _, err := credentials.ParseAccessToken(token); err != nil {
-		return nil, errors.New("invalid access token")
+	result := make([]serverv1.Hostname, len(hostnames))
+	for index, hostname := range hostnames {
+		result[index] = authorityHostname(hostname)
 	}
-	return serverclient.New(serverURL, nil, token)
+	return result, nil
+}
+
+func (a authorityHostnameAPI) ListHostnamesPage(
+	ctx context.Context,
+	cursor string,
+) ([]serverv1.Hostname, string, error) {
+	hostnames, next, err := a.client.ListHostnamesPage(ctx, cursor)
+	if err != nil {
+		return nil, "", err
+	}
+	result := make([]serverv1.Hostname, len(hostnames))
+	for index, hostname := range hostnames {
+		result[index] = authorityHostname(hostname)
+	}
+	return result, next, nil
+}
+
+func (a authorityHostnameAPI) RemoveHostname(ctx context.Context, hostnameID string) error {
+	return a.client.RemoveHostname(ctx, hostnameID)
+}
+
+func (a authorityHostnameAPI) CreateDomainVerification(
+	ctx context.Context,
+	domain, requestKey string,
+) (serverv1.DomainVerification, error) {
+	verification, err := a.client.CreateDomainVerification(ctx, domain, requestKey)
+	return authorityDomainVerification(verification), err
+}
+
+func (a authorityHostnameAPI) CompleteDomainVerification(
+	ctx context.Context,
+	verificationID string,
+) (serverv1.Hostname, error) {
+	hostname, err := a.client.CompleteDomainVerification(ctx, verificationID)
+	return authorityHostname(hostname), err
+}
+
+func namingAPI(authenticated *clientauth.Client) (hostnameAPI, serverv1.Capabilities, error) {
+	if authenticated == nil || authenticated.Core == nil {
+		return nil, serverv1.Capabilities{}, errors.New("authentication did not return a Core client")
+	}
+	capabilities := authenticated.CoreCapabilities
+	if authenticated.Kind == clientstate.ControlSessionKindCore {
+		return authenticated.Core, capabilities, nil
+	}
+	if authenticated.Authority == nil || authenticated.AuthorityCapabilities == nil {
+		return nil, serverv1.Capabilities{}, errors.New("authentication did not return an authorization authority client")
+	}
+	authority := authenticated.AuthorityCapabilities
+	capabilities.HostnameSuffix = authority.HostnameSuffix
+	capabilities.MaximumSubdomainDepth = int(authority.HostnamePolicy.MaximumSubdomainDepth)
+	capabilities.CustomDomainSupport = bool(authority.HostnamePolicy.CustomDomainSupport)
+	capabilities.PersistentBaseSupport = bool(authority.HostnamePolicy.PersistentBaseSupport)
+	capabilities.TemporaryNameSupport = bool(authority.HostnamePolicy.TemporaryNameSupport)
+	return authorityHostnameAPI{client: authenticated.Authority}, capabilities, nil
+}
+
+func routeAPI(authenticated *clientauth.Client) (*routeclient.Client, error) {
+	if authenticated.Kind == clientstate.ControlSessionKindCore {
+		return routeclient.NewLocal(authenticated.Core)
+	}
+	if authenticated.Authority == nil || authenticated.AuthorityCapabilities == nil {
+		return nil, errors.New("authentication did not return an authorization authority client")
+	}
+	return routeclient.NewSigned(
+		authenticated.CoreEndpoint, authenticated.Core, authenticated.Authority, *authenticated.AuthorityCapabilities,
+	)
+}
+
+func authorityHostname(hostname authorityv1.Hostname) serverv1.Hostname {
+	return serverv1.Hostname{
+		Id: hostname.Id, Hostname: hostname.Hostname,
+		Kind: serverv1.HostnameKind(hostname.Kind), Status: serverv1.HostnameStatus(hostname.Status),
+		Source: serverv1.HostnameSource(hostname.Source), CreatedAt: hostname.CreatedAt,
+		ActivatedAt: hostname.ActivatedAt, DeactivatedAt: hostname.DeactivatedAt,
+	}
+}
+
+func authorityDomainVerification(verification authorityv1.DomainVerification) serverv1.DomainVerification {
+	records := make([]serverv1.DNSRecord, len(verification.Records))
+	for index, record := range verification.Records {
+		records[index] = serverv1.DNSRecord{Name: record.Name, Type: serverv1.DNSRecordType(record.Type), Value: record.Value}
+	}
+	return serverv1.DomainVerification{
+		Id: verification.Id, Domain: verification.Domain, VerificationTarget: verification.VerificationTarget,
+		Apex: verification.Apex, Status: serverv1.DomainVerificationStatus(verification.Status), Records: records,
+		HostnameId: verification.HostnameId, CreatedAt: verification.CreatedAt,
+		VerifiedAt: verification.VerifiedAt, InvalidatedAt: verification.InvalidatedAt,
+	}
+}
+
+func diagnosticOutput(outputs []io.Writer) io.Writer {
+	if len(outputs) != 0 && outputs[0] != nil {
+		return outputs[0]
+	}
+	return io.Discard
 }
 
 func resolveServer(root, value string) (string, string, error) {

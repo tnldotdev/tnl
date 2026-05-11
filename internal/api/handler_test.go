@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -16,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	coreadmin "github.com/tnldotdev/tnl/internal/admin"
 	"github.com/tnldotdev/tnl/internal/auth"
 	"github.com/tnldotdev/tnl/internal/certificates"
 	"github.com/tnldotdev/tnl/internal/credentials"
@@ -99,6 +101,111 @@ func TestHealthAndReadinessRequireGET(t *testing.T) {
 	}
 }
 
+func TestAdminEndpointsRequireAdminGrantAndCapability(t *testing.T) {
+	access, _, _, err := credentials.NewAccessToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := func(service AuthService) *httptest.ResponseRecorder {
+		handler := NewHandlerWithServicesAndConfig(
+			fixtureCapabilities(t), service, nil, nil, HandlerConfig{},
+		)
+		req := httptest.NewRequest(http.MethodGet, "/v1/admin/status", nil)
+		req.Header.Set("Authorization", "Bearer "+access.String())
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, req)
+		return response
+	}
+
+	response := request(authenticatingAuthService{})
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("publish-only status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var problem serverv1.Problem
+	if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil {
+		t.Fatal(err)
+	}
+	if problem.Code != serverv1.PermissionDenied {
+		t.Fatalf("publish-only problem = %#v", problem)
+	}
+
+	response = request(noPublishAuthService{})
+	if response.Code != http.StatusNotImplemented {
+		t.Fatalf("unsupported admin status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil {
+		t.Fatal(err)
+	}
+	if problem.Code != serverv1.Unsupported {
+		t.Fatalf("unsupported problem = %#v", problem)
+	}
+}
+
+func TestAdminStatusUsesAuthenticatedService(t *testing.T) {
+	access, _, _, err := credentials.NewAccessToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Date(2026, time.September, 2, 1, 0, 0, 0, time.UTC)
+	current := started.Add(time.Hour)
+	handler := NewHandlerWithServicesAndConfig(
+		fixtureCapabilities(t), noPublishAuthService{}, nil, nil,
+		HandlerConfig{Admin: statusAdminService{status: coreadmin.ServerStatus{
+			Mode: "standalone", StartedAt: started, CurrentTime: current,
+			ActiveRoutes: 2, SuspendedRoutes: 3, Provisioning: 4, ConnectedWorkers: 5,
+		}}},
+	)
+	request := httptest.NewRequest(http.MethodGet, "/v1/admin/status", nil)
+	request.Header.Set("Authorization", "Bearer "+access.String())
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var value serverv1.AdminServerStatus
+	if err := json.Unmarshal(response.Body.Bytes(), &value); err != nil {
+		t.Fatal(err)
+	}
+	if value.Mode != serverv1.Standalone || !value.StartedAt.Equal(started) || !value.CurrentTime.Equal(current) ||
+		value.ActiveRoutes != 2 || value.SuspendedRoutes != 3 || value.ProvisioningRoutes != 4 || value.ConnectedWorkers != 5 {
+		t.Fatalf("admin status = %#v", value)
+	}
+}
+
+func TestOperationalSwitchBlocksNewRouteAndSessionBeforeMutation(t *testing.T) {
+	access, _, _, err := credentials.NewAccessToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := NewHandlerWithServicesAndConfig(
+		fixtureCapabilities(t), authenticatingAuthService{}, failingListRouteService{}, nil,
+		HandlerConfig{Admin: disabledAdminService{}},
+	)
+	for _, test := range []struct {
+		path string
+		body string
+	}{
+		{path: "/v1/routes", body: `{}`},
+		{path: "/v1/routes/route_0123456789abcdef0123456789abcdef/sessions", body: `{}`},
+	} {
+		request := httptest.NewRequest(http.MethodPost, test.path, strings.NewReader(test.body))
+		request.Header.Set("Authorization", "Bearer "+access.String())
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusServiceUnavailable {
+			t.Fatalf("%s status = %d, body = %s", test.path, response.Code, response.Body.String())
+		}
+		var problem serverv1.Problem
+		if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil {
+			t.Fatal(err)
+		}
+		if problem.Code != serverv1.TemporarilyUnavailable || !strings.HasSuffix(problem.Type, "/operation-disabled") {
+			t.Fatalf("%s problem = %#v", test.path, problem)
+		}
+	}
+}
+
 func TestRelayMapReturnsConfiguredSelectedRegion(t *testing.T) {
 	relayMap := []byte(`{"Regions":{"1":{"RegionID":1}}}`)
 	handler := NewHandlerWithServicesAndConfig(
@@ -118,12 +225,19 @@ func TestRelayMapReturnsConfiguredSelectedRegion(t *testing.T) {
 }
 
 func TestOIDCTokenExchangeIsBoundedAndRateLimited(t *testing.T) {
-	token, credentialID, _, err := credentials.NewAccessToken()
+	token, _, _, err := credentials.NewAccessToken()
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := &oidcAuthServiceStub{issued: auth.IssuedAccessToken{
-		Token: token, CredentialID: credentialID, ExpiresAt: time.Now().Add(time.Hour).UTC(),
+	refresh, _, _, err := credentials.NewRefreshToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &oidcAuthServiceStub{issued: auth.IssuedControlSession{
+		SessionID:   "control_session_0123456789abcdef0123456789abcdef",
+		AccessToken: token, AccessExpiresAt: time.Now().Add(time.Hour).UTC(),
+		RefreshToken: refresh, RefreshExpiresAt: time.Now().Add(24 * time.Hour).UTC(),
+		Grants: []auth.Grant{auth.GrantPublish},
 	}}
 	handler := NewHandler(fixtureCapabilities(t), service).(*handler)
 	handler.oidcLimit = rate.NewLimiter(0, 1)
@@ -168,8 +282,8 @@ func TestRequestObservation(t *testing.T) {
 		"server error": {
 			method: http.MethodPost, path: tokenExchangePath,
 			body: `{"login_token":"tnl_login_test"}`, contentType: "application/json",
-			auth: tokenExchangerFunc(func(context.Context, credentials.LoginToken) (auth.IssuedAccessToken, error) {
-				return auth.IssuedAccessToken{}, internalErr
+			auth: tokenExchangerFunc(func(context.Context, credentials.LoginToken) (auth.IssuedControlSession, error) {
+				return auth.IssuedControlSession{}, internalErr
 			}),
 			wantStatus: http.StatusInternalServerError, wantOp: OperationTokenExchange, wantResult: RequestServerError,
 		},
@@ -229,8 +343,8 @@ func TestUnexpectedAuthErrorIsReportedAndSanitized(t *testing.T) {
 	exchanger := tokenExchangerFunc(func(
 		context.Context,
 		credentials.LoginToken,
-	) (auth.IssuedAccessToken, error) {
-		return auth.IssuedAccessToken{}, wrapped
+	) (auth.IssuedControlSession, error) {
+		return auth.IssuedControlSession{}, wrapped
 	})
 	const credential = "tnl_login_do-not-report"
 	request := httptest.NewRequest(
@@ -454,19 +568,27 @@ func TestTokenExchange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	access, credentialID, _, err := credentials.NewAccessToken()
+	access, _, _, err := credentials.NewAccessToken()
 	if err != nil {
 		t.Fatal(err)
 	}
-	expiresAt := time.Date(2026, time.September, 28, 12, 0, 0, 0, time.UTC)
+	refresh, _, _, err := credentials.NewRefreshToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	accessExpiresAt := time.Date(2026, time.September, 28, 12, 0, 0, 0, time.UTC)
+	refreshExpiresAt := accessExpiresAt.Add(30 * 24 * time.Hour)
+	const sessionID = "control_session_0123456789abcdef0123456789abcdef"
 	var received credentials.LoginToken
 	exchanger := tokenExchangerFunc(func(
 		_ context.Context,
 		token credentials.LoginToken,
-	) (auth.IssuedAccessToken, error) {
+	) (auth.IssuedControlSession, error) {
 		received = token
-		return auth.IssuedAccessToken{
-			Token: access, CredentialID: credentialID, ExpiresAt: expiresAt,
+		return auth.IssuedControlSession{
+			SessionID: sessionID, AccessToken: access, AccessExpiresAt: accessExpiresAt,
+			RefreshToken: refresh, RefreshExpiresAt: refreshExpiresAt,
+			Grants: []auth.Grant{auth.GrantPublish, auth.GrantAdmin},
 		}, nil
 	})
 	body, err := json.Marshal(serverv1.TokenExchangeRequest{LoginToken: login.String()})
@@ -487,15 +609,14 @@ func TestTokenExchange(t *testing.T) {
 	if received != login {
 		t.Fatalf("login token = %q, want configured token", received)
 	}
-	var got serverv1.TokenExchangeResponse
+	var got serverv1.ControlSessionResponse
 	if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	want := serverv1.TokenExchangeResponse{
-		AccessToken:  access.String(),
-		CredentialId: credentialID.String(),
-		ExpiresAt:    expiresAt,
-		TokenType:    serverv1.Bearer,
+	want := serverv1.ControlSessionResponse{
+		SessionId: sessionID, AccessToken: access.String(), AccessExpiresAt: accessExpiresAt,
+		RefreshToken: refresh.String(), RefreshExpiresAt: refreshExpiresAt,
+		Grants: []serverv1.Grant{serverv1.Publish, serverv1.Admin},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("response = %#v, want %#v", got, want)
@@ -512,7 +633,10 @@ func TestTokenExchangePersistsUsableAccessToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	exchange, err := auth.NewService(db, login, auth.DefaultAccessTokenLifetime)
+	exchange, err := auth.NewService(db, auth.ServiceConfig{
+		LoginToken: login, LoginTokenRevision: 1,
+		AccessLifetime: auth.DefaultAccessTokenLifetime, RefreshLifetime: auth.DefaultRefreshTokenLifetime,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -529,25 +653,88 @@ func TestTokenExchangePersistsUsableAccessToken(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
 	}
-	var issued serverv1.TokenExchangeResponse
+	var issued serverv1.ControlSessionResponse
 	if err := json.Unmarshal(response.Body.Bytes(), &issued); err != nil {
 		t.Fatal(err)
 	}
-	credentialID, hash, err := credentials.ParseAccessToken(credentials.AccessToken(issued.AccessToken))
+	principal, err := exchange.Authenticate(context.Background(), credentials.AccessToken(issued.AccessToken))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if credentialID.String() != issued.CredentialId {
-		t.Fatalf("credential ID = %q, want %q", credentialID, issued.CredentialId)
+	if principal.Identity.ID != "identity_local" || principal.SessionID != issued.SessionId || !principal.HasGrant(auth.GrantAdmin) {
+		t.Fatalf("principal = %#v", principal)
 	}
-	identity, err := state.AuthenticateAccessCredential(
-		context.Background(), db, credentialID, hash, time.Now(),
-	)
+}
+
+func TestRefreshEndpointUsesRefreshTokenWithoutAccessAuthentication(t *testing.T) {
+	db, err := state.Open(context.Background(), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if identity.ID != "identity_local" {
-		t.Fatalf("identity ID = %q, want identity_local", identity.ID)
+	t.Cleanup(func() { _ = db.Close() })
+	login, err := credentials.NewLoginToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := auth.NewService(db, auth.ServiceConfig{
+		LoginToken: login, LoginTokenRevision: 1,
+		AccessLifetime: auth.DefaultAccessTokenLifetime, RefreshLifetime: auth.DefaultRefreshTokenLifetime,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	issued, err := service.Exchange(context.Background(), login)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(serverv1.RefreshControlSessionRequest{RefreshToken: issued.RefreshToken.String()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := NewHandler(fixtureCapabilities(t), service).(*handler)
+	handler.refreshLimit = rate.NewLimiter(0, 1)
+	request := httptest.NewRequest(http.MethodPost, refreshPath, bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var refreshed serverv1.ControlSessionResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &refreshed); err != nil {
+		t.Fatal(err)
+	}
+	if refreshed.SessionId != issued.SessionID || refreshed.AccessToken == issued.AccessToken.String() ||
+		refreshed.RefreshToken == issued.RefreshToken.String() || refreshed.RefreshExpiresAt != issued.RefreshExpiresAt {
+		t.Fatalf("refreshed session = %#v", refreshed)
+	}
+	if _, err := service.Authenticate(context.Background(), issued.AccessToken); !errors.Is(err, auth.ErrUnauthenticated) {
+		t.Fatalf("replaced access token error = %v", err)
+	}
+	request = httptest.NewRequest(http.MethodPost, refreshPath, bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusTooManyRequests {
+		t.Fatalf("second refresh status = %d, want %d", response.Code, http.StatusTooManyRequests)
+	}
+}
+
+func TestPublishRoutesRequirePublishGrant(t *testing.T) {
+	access, _, _, err := credentials.NewAccessToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, routesPath, nil)
+	request.Header.Set(authorizationHeader, "Bearer "+access.String())
+	response := httptest.NewRecorder()
+	NewHandlerWithRoutes(fixtureCapabilities(t), noPublishAuthService{}, nil).ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusForbidden, response.Body.String())
+	}
+	var problem serverv1.Problem
+	if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil || problem.Code != serverv1.PermissionDenied {
+		t.Fatalf("problem = %#v, error = %v", problem, err)
 	}
 }
 
@@ -565,8 +752,8 @@ func TestTokenExchangeRejectsCredentialsWithoutDisclosure(t *testing.T) {
 			exchanger := tokenExchangerFunc(func(
 				context.Context,
 				credentials.LoginToken,
-			) (auth.IssuedAccessToken, error) {
-				return auth.IssuedAccessToken{}, test.err
+			) (auth.IssuedControlSession, error) {
+				return auth.IssuedControlSession{}, test.err
 			})
 			request := httptest.NewRequest(
 				http.MethodPost,
@@ -629,17 +816,17 @@ func TestTokenExchangeRejectsInvalidRequests(t *testing.T) {
 type tokenExchangerFunc func(
 	context.Context,
 	credentials.LoginToken,
-) (auth.IssuedAccessToken, error)
+) (auth.IssuedControlSession, error)
 
 func (f tokenExchangerFunc) Exchange(
 	ctx context.Context,
 	token credentials.LoginToken,
-) (auth.IssuedAccessToken, error) {
+) (auth.IssuedControlSession, error) {
 	return f(ctx, token)
 }
 
 type oidcAuthServiceStub struct {
-	issued auth.IssuedAccessToken
+	issued auth.IssuedControlSession
 	token  string
 	calls  int
 }
@@ -647,11 +834,11 @@ type oidcAuthServiceStub struct {
 func (*oidcAuthServiceStub) Exchange(
 	context.Context,
 	credentials.LoginToken,
-) (auth.IssuedAccessToken, error) {
+) (auth.IssuedControlSession, error) {
 	panic("unexpected Exchange call")
 }
 
-func (s *oidcAuthServiceStub) ExchangeOIDC(_ context.Context, token string) (auth.IssuedAccessToken, error) {
+func (s *oidcAuthServiceStub) ExchangeOIDC(_ context.Context, token string) (auth.IssuedControlSession, error) {
 	s.calls++
 	s.token = token
 	return s.issued, nil
@@ -660,31 +847,31 @@ func (s *oidcAuthServiceStub) ExchangeOIDC(_ context.Context, token string) (aut
 func (*oidcAuthServiceStub) Authenticate(
 	context.Context,
 	credentials.AccessToken,
-) (state.Identity, error) {
+) (auth.Principal, error) {
 	panic("unexpected Authenticate call")
 }
 
-func (*oidcAuthServiceStub) Revoke(
-	context.Context,
-	state.Identity,
-	credentials.CredentialID,
-) error {
-	panic("unexpected Revoke call")
+func (*oidcAuthServiceStub) Refresh(context.Context, credentials.RefreshToken) (auth.IssuedControlSession, error) {
+	panic("unexpected Refresh call")
+}
+
+func (*oidcAuthServiceStub) Logout(context.Context, auth.Principal) error {
+	panic("unexpected Logout call")
 }
 
 func (tokenExchangerFunc) Authenticate(
 	context.Context,
 	credentials.AccessToken,
-) (state.Identity, error) {
+) (auth.Principal, error) {
 	panic("unexpected Authenticate call")
 }
 
-func (tokenExchangerFunc) Revoke(
-	context.Context,
-	state.Identity,
-	credentials.CredentialID,
-) error {
-	panic("unexpected Revoke call")
+func (tokenExchangerFunc) Refresh(context.Context, credentials.RefreshToken) (auth.IssuedControlSession, error) {
+	panic("unexpected Refresh call")
+}
+
+func (tokenExchangerFunc) Logout(context.Context, auth.Principal) error {
+	panic("unexpected Logout call")
 }
 
 type requestObservation struct {
@@ -723,16 +910,37 @@ type authenticatingAuthService struct {
 	AuthService
 }
 
+type noPublishAuthService struct{ AuthService }
+
+func (noPublishAuthService) Authenticate(context.Context, credentials.AccessToken) (auth.Principal, error) {
+	return auth.Principal{Identity: state.Identity{ID: "identity_test"}, Grants: []auth.Grant{auth.GrantAdmin}}, nil
+}
+
 func (authenticatingAuthService) Authenticate(
 	context.Context,
 	credentials.AccessToken,
-) (state.Identity, error) {
-	return state.Identity{ID: "identity_test"}, nil
+) (auth.Principal, error) {
+	return auth.Principal{Identity: state.Identity{ID: "identity_test"}, Grants: []auth.Grant{auth.GrantPublish}}, nil
 }
 
 type failingListRouteService struct {
 	RouteService
 	err error
+}
+
+type disabledAdminService struct{ AdminService }
+
+func (disabledAdminService) RequireEnabled(context.Context, coreadmin.SwitchName) error {
+	return coreadmin.ErrOperationallyDisabled
+}
+
+type statusAdminService struct {
+	AdminService
+	status coreadmin.ServerStatus
+}
+
+func (service statusAdminService) Status(context.Context) (coreadmin.ServerStatus, error) {
+	return service.status, nil
 }
 
 func (s failingListRouteService) List(context.Context, string) ([]routes.Route, error) {

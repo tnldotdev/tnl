@@ -192,16 +192,20 @@ func (q *Queries) GetACMEAccount(ctx context.Context, directoryUrl string) (Acme
 const getActiveRouteHostname = `-- name: GetActiveRouteHostname :one
 SELECT hostname
 FROM routes
-WHERE id = ? AND version = ? AND status = 'active'
+WHERE id = ?1
+    AND version = ?2
+    AND status = 'active'
+    AND (authorization_expires_at IS NULL OR authorization_expires_at > ?3)
 `
 
 type GetActiveRouteHostnameParams struct {
-	ID      string
+	RouteID string
 	Version int64
+	Now     sql.NullInt64
 }
 
 func (q *Queries) GetActiveRouteHostname(ctx context.Context, arg GetActiveRouteHostnameParams) (string, error) {
-	row := q.db.QueryRowContext(ctx, getActiveRouteHostname, arg.ID, arg.Version)
+	row := q.db.QueryRowContext(ctx, getActiveRouteHostname, arg.RouteID, arg.Version, arg.Now)
 	var hostname string
 	err := row.Scan(&hostname)
 	return hostname, err

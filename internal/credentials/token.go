@@ -1,6 +1,7 @@
 package credentials
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -13,6 +14,7 @@ import (
 const (
 	accessPrefix  = "tnl_access_"
 	loginPrefix   = "tnl_login_"
+	refreshPrefix = "tnl_refresh_"
 	routePrefix   = "tnl_route_"
 	sessionPrefix = "tnl_session_"
 	workerPrefix  = "tnl_worker_"
@@ -26,6 +28,8 @@ var (
 	ErrInvalidAccessToken = errors.New("invalid access token")
 	// ErrInvalidLoginToken is returned for malformed login tokens.
 	ErrInvalidLoginToken = errors.New("invalid login token")
+	// ErrInvalidRefreshToken is returned for malformed or rejected refresh tokens.
+	ErrInvalidRefreshToken = errors.New("invalid refresh token")
 	// ErrInvalidRouteToken is returned for malformed or rejected route tokens.
 	ErrInvalidRouteToken = errors.New("invalid route token")
 	// ErrInvalidSessionToken is returned for malformed or rejected session tokens.
@@ -41,6 +45,9 @@ type AccessToken string
 
 // LoginToken authenticates only to the standalone token exchange.
 type LoginToken string
+
+// RefreshToken rotates one control session's access and refresh credentials.
+type RefreshToken string
 
 // RouteToken authorizes session acquisition for one route.
 type RouteToken string
@@ -101,6 +108,17 @@ func ParseLoginToken(token LoginToken) (LoginVerifier, error) {
 	return LoginVerifier{id: lookupID, hash: hash}, err
 }
 
+// NewRefreshToken creates a control-session refresh token and its storage values.
+func NewRefreshToken() (RefreshToken, CredentialID, SecretHash, error) {
+	token, lookupID, hash, err := newToken(refreshPrefix)
+	return RefreshToken(token), lookupID, hash, err
+}
+
+// ParseRefreshToken validates a refresh token and returns its storage lookup values.
+func ParseRefreshToken(token RefreshToken) (CredentialID, SecretHash, error) {
+	return parseToken(string(token), refreshPrefix, ErrInvalidRefreshToken)
+}
+
 // NewRouteToken creates a route token and its storage values.
 func NewRouteToken() (RouteToken, CredentialID, SecretHash, error) {
 	token, lookupID, hash, err := newToken(routePrefix)
@@ -116,6 +134,46 @@ func ParseRouteToken(token RouteToken) (CredentialID, SecretHash, error) {
 func NewSessionToken() (SessionToken, CredentialID, SecretHash, error) {
 	token, lookupID, hash, err := newToken(sessionPrefix)
 	return SessionToken(token), lookupID, hash, err
+}
+
+// DeriveSessionToken deterministically derives a session credential for one
+// authenticated retry. The route token remains the only secret input.
+func DeriveSessionToken(routeToken RouteToken, retryContext string) (SessionToken, CredentialID, SecretHash, error) {
+	_, _, err := ParseRouteToken(routeToken)
+	if err != nil || retryContext == "" {
+		return "", "", SecretHash{}, ErrInvalidRouteToken
+	}
+	routeSecret := validatedTokenSecret(routeToken.String(), routePrefix)
+	idMAC := hmac.New(sha256.New, routeSecret)
+	_, _ = idMAC.Write([]byte("tnl/session-id/v1\x00" + retryContext))
+	lookupID := CredentialID(base64.RawURLEncoding.EncodeToString(idMAC.Sum(nil)[:lookupBytes]))
+	secretMAC := hmac.New(sha256.New, routeSecret)
+	_, _ = secretMAC.Write([]byte("tnl/session-secret/v1\x00" + retryContext))
+	secret := secretMAC.Sum(nil)
+	hash := sha256.Sum256(secret)
+	token := sessionPrefix + lookupID.String() + "." + base64.RawURLEncoding.EncodeToString(secret)
+	return SessionToken(token), lookupID, hash, nil
+}
+
+// DeriveSessionKeyMaterial derives secret process-independent key material
+// without making it recoverable from the session hash stored in the database.
+func DeriveSessionKeyMaterial(token SessionToken) ([secretBytes]byte, error) {
+	if _, _, err := ParseSessionToken(token); err != nil {
+		return [secretBytes]byte{}, err
+	}
+	secret := validatedTokenSecret(token.String(), sessionPrefix)
+	mac := hmac.New(sha256.New, secret)
+	_, _ = mac.Write([]byte("tnl/ingress-key/v1"))
+	var material [secretBytes]byte
+	copy(material[:], mac.Sum(nil))
+	return material, nil
+}
+
+func validatedTokenSecret(token, prefix string) []byte {
+	value, _ := strings.CutPrefix(token, prefix)
+	_, encodedSecret, _ := strings.Cut(value, ".")
+	secret, _ := base64.RawURLEncoding.DecodeString(encodedSecret)
+	return secret
 }
 
 // ParseSessionToken validates a session token and returns its storage lookup values.
@@ -182,6 +240,9 @@ func (t AccessToken) String() string { return string(t) }
 
 // String returns the serialized login token.
 func (t LoginToken) String() string { return string(t) }
+
+// String returns the serialized refresh token.
+func (t RefreshToken) String() string { return string(t) }
 
 // String returns the serialized route token.
 func (t RouteToken) String() string { return string(t) }

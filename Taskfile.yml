@@ -51,7 +51,7 @@ tasks:
     cmds:
       - |
         docker compose --file deploy/local/compose.yaml exec -T tnld \
-          tnld login-token --state-dir /var/lib/tnl |
+          tnl admin server login-token --state-dir /var/lib/tnl |
           TNL_SERVER=https://tnl.localhost TNL_STATE_DIR=.local/client-state \
             go run ./cmd/tnl login --token
 

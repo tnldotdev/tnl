@@ -39,11 +39,12 @@ var (
 )
 
 type Store struct {
-	serverDir       string
-	routesDir       string
-	locksDir        string
-	credentialsPath string
-	secrets         secretProtector
+	serverDir          string
+	routesDir          string
+	locksDir           string
+	controlEndpoint    string
+	controlSessionPath string
+	secrets            secretProtector
 }
 
 type Lock struct {
@@ -141,7 +142,7 @@ func New(root, serverOrigin string) (*Store, error) {
 	profileDigest := sha256.Sum256([]byte(root + "\x00" + serverOrigin))
 	return &Store{
 		serverDir: server, routesDir: routes, locksDir: locks,
-		credentialsPath: filepath.Join(server, "access-credential.json"),
+		controlEndpoint: serverOrigin, controlSessionPath: filepath.Join(server, "control-session.json"),
 		secrets: newSecretProtector(
 			hex.EncodeToString(profileDigest[:]), filepath.Join(locks, "keychain-initialization.lock"),
 		),
@@ -241,8 +242,27 @@ func (s *Store) LockHostname(hostname string) (*Lock, error) {
 	return openLock(filepath.Join(s.locksDir, hex.EncodeToString(digest[:])+".lock"), "hostname")
 }
 
-func (s *Store) LockCredentials() (*Lock, error) {
-	return openLock(filepath.Join(s.locksDir, "access-credential.lock"), "access credential")
+func (s *Store) LockControlSession() (*Lock, error) {
+	return openLock(filepath.Join(s.locksDir, "control-session.lock"), "control session")
+}
+
+func LockControlSessionContext(ctx context.Context, store *Store) (*Lock, error) {
+	if store == nil {
+		return nil, errors.New("clientstate: state store is required")
+	}
+	for {
+		lock, err := store.LockControlSession()
+		if !errors.Is(err, ErrLocked) {
+			return lock, err
+		}
+		timer := time.NewTimer(100 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 func (s *Store) OpenRoute(routeID string) (*Route, error) {

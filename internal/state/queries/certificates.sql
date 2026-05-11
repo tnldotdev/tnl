@@ -40,7 +40,10 @@ ON CONFLICT (route_id, version, csr_hash) DO NOTHING;
 -- name: GetActiveRouteHostname :one
 SELECT hostname
 FROM routes
-WHERE id = ? AND version = ? AND status = 'active';
+WHERE id = sqlc.arg(route_id)
+    AND version = sqlc.arg(version)
+    AND status = 'active'
+    AND (authorization_expires_at IS NULL OR authorization_expires_at > sqlc.arg(now));
 
 -- name: GetCertificateIssuance :one
 SELECT * FROM certificate_issuances

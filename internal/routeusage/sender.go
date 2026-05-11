@@ -90,26 +90,41 @@ func (p *Sender) Run(ctx context.Context, report func(error)) {
 }
 
 func (p *Sender) SendOne(ctx context.Context) (bool, error) {
-	lifecycle, err := p.store.queries.GetNextLifecycleReport(ctx)
-	if err == nil {
-		err = p.sendLifecycle(ctx, lifecycle)
-		p.observe(ctx, "lifecycle", err)
-		return true, err
+	item, err := p.store.queries.GetNextRouteUsageOutboxItem(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		p.updateOutbox(ctx)
+		return false, nil
 	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return false, fmt.Errorf("routeusage: read lifecycle outbox: %w", err)
+	if err != nil {
+		return false, fmt.Errorf("routeusage: read outbox: %w", err)
 	}
-	usage, err := p.store.queries.GetNextUsageReport(ctx)
-	if err == nil {
-		err = p.sendUsage(ctx, usage)
-		p.observe(ctx, "usage", err)
-		return true, err
+	count, err := p.store.queries.MarkRouteUsageOutboxAttempt(ctx, statedb.MarkRouteUsageOutboxAttemptParams{
+		AttemptedAt: time.Now().UTC().UnixNano(), SourceKind: item.SourceKind,
+		SourceID: item.SourceID, SourceRevision: item.SourceRevision,
+	})
+	if err != nil {
+		return false, fmt.Errorf("routeusage: mark outbox attempt: %w", err)
 	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return false, fmt.Errorf("routeusage: read usage outbox: %w", err)
+	if count != 1 {
+		return true, nil
 	}
-	p.updateOutbox(ctx)
-	return false, nil
+
+	var kind string
+	switch item.SourceKind {
+	case registrationSource:
+		kind = "registration"
+		err = p.sendRegistration(ctx, item)
+	case lifecycleSource:
+		kind = "lifecycle"
+		err = p.sendLifecycle(ctx, item)
+	case usageSource:
+		kind = "usage"
+		err = p.sendUsage(ctx, item)
+	default:
+		return false, fmt.Errorf("routeusage: unknown outbox source %q", item.SourceKind)
+	}
+	p.observe(ctx, kind, err)
+	return true, err
 }
 
 func (p *Sender) observe(ctx context.Context, kind string, deliveryErr error) {
@@ -128,42 +143,98 @@ func (p *Sender) updateOutbox(ctx context.Context) {
 	if p.observer == nil {
 		return
 	}
-	lifecycle, usage, age, err := p.store.outboxStats(ctx, time.Now())
+	registration, lifecycle, usage, age, err := p.store.outboxStats(ctx, time.Now())
 	if err != nil {
 		return
 	}
+	p.observer.SetRouteUsageOutbox("registration", registration)
 	p.observer.SetRouteUsageOutbox("lifecycle", lifecycle)
 	p.observer.SetRouteUsageOutbox("usage", usage)
 	p.observer.SetRouteUsageOldestAge(age)
 }
 
-func (p *Sender) sendLifecycle(ctx context.Context, row statedb.GetNextLifecycleReportRow) error {
-	event := row.RouteLifecycleEvent
-	payload := routeusagev1.RouteLifecycleEvent{
-		EventId: event.EventID, Version: strconv.FormatInt(event.Version, 10),
-		Sequence: strconv.FormatInt(event.Sequence, 10), OccurredAt: time.Unix(0, event.OccurredAt).UTC(),
-		Transition: routeusagev1.RouteLifecycleEventTransition(event.Transition),
+func (p *Sender) sendRegistration(ctx context.Context, item statedb.RouteUsageOutboxItem) error {
+	registration, err := p.store.queries.GetRouteRegistrationReport(ctx, item.SourceID)
+	if err != nil {
+		return fmt.Errorf("routeusage: read route registration: %w", err)
 	}
-	if err := p.post(ctx, event.RouteID, "lifecycle-events", payload); err != nil {
+	payload := routeusagev1.RouteRegistration{
+		RegistrationId:  registration.RegistrationID,
+		RouteId:         registration.RouteID,
+		Hostname:        registration.Hostname,
+		SigningKeyId:    registration.SigningKeyID,
+		AuthorizationId: registration.AuthorizationID,
+		CreatedAt:       wireTimestamp(time.Unix(0, registration.CreatedAt)),
+		RetryId:         registration.RetryID,
+	}
+	if err := p.post(ctx, "/v1/routes", payload); err != nil {
 		return err
 	}
-	_, err := p.store.acknowledge(ctx, lifecycleSource, event.ID, row.SourceRevision)
+	acknowledged, err := p.store.acknowledgeRegistration(ctx, item.SourceID, item.SourceRevision)
+	if err != nil {
+		return err
+	}
+	if !acknowledged {
+		return errors.New("routeusage: registration revision changed before acknowledgment")
+	}
+	return nil
+}
+
+func (p *Sender) sendLifecycle(ctx context.Context, item statedb.RouteUsageOutboxItem) error {
+	event, err := p.store.queries.GetRouteLifecycleReport(ctx, item.SourceID)
+	if err != nil {
+		return fmt.Errorf("routeusage: read lifecycle event: %w", err)
+	}
+	payload := routeusagev1.RouteLifecycleEvent{
+		EventId: event.EventID, Version: strconv.FormatInt(event.Version, 10),
+		Sequence: strconv.FormatInt(event.Sequence, 10), OccurredAt: wireTimestamp(time.Unix(0, event.OccurredAt)),
+		Transition: routeusagev1.RouteLifecycleEventTransition(event.Transition),
+	}
+	if err := p.postRoute(ctx, event.RouteID, "lifecycle-events", payload); err != nil {
+		return err
+	}
+	_, err = p.store.acknowledge(ctx, lifecycleSource, event.ID, item.SourceRevision)
 	return err
 }
 
-func (p *Sender) sendUsage(ctx context.Context, row statedb.GetNextUsageReportRow) error {
-	bucket := row.RouteUsageSnapshot
-	payload := routeusagev1.RouteUsageSnapshot{
-		Version: strconv.FormatInt(bucket.Version, 10), Resolution: routeusagev1.RouteUsageSnapshotResolution(bucket.Resolution),
-		BucketStart: time.Unix(0, bucket.BucketStart).UTC(), Revision: strconv.FormatInt(row.SourceRevision, 10),
-		ObservedThrough: time.Unix(0, bucket.ObservedThrough).UTC(), ConnectionsOpened: strconv.FormatInt(bucket.ConnectionsOpened, 10),
-		ConnectionNanoseconds: strconv.FormatInt(bucket.ConnectionNanoseconds, 10), IngressBytes: strconv.FormatInt(bucket.IngressBytes, 10),
-		EgressBytes: strconv.FormatInt(bucket.EgressBytes, 10), Complete: bucket.Complete != 0,
+func (p *Sender) sendUsage(ctx context.Context, item statedb.RouteUsageOutboxItem) error {
+	bucket, err := p.store.queries.GetRouteUsageReport(ctx, statedb.GetRouteUsageReportParams{
+		SourceID: item.SourceID, SourceRevision: item.SourceRevision,
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
 	}
-	if err := p.post(ctx, bucket.RouteID, "usage-snapshots", payload); err != nil {
+	if err != nil {
+		return fmt.Errorf("routeusage: read usage snapshot: %w", err)
+	}
+	publisherOpenLatency, err := protocolHistogram(bucket.PublisherOpenLatency)
+	if err != nil {
 		return err
 	}
-	acknowledged, err := p.store.acknowledge(ctx, usageSource, bucket.ID, row.SourceRevision)
+	timeToFirstPublisherByte, err := protocolHistogram(bucket.TimeToFirstPublisherByte)
+	if err != nil {
+		return err
+	}
+	successfulConnectionDuration, err := protocolHistogram(bucket.SuccessfulConnectionDuration)
+	if err != nil {
+		return err
+	}
+	payload := routeusagev1.RouteUsageSnapshot{
+		Version: strconv.FormatInt(bucket.Version, 10), Resolution: routeusagev1.RouteUsageSnapshotResolution(bucket.Resolution),
+		BucketStart: wireTimestamp(time.Unix(0, bucket.BucketStart)), Revision: strconv.FormatInt(item.SourceRevision, 10),
+		ObservedThrough: wireTimestamp(time.Unix(0, bucket.ObservedThrough)), ConnectionAttempts: strconv.FormatInt(bucket.ConnectionAttempts, 10),
+		PolicyDenials: strconv.FormatInt(bucket.PolicyDenials, 10), CapacityDenials: strconv.FormatInt(bucket.CapacityDenials, 10),
+		PublisherOpenFailures: strconv.FormatInt(bucket.PublisherOpenFailures, 10), SuccessfulStreams: strconv.FormatInt(bucket.SuccessfulStreams, 10),
+		ConnectionNanoseconds: strconv.FormatInt(bucket.ConnectionNanoseconds, 10), IngressBytes: strconv.FormatInt(bucket.IngressBytes, 10),
+		EgressBytes: strconv.FormatInt(bucket.EgressBytes, 10), PublisherOpenLatency: publisherOpenLatency,
+		TimeToFirstPublisherByte: timeToFirstPublisherByte, SuccessfulConnectionDuration: successfulConnectionDuration,
+		VisitorNetworkEstimate: strconv.FormatInt(bucket.VisitorNetworkEstimate, 10), VisitorNetworkHll: bucket.VisitorNetworkHll,
+		Complete: bucket.Complete != 0,
+	}
+	if err := p.postRoute(ctx, bucket.RouteID, "usage-snapshots", payload); err != nil {
+		return err
+	}
+	acknowledged, err := p.store.acknowledge(ctx, usageSource, bucket.ID, item.SourceRevision)
 	if err != nil || !acknowledged {
 		return err
 	}
@@ -173,13 +244,39 @@ func (p *Sender) sendUsage(ctx context.Context, row statedb.GetNextUsageReportRo
 	return nil
 }
 
-func (p *Sender) post(ctx context.Context, routeID, endpoint string, payload any) error {
+func wireTimestamp(value time.Time) time.Time {
+	return value.UTC().Truncate(time.Millisecond)
+}
+
+func protocolHistogram(data []byte) (*routeusagev1.DurationHistogram, error) {
+	histogram, err := unmarshalDurationHistogram(data)
+	if err != nil {
+		return nil, fmt.Errorf("routeusage: decode duration histogram: %w", err)
+	}
+	if histogram.count() == 0 {
+		return nil, nil
+	}
+	counts := make([]routeusagev1.UnsignedInteger, len(histogram.counts))
+	for index, count := range histogram.counts {
+		counts[index] = strconv.FormatUint(count, 10)
+	}
+	return &routeusagev1.DurationHistogram{
+		Count: strconv.FormatUint(histogram.count(), 10), SumNanoseconds: strconv.FormatUint(histogram.sumNanoseconds, 10),
+		CumulativeCounts: counts,
+	}, nil
+}
+
+func (p *Sender) postRoute(ctx context.Context, routeID, endpoint string, payload any) error {
+	return p.post(ctx, "/v1/routes/"+url.PathEscape(routeID)+"/"+endpoint, payload)
+}
+
+func (p *Sender) post(ctx context.Context, path string, payload any) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("routeusage: encode request: %w", err)
 	}
 	target := *p.baseURL
-	target.Path = strings.TrimSuffix(target.Path, "/") + "/v1/routes/" + url.PathEscape(routeID) + "/" + endpoint
+	target.Path = strings.TrimSuffix(target.Path, "/") + path
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, target.String(), bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("routeusage: create request: %w", err)

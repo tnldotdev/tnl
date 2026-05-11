@@ -11,11 +11,15 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"net/netip"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	coreadmin "github.com/tnldotdev/tnl/internal/admin"
 	"github.com/tnldotdev/tnl/internal/auth"
+	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/certificates"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -29,11 +33,13 @@ import (
 const (
 	healthPath                = "/v1/health"
 	readinessPath             = "/v1/ready"
+	clientIPPath              = "/v1/client-ip"
 	capabilitiesPath          = "/v1/capabilities"
 	relayMapPath              = "/v1/transport/relay-map"
 	tokenExchangePath         = "/v1/auth/token"
 	oidcExchangePath          = "/v1/auth/oidc"
-	credentialsPath           = "/v1/auth/credentials/"
+	refreshPath               = "/v1/auth/refresh"
+	logoutPath                = "/v1/auth/logout"
 	certificateIssuancesPath  = "/v1/certificate-issuances"
 	certificateIssuancePrefix = "/v1/certificate-issuances/"
 	hostnamesPath             = "/v1/hostnames"
@@ -68,11 +74,13 @@ const (
 	OperationUnknown                     Operation = "unknown"
 	OperationHealthGet                   Operation = "health.get"
 	OperationReadinessGet                Operation = "readiness.get"
+	OperationClientIPGet                 Operation = "client_ip.get"
 	OperationCapabilitiesGet             Operation = "capabilities.get"
 	OperationRelayMapGet                 Operation = "transport.relay_map.get"
 	OperationTokenExchange               Operation = "auth.token.exchange"
 	OperationOIDCTokenExchange           Operation = "auth.oidc.exchange"
-	OperationCredentialRevoke            Operation = "auth.credential.revoke"
+	OperationControlSessionRefresh       Operation = "auth.session.refresh"
+	OperationControlSessionLogout        Operation = "auth.session.logout"
 	OperationHostnamesList               Operation = "hostnames.list"
 	OperationHostnameAdd                 Operation = "hostnames.add"
 	OperationHostnameRemove              Operation = "hostnames.remove"
@@ -91,6 +99,21 @@ const (
 	OperationCertificateChallengeReady   Operation = "certificate_issuances.challenge_ready"
 	OperationCertificateChallengeRemoved Operation = "certificate_issuances.challenge_removed"
 	OperationCertificateInstalled        Operation = "certificate_issuances.installed"
+	OperationAdminServerStatus           Operation = "admin.server.status"
+	OperationAdminRoutesList             Operation = "admin.routes.list"
+	OperationAdminRouteShow              Operation = "admin.route.show"
+	OperationAdminRouteSuspend           Operation = "admin.route.suspend"
+	OperationAdminRouteResume            Operation = "admin.route.resume"
+	OperationAdminHostnamesList          Operation = "admin.hostnames.list"
+	OperationAdminHostnameShow           Operation = "admin.hostname.show"
+	OperationAdminHostnameRemove         Operation = "admin.hostname.remove"
+	OperationAdminHostnameQuarantine     Operation = "admin.hostname.quarantine"
+	OperationAdminCredentialsList        Operation = "admin.credentials.list"
+	OperationAdminCredentialRevoke       Operation = "admin.credential.revoke"
+	OperationAdminControlSessionsList    Operation = "admin.control_sessions.list"
+	OperationAdminControlSessionRevoke   Operation = "admin.control_session.revoke"
+	OperationAdminSwitchesList           Operation = "admin.switches.list"
+	OperationAdminSwitchSet              Operation = "admin.switch.set"
 )
 
 // RequestResult classifies an API response by its final HTTP status.
@@ -116,23 +139,26 @@ type ErrorReporter interface {
 
 // HandlerConfig configures production request observation and error reporting.
 type HandlerConfig struct {
-	Observer         Observer
-	ErrorReporter    ErrorReporter
-	RelayMap         []byte
-	DNSReady         func() bool
-	IngressAddresses func() []string
-	Readiness        func(context.Context) error
+	Observer            Observer
+	ErrorReporter       ErrorReporter
+	RelayMap            []byte
+	DNSReady            func() bool
+	IngressAddresses    func() []string
+	Readiness           func(context.Context) error
+	SignedAuthorization bool
+	Admin               AdminService
 }
 
 // AuthService implements authentication flows without exposing storage to HTTP.
 type AuthService interface {
-	Exchange(context.Context, credentials.LoginToken) (auth.IssuedAccessToken, error)
-	Authenticate(context.Context, credentials.AccessToken) (state.Identity, error)
-	Revoke(context.Context, state.Identity, credentials.CredentialID) error
+	Exchange(context.Context, credentials.LoginToken) (auth.IssuedControlSession, error)
+	Refresh(context.Context, credentials.RefreshToken) (auth.IssuedControlSession, error)
+	Authenticate(context.Context, credentials.AccessToken) (auth.Principal, error)
+	Logout(context.Context, auth.Principal) error
 }
 
 type OIDCAuthService interface {
-	ExchangeOIDC(context.Context, string) (auth.IssuedAccessToken, error)
+	ExchangeOIDC(context.Context, string) (auth.IssuedControlSession, error)
 }
 
 // RouteService implements hostnames and fenced route transitions.
@@ -143,14 +169,21 @@ type RouteService interface {
 	CompleteDomainVerification(context.Context, string, string) (routes.Hostname, error)
 	ListHostnamesPage(context.Context, string, string) ([]routes.Hostname, string, error)
 	RemoveHostname(context.Context, string, string) error
-	Create(context.Context, string, string, string, credentials.RouteToken) (routes.SessionSetup, error)
-	CreateSession(context.Context, string, string, credentials.RouteToken) (routes.SessionSetup, error)
+	Create(context.Context, string, string, string, credentials.RouteToken, []string) (routes.SessionSetup, error)
+	CreateSession(context.Context, string, string, credentials.RouteToken, []string) (routes.SessionSetup, error)
 	RegisterTransport(context.Context, string, uint64, credentials.SessionToken, string, string) error
 	Ready(context.Context, string, uint64, credentials.SessionToken) error
 	Heartbeat(context.Context, string, uint64, credentials.SessionToken) (time.Time, error)
 	AuthorizeSession(context.Context, string, uint64, credentials.SessionToken) error
 	List(context.Context, string) ([]routes.Route, error)
 	Delete(context.Context, string, string) error
+}
+
+type SignedRouteService interface {
+	CreateSigned(context.Context, string, string, credentials.RouteToken, routes.SignedRequest) (routes.SessionSetup, error)
+	CreateSignedSession(context.Context, string, credentials.RouteToken, routes.SignedRequest) (routes.SessionSetup, error)
+	HeartbeatSigned(context.Context, string, uint64, credentials.SessionToken, string, authorization.Digest) (time.Time, error)
+	DeleteSigned(context.Context, string, credentials.RouteToken) error
 }
 
 // CertificateService implements durable certificate transitions without exposing storage to HTTP.
@@ -162,18 +195,41 @@ type CertificateService interface {
 	Installed(context.Context, string, string, uint64) (certificates.Issuance, error)
 }
 
+type AdminService interface {
+	Status(context.Context) (coreadmin.ServerStatus, error)
+	ListRoutes(context.Context, string) ([]routes.Route, string, error)
+	Route(context.Context, string) (routes.Route, error)
+	SuspendRoute(context.Context, string, uint64, string, string, string) (routes.Route, error)
+	ResumeRoute(context.Context, string, uint64, string, string) (routes.Route, error)
+	ListHostnames(context.Context, string) ([]routes.Hostname, string, error)
+	Hostname(context.Context, string) (routes.Hostname, error)
+	RemoveHostname(context.Context, string, string, string) error
+	QuarantineHostname(context.Context, string, string, string, string) error
+	ListCredentials(context.Context, string) ([]coreadmin.Credential, string, error)
+	RevokeCredential(context.Context, string, string, string) error
+	ListControlSessions(context.Context, string) ([]coreadmin.ControlSession, string, error)
+	RevokeControlSession(context.Context, string, string, string) error
+	Switches(context.Context) ([]coreadmin.OperationalSwitch, error)
+	SetSwitch(context.Context, coreadmin.SwitchName, bool, string, string) (coreadmin.OperationalSwitch, error)
+	RequireEnabled(context.Context, coreadmin.SwitchName) error
+}
+
 type handler struct {
-	capabilities     serverv1.Capabilities
-	auth             AuthService
-	routes           RouteService
-	certificates     CertificateService
-	observer         Observer
-	errorReporter    ErrorReporter
-	relayMap         []byte
-	dnsReady         func() bool
-	ingressAddresses func() []string
-	readiness        func(context.Context) error
-	oidcLimit        *rate.Limiter
+	capabilities        serverv1.Capabilities
+	auth                AuthService
+	routes              RouteService
+	certificates        CertificateService
+	observer            Observer
+	errorReporter       ErrorReporter
+	relayMap            []byte
+	dnsReady            func() bool
+	ingressAddresses    func() []string
+	readiness           func(context.Context) error
+	oidcLimit           *rate.Limiter
+	refreshLimit        *rate.Limiter
+	clientIPLimit       *rate.Limiter
+	signedAuthorization bool
+	admin               AdminService
 }
 
 // NewHandler creates the server API handler without binding a listener.
@@ -209,17 +265,21 @@ func NewHandlerWithServicesAndConfig(
 		oidcLimit = rate.NewLimiter(rate.Limit(5), 20)
 	}
 	return &handler{
-		capabilities:     capabilities,
-		auth:             auth,
-		routes:           routeService,
-		certificates:     certificateService,
-		observer:         config.Observer,
-		errorReporter:    config.ErrorReporter,
-		relayMap:         append([]byte(nil), config.RelayMap...),
-		dnsReady:         config.DNSReady,
-		ingressAddresses: config.IngressAddresses,
-		readiness:        config.Readiness,
-		oidcLimit:        oidcLimit,
+		capabilities:        capabilities,
+		auth:                auth,
+		routes:              routeService,
+		certificates:        certificateService,
+		observer:            config.Observer,
+		errorReporter:       config.ErrorReporter,
+		relayMap:            append([]byte(nil), config.RelayMap...),
+		dnsReady:            config.DNSReady,
+		ingressAddresses:    config.IngressAddresses,
+		readiness:           config.Readiness,
+		oidcLimit:           oidcLimit,
+		refreshLimit:        rate.NewLimiter(rate.Limit(5), 20),
+		clientIPLimit:       rate.NewLimiter(rate.Limit(1), 4),
+		signedAuthorization: config.SignedAuthorization,
+		admin:               config.Admin,
 	}
 }
 
@@ -252,6 +312,8 @@ func (h *handler) serveHTTP(w http.ResponseWriter, r *http.Request, requestID st
 		h.serveHealth(w, r, requestID)
 	case readinessPath:
 		h.serveReadiness(w, r, requestID)
+	case clientIPPath:
+		h.serveClientIP(w, r, requestID)
 	case capabilitiesPath:
 		h.serveCapabilities(w, r, requestID)
 	case relayMapPath:
@@ -260,6 +322,10 @@ func (h *handler) serveHTTP(w http.ResponseWriter, r *http.Request, requestID st
 		h.serveTokenExchange(w, r, requestID)
 	case oidcExchangePath:
 		h.serveOIDCExchange(w, r, requestID)
+	case refreshPath:
+		h.serveRefresh(w, r, requestID)
+	case logoutPath:
+		h.serveLogout(w, r, requestID)
 	case hostnamesPath:
 		h.serveHostnames(w, r, requestID)
 	case domainVerificationsPath:
@@ -269,6 +335,10 @@ func (h *handler) serveHTTP(w http.ResponseWriter, r *http.Request, requestID st
 	case certificateIssuancesPath:
 		h.serveCertificateIssuances(w, r, requestID)
 	default:
+		if strings.HasPrefix(r.URL.Path, "/v1/admin/") {
+			h.serveAdmin(w, r, requestID)
+			return
+		}
 		if verificationID, operation, ok := domainVerificationPath(r.URL.Path); ok {
 			h.serveDomainVerification(w, r, requestID, verificationID, operation)
 			return
@@ -276,11 +346,6 @@ func (h *handler) serveHTTP(w http.ResponseWriter, r *http.Request, requestID st
 		hostnameID, ok := strings.CutPrefix(r.URL.Path, hostnamePrefix)
 		if ok && validHostnameID(hostnameID) {
 			h.serveHostname(w, r, requestID, hostnameID)
-			return
-		}
-		credentialID, ok := strings.CutPrefix(r.URL.Path, credentialsPath)
-		if ok && credentialID != "" && !strings.Contains(credentialID, "/") {
-			h.serveCredentialRevocation(w, r, requestID, credentialID)
 			return
 		}
 		if routeID, operation, ok := routePath(r.URL.Path); ok {
@@ -332,6 +397,9 @@ func (w *observedResponseWriter) report(err error) {
 }
 
 func operationForRequest(method, path string) Operation {
+	if operation := adminOperationForRequest(method, path); operation != OperationUnknown {
+		return operation
+	}
 	switch path {
 	case healthPath:
 		if method == http.MethodGet {
@@ -340,6 +408,10 @@ func operationForRequest(method, path string) Operation {
 	case readinessPath:
 		if method == http.MethodGet {
 			return OperationReadinessGet
+		}
+	case clientIPPath:
+		if method == http.MethodGet {
+			return OperationClientIPGet
 		}
 	case capabilitiesPath:
 		if method == http.MethodGet {
@@ -356,6 +428,14 @@ func operationForRequest(method, path string) Operation {
 	case oidcExchangePath:
 		if method == http.MethodPost {
 			return OperationOIDCTokenExchange
+		}
+	case refreshPath:
+		if method == http.MethodPost {
+			return OperationControlSessionRefresh
+		}
+	case logoutPath:
+		if method == http.MethodPost {
+			return OperationControlSessionLogout
 		}
 	case hostnamesPath:
 		switch method {
@@ -394,10 +474,6 @@ func operationForRequest(method, path string) Operation {
 		if domainOperation == "complete" && method == http.MethodPost {
 			return OperationDomainVerificationComplete
 		}
-	}
-	if credentialID, ok := strings.CutPrefix(path, credentialsPath); ok && credentialID != "" &&
-		!strings.Contains(credentialID, "/") && method == http.MethodDelete {
-		return OperationCredentialRevoke
 	}
 	if _, routeOperation, ok := routePath(path); ok {
 		switch {
@@ -475,6 +551,28 @@ func (h *handler) serveReadiness(w http.ResponseWriter, r *http.Request, request
 		return
 	}
 	writeJSON(w, status, "application/json", body)
+}
+
+func (h *handler) serveClientIP(w http.ResponseWriter, r *http.Request, requestID string) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w, requestID, http.MethodGet)
+		return
+	}
+	if !h.clientIPLimit.Allow() {
+		w.Header().Set("Retry-After", "1")
+		writeProblem(w, requestID, http.StatusTooManyRequests, serverv1.RateLimited, "Rate limited", "rate-limited")
+		return
+	}
+	remote, err := netip.ParseAddrPort(r.RemoteAddr)
+	if err != nil {
+		writeProblem(
+			w, requestID, http.StatusServiceUnavailable, serverv1.TemporarilyUnavailable,
+			"Temporarily unavailable", "client-ip-unavailable",
+		)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeModel(w, requestID, http.StatusOK, serverv1.ClientIPResponse{Ip: remote.Addr().Unmap().String()})
 }
 
 func (h *handler) serveHostnames(w http.ResponseWriter, r *http.Request, requestID string) {
@@ -716,7 +814,7 @@ func (h *handler) serveTokenExchange(w http.ResponseWriter, r *http.Request, req
 		writeInternalError(w, requestID, err)
 		return
 	}
-	h.writeIssuedAccessToken(w, requestID, issued)
+	h.writeControlSession(w, requestID, issued)
 }
 
 func (h *handler) serveOIDCExchange(w http.ResponseWriter, r *http.Request, requestID string) {
@@ -766,51 +864,56 @@ func (h *handler) serveOIDCExchange(w http.ResponseWriter, r *http.Request, requ
 		writeInternalError(w, requestID, err)
 		return
 	}
-	h.writeIssuedAccessToken(w, requestID, issued)
+	h.writeControlSession(w, requestID, issued)
 }
 
-func (h *handler) writeIssuedAccessToken(
-	w http.ResponseWriter,
-	requestID string,
-	issued auth.IssuedAccessToken,
-) {
-	body, err := marshalJSON(serverv1.TokenExchangeResponse{
-		AccessToken:  issued.Token.String(),
-		CredentialId: issued.CredentialID.String(),
-		ExpiresAt:    issued.ExpiresAt,
-		TokenType:    serverv1.Bearer,
-	})
+func (h *handler) serveRefresh(w http.ResponseWriter, r *http.Request, requestID string) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w, requestID, http.MethodPost)
+		return
+	}
+	if !h.refreshLimit.Allow() {
+		writeProblem(
+			w, requestID, http.StatusTooManyRequests, serverv1.RateLimited,
+			"Rate limited", "rate-limited",
+		)
+		return
+	}
+	var request serverv1.RefreshControlSessionRequest
+	if !decodeRequest(w, r, requestID, &request) {
+		return
+	}
+	if request.RefreshToken == "" || len(request.RefreshToken) > maxCredentialBytes {
+		writeInvalidRequest(w, requestID)
+		return
+	}
+	if h.auth == nil {
+		writeInternalError(w, requestID, errAuthServiceMissing)
+		return
+	}
+	issued, err := h.auth.Refresh(r.Context(), credentials.RefreshToken(request.RefreshToken))
+	if errors.Is(err, auth.ErrUnauthenticated) {
+		writeUnauthenticated(w, requestID)
+		return
+	}
 	if err != nil {
 		writeInternalError(w, requestID, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, "application/json", body)
+	h.writeControlSession(w, requestID, issued)
 }
 
-func (h *handler) serveCredentialRevocation(
-	w http.ResponseWriter,
-	r *http.Request,
-	requestID string,
-	credentialIDValue string,
-) {
-	if r.Method != http.MethodDelete {
-		writeMethodNotAllowed(w, requestID, http.MethodDelete)
+func (h *handler) serveLogout(w http.ResponseWriter, r *http.Request, requestID string) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w, requestID, http.MethodPost)
 		return
 	}
-	identity, ok := h.authenticate(w, r, requestID)
+	principal, ok := h.authenticatePrincipal(w, r, requestID)
 	if !ok {
 		return
 	}
-	credentialID, err := credentials.ParseCredentialID(credentialIDValue)
-	if err != nil {
-		writeProblem(
-			w, requestID, http.StatusBadRequest, serverv1.InvalidArgument,
-			"Invalid request", "invalid-request",
-		)
-		return
-	}
-	if err := h.auth.Revoke(r.Context(), identity, credentialID); errors.Is(err, auth.ErrCredentialNotFound) {
-		writeNotFound(w, requestID)
+	if err := h.auth.Logout(r.Context(), principal); errors.Is(err, auth.ErrUnauthenticated) {
+		writeUnauthenticated(w, requestID)
 		return
 	} else if err != nil {
 		writeInternalError(w, requestID, err)
@@ -819,14 +922,38 @@ func (h *handler) serveCredentialRevocation(
 	writeNoContent(w)
 }
 
+func (h *handler) writeControlSession(
+	w http.ResponseWriter,
+	requestID string,
+	issued auth.IssuedControlSession,
+) {
+	grants := make([]serverv1.Grant, len(issued.Grants))
+	for index, grant := range issued.Grants {
+		grants[index] = serverv1.Grant(grant)
+	}
+	body, err := marshalJSON(serverv1.ControlSessionResponse{
+		SessionId: issued.SessionID, AccessToken: issued.AccessToken.String(), AccessExpiresAt: issued.AccessExpiresAt,
+		RefreshToken: issued.RefreshToken.String(), RefreshExpiresAt: issued.RefreshExpiresAt, Grants: grants,
+	})
+	if err != nil {
+		writeInternalError(w, requestID, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, "application/json", body)
+}
+
 func (h *handler) serveRoutes(w http.ResponseWriter, r *http.Request, requestID string) {
 	if r.Method != http.MethodGet && r.Method != http.MethodPost {
 		writeMethodNotAllowed(w, requestID, http.MethodGet+", "+http.MethodPost)
 		return
 	}
-	identity, ok := h.authenticate(w, r, requestID)
-	if !ok {
-		return
+	var identity state.Identity
+	if r.Method == http.MethodGet || !h.signedAuthorization {
+		var ok bool
+		identity, ok = h.authenticate(w, r, requestID)
+		if !ok {
+			return
+		}
 	}
 	if h.routes == nil {
 		writeInternalError(w, requestID, errRouteServiceMissing)
@@ -845,6 +972,9 @@ func (h *handler) serveRoutes(w http.ResponseWriter, r *http.Request, requestID 
 		writeModel(w, requestID, http.StatusOK, response)
 		return
 	}
+	if !h.requireOperationalSwitch(w, r, requestID, coreadmin.SwitchNewRoutes) {
+		return
+	}
 	var request serverv1.CreateRouteRequest
 	if !decodeRequest(w, r, requestID, &request) {
 		return
@@ -859,7 +989,33 @@ func (h *handler) serveRoutes(w http.ResponseWriter, r *http.Request, requestID 
 		writeInvalidRequest(w, requestID)
 		return
 	}
-	setup, err := h.routes.Create(r.Context(), identity.ID, request.Hostname, request.LocalTarget, routeToken)
+	allowedIPPrefixes, requestErr := routeAllowedIPPrefixes(request.AllowedIpPrefixes)
+	if requestErr != nil {
+		writeInvalidRequest(w, requestID)
+		return
+	}
+	var setup routes.SessionSetup
+	var err error
+	if h.signedAuthorization {
+		signedService, ok := h.routes.(SignedRouteService)
+		if !ok {
+			writeInternalError(w, requestID, errRouteServiceMissing)
+			return
+		}
+		signedRequest, requestErr := signedRouteRequest(
+			authorization.OperationRouteCreate, request.Hostname, request.LocalTarget,
+			routeToken, 0, request.AllowedIpPrefixes, request.SignedAuthorization,
+		)
+		if requestErr != nil {
+			writeInvalidRequest(w, requestID)
+			return
+		}
+		setup, err = signedService.CreateSigned(r.Context(), request.Hostname, request.LocalTarget, routeToken, signedRequest)
+	} else {
+		setup, err = h.routes.Create(
+			r.Context(), identity.ID, request.Hostname, request.LocalTarget, routeToken, allowedIPPrefixes,
+		)
+	}
 	if err != nil {
 		writeRouteError(w, requestID, err)
 		return
@@ -882,11 +1038,27 @@ func (h *handler) serveRoute(
 			writeMethodNotAllowed(w, requestID, http.MethodDelete)
 			return
 		}
-		identity, ok := h.authenticate(w, r, requestID)
-		if !ok {
-			return
+		var err error
+		if h.signedAuthorization {
+			signedService, ok := h.routes.(SignedRouteService)
+			if !ok {
+				writeInternalError(w, requestID, errRouteServiceMissing)
+				return
+			}
+			token, ok := routeBearer(r.Header)
+			if !ok {
+				writeUnauthenticated(w, requestID)
+				return
+			}
+			err = signedService.DeleteSigned(r.Context(), routeID, token)
+		} else {
+			identity, ok := h.authenticate(w, r, requestID)
+			if !ok {
+				return
+			}
+			err = h.routes.Delete(r.Context(), identity.ID, routeID)
 		}
-		if err := h.routes.Delete(r.Context(), identity.ID, routeID); err != nil {
+		if err != nil {
 			writeRouteError(w, requestID, err)
 			return
 		}
@@ -917,6 +1089,9 @@ func (h *handler) serveCertificateIssuances(w http.ResponseWriter, r *http.Reque
 	}
 	if h.certificates == nil {
 		writeInternalError(w, requestID, errCertServiceMissing)
+		return
+	}
+	if !h.requireOperationalSwitch(w, r, requestID, coreadmin.SwitchCertificateIssuance) {
 		return
 	}
 	token, ok := sessionBearer(r.Header)
@@ -1047,8 +1222,7 @@ func (h *handler) serveSessionAcquisition(w http.ResponseWriter, r *http.Request
 		writeMethodNotAllowed(w, requestID, http.MethodPost)
 		return
 	}
-	identity, ok := h.authenticate(w, r, requestID)
-	if !ok {
+	if !h.requireOperationalSwitch(w, r, requestID, coreadmin.SwitchNewSessions) {
 		return
 	}
 	var request serverv1.CreateRouteSessionRequest
@@ -1059,7 +1233,36 @@ func (h *handler) serveSessionAcquisition(w http.ResponseWriter, r *http.Request
 		writeInvalidRequest(w, requestID)
 		return
 	}
-	setup, err := h.routes.CreateSession(r.Context(), identity.ID, routeID, credentials.RouteToken(request.RouteToken))
+	routeToken := credentials.RouteToken(request.RouteToken)
+	allowedIPPrefixes, requestErr := routeAllowedIPPrefixes(request.AllowedIpPrefixes)
+	if requestErr != nil {
+		writeInvalidRequest(w, requestID)
+		return
+	}
+	var setup routes.SessionSetup
+	var err error
+	if h.signedAuthorization {
+		signedService, ok := h.routes.(SignedRouteService)
+		if !ok {
+			writeInternalError(w, requestID, errRouteServiceMissing)
+			return
+		}
+		signedRequest, requestErr := signedRouteRequest(
+			authorization.OperationRouteSessionCreate, "", "", routeToken, 0,
+			request.AllowedIpPrefixes, request.SignedAuthorization,
+		)
+		if requestErr != nil {
+			writeInvalidRequest(w, requestID)
+			return
+		}
+		setup, err = signedService.CreateSignedSession(r.Context(), routeID, routeToken, signedRequest)
+	} else {
+		identity, ok := h.authenticate(w, r, requestID)
+		if !ok {
+			return
+		}
+		setup, err = h.routes.CreateSession(r.Context(), identity.ID, routeID, routeToken, allowedIPPrefixes)
+	}
 	if err != nil {
 		writeRouteError(w, requestID, err)
 		return
@@ -1109,7 +1312,7 @@ func (h *handler) serveHeartbeat(w http.ResponseWriter, r *http.Request, request
 		writeUnauthenticated(w, requestID)
 		return
 	}
-	var request serverv1.RouteVersionRequest
+	var request serverv1.HeartbeatRouteSessionRequest
 	if !decodeRequest(w, r, requestID, &request) {
 		return
 	}
@@ -1117,7 +1320,36 @@ func (h *handler) serveHeartbeat(w http.ResponseWriter, r *http.Request, request
 		writeInvalidRequest(w, requestID)
 		return
 	}
-	expiresAt, err := h.routes.Heartbeat(r.Context(), routeID, uint64(request.Version), token)
+	var expiresAt time.Time
+	var err error
+	if h.signedAuthorization {
+		signedService, ok := h.routes.(SignedRouteService)
+		if !ok {
+			writeInternalError(w, requestID, errRouteServiceMissing)
+			return
+		}
+		signedAuthorization := ""
+		if request.SignedAuthorization != nil {
+			signedAuthorization = *request.SignedAuthorization
+			if signedAuthorization == "" || len(signedAuthorization) > authorization.MaxTokenBytes ||
+				strings.TrimSpace(signedAuthorization) != signedAuthorization {
+				writeInvalidRequest(w, requestID)
+				return
+			}
+		}
+		requestHash, hashErr := authorization.CanonicalRequestHash(authorization.CoreRequest{
+			Operation: authorization.OperationRenew, Version: uint64(request.Version),
+		})
+		if hashErr != nil {
+			writeInvalidRequest(w, requestID)
+			return
+		}
+		expiresAt, err = signedService.HeartbeatSigned(
+			r.Context(), routeID, uint64(request.Version), token, signedAuthorization, requestHash,
+		)
+	} else {
+		expiresAt, err = h.routes.Heartbeat(r.Context(), routeID, uint64(request.Version), token)
+	}
 	if err != nil {
 		writeRouteError(w, requestID, err)
 		return
@@ -1163,26 +1395,97 @@ func sessionBearer(header http.Header) (credentials.SessionToken, bool) {
 	return credentials.SessionToken(token), err == nil && len(token) <= maxCredentialBytes
 }
 
+func routeBearer(header http.Header) (credentials.RouteToken, bool) {
+	token, err := credentials.Bearer(header)
+	if err != nil || len(token) > maxCredentialBytes {
+		return "", false
+	}
+	routeToken := credentials.RouteToken(token)
+	if _, _, err := credentials.ParseRouteToken(routeToken); err != nil {
+		return "", false
+	}
+	return routeToken, true
+}
+
+func signedRouteRequest(
+	operation authorization.Operation,
+	hostname, localTarget string,
+	routeToken credentials.RouteToken,
+	version uint64,
+	prefixValues *serverv1.AllowedIPPrefixes,
+	token *serverv1.SignedAuthorizationToken,
+) (routes.SignedRequest, error) {
+	if token == nil || *token == "" || len(*token) > authorization.MaxTokenBytes || strings.TrimSpace(*token) != *token {
+		return routes.SignedRequest{}, authorization.ErrInvalid
+	}
+	var prefixes []string
+	if prefixValues != nil {
+		prefixes = slices.Clone(*prefixValues)
+		canonical, err := authorization.CanonicalizeIPPrefixes(prefixes)
+		if err != nil || !slices.Equal(canonical, prefixes) {
+			return routes.SignedRequest{}, authorization.ErrInvalid
+		}
+	}
+	requestHash, err := authorization.CanonicalRequestHash(authorization.CoreRequest{
+		Operation: operation, Hostname: hostname, LocalTarget: localTarget,
+		RouteToken: routeToken.String(), AllowedIPPrefixes: prefixes, Version: version,
+	})
+	if err != nil {
+		return routes.SignedRequest{}, err
+	}
+	ipPolicyHash, err := authorization.IPPolicyHash(prefixes)
+	if err != nil {
+		return routes.SignedRequest{}, err
+	}
+	return routes.SignedRequest{
+		Token: *token, RequestHash: requestHash, IPPolicyHash: ipPolicyHash, AllowedIPPrefixes: prefixes,
+	}, nil
+}
+
+func routeAllowedIPPrefixes(values *serverv1.AllowedIPPrefixes) ([]string, error) {
+	if values == nil {
+		return nil, nil
+	}
+	prefixes := slices.Clone(*values)
+	canonical, err := authorization.CanonicalizeIPPrefixes(prefixes)
+	if err != nil || !slices.Equal(canonical, prefixes) {
+		return nil, authorization.ErrInvalid
+	}
+	return prefixes, nil
+}
+
 func (h *handler) authenticate(w http.ResponseWriter, r *http.Request, requestID string) (state.Identity, bool) {
+	principal, ok := h.authenticatePrincipal(w, r, requestID)
+	if !ok {
+		return state.Identity{}, false
+	}
+	if !principal.HasGrant(auth.GrantPublish) {
+		writeProblem(w, requestID, http.StatusForbidden, serverv1.PermissionDenied, "Permission denied", "permission-denied")
+		return state.Identity{}, false
+	}
+	return principal.Identity, true
+}
+
+func (h *handler) authenticatePrincipal(w http.ResponseWriter, r *http.Request, requestID string) (auth.Principal, bool) {
 	if h.auth == nil {
 		writeInternalError(w, requestID, errAuthServiceMissing)
-		return state.Identity{}, false
+		return auth.Principal{}, false
 	}
 	token, ok := bearerToken(r.Header)
 	if !ok {
 		writeUnauthenticated(w, requestID)
-		return state.Identity{}, false
+		return auth.Principal{}, false
 	}
-	identity, err := h.auth.Authenticate(r.Context(), token)
+	principal, err := h.auth.Authenticate(r.Context(), token)
 	if errors.Is(err, auth.ErrUnauthenticated) {
 		writeUnauthenticated(w, requestID)
-		return state.Identity{}, false
+		return auth.Principal{}, false
 	}
 	if err != nil {
 		writeInternalError(w, requestID, err)
-		return state.Identity{}, false
+		return auth.Principal{}, false
 	}
-	return identity, true
+	return principal, true
 }
 
 func routePath(path string) (routeID, operation string, ok bool) {
@@ -1379,7 +1682,8 @@ func writeRouteError(w http.ResponseWriter, requestID string, err error) {
 		writeNotFound(w, requestID)
 	case errors.Is(err, routes.ErrNameUnavailable):
 		writeProblem(w, requestID, http.StatusConflict, serverv1.NameUnavailable, "Name unavailable", "name-unavailable")
-	case errors.Is(err, routes.ErrRouteExists), errors.Is(err, routes.ErrStaleSession), errors.Is(err, routes.ErrInvalidStatus):
+	case errors.Is(err, routes.ErrRouteExists), errors.Is(err, routes.ErrStaleSession),
+		errors.Is(err, routes.ErrInvalidStatus), errors.Is(err, routes.ErrAuthorizationReplayed):
 		writeProblem(w, requestID, http.StatusConflict, serverv1.StatusConflict, "Status conflict", "status-conflict")
 	case errors.Is(err, routes.ErrNoWorkerCapacity), errors.Is(err, routes.ErrUnavailable):
 		writeProblem(w, requestID, http.StatusServiceUnavailable, serverv1.TemporarilyUnavailable, "Temporarily unavailable", "temporarily-unavailable")

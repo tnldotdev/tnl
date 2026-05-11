@@ -86,6 +86,24 @@ func TestLoginTokenRoundTripAndClassIsolation(t *testing.T) {
 	}
 }
 
+func TestRefreshTokenRoundTripAndClassIsolation(t *testing.T) {
+	token, lookupID, hash, err := NewRefreshToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsedID, parsedHash, err := ParseRefreshToken(token)
+	if err != nil || parsedID != lookupID || parsedHash != hash || !strings.HasPrefix(token.String(), refreshPrefix) {
+		t.Fatalf("refresh round trip = %q, %x, %v", parsedID, parsedHash, err)
+	}
+	access, _, _, err := NewAccessToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ParseRefreshToken(RefreshToken(access)); !errors.Is(err, ErrInvalidRefreshToken) {
+		t.Fatalf("access as refresh error = %v", err)
+	}
+}
+
 func TestDataPlaneTokenClasses(t *testing.T) {
 	route, routeID, routeHash, err := NewRouteToken()
 	if err != nil {
@@ -141,15 +159,14 @@ func TestTokenExchangeFixturesUseCanonicalCredentials(t *testing.T) {
 
 	var response struct {
 		AccessToken  AccessToken  `json:"access_token"`
-		CredentialID CredentialID `json:"credential_id"`
+		RefreshToken RefreshToken `json:"refresh_token"`
 	}
 	readJSONFixture(t, "../../api/fixtures/server/v1/token-exchange-response.json", &response)
-	credentialID, _, err := ParseAccessToken(response.AccessToken)
-	if err != nil {
+	if _, _, err := ParseAccessToken(response.AccessToken); err != nil {
 		t.Fatalf("access fixture: %v", err)
 	}
-	if credentialID != response.CredentialID {
-		t.Fatalf("credential ID = %q, want %q", credentialID, response.CredentialID)
+	if _, _, err := ParseRefreshToken(response.RefreshToken); err != nil {
+		t.Fatalf("refresh fixture: %v", err)
 	}
 }
 

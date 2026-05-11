@@ -17,6 +17,7 @@ type publishEvent struct {
 	Target        string     `json:"target,omitempty"`
 	URL           string     `json:"url,omitempty"`
 	Version       uint64     `json:"version,omitempty"`
+	IP            string     `json:"ip,omitempty"`
 	Message       string     `json:"message,omitempty"`
 	Retryable     *bool      `json:"retryable,omitempty"`
 	RetryAt       *time.Time `json:"retry_at,omitempty"`
@@ -58,6 +59,14 @@ func (o *publishOutput) ready(url string, version uint64) error {
 		return err
 	}
 	return o.emitLocked(publishEvent{Type: "ready", URL: url, Version: version})
+}
+
+func (o *publishOutput) currentIP(ip string) error {
+	if o.mode == "human" {
+		_, err := io.WriteString(o.stderr, "Current IP: "+ip+"\n")
+		return err
+	}
+	return o.emit(publishEvent{Type: "current_ip", IP: ip})
 }
 
 func (o *publishOutput) failed(err error) error {
