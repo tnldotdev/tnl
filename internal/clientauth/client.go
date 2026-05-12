@@ -28,7 +28,7 @@ const refreshSafetyMargin = 30 * time.Second
 
 type Config struct {
 	CoreEndpoint    string
-	StateRoot       string
+	State           *clientstate.Database
 	AccessToken     string
 	HTTPClient      *http.Client
 	Diagnostics     io.Writer
@@ -76,17 +76,17 @@ func Authenticate(ctx context.Context, config Config) (*Client, error) {
 		}
 		source.explicit = config.AccessToken
 	} else {
-		if config.StateRoot == "" {
-			return nil, errors.New("clientauth: state directory is required")
+		if config.State == nil {
+			return nil, errors.New("clientauth: client state is required")
 		}
-		source.store, err = clientstate.New(config.StateRoot, resolved.coreEndpoint)
+		source.store, err = config.State.Server(ctx, resolved.coreEndpoint)
 		if err != nil {
 			return nil, err
 		}
 		if _, err := source.accessToken(ctx, config.ForceLogin, ""); err != nil {
 			return nil, err
 		}
-		if err := clientstate.SaveServer(config.StateRoot, resolved.coreEndpoint); err != nil {
+		if err := config.State.SaveServer(ctx, resolved.coreEndpoint); err != nil {
 			return nil, err
 		}
 	}
@@ -113,10 +113,10 @@ func Logout(ctx context.Context, config Config) error {
 	if err != nil {
 		return err
 	}
-	if config.StateRoot == "" {
-		return errors.New("clientauth: state directory is required")
+	if config.State == nil {
+		return errors.New("clientauth: client state is required")
 	}
-	store, err := clientstate.New(config.StateRoot, resolved.coreEndpoint)
+	store, err := config.State.Server(ctx, resolved.coreEndpoint)
 	if err != nil {
 		return err
 	}
@@ -125,7 +125,7 @@ func Logout(ctx context.Context, config Config) error {
 		return err
 	}
 	defer lock.Close()
-	stored, found, err := store.ControlSession()
+	stored, found, err := store.ControlSession(ctx)
 	if err != nil {
 		return err
 	}
@@ -139,7 +139,7 @@ func Logout(ctx context.Context, config Config) error {
 		!errors.Is(err, serverclient.ErrUnauthenticated) && !errors.Is(err, authorityclient.ErrUnauthenticated) {
 		return err
 	}
-	return store.RemoveControlSession()
+	return store.RemoveControlSession(ctx)
 }
 
 func resolveControl(ctx context.Context, coreEndpoint string, httpClient *http.Client) (control, error) {
@@ -212,7 +212,7 @@ func (s *tokenSource) accessToken(ctx context.Context, force bool, usedToken str
 		return "", err
 	}
 	defer lock.Close()
-	stored, found, err := s.store.ControlSession()
+	stored, found, err := s.store.ControlSession(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -227,7 +227,7 @@ func (s *tokenSource) accessToken(ctx context.Context, force bool, usedToken str
 	if found && !s.config.ForceLogin && refreshUsable(stored, now) {
 		refreshed, refreshErr := refreshSession(ctx, s.control, stored)
 		if refreshErr == nil {
-			if err := s.store.SaveControlSession(refreshed); err != nil {
+			if err := s.store.SaveControlSession(ctx, refreshed); err != nil {
 				return "", err
 			}
 			return refreshed.AccessToken, nil
@@ -250,7 +250,7 @@ func (s *tokenSource) accessToken(ctx context.Context, force bool, usedToken str
 			return "", fmt.Errorf("revoke previous control session: %w", err)
 		}
 	}
-	if err := s.store.SaveControlSession(issued); err != nil {
+	if err := s.store.SaveControlSession(ctx, issued); err != nil {
 		_ = revokeSession(ctx, s.control, issued, nil)
 		return "", err
 	}
@@ -390,7 +390,7 @@ func revokeSession(
 		return refreshErr
 	}
 	if store != nil {
-		if err := store.SaveControlSession(refreshed); err != nil {
+		if err := store.SaveControlSession(ctx, refreshed); err != nil {
 			return err
 		}
 	}

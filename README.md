@@ -83,9 +83,11 @@ Control sessions have a fixed 30-day lifetime by default. Their one-hour access
 tokens rotate automatically. Operators configure these lifetimes with
 `TNLD_REFRESH_TOKEN_LIFETIME` and `TNLD_ACCESS_TOKEN_LIFETIME`.
 
-On macOS, `tnl` keeps a profile encryption key in Keychain and encrypts saved
-access and refresh tokens and route TLS private keys in its state files. On Linux, those
-secrets remain in private user-owned files with mode `0600`.
+The client keeps profiles, control sessions, route certificates, and local
+tunnel lifecycle in one private SQLite database at `<state-dir>/client.db`. On
+macOS, `tnl` keeps a profile encryption key in Keychain and encrypts saved access
+and refresh tokens and route TLS private keys in the database. On Linux, the
+database remains private and user-owned with mode `0600`.
 
 The named route becomes available at `https://demo.example.com`. Omitting
 `--name` allocates a fresh friendly temporary name for every invocation. A
@@ -110,6 +112,35 @@ Use `tnl host add`, `tnl host list`, and `tnl host remove HOSTNAME` to manage
 persistent bases and verified custom domains. Managed bases remain bound to
 their original owner after removal; available custom domains are transferable
 after fresh DNS proof.
+
+Query every local tunnel without contacting a server:
+
+```console
+tnl status
+tnl status --output=json
+```
+
+Each `publish` or `dev` invocation receives an opaque `tunnel_id` that is
+distinct from its server-side `route_id`. The versioned JSON snapshot reports
+one observation time, lifecycle counts, and the exact tunnel rows used for
+those counts. A tunnel whose local process lease expires is reported as
+`stale`, rather than `ready`.
+
+## Telemetry
+
+The `tnl` CLI sends pseudonymous usage telemetry to
+`https://tnl.dev/api/telemetry` to understand command adoption and how often
+routes become ready on the hosted service versus self-hosted servers. Each
+payload contains only `installation_id` (a stable random ID), `event`
+(`command` or `route_started`), `command`, optional `server_kind` (`hosted` or
+`self_hosted`, only for `route_started`), `version`, `os`, `arch`, and `ci`.
+It does not include arguments, flags, route IDs, hostnames, URLs, targets,
+errors, credentials, or timestamps.
+
+Telemetry is retained by the server for 365 days. The source IP is visible in
+transit to the endpoint but is not stored in the telemetry table. Disable
+telemetry with `--no-telemetry` or `TNL_NO_TELEMETRY=true`; opting out prevents
+creation of the installation ID as well as telemetry requests.
 
 ## Framework development
 
@@ -225,6 +256,8 @@ root.
 - `internal/naming` owns canonical public-hostname policy.
 - `internal/routes`, `internal/ingress`, and `internal/worker` coordinate route sessions and forward public streams.
 - `internal/publisher` terminates application TLS and proxies only to a literal-loopback HTTP target.
+- `internal/clientstate` owns the shared client SQLite database and local tunnel snapshots.
+- `internal/sqlite` owns SQLite connection and migration mechanics shared by client and server state.
 - `internal/tailtransport` carries route-session traffic over Tailcat.
 - `internal/observability` exports provider-neutral Prometheus metrics.
 - `pkg/protocol/serverv1` contains generated Go types for the server API contract.

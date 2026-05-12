@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -23,6 +22,10 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/serverv1"
 )
 
+type telemetryReporterFunc func(telemetryPayload)
+
+func (f telemetryReporterFunc) Report(payload telemetryPayload) { f(payload) }
+
 func TestVersionCommand(t *testing.T) {
 	var output, errors bytes.Buffer
 	if err := run(context.Background(), []string{"version"}, &output, &errors); err != nil {
@@ -30,6 +33,62 @@ func TestVersionCommand(t *testing.T) {
 	}
 	if output.String() != "tnl devel\n" || errors.Len() != 0 {
 		t.Fatalf("stdout = %q, stderr = %q", output.String(), errors.String())
+	}
+}
+
+func TestCommandTelemetryIsSafeAndOptional(t *testing.T) {
+	t.Setenv("TNL_NO_TELEMETRY", "false")
+	stateRoot := t.TempDir()
+	var payloads []telemetryPayload
+	factoryCalls := 0
+	factory := func(root string) telemetryReporter {
+		factoryCalls++
+		if root != stateRoot {
+			t.Fatalf("telemetry state root = %q, want %q", root, stateRoot)
+		}
+		return telemetryReporterFunc(func(payload telemetryPayload) {
+			payloads = append(payloads, payload)
+		})
+	}
+
+	var stdout, stderr bytes.Buffer
+	err := run(t.Context(), []string{
+		"publish", "sensitive.example:3000", "--access-token", "secret-token", "--state-dir", stateRoot,
+	}, &stdout, &stderr, factory)
+	if err == nil {
+		t.Fatal("publish accepted an invalid target")
+	}
+	if factoryCalls != 1 || len(payloads) != 1 || payloads[0].Event != "command" || payloads[0].Command != "publish" {
+		t.Fatalf("factory calls = %d, payloads = %#v", factoryCalls, payloads)
+	}
+	encoded, err := json.Marshal(payloads[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"installation_id", "event", "command", "version", "os", "arch", "ci"} {
+		if _, found := fields[name]; !found {
+			t.Errorf("telemetry field %q is missing", name)
+		}
+	}
+	if len(fields) != 7 || strings.Contains(string(encoded), "sensitive") || strings.Contains(string(encoded), "secret-token") {
+		t.Fatalf("telemetry payload = %s", encoded)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if err := run(t.Context(), []string{"version", "--no-telemetry"}, &stdout, &stderr, factory); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TNL_NO_TELEMETRY", "true")
+	if err := run(t.Context(), []string{"version"}, &stdout, &stderr, factory); err != nil {
+		t.Fatal(err)
+	}
+	if factoryCalls != 1 {
+		t.Fatalf("opt-out telemetry factory calls = %d", factoryCalls)
 	}
 }
 
@@ -288,7 +347,8 @@ func TestRunPublishPreflightsBeforeServerRequests(t *testing.T) {
 	defer server.Close()
 	var stdout, stderr bytes.Buffer
 	err = runPublish(context.Background(), publishCommand{
-		Target: target, ServerURL: server.URL, AccessToken: "invalid", Output: "ndjson",
+		Target: target, ServerURL: server.URL, AccessToken: "invalid",
+		StateDir: filepath.Join(t.TempDir(), "state"), Output: "ndjson",
 	}, &stdout, &stderr)
 	if err == nil {
 		t.Fatal("runPublish accepted an offline target")
@@ -306,6 +366,9 @@ func TestRunPublishPreflightsBeforeServerRequests(t *testing.T) {
 	}
 	if starting.Type != "starting" || failed.Type != "error" {
 		t.Fatalf("events = %#v, %#v", starting, failed)
+	}
+	if starting.TunnelID == "" || failed.TunnelID != starting.TunnelID {
+		t.Fatalf("uncorrelated events = %#v, %#v", starting, failed)
 	}
 }
 
@@ -350,7 +413,7 @@ func TestRunPublishReadsCurrentIPAfterAuthentication(t *testing.T) {
 	}
 	err = runPublish(t.Context(), publishCommand{
 		Target: port, ServerURL: server.URL, AccessToken: access.String(),
-		StateDir: t.TempDir(), Output: "ndjson", AllowCurrentIP: true,
+		StateDir: filepath.Join(t.TempDir(), "state"), Output: "ndjson", AllowCurrentIP: true,
 	}, &stdout, &stderr)
 	if err == nil || !strings.Contains(err.Error(), "invalid current IP") {
 		t.Fatalf("runPublish error = %v", err)
@@ -385,20 +448,19 @@ func TestRunPublishNDJSONStopsOnEarlyCancellation(t *testing.T) {
 	cancel()
 	var stdout, stderr bytes.Buffer
 	err = runPublish(ctx, publishCommand{
-		Target: listener.Addr().String()[strings.LastIndex(listener.Addr().String(), ":")+1:], Output: "ndjson",
+		Target:   listener.Addr().String()[strings.LastIndex(listener.Addr().String(), ":")+1:],
+		StateDir: t.TempDir(), Output: "ndjson",
 	}, &stdout, &stderr)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("runPublish error = %v", err)
 	}
 	decoder := json.NewDecoder(&stdout)
-	for _, want := range []string{"starting", "stopped"} {
-		var event publishEvent
-		if err := decoder.Decode(&event); err != nil {
-			t.Fatal(err)
-		}
-		if event.Type != want {
-			t.Fatalf("event = %#v, want %q", event, want)
-		}
+	var event publishEvent
+	if err := decoder.Decode(&event); err != nil {
+		t.Fatal(err)
+	}
+	if event.Type != "stopped" {
+		t.Fatalf("event = %#v, want stopped", event)
 	}
 }
 
@@ -458,7 +520,7 @@ func TestHostReleaseRecoversAfterAmbiguousDelete(t *testing.T) {
 	}
 }
 
-func TestHostListWithExplicitTokenDoesNotOpenClientState(t *testing.T) {
+func TestHostListWithExplicitTokenUsesClientState(t *testing.T) {
 	access, _, _, err := credentials.NewAccessToken()
 	if err != nil {
 		t.Fatal(err)
@@ -482,10 +544,7 @@ func TestHostListWithExplicitTokenDoesNotOpenClientState(t *testing.T) {
 	http.DefaultTransport = server.Client().Transport
 	t.Cleanup(func() { http.DefaultTransport = previousTransport })
 
-	statePath := filepath.Join(t.TempDir(), "not-a-directory")
-	if err := os.WriteFile(statePath, []byte("occupied"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	statePath := filepath.Join(t.TempDir(), "state")
 	var output bytes.Buffer
 	if err := runHostList(context.Background(), hostListCommand{
 		ServerURL: server.URL, AccessToken: access.String(), StateDir: statePath,

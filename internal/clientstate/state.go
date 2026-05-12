@@ -10,12 +10,14 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"database/sql"
+	"embed"
 	"encoding/hex"
-	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"io"
+	"io/fs"
+	"math"
 	"net"
 	"net/url"
 	"os"
@@ -25,12 +27,16 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/clientstate/clientstatedb"
+	tnlsqlite "github.com/tnldotdev/tnl/internal/sqlite"
 	"golang.org/x/sys/unix"
 )
 
+const databaseName = "client.db"
+
 const (
-	stateSchemaVersion = 2
-	maxStateBytes      = 128 << 10
+	certificatePhasePending = "pending"
+	certificatePhaseCurrent = "current"
 )
 
 var (
@@ -38,13 +44,25 @@ var (
 	ErrCertificateExpired = errors.New("clientstate: application certificate is expired")
 )
 
+//go:embed migrations/*.sql
+var migrationFiles embed.FS
+
+// Database owns the shared local client database.
+type Database struct {
+	root              string
+	locksDir          string
+	db                *sql.DB
+	queries           *clientstatedb.Queries
+	now               func() time.Time
+	heartbeatInterval time.Duration
+}
+
+// Store scopes credentials, certificates, and locks to one server profile.
 type Store struct {
-	serverDir          string
-	routesDir          string
-	locksDir           string
-	controlEndpoint    string
-	controlSessionPath string
-	secrets            secretProtector
+	database        *Database
+	controlEndpoint string
+	locksDir        string
+	secrets         secretProtector
 }
 
 type Lock struct {
@@ -53,11 +71,10 @@ type Lock struct {
 }
 
 type Route struct {
-	dir           string
-	lock          *os.File
-	secretContext string
-	secrets       secretProtector
-	once          sync.Once
+	store   *Store
+	routeID string
+	lock    *os.File
+	once    sync.Once
 }
 
 type Pending struct {
@@ -79,31 +96,8 @@ type Material struct {
 	Installed   bool
 }
 
-type pendingFile struct {
-	SchemaVersion int    `json:"schema_version"`
-	Hostname      string `json:"hostname"`
-	KeyDER        []byte `json:"key_der"`
-	CSRDER        []byte `json:"csr_der"`
-	IssuanceID    string `json:"issuance_id,omitempty"`
-	Version       uint64 `json:"version,omitempty"`
-}
-
-type currentFile struct {
-	SchemaVersion  int       `json:"schema_version"`
-	Hostname       string    `json:"hostname"`
-	KeyDER         []byte    `json:"key_der"`
-	CSRDER         []byte    `json:"csr_der"`
-	CertificatePEM []byte    `json:"certificate_pem"`
-	RenewAt        time.Time `json:"renew_at"`
-	IssuanceID     string    `json:"issuance_id"`
-	Version        uint64    `json:"version"`
-	Installed      bool      `json:"installed"`
-}
-
-type selectedServerFile struct {
-	SchemaVersion int    `json:"schema_version"`
-	Server        string `json:"server"`
-}
+// DatabasePath returns the shared client database path within root.
+func DatabasePath(root string) string { return filepath.Join(root, databaseName) }
 
 func DefaultDir() (string, error) {
 	root, err := os.UserConfigDir()
@@ -113,40 +107,116 @@ func DefaultDir() (string, error) {
 	return filepath.Join(root, "tnl"), nil
 }
 
-func New(root, serverOrigin string) (*Store, error) {
+// Open creates and migrates the shared local client database.
+func Open(ctx context.Context, root string) (*Database, error) {
+	root, err := prepareRoot(root)
+	if err != nil {
+		return nil, err
+	}
+	locksDir, err := privateSubdir(root, "locks")
+	if err != nil {
+		return nil, err
+	}
+	path := DatabasePath(root)
+	migrationLock, err := openBlockingLock(filepath.Join(locksDir, "migrations.lock"), "migration")
+	if err != nil {
+		return nil, err
+	}
+	defer migrationLock.Close()
+	if info, statErr := os.Lstat(path); statErr == nil {
+		if err := validatePrivateFile(info, false); err != nil {
+			return nil, fmt.Errorf("clientstate: database: %w", err)
+		}
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return nil, fmt.Errorf("clientstate: inspect database: %w", statErr)
+	}
+	migrations, err := fs.Sub(migrationFiles, "migrations")
+	if err != nil {
+		return nil, fmt.Errorf("clientstate: load migrations: %w", err)
+	}
+	db, err := tnlsqlite.Open(ctx, path, migrations)
+	if err != nil {
+		return nil, fmt.Errorf("clientstate: %w", err)
+	}
+	return &Database{
+		root: root, locksDir: locksDir, db: db, queries: clientstatedb.New(db), now: time.Now,
+		heartbeatInterval: tunnelHeartbeatInterval,
+	}, nil
+}
+
+func (d *Database) Close() error {
+	if d == nil || d.db == nil {
+		return nil
+	}
+	return d.db.Close()
+}
+
+// Server returns state scoped to a canonical server origin.
+func (d *Database) Server(ctx context.Context, serverOrigin string) (*Store, error) {
 	serverOrigin, err := CanonicalServer(serverOrigin)
 	if err != nil {
 		return nil, err
 	}
+	now := d.now().UTC().UnixNano()
+	if err := d.queries.UpsertServerProfile(ctx, clientstatedb.UpsertServerProfileParams{
+		Origin: serverOrigin, Now: now,
+	}); err != nil {
+		return nil, fmt.Errorf("clientstate: save server profile: %w", err)
+	}
 	digest := sha256.Sum256([]byte(serverOrigin))
-	root, err = prepareRoot(root)
+	locksDir, err := privateSubdir(d.locksDir, hex.EncodeToString(digest[:]))
 	if err != nil {
 		return nil, err
 	}
-	servers, err := privateSubdir(root, "servers")
-	if err != nil {
-		return nil, err
-	}
-	server, err := privateSubdir(servers, hex.EncodeToString(digest[:]))
-	if err != nil {
-		return nil, err
-	}
-	routes, err := privateSubdir(server, "routes")
-	if err != nil {
-		return nil, err
-	}
-	locks, err := privateSubdir(server, "locks")
-	if err != nil {
-		return nil, err
-	}
-	profileDigest := sha256.Sum256([]byte(root + "\x00" + serverOrigin))
+	profileDigest := sha256.Sum256([]byte(d.root + "\x00" + serverOrigin))
 	return &Store{
-		serverDir: server, routesDir: routes, locksDir: locks,
-		controlEndpoint: serverOrigin, controlSessionPath: filepath.Join(server, "control-session.json"),
+		database: d, controlEndpoint: serverOrigin, locksDir: locksDir,
 		secrets: newSecretProtector(
-			hex.EncodeToString(profileDigest[:]), filepath.Join(locks, "keychain-initialization.lock"),
+			hex.EncodeToString(profileDigest[:]), filepath.Join(locksDir, "keychain-initialization.lock"),
 		),
 	}, nil
+}
+
+// SavedServer returns the server selected by the last successful login.
+func (d *Database) SavedServer(ctx context.Context) (string, bool, error) {
+	selected, err := d.queries.GetSelectedServer(ctx)
+	if err != nil {
+		return "", false, fmt.Errorf("clientstate: read selected server: %w", err)
+	}
+	if !selected.Valid {
+		return "", false, nil
+	}
+	server, err := CanonicalServer(selected.String)
+	if err != nil || server != selected.String {
+		return "", true, errors.New("clientstate: selected server is invalid")
+	}
+	return server, true, nil
+}
+
+// SaveServer records the server selected by a successful login.
+func (d *Database) SaveServer(ctx context.Context, serverOrigin string) error {
+	serverOrigin, err := CanonicalServer(serverOrigin)
+	if err != nil {
+		return err
+	}
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("clientstate: begin selected server update: %w", err)
+	}
+	defer tx.Rollback()
+	queries := d.queries.WithTx(tx)
+	if err := queries.UpsertServerProfile(ctx, clientstatedb.UpsertServerProfileParams{
+		Origin: serverOrigin, Now: d.now().UTC().UnixNano(),
+	}); err != nil {
+		return fmt.Errorf("clientstate: save server profile: %w", err)
+	}
+	if err := queries.SetSelectedServer(ctx, sql.NullString{String: serverOrigin, Valid: true}); err != nil {
+		return fmt.Errorf("clientstate: select server: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("clientstate: commit selected server update: %w", err)
+	}
+	return nil
 }
 
 // CanonicalServer validates and normalizes a tnl server origin.
@@ -172,66 +242,6 @@ func CanonicalServer(value string) (string, error) {
 	}
 	origin.Path = ""
 	return origin.String(), nil
-}
-
-// SavedServer returns the server selected by the last successful login.
-func SavedServer(root string) (string, bool, error) {
-	root, err := prepareRoot(root)
-	if err != nil {
-		return "", false, err
-	}
-	var stored selectedServerFile
-	found, err := readJSON(filepath.Join(root, "selected-server.json"), &stored)
-	if err != nil || !found {
-		return "", found, err
-	}
-	server, err := CanonicalServer(stored.Server)
-	if err != nil || stored.SchemaVersion != stateSchemaVersion || server != stored.Server {
-		return "", true, errors.New("clientstate: selected server is invalid")
-	}
-	return server, true, nil
-}
-
-// SaveServer records the server only after a successful login.
-func SaveServer(root, server string) error {
-	server, err := CanonicalServer(server)
-	if err != nil {
-		return err
-	}
-	root, err = prepareRoot(root)
-	if err != nil {
-		return err
-	}
-	return writeJSON(filepath.Join(root, "selected-server.json"), selectedServerFile{
-		SchemaVersion: stateSchemaVersion,
-		Server:        server,
-	})
-}
-
-func prepareRoot(root string) (string, error) {
-	if strings.TrimSpace(root) == "" {
-		return "", errors.New("clientstate: state directory is required")
-	}
-	root, err := filepath.Abs(root)
-	if err != nil {
-		return "", fmt.Errorf("clientstate: resolve state directory: %w", err)
-	}
-	if info, statErr := os.Lstat(root); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
-		return "", errors.New("clientstate: state directory must not be a symlink")
-	} else if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
-		return "", fmt.Errorf("clientstate: inspect state directory: %w", statErr)
-	}
-	root, err = canonicalPath(root)
-	if err != nil {
-		return "", err
-	}
-	if err := validateTrustedAncestors(filepath.Dir(root)); err != nil {
-		return "", err
-	}
-	if err := ensurePrivateDir(root); err != nil {
-		return "", err
-	}
-	return root, nil
 }
 
 func (s *Store) LockHostname(hostname string) (*Lock, error) {
@@ -269,22 +279,11 @@ func (s *Store) OpenRoute(routeID string) (*Route, error) {
 	if !validRouteID(routeID) {
 		return nil, errors.New("clientstate: invalid route ID")
 	}
-	dir, err := privateSubdir(s.routesDir, routeID)
+	lock, err := openLock(filepath.Join(s.locksDir, routeID+".lock"), "route")
 	if err != nil {
 		return nil, err
 	}
-	lock, err := openLock(filepath.Join(dir, "lock"), "route")
-	if err != nil {
-		return nil, err
-	}
-	if err := cleanupTemps(dir); err != nil {
-		_ = lock.Close()
-		return nil, err
-	}
-	return &Route{
-		dir: dir, lock: lock.file, secrets: s.secrets,
-		secretContext: "route-private-key:" + routeID,
-	}, nil
+	return &Route{store: s, routeID: routeID, lock: lock.file}, nil
 }
 
 func (r *Route) Close() error {
@@ -296,6 +295,9 @@ func (r *Route) Close() error {
 }
 
 func (l *Lock) Close() error {
+	if l == nil {
+		return nil
+	}
 	var result error
 	l.once.Do(func() {
 		result = errors.Join(unix.Flock(int(l.file.Fd()), unix.LOCK_UN), l.file.Close())
@@ -303,64 +305,52 @@ func (l *Lock) Close() error {
 	return result
 }
 
-func (r *Route) Current(hostname string) (Material, bool, error) {
-	var stored currentFile
-	found, err := readJSON(filepath.Join(r.dir, "current.json"), &stored)
-	if err != nil || !found {
-		return Material{}, found, err
+func (r *Route) Current(ctx context.Context, hostname string) (Material, bool, error) {
+	stored, err := r.store.database.queries.GetRouteCertificate(ctx, clientstatedb.GetRouteCertificateParams{
+		ServerOrigin: r.store.controlEndpoint, RouteID: r.routeID, Phase: certificatePhaseCurrent,
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return Material{}, false, nil
 	}
-	if stored.SchemaVersion != stateSchemaVersion || stored.Hostname != hostname || len(stored.CSRDER) == 0 ||
-		stored.RenewAt.IsZero() || stored.IssuanceID == "" || stored.Version == 0 {
+	if err != nil {
+		return Material{}, false, fmt.Errorf("clientstate: read current route certificate: %w", err)
+	}
+	if stored.Hostname != hostname || len(stored.CsrDer) == 0 || !stored.RenewAt.Valid ||
+		stored.IssuanceID == "" || stored.Version <= 0 {
 		return Material{}, true, errors.New("clientstate: current certificate metadata is invalid")
 	}
-	keyDER, err := r.secrets.Open(r.secretContext, stored.KeyDER)
+	keyDER, err := r.store.secrets.Open(r.secretContext(), stored.KeyDer)
 	if err != nil {
 		return Material{}, true, err
 	}
-	certificate, err := certificate(keyDER, stored.CertificatePEM, hostname)
+	certificate, err := certificate(keyDER, stored.CertificatePem, hostname)
 	if err != nil {
 		return Material{}, true, err
 	}
-	if err := validateCSR(stored.CSRDER, certificate.PrivateKey, hostname); err != nil {
+	if err := validateCSR(stored.CsrDer, certificate.PrivateKey, hostname); err != nil {
 		return Material{}, true, err
 	}
-	if !stored.RenewAt.After(certificate.Leaf.NotBefore) || !stored.RenewAt.Before(certificate.Leaf.NotAfter) {
+	renewAt := unixNanoTime(stored.RenewAt.Int64)
+	if !renewAt.After(certificate.Leaf.NotBefore) || !renewAt.Before(certificate.Leaf.NotAfter) {
 		return Material{}, true, errors.New("clientstate: renewal time is outside certificate validity")
 	}
 	return Material{
-		Certificate: certificate, CSRDER: bytes.Clone(stored.CSRDER), RenewAt: stored.RenewAt,
-		NotAfter: certificate.Leaf.NotAfter, IssuanceID: stored.IssuanceID, Version: stored.Version,
-		Installed: stored.Installed,
+		Certificate: certificate, CSRDER: bytes.Clone(stored.CsrDer), RenewAt: renewAt,
+		NotAfter: certificate.Leaf.NotAfter, IssuanceID: stored.IssuanceID, Version: uint64(stored.Version),
+		Installed: stored.Installed == 1,
 	}, true, nil
 }
 
-func (r *Route) Pending(hostname string) (Pending, error) {
-	var stored pendingFile
-	found, err := readJSON(filepath.Join(r.dir, "pending.json"), &stored)
-	if err != nil {
-		return Pending{}, err
+func (r *Route) Pending(ctx context.Context, hostname string) (Pending, error) {
+	stored, err := r.store.database.queries.GetRouteCertificate(ctx, clientstatedb.GetRouteCertificateParams{
+		ServerOrigin: r.store.controlEndpoint, RouteID: r.routeID, Phase: certificatePhasePending,
+	})
+	if err == nil {
+		return r.pendingFromDB(stored, hostname)
 	}
-	if found {
-		if stored.SchemaVersion != stateSchemaVersion || stored.Hostname != hostname {
-			return Pending{}, errors.New("clientstate: pending certificate metadata is invalid")
-		}
-		keyDER, err := r.secrets.Open(r.secretContext, stored.KeyDER)
-		if err != nil {
-			return Pending{}, err
-		}
-		key, err := parseKey(keyDER)
-		if err != nil {
-			return Pending{}, err
-		}
-		if err := validateCSR(stored.CSRDER, key, hostname); err != nil {
-			return Pending{}, err
-		}
-		return Pending{
-			Key: key, CSRDER: bytes.Clone(stored.CSRDER), IssuanceID: stored.IssuanceID,
-			Version: stored.Version, keyDER: keyDER,
-		}, nil
+	if !errors.Is(err, sql.ErrNoRows) {
+		return Pending{}, fmt.Errorf("clientstate: read pending route certificate: %w", err)
 	}
-
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return Pending{}, fmt.Errorf("clientstate: generate application key: %w", err)
@@ -373,18 +363,22 @@ func (r *Route) Pending(hostname string) (Pending, error) {
 	if err != nil {
 		return Pending{}, fmt.Errorf("clientstate: create application CSR: %w", err)
 	}
-	protectedKey, err := r.secrets.Seal(r.secretContext, keyDER)
+	protectedKey, err := r.store.secrets.Seal(r.secretContext(), keyDER)
 	if err != nil {
 		return Pending{}, err
 	}
-	stored = pendingFile{SchemaVersion: stateSchemaVersion, Hostname: hostname, KeyDER: protectedKey, CSRDER: csrDER}
-	if err := writeJSON(filepath.Join(r.dir, "pending.json"), stored); err != nil {
-		return Pending{}, err
+	if err := r.store.database.queries.UpsertRouteCertificate(ctx, clientstatedb.UpsertRouteCertificateParams{
+		ServerOrigin: r.store.controlEndpoint, RouteID: r.routeID, Phase: certificatePhasePending,
+		Hostname: hostname, KeyDer: protectedKey, CsrDer: csrDER, IssuanceID: "", Version: 0,
+		Installed: 0, UpdatedAt: r.store.database.now().UTC().UnixNano(),
+	}); err != nil {
+		return Pending{}, fmt.Errorf("clientstate: save pending route certificate: %w", err)
 	}
 	return Pending{Key: key, CSRDER: csrDER, keyDER: keyDER}, nil
 }
 
 func (r *Route) Commit(
+	ctx context.Context,
 	hostname string,
 	pending Pending,
 	certificatePEM []byte,
@@ -392,7 +386,8 @@ func (r *Route) Commit(
 	issuanceID string,
 	version uint64,
 ) (Material, error) {
-	if pending.Key == nil || len(pending.keyDER) == 0 || len(pending.CSRDER) == 0 || renewAt.IsZero() ||
+	versionValue, err := databaseVersion(version)
+	if err != nil || pending.Key == nil || len(pending.keyDER) == 0 || len(pending.CSRDER) == 0 || renewAt.IsZero() ||
 		issuanceID == "" || version == 0 {
 		return Material{}, errors.New("clientstate: pending certificate material is incomplete")
 	}
@@ -403,97 +398,100 @@ func (r *Route) Commit(
 	if !renewAt.After(installed.Leaf.NotBefore) || !renewAt.Before(installed.Leaf.NotAfter) {
 		return Material{}, errors.New("clientstate: renewal time is outside certificate validity")
 	}
-	protectedKey, err := r.secrets.Seal(r.secretContext, pending.keyDER)
+	protectedKey, err := r.store.secrets.Seal(r.secretContext(), pending.keyDER)
 	if err != nil {
 		return Material{}, err
 	}
-	stored := currentFile{
-		SchemaVersion: stateSchemaVersion, Hostname: hostname, KeyDER: protectedKey, CSRDER: bytes.Clone(pending.CSRDER),
-		CertificatePEM: bytes.Clone(certificatePEM), RenewAt: renewAt.UTC(), IssuanceID: issuanceID,
-		Version: version,
+	tx, err := r.store.database.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Material{}, fmt.Errorf("clientstate: begin route certificate commit: %w", err)
 	}
-	if err := writeJSON(filepath.Join(r.dir, "current.json"), stored); err != nil {
-		return Material{}, err
+	defer tx.Rollback()
+	queries := r.store.database.queries.WithTx(tx)
+	if err := queries.UpsertRouteCertificate(ctx, clientstatedb.UpsertRouteCertificateParams{
+		ServerOrigin: r.store.controlEndpoint, RouteID: r.routeID, Phase: certificatePhaseCurrent,
+		Hostname: hostname, KeyDer: protectedKey, CsrDer: bytes.Clone(pending.CSRDER),
+		CertificatePem: bytes.Clone(certificatePEM), RenewAt: sql.NullInt64{Int64: renewAt.UTC().UnixNano(), Valid: true},
+		IssuanceID: issuanceID, Version: versionValue, Installed: 0,
+		UpdatedAt: r.store.database.now().UTC().UnixNano(),
+	}); err != nil {
+		return Material{}, fmt.Errorf("clientstate: save current route certificate: %w", err)
 	}
-	material := Material{
-		Certificate: installed, CSRDER: bytes.Clone(stored.CSRDER), RenewAt: stored.RenewAt,
+	if err := queries.DeleteRouteCertificate(ctx, clientstatedb.DeleteRouteCertificateParams{
+		ServerOrigin: r.store.controlEndpoint, RouteID: r.routeID, Phase: certificatePhasePending,
+	}); err != nil {
+		return Material{}, fmt.Errorf("clientstate: remove pending route certificate: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return Material{}, fmt.Errorf("clientstate: commit route certificate: %w", err)
+	}
+	return Material{
+		Certificate: installed, CSRDER: bytes.Clone(pending.CSRDER), RenewAt: renewAt.UTC(),
 		NotAfter: installed.Leaf.NotAfter, IssuanceID: issuanceID, Version: version,
-	}
-	if err := os.Remove(filepath.Join(r.dir, "pending.json")); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return material, fmt.Errorf("clientstate: remove pending certificate: %w", err)
-	}
-	if err := syncDir(r.dir); err != nil {
-		return material, err
-	}
-	return material, nil
+	}, nil
 }
 
-func (r *Route) RecordIssuance(hostname string, pending Pending, issuanceID string, version uint64) (Pending, error) {
-	if pending.Key == nil || len(pending.keyDER) == 0 || len(pending.CSRDER) == 0 || issuanceID == "" || version == 0 {
+func (r *Route) RecordIssuance(
+	ctx context.Context, hostname string, pending Pending, issuanceID string, version uint64,
+) (Pending, error) {
+	versionValue, err := databaseVersion(version)
+	if err != nil || pending.Key == nil || len(pending.keyDER) == 0 || len(pending.CSRDER) == 0 ||
+		issuanceID == "" || version == 0 {
 		return Pending{}, errors.New("clientstate: pending certificate issuance is incomplete")
 	}
 	if err := validateCSR(pending.CSRDER, pending.Key, hostname); err != nil {
 		return Pending{}, err
 	}
-	protectedKey, err := r.secrets.Seal(r.secretContext, pending.keyDER)
+	protectedKey, err := r.store.secrets.Seal(r.secretContext(), pending.keyDER)
 	if err != nil {
 		return Pending{}, err
 	}
-	stored := pendingFile{
-		SchemaVersion: stateSchemaVersion, Hostname: hostname, KeyDER: protectedKey, CSRDER: pending.CSRDER,
-		IssuanceID: issuanceID, Version: version,
-	}
-	if err := writeJSON(filepath.Join(r.dir, "pending.json"), stored); err != nil {
-		return Pending{}, err
+	if err := r.store.database.queries.UpsertRouteCertificate(ctx, clientstatedb.UpsertRouteCertificateParams{
+		ServerOrigin: r.store.controlEndpoint, RouteID: r.routeID, Phase: certificatePhasePending,
+		Hostname: hostname, KeyDer: protectedKey, CsrDer: pending.CSRDER, IssuanceID: issuanceID,
+		Version: versionValue, Installed: 0, UpdatedAt: r.store.database.now().UTC().UnixNano(),
+	}); err != nil {
+		return Pending{}, fmt.Errorf("clientstate: save pending route certificate: %w", err)
 	}
 	pending.IssuanceID, pending.Version = issuanceID, version
 	return pending, nil
 }
 
-func (r *Route) MarkInstalled(hostname, issuanceID string, version uint64) (Material, error) {
-	var stored currentFile
-	found, err := readJSON(filepath.Join(r.dir, "current.json"), &stored)
-	if err != nil {
-		return Material{}, err
-	}
-	if !found || stored.Hostname != hostname || stored.IssuanceID != issuanceID || stored.Version != version {
+func (r *Route) MarkInstalled(ctx context.Context, hostname, issuanceID string, version uint64) (Material, error) {
+	stored, err := r.currentCertificate(ctx)
+	if err != nil || stored.Hostname != hostname || stored.IssuanceID != issuanceID || stored.Version != int64(version) {
 		return Material{}, errors.New("clientstate: installed certificate does not match current state")
 	}
-	stored.Installed = true
-	if err := writeJSON(filepath.Join(r.dir, "current.json"), stored); err != nil {
+	stored.Installed = 1
+	if err := r.saveCertificate(ctx, stored); err != nil {
 		return Material{}, err
 	}
-	material, _, err := r.Current(hostname)
+	material, _, err := r.Current(ctx, hostname)
 	return material, err
 }
 
-func (r *Route) RecordCurrentIssuance(hostname, issuanceID string, version uint64) (Material, error) {
-	var stored currentFile
-	found, err := readJSON(filepath.Join(r.dir, "current.json"), &stored)
-	if err != nil {
-		return Material{}, err
-	}
-	if !found || stored.Hostname != hostname || issuanceID == "" || version == 0 {
+func (r *Route) RecordCurrentIssuance(
+	ctx context.Context, hostname, issuanceID string, version uint64,
+) (Material, error) {
+	versionValue, versionErr := databaseVersion(version)
+	stored, err := r.currentCertificate(ctx)
+	if err != nil || versionErr != nil || stored.Hostname != hostname || issuanceID == "" || version == 0 {
 		return Material{}, errors.New("clientstate: current certificate issuance is incomplete")
 	}
-	stored.IssuanceID, stored.Version, stored.Installed = issuanceID, version, false
-	if err := writeJSON(filepath.Join(r.dir, "current.json"), stored); err != nil {
+	stored.IssuanceID, stored.Version, stored.Installed = issuanceID, versionValue, 0
+	if err := r.saveCertificate(ctx, stored); err != nil {
 		return Material{}, err
 	}
-	material, _, err := r.Current(hostname)
+	material, _, err := r.Current(ctx, hostname)
 	return material, err
 }
 
-func (r *Route) CurrentKey(hostname string) (Pending, error) {
-	var stored currentFile
-	found, err := readJSON(filepath.Join(r.dir, "current.json"), &stored)
-	if err != nil {
-		return Pending{}, err
-	}
-	if !found || stored.Hostname != hostname || len(stored.KeyDER) == 0 || len(stored.CSRDER) == 0 {
+func (r *Route) CurrentKey(ctx context.Context, hostname string) (Pending, error) {
+	stored, err := r.currentCertificate(ctx)
+	if err != nil || stored.Hostname != hostname || len(stored.KeyDer) == 0 || len(stored.CsrDer) == 0 {
 		return Pending{}, errors.New("clientstate: current certificate key is incomplete")
 	}
-	keyDER, err := r.secrets.Open(r.secretContext, stored.KeyDER)
+	keyDER, err := r.store.secrets.Open(r.secretContext(), stored.KeyDer)
 	if err != nil {
 		return Pending{}, err
 	}
@@ -501,21 +499,65 @@ func (r *Route) CurrentKey(hostname string) (Pending, error) {
 	if err != nil {
 		return Pending{}, err
 	}
-	if err := validateCSR(stored.CSRDER, key, hostname); err != nil {
+	if err := validateCSR(stored.CsrDer, key, hostname); err != nil {
 		return Pending{}, err
 	}
-	return Pending{Key: key, CSRDER: bytes.Clone(stored.CSRDER), keyDER: keyDER}, nil
+	return Pending{Key: key, CSRDER: bytes.Clone(stored.CsrDer), keyDER: keyDER}, nil
 }
 
-func (r *Route) NewPending(hostname string) (Pending, error) {
-	if err := os.Remove(filepath.Join(r.dir, "pending.json")); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return Pending{}, fmt.Errorf("clientstate: replace pending certificate: %w", err)
+func (r *Route) NewPending(ctx context.Context, hostname string) (Pending, error) {
+	if err := r.store.database.queries.DeleteRouteCertificate(ctx, clientstatedb.DeleteRouteCertificateParams{
+		ServerOrigin: r.store.controlEndpoint, RouteID: r.routeID, Phase: certificatePhasePending,
+	}); err != nil {
+		return Pending{}, fmt.Errorf("clientstate: replace pending route certificate: %w", err)
 	}
-	if err := syncDir(r.dir); err != nil {
+	return r.Pending(ctx, hostname)
+}
+
+func (r *Route) pendingFromDB(stored clientstatedb.RouteCertificate, hostname string) (Pending, error) {
+	if stored.Hostname != hostname {
+		return Pending{}, errors.New("clientstate: pending certificate metadata is invalid")
+	}
+	keyDER, err := r.store.secrets.Open(r.secretContext(), stored.KeyDer)
+	if err != nil {
 		return Pending{}, err
 	}
-	return r.Pending(hostname)
+	key, err := parseKey(keyDER)
+	if err != nil {
+		return Pending{}, err
+	}
+	if err := validateCSR(stored.CsrDer, key, hostname); err != nil {
+		return Pending{}, err
+	}
+	return Pending{
+		Key: key, CSRDER: bytes.Clone(stored.CsrDer), IssuanceID: stored.IssuanceID,
+		Version: uint64(stored.Version), keyDER: keyDER,
+	}, nil
 }
+
+func (r *Route) currentCertificate(ctx context.Context) (clientstatedb.RouteCertificate, error) {
+	stored, err := r.store.database.queries.GetRouteCertificate(ctx, clientstatedb.GetRouteCertificateParams{
+		ServerOrigin: r.store.controlEndpoint, RouteID: r.routeID, Phase: certificatePhaseCurrent,
+	})
+	if err != nil {
+		return clientstatedb.RouteCertificate{}, err
+	}
+	return stored, nil
+}
+
+func (r *Route) saveCertificate(ctx context.Context, stored clientstatedb.RouteCertificate) error {
+	if err := r.store.database.queries.UpsertRouteCertificate(ctx, clientstatedb.UpsertRouteCertificateParams{
+		ServerOrigin: stored.ServerOrigin, RouteID: stored.RouteID, Phase: stored.Phase,
+		Hostname: stored.Hostname, KeyDer: stored.KeyDer, CsrDer: stored.CsrDer,
+		CertificatePem: stored.CertificatePem, RenewAt: stored.RenewAt, IssuanceID: stored.IssuanceID,
+		Version: stored.Version, Installed: stored.Installed, UpdatedAt: r.store.database.now().UTC().UnixNano(),
+	}); err != nil {
+		return fmt.Errorf("clientstate: save route certificate: %w", err)
+	}
+	return nil
+}
+
+func (r *Route) secretContext() string { return "route-private-key:" + r.routeID }
 
 func validateCSR(csrDER []byte, key any, hostname string) error {
 	request, err := x509.ParseCertificateRequest(csrDER)
@@ -584,6 +626,46 @@ func parseKey(keyDER []byte) (*ecdsa.PrivateKey, error) {
 	return key, nil
 }
 
+func databaseVersion(version uint64) (int64, error) {
+	if version > math.MaxInt64 {
+		return 0, errors.New("clientstate: route version exceeds database range")
+	}
+	return int64(version), nil
+}
+
+func unixNanoTime(value int64) time.Time {
+	if value == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, value).UTC()
+}
+
+func prepareRoot(root string) (string, error) {
+	if strings.TrimSpace(root) == "" {
+		return "", errors.New("clientstate: state directory is required")
+	}
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return "", fmt.Errorf("clientstate: resolve state directory: %w", err)
+	}
+	if info, statErr := os.Lstat(root); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+		return "", errors.New("clientstate: state directory must not be a symlink")
+	} else if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+		return "", fmt.Errorf("clientstate: inspect state directory: %w", statErr)
+	}
+	root, err = canonicalPath(root)
+	if err != nil {
+		return "", err
+	}
+	if err := validateTrustedAncestors(filepath.Dir(root)); err != nil {
+		return "", err
+	}
+	if err := ensurePrivateDir(root); err != nil {
+		return "", err
+	}
+	return root, nil
+}
+
 func canonicalPath(path string) (string, error) {
 	cursor := filepath.Clean(path)
 	var missing []string
@@ -645,6 +727,10 @@ func openLock(path, kind string) (*Lock, error) {
 	return openLockOperation(path, kind, unix.LOCK_EX|unix.LOCK_NB)
 }
 
+func openBlockingLock(path, kind string) (*Lock, error) {
+	return openLockOperation(path, kind, unix.LOCK_EX)
+}
+
 func openLockOperation(path, kind string, operation int) (*Lock, error) {
 	descriptor, err := unix.Open(path, unix.O_CREAT|unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0o600)
 	if err != nil {
@@ -668,27 +754,6 @@ func openLockOperation(path, kind string, operation int) (*Lock, error) {
 		return nil, fmt.Errorf("clientstate: lock %s state: %w", kind, err)
 	}
 	return &Lock{file: file}, nil
-}
-
-func cleanupTemps(dir string) error {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return fmt.Errorf("clientstate: list route state: %w", err)
-	}
-	removed := false
-	for _, entry := range entries {
-		if !strings.HasPrefix(entry.Name(), ".tmp-") {
-			continue
-		}
-		if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("clientstate: remove stale temporary state: %w", err)
-		}
-		removed = true
-	}
-	if removed {
-		return syncDir(dir)
-	}
-	return nil
 }
 
 func ensurePrivateDir(path string) error {
@@ -727,84 +792,6 @@ func privateSubdir(parent, name string) (string, error) {
 		return "", fmt.Errorf("clientstate: state path: %w", err)
 	}
 	return path, nil
-}
-
-func readJSON(path string, destination any) (bool, error) {
-	descriptor, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
-	if errors.Is(err, unix.ENOENT) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("clientstate: open state file: %w", err)
-	}
-	file := os.NewFile(uintptr(descriptor), path)
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		return false, fmt.Errorf("clientstate: inspect state file: %w", err)
-	}
-	if err := validatePrivateFile(info, false); err != nil {
-		return false, fmt.Errorf("clientstate: state file: %w", err)
-	}
-	if info.Size() < 0 || info.Size() > maxStateBytes {
-		return false, errors.New("clientstate: state file exceeds limit")
-	}
-	decoder := json.NewDecoder(io.LimitReader(file, maxStateBytes+1))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(destination); err != nil {
-		return false, fmt.Errorf("clientstate: decode state file: %w", err)
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return false, errors.New("clientstate: state file contains trailing data")
-	}
-	return true, nil
-}
-
-func writeJSON(path string, value any) error {
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		return err
-	}
-	if len(encoded) > maxStateBytes {
-		return errors.New("clientstate: state file exceeds limit")
-	}
-	dir := filepath.Dir(path)
-	// Sync before rename and sync the directory after for crash-safe replacement.
-	temporary, err := os.CreateTemp(dir, ".tmp-*")
-	if err != nil {
-		return fmt.Errorf("clientstate: create temporary state: %w", err)
-	}
-	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
-	if err := temporary.Chmod(0o600); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if _, err := temporary.Write(encoded); err != nil {
-		_ = temporary.Close()
-		return fmt.Errorf("clientstate: write temporary state: %w", err)
-	}
-	if err := temporary.Sync(); err != nil {
-		_ = temporary.Close()
-		return fmt.Errorf("clientstate: sync temporary state: %w", err)
-	}
-	if err := temporary.Close(); err != nil {
-		return fmt.Errorf("clientstate: close temporary state: %w", err)
-	}
-	if err := os.Rename(temporaryPath, path); err != nil {
-		return fmt.Errorf("clientstate: replace state file: %w", err)
-	}
-	return syncDir(dir)
-}
-
-func syncDir(dir string) error {
-	directory, err := os.Open(dir)
-	if err != nil {
-		return fmt.Errorf("clientstate: open state directory: %w", err)
-	}
-	err = directory.Sync()
-	closeErr := directory.Close()
-	return errors.Join(err, closeErr)
 }
 
 func validatePrivateFile(info os.FileInfo, directory bool) error {

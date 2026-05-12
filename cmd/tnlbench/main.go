@@ -399,10 +399,15 @@ func activateRoutes(
 				err = publisher.Run(routeCtx, publisher.Config{
 					Server: server, Hostname: process.hostname, Target: target, Certificate: certificates[index],
 					RelayRegion: relayRegion, Regions: regions, Logf: logger.Discard,
-					OnRoute: func(routeID string) { process.routeID = routeID },
-					OnReady: func(string) {
-						ready = true
-						signalResult(nil)
+					Observe: func(event publisher.Event) error {
+						switch event.Type {
+						case publisher.EventRoute:
+							process.routeID = event.RouteID
+						case publisher.EventReady:
+							ready = true
+							signalResult(nil)
+						}
+						return nil
 					},
 				})
 				if ready && routeCtx.Err() == nil {

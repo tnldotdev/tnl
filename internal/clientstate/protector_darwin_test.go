@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/ecdsa"
 	"crypto/x509"
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -12,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/clientstate/clientstatedb"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/zalando/go-keyring"
 )
@@ -107,7 +107,11 @@ func TestKeychainProtectorDoesNotReplaceMissingOrInvalidKey(t *testing.T) {
 
 func TestDarwinClientStateEncryptsControlSessionAndRouteKeys(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "state")
-	store, err := New(root, "https://server.example")
+	database, err := Open(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := database.Server(t.Context(), "https://server.example")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +123,7 @@ func TestDarwinClientStateEncryptsControlSessionAndRouteKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SaveControlSession(ControlSession{
+	if err := store.SaveControlSession(t.Context(), ControlSession{
 		Kind: ControlSessionKindCore, ControlEndpoint: "https://server.example",
 		SessionID: "control_session_0123456789abcdef0123456789abcdef", Issuer: "https://server.example",
 		AccessToken: token.String(), AccessExpiresAt: time.Now().Add(time.Hour).UTC(),
@@ -127,16 +131,12 @@ func TestDarwinClientStateEncryptsControlSessionAndRouteKeys(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	credentialJSON, err := os.ReadFile(store.controlSessionPath)
+	storedCredential, err := database.queries.GetControlSession(t.Context(), store.controlEndpoint)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Contains(credentialJSON, []byte(token)) {
+	if bytes.Contains(storedCredential.AccessToken, []byte(token)) {
 		t.Fatal("credential state contains the access token")
-	}
-	var storedCredential controlSessionFile
-	if err := json.Unmarshal(credentialJSON, &storedCredential); err != nil {
-		t.Fatal(err)
 	}
 	if !bytes.HasPrefix(storedCredential.AccessToken, sealedValuePrefix) {
 		t.Fatal("access token is not encrypted")
@@ -149,7 +149,7 @@ func TestDarwinClientStateEncryptsControlSessionAndRouteKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pending, err := route.Pending("route.example")
+	pending, err := route.Pending(t.Context(), "route.example")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,36 +157,48 @@ func TestDarwinClientStateEncryptsControlSessionAndRouteKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var storedPending pendingFile
-	if found, err := readJSON(filepath.Join(route.dir, "pending.json"), &storedPending); err != nil || !found {
-		t.Fatalf("pending state found = %v, error = %v", found, err)
+	storedPending, err := database.queries.GetRouteCertificate(t.Context(), clientstatedb.GetRouteCertificateParams{
+		ServerOrigin: store.controlEndpoint, RouteID: testRouteID, Phase: certificatePhasePending,
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if bytes.Equal(storedPending.KeyDER, keyDER) || !bytes.HasPrefix(storedPending.KeyDER, sealedValuePrefix) {
+	if bytes.Equal(storedPending.KeyDer, keyDER) || !bytes.HasPrefix(storedPending.KeyDer, sealedValuePrefix) {
 		t.Fatal("pending state contains an unencrypted private key")
 	}
 	renewAt := time.Now().Add(time.Hour).UTC()
 	material, err := route.Commit(
-		"route.example", pending, signedCertificate(t, pending.Key, "route.example"), renewAt, "issuance_current", 1,
+		t.Context(), "route.example", pending, signedCertificate(t, pending.Key, "route.example"), renewAt, "issuance_current", 1,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var storedCurrent currentFile
-	if found, err := readJSON(filepath.Join(route.dir, "current.json"), &storedCurrent); err != nil || !found {
-		t.Fatalf("current state found = %v, error = %v", found, err)
+	storedCurrent, err := database.queries.GetRouteCertificate(t.Context(), clientstatedb.GetRouteCertificateParams{
+		ServerOrigin: store.controlEndpoint, RouteID: testRouteID, Phase: certificatePhaseCurrent,
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if bytes.Equal(storedCurrent.KeyDER, keyDER) || !bytes.HasPrefix(storedCurrent.KeyDER, sealedValuePrefix) {
+	if bytes.Equal(storedCurrent.KeyDer, keyDER) || !bytes.HasPrefix(storedCurrent.KeyDer, sealedValuePrefix) {
 		t.Fatal("current state contains an unencrypted private key")
 	}
 	if err := route.Close(); err != nil {
 		t.Fatal(err)
 	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
 
-	reopened, err := New(root, "https://server.example")
+	reopenedDatabase, err := Open(t.Context(), root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	session, found, err := reopened.ControlSession()
+	defer reopenedDatabase.Close()
+	reopened, err := reopenedDatabase.Server(t.Context(), "https://server.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, found, err := reopened.ControlSession(t.Context())
 	if err != nil || !found || session.AccessToken != token.String() {
 		t.Fatalf("control session = %#v, found = %v, error = %v", session, found, err)
 	}
@@ -195,7 +207,7 @@ func TestDarwinClientStateEncryptsControlSessionAndRouteKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer route.Close()
-	loaded, found, err := route.Current("route.example")
+	loaded, found, err := route.Current(t.Context(), "route.example")
 	if err != nil || !found {
 		t.Fatalf("current state found = %v, error = %v", found, err)
 	}

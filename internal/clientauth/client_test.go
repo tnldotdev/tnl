@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -80,11 +79,16 @@ func TestClientRetriesOneUnauthorizedRequestAfterSerializedRefresh(t *testing.T)
 	defer server.Close()
 
 	stateRoot := filepath.Join(t.TempDir(), "state")
-	store, err := clientstate.New(stateRoot, server.URL)
+	state, err := clientstate.Open(t.Context(), stateRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SaveControlSession(clientstate.ControlSession{
+	defer state.Close()
+	store, err := state.Server(t.Context(), server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveControlSession(t.Context(), clientstate.ControlSession{
 		Kind: clientstate.ControlSessionKindCore, ControlEndpoint: server.URL, SessionID: sessionID, Issuer: server.URL,
 		AccessToken: oldAccess.String(), AccessExpiresAt: time.Now().Add(time.Hour).UTC(),
 		RefreshToken: oldRefresh.String(), RefreshExpiresAt: refreshExpiresAt, Grants: []string{"publish"},
@@ -92,7 +96,7 @@ func TestClientRetriesOneUnauthorizedRequestAfterSerializedRefresh(t *testing.T)
 		t.Fatal(err)
 	}
 	client, err := Authenticate(context.Background(), Config{
-		CoreEndpoint: server.URL, StateRoot: stateRoot, HTTPClient: server.Client(), Diagnostics: &bytes.Buffer{},
+		CoreEndpoint: server.URL, State: state, HTTPClient: server.Client(), Diagnostics: &bytes.Buffer{},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -114,7 +118,7 @@ func TestClientRetriesOneUnauthorizedRequestAfterSerializedRefresh(t *testing.T)
 			t.Fatal(err)
 		}
 	}
-	stored, found, err := store.ControlSession()
+	stored, found, err := store.ControlSession(t.Context())
 	if err != nil || !found || stored.AccessToken != newAccess.String() || stored.RefreshToken != newRefresh.String() {
 		t.Fatalf("stored session = %#v, found = %v, error = %v", stored, found, err)
 	}
@@ -141,12 +145,8 @@ func TestExplicitAccessTokenDoesNotOpenStateOrRefresh(t *testing.T) {
 		http.NotFound(response, request)
 	}))
 	defer server.Close()
-	occupied := filepath.Join(t.TempDir(), "occupied")
-	if err := os.WriteFile(occupied, []byte("not a directory"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	client, err := Authenticate(context.Background(), Config{
-		CoreEndpoint: server.URL, StateRoot: occupied, AccessToken: access.String(),
+		CoreEndpoint: server.URL, AccessToken: access.String(),
 		HTTPClient: server.Client(), Diagnostics: &bytes.Buffer{},
 	})
 	if err != nil {

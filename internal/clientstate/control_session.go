@@ -1,19 +1,22 @@
 package clientstate
 
 import (
+	"context"
+	"database/sql"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/clientstate/clientstatedb"
 	"github.com/tnldotdev/tnl/internal/credentials"
 )
 
 const (
-	controlSessionSchemaVersion = 2
-	maxOpaqueTokenBytes         = 16 << 10
-	maxSessionIDBytes           = 256
+	maxOpaqueTokenBytes = 16 << 10
+	maxSessionIDBytes   = 256
 )
 
 type ControlSessionKind string
@@ -37,28 +40,15 @@ type ControlSession struct {
 	Scopes           []string
 }
 
-type controlSessionFile struct {
-	SchemaVersion    int                `json:"schema_version"`
-	Kind             ControlSessionKind `json:"kind"`
-	ControlEndpoint  string             `json:"control_endpoint"`
-	SessionID        string             `json:"session_id"`
-	Issuer           string             `json:"issuer"`
-	ClientID         string             `json:"client_id,omitempty"`
-	AccessToken      []byte             `json:"access_token"`
-	AccessExpiresAt  time.Time          `json:"access_expires_at"`
-	RefreshToken     []byte             `json:"refresh_token"`
-	RefreshExpiresAt time.Time          `json:"refresh_expires_at"`
-	Grants           []string           `json:"grants,omitempty"`
-	Scopes           []string           `json:"scopes,omitempty"`
-}
-
-func (s *Store) ControlSession() (ControlSession, bool, error) {
-	var stored controlSessionFile
-	found, err := readJSON(s.controlSessionPath, &stored)
-	if err != nil || !found {
-		return ControlSession{}, found, err
+func (s *Store) ControlSession(ctx context.Context) (ControlSession, bool, error) {
+	stored, err := s.database.queries.GetControlSession(ctx, s.controlEndpoint)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ControlSession{}, false, nil
 	}
-	if stored.SchemaVersion != controlSessionSchemaVersion || stored.SessionID == "" {
+	if err != nil {
+		return ControlSession{}, false, fmt.Errorf("clientstate: read control session: %w", err)
+	}
+	if stored.SessionID == "" {
 		return ControlSession{}, true, errors.New("clientstate: saved control session is invalid")
 	}
 	accessToken, err := s.secrets.Open(controlSessionContext(stored.SessionID, "access"), stored.AccessToken)
@@ -71,12 +61,18 @@ func (s *Store) ControlSession() (ControlSession, bool, error) {
 	if err != nil {
 		return ControlSession{}, true, err
 	}
+	var grants, scopes []string
+	if err := json.Unmarshal(stored.Grants, &grants); err != nil {
+		return ControlSession{}, true, errors.New("clientstate: saved control session grants are invalid")
+	}
+	if err := json.Unmarshal(stored.Scopes, &scopes); err != nil {
+		return ControlSession{}, true, errors.New("clientstate: saved control session scopes are invalid")
+	}
 	session := ControlSession{
-		Kind: stored.Kind, ControlEndpoint: stored.ControlEndpoint, SessionID: stored.SessionID,
+		Kind: ControlSessionKind(stored.Kind), ControlEndpoint: stored.ControlEndpoint, SessionID: stored.SessionID,
 		Issuer: stored.Issuer, ClientID: stored.ClientID, AccessToken: string(accessToken),
-		AccessExpiresAt: stored.AccessExpiresAt, RefreshToken: string(refreshToken),
-		RefreshExpiresAt: stored.RefreshExpiresAt, Grants: append([]string(nil), stored.Grants...),
-		Scopes: append([]string(nil), stored.Scopes...),
+		AccessExpiresAt: unixNanoTime(stored.AccessExpiresAt), RefreshToken: string(refreshToken),
+		RefreshExpiresAt: unixNanoTime(stored.RefreshExpiresAt), Grants: grants, Scopes: scopes,
 	}
 	if err := s.validateControlSession(session); err != nil {
 		return ControlSession{}, true, err
@@ -84,7 +80,7 @@ func (s *Store) ControlSession() (ControlSession, bool, error) {
 	return session, true, nil
 }
 
-func (s *Store) SaveControlSession(session ControlSession) error {
+func (s *Store) SaveControlSession(ctx context.Context, session ControlSession) error {
 	if err := s.validateControlSession(session); err != nil {
 		return err
 	}
@@ -98,13 +94,24 @@ func (s *Store) SaveControlSession(session ControlSession) error {
 	if err != nil {
 		return err
 	}
-	return writeJSON(s.controlSessionPath, controlSessionFile{
-		SchemaVersion: controlSessionSchemaVersion, Kind: session.Kind, ControlEndpoint: session.ControlEndpoint,
+	grants, err := json.Marshal(session.Grants)
+	if err != nil {
+		return fmt.Errorf("clientstate: encode control session grants: %w", err)
+	}
+	scopes, err := json.Marshal(session.Scopes)
+	if err != nil {
+		return fmt.Errorf("clientstate: encode control session scopes: %w", err)
+	}
+	if err := s.database.queries.UpsertControlSession(ctx, clientstatedb.UpsertControlSessionParams{
+		ServerOrigin: s.controlEndpoint, Kind: string(session.Kind), ControlEndpoint: session.ControlEndpoint,
 		SessionID: session.SessionID, Issuer: session.Issuer, ClientID: session.ClientID,
-		AccessToken: accessToken, AccessExpiresAt: session.AccessExpiresAt.UTC(),
-		RefreshToken: refreshToken, RefreshExpiresAt: session.RefreshExpiresAt.UTC(),
-		Grants: append([]string(nil), session.Grants...), Scopes: append([]string(nil), session.Scopes...),
-	})
+		AccessToken: accessToken, AccessExpiresAt: session.AccessExpiresAt.UTC().UnixNano(),
+		RefreshToken: refreshToken, RefreshExpiresAt: timeUnixNano(session.RefreshExpiresAt),
+		Grants: grants, Scopes: scopes, UpdatedAt: s.database.now().UTC().UnixNano(),
+	}); err != nil {
+		return fmt.Errorf("clientstate: save control session: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) validateControlSession(session ControlSession) error {
@@ -211,13 +218,20 @@ func validControlSessionGrants(grants []string) bool {
 	return publish && (len(grants) == 1 || admin && len(grants) == 2)
 }
 
-func (s *Store) RemoveControlSession() error {
-	if err := os.Remove(s.controlSessionPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
+func (s *Store) RemoveControlSession(ctx context.Context) error {
+	if err := s.database.queries.DeleteControlSession(ctx, s.controlEndpoint); err != nil {
+		return fmt.Errorf("clientstate: remove control session: %w", err)
 	}
-	return syncDir(s.serverDir)
+	return nil
 }
 
 func controlSessionContext(sessionID, credential string) string {
 	return "control-session:" + sessionID + ":" + credential
+}
+
+func timeUnixNano(value time.Time) int64 {
+	if value.IsZero() {
+		return 0
+	}
+	return value.UTC().UnixNano()
 }

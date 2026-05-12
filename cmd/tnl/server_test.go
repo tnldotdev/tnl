@@ -1,7 +1,6 @@
 package main
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -10,26 +9,34 @@ import (
 
 func TestResolveServerPrefersExplicitValue(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "state")
-	if err := clientstate.SaveServer(root, "https://saved.example"); err != nil {
+	state, err := clientstate.Open(t.Context(), root)
+	if err != nil {
 		t.Fatal(err)
 	}
-	server, _, err := resolveServer(root, "https://explicit.example")
+	if err := state.SaveServer(t.Context(), "https://saved.example"); err != nil {
+		t.Fatal(err)
+	}
+	state.Close()
+	server, resolvedState, err := resolveServer(t.Context(), root, "https://explicit.example")
 	if err != nil || server != "https://explicit.example" {
 		t.Fatalf("resolved server = %q, %v", server, err)
 	}
-	server, _, err = resolveServer(root, "")
+	resolvedState.Close()
+	server, resolvedState, err = resolveServer(t.Context(), root, "")
 	if err != nil || server != "https://saved.example" {
 		t.Fatalf("saved server = %q, %v", server, err)
 	}
+	resolvedState.Close()
 }
 
 func TestResolveServerDefaultsToHostedWithoutSavingSelection(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "state")
-	server, _, err := resolveServer(root, "")
+	server, state, err := resolveServer(t.Context(), root, "")
 	if err != nil || server != defaultServerURL {
 		t.Fatalf("default server = %q, %v", server, err)
 	}
-	if _, err := os.Stat(filepath.Join(root, "selected-server.json")); !os.IsNotExist(err) {
-		t.Fatalf("selected server was persisted: %v", err)
+	defer state.Close()
+	if _, found, err := state.SavedServer(t.Context()); err != nil || found {
+		t.Fatalf("hosted default was persisted: found=%t, error=%v", found, err)
 	}
 }

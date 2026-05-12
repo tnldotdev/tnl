@@ -11,6 +11,7 @@ export interface TnlDevSession {
   readonly publicURL: string;
   readonly socket: string;
   readonly token: string;
+  readonly tunnelID: string;
 }
 
 export interface RegisteredTnlDevSession extends TnlDevSession {
@@ -32,10 +33,14 @@ export function readDevEnvironment(
 
   const socket = requiredEnvironment(environment, "TNL_DEV_SOCKET");
   const token = requiredEnvironment(environment, "TNL_DEV_TOKEN");
+  const tunnelID = requiredEnvironment(environment, "TNL_TUNNEL_ID");
   const hostname = requiredEnvironment(environment, "TNL_PUBLIC_HOSTNAME");
   const publicURL = requiredEnvironment(environment, "TNL_PUBLIC_URL");
   if (!/^[a-f0-9]{64}$/.test(token)) {
     throw new Error("TNL_DEV_TOKEN is invalid");
+  }
+  if (!/^tunnel_[a-f0-9]{32}$/.test(tunnelID)) {
+    throw new Error("TNL_TUNNEL_ID is invalid");
   }
   if (!validHostname(hostname)) {
     throw new Error("TNL_PUBLIC_HOSTNAME is invalid");
@@ -61,7 +66,7 @@ export function readDevEnvironment(
   }
 
   const port = optionalPort(environment.TNL_DEV_PORT, "TNL_DEV_PORT");
-  return Object.freeze({ hostname, port, publicURL, socket, token });
+  return Object.freeze({ hostname, port, publicURL, socket, token, tunnelID });
 }
 
 export async function registerTarget(

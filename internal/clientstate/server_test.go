@@ -7,13 +7,18 @@ import (
 
 func TestSavedServer(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "state")
-	if _, found, err := SavedServer(root); err != nil || found {
-		t.Fatalf("empty saved server = %t, %v", found, err)
-	}
-	if err := SaveServer(root, "https://TNL.EXAMPLE:443/"); err != nil {
+	database, err := Open(t.Context(), root)
+	if err != nil {
 		t.Fatal(err)
 	}
-	server, found, err := SavedServer(root)
+	defer database.Close()
+	if _, found, err := database.SavedServer(t.Context()); err != nil || found {
+		t.Fatalf("empty saved server = %t, %v", found, err)
+	}
+	if err := database.SaveServer(t.Context(), "https://TNL.EXAMPLE:443/"); err != nil {
+		t.Fatal(err)
+	}
+	server, found, err := database.SavedServer(t.Context())
 	if err != nil || !found || server != "https://tnl.example" {
 		t.Fatalf("saved server = %q, %t, %v", server, found, err)
 	}

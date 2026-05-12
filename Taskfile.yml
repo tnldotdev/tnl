@@ -114,7 +114,7 @@ tasks:
     cmds:
       - task: go:generate
       - go test ./pkg/protocol/workerv1 -run='^TestControlSchemaTracksMessageTypes$'
-      - git diff --exit-code -- pkg/protocol internal/state/statedb
+      - git diff --exit-code -- pkg/protocol internal/clientstate/clientstatedb internal/state/statedb
 
   go:format:
     cmds:

@@ -1,2 +1,2 @@
-// Package clientstate persists client control sessions, route keys, and certificates.
+// Package clientstate owns shared local client state and tunnel lifecycle snapshots.
 package clientstate

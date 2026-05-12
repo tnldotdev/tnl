@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
-	"sync"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/authorization"
@@ -63,11 +62,24 @@ type Config struct {
 	LoadRegions       func(context.Context) (map[string]*tailcfg.DERPRegion, error)
 	DrainTime         time.Duration
 	Logf              logger.Logf
-	// OnRoute runs after creation or recovery, before activation.
-	OnRoute func(string)
-	// OnReady runs once; OnSessionReady runs for every version and may abort publisher.
-	OnReady        func(string)
-	OnSessionReady func(string, uint64) error
+	Observe           func(Event) error
+}
+
+type EventType string
+
+const (
+	EventRoute        EventType = "route"
+	EventProvisioning EventType = "provisioning"
+	EventReady        EventType = "ready"
+	EventDraining     EventType = "draining"
+)
+
+type Event struct {
+	Type      EventType
+	RouteID   string
+	Hostname  string
+	PublicURL string
+	Version   uint64
 }
 
 func Run(ctx context.Context, config Config) (result error) {
@@ -131,8 +143,8 @@ func Run(ctx context.Context, config Config) (result error) {
 			result = errors.Join(result, fmt.Errorf("publisher: delete route: %w", err))
 		}
 	}()
-	if routeID != "" && config.OnRoute != nil {
-		config.OnRoute(routeID)
+	if err := observe(config, Event{Type: EventRoute, RouteID: routeID, Hostname: setup.Route.Hostname}); err != nil {
+		return err
 	}
 	var routeState *clientstate.Route
 	if automaticCertificates {
@@ -142,23 +154,21 @@ func Run(ctx context.Context, config Config) (result error) {
 		}
 		defer routeState.Close()
 	}
-	var announced sync.Once
 	for {
 		if setup.Route.Id != routeID {
 			return errors.New("publisher: server changed route ID during session acquisition")
 		}
+		if err := observe(config, Event{
+			Type: EventProvisioning, RouteID: routeID, Hostname: setup.Route.Hostname,
+			Version: uint64(setup.Session.Version),
+		}); err != nil {
+			return err
+		}
 		err := runSession(ctx, config, setup, routeState, func() error {
-			if config.OnSessionReady != nil {
-				if err := config.OnSessionReady("https://"+setup.Route.Hostname, uint64(setup.Session.Version)); err != nil {
-					return err
-				}
-			}
-			announced.Do(func() {
-				if config.OnReady != nil {
-					config.OnReady("https://" + setup.Route.Hostname)
-				}
+			return observe(config, Event{
+				Type: EventReady, RouteID: routeID, Hostname: setup.Route.Hostname,
+				PublicURL: "https://" + setup.Route.Hostname, Version: uint64(setup.Session.Version),
 			})
-			return nil
 		})
 		if ctx.Err() != nil {
 			return nil
@@ -296,7 +306,7 @@ func runSession(
 	var material clientstate.Material
 	var hasMaterial bool
 	if state != nil {
-		material, hasMaterial, err = state.Current(setup.Route.Hostname)
+		material, hasMaterial, err = state.Current(ctx, setup.Route.Hostname)
 		if errors.Is(err, clientstate.ErrCertificateExpired) {
 			hasMaterial = false
 		} else if err != nil {
@@ -408,7 +418,10 @@ func runSession(
 	for {
 		select {
 		case <-ctx.Done():
-			return drainRoute(route, config.DrainTime)
+			return errors.Join(
+				observe(config, Event{Type: EventDraining, RouteID: setup.Route.Id, Hostname: setup.Route.Hostname, Version: version}),
+				drainRoute(route, config.DrainTime),
+			)
 		case err := <-heartbeatErrors:
 			return fmt.Errorf("publisher: heartbeat: %w", err)
 		case <-relayCheck:
@@ -450,6 +463,13 @@ func runSession(
 			renewalTimer.Reset(max(time.Until(material.RenewAt), 0))
 		}
 	}
+}
+
+func observe(config Config, event Event) error {
+	if config.Observe == nil {
+		return nil
+	}
+	return config.Observe(event)
 }
 
 func refreshCertificate(
@@ -496,7 +516,7 @@ func issueCertificate(
 	hostname, profile string,
 	heartbeatErrors <-chan error,
 ) (clientstate.Material, error) {
-	pending, err := state.Pending(hostname)
+	pending, err := state.Pending(ctx, hostname)
 	if err != nil {
 		return clientstate.Material{}, err
 	}
@@ -509,7 +529,7 @@ func issueCertificate(
 			var terminal *terminalCertificateIssuanceError
 			if errors.As(createErr, &terminal) && !rotatedTerminalIssuance {
 				// Retry one terminal issuance with fresh key material.
-				pending, createErr = state.NewPending(hostname)
+				pending, createErr = state.NewPending(ctx, hostname)
 				if createErr != nil {
 					return serverv1.CertificateIssuance{}, createErr
 				}
@@ -519,7 +539,7 @@ func issueCertificate(
 			if createErr != nil {
 				return serverv1.CertificateIssuance{}, createErr
 			}
-			pending, createErr = state.RecordIssuance(hostname, pending, issuance.Id, version)
+			pending, createErr = state.RecordIssuance(ctx, hostname, pending, issuance.Id, version)
 			return issuance, createErr
 		}
 	}
@@ -570,7 +590,7 @@ issuanceLoop:
 					var terminal *terminalCertificateIssuanceError
 					if errors.As(err, &terminal) && !rotatedTerminalIssuance {
 						route.RemoveChallenge(challenge.ID)
-						pending, err = state.NewPending(hostname)
+						pending, err = state.NewPending(ctx, hostname)
 						if err != nil {
 							return clientstate.Material{}, err
 						}
@@ -627,6 +647,7 @@ func installCertificateIssuance(
 ) (clientstate.Material, error) {
 	// Persist and verify before acknowledging the server; MarkInstalled closes the recovery window.
 	material, err := state.Commit(
+		ctx,
 		hostname, pending, []byte(*issuance.CertificatePem), *issuance.RenewAt, issuance.Id, version,
 	)
 	if err != nil {
@@ -643,7 +664,7 @@ func installCertificateIssuance(
 	); err != nil {
 		return material, err
 	}
-	installed, err := state.MarkInstalled(hostname, issuance.Id, version)
+	installed, err := state.MarkInstalled(ctx, hostname, issuance.Id, version)
 	if err != nil {
 		return material, err
 	}
@@ -715,7 +736,7 @@ func reconcileCertificateInstallation(
 	if err != nil || !equalCertificateChain(chain, material.Certificate.Certificate) || !issuance.RenewAt.Equal(material.RenewAt) {
 		return material, errors.New("publisher: reused certificate does not match persisted material")
 	}
-	updated, err := state.RecordCurrentIssuance(hostname, issuance.Id, version)
+	updated, err := state.RecordCurrentIssuance(ctx, hostname, issuance.Id, version)
 	if err != nil {
 		return material, err
 	}
@@ -728,7 +749,7 @@ func reconcileCertificateInstallation(
 	); err != nil {
 		return material, err
 	}
-	installed, err := state.MarkInstalled(hostname, issuance.Id, version)
+	installed, err := state.MarkInstalled(ctx, hostname, issuance.Id, version)
 	if err != nil {
 		return material, err
 	}
@@ -748,7 +769,7 @@ func completeReboundCertificateIssuance(
 	issuance serverv1.CertificateIssuance,
 	heartbeatErrors <-chan error,
 ) (clientstate.Material, error) {
-	pending, err := state.CurrentKey(hostname)
+	pending, err := state.CurrentKey(ctx, hostname)
 	if err != nil {
 		return current, err
 	}

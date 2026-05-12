@@ -19,12 +19,14 @@ describe("tnl dev environment", () => {
       TNL_DEV_PROTOCOL: "1",
       TNL_DEV_SOCKET: "/tmp/tnl-test.sock",
       TNL_DEV_TOKEN: "a".repeat(64),
+      TNL_TUNNEL_ID: `tunnel_${"b".repeat(32)}`,
       TNL_PUBLIC_HOSTNAME: "demo.tnl.dev",
       TNL_PUBLIC_URL: "https://demo.tnl.dev",
     };
     for (const name of [
       "TNL_DEV_SOCKET",
       "TNL_DEV_TOKEN",
+      "TNL_TUNNEL_ID",
       "TNL_PUBLIC_HOSTNAME",
       "TNL_PUBLIC_URL",
     ]) {
@@ -46,6 +48,7 @@ describe("target registration", () => {
       hostname: "demo.tnl.dev",
       port: 5173,
       publicURL: "https://demo.tnl.dev",
+      tunnelID: `tunnel_${"b".repeat(32)}`,
     });
     expect(bootstrap.requests).toEqual([
       {
