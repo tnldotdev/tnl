@@ -248,6 +248,7 @@ type RouteUsageOutboxItem struct {
 
 type RouteUsageReport struct {
 	SnapshotID                   int64
+	ReportID                     string
 	Revision                     int64
 	ObservedThrough              int64
 	ConnectionAttempts           int64
@@ -288,6 +289,7 @@ type RouteUsageSnapshot struct {
 	VisitorNetworkHll            []byte
 	VisitorNetworkEstimate       int64
 	Complete                     int64
+	Finalized                    int64
 }
 
 type ServerValue struct {

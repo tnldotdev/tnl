@@ -92,9 +92,11 @@ it without printing it in daemon logs or storing it in `.env`:
 docker compose exec tnld tnl admin server login-token --state-dir /var/lib/tnl
 ```
 
-Install and verify a release archive as described in [Releases](RELEASES.md),
-then log in. Browser authorization is preferred when the server advertises it;
-otherwise `tnl login` prompts for the login token:
+Install and verify a release archive or an exact-version `@tnldotdev/tnl`
+package as described in [Releases](RELEASES.md), then log in. The npm package
+contains the client only; keep deploying `tnld` from the verified container.
+Browser authorization is preferred when the server advertises it; otherwise
+`tnl login` prompts for the login token:
 
 ```console
 tnl login https://tnl.example.com
@@ -194,7 +196,9 @@ credential with `tnl admin server token service`, then configure both values:
 Leaving both values empty disables reporting; configuring only one is invalid.
 Worker mode cannot report usage because it does not own the durable route state. The
 daemon checkpoints aggregates and visitor sketches in SQLite, retains an outbox
-across restarts, and removes an item only after a `204 No Content` response.
+across restarts, and batches lifecycle events and usage snapshots. Registration
+remains singleton; batch results are correlated by stable item IDs before exact
+outbox revisions are acknowledged.
 
 ## Split Edge And Workers
 

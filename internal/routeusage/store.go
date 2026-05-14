@@ -134,6 +134,7 @@ type UsageSnapshot struct {
 	VisitorNetworkHLL            []byte
 	VisitorNetworkEstimate       uint64
 	Complete                     bool
+	Finalized                    bool
 	Publish                      bool
 }
 
@@ -217,6 +218,10 @@ func (s *Store) SaveUsage(ctx context.Context, snapshots []UsageSnapshot) error 
 		if snapshot.Complete {
 			complete = 1
 		}
+		finalized := int64(0)
+		if snapshot.Finalized || snapshot.Complete {
+			finalized = 1
+		}
 		rowID, err := queries.UpsertRouteUsageSnapshot(ctx, statedb.UpsertRouteUsageSnapshotParams{
 			RouteID: snapshot.RouteID, Version: version, Resolution: snapshot.Resolution,
 			BucketStart: snapshot.BucketStart.UTC().UnixNano(), Revision: revision,
@@ -227,7 +232,8 @@ func (s *Store) SaveUsage(ctx context.Context, snapshots []UsageSnapshot) error 
 			PublisherOpenLatency:         snapshot.PublisherOpenLatency,
 			TimeToFirstPublisherByte:     snapshot.TimeToFirstPublisherByte,
 			SuccessfulConnectionDuration: snapshot.SuccessfulConnectionDuration,
-			VisitorNetworkHll:            visitorCheckpoint, VisitorNetworkEstimate: visitorEstimateInteger, Complete: complete,
+			VisitorNetworkHll:            visitorCheckpoint, VisitorNetworkEstimate: visitorEstimateInteger,
+			Complete: complete, Finalized: finalized,
 		})
 		if err != nil {
 			return fmt.Errorf("routeusage: save usage bucket: %w", err)
@@ -236,8 +242,13 @@ func (s *Store) SaveUsage(ctx context.Context, snapshots []UsageSnapshot) error 
 			if revision < 1 {
 				return errors.New("routeusage: deliverable usage snapshot has no revision")
 			}
+			reportID, err := newUsageReportID()
+			if err != nil {
+				return err
+			}
 			count, err := queries.UpsertRouteUsageReport(ctx, statedb.UpsertRouteUsageReportParams{
-				SnapshotID: rowID, Revision: revision, ObservedThrough: snapshot.ObservedThrough.UTC().UnixNano(),
+				SnapshotID: rowID, ReportID: reportID, Revision: revision,
+				ObservedThrough:    snapshot.ObservedThrough.UTC().UnixNano(),
 				ConnectionAttempts: connectionAttempts, PolicyDenials: policyDenials, CapacityDenials: capacityDenials,
 				PublisherOpenFailures: publisherOpenFailures, SuccessfulStreams: successfulStreams,
 				ConnectionNanoseconds: connectionNanoseconds, IngressBytes: ingressBytes, EgressBytes: egressBytes,
@@ -302,14 +313,73 @@ func (s *Store) outboxStats(ctx context.Context, now time.Time) (int64, int64, i
 	return registration, lifecycle, usage, age, nil
 }
 
-func (s *Store) acknowledge(ctx context.Context, kind string, sourceID, revision int64) (bool, error) {
-	count, err := s.queries.DeleteRouteUsageOutboxRevision(ctx, statedb.DeleteRouteUsageOutboxRevisionParams{
-		SourceKind: kind, SourceID: sourceID, SourceRevision: revision,
-	})
+type outboxRevision struct {
+	kind     string
+	sourceID int64
+	revision int64
+}
+
+func (s *Store) markAttempted(ctx context.Context, items []outboxRevision) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return false, fmt.Errorf("routeusage: acknowledge report: %w", err)
+		return false, fmt.Errorf("routeusage: begin outbox attempt: %w", err)
 	}
-	return count == 1, nil
+	defer tx.Rollback()
+	queries := s.queries.WithTx(tx)
+	attemptedAt := time.Now().UTC().UnixNano()
+	for _, item := range items {
+		count, err := queries.MarkRouteUsageOutboxAttempt(ctx, statedb.MarkRouteUsageOutboxAttemptParams{
+			AttemptedAt: attemptedAt, SourceKind: item.kind,
+			SourceID: item.sourceID, SourceRevision: item.revision,
+		})
+		if err != nil {
+			return false, fmt.Errorf("routeusage: mark outbox attempt: %w", err)
+		}
+		if count != 1 {
+			return false, nil
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("routeusage: commit outbox attempt: %w", err)
+	}
+	return true, nil
+}
+
+func (s *Store) acknowledgeLifecycleBatch(ctx context.Context, items []outboxRevision) error {
+	return s.acknowledgeBatch(ctx, items, false)
+}
+
+func (s *Store) acknowledgeUsageBatch(ctx context.Context, items []outboxRevision) error {
+	return s.acknowledgeBatch(ctx, items, true)
+}
+
+func (s *Store) acknowledgeBatch(ctx context.Context, items []outboxRevision, deleteFinalized bool) error {
+	if len(items) == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("routeusage: begin batch acknowledgment: %w", err)
+	}
+	defer tx.Rollback()
+	queries := s.queries.WithTx(tx)
+	for _, item := range items {
+		count, err := queries.DeleteRouteUsageOutboxRevision(ctx, statedb.DeleteRouteUsageOutboxRevisionParams{
+			SourceKind: item.kind, SourceID: item.sourceID, SourceRevision: item.revision,
+		})
+		if err != nil {
+			return fmt.Errorf("routeusage: acknowledge batch item: %w", err)
+		}
+		if deleteFinalized && count == 1 {
+			if _, err := queries.DeleteAcknowledgedRouteUsageSnapshot(ctx, item.sourceID); err != nil {
+				return fmt.Errorf("routeusage: delete finalized usage snapshot: %w", err)
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("routeusage: commit batch acknowledgment: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) acknowledgeRegistration(ctx context.Context, sourceID, revision int64) (bool, error) {
@@ -345,13 +415,6 @@ func (s *Store) acknowledgeRegistration(ctx context.Context, sourceID, revision 
 	return true, nil
 }
 
-func (s *Store) deleteUsage(ctx context.Context, id int64) error {
-	if _, err := s.queries.DeleteAcknowledgedRouteUsageSnapshot(ctx, id); err != nil {
-		return fmt.Errorf("routeusage: delete delivered usage: %w", err)
-	}
-	return nil
-}
-
 func (s *Store) pruneLifecycle(ctx context.Context, now time.Time) error {
 	return s.queries.DeleteExpiredRouteLifecycleEvents(ctx, statedb.DeleteExpiredRouteLifecycleEventsParams{
 		Cutoff: now.Add(-365 * 24 * time.Hour).UnixNano(), BatchSize: 5000,
@@ -373,11 +436,19 @@ func databaseInteger(value uint64) (int64, error) {
 }
 
 func newEventID() (string, error) {
+	return newOpaqueID("event_", "lifecycle event")
+}
+
+func newUsageReportID() (string, error) {
+	return newOpaqueID("usage_report_", "usage report")
+}
+
+func newOpaqueID(prefix, description string) (string, error) {
 	var material [16]byte
 	if _, err := rand.Read(material[:]); err != nil {
-		return "", fmt.Errorf("routeusage: generate lifecycle event ID: %w", err)
+		return "", fmt.Errorf("routeusage: generate %s ID: %w", description, err)
 	}
-	return "event_" + hex.EncodeToString(material[:]), nil
+	return prefix + hex.EncodeToString(material[:]), nil
 }
 
 func ensureVisitorMasterSecret(db *sql.DB) ([sha256.Size]byte, error) {

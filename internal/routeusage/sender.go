@@ -19,7 +19,12 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/routeusagev1"
 )
 
-const requestTimeout = 10 * time.Second
+const (
+	requestTimeout       = 10 * time.Second
+	maximumBatchItems    = 32
+	maximumRequestBytes  = 256 * 1024
+	maximumResponseBytes = 64 * 1024
+)
 
 type Sender struct {
 	store    *Store
@@ -60,6 +65,8 @@ func (p *Sender) Run(ctx context.Context, report func(error)) {
 		}
 		var delay <-chan time.Time
 		var pollReady <-chan time.Time
+		var pruneReady <-chan time.Time
+		var wake <-chan struct{}
 		var timer *time.Timer
 		if err != nil {
 			jitter := time.Duration(rand.Int64N(int64(backoff / 2)))
@@ -68,6 +75,8 @@ func (p *Sender) Run(ctx context.Context, report func(error)) {
 			backoff = min(backoff*2, 30*time.Second)
 		} else {
 			pollReady = poll.C
+			pruneReady = prune.C
+			wake = p.store.wake
 		}
 		select {
 		case <-ctx.Done():
@@ -75,13 +84,10 @@ func (p *Sender) Run(ctx context.Context, report func(error)) {
 				timer.Stop()
 			}
 			return
-		case <-p.store.wake:
-			if timer != nil {
-				timer.Stop()
-			}
+		case <-wake:
 		case <-delay:
 		case <-pollReady:
-		case now := <-prune.C:
+		case now := <-pruneReady:
 			if pruneErr := p.store.pruneLifecycle(ctx, now.UTC()); pruneErr != nil && report != nil {
 				report(pruneErr)
 			}
@@ -98,17 +104,6 @@ func (p *Sender) SendOne(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("routeusage: read outbox: %w", err)
 	}
-	count, err := p.store.queries.MarkRouteUsageOutboxAttempt(ctx, statedb.MarkRouteUsageOutboxAttemptParams{
-		AttemptedAt: time.Now().UTC().UnixNano(), SourceKind: item.SourceKind,
-		SourceID: item.SourceID, SourceRevision: item.SourceRevision,
-	})
-	if err != nil {
-		return false, fmt.Errorf("routeusage: mark outbox attempt: %w", err)
-	}
-	if count != 1 {
-		return true, nil
-	}
-
 	var kind string
 	switch item.SourceKind {
 	case registrationSource:
@@ -116,10 +111,10 @@ func (p *Sender) SendOne(ctx context.Context) (bool, error) {
 		err = p.sendRegistration(ctx, item)
 	case lifecycleSource:
 		kind = "lifecycle"
-		err = p.sendLifecycle(ctx, item)
+		err = p.sendLifecycleBatch(ctx)
 	case usageSource:
 		kind = "usage"
-		err = p.sendUsage(ctx, item)
+		err = p.sendUsageBatch(ctx)
 	default:
 		return false, fmt.Errorf("routeusage: unknown outbox source %q", item.SourceKind)
 	}
@@ -154,6 +149,12 @@ func (p *Sender) updateOutbox(ctx context.Context) {
 }
 
 func (p *Sender) sendRegistration(ctx context.Context, item statedb.RouteUsageOutboxItem) error {
+	marked, err := p.store.markAttempted(ctx, []outboxRevision{{
+		kind: registrationSource, sourceID: item.SourceID, revision: item.SourceRevision,
+	}})
+	if err != nil || !marked {
+		return err
+	}
 	registration, err := p.store.queries.GetRouteRegistrationReport(ctx, item.SourceID)
 	if err != nil {
 		return fmt.Errorf("routeusage: read route registration: %w", err)
@@ -180,66 +181,114 @@ func (p *Sender) sendRegistration(ctx context.Context, item statedb.RouteUsageOu
 	return nil
 }
 
-func (p *Sender) sendLifecycle(ctx context.Context, item statedb.RouteUsageOutboxItem) error {
-	event, err := p.store.queries.GetRouteLifecycleReport(ctx, item.SourceID)
+func (p *Sender) sendLifecycleBatch(ctx context.Context) error {
+	rows, err := p.store.queries.ListRouteLifecycleOutboxBatch(ctx, maximumBatchItems)
 	if err != nil {
-		return fmt.Errorf("routeusage: read lifecycle event: %w", err)
+		return fmt.Errorf("routeusage: read lifecycle batch: %w", err)
 	}
-	payload := routeusagev1.RouteLifecycleEvent{
-		EventId: event.EventID, Version: strconv.FormatInt(event.Version, 10),
-		Sequence: strconv.FormatInt(event.Sequence, 10), OccurredAt: wireTimestamp(time.Unix(0, event.OccurredAt)),
-		Transition: routeusagev1.RouteLifecycleEventTransition(event.Transition),
+	items := make([]routeusagev1.RouteLifecycleEvent, len(rows))
+	for index, event := range rows {
+		items[index] = routeusagev1.RouteLifecycleEvent{
+			ItemId: event.EventID, RouteId: event.RouteID, Version: strconv.FormatInt(event.Version, 10),
+			Sequence: strconv.FormatInt(event.Sequence, 10), OccurredAt: wireTimestamp(time.Unix(0, event.OccurredAt)),
+			Transition: routeusagev1.RouteLifecycleEventTransition(event.Transition),
+		}
 	}
-	if err := p.postRoute(ctx, event.RouteID, "lifecycle-events", payload); err != nil {
+	count, body, err := encodeBatch(items)
+	if err != nil {
 		return err
 	}
-	_, err = p.store.acknowledge(ctx, lifecycleSource, event.ID, item.SourceRevision)
-	return err
+	rows = rows[:count]
+	references := make([]outboxRevision, count)
+	itemIDs := make([]string, count)
+	byID := make(map[string]outboxRevision, count)
+	for index, row := range rows {
+		reference := outboxRevision{kind: lifecycleSource, sourceID: row.SourceID, revision: row.SourceRevision}
+		references[index], itemIDs[index], byID[row.EventID] = reference, row.EventID, reference
+	}
+	marked, err := p.store.markAttempted(ctx, references)
+	if err != nil || !marked {
+		return err
+	}
+	accepted, rejected, err := p.postBatch(ctx, "/v1/routes/lifecycle-events", body, itemIDs)
+	if err != nil {
+		return err
+	}
+	acknowledged := make([]outboxRevision, 0, len(accepted))
+	for _, itemID := range accepted {
+		acknowledged = append(acknowledged, byID[itemID])
+	}
+	if err := p.store.acknowledgeLifecycleBatch(ctx, acknowledged); err != nil {
+		return err
+	}
+	if rejected {
+		return errors.New("routeusage: receiver rejected lifecycle batch items")
+	}
+	return nil
 }
 
-func (p *Sender) sendUsage(ctx context.Context, item statedb.RouteUsageOutboxItem) error {
-	bucket, err := p.store.queries.GetRouteUsageReport(ctx, statedb.GetRouteUsageReportParams{
-		SourceID: item.SourceID, SourceRevision: item.SourceRevision,
-	})
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	}
+func (p *Sender) sendUsageBatch(ctx context.Context) error {
+	rows, err := p.store.queries.ListRouteUsageOutboxBatch(ctx, maximumBatchItems)
 	if err != nil {
-		return fmt.Errorf("routeusage: read usage snapshot: %w", err)
+		return fmt.Errorf("routeusage: read usage batch: %w", err)
 	}
-	publisherOpenLatency, err := protocolHistogram(bucket.PublisherOpenLatency)
+	items := make([]routeusagev1.RouteUsageSnapshot, len(rows))
+	for index, bucket := range rows {
+		publisherOpenLatency, err := protocolHistogram(bucket.PublisherOpenLatency)
+		if err != nil {
+			return err
+		}
+		timeToFirstPublisherByte, err := protocolHistogram(bucket.TimeToFirstPublisherByte)
+		if err != nil {
+			return err
+		}
+		successfulConnectionDuration, err := protocolHistogram(bucket.SuccessfulConnectionDuration)
+		if err != nil {
+			return err
+		}
+		items[index] = routeusagev1.RouteUsageSnapshot{
+			ItemId: bucket.ReportID, RouteId: bucket.RouteID,
+			Version: strconv.FormatInt(bucket.Version, 10), Resolution: routeusagev1.RouteUsageSnapshotResolution(bucket.Resolution),
+			BucketStart: wireTimestamp(time.Unix(0, bucket.BucketStart)), Revision: strconv.FormatInt(bucket.SourceRevision, 10),
+			ObservedThrough: wireTimestamp(time.Unix(0, bucket.ObservedThrough)), ConnectionAttempts: strconv.FormatInt(bucket.ConnectionAttempts, 10),
+			PolicyDenials: strconv.FormatInt(bucket.PolicyDenials, 10), CapacityDenials: strconv.FormatInt(bucket.CapacityDenials, 10),
+			PublisherOpenFailures: strconv.FormatInt(bucket.PublisherOpenFailures, 10), SuccessfulStreams: strconv.FormatInt(bucket.SuccessfulStreams, 10),
+			ConnectionNanoseconds: strconv.FormatInt(bucket.ConnectionNanoseconds, 10), IngressBytes: strconv.FormatInt(bucket.IngressBytes, 10),
+			EgressBytes: strconv.FormatInt(bucket.EgressBytes, 10), PublisherOpenLatency: publisherOpenLatency,
+			TimeToFirstPublisherByte: timeToFirstPublisherByte, SuccessfulConnectionDuration: successfulConnectionDuration,
+			VisitorNetworkEstimate: strconv.FormatInt(bucket.VisitorNetworkEstimate, 10), VisitorNetworkHll: bucket.VisitorNetworkHll,
+			Complete: bucket.Complete != 0,
+		}
+	}
+	count, body, err := encodeBatch(items)
 	if err != nil {
 		return err
 	}
-	timeToFirstPublisherByte, err := protocolHistogram(bucket.TimeToFirstPublisherByte)
+	rows = rows[:count]
+	references := make([]outboxRevision, count)
+	itemIDs := make([]string, count)
+	byID := make(map[string]outboxRevision, count)
+	for index, row := range rows {
+		reference := outboxRevision{kind: usageSource, sourceID: row.SourceID, revision: row.SourceRevision}
+		references[index], itemIDs[index], byID[row.ReportID] = reference, row.ReportID, reference
+	}
+	marked, err := p.store.markAttempted(ctx, references)
+	if err != nil || !marked {
+		return err
+	}
+	accepted, rejected, err := p.postBatch(ctx, "/v1/routes/usage-snapshots", body, itemIDs)
 	if err != nil {
 		return err
 	}
-	successfulConnectionDuration, err := protocolHistogram(bucket.SuccessfulConnectionDuration)
-	if err != nil {
+	acknowledged := make([]outboxRevision, 0, len(accepted))
+	for _, itemID := range accepted {
+		acknowledged = append(acknowledged, byID[itemID])
+	}
+	if err := p.store.acknowledgeUsageBatch(ctx, acknowledged); err != nil {
 		return err
 	}
-	payload := routeusagev1.RouteUsageSnapshot{
-		Version: strconv.FormatInt(bucket.Version, 10), Resolution: routeusagev1.RouteUsageSnapshotResolution(bucket.Resolution),
-		BucketStart: wireTimestamp(time.Unix(0, bucket.BucketStart)), Revision: strconv.FormatInt(item.SourceRevision, 10),
-		ObservedThrough: wireTimestamp(time.Unix(0, bucket.ObservedThrough)), ConnectionAttempts: strconv.FormatInt(bucket.ConnectionAttempts, 10),
-		PolicyDenials: strconv.FormatInt(bucket.PolicyDenials, 10), CapacityDenials: strconv.FormatInt(bucket.CapacityDenials, 10),
-		PublisherOpenFailures: strconv.FormatInt(bucket.PublisherOpenFailures, 10), SuccessfulStreams: strconv.FormatInt(bucket.SuccessfulStreams, 10),
-		ConnectionNanoseconds: strconv.FormatInt(bucket.ConnectionNanoseconds, 10), IngressBytes: strconv.FormatInt(bucket.IngressBytes, 10),
-		EgressBytes: strconv.FormatInt(bucket.EgressBytes, 10), PublisherOpenLatency: publisherOpenLatency,
-		TimeToFirstPublisherByte: timeToFirstPublisherByte, SuccessfulConnectionDuration: successfulConnectionDuration,
-		VisitorNetworkEstimate: strconv.FormatInt(bucket.VisitorNetworkEstimate, 10), VisitorNetworkHll: bucket.VisitorNetworkHll,
-		Complete: bucket.Complete != 0,
-	}
-	if err := p.postRoute(ctx, bucket.RouteID, "usage-snapshots", payload); err != nil {
-		return err
-	}
-	acknowledged, err := p.store.acknowledge(ctx, usageSource, bucket.ID, item.SourceRevision)
-	if err != nil || !acknowledged {
-		return err
-	}
-	if bucket.Complete != 0 {
-		return p.store.deleteUsage(ctx, bucket.ID)
+	if rejected {
+		return errors.New("routeusage: receiver rejected usage batch items")
 	}
 	return nil
 }
@@ -266,8 +315,102 @@ func protocolHistogram(data []byte) (*routeusagev1.DurationHistogram, error) {
 	}, nil
 }
 
-func (p *Sender) postRoute(ctx context.Context, routeID, endpoint string, payload any) error {
-	return p.post(ctx, "/v1/routes/"+url.PathEscape(routeID)+"/"+endpoint, payload)
+func encodeBatch[T any](items []T) (int, []byte, error) {
+	if len(items) > maximumBatchItems {
+		items = items[:maximumBatchItems]
+	}
+	for len(items) > 0 {
+		body, err := json.Marshal(struct {
+			Items []T `json:"items"`
+		}{Items: items})
+		if err != nil {
+			return 0, nil, fmt.Errorf("routeusage: encode batch request: %w", err)
+		}
+		if len(body) <= maximumRequestBytes {
+			return len(items), body, nil
+		}
+		items = items[:len(items)-1]
+	}
+	return 0, nil, errors.New("routeusage: batch item exceeds request size limit")
+}
+
+func (p *Sender) postBatch(ctx context.Context, path string, body []byte, itemIDs []string) ([]string, bool, error) {
+	target := *p.baseURL
+	target.Path = strings.TrimSuffix(target.Path, "/") + path
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, target.String(), bytes.NewReader(body))
+	if err != nil {
+		return nil, false, fmt.Errorf("routeusage: create batch request: %w", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+p.token)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := p.client.Do(request)
+	if err != nil {
+		return nil, false, fmt.Errorf("routeusage: deliver batch request: %w", err)
+	}
+	defer response.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(response.Body, maximumResponseBytes+1))
+	if err != nil {
+		return nil, false, fmt.Errorf("routeusage: read batch response: %w", err)
+	}
+	if len(data) > maximumResponseBytes {
+		return nil, false, errors.New("routeusage: receiver response exceeds size limit")
+	}
+	if response.StatusCode != http.StatusOK {
+		return nil, false, fmt.Errorf("routeusage: receiver returned %s", response.Status)
+	}
+	var payload struct {
+		Results []routeusagev1.BatchResult `json:"results"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&payload); err != nil {
+		return nil, false, fmt.Errorf("routeusage: decode batch response: %w", err)
+	}
+	if err := requireJSONEnd(decoder); err != nil {
+		return nil, false, err
+	}
+	requested := make(map[string]struct{}, len(itemIDs))
+	for _, itemID := range itemIDs {
+		requested[itemID] = struct{}{}
+	}
+	if len(payload.Results) != len(requested) {
+		return nil, false, errors.New("routeusage: batch response result count does not match request")
+	}
+	seen := make(map[string]struct{}, len(payload.Results))
+	accepted := make([]string, 0, len(payload.Results))
+	rejected := false
+	for _, result := range payload.Results {
+		if _, ok := requested[result.ItemId]; !ok {
+			return nil, false, fmt.Errorf("routeusage: batch response contains unknown item %q", result.ItemId)
+		}
+		if _, duplicate := seen[result.ItemId]; duplicate {
+			return nil, false, fmt.Errorf("routeusage: batch response contains duplicate item %q", result.ItemId)
+		}
+		seen[result.ItemId] = struct{}{}
+		if result.Accepted {
+			if result.Code != nil {
+				return nil, false, fmt.Errorf("routeusage: accepted batch item %q has a problem code", result.ItemId)
+			}
+			accepted = append(accepted, result.ItemId)
+			continue
+		}
+		if result.Code == nil || !result.Code.Valid() {
+			return nil, false, fmt.Errorf("routeusage: rejected batch item %q has no valid problem code", result.ItemId)
+		}
+		rejected = true
+	}
+	return accepted, rejected, nil
+}
+
+func requireJSONEnd(decoder *json.Decoder) error {
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("routeusage: batch response contains multiple JSON values")
+		}
+		return fmt.Errorf("routeusage: decode trailing batch response: %w", err)
+	}
+	return nil
 }
 
 func (p *Sender) post(ctx context.Context, path string, payload any) error {

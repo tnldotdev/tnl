@@ -7,6 +7,7 @@ package statedb
 
 import (
 	"context"
+	"database/sql"
 )
 
 const acknowledgeRouteRegistrationRevision = `-- name: AcknowledgeRouteRegistrationRevision :execrows
@@ -91,7 +92,7 @@ func (q *Queries) CountRouteUsageOutboxByKind(ctx context.Context, sourceKind st
 const deleteAcknowledgedRouteUsageSnapshot = `-- name: DeleteAcknowledgedRouteUsageSnapshot :execrows
 DELETE FROM route_usage_snapshots
 WHERE id = ?1
-    AND complete = 1
+    AND finalized = 1
     AND NOT EXISTS (
         SELECT 1
         FROM route_usage_outbox_items
@@ -114,6 +115,16 @@ WHERE id IN (
     SELECT event.id
     FROM route_lifecycle_events AS event
     WHERE event.occurred_at < ?1
+        AND NOT (
+            event.transition = 'version_started'
+            AND EXISTS (
+                SELECT 1
+                FROM routes AS current_route
+                WHERE current_route.id = event.route_id
+                    AND current_route.version = event.version
+                    AND current_route.status <> 'deleted'
+            )
+        )
         AND NOT EXISTS (
             SELECT 1
             FROM route_usage_outbox_items
@@ -202,6 +213,19 @@ WHERE
                         AND registration.acknowledged_revision IS NOT NULL
                 )
             )
+            AND EXISTS (
+                SELECT 1
+                FROM route_lifecycle_events AS started
+                WHERE started.route_id = snapshot.route_id
+                    AND started.version = snapshot.version
+                    AND started.transition = 'version_started'
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM route_usage_outbox_items AS started_outbox
+                        WHERE started_outbox.source_kind = 'lifecycle_event'
+                            AND started_outbox.source_id = started.id
+                    )
+            )
     ))
 ORDER BY
     coalesce(outbox.last_attempted_at, outbox.enqueued_at),
@@ -241,27 +265,6 @@ func (q *Queries) GetOldestRouteUsageOutboxTime(ctx context.Context) (int64, err
 	return enqueued_at, err
 }
 
-const getRouteLifecycleReport = `-- name: GetRouteLifecycleReport :one
-SELECT id, event_id, route_id, version, sequence, occurred_at, transition
-FROM route_lifecycle_events
-WHERE id = ?1
-`
-
-func (q *Queries) GetRouteLifecycleReport(ctx context.Context, id int64) (RouteLifecycleEvent, error) {
-	row := q.db.QueryRowContext(ctx, getRouteLifecycleReport, id)
-	var i RouteLifecycleEvent
-	err := row.Scan(
-		&i.ID,
-		&i.EventID,
-		&i.RouteID,
-		&i.Version,
-		&i.Sequence,
-		&i.OccurredAt,
-		&i.Transition,
-	)
-	return i, err
-}
-
 const getRouteRegistrationReport = `-- name: GetRouteRegistrationReport :one
 SELECT id, registration_id, route_id, hostname, signing_key_id, authorization_id, created_at, retry_id, revision, acknowledged_revision, acknowledged_at
 FROM route_registrations
@@ -287,99 +290,8 @@ func (q *Queries) GetRouteRegistrationReport(ctx context.Context, id int64) (Rou
 	return i, err
 }
 
-const getRouteUsageReport = `-- name: GetRouteUsageReport :one
-SELECT
-    snapshot.id,
-    snapshot.route_id,
-    snapshot.version,
-    snapshot.resolution,
-    snapshot.bucket_start,
-    report.revision,
-    report.observed_through,
-    report.connection_attempts,
-    report.policy_denials,
-    report.capacity_denials,
-    report.publisher_open_failures,
-    report.successful_streams,
-    report.connection_nanoseconds,
-    report.ingress_bytes,
-    report.egress_bytes,
-    report.publisher_open_latency,
-    report.time_to_first_publisher_byte,
-    report.successful_connection_duration,
-    report.visitor_network_hll,
-    report.visitor_network_estimate,
-    report.complete
-FROM route_usage_snapshots AS snapshot
-JOIN route_usage_reports AS report ON report.snapshot_id = snapshot.id
-JOIN route_usage_outbox_items AS outbox
-    ON outbox.source_kind = 'usage_snapshot'
-    AND outbox.source_id = snapshot.id
-WHERE snapshot.id = ?1
-    AND outbox.source_revision = ?2
-    AND report.revision = ?2
-`
-
-type GetRouteUsageReportParams struct {
-	SourceID       int64
-	SourceRevision int64
-}
-
-type GetRouteUsageReportRow struct {
-	ID                           int64
-	RouteID                      string
-	Version                      int64
-	Resolution                   string
-	BucketStart                  int64
-	Revision                     int64
-	ObservedThrough              int64
-	ConnectionAttempts           int64
-	PolicyDenials                int64
-	CapacityDenials              int64
-	PublisherOpenFailures        int64
-	SuccessfulStreams            int64
-	ConnectionNanoseconds        int64
-	IngressBytes                 int64
-	EgressBytes                  int64
-	PublisherOpenLatency         []byte
-	TimeToFirstPublisherByte     []byte
-	SuccessfulConnectionDuration []byte
-	VisitorNetworkHll            []byte
-	VisitorNetworkEstimate       int64
-	Complete                     int64
-}
-
-func (q *Queries) GetRouteUsageReport(ctx context.Context, arg GetRouteUsageReportParams) (GetRouteUsageReportRow, error) {
-	row := q.db.QueryRowContext(ctx, getRouteUsageReport, arg.SourceID, arg.SourceRevision)
-	var i GetRouteUsageReportRow
-	err := row.Scan(
-		&i.ID,
-		&i.RouteID,
-		&i.Version,
-		&i.Resolution,
-		&i.BucketStart,
-		&i.Revision,
-		&i.ObservedThrough,
-		&i.ConnectionAttempts,
-		&i.PolicyDenials,
-		&i.CapacityDenials,
-		&i.PublisherOpenFailures,
-		&i.SuccessfulStreams,
-		&i.ConnectionNanoseconds,
-		&i.IngressBytes,
-		&i.EgressBytes,
-		&i.PublisherOpenLatency,
-		&i.TimeToFirstPublisherByte,
-		&i.SuccessfulConnectionDuration,
-		&i.VisitorNetworkHll,
-		&i.VisitorNetworkEstimate,
-		&i.Complete,
-	)
-	return i, err
-}
-
 const getRouteUsageSnapshot = `-- name: GetRouteUsageSnapshot :one
-SELECT id, route_id, version, resolution, bucket_start, revision, observed_through, connection_attempts, policy_denials, capacity_denials, publisher_open_failures, successful_streams, connection_nanoseconds, ingress_bytes, egress_bytes, publisher_open_latency, time_to_first_publisher_byte, successful_connection_duration, visitor_network_hll, visitor_network_estimate, complete
+SELECT id, route_id, version, resolution, bucket_start, revision, observed_through, connection_attempts, policy_denials, capacity_denials, publisher_open_failures, successful_streams, connection_nanoseconds, ingress_bytes, egress_bytes, publisher_open_latency, time_to_first_publisher_byte, successful_connection_duration, visitor_network_hll, visitor_network_estimate, complete, finalized
 FROM route_usage_snapshots
 WHERE route_id = ?1
     AND version = ?2
@@ -424,6 +336,7 @@ func (q *Queries) GetRouteUsageSnapshot(ctx context.Context, arg GetRouteUsageSn
 		&i.VisitorNetworkHll,
 		&i.VisitorNetworkEstimate,
 		&i.Complete,
+		&i.Finalized,
 	)
 	return i, err
 }
@@ -517,9 +430,9 @@ func (q *Queries) InsertRouteRegistration(ctx context.Context, arg InsertRouteRe
 }
 
 const listIncompleteRouteUsageSnapshots = `-- name: ListIncompleteRouteUsageSnapshots :many
-SELECT id, route_id, version, resolution, bucket_start, revision, observed_through, connection_attempts, policy_denials, capacity_denials, publisher_open_failures, successful_streams, connection_nanoseconds, ingress_bytes, egress_bytes, publisher_open_latency, time_to_first_publisher_byte, successful_connection_duration, visitor_network_hll, visitor_network_estimate, complete
+SELECT id, route_id, version, resolution, bucket_start, revision, observed_through, connection_attempts, policy_denials, capacity_denials, publisher_open_failures, successful_streams, connection_nanoseconds, ingress_bytes, egress_bytes, publisher_open_latency, time_to_first_publisher_byte, successful_connection_duration, visitor_network_hll, visitor_network_estimate, complete, finalized
 FROM route_usage_snapshots
-WHERE complete = 0
+WHERE finalized = 0
 ORDER BY bucket_start, route_id, version, resolution
 `
 
@@ -554,6 +467,234 @@ func (q *Queries) ListIncompleteRouteUsageSnapshots(ctx context.Context) ([]Rout
 			&i.VisitorNetworkHll,
 			&i.VisitorNetworkEstimate,
 			&i.Complete,
+			&i.Finalized,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRouteLifecycleOutboxBatch = `-- name: ListRouteLifecycleOutboxBatch :many
+SELECT
+    outbox.source_kind,
+    outbox.source_id,
+    outbox.source_revision,
+    outbox.enqueued_at,
+    outbox.last_attempted_at,
+    event.event_id,
+    event.route_id,
+    event.version,
+    event.sequence,
+    event.occurred_at,
+    event.transition
+FROM route_usage_outbox_items AS outbox
+JOIN route_lifecycle_events AS event ON event.id = outbox.source_id
+JOIN routes AS route ON route.id = event.route_id
+WHERE outbox.source_kind = 'lifecycle_event'
+    AND (
+        route.authorization_id IS NULL OR EXISTS (
+            SELECT 1
+            FROM route_registrations AS registration
+            WHERE registration.route_id = event.route_id
+                AND registration.acknowledged_revision IS NOT NULL
+        )
+    )
+    AND NOT EXISTS (
+        SELECT 1
+        FROM route_usage_outbox_items AS earlier_outbox
+        JOIN route_lifecycle_events AS earlier_event ON earlier_event.id = earlier_outbox.source_id
+        WHERE earlier_outbox.source_kind = 'lifecycle_event'
+            AND earlier_event.route_id = event.route_id
+            AND earlier_event.sequence < event.sequence
+    )
+ORDER BY coalesce(outbox.last_attempted_at, outbox.enqueued_at), outbox.source_id
+LIMIT ?1
+`
+
+type ListRouteLifecycleOutboxBatchRow struct {
+	SourceKind      string
+	SourceID        int64
+	SourceRevision  int64
+	EnqueuedAt      int64
+	LastAttemptedAt sql.NullInt64
+	EventID         string
+	RouteID         string
+	Version         int64
+	Sequence        int64
+	OccurredAt      int64
+	Transition      string
+}
+
+func (q *Queries) ListRouteLifecycleOutboxBatch(ctx context.Context, batchSize int64) ([]ListRouteLifecycleOutboxBatchRow, error) {
+	rows, err := q.db.QueryContext(ctx, listRouteLifecycleOutboxBatch, batchSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRouteLifecycleOutboxBatchRow
+	for rows.Next() {
+		var i ListRouteLifecycleOutboxBatchRow
+		if err := rows.Scan(
+			&i.SourceKind,
+			&i.SourceID,
+			&i.SourceRevision,
+			&i.EnqueuedAt,
+			&i.LastAttemptedAt,
+			&i.EventID,
+			&i.RouteID,
+			&i.Version,
+			&i.Sequence,
+			&i.OccurredAt,
+			&i.Transition,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRouteUsageOutboxBatch = `-- name: ListRouteUsageOutboxBatch :many
+SELECT
+    outbox.source_kind,
+    outbox.source_id,
+    outbox.source_revision,
+    outbox.enqueued_at,
+    outbox.last_attempted_at,
+    snapshot.route_id,
+    snapshot.version,
+    snapshot.resolution,
+    snapshot.bucket_start,
+    report.report_id,
+    report.revision,
+    report.observed_through,
+    report.connection_attempts,
+    report.policy_denials,
+    report.capacity_denials,
+    report.publisher_open_failures,
+    report.successful_streams,
+    report.connection_nanoseconds,
+    report.ingress_bytes,
+    report.egress_bytes,
+    report.publisher_open_latency,
+    report.time_to_first_publisher_byte,
+    report.successful_connection_duration,
+    report.visitor_network_hll,
+    report.visitor_network_estimate,
+    report.complete,
+    snapshot.finalized
+FROM route_usage_outbox_items AS outbox
+JOIN route_usage_snapshots AS snapshot ON snapshot.id = outbox.source_id
+JOIN route_usage_reports AS report
+    ON report.snapshot_id = snapshot.id AND report.revision = outbox.source_revision
+JOIN routes AS route ON route.id = snapshot.route_id
+WHERE outbox.source_kind = 'usage_snapshot'
+    AND (
+        route.authorization_id IS NULL OR EXISTS (
+            SELECT 1
+            FROM route_registrations AS registration
+            WHERE registration.route_id = snapshot.route_id
+                AND registration.acknowledged_revision IS NOT NULL
+        )
+    )
+    AND EXISTS (
+        SELECT 1
+        FROM route_lifecycle_events AS started
+        WHERE started.route_id = snapshot.route_id
+            AND started.version = snapshot.version
+            AND started.transition = 'version_started'
+            AND NOT EXISTS (
+                SELECT 1
+                FROM route_usage_outbox_items AS started_outbox
+                WHERE started_outbox.source_kind = 'lifecycle_event'
+                    AND started_outbox.source_id = started.id
+            )
+    )
+ORDER BY coalesce(outbox.last_attempted_at, outbox.enqueued_at), outbox.source_id
+LIMIT ?1
+`
+
+type ListRouteUsageOutboxBatchRow struct {
+	SourceKind                   string
+	SourceID                     int64
+	SourceRevision               int64
+	EnqueuedAt                   int64
+	LastAttemptedAt              sql.NullInt64
+	RouteID                      string
+	Version                      int64
+	Resolution                   string
+	BucketStart                  int64
+	ReportID                     string
+	Revision                     int64
+	ObservedThrough              int64
+	ConnectionAttempts           int64
+	PolicyDenials                int64
+	CapacityDenials              int64
+	PublisherOpenFailures        int64
+	SuccessfulStreams            int64
+	ConnectionNanoseconds        int64
+	IngressBytes                 int64
+	EgressBytes                  int64
+	PublisherOpenLatency         []byte
+	TimeToFirstPublisherByte     []byte
+	SuccessfulConnectionDuration []byte
+	VisitorNetworkHll            []byte
+	VisitorNetworkEstimate       int64
+	Complete                     int64
+	Finalized                    int64
+}
+
+func (q *Queries) ListRouteUsageOutboxBatch(ctx context.Context, batchSize int64) ([]ListRouteUsageOutboxBatchRow, error) {
+	rows, err := q.db.QueryContext(ctx, listRouteUsageOutboxBatch, batchSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRouteUsageOutboxBatchRow
+	for rows.Next() {
+		var i ListRouteUsageOutboxBatchRow
+		if err := rows.Scan(
+			&i.SourceKind,
+			&i.SourceID,
+			&i.SourceRevision,
+			&i.EnqueuedAt,
+			&i.LastAttemptedAt,
+			&i.RouteID,
+			&i.Version,
+			&i.Resolution,
+			&i.BucketStart,
+			&i.ReportID,
+			&i.Revision,
+			&i.ObservedThrough,
+			&i.ConnectionAttempts,
+			&i.PolicyDenials,
+			&i.CapacityDenials,
+			&i.PublisherOpenFailures,
+			&i.SuccessfulStreams,
+			&i.ConnectionNanoseconds,
+			&i.IngressBytes,
+			&i.EgressBytes,
+			&i.PublisherOpenLatency,
+			&i.TimeToFirstPublisherByte,
+			&i.SuccessfulConnectionDuration,
+			&i.VisitorNetworkHll,
+			&i.VisitorNetworkEstimate,
+			&i.Complete,
+			&i.Finalized,
 		); err != nil {
 			return nil, err
 		}
@@ -635,6 +776,7 @@ func (q *Queries) UpsertRouteUsageOutbox(ctx context.Context, arg UpsertRouteUsa
 const upsertRouteUsageReport = `-- name: UpsertRouteUsageReport :execrows
 INSERT INTO route_usage_reports (
     snapshot_id,
+    report_id,
     revision,
     observed_through,
     connection_attempts,
@@ -653,8 +795,11 @@ INSERT INTO route_usage_reports (
     complete
 ) VALUES (
     ?1,
+    coalesce(
+        (SELECT report_id FROM route_usage_reports WHERE snapshot_id = ?1 AND revision = ?2),
+        CAST(?3 AS TEXT)
+    ),
     ?2,
-    ?3,
     ?4,
     ?5,
     ?6,
@@ -668,9 +813,14 @@ INSERT INTO route_usage_reports (
     ?14,
     ?15,
     ?16,
-    ?17
+    ?17,
+    ?18
 )
 ON CONFLICT (snapshot_id) DO UPDATE SET
+    report_id = CASE
+        WHEN excluded.revision > route_usage_reports.revision THEN excluded.report_id
+        ELSE route_usage_reports.report_id
+    END,
     revision = excluded.revision,
     observed_through = excluded.observed_through,
     connection_attempts = excluded.connection_attempts,
@@ -710,6 +860,7 @@ WHERE excluded.revision > route_usage_reports.revision OR (
 type UpsertRouteUsageReportParams struct {
 	SnapshotID                   int64
 	Revision                     int64
+	ReportID                     string
 	ObservedThrough              int64
 	ConnectionAttempts           int64
 	PolicyDenials                int64
@@ -731,6 +882,7 @@ func (q *Queries) UpsertRouteUsageReport(ctx context.Context, arg UpsertRouteUsa
 	result, err := q.db.ExecContext(ctx, upsertRouteUsageReport,
 		arg.SnapshotID,
 		arg.Revision,
+		arg.ReportID,
 		arg.ObservedThrough,
 		arg.ConnectionAttempts,
 		arg.PolicyDenials,
@@ -774,7 +926,8 @@ INSERT INTO route_usage_snapshots (
     successful_connection_duration,
     visitor_network_hll,
     visitor_network_estimate,
-    complete
+    complete,
+    finalized
 ) VALUES (
     ?1,
     ?2,
@@ -795,7 +948,8 @@ INSERT INTO route_usage_snapshots (
     ?17,
     ?18,
     ?19,
-    ?20
+    ?20,
+    ?21
 )
 ON CONFLICT (route_id, version, resolution, bucket_start) DO UPDATE SET
     revision = excluded.revision,
@@ -813,7 +967,8 @@ ON CONFLICT (route_id, version, resolution, bucket_start) DO UPDATE SET
     successful_connection_duration = excluded.successful_connection_duration,
     visitor_network_hll = excluded.visitor_network_hll,
     visitor_network_estimate = excluded.visitor_network_estimate,
-    complete = excluded.complete
+    complete = excluded.complete,
+    finalized = excluded.finalized
 WHERE excluded.revision >= route_usage_snapshots.revision
 RETURNING id
 `
@@ -839,6 +994,7 @@ type UpsertRouteUsageSnapshotParams struct {
 	VisitorNetworkHll            []byte
 	VisitorNetworkEstimate       int64
 	Complete                     int64
+	Finalized                    int64
 }
 
 func (q *Queries) UpsertRouteUsageSnapshot(ctx context.Context, arg UpsertRouteUsageSnapshotParams) (int64, error) {
@@ -863,6 +1019,7 @@ func (q *Queries) UpsertRouteUsageSnapshot(ctx context.Context, arg UpsertRouteU
 		arg.VisitorNetworkHll,
 		arg.VisitorNetworkEstimate,
 		arg.Complete,
+		arg.Finalized,
 	)
 	var id int64
 	err := row.Scan(&id)
