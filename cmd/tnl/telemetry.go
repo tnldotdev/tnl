@@ -43,9 +43,9 @@ type asyncTelemetryReporter struct {
 	root   string
 	client *http.Client
 
-	idOnce sync.Once
-	id     string
-	wait   sync.WaitGroup
+	idMu sync.Mutex
+	id   string
+	wait sync.WaitGroup
 }
 
 func newTelemetryReporter(root string) *asyncTelemetryReporter {
@@ -67,18 +67,11 @@ func (r *asyncTelemetryReporter) Report(payload telemetryPayload) {
 		ctx, cancel := context.WithTimeout(context.Background(), telemetryRequestTimeout)
 		defer cancel()
 
-		r.idOnce.Do(func() {
-			state, err := clientstate.Open(ctx, r.root)
-			if err != nil {
-				return
-			}
-			defer state.Close()
-			r.id, _ = state.InstallationID(ctx)
-		})
-		if r.id == "" {
+		installationID, err := r.installationID(ctx)
+		if err != nil {
 			return
 		}
-		payload.InstallationID = r.id
+		payload.InstallationID = installationID
 		body, err := json.Marshal(payload)
 		if err != nil {
 			return
@@ -94,6 +87,21 @@ func (r *asyncTelemetryReporter) Report(payload telemetryPayload) {
 			_ = response.Body.Close()
 		}
 	}()
+}
+
+func (r *asyncTelemetryReporter) installationID(ctx context.Context) (string, error) {
+	r.idMu.Lock()
+	defer r.idMu.Unlock()
+	if r.id != "" {
+		return r.id, nil
+	}
+	state, err := clientstate.Open(ctx, r.root)
+	if err != nil {
+		return "", err
+	}
+	defer state.Close()
+	r.id, err = state.InstallationID(ctx)
+	return r.id, err
 }
 
 func (r *asyncTelemetryReporter) Wait(ctx context.Context) {
@@ -126,7 +134,10 @@ func canonicalTelemetryCommand(parsed *kong.Context) string {
 }
 
 func telemetryStateRoot(parsed *kong.Context) (string, error) {
-	stateDir := ""
+	stateDir := os.Getenv("TNL_STATE_DIR")
+	if stateDir != "" {
+		stateDir = kong.ExpandPath(stateDir)
+	}
 	for _, flag := range parsed.Flags() {
 		if flag.Name != "state-dir" || !hasEnvironment(flag.Envs, "TNL_STATE_DIR") {
 			continue

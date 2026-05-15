@@ -26,3 +26,43 @@ func TestInstallationIDIsStable(t *testing.T) {
 		t.Fatalf("installation IDs = %q, %q", first, second)
 	}
 }
+
+func TestInstallationIDIsStableAcrossConcurrentDatabases(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "state")
+	firstDatabase, err := Open(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer firstDatabase.Close()
+	secondDatabase, err := Open(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secondDatabase.Close()
+
+	type result struct {
+		id  string
+		err error
+	}
+	start := make(chan struct{})
+	results := make(chan result, 2)
+	for _, database := range []*Database{firstDatabase, secondDatabase} {
+		go func() {
+			<-start
+			id, err := database.InstallationID(t.Context())
+			results <- result{id: id, err: err}
+		}()
+	}
+	close(start)
+	first := <-results
+	second := <-results
+	if first.err != nil {
+		t.Fatal(first.err)
+	}
+	if second.err != nil {
+		t.Fatal(second.err)
+	}
+	if first.id == "" || first.id != second.id {
+		t.Fatalf("installation IDs = %q, %q", first.id, second.id)
+	}
+}
