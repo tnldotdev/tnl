@@ -53,6 +53,7 @@ describe("tunnel assignment and target registration", () => {
   test("sends exact authenticated requests and provides worktree context", async () => {
     const bootstrap = await startTestBootstrap();
     onTestFinished(() => bootstrap.close());
+    let worktreeLabel = "";
 
     const assignment = await requestTunnelAssignment(
       {
@@ -60,12 +61,9 @@ describe("tunnel assignment and target registration", () => {
         options: ({ cwd, env, worktree }) => {
           expect(cwd).toBe(process.cwd());
           expect(env.DEPLOYMENT_SLOT).toBe("review-3");
-          expect(worktree).toEqual({
-            isGit: true,
-            label: "tnl",
-            name: "tnl",
-            root: process.cwd(),
-          });
+          expect(worktree).toMatchObject({ isGit: true, name: "tnl", root: process.cwd() });
+          expect(worktree.label).toMatch(/^tnl-[a-f0-9]{6}$/);
+          worktreeLabel = worktree.label;
           return {
             server: "https://tnl.example.com",
             name: `${worktree.label}.example.com`,
@@ -96,7 +94,7 @@ describe("tunnel assignment and target registration", () => {
           framework: "vite",
           options: {
             server: "https://tnl.example.com",
-            name: "tnl.example.com",
+            name: `${worktreeLabel}.example.com`,
             allowIP: ["198.51.100.0/24"],
             allowCurrentIP: true,
           },
@@ -149,7 +147,7 @@ describe("tunnel assignment and target registration", () => {
       directory,
     );
 
-    expect(observedLabel).toMatch(/^tnl-feature-auth-[a-z0-9]+-[a-f0-9]{8}$/);
+    expect(observedLabel).toMatch(/^tnl-feature-auth-[a-z0-9]+-[a-f0-9]{6}$/);
     expect(observedLabel.length).toBeLessThanOrEqual(63);
   });
 

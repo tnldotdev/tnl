@@ -221,6 +221,30 @@ func TestChildResultPreservesExitStatus(t *testing.T) {
 	}
 }
 
+func TestWaitForDevTargetStopsWhenCommandExits(t *testing.T) {
+	bootstrap, err := newDevBootstrap("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bootstrap.Close()
+	process, err := startDevProcess(
+		[]string{"sh", "-c", "exit 0"},
+		os.Environ(),
+		nil,
+		io.Discard,
+		io.Discard,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if _, err := waitForDevTarget(ctx, bootstrap, process); err == nil ||
+		err.Error() != "development server command exited before target registration" {
+		t.Fatalf("wait error = %v", err)
+	}
+}
+
 func TestDevProcessStopTerminatesProcessGroup(t *testing.T) {
 	reader, writer, err := os.Pipe()
 	if err != nil {

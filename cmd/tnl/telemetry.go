@@ -27,6 +27,7 @@ type telemetryPayload struct {
 	Event          string `json:"event"`
 	Command        string `json:"command"`
 	ServerKind     string `json:"server_kind,omitempty"`
+	Framework      string `json:"framework,omitempty"`
 	Version        string `json:"version"`
 	OS             string `json:"os"`
 	Arch           string `json:"arch"`
@@ -116,9 +117,9 @@ func (r *asyncTelemetryReporter) Wait(ctx context.Context) {
 	}
 }
 
-func newTelemetryPayload(event, command, serverKind string) telemetryPayload {
+func newTelemetryPayload(event, command, serverKind, framework string) telemetryPayload {
 	return telemetryPayload{
-		Event: event, Command: command, ServerKind: serverKind,
+		Event: event, Command: command, ServerKind: serverKind, Framework: framework,
 		Version: buildinfo.Version, OS: runtime.GOOS, Arch: runtime.GOARCH, CI: os.Getenv("CI") != "",
 	}
 }
@@ -167,7 +168,7 @@ func optionalTelemetryReporter(reporters []telemetryReporter) telemetryReporter 
 
 func withTelemetryObserver(
 	reporter telemetryReporter,
-	command, serverURL string,
+	command, serverURL, framework string,
 	observe func(publisher.Event) error,
 ) func(publisher.Event) error {
 	if reporter == nil {
@@ -186,9 +187,20 @@ func withTelemetryObserver(
 		}
 		if event.Type == publisher.EventReady {
 			ready.Do(func() {
-				reporter.Report(newTelemetryPayload("route_started", command, serverKind))
+				reporter.Report(newTelemetryPayload("route_started", command, serverKind, framework))
 			})
 		}
 		return nil
+	}
+}
+
+func telemetryFramework(framework string) string {
+	switch framework {
+	case "":
+		return ""
+	case "vite", "next":
+		return framework
+	default:
+		return "other"
 	}
 }

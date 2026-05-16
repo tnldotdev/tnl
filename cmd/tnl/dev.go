@@ -260,7 +260,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 
 	if target == "" {
 		targetCtx, cancelTarget := context.WithTimeout(ctx, flags.StartupTimeout)
-		reported, err := bootstrap.Target(targetCtx)
+		reported, err := waitForDevTarget(targetCtx, bootstrap, child)
 		cancelTarget()
 		if err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
@@ -332,7 +332,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 				}
 				return config.DecodeRelayRegions(relayMap)
 			},
-			Observe: withTelemetryObserver(telemetry, "dev", serverURL, func(event publisher.Event) error {
+			Observe: withTelemetryObserver(telemetry, "dev", serverURL, telemetryFramework(framework), func(event publisher.Event) error {
 				switch event.Type {
 				case publisher.EventRoute:
 					return tunnel.SetRoute(publishCtx, event.RouteID, event.Hostname)
@@ -377,6 +377,30 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 type devConfigurationResult struct {
 	configuration devConfigurationRequest
 	err           error
+}
+
+type devTargetResult struct {
+	target devTargetRequest
+	err    error
+}
+
+func waitForDevTarget(ctx context.Context, bootstrap *devBootstrap, child *devProcess) (devTargetRequest, error) {
+	targeted := make(chan devTargetResult, 1)
+	go func() {
+		target, err := bootstrap.Target(ctx)
+		targeted <- devTargetResult{target: target, err: err}
+	}()
+	select {
+	case <-child.Done():
+		if err := childResult(child.Err()); err != nil {
+			return devTargetRequest{}, err
+		}
+		return devTargetRequest{}, errors.New("development server command exited before target registration")
+	case result := <-targeted:
+		return result.target, result.err
+	case <-ctx.Done():
+		return devTargetRequest{}, context.Cause(ctx)
+	}
 }
 
 type devBootstrap struct {

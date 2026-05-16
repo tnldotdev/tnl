@@ -56,10 +56,7 @@ export interface TnlOptions {
 export interface TnlWorktree {
   /** True when `root` was found through Git. */
   readonly isGit: boolean;
-  /**
-   * A DNS-safe version of `name`. Safe names stay unchanged. Other names get a
-   * short stable suffix to avoid collisions.
-   */
+  /** A DNS-safe version of `name` with a short stable suffix to avoid collisions. */
   readonly label: string;
   /** The directory name of `root`. */
   readonly name: string;
@@ -272,11 +269,8 @@ function worktreeLabel(name: string, root: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
-  if (normalized === name && validHostnameLabel(normalized)) {
-    return normalized;
-  }
-  const suffix = createHash("sha256").update(root).digest("hex").slice(0, 8);
-  const stem = normalized.slice(0, 54).replace(/-+$/g, "") || "worktree";
+  const suffix = createHash("sha256").update(root).digest("hex").slice(0, 6);
+  const stem = normalized.slice(0, 56).replace(/-+$/g, "") || "worktree";
   return `${stem}-${suffix}`;
 }
 
