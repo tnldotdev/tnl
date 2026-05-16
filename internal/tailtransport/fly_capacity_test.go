@@ -1,14 +1,10 @@
 package tailtransport
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
-	"net/http"
 	"os"
 	"testing"
 	"time"
@@ -41,14 +37,12 @@ func BenchmarkTailcatFly(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	agent := &flyAgent{
-		url:   os.Getenv("TNL_TEST_TAILCAT_AGENT_URL"),
-		token: os.Getenv("TNL_TAILBENCH_TOKEN"),
-		http:  &http.Client{Timeout: 20 * time.Minute},
-	}
-	if agent.url == "" || agent.token == "" {
+	agentURL := os.Getenv("TNL_TEST_TAILCAT_AGENT_URL")
+	agentToken := os.Getenv("TNL_TAILBENCH_TOKEN")
+	if agentURL == "" || agentToken == "" {
 		b.Fatal("TNL_TEST_TAILCAT_AGENT_URL and TNL_TAILBENCH_TOKEN are required")
 	}
+	agent := tailbench.NewAgentClient(agentURL, agentToken, 20*time.Minute)
 
 	for _, routeCount := range config.routeCounts {
 		if ok := b.Run(fmt.Sprintf("routes_%d", routeCount), func(b *testing.B) {
@@ -62,7 +56,7 @@ func BenchmarkTailcatFly(b *testing.B) {
 	}
 }
 
-func runFlyCapacityTier(b *testing.B, config capacityConfig, region *tailcfg.DERPRegion, agent *flyAgent, routeCount int) {
+func runFlyCapacityTier(b *testing.B, config capacityConfig, region *tailcfg.DERPRegion, agent *tailbench.AgentClient, routeCount int) {
 	before := settledResources()
 	keys := make([]key.NodePrivate, routeCount)
 	publicKeys := make([]string, routeCount)
@@ -73,7 +67,7 @@ func runFlyCapacityTier(b *testing.B, config capacityConfig, region *tailcfg.DER
 
 	b.Logf("starting %d Fly agent routes", routeCount)
 	agentStarted := time.Now()
-	remote, err := agent.create(publicKeys)
+	remote, err := agent.Create(publicKeys)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -92,7 +86,7 @@ func runFlyCapacityTier(b *testing.B, config capacityConfig, region *tailcfg.DER
 			return nil
 		})
 		if remoteActive {
-			_, _ = agent.close()
+			_, _ = agent.Close()
 		}
 	}()
 	if len(remote.Endpoints) != routeCount {
@@ -146,7 +140,7 @@ func runFlyCapacityTier(b *testing.B, config capacityConfig, region *tailcfg.DER
 	err = runParallel(routeCount, config.parallel, func(index int) error {
 		ctx, cancel := context.WithTimeout(context.Background(), operationTimeout)
 		defer cancel()
-		conn, latency, err := openBenchmarkStream(ctx, dialers[index])
+		conn, latency, err := tailbench.OpenEchoStream(ctx, dialers[index].Open)
 		connections[index] = conn
 		firstByte[index] = latency
 		return err
@@ -161,7 +155,7 @@ func runFlyCapacityTier(b *testing.B, config capacityConfig, region *tailcfg.DER
 	err = runParallel(routeCount, config.parallel, func(index int) error {
 		deadline := time.Now().Add(operationTimeout)
 		_ = connections[index].SetDeadline(deadline)
-		err := roundTripBytes(connections[index], config.transferSize)
+		err := tailbench.RoundTripBytes(connections[index], config.transferSize)
 		_ = connections[index].SetDeadline(time.Time{})
 		return err
 	})
@@ -176,7 +170,7 @@ func runFlyCapacityTier(b *testing.B, config capacityConfig, region *tailcfg.DER
 		ctx, cancel := context.WithTimeout(context.Background(), operationTimeout)
 		defer cancel()
 		startedAt := time.Now()
-		connErr := closeBenchmarkStream(ctx, connections[index])
+		connErr := tailbench.CloseEchoStream(ctx, connections[index])
 		connections[index] = nil
 		drainErr := dialers[index].Drain(ctx)
 		shutdown[index] = time.Since(startedAt)
@@ -187,7 +181,7 @@ func runFlyCapacityTier(b *testing.B, config capacityConfig, region *tailcfg.DER
 	}
 	b.Logf("closing %d Fly agent routes", routeCount)
 	agentShutdownStarted := time.Now()
-	remoteClosed, err := agent.close()
+	remoteClosed, err := agent.Close()
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -229,49 +223,4 @@ func runFlyCapacityTier(b *testing.B, config capacityConfig, region *tailcfg.DER
 	b.ReportMetric(float64(remoteClosed.ForcedCloses), "agent_forced_closes")
 	residualBudget := int64(32*1024*1024 + routeCount*512*1024)
 	enforceBudgets(b, routeCount, before, ready, after, startup, firstByte, shutdown, residualBudget)
-}
-
-type flyAgent struct {
-	url   string
-	token string
-	http  *http.Client
-}
-
-func (a *flyAgent) create(keys []string) (tailbench.CreateRunResponse, error) {
-	var response tailbench.CreateRunResponse
-	err := a.request(http.MethodPost, tailbench.CreateRunRequest{ClientPublicKeys: keys}, &response)
-	return response, err
-}
-
-func (a *flyAgent) close() (tailbench.CloseRunResponse, error) {
-	var response tailbench.CloseRunResponse
-	err := a.request(http.MethodDelete, nil, &response)
-	return response, err
-}
-
-func (a *flyAgent) request(method string, body, response any) error {
-	var reader io.Reader
-	if body != nil {
-		encoded, err := json.Marshal(body)
-		if err != nil {
-			return err
-		}
-		reader = bytes.NewReader(encoded)
-	}
-	request, err := http.NewRequest(method, a.url+"/v1/run", reader)
-	if err != nil {
-		return err
-	}
-	request.Header.Set("Authorization", "Bearer "+a.token)
-	request.Header.Set("Content-Type", "application/json")
-	result, err := a.http.Do(request)
-	if err != nil {
-		return err
-	}
-	defer result.Body.Close()
-	if result.StatusCode/100 != 2 {
-		message, _ := io.ReadAll(io.LimitReader(result.Body, 4*1024))
-		return fmt.Errorf("agent %s: %s: %s", method, result.Status, bytes.TrimSpace(message))
-	}
-	return json.NewDecoder(result.Body).Decode(response)
 }
