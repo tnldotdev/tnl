@@ -265,7 +265,17 @@ func (d *daemon) startServer(
 	}
 	dns := d.dns
 	if dns == nil {
-		dns = dnsready.New(cfg.ServerHostname(), cfg.HostnameSuffix())
+		resolver := net.DefaultResolver
+		if cfg.DNSServer != "" {
+			dialer := new(net.Dialer)
+			resolver = &net.Resolver{
+				PreferGo: true,
+				Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+					return dialer.DialContext(ctx, network, cfg.DNSServer)
+				},
+			}
+		}
+		dns = dnsready.NewWithResolver(cfg.ServerHostname(), cfg.HostnameSuffix(), resolver)
 	}
 	storeConfig.DomainVerifier = dns
 	if cfg.SignedAuthorizationEnabled() {

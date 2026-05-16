@@ -33,6 +33,7 @@ type Pebble struct {
 	directoryURL  string
 	managementURL string
 	httpClient    *http.Client
+	endpointRoot  []byte
 	logs          *lockedBuffer
 }
 
@@ -80,7 +81,7 @@ func StartPebble(t testing.TB, executable string, validationPort int, dnsAddress
 	managementAddress := managementListener.Addr().String()
 
 	directory := t.TempDir()
-	certificatePath, keyPath, roots := writeTLSCredentials(t, directory)
+	certificatePath, keyPath, roots, endpointRoot := writeTLSCredentials(t, directory)
 	profile := map[string]any{"description": "tnl integration test", "validityPeriod": 3600}
 	config := map[string]any{"pebble": map[string]any{
 		"listenAddress": directoryAddress, "managementListenAddress": managementAddress,
@@ -131,7 +132,7 @@ func StartPebble(t testing.TB, executable string, validationPort int, dnsAddress
 	t.Cleanup(transport.CloseIdleConnections)
 	pebble := &Pebble{
 		directoryURL: "https://" + directoryAddress + "/dir", managementURL: "https://" + managementAddress,
-		httpClient: &http.Client{Transport: transport, Timeout: 10 * time.Second}, logs: logs,
+		httpClient: &http.Client{Transport: transport, Timeout: 10 * time.Second}, endpointRoot: endpointRoot, logs: logs,
 	}
 	waitForTCP(t, directoryAddress, pebble.Logs)
 	return pebble
@@ -150,6 +151,27 @@ func (p *Pebble) ACMEClient(accountKey *ecdsa.PrivateKey, kid acme.KeyID) *acme.
 
 func (p *Pebble) IssuerRoots(t testing.TB) *x509.CertPool {
 	t.Helper()
+	rootPEM := p.issuerRootPEM(t)
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(rootPEM) {
+		t.Fatal("Pebble root response contained no certificate")
+	}
+	return roots
+}
+
+// TrustBundlePath writes the endpoint and issuance roots needed by child processes.
+func (p *Pebble) TrustBundlePath(t testing.TB) string {
+	t.Helper()
+	bundle := append(bytes.Clone(p.endpointRoot), p.issuerRootPEM(t)...)
+	path := filepath.Join(t.TempDir(), "pebble-trust-bundle.pem")
+	if err := os.WriteFile(path, bundle, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func (p *Pebble) issuerRootPEM(t testing.TB) []byte {
+	t.Helper()
 	response, err := p.httpClient.Get(p.managementURL + "/roots/0")
 	if err != nil {
 		t.Fatal(err)
@@ -162,14 +184,10 @@ func (p *Pebble) IssuerRoots(t testing.TB) *x509.CertPool {
 	if err != nil {
 		t.Fatal(err)
 	}
-	roots := x509.NewCertPool()
-	if !roots.AppendCertsFromPEM(rootPEM) {
-		t.Fatal("Pebble root response contained no certificate")
-	}
-	return roots
+	return rootPEM
 }
 
-func writeTLSCredentials(t testing.TB, directory string) (string, string, *x509.CertPool) {
+func writeTLSCredentials(t testing.TB, directory string) (string, string, *x509.CertPool, []byte) {
 	t.Helper()
 	now := time.Now()
 	rootKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -217,7 +235,8 @@ func writeTLSCredentials(t testing.TB, directory string) (string, string, *x509.
 	}
 	roots := x509.NewCertPool()
 	roots.AddCert(root)
-	return certificatePath, keyPath, roots
+	rootPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: rootDER})
+	return certificatePath, keyPath, roots, rootPEM
 }
 
 func unusedLocalAddress(t testing.TB) string {
@@ -255,18 +274,18 @@ func waitForTCP(t testing.TB, address string, diagnostics func() string) {
 }
 
 type lockedBuffer struct {
-	mu sync.Mutex
-	bytes.Buffer
+	mu     sync.Mutex
+	buffer bytes.Buffer
 }
 
 func (b *lockedBuffer) Write(contents []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.Buffer.Write(contents)
+	return b.buffer.Write(contents)
 }
 
 func (b *lockedBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.Buffer.String()
+	return b.buffer.String()
 }

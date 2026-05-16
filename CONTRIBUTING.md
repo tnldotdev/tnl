@@ -32,4 +32,5 @@ server repository. Shared contracts and fixtures remain authoritative under
 
 Every dependency must have a compatible license and a clear purpose. Direct
 runtime dependencies that require attribution must add their notices to
-`NOTICE`; generated release archives must include `LICENSE` and `NOTICE`.
+`NOTICE`; generated release archives and native npm packages must include
+`LICENSE`, `NOTICE`, and `THIRD_PARTY_LICENSES.txt`.

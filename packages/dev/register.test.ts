@@ -1,11 +1,32 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, onTestFinished, test } from "vitest";
-import { readDevEnvironment, registerTarget } from "./dist/index.js";
+import {
+  readDevEnvironment,
+  registerTarget,
+  requestTunnelAssignment,
+  type TnlTunnelAssignment,
+} from "./dist/index.js";
 import { startTestBootstrap } from "./test-helper.js";
 
 describe("tnl dev environment", () => {
   test("is inert outside tnl dev", async () => {
     expect(readDevEnvironment({})).toBeNull();
-    await expect(registerTarget("INVALID", 0, {})).resolves.toBeNull();
+    let configured = false;
+    await expect(
+      requestTunnelAssignment(
+        {
+          framework: "INVALID",
+          options: () => {
+            configured = true;
+            return {};
+          },
+        },
+        {},
+      ),
+    ).resolves.toBeNull();
+    expect(configured).toBe(false);
   });
 
   test("rejects unsupported protocols", () => {
@@ -19,17 +40,8 @@ describe("tnl dev environment", () => {
       TNL_DEV_PROTOCOL: "1",
       TNL_DEV_SOCKET: "/tmp/tnl-test.sock",
       TNL_DEV_TOKEN: "a".repeat(64),
-      TNL_TUNNEL_ID: `tunnel_${"b".repeat(32)}`,
-      TNL_PUBLIC_HOSTNAME: "demo.tnl.dev",
-      TNL_PUBLIC_URL: "https://demo.tnl.dev",
     };
-    for (const name of [
-      "TNL_DEV_SOCKET",
-      "TNL_DEV_TOKEN",
-      "TNL_TUNNEL_ID",
-      "TNL_PUBLIC_HOSTNAME",
-      "TNL_PUBLIC_URL",
-    ]) {
+    for (const name of ["TNL_DEV_SOCKET", "TNL_DEV_TOKEN"]) {
       const incomplete = { ...environment };
       delete incomplete[name];
       expect(() => readDevEnvironment(incomplete), name).toThrow(new RegExp(`${name} is required`));
@@ -37,23 +49,65 @@ describe("tnl dev environment", () => {
   });
 });
 
-describe("target registration", () => {
-  test("sends the exact authenticated registration request", async () => {
+describe("tunnel assignment and target registration", () => {
+  test("sends exact authenticated requests and provides worktree context", async () => {
     const bootstrap = await startTestBootstrap();
     onTestFinished(() => bootstrap.close());
 
-    const session = await registerTarget("vite", 5173, bootstrap.environment);
-
-    expect(session).toMatchObject({
+    const assignment = await requestTunnelAssignment(
+      {
+        framework: "vite",
+        options: ({ cwd, env, worktree }) => {
+          expect(cwd).toBe(process.cwd());
+          expect(env.DEPLOYMENT_SLOT).toBe("review-3");
+          expect(worktree).toEqual({
+            isGit: true,
+            label: "tnl",
+            name: "tnl",
+            root: process.cwd(),
+          });
+          return {
+            server: "https://tnl.example.com",
+            name: `${worktree.label}.example.com`,
+            allowIP: ["198.51.100.0/24"],
+            allowCurrentIP: true,
+          };
+        },
+      },
+      { ...bootstrap.environment, DEPLOYMENT_SLOT: "review-3" },
+    );
+    expect(assignment).not.toBeNull();
+    if (assignment === null) {
+      return;
+    }
+    expect(assignment).toMatchObject({
+      framework: "vite",
       hostname: "demo.tnl.dev",
-      port: 5173,
       publicURL: "https://demo.tnl.dev",
       tunnelID: `tunnel_${"b".repeat(32)}`,
     });
+    await registerTarget(assignment, 5174);
+
     expect(bootstrap.requests).toEqual([
       {
         authorization: `Bearer ${"a".repeat(64)}`,
-        body: { protocol: 1, framework: "vite", port: 5173 },
+        body: {
+          protocol: 1,
+          framework: "vite",
+          options: {
+            server: "https://tnl.example.com",
+            name: "tnl.example.com",
+            allowIP: ["198.51.100.0/24"],
+            allowCurrentIP: true,
+          },
+        },
+        contentType: "application/json",
+        method: "POST",
+        path: "/v1/configure",
+      },
+      {
+        authorization: `Bearer ${"a".repeat(64)}`,
+        body: { protocol: 1, framework: "vite", port: 5174 },
         contentType: "application/json",
         method: "POST",
         path: "/v1/target",
@@ -68,28 +122,85 @@ describe("target registration", () => {
     });
     onTestFinished(() => bootstrap.close());
 
-    await expect(registerTarget("next", 3000, bootstrap.environment)).rejects.toThrow(
-      /status 409: target already registered/,
+    await expect(
+      requestTunnelAssignment({ framework: "next" }, bootstrap.environment),
+    ).rejects.toThrow(/status 409: target already registered/);
+  });
+
+  test("normalizes a non-Git directory into a stable DNS label", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "TNL Feature Auth "));
+    onTestFinished(() => rm(directory, { force: true, recursive: true }));
+    const bootstrap = await startTestBootstrap();
+    onTestFinished(() => bootstrap.close());
+    let observedLabel = "";
+
+    await requestTunnelAssignment(
+      {
+        framework: "vite",
+        options: ({ worktree }) => {
+          expect(worktree.isGit).toBe(false);
+          expect(worktree.root).toBe(directory);
+          expect(worktree.name).toBe(path.basename(directory));
+          observedLabel = worktree.label;
+          return { name: `${worktree.label}.example.com` };
+        },
+      },
+      bootstrap.environment,
+      directory,
     );
+
+    expect(observedLabel).toMatch(/^tnl-feature-auth-[a-z0-9]+-[a-f0-9]{8}$/);
+    expect(observedLabel.length).toBeLessThanOrEqual(63);
   });
 
   test("rejects oversized responses", async () => {
     const bootstrap = await startTestBootstrap({ responseBody: "x".repeat(5000), status: 409 });
     onTestFinished(() => bootstrap.close());
 
-    await expect(registerTarget("next", 3000, bootstrap.environment)).rejects.toThrow(
-      /oversized response/,
-    );
+    await expect(
+      requestTunnelAssignment({ framework: "next" }, bootstrap.environment),
+    ).rejects.toThrow(/oversized response/);
   });
 
-  test.each([
-    ["framework", "Next.js", 3000],
-    ["port", "next", 0],
-  ])("validates the %s before sending", async (_name, framework, port) => {
+  test("validates framework and port before sending", async () => {
     const bootstrap = await startTestBootstrap();
     onTestFinished(() => bootstrap.close());
 
-    await expect(registerTarget(framework, port, bootstrap.environment)).rejects.toThrow();
+    await expect(
+      requestTunnelAssignment({ framework: "Next.js" }, bootstrap.environment),
+    ).rejects.toThrow(/framework name/);
+    await expect(registerTarget(fakeAssignment(bootstrap.environment), 0)).rejects.toThrow(
+      /target port/,
+    );
+    expect(bootstrap.requests).toHaveLength(0);
+  });
+
+  test.each([
+    [{ unknown: true }, /unknown tnl option/],
+    [{ name: "" }, /tnl name must be a non-empty string/],
+    [{ allowIP: "198.51.100.1" }, /tnl allowIP must be an array/],
+    [{ allowCurrentIP: "yes" }, /tnl allowCurrentIP must be a boolean/],
+  ])("rejects invalid options before sending", async (options, expected) => {
+    const bootstrap = await startTestBootstrap();
+    onTestFinished(() => bootstrap.close());
+
+    await expect(
+      requestTunnelAssignment(
+        { framework: "vite", options: options as never },
+        bootstrap.environment,
+      ),
+    ).rejects.toThrow(expected);
     expect(bootstrap.requests).toHaveLength(0);
   });
 });
+
+function fakeAssignment(environment: Record<string, string>): TnlTunnelAssignment {
+  return {
+    framework: "vite",
+    hostname: "demo.tnl.dev",
+    publicURL: "https://demo.tnl.dev",
+    tunnelID: `tunnel_${"b".repeat(32)}`,
+    socket: environment.TNL_DEV_SOCKET ?? "",
+    token: environment.TNL_DEV_TOKEN ?? "",
+  };
+}

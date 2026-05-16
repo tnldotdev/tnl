@@ -1,0 +1,25 @@
+{
+  "name": "@tnldotdev/tnl",
+  "version": "0.0.0-development",
+  "description": "The tnl client for project-local development workflows.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tnldotdev/tnl.git",
+    "directory": "packages/tnl"
+  },
+  "bin": {
+    "tnl": "bin/tnl.mjs"
+  },
+  "files": [
+    "bin",
+    "lib"
+  ],
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22.15"
+  }
+}

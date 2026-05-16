@@ -5,14 +5,14 @@
   "scripts": {
     "build": "pnpm --filter @tnldotdev/dev build && pnpm --filter @tnldotdev/next build:self && pnpm --filter @tnldotdev/vite build:self",
     "clean": "pnpm --recursive --if-present run clean",
-    "format": "oxfmt --write package.json pnpm-workspace.yaml tsconfig.base.json tsconfig.test.json vitest.config.ts 'packages/**/*.{json,md,ts,tsx}' 'scripts/*.mjs'",
-    "format:check": "oxfmt --check package.json pnpm-workspace.yaml tsconfig.base.json tsconfig.test.json vitest.config.ts 'packages/**/*.{json,md,ts,tsx}' 'scripts/*.mjs'",
+    "format": "oxfmt --write package.json pnpm-workspace.yaml tsconfig.base.json tsconfig.test.json vitest.config.ts 'packages/**/*.{json,md,mjs,ts,tsx}' 'scripts/*.mjs'",
+    "format:check": "oxfmt --check package.json pnpm-workspace.yaml tsconfig.base.json tsconfig.test.json vitest.config.ts 'packages/**/*.{json,md,mjs,ts,tsx}' 'scripts/*.mjs'",
     "lint": "oxlint --deny-warnings packages scripts vitest.config.ts",
     "pack": "node scripts/verify-packages.mjs",
     "pretest": "pnpm build",
     "pretypecheck": "pnpm build",
-    "test": "vitest run",
-    "test:ci": "vitest run",
+    "test": "vitest run && node --test packages/tnl/launcher.test.mjs",
+    "test:ci": "vitest run && node --test packages/tnl/launcher.test.mjs",
     "typecheck": "tsc --project packages/dev/type-test.tsconfig.json && tsc --project packages/next/type-test.tsconfig.json && tsc --project packages/vite/type-test.tsconfig.json && tsc --project tsconfig.test.json",
     "typecheck:ci": "tsc --project packages/dev/type-test.tsconfig.json && tsc --project packages/next/type-test.tsconfig.json && tsc --project packages/vite/type-test.tsconfig.json && tsc --project tsconfig.test.json"
   },

@@ -12,6 +12,7 @@ func TestParseTNLD(t *testing.T) {
 	t.Setenv("TNLD_STATE_DIR", "/from-env")
 	t.Setenv("TNLD_BACKUP_URL", "s3://backup/tnld")
 	t.Setenv("TNLD_DOMAIN", "example.com")
+	t.Setenv("TNLD_DNS_SERVER", "127.0.0.1:5353")
 	t.Setenv("TNLD_ACME_EMAIL", "operator@example.com")
 	t.Setenv("TNLD_ACME_ACCEPT_TERMS", "true")
 	t.Setenv("TNLD_RELAY_PROVIDER", "tailcat")
@@ -31,6 +32,9 @@ func TestParseTNLD(t *testing.T) {
 	}
 	if config.MetricsListen != "127.0.0.1:9090" {
 		t.Fatalf("MetricsListen = %q, want 127.0.0.1:9090", config.MetricsListen)
+	}
+	if config.DNSServer != "127.0.0.1:5353" {
+		t.Fatalf("DNSServer = %q, want 127.0.0.1:5353", config.DNSServer)
 	}
 	if config.PublicListen != ":443" || config.RelayProvider != "tailcat" {
 		t.Fatalf("public configuration = %q, %q, want :443, tailcat", config.PublicListen, config.RelayProvider)
@@ -147,6 +151,7 @@ func TestParseTNLDRejectsInvalidInput(t *testing.T) {
 		"missing metrics port":        {"--state-dir", "/state", "--metrics-listen", "127.0.0.1"},
 		"invalid metrics port":        {"--state-dir", "/state", "--metrics-listen", "127.0.0.1:nope"},
 		"metrics whitespace":          {"--state-dir", "/state", "--metrics-listen", " 127.0.0.1:9090"},
+		"invalid DNS server":          {"--state-dir", "/state", "--dns-server", "127.0.0.1"},
 		"zero active hostnames":       {"--state-dir", "/state", "--max-active-hostnames", "0"},
 		"negative hostname requests":  {"--state-dir", "/state", "--max-hostname-requests", "-1"},
 		"requests below active":       {"--state-dir", "/state", "--max-active-hostnames", "10", "--max-hostname-requests", "9"},

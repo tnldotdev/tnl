@@ -54,7 +54,7 @@ interface TestWebSocketOptions {
 }
 
 export async function startTestBootstrap(options: BootstrapOptions = {}): Promise<TestBootstrap> {
-  const status = options.status ?? 204;
+  const status = options.status ?? 200;
   const directory = await mkdtemp(path.join(os.tmpdir(), "tnl-dev-test-"));
   const socket = path.join(directory, "control.sock");
   const requests: BootstrapRequest[] = [];
@@ -63,19 +63,34 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
     request.on("data", (chunk: Buffer) => chunks.push(chunk));
     request.on("end", () => {
       const body = Buffer.concat(chunks).toString("utf8");
+      const parsedBody = body === "" ? null : JSON.parse(body);
       requests.push({
         authorization: request.headers.authorization,
-        body: body === "" ? null : JSON.parse(body),
+        body: parsedBody,
         contentType: request.headers["content-type"],
         method: request.method,
         path: request.url,
       });
       response.statusCode = status;
-      if (status !== 204) {
+      if (status !== 200) {
         response.end(options.responseBody ?? "registration failed");
         return;
       }
-      response.end();
+      if (request.url === "/v1/target") {
+        response.statusCode = 204;
+        response.end();
+        return;
+      }
+      response.setHeader("Content-Type", "application/json");
+      response.end(
+        options.responseBody ??
+          JSON.stringify({
+            protocol: 1,
+            tunnelID: `tunnel_${"b".repeat(32)}`,
+            hostname: "demo.tnl.dev",
+            publicURL: "https://demo.tnl.dev",
+          }),
+      );
     });
   });
   await new Promise<void>((resolve, reject) => {
@@ -87,9 +102,6 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
     TNL_DEV_PROTOCOL: "1",
     TNL_DEV_SOCKET: socket,
     TNL_DEV_TOKEN: "a".repeat(64),
-    TNL_TUNNEL_ID: `tunnel_${"b".repeat(32)}`,
-    TNL_PUBLIC_HOSTNAME: "demo.tnl.dev",
-    TNL_PUBLIC_URL: "https://demo.tnl.dev",
   };
   return {
     environment,
@@ -225,16 +237,17 @@ export async function waitForProcessExit(
 
 export async function waitForBootstrapRequest(
   bootstrap: TestBootstrap,
+  index = 0,
   timeout = 30_000,
 ): Promise<BootstrapRequest> {
   const deadline = Date.now() + timeout;
-  while (bootstrap.requests.length === 0) {
+  while (bootstrap.requests.length <= index) {
     if (Date.now() >= deadline) {
       throw new Error("framework did not register with tnl dev");
     }
     await delay(50);
   }
-  const request = bootstrap.requests[0];
+  const request = bootstrap.requests[index];
   if (request === undefined) {
     throw new Error("framework registration disappeared");
   }

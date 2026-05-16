@@ -12,7 +12,6 @@ import {
   startTestBootstrap,
   startTestProcess,
   waitForBootstrapRequest,
-  waitForProcessExit,
   withProcessEnvironment,
 } from "../dev/test-helper.js";
 import tnl from "./dist/index.js";
@@ -42,33 +41,47 @@ describe("tnl", () => {
     expect(bootstrap.requests).toHaveLength(0);
   });
 
-  test("pins loopback, strict port, and the assigned host", async () => {
+  test("pins loopback and the assigned host while preserving Vite port selection", async () => {
     const bootstrap = await startTestBootstrap();
     onTestFinished(() => bootstrap.close());
 
     await withProcessEnvironment(bootstrap.environment, async () => {
       await expect(
-        runConfigHook(tnl(), {
-          server: {
-            allowedHosts: ["existing.example", "demo.tnl.dev"],
-            host: "0.0.0.0",
-            port: 5200,
-            strictPort: false,
+        runConfigHook(
+          tnl(async ({ cwd, env, worktree }) => {
+            expect(cwd).toBe(process.cwd());
+            expect(env.TNL_DEV_PROTOCOL).toBe("1");
+            expect(worktree.label).toBe("tnl");
+            return {
+              server: "https://tnl.example.com",
+              name: "agent.example.com",
+              allowCurrentIP: true,
+            };
+          }),
+          {
+            server: {
+              allowedHosts: ["existing.example", "demo.tnl.dev"],
+              host: "0.0.0.0",
+              port: 5200,
+              strictPort: false,
+            },
           },
-        }),
+        ),
       ).resolves.toEqual({
         server: {
           allowedHosts: ["existing.example", "demo.tnl.dev"],
           host: "127.0.0.1",
-          port: 5200,
-          strictPort: true,
         },
       });
     });
     expect(bootstrap.requests[0]?.body).toEqual({
       protocol: 1,
       framework: "vite",
-      port: 5200,
+      options: {
+        server: "https://tnl.example.com",
+        name: "agent.example.com",
+        allowCurrentIP: true,
+      },
     });
   });
 
@@ -84,7 +97,7 @@ describe("tnl", () => {
     expect(bootstrap.requests[0]?.body).toEqual({
       protocol: 1,
       framework: "vite",
-      port: 5300,
+      options: {},
     });
   });
 });
@@ -100,8 +113,16 @@ test(
     onTestFinished(() => process_.close());
 
     try {
-      const registration = await waitForBootstrapRequest(bootstrap);
-      expect(registration.body).toEqual({ protocol: 1, framework: "vite", port });
+      const assignment = await waitForBootstrapRequest(bootstrap);
+      expect(assignment).toMatchObject({
+        body: { protocol: 1, framework: "vite", options: {} },
+        path: "/v1/configure",
+      });
+      const target = await waitForBootstrapRequest(bootstrap, 1);
+      expect(target).toMatchObject({
+        body: { protocol: 1, framework: "vite", port },
+        path: "/v1/target",
+      });
 
       const page = await requestTestServer(port);
       expect(page.status).toBe(200);
@@ -141,7 +162,7 @@ test(
   },
 );
 
-test("fails instead of incrementing an occupied port", { timeout: 60_000 }, async () => {
+test("registers the next port selected by Vite when the preferred port is occupied", async () => {
   const bootstrap = await startTestBootstrap();
   onTestFinished(() => bootstrap.close());
   const port = await reserveLoopbackPort();
@@ -150,12 +171,18 @@ test("fails instead of incrementing an occupied port", { timeout: 60_000 }, asyn
   const process_ = startViteFixture(port, bootstrap.environment);
   onTestFinished(() => process_.close());
 
-  const registration = await waitForBootstrapRequest(bootstrap);
-  expect(registration.body).toEqual({ protocol: 1, framework: "vite", port });
-  const exit = await waitForProcessExit(process_);
-  expect(exit.code).not.toBe(0);
-  expect(process_.output()).toContain(`Port ${port} is already in use`);
-  expect(process_.output()).not.toContain("trying another one");
+  const assignment = await waitForBootstrapRequest(bootstrap);
+  expect(assignment).toMatchObject({
+    body: { protocol: 1, framework: "vite", options: {} },
+    path: "/v1/configure",
+  });
+  const target = await waitForBootstrapRequest(bootstrap, 1);
+  expect(target.path).toBe("/v1/target");
+  expect(target.body).toMatchObject({ protocol: 1, framework: "vite" });
+  const selectedPort = (target.body as { port: number }).port;
+  expect(selectedPort).toBeGreaterThan(port);
+  await expect(requestTestServer(selectedPort)).resolves.toMatchObject({ status: 200 });
+  expect(process_.output()).toContain(`Port ${port} is in use, trying another one`);
 });
 
 async function runConfigHook(
