@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,13 +11,17 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/0xcadams/tnl/internal/auth"
+	"github.com/0xcadams/tnl/internal/credentials"
+	"github.com/0xcadams/tnl/internal/state"
 	"github.com/0xcadams/tnl/pkg/protocol/corev1"
 )
 
 func TestCapabilities(t *testing.T) {
 	want := fixtureCapabilities(t)
-	handler := NewHandler(want)
+	handler := NewHandler(want, nil)
 	request := httptest.NewRequest(http.MethodGet, capabilitiesPath, nil)
 	request.Header.Set(requestIDHeader, "req_client123")
 	response := httptest.NewRecorder()
@@ -37,7 +43,7 @@ func TestCapabilities(t *testing.T) {
 }
 
 func TestRequestIDGeneration(t *testing.T) {
-	handler := NewHandler(fixtureCapabilities(t))
+	handler := NewHandler(fixtureCapabilities(t), nil)
 	pattern := regexp.MustCompile(`^req_[A-Za-z0-9]+$`)
 
 	for name, incoming := range map[string][]string{
@@ -63,7 +69,7 @@ func TestRequestIDGeneration(t *testing.T) {
 }
 
 func TestProblemResponses(t *testing.T) {
-	handler := NewHandler(fixtureCapabilities(t))
+	handler := NewHandler(fixtureCapabilities(t), nil)
 	tests := map[string]struct {
 		method      string
 		path        string
@@ -86,6 +92,14 @@ func TestProblemResponses(t *testing.T) {
 			code:        corev1.InvalidArgument,
 			problemType: "https://tnl.dev/problems/method-not-allowed",
 			allow:       http.MethodGet,
+		},
+		"unsupported token method": {
+			method:      http.MethodGet,
+			path:        tokenExchangePath,
+			status:      http.StatusMethodNotAllowed,
+			code:        corev1.InvalidArgument,
+			problemType: "https://tnl.dev/problems/method-not-allowed",
+			allow:       http.MethodPost,
 		},
 	}
 
@@ -125,7 +139,7 @@ func TestCapabilitiesResponseIsBounded(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, capabilitiesPath, nil)
 	response := httptest.NewRecorder()
 
-	NewHandler(capabilities).ServeHTTP(response, request)
+	NewHandler(capabilities, nil).ServeHTTP(response, request)
 
 	if response.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusInternalServerError)
@@ -137,6 +151,195 @@ func TestCapabilitiesResponseIsBounded(t *testing.T) {
 	if problem.Code != corev1.Internal {
 		t.Fatalf("problem code = %q, want %q", problem.Code, corev1.Internal)
 	}
+}
+
+func TestTokenExchange(t *testing.T) {
+	bootstrap, err := credentials.NewBootstrapToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	access, credentialID, _, err := credentials.NewAccessToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiresAt := time.Date(2026, time.September, 28, 12, 0, 0, 0, time.UTC)
+	var received credentials.BootstrapToken
+	exchanger := tokenExchangerFunc(func(
+		_ context.Context,
+		token credentials.BootstrapToken,
+	) (auth.IssuedAccessToken, error) {
+		received = token
+		return auth.IssuedAccessToken{
+			Token: access, CredentialID: credentialID, ExpiresAt: expiresAt,
+		}, nil
+	})
+	body, err := json.Marshal(corev1.TokenExchangeRequest{BootstrapToken: bootstrap.String()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, tokenExchangePath, strings.NewReader(string(body)))
+	request.Header.Set("Content-Type", "application/json; charset=utf-8")
+	request.Header.Set(requestIDHeader, "req_exchange")
+	response := httptest.NewRecorder()
+
+	NewHandler(fixtureCapabilities(t), exchanger).ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	assertResponseHeaders(t, response, "application/json", "req_exchange")
+	if received != bootstrap {
+		t.Fatalf("bootstrap token = %q, want configured token", received)
+	}
+	var got corev1.TokenExchangeResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	want := corev1.TokenExchangeResponse{
+		AccessToken:  access.String(),
+		CredentialId: credentialID.String(),
+		ExpiresAt:    expiresAt,
+		TokenType:    corev1.Bearer,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("response = %#v, want %#v", got, want)
+	}
+}
+
+func TestTokenExchangePersistsUsableAccessToken(t *testing.T) {
+	db, err := state.Open(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	bootstrap, err := credentials.NewBootstrapToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	exchange, err := auth.NewTokenExchange(db, bootstrap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(corev1.TokenExchangeRequest{BootstrapToken: bootstrap.String()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, tokenExchangePath, strings.NewReader(string(body)))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+
+	NewHandler(fixtureCapabilities(t), exchange).ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	var issued corev1.TokenExchangeResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &issued); err != nil {
+		t.Fatal(err)
+	}
+	credentialID, hash, err := credentials.ParseAccessToken(credentials.AccessToken(issued.AccessToken))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if credentialID.String() != issued.CredentialId {
+		t.Fatalf("credential ID = %q, want %q", credentialID, issued.CredentialId)
+	}
+	principal, err := state.AuthenticateAccessCredential(
+		context.Background(), db, credentialID, hash, time.Now(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if principal.ID != "principal_local" {
+		t.Fatalf("principal ID = %q, want principal_local", principal.ID)
+	}
+}
+
+func TestTokenExchangeRejectsCredentialsWithoutDisclosure(t *testing.T) {
+	bootstrap := "tnl_bootstrap_do-not-disclose"
+	for name, test := range map[string]struct {
+		err    error
+		status int
+		code   corev1.ProblemCode
+	}{
+		"unauthenticated": {err: auth.ErrUnauthenticated, status: http.StatusUnauthorized, code: corev1.Unauthenticated},
+		"internal":        {err: errors.New("storage failed"), status: http.StatusInternalServerError, code: corev1.Internal},
+	} {
+		t.Run(name, func(t *testing.T) {
+			exchanger := tokenExchangerFunc(func(
+				context.Context,
+				credentials.BootstrapToken,
+			) (auth.IssuedAccessToken, error) {
+				return auth.IssuedAccessToken{}, test.err
+			})
+			request := httptest.NewRequest(
+				http.MethodPost,
+				tokenExchangePath,
+				strings.NewReader(`{"bootstrap_token":"`+bootstrap+`"}`),
+			)
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+
+			NewHandler(fixtureCapabilities(t), exchanger).ServeHTTP(response, request)
+
+			if response.Code != test.status {
+				t.Fatalf("status = %d, want %d", response.Code, test.status)
+			}
+			var problem corev1.Problem
+			if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil {
+				t.Fatal(err)
+			}
+			if problem.Code != test.code || strings.Contains(response.Body.String(), bootstrap) {
+				t.Fatalf("problem = %s", response.Body.String())
+			}
+		})
+	}
+}
+
+func TestTokenExchangeRejectsInvalidRequests(t *testing.T) {
+	tests := map[string]struct {
+		contentType string
+		body        string
+		status      int
+	}{
+		"missing content type": {body: `{}`, status: http.StatusUnsupportedMediaType},
+		"wrong content type":   {contentType: "text/plain", body: `{}`, status: http.StatusUnsupportedMediaType},
+		"empty object":         {contentType: "application/json", body: `{}`, status: http.StatusBadRequest},
+		"unknown field":        {contentType: "application/json", body: `{"bootstrap_token":"x","extra":true}`, status: http.StatusBadRequest},
+		"trailing value":       {contentType: "application/json", body: `{"bootstrap_token":"x"} {}`, status: http.StatusBadRequest},
+		"malformed JSON":       {contentType: "application/json", body: `{`, status: http.StatusBadRequest},
+		"oversized token":      {contentType: "application/json", body: `{"bootstrap_token":"` + strings.Repeat("x", maxCredentialBytes+1) + `"}`, status: http.StatusBadRequest},
+		"oversized body":       {contentType: "application/json", body: `{"bootstrap_token":"` + strings.Repeat("x", maxJSONRequestBytes) + `"}`, status: http.StatusRequestEntityTooLarge},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, tokenExchangePath, strings.NewReader(test.body))
+			if test.contentType != "" {
+				request.Header.Set("Content-Type", test.contentType)
+			}
+			response := httptest.NewRecorder()
+
+			NewHandler(fixtureCapabilities(t), nil).ServeHTTP(response, request)
+
+			if response.Code != test.status {
+				t.Fatalf("status = %d, want %d: %s", response.Code, test.status, response.Body.String())
+			}
+			assertResponseHeaders(t, response, "application/problem+json", response.Header().Get(requestIDHeader))
+		})
+	}
+}
+
+type tokenExchangerFunc func(
+	context.Context,
+	credentials.BootstrapToken,
+) (auth.IssuedAccessToken, error)
+
+func (f tokenExchangerFunc) Exchange(
+	ctx context.Context,
+	token credentials.BootstrapToken,
+) (auth.IssuedAccessToken, error) {
+	return f(ctx, token)
 }
 
 func fixtureCapabilities(t *testing.T) corev1.Capabilities {

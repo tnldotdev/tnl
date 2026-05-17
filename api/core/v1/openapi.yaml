@@ -27,6 +27,38 @@ paths:
           $ref: "#/components/responses/Problem"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/auth/token:
+    post:
+      operationId: exchangeBootstrapToken
+      summary: Exchange a deployment bootstrap token for an access token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TokenExchangeRequest"
+      responses:
+        "200":
+          description: Access token issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenExchangeResponse"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "413":
+          $ref: "#/components/responses/Problem"
+        "415":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
 components:
   responses:
     Problem:
@@ -88,6 +120,35 @@ components:
         profile:
           type: string
           pattern: ^[a-z0-9][a-z0-9-]{0,62}$
+    TokenExchangeRequest:
+      type: object
+      additionalProperties: false
+      required: [bootstrap_token]
+      properties:
+        bootstrap_token:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^tnl_bootstrap_[A-Za-z0-9_-]{21}[AQgw]\.[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$'
+    TokenExchangeResponse:
+      type: object
+      additionalProperties: false
+      required: [access_token, credential_id, token_type, expires_at]
+      properties:
+        access_token:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^tnl_access_[A-Za-z0-9_-]{21}[AQgw]\.[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$'
+        credential_id:
+          type: string
+          pattern: ^[A-Za-z0-9_-]{22}$
+        token_type:
+          type: string
+          const: Bearer
+        expires_at:
+          type: string
+          format: date-time
     Problem:
       type: object
       additionalProperties: false
