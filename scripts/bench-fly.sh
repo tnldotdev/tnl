@@ -373,7 +373,7 @@ run_tier() {
     for _ in $(seq 1 15); do
       if fly logs --app "${app}" --machine "${driver_ids[index]}" --json --no-tail >"${log_file}.json" 2>/dev/null; then
         jq -r '.message // .msg // empty' "${log_file}.json" >"${log_file}"
-        result="$(jq -Rrc 'fromjson? | select(.schema_version == 1)' "${log_file}")"
+        result="$(jq -Rrc 'fromjson? | select(.schema_version == 2)' "${log_file}")"
         [[ -n "${result}" ]] && break
       fi
       sleep 2

@@ -169,6 +169,11 @@ tasks:
     cmds:
       - go run ./cmd/tnlbench plan
 
+  go:bench-fly:report:
+    desc: Merge Fly benchmark result rows and write reports
+    cmds:
+      - go run ./cmd/tnlbench report
+
   go:build:
     cmds:
       - go build ./cmd/...
