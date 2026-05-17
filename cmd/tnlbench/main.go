@@ -55,6 +55,11 @@ type cli struct {
 	Timeout        time.Duration `name:"timeout" env:"TNL_BENCH_TIMEOUT" default:"30m" help:"Overall benchmark deadline."`
 }
 
+type benchmarkCLI struct {
+	Plan   planCommand `cmd:"" help:"Expand and price a benchmark suite without creating resources."`
+	Driver cli         `cmd:"" help:"Run one benchmark driver shard."`
+}
+
 func (c cli) Validate() error {
 	if c.Routes <= 0 || c.Routes > 5000 {
 		return errors.New("routes must be between 1 and 5000")
@@ -179,8 +184,22 @@ type result struct {
 }
 
 func main() {
-	var flags cli
-	kong.Parse(&flags, kong.Name("tnlbench"), kong.Description("Benchmark the complete tnl route path."))
+	var commands benchmarkCLI
+	parsed := kong.Parse(&commands, kong.Name("tnlbench"), kong.Description("Benchmark the complete tnl route path."))
+	switch parsed.Command() {
+	case "plan":
+		if err := commands.Plan.run(os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "tnlbench: plan: %v\n", err)
+			os.Exit(1)
+		}
+	case "driver":
+		runDriver(commands.Driver)
+	default:
+		panic("unhandled tnlbench command")
+	}
+}
+
+func runDriver(flags cli) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	ctx, cancel := context.WithTimeout(ctx, flags.Timeout)
