@@ -157,13 +157,14 @@ func TestWaitWorkerRoutesAcceptsAggregateAboveExpected(t *testing.T) {
 	}
 }
 
-func TestCleanupRoutesDeletesCapturedRouteIDs(t *testing.T) {
-	cleaner := new(cleanerStub)
+func TestCleanupRoutesLetsPublisherDeleteCapturedRouteIDs(t *testing.T) {
+	cleaner := newCleanerStub("route_a")
 	routeCtx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
 		<-routeCtx.Done()
 		cleaner.record("stop")
+		cleaner.deleteAsPublisher("route_a")
 		done <- nil
 	}()
 	processes := []*routeProcess{{
@@ -179,13 +180,35 @@ func TestCleanupRoutesDeletesCapturedRouteIDs(t *testing.T) {
 	if routeCtx.Err() != context.Canceled {
 		t.Fatal("publisher context was not canceled")
 	}
-	if !slices.Equal(cleaner.events, []string{"stop", "delete:route_a", "remove:hostname_a"}) {
+	if !slices.Equal(cleaner.events, []string{"stop", "publisher-delete:route_a", "list", "remove:hostname_a"}) {
+		t.Fatalf("cleanup events = %v", cleaner.events)
+	}
+}
+
+func TestCleanupRoutesFallsBackWhenPublisherLeavesRoute(t *testing.T) {
+	cleaner := newCleanerStub("route_a")
+	routeCtx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		<-routeCtx.Done()
+		cleaner.record("stop")
+		done <- errors.New("publisher deletion failed")
+	}()
+	processes := []*routeProcess{{
+		routeID: "route_a", hostnameID: "hostname_a", hostnameOwner: cleaner, cancel: cancel, done: done,
+	}}
+	_, err := cleanupRoutes(context.Background(), cli{Parallel: 1}, cleaner, processes)
+	if err == nil || !strings.Contains(err.Error(), "publisher deletion failed") ||
+		!strings.Contains(err.Error(), "publisher cleanup left 1 routes") {
+		t.Fatalf("cleanup error = %v", err)
+	}
+	if !slices.Equal(cleaner.events, []string{"stop", "list", "delete:route_a", "list", "remove:hostname_a"}) {
 		t.Fatalf("cleanup events = %v", cleaner.events)
 	}
 }
 
 func TestCleanupRoutesReleasesClaimWithoutRoute(t *testing.T) {
-	cleaner := new(cleanerStub)
+	cleaner := newCleanerStub()
 	done := make(chan error, 1)
 	done <- errors.New("route creation failed")
 	process := &routeProcess{
@@ -203,11 +226,34 @@ func TestCleanupRoutesReleasesClaimWithoutRoute(t *testing.T) {
 type cleanerStub struct {
 	mu     sync.Mutex
 	events []string
+	routes map[string]struct{}
+}
+
+func newCleanerStub(routeIDs ...string) *cleanerStub {
+	cleaner := &cleanerStub{routes: make(map[string]struct{}, len(routeIDs))}
+	for _, routeID := range routeIDs {
+		cleaner.routes[routeID] = struct{}{}
+	}
+	return cleaner
 }
 
 func (c *cleanerStub) DeleteRoute(_ context.Context, routeID string) error {
-	c.record("delete:" + routeID)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.events = append(c.events, "delete:"+routeID)
+	delete(c.routes, routeID)
 	return nil
+}
+
+func (c *cleanerStub) ListRoutes(context.Context) ([]serverv1.Route, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.events = append(c.events, "list")
+	routes := make([]serverv1.Route, 0, len(c.routes))
+	for routeID := range c.routes {
+		routes = append(routes, serverv1.Route{Id: routeID})
+	}
+	return routes, nil
 }
 
 func (c *cleanerStub) RemoveHostname(_ context.Context, hostnameID string) error {
@@ -219,4 +265,11 @@ func (c *cleanerStub) record(event string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.events = append(c.events, event)
+}
+
+func (c *cleanerStub) deleteAsPublisher(routeID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.events = append(c.events, "publisher-delete:"+routeID)
+	delete(c.routes, routeID)
 }

@@ -129,6 +129,7 @@ type routeProcess struct {
 
 type routeCleaner interface {
 	DeleteRoute(context.Context, string) error
+	ListRoutes(context.Context) ([]serverv1.Route, error)
 }
 
 type hostnameOwner interface {
@@ -515,7 +516,7 @@ func loadRoutes(
 }
 
 func cleanupRoutes(ctx context.Context, flags cli, server routeCleaner, processes []*routeProcess) ([]time.Duration, error) {
-	// Stop all publishers before deleting routes and removing their hostnames.
+	// Publishers own route deletion. Hostnames are removed only after that deletion is verified.
 	started := time.Now()
 	for _, process := range processes {
 		if process != nil {
@@ -535,7 +536,8 @@ func cleanupRoutes(ctx context.Context, flags cli, server routeCleaner, processe
 			}
 			routeIDs[index] = process.routeID
 		case <-ctx.Done():
-			return nil, errors.Join(cleanupErr, ctx.Err())
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("stop route %d: %w", index, ctx.Err()))
+			routeIDs[index] = process.routeID
 		}
 	}
 
@@ -545,32 +547,51 @@ func cleanupRoutes(ctx context.Context, flags cli, server routeCleaner, processe
 	}
 	results := make(chan cleanupResult, len(processes))
 	semaphore := make(chan struct{}, flags.Parallel)
-	count := 0
-	for index, process := range processes {
-		if process == nil {
-			continue
-		}
-		if routeIDs[index] == "" {
-			continue
-		}
-		count++
-		semaphore <- struct{}{}
-		go func(index int, routeID string) {
-			defer func() { <-semaphore }()
-			var err error
-			if deleteErr := server.DeleteRoute(ctx, routeID); deleteErr != nil {
-				err = fmt.Errorf("delete route %d: %w", index, deleteErr)
-			}
-			results <- cleanupResult{index: index, err: err}
-		}(index, routeIDs[index])
+	cleanupCtx := ctx
+	cancelCleanup := func() {}
+	if ctx.Err() != nil {
+		cleanupCtx, cancelCleanup = context.WithTimeout(context.Background(), 30*time.Second)
 	}
-	for range count {
-		result := <-results
-		cleanupErr = errors.Join(cleanupErr, result.err)
+	defer cancelCleanup()
+
+	remaining, verifyErr := remainingRoutes(cleanupCtx, server, routeIDs)
+	if verifyErr != nil {
+		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("verify publisher route cleanup: %w", verifyErr))
+	} else if len(remaining) != 0 {
+		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("publisher cleanup left %d routes", len(remaining)))
+		fmt.Fprintf(os.Stderr, "tnlbench: publisher cleanup left %d routes; using explicit deletion fallback\n", len(remaining))
+		count := 0
+		for index, routeID := range routeIDs {
+			if _, found := remaining[routeID]; routeID == "" || !found {
+				continue
+			}
+			count++
+			semaphore <- struct{}{}
+			go func(index int, routeID string) {
+				defer func() { <-semaphore }()
+				err := server.DeleteRoute(cleanupCtx, routeID)
+				if errors.Is(err, serverclient.ErrNotFound) {
+					err = nil
+				}
+				if err != nil {
+					err = fmt.Errorf("fallback delete route %d: %w", index, err)
+				}
+				results <- cleanupResult{index: index, err: err}
+			}(index, routeID)
+		}
+		for range count {
+			result := <-results
+			cleanupErr = errors.Join(cleanupErr, result.err)
+		}
+		if stillRemaining, err := remainingRoutes(cleanupCtx, server, routeIDs); err != nil {
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("verify fallback route cleanup: %w", err))
+		} else if len(stillRemaining) != 0 {
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("fallback cleanup left %d routes", len(stillRemaining)))
+		}
 	}
 
 	completed := make([]time.Duration, len(processes))
-	count = 0
+	count := 0
 	for index, process := range processes {
 		if process == nil || process.hostnameID == "" {
 			continue
@@ -585,7 +606,7 @@ func cleanupRoutes(ctx context.Context, flags cli, server routeCleaner, processe
 		go func(index int, process *routeProcess) {
 			defer func() { <-semaphore }()
 			var err error
-			if releaseErr := process.hostnameOwner.RemoveHostname(ctx, process.hostnameID); releaseErr != nil {
+			if releaseErr := process.hostnameOwner.RemoveHostname(cleanupCtx, process.hostnameID); releaseErr != nil {
 				err = fmt.Errorf("remove hostname %d: %w", index, releaseErr)
 			}
 			completed[index] = time.Since(started)
@@ -607,6 +628,29 @@ func cleanupRoutes(ctx context.Context, flags cli, server routeCleaner, processe
 		timings = append(timings, completed[index])
 	}
 	return timings, cleanupErr
+}
+
+func remainingRoutes(ctx context.Context, server routeCleaner, routeIDs []string) (map[string]struct{}, error) {
+	wanted := make(map[string]struct{}, len(routeIDs))
+	for _, routeID := range routeIDs {
+		if routeID != "" {
+			wanted[routeID] = struct{}{}
+		}
+	}
+	if len(wanted) == 0 {
+		return nil, nil
+	}
+	routes, err := server.ListRoutes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	remaining := make(map[string]struct{})
+	for _, route := range routes {
+		if _, found := wanted[route.Id]; found {
+			remaining[route.Id] = struct{}{}
+		}
+	}
+	return remaining, nil
 }
 
 func waitWorkerRoutes(ctx context.Context, metricsURLs []string, want int) ([]workerSample, error) {
