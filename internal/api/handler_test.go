@@ -216,7 +216,7 @@ func TestTokenExchangePersistsUsableAccessToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	exchange, err := auth.NewTokenExchange(db, bootstrap)
+	exchange, err := auth.NewService(db, bootstrap)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -340,6 +340,21 @@ func (f tokenExchangerFunc) Exchange(
 	token credentials.BootstrapToken,
 ) (auth.IssuedAccessToken, error) {
 	return f(ctx, token)
+}
+
+func (tokenExchangerFunc) Authenticate(
+	context.Context,
+	credentials.AccessToken,
+) (state.Principal, error) {
+	panic("unexpected Authenticate call")
+}
+
+func (tokenExchangerFunc) Revoke(
+	context.Context,
+	state.Principal,
+	credentials.CredentialID,
+) error {
+	panic("unexpected Revoke call")
 }
 
 func fixtureCapabilities(t *testing.T) corev1.Capabilities {

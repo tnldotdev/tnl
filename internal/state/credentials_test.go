@@ -59,17 +59,50 @@ func TestAccessCredentialLifecycle(t *testing.T) {
 	assertInvalidAccessCredential(t, db, lookupID, wrongHash, now)
 	assertInvalidAccessCredential(t, db, lookupID, hash, expiresAt)
 
-	if err := RevokeAccessCredential(context.Background(), db, lookupID, now.Add(time.Hour)); err != nil {
+	if err := RevokeAccessCredential(context.Background(), db, want.ID, lookupID, now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	if err := RevokeAccessCredential(context.Background(), db, lookupID, now.Add(2*time.Hour)); err != nil {
+	if err := RevokeAccessCredential(context.Background(), db, want.ID, lookupID, now.Add(2*time.Hour)); err != nil {
 		t.Fatalf("repeat revocation: %v", err)
 	}
 	assertInvalidAccessCredential(t, db, lookupID, hash, now)
 	if err := RevokeAccessCredential(
-		context.Background(), db, credentials.CredentialID("missing"), now,
+		context.Background(), db, want.ID, credentials.CredentialID("missing"), now,
 	); !errors.Is(err, ErrAccessCredentialNotFound) {
 		t.Fatalf("missing revocation error = %v", err)
+	}
+}
+
+func TestRevokeAccessCredentialEnforcesOwnership(t *testing.T) {
+	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	now := time.Unix(1_700_000_000, 0)
+	token, credentialID, hash, err := credentials.NewAccessToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := Principal{ID: "principal_owner"}
+	if err := CreateAccessCredential(
+		context.Background(), db, owner, credentialID, hash, now, now.Add(time.Hour),
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RevokeAccessCredential(
+		context.Background(), db, "principal_other", credentialID, now,
+	); !errors.Is(err, ErrAccessCredentialNotFound) {
+		t.Fatalf("wrong-owner revocation error = %v", err)
+	}
+	parsedID, parsedHash, err := credentials.ParseAccessToken(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AuthenticateAccessCredential(context.Background(), db, parsedID, parsedHash, now); err != nil {
+		t.Fatalf("wrong-owner revocation invalidated credential: %v", err)
 	}
 }
 

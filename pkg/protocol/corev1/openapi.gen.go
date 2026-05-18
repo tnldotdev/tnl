@@ -153,6 +153,9 @@ type CapabilitiesHostnameAuthorization string
 // CapabilitiesProtocolVersions defines model for Capabilities.ProtocolVersions.
 type CapabilitiesProtocolVersions int
 
+// CredentialID defines model for CredentialID.
+type CredentialID = string
+
 // Problem defines model for Problem.
 type Problem struct {
 	Code      ProblemCode            `json:"code"`
@@ -174,7 +177,7 @@ type TokenExchangeRequest struct {
 // TokenExchangeResponse defines model for TokenExchangeResponse.
 type TokenExchangeResponse struct {
 	AccessToken  string                         `json:"access_token"`
-	CredentialId string                         `json:"credential_id"`
+	CredentialId CredentialID                   `json:"credential_id"`
 	ExpiresAt    time.Time                      `json:"expires_at"`
 	TokenType    TokenExchangeResponseTokenType `json:"token_type"`
 }
@@ -194,6 +197,9 @@ type TransportCapabilitiesType string
 
 // TransportCapabilitiesVersion defines model for TransportCapabilities.Version.
 type TransportCapabilitiesVersion int
+
+// BearerProblem defines model for BearerProblem.
+type BearerProblem = Problem
 
 // ExchangeBootstrapTokenJSONRequestBody defines body for ExchangeBootstrapToken for application/json ContentType.
 type ExchangeBootstrapTokenJSONRequestBody = TokenExchangeRequest
