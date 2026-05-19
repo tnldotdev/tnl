@@ -85,7 +85,7 @@ milestones work.
 - `scale` intentionally fails planning until
   `BENCH_ROUTES_PER_WORKER` supplies a qualified density.
 
-## Current Uncommitted Work
+### `71a2d9c feat: add mergeable benchmark results`
 
 - Added result schema v2 with cell, repetition, shard, configuration, phase,
   resource, cleanup, and failure fields.
@@ -97,13 +97,29 @@ milestones work.
   `report.json` plus `report.md`.
 - Updated legacy result extraction to select schema version 2.
 
-## Important Limitation
+## Current Uncommitted Work
 
-The existing `scripts/bench-fly.sh` is still the legacy topology/matrix runner.
-It does not consume the new machine-readable plan and ignores `BENCH_SUITE`.
-Do not run the documented profile command until the orchestrator is rewritten;
-otherwise it would run the legacy default matrix. The read-only plan command is
-safe and does not call Fly, DNS, ACME, or certificate services.
+- Reworked `scripts/bench-fly.sh` to require `BENCH_APPROVED=1`, consume the
+  machine-readable plan, and run the expanded `smoke`, `density`, or `scale`
+  cells with the planned edge, worker, driver, route, repetition, and timeout
+  values.
+- Added a per-run directory with `manifest.json`, `results.jsonl`, generated
+  reports, and failure diagnostics.
+- The runner checks the final row count against the plan.
+- A failed cell is retained and stops the suite without retry. Per user
+  direction, actual benchmark failures will be reported without runtime fixes
+  or reruns intended to obtain a preferred result.
+
+## Important Limitations
+
+- The read-only plan command is safe and does not call Fly, DNS, ACME, or
+  certificate services.
+- The profile-driven Fly runner currently covers capacity smoke, density, and
+  horizontal scale cells. It does not yet coordinate worker drain or run an
+  autoscaler.
+- Driver schema v2 currently records activation, one all-route correctness
+  wave, and cleanup. Representative sustained traffic, persistent streams,
+  burst, and churn still need driver implementation before drain qualification.
 
 ## Next Steps
 

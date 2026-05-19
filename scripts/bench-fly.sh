@@ -4,22 +4,19 @@ set -euo pipefail
 
 org="${ORG:-tnl}"
 region="${REGION:-sjc}"
-modes="${MODES:-single-node,ha}"
-single_routes="${SINGLE_ROUTES:-1,100,250,400,500}"
-ha_routes="${HA_ROUTES:-1,250,500,800,1000}"
-workers="${WORKERS:-2}"
-drivers="${DRIVERS:-1}"
+bench_suite="${BENCH_SUITE:?set BENCH_SUITE to a planned suite}"
+bench_approved="${BENCH_APPROVED:-0}"
+workers=0
+drivers=0
 parallel="${PARALLEL:-8}"
 payload_bytes="${PAYLOAD_BYTES:-65536}"
-benchmark_timeout="${TIMEOUT:-5m}"
-attempts="${ATTEMPTS:-3}"
 driver_wait_seconds="${DRIVER_WAIT_SECONDS:-480}"
-worker_capacity="${WORKER_CAPACITY:-500}"
+benchmark_timeout=""
+worker_capacity=0
 nofile_limit="${NOFILE_LIMIT:-65536}"
-single_size="${SINGLE_SIZE:-performance-6x}"
-edge_size="${EDGE_SIZE:-performance-2x}"
-worker_size="${WORKER_SIZE:-performance-6x}"
-driver_size="${DRIVER_SIZE:-performance-8x}"
+edge_size=""
+worker_size=""
+driver_size=""
 local_control_port="${LOCAL_CONTROL_PORT:-18443}"
 derp_region="${DERP_REGION:-302}"
 domain="${DOMAIN:?set DOMAIN to the benchmark base domain}"
@@ -35,10 +32,13 @@ app="tnl-bench-${run_id}"
 image="registry.fly.io/${app}:${run_id}"
 temp_dir="$(mktemp -d)"
 results_dir="${RESULTS_DIR:-bench-results}"
-results_file="${results_dir}/${run_id}.jsonl"
+run_dir="${results_dir}/${run_id}"
+results_file="${run_dir}/results.jsonl"
 proxy_pid=""
 edge_metrics_url=""
 login_token=""
+current_cell_id=""
+current_repetition=1
 
 if [[ ! -x "${dns_hook}" ]]; then
   printf 'DNS_HOOK must be executable: %s\n' "${dns_hook}" >&2
@@ -152,7 +152,7 @@ capture_failure_diagnostics() {
   local topology="$1"
   local routes="$2"
   local attempt="$3"
-  local directory="${results_dir}/${run_id}-failures/${topology}-${routes}-attempt-${attempt}"
+  local directory="${run_dir}/failures/${topology}-${routes}-attempt-${attempt}"
   mkdir -p "${directory}"
   fly machine list --app "${app}" --json 2>"${directory}/machines.err" | jq '[.[] | {
     id, name, state, region, instance_id, created_at, updated_at,
@@ -331,6 +331,10 @@ run_tier() {
       --file-local "/etc/tnl/control-ca.crt=${temp_dir}/control-ca.crt" \
       --file-local "/etc/tnl/relay.json=${temp_dir}/relay.json" \
       --env "TNL_BENCH_TOPOLOGY=${topology}" \
+      --env "TNL_BENCH_CELL_ID=${current_cell_id}" \
+      --env "TNL_BENCH_SUITE=${bench_suite}" \
+      --env TNL_BENCH_WORKLOAD=agent-worktrees-assumed-v1 \
+      --env "TNL_BENCH_REPETITION=${current_repetition}" \
       --env "TNL_BENCH_SERVER=https://${server_hostname}" \
       --env "TNL_BENCH_LOGIN_TOKEN=${login_token}" \
       --env TNL_BENCH_CONTROL_CA_FILE=/etc/tnl/control-ca.crt \
@@ -402,16 +406,63 @@ run_tier() {
       failed=1
     fi
   done
-  if ((failed != 0)); then
-    return 1
-  fi
-  if ! fly machine destroy --force --app "${app}" "${driver_ids[@]}" >/dev/null; then
-    return 1
-  fi
   tee -a "${results_file}" <"${tier_results}"
+  if ! fly machine destroy --force --app "${app}" "${driver_ids[@]}" >/dev/null; then
+    failed=1
+  fi
+  ((failed == 0))
 }
 
-mkdir -p "${results_dir}"
+if [[ "${bench_approved}" != "1" ]]; then
+  printf 'BENCH_APPROVED=1 is required before creating Fly or DNS resources\n' >&2
+  exit 2
+fi
+
+plan_json="$(go run ./cmd/tnlbench plan --suite "${bench_suite}" --format json)"
+if [[ "$(jq -r '.read_only' <<<"${plan_json}")" != "true" ]]; then
+  printf 'benchmark plan is not marked read-only\n' >&2
+  exit 2
+fi
+if [[ "$(jq -r '.transport' <<<"${plan_json}")" != "forced-derp" ]]; then
+  printf 'capacity runner currently requires forced-derp transport\n' >&2
+  exit 2
+fi
+region="$(jq -r '.region' <<<"${plan_json}")"
+edge_size="$(jq -r '.machines.edge.size' <<<"${plan_json}")"
+worker_size="$(jq -r '.machines.worker.size' <<<"${plan_json}")"
+driver_size="$(jq -r '.machines.driver.size' <<<"${plan_json}")"
+worker_capacity="$(jq -r '.machines.worker.capacity' <<<"${plan_json}")"
+
+mkdir -p "${run_dir}/failures"
+: >"${results_file}"
+git_sha="$(git rev-parse HEAD)"
+git_dirty=false
+if [[ -n "$(git status --porcelain)" ]]; then
+  git_dirty=true
+fi
+jq -n \
+  --arg run_id "${run_id}" \
+  --arg created_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --arg git_sha "${git_sha}" \
+  --arg image "${image}" \
+  --argjson git_dirty "${git_dirty}" \
+  --argjson plan "${plan_json}" \
+  '{
+    manifest_schema_version: 1,
+    run_id: $run_id,
+    created_at: $created_at,
+    git_sha: $git_sha,
+    git_dirty: $git_dirty,
+    image: $image,
+    plan: $plan
+  }' >"${run_dir}/manifest.json"
+
+printf '%s\n' "${plan_json}" | jq '{
+  suite, region, transport, cells, expected_result_rows,
+  expected_duration_seconds, maximum_duration_seconds,
+  expected_spend, maximum_spend
+}'
+
 worker_token="$(go run ./cmd/tnl admin server token worker)"
 cp "${control_ca_file}" "${temp_dir}/control-ca.crt"
 
@@ -428,70 +479,31 @@ fly ips allocate-v6 --app "${app}" >/dev/null
 fly deploy . --app "${app}" --config fly.bench.toml --build-only --push \
   --image-label "${run_id}" --no-public-ips
 
-IFS=',' read -r -a mode_list <<<"${modes}"
-for mode in "${mode_list[@]}"; do
-  mode="${mode//[[:space:]]/}"
-  case "${mode}" in
-    single-node)
-      IFS=',' read -r -a route_list <<<"${single_routes}"
-      for routes in "${route_list[@]}"; do
-        routes="${routes//[[:space:]]/}"
-        completed=0
-        for ((attempt = 1; attempt <= attempts; attempt++)); do
-          destroy_machines
-          launch_single_node "${routes}"
-          wait_for_server
-          login_token="$(read_login_token single-node)"
-          single_ip="$(machine_value single-node private_ip)"
-          edge_metrics_url="http://[${single_ip}]:9090/metrics"
-          if run_tier single-node "${routes}" "${single_size}" "http://[${single_ip}]:9090/metrics"; then
-            completed=1
-            break
-          fi
-          capture_failure_diagnostics single-node "${routes}" "${attempt}"
-          if ((attempt < attempts)); then
-            printf 'retrying single-node %s routes after failed attempt %s\n' "${routes}" "${attempt}" >&2
-          fi
-        done
-        if ((completed == 0)); then
-          exit 1
-        fi
-      done
-      ;;
-    ha)
-      IFS=',' read -r -a route_list <<<"${ha_routes}"
-      for routes in "${route_list[@]}"; do
-        routes="${routes//[[:space:]]/}"
-        completed=0
-        for ((attempt = 1; attempt <= attempts; attempt++)); do
-          destroy_machines
-          launch_edge "${routes}"
-          wait_for_server
-          login_token="$(read_login_token edge)"
-          edge_ip="$(machine_value edge private_ip)"
-          edge_metrics_url="http://[${edge_ip}]:9090/metrics"
-          launch_workers
-          sleep 5
-          if run_tier ha "${routes}" "${edge_size}+${workers}x${worker_size}" "${worker_metrics[@]}"; then
-            completed=1
-            break
-          fi
-          capture_failure_diagnostics ha "${routes}" "${attempt}"
-          if ((attempt < attempts)); then
-            printf 'retrying ha %s routes after failed attempt %s\n' "${routes}" "${attempt}" >&2
-          fi
-        done
-        if ((completed == 0)); then
-          exit 1
-        fi
-      done
-      ;;
-    *)
-      printf 'invalid mode: %s\n' "${mode}" >&2
-      exit 2
-      ;;
-  esac
-done
+while IFS=$'\t' read -r current_cell_id workers routes current_repetition drivers maximum_seconds; do
+  destroy_machines
+  benchmark_timeout="${maximum_seconds}s"
+  driver_wait_seconds=$((maximum_seconds + 180))
+  launch_edge "${routes}"
+  wait_for_server
+  login_token="$(read_login_token edge)"
+  edge_ip="$(machine_value edge private_ip)"
+  edge_metrics_url="http://[${edge_ip}]:9090/metrics"
+  launch_workers
+  sleep 5
+  if ! run_tier ha "${routes}" "${edge_size}+${workers}x${worker_size}" "${worker_metrics[@]}"; then
+    capture_failure_diagnostics ha "${routes}" 1
+    BENCH_RUN="${run_dir}" go run ./cmd/tnlbench report || true
+    printf 'benchmark cell failed; stopping suite without retry: %s\n' "${current_cell_id}" >&2
+    exit 1
+  fi
+done < <(jq -r '.cells[] | [.id, .workers, .routes, .repetition, .drivers, .maximum_duration_seconds] | @tsv' <<<"${plan_json}")
 
 destroy_machines
-printf '\nResults: %s\n' "${results_file}"
+actual_rows="$(jq -s 'length' "${results_file}")"
+expected_rows="$(jq -r '.expected_result_rows' <<<"${plan_json}")"
+if [[ "${actual_rows}" != "${expected_rows}" ]]; then
+  printf 'result row mismatch: got %s, want %s\n' "${actual_rows}" "${expected_rows}" >&2
+  exit 1
+fi
+BENCH_RUN="${run_dir}" go run ./cmd/tnlbench report
+printf '\nResults: %s\n' "${run_dir}"
