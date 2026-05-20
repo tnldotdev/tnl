@@ -28,7 +28,28 @@ func loadCertPool(path string) (*x509.CertPool, error) {
 	return pool, nil
 }
 
-func benchmarkCertificates(hostnames []string) ([]tls.Certificate, *x509.CertPool, error) {
+func benchmarkCertificates(hostnames []string, certificateFile, keyFile string) ([]tls.Certificate, *x509.CertPool, error) {
+	if certificateFile != "" || keyFile != "" {
+		certificate, err := tls.LoadX509KeyPair(certificateFile, keyFile)
+		if err != nil {
+			return nil, nil, err
+		}
+		certificate.Leaf, err = x509.ParseCertificate(certificate.Certificate[0])
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, hostname := range hostnames {
+			if err := certificate.Leaf.VerifyHostname(hostname); err != nil {
+				return nil, nil, err
+			}
+		}
+		certificates := make([]tls.Certificate, len(hostnames))
+		for index := range certificates {
+			certificates[index] = certificate
+		}
+		return certificates, nil, nil
+	}
+
 	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, nil, err

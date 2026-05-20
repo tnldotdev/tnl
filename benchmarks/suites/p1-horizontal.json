@@ -14,10 +14,10 @@
   "hosted_worker_limits": {"minimum": 2, "maximum": 10},
   "required_inputs": [
     "Fly organization access",
-    "Dedicated benchmark base domain",
-    "DNS update hook",
-    "ACME directory and account email",
-    "Control CA bundle"
+    "Persistent tnl-bench app with a dedicated IPv4",
+    "Wildcard A record for *.bench.tnl.wtf",
+    "Let's Encrypt wildcard certificate and private key for *.bench.tnl.wtf",
+    "Let's Encrypt account email"
   ],
   "suites": {
     "smoke": {

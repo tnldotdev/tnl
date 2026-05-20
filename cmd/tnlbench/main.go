@@ -35,28 +35,30 @@ import (
 )
 
 type cli struct {
-	CellID         string        `name:"cell-id" env:"TNL_BENCH_CELL_ID" help:"Stable expanded benchmark cell ID."`
-	Suite          string        `name:"suite" env:"TNL_BENCH_SUITE" default:"legacy" help:"Benchmark suite name."`
-	Workload       string        `name:"workload" env:"TNL_BENCH_WORKLOAD" default:"agent-worktrees-assumed-v1" help:"Benchmark workload ID."`
-	Repetition     int           `name:"repetition" env:"TNL_BENCH_REPETITION" default:"1" help:"One-based cell repetition."`
-	Topology       string        `name:"topology" env:"TNL_BENCH_TOPOLOGY" enum:"single-node,ha" required:"" help:"Deployment topology under test."`
-	ServerURL      string        `name:"server" env:"TNL_BENCH_SERVER" required:"" help:"Server HTTPS origin."`
-	LoginToken     string        `name:"login-token" env:"TNL_BENCH_LOGIN_TOKEN" required:"" help:"Server login token."`
-	ControlCAFile  string        `name:"control-ca-file" env:"TNL_BENCH_CONTROL_CA_FILE" type:"path" help:"Optional PEM CA for the server endpoint; system roots are used when omitted."`
-	PublicAddress  string        `name:"public-address" env:"TNL_BENCH_PUBLIC_ADDRESS" required:"" help:"Public ingress host:port to dial."`
-	HostnameSuffix string        `name:"hostname-suffix" env:"TNL_BENCH_HOSTNAME_SUFFIX" required:"" help:"Suffix below which benchmark routes are created."`
-	MetricsURLs    []string      `name:"metrics-url" env:"TNL_BENCH_METRICS_URLS" help:"Private worker metrics URL; repeat for each worker."`
-	EdgeMetricsURL string        `name:"edge-metrics-url" env:"TNL_BENCH_EDGE_METRICS_URL" help:"Private edge metrics URL used for failure evidence."`
-	Routes         int           `name:"routes" env:"TNL_BENCH_ROUTES" default:"1" help:"Routes to activate."`
-	ExpectedRoutes int           `name:"expected-routes" env:"TNL_BENCH_EXPECTED_ROUTES" help:"Aggregate worker route count used to coordinate driver shards; defaults to routes."`
-	DriverIndex    int           `name:"driver-index" env:"TNL_BENCH_DRIVER_INDEX" help:"Zero-based index of this driver shard."`
-	DriverCount    int           `name:"driver-count" env:"TNL_BENCH_DRIVER_COUNT" default:"1" help:"Number of coordinated driver shards."`
-	BarrierURL     string        `name:"barrier-url" env:"TNL_BENCH_BARRIER_URL" help:"Driver coordinator URL."`
-	BarrierListen  string        `name:"barrier-listen" env:"TNL_BENCH_BARRIER_LISTEN" help:"Driver coordinator listen address; set on driver zero."`
-	BarrierToken   string        `name:"barrier-token" env:"TNL_BENCH_BARRIER_TOKEN" help:"Driver coordinator bearer token."`
-	Parallel       int           `name:"parallel" env:"TNL_BENCH_PARALLEL" default:"8" help:"Maximum concurrent setup, load, and cleanup operations."`
-	PayloadBytes   int           `name:"payload-bytes" env:"TNL_BENCH_PAYLOAD_BYTES" default:"65536" help:"Response bytes transferred per route."`
-	Timeout        time.Duration `name:"timeout" env:"TNL_BENCH_TIMEOUT" default:"30m" help:"Overall benchmark deadline."`
+	CellID             string        `name:"cell-id" env:"TNL_BENCH_CELL_ID" help:"Stable expanded benchmark cell ID."`
+	Suite              string        `name:"suite" env:"TNL_BENCH_SUITE" default:"legacy" help:"Benchmark suite name."`
+	Workload           string        `name:"workload" env:"TNL_BENCH_WORKLOAD" default:"agent-worktrees-assumed-v1" help:"Benchmark workload ID."`
+	Repetition         int           `name:"repetition" env:"TNL_BENCH_REPETITION" default:"1" help:"One-based cell repetition."`
+	Topology           string        `name:"topology" env:"TNL_BENCH_TOPOLOGY" enum:"single-node,ha" required:"" help:"Deployment topology under test."`
+	ServerURL          string        `name:"server" env:"TNL_BENCH_SERVER" required:"" help:"Server HTTPS origin."`
+	LoginToken         string        `name:"login-token" env:"TNL_BENCH_LOGIN_TOKEN" required:"" help:"Server login token."`
+	ControlCAFile      string        `name:"control-ca-file" env:"TNL_BENCH_CONTROL_CA_FILE" type:"path" help:"Optional PEM CA for the server endpoint; system roots are used when omitted."`
+	CertificateFile    string        `name:"certificate-file" env:"TNL_BENCH_CERTIFICATE_FILE" type:"path" help:"Optional PEM certificate chain shared by benchmark routes."`
+	CertificateKeyFile string        `name:"certificate-key-file" env:"TNL_BENCH_CERTIFICATE_KEY_FILE" type:"path" help:"Private key for --certificate-file."`
+	PublicAddress      string        `name:"public-address" env:"TNL_BENCH_PUBLIC_ADDRESS" required:"" help:"Public ingress host:port to dial."`
+	HostnameSuffix     string        `name:"hostname-suffix" env:"TNL_BENCH_HOSTNAME_SUFFIX" required:"" help:"Suffix below which benchmark routes are created."`
+	MetricsURLs        []string      `name:"metrics-url" env:"TNL_BENCH_METRICS_URLS" help:"Private worker metrics URL; repeat for each worker."`
+	EdgeMetricsURL     string        `name:"edge-metrics-url" env:"TNL_BENCH_EDGE_METRICS_URL" help:"Private edge metrics URL used for failure evidence."`
+	Routes             int           `name:"routes" env:"TNL_BENCH_ROUTES" default:"1" help:"Routes to activate."`
+	ExpectedRoutes     int           `name:"expected-routes" env:"TNL_BENCH_EXPECTED_ROUTES" help:"Aggregate worker route count used to coordinate driver shards; defaults to routes."`
+	DriverIndex        int           `name:"driver-index" env:"TNL_BENCH_DRIVER_INDEX" help:"Zero-based index of this driver shard."`
+	DriverCount        int           `name:"driver-count" env:"TNL_BENCH_DRIVER_COUNT" default:"1" help:"Number of coordinated driver shards."`
+	BarrierURL         string        `name:"barrier-url" env:"TNL_BENCH_BARRIER_URL" help:"Driver coordinator URL."`
+	BarrierListen      string        `name:"barrier-listen" env:"TNL_BENCH_BARRIER_LISTEN" help:"Driver coordinator listen address; set on driver zero."`
+	BarrierToken       string        `name:"barrier-token" env:"TNL_BENCH_BARRIER_TOKEN" help:"Driver coordinator bearer token."`
+	Parallel           int           `name:"parallel" env:"TNL_BENCH_PARALLEL" default:"8" help:"Maximum concurrent setup, load, and cleanup operations."`
+	PayloadBytes       int           `name:"payload-bytes" env:"TNL_BENCH_PAYLOAD_BYTES" default:"65536" help:"Response bytes transferred per route."`
+	Timeout            time.Duration `name:"timeout" env:"TNL_BENCH_TIMEOUT" default:"30m" help:"Overall benchmark deadline."`
 }
 
 type benchmarkCLI struct {
@@ -68,6 +70,9 @@ type benchmarkCLI struct {
 func (c cli) Validate() error {
 	if c.Repetition <= 0 {
 		return errors.New("repetition must be positive")
+	}
+	if (c.CertificateFile == "") != (c.CertificateKeyFile == "") {
+		return errors.New("certificate file and key file must be provided together")
 	}
 	if c.Routes <= 0 || c.Routes > 5000 {
 		return errors.New("routes must be between 1 and 5000")
@@ -310,7 +315,9 @@ func run(ctx context.Context, flags cli) (measurements, error) {
 	for index := range hostnames {
 		hostnames[index] = benchmarkHostname(flags.DriverIndex, index, hostnameSuffix)
 	}
-	applicationCertificates, applicationRoots, err := benchmarkCertificates(hostnames)
+	applicationCertificates, applicationRoots, err := benchmarkCertificates(
+		hostnames, flags.CertificateFile, flags.CertificateKeyFile,
+	)
 	if err != nil {
 		return measurements{}, err
 	}
