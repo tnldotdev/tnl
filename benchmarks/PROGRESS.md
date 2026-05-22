@@ -110,7 +110,7 @@ milestones work.
   direction, actual benchmark failures will be reported without runtime fixes
   or reruns intended to obtain a preferred result.
 
-## Current Uncommitted Work
+### `8baf406 feat: use persistent public benchmark ingress`
 
 - Restored the benchmark files after an accidental local deletion; the user
   confirmed those deletions were not intentional.
@@ -125,7 +125,15 @@ milestones work.
 - Added optional driver certificate/key inputs so all generated routes can use
   one real `*.bench.tnl.wtf` wildcard certificate.
 - Added system CA certificates to the benchmark image.
-- Wildcard issuance through a temporary DNS-01 TXT record is the next action.
+
+## Current Operational State
+
+- Let's Encrypt issued the ignored local `*.bench.tnl.wtf` wildcard certificate
+  for 2026-09-02 through 2026-12-01. Its chain, hostname, expiration window,
+  private key, and key pairing were validated locally.
+- The temporary `_acme-challenge.bench.tnl.wtf` TXT record was removed after
+  issuance and is absent from Vercel's authoritative nameserver.
+- The persistent app currently has no Machines. No benchmark has run yet.
 
 ## Important Limitations
 
@@ -140,15 +148,15 @@ milestones work.
 
 ## Next Steps
 
-1. Issue and locally store the real `*.bench.tnl.wtf` wildcard certificate.
-2. Verify, commit, and push the persistent-app and wildcard TLS changes.
-3. Run the cheap smoke suite once. If it fails, preserve and report the result
+1. Review the read-only smoke plan and obtain explicit approval to create its
+   temporary Fly Machines.
+2. Run the cheap smoke suite once. If it fails, preserve and report the result
    without fixes or a preferred-outcome rerun.
-4. Run density scouting, rerun the candidate knee and adjacent point three
+3. Run density scouting, rerun the candidate knee and adjacent point three
    times, then record an approximately 80% scheduling target.
-5. Run the 1/2/4/8/10-worker scale matrix at that target.
-6. Add manual drain coordination and qualify 3 to 2 and 4 to 3.
-7. Qualify the pinned hosted autoscaler policy through 4 to 3 to 2 before
+4. Run the 1/2/4/8/10-worker scale matrix at that target.
+5. Add manual drain coordination and qualify 3 to 2 and 4 to 3.
+6. Qualify the pinned hosted autoscaler policy through 4 to 3 to 2 before
    changing the authoritative `tnl.dev` policy.
 
 ## Commands Verified So Far
@@ -156,6 +164,10 @@ milestones work.
 ```sh
 go test ./cmd/tnlbench
 go test -race ./cmd/tnlbench
+mise exec -- task go:test
+mise exec -- task go:format-check
+go vet ./cmd/tnlbench
+bash -n scripts/bench-fly.sh
 BENCH_SUITE=smoke mise exec -- task go:bench-fly:plan
 BENCH_SUITE=smoke BENCH_PLAN_FORMAT=json mise exec -- task go:bench-fly:plan
 ```
