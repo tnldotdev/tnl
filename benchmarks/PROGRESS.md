@@ -156,6 +156,18 @@ milestones work.
 - Per user direction, the failed smoke was not retried and no runtime or policy
   changes were made in response.
 
+### Packaging Fix After Smoke
+
+- With explicit user direction after reviewing the failure, `Dockerfile.bench`
+  now builds `cmd/tnl` and installs it at `/usr/local/bin/tnl`, matching the
+  path used by login-token retrieval.
+- A clean detached `4474257` source tree plus this Dockerfile change built
+  successfully, and `/usr/local/bin/tnl version` ran inside the resulting
+  container.
+- The current working tree contains unrelated concurrent source changes that
+  do not compile together; they were not modified or included in this fix.
+- No benchmark rerun has been approved or attempted.
+
 ## Important Limitations
 
 - The read-only plan command is safe and does not call Fly, DNS, ACME, or
