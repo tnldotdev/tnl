@@ -74,7 +74,7 @@ jobs:
         env:
           FRAMEWORK: ${{ matrix.framework }}
           VERSION: ${{ matrix.version }}
-        run: pnpm --filter "@tnldotdev/$FRAMEWORK" add --save-dev --save-exact "$FRAMEWORK@$VERSION"
+        run: pnpm --filter "@tnldotdev/$FRAMEWORK" add --save-dev --save-exact --ignore-scripts "$FRAMEWORK@$VERSION"
 
       - name: Build adapter
         env:

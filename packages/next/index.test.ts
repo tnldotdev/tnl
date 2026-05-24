@@ -6,6 +6,7 @@ import {
   openTestWebSocket,
   openTestWebSocketWithMessage,
   requestTestServer,
+  reserveLoopbackPort,
   startTestBootstrap,
   startTestProcess,
   waitForBootstrapRequest,
@@ -153,9 +154,10 @@ test("runs Next.js with protected development assets and HMR", { timeout: 60_000
   const bootstrap = await startTestBootstrap();
   onTestFinished(() => bootstrap.close());
   const nextCLI = fileURLToPath(new URL("node_modules/next/dist/bin/next", import.meta.url));
+  const port = await reserveLoopbackPort();
   const process_ = startTestProcess(
     process.execPath,
-    [nextCLI, "dev", "--hostname", "127.0.0.1", "--port", "0"],
+    [nextCLI, "dev", "--hostname", "127.0.0.1", "--port", String(port)],
     { cwd: fixture, env: { ...process.env, ...bootstrap.environment } },
   );
   onTestFinished(async () => {
@@ -173,9 +175,7 @@ test("runs Next.js with protected development assets and HMR", { timeout: 60_000
     });
     const target = await waitForBootstrapRequest(bootstrap, 1);
     expect(target.path).toBe("/v1/target");
-    expect(target.body).toMatchObject({ protocol: 1, framework: "next" });
-    const port = (target.body as { port: number }).port;
-    expect(port).toBeGreaterThan(0);
+    expect(target.body).toMatchObject({ protocol: 1, framework: "next", port });
 
     const page = await requestTestServer(port);
     expect(page.status).toBe(200);
