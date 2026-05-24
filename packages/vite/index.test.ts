@@ -22,10 +22,16 @@ const serveEnvironment: ConfigEnv = {
   isSsrBuild: false,
   mode: "development",
 };
+const expectedTnlDefine = {
+  "import.meta.env.VITE_TNL_HOSTNAME": JSON.stringify("demo.tnl.dev"),
+  "import.meta.env.VITE_TNL_TUNNEL_ID": JSON.stringify(`tunnel_${"b".repeat(32)}`),
+  "import.meta.env.VITE_TNL_URL": JSON.stringify("https://demo.tnl.dev"),
+};
 
 describe("tnl", () => {
   test("takes no arguments and is inert outside tnl dev", async () => {
     expect(tnl).toHaveLength(0);
+    expect(tnl()).toMatchObject({ apply: "serve", enforce: "post", name: "tnl" });
     await expect(runConfigHook(tnl(), { server: { port: 4173 } })).resolves.toBeUndefined();
   });
 
@@ -68,6 +74,7 @@ describe("tnl", () => {
           },
         ),
       ).resolves.toEqual({
+        define: expectedTnlDefine,
         server: {
           allowedHosts: ["existing.example", "demo.tnl.dev"],
           host: "127.0.0.1",
@@ -91,6 +98,7 @@ describe("tnl", () => {
 
     await withProcessEnvironment({ ...bootstrap.environment, TNL_DEV_PORT: "5300" }, async () => {
       await expect(runConfigHook(tnl(), { server: { port: 5200 } })).resolves.toMatchObject({
+        define: expectedTnlDefine,
         server: { port: 5300 },
       });
     });
@@ -128,6 +136,11 @@ test(
       expect(page.status).toBe(200);
       expect(page.body).toContain("Vite fixture");
       expect(page.headers["x-tnl-fixture"]).toBe("vite");
+      const appModule = await requestTestServer(port, { path: "/src/main.ts" });
+      expect(appModule.status).toBe(200);
+      expect(appModule.body).toContain('"VITE_TNL_URL": "https://demo.tnl.dev"');
+      expect(appModule.body).toContain('"VITE_TNL_HOSTNAME": "demo.tnl.dev"');
+      expect(appModule.body).toContain(`"VITE_TNL_TUNNEL_ID": "tunnel_${"b".repeat(32)}"`);
       await expect(requestTestServer(port, { host: "existing.example" })).resolves.toMatchObject({
         status: 200,
       });

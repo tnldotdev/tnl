@@ -254,6 +254,28 @@ func TestPublishNameOption(t *testing.T) {
 	}
 }
 
+func TestPublishAndDevOpenOptions(t *testing.T) {
+	for _, test := range []struct {
+		arguments []string
+		open      func(cli) bool
+	}{
+		{arguments: []string{"publish", "3000", "--open"}, open: func(flags cli) bool { return flags.Publish.Open }},
+		{arguments: []string{"dev", "--open", "--", "pnpm", "dev"}, open: func(flags cli) bool { return flags.Dev.Open }},
+	} {
+		var flags cli
+		parser, err := kong.New(&flags)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := parser.Parse(test.arguments); err != nil {
+			t.Fatalf("parse %q: %v", test.arguments, err)
+		}
+		if !test.open(flags) {
+			t.Fatalf("open was false for %q", test.arguments)
+		}
+	}
+}
+
 func TestPublishIPAllowlistOptions(t *testing.T) {
 	var flags cli
 	parser, err := kong.New(&flags)

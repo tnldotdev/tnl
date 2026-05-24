@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, onTestFinished, test } from "vitest";
 import {
+  publicTunnelEnvironment,
   readDevEnvironment,
   registerTarget,
   requestTunnelAssignment,
@@ -83,6 +84,11 @@ describe("tunnel assignment and target registration", () => {
       hostname: "demo.tnl.dev",
       publicURL: "https://demo.tnl.dev",
       tunnelID: `tunnel_${"b".repeat(32)}`,
+    });
+    expect(publicTunnelEnvironment(assignment, "NEXT_PUBLIC_")).toEqual({
+      NEXT_PUBLIC_TNL_HOSTNAME: "demo.tnl.dev",
+      NEXT_PUBLIC_TNL_TUNNEL_ID: `tunnel_${"b".repeat(32)}`,
+      NEXT_PUBLIC_TNL_URL: "https://demo.tnl.dev",
     });
     await registerTarget(assignment, 5174);
 
@@ -200,5 +206,5 @@ function fakeAssignment(environment: Record<string, string>): TnlTunnelAssignmen
     tunnelID: `tunnel_${"b".repeat(32)}`,
     socket: environment.TNL_DEV_SOCKET ?? "",
     token: environment.TNL_DEV_TOKEN ?? "",
-  };
+  } as unknown as TnlTunnelAssignment;
 }

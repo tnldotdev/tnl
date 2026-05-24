@@ -75,6 +75,16 @@ func TestResolveDevCommandFindsProjectLocalExecutable(t *testing.T) {
 	}
 }
 
+func TestRunDevReportsMissingFrameworkIntegration(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := runDev(t.Context(), devCommand{
+		Command: []string{"sh", "-c", "sleep 1"}, StartupTimeout: 10 * time.Millisecond,
+	}, nil, &stdout, &stderr)
+	if err == nil || err.Error() != "development server did not connect to tnl; install and configure @tnldotdev/next or @tnldotdev/vite, or use --port" {
+		t.Fatalf("runDev error = %v", err)
+	}
+}
+
 func TestDevBootstrapConfiguresAndRegistersOneTarget(t *testing.T) {
 	bootstrap, err := newDevBootstrap("")
 	if err != nil {

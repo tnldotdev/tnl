@@ -63,6 +63,15 @@ pnpm dev:public
 
 Ordinary `pnpm dev` remains local.
 
+## Public Environment
+
+During `tnl dev`, app code receives `VITE_TNL_URL`, `VITE_TNL_HOSTNAME`, and
+`VITE_TNL_TUNNEL_ID` through `import.meta.env`. The plugin does not define them
+during ordinary local development, builds, or previews.
+
+For typed values, add `/// <reference types="@tnldotdev/vite/env" />` to
+`vite-env.d.ts`.
+
 ## Tunnel Options
 
 `tnl` accepts these project options:

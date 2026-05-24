@@ -58,6 +58,15 @@ pnpm dev:public
 
 Ordinary `pnpm dev` remains local.
 
+## Public Environment
+
+During `tnl dev`, app code receives `NEXT_PUBLIC_TNL_URL`,
+`NEXT_PUBLIC_TNL_HOSTNAME`, and `NEXT_PUBLIC_TNL_TUNNEL_ID`. The adapter does
+not define them during ordinary local development or production builds.
+
+For typed values, add `/// <reference types="@tnldotdev/next/env" />` to a
+project declaration file.
+
 ## Tunnel Options
 
 The available route options mirror `tnl publish` and server selection:

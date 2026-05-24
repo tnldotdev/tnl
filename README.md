@@ -76,6 +76,8 @@ tnl login https://tnl.example.com
 tnl publish 3000
 ```
 
+Add `--open` to launch the public URL in the default browser once it is ready.
+
 The command prints the account URL and one-time code to approve. Use
 `tnl logout` to revoke and remove the saved session.
 
@@ -242,6 +244,8 @@ Ordinary `pnpm dev` remains local. Run the public server with:
 ```console
 pnpm dev:public
 ```
+
+Use `tnl dev --open -- pnpm dev` to open the public URL once it is ready.
 
 Each developer can select a hostname in their local shell:
 

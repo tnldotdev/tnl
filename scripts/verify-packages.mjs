@@ -8,6 +8,7 @@ const run = promisify(execFile);
 const root = path.resolve(import.meta.dirname, "..");
 const directory = await mkdtemp(path.join(tmpdir(), "tnl-packages-"));
 const packageNames = ["@tnldotdev/dev", "@tnldotdev/next", "@tnldotdev/vite"];
+const entrypoints = [...packageNames, "@tnldotdev/next/env", "@tnldotdev/vite/env"];
 
 try {
   const tarballs = {};
@@ -46,7 +47,7 @@ try {
     [
       "--input-type=module",
       "--eval",
-      `await Promise.all(${JSON.stringify(packageNames)}.map((name) => import(name)));`,
+      `await Promise.all(${JSON.stringify(entrypoints)}.map((name) => import(name)));`,
     ],
     { cwd: directory },
   );

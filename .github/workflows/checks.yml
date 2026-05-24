@@ -39,6 +39,55 @@ jobs:
           pnpm format:check
           pnpm run pack
 
+  framework-compatibility:
+    name: ${{ matrix.framework }} ${{ matrix.version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - framework: next
+            version: "15.2.0"
+          - framework: next
+            version: "16.3.3"
+          - framework: vite
+            version: "6.0.0"
+          - framework: vite
+            version: "7.0.0"
+          - framework: vite
+            version: "8.2.2"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm and Node
+        uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
+        with:
+          runtime: node@22.23.2
+          cache: true
+          require-lockfile: true
+
+      - name: Install framework version
+        env:
+          FRAMEWORK: ${{ matrix.framework }}
+          VERSION: ${{ matrix.version }}
+        run: pnpm --filter "@tnldotdev/$FRAMEWORK" add --save-dev --save-exact "$FRAMEWORK@$VERSION"
+
+      - name: Build adapter
+        env:
+          FRAMEWORK: ${{ matrix.framework }}
+        run: |
+          pnpm --filter @tnldotdev/dev build
+          pnpm --filter "@tnldotdev/$FRAMEWORK" build:self
+
+      - name: Test adapter
+        env:
+          FRAMEWORK: ${{ matrix.framework }}
+        run: pnpm exec vitest run "packages/$FRAMEWORK/index.test.ts"
+
   go:
     name: Go
     runs-on: ubuntu-latest

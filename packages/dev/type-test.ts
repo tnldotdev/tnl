@@ -1,11 +1,15 @@
 import {
+  publicTunnelEnvironment,
   readDevEnvironment,
   registerTarget,
   requestTunnelAssignment,
   type TnlDevBootstrap,
+  type TnlHostname,
   type TnlOptions,
   type TnlOptionsInput,
+  type TnlPublicURL,
   type TnlTunnelAssignment,
+  type TnlTunnelID,
   type TnlWorktree,
 } from "./dist/index.js";
 
@@ -36,7 +40,14 @@ if (session !== null) {
 }
 
 async function register(assignment: TnlTunnelAssignment): Promise<void> {
+  const environment = publicTunnelEnvironment(assignment, "PUBLIC_");
+  environment.PUBLIC_TNL_HOSTNAME satisfies TnlHostname;
+  environment.PUBLIC_TNL_TUNNEL_ID satisfies TnlTunnelID;
+  environment.PUBLIC_TNL_URL satisfies TnlPublicURL;
   await registerTarget(assignment, 5173);
 }
 
-export { assigned, options, register, session, worktree };
+// @ts-expect-error Public URLs must come from tnl validation.
+const unvalidatedURL: TnlPublicURL = "https://demo.tnl.dev";
+
+export { assigned, options, register, session, unvalidatedURL, worktree };

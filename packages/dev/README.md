@@ -21,4 +21,7 @@ the absolute root, original directory name, DNS-safe label, and whether Git
 provided the root. Public declarations include property-level documentation for
 all options and context values.
 
+`publicTunnelEnvironment` exposes only the public URL, hostname, and tunnel ID;
+private bootstrap credentials are never included.
+
 Install `@tnldotdev/next` or `@tnldotdev/vite` instead.

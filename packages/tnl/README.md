@@ -8,8 +8,10 @@ does not include the `tnld` server daemon.
 Install the client:
 
 ```console
-pnpm add --save-dev @tnldotdev/tnl@next @tnldotdev/vite@next
+pnpm add --save-dev @tnldotdev/tnl@next
 ```
+
+Add `@tnldotdev/next` or `@tnldotdev/vite` for framework integration.
 
 Then invoke `tnl` from a package script:
 
@@ -20,6 +22,9 @@ Then invoke `tnl` from a package script:
   }
 }
 ```
+
+Use `tnl publish 3000 --open` or `tnl dev --open -- pnpm dev` to launch the
+public URL once it is ready.
 
 The package selects an exact-version native optional dependency for the current
 platform. It does not run an install script or download executable code from a
