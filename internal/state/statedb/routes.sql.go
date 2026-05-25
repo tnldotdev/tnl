@@ -1372,23 +1372,34 @@ func (q *Queries) RenewRouteAuthorization(ctx context.Context, arg RenewRouteAut
 	return result.RowsAffected()
 }
 
-const replaceRoute = `-- name: ReplaceRoute :exec
+const replaceRoute = `-- name: ReplaceRoute :execrows
 UPDATE routes
 SET
     local_target = ?1,
     version = ?2
 WHERE id = ?3
+    AND identity_id = CAST(?4 AS TEXT)
+    AND status = 'active'
 `
 
 type ReplaceRouteParams struct {
 	LocalTarget string
 	Version     int64
 	RouteID     string
+	IdentityID  string
 }
 
-func (q *Queries) ReplaceRoute(ctx context.Context, arg ReplaceRouteParams) error {
-	_, err := q.db.ExecContext(ctx, replaceRoute, arg.LocalTarget, arg.Version, arg.RouteID)
-	return err
+func (q *Queries) ReplaceRoute(ctx context.Context, arg ReplaceRouteParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, replaceRoute,
+		arg.LocalTarget,
+		arg.Version,
+		arg.RouteID,
+		arg.IdentityID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const replaceSignedRoute = `-- name: ReplaceSignedRoute :execrows

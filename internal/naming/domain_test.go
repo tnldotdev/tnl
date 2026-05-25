@@ -27,6 +27,9 @@ func TestCustomDomainUsesPrivatePublicSuffixes(t *testing.T) {
 			t.Fatalf("CustomDomain(%q) error = %v", input, err)
 		}
 	}
+	if _, _, err := CustomDomain("example.com", "routes.example.com"); !errors.Is(err, ErrUnclaimableDomain) {
+		t.Fatalf("managed suffix ancestor error = %v", err)
+	}
 }
 
 func TestChildDepth(t *testing.T) {
