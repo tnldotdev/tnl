@@ -238,7 +238,7 @@ func (d *daemon) startServer(
 	var oidcVerifier auth.OIDCVerifier
 	if cfg.OIDCEnabled() {
 		oidcVerifier, err = auth.NewOIDCVerifier(auth.OIDCConfig{
-			Issuer: cfg.OIDCIssuer, ClientID: cfg.OIDCClientID,
+			Issuer: cfg.OIDCIssuer, ClientID: cfg.OIDCClientID, CoreEndpoint: "https://" + cfg.ServerHostname(),
 		})
 		if err != nil {
 			return nil, nil, err

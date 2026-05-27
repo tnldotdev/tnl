@@ -295,7 +295,8 @@ func (s *tokenSource) login(ctx context.Context) (clientstate.ControlSession, er
 		result, err := oidcauth.Login(ctx, oidcauth.Config{
 			Issuer: capabilities.Oidc.Issuer, ClientID: capabilities.Oidc.ClientId,
 			LoginFlow: string(capabilities.Oidc.LoginFlow), Scopes: []string{"openid"},
-			HTTPClient: s.control.rawHTTP, OpenURL: s.config.OpenURL,
+			CoreEndpoint: s.control.coreEndpoint,
+			HTTPClient:   s.control.rawHTTP, OpenURL: s.config.OpenURL,
 		}, s.config.Diagnostics)
 		if err != nil {
 			return clientstate.ControlSession{}, err
