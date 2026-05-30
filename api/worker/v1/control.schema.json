@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tnl.dev/schemas/worker/v1/control.json",
+  "title": "TNL worker control message v1",
+  "oneOf": [
+    {"$ref": "#/$defs/hello"},
+    {"$ref": "#/$defs/accepted"},
+    {"$ref": "#/$defs/attachRoute"},
+    {"$ref": "#/$defs/routeReady"},
+    {"$ref": "#/$defs/detachRoute"},
+    {"$ref": "#/$defs/routeDrained"},
+    {"$ref": "#/$defs/workerDraining"},
+    {"$ref": "#/$defs/error"}
+  ],
+  "$defs": {
+    "route": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["route_id", "generation"],
+      "properties": {
+        "route_id": {"type": "string", "minLength": 1, "pattern": "^\\S(?:.*\\S)?$"},
+        "generation": {"type": "integer", "minimum": 1}
+      }
+    },
+    "hello": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "capacity"],
+      "properties": {
+        "type": {"const": "hello"},
+        "capacity": {"type": "integer", "minimum": 1}
+      }
+    },
+    "accepted": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {"type": {"const": "accepted"}}
+    },
+    "attachRoute": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "route", "endpoint", "client_private_key"],
+      "properties": {
+        "type": {"const": "attach_route"},
+        "route": {"$ref": "#/$defs/route"},
+        "endpoint": {"$ref": "../../transport/v1/tailcat-descriptor.schema.json"},
+        "client_private_key": {"type": "string", "minLength": 1}
+      }
+    },
+    "routeReady": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "route"],
+      "properties": {
+        "type": {"const": "route_ready"},
+        "route": {"$ref": "#/$defs/route"}
+      }
+    },
+    "detachRoute": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "route"],
+      "properties": {
+        "type": {"const": "detach_route"},
+        "route": {"$ref": "#/$defs/route"}
+      }
+    },
+    "routeDrained": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "route"],
+      "properties": {
+        "type": {"const": "route_drained"},
+        "route": {"$ref": "#/$defs/route"}
+      }
+    },
+    "workerDraining": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {"type": {"const": "worker_draining"}}
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "code"],
+      "properties": {
+        "type": {"const": "error"},
+        "route": {"$ref": "#/$defs/route"},
+        "code": {"enum": ["invalid_message", "stale_assignment", "at_capacity", "internal"]}
+      }
+    }
+  }
+}
