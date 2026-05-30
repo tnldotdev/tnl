@@ -1,4 +1,3 @@
-// Package state opens and migrates the tnld SQLite database.
 package state
 
 import (
@@ -64,6 +63,7 @@ func dataSourceName(path string) string {
 	query.Set("_busy_timeout", "5000")
 	query.Set("_foreign_keys", "on")
 	query.Set("_journal_mode", "WAL")
+	query.Set("_txlock", "immediate")
 	u.RawQuery = query.Encode()
 	return u.String()
 }
