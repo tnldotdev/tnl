@@ -202,21 +202,25 @@ outbox revisions are acknowledged.
 
 ## Split Edge And Workers
 
-`compose.split.yaml` runs one edge with durable SQLite state and one or more
-stateless workers. Generate one worker credential with the verified `tnld`
-binary and add it to `.env` as `TNLD_WORKER_TOKEN`:
+`compose.split.yaml` runs one edge with durable SQLite state and one stateless
+worker. Generate a dedicated credential for that worker with the verified
+`tnld` binary and add it to `.env` as `TNLD_WORKER_TOKEN`:
 
 ```console
 tnl admin server token worker
 docker compose --file compose.split.yaml pull
-docker compose --file compose.split.yaml up -d --scale worker=2
+docker compose --file compose.split.yaml up -d
 docker compose --file compose.split.yaml exec edge \
   tnl admin server login-token --state-dir /var/lib/tnl
 ```
 
 The worker connects outbound to `wss://tnl.<domain>/internal/v1/worker`, so no
 worker ingress port is required. Keep at least one worker running and size
-`TNLD_WORKER_CAPACITY` for the intended fixed pool.
+`TNLD_WORKER_CAPACITY` for each worker.
+
+Give every additional worker its own token and configure the edge with the
+tokens in `TNLD_ACCEPTED_WORKER_TOKENS`. Reusing a token is rejected while its
+worker session is connected.
 
 This topology scales route work and tolerates an individual worker restart. It
 does not make the edge highly available: the edge and its SQLite volume remain

@@ -104,6 +104,38 @@ func TestRemoteOwnerMatchesLocalSemantics(t *testing.T) {
 	}
 }
 
+func TestHubBoundsWorkerCredentialsAndCapacity(t *testing.T) {
+	_, first, err := credentials.NewWorkerToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, second, err := credentials.NewWorkerToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewHub(HubConfig{Tokens: []credentials.WorkerVerifier{first, first}, Registry: newTestRegistry()}); err == nil {
+		t.Fatal("duplicate worker credential accepted")
+	}
+	hub, err := NewHub(HubConfig{
+		Tokens: []credentials.WorkerVerifier{first, second}, Registry: newTestRegistry(),
+		MaxSessions: 1, MaxWorkerCapacity: 2, MaxTotalCapacity: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hub.reserve(first.ID()) || hub.reserve(first.ID()) || hub.reserve(second.ID()) {
+		t.Fatal("worker session reservation limits were not enforced")
+	}
+	if hub.claimCapacity(first.ID(), 3) || !hub.claimCapacity(first.ID(), 2) {
+		t.Fatal("worker capacity limits were not enforced")
+	}
+	hub.release(first.ID())
+	if !hub.reserve(second.ID()) || !hub.claimCapacity(second.ID(), 1) {
+		t.Fatal("worker reservation was not released")
+	}
+	hub.release(second.ID())
+}
+
 func TestSessionObservers(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -173,8 +205,8 @@ func TestSessionObservers(t *testing.T) {
 			if test.abrupt {
 				hub.mu.Lock()
 				var connection *websocket.Conn
-				for current := range hub.connections {
-					connection = current
+				for _, reservation := range hub.sessions {
+					connection = reservation.connection
 					break
 				}
 				hub.mu.Unlock()
@@ -232,7 +264,7 @@ func validDisconnectReason(reason DisconnectReason) bool {
 
 func TestRemoteOwnerDetachesLateAttachResponse(t *testing.T) {
 	edge, remote := net.Pipe()
-	worker := newRemoteWorker(nil, edge, 1)
+	worker := newRemoteWorker(nil, edge, 1, 1)
 	loopDone := make(chan error, 1)
 	go func() { loopDone <- worker.readLoop() }()
 
