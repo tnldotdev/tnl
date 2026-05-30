@@ -38,6 +38,7 @@ type ActiveRoute struct {
 	Version           uint64
 	AllowedIPPrefixes []netip.Prefix
 	Backend           worker.RouteBackend
+	SourceKey         [32]byte
 	expires           time.Time
 }
 
@@ -60,12 +61,14 @@ type assignment struct {
 	expiresAt         time.Time
 	worker            *workerState
 	backend           worker.WorkerRoute
+	sourceKey         [32]byte
 }
 
 type pendingSession struct {
 	hostname          string
 	allowedIPPrefixes []netip.Prefix
 	key               key.NodePrivate
+	sourceKey         [32]byte
 	expiresAt         time.Time
 }
 
@@ -315,6 +318,10 @@ func (c *Coordinator) prepare(provisioning Provisioning) (SessionSetup, error) {
 			return SessionSetup{}, err
 		}
 	}
+	sourceKey, err := credentials.DeriveSessionSourceKey(provisioning.SessionToken)
+	if err != nil {
+		return SessionSetup{}, err
+	}
 	ref := worker.RouteRef{RouteID: provisioning.Route.ID, Version: provisioning.Session.Version}
 	c.mu.Lock()
 	if c.closed {
@@ -328,7 +335,7 @@ func (c *Coordinator) prepare(provisioning Provisioning) (SessionSetup, error) {
 	}
 	c.pending[ref] = pendingSession{
 		hostname: provisioning.Route.Hostname, allowedIPPrefixes: allowedIPPrefixes,
-		key: ingressKey, expiresAt: provisioning.Session.ExpiresAt,
+		key: ingressKey, sourceKey: sourceKey, expiresAt: provisioning.Session.ExpiresAt,
 	}
 	c.mu.Unlock()
 	return SessionSetup{Provisioning: provisioning, WorkerPublicKey: ingressKey.Public().String()}, nil
@@ -424,7 +431,7 @@ func (c *Coordinator) RegisterTransport(
 		previous := c.assignments[routeID]
 		assignment := &assignment{
 			ref: ref, hostname: currentPending.hostname, allowedIPPrefixes: currentPending.allowedIPPrefixes,
-			expiresAt: session.ExpiresAt, worker: selectedWorker, backend: backend,
+			expiresAt: session.ExpiresAt, worker: selectedWorker, backend: backend, sourceKey: currentPending.sourceKey,
 		}
 		c.assignments[routeID] = assignment
 		c.challenges[assignment.hostname] = assignment
@@ -890,6 +897,7 @@ func (c *Coordinator) LookupChallenge(hostname string) (ActiveRoute, bool) {
 	if current != nil && current.expiresAt.After(c.store.now()) {
 		return ActiveRoute{
 			RouteID: current.ref.RouteID, Version: current.ref.Version, Backend: current.backend,
+			SourceKey: current.sourceKey,
 		}, true
 	}
 	return ActiveRoute{}, false
@@ -1032,7 +1040,8 @@ func (c *Coordinator) publishLocked(current *assignment) {
 	next := cloneSnapshot(c.snapshot.Load())
 	next.byHostname[current.hostname] = ActiveRoute{
 		RouteID: current.ref.RouteID, Version: current.ref.Version,
-		AllowedIPPrefixes: current.allowedIPPrefixes, Backend: current.backend, expires: current.expiresAt,
+		AllowedIPPrefixes: current.allowedIPPrefixes, Backend: current.backend, SourceKey: current.sourceKey,
+		expires: current.expiresAt,
 	}
 	c.snapshot.Store(next)
 }

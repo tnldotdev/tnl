@@ -172,6 +172,19 @@ func DeriveSessionKeyMaterial(token SessionToken) ([secretBytes]byte, error) {
 	return material, nil
 }
 
+// DeriveSessionSourceKey derives an edge-to-publisher source authentication key.
+func DeriveSessionSourceKey(token SessionToken) ([secretBytes]byte, error) {
+	if _, _, err := ParseSessionToken(token); err != nil {
+		return [secretBytes]byte{}, err
+	}
+	secret := validatedTokenSecret(token.String(), sessionPrefix)
+	mac := hmac.New(sha256.New, secret)
+	_, _ = mac.Write([]byte("tnl/source-auth-key/v1"))
+	var material [secretBytes]byte
+	copy(material[:], mac.Sum(nil))
+	return material, nil
+}
+
 func validatedTokenSecret(token, prefix string) []byte {
 	value, _ := strings.CutPrefix(token, prefix)
 	_, encodedSecret, _ := strings.Cut(value, ".")

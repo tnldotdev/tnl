@@ -21,6 +21,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/proxyproto"
+	"github.com/tnldotdev/tnl/internal/sourceauth"
 	"github.com/tnldotdev/tnl/internal/tailtransport"
 	"github.com/tnldotdev/tnl/internal/tlschallenge"
 	"golang.org/x/crypto/acme"
@@ -34,6 +35,8 @@ type RouteConfig struct {
 	Target            string
 	Certificate       tls.Certificate
 	StrictCertificate bool
+	SourceKey         [32]byte
+	AllowedIPPrefixes []string
 	AllowedClient     key.NodePublic
 	RelayRegion       string
 	Regions           map[string]*tailcfg.DERPRegion
@@ -49,6 +52,8 @@ type Route struct {
 	queue             *routeListener
 	http              *http.Server
 	tailcat           *tailtransport.Server
+	sourceKey         [32]byte
+	allowedIPPrefixes []netip.Prefix
 
 	mu        sync.Mutex
 	started   bool
@@ -66,10 +71,23 @@ func NewRoute(config RouteConfig) (*Route, error) {
 	if err != nil {
 		return nil, err
 	}
+	if config.SourceKey == [32]byte{} {
+		return nil, errors.New("publisher: source authentication key is required")
+	}
+	allowedIPPrefixes := make([]netip.Prefix, len(config.AllowedIPPrefixes))
+	for index, value := range config.AllowedIPPrefixes {
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil || prefix.String() != value {
+			return nil, errors.New("publisher: allowed IP prefix must be canonical")
+		}
+		allowedIPPrefixes[index] = prefix
+	}
 	queue := newRouteListener()
 	route := &Route{
 		hostname:          hostname,
 		strictCertificate: config.StrictCertificate,
+		sourceKey:         config.SourceKey,
+		allowedIPPrefixes: allowedIPPrefixes,
 		queue:             queue,
 		tls: &tls.Config{
 			MinVersion:             tls.VersionTLS12,
@@ -223,11 +241,14 @@ func (r *Route) startHTTP() {
 
 func (r *Route) handle(connection net.Conn) {
 	_ = connection.SetDeadline(time.Now().Add(10 * time.Second))
-	header, replay, err := proxyproto.Decode(connection)
+	claim, err := sourceauth.Server(connection, r.sourceKey)
 	if err != nil {
 		return
 	}
-	metadata := &metadataConn{Conn: &routeReaderConn{Conn: connection, reader: replay}, header: header}
+	if claim.Purpose == sourceauth.PurposeApplication && !routeIPAllowed(claim.Header.Source.Addr(), r.allowedIPPrefixes) {
+		return
+	}
+	metadata := &metadataConn{Conn: connection, header: claim.Header}
 	tracked := newDoneConn(metadata)
 	secured := tls.Server(tracked, r.tls)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -238,7 +259,12 @@ func (r *Route) handle(connection net.Conn) {
 		return
 	}
 	_ = secured.SetDeadline(time.Time{})
-	if secured.ConnectionState().NegotiatedProtocol == acme.ALPNProto {
+	challenge := secured.ConnectionState().NegotiatedProtocol == acme.ALPNProto
+	if challenge != (claim.Purpose == sourceauth.PurposeACME) {
+		_ = secured.Close()
+		return
+	}
+	if challenge {
 		_ = tracked.Close()
 		return
 	}
@@ -350,16 +376,22 @@ type routeAddress string
 func (routeAddress) Network() string  { return "tailcat" }
 func (a routeAddress) String() string { return string(a) }
 
-type routeReaderConn struct {
-	net.Conn
-	reader io.Reader
-}
-
-func (c *routeReaderConn) Read(destination []byte) (int, error) { return c.reader.Read(destination) }
-
 type metadataConn struct {
 	net.Conn
 	header proxyproto.Header
+}
+
+func routeIPAllowed(source netip.Addr, prefixes []netip.Prefix) bool {
+	if len(prefixes) == 0 {
+		return true
+	}
+	source = source.Unmap()
+	for _, prefix := range prefixes {
+		if prefix.Contains(source) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *metadataConn) RemoteAddr() net.Addr { return tcpAddress(c.header.Source) }

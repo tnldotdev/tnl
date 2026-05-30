@@ -2,7 +2,6 @@
 package ingress
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -16,6 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/proxyproto"
 	"github.com/tnldotdev/tnl/internal/relay"
 	"github.com/tnldotdev/tnl/internal/router"
+	"github.com/tnldotdev/tnl/internal/sourceauth"
 	"github.com/tnldotdev/tnl/internal/sourcelimiter"
 	"github.com/tnldotdev/tnl/internal/worker"
 )
@@ -27,11 +27,10 @@ type Route struct {
 	Version           uint64
 	AllowedIPPrefixes []netip.Prefix
 	Backend           worker.RouteBackend
+	SourceKey         [32]byte
 }
 
 type LookupFunc func(string) (Route, bool)
-
-type BackendLookupFunc func(string) (worker.RouteBackend, bool)
 
 type UsageConnection interface {
 	PolicyDenied(time.Time)
@@ -56,7 +55,7 @@ type Metrics interface {
 
 type Config struct {
 	Lookup              LookupFunc
-	LookupChallenge     BackendLookupFunc
+	LookupChallenge     LookupFunc
 	ServerHostname      string
 	HandleControl       func(net.Conn) bool
 	RequireProxyHeader  bool
@@ -206,12 +205,11 @@ func (s *Server) handle(public net.Conn) error {
 		return nil
 	}
 	route, ok := s.config.Lookup(hello.ServerName)
-	backend := route.Backend
 	routeID := route.ID
 	challenge := hello.ACMETLSALPN && s.config.LookupChallenge != nil
 	// Challenge lookup replaces ordinary routing to prevent fallback.
 	if challenge {
-		backend, ok = s.config.LookupChallenge(hello.ServerName)
+		route, ok = s.config.LookupChallenge(hello.ServerName)
 		routeID = hello.ServerName
 	}
 	if !ok {
@@ -258,7 +256,7 @@ func (s *Server) handle(public net.Conn) error {
 		}()
 	}
 	openCtx, cancel := context.WithTimeout(context.Background(), s.config.OpenTimeout)
-	stream, err := backend.Open(openCtx)
+	stream, err := route.Backend.Open(openCtx)
 	cancel()
 	if err != nil {
 		return fmt.Errorf("ingress: open route: %w", err)
@@ -272,13 +270,19 @@ func (s *Server) handle(public net.Conn) error {
 	}
 	defer s.releaseBackend(stream)
 	defer stream.Close()
-	header, err := proxyproto.Encode(proxyproto.Header{Source: source, Destination: destination})
-	if err != nil {
-		return fmt.Errorf("ingress: encode proxy header: %w", err)
+	if err := stream.SetDeadline(time.Now().Add(s.config.OpenTimeout)); err != nil {
+		return fmt.Errorf("ingress: set source authentication deadline: %w", err)
 	}
-	if err := writeAll(stream, header); err != nil {
-		return fmt.Errorf("ingress: write proxy header: %w", err)
+	purpose := sourceauth.PurposeApplication
+	if challenge {
+		purpose = sourceauth.PurposeACME
 	}
+	if err := sourceauth.Client(stream, route.SourceKey, purpose, proxyproto.Header{
+		Source: source, Destination: destination,
+	}); err != nil {
+		return fmt.Errorf("ingress: authenticate source metadata: %w", err)
+	}
+	_ = stream.SetDeadline(time.Time{})
 	if usage != nil {
 		usage.StreamOpened(time.Now().UTC())
 		streamOpened = true
@@ -473,9 +477,4 @@ func ipAllowed(source netip.Addr, prefixes []netip.Prefix) bool {
 
 func tcpAddress(endpoint netip.AddrPort) net.Addr {
 	return &net.TCPAddr{IP: net.IP(endpoint.Addr().AsSlice()), Port: int(endpoint.Port())}
-}
-
-func writeAll(writer io.Writer, data []byte) error {
-	_, err := io.Copy(writer, bytes.NewReader(data))
-	return err
 }

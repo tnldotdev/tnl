@@ -86,11 +86,15 @@ func TestIntegrationAutomaticCertificatePublishRestartAndRenewal(t *testing.T) {
 	publicIngress, err := ingress.New(publicListener, ingress.Config{
 		Lookup: func(name string) (ingress.Route, bool) {
 			active, ok := coordinator.Lookup(name)
-			return ingress.Route{ID: active.RouteID, Version: active.Version, Backend: active.Backend}, ok
+			return ingress.Route{
+				ID: active.RouteID, Version: active.Version, Backend: active.Backend, SourceKey: active.SourceKey,
+			}, ok
 		},
-		LookupChallenge: func(name string) (worker.RouteBackend, bool) {
+		LookupChallenge: func(name string) (ingress.Route, bool) {
 			active, ok := coordinator.LookupChallenge(name)
-			return active.Backend, ok
+			return ingress.Route{
+				ID: active.RouteID, Version: active.Version, Backend: active.Backend, SourceKey: active.SourceKey,
+			}, ok
 		},
 		MaxConnections: 32, MaxRouteConnections: 8,
 	})
@@ -118,7 +122,7 @@ func TestIntegrationAutomaticCertificatePublishRestartAndRenewal(t *testing.T) {
 			if !ok || active.RouteID != issuance.RouteID || active.Version != issuance.Version {
 				return errors.New("assigned challenge route is unavailable")
 			}
-			return certificates.ProbeTLSALPN(probeContext, active.Backend, issuance)
+			return certificates.ProbeTLSALPN(probeContext, active.Backend, active.SourceKey, issuance)
 		},
 	})
 	if err != nil {
