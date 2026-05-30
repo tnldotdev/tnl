@@ -25,7 +25,9 @@ import (
 var ErrNoWorkerCapacity = errors.New("routes: no worker capacity")
 
 const (
-	sessionReapInterval = time.Second
+	sessionReapInterval              = time.Second
+	domainVerificationTimeout        = 10 * time.Second
+	maxConcurrentDomainVerifications = 16
 )
 
 type SessionSetup struct {
@@ -95,6 +97,7 @@ type Coordinator struct {
 	closed       bool
 	stopReaper   context.CancelFunc
 	reaperDone   chan struct{}
+	domainChecks chan struct{}
 }
 
 func NewCoordinator(
@@ -128,6 +131,7 @@ func NewCoordinator(
 		routeLocks:       make(map[string]*routeMutex),
 		stopReaper:       stopReaper,
 		reaperDone:       make(chan struct{}),
+		domainChecks:     make(chan struct{}, maxConcurrentDomainVerifications),
 	}
 	c.snapshot.Store(&routeSnapshot{byHostname: map[string]ActiveRoute{}})
 	go c.reapSessions(reaperCtx)
@@ -671,12 +675,27 @@ func (c *Coordinator) CompleteDomainVerification(
 	ctx context.Context,
 	identityID, id string,
 ) (Hostname, error) {
+	if c.isClosed() {
+		return Hostname{}, net.ErrClosed
+	}
+	checkCtx, cancel := context.WithTimeout(ctx, domainVerificationTimeout)
+	defer cancel()
+	select {
+	case c.domainChecks <- struct{}{}:
+	case <-checkCtx.Done():
+		return Hostname{}, fmt.Errorf("%w: %v", ErrDNSProofPending, checkCtx.Err())
+	}
+	err := c.store.checkDomainVerification(checkCtx, identityID, id)
+	<-c.domainChecks
+	if err != nil {
+		return Hostname{}, err
+	}
 	c.mutationMu.Lock()
 	defer c.mutationMu.Unlock()
 	if c.isClosed() {
 		return Hostname{}, net.ErrClosed
 	}
-	return c.store.CompleteDomainVerification(ctx, identityID, id)
+	return c.store.activateDomainVerification(ctx, identityID, id)
 }
 
 func (c *Coordinator) RemoveHostname(ctx context.Context, identityID, hostnameID string) (err error) {

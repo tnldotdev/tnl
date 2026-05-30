@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/state"
@@ -14,6 +16,13 @@ import (
 type domainVerifierStub struct {
 	err       error
 	addresses []string
+}
+
+type blockingDomainVerifier struct {
+	entered     chan struct{}
+	release     chan struct{}
+	enterOnce   sync.Once
+	releaseOnce sync.Once
 }
 
 func TestDomainDNSRecords(t *testing.T) {
@@ -37,6 +46,74 @@ func (v *domainVerifierStub) CheckDomain(context.Context, string, string, bool) 
 
 func (v *domainVerifierStub) IngressAddresses() []string {
 	return append([]string(nil), v.addresses...)
+}
+
+func (v *blockingDomainVerifier) CheckDomain(ctx context.Context, _, _ string, _ bool) error {
+	v.enterOnce.Do(func() { close(v.entered) })
+	select {
+	case <-v.release:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (*blockingDomainVerifier) IngressAddresses() []string { return []string{"192.0.2.10"} }
+
+func (v *blockingDomainVerifier) releaseCheck() { v.releaseOnce.Do(func() { close(v.release) }) }
+
+func TestDomainVerificationDNSDoesNotHoldMutationLock(t *testing.T) {
+	ctx := context.Background()
+	db, err := state.Open(ctx, filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	upsertTestIdentity(t, ctx, statedb.New(db), "owner", "Owner", 1)
+	verifier := &blockingDomainVerifier{entered: make(chan struct{}), release: make(chan struct{})}
+	t.Cleanup(verifier.releaseCheck)
+	store, err := NewStore(db, "routes.test", StoreConfig{
+		VerificationSuffix: "domains.routes.test", DomainVerifier: verifier,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	coordinator, err := NewCoordinator(ctx, store, "instance")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = coordinator.Close() })
+	verification, err := coordinator.CreateDomainVerification(ctx, "owner", "first.com", "first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	completed := make(chan error, 1)
+	go func() {
+		_, err := coordinator.CompleteDomainVerification(ctx, "owner", verification.ID)
+		completed <- err
+	}()
+	select {
+	case <-verifier.entered:
+	case <-time.After(time.Second):
+		t.Fatal("DNS verification did not start")
+	}
+	created := make(chan error, 1)
+	go func() {
+		_, err := coordinator.CreateDomainVerification(ctx, "owner", "second.com", "second")
+		created <- err
+	}()
+	select {
+	case err := <-created:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("unrelated mutation blocked behind DNS verification")
+	}
+	verifier.releaseCheck()
+	if err := <-completed; err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestCustomDomainVerificationLifecycleAndTransfer(t *testing.T) {
