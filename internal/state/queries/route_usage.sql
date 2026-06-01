@@ -452,6 +452,33 @@ WHERE id = sqlc.arg(id)
             AND source_id = route_usage_snapshots.id
     );
 
+-- name: DropExcessRouteUsageOutbox :many
+DELETE FROM route_usage_outbox_items
+WHERE source_kind = 'usage_snapshot'
+    AND source_id IN (
+        SELECT outbox.source_id
+        FROM route_usage_outbox_items AS outbox
+        JOIN route_usage_snapshots AS snapshot ON snapshot.id = outbox.source_id
+        WHERE outbox.source_kind = 'usage_snapshot'
+        ORDER BY snapshot.bucket_start, snapshot.id
+        LIMIT max(
+            (SELECT COUNT(*) FROM route_usage_outbox_items AS pending WHERE pending.source_kind = 'usage_snapshot')
+                - CAST(sqlc.arg(max_pending) AS INTEGER),
+            0
+        )
+    )
+RETURNING source_id;
+
+-- name: DeleteUnqueuedRouteUsageReport :exec
+DELETE FROM route_usage_reports
+WHERE snapshot_id = sqlc.arg(snapshot_id)
+    AND NOT EXISTS (
+        SELECT 1
+        FROM route_usage_outbox_items
+        WHERE source_kind = 'usage_snapshot'
+            AND source_id = route_usage_reports.snapshot_id
+    );
+
 -- name: DeleteExpiredRouteLifecycleEvents :exec
 DELETE FROM route_lifecycle_events
 WHERE id IN (
@@ -466,6 +493,15 @@ WHERE id IN (
                 WHERE current_route.id = event.route_id
                     AND current_route.version = event.version
                     AND current_route.status <> 'deleted'
+            )
+        )
+        AND NOT (
+            event.transition = 'version_started'
+            AND EXISTS (
+                SELECT 1
+                FROM route_usage_snapshots AS snapshot
+                WHERE snapshot.route_id = event.route_id
+                    AND snapshot.version = event.version
             )
         )
         AND NOT EXISTS (
