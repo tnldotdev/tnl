@@ -26,6 +26,7 @@ var ErrNoWorkerCapacity = errors.New("routes: no worker capacity")
 
 const (
 	sessionReapInterval              = time.Second
+	routeStatePruneInterval          = time.Hour
 	domainVerificationTimeout        = 10 * time.Second
 	maxConcurrentDomainVerifications = 16
 )
@@ -1148,12 +1149,16 @@ func (c *Coordinator) reapSessions(ctx context.Context) {
 	defer close(c.reaperDone)
 	ticker := time.NewTicker(sessionReapInterval)
 	defer ticker.Stop()
+	prune := time.NewTicker(routeStatePruneInterval)
+	defer prune.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case now := <-ticker.C:
 			c.expireDue(ctx, now)
+		case <-prune.C:
+			_ = c.store.pruneRouteState(ctx, c.store.now())
 		}
 	}
 }
