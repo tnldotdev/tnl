@@ -49,5 +49,8 @@ func (s *Server) Done() <-chan error {
 
 // Shutdown gracefully stops the listener.
 func (s *Server) Shutdown(ctx context.Context) error {
-	return s.server.Shutdown(ctx)
+	if err := s.server.Shutdown(ctx); err != nil {
+		return errors.Join(err, s.server.Close())
+	}
+	return nil
 }

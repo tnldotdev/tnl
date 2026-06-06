@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/0xcadams/tnl/internal/credentials"
+)
 
 func TestParseTNLD(t *testing.T) {
 	t.Setenv("TNLD_STATE_DIR", "/from-env")
@@ -40,10 +44,18 @@ func TestParseTNLD(t *testing.T) {
 
 func TestParseTNLDWorkerDoesNotRequireState(t *testing.T) {
 	t.Setenv("TNLD_STATE_DIR", "")
-
 	t.Setenv("TNLD_METRICS_LISTEN", "")
+	workerToken, _, err := credentials.NewWorkerToken()
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	config, err := ParseTNLD([]string{"--mode", "worker"})
+	config, err := ParseTNLD([]string{
+		"--mode", "worker",
+		"--worker-url", "wss://edge.example/internal/v1/worker",
+		"--worker-token", workerToken.String(),
+		"--relay-map-file", "/relay.json",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
