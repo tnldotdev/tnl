@@ -95,12 +95,13 @@ async function verifyConsumer(tarballs) {
   await writeFile(
     path.join(temporaryDirectory, "consumer.ts"),
     `import type { Plugin } from "vite";
-import { readDevEnvironment, registerTarget, type RegisteredTnlDevSession, type TnlDevBootstrap } from "@tnldotdev/dev";
+import { readDevEnvironment, registerTarget, type TnlDevBootstrap, type TnlTunnelAssignment } from "@tnldotdev/dev";
 import { withTnl, type NextConfigFactory } from "@tnldotdev/next";
 import tnl from "@tnldotdev/vite";
 
 const session: TnlDevBootstrap | null = readDevEnvironment({});
-const registered: Promise<RegisteredTnlDevSession | null> = registerTarget({ framework: "vite", port: 5173 }, {});
+declare const assignment: TnlTunnelAssignment;
+const registered: Promise<void> = registerTarget(assignment, 5173);
 const nextConfig: NextConfigFactory = withTnl(async (_phase, { defaultConfig }) => defaultConfig);
 const vitePlugin: Plugin = tnl();
 
