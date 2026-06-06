@@ -10,7 +10,6 @@ import {
   startTestBootstrap,
   startTestProcess,
   waitForBootstrapRequest,
-  withProcessArguments,
   withProcessEnvironment,
 } from "../dev/test-helper.js";
 import { withTnl, type NextConfigContext } from "./dist/index.js";
@@ -34,39 +33,48 @@ describe("withTnl", () => {
     const originalContext: NextConfigContext = { defaultConfig: { reactStrictMode: false } };
     let receivedPhase: string | undefined;
     let receivedContext: NextConfigContext | undefined;
+    let requestedName: string | undefined;
 
-    await withProcessEnvironment({ ...bootstrap.environment, TNL_DEV_PORT: "3200" }, async () => {
-      const wrapped = withTnl(
-        async (phase, factoryContext) => {
-          receivedPhase = phase;
-          receivedContext = factoryContext;
-          return {
-            allowedDevOrigins: ["existing.example", "demo.tnl.dev"],
-            env: {
-              EXISTING_PUBLIC_VALUE: "existing",
-              NEXT_PUBLIC_TNL_URL: "https://stale.example",
-            },
-            reactStrictMode: true,
-          };
-        },
-        ({ cwd, env, worktree }) => {
-          expect(cwd).toBe(process.cwd());
-          expect(env.TNL_DEV_PORT).toBe("3200");
-          return { name: `${worktree.label}.example.com`, allowCurrentIP: true };
-        },
-      );
+    await withProcessEnvironment(
+      {
+        ...bootstrap.environment,
+        PORT: "3200",
+        TNL_DEV_PORT: "3200",
+      },
+      async () => {
+        const wrapped = withTnl(
+          async (phase, factoryContext) => {
+            receivedPhase = phase;
+            receivedContext = factoryContext;
+            return {
+              allowedDevOrigins: ["existing.example", "demo.tnl.dev"],
+              env: {
+                EXISTING_PUBLIC_VALUE: "existing",
+                NEXT_PUBLIC_TNL_URL: "https://stale.example",
+              },
+              reactStrictMode: true,
+            };
+          },
+          ({ cwd, env, worktree }) => {
+            expect(cwd).toBe(process.cwd());
+            expect(env.TNL_DEV_PORT).toBe("3200");
+            requestedName = `${worktree.label}.example.com`;
+            return { name: requestedName, allowCurrentIP: true };
+          },
+        );
 
-      await expect(wrapped(developmentPhase, originalContext)).resolves.toMatchObject({
-        allowedDevOrigins: ["existing.example", "demo.tnl.dev"],
-        env: {
-          EXISTING_PUBLIC_VALUE: "existing",
-          NEXT_PUBLIC_TNL_HOSTNAME: "demo.tnl.dev",
-          NEXT_PUBLIC_TNL_TUNNEL_ID: `tunnel_${"b".repeat(32)}`,
-          NEXT_PUBLIC_TNL_URL: "https://demo.tnl.dev",
-        },
-        reactStrictMode: true,
-      });
-    });
+        await expect(wrapped(developmentPhase, originalContext)).resolves.toMatchObject({
+          allowedDevOrigins: ["existing.example", "demo.tnl.dev"],
+          env: {
+            EXISTING_PUBLIC_VALUE: "existing",
+            NEXT_PUBLIC_TNL_HOSTNAME: "demo.tnl.dev",
+            NEXT_PUBLIC_TNL_TUNNEL_ID: `tunnel_${"b".repeat(32)}`,
+            NEXT_PUBLIC_TNL_URL: "https://demo.tnl.dev",
+          },
+          reactStrictMode: true,
+        });
+      },
+    );
 
     expect(receivedPhase).toBe(developmentPhase);
     expect(receivedContext).toBe(originalContext);
@@ -75,10 +83,7 @@ describe("withTnl", () => {
       body: {
         protocol: 1,
         framework: "next",
-        options: {
-          name: expect.stringMatching(/^tnl-[a-f0-9]{6}\.example\.com$/),
-          allowCurrentIP: true,
-        },
+        options: { name: requestedName, allowCurrentIP: true },
       },
     });
     expect(bootstrap.requests[1]).toMatchObject({
@@ -92,39 +97,20 @@ describe("withTnl", () => {
   });
 
   test.each([
-    {
-      arguments: ["node", "next", "dev", "--port", "3200"],
-      environment: { PORT: "3100", TNL_DEV_PORT: "3300" },
-      expected: 3300,
-      source: "tnl dev --port",
-    },
-    {
-      arguments: ["node", "next", "dev", "--port=3200"],
-      environment: { PORT: "3100", TNL_DEV_PORT: undefined },
-      expected: 3200,
-      source: "Next.js --port",
-    },
-    {
-      arguments: ["node", "next", "dev"],
-      environment: { PORT: "3100", TNL_DEV_PORT: undefined },
-      expected: 3100,
-      source: "PORT",
-    },
-    {
-      arguments: ["node", "next", "dev"],
-      environment: { PORT: undefined, TNL_DEV_PORT: undefined },
-      expected: 3000,
-      source: "default",
-    },
-  ])("uses $source port precedence", async ({ arguments: arguments_, environment, expected }) => {
+    { port: 3200, forcedPort: "3200" },
+    { port: 3100, forcedPort: undefined },
+  ])("registers Next.js final port $port", async ({ port, forcedPort }) => {
     const bootstrap = await startTestBootstrap();
     onTestFinished(() => bootstrap.close());
 
-    await withProcessEnvironment({ ...bootstrap.environment, ...environment }, async () => {
-      await withProcessArguments(arguments_, async () => {
-        await withTnl()(developmentPhase, context);
-      });
-    });
+    await withProcessEnvironment(
+      {
+        ...bootstrap.environment,
+        PORT: String(port),
+        TNL_DEV_PORT: forcedPort,
+      },
+      async () => withTnl()(developmentPhase, context),
+    );
 
     expect(bootstrap.requests[0]?.body).toEqual({
       protocol: 1,
@@ -134,8 +120,22 @@ describe("withTnl", () => {
     expect(bootstrap.requests[1]?.body).toEqual({
       protocol: 1,
       framework: "next",
-      port: expected,
+      port,
     });
+  });
+
+  test("rejects a tnl dev --port mismatch", async () => {
+    const bootstrap = await startTestBootstrap();
+    onTestFinished(() => bootstrap.close());
+    await withProcessEnvironment(
+      { ...bootstrap.environment, PORT: "3200", TNL_DEV_PORT: "3300" },
+      async () => {
+        await expect(withTnl()(developmentPhase, context)).rejects.toThrow(
+          /tnl dev --port requires 3300/,
+        );
+      },
+    );
+    expect(bootstrap.requests).toHaveLength(0);
   });
 });
 

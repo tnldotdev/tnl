@@ -164,6 +164,49 @@ func TestRouteSessionLifecycle(t *testing.T) {
 	}
 }
 
+func TestRouteReplacementRequiresExistingOwner(t *testing.T) {
+	ctx := context.Background()
+	db, err := state.Open(ctx, filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	queries := statedb.New(db)
+	upsertTestIdentity(t, ctx, queries, "owner", "Owner", 1)
+	upsertTestIdentity(t, ctx, queries, "other", "Other", 1)
+	store, err := NewStore(db, "routes.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AddManagedHostname(ctx, "owner", "victim", "victim-hostname"); err != nil {
+		t.Fatal(err)
+	}
+	ownerToken, _, _, err := credentials.NewRouteToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := store.Create(ctx, "owner", "victim.routes.example.com", "localhost:3000", "instance", ownerToken, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := queries.InsertCustomDomainHostname(ctx, statedb.InsertCustomDomainHostnameParams{
+		ID: "hostname_00000000000000000000000000000001", IdentityID: "other", Hostname: "example.com", CreatedAt: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	otherToken, _, _, err := credentials.NewRouteToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Create(ctx, "other", created.Route.Hostname, "localhost:3001", "instance", otherToken, nil); !errors.Is(err, ErrNameUnavailable) {
+		t.Fatalf("cross-owner replacement error = %v", err)
+	}
+	stored, err := queries.GetRouteByID(ctx, created.Route.ID)
+	if err != nil || stored.IdentityID.String != "owner" || stored.Version != 1 || stored.LocalTarget != "localhost:3000" {
+		t.Fatalf("stored route = %#v, %v", stored, err)
+	}
+}
+
 func TestLifecycleFailureRollsBackRouteMutation(t *testing.T) {
 	ctx := t.Context()
 	db, err := state.Open(ctx, filepath.Join(t.TempDir(), "state"))

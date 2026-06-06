@@ -259,6 +259,7 @@ func TestIssueCertificatePersistsAndRotatesApplicationKey(t *testing.T) {
 	defer state.Close()
 	route, err := NewRoute(RouteConfig{
 		Hostname: "route.example", Target: "http://127.0.0.1:3000", AllowedClient: key.NewNode().Public(),
+		SourceKey:   [32]byte{1, 2, 3},
 		RelayRegion: "test", Regions: map[string]*tailcfg.DERPRegion{"test": {
 			RegionID: 1, Nodes: []*tailcfg.DERPNode{{RegionID: 1, HostName: "derp.example"}},
 		}},
@@ -547,6 +548,7 @@ func testCertificateRoute(t *testing.T, strict bool) *Route {
 	t.Helper()
 	route, err := NewRoute(RouteConfig{
 		Hostname: "route.example", Target: "http://127.0.0.1:3000", StrictCertificate: strict,
+		SourceKey:     [32]byte{1, 2, 3},
 		AllowedClient: key.NewNode().Public(), RelayRegion: "test", Regions: map[string]*tailcfg.DERPRegion{"test": {
 			RegionID: 1, Nodes: []*tailcfg.DERPNode{{RegionID: 1, HostName: "derp.example"}},
 		}},

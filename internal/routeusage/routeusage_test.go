@@ -447,6 +447,73 @@ func TestSenderDeliversRegistrationBeforeRouteReports(t *testing.T) {
 	}
 }
 
+func TestSaveUsageCapsPendingSnapshotsWithoutDroppingLifecycle(t *testing.T) {
+	db, store := newTestStore(t)
+	store.maxPendingUsage = 2
+	enqueueRegistration(t, db, store, testRouteID, "test.tnl.dev", "a")
+	enqueueRouteLifecycle(t, db, store, testRouteID, routes.LifecycleVersionStarted, time.Now())
+	start := time.Date(2026, time.January, 2, 12, 0, 0, 0, time.UTC)
+	snapshots := make([]UsageSnapshot, 3)
+	for index := range snapshots {
+		bucket := start.Add(time.Duration(index) * time.Minute)
+		snapshots[index] = UsageSnapshot{
+			RouteID: testRouteID, Version: 1, Resolution: "minute", BucketStart: bucket,
+			Revision: 1, ObservedThrough: bucket.Add(time.Minute), Finalized: true, Publish: true,
+		}
+	}
+	if err := store.SaveUsage(t.Context(), snapshots); err != nil {
+		t.Fatal(err)
+	}
+	for kind, want := range map[string]int64{registrationSource: 1, lifecycleSource: 1, usageSource: 2} {
+		if got := scalar(t, db, "SELECT COUNT(*) FROM route_usage_outbox_items WHERE source_kind = ?", kind); got != want {
+			t.Fatalf("%s outbox count = %d, want %d", kind, got, want)
+		}
+	}
+	if got := scalar(t, db, "SELECT COUNT(*) FROM route_usage_snapshots"); got != 2 {
+		t.Fatalf("usage snapshot count = %d, want 2", got)
+	}
+	if got := scalar(t, db, "SELECT COUNT(*) FROM route_usage_reports"); got != 2 {
+		t.Fatalf("usage report count = %d, want 2", got)
+	}
+	if got := scalar(t, db, "SELECT COUNT(*) FROM route_usage_snapshots WHERE bucket_start = ?", start.UnixNano()); got != 0 {
+		t.Fatal("oldest usage snapshot was retained")
+	}
+}
+
+func TestLifecyclePruneRetainsVersionStartNeededByUsage(t *testing.T) {
+	db, store := newTestStore(t)
+	old := time.Now().Add(-2 * 365 * 24 * time.Hour)
+	enqueueRouteLifecycle(t, db, store, testRouteID, routes.LifecycleVersionStarted, old)
+	if _, err := db.ExecContext(t.Context(), "DELETE FROM route_usage_outbox_items"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveUsage(t.Context(), []UsageSnapshot{{
+		RouteID: testRouteID, Version: 1, Resolution: "minute", BucketStart: old,
+		Revision: 1, ObservedThrough: old.Add(time.Minute), Finalized: true, Publish: true,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.pruneLifecycle(t.Context(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if got := scalar(t, db, "SELECT COUNT(*) FROM route_lifecycle_events"); got != 1 {
+		t.Fatalf("lifecycle count with pending usage = %d, want 1", got)
+	}
+	if _, err := db.ExecContext(t.Context(), `
+		DELETE FROM route_usage_outbox_items WHERE source_kind = 'usage_snapshot';
+		DELETE FROM route_usage_snapshots;
+		UPDATE routes SET status = 'deleted', deleted_at = 1 WHERE id = 'route_test';
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.pruneLifecycle(t.Context(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if got := scalar(t, db, "SELECT COUNT(*) FROM route_lifecycle_events"); got != 0 {
+		t.Fatalf("unused lifecycle count = %d, want 0", got)
+	}
+}
+
 func TestWireTimestampUTCNormalizesAndTruncates(t *testing.T) {
 	location := time.FixedZone("test", -7*60*60)
 	tests := []struct {

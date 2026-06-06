@@ -273,6 +273,9 @@ func (s *Store) Create(
 	if err == nil {
 		// Recreate in place, rotating credentials and fencing the old tlschallenge.
 		existing := routeFromDB(existingRoute)
+		if existing.IdentityID != identityID {
+			return Provisioning{}, ErrNameUnavailable
+		}
 		if existing.Status != "active" {
 			return Provisioning{}, ErrInvalidStatus
 		}
@@ -299,12 +302,17 @@ func (s *Store) Create(
 		if err != nil {
 			return Provisioning{}, fmt.Errorf("routes: advance replaced route: %w", err)
 		}
-		if err := queries.ReplaceRoute(ctx, statedb.ReplaceRouteParams{
+		count, err = queries.ReplaceRoute(ctx, statedb.ReplaceRouteParams{
 			LocalTarget: localTarget,
 			Version:     dbVersion,
 			RouteID:     existing.ID,
-		}); err != nil {
+			IdentityID:  identityID,
+		})
+		if err != nil {
 			return Provisioning{}, fmt.Errorf("routes: advance replaced route: %w", err)
+		}
+		if err := requireCount(count, ErrNameUnavailable); err != nil {
+			return Provisioning{}, err
 		}
 		if err := insertAllowedIPPrefixes(ctx, queries, existing.ID, version, allowedIPPrefixes); err != nil {
 			return Provisioning{}, err

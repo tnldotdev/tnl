@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/proxyproto"
+	"github.com/tnldotdev/tnl/internal/sourceauth"
 	"github.com/tnldotdev/tnl/internal/tlschallenge"
 	"golang.org/x/crypto/acme"
 )
@@ -24,15 +24,17 @@ func TestProbeTLSALPN(t *testing.T) {
 		t.Fatal(err)
 	}
 	backend := &challengeBackend{t: t, challenges: &challenges}
+	sourceKey := [32]byte{1, 2, 3}
+	backend.sourceKey = sourceKey
 	issuance := Issuance{
 		Hostname: testHostname, ChallengeURL: challenge.ID,
 		ChallengeDigest: digest, ChallengeExpires: expiresAt,
 	}
-	if err := ProbeTLSALPN(context.Background(), backend, issuance); err != nil {
+	if err := ProbeTLSALPN(context.Background(), backend, sourceKey, issuance); err != nil {
 		t.Fatal(err)
 	}
 	issuance.ChallengeDigest[0] ^= 0xff
-	if err := ProbeTLSALPN(context.Background(), backend, issuance); err == nil {
+	if err := ProbeTLSALPN(context.Background(), backend, sourceKey, issuance); err == nil {
 		t.Fatal("probe accepted a mismatched challenge digest")
 	}
 }
@@ -40,6 +42,7 @@ func TestProbeTLSALPN(t *testing.T) {
 type challengeBackend struct {
 	t          *testing.T
 	challenges *tlschallenge.TLSALPNChallenges
+	sourceKey  [32]byte
 }
 
 func (b *challengeBackend) Open(context.Context) (net.Conn, error) {
@@ -55,11 +58,14 @@ func (b *challengeBackend) Open(context.Context) (net.Conn, error) {
 			return
 		}
 		defer server.Close()
-		if _, replay, err := proxyproto.Decode(server); err != nil {
-			b.t.Errorf("decode PROXY header: %v", err)
+		claim, err := sourceauth.Server(server, b.sourceKey)
+		if err != nil {
+			b.t.Errorf("authenticate source metadata: %v", err)
 			return
-		} else {
-			server = &probeReaderConn{Conn: server, reader: replay}
+		}
+		if claim.Purpose != sourceauth.PurposeACME {
+			b.t.Errorf("source purpose = %v", claim.Purpose)
+			return
 		}
 		connection := tls.Server(server, &tls.Config{
 			GetCertificate: b.challenges.GetCertificate, NextProtos: []string{acme.ALPNProto},
@@ -68,13 +74,4 @@ func (b *challengeBackend) Open(context.Context) (net.Conn, error) {
 		_ = connection.Handshake()
 	}()
 	return net.Dial("tcp", listener.Addr().String())
-}
-
-type probeReaderConn struct {
-	net.Conn
-	reader interface{ Read([]byte) (int, error) }
-}
-
-func (c *probeReaderConn) Read(destination []byte) (int, error) {
-	return c.reader.Read(destination)
 }

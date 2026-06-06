@@ -277,6 +277,10 @@ func runSession(
 	if _, _, err := credentials.ParseSessionToken(sessionToken); err != nil {
 		return errors.New("publisher: server returned invalid session token")
 	}
+	sourceKey, err := credentials.DeriveSessionSourceKey(sessionToken)
+	if err != nil {
+		return errors.New("publisher: server returned invalid session token")
+	}
 	var ingressKey key.NodePublic
 	if err := ingressKey.UnmarshalText([]byte(setup.WorkerPublicKey)); err != nil || ingressKey.IsZero() {
 		return errors.New("publisher: server returned invalid ingress key")
@@ -319,7 +323,8 @@ func runSession(
 	route, err := NewRoute(RouteConfig{
 		Hostname: setup.Route.Hostname, Target: config.Target, Certificate: certificate,
 		StrictCertificate: true,
-		AllowedClient:     ingressKey, RelayRegion: config.RelayRegion, Regions: config.Regions, Logf: config.Logf,
+		SourceKey:         sourceKey, AllowedIPPrefixes: config.AllowedIPPrefixes,
+		AllowedClient: ingressKey, RelayRegion: config.RelayRegion, Regions: config.Regions, Logf: config.Logf,
 	})
 	if err != nil {
 		return err

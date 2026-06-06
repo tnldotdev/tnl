@@ -81,10 +81,13 @@ type TNLD struct {
 	RelayRegion                    string        `name:"relay-region" env:"TNLD_RELAY_REGION" help:"DERP region code selected from a custom relay map."`
 	WorkerURL                      string        `name:"worker-url" env:"TNLD_WORKER_URL" help:"Worker-mode WSS edge URL."`
 	WorkerToken                    string        `name:"worker-token" env:"TNLD_WORKER_TOKEN" help:"Edge-to-worker authentication token."`
+	AcceptedWorkerTokens           []string      `name:"accepted-worker-token" env:"TNLD_ACCEPTED_WORKER_TOKENS" help:"Worker token accepted by an edge; repeat for each worker."`
 	RouteUsageURL                  string        `name:"route-usage-url" env:"TNLD_ROUTE_USAGE_URL" help:"Route usage receiver base URL."`
 	RouteUsageToken                string        `name:"route-usage-token" env:"TNLD_ROUTE_USAGE_TOKEN" help:"Service token for the route usage receiver."`
 	WorkerCapacity                 int           `name:"worker-capacity" env:"TNLD_WORKER_CAPACITY" default:"500" help:"Hard route capacity for this worker."`
 	WorkerStreamLimit              int           `name:"worker-stream-limit" env:"TNLD_WORKER_STREAM_LIMIT" default:"4096" help:"Maximum multiplexed streams per worker session."`
+	WorkerSessionLimit             int           `name:"worker-session-limit" env:"TNLD_WORKER_SESSION_LIMIT" default:"10" help:"Maximum concurrent worker sessions on an edge."`
+	WorkerTotalCapacity            int           `name:"worker-total-capacity" env:"TNLD_WORKER_TOTAL_CAPACITY" default:"5000" help:"Maximum total route capacity advertised to an edge."`
 	PublicConnLimit                int           `name:"public-connection-limit" env:"TNLD_PUBLIC_CONNECTION_LIMIT" default:"20000" help:"Maximum concurrent public connections."`
 	RouteConnLimit                 int           `name:"route-connection-limit" env:"TNLD_ROUTE_CONNECTION_LIMIT" default:"500" help:"Maximum concurrent public connections per route."`
 	RequireProxyHeader             bool          `name:"require-proxy-header" env:"TNLD_REQUIRE_PROXY_HEADER" help:"Require one trusted outer PROXY v2 header on public ingress."`
@@ -111,7 +114,8 @@ func (c TNLD) Validate() error {
 	if err := validateListenAddress(c.PublicListen); err != nil {
 		return fmt.Errorf("public listen address: %w", err)
 	}
-	if c.WorkerCapacity <= 0 || c.WorkerStreamLimit <= 0 || c.PublicConnLimit <= 0 || c.RouteConnLimit <= 0 {
+	if c.WorkerCapacity <= 0 || c.WorkerStreamLimit <= 0 || c.WorkerSessionLimit <= 0 ||
+		c.WorkerTotalCapacity <= 0 || c.PublicConnLimit <= 0 || c.RouteConnLimit <= 0 {
 		return errors.New("capacity and connection limits must be positive")
 	}
 	if c.MaxActiveHostnames <= 0 || c.MaxHostnameRequests <= 0 {
@@ -184,14 +188,26 @@ func (c TNLD) Validate() error {
 		if c.RelayProvider != "" && c.RelayMapFile != "" {
 			return errors.New("relay provider and custom relay map are mutually exclusive")
 		}
-		if c.Mode == TNLDModeEdge && c.WorkerToken == "" {
+		if c.Mode == TNLDModeEdge && c.WorkerToken == "" && len(c.AcceptedWorkerTokens) == 0 {
 			return errors.New("edge control requires a worker token")
 		}
-		if c.Mode == TNLDModeEdge {
-			if _, err := credentials.ParseWorkerToken(credentials.WorkerToken(c.WorkerToken)); err != nil {
-				return errors.New("edge worker token is invalid")
-			}
+	}
+	if len(c.AcceptedWorkerTokens) != 0 && c.Mode != TNLDModeEdge {
+		return errors.New("accepted worker tokens are valid only in edge mode")
+	}
+	if len(c.AcceptedWorkerTokens) != 0 && c.WorkerToken != "" {
+		return errors.New("worker token and accepted worker tokens are mutually exclusive on an edge")
+	}
+	seenWorkerTokens := make(map[credentials.CredentialID]struct{}, len(c.AcceptedWorkerTokens)+1)
+	for _, raw := range c.edgeWorkerTokens() {
+		verifier, err := credentials.ParseWorkerToken(credentials.WorkerToken(raw))
+		if err != nil {
+			return errors.New("edge worker token is invalid")
 		}
+		if _, exists := seenWorkerTokens[verifier.ID()]; exists {
+			return errors.New("edge worker tokens must be unique")
+		}
+		seenWorkerTokens[verifier.ID()] = struct{}{}
 	}
 	if c.Mode == TNLDModeWorker && c.WorkerURL == "" {
 		return errors.New("worker mode requires a worker URL")
@@ -229,6 +245,16 @@ func (c TNLD) Validate() error {
 			workerURL.Path != workerv1.Endpoint || workerURL.RawQuery != "" || workerURL.Fragment != "" {
 			return fmt.Errorf("worker URL must be a wss origin with path %s", workerv1.Endpoint)
 		}
+	}
+	return nil
+}
+
+func (c TNLD) edgeWorkerTokens() []string {
+	if len(c.AcceptedWorkerTokens) != 0 {
+		return c.AcceptedWorkerTokens
+	}
+	if c.Mode == TNLDModeEdge && c.WorkerToken != "" {
+		return []string{c.WorkerToken}
 	}
 	return nil
 }

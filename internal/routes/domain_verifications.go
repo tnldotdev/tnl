@@ -138,21 +138,40 @@ func (s *Store) CompleteDomainVerification(
 	ctx context.Context,
 	identityID, id string,
 ) (Hostname, error) {
+	if err := s.checkDomainVerification(ctx, identityID, id); err != nil {
+		return Hostname{}, err
+	}
+	return s.activateDomainVerification(ctx, identityID, id)
+}
+
+func (s *Store) checkDomainVerification(ctx context.Context, identityID, id string) error {
+	verification, err := s.GetDomainVerification(ctx, identityID, id)
+	if err != nil {
+		return err
+	}
+	if verification.Status == DomainVerificationStatusVerified && verification.HostnameID != "" {
+		return nil
+	}
+	if verification.Status != DomainVerificationStatusPending {
+		return ErrInvalidStatus
+	}
+	if err := s.domainVerifier.CheckDomain(ctx, verification.Domain, verification.VerificationTarget, verification.Apex); err != nil {
+		return fmt.Errorf("%w: %v", ErrDNSProofPending, err)
+	}
+	return nil
+}
+
+func (s *Store) activateDomainVerification(ctx context.Context, identityID, id string) (Hostname, error) {
 	verification, err := s.GetDomainVerification(ctx, identityID, id)
 	if err != nil {
 		return Hostname{}, err
 	}
-	if verification.Status == "verified" && verification.HostnameID != "" {
-		hostname, err := readHostnameByName(ctx, s.queries, verification.Domain)
-		return hostname, err
+	if verification.Status == DomainVerificationStatusVerified && verification.HostnameID != "" {
+		return readHostnameByName(ctx, s.queries, verification.Domain)
 	}
 	if verification.Status != DomainVerificationStatusPending {
 		return Hostname{}, ErrInvalidStatus
 	}
-	if err := s.domainVerifier.CheckDomain(ctx, verification.Domain, verification.VerificationTarget, verification.Apex); err != nil {
-		return Hostname{}, fmt.Errorf("%w: %v", ErrDNSProofPending, err)
-	}
-
 	now := time.Unix(0, s.now().UnixNano()).UTC()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

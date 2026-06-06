@@ -8,11 +8,11 @@ import (
 	"encoding/asn1"
 	"errors"
 	"fmt"
-	"io"
 	"net/netip"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/proxyproto"
+	"github.com/tnldotdev/tnl/internal/sourceauth"
 	"github.com/tnldotdev/tnl/internal/worker"
 	"golang.org/x/crypto/acme"
 )
@@ -20,7 +20,7 @@ import (
 var acmeIdentifierOID = asn1.ObjectIdentifier{1, 3, 6, 1, 5, 5, 7, 1, 31}
 
 // ProbeTLSALPN verifies challenge material through the assigned route backend.
-func ProbeTLSALPN(ctx context.Context, backend worker.RouteBackend, issuance Issuance) error {
+func ProbeTLSALPN(ctx context.Context, backend worker.RouteBackend, sourceKey [32]byte, issuance Issuance) error {
 	if backend == nil || issuance.Challenge() == nil {
 		return errors.New("certificates: route challenge is unavailable")
 	}
@@ -36,15 +36,11 @@ func ProbeTLSALPN(ctx context.Context, backend worker.RouteBackend, issuance Iss
 	if err := stream.SetDeadline(deadline); err != nil {
 		return fmt.Errorf("certificates: set challenge probe deadline: %w", err)
 	}
-	header, err := proxyproto.Encode(proxyproto.Header{
+	if err := sourceauth.Client(stream, sourceKey, sourceauth.PurposeACME, proxyproto.Header{
 		Source:      netip.MustParseAddrPort("127.0.0.1:1"),
 		Destination: netip.MustParseAddrPort("127.0.0.1:443"),
-	})
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(stream, bytes.NewReader(header)); err != nil {
-		return fmt.Errorf("certificates: write challenge PROXY header: %w", err)
+	}); err != nil {
+		return fmt.Errorf("certificates: authenticate challenge source: %w", err)
 	}
 	connection := tls.Client(stream, &tls.Config{
 		ServerName: issuance.Hostname, NextProtos: []string{acme.ALPNProto}, MinVersion: tls.VersionTLS12,

@@ -125,6 +125,15 @@ WHERE id IN (
                     AND current_route.status <> 'deleted'
             )
         )
+        AND NOT (
+            event.transition = 'version_started'
+            AND EXISTS (
+                SELECT 1
+                FROM route_usage_snapshots AS snapshot
+                WHERE snapshot.route_id = event.route_id
+                    AND snapshot.version = event.version
+            )
+        )
         AND NOT EXISTS (
             SELECT 1
             FROM route_usage_outbox_items
@@ -165,6 +174,63 @@ func (q *Queries) DeleteRouteUsageOutboxRevision(ctx context.Context, arg Delete
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const deleteUnqueuedRouteUsageReport = `-- name: DeleteUnqueuedRouteUsageReport :exec
+DELETE FROM route_usage_reports
+WHERE snapshot_id = ?1
+    AND NOT EXISTS (
+        SELECT 1
+        FROM route_usage_outbox_items
+        WHERE source_kind = 'usage_snapshot'
+            AND source_id = route_usage_reports.snapshot_id
+    )
+`
+
+func (q *Queries) DeleteUnqueuedRouteUsageReport(ctx context.Context, snapshotID int64) error {
+	_, err := q.db.ExecContext(ctx, deleteUnqueuedRouteUsageReport, snapshotID)
+	return err
+}
+
+const dropExcessRouteUsageOutbox = `-- name: DropExcessRouteUsageOutbox :many
+DELETE FROM route_usage_outbox_items
+WHERE source_kind = 'usage_snapshot'
+    AND source_id IN (
+        SELECT outbox.source_id
+        FROM route_usage_outbox_items AS outbox
+        JOIN route_usage_snapshots AS snapshot ON snapshot.id = outbox.source_id
+        WHERE outbox.source_kind = 'usage_snapshot'
+        ORDER BY snapshot.bucket_start, snapshot.id
+        LIMIT max(
+            (SELECT COUNT(*) FROM route_usage_outbox_items AS pending WHERE pending.source_kind = 'usage_snapshot')
+                - CAST(?1 AS INTEGER),
+            0
+        )
+    )
+RETURNING source_id
+`
+
+func (q *Queries) DropExcessRouteUsageOutbox(ctx context.Context, maxPending int64) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, dropExcessRouteUsageOutbox, maxPending)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var source_id int64
+		if err := rows.Scan(&source_id); err != nil {
+			return nil, err
+		}
+		items = append(items, source_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getNextRouteUsageOutboxItem = `-- name: GetNextRouteUsageOutboxItem :one

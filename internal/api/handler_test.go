@@ -22,9 +22,9 @@ import (
 	"github.com/tnldotdev/tnl/internal/certificates"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/routes"
+	"github.com/tnldotdev/tnl/internal/sourcelimiter"
 	"github.com/tnldotdev/tnl/internal/state"
 	"github.com/tnldotdev/tnl/pkg/protocol/serverv1"
-	"golang.org/x/time/rate"
 )
 
 func TestCapabilities(t *testing.T) {
@@ -240,7 +240,7 @@ func TestOIDCTokenExchangeIsBoundedAndRateLimited(t *testing.T) {
 		Grants: []auth.Grant{auth.GrantPublish},
 	}}
 	handler := NewHandler(fixtureCapabilities(t), service).(*handler)
-	handler.oidcLimit = rate.NewLimiter(0, 1)
+	handler.oidcLimit = testAPISourceLimiter(t)
 
 	request := httptest.NewRequest(http.MethodPost, oidcExchangePath, strings.NewReader(`{"id_token":"id-token"}`))
 	request.Header.Set("Content-Type", "application/json")
@@ -256,6 +256,14 @@ func TestOIDCTokenExchangeIsBoundedAndRateLimited(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusTooManyRequests || service.calls != 1 {
 		t.Fatalf("status = %d, calls = %d, body = %s", response.Code, service.calls, response.Body.String())
+	}
+	request = httptest.NewRequest(http.MethodPost, oidcExchangePath, strings.NewReader(`{"id_token":"id-token"}`))
+	request.RemoteAddr = "198.51.100.2:1234"
+	request.Header.Set("Content-Type", "application/json")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || service.calls != 2 {
+		t.Fatalf("independent source status = %d, calls = %d", response.Code, service.calls)
 	}
 }
 
@@ -692,7 +700,7 @@ func TestRefreshEndpointUsesRefreshTokenWithoutAccessAuthentication(t *testing.T
 		t.Fatal(err)
 	}
 	handler := NewHandler(fixtureCapabilities(t), service).(*handler)
-	handler.refreshLimit = rate.NewLimiter(0, 1)
+	handler.refreshLimit = testAPISourceLimiter(t)
 	request := httptest.NewRequest(http.MethodPost, refreshPath, bytes.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
@@ -718,6 +726,25 @@ func TestRefreshEndpointUsesRefreshTokenWithoutAccessAuthentication(t *testing.T
 	if response.Code != http.StatusTooManyRequests {
 		t.Fatalf("second refresh status = %d, want %d", response.Code, http.StatusTooManyRequests)
 	}
+	request = httptest.NewRequest(http.MethodPost, refreshPath, bytes.NewReader(body))
+	request.RemoteAddr = "198.51.100.2:1234"
+	request.Header.Set("Content-Type", "application/json")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("independent source status = %d, want request to reach authentication", response.Code)
+	}
+}
+
+func testAPISourceLimiter(t *testing.T) *sourcelimiter.Limiter {
+	t.Helper()
+	limiter, err := sourcelimiter.New(sourcelimiter.Config{
+		Rate: 0.000001, Burst: 1, MaxEntries: 8, IdleExpiration: time.Hour, Shards: 4,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return limiter
 }
 
 func TestPublishRoutesRequirePublishGrant(t *testing.T) {

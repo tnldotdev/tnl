@@ -29,6 +29,9 @@ type HubConfig struct {
 	Tokens                []credentials.WorkerVerifier
 	Registry              Registry
 	MaxStreams            int
+	MaxSessions           int
+	MaxWorkerCapacity     int
+	MaxTotalCapacity      int
 	DrainTime             time.Duration
 	OnError               func(error)
 	OnSessionEstablished  func(SessionRole)
@@ -36,10 +39,16 @@ type HubConfig struct {
 }
 
 type Hub struct {
-	config      HubConfig
-	mu          sync.Mutex
-	connections map[*websocket.Conn]struct{}
-	closed      bool
+	config        HubConfig
+	mu            sync.Mutex
+	sessions      map[credentials.CredentialID]*workerReservation
+	totalCapacity int
+	closed        bool
+}
+
+type workerReservation struct {
+	connection *websocket.Conn
+	capacity   int
 }
 
 func NewHub(config HubConfig) (*Hub, error) {
@@ -49,10 +58,26 @@ func NewHub(config HubConfig) (*Hub, error) {
 	if config.MaxStreams <= 0 {
 		config.MaxStreams = defaultMaxStreams
 	}
+	if config.MaxSessions <= 0 {
+		config.MaxSessions = defaultMaxSessions
+	}
+	if config.MaxWorkerCapacity <= 0 {
+		config.MaxWorkerCapacity = defaultMaxWorkerCapacity
+	}
+	if config.MaxTotalCapacity <= 0 {
+		config.MaxTotalCapacity = defaultMaxTotalCapacity
+	}
+	seen := make(map[credentials.CredentialID]struct{}, len(config.Tokens))
+	for _, verifier := range config.Tokens {
+		if _, exists := seen[verifier.ID()]; exists {
+			return nil, errors.New("workercontrol: duplicate worker token")
+		}
+		seen[verifier.ID()] = struct{}{}
+	}
 	if config.DrainTime <= 0 {
 		config.DrainTime = 30 * time.Second
 	}
-	return &Hub{config: config, connections: make(map[*websocket.Conn]struct{})}, nil
+	return &Hub{config: config, sessions: make(map[credentials.CredentialID]*workerReservation)}, nil
 }
 
 func (h *Hub) ServeHTTP(response http.ResponseWriter, request *http.Request) {
@@ -62,11 +87,17 @@ func (h *Hub) ServeHTTP(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	token, err := credentials.Bearer(request.Header)
-	if err != nil || !h.matches(credentials.WorkerToken(token)) {
+	credentialID, authenticated := h.authenticate(credentials.WorkerToken(token))
+	if err != nil || !authenticated {
 		response.Header().Set("WWW-Authenticate", "Bearer")
 		http.Error(response, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	if !h.reserve(credentialID) {
+		http.Error(response, "worker session limit reached", http.StatusTooManyRequests)
+		return
+	}
+	defer h.release(credentialID)
 	connection, err := websocket.Accept(response, request, &websocket.AcceptOptions{
 		Subprotocols: []string{workerv1.Subprotocol},
 	})
@@ -74,10 +105,9 @@ func (h *Hub) ServeHTTP(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	defer connection.CloseNow()
-	if !h.track(connection) {
+	if !h.bind(credentialID, connection) {
 		return
 	}
-	defer h.untrack(connection)
 	if connection.Subprotocol() != workerv1.Subprotocol {
 		_ = connection.Close(websocket.StatusPolicyViolation, "subprotocol required")
 		return
@@ -86,7 +116,7 @@ func (h *Hub) ServeHTTP(response http.ResponseWriter, request *http.Request) {
 	lifetime, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	network := websocket.NetConn(lifetime, connection, websocket.MessageBinary)
-	session, err := yamux.Server(network, muxConfig(h.config.MaxStreams), nil)
+	session, err := yamux.Server(network, muxConfig(1), nil)
 	if err != nil {
 		h.report(err)
 		return
@@ -105,6 +135,10 @@ func (h *Hub) ServeHTTP(response http.ResponseWriter, request *http.Request) {
 	}
 	if hello.Type != workerv1.Hello {
 		h.report(errors.New("workercontrol: invalid worker hello"))
+		return
+	}
+	if !h.claimCapacity(credentialID, hello.Capacity) {
+		_ = workerv1.WriteControl(control, workerv1.Message{Type: workerv1.Error, Code: workerv1.AtCapacity})
 		return
 	}
 	if err := workerv1.WriteControl(control, workerv1.Message{Type: workerv1.Accepted}); err != nil {
@@ -126,7 +160,7 @@ func (h *Hub) ServeHTTP(response http.ResponseWriter, request *http.Request) {
 		h.report(err)
 		return
 	}
-	worker := newRemoteWorker(session, control, hello.Capacity)
+	worker := newRemoteWorker(session, control, hello.Capacity, h.config.MaxStreams)
 	if err := h.config.Registry.AddWorker(id, worker); err != nil {
 		h.report(err)
 		return
@@ -158,9 +192,11 @@ func (h *Hub) Close() {
 		return
 	}
 	h.closed = true
-	connections := make([]*websocket.Conn, 0, len(h.connections))
-	for connection := range h.connections {
-		connections = append(connections, connection)
+	connections := make([]*websocket.Conn, 0, len(h.sessions))
+	for _, reservation := range h.sessions {
+		if reservation.connection != nil {
+			connections = append(connections, reservation.connection)
+		}
 	}
 	h.mu.Unlock()
 	for _, connection := range connections {
@@ -168,19 +204,46 @@ func (h *Hub) Close() {
 	}
 }
 
-func (h *Hub) track(connection *websocket.Conn) bool {
+func (h *Hub) reserve(id credentials.CredentialID) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.closed {
+	if h.closed || len(h.sessions) >= h.config.MaxSessions || h.sessions[id] != nil {
 		return false
 	}
-	h.connections[connection] = struct{}{}
+	h.sessions[id] = &workerReservation{}
 	return true
 }
 
-func (h *Hub) untrack(connection *websocket.Conn) {
+func (h *Hub) bind(id credentials.CredentialID, connection *websocket.Conn) bool {
 	h.mu.Lock()
-	delete(h.connections, connection)
+	defer h.mu.Unlock()
+	reservation := h.sessions[id]
+	if h.closed || reservation == nil {
+		return false
+	}
+	reservation.connection = connection
+	return true
+}
+
+func (h *Hub) claimCapacity(id credentials.CredentialID, capacity int) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	reservation := h.sessions[id]
+	if reservation == nil || capacity <= 0 || capacity > h.config.MaxWorkerCapacity ||
+		h.totalCapacity+capacity > h.config.MaxTotalCapacity {
+		return false
+	}
+	reservation.capacity = capacity
+	h.totalCapacity += capacity
+	return true
+}
+
+func (h *Hub) release(id credentials.CredentialID) {
+	h.mu.Lock()
+	if reservation := h.sessions[id]; reservation != nil {
+		h.totalCapacity -= reservation.capacity
+		delete(h.sessions, id)
+	}
 	h.mu.Unlock()
 }
 
@@ -190,13 +253,17 @@ func (h *Hub) isClosed() bool {
 	return h.closed
 }
 
-func (h *Hub) matches(token credentials.WorkerToken) bool {
-	matched := false
+func (h *Hub) authenticate(token credentials.WorkerToken) (credentials.CredentialID, bool) {
+	var matchedID credentials.CredentialID
+	matched := 0
 	// Run every verifier so token position does not affect timing.
 	for _, verifier := range h.config.Tokens {
-		matched = verifier.Matches(token) || matched
+		if verifier.Matches(token) {
+			matchedID = verifier.ID()
+			matched++
+		}
 	}
-	return matched
+	return matchedID, matched == 1
 }
 
 func (h *Hub) report(err error) {
@@ -231,9 +298,10 @@ type pendingResponse struct {
 }
 
 type remoteWorker struct {
-	session  *yamux.Session
-	control  net.Conn
-	capacity int
+	session    *yamux.Session
+	control    net.Conn
+	capacity   int
+	maxStreams int
 
 	writeMu sync.Mutex
 	mu      sync.Mutex
@@ -242,6 +310,7 @@ type remoteWorker struct {
 	changed chan struct{}
 
 	attaching      int
+	streams        int
 	draining       bool
 	workerDraining bool
 	closed         bool
@@ -249,9 +318,9 @@ type remoteWorker struct {
 	onDraining     func()
 }
 
-func newRemoteWorker(session *yamux.Session, control net.Conn, capacity int) *remoteWorker {
+func newRemoteWorker(session *yamux.Session, control net.Conn, capacity, maxStreams int) *remoteWorker {
 	return &remoteWorker{
-		session: session, control: control, capacity: capacity,
+		session: session, control: control, capacity: capacity, maxStreams: maxStreams,
 		routes: make(map[string]*remoteRoute), pending: make(map[worker.RouteRef]chan pendingResponse),
 		changed: make(chan struct{}),
 	}
@@ -513,12 +582,20 @@ func (o *remoteWorker) discard(ref worker.RouteRef) {
 func (o *remoteWorker) open(ctx context.Context, route *remoteRoute) (net.Conn, error) {
 	o.mu.Lock()
 	ready := o.routes[route.ref.RouteID] == route && !o.draining && !o.closed
+	atCapacity := ready && o.streams >= o.maxStreams
+	if ready && !atCapacity {
+		o.streams++
+	}
 	o.mu.Unlock()
 	if !ready {
 		return nil, worker.ErrDraining
 	}
+	if atCapacity {
+		return nil, worker.ErrAtCapacity
+	}
 	stream, err := o.session.OpenStream(ctx)
 	if err != nil {
+		o.releaseStream()
 		return nil, err
 	}
 	if deadline, ok := ctx.Deadline(); ok {
@@ -526,10 +603,43 @@ func (o *remoteWorker) open(ctx context.Context, route *remoteRoute) (net.Conn, 
 	}
 	if err := workerv1.WriteDataHeader(stream, workerv1.DataHeader{RouteID: route.ref.RouteID, Version: route.ref.Version}); err != nil {
 		_ = stream.Reset()
+		o.releaseStream()
 		return nil, err
 	}
 	_ = stream.SetWriteDeadline(time.Time{})
-	return stream, nil
+	return &countedStream{Conn: stream, release: o.releaseStream}, nil
+}
+
+func (o *remoteWorker) releaseStream() {
+	o.mu.Lock()
+	o.streams--
+	o.mu.Unlock()
+}
+
+type countedStream struct {
+	net.Conn
+	release func()
+	once    sync.Once
+}
+
+func (s *countedStream) Close() error {
+	err := s.Conn.Close()
+	s.once.Do(s.release)
+	return err
+}
+
+func (s *countedStream) CloseRead() error {
+	if closer, ok := s.Conn.(interface{ CloseRead() error }); ok {
+		return closer.CloseRead()
+	}
+	return errors.ErrUnsupported
+}
+
+func (s *countedStream) CloseWrite() error {
+	if closer, ok := s.Conn.(interface{ CloseWrite() error }); ok {
+		return closer.CloseWrite()
+	}
+	return errors.ErrUnsupported
 }
 
 func (o *remoteWorker) detach(ctx context.Context, route *remoteRoute) error {

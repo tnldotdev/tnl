@@ -238,7 +238,7 @@ func (d *daemon) startServer(
 	var oidcVerifier auth.OIDCVerifier
 	if cfg.OIDCEnabled() {
 		oidcVerifier, err = auth.NewOIDCVerifier(auth.OIDCConfig{
-			Issuer: cfg.OIDCIssuer, ClientID: cfg.OIDCClientID,
+			Issuer: cfg.OIDCIssuer, ClientID: cfg.OIDCClientID, CoreEndpoint: "https://" + cfg.ServerHostname(),
 		})
 		if err != nil {
 			return nil, nil, err
@@ -331,7 +331,7 @@ func (d *daemon) startServer(
 				if !ok || active.RouteID != issuance.RouteID || active.Version != issuance.Version {
 					return errors.New("assigned challenge route is unavailable")
 				}
-				return certificates.ProbeTLSALPN(probeCtx, active.Backend, issuance)
+				return certificates.ProbeTLSALPN(probeCtx, active.Backend, active.SourceKey, issuance)
 			},
 		}, report)
 	}
@@ -351,13 +351,22 @@ func (d *daemon) startServer(
 		}
 		go monitorWorker(ctx, worker, metrics)
 	} else {
-		verifier, err := credentials.ParseWorkerToken(credentials.WorkerToken(cfg.WorkerToken))
-		if err != nil {
-			return nil, nil, fmt.Errorf("configure worker token: %w", err)
+		workerTokens := cfg.AcceptedWorkerTokens
+		if len(workerTokens) == 0 {
+			workerTokens = []string{cfg.WorkerToken}
+		}
+		verifiers := make([]credentials.WorkerVerifier, len(workerTokens))
+		for index, token := range workerTokens {
+			verifiers[index], err = credentials.ParseWorkerToken(credentials.WorkerToken(token))
+			if err != nil {
+				return nil, nil, fmt.Errorf("configure worker token: %w", err)
+			}
 		}
 		hub, err = workercontrol.NewHub(workercontrol.HubConfig{
-			Tokens: []credentials.WorkerVerifier{verifier}, Registry: d.coordinator,
-			MaxStreams: cfg.WorkerStreamLimit, DrainTime: cfg.DrainTimeout, OnError: report,
+			Tokens: verifiers, Registry: d.coordinator,
+			MaxStreams: cfg.WorkerStreamLimit, MaxSessions: cfg.WorkerSessionLimit,
+			MaxWorkerCapacity: cfg.WorkerCapacity, MaxTotalCapacity: cfg.WorkerTotalCapacity,
+			DrainTime: cfg.DrainTimeout, OnError: report,
 			OnSessionEstablished: func(role workercontrol.SessionRole) {
 				metrics.ObserveWorkerSessionEstablished(string(role))
 			},
@@ -415,7 +424,7 @@ func (d *daemon) startServer(
 			route, ok := d.coordinator.Lookup(hostname)
 			return ingress.Route{
 				ID: route.RouteID, Version: route.Version,
-				AllowedIPPrefixes: route.AllowedIPPrefixes, Backend: route.Backend,
+				AllowedIPPrefixes: route.AllowedIPPrefixes, Backend: route.Backend, SourceKey: route.SourceKey,
 			}, ok
 		},
 		ServerHostname:     cfg.ServerHostname(),
@@ -429,9 +438,11 @@ func (d *daemon) startServer(
 		}
 	}
 	if cfg.ACMEEnabled() {
-		ingressConfig.LookupChallenge = func(hostname string) (worker.RouteBackend, bool) {
+		ingressConfig.LookupChallenge = func(hostname string) (ingress.Route, bool) {
 			route, ok := d.coordinator.LookupChallenge(hostname)
-			return route.Backend, ok
+			return ingress.Route{
+				ID: route.RouteID, Version: route.Version, Backend: route.Backend, SourceKey: route.SourceKey,
+			}, ok
 		}
 	}
 	d.ingress, err = ingress.New(publicListener, ingressConfig)

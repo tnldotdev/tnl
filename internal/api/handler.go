@@ -24,9 +24,9 @@ import (
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/routes"
+	"github.com/tnldotdev/tnl/internal/sourcelimiter"
 	"github.com/tnldotdev/tnl/internal/state"
 	"github.com/tnldotdev/tnl/pkg/protocol/serverv1"
-	"golang.org/x/time/rate"
 	"tailscale.com/types/key"
 )
 
@@ -225,9 +225,9 @@ type handler struct {
 	dnsReady            func() bool
 	ingressAddresses    func() []string
 	readiness           func(context.Context) error
-	oidcLimit           *rate.Limiter
-	refreshLimit        *rate.Limiter
-	clientIPLimit       *rate.Limiter
+	oidcLimit           *sourcelimiter.Limiter
+	refreshLimit        *sourcelimiter.Limiter
+	clientIPLimit       *sourcelimiter.Limiter
 	signedAuthorization bool
 	admin               AdminService
 }
@@ -260,9 +260,9 @@ func NewHandlerWithServicesAndConfig(
 	certificateService CertificateService,
 	config HandlerConfig,
 ) http.Handler {
-	var oidcLimit *rate.Limiter
+	var oidcLimit *sourcelimiter.Limiter
 	if _, ok := auth.(OIDCAuthService); ok {
-		oidcLimit = rate.NewLimiter(rate.Limit(5), 20)
+		oidcLimit = newSourceLimiter(5, 20)
 	}
 	return &handler{
 		capabilities:        capabilities,
@@ -276,11 +276,24 @@ func NewHandlerWithServicesAndConfig(
 		ingressAddresses:    config.IngressAddresses,
 		readiness:           config.Readiness,
 		oidcLimit:           oidcLimit,
-		refreshLimit:        rate.NewLimiter(rate.Limit(5), 20),
-		clientIPLimit:       rate.NewLimiter(rate.Limit(1), 4),
+		refreshLimit:        newSourceLimiter(5, 20),
+		clientIPLimit:       newSourceLimiter(1, 4),
 		signedAuthorization: config.SignedAuthorization,
 		admin:               config.Admin,
 	}
+}
+
+func newSourceLimiter(requestsPerSecond float64, burst int) *sourcelimiter.Limiter {
+	limiter, err := sourcelimiter.New(sourcelimiter.Config{Rate: requestsPerSecond, Burst: burst})
+	if err != nil {
+		panic("api: invalid source limiter configuration")
+	}
+	return limiter
+}
+
+func allowRequestSource(limiter *sourcelimiter.Limiter, request *http.Request) bool {
+	remote, err := netip.ParseAddrPort(request.RemoteAddr)
+	return err == nil && limiter.Allow(remote.Addr())
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -558,17 +571,17 @@ func (h *handler) serveClientIP(w http.ResponseWriter, r *http.Request, requestI
 		writeMethodNotAllowed(w, requestID, http.MethodGet)
 		return
 	}
-	if !h.clientIPLimit.Allow() {
-		w.Header().Set("Retry-After", "1")
-		writeProblem(w, requestID, http.StatusTooManyRequests, serverv1.RateLimited, "Rate limited", "rate-limited")
-		return
-	}
 	remote, err := netip.ParseAddrPort(r.RemoteAddr)
 	if err != nil {
 		writeProblem(
 			w, requestID, http.StatusServiceUnavailable, serverv1.TemporarilyUnavailable,
 			"Temporarily unavailable", "client-ip-unavailable",
 		)
+		return
+	}
+	if !h.clientIPLimit.Allow(remote.Addr()) {
+		w.Header().Set("Retry-After", "1")
+		writeProblem(w, requestID, http.StatusTooManyRequests, serverv1.RateLimited, "Rate limited", "rate-limited")
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
@@ -822,7 +835,7 @@ func (h *handler) serveOIDCExchange(w http.ResponseWriter, r *http.Request, requ
 		writeMethodNotAllowed(w, requestID, http.MethodPost)
 		return
 	}
-	if h.oidcLimit != nil && !h.oidcLimit.Allow() {
+	if h.oidcLimit != nil && !allowRequestSource(h.oidcLimit, r) {
 		writeProblem(
 			w, requestID, http.StatusTooManyRequests, serverv1.RateLimited,
 			"Rate limited", "rate-limited",
@@ -872,7 +885,7 @@ func (h *handler) serveRefresh(w http.ResponseWriter, r *http.Request, requestID
 		writeMethodNotAllowed(w, requestID, http.MethodPost)
 		return
 	}
-	if !h.refreshLimit.Allow() {
+	if !allowRequestSource(h.refreshLimit, r) {
 		writeProblem(
 			w, requestID, http.StatusTooManyRequests, serverv1.RateLimited,
 			"Rate limited", "rate-limited",
