@@ -45,15 +45,15 @@ func TestIntegrationTLSALPNThroughTailcat(t *testing.T) {
 	pebble := integrationtest.StartPebble(t, pebblePath, publicListener.Addr().(*net.TCPAddr).Port, dnsAddress)
 
 	region := runTestDERP(t)
-	ingressKey := key.NewNode()
+	tailcatDialerKey := key.NewNode()
 	proxyErrors := make(chan error, 1)
 
 	firstChallenges := new(tlschallenge.TLSALPNChallenges)
-	firstServer, firstEndpoint, err := startTestServer(ctx, region, ingressKey.Public(), tlsALPNHandler(firstChallenges, proxyErrors))
+	firstServer, firstEndpoint, err := startTestServer(ctx, region, tailcatDialerKey.Public(), tlsALPNHandler(firstChallenges, proxyErrors))
 	if err != nil {
 		t.Fatalf("start first publisher: %v", err)
 	}
-	firstDialer, err := startTestDialer(ctx, region, firstEndpoint, ingressKey)
+	firstDialer, err := startTestDialer(ctx, region, firstEndpoint, tailcatDialerKey)
 	if err != nil {
 		firstServer.Close()
 		t.Fatalf("start first ingress dialer: %v", err)
@@ -116,11 +116,11 @@ func TestIntegrationTLSALPNThroughTailcat(t *testing.T) {
 	if err := secondChallenges.Install(command); err != nil {
 		t.Fatalf("reinstall challenge: %v", err)
 	}
-	secondServer, secondEndpoint, err := startTestServer(ctx, region, ingressKey.Public(), tlsALPNHandler(secondChallenges, proxyErrors))
+	secondServer, secondEndpoint, err := startTestServer(ctx, region, tailcatDialerKey.Public(), tlsALPNHandler(secondChallenges, proxyErrors))
 	if err != nil {
 		t.Fatalf("restart publisher: %v", err)
 	}
-	secondDialer, err := startTestDialer(ctx, region, secondEndpoint, ingressKey)
+	secondDialer, err := startTestDialer(ctx, region, secondEndpoint, tailcatDialerKey)
 	if err != nil {
 		secondServer.Close()
 		t.Fatalf("restart ingress dialer: %v", err)
@@ -141,7 +141,7 @@ func TestIntegrationTLSALPNThroughTailcat(t *testing.T) {
 		t.Fatalf("wait for validation: %v", ctx.Err())
 	}
 
-	// Swap the active route after Pebble's validation ClientHello arrives.
+	// Swap the routable route after Pebble's validation ClientHello arrives.
 	ingress.SetDialer(secondDialer)
 	if err := firstDialer.Close(); err != nil {
 		t.Fatalf("close first dialer: %v", err)

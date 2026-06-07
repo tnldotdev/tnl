@@ -5,29 +5,27 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"math"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/routes"
 	"github.com/tnldotdev/tnl/internal/state/statedb"
 )
 
 const (
-	registrationSource           = "registration"
-	lifecycleSource              = "lifecycle_event"
-	usageSource                  = "usage_snapshot"
-	visitorSecretKey             = "route-usage-visitor-master-secret"
-	maximumPendingUsageSnapshots = 10_000
+	registrationSource      = "registration"
+	lifecycleSource         = "lifecycle_event"
+	usageBucketReportSource = "usage_bucket_report"
+	visitorSecretKey        = "route-usage-visitor-master-secret"
 )
 
 type Store struct {
-	db              *sql.DB
-	queries         *statedb.Queries
-	wake            chan struct{}
-	maxPendingUsage int
+	db      *sql.DB
+	queries *statedb.Queries
+	wake    chan struct{}
 
 	visitorMasterSecret [sha256.Size]byte
 }
@@ -41,8 +39,7 @@ func NewStore(db *sql.DB) (*Store, error) {
 		return nil, err
 	}
 	return &Store{
-		db: db, queries: statedb.New(db), wake: make(chan struct{}, 1),
-		maxPendingUsage: maximumPendingUsageSnapshots, visitorMasterSecret: visitorMasterSecret,
+		db: db, queries: statedb.New(db), wake: make(chan struct{}, 1), visitorMasterSecret: visitorMasterSecret,
 	}, nil
 }
 
@@ -78,12 +75,13 @@ func (s *Store) RecordLifecycle(
 	queries *statedb.Queries,
 	change routes.LifecycleChange,
 ) error {
-	version, err := databaseInteger(change.Version)
+	routeVersion, err := databaseInteger(change.RouteVersion)
 	if err != nil {
 		return err
 	}
+	transition := string(change.Transition)
 	exists, err := queries.CountRouteLifecycleTransition(ctx, statedb.CountRouteLifecycleTransitionParams{
-		RouteID: change.RouteID, Version: version, Transition: string(change.Transition),
+		RouteID: change.RouteID, RouteVersion: routeVersion, Transition: transition,
 	})
 	if err != nil {
 		return fmt.Errorf("routeusage: check lifecycle transition: %w", err)
@@ -100,8 +98,8 @@ func (s *Store) RecordLifecycle(
 		return err
 	}
 	eventRowID, err := queries.InsertRouteLifecycleEvent(ctx, statedb.InsertRouteLifecycleEventParams{
-		EventID: eventID, RouteID: change.RouteID, Version: version, Sequence: sequence,
-		OccurredAt: change.OccurredAt.UTC().UnixNano(), Transition: string(change.Transition),
+		EventID: eventID, RouteID: change.RouteID, RouteVersion: routeVersion, Sequence: sequence,
+		OccurredAt: change.OccurredAt.UTC().UnixNano(), Transition: transition,
 	})
 	if err != nil {
 		return fmt.Errorf("routeusage: insert lifecycle event: %w", err)
@@ -118,7 +116,7 @@ func (s *Store) RecordLifecycle(
 
 type UsageSnapshot struct {
 	RouteID                      string
-	Version                      uint64
+	RouteVersion                 uint64
 	Resolution                   string
 	BucketStart                  time.Time
 	Revision                     uint64
@@ -136,9 +134,9 @@ type UsageSnapshot struct {
 	SuccessfulConnectionDuration []byte
 	VisitorNetworkHLL            []byte
 	VisitorNetworkEstimate       uint64
-	Complete                     bool
-	Finalized                    bool
-	Publish                      bool
+	CoverageComplete             bool
+	CollectionFinalized          bool
+	Enqueue                      bool
 }
 
 func (s *Store) SaveUsage(ctx context.Context, snapshots []UsageSnapshot) error {
@@ -152,7 +150,7 @@ func (s *Store) SaveUsage(ctx context.Context, snapshots []UsageSnapshot) error 
 	defer tx.Rollback()
 	queries := s.queries.WithTx(tx)
 	for _, snapshot := range snapshots {
-		version, err := databaseInteger(snapshot.Version)
+		routeVersion, err := databaseInteger(snapshot.RouteVersion)
 		if err != nil {
 			return err
 		}
@@ -217,16 +215,16 @@ func (s *Store) SaveUsage(ctx context.Context, snapshots []UsageSnapshot) error 
 		if err != nil {
 			return err
 		}
-		complete := int64(0)
-		if snapshot.Complete {
-			complete = 1
+		coverageComplete := int64(0)
+		if snapshot.CoverageComplete {
+			coverageComplete = 1
 		}
-		finalized := int64(0)
-		if snapshot.Finalized || snapshot.Complete {
-			finalized = 1
+		collectionFinalized := int64(0)
+		if snapshot.CollectionFinalized || snapshot.CoverageComplete {
+			collectionFinalized = 1
 		}
 		rowID, err := queries.UpsertRouteUsageSnapshot(ctx, statedb.UpsertRouteUsageSnapshotParams{
-			RouteID: snapshot.RouteID, Version: version, Resolution: snapshot.Resolution,
+			RouteID: snapshot.RouteID, RouteVersion: routeVersion, Resolution: snapshot.Resolution,
 			BucketStart: snapshot.BucketStart.UTC().UnixNano(), Revision: revision,
 			ObservedThrough: snapshot.ObservedThrough.UTC().UnixNano(), ConnectionAttempts: connectionAttempts,
 			PolicyDenials: policyDenials, CapacityDenials: capacityDenials,
@@ -236,16 +234,16 @@ func (s *Store) SaveUsage(ctx context.Context, snapshots []UsageSnapshot) error 
 			TimeToFirstPublisherByte:     snapshot.TimeToFirstPublisherByte,
 			SuccessfulConnectionDuration: snapshot.SuccessfulConnectionDuration,
 			VisitorNetworkHll:            visitorCheckpoint, VisitorNetworkEstimate: visitorEstimateInteger,
-			Complete: complete, Finalized: finalized,
+			Complete: coverageComplete, Finalized: collectionFinalized,
 		})
 		if err != nil {
 			return fmt.Errorf("routeusage: save usage bucket: %w", err)
 		}
-		if snapshot.Publish {
+		if snapshot.Enqueue {
 			if revision < 1 {
-				return errors.New("routeusage: deliverable usage snapshot has no revision")
+				return errors.New("routeusage: usage bucket report has no revision")
 			}
-			reportID, err := newUsageReportID()
+			reportID, err := newUsageBucketReportID()
 			if err != nil {
 				return err
 			}
@@ -258,32 +256,20 @@ func (s *Store) SaveUsage(ctx context.Context, snapshots []UsageSnapshot) error 
 				PublisherOpenLatency:         snapshot.PublisherOpenLatency,
 				TimeToFirstPublisherByte:     snapshot.TimeToFirstPublisherByte,
 				SuccessfulConnectionDuration: snapshot.SuccessfulConnectionDuration,
-				VisitorNetworkHll:            visitorCheckpoint, VisitorNetworkEstimate: visitorEstimateInteger, Complete: complete,
+				VisitorNetworkHll:            visitorCheckpoint, VisitorNetworkEstimate: visitorEstimateInteger, Complete: coverageComplete,
 			})
 			if err != nil {
-				return fmt.Errorf("routeusage: save deliverable usage report: %w", err)
+				return fmt.Errorf("routeusage: save usage bucket report: %w", err)
 			}
 			if count != 1 {
-				return errors.New("routeusage: usage revision does not identify one payload")
+				return errors.New("routeusage: usage bucket report revision does not identify one payload")
 			}
 			if err := queries.UpsertRouteUsageOutbox(ctx, statedb.UpsertRouteUsageOutboxParams{
-				SourceKind: usageSource, SourceID: rowID, SourceRevision: revision,
+				SourceKind: usageBucketReportSource, SourceID: rowID, SourceRevision: revision,
 				EnqueuedAt: time.Now().UTC().UnixNano(),
 			}); err != nil {
-				return fmt.Errorf("routeusage: enqueue usage snapshot: %w", err)
+				return fmt.Errorf("routeusage: enqueue usage bucket report: %w", err)
 			}
-		}
-	}
-	dropped, err := queries.DropExcessRouteUsageOutbox(ctx, int64(s.maxPendingUsage))
-	if err != nil {
-		return fmt.Errorf("routeusage: cap usage backlog: %w", err)
-	}
-	for _, snapshotID := range dropped {
-		if err := queries.DeleteUnqueuedRouteUsageReport(ctx, snapshotID); err != nil {
-			return fmt.Errorf("routeusage: delete dropped usage report: %w", err)
-		}
-		if _, err := queries.DeleteAcknowledgedRouteUsageSnapshot(ctx, snapshotID); err != nil {
-			return fmt.Errorf("routeusage: delete dropped finalized snapshot: %w", err)
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -310,13 +296,13 @@ func (s *Store) outboxStats(ctx context.Context, now time.Time) (int64, int64, i
 	if err != nil {
 		return 0, 0, 0, 0, fmt.Errorf("routeusage: count lifecycle outbox: %w", err)
 	}
-	usage, err := s.queries.CountRouteUsageOutboxByKind(ctx, usageSource)
+	usageBucketReports, err := s.queries.CountRouteUsageOutboxByKind(ctx, usageBucketReportSource)
 	if err != nil {
 		return 0, 0, 0, 0, fmt.Errorf("routeusage: count usage outbox: %w", err)
 	}
 	oldest, err := s.queries.GetOldestRouteUsageOutboxTime(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
-		return registration, lifecycle, usage, 0, nil
+		return registration, lifecycle, usageBucketReports, 0, nil
 	}
 	if err != nil {
 		return 0, 0, 0, 0, fmt.Errorf("routeusage: read oldest outbox item: %w", err)
@@ -325,7 +311,7 @@ func (s *Store) outboxStats(ctx context.Context, now time.Time) (int64, int64, i
 	if age < 0 {
 		age = 0
 	}
-	return registration, lifecycle, usage, age, nil
+	return registration, lifecycle, usageBucketReports, age, nil
 }
 
 type outboxRevision struct {
@@ -364,7 +350,7 @@ func (s *Store) acknowledgeLifecycleBatch(ctx context.Context, items []outboxRev
 	return s.acknowledgeBatch(ctx, items, false)
 }
 
-func (s *Store) acknowledgeUsageBatch(ctx context.Context, items []outboxRevision) error {
+func (s *Store) acknowledgeUsageBucketReportBatch(ctx context.Context, items []outboxRevision) error {
 	return s.acknowledgeBatch(ctx, items, true)
 }
 
@@ -454,16 +440,16 @@ func newEventID() (string, error) {
 	return newOpaqueID("event_", "lifecycle event")
 }
 
-func newUsageReportID() (string, error) {
-	return newOpaqueID("usage_report_", "usage report")
+func newUsageBucketReportID() (string, error) {
+	return newOpaqueID("usage_report_", "usage bucket report")
 }
 
 func newOpaqueID(prefix, description string) (string, error) {
-	var material [16]byte
-	if _, err := rand.Read(material[:]); err != nil {
+	id, err := opaqueid.New(prefix)
+	if err != nil {
 		return "", fmt.Errorf("routeusage: generate %s ID: %w", description, err)
 	}
-	return prefix + hex.EncodeToString(material[:]), nil
+	return id, nil
 }
 
 func ensureVisitorMasterSecret(db *sql.DB) ([sha256.Size]byte, error) {

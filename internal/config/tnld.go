@@ -56,9 +56,9 @@ type TNLD struct {
 	MetricsListen                  string        `name:"metrics-listen" env:"TNLD_METRICS_LISTEN" default:"127.0.0.1:9090" help:"Private Prometheus listen address; empty disables metrics."`
 	DNSServer                      string        `name:"dns-server" env:"TNLD_DNS_SERVER" help:"DNS resolver address for public-hostname readiness checks; defaults to the system resolver."`
 	PublicListen                   string        `name:"public-listen" env:"TNLD_PUBLIC_LISTEN" default:":443" help:"Public TLS listen address for the control API and routes; empty disables ingress."`
-	Domain                         string        `name:"domain" env:"TNLD_DOMAIN" help:"Canonical domain shorthand; derives tnl.<domain> control and <domain> routes."`
-	ControlHostname                string        `name:"control-hostname" env:"TNLD_CONTROL_HOSTNAME" help:"Canonical control API hostname; overrides --domain derivation."`
-	PublicHostnameSuffix           string        `name:"hostname-suffix" env:"TNLD_HOSTNAME_SUFFIX" help:"Canonical public hostname suffix; overrides --domain derivation."`
+	Domain                         string        `name:"domain" env:"TNLD_DOMAIN" help:"Lowercase DNS domain without a scheme, port, path, or trailing dot; derives the control hostname and route hostname suffix."`
+	ControlHostname                string        `name:"control-hostname" env:"TNLD_CONTROL_HOSTNAME" help:"Lowercase control API hostname without a trailing dot; overrides --domain derivation."`
+	PublicHostnameSuffix           string        `name:"hostname-suffix" env:"TNLD_HOSTNAME_SUFFIX" help:"Lowercase deployment hostname suffix without a trailing dot; overrides --domain derivation."`
 	ReservedRouteNames             []string      `name:"reserved-route-name" env:"TNLD_RESERVED_ROUTE_NAMES" help:"Route base unavailable for user hostnames; repeat for each name."`
 	MaxActiveHostnames             int           `name:"max-active-hostnames" env:"TNLD_MAX_ACTIVE_HOSTNAMES" default:"128" help:"Maximum active hostnames per identity."`
 	MaxHostnameRequests            int           `name:"max-hostname-requests" env:"TNLD_MAX_HOSTNAME_REQUESTS" default:"1024" help:"Maximum hostname request records per identity."`
@@ -69,9 +69,9 @@ type TNLD struct {
 	OIDCIssuer                     string        `name:"oidc-issuer" env:"TNLD_OIDC_ISSUER" help:"OIDC issuer used for login."`
 	OIDCClientID                   string        `name:"oidc-client-id" env:"TNLD_OIDC_CLIENT_ID" help:"OIDC client ID used for login."`
 	OIDCLoginFlow                  OIDCLoginFlow `name:"oidc-login-flow" env:"TNLD_OIDC_LOGIN_FLOW" help:"OIDC login flow: device_code or authorization_code_pkce."`
-	AuthorizationAuthorityEndpoint string        `name:"authorization-authority-endpoint" env:"TNLD_AUTHORIZATION_AUTHORITY_ENDPOINT" help:"Canonical HTTPS authorization authority origin advertised to clients."`
+	AuthorizationAuthorityEndpoint string        `name:"authorization-authority-endpoint" env:"TNLD_AUTHORIZATION_AUTHORITY_ENDPOINT" help:"Exact HTTPS authorization authority origin advertised to clients."`
 	AuthorizationIssuer            string        `name:"authorization-issuer" env:"TNLD_AUTHORIZATION_ISSUER" help:"Exact trusted signed-authorization issuer."`
-	AuthorizationReceiver          string        `name:"authorization-receiver" env:"TNLD_AUTHORIZATION_RECEIVER" help:"Exact signed-authorization receiver for this Core."`
+	AuthorizationReceiver          string        `name:"authorization-receiver" env:"TNLD_AUTHORIZATION_RECEIVER" help:"Expected signed-authorization receiver."`
 	AuthorizationKeyID             string        `name:"authorization-key-id" env:"TNLD_AUTHORIZATION_KEY_ID" help:"Trusted authorization Ed25519 key ID."`
 	AuthorizationPublicKey         string        `name:"authorization-public-key" env:"TNLD_AUTHORIZATION_PUBLIC_KEY" help:"Trusted Ed25519 public key in unpadded base64url form."`
 	AccessTokenLifetime            time.Duration `name:"access-token-lifetime" env:"TNLD_ACCESS_TOKEN_LIFETIME" default:"1h" help:"Lifetime of newly issued access tokens."`
@@ -79,15 +79,12 @@ type TNLD struct {
 	RelayProvider                  string        `name:"relay-provider" env:"TNLD_RELAY_PROVIDER" help:"Hosted relay provider; set to tailcat to explicitly use Tailcat's public relays."`
 	RelayMapFile                   string        `name:"relay-map-file" env:"TNLD_RELAY_MAP_FILE" type:"path" help:"Approved DERP map JSON file."`
 	RelayRegion                    string        `name:"relay-region" env:"TNLD_RELAY_REGION" help:"DERP region code selected from a custom relay map."`
-	WorkerURL                      string        `name:"worker-url" env:"TNLD_WORKER_URL" help:"Worker-mode WSS edge URL."`
+	EdgeURL                        string        `name:"edge-url" env:"TNLD_EDGE_URL" help:"WSS URL of the edge worker endpoint."`
 	WorkerToken                    string        `name:"worker-token" env:"TNLD_WORKER_TOKEN" help:"Edge-to-worker authentication token."`
-	AcceptedWorkerTokens           []string      `name:"accepted-worker-token" env:"TNLD_ACCEPTED_WORKER_TOKENS" help:"Worker token accepted by an edge; repeat for each worker."`
 	RouteUsageURL                  string        `name:"route-usage-url" env:"TNLD_ROUTE_USAGE_URL" help:"Route usage receiver base URL."`
 	RouteUsageToken                string        `name:"route-usage-token" env:"TNLD_ROUTE_USAGE_TOKEN" help:"Service token for the route usage receiver."`
 	WorkerCapacity                 int           `name:"worker-capacity" env:"TNLD_WORKER_CAPACITY" default:"500" help:"Hard route capacity for this worker."`
 	WorkerStreamLimit              int           `name:"worker-stream-limit" env:"TNLD_WORKER_STREAM_LIMIT" default:"4096" help:"Maximum multiplexed streams per worker session."`
-	WorkerSessionLimit             int           `name:"worker-session-limit" env:"TNLD_WORKER_SESSION_LIMIT" default:"10" help:"Maximum concurrent worker sessions on an edge."`
-	WorkerTotalCapacity            int           `name:"worker-total-capacity" env:"TNLD_WORKER_TOTAL_CAPACITY" default:"5000" help:"Maximum total route capacity advertised to an edge."`
 	PublicConnLimit                int           `name:"public-connection-limit" env:"TNLD_PUBLIC_CONNECTION_LIMIT" default:"20000" help:"Maximum concurrent public connections."`
 	RouteConnLimit                 int           `name:"route-connection-limit" env:"TNLD_ROUTE_CONNECTION_LIMIT" default:"500" help:"Maximum concurrent public connections per route."`
 	RequireProxyHeader             bool          `name:"require-proxy-header" env:"TNLD_REQUIRE_PROXY_HEADER" help:"Require one trusted outer PROXY v2 header on public ingress."`
@@ -100,7 +97,7 @@ func (c TNLD) Validate() error {
 		return errors.New("state directory must not be empty")
 	}
 	if c.BackupURL != "" && !c.Mode.UsesState() {
-		return errors.New("backup requires a state-owning mode")
+		return errors.New("backup requires standalone or edge mode")
 	}
 	if err := backup.ValidateURL(c.BackupURL); err != nil {
 		return err
@@ -114,8 +111,7 @@ func (c TNLD) Validate() error {
 	if err := validateListenAddress(c.PublicListen); err != nil {
 		return fmt.Errorf("public listen address: %w", err)
 	}
-	if c.WorkerCapacity <= 0 || c.WorkerStreamLimit <= 0 || c.WorkerSessionLimit <= 0 ||
-		c.WorkerTotalCapacity <= 0 || c.PublicConnLimit <= 0 || c.RouteConnLimit <= 0 {
+	if c.WorkerCapacity <= 0 || c.WorkerStreamLimit <= 0 || c.PublicConnLimit <= 0 || c.RouteConnLimit <= 0 {
 		return errors.New("capacity and connection limits must be positive")
 	}
 	if c.MaxActiveHostnames <= 0 || c.MaxHostnameRequests <= 0 {
@@ -188,29 +184,17 @@ func (c TNLD) Validate() error {
 		if c.RelayProvider != "" && c.RelayMapFile != "" {
 			return errors.New("relay provider and custom relay map are mutually exclusive")
 		}
-		if c.Mode == TNLDModeEdge && c.WorkerToken == "" && len(c.AcceptedWorkerTokens) == 0 {
+		if c.Mode == TNLDModeEdge && c.WorkerToken == "" {
 			return errors.New("edge control requires a worker token")
 		}
-	}
-	if len(c.AcceptedWorkerTokens) != 0 && c.Mode != TNLDModeEdge {
-		return errors.New("accepted worker tokens are valid only in edge mode")
-	}
-	if len(c.AcceptedWorkerTokens) != 0 && c.WorkerToken != "" {
-		return errors.New("worker token and accepted worker tokens are mutually exclusive on an edge")
-	}
-	seenWorkerTokens := make(map[credentials.CredentialID]struct{}, len(c.AcceptedWorkerTokens)+1)
-	for _, raw := range c.edgeWorkerTokens() {
-		verifier, err := credentials.ParseWorkerToken(credentials.WorkerToken(raw))
-		if err != nil {
-			return errors.New("edge worker token is invalid")
+		if c.Mode == TNLDModeEdge {
+			if _, err := credentials.ParseWorkerToken(credentials.WorkerToken(c.WorkerToken)); err != nil {
+				return errors.New("edge worker token is invalid")
+			}
 		}
-		if _, exists := seenWorkerTokens[verifier.ID()]; exists {
-			return errors.New("edge worker tokens must be unique")
-		}
-		seenWorkerTokens[verifier.ID()] = struct{}{}
 	}
-	if c.Mode == TNLDModeWorker && c.WorkerURL == "" {
-		return errors.New("worker mode requires a worker URL")
+	if c.Mode == TNLDModeWorker && c.EdgeURL == "" {
+		return errors.New("worker mode requires an edge URL")
 	}
 	if (c.RouteUsageURL == "") != (c.RouteUsageToken == "") {
 		return errors.New("route usage URL and token must be configured together")
@@ -230,31 +214,21 @@ func (c TNLD) Validate() error {
 			return errors.New("route usage URL must be an HTTPS base URL or a loopback HTTP base URL")
 		}
 	}
-	if c.WorkerURL != "" {
+	if c.EdgeURL != "" {
 		if c.Mode != TNLDModeWorker {
-			return errors.New("worker URL is valid only in worker mode")
+			return errors.New("edge URL is valid only in worker mode")
 		}
 		if c.WorkerToken == "" {
-			return errors.New("worker token is required when worker URL is set")
+			return errors.New("worker token is required when edge URL is set")
 		}
 		if _, err := credentials.ParseWorkerToken(credentials.WorkerToken(c.WorkerToken)); err != nil {
 			return errors.New("worker token is invalid")
 		}
-		workerURL, err := url.Parse(c.WorkerURL)
-		if err != nil || workerURL.Scheme != "wss" || workerURL.Host == "" || workerURL.User != nil ||
-			workerURL.Path != workerv1.Endpoint || workerURL.RawQuery != "" || workerURL.Fragment != "" {
-			return fmt.Errorf("worker URL must be a wss origin with path %s", workerv1.Endpoint)
+		edgeURL, err := url.Parse(c.EdgeURL)
+		if err != nil || edgeURL.Scheme != "wss" || edgeURL.Host == "" || edgeURL.User != nil ||
+			edgeURL.Path != workerv1.Endpoint || edgeURL.RawQuery != "" || edgeURL.Fragment != "" {
+			return errors.New("Worker endpoint must be a WSS URL with path /internal/v1/worker.")
 		}
-	}
-	return nil
-}
-
-func (c TNLD) edgeWorkerTokens() []string {
-	if len(c.AcceptedWorkerTokens) != 0 {
-		return c.AcceptedWorkerTokens
-	}
-	if c.Mode == TNLDModeEdge && c.WorkerToken != "" {
-		return []string{c.WorkerToken}
 	}
 	return nil
 }
@@ -293,7 +267,7 @@ func (c TNLD) validateOIDC() error {
 	return nil
 }
 
-// SignedAuthorizationEnabled reports whether Core delegates hostname
+// SignedAuthorizationEnabled reports whether the server delegates hostname
 // authorization to the configured authority.
 func (c TNLD) SignedAuthorizationEnabled() bool {
 	return c.AuthorizationAuthorityEndpoint != ""
@@ -330,7 +304,7 @@ func (c TNLD) validateAuthorization() error {
 		return errors.New("authorization authority configuration is incomplete")
 	}
 	if !c.Mode.UsesState() {
-		return errors.New("authorization authority requires a state-owning mode")
+		return errors.New("authorization authority requires standalone or edge mode")
 	}
 	authorityEndpoint, err := url.Parse(c.AuthorizationAuthorityEndpoint)
 	if err != nil || authorityEndpoint.Scheme != "https" || authorityEndpoint.Host == "" || authorityEndpoint.User != nil ||

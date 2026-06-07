@@ -76,7 +76,7 @@ func (s *Store) SuspendAdminRoute(
 	if err != nil {
 		return Route{}, fmt.Errorf("routes: read suspended route: %w", err)
 	}
-	if err := s.recordLifecycle(ctx, queries, routeID, uint64(route.Version), now, LifecycleDisconnected); err != nil {
+	if err := s.recordLifecycle(ctx, queries, routeID, uint64(route.RouteVersion), now, LifecycleDisconnected); err != nil {
 		return Route{}, err
 	}
 	if err := insertAdminAudit(ctx, queries, actor, requestID, "route.suspend", routeID, now); err != nil {
@@ -212,16 +212,16 @@ func (s *Store) RemoveAdminHostname(
 	result := make([]string, 0, len(routeRows))
 	for _, route := range routeRows {
 		result = append(result, route.ID)
-		if route.Status == "active" {
-			if err := s.recordLifecycle(ctx, queries, route.ID, uint64(route.Version), now, LifecycleDisconnected); err != nil {
+		if RouteStatus(route.Status) == RouteStatusEnabled {
+			if err := s.recordLifecycle(ctx, queries, route.ID, uint64(route.RouteVersion), now, LifecycleDisconnected); err != nil {
 				return nil, err
 			}
 		}
-		if err := s.recordLifecycle(ctx, queries, route.ID, uint64(route.Version), now, LifecycleDeleted); err != nil {
+		if err := s.recordLifecycle(ctx, queries, route.ID, uint64(route.RouteVersion), now, LifecycleDeleted); err != nil {
 			return nil, err
 		}
 	}
-	if err := insertAdminAudit(ctx, queries, actor, requestID, "hostname.remove", hostnameID, now); err != nil {
+	if err := insertAdminAudit(ctx, queries, actor, requestID, "hostname.release", hostnameID, now); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -275,8 +275,8 @@ func (s *Store) QuarantineAdminHostname(
 	result := make([]string, 0, len(routeRows))
 	for _, route := range routeRows {
 		result = append(result, route.ID)
-		if route.Status == "active" {
-			if err := s.recordLifecycle(ctx, queries, route.ID, uint64(route.Version), now, LifecycleDisconnected); err != nil {
+		if RouteStatus(route.Status) == RouteStatusEnabled {
+			if err := s.recordLifecycle(ctx, queries, route.ID, uint64(route.RouteVersion), now, LifecycleDisconnected); err != nil {
 				return nil, err
 			}
 		}

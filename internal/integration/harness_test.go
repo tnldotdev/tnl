@@ -91,7 +91,7 @@ type systemFixture struct {
 	stateDir    string
 	clientState string
 	controlURL  string
-	workerURL   string
+	edgeURL     string
 	proxyURL    string
 	trustBundle string
 	pebble      *integrationtest.Pebble
@@ -118,7 +118,7 @@ func newSystem(t *testing.T, options systemOptions) *systemFixture {
 	fixture := &systemFixture{
 		t: t, stateDir: filepath.Join(root, "server"), clientState: filepath.Join(root, "client"),
 		controlURL: controlURL,
-		workerURL:  "wss://" + net.JoinHostPort(testControlHost, publicPortText) + "/internal/v1/worker",
+		edgeURL:    "wss://" + net.JoinHostPort(testControlHost, publicPortText) + "/internal/v1/worker",
 		proxyURL:   proxyURL, trustBundle: pebble.TrustBundlePath(t), pebble: pebble,
 	}
 	fixture.transport = &http.Transport{
@@ -260,7 +260,7 @@ func (s *systemFixture) startWorker(t *testing.T, token string) *childProcess {
 		path: tnldBinary,
 		args: []string{
 			"serve", "--mode", "worker", "--metrics-listen=",
-			"--worker-url", s.workerURL, "--worker-token", token,
+			"--edge-url", s.edgeURL, "--worker-token", token,
 			"--worker-capacity", "8", "--worker-stream-limit", "32", "--drain-timeout", "5s",
 		},
 		dir: repositoryRoot, env: s.environment(nil),

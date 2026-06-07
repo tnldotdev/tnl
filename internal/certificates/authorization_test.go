@@ -18,10 +18,10 @@ func TestRouteHostnameRejectsExpiredSignedAuthorization(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	if _, err := db.ExecContext(ctx, `INSERT INTO routes (
-		id, hostname, local_target, status, version,
+		id, hostname, local_target, status, route_version,
 		authorization_issuer, authorization_id, authorization_key_id, authorization_retry_id,
 		authorization_revision, authorization_expires_at, authorization_request_hash, created_at
-	) VALUES (?, ?, ?, 'active', 1, ?, ?, ?, ?, 1, ?, zeroblob(32), 1)`,
+		) VALUES (?, ?, ?, 'enabled', 1, ?, ?, ?, ?, 1, ?, zeroblob(32), 1)`,
 		"route_0123456789abcdef0123456789abcdef", "route.example", "localhost:3000",
 		"https://authority.example", "authorization_0123456789abcdef0123456789abcdef", "key-1",
 		"retry_0123456789abcdef0123456789abcdef", int64(99)); err != nil {

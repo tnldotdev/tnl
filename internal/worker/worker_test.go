@@ -63,13 +63,13 @@ func TestEngineOwnsRouteLifecycle(t *testing.T) {
 		t.Fatalf("open while draining error = %v", err)
 	}
 	if replacementDialer.drains.Load() != 1 {
-		t.Fatal("engine did not drain active route")
+		t.Fatal("engine did not drain routable route")
 	}
 	if err := engine.Close(); err != nil {
 		t.Fatal(err)
 	}
 	if replacementDialer.closes.Load() != 1 {
-		t.Fatal("engine did not close active route")
+		t.Fatal("engine did not close routable route")
 	}
 }
 
@@ -113,7 +113,7 @@ func TestEngineReportsDialerCreationFailure(t *testing.T) {
 		"operation=create",
 		"reason=process_file_limit",
 		`route_id="route-creation-failure"`,
-		"version=7",
+		"route_version=7",
 		"active=0",
 		"limit=3",
 		"worker: create route dialer",
@@ -207,10 +207,10 @@ func TestTailcatFailureReasonIsBounded(t *testing.T) {
 	}
 }
 
-func testAssignment(routeID string, version uint64) Assignment {
+func testAssignment(routeID string, routeVersion uint64) Assignment {
 	return Assignment{
-		RouteRef: RouteRef{RouteID: routeID, Version: version},
-		Endpoint: tailtransport.Endpoint{Version: 1, PublisherPublicKey: key.NewNode().Public().String(), RelayRegion: "test"},
+		RouteRef: RouteRef{RouteID: routeID, RouteVersion: routeVersion},
+		Endpoint: tailtransport.TransportDescriptor{Version: 1, PublisherPublicKey: key.NewNode().Public().String(), RelayRegion: "test"},
 		Key:      key.NewNode(),
 	}
 }

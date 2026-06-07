@@ -67,7 +67,7 @@ CREATE INDEX hostnames_identity_active
     WHERE kind IN ('managed', 'custom_domain') AND status IN ('active', 'inactive');
 CREATE INDEX hostnames_temporary_cleanup
     ON hostnames (status, created_at) WHERE kind = 'temporary';
-CREATE INDEX hostnames_friendly_capacity
+CREATE INDEX hostnames_generated_hostname_capacity
     ON hostnames (kind) WHERE kind IN ('managed', 'temporary');
 
 CREATE TABLE hostname_requests (
@@ -107,8 +107,8 @@ CREATE TABLE routes (
     identity_id TEXT REFERENCES identities(id) ON DELETE RESTRICT,
     hostname TEXT NOT NULL,
     local_target TEXT NOT NULL,
-    status TEXT NOT NULL CHECK (status IN ('active', 'suspended', 'deleted')),
-    version INTEGER NOT NULL CHECK (version >= 1),
+    status TEXT NOT NULL CHECK (status IN ('enabled', 'suspended', 'deleted')),
+    route_version INTEGER NOT NULL CHECK (route_version >= 1),
     suspension_revision INTEGER NOT NULL DEFAULT 0 CHECK (suspension_revision >= 0),
     suspension_reason TEXT CHECK (suspension_reason IS NULL OR length(suspension_reason) BETWEEN 1 AND 256),
     suspended_at INTEGER,
@@ -145,7 +145,7 @@ CREATE TABLE routes (
 ) STRICT;
 
 CREATE INDEX routes_identity_id ON routes (identity_id);
-CREATE UNIQUE INDEX routes_current_hostname ON routes (hostname) WHERE status IN ('active', 'suspended');
+CREATE UNIQUE INDEX routes_current_hostname ON routes (hostname) WHERE status IN ('enabled', 'suspended');
 CREATE UNIQUE INDEX routes_authorization_id
     ON routes (authorization_issuer, authorization_id) WHERE authorization_id IS NOT NULL;
 CREATE UNIQUE INDEX routes_authorization_retry
@@ -189,7 +189,7 @@ CREATE TABLE route_credentials (
 CREATE TABLE route_sessions (
     id TEXT PRIMARY KEY,
     route_id TEXT NOT NULL REFERENCES routes(id) ON DELETE CASCADE,
-    version INTEGER NOT NULL CHECK (version >= 1),
+    route_version INTEGER NOT NULL CHECK (route_version >= 1),
     status TEXT NOT NULL CHECK (status IN ('pending', 'starting', 'ready', 'expired')),
     token_id TEXT NOT NULL UNIQUE,
     secret_hash BLOB NOT NULL UNIQUE,
@@ -199,7 +199,7 @@ CREATE TABLE route_sessions (
     created_at INTEGER NOT NULL CHECK (created_at >= 0),
     last_heartbeat_at INTEGER NOT NULL CHECK (last_heartbeat_at >= created_at),
     expires_at INTEGER NOT NULL CHECK (expires_at >= created_at),
-    UNIQUE (route_id, version)
+    UNIQUE (route_id, route_version)
 ) STRICT;
 
 CREATE INDEX route_sessions_route_status ON route_sessions (route_id, status);
@@ -217,7 +217,7 @@ CREATE TABLE acme_accounts (
 CREATE TABLE certificate_issuances (
     id TEXT PRIMARY KEY,
     route_id TEXT NOT NULL REFERENCES routes(id) ON DELETE CASCADE,
-    version INTEGER NOT NULL CHECK (version >= 1),
+    route_version INTEGER NOT NULL CHECK (route_version >= 1),
     hostname TEXT NOT NULL,
     acme_profile TEXT NOT NULL,
     status TEXT NOT NULL CHECK (status IN (
@@ -249,11 +249,11 @@ CREATE TABLE certificate_issuances (
     last_error TEXT,
     created_at INTEGER NOT NULL CHECK (created_at >= 0),
     updated_at INTEGER NOT NULL CHECK (updated_at >= created_at),
-    UNIQUE (route_id, version, csr_hash)
+    UNIQUE (route_id, route_version, csr_hash)
 ) STRICT;
 
 CREATE INDEX certificate_issuances_route_version
-    ON certificate_issuances (route_id, version, created_at DESC);
+    ON certificate_issuances (route_id, route_version, created_at DESC);
 
 CREATE TABLE oidc_assertion_exchanges (
     assertion_hash BLOB PRIMARY KEY,
@@ -263,17 +263,17 @@ CREATE TABLE oidc_assertion_exchanges (
 
 CREATE INDEX oidc_assertion_exchanges_expires_at ON oidc_assertion_exchanges (expires_at);
 
-CREATE TABLE operational_switches (
-    name TEXT PRIMARY KEY CHECK (name IN ('new_routes', 'new_sessions', 'certificate_issuance')),
+CREATE TABLE maintenance_controls (
+    name TEXT PRIMARY KEY CHECK (name IN ('route_creation', 'route_session_creation', 'certificate_issuance')),
     enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
     revision INTEGER NOT NULL CHECK (revision >= 1),
     updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
     updated_by TEXT NOT NULL CHECK (length(updated_by) BETWEEN 1 AND 256)
 ) STRICT;
 
-INSERT INTO operational_switches (name, enabled, revision, updated_at, updated_by) VALUES
-    ('new_routes', 1, 1, 0, 'system'),
-    ('new_sessions', 1, 1, 0, 'system'),
+INSERT INTO maintenance_controls (name, enabled, revision, updated_at, updated_by) VALUES
+    ('route_creation', 1, 1, 0, 'system'),
+    ('route_session_creation', 1, 1, 0, 'system'),
     ('certificate_issuance', 1, 1, 0, 'system');
 
 CREATE TABLE admin_audit_events (
@@ -281,8 +281,8 @@ CREATE TABLE admin_audit_events (
     actor TEXT NOT NULL CHECK (length(actor) BETWEEN 1 AND 256),
     request_id TEXT NOT NULL CHECK (length(request_id) BETWEEN 1 AND 68),
     operation TEXT NOT NULL CHECK (operation IN (
-        'route.suspend', 'route.resume', 'hostname.remove', 'hostname.quarantine',
-        'credential.revoke', 'control_session.revoke', 'switch.set'
+        'route.suspend', 'route.resume', 'hostname.release', 'hostname.quarantine',
+        'credential.revoke', 'control_session.revoke', 'maintenance_control.set'
     )),
     target TEXT NOT NULL CHECK (length(target) BETWEEN 1 AND 256),
     occurred_at INTEGER NOT NULL CHECK (occurred_at >= 0)
@@ -315,12 +315,12 @@ CREATE TABLE route_lifecycle_events (
     id INTEGER PRIMARY KEY,
     event_id TEXT NOT NULL UNIQUE,
     route_id TEXT NOT NULL REFERENCES routes(id) ON DELETE RESTRICT,
-    version INTEGER NOT NULL CHECK (version >= 1),
+    route_version INTEGER NOT NULL CHECK (route_version >= 1),
     sequence INTEGER NOT NULL CHECK (sequence >= 1),
     occurred_at INTEGER NOT NULL CHECK (occurred_at >= 0),
-    transition TEXT NOT NULL CHECK (transition IN ('version_started', 'ready', 'disconnected', 'deleted')),
+    transition TEXT NOT NULL CHECK (transition IN ('route_version_started', 'ready', 'disconnected', 'deleted')),
     UNIQUE (route_id, sequence),
-    UNIQUE (route_id, version, transition)
+    UNIQUE (route_id, route_version, transition)
 ) STRICT;
 
 CREATE INDEX route_lifecycle_events_retention ON route_lifecycle_events (occurred_at, id);
@@ -328,7 +328,7 @@ CREATE INDEX route_lifecycle_events_retention ON route_lifecycle_events (occurre
 CREATE TABLE route_usage_snapshots (
     id INTEGER PRIMARY KEY,
     route_id TEXT NOT NULL REFERENCES routes(id) ON DELETE RESTRICT,
-    version INTEGER NOT NULL CHECK (version >= 1),
+    route_version INTEGER NOT NULL CHECK (route_version >= 1),
     resolution TEXT NOT NULL CHECK (resolution IN ('minute', 'hour')),
     bucket_start INTEGER NOT NULL CHECK (bucket_start >= 0),
     revision INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),
@@ -355,7 +355,7 @@ CREATE TABLE route_usage_snapshots (
     complete INTEGER NOT NULL DEFAULT 0 CHECK (complete IN (0, 1)),
     finalized INTEGER NOT NULL DEFAULT 0 CHECK (finalized IN (0, 1)),
     CHECK (complete = 0 OR finalized = 1),
-    UNIQUE (route_id, version, resolution, bucket_start)
+    UNIQUE (route_id, route_version, resolution, bucket_start)
 ) STRICT;
 
 CREATE INDEX route_usage_snapshots_incomplete
@@ -390,7 +390,7 @@ CREATE TABLE route_usage_reports (
 ) STRICT;
 
 CREATE TABLE route_usage_outbox_items (
-    source_kind TEXT NOT NULL CHECK (source_kind IN ('registration', 'lifecycle_event', 'usage_snapshot')),
+    source_kind TEXT NOT NULL CHECK (source_kind IN ('registration', 'lifecycle_event', 'usage_bucket_report')),
     source_id INTEGER NOT NULL,
     source_revision INTEGER NOT NULL CHECK (source_revision >= 1),
     enqueued_at INTEGER NOT NULL CHECK (enqueued_at >= 0),

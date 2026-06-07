@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/proxyproto"
-	"github.com/tnldotdev/tnl/internal/sourceauth"
 	"github.com/tnldotdev/tnl/internal/tlschallenge"
 	"golang.org/x/crypto/acme"
 	"tailscale.com/tailcfg"
@@ -41,7 +40,6 @@ func TestRouteTerminatesTLSAndProxiesLoopbackHTTP(t *testing.T) {
 		Target:        upstream.URL,
 		Certificate:   routeTestCertificate(t, "route.example"),
 		AllowedClient: key.NewNode().Public(),
-		SourceKey:     [32]byte{1, 2, 3},
 		RelayRegion:   "test",
 		Regions: map[string]*tailcfg.DERPRegion{"test": {
 			RegionID: 1, Nodes: []*tailcfg.DERPNode{{RegionID: 1, HostName: "derp.example"}},
@@ -62,11 +60,14 @@ func TestRouteTerminatesTLSAndProxiesLoopbackHTTP(t *testing.T) {
 		route.handle(agentConnection)
 		close(handled)
 	}()
-	header := proxyproto.Header{
+	header, err := proxyproto.Encode(proxyproto.Header{
 		Source:      netip.MustParseAddrPort("192.0.2.10:1234"),
 		Destination: netip.MustParseAddrPort("127.0.0.1:443"),
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if err := sourceauth.Client(ingress, [32]byte{1, 2, 3}, sourceauth.PurposeApplication, header); err != nil {
+	if _, err := ingress.Write(header); err != nil {
 		t.Fatal(err)
 	}
 	client := tls.Client(ingress, &tls.Config{
@@ -105,7 +106,6 @@ func TestRouteTerminatesTLSAndProxiesLoopbackHTTP(t *testing.T) {
 func TestRouteSelectsChallengeAndInstalledCertificate(t *testing.T) {
 	route, err := NewRoute(RouteConfig{
 		Hostname: "route.example", Target: "http://127.0.0.1:3000", AllowedClient: key.NewNode().Public(),
-		SourceKey:   [32]byte{1, 2, 3},
 		RelayRegion: "test", Regions: map[string]*tailcfg.DERPRegion{"test": {
 			RegionID: 1, Nodes: []*tailcfg.DERPNode{{RegionID: 1, HostName: "derp.example"}},
 		}},

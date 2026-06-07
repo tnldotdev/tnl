@@ -1,28 +1,28 @@
 import {
   publicTunnelEnvironment,
   readDevEnvironment,
-  registerTarget,
+  registerLocalPort,
   requestTunnelAssignment,
   type TnlDevBootstrap,
   type TnlHostname,
-  type TnlOptions,
-  type TnlOptionsInput,
   type TnlPublicURL,
   type TnlTunnelAssignment,
   type TnlTunnelID,
+  type TnlTunnelOptions,
+  type TnlTunnelOptionsInput,
   type TnlWorktree,
 } from "./dist/index.js";
 
 const session: TnlDevBootstrap | null = readDevEnvironment({});
-const options: TnlOptions = {
-  server: "https://tnl.example.com",
-  name: "agent.example.com",
+const options: TnlTunnelOptions = {
+  controlURL: "https://tnl.example.com",
+  host: "agent.example.com",
   allowIP: ["198.51.100.0/24"],
   allowCurrentIP: true,
 };
-const dynamicOptions: TnlOptionsInput = async ({ cwd, env, worktree }) => ({
+const dynamicOptions: TnlTunnelOptionsInput = async ({ cwd, env, worktree }) => ({
   ...options,
-  name: `${env.USER ?? worktree.label}.${cwd.length}.example.com`,
+  host: `${env.USER ?? worktree.label}.${cwd.length}.example.com`,
 });
 const assigned: Promise<TnlTunnelAssignment | null> = requestTunnelAssignment(
   { framework: "vite", options: dynamicOptions },
@@ -44,7 +44,7 @@ async function register(assignment: TnlTunnelAssignment): Promise<void> {
   environment.PUBLIC_TNL_HOSTNAME satisfies TnlHostname;
   environment.PUBLIC_TNL_TUNNEL_ID satisfies TnlTunnelID;
   environment.PUBLIC_TNL_URL satisfies TnlPublicURL;
-  await registerTarget(assignment, 5173);
+  await registerLocalPort(assignment, 5173);
 }
 
 // @ts-expect-error Public URLs must come from tnl validation.

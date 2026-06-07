@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/oidcnonce"
 	"github.com/tnldotdev/tnl/internal/testutil/oidctest"
 )
 
@@ -91,19 +90,15 @@ func TestLoginDiscoversProviderAndValidatesNonce(t *testing.T) {
 			defer provider.Close()
 
 			var output bytes.Buffer
-			const coreEndpoint = "https://core.example"
 			result, err := Login(context.Background(), Config{
 				Issuer: provider.URL, ClientID: "tnl-cli", LoginFlow: LoginFlowDeviceCode,
-				Scopes: []string{"openid"}, CoreEndpoint: coreEndpoint, HTTPClient: provider.Client(),
+				Scopes: []string{"openid"}, HTTPClient: provider.Client(),
 			}, &output)
-			mu.Lock()
-			boundNonce := nonce
-			mu.Unlock()
 			if test.valid && (err != nil || result.IDToken == "" || result.Issuer != provider.URL ||
 				result.ClientID != "tnl-cli" || result.Subject != "user-123" ||
 				result.AccessToken != "provider-access" || result.RefreshToken != "provider-refresh" ||
 				result.IDTokenExpiresAt.IsZero() || result.AccessExpiresAt.IsZero() || result.RefreshExpiresAt.IsZero() ||
-				!strings.Contains(output.String(), "ABCD-1234") || !oidcnonce.Validate(coreEndpoint, boundNonce)) {
+				!strings.Contains(output.String(), "ABCD-1234")) {
 				t.Fatalf("result = %#v, output = %q, error = %v", result, output.String(), err)
 			}
 			if !test.valid && err == nil {

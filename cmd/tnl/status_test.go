@@ -56,8 +56,11 @@ func TestStatusJSONUsesSharedTunnelSnapshot(t *testing.T) {
 		"total", "starting", "provisioning", "ready", "draining", "stale")
 	tunnels := payload["tunnels"].([]any)
 	assertJSONKeys(t, tunnels[0].(map[string]any),
-		"tunnel_id", "command", "state", "process_id", "server", "route_id", "session_version",
+		"tunnel_id", "command", "state", "process_id", "server", "route_id", "route_version",
 		"hostname", "public_url", "target", "started_at", "updated_at", "heartbeat_at", "lease_expires_at")
+	if tunnels[0].(map[string]any)["route_version"] != float64(1) {
+		t.Fatalf("route version = %v", tunnels[0].(map[string]any)["route_version"])
+	}
 }
 
 func assertJSONKeys(t *testing.T, value map[string]any, keys ...string) {

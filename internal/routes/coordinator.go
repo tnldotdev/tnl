@@ -25,10 +25,7 @@ import (
 var ErrNoWorkerCapacity = errors.New("routes: no worker capacity")
 
 const (
-	sessionReapInterval              = time.Second
-	routeStatePruneInterval          = time.Hour
-	domainVerificationTimeout        = 10 * time.Second
-	maxConcurrentDomainVerifications = 16
+	sessionReapInterval = time.Second
 )
 
 type SessionSetup struct {
@@ -36,18 +33,17 @@ type SessionSetup struct {
 	WorkerPublicKey string
 }
 
-type ActiveRoute struct {
+type RoutableRoute struct {
 	RouteID           string
-	Version           uint64
+	RouteVersion      uint64
 	AllowedIPPrefixes []netip.Prefix
 	Backend           worker.RouteBackend
-	SourceKey         [32]byte
 	expires           time.Time
 }
 
 // routeSnapshot is immutable after publishing for lock-free ingress reads.
 type routeSnapshot struct {
-	byHostname map[string]ActiveRoute
+	byHostname map[string]RoutableRoute
 }
 
 type workerState struct {
@@ -64,14 +60,12 @@ type assignment struct {
 	expiresAt         time.Time
 	worker            *workerState
 	backend           worker.WorkerRoute
-	sourceKey         [32]byte
 }
 
 type pendingSession struct {
 	hostname          string
 	allowedIPPrefixes []netip.Prefix
 	key               key.NodePrivate
-	sourceKey         [32]byte
 	expiresAt         time.Time
 }
 
@@ -98,7 +92,6 @@ type Coordinator struct {
 	closed       bool
 	stopReaper   context.CancelFunc
 	reaperDone   chan struct{}
-	domainChecks chan struct{}
 }
 
 func NewCoordinator(
@@ -132,9 +125,8 @@ func NewCoordinator(
 		routeLocks:       make(map[string]*routeMutex),
 		stopReaper:       stopReaper,
 		reaperDone:       make(chan struct{}),
-		domainChecks:     make(chan struct{}, maxConcurrentDomainVerifications),
 	}
-	c.snapshot.Store(&routeSnapshot{byHostname: map[string]ActiveRoute{}})
+	c.snapshot.Store(&routeSnapshot{byHostname: map[string]RoutableRoute{}})
 	go c.reapSessions(reaperCtx)
 	return c, nil
 }
@@ -164,11 +156,11 @@ func (c *Coordinator) Create(
 	removed := false
 	defer func() {
 		if removed {
-			c.observeRouteRemoval(RouteRemovalVersionReplaced)
+			c.observeRouteRemoval(RouteRemovalRouteVersionReplaced)
 		}
 	}()
-	if c.config.PublishReady != nil {
-		if err := c.config.PublishReady(ctx, hostname); err != nil {
+	if c.config.CheckHostnamePublishability != nil {
+		if err := c.config.CheckHostnamePublishability(ctx, hostname); err != nil {
 			return SessionSetup{}, ErrUnavailable
 		}
 	}
@@ -177,7 +169,7 @@ func (c *Coordinator) Create(
 	if c.isClosed() {
 		return SessionSetup{}, net.ErrClosed
 	}
-	existingRouteID, err := c.store.ActiveRouteID(ctx, identityID, hostname)
+	existingRouteID, err := c.store.EnabledRouteID(ctx, identityID, hostname)
 	if err != nil {
 		return SessionSetup{}, err
 	}
@@ -191,7 +183,7 @@ func (c *Coordinator) Create(
 	if err != nil {
 		return SessionSetup{}, err
 	}
-	if provisioning.Route.Version > 1 {
+	if provisioning.Route.RouteVersion > 1 {
 		removed = c.deactivate(provisioning.Route.ID)
 	}
 	return c.prepare(provisioning)
@@ -206,7 +198,7 @@ func (c *Coordinator) CreateSession(
 	removed := false
 	defer func() {
 		if removed {
-			c.observeRouteRemoval(RouteRemovalVersionReplaced)
+			c.observeRouteRemoval(RouteRemovalRouteVersionReplaced)
 		}
 	}()
 	c.mutationMu.Lock()
@@ -238,15 +230,15 @@ func (c *Coordinator) CreateSigned(
 	removed := false
 	defer func() {
 		if removed {
-			c.observeRouteRemoval(RouteRemovalVersionReplaced)
+			c.observeRouteRemoval(RouteRemovalRouteVersionReplaced)
 		}
 	}()
 	validated, err := c.store.validateSignedCreate(hostname, localTarget, routeToken, request)
 	if err != nil {
 		return SessionSetup{}, err
 	}
-	if c.config.PublishReady != nil {
-		if err := c.config.PublishReady(ctx, validated.hostname); err != nil {
+	if c.config.CheckHostnamePublishability != nil {
+		if err := c.config.CheckHostnamePublishability(ctx, validated.hostname); err != nil {
 			return SessionSetup{}, ErrUnavailable
 		}
 	}
@@ -255,7 +247,7 @@ func (c *Coordinator) CreateSigned(
 	if c.isClosed() {
 		return SessionSetup{}, net.ErrClosed
 	}
-	existingRouteID, err := c.store.ActiveSignedRouteID(ctx, validated.hostname)
+	existingRouteID, err := c.store.CurrentSignedRouteID(ctx, validated.hostname)
 	if err != nil {
 		return SessionSetup{}, err
 	}
@@ -269,7 +261,7 @@ func (c *Coordinator) CreateSigned(
 	if err != nil {
 		return SessionSetup{}, err
 	}
-	if provisioning.Restored || !provisioning.Replayed && provisioning.Route.Version > 1 {
+	if provisioning.Restored || !provisioning.ReusedResult && provisioning.Route.RouteVersion > 1 {
 		removed = c.deactivate(provisioning.Route.ID)
 	}
 	return c.prepare(provisioning)
@@ -284,7 +276,7 @@ func (c *Coordinator) CreateSignedSession(
 	removed := false
 	defer func() {
 		if removed {
-			c.observeRouteRemoval(RouteRemovalVersionReplaced)
+			c.observeRouteRemoval(RouteRemovalRouteVersionReplaced)
 		}
 	}()
 	c.mutationMu.Lock()
@@ -300,7 +292,7 @@ func (c *Coordinator) CreateSignedSession(
 	if err != nil {
 		return SessionSetup{}, err
 	}
-	if provisioning.Restored || !provisioning.Replayed {
+	if provisioning.Restored || !provisioning.ReusedResult {
 		removed = c.deactivate(routeID)
 	}
 	return c.prepare(provisioning)
@@ -315,19 +307,15 @@ func (c *Coordinator) prepare(provisioning Provisioning) (SessionSetup, error) {
 		}
 		allowedIPPrefixes[index] = prefix
 	}
-	ingressKey := key.NewNode()
+	tailcatDialerKey := key.NewNode()
 	if provisioning.Route.AuthorizationID != "" {
 		var err error
-		ingressKey, err = signedIngressKey(provisioning.SessionToken)
+		tailcatDialerKey, err = signedTailcatDialerKey(provisioning.SessionToken)
 		if err != nil {
 			return SessionSetup{}, err
 		}
 	}
-	sourceKey, err := credentials.DeriveSessionSourceKey(provisioning.SessionToken)
-	if err != nil {
-		return SessionSetup{}, err
-	}
-	ref := worker.RouteRef{RouteID: provisioning.Route.ID, Version: provisioning.Session.Version}
+	ref := worker.RouteRef{RouteID: provisioning.Route.ID, RouteVersion: provisioning.Session.RouteVersion}
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
@@ -340,16 +328,16 @@ func (c *Coordinator) prepare(provisioning Provisioning) (SessionSetup, error) {
 	}
 	c.pending[ref] = pendingSession{
 		hostname: provisioning.Route.Hostname, allowedIPPrefixes: allowedIPPrefixes,
-		key: ingressKey, sourceKey: sourceKey, expiresAt: provisioning.Session.ExpiresAt,
+		key: tailcatDialerKey, expiresAt: provisioning.Session.ExpiresAt,
 	}
 	c.mu.Unlock()
-	return SessionSetup{Provisioning: provisioning, WorkerPublicKey: ingressKey.Public().String()}, nil
+	return SessionSetup{Provisioning: provisioning, WorkerPublicKey: tailcatDialerKey.Public().String()}, nil
 }
 
-func (c *Coordinator) RegisterTransport(
+func (c *Coordinator) AttachRouteTransport(
 	ctx context.Context,
 	routeID string,
-	version uint64,
+	routeVersion uint64,
 	token credentials.SessionToken,
 	publisherPublicKey, relayRegion string,
 ) (err error) {
@@ -361,17 +349,17 @@ func (c *Coordinator) RegisterTransport(
 		unlockRoute()
 		c.observeStage(CoordinatorStageTransportRouteLockWait, lockWait)
 		if replaced {
-			c.observeRouteRemoval(RouteRemovalVersionReplaced)
+			c.observeRouteRemoval(RouteRemovalRouteVersionReplaced)
 		}
 		if errors.Is(err, ErrNoWorkerCapacity) {
 			c.observeWorkerCapacityRejection()
 		}
 	}()
-	session, err := c.store.AuthenticateSession(ctx, routeID, version, token, c.serverInstanceID)
+	session, err := c.store.AuthenticateSession(ctx, routeID, routeVersion, token, c.serverInstanceID)
 	if err != nil {
 		return err
 	}
-	ref := worker.RouteRef{RouteID: routeID, Version: version}
+	ref := worker.RouteRef{RouteID: routeID, RouteVersion: routeVersion}
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
@@ -384,7 +372,7 @@ func (c *Coordinator) RegisterTransport(
 		}
 		return nil
 	}
-	if session.Status == "starting" &&
+	if session.Status == SessionStatusStarting &&
 		(session.PublisherPublicKey != publisherPublicKey || session.RelayRegion != relayRegion) {
 		c.mu.Unlock()
 		return ErrInvalidStatus
@@ -394,12 +382,12 @@ func (c *Coordinator) RegisterTransport(
 	if !ok {
 		return ErrStaleSession
 	}
-	endpoint := tailtransport.Endpoint{
+	endpoint := tailtransport.TransportDescriptor{
 		Version:            transportv1.TailcatDescriptorVersion,
 		PublisherPublicKey: publisherPublicKey,
 		RelayRegion:        relayRegion,
 	}
-	if err := c.store.RegisterTransport(ctx, session, publisherPublicKey, relayRegion); err != nil {
+	if err := c.store.AttachRouteTransport(ctx, session, publisherPublicKey, relayRegion); err != nil {
 		return err
 	}
 
@@ -436,7 +424,7 @@ func (c *Coordinator) RegisterTransport(
 		previous := c.assignments[routeID]
 		assignment := &assignment{
 			ref: ref, hostname: currentPending.hostname, allowedIPPrefixes: currentPending.allowedIPPrefixes,
-			expiresAt: session.ExpiresAt, worker: selectedWorker, backend: backend, sourceKey: currentPending.sourceKey,
+			expiresAt: session.ExpiresAt, worker: selectedWorker, backend: backend,
 		}
 		c.assignments[routeID] = assignment
 		c.challenges[assignment.hostname] = assignment
@@ -453,7 +441,7 @@ func (c *Coordinator) RegisterTransport(
 func (c *Coordinator) Ready(
 	ctx context.Context,
 	routeID string,
-	version uint64,
+	routeVersion uint64,
 	token credentials.SessionToken,
 ) error {
 	lockStarted := time.Now()
@@ -463,13 +451,13 @@ func (c *Coordinator) Ready(
 		unlockRoute()
 		c.observeStage(CoordinatorStageReadyRouteLockWait, lockWait)
 	}()
-	session, err := c.store.AuthenticateSession(ctx, routeID, version, token, c.serverInstanceID)
+	session, err := c.store.AuthenticateSession(ctx, routeID, routeVersion, token, c.serverInstanceID)
 	if err != nil {
 		return err
 	}
 	c.mu.Lock()
 	current := c.assignments[routeID]
-	if current == nil || current.ref.Version != version {
+	if current == nil || current.ref.RouteVersion != routeVersion {
 		c.mu.Unlock()
 		return ErrInvalidStatus
 	}
@@ -495,7 +483,7 @@ func (c *Coordinator) Ready(
 func (c *Coordinator) Heartbeat(
 	ctx context.Context,
 	routeID string,
-	version uint64,
+	routeVersion uint64,
 	token credentials.SessionToken,
 ) (expiresAt time.Time, err error) {
 	lockStarted := time.Now()
@@ -506,7 +494,7 @@ func (c *Coordinator) Heartbeat(
 		c.observeStage(CoordinatorStageHeartbeatRouteLockWait, lockWait)
 		c.observeHeartbeat(heartbeatResult(err))
 	}()
-	session, err := c.store.AuthenticateSession(ctx, routeID, version, token, c.serverInstanceID)
+	session, err := c.store.AuthenticateSession(ctx, routeID, routeVersion, token, c.serverInstanceID)
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -514,7 +502,7 @@ func (c *Coordinator) Heartbeat(
 	if err != nil {
 		return time.Time{}, err
 	}
-	if err := c.updateHeartbeatExpiry(routeID, version, expiresAt); err != nil {
+	if err := c.updateHeartbeatExpiry(routeID, routeVersion, expiresAt); err != nil {
 		return time.Time{}, err
 	}
 	return expiresAt, nil
@@ -523,7 +511,7 @@ func (c *Coordinator) Heartbeat(
 func (c *Coordinator) HeartbeatSigned(
 	ctx context.Context,
 	routeID string,
-	version uint64,
+	routeVersion uint64,
 	token credentials.SessionToken,
 	signedAuthorization string,
 	requestHash authorization.Digest,
@@ -538,9 +526,9 @@ func (c *Coordinator) HeartbeatSigned(
 	}()
 	var session Session
 	if signedAuthorization == "" {
-		session, err = c.store.AuthenticateSession(ctx, routeID, version, token, c.serverInstanceID)
+		session, err = c.store.AuthenticateSession(ctx, routeID, routeVersion, token, c.serverInstanceID)
 	} else {
-		session, err = c.store.AuthenticateSessionForRenewal(ctx, routeID, version, token, c.serverInstanceID)
+		session, err = c.store.AuthenticateSessionForRenewal(ctx, routeID, routeVersion, token, c.serverInstanceID)
 	}
 	if err != nil {
 		return time.Time{}, err
@@ -549,14 +537,14 @@ func (c *Coordinator) HeartbeatSigned(
 	if err != nil {
 		return time.Time{}, err
 	}
-	if err := c.updateHeartbeatExpiry(routeID, version, expiresAt); err != nil {
+	if err := c.updateHeartbeatExpiry(routeID, routeVersion, expiresAt); err != nil {
 		return time.Time{}, err
 	}
 	return expiresAt, nil
 }
 
-func (c *Coordinator) updateHeartbeatExpiry(routeID string, version uint64, expiresAt time.Time) error {
-	ref := worker.RouteRef{RouteID: routeID, Version: version}
+func (c *Coordinator) updateHeartbeatExpiry(routeID string, routeVersion uint64, expiresAt time.Time) error {
+	ref := worker.RouteRef{RouteID: routeID, RouteVersion: routeVersion}
 	stateStarted := time.Now()
 	c.mu.Lock()
 	updated := false
@@ -578,7 +566,7 @@ func (c *Coordinator) updateHeartbeatExpiry(routeID string, version uint64, expi
 	return nil
 }
 
-func signedIngressKey(token credentials.SessionToken) (key.NodePrivate, error) {
+func signedTailcatDialerKey(token credentials.SessionToken) (key.NodePrivate, error) {
 	material, err := credentials.DeriveSessionKeyMaterial(token)
 	if err != nil {
 		return key.NodePrivate{}, ErrUnauthenticated
@@ -588,7 +576,7 @@ func signedIngressKey(token credentials.SessionToken) (key.NodePrivate, error) {
 	material[31] |= 64
 	var result key.NodePrivate
 	if err := result.UnmarshalText([]byte("privkey:" + hex.EncodeToString(material[:]))); err != nil {
-		return key.NodePrivate{}, fmt.Errorf("routes: derive signed ingress key: %w", err)
+		return key.NodePrivate{}, fmt.Errorf("routes: derive signed tailcat dialer key: %w", err)
 	}
 	return result, nil
 }
@@ -598,13 +586,13 @@ func signedIngressKey(token credentials.SessionToken) (key.NodePrivate, error) {
 func (c *Coordinator) AuthorizeSession(
 	ctx context.Context,
 	routeID string,
-	version uint64,
+	routeVersion uint64,
 	token credentials.SessionToken,
 ) error {
 	if c.isClosed() {
 		return net.ErrClosed
 	}
-	_, err := c.store.AuthenticateSession(ctx, routeID, version, token, c.serverInstanceID)
+	_, err := c.store.AuthenticateSession(ctx, routeID, routeVersion, token, c.serverInstanceID)
 	return err
 }
 
@@ -612,28 +600,28 @@ func (c *Coordinator) List(ctx context.Context, identityID string) ([]Route, err
 	return c.store.List(ctx, identityID)
 }
 
-func (c *Coordinator) AddManagedHostname(
+func (c *Coordinator) ClaimManagedHostname(
 	ctx context.Context,
-	identityID, label, requestKey string,
+	identityID, label, idempotencyKey string,
 ) (Hostname, error) {
 	c.mutationMu.Lock()
 	defer c.mutationMu.Unlock()
 	if c.isClosed() {
 		return Hostname{}, net.ErrClosed
 	}
-	return c.store.AddManagedHostname(ctx, identityID, label, requestKey)
+	return c.store.ClaimManagedHostname(ctx, identityID, label, idempotencyKey)
 }
 
-func (c *Coordinator) AddHostname(
+func (c *Coordinator) ClaimHostname(
 	ctx context.Context,
-	identityID, kind, name, requestKey string,
+	identityID, kind, label, idempotencyKey string,
 ) (Hostname, error) {
 	c.mutationMu.Lock()
 	defer c.mutationMu.Unlock()
 	if c.isClosed() {
 		return Hostname{}, net.ErrClosed
 	}
-	return c.store.AddHostname(ctx, identityID, kind, name, requestKey)
+	return c.store.ClaimHostname(ctx, identityID, kind, label, idempotencyKey)
 }
 
 func (c *Coordinator) ListHostnames(ctx context.Context, identityID string) ([]Hostname, error) {
@@ -655,14 +643,14 @@ func (c *Coordinator) ListHostnamesPage(
 
 func (c *Coordinator) CreateDomainVerification(
 	ctx context.Context,
-	identityID, domain, requestKey string,
+	identityID, domain, idempotencyKey string,
 ) (DomainVerification, error) {
 	c.mutationMu.Lock()
 	defer c.mutationMu.Unlock()
 	if c.isClosed() {
 		return DomainVerification{}, net.ErrClosed
 	}
-	return c.store.CreateDomainVerification(ctx, identityID, domain, requestKey)
+	return c.store.CreateDomainVerification(ctx, identityID, domain, idempotencyKey)
 }
 
 func (c *Coordinator) GetDomainVerification(ctx context.Context, identityID, id string) (DomainVerification, error) {
@@ -676,30 +664,15 @@ func (c *Coordinator) CompleteDomainVerification(
 	ctx context.Context,
 	identityID, id string,
 ) (Hostname, error) {
-	if c.isClosed() {
-		return Hostname{}, net.ErrClosed
-	}
-	checkCtx, cancel := context.WithTimeout(ctx, domainVerificationTimeout)
-	defer cancel()
-	select {
-	case c.domainChecks <- struct{}{}:
-	case <-checkCtx.Done():
-		return Hostname{}, fmt.Errorf("%w: %v", ErrDNSProofPending, checkCtx.Err())
-	}
-	err := c.store.checkDomainVerification(checkCtx, identityID, id)
-	<-c.domainChecks
-	if err != nil {
-		return Hostname{}, err
-	}
 	c.mutationMu.Lock()
 	defer c.mutationMu.Unlock()
 	if c.isClosed() {
 		return Hostname{}, net.ErrClosed
 	}
-	return c.store.activateDomainVerification(ctx, identityID, id)
+	return c.store.CompleteDomainVerification(ctx, identityID, id)
 }
 
-func (c *Coordinator) RemoveHostname(ctx context.Context, identityID, hostnameID string) (err error) {
+func (c *Coordinator) ReleaseHostname(ctx context.Context, identityID, hostnameID string) (err error) {
 	removed := false
 	defer func() {
 		if removed {
@@ -711,7 +684,7 @@ func (c *Coordinator) RemoveHostname(ctx context.Context, identityID, hostnameID
 	if c.isClosed() {
 		return net.ErrClosed
 	}
-	routeIDs, err := c.store.ActiveRouteIDsForHostname(ctx, identityID, hostnameID)
+	routeIDs, err := c.store.EnabledRouteIDsForHostname(ctx, identityID, hostnameID)
 	if err != nil {
 		return err
 	}
@@ -719,7 +692,7 @@ func (c *Coordinator) RemoveHostname(ctx context.Context, identityID, hostnameID
 		unlockRoute := c.lockRoute(routeID)
 		defer unlockRoute()
 	}
-	if err := c.store.RemoveHostname(ctx, identityID, hostnameID); err != nil {
+	if err := c.store.ReleaseHostname(ctx, identityID, hostnameID); err != nil {
 		return err
 	}
 	for _, routeID := range routeIDs {
@@ -892,10 +865,10 @@ func (c *Coordinator) isClosed() bool {
 	return c.closed
 }
 
-func (c *Coordinator) Lookup(hostname string) (ActiveRoute, bool) {
+func (c *Coordinator) Lookup(hostname string) (RoutableRoute, bool) {
 	canonical, err := naming.CanonicalizeHostname(hostname)
 	if err != nil || canonical != hostname {
-		return ActiveRoute{}, false
+		return RoutableRoute{}, false
 	}
 	result, ok := c.snapshot.Load().byHostname[canonical]
 	return result, ok && result.expires.After(c.store.now())
@@ -903,24 +876,23 @@ func (c *Coordinator) Lookup(hostname string) (ActiveRoute, bool) {
 
 // LookupChallenge resolves current assigned routes before ordinary traffic is
 // published. Callers must use it only for TLS-ALPN-01 ClientHellos.
-func (c *Coordinator) LookupChallenge(hostname string) (ActiveRoute, bool) {
+func (c *Coordinator) LookupChallenge(hostname string) (RoutableRoute, bool) {
 	canonical, err := naming.CanonicalizeHostname(hostname)
 	if err != nil || canonical != hostname {
-		return ActiveRoute{}, false
+		return RoutableRoute{}, false
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
-		return ActiveRoute{}, false
+		return RoutableRoute{}, false
 	}
 	current := c.challenges[hostname]
 	if current != nil && current.expiresAt.After(c.store.now()) {
-		return ActiveRoute{
-			RouteID: current.ref.RouteID, Version: current.ref.Version, Backend: current.backend,
-			SourceKey: current.sourceKey,
+		return RoutableRoute{
+			RouteID: current.ref.RouteID, RouteVersion: current.ref.RouteVersion, Backend: current.backend,
 		}, true
 	}
-	return ActiveRoute{}, false
+	return RoutableRoute{}, false
 }
 
 func (c *Coordinator) DrainWorker(ctx context.Context, id string) error {
@@ -933,11 +905,11 @@ func (c *Coordinator) DrainWorker(ctx context.Context, id string) error {
 	worker.draining = true
 	assigned := c.ownerAssignmentsLocked(worker)
 	for _, current := range assigned {
-		c.unpublishLocked(current.ref.RouteID, current.ref.Version)
+		c.unpublishLocked(current.ref.RouteID, current.ref.RouteVersion)
 	}
 	c.mu.Unlock()
 	for _, current := range assigned {
-		_ = c.store.Expire(ctx, current.ref.RouteID, current.ref.Version)
+		_ = c.store.Expire(ctx, current.ref.RouteID, current.ref.RouteVersion)
 	}
 	err := worker.worker.Drain(ctx)
 	c.removeWorker(worker, RouteRemovalWorkerDraining)
@@ -971,7 +943,7 @@ func (c *Coordinator) Close() error {
 	clear(c.workers)
 	clear(c.pending)
 	clear(c.assignments)
-	c.snapshot.Store(&routeSnapshot{byHostname: map[string]ActiveRoute{}})
+	c.snapshot.Store(&routeSnapshot{byHostname: map[string]RoutableRoute{}})
 	c.mu.Unlock()
 	stopReaper()
 	<-reaperDone
@@ -1023,7 +995,7 @@ func (c *Coordinator) deactivate(routeID string) bool {
 			delete(c.challenges, current.hostname)
 		}
 		delete(current.worker.routes, routeID)
-		c.unpublishLocked(routeID, current.ref.Version)
+		c.unpublishLocked(routeID, current.ref.RouteVersion)
 	}
 	c.mu.Unlock()
 	if current != nil {
@@ -1046,7 +1018,7 @@ func (c *Coordinator) deactivateDraining(ctx context.Context, routeID string) bo
 			delete(c.challenges, current.hostname)
 		}
 		delete(current.worker.routes, routeID)
-		c.unpublishLocked(routeID, current.ref.Version)
+		c.unpublishLocked(routeID, current.ref.RouteVersion)
 	}
 	c.mu.Unlock()
 	if current != nil {
@@ -1058,19 +1030,18 @@ func (c *Coordinator) deactivateDraining(ctx context.Context, routeID string) bo
 
 func (c *Coordinator) publishLocked(current *assignment) {
 	next := cloneSnapshot(c.snapshot.Load())
-	next.byHostname[current.hostname] = ActiveRoute{
-		RouteID: current.ref.RouteID, Version: current.ref.Version,
-		AllowedIPPrefixes: current.allowedIPPrefixes, Backend: current.backend, SourceKey: current.sourceKey,
-		expires: current.expiresAt,
+	next.byHostname[current.hostname] = RoutableRoute{
+		RouteID: current.ref.RouteID, RouteVersion: current.ref.RouteVersion,
+		AllowedIPPrefixes: current.allowedIPPrefixes, Backend: current.backend, expires: current.expiresAt,
 	}
 	c.snapshot.Store(next)
 }
 
-func (c *Coordinator) unpublishLocked(routeID string, version uint64) {
+func (c *Coordinator) unpublishLocked(routeID string, routeVersion uint64) {
 	current := c.snapshot.Load()
 	next := cloneSnapshot(current)
 	for hostname, route := range next.byHostname {
-		if route.RouteID == routeID && route.Version == version {
+		if route.RouteID == routeID && route.RouteVersion == routeVersion {
 			delete(next.byHostname, hostname)
 		}
 	}
@@ -1078,7 +1049,7 @@ func (c *Coordinator) unpublishLocked(routeID string, version uint64) {
 }
 
 func cloneSnapshot(current *routeSnapshot) *routeSnapshot {
-	next := &routeSnapshot{byHostname: make(map[string]ActiveRoute, len(current.byHostname))}
+	next := &routeSnapshot{byHostname: make(map[string]RoutableRoute, len(current.byHostname))}
 	for hostname, route := range current.byHostname {
 		next.byHostname[hostname] = route
 	}
@@ -1099,7 +1070,7 @@ func (c *Coordinator) removeWorker(worker *workerState, reason RouteRemovalReaso
 			delete(c.challenges, current.hostname)
 		}
 		delete(c.pending, current.ref)
-		c.unpublishLocked(current.ref.RouteID, current.ref.Version)
+		c.unpublishLocked(current.ref.RouteID, current.ref.RouteVersion)
 	}
 	c.mu.Unlock()
 	for range assigned {
@@ -1109,7 +1080,7 @@ func (c *Coordinator) removeWorker(worker *workerState, reason RouteRemovalReaso
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	for _, current := range assigned {
-		_ = c.store.Expire(ctx, current.ref.RouteID, current.ref.Version)
+		_ = c.store.Expire(ctx, current.ref.RouteID, current.ref.RouteVersion)
 	}
 }
 
@@ -1149,16 +1120,12 @@ func (c *Coordinator) reapSessions(ctx context.Context) {
 	defer close(c.reaperDone)
 	ticker := time.NewTicker(sessionReapInterval)
 	defer ticker.Stop()
-	prune := time.NewTicker(routeStatePruneInterval)
-	defer prune.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case now := <-ticker.C:
 			c.expireDue(ctx, now)
-		case <-prune.C:
-			_ = c.store.pruneRouteState(ctx, c.store.now())
 		}
 	}
 }
@@ -1183,7 +1150,7 @@ func (c *Coordinator) expireDue(ctx context.Context, now time.Time) {
 		unlockRoute := c.lockRoute(ref.RouteID)
 		backend, expired, removed := c.expireMemory(ref, now)
 		if expired {
-			_ = c.store.Expire(ctx, ref.RouteID, ref.Version)
+			_ = c.store.Expire(ctx, ref.RouteID, ref.RouteVersion)
 		}
 		unlockRoute()
 		if backend != nil {
@@ -1221,13 +1188,13 @@ func (c *Coordinator) expireMemory(ref worker.RouteRef, now time.Time) (worker.W
 		delete(c.challenges, current.hostname)
 	}
 	delete(current.worker.routes, ref.RouteID)
-	c.unpublishLocked(ref.RouteID, ref.Version)
+	c.unpublishLocked(ref.RouteID, ref.RouteVersion)
 	return current.backend, true, true
 }
 
-func (c *Coordinator) Stats() (provisioning, active int) {
+func (c *Coordinator) Stats() (provisioning, routable int) {
 	stats := c.HealthStats()
-	return stats.Provisioning, stats.Active
+	return stats.Provisioning, stats.Routable
 }
 
 func (c *Coordinator) HealthStats() HealthStats {
@@ -1237,7 +1204,7 @@ func (c *Coordinator) HealthStats() HealthStats {
 	snapshot := c.snapshot.Load()
 	stats := HealthStats{
 		Provisioning:     len(c.pending),
-		Active:           len(snapshot.byHostname),
+		Routable:         len(snapshot.byHostname),
 		ConnectedWorkers: len(c.workers),
 	}
 	hasProvisioning := false
@@ -1248,16 +1215,16 @@ func (c *Coordinator) HealthStats() HealthStats {
 			hasProvisioning = true
 		}
 	}
-	hasActive := false
+	hasRoutable := false
 	for _, route := range snapshot.byHostname {
 		current := c.assignments[route.RouteID]
-		if current == nil || current.ref.Version != route.Version {
+		if current == nil || current.ref.RouteVersion != route.RouteVersion {
 			continue
 		}
 		remaining := max(0, current.expiresAt.Sub(now).Seconds())
-		if !hasActive || remaining < stats.MinimumActiveSessionSeconds {
-			stats.MinimumActiveSessionSeconds = remaining
-			hasActive = true
+		if !hasRoutable || remaining < stats.MinimumRoutableSessionSeconds {
+			stats.MinimumRoutableSessionSeconds = remaining
+			hasRoutable = true
 		}
 	}
 	return stats

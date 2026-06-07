@@ -2,8 +2,8 @@
 // runs on the publisher beside the local target, while hosted ingress owns one
 // reusable Dialer and opens streams to the session's fixed TCP port.
 //
-// Endpoint values contain only a server public key and an operator-defined
-// relay region name. The package resolves and snapshots that profile locally;
+// TransportDescriptor values contain only a server public key and an operator-defined
+// relay region name. The package resolves and snapshots that relay region locally;
 // raw Tailcat connection blobs never cross the untrusted protocol boundary.
 //
 // A transport starts once, drains by rejecting new streams while existing

@@ -21,24 +21,24 @@ export default withTnl({
 
 `withTnl` also accepts promised configuration and synchronous or asynchronous
 configuration functions. Its second argument accepts static tunnel options or
-a synchronous or asynchronous factory. Reserve a managed base once with
-`tnl host add myapp`, then give every Git worktree its own child name:
+a synchronous or asynchronous factory. Claim a managed hostname once with
+`tnl host claim myapp`, then give every Git worktree its own child hostname:
 
 ```ts
 // next.config.ts
 import { withTnl } from "@tnldotdev/next";
 
 export default withTnl({ reactStrictMode: true }, ({ worktree }) => ({
-  name: `${worktree.label}.myapp`,
+  host: `${worktree.label}.myapp`,
   allowCurrentIP: true,
 }));
 ```
 
 The options factory runs only for a Next.js development server beneath
-`tnl dev`. It receives a frozen environment snapshot, the process working
-directory, and worktree metadata. The integration registers the final listening
-port exposed by Next.js. If `tnl dev --port` is set, Next.js must bind that exact
-port.
+`tnl dev`. It receives a read-only environment copy, the process working
+directory, and worktree metadata. Next.js retains its normal behavior of trying
+the next port when its default is occupied; the integration reports the final
+listening port with `registerLocalPort`.
 
 ## Run
 
@@ -69,14 +69,14 @@ project declaration file.
 
 ## Tunnel Options
 
-The available route options mirror `tnl publish` and server selection:
+The available `TnlTunnelOptions` mirror `tnl publish` and server selection:
 
 ```ts
 withTnl(
   {},
   {
-    server: "https://tnl.example.com",
-    name: "feature.chase.example.com",
+    controlURL: "https://tnl.example.com",
+    host: "feature.chase.example.com",
     allowIP: ["198.51.100.0/24", "2001:db8::/64"],
     allowCurrentIP: true,
   },
@@ -86,17 +86,20 @@ withTnl(
 `allowCurrentIP` is additive with `allowIP`. When `allowIP` is omitted,
 `allowCurrentIP: true` restricts access to the current public IP only. The Go
 client performs server authentication, hostname authorization, and IP
-canonicalization. CLI `--server`/`TNL_SERVER` and `--name`/`TNL_NAME` take
+normalization. CLI `--server`/`TNL_SERVER` and `--host`/`TNL_HOST` take
 precedence over project options.
 
-The signed-in user must own the configured custom domain or an eligible parent
-hostname. Separate users cannot currently share one parent hostname.
+The selected server-local identity must own a managed hostname or custom domain
+with active status. The `host` hostname must match it exactly or add no more
+than eight labels to its left. A temporary hostname authorizes only itself. An
+identity cannot publish beneath a hostname owned by another identity.
 
 ## Configuration
 
 Your existing Next.js settings are preserved. During `tnl dev`, the assigned
 hostname is added to `allowedDevOrigins` and the resolved development port is
-registered. Outside `tnl dev`, the wrapper makes no changes.
+reported with `registerLocalPort`. Outside `tnl dev`, the wrapper makes no
+changes.
 
 ## Requirements
 

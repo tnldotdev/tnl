@@ -165,7 +165,7 @@ func TestAdminPageValidationRejectsNonAdvancingAndOversizedPages(t *testing.T) {
 	id := serverv1.RouteID("route_00000000000000000000000000000001")
 	page := serverv1.AdminRoutePage{
 		Routes: []serverv1.AdminRoute{{
-			Id: id, Status: serverv1.AdminRouteStatusActive, Version: 1,
+			Id: id, Status: serverv1.AdminRouteStatusEnabled, RouteVersion: 1,
 		}},
 		NextCursor: &id,
 	}
@@ -189,7 +189,7 @@ func TestRequireAdministrationCapability(t *testing.T) {
 		Version: serverv1.AdministrationCapabilitiesVersionN1,
 		Operations: []serverv1.AdministrationCapabilitiesOperations{
 			serverv1.ServerStatus, serverv1.Routes, serverv1.Hostnames, serverv1.Credentials,
-			serverv1.ControlSessions, serverv1.OperationalSwitches,
+			serverv1.ControlSessions, serverv1.MaintenanceControls,
 		},
 	}}
 	if err := RequireAdministrationCapability(capabilities); err != nil {
@@ -198,6 +198,54 @@ func TestRequireAdministrationCapability(t *testing.T) {
 	capabilities.Administration.Operations[5] = serverv1.Routes
 	if err := RequireAdministrationCapability(capabilities); err == nil || errors.Is(err, ErrUnsupported) {
 		t.Fatalf("duplicate capability error = %v", err)
+	}
+}
+
+func TestAdminMaintenanceControlRequests(t *testing.T) {
+	access, _, _, err := credentials.NewAccessToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, time.September, 2, 1, 0, 0, 0, time.UTC)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		switch request.Method + " " + request.URL.Path {
+		case "GET /v1/admin/maintenance-controls":
+			_ = json.NewEncoder(response).Encode([]serverv1.AdminMaintenanceControl{
+				{Name: serverv1.MaintenanceControlNameCertificateIssuance, Enabled: true, Revision: 1, UpdatedAt: now, UpdatedBy: "system"},
+				{Name: serverv1.MaintenanceControlNameRouteCreation, Enabled: true, Revision: 1, UpdatedAt: now, UpdatedBy: "system"},
+				{Name: serverv1.MaintenanceControlNameRouteSessionCreation, Enabled: true, Revision: 1, UpdatedAt: now, UpdatedBy: "system"},
+			})
+		case "PUT /v1/admin/maintenance-controls/route_creation":
+			var body serverv1.SetAdminMaintenanceControlRequest
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+				t.Error(err)
+			}
+			if body.Enabled {
+				t.Errorf("maintenance control request = %#v", body)
+			}
+			_ = json.NewEncoder(response).Encode(serverv1.AdminMaintenanceControl{
+				Name: serverv1.MaintenanceControlNameRouteCreation, Revision: 2, UpdatedAt: now, UpdatedBy: "identity_test",
+			})
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+	client, err := New(server.URL, server.Client(), access)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	controls, err := client.AdminListMaintenanceControls(t.Context())
+	if err != nil || len(controls) != 3 {
+		t.Fatalf("maintenance controls = %#v, %v", controls, err)
+	}
+	control, err := client.AdminSetMaintenanceControl(
+		t.Context(), serverv1.MaintenanceControlNameRouteCreation, false,
+	)
+	if err != nil || control.Name != serverv1.MaintenanceControlNameRouteCreation || control.Enabled || control.Revision != 2 {
+		t.Fatalf("maintenance control = %#v, %v", control, err)
 	}
 }
 
@@ -240,6 +288,49 @@ func TestClientPaginatesHostnames(t *testing.T) {
 	}
 	if len(hostnames) != 3 || requests != 2 {
 		t.Fatalf("hostnames = %d, requests = %d", len(hostnames), requests)
+	}
+}
+
+func TestClientClaimsAndReleasesHostname(t *testing.T) {
+	access, _, _, err := credentials.NewAccessToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const hostnameID = "hostname_00000000000000000000000000000001"
+	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.Method + " " + request.URL.Path {
+		case "POST /v1/hostnames":
+			var body serverv1.ClaimHostnameRequest
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+				t.Error(err)
+			}
+			if body.Kind != serverv1.ClaimHostnameRequestKindManaged || body.Label == nil || *body.Label != "demo" {
+				t.Errorf("claim body = %#v", body)
+			}
+			if request.Header.Get("Idempotency-Key") != "claim-key" {
+				t.Errorf("idempotency key = %q", request.Header.Get("Idempotency-Key"))
+			}
+			_ = json.NewEncoder(response).Encode(serverv1.Hostname{Id: hostnameID})
+		case "DELETE /v1/hostnames/" + hostnameID:
+			response.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+	client, err := New(server.URL, server.Client(), access)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hostname, err := client.ClaimHostname(
+		t.Context(), serverv1.ClaimHostnameRequestKindManaged, "demo", "claim-key",
+	)
+	if err != nil || hostname.Id != hostnameID {
+		t.Fatalf("claimed hostname = %#v, %v", hostname, err)
+	}
+	if err := client.ReleaseHostname(t.Context(), hostnameID); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -315,7 +406,7 @@ func TestClientCertificateLifecycleRequests(t *testing.T) {
 			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
 				t.Error(err)
 			}
-			if body.Csr != base64.RawURLEncoding.EncodeToString([]byte("csr")) || body.AcmeProfile != "tlsserver" {
+			if body.RouteVersion != 1 || body.Csr != base64.RawURLEncoding.EncodeToString([]byte("csr")) || body.AcmeProfile != "tlsserver" {
 				t.Errorf("create body = %#v", body)
 			}
 		}

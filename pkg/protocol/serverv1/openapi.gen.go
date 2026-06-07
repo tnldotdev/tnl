@@ -4,26 +4,18 @@
 package serverv1
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
 	"time"
-)
 
-// Defines values for AddHostnameRequestKind.
-const (
-	AddHostnameRequestKindManaged   AddHostnameRequestKind = "managed"
-	AddHostnameRequestKindTemporary AddHostnameRequestKind = "temporary"
+	"github.com/oapi-codegen/runtime"
 )
-
-// Valid indicates whether the value is a known member of the AddHostnameRequestKind enum.
-func (e AddHostnameRequestKind) Valid() bool {
-	switch e {
-	case AddHostnameRequestKindManaged:
-		return true
-	case AddHostnameRequestKindTemporary:
-		return true
-	default:
-		return false
-	}
-}
 
 // Defines values for AdminHostnameKind.
 const (
@@ -78,17 +70,17 @@ func (e AdminHostnameStatus) Valid() bool {
 
 // Defines values for AdminRouteStatus.
 const (
-	AdminRouteStatusActive    AdminRouteStatus = "active"
 	AdminRouteStatusDeleted   AdminRouteStatus = "deleted"
+	AdminRouteStatusEnabled   AdminRouteStatus = "enabled"
 	AdminRouteStatusSuspended AdminRouteStatus = "suspended"
 )
 
 // Valid indicates whether the value is a known member of the AdminRouteStatus enum.
 func (e AdminRouteStatus) Valid() bool {
 	switch e {
-	case AdminRouteStatusActive:
-		return true
 	case AdminRouteStatusDeleted:
+		return true
+	case AdminRouteStatusEnabled:
 		return true
 	case AdminRouteStatusSuspended:
 		return true
@@ -120,7 +112,7 @@ const (
 	ControlSessions     AdministrationCapabilitiesOperations = "control_sessions"
 	Credentials         AdministrationCapabilitiesOperations = "credentials"
 	Hostnames           AdministrationCapabilitiesOperations = "hostnames"
-	OperationalSwitches AdministrationCapabilitiesOperations = "operational_switches"
+	MaintenanceControls AdministrationCapabilitiesOperations = "maintenance_controls"
 	Routes              AdministrationCapabilitiesOperations = "routes"
 	ServerStatus        AdministrationCapabilitiesOperations = "server_status"
 )
@@ -134,7 +126,7 @@ func (e AdministrationCapabilitiesOperations) Valid() bool {
 		return true
 	case Hostnames:
 		return true
-	case OperationalSwitches:
+	case MaintenanceControls:
 		return true
 	case Routes:
 		return true
@@ -268,6 +260,24 @@ func (e CertificateIssuanceStatus) Valid() bool {
 	case CertificateIssuanceStatusWaitingForChallenge:
 		return true
 	case CertificateIssuanceStatusWaitingForInstall:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ClaimHostnameRequestKind.
+const (
+	ClaimHostnameRequestKindManaged   ClaimHostnameRequestKind = "managed"
+	ClaimHostnameRequestKindTemporary ClaimHostnameRequestKind = "temporary"
+)
+
+// Valid indicates whether the value is a known member of the ClaimHostnameRequestKind enum.
+func (e ClaimHostnameRequestKind) Valid() bool {
+	switch e {
+	case ClaimHostnameRequestKindManaged:
+		return true
+	case ClaimHostnameRequestKindTemporary:
 		return true
 	default:
 		return false
@@ -415,6 +425,27 @@ func (e HostnameStatus) Valid() bool {
 	}
 }
 
+// Defines values for MaintenanceControlName.
+const (
+	MaintenanceControlNameCertificateIssuance  MaintenanceControlName = "certificate_issuance"
+	MaintenanceControlNameRouteCreation        MaintenanceControlName = "route_creation"
+	MaintenanceControlNameRouteSessionCreation MaintenanceControlName = "route_session_creation"
+)
+
+// Valid indicates whether the value is a known member of the MaintenanceControlName enum.
+func (e MaintenanceControlName) Valid() bool {
+	switch e {
+	case MaintenanceControlNameCertificateIssuance:
+		return true
+	case MaintenanceControlNameRouteCreation:
+		return true
+	case MaintenanceControlNameRouteSessionCreation:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for OIDCCapabilitiesLoginFlow.
 const (
 	AuthorizationCodePkce OIDCCapabilitiesLoginFlow = "authorization_code_pkce"
@@ -427,27 +458,6 @@ func (e OIDCCapabilitiesLoginFlow) Valid() bool {
 	case AuthorizationCodePkce:
 		return true
 	case DeviceCode:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for OperationalSwitchName.
-const (
-	OperationalSwitchNameCertificateIssuance OperationalSwitchName = "certificate_issuance"
-	OperationalSwitchNameNewRoutes           OperationalSwitchName = "new_routes"
-	OperationalSwitchNameNewSessions         OperationalSwitchName = "new_sessions"
-)
-
-// Valid indicates whether the value is a known member of the OperationalSwitchName enum.
-func (e OperationalSwitchName) Valid() bool {
-	switch e {
-	case OperationalSwitchNameCertificateIssuance:
-		return true
-	case OperationalSwitchNameNewRoutes:
-		return true
-	case OperationalSwitchNameNewSessions:
 		return true
 	default:
 		return false
@@ -543,13 +553,13 @@ func (e ReadinessResponseStatus) Valid() bool {
 
 // Defines values for RouteStatus.
 const (
-	RouteStatusActive RouteStatus = "active"
+	RouteStatusEnabled RouteStatus = "enabled"
 )
 
 // Valid indicates whether the value is a known member of the RouteStatus enum.
 func (e RouteStatus) Valid() bool {
 	switch e {
-	case RouteStatusActive:
+	case RouteStatusEnabled:
 		return true
 	default:
 		return false
@@ -630,15 +640,6 @@ type AcmeCapabilities struct {
 	AcmeProfile string `json:"acme_profile"`
 }
 
-// AddHostnameRequest defines model for AddHostnameRequest.
-type AddHostnameRequest struct {
-	Kind AddHostnameRequestKind `json:"kind"`
-	Name *string                `json:"name,omitempty"`
-}
-
-// AddHostnameRequestKind defines model for AddHostnameRequest.Kind.
-type AddHostnameRequestKind string
-
 // AdminControlSession defines model for AdminControlSession.
 type AdminControlSession struct {
 	AccessExpiresAt      time.Time        `json:"access_expires_at"`
@@ -698,13 +699,13 @@ type AdminHostnamePage struct {
 	NextCursor *HostnameID     `json:"next_cursor,omitempty"`
 }
 
-// AdminOperationalSwitch defines model for AdminOperationalSwitch.
-type AdminOperationalSwitch struct {
-	Enabled   bool                  `json:"enabled"`
-	Name      OperationalSwitchName `json:"name"`
-	Revision  int                   `json:"revision"`
-	UpdatedAt time.Time             `json:"updated_at"`
-	UpdatedBy string                `json:"updated_by"`
+// AdminMaintenanceControl defines model for AdminMaintenanceControl.
+type AdminMaintenanceControl struct {
+	Enabled   bool                   `json:"enabled"`
+	Name      MaintenanceControlName `json:"name"`
+	Revision  int                    `json:"revision"`
+	UpdatedAt time.Time              `json:"updated_at"`
+	UpdatedBy string                 `json:"updated_by"`
 }
 
 // AdminReasonRequest defines model for AdminReasonRequest.
@@ -714,17 +715,19 @@ type AdminReasonRequest struct {
 
 // AdminRoute defines model for AdminRoute.
 type AdminRoute struct {
-	CreatedAt          time.Time        `json:"created_at"`
-	DeletedAt          *time.Time       `json:"deleted_at,omitempty"`
-	Hostname           string           `json:"hostname"`
-	Id                 RouteID          `json:"id"`
-	IdentityId         *string          `json:"identity_id,omitempty"`
-	LocalTarget        string           `json:"local_target"`
+	CreatedAt   time.Time  `json:"created_at"`
+	DeletedAt   *time.Time `json:"deleted_at,omitempty"`
+	Hostname    string     `json:"hostname"`
+	Id          RouteID    `json:"id"`
+	IdentityId  *string    `json:"identity_id,omitempty"`
+	LocalTarget string     `json:"local_target"`
+
+	// RouteVersion Current route version.
+	RouteVersion       int              `json:"route_version"`
 	Status             AdminRouteStatus `json:"status"`
 	SuspendedAt        *time.Time       `json:"suspended_at,omitempty"`
 	SuspensionReason   *string          `json:"suspension_reason,omitempty"`
 	SuspensionRevision int              `json:"suspension_revision"`
-	Version            int              `json:"version"`
 }
 
 // AdminRouteStatus defines model for AdminRoute.Status.
@@ -738,9 +741,9 @@ type AdminRoutePage struct {
 
 // AdminServerStatus defines model for AdminServerStatus.
 type AdminServerStatus struct {
-	ActiveRoutes       int                   `json:"active_routes"`
 	ConnectedWorkers   int                   `json:"connected_workers"`
 	CurrentTime        time.Time             `json:"current_time"`
+	EnabledRoutes      int                   `json:"enabled_routes"`
 	Mode               AdminServerStatusMode `json:"mode"`
 	ProvisioningRoutes int                   `json:"provisioning_routes"`
 	StartedAt          time.Time             `json:"started_at"`
@@ -762,7 +765,7 @@ type AdministrationCapabilitiesOperations string
 // AdministrationCapabilitiesVersion defines model for AdministrationCapabilities.Version.
 type AdministrationCapabilitiesVersion int
 
-// AllowedIPPrefixes Canonical, masked IPv4 or IPv6 prefixes that replace the route policy for this version. An empty or omitted list allows all source addresses.
+// AllowedIPPrefixes Canonical, masked IPv4 or IPv6 prefixes that replace the policy for the new route version. An empty or omitted list allows all source addresses.
 type AllowedIPPrefixes = []string
 
 // AuthenticationCapabilities defines model for AuthenticationCapabilities.
@@ -815,30 +818,46 @@ type CertificateChallenge struct {
 // CertificateInstalledRequest defines model for CertificateInstalledRequest.
 type CertificateInstalledRequest struct {
 	IssuanceId string `json:"issuance_id"`
-	Version    int    `json:"version"`
+
+	// RouteVersion Route version where the certificate was installed.
+	RouteVersion int `json:"route_version"`
 }
 
 // CertificateIssuance defines model for CertificateIssuance.
 type CertificateIssuance struct {
-	AcmeProfile    string                    `json:"acme_profile"`
-	CertificatePem *string                   `json:"certificate_pem,omitempty"`
-	Challenge      *CertificateChallenge     `json:"challenge,omitempty"`
-	CreatedAt      time.Time                 `json:"created_at"`
-	Error          *string                   `json:"error,omitempty"`
-	Hostname       string                    `json:"hostname"`
-	Id             string                    `json:"id"`
-	NotAfter       *time.Time                `json:"not_after,omitempty"`
-	NotBefore      *time.Time                `json:"not_before,omitempty"`
-	RenewAt        *time.Time                `json:"renew_at,omitempty"`
-	RetryAt        *time.Time                `json:"retry_at,omitempty"`
-	RouteId        string                    `json:"route_id"`
-	Status         CertificateIssuanceStatus `json:"status"`
-	UpdatedAt      time.Time                 `json:"updated_at"`
-	Version        int                       `json:"version"`
+	AcmeProfile    string                `json:"acme_profile"`
+	CertificatePem *string               `json:"certificate_pem,omitempty"`
+	Challenge      *CertificateChallenge `json:"challenge,omitempty"`
+	CreatedAt      time.Time             `json:"created_at"`
+	Error          *string               `json:"error,omitempty"`
+	Hostname       string                `json:"hostname"`
+	Id             string                `json:"id"`
+	NotAfter       *time.Time            `json:"not_after,omitempty"`
+	NotBefore      *time.Time            `json:"not_before,omitempty"`
+	RenewAt        *time.Time            `json:"renew_at,omitempty"`
+	RetryAt        *time.Time            `json:"retry_at,omitempty"`
+	RouteId        string                `json:"route_id"`
+
+	// RouteVersion Route version that requested the certificate.
+	RouteVersion int                       `json:"route_version"`
+	Status       CertificateIssuanceStatus `json:"status"`
+	UpdatedAt    time.Time                 `json:"updated_at"`
 }
 
 // CertificateIssuanceStatus defines model for CertificateIssuance.Status.
 type CertificateIssuanceStatus string
+
+// ClaimHostnameRequest defines model for ClaimHostnameRequest.
+type ClaimHostnameRequest struct {
+	// Kind Managed claims persist until released; temporary hostnames are allocated by the server.
+	Kind ClaimHostnameRequestKind `json:"kind"`
+
+	// Label Preferred DNS label for a managed claim. Omit it to let the server allocate a label.
+	Label *string `json:"label,omitempty"`
+}
+
+// ClaimHostnameRequestKind Managed claims persist until released; temporary hostnames are allocated by the server.
+type ClaimHostnameRequestKind string
 
 // ClientIPResponse defines model for ClientIPResponse.
 type ClientIPResponse struct {
@@ -864,7 +883,9 @@ type CreateCertificateIssuanceRequest struct {
 	AcmeProfile string `json:"acme_profile"`
 	Csr         string `json:"csr"`
 	RouteId     string `json:"route_id"`
-	Version     int    `json:"version"`
+
+	// RouteVersion Route version requesting the certificate.
+	RouteVersion int `json:"route_version"`
 }
 
 // CreateDomainVerificationRequest defines model for CreateDomainVerificationRequest.
@@ -874,7 +895,7 @@ type CreateDomainVerificationRequest struct {
 
 // CreateRouteRequest defines model for CreateRouteRequest.
 type CreateRouteRequest struct {
-	// AllowedIpPrefixes Canonical, masked IPv4 or IPv6 prefixes that replace the route policy for this version. An empty or omitted list allows all source addresses.
+	// AllowedIpPrefixes Canonical, masked IPv4 or IPv6 prefixes that replace the policy for the new route version. An empty or omitted list allows all source addresses.
 	AllowedIpPrefixes *AllowedIPPrefixes `json:"allowed_ip_prefixes,omitempty"`
 	Hostname          string             `json:"hostname"`
 	LocalTarget       string             `json:"local_target"`
@@ -886,7 +907,7 @@ type CreateRouteRequest struct {
 
 // CreateRouteSessionRequest defines model for CreateRouteSessionRequest.
 type CreateRouteSessionRequest struct {
-	// AllowedIpPrefixes Canonical, masked IPv4 or IPv6 prefixes that replace the route policy for this version. An empty or omitted list allows all source addresses.
+	// AllowedIpPrefixes Canonical, masked IPv4 or IPv6 prefixes that replace the policy for the new route version. An empty or omitted list allows all source addresses.
 	AllowedIpPrefixes *AllowedIPPrefixes `json:"allowed_ip_prefixes,omitempty"`
 	RouteToken        string             `json:"route_token"`
 
@@ -942,9 +963,11 @@ type HeartbeatResponse struct {
 
 // HeartbeatRouteSessionRequest defines model for HeartbeatRouteSessionRequest.
 type HeartbeatRouteSessionRequest struct {
+	// RouteVersion Route version owned by the authenticated route session.
+	RouteVersion int `json:"route_version"`
+
 	// SignedAuthorization Compact EdDSA JWS with kid and typ=tnl-authorization+jwt protected headers.
 	SignedAuthorization *SignedAuthorizationToken `json:"signed_authorization,omitempty"`
-	Version             int                       `json:"version"`
 }
 
 // Hostname defines model for Hostname.
@@ -982,6 +1005,9 @@ type LocalHostnameCapabilities struct {
 	Suffix string `json:"suffix"`
 }
 
+// MaintenanceControlName defines model for MaintenanceControlName.
+type MaintenanceControlName string
+
 // OIDCCapabilities defines model for OIDCCapabilities.
 type OIDCCapabilities struct {
 	ClientId  string                    `json:"client_id"`
@@ -996,9 +1022,6 @@ type OIDCCapabilitiesLoginFlow string
 type OIDCTokenExchangeRequest struct {
 	IdToken string `json:"id_token"`
 }
-
-// OperationalSwitchName defines model for OperationalSwitchName.
-type OperationalSwitchName string
 
 // Problem defines model for Problem.
 type Problem struct {
@@ -1038,7 +1061,9 @@ type RefreshControlSessionRequest struct {
 // RegisterTransportRequest defines model for RegisterTransportRequest.
 type RegisterTransportRequest struct {
 	Endpoint TailcatDescriptor `json:"endpoint"`
-	Version  int               `json:"version"`
+
+	// RouteVersion Route version that will use the registered transport.
+	RouteVersion int `json:"route_version"`
 }
 
 // ResumeAdminRouteRequest defines model for ResumeAdminRouteRequest.
@@ -1048,12 +1073,14 @@ type ResumeAdminRouteRequest struct {
 
 // Route defines model for Route.
 type Route struct {
-	CreatedAt   time.Time   `json:"created_at"`
-	Hostname    string      `json:"hostname"`
-	Id          string      `json:"id"`
-	LocalTarget string      `json:"local_target"`
-	Status      RouteStatus `json:"status"`
-	Version     int         `json:"version"`
+	CreatedAt   time.Time `json:"created_at"`
+	Hostname    string    `json:"hostname"`
+	Id          string    `json:"id"`
+	LocalTarget string    `json:"local_target"`
+
+	// RouteVersion Current route version.
+	RouteVersion int         `json:"route_version"`
+	Status       RouteStatus `json:"status"`
 }
 
 // RouteStatus defines model for Route.Status.
@@ -1064,12 +1091,14 @@ type RouteID = string
 
 // RouteSession defines model for RouteSession.
 type RouteSession struct {
-	CreatedAt time.Time          `json:"created_at"`
-	ExpiresAt time.Time          `json:"expires_at"`
-	Id        string             `json:"id"`
-	RouteId   string             `json:"route_id"`
-	Status    RouteSessionStatus `json:"status"`
-	Version   int                `json:"version"`
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
+	Id        string    `json:"id"`
+	RouteId   string    `json:"route_id"`
+
+	// RouteVersion Route version represented by this session.
+	RouteVersion int                `json:"route_version"`
+	Status       RouteSessionStatus `json:"status"`
 }
 
 // RouteSessionStatus defines model for RouteSession.Status.
@@ -1077,7 +1106,8 @@ type RouteSessionStatus string
 
 // RouteVersionRequest defines model for RouteVersionRequest.
 type RouteVersionRequest struct {
-	Version int `json:"version"`
+	// RouteVersion Route version owned by the authenticated route session.
+	RouteVersion int `json:"route_version"`
 }
 
 // SessionSetup defines model for SessionSetup.
@@ -1088,8 +1118,8 @@ type SessionSetup struct {
 	WorkerPublicKey string       `json:"worker_public_key"`
 }
 
-// SetAdminSwitchRequest defines model for SetAdminSwitchRequest.
-type SetAdminSwitchRequest struct {
+// SetAdminMaintenanceControlRequest defines model for SetAdminMaintenanceControlRequest.
+type SetAdminMaintenanceControlRequest struct {
 	Enabled bool `json:"enabled"`
 }
 
@@ -1169,22 +1199,22 @@ type ListHostnamesParams struct {
 	Cursor *HostnameID `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
-// AddHostnameParams defines parameters for AddHostname.
-type AddHostnameParams struct {
+// ClaimHostnameParams defines parameters for ClaimHostname.
+type ClaimHostnameParams struct {
 	IdempotencyKey string `json:"Idempotency-Key"`
 }
 
 // QuarantineAdminHostnameJSONRequestBody defines body for QuarantineAdminHostname for application/json ContentType.
 type QuarantineAdminHostnameJSONRequestBody = AdminReasonRequest
 
+// SetAdminMaintenanceControlJSONRequestBody defines body for SetAdminMaintenanceControl for application/json ContentType.
+type SetAdminMaintenanceControlJSONRequestBody = SetAdminMaintenanceControlRequest
+
 // ResumeAdminRouteJSONRequestBody defines body for ResumeAdminRoute for application/json ContentType.
 type ResumeAdminRouteJSONRequestBody = ResumeAdminRouteRequest
 
 // SuspendAdminRouteJSONRequestBody defines body for SuspendAdminRoute for application/json ContentType.
 type SuspendAdminRouteJSONRequestBody = SuspendAdminRouteRequest
-
-// SetAdminSwitchJSONRequestBody defines body for SetAdminSwitch for application/json ContentType.
-type SetAdminSwitchJSONRequestBody = SetAdminSwitchRequest
 
 // ExchangeOIDCTokenJSONRequestBody defines body for ExchangeOIDCToken for application/json ContentType.
 type ExchangeOIDCTokenJSONRequestBody = OIDCTokenExchangeRequest
@@ -1201,8 +1231,8 @@ type CreateCertificateIssuanceJSONRequestBody = CreateCertificateIssuanceRequest
 // CreateDomainVerificationJSONRequestBody defines body for CreateDomainVerification for application/json ContentType.
 type CreateDomainVerificationJSONRequestBody = CreateDomainVerificationRequest
 
-// AddHostnameJSONRequestBody defines body for AddHostname for application/json ContentType.
-type AddHostnameJSONRequestBody = AddHostnameRequest
+// ClaimHostnameJSONRequestBody defines body for ClaimHostname for application/json ContentType.
+type ClaimHostnameJSONRequestBody = ClaimHostnameRequest
 
 // CreateRouteJSONRequestBody defines body for CreateRoute for application/json ContentType.
 type CreateRouteJSONRequestBody = CreateRouteRequest
@@ -1221,3 +1251,9988 @@ type CreateRouteSessionJSONRequestBody = CreateRouteSessionRequest
 
 // RegisterRouteTransportJSONRequestBody defines body for RegisterRouteTransport for application/json ContentType.
 type RegisterRouteTransportJSONRequestBody = RegisterTransportRequest
+
+// RequestEditorFn is the function signature for the RequestEditor callback function
+type RequestEditorFn func(ctx context.Context, req *http.Request) error
+
+// Doer performs HTTP requests.
+//
+// The standard http.Client implements this interface.
+type HttpRequestDoer interface {
+	Do(req *http.Request) (*http.Response, error)
+}
+
+// Client which conforms to the OpenAPI3 specification for this service.
+type Client struct {
+	// The endpoint of the server conforming to this interface, with scheme,
+	// https://api.deepmap.com for example. This can contain a path relative
+	// to the server, such as https://api.deepmap.com/dev-test, and all the
+	// paths in the swagger spec will be appended to the server.
+	Server string
+
+	// Doer for performing requests, typically a *http.Client with any
+	// customized settings, such as certificate chains.
+	Client HttpRequestDoer
+
+	// A list of callbacks for modifying requests which are generated before sending over
+	// the network.
+	RequestEditors []RequestEditorFn
+}
+
+// ClientOption allows setting custom parameters during construction
+type ClientOption func(*Client) error
+
+// Creates a new Client, with reasonable defaults
+func NewClient(server string, opts ...ClientOption) (*Client, error) {
+	// create a client with sane default values
+	client := Client{
+		Server: server,
+	}
+	// mutate client and add all optional params
+	for _, o := range opts {
+		if err := o(&client); err != nil {
+			return nil, err
+		}
+	}
+	// ensure the server URL always has a trailing slash
+	if !strings.HasSuffix(client.Server, "/") {
+		client.Server += "/"
+	}
+	// create httpClient, if not already present
+	if client.Client == nil {
+		client.Client = &http.Client{}
+	}
+	return &client, nil
+}
+
+// WithHTTPClient allows overriding the default Doer, which is
+// automatically created using http.Client. This is useful for tests.
+func WithHTTPClient(doer HttpRequestDoer) ClientOption {
+	return func(c *Client) error {
+		c.Client = doer
+		return nil
+	}
+}
+
+// WithRequestEditorFn allows setting up a callback function, which will be
+// called right before sending the request. This can be used to mutate the request.
+func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
+	return func(c *Client) error {
+		c.RequestEditors = append(c.RequestEditors, fn)
+		return nil
+	}
+}
+
+// The interface specification for the client above.
+type ClientInterface interface {
+
+	// ListAdminControlSessions List control sessions without credentials
+	//
+	// Corresponds with GET /v1/admin/control-sessions (the `ListAdminControlSessions` operationId).
+	ListAdminControlSessions(ctx context.Context, params *ListAdminControlSessionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeAdminControlSession Revoke one control session
+	//
+	// Corresponds with DELETE /v1/admin/control-sessions/{id} (the `RevokeAdminControlSession` operationId).
+	RevokeAdminControlSession(ctx context.Context, id ControlSessionID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListAdminCredentials List nonsecret route credentials
+	//
+	// Corresponds with GET /v1/admin/credentials (the `ListAdminCredentials` operationId).
+	ListAdminCredentials(ctx context.Context, params *ListAdminCredentialsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeAdminCredential Revoke one route credential
+	//
+	// Corresponds with DELETE /v1/admin/credentials/{id} (the `RevokeAdminCredential` operationId).
+	RevokeAdminCredential(ctx context.Context, id CredentialID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListAdminHostnames List local hostnames across identities
+	//
+	// Corresponds with GET /v1/admin/hostnames (the `ListAdminHostnames` operationId).
+	ListAdminHostnames(ctx context.Context, params *ListAdminHostnamesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RemoveAdminHostname Remove a local hostname and its routes
+	//
+	// Corresponds with DELETE /v1/admin/hostnames/{id} (the `RemoveAdminHostname` operationId).
+	RemoveAdminHostname(ctx context.Context, id HostnameID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetAdminHostname Show one local hostname
+	//
+	// Corresponds with GET /v1/admin/hostnames/{id} (the `GetAdminHostname` operationId).
+	GetAdminHostname(ctx context.Context, id HostnameID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// QuarantineAdminHostnameWithBody Quarantine a local hostname and suspend its routes
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/admin/hostnames/{id}/quarantine (the `QuarantineAdminHostname` operationId).
+	QuarantineAdminHostnameWithBody(ctx context.Context, id HostnameID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// QuarantineAdminHostname Quarantine a local hostname and suspend its routes
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/admin/hostnames/{id}/quarantine (the `QuarantineAdminHostname` operationId).
+	QuarantineAdminHostname(ctx context.Context, id HostnameID, body QuarantineAdminHostnameJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListAdminMaintenanceControls List server maintenance controls
+	//
+	// Corresponds with GET /v1/admin/maintenance-controls (the `ListAdminMaintenanceControls` operationId).
+	ListAdminMaintenanceControls(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetAdminMaintenanceControlWithBody Set one server maintenance control
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /v1/admin/maintenance-controls/{name} (the `SetAdminMaintenanceControl` operationId).
+	SetAdminMaintenanceControlWithBody(ctx context.Context, name MaintenanceControlName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetAdminMaintenanceControl Set one server maintenance control
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /v1/admin/maintenance-controls/{name} (the `SetAdminMaintenanceControl` operationId).
+	SetAdminMaintenanceControl(ctx context.Context, name MaintenanceControlName, body SetAdminMaintenanceControlJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListAdminRoutes List routes across identities
+	//
+	// Corresponds with GET /v1/admin/routes (the `ListAdminRoutes` operationId).
+	ListAdminRoutes(ctx context.Context, params *ListAdminRoutesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetAdminRoute Show one route
+	//
+	// Corresponds with GET /v1/admin/routes/{id} (the `GetAdminRoute` operationId).
+	GetAdminRoute(ctx context.Context, id RouteID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ResumeAdminRouteWithBody Resume one route at a new route version
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/admin/routes/{id}/resume (the `ResumeAdminRoute` operationId).
+	ResumeAdminRouteWithBody(ctx context.Context, id RouteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ResumeAdminRoute Resume one route at a new route version
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/admin/routes/{id}/resume (the `ResumeAdminRoute` operationId).
+	ResumeAdminRoute(ctx context.Context, id RouteID, body ResumeAdminRouteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SuspendAdminRouteWithBody Suspend and drain one route
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/admin/routes/{id}/suspend (the `SuspendAdminRoute` operationId).
+	SuspendAdminRouteWithBody(ctx context.Context, id RouteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SuspendAdminRoute Suspend and drain one route
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/admin/routes/{id}/suspend (the `SuspendAdminRoute` operationId).
+	SuspendAdminRoute(ctx context.Context, id RouteID, body SuspendAdminRouteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetAdminServerStatus Return self-hosted server status
+	//
+	// Corresponds with GET /v1/admin/status (the `GetAdminServerStatus` operationId).
+	GetAdminServerStatus(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// LogoutControlSession Revoke the authenticated control session
+	//
+	// Corresponds with POST /v1/auth/logout (the `LogoutControlSession` operationId).
+	LogoutControlSession(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExchangeOIDCTokenWithBody Exchange an OIDC ID token for a control session
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/auth/oidc (the `ExchangeOIDCToken` operationId).
+	ExchangeOIDCTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExchangeOIDCToken Exchange an OIDC ID token for a control session
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/auth/oidc (the `ExchangeOIDCToken` operationId).
+	ExchangeOIDCToken(ctx context.Context, body ExchangeOIDCTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RefreshControlSessionWithBody Rotate a control session's access and refresh tokens
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/auth/refresh (the `RefreshControlSession` operationId).
+	RefreshControlSessionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RefreshControlSession Rotate a control session's access and refresh tokens
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/auth/refresh (the `RefreshControlSession` operationId).
+	RefreshControlSession(ctx context.Context, body RefreshControlSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExchangeLoginTokenWithBody Exchange a login token for a control session
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/auth/token (the `ExchangeLoginToken` operationId).
+	ExchangeLoginTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExchangeLoginToken Exchange a login token for a control session
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/auth/token (the `ExchangeLoginToken` operationId).
+	ExchangeLoginToken(ctx context.Context, body ExchangeLoginTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetCapabilities Describe supported server behavior
+	//
+	// Corresponds with GET /v1/capabilities (the `GetCapabilities` operationId).
+	GetCapabilities(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateCertificateIssuanceWithBody Create or resume a certificate issuance for a current route session
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/certificate-issuances (the `CreateCertificateIssuance` operationId).
+	CreateCertificateIssuanceWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateCertificateIssuance Create or resume a certificate issuance for a current route session
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/certificate-issuances (the `CreateCertificateIssuance` operationId).
+	CreateCertificateIssuance(ctx context.Context, body CreateCertificateIssuanceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetCertificateIssuance Read persisted certificate-issuance state
+	//
+	// Corresponds with GET /v1/certificate-issuances/{id} (the `GetCertificateIssuance` operationId).
+	GetCertificateIssuance(ctx context.Context, id CertificateIssuanceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// MarkCertificateChallengeReady Probe and complete an installed TLS-ALPN challenge
+	//
+	// Corresponds with POST /v1/certificate-issuances/{id}/challenge-ready (the `MarkCertificateChallengeReady` operationId).
+	MarkCertificateChallengeReady(ctx context.Context, id CertificateIssuanceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// MarkCertificateChallengeRemoved Acknowledge challenge-specific cleanup by the publisher
+	//
+	// Corresponds with POST /v1/certificate-issuances/{id}/challenge-removed (the `MarkCertificateChallengeRemoved` operationId).
+	MarkCertificateChallengeRemoved(ctx context.Context, id CertificateIssuanceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetClientIP Return the requesting client's public IP address
+	//
+	// Corresponds with GET /v1/client-ip (the `GetClientIP` operationId).
+	GetClientIP(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateDomainVerificationWithBody Create a pending custom-domain verification
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/domain-verifications (the `CreateDomainVerification` operationId).
+	CreateDomainVerificationWithBody(ctx context.Context, params *CreateDomainVerificationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateDomainVerification Create a pending custom-domain verification
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/domain-verifications (the `CreateDomainVerification` operationId).
+	CreateDomainVerification(ctx context.Context, params *CreateDomainVerificationParams, body CreateDomainVerificationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetDomainVerification Read an owned custom-domain verification
+	//
+	// Corresponds with GET /v1/domain-verifications/{id} (the `GetDomainVerification` operationId).
+	GetDomainVerification(ctx context.Context, id DomainVerificationID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CompleteDomainVerification Verify DNS and claim a custom domain
+	//
+	// Corresponds with POST /v1/domain-verifications/{id}/complete (the `CompleteDomainVerification` operationId).
+	CompleteDomainVerification(ctx context.Context, id DomainVerificationID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetHealth Confirm that the control HTTP server is serving
+	//
+	// Corresponds with GET /v1/health (the `GetHealth` operationId).
+	GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListHostnames List hostname claims owned by the authenticated identity
+	//
+	// Corresponds with GET /v1/hostnames (the `ListHostnames` operationId).
+	ListHostnames(ctx context.Context, params *ListHostnamesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ClaimHostnameWithBody Claim a managed hostname or allocate a temporary hostname
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/hostnames (the `ClaimHostname` operationId).
+	ClaimHostnameWithBody(ctx context.Context, params *ClaimHostnameParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ClaimHostname Claim a managed hostname or allocate a temporary hostname
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/hostnames (the `ClaimHostname` operationId).
+	ClaimHostname(ctx context.Context, params *ClaimHostnameParams, body ClaimHostnameJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReleaseHostname Release an owned persistent hostname claim
+	//
+	// Corresponds with DELETE /v1/hostnames/{id} (the `ReleaseHostname` operationId).
+	ReleaseHostname(ctx context.Context, id HostnameID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetReadiness Confirm that the control server and durable state are ready
+	//
+	// Corresponds with GET /v1/ready (the `GetReadiness` operationId).
+	GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListRoutes List routes owned by the authenticated identity
+	//
+	// Corresponds with GET /v1/routes (the `ListRoutes` operationId).
+	ListRoutes(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateRouteWithBody Create or reclaim an owned route with a new route version
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/routes (the `CreateRoute` operationId).
+	CreateRouteWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateRoute Create or reclaim an owned route with a new route version
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/routes (the `CreateRoute` operationId).
+	CreateRoute(ctx context.Context, body CreateRouteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteRoute Delete a route owned by the authenticated identity or route credential
+	//
+	// Corresponds with DELETE /v1/routes/{id} (the `DeleteRoute` operationId).
+	DeleteRoute(ctx context.Context, id RouteID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// MarkRouteCertificateInstalledWithBody Acknowledge installation of a validated route certificate
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/routes/{id}/certificate-installed (the `MarkRouteCertificateInstalled` operationId).
+	MarkRouteCertificateInstalledWithBody(ctx context.Context, id RouteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// MarkRouteCertificateInstalled Acknowledge installation of a validated route certificate
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/routes/{id}/certificate-installed (the `MarkRouteCertificateInstalled` operationId).
+	MarkRouteCertificateInstalled(ctx context.Context, id RouteID, body MarkRouteCertificateInstalledJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// HeartbeatRouteSessionWithBody Refresh one current route session
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/routes/{id}/heartbeat (the `HeartbeatRouteSession` operationId).
+	HeartbeatRouteSessionWithBody(ctx context.Context, id RouteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// HeartbeatRouteSession Refresh one current route session
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/routes/{id}/heartbeat (the `HeartbeatRouteSession` operationId).
+	HeartbeatRouteSession(ctx context.Context, id RouteID, body HeartbeatRouteSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// MarkRouteReadyWithBody Publish a current attached route
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/routes/{id}/ready (the `MarkRouteReady` operationId).
+	MarkRouteReadyWithBody(ctx context.Context, id RouteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// MarkRouteReady Publish a current attached route
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/routes/{id}/ready (the `MarkRouteReady` operationId).
+	MarkRouteReady(ctx context.Context, id RouteID, body MarkRouteReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateRouteSessionWithBody Create the next route version
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/routes/{id}/sessions (the `CreateRouteSession` operationId).
+	CreateRouteSessionWithBody(ctx context.Context, id RouteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateRouteSession Create the next route version
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/routes/{id}/sessions (the `CreateRouteSession` operationId).
+	CreateRouteSession(ctx context.Context, id RouteID, body CreateRouteSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RegisterRouteTransportWithBody Register the publisher Tailcat endpoint for a route session
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/routes/{id}/transport (the `RegisterRouteTransport` operationId).
+	RegisterRouteTransportWithBody(ctx context.Context, id RouteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RegisterRouteTransport Register the publisher Tailcat endpoint for a route session
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/routes/{id}/transport (the `RegisterRouteTransport` operationId).
+	RegisterRouteTransport(ctx context.Context, id RouteID, body RegisterRouteTransportJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetRelayMap Return the selected Tailcat DERP region
+	//
+	// Corresponds with GET /v1/transport/relay-map (the `GetRelayMap` operationId).
+	GetRelayMap(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+}
+
+// ListAdminControlSessions List control sessions without credentials
+//
+// Corresponds with GET /v1/admin/control-sessions (the `ListAdminControlSessions` operationId).
+func (c *Client) ListAdminControlSessions(ctx context.Context, params *ListAdminControlSessionsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListAdminControlSessionsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RevokeAdminControlSession Revoke one control session
+//
+// Corresponds with DELETE /v1/admin/control-sessions/{id} (the `RevokeAdminControlSession` operationId).
+func (c *Client) RevokeAdminControlSession(ctx context.Context, id ControlSessionID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeAdminControlSessionRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListAdminCredentials List nonsecret route credentials
+//
+// Corresponds with GET /v1/admin/credentials (the `ListAdminCredentials` operationId).
+func (c *Client) ListAdminCredentials(ctx context.Context, params *ListAdminCredentialsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListAdminCredentialsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RevokeAdminCredential Revoke one route credential
+//
+// Corresponds with DELETE /v1/admin/credentials/{id} (the `RevokeAdminCredential` operationId).
+func (c *Client) RevokeAdminCredential(ctx context.Context, id CredentialID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeAdminCredentialRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListAdminHostnames List local hostnames across identities
+//
+// Corresponds with GET /v1/admin/hostnames (the `ListAdminHostnames` operationId).
+func (c *Client) ListAdminHostnames(ctx context.Context, params *ListAdminHostnamesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListAdminHostnamesRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RemoveAdminHostname Remove a local hostname and its routes
+//
+// Corresponds with DELETE /v1/admin/hostnames/{id} (the `RemoveAdminHostname` operationId).
+func (c *Client) RemoveAdminHostname(ctx context.Context, id HostnameID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRemoveAdminHostnameRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetAdminHostname Show one local hostname
+//
+// Corresponds with GET /v1/admin/hostnames/{id} (the `GetAdminHostname` operationId).
+func (c *Client) GetAdminHostname(ctx context.Context, id HostnameID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetAdminHostnameRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// QuarantineAdminHostnameWithBody Quarantine a local hostname and suspend its routes
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/admin/hostnames/{id}/quarantine (the `QuarantineAdminHostname` operationId).
+func (c *Client) QuarantineAdminHostnameWithBody(ctx context.Context, id HostnameID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewQuarantineAdminHostnameRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// QuarantineAdminHostname Quarantine a local hostname and suspend its routes
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/admin/hostnames/{id}/quarantine (the `QuarantineAdminHostname` operationId).
+func (c *Client) QuarantineAdminHostname(ctx context.Context, id HostnameID, body QuarantineAdminHostnameJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewQuarantineAdminHostnameRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListAdminMaintenanceControls List server maintenance controls
+//
+// Corresponds with GET /v1/admin/maintenance-controls (the `ListAdminMaintenanceControls` operationId).
+func (c *Client) ListAdminMaintenanceControls(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListAdminMaintenanceControlsRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetAdminMaintenanceControlWithBody Set one server maintenance control
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /v1/admin/maintenance-controls/{name} (the `SetAdminMaintenanceControl` operationId).
+func (c *Client) SetAdminMaintenanceControlWithBody(ctx context.Context, name MaintenanceControlName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetAdminMaintenanceControlRequestWithBody(c.Server, name, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetAdminMaintenanceControl Set one server maintenance control
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /v1/admin/maintenance-controls/{name} (the `SetAdminMaintenanceControl` operationId).
+func (c *Client) SetAdminMaintenanceControl(ctx context.Context, name MaintenanceControlName, body SetAdminMaintenanceControlJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetAdminMaintenanceControlRequest(c.Server, name, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListAdminRoutes List routes across identities
+//
+// Corresponds with GET /v1/admin/routes (the `ListAdminRoutes` operationId).
+func (c *Client) ListAdminRoutes(ctx context.Context, params *ListAdminRoutesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListAdminRoutesRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetAdminRoute Show one route
+//
+// Corresponds with GET /v1/admin/routes/{id} (the `GetAdminRoute` operationId).
+func (c *Client) GetAdminRoute(ctx context.Context, id RouteID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetAdminRouteRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ResumeAdminRouteWithBody Resume one route at a new route version
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/admin/routes/{id}/resume (the `ResumeAdminRoute` operationId).
+func (c *Client) ResumeAdminRouteWithBody(ctx context.Context, id RouteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResumeAdminRouteRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ResumeAdminRoute Resume one route at a new route version
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/admin/routes/{id}/resume (the `ResumeAdminRoute` operationId).
+func (c *Client) ResumeAdminRoute(ctx context.Context, id RouteID, body ResumeAdminRouteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResumeAdminRouteRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SuspendAdminRouteWithBody Suspend and drain one route
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/admin/routes/{id}/suspend (the `SuspendAdminRoute` operationId).
+func (c *Client) SuspendAdminRouteWithBody(ctx context.Context, id RouteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSuspendAdminRouteRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SuspendAdminRoute Suspend and drain one route
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/admin/routes/{id}/suspend (the `SuspendAdminRoute` operationId).
+func (c *Client) SuspendAdminRoute(ctx context.Context, id RouteID, body SuspendAdminRouteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSuspendAdminRouteRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetAdminServerStatus Return self-hosted server status
+//
+// Corresponds with GET /v1/admin/status (the `GetAdminServerStatus` operationId).
+func (c *Client) GetAdminServerStatus(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetAdminServerStatusRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// LogoutControlSession Revoke the authenticated control session
+//
+// Corresponds with POST /v1/auth/logout (the `LogoutControlSession` operationId).
+func (c *Client) LogoutControlSession(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLogoutControlSessionRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExchangeOIDCTokenWithBody Exchange an OIDC ID token for a control session
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/auth/oidc (the `ExchangeOIDCToken` operationId).
+func (c *Client) ExchangeOIDCTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExchangeOIDCTokenRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExchangeOIDCToken Exchange an OIDC ID token for a control session
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/auth/oidc (the `ExchangeOIDCToken` operationId).
+func (c *Client) ExchangeOIDCToken(ctx context.Context, body ExchangeOIDCTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExchangeOIDCTokenRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RefreshControlSessionWithBody Rotate a control session's access and refresh tokens
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/auth/refresh (the `RefreshControlSession` operationId).
+func (c *Client) RefreshControlSessionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRefreshControlSessionRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RefreshControlSession Rotate a control session's access and refresh tokens
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/auth/refresh (the `RefreshControlSession` operationId).
+func (c *Client) RefreshControlSession(ctx context.Context, body RefreshControlSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRefreshControlSessionRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExchangeLoginTokenWithBody Exchange a login token for a control session
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/auth/token (the `ExchangeLoginToken` operationId).
+func (c *Client) ExchangeLoginTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExchangeLoginTokenRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExchangeLoginToken Exchange a login token for a control session
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/auth/token (the `ExchangeLoginToken` operationId).
+func (c *Client) ExchangeLoginToken(ctx context.Context, body ExchangeLoginTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExchangeLoginTokenRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetCapabilities Describe supported server behavior
+//
+// Corresponds with GET /v1/capabilities (the `GetCapabilities` operationId).
+func (c *Client) GetCapabilities(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetCapabilitiesRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateCertificateIssuanceWithBody Create or resume a certificate issuance for a current route session
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/certificate-issuances (the `CreateCertificateIssuance` operationId).
+func (c *Client) CreateCertificateIssuanceWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateCertificateIssuanceRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateCertificateIssuance Create or resume a certificate issuance for a current route session
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/certificate-issuances (the `CreateCertificateIssuance` operationId).
+func (c *Client) CreateCertificateIssuance(ctx context.Context, body CreateCertificateIssuanceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateCertificateIssuanceRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetCertificateIssuance Read persisted certificate-issuance state
+//
+// Corresponds with GET /v1/certificate-issuances/{id} (the `GetCertificateIssuance` operationId).
+func (c *Client) GetCertificateIssuance(ctx context.Context, id CertificateIssuanceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetCertificateIssuanceRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// MarkCertificateChallengeReady Probe and complete an installed TLS-ALPN challenge
+//
+// Corresponds with POST /v1/certificate-issuances/{id}/challenge-ready (the `MarkCertificateChallengeReady` operationId).
+func (c *Client) MarkCertificateChallengeReady(ctx context.Context, id CertificateIssuanceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMarkCertificateChallengeReadyRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// MarkCertificateChallengeRemoved Acknowledge challenge-specific cleanup by the publisher
+//
+// Corresponds with POST /v1/certificate-issuances/{id}/challenge-removed (the `MarkCertificateChallengeRemoved` operationId).
+func (c *Client) MarkCertificateChallengeRemoved(ctx context.Context, id CertificateIssuanceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMarkCertificateChallengeRemovedRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetClientIP Return the requesting client's public IP address
+//
+// Corresponds with GET /v1/client-ip (the `GetClientIP` operationId).
+func (c *Client) GetClientIP(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetClientIPRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateDomainVerificationWithBody Create a pending custom-domain verification
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/domain-verifications (the `CreateDomainVerification` operationId).
+func (c *Client) CreateDomainVerificationWithBody(ctx context.Context, params *CreateDomainVerificationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateDomainVerificationRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateDomainVerification Create a pending custom-domain verification
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/domain-verifications (the `CreateDomainVerification` operationId).
+func (c *Client) CreateDomainVerification(ctx context.Context, params *CreateDomainVerificationParams, body CreateDomainVerificationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateDomainVerificationRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetDomainVerification Read an owned custom-domain verification
+//
+// Corresponds with GET /v1/domain-verifications/{id} (the `GetDomainVerification` operationId).
+func (c *Client) GetDomainVerification(ctx context.Context, id DomainVerificationID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetDomainVerificationRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CompleteDomainVerification Verify DNS and claim a custom domain
+//
+// Corresponds with POST /v1/domain-verifications/{id}/complete (the `CompleteDomainVerification` operationId).
+func (c *Client) CompleteDomainVerification(ctx context.Context, id DomainVerificationID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCompleteDomainVerificationRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetHealth Confirm that the control HTTP server is serving
+//
+// Corresponds with GET /v1/health (the `GetHealth` operationId).
+func (c *Client) GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetHealthRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListHostnames List hostname claims owned by the authenticated identity
+//
+// Corresponds with GET /v1/hostnames (the `ListHostnames` operationId).
+func (c *Client) ListHostnames(ctx context.Context, params *ListHostnamesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListHostnamesRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ClaimHostnameWithBody Claim a managed hostname or allocate a temporary hostname
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/hostnames (the `ClaimHostname` operationId).
+func (c *Client) ClaimHostnameWithBody(ctx context.Context, params *ClaimHostnameParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewClaimHostnameRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ClaimHostname Claim a managed hostname or allocate a temporary hostname
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/hostnames (the `ClaimHostname` operationId).
+func (c *Client) ClaimHostname(ctx context.Context, params *ClaimHostnameParams, body ClaimHostnameJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewClaimHostnameRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReleaseHostname Release an owned persistent hostname claim
+//
+// Corresponds with DELETE /v1/hostnames/{id} (the `ReleaseHostname` operationId).
+func (c *Client) ReleaseHostname(ctx context.Context, id HostnameID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReleaseHostnameRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetReadiness Confirm that the control server and durable state are ready
+//
+// Corresponds with GET /v1/ready (the `GetReadiness` operationId).
+func (c *Client) GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetReadinessRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListRoutes List routes owned by the authenticated identity
+//
+// Corresponds with GET /v1/routes (the `ListRoutes` operationId).
+func (c *Client) ListRoutes(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListRoutesRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateRouteWithBody Create or reclaim an owned route with a new route version
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/routes (the `CreateRoute` operationId).
+func (c *Client) CreateRouteWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateRouteRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateRoute Create or reclaim an owned route with a new route version
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/routes (the `CreateRoute` operationId).
+func (c *Client) CreateRoute(ctx context.Context, body CreateRouteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateRouteRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteRoute Delete a route owned by the authenticated identity or route credential
+//
+// Corresponds with DELETE /v1/routes/{id} (the `DeleteRoute` operationId).
+func (c *Client) DeleteRoute(ctx context.Context, id RouteID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteRouteRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// MarkRouteCertificateInstalledWithBody Acknowledge installation of a validated route certificate
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/routes/{id}/certificate-installed (the `MarkRouteCertificateInstalled` operationId).
+func (c *Client) MarkRouteCertificateInstalledWithBody(ctx context.Context, id RouteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMarkRouteCertificateInstalledRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// MarkRouteCertificateInstalled Acknowledge installation of a validated route certificate
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/routes/{id}/certificate-installed (the `MarkRouteCertificateInstalled` operationId).
+func (c *Client) MarkRouteCertificateInstalled(ctx context.Context, id RouteID, body MarkRouteCertificateInstalledJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMarkRouteCertificateInstalledRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// HeartbeatRouteSessionWithBody Refresh one current route session
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/routes/{id}/heartbeat (the `HeartbeatRouteSession` operationId).
+func (c *Client) HeartbeatRouteSessionWithBody(ctx context.Context, id RouteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewHeartbeatRouteSessionRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// HeartbeatRouteSession Refresh one current route session
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/routes/{id}/heartbeat (the `HeartbeatRouteSession` operationId).
+func (c *Client) HeartbeatRouteSession(ctx context.Context, id RouteID, body HeartbeatRouteSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewHeartbeatRouteSessionRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// MarkRouteReadyWithBody Publish a current attached route
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/routes/{id}/ready (the `MarkRouteReady` operationId).
+func (c *Client) MarkRouteReadyWithBody(ctx context.Context, id RouteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMarkRouteReadyRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// MarkRouteReady Publish a current attached route
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/routes/{id}/ready (the `MarkRouteReady` operationId).
+func (c *Client) MarkRouteReady(ctx context.Context, id RouteID, body MarkRouteReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMarkRouteReadyRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateRouteSessionWithBody Create the next route version
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/routes/{id}/sessions (the `CreateRouteSession` operationId).
+func (c *Client) CreateRouteSessionWithBody(ctx context.Context, id RouteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateRouteSessionRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateRouteSession Create the next route version
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/routes/{id}/sessions (the `CreateRouteSession` operationId).
+func (c *Client) CreateRouteSession(ctx context.Context, id RouteID, body CreateRouteSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateRouteSessionRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RegisterRouteTransportWithBody Register the publisher Tailcat endpoint for a route session
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/routes/{id}/transport (the `RegisterRouteTransport` operationId).
+func (c *Client) RegisterRouteTransportWithBody(ctx context.Context, id RouteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRegisterRouteTransportRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RegisterRouteTransport Register the publisher Tailcat endpoint for a route session
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/routes/{id}/transport (the `RegisterRouteTransport` operationId).
+func (c *Client) RegisterRouteTransport(ctx context.Context, id RouteID, body RegisterRouteTransportJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRegisterRouteTransportRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetRelayMap Return the selected Tailcat DERP region
+//
+// Corresponds with GET /v1/transport/relay-map (the `GetRelayMap` operationId).
+func (c *Client) GetRelayMap(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetRelayMapRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// NewListAdminControlSessionsRequest constructs an http.Request for the ListAdminControlSessions method
+func NewListAdminControlSessionsRequest(server string, params *ListAdminControlSessionsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/admin/control-sessions")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewRevokeAdminControlSessionRequest constructs an http.Request for the RevokeAdminControlSession method
+func NewRevokeAdminControlSessionRequest(server string, id ControlSessionID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/admin/control-sessions/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListAdminCredentialsRequest constructs an http.Request for the ListAdminCredentials method
+func NewListAdminCredentialsRequest(server string, params *ListAdminCredentialsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/admin/credentials")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewRevokeAdminCredentialRequest constructs an http.Request for the RevokeAdminCredential method
+func NewRevokeAdminCredentialRequest(server string, id CredentialID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/admin/credentials/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListAdminHostnamesRequest constructs an http.Request for the ListAdminHostnames method
+func NewListAdminHostnamesRequest(server string, params *ListAdminHostnamesParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/admin/hostnames")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewRemoveAdminHostnameRequest constructs an http.Request for the RemoveAdminHostname method
+func NewRemoveAdminHostnameRequest(server string, id HostnameID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/admin/hostnames/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetAdminHostnameRequest constructs an http.Request for the GetAdminHostname method
+func NewGetAdminHostnameRequest(server string, id HostnameID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/admin/hostnames/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewQuarantineAdminHostnameRequest calls the generic QuarantineAdminHostname builder with application/json body
+func NewQuarantineAdminHostnameRequest(server string, id HostnameID, body QuarantineAdminHostnameJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewQuarantineAdminHostnameRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewQuarantineAdminHostnameRequestWithBody constructs an http.Request for the QuarantineAdminHostname method, with any body, and a specified content type
+func NewQuarantineAdminHostnameRequestWithBody(server string, id HostnameID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/admin/hostnames/%s/quarantine", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListAdminMaintenanceControlsRequest constructs an http.Request for the ListAdminMaintenanceControls method
+func NewListAdminMaintenanceControlsRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/admin/maintenance-controls")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewSetAdminMaintenanceControlRequest calls the generic SetAdminMaintenanceControl builder with application/json body
+func NewSetAdminMaintenanceControlRequest(server string, name MaintenanceControlName, body SetAdminMaintenanceControlJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSetAdminMaintenanceControlRequestWithBody(server, name, "application/json", bodyReader)
+}
+
+// NewSetAdminMaintenanceControlRequestWithBody constructs an http.Request for the SetAdminMaintenanceControl method, with any body, and a specified content type
+func NewSetAdminMaintenanceControlRequestWithBody(server string, name MaintenanceControlName, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/admin/maintenance-controls/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListAdminRoutesRequest constructs an http.Request for the ListAdminRoutes method
+func NewListAdminRoutesRequest(server string, params *ListAdminRoutesParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/admin/routes")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetAdminRouteRequest constructs an http.Request for the GetAdminRoute method
+func NewGetAdminRouteRequest(server string, id RouteID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/admin/routes/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewResumeAdminRouteRequest calls the generic ResumeAdminRoute builder with application/json body
+func NewResumeAdminRouteRequest(server string, id RouteID, body ResumeAdminRouteJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewResumeAdminRouteRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewResumeAdminRouteRequestWithBody constructs an http.Request for the ResumeAdminRoute method, with any body, and a specified content type
+func NewResumeAdminRouteRequestWithBody(server string, id RouteID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/admin/routes/%s/resume", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewSuspendAdminRouteRequest calls the generic SuspendAdminRoute builder with application/json body
+func NewSuspendAdminRouteRequest(server string, id RouteID, body SuspendAdminRouteJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSuspendAdminRouteRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewSuspendAdminRouteRequestWithBody constructs an http.Request for the SuspendAdminRoute method, with any body, and a specified content type
+func NewSuspendAdminRouteRequestWithBody(server string, id RouteID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/admin/routes/%s/suspend", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetAdminServerStatusRequest constructs an http.Request for the GetAdminServerStatus method
+func NewGetAdminServerStatusRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/admin/status")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewLogoutControlSessionRequest constructs an http.Request for the LogoutControlSession method
+func NewLogoutControlSessionRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/auth/logout")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewExchangeOIDCTokenRequest calls the generic ExchangeOIDCToken builder with application/json body
+func NewExchangeOIDCTokenRequest(server string, body ExchangeOIDCTokenJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewExchangeOIDCTokenRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewExchangeOIDCTokenRequestWithBody constructs an http.Request for the ExchangeOIDCToken method, with any body, and a specified content type
+func NewExchangeOIDCTokenRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/auth/oidc")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRefreshControlSessionRequest calls the generic RefreshControlSession builder with application/json body
+func NewRefreshControlSessionRequest(server string, body RefreshControlSessionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRefreshControlSessionRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewRefreshControlSessionRequestWithBody constructs an http.Request for the RefreshControlSession method, with any body, and a specified content type
+func NewRefreshControlSessionRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/auth/refresh")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewExchangeLoginTokenRequest calls the generic ExchangeLoginToken builder with application/json body
+func NewExchangeLoginTokenRequest(server string, body ExchangeLoginTokenJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewExchangeLoginTokenRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewExchangeLoginTokenRequestWithBody constructs an http.Request for the ExchangeLoginToken method, with any body, and a specified content type
+func NewExchangeLoginTokenRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/auth/token")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetCapabilitiesRequest constructs an http.Request for the GetCapabilities method
+func NewGetCapabilitiesRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/capabilities")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateCertificateIssuanceRequest calls the generic CreateCertificateIssuance builder with application/json body
+func NewCreateCertificateIssuanceRequest(server string, body CreateCertificateIssuanceJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateCertificateIssuanceRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreateCertificateIssuanceRequestWithBody constructs an http.Request for the CreateCertificateIssuance method, with any body, and a specified content type
+func NewCreateCertificateIssuanceRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/certificate-issuances")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetCertificateIssuanceRequest constructs an http.Request for the GetCertificateIssuance method
+func NewGetCertificateIssuanceRequest(server string, id CertificateIssuanceID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/certificate-issuances/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewMarkCertificateChallengeReadyRequest constructs an http.Request for the MarkCertificateChallengeReady method
+func NewMarkCertificateChallengeReadyRequest(server string, id CertificateIssuanceID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/certificate-issuances/%s/challenge-ready", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewMarkCertificateChallengeRemovedRequest constructs an http.Request for the MarkCertificateChallengeRemoved method
+func NewMarkCertificateChallengeRemovedRequest(server string, id CertificateIssuanceID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/certificate-issuances/%s/challenge-removed", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetClientIPRequest constructs an http.Request for the GetClientIP method
+func NewGetClientIPRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/client-ip")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateDomainVerificationRequest calls the generic CreateDomainVerification builder with application/json body
+func NewCreateDomainVerificationRequest(server string, params *CreateDomainVerificationParams, body CreateDomainVerificationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateDomainVerificationRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewCreateDomainVerificationRequestWithBody constructs an http.Request for the CreateDomainVerification method, with any body, and a specified content type
+func NewCreateDomainVerificationRequestWithBody(server string, params *CreateDomainVerificationParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/domain-verifications")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewGetDomainVerificationRequest constructs an http.Request for the GetDomainVerification method
+func NewGetDomainVerificationRequest(server string, id DomainVerificationID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/domain-verifications/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCompleteDomainVerificationRequest constructs an http.Request for the CompleteDomainVerification method
+func NewCompleteDomainVerificationRequest(server string, id DomainVerificationID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/domain-verifications/%s/complete", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetHealthRequest constructs an http.Request for the GetHealth method
+func NewGetHealthRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/health")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListHostnamesRequest constructs an http.Request for the ListHostnames method
+func NewListHostnamesRequest(server string, params *ListHostnamesParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/hostnames")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewClaimHostnameRequest calls the generic ClaimHostname builder with application/json body
+func NewClaimHostnameRequest(server string, params *ClaimHostnameParams, body ClaimHostnameJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewClaimHostnameRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewClaimHostnameRequestWithBody constructs an http.Request for the ClaimHostname method, with any body, and a specified content type
+func NewClaimHostnameRequestWithBody(server string, params *ClaimHostnameParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/hostnames")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewReleaseHostnameRequest constructs an http.Request for the ReleaseHostname method
+func NewReleaseHostnameRequest(server string, id HostnameID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/hostnames/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetReadinessRequest constructs an http.Request for the GetReadiness method
+func NewGetReadinessRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/ready")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListRoutesRequest constructs an http.Request for the ListRoutes method
+func NewListRoutesRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/routes")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateRouteRequest calls the generic CreateRoute builder with application/json body
+func NewCreateRouteRequest(server string, body CreateRouteJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateRouteRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreateRouteRequestWithBody constructs an http.Request for the CreateRoute method, with any body, and a specified content type
+func NewCreateRouteRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/routes")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteRouteRequest constructs an http.Request for the DeleteRoute method
+func NewDeleteRouteRequest(server string, id RouteID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/routes/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewMarkRouteCertificateInstalledRequest calls the generic MarkRouteCertificateInstalled builder with application/json body
+func NewMarkRouteCertificateInstalledRequest(server string, id RouteID, body MarkRouteCertificateInstalledJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewMarkRouteCertificateInstalledRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewMarkRouteCertificateInstalledRequestWithBody constructs an http.Request for the MarkRouteCertificateInstalled method, with any body, and a specified content type
+func NewMarkRouteCertificateInstalledRequestWithBody(server string, id RouteID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/routes/%s/certificate-installed", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewHeartbeatRouteSessionRequest calls the generic HeartbeatRouteSession builder with application/json body
+func NewHeartbeatRouteSessionRequest(server string, id RouteID, body HeartbeatRouteSessionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewHeartbeatRouteSessionRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewHeartbeatRouteSessionRequestWithBody constructs an http.Request for the HeartbeatRouteSession method, with any body, and a specified content type
+func NewHeartbeatRouteSessionRequestWithBody(server string, id RouteID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/routes/%s/heartbeat", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewMarkRouteReadyRequest calls the generic MarkRouteReady builder with application/json body
+func NewMarkRouteReadyRequest(server string, id RouteID, body MarkRouteReadyJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewMarkRouteReadyRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewMarkRouteReadyRequestWithBody constructs an http.Request for the MarkRouteReady method, with any body, and a specified content type
+func NewMarkRouteReadyRequestWithBody(server string, id RouteID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/routes/%s/ready", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewCreateRouteSessionRequest calls the generic CreateRouteSession builder with application/json body
+func NewCreateRouteSessionRequest(server string, id RouteID, body CreateRouteSessionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateRouteSessionRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewCreateRouteSessionRequestWithBody constructs an http.Request for the CreateRouteSession method, with any body, and a specified content type
+func NewCreateRouteSessionRequestWithBody(server string, id RouteID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/routes/%s/sessions", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRegisterRouteTransportRequest calls the generic RegisterRouteTransport builder with application/json body
+func NewRegisterRouteTransportRequest(server string, id RouteID, body RegisterRouteTransportJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRegisterRouteTransportRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewRegisterRouteTransportRequestWithBody constructs an http.Request for the RegisterRouteTransport method, with any body, and a specified content type
+func NewRegisterRouteTransportRequestWithBody(server string, id RouteID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/routes/%s/transport", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetRelayMapRequest constructs an http.Request for the GetRelayMap method
+func NewGetRelayMapRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/transport/relay-map")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+func (c *Client) applyEditors(ctx context.Context, req *http.Request, additionalEditors []RequestEditorFn) error {
+	for _, r := range c.RequestEditors {
+		if err := r(ctx, req); err != nil {
+			return err
+		}
+	}
+	for _, r := range additionalEditors {
+		if err := r(ctx, req); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ClientWithResponses builds on ClientInterface to offer response payloads
+type ClientWithResponses struct {
+	ClientInterface
+}
+
+// NewClientWithResponses creates a new ClientWithResponses, which wraps
+// Client with return type handling
+func NewClientWithResponses(server string, opts ...ClientOption) (*ClientWithResponses, error) {
+	client, err := NewClient(server, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &ClientWithResponses{client}, nil
+}
+
+// WithBaseURL overrides the baseURL.
+func WithBaseURL(baseURL string) ClientOption {
+	return func(c *Client) error {
+		newBaseURL, err := url.Parse(baseURL)
+		if err != nil {
+			return err
+		}
+		c.Server = newBaseURL.String()
+		return nil
+	}
+}
+
+// ClientWithResponsesInterface is the interface specification for the client with responses above.
+type ClientWithResponsesInterface interface {
+
+	// ListAdminControlSessionsWithResponse List control sessions without credentials
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/admin/control-sessions (the `ListAdminControlSessions` operationId).
+	ListAdminControlSessionsWithResponse(ctx context.Context, params *ListAdminControlSessionsParams, reqEditors ...RequestEditorFn) (*ListAdminControlSessionsResponse, error)
+
+	// RevokeAdminControlSessionWithResponse Revoke one control session
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/admin/control-sessions/{id} (the `RevokeAdminControlSession` operationId).
+	RevokeAdminControlSessionWithResponse(ctx context.Context, id ControlSessionID, reqEditors ...RequestEditorFn) (*RevokeAdminControlSessionResponse, error)
+
+	// ListAdminCredentialsWithResponse List nonsecret route credentials
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/admin/credentials (the `ListAdminCredentials` operationId).
+	ListAdminCredentialsWithResponse(ctx context.Context, params *ListAdminCredentialsParams, reqEditors ...RequestEditorFn) (*ListAdminCredentialsResponse, error)
+
+	// RevokeAdminCredentialWithResponse Revoke one route credential
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/admin/credentials/{id} (the `RevokeAdminCredential` operationId).
+	RevokeAdminCredentialWithResponse(ctx context.Context, id CredentialID, reqEditors ...RequestEditorFn) (*RevokeAdminCredentialResponse, error)
+
+	// ListAdminHostnamesWithResponse List local hostnames across identities
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/admin/hostnames (the `ListAdminHostnames` operationId).
+	ListAdminHostnamesWithResponse(ctx context.Context, params *ListAdminHostnamesParams, reqEditors ...RequestEditorFn) (*ListAdminHostnamesResponse, error)
+
+	// RemoveAdminHostnameWithResponse Remove a local hostname and its routes
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/admin/hostnames/{id} (the `RemoveAdminHostname` operationId).
+	RemoveAdminHostnameWithResponse(ctx context.Context, id HostnameID, reqEditors ...RequestEditorFn) (*RemoveAdminHostnameResponse, error)
+
+	// GetAdminHostnameWithResponse Show one local hostname
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/admin/hostnames/{id} (the `GetAdminHostname` operationId).
+	GetAdminHostnameWithResponse(ctx context.Context, id HostnameID, reqEditors ...RequestEditorFn) (*GetAdminHostnameResponse, error)
+
+	// QuarantineAdminHostnameWithBodyWithResponse Quarantine a local hostname and suspend its routes
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/admin/hostnames/{id}/quarantine (the `QuarantineAdminHostname` operationId).
+	QuarantineAdminHostnameWithBodyWithResponse(ctx context.Context, id HostnameID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*QuarantineAdminHostnameResponse, error)
+
+	// QuarantineAdminHostnameWithResponse Quarantine a local hostname and suspend its routes
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/admin/hostnames/{id}/quarantine (the `QuarantineAdminHostname` operationId).
+	QuarantineAdminHostnameWithResponse(ctx context.Context, id HostnameID, body QuarantineAdminHostnameJSONRequestBody, reqEditors ...RequestEditorFn) (*QuarantineAdminHostnameResponse, error)
+
+	// ListAdminMaintenanceControlsWithResponse List server maintenance controls
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/admin/maintenance-controls (the `ListAdminMaintenanceControls` operationId).
+	ListAdminMaintenanceControlsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListAdminMaintenanceControlsResponse, error)
+
+	// SetAdminMaintenanceControlWithBodyWithResponse Set one server maintenance control
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/admin/maintenance-controls/{name} (the `SetAdminMaintenanceControl` operationId).
+	SetAdminMaintenanceControlWithBodyWithResponse(ctx context.Context, name MaintenanceControlName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetAdminMaintenanceControlResponse, error)
+
+	// SetAdminMaintenanceControlWithResponse Set one server maintenance control
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/admin/maintenance-controls/{name} (the `SetAdminMaintenanceControl` operationId).
+	SetAdminMaintenanceControlWithResponse(ctx context.Context, name MaintenanceControlName, body SetAdminMaintenanceControlJSONRequestBody, reqEditors ...RequestEditorFn) (*SetAdminMaintenanceControlResponse, error)
+
+	// ListAdminRoutesWithResponse List routes across identities
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/admin/routes (the `ListAdminRoutes` operationId).
+	ListAdminRoutesWithResponse(ctx context.Context, params *ListAdminRoutesParams, reqEditors ...RequestEditorFn) (*ListAdminRoutesResponse, error)
+
+	// GetAdminRouteWithResponse Show one route
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/admin/routes/{id} (the `GetAdminRoute` operationId).
+	GetAdminRouteWithResponse(ctx context.Context, id RouteID, reqEditors ...RequestEditorFn) (*GetAdminRouteResponse, error)
+
+	// ResumeAdminRouteWithBodyWithResponse Resume one route at a new route version
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/admin/routes/{id}/resume (the `ResumeAdminRoute` operationId).
+	ResumeAdminRouteWithBodyWithResponse(ctx context.Context, id RouteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ResumeAdminRouteResponse, error)
+
+	// ResumeAdminRouteWithResponse Resume one route at a new route version
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/admin/routes/{id}/resume (the `ResumeAdminRoute` operationId).
+	ResumeAdminRouteWithResponse(ctx context.Context, id RouteID, body ResumeAdminRouteJSONRequestBody, reqEditors ...RequestEditorFn) (*ResumeAdminRouteResponse, error)
+
+	// SuspendAdminRouteWithBodyWithResponse Suspend and drain one route
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/admin/routes/{id}/suspend (the `SuspendAdminRoute` operationId).
+	SuspendAdminRouteWithBodyWithResponse(ctx context.Context, id RouteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SuspendAdminRouteResponse, error)
+
+	// SuspendAdminRouteWithResponse Suspend and drain one route
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/admin/routes/{id}/suspend (the `SuspendAdminRoute` operationId).
+	SuspendAdminRouteWithResponse(ctx context.Context, id RouteID, body SuspendAdminRouteJSONRequestBody, reqEditors ...RequestEditorFn) (*SuspendAdminRouteResponse, error)
+
+	// GetAdminServerStatusWithResponse Return self-hosted server status
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/admin/status (the `GetAdminServerStatus` operationId).
+	GetAdminServerStatusWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAdminServerStatusResponse, error)
+
+	// LogoutControlSessionWithResponse Revoke the authenticated control session
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/auth/logout (the `LogoutControlSession` operationId).
+	LogoutControlSessionWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*LogoutControlSessionResponse, error)
+
+	// ExchangeOIDCTokenWithBodyWithResponse Exchange an OIDC ID token for a control session
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/auth/oidc (the `ExchangeOIDCToken` operationId).
+	ExchangeOIDCTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExchangeOIDCTokenResponse, error)
+
+	// ExchangeOIDCTokenWithResponse Exchange an OIDC ID token for a control session
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/auth/oidc (the `ExchangeOIDCToken` operationId).
+	ExchangeOIDCTokenWithResponse(ctx context.Context, body ExchangeOIDCTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*ExchangeOIDCTokenResponse, error)
+
+	// RefreshControlSessionWithBodyWithResponse Rotate a control session's access and refresh tokens
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/auth/refresh (the `RefreshControlSession` operationId).
+	RefreshControlSessionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RefreshControlSessionResponse, error)
+
+	// RefreshControlSessionWithResponse Rotate a control session's access and refresh tokens
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/auth/refresh (the `RefreshControlSession` operationId).
+	RefreshControlSessionWithResponse(ctx context.Context, body RefreshControlSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*RefreshControlSessionResponse, error)
+
+	// ExchangeLoginTokenWithBodyWithResponse Exchange a login token for a control session
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/auth/token (the `ExchangeLoginToken` operationId).
+	ExchangeLoginTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExchangeLoginTokenResponse, error)
+
+	// ExchangeLoginTokenWithResponse Exchange a login token for a control session
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/auth/token (the `ExchangeLoginToken` operationId).
+	ExchangeLoginTokenWithResponse(ctx context.Context, body ExchangeLoginTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*ExchangeLoginTokenResponse, error)
+
+	// GetCapabilitiesWithResponse Describe supported server behavior
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/capabilities (the `GetCapabilities` operationId).
+	GetCapabilitiesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetCapabilitiesResponse, error)
+
+	// CreateCertificateIssuanceWithBodyWithResponse Create or resume a certificate issuance for a current route session
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/certificate-issuances (the `CreateCertificateIssuance` operationId).
+	CreateCertificateIssuanceWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateCertificateIssuanceResponse, error)
+
+	// CreateCertificateIssuanceWithResponse Create or resume a certificate issuance for a current route session
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/certificate-issuances (the `CreateCertificateIssuance` operationId).
+	CreateCertificateIssuanceWithResponse(ctx context.Context, body CreateCertificateIssuanceJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCertificateIssuanceResponse, error)
+
+	// GetCertificateIssuanceWithResponse Read persisted certificate-issuance state
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/certificate-issuances/{id} (the `GetCertificateIssuance` operationId).
+	GetCertificateIssuanceWithResponse(ctx context.Context, id CertificateIssuanceID, reqEditors ...RequestEditorFn) (*GetCertificateIssuanceResponse, error)
+
+	// MarkCertificateChallengeReadyWithResponse Probe and complete an installed TLS-ALPN challenge
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/certificate-issuances/{id}/challenge-ready (the `MarkCertificateChallengeReady` operationId).
+	MarkCertificateChallengeReadyWithResponse(ctx context.Context, id CertificateIssuanceID, reqEditors ...RequestEditorFn) (*MarkCertificateChallengeReadyResponse, error)
+
+	// MarkCertificateChallengeRemovedWithResponse Acknowledge challenge-specific cleanup by the publisher
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/certificate-issuances/{id}/challenge-removed (the `MarkCertificateChallengeRemoved` operationId).
+	MarkCertificateChallengeRemovedWithResponse(ctx context.Context, id CertificateIssuanceID, reqEditors ...RequestEditorFn) (*MarkCertificateChallengeRemovedResponse, error)
+
+	// GetClientIPWithResponse Return the requesting client's public IP address
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/client-ip (the `GetClientIP` operationId).
+	GetClientIPWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetClientIPResponse, error)
+
+	// CreateDomainVerificationWithBodyWithResponse Create a pending custom-domain verification
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/domain-verifications (the `CreateDomainVerification` operationId).
+	CreateDomainVerificationWithBodyWithResponse(ctx context.Context, params *CreateDomainVerificationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateDomainVerificationResponse, error)
+
+	// CreateDomainVerificationWithResponse Create a pending custom-domain verification
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/domain-verifications (the `CreateDomainVerification` operationId).
+	CreateDomainVerificationWithResponse(ctx context.Context, params *CreateDomainVerificationParams, body CreateDomainVerificationJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateDomainVerificationResponse, error)
+
+	// GetDomainVerificationWithResponse Read an owned custom-domain verification
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/domain-verifications/{id} (the `GetDomainVerification` operationId).
+	GetDomainVerificationWithResponse(ctx context.Context, id DomainVerificationID, reqEditors ...RequestEditorFn) (*GetDomainVerificationResponse, error)
+
+	// CompleteDomainVerificationWithResponse Verify DNS and claim a custom domain
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/domain-verifications/{id}/complete (the `CompleteDomainVerification` operationId).
+	CompleteDomainVerificationWithResponse(ctx context.Context, id DomainVerificationID, reqEditors ...RequestEditorFn) (*CompleteDomainVerificationResponse, error)
+
+	// GetHealthWithResponse Confirm that the control HTTP server is serving
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/health (the `GetHealth` operationId).
+	GetHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetHealthResponse, error)
+
+	// ListHostnamesWithResponse List hostname claims owned by the authenticated identity
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/hostnames (the `ListHostnames` operationId).
+	ListHostnamesWithResponse(ctx context.Context, params *ListHostnamesParams, reqEditors ...RequestEditorFn) (*ListHostnamesResponse, error)
+
+	// ClaimHostnameWithBodyWithResponse Claim a managed hostname or allocate a temporary hostname
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/hostnames (the `ClaimHostname` operationId).
+	ClaimHostnameWithBodyWithResponse(ctx context.Context, params *ClaimHostnameParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClaimHostnameResponse, error)
+
+	// ClaimHostnameWithResponse Claim a managed hostname or allocate a temporary hostname
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/hostnames (the `ClaimHostname` operationId).
+	ClaimHostnameWithResponse(ctx context.Context, params *ClaimHostnameParams, body ClaimHostnameJSONRequestBody, reqEditors ...RequestEditorFn) (*ClaimHostnameResponse, error)
+
+	// ReleaseHostnameWithResponse Release an owned persistent hostname claim
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/hostnames/{id} (the `ReleaseHostname` operationId).
+	ReleaseHostnameWithResponse(ctx context.Context, id HostnameID, reqEditors ...RequestEditorFn) (*ReleaseHostnameResponse, error)
+
+	// GetReadinessWithResponse Confirm that the control server and durable state are ready
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/ready (the `GetReadiness` operationId).
+	GetReadinessWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetReadinessResponse, error)
+
+	// ListRoutesWithResponse List routes owned by the authenticated identity
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/routes (the `ListRoutes` operationId).
+	ListRoutesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListRoutesResponse, error)
+
+	// CreateRouteWithBodyWithResponse Create or reclaim an owned route with a new route version
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/routes (the `CreateRoute` operationId).
+	CreateRouteWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateRouteResponse, error)
+
+	// CreateRouteWithResponse Create or reclaim an owned route with a new route version
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/routes (the `CreateRoute` operationId).
+	CreateRouteWithResponse(ctx context.Context, body CreateRouteJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateRouteResponse, error)
+
+	// DeleteRouteWithResponse Delete a route owned by the authenticated identity or route credential
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/routes/{id} (the `DeleteRoute` operationId).
+	DeleteRouteWithResponse(ctx context.Context, id RouteID, reqEditors ...RequestEditorFn) (*DeleteRouteResponse, error)
+
+	// MarkRouteCertificateInstalledWithBodyWithResponse Acknowledge installation of a validated route certificate
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/routes/{id}/certificate-installed (the `MarkRouteCertificateInstalled` operationId).
+	MarkRouteCertificateInstalledWithBodyWithResponse(ctx context.Context, id RouteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MarkRouteCertificateInstalledResponse, error)
+
+	// MarkRouteCertificateInstalledWithResponse Acknowledge installation of a validated route certificate
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/routes/{id}/certificate-installed (the `MarkRouteCertificateInstalled` operationId).
+	MarkRouteCertificateInstalledWithResponse(ctx context.Context, id RouteID, body MarkRouteCertificateInstalledJSONRequestBody, reqEditors ...RequestEditorFn) (*MarkRouteCertificateInstalledResponse, error)
+
+	// HeartbeatRouteSessionWithBodyWithResponse Refresh one current route session
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/routes/{id}/heartbeat (the `HeartbeatRouteSession` operationId).
+	HeartbeatRouteSessionWithBodyWithResponse(ctx context.Context, id RouteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*HeartbeatRouteSessionResponse, error)
+
+	// HeartbeatRouteSessionWithResponse Refresh one current route session
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/routes/{id}/heartbeat (the `HeartbeatRouteSession` operationId).
+	HeartbeatRouteSessionWithResponse(ctx context.Context, id RouteID, body HeartbeatRouteSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*HeartbeatRouteSessionResponse, error)
+
+	// MarkRouteReadyWithBodyWithResponse Publish a current attached route
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/routes/{id}/ready (the `MarkRouteReady` operationId).
+	MarkRouteReadyWithBodyWithResponse(ctx context.Context, id RouteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MarkRouteReadyResponse, error)
+
+	// MarkRouteReadyWithResponse Publish a current attached route
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/routes/{id}/ready (the `MarkRouteReady` operationId).
+	MarkRouteReadyWithResponse(ctx context.Context, id RouteID, body MarkRouteReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*MarkRouteReadyResponse, error)
+
+	// CreateRouteSessionWithBodyWithResponse Create the next route version
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/routes/{id}/sessions (the `CreateRouteSession` operationId).
+	CreateRouteSessionWithBodyWithResponse(ctx context.Context, id RouteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateRouteSessionResponse, error)
+
+	// CreateRouteSessionWithResponse Create the next route version
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/routes/{id}/sessions (the `CreateRouteSession` operationId).
+	CreateRouteSessionWithResponse(ctx context.Context, id RouteID, body CreateRouteSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateRouteSessionResponse, error)
+
+	// RegisterRouteTransportWithBodyWithResponse Register the publisher Tailcat endpoint for a route session
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/routes/{id}/transport (the `RegisterRouteTransport` operationId).
+	RegisterRouteTransportWithBodyWithResponse(ctx context.Context, id RouteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterRouteTransportResponse, error)
+
+	// RegisterRouteTransportWithResponse Register the publisher Tailcat endpoint for a route session
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/routes/{id}/transport (the `RegisterRouteTransport` operationId).
+	RegisterRouteTransportWithResponse(ctx context.Context, id RouteID, body RegisterRouteTransportJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterRouteTransportResponse, error)
+
+	// GetRelayMapWithResponse Return the selected Tailcat DERP region
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/transport/relay-map (the `GetRelayMap` operationId).
+	GetRelayMapWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetRelayMapResponse, error)
+}
+
+// ListAdminControlSessionsResponse401Headers the declared response headers of an HTTP 401 response for ListAdminControlSessions
+type ListAdminControlSessionsResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ListAdminControlSessionsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AdminControlSessionPage
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ListAdminControlSessionsResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListAdminControlSessionsResponse) GetJSON200() *AdminControlSessionPage {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListAdminControlSessionsResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListAdminControlSessionsResponse) GetApplicationproblemJSON403() *Problem {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListAdminControlSessionsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListAdminControlSessionsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListAdminControlSessionsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListAdminControlSessionsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListAdminControlSessionsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// RevokeAdminControlSessionResponse401Headers the declared response headers of an HTTP 401 response for RevokeAdminControlSession
+type RevokeAdminControlSessionResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type RevokeAdminControlSessionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *RevokeAdminControlSessionResponse401Headers
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r RevokeAdminControlSessionResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r RevokeAdminControlSessionResponse) GetApplicationproblemJSON403() *Problem {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r RevokeAdminControlSessionResponse) GetApplicationproblemJSON404() *Problem {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RevokeAdminControlSessionResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RevokeAdminControlSessionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokeAdminControlSessionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokeAdminControlSessionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RevokeAdminControlSessionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ListAdminCredentialsResponse401Headers the declared response headers of an HTTP 401 response for ListAdminCredentials
+type ListAdminCredentialsResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ListAdminCredentialsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AdminCredentialPage
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ListAdminCredentialsResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListAdminCredentialsResponse) GetJSON200() *AdminCredentialPage {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListAdminCredentialsResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListAdminCredentialsResponse) GetApplicationproblemJSON403() *Problem {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListAdminCredentialsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListAdminCredentialsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListAdminCredentialsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListAdminCredentialsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListAdminCredentialsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// RevokeAdminCredentialResponse401Headers the declared response headers of an HTTP 401 response for RevokeAdminCredential
+type RevokeAdminCredentialResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type RevokeAdminCredentialResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *RevokeAdminCredentialResponse401Headers
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r RevokeAdminCredentialResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r RevokeAdminCredentialResponse) GetApplicationproblemJSON403() *Problem {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r RevokeAdminCredentialResponse) GetApplicationproblemJSON404() *Problem {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r RevokeAdminCredentialResponse) GetApplicationproblemJSON409() *Problem {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RevokeAdminCredentialResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RevokeAdminCredentialResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokeAdminCredentialResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokeAdminCredentialResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RevokeAdminCredentialResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ListAdminHostnamesResponse401Headers the declared response headers of an HTTP 401 response for ListAdminHostnames
+type ListAdminHostnamesResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ListAdminHostnamesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AdminHostnamePage
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ListAdminHostnamesResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListAdminHostnamesResponse) GetJSON200() *AdminHostnamePage {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListAdminHostnamesResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListAdminHostnamesResponse) GetApplicationproblemJSON403() *Problem {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListAdminHostnamesResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListAdminHostnamesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListAdminHostnamesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListAdminHostnamesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListAdminHostnamesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// RemoveAdminHostnameResponse401Headers the declared response headers of an HTTP 401 response for RemoveAdminHostname
+type RemoveAdminHostnameResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type RemoveAdminHostnameResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *RemoveAdminHostnameResponse401Headers
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r RemoveAdminHostnameResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r RemoveAdminHostnameResponse) GetApplicationproblemJSON403() *Problem {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r RemoveAdminHostnameResponse) GetApplicationproblemJSON404() *Problem {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r RemoveAdminHostnameResponse) GetApplicationproblemJSON409() *Problem {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RemoveAdminHostnameResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RemoveAdminHostnameResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RemoveAdminHostnameResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RemoveAdminHostnameResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RemoveAdminHostnameResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetAdminHostnameResponse401Headers the declared response headers of an HTTP 401 response for GetAdminHostname
+type GetAdminHostnameResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type GetAdminHostnameResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AdminHostname
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *GetAdminHostnameResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetAdminHostnameResponse) GetJSON200() *AdminHostname {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetAdminHostnameResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetAdminHostnameResponse) GetApplicationproblemJSON403() *Problem {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GetAdminHostnameResponse) GetApplicationproblemJSON404() *Problem {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetAdminHostnameResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetAdminHostnameResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetAdminHostnameResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetAdminHostnameResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetAdminHostnameResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// QuarantineAdminHostnameResponse401Headers the declared response headers of an HTTP 401 response for QuarantineAdminHostname
+type QuarantineAdminHostnameResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type QuarantineAdminHostnameResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *QuarantineAdminHostnameResponse401Headers
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r QuarantineAdminHostnameResponse) GetApplicationproblemJSON400() *Problem {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r QuarantineAdminHostnameResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r QuarantineAdminHostnameResponse) GetApplicationproblemJSON403() *Problem {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r QuarantineAdminHostnameResponse) GetApplicationproblemJSON404() *Problem {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r QuarantineAdminHostnameResponse) GetApplicationproblemJSON409() *Problem {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r QuarantineAdminHostnameResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r QuarantineAdminHostnameResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r QuarantineAdminHostnameResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r QuarantineAdminHostnameResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r QuarantineAdminHostnameResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ListAdminMaintenanceControlsResponse401Headers the declared response headers of an HTTP 401 response for ListAdminMaintenanceControls
+type ListAdminMaintenanceControlsResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ListAdminMaintenanceControlsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]AdminMaintenanceControl
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ListAdminMaintenanceControlsResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListAdminMaintenanceControlsResponse) GetJSON200() *[]AdminMaintenanceControl {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListAdminMaintenanceControlsResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListAdminMaintenanceControlsResponse) GetApplicationproblemJSON403() *Problem {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListAdminMaintenanceControlsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListAdminMaintenanceControlsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListAdminMaintenanceControlsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListAdminMaintenanceControlsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListAdminMaintenanceControlsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// SetAdminMaintenanceControlResponse401Headers the declared response headers of an HTTP 401 response for SetAdminMaintenanceControl
+type SetAdminMaintenanceControlResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type SetAdminMaintenanceControlResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AdminMaintenanceControl
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *SetAdminMaintenanceControlResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SetAdminMaintenanceControlResponse) GetJSON200() *AdminMaintenanceControl {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r SetAdminMaintenanceControlResponse) GetApplicationproblemJSON400() *Problem {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r SetAdminMaintenanceControlResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r SetAdminMaintenanceControlResponse) GetApplicationproblemJSON403() *Problem {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r SetAdminMaintenanceControlResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r SetAdminMaintenanceControlResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SetAdminMaintenanceControlResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SetAdminMaintenanceControlResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SetAdminMaintenanceControlResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ListAdminRoutesResponse401Headers the declared response headers of an HTTP 401 response for ListAdminRoutes
+type ListAdminRoutesResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ListAdminRoutesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AdminRoutePage
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ListAdminRoutesResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListAdminRoutesResponse) GetJSON200() *AdminRoutePage {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListAdminRoutesResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListAdminRoutesResponse) GetApplicationproblemJSON403() *Problem {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListAdminRoutesResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListAdminRoutesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListAdminRoutesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListAdminRoutesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListAdminRoutesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetAdminRouteResponse401Headers the declared response headers of an HTTP 401 response for GetAdminRoute
+type GetAdminRouteResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type GetAdminRouteResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AdminRoute
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *GetAdminRouteResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetAdminRouteResponse) GetJSON200() *AdminRoute {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetAdminRouteResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetAdminRouteResponse) GetApplicationproblemJSON403() *Problem {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GetAdminRouteResponse) GetApplicationproblemJSON404() *Problem {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetAdminRouteResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetAdminRouteResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetAdminRouteResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetAdminRouteResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetAdminRouteResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ResumeAdminRouteResponse401Headers the declared response headers of an HTTP 401 response for ResumeAdminRoute
+type ResumeAdminRouteResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ResumeAdminRouteResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AdminRoute
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ResumeAdminRouteResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ResumeAdminRouteResponse) GetJSON200() *AdminRoute {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ResumeAdminRouteResponse) GetApplicationproblemJSON400() *Problem {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ResumeAdminRouteResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ResumeAdminRouteResponse) GetApplicationproblemJSON403() *Problem {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ResumeAdminRouteResponse) GetApplicationproblemJSON404() *Problem {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r ResumeAdminRouteResponse) GetApplicationproblemJSON409() *Problem {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ResumeAdminRouteResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ResumeAdminRouteResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ResumeAdminRouteResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ResumeAdminRouteResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ResumeAdminRouteResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// SuspendAdminRouteResponse401Headers the declared response headers of an HTTP 401 response for SuspendAdminRoute
+type SuspendAdminRouteResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type SuspendAdminRouteResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AdminRoute
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *SuspendAdminRouteResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SuspendAdminRouteResponse) GetJSON200() *AdminRoute {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r SuspendAdminRouteResponse) GetApplicationproblemJSON400() *Problem {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r SuspendAdminRouteResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r SuspendAdminRouteResponse) GetApplicationproblemJSON403() *Problem {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r SuspendAdminRouteResponse) GetApplicationproblemJSON404() *Problem {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r SuspendAdminRouteResponse) GetApplicationproblemJSON409() *Problem {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r SuspendAdminRouteResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r SuspendAdminRouteResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SuspendAdminRouteResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SuspendAdminRouteResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SuspendAdminRouteResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetAdminServerStatusResponse401Headers the declared response headers of an HTTP 401 response for GetAdminServerStatus
+type GetAdminServerStatusResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type GetAdminServerStatusResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AdminServerStatus
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem
+	// ApplicationproblemJSON501 the response for an HTTP 501 `application/problem+json` response
+	ApplicationproblemJSON501 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *GetAdminServerStatusResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetAdminServerStatusResponse) GetJSON200() *AdminServerStatus {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetAdminServerStatusResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetAdminServerStatusResponse) GetApplicationproblemJSON403() *Problem {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON501 returns the response for an HTTP 501 `application/problem+json` response
+func (r GetAdminServerStatusResponse) GetApplicationproblemJSON501() *Problem {
+	return r.ApplicationproblemJSON501
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetAdminServerStatusResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetAdminServerStatusResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetAdminServerStatusResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetAdminServerStatusResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetAdminServerStatusResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// LogoutControlSessionResponse401Headers the declared response headers of an HTTP 401 response for LogoutControlSession
+type LogoutControlSessionResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type LogoutControlSessionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSON429 the response for an HTTP 429 `application/problem+json` response
+	ApplicationproblemJSON429 *Problem
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *LogoutControlSessionResponse401Headers
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r LogoutControlSessionResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON429 returns the response for an HTTP 429 `application/problem+json` response
+func (r LogoutControlSessionResponse) GetApplicationproblemJSON429() *Problem {
+	return r.ApplicationproblemJSON429
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r LogoutControlSessionResponse) GetApplicationproblemJSON503() *Problem {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r LogoutControlSessionResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r LogoutControlSessionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r LogoutControlSessionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r LogoutControlSessionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r LogoutControlSessionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ExchangeOIDCTokenResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ControlSessionResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Problem
+	// ApplicationproblemJSON413 the response for an HTTP 413 `application/problem+json` response
+	ApplicationproblemJSON413 *Problem
+	// ApplicationproblemJSON415 the response for an HTTP 415 `application/problem+json` response
+	ApplicationproblemJSON415 *Problem
+	// ApplicationproblemJSON429 the response for an HTTP 429 `application/problem+json` response
+	ApplicationproblemJSON429 *Problem
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ExchangeOIDCTokenResponse) GetJSON200() *ControlSessionResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ExchangeOIDCTokenResponse) GetApplicationproblemJSON400() *Problem {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ExchangeOIDCTokenResponse) GetApplicationproblemJSON401() *Problem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON413 returns the response for an HTTP 413 `application/problem+json` response
+func (r ExchangeOIDCTokenResponse) GetApplicationproblemJSON413() *Problem {
+	return r.ApplicationproblemJSON413
+}
+
+// GetApplicationproblemJSON415 returns the response for an HTTP 415 `application/problem+json` response
+func (r ExchangeOIDCTokenResponse) GetApplicationproblemJSON415() *Problem {
+	return r.ApplicationproblemJSON415
+}
+
+// GetApplicationproblemJSON429 returns the response for an HTTP 429 `application/problem+json` response
+func (r ExchangeOIDCTokenResponse) GetApplicationproblemJSON429() *Problem {
+	return r.ApplicationproblemJSON429
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ExchangeOIDCTokenResponse) GetApplicationproblemJSON503() *Problem {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ExchangeOIDCTokenResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ExchangeOIDCTokenResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ExchangeOIDCTokenResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ExchangeOIDCTokenResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ExchangeOIDCTokenResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RefreshControlSessionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ControlSessionResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Problem
+	// ApplicationproblemJSON413 the response for an HTTP 413 `application/problem+json` response
+	ApplicationproblemJSON413 *Problem
+	// ApplicationproblemJSON415 the response for an HTTP 415 `application/problem+json` response
+	ApplicationproblemJSON415 *Problem
+	// ApplicationproblemJSON429 the response for an HTTP 429 `application/problem+json` response
+	ApplicationproblemJSON429 *Problem
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RefreshControlSessionResponse) GetJSON200() *ControlSessionResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r RefreshControlSessionResponse) GetApplicationproblemJSON400() *Problem {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r RefreshControlSessionResponse) GetApplicationproblemJSON401() *Problem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON413 returns the response for an HTTP 413 `application/problem+json` response
+func (r RefreshControlSessionResponse) GetApplicationproblemJSON413() *Problem {
+	return r.ApplicationproblemJSON413
+}
+
+// GetApplicationproblemJSON415 returns the response for an HTTP 415 `application/problem+json` response
+func (r RefreshControlSessionResponse) GetApplicationproblemJSON415() *Problem {
+	return r.ApplicationproblemJSON415
+}
+
+// GetApplicationproblemJSON429 returns the response for an HTTP 429 `application/problem+json` response
+func (r RefreshControlSessionResponse) GetApplicationproblemJSON429() *Problem {
+	return r.ApplicationproblemJSON429
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r RefreshControlSessionResponse) GetApplicationproblemJSON503() *Problem {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RefreshControlSessionResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RefreshControlSessionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RefreshControlSessionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RefreshControlSessionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RefreshControlSessionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ExchangeLoginTokenResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ControlSessionResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Problem
+	// ApplicationproblemJSON413 the response for an HTTP 413 `application/problem+json` response
+	ApplicationproblemJSON413 *Problem
+	// ApplicationproblemJSON415 the response for an HTTP 415 `application/problem+json` response
+	ApplicationproblemJSON415 *Problem
+	// ApplicationproblemJSON429 the response for an HTTP 429 `application/problem+json` response
+	ApplicationproblemJSON429 *Problem
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ExchangeLoginTokenResponse) GetJSON200() *ControlSessionResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ExchangeLoginTokenResponse) GetApplicationproblemJSON400() *Problem {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ExchangeLoginTokenResponse) GetApplicationproblemJSON401() *Problem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON413 returns the response for an HTTP 413 `application/problem+json` response
+func (r ExchangeLoginTokenResponse) GetApplicationproblemJSON413() *Problem {
+	return r.ApplicationproblemJSON413
+}
+
+// GetApplicationproblemJSON415 returns the response for an HTTP 415 `application/problem+json` response
+func (r ExchangeLoginTokenResponse) GetApplicationproblemJSON415() *Problem {
+	return r.ApplicationproblemJSON415
+}
+
+// GetApplicationproblemJSON429 returns the response for an HTTP 429 `application/problem+json` response
+func (r ExchangeLoginTokenResponse) GetApplicationproblemJSON429() *Problem {
+	return r.ApplicationproblemJSON429
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ExchangeLoginTokenResponse) GetApplicationproblemJSON503() *Problem {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ExchangeLoginTokenResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ExchangeLoginTokenResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ExchangeLoginTokenResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ExchangeLoginTokenResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ExchangeLoginTokenResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetCapabilitiesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Capabilities
+	// ApplicationproblemJSON429 the response for an HTTP 429 `application/problem+json` response
+	ApplicationproblemJSON429 *Problem
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetCapabilitiesResponse) GetJSON200() *Capabilities {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON429 returns the response for an HTTP 429 `application/problem+json` response
+func (r GetCapabilitiesResponse) GetApplicationproblemJSON429() *Problem {
+	return r.ApplicationproblemJSON429
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetCapabilitiesResponse) GetApplicationproblemJSON503() *Problem {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetCapabilitiesResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetCapabilitiesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetCapabilitiesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetCapabilitiesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetCapabilitiesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// CreateCertificateIssuanceResponse401Headers the declared response headers of an HTTP 401 response for CreateCertificateIssuance
+type CreateCertificateIssuanceResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type CreateCertificateIssuanceResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *CertificateIssuance
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem
+	// ApplicationproblemJSON412 the response for an HTTP 412 `application/problem+json` response
+	ApplicationproblemJSON412 *Problem
+	// ApplicationproblemJSON429 the response for an HTTP 429 `application/problem+json` response
+	ApplicationproblemJSON429 *Problem
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *CreateCertificateIssuanceResponse401Headers
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateCertificateIssuanceResponse) GetJSON201() *CertificateIssuance {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r CreateCertificateIssuanceResponse) GetApplicationproblemJSON400() *Problem {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r CreateCertificateIssuanceResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r CreateCertificateIssuanceResponse) GetApplicationproblemJSON409() *Problem {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON412 returns the response for an HTTP 412 `application/problem+json` response
+func (r CreateCertificateIssuanceResponse) GetApplicationproblemJSON412() *Problem {
+	return r.ApplicationproblemJSON412
+}
+
+// GetApplicationproblemJSON429 returns the response for an HTTP 429 `application/problem+json` response
+func (r CreateCertificateIssuanceResponse) GetApplicationproblemJSON429() *Problem {
+	return r.ApplicationproblemJSON429
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r CreateCertificateIssuanceResponse) GetApplicationproblemJSON503() *Problem {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateCertificateIssuanceResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateCertificateIssuanceResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateCertificateIssuanceResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateCertificateIssuanceResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateCertificateIssuanceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetCertificateIssuanceResponse401Headers the declared response headers of an HTTP 401 response for GetCertificateIssuance
+type GetCertificateIssuanceResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type GetCertificateIssuanceResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CertificateIssuance
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *GetCertificateIssuanceResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetCertificateIssuanceResponse) GetJSON200() *CertificateIssuance {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetCertificateIssuanceResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GetCertificateIssuanceResponse) GetApplicationproblemJSON404() *Problem {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetCertificateIssuanceResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetCertificateIssuanceResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetCertificateIssuanceResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetCertificateIssuanceResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetCertificateIssuanceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// MarkCertificateChallengeReadyResponse401Headers the declared response headers of an HTTP 401 response for MarkCertificateChallengeReady
+type MarkCertificateChallengeReadyResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type MarkCertificateChallengeReadyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CertificateIssuance
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem
+	// ApplicationproblemJSON412 the response for an HTTP 412 `application/problem+json` response
+	ApplicationproblemJSON412 *Problem
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *MarkCertificateChallengeReadyResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r MarkCertificateChallengeReadyResponse) GetJSON200() *CertificateIssuance {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r MarkCertificateChallengeReadyResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r MarkCertificateChallengeReadyResponse) GetApplicationproblemJSON409() *Problem {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON412 returns the response for an HTTP 412 `application/problem+json` response
+func (r MarkCertificateChallengeReadyResponse) GetApplicationproblemJSON412() *Problem {
+	return r.ApplicationproblemJSON412
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r MarkCertificateChallengeReadyResponse) GetApplicationproblemJSON503() *Problem {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r MarkCertificateChallengeReadyResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r MarkCertificateChallengeReadyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r MarkCertificateChallengeReadyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r MarkCertificateChallengeReadyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r MarkCertificateChallengeReadyResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// MarkCertificateChallengeRemovedResponse401Headers the declared response headers of an HTTP 401 response for MarkCertificateChallengeRemoved
+type MarkCertificateChallengeRemovedResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type MarkCertificateChallengeRemovedResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem
+	// ApplicationproblemJSON412 the response for an HTTP 412 `application/problem+json` response
+	ApplicationproblemJSON412 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *MarkCertificateChallengeRemovedResponse401Headers
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r MarkCertificateChallengeRemovedResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r MarkCertificateChallengeRemovedResponse) GetApplicationproblemJSON409() *Problem {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON412 returns the response for an HTTP 412 `application/problem+json` response
+func (r MarkCertificateChallengeRemovedResponse) GetApplicationproblemJSON412() *Problem {
+	return r.ApplicationproblemJSON412
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r MarkCertificateChallengeRemovedResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r MarkCertificateChallengeRemovedResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r MarkCertificateChallengeRemovedResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r MarkCertificateChallengeRemovedResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r MarkCertificateChallengeRemovedResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetClientIPResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ClientIPResponse
+	// ApplicationproblemJSON429 the response for an HTTP 429 `application/problem+json` response
+	ApplicationproblemJSON429 *Problem
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetClientIPResponse) GetJSON200() *ClientIPResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON429 returns the response for an HTTP 429 `application/problem+json` response
+func (r GetClientIPResponse) GetApplicationproblemJSON429() *Problem {
+	return r.ApplicationproblemJSON429
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetClientIPResponse) GetApplicationproblemJSON503() *Problem {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetClientIPResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetClientIPResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetClientIPResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetClientIPResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetClientIPResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// CreateDomainVerificationResponse401Headers the declared response headers of an HTTP 401 response for CreateDomainVerification
+type CreateDomainVerificationResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type CreateDomainVerificationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *DomainVerification
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *CreateDomainVerificationResponse401Headers
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateDomainVerificationResponse) GetJSON201() *DomainVerification {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r CreateDomainVerificationResponse) GetApplicationproblemJSON400() *Problem {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r CreateDomainVerificationResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r CreateDomainVerificationResponse) GetApplicationproblemJSON409() *Problem {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateDomainVerificationResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateDomainVerificationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateDomainVerificationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateDomainVerificationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateDomainVerificationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetDomainVerificationResponse401Headers the declared response headers of an HTTP 401 response for GetDomainVerification
+type GetDomainVerificationResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type GetDomainVerificationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *DomainVerification
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *GetDomainVerificationResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetDomainVerificationResponse) GetJSON200() *DomainVerification {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetDomainVerificationResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GetDomainVerificationResponse) GetApplicationproblemJSON404() *Problem {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetDomainVerificationResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetDomainVerificationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetDomainVerificationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetDomainVerificationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetDomainVerificationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// CompleteDomainVerificationResponse401Headers the declared response headers of an HTTP 401 response for CompleteDomainVerification
+type CompleteDomainVerificationResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type CompleteDomainVerificationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Hostname
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem
+	// ApplicationproblemJSON412 the response for an HTTP 412 `application/problem+json` response
+	ApplicationproblemJSON412 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *CompleteDomainVerificationResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r CompleteDomainVerificationResponse) GetJSON200() *Hostname {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r CompleteDomainVerificationResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r CompleteDomainVerificationResponse) GetApplicationproblemJSON404() *Problem {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r CompleteDomainVerificationResponse) GetApplicationproblemJSON409() *Problem {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON412 returns the response for an HTTP 412 `application/problem+json` response
+func (r CompleteDomainVerificationResponse) GetApplicationproblemJSON412() *Problem {
+	return r.ApplicationproblemJSON412
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CompleteDomainVerificationResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CompleteDomainVerificationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CompleteDomainVerificationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CompleteDomainVerificationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CompleteDomainVerificationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetHealthResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *HealthResponse
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetHealthResponse) GetJSON200() *HealthResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetHealthResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetHealthResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetHealthResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetHealthResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetHealthResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ListHostnamesResponse401Headers the declared response headers of an HTTP 401 response for ListHostnames
+type ListHostnamesResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ListHostnamesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *HostnamePage
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ListHostnamesResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListHostnamesResponse) GetJSON200() *HostnamePage {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListHostnamesResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListHostnamesResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListHostnamesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListHostnamesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListHostnamesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListHostnamesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ClaimHostnameResponse401Headers the declared response headers of an HTTP 401 response for ClaimHostname
+type ClaimHostnameResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ClaimHostnameResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *Hostname
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ClaimHostnameResponse401Headers
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r ClaimHostnameResponse) GetJSON201() *Hostname {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ClaimHostnameResponse) GetApplicationproblemJSON400() *Problem {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ClaimHostnameResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r ClaimHostnameResponse) GetApplicationproblemJSON409() *Problem {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ClaimHostnameResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ClaimHostnameResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ClaimHostnameResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ClaimHostnameResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ClaimHostnameResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ReleaseHostnameResponse401Headers the declared response headers of an HTTP 401 response for ReleaseHostname
+type ReleaseHostnameResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ReleaseHostnameResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ReleaseHostnameResponse401Headers
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ReleaseHostnameResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ReleaseHostnameResponse) GetApplicationproblemJSON404() *Problem {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ReleaseHostnameResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ReleaseHostnameResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReleaseHostnameResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReleaseHostnameResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReleaseHostnameResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetReadinessResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ReadinessResponse
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ReadinessResponse
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetReadinessResponse) GetJSON200() *ReadinessResponse {
+	return r.JSON200
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetReadinessResponse) GetJSON503() *ReadinessResponse {
+	return r.JSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetReadinessResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetReadinessResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetReadinessResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetReadinessResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetReadinessResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ListRoutesResponse401Headers the declared response headers of an HTTP 401 response for ListRoutes
+type ListRoutesResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ListRoutesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]Route
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ListRoutesResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListRoutesResponse) GetJSON200() *[]Route {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListRoutesResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListRoutesResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListRoutesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListRoutesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListRoutesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListRoutesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// CreateRouteResponse401Headers the declared response headers of an HTTP 401 response for CreateRoute
+type CreateRouteResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type CreateRouteResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *SessionSetup
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *CreateRouteResponse401Headers
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateRouteResponse) GetJSON201() *SessionSetup {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r CreateRouteResponse) GetApplicationproblemJSON400() *Problem {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r CreateRouteResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r CreateRouteResponse) GetApplicationproblemJSON409() *Problem {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateRouteResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateRouteResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateRouteResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateRouteResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateRouteResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// DeleteRouteResponse401Headers the declared response headers of an HTTP 401 response for DeleteRoute
+type DeleteRouteResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type DeleteRouteResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *DeleteRouteResponse401Headers
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r DeleteRouteResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r DeleteRouteResponse) GetApplicationproblemJSON404() *Problem {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DeleteRouteResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteRouteResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteRouteResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteRouteResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteRouteResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// MarkRouteCertificateInstalledResponse401Headers the declared response headers of an HTTP 401 response for MarkRouteCertificateInstalled
+type MarkRouteCertificateInstalledResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type MarkRouteCertificateInstalledResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem
+	// ApplicationproblemJSON412 the response for an HTTP 412 `application/problem+json` response
+	ApplicationproblemJSON412 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *MarkRouteCertificateInstalledResponse401Headers
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r MarkRouteCertificateInstalledResponse) GetApplicationproblemJSON400() *Problem {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r MarkRouteCertificateInstalledResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r MarkRouteCertificateInstalledResponse) GetApplicationproblemJSON409() *Problem {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON412 returns the response for an HTTP 412 `application/problem+json` response
+func (r MarkRouteCertificateInstalledResponse) GetApplicationproblemJSON412() *Problem {
+	return r.ApplicationproblemJSON412
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r MarkRouteCertificateInstalledResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r MarkRouteCertificateInstalledResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r MarkRouteCertificateInstalledResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r MarkRouteCertificateInstalledResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r MarkRouteCertificateInstalledResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// HeartbeatRouteSessionResponse401Headers the declared response headers of an HTTP 401 response for HeartbeatRouteSession
+type HeartbeatRouteSessionResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type HeartbeatRouteSessionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *HeartbeatResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *HeartbeatRouteSessionResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r HeartbeatRouteSessionResponse) GetJSON200() *HeartbeatResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r HeartbeatRouteSessionResponse) GetApplicationproblemJSON400() *Problem {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r HeartbeatRouteSessionResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r HeartbeatRouteSessionResponse) GetApplicationproblemJSON409() *Problem {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r HeartbeatRouteSessionResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r HeartbeatRouteSessionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r HeartbeatRouteSessionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r HeartbeatRouteSessionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r HeartbeatRouteSessionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// MarkRouteReadyResponse401Headers the declared response headers of an HTTP 401 response for MarkRouteReady
+type MarkRouteReadyResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type MarkRouteReadyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *MarkRouteReadyResponse401Headers
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r MarkRouteReadyResponse) GetApplicationproblemJSON400() *Problem {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r MarkRouteReadyResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r MarkRouteReadyResponse) GetApplicationproblemJSON409() *Problem {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r MarkRouteReadyResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r MarkRouteReadyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r MarkRouteReadyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r MarkRouteReadyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r MarkRouteReadyResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// CreateRouteSessionResponse401Headers the declared response headers of an HTTP 401 response for CreateRouteSession
+type CreateRouteSessionResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type CreateRouteSessionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *SessionSetup
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *CreateRouteSessionResponse401Headers
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateRouteSessionResponse) GetJSON201() *SessionSetup {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r CreateRouteSessionResponse) GetApplicationproblemJSON400() *Problem {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r CreateRouteSessionResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r CreateRouteSessionResponse) GetApplicationproblemJSON404() *Problem {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateRouteSessionResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateRouteSessionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateRouteSessionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateRouteSessionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateRouteSessionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// RegisterRouteTransportResponse401Headers the declared response headers of an HTTP 401 response for RegisterRouteTransport
+type RegisterRouteTransportResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type RegisterRouteTransportResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *RegisterRouteTransportResponse401Headers
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r RegisterRouteTransportResponse) GetApplicationproblemJSON400() *Problem {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r RegisterRouteTransportResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r RegisterRouteTransportResponse) GetApplicationproblemJSON409() *Problem {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r RegisterRouteTransportResponse) GetApplicationproblemJSON503() *Problem {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RegisterRouteTransportResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RegisterRouteTransportResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RegisterRouteTransportResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RegisterRouteTransportResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RegisterRouteTransportResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetRelayMapResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *map[string]interface{}
+	// ApplicationproblemJSON429 the response for an HTTP 429 `application/problem+json` response
+	ApplicationproblemJSON429 *Problem
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetRelayMapResponse) GetJSON200() *map[string]interface{} {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON429 returns the response for an HTTP 429 `application/problem+json` response
+func (r GetRelayMapResponse) GetApplicationproblemJSON429() *Problem {
+	return r.ApplicationproblemJSON429
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetRelayMapResponse) GetApplicationproblemJSON503() *Problem {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetRelayMapResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetRelayMapResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetRelayMapResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetRelayMapResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetRelayMapResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ListAdminControlSessionsWithResponse List control sessions without credentials
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/admin/control-sessions (the `ListAdminControlSessions` operationId).
+func (c *ClientWithResponses) ListAdminControlSessionsWithResponse(ctx context.Context, params *ListAdminControlSessionsParams, reqEditors ...RequestEditorFn) (*ListAdminControlSessionsResponse, error) {
+	rsp, err := c.ListAdminControlSessions(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListAdminControlSessionsResponse(rsp)
+}
+
+// RevokeAdminControlSessionWithResponse Revoke one control session
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/admin/control-sessions/{id} (the `RevokeAdminControlSession` operationId).
+func (c *ClientWithResponses) RevokeAdminControlSessionWithResponse(ctx context.Context, id ControlSessionID, reqEditors ...RequestEditorFn) (*RevokeAdminControlSessionResponse, error) {
+	rsp, err := c.RevokeAdminControlSession(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeAdminControlSessionResponse(rsp)
+}
+
+// ListAdminCredentialsWithResponse List nonsecret route credentials
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/admin/credentials (the `ListAdminCredentials` operationId).
+func (c *ClientWithResponses) ListAdminCredentialsWithResponse(ctx context.Context, params *ListAdminCredentialsParams, reqEditors ...RequestEditorFn) (*ListAdminCredentialsResponse, error) {
+	rsp, err := c.ListAdminCredentials(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListAdminCredentialsResponse(rsp)
+}
+
+// RevokeAdminCredentialWithResponse Revoke one route credential
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/admin/credentials/{id} (the `RevokeAdminCredential` operationId).
+func (c *ClientWithResponses) RevokeAdminCredentialWithResponse(ctx context.Context, id CredentialID, reqEditors ...RequestEditorFn) (*RevokeAdminCredentialResponse, error) {
+	rsp, err := c.RevokeAdminCredential(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeAdminCredentialResponse(rsp)
+}
+
+// ListAdminHostnamesWithResponse List local hostnames across identities
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/admin/hostnames (the `ListAdminHostnames` operationId).
+func (c *ClientWithResponses) ListAdminHostnamesWithResponse(ctx context.Context, params *ListAdminHostnamesParams, reqEditors ...RequestEditorFn) (*ListAdminHostnamesResponse, error) {
+	rsp, err := c.ListAdminHostnames(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListAdminHostnamesResponse(rsp)
+}
+
+// RemoveAdminHostnameWithResponse Remove a local hostname and its routes
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/admin/hostnames/{id} (the `RemoveAdminHostname` operationId).
+func (c *ClientWithResponses) RemoveAdminHostnameWithResponse(ctx context.Context, id HostnameID, reqEditors ...RequestEditorFn) (*RemoveAdminHostnameResponse, error) {
+	rsp, err := c.RemoveAdminHostname(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRemoveAdminHostnameResponse(rsp)
+}
+
+// GetAdminHostnameWithResponse Show one local hostname
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/admin/hostnames/{id} (the `GetAdminHostname` operationId).
+func (c *ClientWithResponses) GetAdminHostnameWithResponse(ctx context.Context, id HostnameID, reqEditors ...RequestEditorFn) (*GetAdminHostnameResponse, error) {
+	rsp, err := c.GetAdminHostname(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetAdminHostnameResponse(rsp)
+}
+
+// QuarantineAdminHostnameWithBodyWithResponse Quarantine a local hostname and suspend its routes
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/admin/hostnames/{id}/quarantine (the `QuarantineAdminHostname` operationId).
+func (c *ClientWithResponses) QuarantineAdminHostnameWithBodyWithResponse(ctx context.Context, id HostnameID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*QuarantineAdminHostnameResponse, error) {
+	rsp, err := c.QuarantineAdminHostnameWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseQuarantineAdminHostnameResponse(rsp)
+}
+
+// QuarantineAdminHostnameWithResponse Quarantine a local hostname and suspend its routes
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/admin/hostnames/{id}/quarantine (the `QuarantineAdminHostname` operationId).
+func (c *ClientWithResponses) QuarantineAdminHostnameWithResponse(ctx context.Context, id HostnameID, body QuarantineAdminHostnameJSONRequestBody, reqEditors ...RequestEditorFn) (*QuarantineAdminHostnameResponse, error) {
+	rsp, err := c.QuarantineAdminHostname(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseQuarantineAdminHostnameResponse(rsp)
+}
+
+// ListAdminMaintenanceControlsWithResponse List server maintenance controls
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/admin/maintenance-controls (the `ListAdminMaintenanceControls` operationId).
+func (c *ClientWithResponses) ListAdminMaintenanceControlsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListAdminMaintenanceControlsResponse, error) {
+	rsp, err := c.ListAdminMaintenanceControls(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListAdminMaintenanceControlsResponse(rsp)
+}
+
+// SetAdminMaintenanceControlWithBodyWithResponse Set one server maintenance control
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/admin/maintenance-controls/{name} (the `SetAdminMaintenanceControl` operationId).
+func (c *ClientWithResponses) SetAdminMaintenanceControlWithBodyWithResponse(ctx context.Context, name MaintenanceControlName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetAdminMaintenanceControlResponse, error) {
+	rsp, err := c.SetAdminMaintenanceControlWithBody(ctx, name, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetAdminMaintenanceControlResponse(rsp)
+}
+
+// SetAdminMaintenanceControlWithResponse Set one server maintenance control
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/admin/maintenance-controls/{name} (the `SetAdminMaintenanceControl` operationId).
+func (c *ClientWithResponses) SetAdminMaintenanceControlWithResponse(ctx context.Context, name MaintenanceControlName, body SetAdminMaintenanceControlJSONRequestBody, reqEditors ...RequestEditorFn) (*SetAdminMaintenanceControlResponse, error) {
+	rsp, err := c.SetAdminMaintenanceControl(ctx, name, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetAdminMaintenanceControlResponse(rsp)
+}
+
+// ListAdminRoutesWithResponse List routes across identities
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/admin/routes (the `ListAdminRoutes` operationId).
+func (c *ClientWithResponses) ListAdminRoutesWithResponse(ctx context.Context, params *ListAdminRoutesParams, reqEditors ...RequestEditorFn) (*ListAdminRoutesResponse, error) {
+	rsp, err := c.ListAdminRoutes(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListAdminRoutesResponse(rsp)
+}
+
+// GetAdminRouteWithResponse Show one route
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/admin/routes/{id} (the `GetAdminRoute` operationId).
+func (c *ClientWithResponses) GetAdminRouteWithResponse(ctx context.Context, id RouteID, reqEditors ...RequestEditorFn) (*GetAdminRouteResponse, error) {
+	rsp, err := c.GetAdminRoute(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetAdminRouteResponse(rsp)
+}
+
+// ResumeAdminRouteWithBodyWithResponse Resume one route at a new route version
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/admin/routes/{id}/resume (the `ResumeAdminRoute` operationId).
+func (c *ClientWithResponses) ResumeAdminRouteWithBodyWithResponse(ctx context.Context, id RouteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ResumeAdminRouteResponse, error) {
+	rsp, err := c.ResumeAdminRouteWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResumeAdminRouteResponse(rsp)
+}
+
+// ResumeAdminRouteWithResponse Resume one route at a new route version
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/admin/routes/{id}/resume (the `ResumeAdminRoute` operationId).
+func (c *ClientWithResponses) ResumeAdminRouteWithResponse(ctx context.Context, id RouteID, body ResumeAdminRouteJSONRequestBody, reqEditors ...RequestEditorFn) (*ResumeAdminRouteResponse, error) {
+	rsp, err := c.ResumeAdminRoute(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResumeAdminRouteResponse(rsp)
+}
+
+// SuspendAdminRouteWithBodyWithResponse Suspend and drain one route
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/admin/routes/{id}/suspend (the `SuspendAdminRoute` operationId).
+func (c *ClientWithResponses) SuspendAdminRouteWithBodyWithResponse(ctx context.Context, id RouteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SuspendAdminRouteResponse, error) {
+	rsp, err := c.SuspendAdminRouteWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSuspendAdminRouteResponse(rsp)
+}
+
+// SuspendAdminRouteWithResponse Suspend and drain one route
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/admin/routes/{id}/suspend (the `SuspendAdminRoute` operationId).
+func (c *ClientWithResponses) SuspendAdminRouteWithResponse(ctx context.Context, id RouteID, body SuspendAdminRouteJSONRequestBody, reqEditors ...RequestEditorFn) (*SuspendAdminRouteResponse, error) {
+	rsp, err := c.SuspendAdminRoute(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSuspendAdminRouteResponse(rsp)
+}
+
+// GetAdminServerStatusWithResponse Return self-hosted server status
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/admin/status (the `GetAdminServerStatus` operationId).
+func (c *ClientWithResponses) GetAdminServerStatusWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAdminServerStatusResponse, error) {
+	rsp, err := c.GetAdminServerStatus(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetAdminServerStatusResponse(rsp)
+}
+
+// LogoutControlSessionWithResponse Revoke the authenticated control session
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/auth/logout (the `LogoutControlSession` operationId).
+func (c *ClientWithResponses) LogoutControlSessionWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*LogoutControlSessionResponse, error) {
+	rsp, err := c.LogoutControlSession(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseLogoutControlSessionResponse(rsp)
+}
+
+// ExchangeOIDCTokenWithBodyWithResponse Exchange an OIDC ID token for a control session
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/auth/oidc (the `ExchangeOIDCToken` operationId).
+func (c *ClientWithResponses) ExchangeOIDCTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExchangeOIDCTokenResponse, error) {
+	rsp, err := c.ExchangeOIDCTokenWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExchangeOIDCTokenResponse(rsp)
+}
+
+// ExchangeOIDCTokenWithResponse Exchange an OIDC ID token for a control session
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/auth/oidc (the `ExchangeOIDCToken` operationId).
+func (c *ClientWithResponses) ExchangeOIDCTokenWithResponse(ctx context.Context, body ExchangeOIDCTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*ExchangeOIDCTokenResponse, error) {
+	rsp, err := c.ExchangeOIDCToken(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExchangeOIDCTokenResponse(rsp)
+}
+
+// RefreshControlSessionWithBodyWithResponse Rotate a control session's access and refresh tokens
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/auth/refresh (the `RefreshControlSession` operationId).
+func (c *ClientWithResponses) RefreshControlSessionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RefreshControlSessionResponse, error) {
+	rsp, err := c.RefreshControlSessionWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRefreshControlSessionResponse(rsp)
+}
+
+// RefreshControlSessionWithResponse Rotate a control session's access and refresh tokens
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/auth/refresh (the `RefreshControlSession` operationId).
+func (c *ClientWithResponses) RefreshControlSessionWithResponse(ctx context.Context, body RefreshControlSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*RefreshControlSessionResponse, error) {
+	rsp, err := c.RefreshControlSession(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRefreshControlSessionResponse(rsp)
+}
+
+// ExchangeLoginTokenWithBodyWithResponse Exchange a login token for a control session
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/auth/token (the `ExchangeLoginToken` operationId).
+func (c *ClientWithResponses) ExchangeLoginTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExchangeLoginTokenResponse, error) {
+	rsp, err := c.ExchangeLoginTokenWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExchangeLoginTokenResponse(rsp)
+}
+
+// ExchangeLoginTokenWithResponse Exchange a login token for a control session
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/auth/token (the `ExchangeLoginToken` operationId).
+func (c *ClientWithResponses) ExchangeLoginTokenWithResponse(ctx context.Context, body ExchangeLoginTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*ExchangeLoginTokenResponse, error) {
+	rsp, err := c.ExchangeLoginToken(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExchangeLoginTokenResponse(rsp)
+}
+
+// GetCapabilitiesWithResponse Describe supported server behavior
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/capabilities (the `GetCapabilities` operationId).
+func (c *ClientWithResponses) GetCapabilitiesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetCapabilitiesResponse, error) {
+	rsp, err := c.GetCapabilities(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetCapabilitiesResponse(rsp)
+}
+
+// CreateCertificateIssuanceWithBodyWithResponse Create or resume a certificate issuance for a current route session
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/certificate-issuances (the `CreateCertificateIssuance` operationId).
+func (c *ClientWithResponses) CreateCertificateIssuanceWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateCertificateIssuanceResponse, error) {
+	rsp, err := c.CreateCertificateIssuanceWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateCertificateIssuanceResponse(rsp)
+}
+
+// CreateCertificateIssuanceWithResponse Create or resume a certificate issuance for a current route session
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/certificate-issuances (the `CreateCertificateIssuance` operationId).
+func (c *ClientWithResponses) CreateCertificateIssuanceWithResponse(ctx context.Context, body CreateCertificateIssuanceJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCertificateIssuanceResponse, error) {
+	rsp, err := c.CreateCertificateIssuance(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateCertificateIssuanceResponse(rsp)
+}
+
+// GetCertificateIssuanceWithResponse Read persisted certificate-issuance state
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/certificate-issuances/{id} (the `GetCertificateIssuance` operationId).
+func (c *ClientWithResponses) GetCertificateIssuanceWithResponse(ctx context.Context, id CertificateIssuanceID, reqEditors ...RequestEditorFn) (*GetCertificateIssuanceResponse, error) {
+	rsp, err := c.GetCertificateIssuance(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetCertificateIssuanceResponse(rsp)
+}
+
+// MarkCertificateChallengeReadyWithResponse Probe and complete an installed TLS-ALPN challenge
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/certificate-issuances/{id}/challenge-ready (the `MarkCertificateChallengeReady` operationId).
+func (c *ClientWithResponses) MarkCertificateChallengeReadyWithResponse(ctx context.Context, id CertificateIssuanceID, reqEditors ...RequestEditorFn) (*MarkCertificateChallengeReadyResponse, error) {
+	rsp, err := c.MarkCertificateChallengeReady(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMarkCertificateChallengeReadyResponse(rsp)
+}
+
+// MarkCertificateChallengeRemovedWithResponse Acknowledge challenge-specific cleanup by the publisher
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/certificate-issuances/{id}/challenge-removed (the `MarkCertificateChallengeRemoved` operationId).
+func (c *ClientWithResponses) MarkCertificateChallengeRemovedWithResponse(ctx context.Context, id CertificateIssuanceID, reqEditors ...RequestEditorFn) (*MarkCertificateChallengeRemovedResponse, error) {
+	rsp, err := c.MarkCertificateChallengeRemoved(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMarkCertificateChallengeRemovedResponse(rsp)
+}
+
+// GetClientIPWithResponse Return the requesting client's public IP address
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/client-ip (the `GetClientIP` operationId).
+func (c *ClientWithResponses) GetClientIPWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetClientIPResponse, error) {
+	rsp, err := c.GetClientIP(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetClientIPResponse(rsp)
+}
+
+// CreateDomainVerificationWithBodyWithResponse Create a pending custom-domain verification
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/domain-verifications (the `CreateDomainVerification` operationId).
+func (c *ClientWithResponses) CreateDomainVerificationWithBodyWithResponse(ctx context.Context, params *CreateDomainVerificationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateDomainVerificationResponse, error) {
+	rsp, err := c.CreateDomainVerificationWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateDomainVerificationResponse(rsp)
+}
+
+// CreateDomainVerificationWithResponse Create a pending custom-domain verification
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/domain-verifications (the `CreateDomainVerification` operationId).
+func (c *ClientWithResponses) CreateDomainVerificationWithResponse(ctx context.Context, params *CreateDomainVerificationParams, body CreateDomainVerificationJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateDomainVerificationResponse, error) {
+	rsp, err := c.CreateDomainVerification(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateDomainVerificationResponse(rsp)
+}
+
+// GetDomainVerificationWithResponse Read an owned custom-domain verification
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/domain-verifications/{id} (the `GetDomainVerification` operationId).
+func (c *ClientWithResponses) GetDomainVerificationWithResponse(ctx context.Context, id DomainVerificationID, reqEditors ...RequestEditorFn) (*GetDomainVerificationResponse, error) {
+	rsp, err := c.GetDomainVerification(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetDomainVerificationResponse(rsp)
+}
+
+// CompleteDomainVerificationWithResponse Verify DNS and claim a custom domain
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/domain-verifications/{id}/complete (the `CompleteDomainVerification` operationId).
+func (c *ClientWithResponses) CompleteDomainVerificationWithResponse(ctx context.Context, id DomainVerificationID, reqEditors ...RequestEditorFn) (*CompleteDomainVerificationResponse, error) {
+	rsp, err := c.CompleteDomainVerification(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCompleteDomainVerificationResponse(rsp)
+}
+
+// GetHealthWithResponse Confirm that the control HTTP server is serving
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/health (the `GetHealth` operationId).
+func (c *ClientWithResponses) GetHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetHealthResponse, error) {
+	rsp, err := c.GetHealth(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetHealthResponse(rsp)
+}
+
+// ListHostnamesWithResponse List hostname claims owned by the authenticated identity
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/hostnames (the `ListHostnames` operationId).
+func (c *ClientWithResponses) ListHostnamesWithResponse(ctx context.Context, params *ListHostnamesParams, reqEditors ...RequestEditorFn) (*ListHostnamesResponse, error) {
+	rsp, err := c.ListHostnames(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListHostnamesResponse(rsp)
+}
+
+// ClaimHostnameWithBodyWithResponse Claim a managed hostname or allocate a temporary hostname
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/hostnames (the `ClaimHostname` operationId).
+func (c *ClientWithResponses) ClaimHostnameWithBodyWithResponse(ctx context.Context, params *ClaimHostnameParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClaimHostnameResponse, error) {
+	rsp, err := c.ClaimHostnameWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseClaimHostnameResponse(rsp)
+}
+
+// ClaimHostnameWithResponse Claim a managed hostname or allocate a temporary hostname
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/hostnames (the `ClaimHostname` operationId).
+func (c *ClientWithResponses) ClaimHostnameWithResponse(ctx context.Context, params *ClaimHostnameParams, body ClaimHostnameJSONRequestBody, reqEditors ...RequestEditorFn) (*ClaimHostnameResponse, error) {
+	rsp, err := c.ClaimHostname(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseClaimHostnameResponse(rsp)
+}
+
+// ReleaseHostnameWithResponse Release an owned persistent hostname claim
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/hostnames/{id} (the `ReleaseHostname` operationId).
+func (c *ClientWithResponses) ReleaseHostnameWithResponse(ctx context.Context, id HostnameID, reqEditors ...RequestEditorFn) (*ReleaseHostnameResponse, error) {
+	rsp, err := c.ReleaseHostname(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReleaseHostnameResponse(rsp)
+}
+
+// GetReadinessWithResponse Confirm that the control server and durable state are ready
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/ready (the `GetReadiness` operationId).
+func (c *ClientWithResponses) GetReadinessWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetReadinessResponse, error) {
+	rsp, err := c.GetReadiness(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetReadinessResponse(rsp)
+}
+
+// ListRoutesWithResponse List routes owned by the authenticated identity
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/routes (the `ListRoutes` operationId).
+func (c *ClientWithResponses) ListRoutesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListRoutesResponse, error) {
+	rsp, err := c.ListRoutes(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListRoutesResponse(rsp)
+}
+
+// CreateRouteWithBodyWithResponse Create or reclaim an owned route with a new route version
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/routes (the `CreateRoute` operationId).
+func (c *ClientWithResponses) CreateRouteWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateRouteResponse, error) {
+	rsp, err := c.CreateRouteWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateRouteResponse(rsp)
+}
+
+// CreateRouteWithResponse Create or reclaim an owned route with a new route version
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/routes (the `CreateRoute` operationId).
+func (c *ClientWithResponses) CreateRouteWithResponse(ctx context.Context, body CreateRouteJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateRouteResponse, error) {
+	rsp, err := c.CreateRoute(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateRouteResponse(rsp)
+}
+
+// DeleteRouteWithResponse Delete a route owned by the authenticated identity or route credential
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/routes/{id} (the `DeleteRoute` operationId).
+func (c *ClientWithResponses) DeleteRouteWithResponse(ctx context.Context, id RouteID, reqEditors ...RequestEditorFn) (*DeleteRouteResponse, error) {
+	rsp, err := c.DeleteRoute(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteRouteResponse(rsp)
+}
+
+// MarkRouteCertificateInstalledWithBodyWithResponse Acknowledge installation of a validated route certificate
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/routes/{id}/certificate-installed (the `MarkRouteCertificateInstalled` operationId).
+func (c *ClientWithResponses) MarkRouteCertificateInstalledWithBodyWithResponse(ctx context.Context, id RouteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MarkRouteCertificateInstalledResponse, error) {
+	rsp, err := c.MarkRouteCertificateInstalledWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMarkRouteCertificateInstalledResponse(rsp)
+}
+
+// MarkRouteCertificateInstalledWithResponse Acknowledge installation of a validated route certificate
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/routes/{id}/certificate-installed (the `MarkRouteCertificateInstalled` operationId).
+func (c *ClientWithResponses) MarkRouteCertificateInstalledWithResponse(ctx context.Context, id RouteID, body MarkRouteCertificateInstalledJSONRequestBody, reqEditors ...RequestEditorFn) (*MarkRouteCertificateInstalledResponse, error) {
+	rsp, err := c.MarkRouteCertificateInstalled(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMarkRouteCertificateInstalledResponse(rsp)
+}
+
+// HeartbeatRouteSessionWithBodyWithResponse Refresh one current route session
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/routes/{id}/heartbeat (the `HeartbeatRouteSession` operationId).
+func (c *ClientWithResponses) HeartbeatRouteSessionWithBodyWithResponse(ctx context.Context, id RouteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*HeartbeatRouteSessionResponse, error) {
+	rsp, err := c.HeartbeatRouteSessionWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseHeartbeatRouteSessionResponse(rsp)
+}
+
+// HeartbeatRouteSessionWithResponse Refresh one current route session
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/routes/{id}/heartbeat (the `HeartbeatRouteSession` operationId).
+func (c *ClientWithResponses) HeartbeatRouteSessionWithResponse(ctx context.Context, id RouteID, body HeartbeatRouteSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*HeartbeatRouteSessionResponse, error) {
+	rsp, err := c.HeartbeatRouteSession(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseHeartbeatRouteSessionResponse(rsp)
+}
+
+// MarkRouteReadyWithBodyWithResponse Publish a current attached route
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/routes/{id}/ready (the `MarkRouteReady` operationId).
+func (c *ClientWithResponses) MarkRouteReadyWithBodyWithResponse(ctx context.Context, id RouteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MarkRouteReadyResponse, error) {
+	rsp, err := c.MarkRouteReadyWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMarkRouteReadyResponse(rsp)
+}
+
+// MarkRouteReadyWithResponse Publish a current attached route
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/routes/{id}/ready (the `MarkRouteReady` operationId).
+func (c *ClientWithResponses) MarkRouteReadyWithResponse(ctx context.Context, id RouteID, body MarkRouteReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*MarkRouteReadyResponse, error) {
+	rsp, err := c.MarkRouteReady(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMarkRouteReadyResponse(rsp)
+}
+
+// CreateRouteSessionWithBodyWithResponse Create the next route version
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/routes/{id}/sessions (the `CreateRouteSession` operationId).
+func (c *ClientWithResponses) CreateRouteSessionWithBodyWithResponse(ctx context.Context, id RouteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateRouteSessionResponse, error) {
+	rsp, err := c.CreateRouteSessionWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateRouteSessionResponse(rsp)
+}
+
+// CreateRouteSessionWithResponse Create the next route version
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/routes/{id}/sessions (the `CreateRouteSession` operationId).
+func (c *ClientWithResponses) CreateRouteSessionWithResponse(ctx context.Context, id RouteID, body CreateRouteSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateRouteSessionResponse, error) {
+	rsp, err := c.CreateRouteSession(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateRouteSessionResponse(rsp)
+}
+
+// RegisterRouteTransportWithBodyWithResponse Register the publisher Tailcat endpoint for a route session
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/routes/{id}/transport (the `RegisterRouteTransport` operationId).
+func (c *ClientWithResponses) RegisterRouteTransportWithBodyWithResponse(ctx context.Context, id RouteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterRouteTransportResponse, error) {
+	rsp, err := c.RegisterRouteTransportWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRegisterRouteTransportResponse(rsp)
+}
+
+// RegisterRouteTransportWithResponse Register the publisher Tailcat endpoint for a route session
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/routes/{id}/transport (the `RegisterRouteTransport` operationId).
+func (c *ClientWithResponses) RegisterRouteTransportWithResponse(ctx context.Context, id RouteID, body RegisterRouteTransportJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterRouteTransportResponse, error) {
+	rsp, err := c.RegisterRouteTransport(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRegisterRouteTransportResponse(rsp)
+}
+
+// GetRelayMapWithResponse Return the selected Tailcat DERP region
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/transport/relay-map (the `GetRelayMap` operationId).
+func (c *ClientWithResponses) GetRelayMapWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetRelayMapResponse, error) {
+	rsp, err := c.GetRelayMap(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetRelayMapResponse(rsp)
+}
+
+// ParseListAdminControlSessionsResponse parses an HTTP response from a ListAdminControlSessionsWithResponse call
+func ParseListAdminControlSessionsResponse(rsp *http.Response) (*ListAdminControlSessionsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListAdminControlSessionsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminControlSessionPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ListAdminControlSessionsResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseRevokeAdminControlSessionResponse parses an HTTP response from a RevokeAdminControlSessionWithResponse call
+func ParseRevokeAdminControlSessionResponse(rsp *http.Response) (*RevokeAdminControlSessionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokeAdminControlSessionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers RevokeAdminControlSessionResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListAdminCredentialsResponse parses an HTTP response from a ListAdminCredentialsWithResponse call
+func ParseListAdminCredentialsResponse(rsp *http.Response) (*ListAdminCredentialsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListAdminCredentialsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminCredentialPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ListAdminCredentialsResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseRevokeAdminCredentialResponse parses an HTTP response from a RevokeAdminCredentialWithResponse call
+func ParseRevokeAdminCredentialResponse(rsp *http.Response) (*RevokeAdminCredentialResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokeAdminCredentialResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers RevokeAdminCredentialResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListAdminHostnamesResponse parses an HTTP response from a ListAdminHostnamesWithResponse call
+func ParseListAdminHostnamesResponse(rsp *http.Response) (*ListAdminHostnamesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListAdminHostnamesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminHostnamePage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ListAdminHostnamesResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseRemoveAdminHostnameResponse parses an HTTP response from a RemoveAdminHostnameWithResponse call
+func ParseRemoveAdminHostnameResponse(rsp *http.Response) (*RemoveAdminHostnameResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RemoveAdminHostnameResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers RemoveAdminHostnameResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetAdminHostnameResponse parses an HTTP response from a GetAdminHostnameWithResponse call
+func ParseGetAdminHostnameResponse(rsp *http.Response) (*GetAdminHostnameResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetAdminHostnameResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminHostname
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers GetAdminHostnameResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseQuarantineAdminHostnameResponse parses an HTTP response from a QuarantineAdminHostnameWithResponse call
+func ParseQuarantineAdminHostnameResponse(rsp *http.Response) (*QuarantineAdminHostnameResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &QuarantineAdminHostnameResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers QuarantineAdminHostnameResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListAdminMaintenanceControlsResponse parses an HTTP response from a ListAdminMaintenanceControlsWithResponse call
+func ParseListAdminMaintenanceControlsResponse(rsp *http.Response) (*ListAdminMaintenanceControlsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListAdminMaintenanceControlsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []AdminMaintenanceControl
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ListAdminMaintenanceControlsResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseSetAdminMaintenanceControlResponse parses an HTTP response from a SetAdminMaintenanceControlWithResponse call
+func ParseSetAdminMaintenanceControlResponse(rsp *http.Response) (*SetAdminMaintenanceControlResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SetAdminMaintenanceControlResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminMaintenanceControl
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers SetAdminMaintenanceControlResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListAdminRoutesResponse parses an HTTP response from a ListAdminRoutesWithResponse call
+func ParseListAdminRoutesResponse(rsp *http.Response) (*ListAdminRoutesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListAdminRoutesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminRoutePage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ListAdminRoutesResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetAdminRouteResponse parses an HTTP response from a GetAdminRouteWithResponse call
+func ParseGetAdminRouteResponse(rsp *http.Response) (*GetAdminRouteResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetAdminRouteResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminRoute
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers GetAdminRouteResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseResumeAdminRouteResponse parses an HTTP response from a ResumeAdminRouteWithResponse call
+func ParseResumeAdminRouteResponse(rsp *http.Response) (*ResumeAdminRouteResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ResumeAdminRouteResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminRoute
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ResumeAdminRouteResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseSuspendAdminRouteResponse parses an HTTP response from a SuspendAdminRouteWithResponse call
+func ParseSuspendAdminRouteResponse(rsp *http.Response) (*SuspendAdminRouteResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SuspendAdminRouteResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminRoute
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers SuspendAdminRouteResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetAdminServerStatusResponse parses an HTTP response from a GetAdminServerStatusWithResponse call
+func ParseGetAdminServerStatusResponse(rsp *http.Response) (*GetAdminServerStatusResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetAdminServerStatusResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminServerStatus
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 501:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON501 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers GetAdminServerStatusResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseLogoutControlSessionResponse parses an HTTP response from a LogoutControlSessionWithResponse call
+func ParseLogoutControlSessionResponse(rsp *http.Response) (*LogoutControlSessionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &LogoutControlSessionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers LogoutControlSessionResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseExchangeOIDCTokenResponse parses an HTTP response from a ExchangeOIDCTokenWithResponse call
+func ParseExchangeOIDCTokenResponse(rsp *http.Response) (*ExchangeOIDCTokenResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ExchangeOIDCTokenResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ControlSessionResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON415 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRefreshControlSessionResponse parses an HTTP response from a RefreshControlSessionWithResponse call
+func ParseRefreshControlSessionResponse(rsp *http.Response) (*RefreshControlSessionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RefreshControlSessionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ControlSessionResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON415 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseExchangeLoginTokenResponse parses an HTTP response from a ExchangeLoginTokenWithResponse call
+func ParseExchangeLoginTokenResponse(rsp *http.Response) (*ExchangeLoginTokenResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ExchangeLoginTokenResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ControlSessionResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON415 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetCapabilitiesResponse parses an HTTP response from a GetCapabilitiesWithResponse call
+func ParseGetCapabilitiesResponse(rsp *http.Response) (*GetCapabilitiesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetCapabilitiesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Capabilities
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateCertificateIssuanceResponse parses an HTTP response from a CreateCertificateIssuanceWithResponse call
+func ParseCreateCertificateIssuanceResponse(rsp *http.Response) (*CreateCertificateIssuanceResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateCertificateIssuanceResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest CertificateIssuance
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 412:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON412 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers CreateCertificateIssuanceResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetCertificateIssuanceResponse parses an HTTP response from a GetCertificateIssuanceWithResponse call
+func ParseGetCertificateIssuanceResponse(rsp *http.Response) (*GetCertificateIssuanceResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetCertificateIssuanceResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CertificateIssuance
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers GetCertificateIssuanceResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseMarkCertificateChallengeReadyResponse parses an HTTP response from a MarkCertificateChallengeReadyWithResponse call
+func ParseMarkCertificateChallengeReadyResponse(rsp *http.Response) (*MarkCertificateChallengeReadyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &MarkCertificateChallengeReadyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CertificateIssuance
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 412:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON412 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers MarkCertificateChallengeReadyResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseMarkCertificateChallengeRemovedResponse parses an HTTP response from a MarkCertificateChallengeRemovedWithResponse call
+func ParseMarkCertificateChallengeRemovedResponse(rsp *http.Response) (*MarkCertificateChallengeRemovedResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &MarkCertificateChallengeRemovedResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 412:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON412 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers MarkCertificateChallengeRemovedResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetClientIPResponse parses an HTTP response from a GetClientIPWithResponse call
+func ParseGetClientIPResponse(rsp *http.Response) (*GetClientIPResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetClientIPResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ClientIPResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateDomainVerificationResponse parses an HTTP response from a CreateDomainVerificationWithResponse call
+func ParseCreateDomainVerificationResponse(rsp *http.Response) (*CreateDomainVerificationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateDomainVerificationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest DomainVerification
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers CreateDomainVerificationResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetDomainVerificationResponse parses an HTTP response from a GetDomainVerificationWithResponse call
+func ParseGetDomainVerificationResponse(rsp *http.Response) (*GetDomainVerificationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetDomainVerificationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DomainVerification
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers GetDomainVerificationResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseCompleteDomainVerificationResponse parses an HTTP response from a CompleteDomainVerificationWithResponse call
+func ParseCompleteDomainVerificationResponse(rsp *http.Response) (*CompleteDomainVerificationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CompleteDomainVerificationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Hostname
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 412:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON412 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers CompleteDomainVerificationResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetHealthResponse parses an HTTP response from a GetHealthWithResponse call
+func ParseGetHealthResponse(rsp *http.Response) (*GetHealthResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetHealthResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest HealthResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListHostnamesResponse parses an HTTP response from a ListHostnamesWithResponse call
+func ParseListHostnamesResponse(rsp *http.Response) (*ListHostnamesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListHostnamesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest HostnamePage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ListHostnamesResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseClaimHostnameResponse parses an HTTP response from a ClaimHostnameWithResponse call
+func ParseClaimHostnameResponse(rsp *http.Response) (*ClaimHostnameResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ClaimHostnameResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest Hostname
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ClaimHostnameResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseReleaseHostnameResponse parses an HTTP response from a ReleaseHostnameWithResponse call
+func ParseReleaseHostnameResponse(rsp *http.Response) (*ReleaseHostnameResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReleaseHostnameResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ReleaseHostnameResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetReadinessResponse parses an HTTP response from a GetReadinessWithResponse call
+func ParseGetReadinessResponse(rsp *http.Response) (*GetReadinessResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetReadinessResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ReadinessResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ReadinessResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListRoutesResponse parses an HTTP response from a ListRoutesWithResponse call
+func ParseListRoutesResponse(rsp *http.Response) (*ListRoutesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListRoutesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []Route
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ListRoutesResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseCreateRouteResponse parses an HTTP response from a CreateRouteWithResponse call
+func ParseCreateRouteResponse(rsp *http.Response) (*CreateRouteResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateRouteResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest SessionSetup
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers CreateRouteResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseDeleteRouteResponse parses an HTTP response from a DeleteRouteWithResponse call
+func ParseDeleteRouteResponse(rsp *http.Response) (*DeleteRouteResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteRouteResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers DeleteRouteResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseMarkRouteCertificateInstalledResponse parses an HTTP response from a MarkRouteCertificateInstalledWithResponse call
+func ParseMarkRouteCertificateInstalledResponse(rsp *http.Response) (*MarkRouteCertificateInstalledResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &MarkRouteCertificateInstalledResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 412:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON412 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers MarkRouteCertificateInstalledResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseHeartbeatRouteSessionResponse parses an HTTP response from a HeartbeatRouteSessionWithResponse call
+func ParseHeartbeatRouteSessionResponse(rsp *http.Response) (*HeartbeatRouteSessionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &HeartbeatRouteSessionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest HeartbeatResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers HeartbeatRouteSessionResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseMarkRouteReadyResponse parses an HTTP response from a MarkRouteReadyWithResponse call
+func ParseMarkRouteReadyResponse(rsp *http.Response) (*MarkRouteReadyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &MarkRouteReadyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers MarkRouteReadyResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseCreateRouteSessionResponse parses an HTTP response from a CreateRouteSessionWithResponse call
+func ParseCreateRouteSessionResponse(rsp *http.Response) (*CreateRouteSessionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateRouteSessionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest SessionSetup
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers CreateRouteSessionResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseRegisterRouteTransportResponse parses an HTTP response from a RegisterRouteTransportWithResponse call
+func ParseRegisterRouteTransportResponse(rsp *http.Response) (*RegisterRouteTransportResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RegisterRouteTransportResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers RegisterRouteTransportResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetRelayMapResponse parses an HTTP response from a GetRelayMapWithResponse call
+func ParseGetRelayMapResponse(rsp *http.Response) (*GetRelayMapResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetRelayMapResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}

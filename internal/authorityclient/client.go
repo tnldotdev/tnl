@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
+	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/pkg/protocol/authorityv1"
 )
 
@@ -33,7 +34,7 @@ var (
 )
 
 type Client struct {
-	base    *url.URL
+	api     *authorityv1.Client
 	http    *http.Client
 	timeout time.Duration
 }
@@ -57,32 +58,40 @@ func New(endpoint string, httpClient *http.Client) (*Client, error) {
 	if err != nil || canonical != endpoint {
 		return nil, errors.New("authorityclient: endpoint must be a canonical HTTPS origin")
 	}
-	base, err := url.Parse(canonical)
-	if err != nil {
-		return nil, errors.New("authorityclient: endpoint must be a canonical HTTPS origin")
-	}
 	if httpClient == nil {
 		httpClient = &http.Client{}
 	}
-	return &Client{base: base, http: httpClient, timeout: defaultRequestTimeout}, nil
+	apiClient, err := authorityv1.NewClient(
+		canonical,
+		authorityv1.WithHTTPClient(httpClient),
+		authorityv1.WithRequestEditorFn(func(_ context.Context, request *http.Request) error {
+			request.Header.Set("Accept", "application/json, application/problem+json")
+			return nil
+		}),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("authorityclient: configure generated client: %w", err)
+	}
+	return &Client{api: apiClient, http: httpClient, timeout: defaultRequestTimeout}, nil
 }
 
 func (c *Client) Capabilities(ctx context.Context) (authorityv1.Capabilities, error) {
-	return request[authorityv1.Capabilities](ctx, c, http.MethodGet, "/v1/capabilities", nil, nil, nil)
+	return request[authorityv1.Capabilities](ctx, c, c.api.GetCapabilities)
 }
 
-func (c *Client) AddHostname(
+func (c *Client) ClaimHostname(
 	ctx context.Context,
-	kind authorityv1.AddHostnameRequestKind,
-	name, requestKey string,
+	kind authorityv1.ClaimHostnameRequestKind,
+	label, idempotencyKey string,
 ) (authorityv1.Hostname, error) {
-	body := authorityv1.AddHostnameRequest{Kind: kind}
-	if name != "" {
-		body.Name = &name
+	body := authorityv1.ClaimHostnameRequest{Kind: kind}
+	if label != "" {
+		body.Label = &label
 	}
-	headers := make(http.Header)
-	headers.Set("Idempotency-Key", requestKey)
-	return request[authorityv1.Hostname](ctx, c, http.MethodPost, "/v1/hostnames", body, nil, headers)
+	params := &authorityv1.ClaimHostnameParams{IdempotencyKey: idempotencyKey}
+	return request[authorityv1.Hostname](ctx, c, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.ClaimHostname(ctx, params, body, editors...)
+	})
 }
 
 func (c *Client) ListHostnames(ctx context.Context) ([]authorityv1.Hostname, error) {
@@ -102,11 +111,13 @@ func (c *Client) ListHostnames(ctx context.Context) ([]authorityv1.Hostname, err
 }
 
 func (c *Client) ListHostnamesPage(ctx context.Context, cursor string) ([]authorityv1.Hostname, string, error) {
-	query := make(url.Values)
+	params := &authorityv1.ListHostnamesParams{}
 	if cursor != "" {
-		query.Set("cursor", cursor)
+		params.Cursor = &cursor
 	}
-	page, err := request[authorityv1.HostnamePage](ctx, c, http.MethodGet, "/v1/hostnames", nil, query, nil)
+	page, err := request[authorityv1.HostnamePage](ctx, c, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.ListHostnames(ctx, params, editors...)
+	})
 	if err != nil {
 		return nil, "", err
 	}
@@ -130,45 +141,45 @@ func (c *Client) ListHostnamesPage(ctx context.Context, cursor string) ([]author
 	return page.Hostnames, next, nil
 }
 
-func (c *Client) RemoveHostname(ctx context.Context, hostnameID string) error {
-	_, err := request[struct{}](ctx, c, http.MethodDelete, "/v1/hostnames/"+url.PathEscape(hostnameID), nil, nil, nil)
+func (c *Client) ReleaseHostname(ctx context.Context, hostnameID string) error {
+	_, err := request[struct{}](ctx, c, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.ReleaseHostname(ctx, hostnameID, editors...)
+	})
 	return err
 }
 
 func (c *Client) CreateDomainVerification(
 	ctx context.Context,
-	domain, requestKey string,
+	domain, idempotencyKey string,
 ) (authorityv1.DomainVerification, error) {
-	headers := make(http.Header)
-	headers.Set("Idempotency-Key", requestKey)
-	return request[authorityv1.DomainVerification](
-		ctx, c, http.MethodPost, "/v1/domain-verifications",
-		authorityv1.CreateDomainVerificationRequest{Domain: domain}, nil, headers,
-	)
+	params := &authorityv1.CreateDomainVerificationParams{IdempotencyKey: idempotencyKey}
+	body := authorityv1.CreateDomainVerificationRequest{Domain: domain}
+	return request[authorityv1.DomainVerification](ctx, c, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.CreateDomainVerification(ctx, params, body, editors...)
+	})
 }
 
 func (c *Client) DomainVerification(ctx context.Context, verificationID string) (authorityv1.DomainVerification, error) {
-	return request[authorityv1.DomainVerification](
-		ctx, c, http.MethodGet, domainVerificationPath(verificationID, ""), nil, nil, nil,
-	)
+	return request[authorityv1.DomainVerification](ctx, c, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.GetDomainVerification(ctx, verificationID, editors...)
+	})
 }
 
 func (c *Client) CompleteDomainVerification(ctx context.Context, verificationID string) (authorityv1.Hostname, error) {
-	return request[authorityv1.Hostname](
-		ctx, c, http.MethodPost, domainVerificationPath(verificationID, "complete"), nil, nil, nil,
-	)
+	return request[authorityv1.Hostname](ctx, c, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.CompleteDomainVerification(ctx, verificationID, editors...)
+	})
 }
 
 func (c *Client) IssueAuthorization(
 	ctx context.Context,
 	requestBody authorityv1.IssueAuthorizationRequest,
-	requestKey string,
+	idempotencyKey string,
 ) (authorityv1.AuthorizationEnvelope, error) {
-	headers := make(http.Header)
-	headers.Set("Idempotency-Key", requestKey)
-	return request[authorityv1.AuthorizationEnvelope](
-		ctx, c, http.MethodPost, "/v1/authorizations", requestBody, nil, headers,
-	)
+	params := &authorityv1.IssueAuthorizationParams{IdempotencyKey: idempotencyKey}
+	return request[authorityv1.AuthorizationEnvelope](ctx, c, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.IssueAuthorization(ctx, params, requestBody, editors...)
+	})
 }
 
 func (c *Client) DiscoverOIDC(ctx context.Context, issuer string) (OIDCMetadata, error) {
@@ -293,32 +304,39 @@ func (r oauthTokenResponse) tokens(started time.Time, previousRefresh string) (O
 	return tokens, nil
 }
 
-func request[T any](
-	ctx context.Context,
-	client *Client,
-	method, path string,
-	requestBody any,
-	query url.Values,
-	headers http.Header,
-) (T, error) {
+type authorityRequest func(context.Context, ...authorityv1.RequestEditorFn) (*http.Response, error)
+
+func request[T any](ctx context.Context, client *Client, call authorityRequest) (T, error) {
 	var zero T
-	var body io.Reader
-	if requestBody != nil {
-		encoded, err := json.Marshal(requestBody)
-		if err != nil {
-			return zero, err
-		}
-		body = bytes.NewReader(encoded)
-		if headers == nil {
-			headers = make(http.Header)
-		}
-		headers.Set("Content-Type", "application/json")
+	requestCtx, cancel := context.WithTimeout(ctx, client.timeout)
+	defer cancel()
+	response, err := call(requestCtx)
+	if err != nil {
+		return zero, fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
-	endpoint := client.base.JoinPath(path)
-	endpoint.RawQuery = query.Encode()
+	defer response.Body.Close()
+	payload, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
+	if err != nil {
+		return zero, fmt.Errorf("%w: %w", ErrUnavailable, err)
+	}
+	if len(payload) > maxResponseBytes {
+		return zero, errors.New("authorityclient: response exceeds limit")
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return zero, responseError(response.StatusCode, response.Header, payload)
+	}
+	if len(payload) == 0 {
+		return zero, nil
+	}
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.UseNumber()
+	decoder.DisallowUnknownFields()
 	var result T
-	if err := client.requestURL(ctx, method, endpoint.String(), body, headers, &result, true); err != nil {
-		return zero, err
+	if err := decoder.Decode(&result); err != nil {
+		return zero, fmt.Errorf("authorityclient: decode response: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return zero, errors.New("authorityclient: response contains trailing JSON")
 	}
 	return result, nil
 }
@@ -415,24 +433,8 @@ func (e *ProblemError) Error() string {
 	return "authorityclient: HTTP " + strconv.Itoa(e.Status) + ": " + e.Problem.Title
 }
 
-func domainVerificationPath(verificationID, operation string) string {
-	path := "/v1/domain-verifications/" + url.PathEscape(verificationID)
-	if operation != "" {
-		path += "/" + operation
-	}
-	return path
-}
-
 func validID(value, prefix string) bool {
-	if len(value) != len(prefix)+32 || !strings.HasPrefix(value, prefix) {
-		return false
-	}
-	for _, character := range value[len(prefix):] {
-		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
-			return false
-		}
-	}
-	return true
+	return opaqueid.Valid(value, prefix)
 }
 
 func parseHTTPSURL(value string) (*url.URL, error) {

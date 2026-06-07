@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/state/statedb"
 )
 
@@ -357,14 +358,5 @@ func validAuthenticationMethod(method AuthenticationMethod) bool {
 }
 
 func validControlSessionID(value string) bool {
-	const prefix = "control_session_"
-	if len(value) != len(prefix)+32 || !strings.HasPrefix(value, prefix) {
-		return false
-	}
-	for _, character := range value[len(prefix):] {
-		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
-			return false
-		}
-	}
-	return true
+	return opaqueid.Valid(value, "control_session_")
 }

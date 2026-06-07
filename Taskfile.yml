@@ -5,12 +5,12 @@ env:
 
 tasks:
   dev:
-    desc: Run the Core development stack
+    desc: Run the local development stack
     cmds:
       - docker compose --file deploy/local/compose.yaml up --build
 
   local:up:
-    desc: Start the local Core services in the background
+    desc: Start the local services in the background
     cmds:
       - docker compose --file deploy/local/compose.yaml up --build --detach
       - install -d -m 0700 .local/certs
@@ -63,12 +63,12 @@ tasks:
       - TNL_SERVER=https://tnl.localhost TNL_STATE_DIR=.local/client-state go run ./cmd/tnl {{.CLI_ARGS}}
 
   local:down:
-    desc: Stop the local Core services without removing state
+    desc: Stop the local services without removing state
     cmds:
       - docker compose --file deploy/local/compose.yaml stop
 
   local:reset:
-    desc: Remove local Core services, trust, and persistent state
+    desc: Remove local services, trust, and persistent state
     cmds:
       - task: local:untrust
       - docker compose --file deploy/local/compose.yaml down --volumes --remove-orphans
@@ -160,7 +160,7 @@ tasks:
       - go test -race -v ./cmd/tnld ./internal/controltls ./internal/tailtransport ./internal/publisher ./internal/integration -run='^TestIntegration' -count=1 -timeout=15m
 
   go:bench-fly:
-    desc: Benchmark complete single-node and HA route paths on Fly
+    desc: Benchmark complete standalone and split route paths on Fly
     cmds:
       - ./scripts/bench-fly.sh
 

@@ -2,9 +2,7 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -21,7 +19,7 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
-	coreadmin "github.com/tnldotdev/tnl/internal/admin"
+	adminservice "github.com/tnldotdev/tnl/internal/admin"
 	"github.com/tnldotdev/tnl/internal/api"
 	"github.com/tnldotdev/tnl/internal/auth"
 	"github.com/tnldotdev/tnl/internal/authorization"
@@ -34,6 +32,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/dnsready"
 	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/routes"
 	"github.com/tnldotdev/tnl/internal/routeusage"
 	"github.com/tnldotdev/tnl/internal/serverclient"
@@ -189,7 +188,7 @@ func serve(ctx context.Context, cfg config.TNLD) error {
 		}
 		go forward(done, "serve metrics", running.metricsServer.Done())
 	}
-	if cfg.Mode == config.TNLDModeWorker && cfg.WorkerURL != "" {
+	if cfg.Mode == config.TNLDModeWorker && cfg.EdgeURL != "" {
 		workerDone, err := startWorker(lifetime, cfg, metrics)
 		if err != nil {
 			return errors.Join(err, running.shutdown(cfg.DrainTimeout))
@@ -238,7 +237,7 @@ func (d *daemon) startServer(
 	var oidcVerifier auth.OIDCVerifier
 	if cfg.OIDCEnabled() {
 		oidcVerifier, err = auth.NewOIDCVerifier(auth.OIDCConfig{
-			Issuer: cfg.OIDCIssuer, ClientID: cfg.OIDCClientID, CoreEndpoint: "https://" + cfg.ServerHostname(),
+			Issuer: cfg.OIDCIssuer, ClientID: cfg.OIDCClientID,
 		})
 		if err != nil {
 			return nil, nil, err
@@ -296,7 +295,7 @@ func (d *daemon) startServer(
 		return nil, nil, err
 	}
 	d.coordinator, err = routes.NewCoordinator(ctx, store, serverInstanceID, routes.CoordinatorConfig{
-		PublishReady: dns.CheckHostname,
+		CheckHostnamePublishability: dns.CheckHostname,
 		ObserveHeartbeat: func(result routes.HeartbeatResult) {
 			metrics.ObserveRouteSessionHeartbeat(string(result))
 		},
@@ -314,7 +313,7 @@ func (d *daemon) startServer(
 		return nil, nil, err
 	}
 	go monitorRoutes(ctx, d.coordinator, metrics)
-	go monitorNameCapacity(ctx, store, metrics)
+	go monitorGeneratedHostnameCapacity(ctx, store, metrics)
 	var certificateService api.CertificateService
 	if cfg.ACMEEnabled() {
 		control := new(certificateControl)
@@ -328,10 +327,10 @@ func (d *daemon) startServer(
 			HostnameReady: dns.CheckHostname,
 			Probe: func(probeCtx context.Context, issuance certificates.Issuance) error {
 				active, ok := d.coordinator.LookupChallenge(issuance.Hostname)
-				if !ok || active.RouteID != issuance.RouteID || active.Version != issuance.Version {
+				if !ok || active.RouteID != issuance.RouteID || active.RouteVersion != issuance.RouteVersion {
 					return errors.New("assigned challenge route is unavailable")
 				}
-				return certificates.ProbeTLSALPN(probeCtx, active.Backend, active.SourceKey, issuance)
+				return certificates.ProbeTLSALPN(probeCtx, active.Backend, issuance)
 			},
 		}, report)
 	}
@@ -351,22 +350,13 @@ func (d *daemon) startServer(
 		}
 		go monitorWorker(ctx, worker, metrics)
 	} else {
-		workerTokens := cfg.AcceptedWorkerTokens
-		if len(workerTokens) == 0 {
-			workerTokens = []string{cfg.WorkerToken}
-		}
-		verifiers := make([]credentials.WorkerVerifier, len(workerTokens))
-		for index, token := range workerTokens {
-			verifiers[index], err = credentials.ParseWorkerToken(credentials.WorkerToken(token))
-			if err != nil {
-				return nil, nil, fmt.Errorf("configure worker token: %w", err)
-			}
+		verifier, err := credentials.ParseWorkerToken(credentials.WorkerToken(cfg.WorkerToken))
+		if err != nil {
+			return nil, nil, fmt.Errorf("configure worker token: %w", err)
 		}
 		hub, err = workercontrol.NewHub(workercontrol.HubConfig{
-			Tokens: verifiers, Registry: d.coordinator,
-			MaxStreams: cfg.WorkerStreamLimit, MaxSessions: cfg.WorkerSessionLimit,
-			MaxWorkerCapacity: cfg.WorkerCapacity, MaxTotalCapacity: cfg.WorkerTotalCapacity,
-			DrainTime: cfg.DrainTimeout, OnError: report,
+			Tokens: []credentials.WorkerVerifier{verifier}, Registry: d.coordinator,
+			MaxStreams: cfg.WorkerStreamLimit, DrainTime: cfg.DrainTimeout, OnError: report,
 			OnSessionEstablished: func(role workercontrol.SessionRole) {
 				metrics.ObserveWorkerSessionEstablished(string(role))
 			},
@@ -388,7 +378,7 @@ func (d *daemon) startServer(
 		return nil, nil, err
 	}
 	apiMetrics := serverAPIObserver{metrics: metrics}
-	adminService, err := coreadmin.NewService(d.db, d.coordinator, string(cfg.Mode), cfg.DrainTimeout)
+	adminService, err := adminservice.NewService(d.db, d.coordinator, string(cfg.Mode), cfg.DrainTimeout)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -423,8 +413,8 @@ func (d *daemon) startServer(
 		Lookup: func(hostname string) (ingress.Route, bool) {
 			route, ok := d.coordinator.Lookup(hostname)
 			return ingress.Route{
-				ID: route.RouteID, Version: route.Version,
-				AllowedIPPrefixes: route.AllowedIPPrefixes, Backend: route.Backend, SourceKey: route.SourceKey,
+				ID: route.RouteID, RouteVersion: route.RouteVersion,
+				AllowedIPPrefixes: route.AllowedIPPrefixes, Backend: route.Backend,
 			}, ok
 		},
 		ServerHostname:     cfg.ServerHostname(),
@@ -433,16 +423,14 @@ func (d *daemon) startServer(
 		MaxRouteConnections: cfg.RouteConnLimit, Metrics: metrics, OnError: report,
 	}
 	if d.routeUsageReporter != nil {
-		ingressConfig.OpenUsage = func(routeID string, version uint64, source netip.Addr, at time.Time) ingress.UsageConnection {
-			return d.routeUsageReporter.Collector.Open(routeID, version, source, at)
+		ingressConfig.OpenUsage = func(routeID string, routeVersion uint64, source netip.Addr, at time.Time) ingress.UsageConnection {
+			return d.routeUsageReporter.Collector.Open(routeID, routeVersion, source, at)
 		}
 	}
 	if cfg.ACMEEnabled() {
-		ingressConfig.LookupChallenge = func(hostname string) (ingress.Route, bool) {
+		ingressConfig.LookupChallenge = func(hostname string) (worker.RouteBackend, bool) {
 			route, ok := d.coordinator.LookupChallenge(hostname)
-			return ingress.Route{
-				ID: route.RouteID, Version: route.Version, Backend: route.Backend, SourceKey: route.SourceKey,
-			}, ok
+			return route.Backend, ok
 		}
 	}
 	d.ingress, err = ingress.New(publicListener, ingressConfig)
@@ -499,7 +487,7 @@ func (c *certificateControl) initialize(
 func (c *certificateControl) Create(
 	ctx context.Context,
 	routeID string,
-	version uint64,
+	routeVersion uint64,
 	profile string,
 	csrDER []byte,
 ) (certificates.Issuance, error) {
@@ -507,7 +495,7 @@ func (c *certificateControl) Create(
 	if service == nil {
 		return certificates.Issuance{}, certificates.ErrUnavailable
 	}
-	return service.Create(ctx, routeID, version, profile, csrDER)
+	return service.Create(ctx, routeID, routeVersion, profile, csrDER)
 }
 
 func (c *certificateControl) Get(ctx context.Context, id string) (certificates.Issuance, error) {
@@ -537,25 +525,25 @@ func (c *certificateControl) ChallengeRemoved(ctx context.Context, id string) (c
 func (c *certificateControl) Installed(
 	ctx context.Context,
 	id, routeID string,
-	version uint64,
+	routeVersion uint64,
 ) (certificates.Issuance, error) {
 	service := c.service.Load()
 	if service == nil {
 		return certificates.Issuance{}, certificates.ErrUnavailable
 	}
-	return service.Installed(ctx, id, routeID, version)
+	return service.Installed(ctx, id, routeID, routeVersion)
 }
 
 func startWorker(ctx context.Context, cfg config.TNLD, metrics *observability.Metrics) (<-chan error, error) {
-	workerURL, err := url.Parse(cfg.WorkerURL)
+	edgeURL, err := url.Parse(cfg.EdgeURL)
 	if err != nil {
 		return nil, err
 	}
 	serverScheme := "https"
-	if workerURL.Scheme == "ws" {
+	if edgeURL.Scheme == "ws" {
 		serverScheme = "http"
 	}
-	server, err := serverclient.New((&url.URL{Scheme: serverScheme, Host: workerURL.Host}).String(), nil, "")
+	server, err := serverclient.New((&url.URL{Scheme: serverScheme, Host: edgeURL.Host}).String(), nil, "")
 	if err != nil {
 		return nil, err
 	}
@@ -600,7 +588,7 @@ func startWorker(ctx context.Context, cfg config.TNLD, metrics *observability.Me
 			go monitorWorker(sessionCtx, worker, metrics)
 			started := time.Now()
 			runErr := workercontrol.RunWorker(ctx, workercontrol.WorkerConfig{
-				URL: cfg.WorkerURL, Token: token, Worker: worker, MaxStreams: cfg.WorkerStreamLimit,
+				URL: cfg.EdgeURL, Token: token, Worker: worker, MaxStreams: cfg.WorkerStreamLimit,
 				DrainTime: cfg.DrainTimeout, OnError: report,
 				OnSessionEstablished: func(role workercontrol.SessionRole) {
 					metrics.ObserveWorkerSessionEstablished(string(role))
@@ -720,7 +708,7 @@ func capabilities(cfg config.TNLD, relayRegion string) serverv1.Capabilities {
 			Version: serverv1.AdministrationCapabilitiesVersionN1,
 			Operations: []serverv1.AdministrationCapabilitiesOperations{
 				serverv1.ServerStatus, serverv1.Routes, serverv1.Hostnames, serverv1.Credentials,
-				serverv1.ControlSessions, serverv1.OperationalSwitches,
+				serverv1.ControlSessions, serverv1.MaintenanceControls,
 			},
 		},
 		Authentication: serverv1.AuthenticationCapabilities{
@@ -760,11 +748,7 @@ func capabilities(cfg config.TNLD, relayRegion string) serverv1.Capabilities {
 
 func newServerInstanceID() (string, error) {
 	// Fence process-local assignments; an exact signed retry may explicitly restore its session.
-	var material [16]byte
-	if _, err := rand.Read(material[:]); err != nil {
-		return "", err
-	}
-	return "instance_" + hex.EncodeToString(material[:]), nil
+	return opaqueid.New("instance_")
 }
 
 func forward(destination chan<- error, name string, source <-chan error) {
@@ -851,9 +835,9 @@ func monitorRoutes(ctx context.Context, coordinator *routes.Coordinator, metrics
 	for {
 		stats := coordinator.HealthStats()
 		metrics.SetRoutes("provisioning", stats.Provisioning)
-		metrics.SetRoutes("active", stats.Active)
+		metrics.SetRoutes("routable", stats.Routable)
 		metrics.SetRouteSessionMinSecondsRemaining("provisioning", stats.MinimumProvisioningSessionSeconds)
-		metrics.SetRouteSessionMinSecondsRemaining("active", stats.MinimumActiveSessionSeconds)
+		metrics.SetRouteSessionMinSecondsRemaining("routable", stats.MinimumRoutableSessionSeconds)
 		metrics.SetWorkersConnected(stats.ConnectedWorkers)
 		select {
 		case <-ctx.Done():
@@ -863,13 +847,13 @@ func monitorRoutes(ctx context.Context, coordinator *routes.Coordinator, metrics
 	}
 }
 
-func monitorNameCapacity(ctx context.Context, store *routes.Store, metrics *observability.Metrics) {
+func monitorGeneratedHostnameCapacity(ctx context.Context, store *routes.Store, metrics *observability.Metrics) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	for {
-		total, remaining, err := store.FriendlyNameCapacity(ctx)
+		total, remaining, err := store.GeneratedHostnameCapacity(ctx)
 		if err == nil {
-			metrics.SetFriendlyNameCapacity(total, remaining)
+			metrics.SetGeneratedHostnameCapacity(total, remaining)
 		}
 		select {
 		case <-ctx.Done():

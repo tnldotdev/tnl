@@ -24,7 +24,7 @@ WHERE directory_url = ?;
 INSERT INTO certificate_issuances (
     id,
     route_id,
-    version,
+    route_version,
     hostname,
     acme_profile,
     status,
@@ -35,14 +35,14 @@ INSERT INTO certificate_issuances (
     updated_at
 )
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT (route_id, version, csr_hash) DO NOTHING;
+ON CONFLICT (route_id, route_version, csr_hash) DO NOTHING;
 
--- name: GetActiveRouteHostname :one
+-- name: GetEnabledRouteHostname :one
 SELECT hostname
 FROM routes
 WHERE id = sqlc.arg(route_id)
-    AND version = sqlc.arg(version)
-    AND status = 'active'
+    AND route_version = sqlc.arg(route_version)
+    AND status = 'enabled'
     AND (authorization_expires_at IS NULL OR authorization_expires_at > sqlc.arg(now));
 
 -- name: GetCertificateIssuance :one
@@ -51,7 +51,7 @@ WHERE id = ?;
 
 -- name: FindBoundCertificateIssuance :one
 SELECT * FROM certificate_issuances
-WHERE route_id = ? AND version = ? AND csr_hash = ?;
+WHERE route_id = ? AND route_version = ? AND csr_hash = ?;
 
 -- name: FindResumableCertificateIssuance :one
 SELECT * FROM certificate_issuances
@@ -64,14 +64,14 @@ LIMIT 1;
 
 -- name: RebindCertificateIssuance :execrows
 UPDATE certificate_issuances
-SET version = ?, updated_at = ?
+SET route_version = ?, updated_at = ?
 WHERE id = ?;
 
 -- name: HasBlockingCertificateIssuance :one
 SELECT CAST(EXISTS (
     SELECT 1
     FROM certificate_issuances
-    WHERE route_id = ? AND version = ? AND csr_hash != ?
+    WHERE route_id = ? AND route_version = ? AND csr_hash != ?
         AND (
             status NOT IN ('installed', 'failed', 'blocked', 'canceled')
             OR (status = 'installed' AND renew_at > CAST(sqlc.arg(now) AS INTEGER))

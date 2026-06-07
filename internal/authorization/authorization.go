@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +16,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/opaqueid"
 )
 
 const (
@@ -54,7 +54,7 @@ type Config struct {
 	Now       func() time.Time
 }
 
-// Expected binds a signed authorization to one exact Core operation.
+// Expected binds a signed authorization to one exact authorized operation.
 // RouteID and RouteVersion must both be empty for route.create and present otherwise.
 type Expected struct {
 	Operation            Operation
@@ -316,12 +316,7 @@ func decodeStrictObject(data []byte, destination any) error {
 }
 
 func validID(value, prefix string) bool {
-	prefix += "_"
-	if len(value) != len(prefix)+32 || !strings.HasPrefix(value, prefix) {
-		return false
-	}
-	_, err := hex.DecodeString(value[len(prefix):])
-	return err == nil
+	return opaqueid.Valid(value, prefix+"_")
 }
 
 func invalid(reason string) error { return fmt.Errorf("%w: %s", ErrInvalid, reason) }

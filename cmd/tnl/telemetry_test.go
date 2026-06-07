@@ -59,7 +59,7 @@ func TestTelemetryObserverReportsReadyOnce(t *testing.T) {
 				},
 			)
 			for _, event := range []publisher.Event{
-				{Type: publisher.EventRoute},
+				{Type: publisher.EventRouteAssigned},
 				{Type: publisher.EventReady},
 				{Type: publisher.EventReady},
 			} {

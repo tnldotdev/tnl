@@ -2,8 +2,6 @@ package workercontrol
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -15,6 +13,7 @@ import (
 	"github.com/coder/websocket"
 	yamux "github.com/libp2p/go-yamux/v5"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/worker"
 	"github.com/tnldotdev/tnl/pkg/protocol/workerv1"
 )
@@ -29,9 +28,6 @@ type HubConfig struct {
 	Tokens                []credentials.WorkerVerifier
 	Registry              Registry
 	MaxStreams            int
-	MaxSessions           int
-	MaxWorkerCapacity     int
-	MaxTotalCapacity      int
 	DrainTime             time.Duration
 	OnError               func(error)
 	OnSessionEstablished  func(SessionRole)
@@ -39,16 +35,10 @@ type HubConfig struct {
 }
 
 type Hub struct {
-	config        HubConfig
-	mu            sync.Mutex
-	sessions      map[credentials.CredentialID]*workerReservation
-	totalCapacity int
-	closed        bool
-}
-
-type workerReservation struct {
-	connection *websocket.Conn
-	capacity   int
+	config      HubConfig
+	mu          sync.Mutex
+	connections map[*websocket.Conn]struct{}
+	closed      bool
 }
 
 func NewHub(config HubConfig) (*Hub, error) {
@@ -58,26 +48,10 @@ func NewHub(config HubConfig) (*Hub, error) {
 	if config.MaxStreams <= 0 {
 		config.MaxStreams = defaultMaxStreams
 	}
-	if config.MaxSessions <= 0 {
-		config.MaxSessions = defaultMaxSessions
-	}
-	if config.MaxWorkerCapacity <= 0 {
-		config.MaxWorkerCapacity = defaultMaxWorkerCapacity
-	}
-	if config.MaxTotalCapacity <= 0 {
-		config.MaxTotalCapacity = defaultMaxTotalCapacity
-	}
-	seen := make(map[credentials.CredentialID]struct{}, len(config.Tokens))
-	for _, verifier := range config.Tokens {
-		if _, exists := seen[verifier.ID()]; exists {
-			return nil, errors.New("workercontrol: duplicate worker token")
-		}
-		seen[verifier.ID()] = struct{}{}
-	}
 	if config.DrainTime <= 0 {
 		config.DrainTime = 30 * time.Second
 	}
-	return &Hub{config: config, sessions: make(map[credentials.CredentialID]*workerReservation)}, nil
+	return &Hub{config: config, connections: make(map[*websocket.Conn]struct{})}, nil
 }
 
 func (h *Hub) ServeHTTP(response http.ResponseWriter, request *http.Request) {
@@ -87,17 +61,11 @@ func (h *Hub) ServeHTTP(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	token, err := credentials.Bearer(request.Header)
-	credentialID, authenticated := h.authenticate(credentials.WorkerToken(token))
-	if err != nil || !authenticated {
+	if err != nil || !h.matches(credentials.WorkerToken(token)) {
 		response.Header().Set("WWW-Authenticate", "Bearer")
 		http.Error(response, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	if !h.reserve(credentialID) {
-		http.Error(response, "worker session limit reached", http.StatusTooManyRequests)
-		return
-	}
-	defer h.release(credentialID)
 	connection, err := websocket.Accept(response, request, &websocket.AcceptOptions{
 		Subprotocols: []string{workerv1.Subprotocol},
 	})
@@ -105,9 +73,10 @@ func (h *Hub) ServeHTTP(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	defer connection.CloseNow()
-	if !h.bind(credentialID, connection) {
+	if !h.track(connection) {
 		return
 	}
+	defer h.untrack(connection)
 	if connection.Subprotocol() != workerv1.Subprotocol {
 		_ = connection.Close(websocket.StatusPolicyViolation, "subprotocol required")
 		return
@@ -116,7 +85,7 @@ func (h *Hub) ServeHTTP(response http.ResponseWriter, request *http.Request) {
 	lifetime, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	network := websocket.NetConn(lifetime, connection, websocket.MessageBinary)
-	session, err := yamux.Server(network, muxConfig(1), nil)
+	session, err := yamux.Server(network, muxConfig(h.config.MaxStreams), nil)
 	if err != nil {
 		h.report(err)
 		return
@@ -137,11 +106,7 @@ func (h *Hub) ServeHTTP(response http.ResponseWriter, request *http.Request) {
 		h.report(errors.New("workercontrol: invalid worker hello"))
 		return
 	}
-	if !h.claimCapacity(credentialID, hello.Capacity) {
-		_ = workerv1.WriteControl(control, workerv1.Message{Type: workerv1.Error, Code: workerv1.AtCapacity})
-		return
-	}
-	if err := workerv1.WriteControl(control, workerv1.Message{Type: workerv1.Accepted}); err != nil {
+	if err := workerv1.WriteControl(control, workerv1.Message{Type: workerv1.HelloAccepted}); err != nil {
 		h.report(err)
 		return
 	}
@@ -160,7 +125,7 @@ func (h *Hub) ServeHTTP(response http.ResponseWriter, request *http.Request) {
 		h.report(err)
 		return
 	}
-	worker := newRemoteWorker(session, control, hello.Capacity, h.config.MaxStreams)
+	worker := newRemoteWorker(session, control, hello.RouteCapacity)
 	if err := h.config.Registry.AddWorker(id, worker); err != nil {
 		h.report(err)
 		return
@@ -192,11 +157,9 @@ func (h *Hub) Close() {
 		return
 	}
 	h.closed = true
-	connections := make([]*websocket.Conn, 0, len(h.sessions))
-	for _, reservation := range h.sessions {
-		if reservation.connection != nil {
-			connections = append(connections, reservation.connection)
-		}
+	connections := make([]*websocket.Conn, 0, len(h.connections))
+	for connection := range h.connections {
+		connections = append(connections, connection)
 	}
 	h.mu.Unlock()
 	for _, connection := range connections {
@@ -204,46 +167,19 @@ func (h *Hub) Close() {
 	}
 }
 
-func (h *Hub) reserve(id credentials.CredentialID) bool {
+func (h *Hub) track(connection *websocket.Conn) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.closed || len(h.sessions) >= h.config.MaxSessions || h.sessions[id] != nil {
+	if h.closed {
 		return false
 	}
-	h.sessions[id] = &workerReservation{}
+	h.connections[connection] = struct{}{}
 	return true
 }
 
-func (h *Hub) bind(id credentials.CredentialID, connection *websocket.Conn) bool {
+func (h *Hub) untrack(connection *websocket.Conn) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
-	reservation := h.sessions[id]
-	if h.closed || reservation == nil {
-		return false
-	}
-	reservation.connection = connection
-	return true
-}
-
-func (h *Hub) claimCapacity(id credentials.CredentialID, capacity int) bool {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	reservation := h.sessions[id]
-	if reservation == nil || capacity <= 0 || capacity > h.config.MaxWorkerCapacity ||
-		h.totalCapacity+capacity > h.config.MaxTotalCapacity {
-		return false
-	}
-	reservation.capacity = capacity
-	h.totalCapacity += capacity
-	return true
-}
-
-func (h *Hub) release(id credentials.CredentialID) {
-	h.mu.Lock()
-	if reservation := h.sessions[id]; reservation != nil {
-		h.totalCapacity -= reservation.capacity
-		delete(h.sessions, id)
-	}
+	delete(h.connections, connection)
 	h.mu.Unlock()
 }
 
@@ -253,17 +189,13 @@ func (h *Hub) isClosed() bool {
 	return h.closed
 }
 
-func (h *Hub) authenticate(token credentials.WorkerToken) (credentials.CredentialID, bool) {
-	var matchedID credentials.CredentialID
-	matched := 0
+func (h *Hub) matches(token credentials.WorkerToken) bool {
+	matched := false
 	// Run every verifier so token position does not affect timing.
 	for _, verifier := range h.config.Tokens {
-		if verifier.Matches(token) {
-			matchedID = verifier.ID()
-			matched++
-		}
+		matched = verifier.Matches(token) || matched
 	}
-	return matchedID, matched == 1
+	return matched
 }
 
 func (h *Hub) report(err error) {
@@ -285,11 +217,7 @@ func (h *Hub) sessionDisconnected(role SessionRole, reason DisconnectReason) {
 }
 
 func sessionID() (string, error) {
-	var material [16]byte
-	if _, err := rand.Read(material[:]); err != nil {
-		return "", err
-	}
-	return "worker_" + hex.EncodeToString(material[:]), nil
+	return opaqueid.New("worker_")
 }
 
 type pendingResponse struct {
@@ -298,10 +226,9 @@ type pendingResponse struct {
 }
 
 type remoteWorker struct {
-	session    *yamux.Session
-	control    net.Conn
-	capacity   int
-	maxStreams int
+	session  *yamux.Session
+	control  net.Conn
+	capacity int
 
 	writeMu sync.Mutex
 	mu      sync.Mutex
@@ -310,7 +237,6 @@ type remoteWorker struct {
 	changed chan struct{}
 
 	attaching      int
-	streams        int
 	draining       bool
 	workerDraining bool
 	closed         bool
@@ -318,9 +244,9 @@ type remoteWorker struct {
 	onDraining     func()
 }
 
-func newRemoteWorker(session *yamux.Session, control net.Conn, capacity, maxStreams int) *remoteWorker {
+func newRemoteWorker(session *yamux.Session, control net.Conn, capacity int) *remoteWorker {
 	return &remoteWorker{
-		session: session, control: control, capacity: capacity, maxStreams: maxStreams,
+		session: session, control: control, capacity: capacity,
 		routes: make(map[string]*remoteRoute), pending: make(map[worker.RouteRef]chan pendingResponse),
 		changed: make(chan struct{}),
 	}
@@ -337,11 +263,11 @@ func (o *remoteWorker) Attach(ctx context.Context, assignment worker.Assignment)
 		return nil, worker.ErrDraining
 	}
 	if current := o.routes[assignment.RouteID]; current != nil {
-		if current.ref.Version == assignment.Version {
+		if current.ref.RouteVersion == assignment.RouteVersion {
 			o.mu.Unlock()
 			return current, nil
 		}
-		if current.ref.Version > assignment.Version {
+		if current.ref.RouteVersion > assignment.RouteVersion {
 			o.mu.Unlock()
 			return nil, worker.ErrStaleAssignment
 		}
@@ -359,16 +285,16 @@ func (o *remoteWorker) Attach(ctx context.Context, assignment worker.Assignment)
 		o.mu.Unlock()
 	}()
 
-	privateKey, err := assignment.Key.MarshalText()
+	tailcatDialerPrivateKey, err := assignment.Key.MarshalText()
 	if err != nil {
 		return nil, err
 	}
 	ref := assignment.RouteRef
 	response, err := o.request(ctx, workerv1.Message{
-		Type:             workerv1.AttachRoute,
-		Route:            &workerv1.RouteRef{RouteID: ref.RouteID, Version: ref.Version},
-		Endpoint:         &assignment.Endpoint,
-		WorkerPrivateKey: string(privateKey),
+		Type:                    workerv1.AttachRoute,
+		Route:                   &workerv1.RouteRef{RouteID: ref.RouteID, RouteVersion: ref.RouteVersion},
+		PublisherTransport:      &assignment.Endpoint,
+		TailcatDialerPrivateKey: string(tailcatDialerPrivateKey),
 	})
 	if err != nil {
 		return nil, err
@@ -498,7 +424,7 @@ func (o *remoteWorker) readLoop() error {
 		if message.Route == nil {
 			return errors.New("workercontrol: response omitted route")
 		}
-		ref := worker.RouteRef{RouteID: message.Route.RouteID, Version: message.Route.Version}
+		ref := worker.RouteRef{RouteID: message.Route.RouteID, RouteVersion: message.Route.RouteVersion}
 		o.mu.Lock()
 		pending := o.pending[ref]
 		if pending != nil {
@@ -529,7 +455,7 @@ func (o *remoteWorker) readLoop() error {
 }
 
 func (o *remoteWorker) request(ctx context.Context, message workerv1.Message) (workerv1.Message, error) {
-	ref := worker.RouteRef{RouteID: message.Route.RouteID, Version: message.Route.Version}
+	ref := worker.RouteRef{RouteID: message.Route.RouteID, RouteVersion: message.Route.RouteVersion}
 	response := make(chan pendingResponse, 1)
 	o.mu.Lock()
 	if o.closed {
@@ -582,70 +508,29 @@ func (o *remoteWorker) discard(ref worker.RouteRef) {
 func (o *remoteWorker) open(ctx context.Context, route *remoteRoute) (net.Conn, error) {
 	o.mu.Lock()
 	ready := o.routes[route.ref.RouteID] == route && !o.draining && !o.closed
-	atCapacity := ready && o.streams >= o.maxStreams
-	if ready && !atCapacity {
-		o.streams++
-	}
 	o.mu.Unlock()
 	if !ready {
 		return nil, worker.ErrDraining
 	}
-	if atCapacity {
-		return nil, worker.ErrAtCapacity
-	}
 	stream, err := o.session.OpenStream(ctx)
 	if err != nil {
-		o.releaseStream()
 		return nil, err
 	}
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = stream.SetWriteDeadline(deadline)
 	}
-	if err := workerv1.WriteDataHeader(stream, workerv1.DataHeader{RouteID: route.ref.RouteID, Version: route.ref.Version}); err != nil {
+	if err := workerv1.WriteDataHeader(stream, workerv1.DataHeader{RouteID: route.ref.RouteID, RouteVersion: route.ref.RouteVersion}); err != nil {
 		_ = stream.Reset()
-		o.releaseStream()
 		return nil, err
 	}
 	_ = stream.SetWriteDeadline(time.Time{})
-	return &countedStream{Conn: stream, release: o.releaseStream}, nil
-}
-
-func (o *remoteWorker) releaseStream() {
-	o.mu.Lock()
-	o.streams--
-	o.mu.Unlock()
-}
-
-type countedStream struct {
-	net.Conn
-	release func()
-	once    sync.Once
-}
-
-func (s *countedStream) Close() error {
-	err := s.Conn.Close()
-	s.once.Do(s.release)
-	return err
-}
-
-func (s *countedStream) CloseRead() error {
-	if closer, ok := s.Conn.(interface{ CloseRead() error }); ok {
-		return closer.CloseRead()
-	}
-	return errors.ErrUnsupported
-}
-
-func (s *countedStream) CloseWrite() error {
-	if closer, ok := s.Conn.(interface{ CloseWrite() error }); ok {
-		return closer.CloseWrite()
-	}
-	return errors.ErrUnsupported
+	return stream, nil
 }
 
 func (o *remoteWorker) detach(ctx context.Context, route *remoteRoute) error {
 	message, err := o.request(ctx, workerv1.Message{
 		Type:  workerv1.DetachRoute,
-		Route: &workerv1.RouteRef{RouteID: route.ref.RouteID, Version: route.ref.Version},
+		Route: &workerv1.RouteRef{RouteID: route.ref.RouteID, RouteVersion: route.ref.RouteVersion},
 	})
 	if err == nil && message.Type != workerv1.RouteDrained {
 		err = errors.New("workercontrol: unexpected detach response")
@@ -704,9 +589,9 @@ func (r *remoteRoute) markClosed() {
 
 func remoteError(code workerv1.ErrorCode) error {
 	switch code {
-	case workerv1.StaleAssignment:
+	case workerv1.StaleRouteVersion:
 		return worker.ErrStaleAssignment
-	case workerv1.AtCapacity:
+	case workerv1.RouteCapacityExceeded:
 		return worker.ErrAtCapacity
 	default:
 		return errors.New("workercontrol: worker rejected operation")

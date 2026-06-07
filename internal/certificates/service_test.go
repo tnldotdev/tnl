@@ -77,8 +77,8 @@ func TestServiceCertificateLifecycle(t *testing.T) {
 		t.Fatalf("idempotent issuance ID = %q, orders = %d", idempotent.ID, fake.orders)
 	}
 	if err := queries.AdvanceRouteVersion(context.Background(), statedb.AdvanceRouteVersionParams{
-		Version: 2,
-		RouteID: testRouteID,
+		RouteVersion: 2,
+		RouteID:      testRouteID,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestServiceCertificateLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if issuance.ID != idempotent.ID || issuance.Version != 2 || fake.orders != 1 {
+	if issuance.ID != idempotent.ID || issuance.RouteVersion != 2 || fake.orders != 1 {
 		t.Fatalf("rebound issuance = %+v, orders = %d", issuance, fake.orders)
 	}
 	issuance.Status = StatusValidating
@@ -94,8 +94,8 @@ func TestServiceCertificateLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := queries.AdvanceRouteVersion(context.Background(), statedb.AdvanceRouteVersionParams{
-		Version: 3,
-		RouteID: testRouteID,
+		RouteVersion: 3,
+		RouteID:      testRouteID,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestServiceCertificateLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if issuance.ID != idempotent.ID || issuance.Version != 3 || issuance.Status != StatusValidating || fake.orders != 1 {
+	if issuance.ID != idempotent.ID || issuance.RouteVersion != 3 || issuance.Status != StatusValidating || fake.orders != 1 {
 		t.Fatalf("processing rebound issuance = %+v, orders = %d", issuance, fake.orders)
 	}
 
@@ -140,8 +140,8 @@ func TestServiceCertificateLifecycle(t *testing.T) {
 	}
 	for version := 4; version <= 7; version++ {
 		if err := queries.AdvanceRouteVersion(context.Background(), statedb.AdvanceRouteVersionParams{
-			Version: int64(version),
-			RouteID: testRouteID,
+			RouteVersion: int64(version),
+			RouteID:      testRouteID,
 		}); err != nil {
 			t.Fatal(err)
 		}

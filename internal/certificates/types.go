@@ -44,12 +44,12 @@ type Challenge struct {
 }
 
 type Issuance struct {
-	ID          string
-	RouteID     string
-	Version     uint64
-	Hostname    string
-	ACMEProfile string
-	Status      string
+	ID           string
+	RouteID      string
+	RouteVersion uint64
+	Hostname     string
+	ACMEProfile  string
+	Status       string
 
 	CSRDER   []byte
 	CSRHash  [sha256.Size]byte

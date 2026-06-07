@@ -89,14 +89,14 @@ func TestClientRetriesOneUnauthorizedRequestAfterSerializedRefresh(t *testing.T)
 		t.Fatal(err)
 	}
 	if err := store.SaveControlSession(t.Context(), clientstate.ControlSession{
-		Kind: clientstate.ControlSessionKindCore, ControlEndpoint: server.URL, SessionID: sessionID, Issuer: server.URL,
+		Kind: clientstate.ControlSessionKindServer, ControlEndpoint: server.URL, SessionID: sessionID, Issuer: server.URL,
 		AccessToken: oldAccess.String(), AccessExpiresAt: time.Now().Add(time.Hour).UTC(),
 		RefreshToken: oldRefresh.String(), RefreshExpiresAt: refreshExpiresAt, Grants: []string{"publish"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	client, err := Authenticate(context.Background(), Config{
-		CoreEndpoint: server.URL, State: state, HTTPClient: server.Client(), Diagnostics: &bytes.Buffer{},
+		ServerEndpoint: server.URL, State: state, HTTPClient: server.Client(), Diagnostics: &bytes.Buffer{},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -107,7 +107,7 @@ func TestClientRetriesOneUnauthorizedRequestAfterSerializedRefresh(t *testing.T)
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			_, err := client.Core.ListRoutes(context.Background())
+			_, err := client.Server.ListRoutes(context.Background())
 			errorsFound <- err
 		}()
 	}
@@ -157,16 +157,16 @@ func TestExplicitAccessTokenDoesNotOpenStateOrRefresh(t *testing.T) {
 	}))
 	defer server.Close()
 	client, err := Authenticate(context.Background(), Config{
-		CoreEndpoint: server.URL, AccessToken: access.String(),
+		ServerEndpoint: server.URL, AccessToken: access.String(),
 		HTTPClient: server.Client(), Diagnostics: &bytes.Buffer{},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.Core.ListRoutes(context.Background()); err != nil {
+	if _, err := client.Server.ListRoutes(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.Core.Heartbeat(context.Background(), "route", 1, session); err != nil {
+	if _, err := client.Server.Heartbeat(context.Background(), "route", 1, session); err != nil {
 		t.Fatal(err)
 	}
 }

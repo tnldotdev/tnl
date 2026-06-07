@@ -39,7 +39,7 @@ type LocalTunnel struct {
 	Target         string
 	Framework      string
 	RouteID        string
-	SessionVersion int64
+	RouteVersion   int64
 	State          string
 	StartedAt      int64
 	UpdatedAt      int64
@@ -59,7 +59,7 @@ type RouteCertificate struct {
 	CertificatePem []byte
 	RenewAt        sql.NullInt64
 	IssuanceID     string
-	Version        int64
+	RouteVersion   int64
 	Installed      int64
 	UpdatedAt      int64
 }

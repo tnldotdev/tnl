@@ -195,8 +195,8 @@ func TestIntegrationStandaloneControlLifecycle(t *testing.T) {
 	if !capabilities.DnsReady || len(capabilities.IngressIpv4) != 1 || capabilities.IngressIpv4[0] != "127.0.0.1" || len(capabilities.IngressIpv6) != 0 {
 		t.Fatalf("DNS capabilities = %#v", capabilities)
 	}
-	hostname, err := client.AddHostname(
-		context.Background(), serverv1.AddHostnameRequestKindManaged, "route", "standalone-test",
+	hostname, err := client.ClaimHostname(
+		context.Background(), serverv1.ClaimHostnameRequestKindManaged, "route", "standalone-test",
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -214,13 +214,13 @@ func TestIntegrationStandaloneControlLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if setup.Route.Version != 1 || setup.SessionToken == "" {
+	if setup.Route.RouteVersion != 1 || setup.SessionToken == "" {
 		t.Fatalf("setup = %#v", setup)
 	}
 	if err := client.DeleteRoute(context.Background(), setup.Route.Id); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.RemoveHostname(context.Background(), hostname.Id); err != nil {
+	if err := client.ReleaseHostname(context.Background(), hostname.Id); err != nil {
 		t.Fatal(err)
 	}
 	if hostnames, err := client.ListHostnames(context.Background()); err != nil || len(hostnames) != 1 ||
@@ -283,7 +283,7 @@ func TestWorkerReconnectsWithFreshOwner(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done, err := startWorker(ctx, config.TNLD{
-		Mode: config.TNLDModeWorker, WorkerURL: "wss" + strings.TrimPrefix(server.URL, "https") + workerv1.Endpoint,
+		Mode: config.TNLDModeWorker, EdgeURL: "wss" + strings.TrimPrefix(server.URL, "https") + workerv1.Endpoint,
 		WorkerToken: token.String(), WorkerCapacity: 2, WorkerStreamLimit: 10,
 		DrainTimeout: time.Second,
 	}, observability.New("worker"))

@@ -12,7 +12,7 @@ func TestAuthorizationConfiguration(t *testing.T) {
 		Mode:                           TNLDModeStandalone,
 		AuthorizationAuthorityEndpoint: "https://authority.example",
 		AuthorizationIssuer:            "https://authority.example/issuer",
-		AuthorizationReceiver:          "https://core.example",
+		AuthorizationReceiver:          "https://server.example",
 		AuthorizationKeyID:             "key-1",
 		AuthorizationPublicKey:         base64.RawURLEncoding.EncodeToString(make([]byte, ed25519.PublicKeySize)),
 	}

@@ -14,7 +14,7 @@ const checkpointInterval = 10 * time.Second
 
 type bucketKey struct {
 	routeID       string
-	version       uint64
+	routeVersion  uint64
 	resolution    string
 	startUnixNano int64
 }
@@ -41,13 +41,13 @@ type usageBucket struct {
 	successfulConnectionDuration durationHistogram
 	visitors                     *visitorSketch
 	revision                     uint64
-	canComplete                  bool
-	complete                     bool
-	finalized                    bool
+	completeAtBoundary           bool
+	coverageComplete             bool
+	collectionFinalized          bool
 	dirty                        bool
-	publish                      bool
-	publishVersion               uint64
-	version                      uint64
+	enqueue                      bool
+	enqueuedGeneration           uint64
+	mutationGeneration           uint64
 }
 
 type Collector struct {
@@ -65,7 +65,7 @@ type Collector struct {
 type Connection struct {
 	collector          *Collector
 	routeID            string
-	version            uint64
+	routeVersion       uint64
 	attemptedAt        time.Time
 	publisherOpeningAt time.Time
 	streamOpenedAt     time.Time
@@ -126,17 +126,17 @@ func (c *Collector) Recover(ctx context.Context) error {
 		}
 		visitorKey := visitorKey{routeID: row.RouteID, resolution: row.Resolution, startUnixNano: row.BucketStart}
 		bucket := &usageBucket{
-			key:             bucketKey{routeID: row.RouteID, version: uint64(row.Version), resolution: row.Resolution, startUnixNano: row.BucketStart},
+			key:             bucketKey{routeID: row.RouteID, routeVersion: uint64(row.RouteVersion), resolution: row.Resolution, startUnixNano: row.BucketStart},
 			observedThrough: time.Unix(0, row.ObservedThrough).UTC(), connectionAttempts: uint64(row.ConnectionAttempts),
 			policyDenials: uint64(row.PolicyDenials), capacityDenials: uint64(row.CapacityDenials),
 			publisherOpenFailures: uint64(row.PublisherOpenFailures), successfulStreams: uint64(row.SuccessfulStreams),
 			connectionNanoseconds: uint64(row.ConnectionNanoseconds), ingressBytes: uint64(row.IngressBytes),
 			egressBytes: uint64(row.EgressBytes), publisherOpenLatency: publisherOpenLatency,
 			timeToFirstPublisherByte: timeToFirstPublisherByte, successfulConnectionDuration: successfulConnectionDuration,
-			visitors: c.visitors[visitorKey], revision: uint64(row.Revision), canComplete: false,
+			visitors: c.visitors[visitorKey], revision: uint64(row.Revision), completeAtBoundary: false,
 		}
 		if !now.Before(bucketEnd(start, row.Resolution)) {
-			bucket.finalized = true
+			bucket.collectionFinalized = true
 			bucket.revision++
 			stale = append(stale, bucket.snapshot(true))
 			continue
@@ -148,13 +148,13 @@ func (c *Collector) Recover(ctx context.Context) error {
 	return c.store.SaveUsage(ctx, stale)
 }
 
-func (c *Collector) Open(routeID string, version uint64, source netip.Addr, at time.Time) *Connection {
+func (c *Collector) Open(routeID string, routeVersion uint64, source netip.Addr, at time.Time) *Connection {
 	at = at.UTC()
-	connection := &Connection{collector: c, routeID: routeID, version: version, attemptedAt: at}
+	connection := &Connection{collector: c, routeID: routeID, routeVersion: routeVersion, attemptedAt: at}
 	c.mu.Lock()
 	c.connections[connection] = struct{}{}
-	c.addCounter(routeID, version, at, func(bucket *usageBucket) *uint64 { return &bucket.connectionAttempts })
-	c.addVisitor(routeID, version, source, at)
+	c.addCounter(routeID, routeVersion, at, func(bucket *usageBucket) *uint64 { return &bucket.connectionAttempts })
+	c.addVisitor(routeID, routeVersion, source, at)
 	c.mu.Unlock()
 	return connection
 }
@@ -197,7 +197,7 @@ func (connection *Connection) StreamOpened(at time.Time) {
 	connection.outcome = true
 	connection.streamOpenedAt = at
 	connection.lastAt = at
-	c.addCounter(connection.routeID, connection.version, at, func(bucket *usageBucket) *uint64 {
+	c.addCounter(connection.routeID, connection.routeVersion, at, func(bucket *usageBucket) *uint64 {
 		return &bucket.successfulStreams
 	})
 }
@@ -219,7 +219,7 @@ func (connection *Connection) Close(at time.Time) {
 	}
 	at = at.UTC()
 	c.advanceConnection(connection, at)
-	if connection.streamOpened && !c.observeHistogram(connection.routeID, connection.version, at.Sub(connection.streamOpenedAt), at, func(bucket *usageBucket) *durationHistogram {
+	if connection.streamOpened && !c.observeHistogram(connection.routeID, connection.routeVersion, at.Sub(connection.streamOpenedAt), at, func(bucket *usageBucket) *durationHistogram {
 		return &bucket.successfulConnectionDuration
 	}) {
 		c.err = errors.New("routeusage: usage histogram exceeds SQLite integer range")
@@ -236,7 +236,7 @@ func (connection *Connection) deny(at time.Time, counter func(*usageBucket) *uin
 		return
 	}
 	connection.outcome = true
-	c.addCounter(connection.routeID, connection.version, at.UTC(), counter)
+	c.addCounter(connection.routeID, connection.routeVersion, at.UTC(), counter)
 }
 
 func (connection *Connection) observePublisherOpen(failed bool, at time.Time) {
@@ -252,7 +252,7 @@ func (connection *Connection) observePublisherOpen(failed bool, at time.Time) {
 		if startedAt.IsZero() {
 			startedAt = connection.attemptedAt
 		}
-		if !c.observeHistogram(connection.routeID, connection.version, at.Sub(startedAt), at, func(bucket *usageBucket) *durationHistogram {
+		if !c.observeHistogram(connection.routeID, connection.routeVersion, at.Sub(startedAt), at, func(bucket *usageBucket) *durationHistogram {
 			return &bucket.publisherOpenLatency
 		}) {
 			c.err = errors.New("routeusage: usage histogram exceeds SQLite integer range")
@@ -262,7 +262,7 @@ func (connection *Connection) observePublisherOpen(failed bool, at time.Time) {
 	}
 	if failed {
 		connection.outcome = true
-		c.addCounter(connection.routeID, connection.version, at, func(bucket *usageBucket) *uint64 {
+		c.addCounter(connection.routeID, connection.routeVersion, at, func(bucket *usageBucket) *uint64 {
 			return &bucket.publisherOpenFailures
 		})
 	}
@@ -281,7 +281,7 @@ func (connection *Connection) observe(ingressBytes, egressBytes int64, at time.T
 	at = at.UTC()
 	c.advanceConnection(connection, at)
 	if egressBytes > 0 && !connection.firstPublisherByte {
-		if !c.observeHistogram(connection.routeID, connection.version, at.Sub(connection.attemptedAt), at, func(bucket *usageBucket) *durationHistogram {
+		if !c.observeHistogram(connection.routeID, connection.routeVersion, at.Sub(connection.attemptedAt), at, func(bucket *usageBucket) *durationHistogram {
 			return &bucket.timeToFirstPublisherByte
 		}) {
 			c.err = errors.New("routeusage: usage histogram exceeds SQLite integer range")
@@ -289,7 +289,7 @@ func (connection *Connection) observe(ingressBytes, egressBytes int64, at time.T
 		}
 		connection.firstPublisherByte = true
 	}
-	c.addBytes(connection.routeID, connection.version, ingressBytes, egressBytes, at)
+	c.addBytes(connection.routeID, connection.routeVersion, ingressBytes, egressBytes, at)
 }
 
 func (c *Collector) Run(ctx context.Context, report func(error)) {
@@ -346,40 +346,40 @@ func (c *Collector) Checkpoint(ctx context.Context, now time.Time, finalizeHours
 			markDirty(bucket)
 		}
 		if !now.Before(end) {
-			bucket.finalized = true
-			bucket.complete = bucket.canComplete
+			bucket.collectionFinalized = true
+			bucket.coverageComplete = bucket.completeAtBoundary
 			bucket.observedThrough = end
 			markDirty(bucket)
 		}
-		if finalizeHours && bucket.key.resolution == "hour" && !bucket.finalized {
-			bucket.finalized = true
-			bucket.complete = false
+		if finalizeHours && bucket.key.resolution == "hour" && !bucket.collectionFinalized {
+			bucket.collectionFinalized = true
+			bucket.coverageComplete = false
 			markDirty(bucket)
 		}
-		shouldPublish := bucket.finalized
+		shouldEnqueue := bucket.collectionFinalized
 		// A retried checkpoint may already have committed, so changed retry content needs a new revision.
-		if bucket.publish && bucket.version != bucket.publishVersion {
+		if bucket.enqueue && bucket.mutationGeneration != bucket.enqueuedGeneration {
 			bucket.revision++
 			markDirty(bucket)
-			bucket.publishVersion = bucket.version
+			bucket.enqueuedGeneration = bucket.mutationGeneration
 		}
-		if shouldPublish && !bucket.publish {
+		if shouldEnqueue && !bucket.enqueue {
 			bucket.revision++
-			bucket.publish = true
+			bucket.enqueue = true
 			markDirty(bucket)
-			bucket.publishVersion = bucket.version
+			bucket.enqueuedGeneration = bucket.mutationGeneration
 		}
 	}
 	var snapshots []UsageSnapshot
 	var saved []*usageBucket
-	var versions []uint64
+	var generations []uint64
 	for _, bucket := range c.buckets {
 		if !bucket.dirty {
 			continue
 		}
-		snapshots = append(snapshots, bucket.snapshot(bucket.publish))
+		snapshots = append(snapshots, bucket.snapshot(bucket.enqueue))
 		saved = append(saved, bucket)
-		versions = append(versions, bucket.version)
+		generations = append(generations, bucket.mutationGeneration)
 	}
 	c.mu.Unlock()
 
@@ -388,14 +388,14 @@ func (c *Collector) Checkpoint(ctx context.Context, now time.Time, finalizeHours
 	}
 	c.mu.Lock()
 	for index, bucket := range saved {
-		unchanged := bucket.version == versions[index]
+		unchanged := bucket.mutationGeneration == generations[index]
 		if unchanged {
 			bucket.dirty = false
 		}
-		if snapshots[index].Publish {
-			bucket.publish = false
+		if snapshots[index].Enqueue {
+			bucket.enqueue = false
 		}
-		if bucket.finalized && unchanged {
+		if bucket.collectionFinalized && unchanged {
 			delete(c.buckets, bucket.key)
 		}
 	}
@@ -404,9 +404,9 @@ func (c *Collector) Checkpoint(ctx context.Context, now time.Time, finalizeHours
 	return nil
 }
 
-func (b *usageBucket) snapshot(publish bool) UsageSnapshot {
+func (b *usageBucket) snapshot(enqueue bool) UsageSnapshot {
 	return UsageSnapshot{
-		RouteID: b.key.routeID, Version: b.key.version, Resolution: b.key.resolution,
+		RouteID: b.key.routeID, RouteVersion: b.key.routeVersion, Resolution: b.key.resolution,
 		BucketStart: time.Unix(0, b.key.startUnixNano).UTC(), Revision: b.revision,
 		ObservedThrough: b.observedThrough, ConnectionAttempts: b.connectionAttempts,
 		PolicyDenials: b.policyDenials, CapacityDenials: b.capacityDenials,
@@ -416,13 +416,13 @@ func (b *usageBucket) snapshot(publish bool) UsageSnapshot {
 		TimeToFirstPublisherByte:     b.timeToFirstPublisherByte.marshalBinary(),
 		SuccessfulConnectionDuration: b.successfulConnectionDuration.marshalBinary(),
 		VisitorNetworkHLL:            b.visitors.checkpoint(), VisitorNetworkEstimate: b.visitors.estimate(),
-		Complete: b.complete, Finalized: b.finalized, Publish: publish,
+		CoverageComplete: b.coverageComplete, CollectionFinalized: b.collectionFinalized, Enqueue: enqueue,
 	}
 }
 
-func (c *Collector) addCounter(routeID string, version uint64, at time.Time, counter func(*usageBucket) *uint64) {
+func (c *Collector) addCounter(routeID string, routeVersion uint64, at time.Time, counter func(*usageBucket) *uint64) {
 	for _, resolution := range []string{"minute", "hour"} {
-		bucket := c.bucket(routeID, version, resolution, at)
+		bucket := c.bucket(routeID, routeVersion, resolution, at)
 		value := counter(bucket)
 		*value = c.add(*value, 1)
 		if at.After(bucket.observedThrough) {
@@ -432,13 +432,13 @@ func (c *Collector) addCounter(routeID string, version uint64, at time.Time, cou
 	}
 }
 
-func (c *Collector) addVisitor(routeID string, version uint64, source netip.Addr, at time.Time) {
+func (c *Collector) addVisitor(routeID string, routeVersion uint64, source netip.Addr, at time.Time) {
 	hash, ok := visitorNetworkHash(c.store.visitorMasterSecret, routeID, source, at)
 	if !ok {
 		return
 	}
 	for _, resolution := range []string{"minute", "hour"} {
-		bucket := c.bucket(routeID, version, resolution, at)
+		bucket := c.bucket(routeID, routeVersion, resolution, at)
 		if !bucket.visitors.insert(hash) {
 			continue
 		}
@@ -453,13 +453,13 @@ func (c *Collector) addVisitor(routeID string, version uint64, source netip.Addr
 
 func (c *Collector) observeHistogram(
 	routeID string,
-	version uint64,
+	routeVersion uint64,
 	duration time.Duration,
 	at time.Time,
 	histogram func(*usageBucket) *durationHistogram,
 ) bool {
 	for _, resolution := range []string{"minute", "hour"} {
-		bucket := c.bucket(routeID, version, resolution, at)
+		bucket := c.bucket(routeID, routeVersion, resolution, at)
 		if !histogram(bucket).observe(duration) {
 			return false
 		}
@@ -471,9 +471,9 @@ func (c *Collector) observeHistogram(
 	return true
 }
 
-func (c *Collector) addBytes(routeID string, version uint64, ingressBytes, egressBytes int64, at time.Time) {
+func (c *Collector) addBytes(routeID string, routeVersion uint64, ingressBytes, egressBytes int64, at time.Time) {
 	for _, resolution := range []string{"minute", "hour"} {
-		bucket := c.bucket(routeID, version, resolution, at)
+		bucket := c.bucket(routeID, routeVersion, resolution, at)
 		if ingressBytes > 0 {
 			bucket.ingressBytes = c.add(bucket.ingressBytes, uint64(ingressBytes))
 		}
@@ -499,7 +499,7 @@ func (c *Collector) advanceConnection(connection *Connection, at time.Time) {
 		}
 		duration := uint64(segmentEnd.Sub(cursor))
 		for _, resolution := range []string{"minute", "hour"} {
-			bucket := c.bucket(connection.routeID, connection.version, resolution, cursor)
+			bucket := c.bucket(connection.routeID, connection.routeVersion, resolution, cursor)
 			bucket.connectionNanoseconds = c.add(bucket.connectionNanoseconds, duration)
 			if segmentEnd.After(bucket.observedThrough) {
 				bucket.observedThrough = segmentEnd
@@ -511,12 +511,12 @@ func (c *Collector) advanceConnection(connection *Connection, at time.Time) {
 	connection.lastAt = at
 }
 
-func (c *Collector) bucket(routeID string, version uint64, resolution string, at time.Time) *usageBucket {
+func (c *Collector) bucket(routeID string, routeVersion uint64, resolution string, at time.Time) *usageBucket {
 	start := at.Truncate(time.Minute)
 	if resolution == "hour" {
 		start = at.Truncate(time.Hour)
 	}
-	key := bucketKey{routeID: routeID, version: version, resolution: resolution, startUnixNano: start.UnixNano()}
+	key := bucketKey{routeID: routeID, routeVersion: routeVersion, resolution: resolution, startUnixNano: start.UnixNano()}
 	bucket := c.buckets[key]
 	if bucket == nil {
 		visitorKey := visitorKey{routeID: routeID, resolution: resolution, startUnixNano: start.UnixNano()}
@@ -525,7 +525,7 @@ func (c *Collector) bucket(routeID string, version uint64, resolution string, at
 			visitors = new(visitorSketch)
 			c.visitors[visitorKey] = visitors
 		}
-		bucket = &usageBucket{key: key, observedThrough: start, visitors: visitors, canComplete: true}
+		bucket = &usageBucket{key: key, observedThrough: start, visitors: visitors, completeAtBoundary: true}
 		c.buckets[key] = bucket
 	}
 	return bucket
@@ -555,7 +555,7 @@ func (c *Collector) add(left, right uint64) uint64 {
 }
 
 func markDirty(bucket *usageBucket) {
-	bucket.version++
+	bucket.mutationGeneration++
 	bucket.dirty = true
 }
 

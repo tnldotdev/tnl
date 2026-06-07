@@ -16,38 +16,38 @@ import (
 
 // Metrics owns a process-local Prometheus registry.
 type Metrics struct {
-	registry              *prometheus.Registry
-	routes                *prometheus.GaugeVec
-	workerRoutes          prometheus.Gauge
-	workerCapacity        prometheus.Gauge
-	workerDraining        prometheus.Gauge
-	streams               prometheus.Gauge
-	tailcatPaths          *prometheus.GaugeVec
-	tailcatFailures       *prometheus.CounterVec
-	tailcatForcedClose    prometheus.Counter
-	capacityRejections    *prometheus.CounterVec
-	sourceLimiterRejects  prometheus.Counter
-	sourceLimiterEntries  prometheus.Gauge
-	ipAllowlistDenials    prometheus.Counter
-	nameCapacity          prometheus.Gauge
-	nameRemaining         prometheus.Gauge
-	forwardedBytes        *prometheus.CounterVec
-	apiRequests           *prometheus.CounterVec
-	apiRequestDuration    *prometheus.HistogramVec
-	sqliteDuration        *prometheus.HistogramVec
-	sqliteErrors          *prometheus.CounterVec
-	coordinatorStage      *prometheus.HistogramVec
-	routeHeartbeats       *prometheus.CounterVec
-	routeRemovals         *prometheus.CounterVec
-	routeSessionMinimum   *prometheus.GaugeVec
-	workersConnected      prometheus.Gauge
-	workerSessions        *prometheus.GaugeVec
-	sessionStarts         *prometheus.CounterVec
-	sessionDisconnects    *prometheus.CounterVec
-	routeUsageOutbox      *prometheus.GaugeVec
-	routeUsageOldestAge   prometheus.Gauge
-	routeUsageCheckpoints *prometheus.CounterVec
-	routeUsageDeliveries  *prometheus.CounterVec
+	registry                   *prometheus.Registry
+	routes                     *prometheus.GaugeVec
+	workerRoutes               prometheus.Gauge
+	workerCapacity             prometheus.Gauge
+	workerDraining             prometheus.Gauge
+	streams                    prometheus.Gauge
+	tailcatPaths               *prometheus.GaugeVec
+	tailcatFailures            *prometheus.CounterVec
+	tailcatForcedClose         prometheus.Counter
+	capacityRejections         *prometheus.CounterVec
+	sourceLimiterRejects       prometheus.Counter
+	sourceLimiterEntries       prometheus.Gauge
+	ipAllowlistDenials         prometheus.Counter
+	generatedHostnameCapacity  prometheus.Gauge
+	generatedHostnameRemaining prometheus.Gauge
+	forwardedBytes             *prometheus.CounterVec
+	apiRequests                *prometheus.CounterVec
+	apiRequestDuration         *prometheus.HistogramVec
+	sqliteDuration             *prometheus.HistogramVec
+	sqliteErrors               *prometheus.CounterVec
+	coordinatorStage           *prometheus.HistogramVec
+	routeHeartbeats            *prometheus.CounterVec
+	routeRemovals              *prometheus.CounterVec
+	routeSessionMinimum        *prometheus.GaugeVec
+	workersConnected           prometheus.Gauge
+	workerSessions             *prometheus.GaugeVec
+	sessionStarts              *prometheus.CounterVec
+	sessionDisconnects         *prometheus.CounterVec
+	routeUsageOutbox           *prometheus.GaugeVec
+	routeUsageOldestAge        prometheus.Gauge
+	routeUsageCheckpoints      *prometheus.CounterVec
+	routeUsageDeliveries       *prometheus.CounterVec
 }
 
 // New constructs an isolated registry for one process role.
@@ -63,11 +63,11 @@ func New(mode string) *Metrics {
 		registry: registry,
 		routes: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "tnl_routes",
-			Help: "Current routes by lifecycle status.",
+			Help: "Current routes by runtime state.",
 		}, []string{"status"}),
 		workerRoutes: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "tnl_worker_routes_active",
-			Help: "Current active routes owned by this worker.",
+			Name: "tnl_worker_routes_routable",
+			Help: "Current routable routes owned by this worker.",
 		}),
 		workerCapacity: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "tnl_worker_route_capacity",
@@ -109,13 +109,13 @@ func New(mode string) *Metrics {
 			Name: "tnl_ip_allowlist_denials_total",
 			Help: "Public route connections denied by IP allowlists.",
 		}),
-		nameCapacity: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "tnl_friendly_name_namespace_capacity",
-			Help: "Total usable friendly-name pairs in the reviewed corpus.",
+		generatedHostnameCapacity: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "tnl_generated_hostname_namespace_capacity",
+			Help: "Total usable labels in the generated hostname namespace.",
 		}),
-		nameRemaining: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "tnl_friendly_name_namespace_remaining_lower_bound",
-			Help: "Conservative lower bound of friendly-name pairs not present in the name ledger.",
+		generatedHostnameRemaining: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "tnl_generated_hostname_namespace_remaining_lower_bound",
+			Help: "Conservative lower bound of generated hostname labels not present in the hostname ledger.",
 		}),
 		forwardedBytes: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "tnl_forwarded_bytes_total",
@@ -154,7 +154,7 @@ func New(mode string) *Metrics {
 		}, []string{"reason"}),
 		routeSessionMinimum: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "tnl_route_session_min_seconds_remaining",
-			Help: "Minimum seconds remaining on a route session by lifecycle status.",
+			Help: "Minimum seconds remaining on a route session by runtime state.",
 		}, []string{"status"}),
 		workersConnected: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "tnl_workers_connected",
@@ -203,8 +203,8 @@ func New(mode string) *Metrics {
 		metrics.sourceLimiterRejects,
 		metrics.sourceLimiterEntries,
 		metrics.ipAllowlistDenials,
-		metrics.nameCapacity,
-		metrics.nameRemaining,
+		metrics.generatedHostnameCapacity,
+		metrics.generatedHostnameRemaining,
 		metrics.forwardedBytes,
 		metrics.apiRequests,
 		metrics.apiRequestDuration,
@@ -235,7 +235,7 @@ func (m *Metrics) Handler() http.Handler {
 	return mux
 }
 
-// SetRoutes records the authoritative route count for a lifecycle status.
+// SetRoutes records the authoritative route count for a runtime state.
 func (m *Metrics) SetRoutes(status string, count int) {
 	m.routes.WithLabelValues(status).Set(float64(count))
 }
@@ -296,10 +296,10 @@ func (m *Metrics) IncIPAllowlistDenial() {
 	m.ipAllowlistDenials.Inc()
 }
 
-// SetFriendlyNameCapacity records total and conservatively remaining allocator capacity.
-func (m *Metrics) SetFriendlyNameCapacity(total, remaining int64) {
-	m.nameCapacity.Set(float64(total))
-	m.nameRemaining.Set(float64(remaining))
+// SetGeneratedHostnameCapacity records total and conservatively remaining allocator capacity.
+func (m *Metrics) SetGeneratedHostnameCapacity(total, remaining int64) {
+	m.generatedHostnameCapacity.Set(float64(total))
+	m.generatedHostnameRemaining.Set(float64(remaining))
 }
 
 // AddForwardedBytes records bytes forwarded in a stable direction.
@@ -398,7 +398,7 @@ func (m *Metrics) ObserveRouteRemoval(reason string) {
 	m.routeRemovals.WithLabelValues(reason).Inc()
 }
 
-// SetRouteSessionMinSecondsRemaining records a lifecycle status from a bounded producer value.
+// SetRouteSessionMinSecondsRemaining records a runtime state from a bounded producer value.
 func (m *Metrics) SetRouteSessionMinSecondsRemaining(status string, seconds float64) {
 	m.routeSessionMinimum.WithLabelValues(status).Set(seconds)
 }

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
-	"github.com/tnldotdev/tnl/internal/oidcnonce"
 )
 
 var ErrOIDCUnavailable = errors.New("auth: OIDC provider unavailable")
@@ -27,17 +26,15 @@ type OIDCVerifier interface {
 }
 
 type OIDCConfig struct {
-	Issuer       string
-	ClientID     string
-	CoreEndpoint string
-	HTTPClient   *http.Client
+	Issuer     string
+	ClientID   string
+	HTTPClient *http.Client
 }
 
 type oidcVerifier struct {
-	issuer       string
-	clientID     string
-	coreEndpoint string
-	httpClient   *http.Client
+	issuer     string
+	clientID   string
+	httpClient *http.Client
 
 	mu       sync.Mutex
 	verifier *oidc.IDTokenVerifier
@@ -53,18 +50,14 @@ func NewOIDCVerifier(config OIDCConfig) (OIDCVerifier, error) {
 	if strings.TrimSpace(config.ClientID) != config.ClientID || config.ClientID == "" || len(config.ClientID) > 128 {
 		return nil, errors.New("auth: OIDC client ID is invalid")
 	}
-	if err := oidcnonce.ValidateCoreEndpoint(config.CoreEndpoint); err != nil {
-		return nil, errors.New("auth: OIDC Core endpoint is invalid")
-	}
 	client := config.HTTPClient
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second}
 	}
 	return &oidcVerifier{
-		issuer:       strings.TrimSuffix(issuer.String(), "/"),
-		clientID:     config.ClientID,
-		coreEndpoint: config.CoreEndpoint,
-		httpClient:   client,
+		issuer:     strings.TrimSuffix(issuer.String(), "/"),
+		clientID:   config.ClientID,
+		httpClient: client,
 	}, nil
 }
 
@@ -83,12 +76,6 @@ func (v *oidcVerifier) Verify(ctx context.Context, raw string) (OIDCIdentity, er
 		return OIDCIdentity{}, ErrUnauthenticated
 	}
 	if strings.TrimSpace(token.Subject) == "" || len(token.Subject) > 256 || !token.Expiry.After(time.Now()) {
-		return OIDCIdentity{}, ErrUnauthenticated
-	}
-	var claims struct {
-		Nonce string `json:"nonce"`
-	}
-	if token.Claims(&claims) != nil || !oidcnonce.Validate(v.coreEndpoint, claims.Nonce) {
 		return OIDCIdentity{}, ErrUnauthenticated
 	}
 	return OIDCIdentity{Issuer: token.Issuer, Subject: token.Subject, ExpiresAt: token.Expiry.UTC()}, nil

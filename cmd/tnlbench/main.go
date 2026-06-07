@@ -39,7 +39,7 @@ type cli struct {
 	Suite              string        `name:"suite" env:"TNL_BENCH_SUITE" default:"legacy" help:"Benchmark suite name."`
 	Workload           string        `name:"workload" env:"TNL_BENCH_WORKLOAD" default:"agent-worktrees-assumed-v1" help:"Benchmark workload ID."`
 	Repetition         int           `name:"repetition" env:"TNL_BENCH_REPETITION" default:"1" help:"One-based cell repetition."`
-	Topology           string        `name:"topology" env:"TNL_BENCH_TOPOLOGY" enum:"single-node,ha" required:"" help:"Deployment topology under test."`
+	Topology           string        `name:"topology" env:"TNL_BENCH_TOPOLOGY" enum:"standalone,split" required:"" help:"Deployment topology under test: ${enum}."`
 	ServerURL          string        `name:"server" env:"TNL_BENCH_SERVER" required:"" help:"Server HTTPS origin."`
 	LoginToken         string        `name:"login-token" env:"TNL_BENCH_LOGIN_TOKEN" required:"" help:"Server login token."`
 	ControlCAFile      string        `name:"control-ca-file" env:"TNL_BENCH_CONTROL_CA_FILE" type:"path" help:"Optional PEM CA for the server endpoint; system roots are used when omitted."`
@@ -158,7 +158,7 @@ type routeCleaner interface {
 }
 
 type hostnameOwner interface {
-	RemoveHostname(context.Context, string) error
+	ReleaseHostname(context.Context, string) error
 }
 
 type timingSummary struct {
@@ -436,8 +436,8 @@ func activateRoutes(
 					}{index: index, duration: time.Since(started), err: err}
 				})
 			}
-			hostname, err := server.AddHostname(
-				routeCtx, serverv1.AddHostnameRequestKindManaged,
+			hostname, err := server.ClaimHostname(
+				routeCtx, serverv1.ClaimHostnameRequestKindManaged,
 				benchmarkRouteLabel(flags.DriverIndex, index), benchmarkHostnameRequestKey(flags.DriverIndex, index),
 			)
 			if err != nil {
@@ -455,7 +455,7 @@ func activateRoutes(
 					RelayRegion: relayRegion, Regions: regions, Logf: logger.Discard,
 					Observe: func(event publisher.Event) error {
 						switch event.Type {
-						case publisher.EventRoute:
+						case publisher.EventRouteAssigned:
 							process.routeID = event.RouteID
 						case publisher.EventReady:
 							ready = true
@@ -569,7 +569,7 @@ func loadRoutes(
 }
 
 func cleanupRoutes(ctx context.Context, flags cli, server routeCleaner, processes []*routeProcess) ([]time.Duration, error) {
-	// Publishers own route deletion. Hostnames are removed only after that deletion is verified.
+	// Publishers own route deletion. Hostnames are released only after that deletion is verified.
 	started := time.Now()
 	for _, process := range processes {
 		if process != nil {
@@ -650,7 +650,7 @@ func cleanupRoutes(ctx context.Context, flags cli, server routeCleaner, processe
 			continue
 		}
 		if process.hostnameOwner == nil {
-			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("remove hostname %d: missing owner", index))
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("release hostname %d: missing owner", index))
 			completed[index] = time.Since(started)
 			continue
 		}
@@ -659,8 +659,8 @@ func cleanupRoutes(ctx context.Context, flags cli, server routeCleaner, processe
 		go func(index int, process *routeProcess) {
 			defer func() { <-semaphore }()
 			var err error
-			if releaseErr := process.hostnameOwner.RemoveHostname(cleanupCtx, process.hostnameID); releaseErr != nil {
-				err = fmt.Errorf("remove hostname %d: %w", index, releaseErr)
+			if releaseErr := process.hostnameOwner.ReleaseHostname(cleanupCtx, process.hostnameID); releaseErr != nil {
+				err = fmt.Errorf("release hostname %d: %w", index, releaseErr)
 			}
 			completed[index] = time.Since(started)
 			results <- cleanupResult{index: index, err: err}
@@ -762,7 +762,7 @@ func sampleWorkers(ctx context.Context, metricsURLs []string) ([]workerSample, e
 			return nil, fmt.Errorf("metrics worker %d: %w", index, err)
 		}
 		samples[index] = workerSample{
-			Worker: index, Routes: int(values["tnl_worker_routes_active"]),
+			Worker: index, Routes: int(values["tnl_worker_routes_routable"]),
 			Capacity: int(values["tnl_worker_route_capacity"]), RSSBytes: values["process_resident_memory_bytes"],
 			Goroutines: int(values["go_goroutines"]), OpenFDs: int(values["process_open_fds"]),
 			MaxFDs:                               int(values["process_max_fds"]),

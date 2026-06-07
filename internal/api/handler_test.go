@@ -17,14 +17,14 @@ import (
 	"testing"
 	"time"
 
-	coreadmin "github.com/tnldotdev/tnl/internal/admin"
+	adminservice "github.com/tnldotdev/tnl/internal/admin"
 	"github.com/tnldotdev/tnl/internal/auth"
 	"github.com/tnldotdev/tnl/internal/certificates"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/routes"
-	"github.com/tnldotdev/tnl/internal/sourcelimiter"
 	"github.com/tnldotdev/tnl/internal/state"
 	"github.com/tnldotdev/tnl/pkg/protocol/serverv1"
+	"golang.org/x/time/rate"
 )
 
 func TestCapabilities(t *testing.T) {
@@ -91,11 +91,13 @@ func TestHealthAndReadiness(t *testing.T) {
 func TestHealthAndReadinessRequireGET(t *testing.T) {
 	for _, path := range []string{healthPath, readinessPath} {
 		t.Run(path, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodPost, path, nil)
-			response := httptest.NewRecorder()
-			NewHandler(fixtureCapabilities(t), nil).ServeHTTP(response, request)
-			if response.Code != http.StatusMethodNotAllowed || response.Header().Get("Allow") != http.MethodGet {
-				t.Fatalf("status = %d, Allow = %q", response.Code, response.Header().Get("Allow"))
+			for _, method := range []string{http.MethodPost, http.MethodHead} {
+				request := httptest.NewRequest(method, path, nil)
+				response := httptest.NewRecorder()
+				NewHandler(fixtureCapabilities(t), nil).ServeHTTP(response, request)
+				if response.Code != http.StatusMethodNotAllowed || response.Header().Get("Allow") != http.MethodGet {
+					t.Fatalf("%s status = %d, Allow = %q", method, response.Code, response.Header().Get("Allow"))
+				}
 			}
 		})
 	}
@@ -150,9 +152,9 @@ func TestAdminStatusUsesAuthenticatedService(t *testing.T) {
 	current := started.Add(time.Hour)
 	handler := NewHandlerWithServicesAndConfig(
 		fixtureCapabilities(t), noPublishAuthService{}, nil, nil,
-		HandlerConfig{Admin: statusAdminService{status: coreadmin.ServerStatus{
+		HandlerConfig{Admin: statusAdminService{status: adminservice.ServerStatus{
 			Mode: "standalone", StartedAt: started, CurrentTime: current,
-			ActiveRoutes: 2, SuspendedRoutes: 3, Provisioning: 4, ConnectedWorkers: 5,
+			EnabledRoutes: 2, SuspendedRoutes: 3, Provisioning: 4, ConnectedWorkers: 5,
 		}}},
 	)
 	request := httptest.NewRequest(http.MethodGet, "/v1/admin/status", nil)
@@ -167,12 +169,67 @@ func TestAdminStatusUsesAuthenticatedService(t *testing.T) {
 		t.Fatal(err)
 	}
 	if value.Mode != serverv1.Standalone || !value.StartedAt.Equal(started) || !value.CurrentTime.Equal(current) ||
-		value.ActiveRoutes != 2 || value.SuspendedRoutes != 3 || value.ProvisioningRoutes != 4 || value.ConnectedWorkers != 5 {
+		value.EnabledRoutes != 2 || value.SuspendedRoutes != 3 || value.ProvisioningRoutes != 4 || value.ConnectedWorkers != 5 {
 		t.Fatalf("admin status = %#v", value)
 	}
 }
 
-func TestOperationalSwitchBlocksNewRouteAndSessionBeforeMutation(t *testing.T) {
+func TestAdminMaintenanceControlsUseRegeneratedPathAndTypes(t *testing.T) {
+	access, _, _, err := credentials.NewAccessToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, time.September, 2, 1, 0, 0, 0, time.UTC)
+	service := &maintenanceAdminService{controls: []adminservice.MaintenanceControl{
+		{Name: adminservice.MaintenanceControlCertificateIssuance, Enabled: true, Revision: 1, UpdatedAt: now, UpdatedBy: "system"},
+		{Name: adminservice.MaintenanceControlRouteCreation, Enabled: true, Revision: 1, UpdatedAt: now, UpdatedBy: "system"},
+		{Name: adminservice.MaintenanceControlRouteSessionCreation, Enabled: true, Revision: 1, UpdatedAt: now, UpdatedBy: "system"},
+	}}
+	handler := NewHandlerWithServicesAndConfig(
+		fixtureCapabilities(t), noPublishAuthService{}, nil, nil, HandlerConfig{Admin: service},
+	)
+
+	request := httptest.NewRequest(http.MethodGet, "/v1/admin/maintenance-controls", nil)
+	request.Header.Set("Authorization", "Bearer "+access.String())
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("list status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var controls []serverv1.AdminMaintenanceControl
+	if err := json.Unmarshal(response.Body.Bytes(), &controls); err != nil {
+		t.Fatal(err)
+	}
+	if len(controls) != 3 || controls[1].Name != serverv1.MaintenanceControlNameRouteCreation {
+		t.Fatalf("maintenance controls = %#v", controls)
+	}
+
+	request = httptest.NewRequest(
+		http.MethodPut, "/v1/admin/maintenance-controls/route_creation", strings.NewReader(`{"enabled":false}`),
+	)
+	request.Header.Set("Authorization", "Bearer "+access.String())
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(requestIDHeader, "req_maintenance")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("set status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if service.name != adminservice.MaintenanceControlRouteCreation || service.enabled ||
+		service.actor != "identity_test" || service.requestID != "req_maintenance" {
+		t.Fatalf("set maintenance control = %#v", service)
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/v1/admin/switches", nil)
+	request.Header.Set("Authorization", "Bearer "+access.String())
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("legacy path status = %d, body = %s", response.Code, response.Body.String())
+	}
+}
+
+func TestMaintenanceControlBlocksNewRouteAndSessionBeforeMutation(t *testing.T) {
 	access, _, _, err := credentials.NewAccessToken()
 	if err != nil {
 		t.Fatal(err)
@@ -200,7 +257,7 @@ func TestOperationalSwitchBlocksNewRouteAndSessionBeforeMutation(t *testing.T) {
 		if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil {
 			t.Fatal(err)
 		}
-		if problem.Code != serverv1.TemporarilyUnavailable || !strings.HasSuffix(problem.Type, "/operation-disabled") {
+		if problem.Code != serverv1.TemporarilyUnavailable || !strings.HasSuffix(problem.Type, "/maintenance-control-disabled") {
 			t.Fatalf("%s problem = %#v", test.path, problem)
 		}
 	}
@@ -240,7 +297,7 @@ func TestOIDCTokenExchangeIsBoundedAndRateLimited(t *testing.T) {
 		Grants: []auth.Grant{auth.GrantPublish},
 	}}
 	handler := NewHandler(fixtureCapabilities(t), service).(*handler)
-	handler.oidcLimit = testAPISourceLimiter(t)
+	handler.oidcLimit = rate.NewLimiter(0, 1)
 
 	request := httptest.NewRequest(http.MethodPost, oidcExchangePath, strings.NewReader(`{"id_token":"id-token"}`))
 	request.Header.Set("Content-Type", "application/json")
@@ -256,14 +313,6 @@ func TestOIDCTokenExchangeIsBoundedAndRateLimited(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusTooManyRequests || service.calls != 1 {
 		t.Fatalf("status = %d, calls = %d, body = %s", response.Code, service.calls, response.Body.String())
-	}
-	request = httptest.NewRequest(http.MethodPost, oidcExchangePath, strings.NewReader(`{"id_token":"id-token"}`))
-	request.RemoteAddr = "198.51.100.2:1234"
-	request.Header.Set("Content-Type", "application/json")
-	response = httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusOK || service.calls != 2 {
-		t.Fatalf("independent source status = %d, calls = %d", response.Code, service.calls)
 	}
 }
 
@@ -326,11 +375,29 @@ func TestRequestObservation(t *testing.T) {
 }
 
 func TestOperationNamesAreStableAndDoNotContainResourceIDs(t *testing.T) {
+	operationForRequest := func(method, path string) Operation {
+		observer := &recordingObserver{}
+		handler := NewHandlerWithServicesAndConfig(
+			fixtureCapabilities(t), nil, nil, nil, HandlerConfig{Observer: observer},
+		)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(method, path, nil))
+		if len(observer.observations) != 1 {
+			t.Fatalf("observations for %s %s = %#v", method, path, observer.observations)
+		}
+		return observer.observations[0].operation
+	}
 	if got := operationForRequest(http.MethodGet, healthPath); got != OperationHealthGet {
 		t.Fatalf("health operation = %q", got)
 	}
 	if got := operationForRequest(http.MethodGet, readinessPath); got != OperationReadinessGet {
 		t.Fatalf("readiness operation = %q", got)
+	}
+	if got := operationForRequest(http.MethodPost, hostnamesPath); got != OperationHostnameClaim || string(got) != "hostnames.claim" {
+		t.Fatalf("claim hostname operation = %q", got)
+	}
+	if got := operationForRequest(http.MethodDelete, hostnamePrefix+"hostname_0123456789abcdef0123456789abcdef"); got != OperationHostnameRelease || string(got) != "hostnames.release" {
+		t.Fatalf("release hostname operation = %q", got)
 	}
 	const want = "routes.heartbeat"
 	for _, path := range []string{
@@ -700,7 +767,7 @@ func TestRefreshEndpointUsesRefreshTokenWithoutAccessAuthentication(t *testing.T
 		t.Fatal(err)
 	}
 	handler := NewHandler(fixtureCapabilities(t), service).(*handler)
-	handler.refreshLimit = testAPISourceLimiter(t)
+	handler.refreshLimit = rate.NewLimiter(0, 1)
 	request := httptest.NewRequest(http.MethodPost, refreshPath, bytes.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
@@ -726,25 +793,6 @@ func TestRefreshEndpointUsesRefreshTokenWithoutAccessAuthentication(t *testing.T
 	if response.Code != http.StatusTooManyRequests {
 		t.Fatalf("second refresh status = %d, want %d", response.Code, http.StatusTooManyRequests)
 	}
-	request = httptest.NewRequest(http.MethodPost, refreshPath, bytes.NewReader(body))
-	request.RemoteAddr = "198.51.100.2:1234"
-	request.Header.Set("Content-Type", "application/json")
-	response = httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusUnauthorized {
-		t.Fatalf("independent source status = %d, want request to reach authentication", response.Code)
-	}
-}
-
-func testAPISourceLimiter(t *testing.T) *sourcelimiter.Limiter {
-	t.Helper()
-	limiter, err := sourcelimiter.New(sourcelimiter.Config{
-		Rate: 0.000001, Burst: 1, MaxEntries: 8, IdleExpiration: time.Hour, Shards: 4,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return limiter
 }
 
 func TestPublishRoutesRequirePublishGrant(t *testing.T) {
@@ -957,17 +1005,45 @@ type failingListRouteService struct {
 
 type disabledAdminService struct{ AdminService }
 
-func (disabledAdminService) RequireEnabled(context.Context, coreadmin.SwitchName) error {
-	return coreadmin.ErrOperationallyDisabled
+func (disabledAdminService) RequireEnabled(context.Context, adminservice.MaintenanceControlName) error {
+	return adminservice.ErrMaintenanceControlDisabled
 }
 
 type statusAdminService struct {
 	AdminService
-	status coreadmin.ServerStatus
+	status adminservice.ServerStatus
 }
 
-func (service statusAdminService) Status(context.Context) (coreadmin.ServerStatus, error) {
+func (service statusAdminService) Status(context.Context) (adminservice.ServerStatus, error) {
 	return service.status, nil
+}
+
+type maintenanceAdminService struct {
+	AdminService
+	controls  []adminservice.MaintenanceControl
+	name      adminservice.MaintenanceControlName
+	enabled   bool
+	actor     string
+	requestID string
+}
+
+func (service *maintenanceAdminService) ListMaintenanceControls(context.Context) ([]adminservice.MaintenanceControl, error) {
+	return service.controls, nil
+}
+
+func (service *maintenanceAdminService) SetMaintenanceControl(
+	_ context.Context,
+	name adminservice.MaintenanceControlName,
+	enabled bool,
+	actor, requestID string,
+) (adminservice.MaintenanceControl, error) {
+	service.name = name
+	service.enabled = enabled
+	service.actor = actor
+	service.requestID = requestID
+	return adminservice.MaintenanceControl{
+		Name: name, Enabled: enabled, Revision: 2, UpdatedAt: service.controls[0].UpdatedAt, UpdatedBy: actor,
+	}, nil
 }
 
 func (s failingListRouteService) List(context.Context, string) ([]routes.Route, error) {

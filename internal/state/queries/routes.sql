@@ -11,16 +11,16 @@ WHERE identity_id = CAST(sqlc.arg(identity_id) AS TEXT)
 ORDER BY length(hostname) DESC
 LIMIT 1;
 
--- name: GetActiveRouteByHostname :one
+-- name: GetCurrentRouteByHostname :one
 SELECT routes.*
 FROM routes
-WHERE hostname = sqlc.arg(hostname) AND status IN ('active', 'suspended');
+WHERE hostname = sqlc.arg(hostname) AND status IN ('enabled', 'suspended');
 
--- name: GetActiveSignedRouteIDByHostname :one
+-- name: GetCurrentSignedRouteIDByHostname :one
 SELECT id
 FROM routes
 WHERE hostname = sqlc.arg(hostname)
-    AND status IN ('active', 'suspended')
+    AND status IN ('enabled', 'suspended')
     AND authorization_id IS NOT NULL;
 
 -- name: GetRouteByID :one
@@ -48,20 +48,18 @@ UPDATE route_sessions
 SET status = 'expired'
 WHERE route_id = sqlc.arg(route_id) AND status != 'expired';
 
--- name: ReplaceRoute :execrows
+-- name: ReplaceRoute :exec
 UPDATE routes
 SET
     local_target = sqlc.arg(local_target),
-    version = sqlc.arg(version)
-WHERE id = sqlc.arg(route_id)
-    AND identity_id = CAST(sqlc.arg(identity_id) AS TEXT)
-    AND status = 'active';
+    route_version = sqlc.arg(route_version)
+WHERE id = sqlc.arg(route_id);
 
 -- name: ReplaceSignedRoute :execrows
 UPDATE routes
 SET
     local_target = sqlc.arg(local_target),
-    version = sqlc.arg(version),
+    route_version = sqlc.arg(route_version),
     authorization_issuer = sqlc.arg(authorization_issuer),
     authorization_id = sqlc.arg(authorization_id),
     authorization_key_id = sqlc.arg(authorization_key_id),
@@ -70,13 +68,13 @@ SET
     authorization_expires_at = sqlc.arg(authorization_expires_at),
     authorization_request_hash = sqlc.arg(authorization_request_hash),
     authorization_ip_policy_hash = sqlc.arg(authorization_ip_policy_hash)
-WHERE id = sqlc.arg(route_id) AND status = 'active';
+WHERE id = sqlc.arg(route_id) AND status = 'enabled';
 
 -- name: InsertRouteSession :exec
 INSERT INTO route_sessions (
     id,
     route_id,
-    version,
+    route_version,
     status,
     token_id,
     secret_hash,
@@ -87,7 +85,7 @@ INSERT INTO route_sessions (
 ) VALUES (
     sqlc.arg(session_id),
     sqlc.arg(route_id),
-    sqlc.arg(version),
+    sqlc.arg(route_version),
     'pending',
     sqlc.arg(token_id),
     sqlc.arg(secret_hash),
@@ -105,7 +103,7 @@ INSERT INTO routes (
     hostname,
     local_target,
     status,
-    version,
+    route_version,
     created_at
 ) VALUES (
     sqlc.arg(route_id),
@@ -113,7 +111,7 @@ INSERT INTO routes (
     CAST(sqlc.arg(identity_id) AS TEXT),
     sqlc.arg(hostname),
     sqlc.arg(local_target),
-    'active',
+    'enabled',
     1,
     sqlc.arg(created_at)
 );
@@ -124,7 +122,7 @@ INSERT INTO routes (
     hostname,
     local_target,
     status,
-    version,
+    route_version,
     authorization_issuer,
     authorization_id,
     authorization_key_id,
@@ -138,7 +136,7 @@ INSERT INTO routes (
     sqlc.arg(route_id),
     sqlc.arg(hostname),
     sqlc.arg(local_target),
-    'active',
+    'enabled',
     1,
     sqlc.arg(authorization_issuer),
     sqlc.arg(authorization_id),
@@ -168,7 +166,7 @@ INSERT INTO route_credentials (
 INSERT INTO route_sessions (
     id,
     route_id,
-    version,
+    route_version,
     status,
     token_id,
     secret_hash,
@@ -191,13 +189,13 @@ INSERT INTO route_sessions (
 
 -- name: AdvanceRouteVersion :exec
 UPDATE routes
-SET version = sqlc.arg(version)
+SET route_version = sqlc.arg(route_version)
 WHERE id = sqlc.arg(route_id);
 
 -- name: AdvanceSignedRouteVersion :execrows
 UPDATE routes
 SET
-    version = sqlc.arg(version),
+    route_version = sqlc.arg(route_version),
     authorization_issuer = sqlc.arg(authorization_issuer),
     authorization_id = sqlc.arg(authorization_id),
     authorization_key_id = sqlc.arg(authorization_key_id),
@@ -207,8 +205,8 @@ SET
     authorization_request_hash = sqlc.arg(authorization_request_hash),
     authorization_ip_policy_hash = sqlc.arg(authorization_ip_policy_hash)
 WHERE id = sqlc.arg(route_id)
-    AND version = sqlc.arg(previous_version)
-    AND status = 'active'
+    AND route_version = sqlc.arg(previous_route_version)
+    AND status = 'enabled'
     AND authorization_expires_at > sqlc.arg(now);
 
 -- name: GetRouteCredential :one
@@ -221,29 +219,29 @@ JOIN route_credentials ON route_credentials.route_id = routes.id
 WHERE routes.id = sqlc.arg(route_id)
     AND route_credentials.id = sqlc.arg(credential_id);
 
--- name: CountActiveRoutesByIdentity :one
+-- name: CountEnabledRoutesByIdentity :one
 SELECT COUNT(*)
 FROM routes
 WHERE id = sqlc.arg(route_id)
     AND identity_id = CAST(sqlc.arg(identity_id) AS TEXT)
-    AND status = 'active';
+    AND status = 'enabled';
 
--- name: GetActiveRouteIDByHostname :one
+-- name: GetEnabledRouteIDByHostname :one
 SELECT id
 FROM routes
 WHERE identity_id = CAST(sqlc.arg(identity_id) AS TEXT)
     AND hostname = sqlc.arg(hostname)
-    AND status = 'active';
+    AND status = 'enabled';
 
 -- name: GetRouteSessionForAuthentication :one
 SELECT route_sessions.*
 FROM route_sessions
 JOIN routes ON routes.id = route_sessions.route_id
 WHERE route_sessions.route_id = sqlc.arg(route_id)
-    AND route_sessions.version = sqlc.arg(version)
+    AND route_sessions.route_version = sqlc.arg(route_version)
     AND route_sessions.token_id = sqlc.arg(token_id)
-    AND routes.status = 'active'
-    AND routes.version = route_sessions.version
+    AND routes.status = 'enabled'
+    AND routes.route_version = route_sessions.route_version
     AND route_sessions.status != 'expired'
     AND route_sessions.expires_at > sqlc.arg(now)
     AND (routes.authorization_expires_at IS NULL OR routes.authorization_expires_at > sqlc.arg(now));
@@ -251,7 +249,7 @@ WHERE route_sessions.route_id = sqlc.arg(route_id)
 -- name: GetRouteSessionByVersion :one
 SELECT *
 FROM route_sessions
-WHERE route_id = sqlc.arg(route_id) AND version = sqlc.arg(version);
+WHERE route_id = sqlc.arg(route_id) AND route_version = sqlc.arg(route_version);
 
 -- name: RestoreSignedRouteSessionRetry :execrows
 UPDATE route_sessions
@@ -264,7 +262,7 @@ SET
     expires_at = sqlc.arg(expires_at)
 WHERE id = sqlc.arg(session_id)
     AND route_id = sqlc.arg(route_id)
-    AND version = sqlc.arg(version)
+    AND route_version = sqlc.arg(route_version)
     AND token_id = sqlc.arg(token_id)
     AND (
         status = 'expired'
@@ -285,14 +283,14 @@ SET
     status = 'starting'
 WHERE route_sessions.id = sqlc.arg(session_id)
     AND route_sessions.route_id = sqlc.arg(route_id)
-    AND route_sessions.version = sqlc.arg(version)
+    AND route_sessions.route_version = sqlc.arg(route_version)
     AND route_sessions.status IN ('pending', 'starting')
     AND route_sessions.expires_at > sqlc.arg(now)
     AND EXISTS (
         SELECT 1 FROM routes
         WHERE routes.id = route_sessions.route_id
-            AND routes.status = 'active'
-            AND routes.version = route_sessions.version
+            AND routes.status = 'enabled'
+            AND routes.route_version = route_sessions.route_version
             AND (routes.authorization_expires_at IS NULL OR routes.authorization_expires_at > sqlc.arg(now))
     );
 
@@ -301,14 +299,14 @@ UPDATE route_sessions
 SET status = 'ready'
 WHERE route_sessions.id = sqlc.arg(session_id)
     AND route_sessions.route_id = sqlc.arg(route_id)
-    AND route_sessions.version = sqlc.arg(version)
+    AND route_sessions.route_version = sqlc.arg(route_version)
     AND route_sessions.status = 'starting'
     AND route_sessions.expires_at > sqlc.arg(now)
     AND EXISTS (
         SELECT 1 FROM routes
         WHERE routes.id = route_sessions.route_id
-            AND routes.status = 'active'
-            AND routes.version = route_sessions.version
+            AND routes.status = 'enabled'
+            AND routes.route_version = route_sessions.route_version
             AND (routes.authorization_expires_at IS NULL OR routes.authorization_expires_at > sqlc.arg(now))
     );
 
@@ -317,13 +315,13 @@ SELECT status
 FROM route_sessions
 WHERE route_sessions.id = sqlc.arg(session_id)
     AND route_sessions.route_id = sqlc.arg(route_id)
-    AND route_sessions.version = sqlc.arg(version)
+    AND route_sessions.route_version = sqlc.arg(route_version)
     AND route_sessions.expires_at > sqlc.arg(now)
     AND EXISTS (
         SELECT 1 FROM routes
         WHERE routes.id = route_sessions.route_id
-            AND routes.status = 'active'
-            AND routes.version = route_sessions.version
+            AND routes.status = 'enabled'
+            AND routes.route_version = route_sessions.route_version
             AND (routes.authorization_expires_at IS NULL OR routes.authorization_expires_at > sqlc.arg(now))
     );
 
@@ -334,7 +332,7 @@ SET
     expires_at = sqlc.arg(expires_at)
 WHERE route_sessions.id = sqlc.arg(session_id)
     AND route_sessions.route_id = sqlc.arg(route_id)
-    AND route_sessions.version = sqlc.arg(version)
+    AND route_sessions.route_version = sqlc.arg(route_version)
     AND route_sessions.status != 'expired'
     AND route_sessions.expires_at > sqlc.arg(now)
     AND EXISTS (
@@ -350,13 +348,13 @@ SET
     expires_at = sqlc.arg(expires_at)
 WHERE route_sessions.id = sqlc.arg(session_id)
     AND route_sessions.route_id = sqlc.arg(route_id)
-    AND route_sessions.version = sqlc.arg(version)
+    AND route_sessions.route_version = sqlc.arg(route_version)
     AND route_sessions.status != 'expired'
     AND EXISTS (
         SELECT 1 FROM routes
         WHERE routes.id = route_sessions.route_id
-            AND routes.status = 'active'
-            AND routes.version = route_sessions.version
+            AND routes.status = 'enabled'
+            AND routes.route_version = route_sessions.route_version
             AND routes.authorization_expires_at > sqlc.arg(now)
     );
 
@@ -372,7 +370,7 @@ SET
     authorization_request_hash = sqlc.arg(next_request_hash),
     authorization_ip_policy_hash = sqlc.arg(next_ip_policy_hash)
 WHERE id = sqlc.arg(route_id)
-    AND status = 'active'
+    AND status = 'enabled'
     AND authorization_issuer = sqlc.arg(previous_issuer)
     AND authorization_id = sqlc.arg(previous_authorization_id)
     AND authorization_key_id = sqlc.arg(previous_key_id)
@@ -440,41 +438,41 @@ SET status = 'expired'
 WHERE server_instance_id != sqlc.arg(server_instance_id) AND status != 'expired';
 
 -- name: ListOtherServerInstanceRouteSessions :many
-SELECT route_id, version
+SELECT route_id, route_version
 FROM route_sessions
 WHERE server_instance_id != sqlc.arg(server_instance_id) AND status != 'expired'
-ORDER BY route_id, version;
+ORDER BY route_id, route_version;
 
 -- name: ExpireRouteSession :execrows
 UPDATE route_sessions
 SET status = 'expired'
 WHERE route_id = sqlc.arg(route_id)
-    AND version = sqlc.arg(version)
+    AND route_version = sqlc.arg(route_version)
     AND status != 'expired';
 
--- name: ListActiveRoutes :many
+-- name: ListEnabledRoutes :many
 SELECT routes.*
 FROM routes
-WHERE identity_id = CAST(sqlc.arg(identity_id) AS TEXT) AND status = 'active'
+WHERE identity_id = CAST(sqlc.arg(identity_id) AS TEXT) AND status = 'enabled'
 ORDER BY created_at, id;
 
--- name: DeleteActiveRoute :execrows
+-- name: DeleteEnabledRoute :execrows
 UPDATE routes
 SET
     status = 'deleted',
     deleted_at = CAST(sqlc.arg(deleted_at) AS INTEGER)
 WHERE id = sqlc.arg(route_id)
     AND identity_id = CAST(sqlc.arg(identity_id) AS TEXT)
-    AND status = 'active';
+    AND status = 'enabled';
 
--- name: DeleteActiveSignedRoute :execrows
+-- name: DeleteEnabledSignedRoute :execrows
 UPDATE routes
 SET
     status = 'deleted',
     deleted_at = CAST(sqlc.arg(deleted_at) AS INTEGER)
 WHERE id = sqlc.arg(route_id)
     AND authorization_id IS NOT NULL
-    AND status = 'active';
+    AND status = 'enabled';
 
 -- name: RetireTemporaryHostnameByRoute :exec
 UPDATE hostnames
@@ -489,14 +487,14 @@ SET revoked_at = COALESCE(revoked_at, CAST(sqlc.arg(revoked_at) AS INTEGER))
 WHERE route_id = sqlc.arg(route_id);
 
 -- name: GetRouteVersion :one
-SELECT version
+SELECT route_version
 FROM routes
 WHERE id = sqlc.arg(route_id);
 
--- name: ListActiveHostnameRouteVersions :many
-SELECT id, version
+-- name: ListEnabledHostnameRouteVersions :many
+SELECT id, route_version
 FROM routes
-WHERE hostname_id = sqlc.arg(hostname_id) AND status = 'active'
+WHERE hostname_id = sqlc.arg(hostname_id) AND status = 'enabled'
 ORDER BY id;
 
 -- name: ListAbandonedTemporaryRoutes :many
@@ -505,7 +503,7 @@ FROM hostnames
 JOIN routes ON routes.hostname_id = hostnames.id
 WHERE hostnames.kind = 'temporary'
     AND hostnames.status = 'active'
-    AND routes.status = 'active'
+    AND routes.status = 'enabled'
     AND NOT EXISTS (
         SELECT 1
         FROM route_sessions

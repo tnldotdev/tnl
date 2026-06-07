@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alecthomas/kong"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/pkg/protocol/serverv1"
 )
@@ -133,8 +134,8 @@ func TestSummarize(t *testing.T) {
 }
 
 func TestParseMetrics(t *testing.T) {
-	values := parseMetrics("# HELP ignored\ntnl_worker_routes_active 12\nprocess_resident_memory_bytes 4096\nprocess_max_fds 1048576\nmetric{label=\"x\"} 1\n")
-	if values["tnl_worker_routes_active"] != 12 || values["process_resident_memory_bytes"] != 4096 ||
+	values := parseMetrics("# HELP ignored\ntnl_worker_routes_routable 12\nprocess_resident_memory_bytes 4096\nprocess_max_fds 1048576\nmetric{label=\"x\"} 1\n")
+	if values["tnl_worker_routes_routable"] != 12 || values["process_resident_memory_bytes"] != 4096 ||
 		values["process_max_fds"] != 1048576 || values[`metric{label="x"}`] != 1 {
 		t.Fatalf("metrics = %#v", values)
 	}
@@ -167,6 +168,39 @@ func TestExpectedRoutes(t *testing.T) {
 	}
 }
 
+func TestTopologyHardCutover(t *testing.T) {
+	for _, topology := range []string{"standalone", "split"} {
+		var flags cli
+		parser, err := kong.New(&flags)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := parser.Parse(benchmarkCLIArguments(topology)); err != nil {
+			t.Fatalf("parse topology %q: %v", topology, err)
+		}
+	}
+	for _, topology := range []string{"single-node", "ha"} {
+		var flags cli
+		parser, err := kong.New(&flags)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := parser.Parse(benchmarkCLIArguments(topology)); err == nil {
+			t.Fatalf("legacy topology %q was accepted", topology)
+		}
+	}
+}
+
+func benchmarkCLIArguments(topology string) []string {
+	return []string{
+		"--topology", topology,
+		"--server", "https://control.bench.test",
+		"--login-token", "token",
+		"--public-address", "bench.test:443",
+		"--hostname-suffix", "bench.test",
+	}
+}
+
 func TestValidateExpectedRoutes(t *testing.T) {
 	flags := cli{
 		PublicAddress: "bench.test:443", HostnameSuffix: "bench.test",
@@ -183,7 +217,7 @@ func TestValidateExpectedRoutes(t *testing.T) {
 
 func TestWaitWorkerRoutesAcceptsAggregateAboveExpected(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
-		_, _ = response.Write([]byte("tnl_worker_routes_active 13\ntnl_worker_route_capacity 20\n"))
+		_, _ = response.Write([]byte("tnl_worker_routes_routable 13\ntnl_worker_route_capacity 20\n"))
 	}))
 	defer server.Close()
 
@@ -219,7 +253,7 @@ func TestCleanupRoutesLetsPublisherDeleteCapturedRouteIDs(t *testing.T) {
 	if routeCtx.Err() != context.Canceled {
 		t.Fatal("publisher context was not canceled")
 	}
-	if !slices.Equal(cleaner.events, []string{"stop", "publisher-delete:route_a", "list", "remove:hostname_a"}) {
+	if !slices.Equal(cleaner.events, []string{"stop", "publisher-delete:route_a", "list", "release:hostname_a"}) {
 		t.Fatalf("cleanup events = %v", cleaner.events)
 	}
 }
@@ -241,7 +275,7 @@ func TestCleanupRoutesFallsBackWhenPublisherLeavesRoute(t *testing.T) {
 		!strings.Contains(err.Error(), "publisher cleanup left 1 routes") {
 		t.Fatalf("cleanup error = %v", err)
 	}
-	if !slices.Equal(cleaner.events, []string{"stop", "list", "delete:route_a", "list", "remove:hostname_a"}) {
+	if !slices.Equal(cleaner.events, []string{"stop", "list", "delete:route_a", "list", "release:hostname_a"}) {
 		t.Fatalf("cleanup events = %v", cleaner.events)
 	}
 }
@@ -257,7 +291,7 @@ func TestCleanupRoutesReleasesClaimWithoutRoute(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "route creation failed") {
 		t.Fatalf("cleanup error = %v", err)
 	}
-	if !slices.Equal(cleaner.events, []string{"remove:hostname_partial"}) {
+	if !slices.Equal(cleaner.events, []string{"release:hostname_partial"}) {
 		t.Fatalf("cleanup events = %v", cleaner.events)
 	}
 }
@@ -295,8 +329,8 @@ func (c *cleanerStub) ListRoutes(context.Context) ([]serverv1.Route, error) {
 	return routes, nil
 }
 
-func (c *cleanerStub) RemoveHostname(_ context.Context, hostnameID string) error {
-	c.record("remove:" + hostnameID)
+func (c *cleanerStub) ReleaseHostname(_ context.Context, hostnameID string) error {
+	c.record("release:" + hostnameID)
 	return nil
 }
 

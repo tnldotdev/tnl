@@ -86,15 +86,11 @@ func TestIntegrationAutomaticCertificatePublishRestartAndRenewal(t *testing.T) {
 	publicIngress, err := ingress.New(publicListener, ingress.Config{
 		Lookup: func(name string) (ingress.Route, bool) {
 			active, ok := coordinator.Lookup(name)
-			return ingress.Route{
-				ID: active.RouteID, Version: active.Version, Backend: active.Backend, SourceKey: active.SourceKey,
-			}, ok
+			return ingress.Route{ID: active.RouteID, RouteVersion: active.RouteVersion, Backend: active.Backend}, ok
 		},
-		LookupChallenge: func(name string) (ingress.Route, bool) {
+		LookupChallenge: func(name string) (worker.RouteBackend, bool) {
 			active, ok := coordinator.LookupChallenge(name)
-			return ingress.Route{
-				ID: active.RouteID, Version: active.Version, Backend: active.Backend, SourceKey: active.SourceKey,
-			}, ok
+			return active.Backend, ok
 		},
 		MaxConnections: 32, MaxRouteConnections: 8,
 	})
@@ -119,10 +115,10 @@ func TestIntegrationAutomaticCertificatePublishRestartAndRenewal(t *testing.T) {
 		ACMEProfile: "tlsserver", HTTPClient: pebble.HTTPClient(), Roots: issuerRoots,
 		Probe: func(probeContext context.Context, issuance certificates.Issuance) error {
 			active, ok := coordinator.LookupChallenge(issuance.Hostname)
-			if !ok || active.RouteID != issuance.RouteID || active.Version != issuance.Version {
+			if !ok || active.RouteID != issuance.RouteID || active.RouteVersion != issuance.RouteVersion {
 				return errors.New("assigned challenge route is unavailable")
 			}
-			return certificates.ProbeTLSALPN(probeContext, active.Backend, active.SourceKey, issuance)
+			return certificates.ProbeTLSALPN(probeContext, active.Backend, issuance)
 		},
 	})
 	if err != nil {
@@ -154,8 +150,8 @@ func TestIntegrationAutomaticCertificatePublishRestartAndRenewal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.AddHostname(
-		ctx, serverv1.AddHostnameRequestKindManaged, "route", "pebble-integration",
+	if _, err := client.ClaimHostname(
+		ctx, serverv1.ClaimHostnameRequestKindManaged, "route", "pebble-integration",
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +169,7 @@ func TestIntegrationAutomaticCertificatePublishRestartAndRenewal(t *testing.T) {
 	agentState := newPublisherState(t, stateRoot, controlServer.URL)
 	publishConfig := Config{
 		// Suppress graceful deletion to model abrupt process loss for the restart path.
-		Server: crashRestartServer{Server: client}, Hostname: hostname, Target: origin.URL, State: agentState, ACMEProfile: "tlsserver",
+		Server: crashRestartServer{RouteControlClient: client}, Hostname: hostname, Target: origin.URL, State: agentState, ACMEProfile: "tlsserver",
 		RelayRegion: "test", Regions: regions, DrainTime: 5 * time.Second, Logf: logger.Discard,
 	}
 	firstRun := startIntegrationPublish(ctx, publishConfig)
@@ -237,7 +233,7 @@ func TestIntegrationAutomaticCertificatePublishRestartAndRenewal(t *testing.T) {
 	assertPersistedPublish(t, database, routeID, 1)
 	freshRestart.Stop(t)
 	fresh := readCurrentMaterial(t, agentState, routeID, hostname)
-	if fresh.IssuanceID != initial.IssuanceID || fresh.Version != initial.Version {
+	if fresh.IssuanceID != initial.IssuanceID || fresh.RouteVersion != initial.RouteVersion {
 		t.Fatalf("fresh restart changed certificate state from %+v to %+v", initial, fresh)
 	}
 
@@ -260,12 +256,12 @@ func TestIntegrationAutomaticCertificatePublishRestartAndRenewal(t *testing.T) {
 	renewalRun.Stop(t)
 	replacement := readCurrentMaterial(t, agentState, routeID, hostname)
 	if !replacement.Installed || replacement.IssuanceID == initial.IssuanceID ||
-		replacement.Version <= initial.Version || !replacement.RenewAt.After(time.Now()) {
+		replacement.RouteVersion <= initial.RouteVersion || !replacement.RenewAt.After(time.Now()) {
 		t.Fatalf("renewed publisher certificate = %+v", replacement)
 	}
 }
 
-type crashRestartServer struct{ Server }
+type crashRestartServer struct{ RouteControlClient }
 
 func (crashRestartServer) DeleteRoute(context.Context, string) error { return nil }
 

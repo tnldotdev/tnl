@@ -82,7 +82,7 @@ func TestConfiguredReservationConflictsFailClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.AddHostname(ctx, "owner", HostnameKindManaged, "domains", "reserved"); !errors.Is(err, ErrNameUnavailable) {
+	if _, err := store.ClaimHostname(ctx, "owner", HostnameKindManaged, "domains", "reserved"); !errors.Is(err, ErrNameUnavailable) {
 		t.Fatalf("reserved hostname error = %v", err)
 	}
 }
@@ -100,18 +100,18 @@ func TestTemporaryClaimsDoNotConsumePersistentQuota(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.AddHostname(ctx, "owner", HostnameKindManaged, "owned", "persistent"); err != nil {
+	if _, err := store.ClaimHostname(ctx, "owner", HostnameKindManaged, "owned", "persistent"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.AddHostname(ctx, "owner", HostnameKindTemporary, "", "temporary"); err != nil {
+	if _, err := store.ClaimHostname(ctx, "owner", HostnameKindTemporary, "", "temporary"); err != nil {
 		t.Fatalf("temporary hostname with full persistent quota: %v", err)
 	}
-	total, remaining, err := store.FriendlyNameCapacity(ctx)
+	total, remaining, err := store.GeneratedHostnameCapacity(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if total != 4_429_593 || remaining != total-2 {
-		t.Fatalf("friendly name capacity = %d/%d", remaining, total)
+		t.Fatalf("generated hostname capacity = %d/%d", remaining, total)
 	}
 }
 
@@ -128,7 +128,7 @@ func TestRetiredTemporaryClaimsDoNotConsumeRequestQuota(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hostname, err := store.AddHostname(ctx, "owner", HostnameKindTemporary, "", "first")
+	hostname, err := store.ClaimHostname(ctx, "owner", HostnameKindTemporary, "", "first")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestRetiredTemporaryClaimsDoNotConsumeRequestQuota(t *testing.T) {
 	if err := store.Delete(ctx, "owner", created.Route.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.AddHostname(ctx, "owner", HostnameKindTemporary, "", "second"); err != nil {
+	if _, err := store.ClaimHostname(ctx, "owner", HostnameKindTemporary, "", "second"); err != nil {
 		t.Fatalf("hostname after temporary burn: %v", err)
 	}
 }
@@ -163,7 +163,7 @@ func TestTemporaryRestartReacquisitionAndAbandonedCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	store.now = func() time.Time { return t0 }
-	hostname, err := store.AddHostname(ctx, "owner", HostnameKindTemporary, "", "route")
+	hostname, err := store.ClaimHostname(ctx, "owner", HostnameKindTemporary, "", "route")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,10 +187,10 @@ func TestTemporaryRestartReacquisitionAndAbandonedCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	replacement, err := restarted.Create(ctx, "owner", hostname.Hostname, "localhost:3000", "instance-two", replacementToken, nil)
-	if err != nil || replacement.Route.ID != created.Route.ID || replacement.Route.Version != 2 {
+	if err != nil || replacement.Route.ID != created.Route.ID || replacement.Route.RouteVersion != 2 {
 		t.Fatalf("restart reacquisition = %#v, %v", replacement, err)
 	}
-	temporary, err := restarted.AddHostname(ctx, "owner", HostnameKindTemporary, "", "temporary")
+	temporary, err := restarted.ClaimHostname(ctx, "owner", HostnameKindTemporary, "", "temporary")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +207,7 @@ func TestTemporaryRestartReacquisitionAndAbandonedCleanup(t *testing.T) {
 	}
 }
 
-func TestConcurrentFriendlyAllocationsAreUnique(t *testing.T) {
+func TestConcurrentGeneratedHostnameAllocationsAreUnique(t *testing.T) {
 	ctx := context.Background()
 	db, err := state.Open(ctx, filepath.Join(t.TempDir(), "state"))
 	if err != nil {
@@ -226,7 +226,7 @@ func TestConcurrentFriendlyAllocationsAreUnique(t *testing.T) {
 	for index := range 32 {
 		go func() {
 			<-start
-			hostname, err := store.AddHostname(ctx, "owner", HostnameKindManaged, "", fmt.Sprintf("request-%d", index))
+			hostname, err := store.ClaimHostname(ctx, "owner", HostnameKindManaged, "", fmt.Sprintf("request-%d", index))
 			results <- hostname
 			errors <- err
 		}()
@@ -262,7 +262,7 @@ func TestHostnameLifecycle(t *testing.T) {
 	}
 	store.now = func() time.Time { return now }
 
-	hostname, err := store.AddManagedHostname(ctx, "owner", "Demo", "exact-request")
+	hostname, err := store.ClaimManagedHostname(ctx, "owner", "Demo", "exact-request")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,11 +270,11 @@ func TestHostnameLifecycle(t *testing.T) {
 		hostname.Status != HostnameStatusActive || hostname.Source != HostnameSourceUser || hostname.CreatedAt != now {
 		t.Fatalf("hostname = %#v", hostname)
 	}
-	replayed, err := store.AddManagedHostname(ctx, "owner", "demo", "exact-request")
+	replayed, err := store.ClaimManagedHostname(ctx, "owner", "demo", "exact-request")
 	if err != nil || replayed.ID != hostname.ID {
 		t.Fatalf("replayed hostname = %#v, %v", replayed, err)
 	}
-	alias, err := store.AddManagedHostname(ctx, "owner", "demo", "alias-request")
+	alias, err := store.ClaimManagedHostname(ctx, "owner", "demo", "alias-request")
 	if err != nil || alias.ID != hostname.ID {
 		t.Fatalf("aliased hostname = %#v, %v", alias, err)
 	}
@@ -285,23 +285,23 @@ func TestHostnameLifecycle(t *testing.T) {
 	if exactRequests != 2 {
 		t.Fatalf("exact hostname request records = %d", exactRequests)
 	}
-	if _, err := store.AddManagedHostname(ctx, "owner", "other", "alias-request"); !errors.Is(err, ErrInvalidStatus) {
-		t.Fatalf("aliased request key error = %v", err)
+	if _, err := store.ClaimManagedHostname(ctx, "owner", "other", "alias-request"); !errors.Is(err, ErrInvalidStatus) {
+		t.Fatalf("aliased idempotency key error = %v", err)
 	}
-	if _, err := store.AddManagedHostname(ctx, "owner", "other", "exact-request"); !errors.Is(err, ErrInvalidStatus) {
+	if _, err := store.ClaimManagedHostname(ctx, "owner", "other", "exact-request"); !errors.Is(err, ErrInvalidStatus) {
 		t.Fatalf("changed replay error = %v", err)
 	}
-	if _, err := store.AddManagedHostname(ctx, "other", "demo", "competing-request"); !errors.Is(err, ErrNameUnavailable) {
+	if _, err := store.ClaimManagedHostname(ctx, "other", "demo", "competing-request"); !errors.Is(err, ErrNameUnavailable) {
 		t.Fatalf("competing hostname error = %v", err)
 	}
-	random, err := store.AddManagedHostname(ctx, "owner", "", "random-request")
+	random, err := store.ClaimManagedHostname(ctx, "owner", "", "random-request")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if random.Hostname == hostname.Hostname || !strings.HasSuffix(random.Hostname, ".example") {
 		t.Fatalf("random hostname = %#v", random)
 	}
-	if replayed, err := store.AddManagedHostname(ctx, "owner", "", "random-request"); err != nil || replayed.ID != random.ID {
+	if replayed, err := store.ClaimManagedHostname(ctx, "owner", "", "random-request"); err != nil || replayed.ID != random.ID {
 		t.Fatalf("replayed random hostname = %#v, %v", replayed, err)
 	}
 
@@ -322,23 +322,23 @@ func TestHostnameLifecycle(t *testing.T) {
 			t.Fatalf("routed hostname status = %q", listed.Status)
 		}
 	}
-	if err := store.RemoveHostname(ctx, "owner", hostname.ID); err != nil {
+	if err := store.ReleaseHostname(ctx, "owner", hostname.ID); err != nil {
 		t.Fatal(err)
 	}
 	if routes, err := store.List(ctx, "owner"); err != nil || len(routes) != 0 {
-		t.Fatalf("routes after removal = %#v, %v", routes, err)
+		t.Fatalf("routes after release = %#v, %v", routes, err)
 	}
 	if _, err := store.AuthenticateSession(ctx, created.Route.ID, 1, created.SessionToken, "instance"); !errors.Is(err, ErrStaleSession) {
-		t.Fatalf("removed session error = %v", err)
+		t.Fatalf("released session error = %v", err)
 	}
-	reactivated, err := store.AddManagedHostname(ctx, "owner", "demo", "replacement-request")
+	reactivated, err := store.ClaimManagedHostname(ctx, "owner", "demo", "replacement-request")
 	if err != nil || reactivated.ID != hostname.ID || reactivated.Status != HostnameStatusActive {
 		t.Fatalf("managed reactivation = %#v, %v", reactivated, err)
 	}
-	if _, err := store.AddManagedHostname(ctx, "other", "demo", "other-replacement"); !errors.Is(err, ErrNameUnavailable) {
+	if _, err := store.ClaimManagedHostname(ctx, "other", "demo", "other-replacement"); !errors.Is(err, ErrNameUnavailable) {
 		t.Fatalf("managed transfer error = %v", err)
 	}
-	if replayed, err := store.AddManagedHostname(ctx, "owner", "demo", "exact-request"); err != nil || replayed.ID != hostname.ID {
+	if replayed, err := store.ClaimManagedHostname(ctx, "owner", "demo", "exact-request"); err != nil || replayed.ID != hostname.ID {
 		t.Fatalf("original replay = %#v, %v", replayed, err)
 	}
 }
@@ -364,7 +364,7 @@ func TestRouteCreationRequiresOwnedClaim(t *testing.T) {
 	if _, err := store.Create(ctx, "owner", "missing.example", "http://127.0.0.1:3000", "instance", routeToken, nil); !errors.Is(err, ErrNameUnavailable) {
 		t.Fatalf("unclaimed route error = %v", err)
 	}
-	if _, err := store.AddHostname(ctx, "owner", HostnameKindManaged, "base", "base"); err != nil {
+	if _, err := store.ClaimHostname(ctx, "owner", HostnameKindManaged, "base", "base"); err != nil {
 		t.Fatal(err)
 	}
 	deep := "a.b.c.d.e.f.g.h.base.example"
@@ -402,7 +402,7 @@ func TestExistingClaimBypassesNewActiveQuota(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hostname, err := store.AddManagedHostname(ctx, "owner", "route0", "migrated-hostname")
+	hostname, err := store.ClaimManagedHostname(ctx, "owner", "route0", "migrated-hostname")
 	if err != nil || hostname.Hostname != "route0.example" {
 		t.Fatalf("existing hostname = %#v, %v", hostname, err)
 	}
@@ -418,7 +418,7 @@ func TestExistingClaimBypassesNewActiveQuota(t *testing.T) {
 	if err != nil || len(second) != DefaultMaxActiveHostnames-hostnamePageSize || final != "" {
 		t.Fatalf("second hostname page = %d, %q, %v", len(second), final, err)
 	}
-	if _, err := store.AddManagedHostname(ctx, "owner", "new", "over-quota"); !errors.Is(err, ErrInvalidStatus) {
+	if _, err := store.ClaimManagedHostname(ctx, "owner", "new", "over-quota"); !errors.Is(err, ErrInvalidStatus) {
 		t.Fatalf("new hostname over quota error = %v", err)
 	}
 }
@@ -439,23 +439,23 @@ func TestHostnameActiveLimitOverride(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := store.AddManagedHostname(ctx, "owner", "first", "first-request")
+	first, err := store.ClaimManagedHostname(ctx, "owner", "first", "first-request")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.AddManagedHostname(ctx, "owner", "second", "second-request"); err != nil {
+	if _, err := store.ClaimManagedHostname(ctx, "owner", "second", "second-request"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.AddManagedHostname(ctx, "owner", "third", "over-limit"); !errors.Is(err, ErrInvalidStatus) {
+	if _, err := store.ClaimManagedHostname(ctx, "owner", "third", "over-limit"); !errors.Is(err, ErrInvalidStatus) {
 		t.Fatalf("hostname over active limit error = %v", err)
 	}
-	if err := store.RemoveHostname(ctx, "owner", first.ID); err != nil {
+	if err := store.ReleaseHostname(ctx, "owner", first.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.AddManagedHostname(ctx, "owner", "third", "replacement-request"); err != nil {
+	if _, err := store.ClaimManagedHostname(ctx, "owner", "third", "replacement-request"); err != nil {
 		t.Fatalf("replacement hostname: %v", err)
 	}
-	if _, err := store.AddManagedHostname(ctx, "owner", "first", "reactivation-over-limit"); !errors.Is(err, ErrInvalidStatus) {
+	if _, err := store.ClaimManagedHostname(ctx, "owner", "first", "reactivation-over-limit"); !errors.Is(err, ErrInvalidStatus) {
 		t.Fatalf("reactivation over limit error = %v", err)
 	}
 }
@@ -507,10 +507,10 @@ func TestHostnameRequestLimitStillAllowsKnownReplay(t *testing.T) {
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if replayed, err := store.AddManagedHostname(ctx, "owner", "route", "request-0000"); err != nil || replayed.ID != hostnameID {
+	if replayed, err := store.ClaimManagedHostname(ctx, "owner", "route", "request-0000"); err != nil || replayed.ID != hostnameID {
 		t.Fatalf("known replay = %#v, %v", replayed, err)
 	}
-	if _, err := store.AddManagedHostname(ctx, "owner", "route", "new-request"); !errors.Is(err, ErrInvalidStatus) {
+	if _, err := store.ClaimManagedHostname(ctx, "owner", "route", "new-request"); !errors.Is(err, ErrInvalidStatus) {
 		t.Fatalf("new request at limit error = %v", err)
 	}
 	requests, err := queries.CountHostnameRequests(ctx, "owner")
@@ -544,25 +544,25 @@ func TestHostnameObserverReportsValidationAndReleaseErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.AddManagedHostname(ctx, "owner", "route", " bad "); !errors.Is(err, ErrInvalidArgument) {
+	if _, err := store.ClaimManagedHostname(ctx, "owner", "route", " bad "); !errors.Is(err, ErrInvalidArgument) {
 		t.Fatalf("invalid hostname error = %v", err)
 	}
-	hostname, err := store.AddManagedHostname(ctx, "owner", "route", "valid")
+	hostname, err := store.ClaimManagedHostname(ctx, "owner", "route", "valid")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.RemoveHostname(ctx, "owner", hostname.ID); err != nil {
+	if err := store.ReleaseHostname(ctx, "owner", hostname.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.RemoveHostname(ctx, "owner", hostname.ID); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("repeated removal error = %v", err)
+	if err := store.ReleaseHostname(ctx, "owner", hostname.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("repeated release error = %v", err)
 	}
 
 	wantOperations := []StoreOperation{
-		StoreOperationHostname,
-		StoreOperationHostname,
-		StoreOperationHostnameRemove,
-		StoreOperationHostnameRemove,
+		StoreOperationHostnameClaim,
+		StoreOperationHostnameClaim,
+		StoreOperationHostnameRelease,
+		StoreOperationHostnameRelease,
 	}
 	if len(observations) != len(wantOperations) {
 		t.Fatalf("observations = %#v", observations)

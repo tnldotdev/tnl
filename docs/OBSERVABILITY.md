@@ -10,16 +10,17 @@ monitor file-descriptor pressure with `process_open_fds` and
 
 ## Service Health
 
-Probe the public control hostname over HTTPS:
+Probe the control API hostname over HTTPS:
 
 ```console
 curl --fail https://tnl.example.com/v1/health
 curl --fail https://tnl.example.com/v1/ready
 ```
 
-`/v1/health` checks control TLS and HTTP serving. `/v1/ready` additionally runs
-a bounded SQLite check. DNS remains in `/v1/capabilities`; only a test route
-checks DNS, ACME, relay, worker, and publisher behavior end to end.
+`/v1/health` checks control TLS and HTTP serving. `/v1/ready` additionally
+checks that SQLite accepts a query. DNS state is reported by
+`/v1/capabilities`; only a test route checks DNS, ACME, relay, worker, and
+publisher behavior end to end.
 
 The main availability signals are:
 
@@ -31,10 +32,11 @@ The main availability signals are:
   `tnl_sqlite_pool_wait_seconds_total` for database-pool pressure.
 - `tnl_worker_sessions_active{role}` and
   `tnl_worker_session_disconnects_total{role,reason}` for edge/worker health.
-- `tnl_worker_routes_active`, `tnl_worker_route_capacity`, and
+- `tnl_worker_routes_routable`, `tnl_worker_route_capacity`, and
   `tnl_capacity_rejections_total{resource="worker_routes"}` for route capacity.
 - `tnl_source_limiter_rejections_total` and `tnl_source_limiter_entries` for
-  abusive connection starts and pressure on the bounded source table.
+  abusive connection starts and pressure on the source table, which is capped
+  at 8,192 entries.
 - `tnl_ip_allowlist_denials_total` for visitor connections rejected by route
   IP policy. This counter intentionally has no route or source labels.
 - `tnl_tailcat_failures_total{operation,reason}` for Tailcat setup failures,
@@ -45,10 +47,10 @@ The main availability signals are:
 - `tnl_route_coordinator_stage_duration_seconds{stage}` for distinguishing
   per-route lock waits, worker attachment, publishing, and state updates.
 
-Labels use bounded values. Route IDs, hostnames, identities, workers, request
-IDs, errors, and SQL text are deliberately excluded from metric labels.
-Unexpected API and Tailcat errors are instead written to logs with request or
-route correlation fields and sanitized responses remain unchanged.
+Labels use fixed enumerated values. Route IDs, hostnames, identities, workers,
+request IDs, error text, and SQL text are deliberately excluded from metric
+labels. Unexpected API and Tailcat errors are instead written to logs with
+request or route correlation fields; client responses remain sanitized.
 
 ## Alert Queries
 
@@ -60,8 +62,8 @@ process_open_fds / clamp_min(process_max_fds, 1)
 
 Warn above `0.80` for 15 minutes and treat above `0.90` for 5 minutes as
 critical. The forced-DERP capacity benchmark observed approximately four open
-FDs per active route, but this is an estimate; the utilization ratio is
-authoritative.
+FDs per route that was runtime routable. Use the measured utilization ratio for
+alerts rather than deriving utilization from that estimate.
 
 Other useful alert conditions are:
 
@@ -71,16 +73,17 @@ increase(tnl_sqlite_errors_total{reason=~"busy|locked"}[10m]) > 0
 tnl_worker_sessions_active{role="edge"} == 0
 increase(tnl_worker_session_disconnects_total{reason!="shutdown"}[10m]) > 3
 increase(tnl_route_removals_total{reason="session_expired"}[10m]) > 0
-tnl_route_session_min_seconds_remaining{status="active"} < 15
+tnl_route_session_min_seconds_remaining{status="routable"} < 15
 increase(tnl_capacity_rejections_total{resource="worker_routes"}[5m]) > 0
 increase(tnl_source_limiter_rejections_total[5m]) > 0
 tnl_source_limiter_entries > 7372
 increase(tnl_ip_allowlist_denials_total[10m]) > 0
 ```
 
-Gate the session-margin query on `tnl_routes{status="active"} > 0`, because the
-minimum is zero when no active routes exist. API alerts should require both
-error volume and ratio to avoid paging on one failed request:
+Gate the session-margin query on `tnl_worker_routes_routable > 0`, because the
+minimum is zero when no worker backend is routable. A durable enabled route is
+not necessarily runtime routable. API alerts should require both error volume
+and ratio to avoid paging on one failed request:
 
 ```promql
 sum(increase(tnl_api_requests_total{result="server_error"}[10m])) >= 5
@@ -89,5 +92,6 @@ sum(rate(tnl_api_requests_total{result="server_error"}[5m]))
   / clamp_min(sum(rate(tnl_api_requests_total[5m])), 0.001) > 0.02
 ```
 
-Deployment repositories should own concrete recording and alert rules. This
-repository owns metric names, semantics, and bounded label values.
+Deployment repositories should define recording and alert rules for their
+environment. This repository defines metric names, semantics, and the allowed
+label values.

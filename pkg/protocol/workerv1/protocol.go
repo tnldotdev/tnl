@@ -24,7 +24,7 @@ type MessageType string
 
 const (
 	Hello          MessageType = "hello"
-	Accepted       MessageType = "accepted"
+	HelloAccepted  MessageType = "hello_accepted"
 	AttachRoute    MessageType = "attach_route"
 	RouteReady     MessageType = "route_ready"
 	DetachRoute    MessageType = "detach_route"
@@ -36,29 +36,29 @@ const (
 type ErrorCode string
 
 const (
-	InvalidMessage  ErrorCode = "invalid_message"
-	StaleAssignment ErrorCode = "stale_assignment"
-	AtCapacity      ErrorCode = "at_capacity"
-	Internal        ErrorCode = "internal"
+	InvalidMessage        ErrorCode = "invalid_message"
+	StaleRouteVersion     ErrorCode = "stale_route_version"
+	RouteCapacityExceeded ErrorCode = "route_capacity_exceeded"
+	Internal              ErrorCode = "internal"
 )
 
 type RouteRef struct {
-	RouteID string `json:"route_id"`
-	Version uint64 `json:"version"`
+	RouteID      string `json:"route_id"`
+	RouteVersion uint64 `json:"route_version"`
 }
 
 type Message struct {
-	Type             MessageType                    `json:"type"`
-	Capacity         int                            `json:"capacity,omitempty"`
-	Route            *RouteRef                      `json:"route,omitempty"`
-	Endpoint         *transportv1.TailcatDescriptor `json:"endpoint,omitempty"`
-	WorkerPrivateKey string                         `json:"worker_private_key,omitempty"`
-	Code             ErrorCode                      `json:"code,omitempty"`
+	Type                    MessageType                    `json:"type"`
+	RouteCapacity           int                            `json:"route_capacity,omitempty"`
+	Route                   *RouteRef                      `json:"route,omitempty"`
+	PublisherTransport      *transportv1.TailcatDescriptor `json:"publisher_transport,omitempty"`
+	TailcatDialerPrivateKey string                         `json:"tailcat_dialer_private_key,omitempty"`
+	Code                    ErrorCode                      `json:"code,omitempty"`
 }
 
 type DataHeader struct {
-	RouteID string `json:"route_id"`
-	Version uint64 `json:"version"`
+	RouteID      string `json:"route_id"`
+	RouteVersion uint64 `json:"route_version"`
 }
 
 func WriteControl(writer io.Writer, message Message) error {
@@ -98,8 +98,8 @@ func ReadDataHeader(reader io.Reader) (DataHeader, error) {
 }
 
 func (m Message) Validate() error {
-	if m.Capacity < 0 {
-		return errors.New("workerv1: invalid capacity")
+	if m.RouteCapacity < 0 {
+		return errors.New("workerv1: invalid route capacity")
 	}
 	if m.Route != nil {
 		if err := m.Route.validate(); err != nil {
@@ -109,26 +109,26 @@ func (m Message) Validate() error {
 	// Message is a closed tagged union; variants reject unrelated fields.
 	switch m.Type {
 	case Hello:
-		if m.Capacity <= 0 || m.Route != nil || m.Endpoint != nil || m.WorkerPrivateKey != "" || m.Code != "" {
+		if m.RouteCapacity <= 0 || m.Route != nil || m.PublisherTransport != nil || m.TailcatDialerPrivateKey != "" || m.Code != "" {
 			return errors.New("workerv1: invalid hello")
 		}
-	case Accepted, WorkerDraining:
-		if m.Capacity != 0 || m.Route != nil || m.Endpoint != nil || m.WorkerPrivateKey != "" || m.Code != "" {
+	case HelloAccepted, WorkerDraining:
+		if m.RouteCapacity != 0 || m.Route != nil || m.PublisherTransport != nil || m.TailcatDialerPrivateKey != "" || m.Code != "" {
 			return fmt.Errorf("workerv1: invalid %s", m.Type)
 		}
 	case AttachRoute:
-		if m.Route == nil || m.Endpoint == nil || m.WorkerPrivateKey == "" || m.Capacity != 0 || m.Code != "" {
+		if m.Route == nil || m.PublisherTransport == nil || m.TailcatDialerPrivateKey == "" || m.RouteCapacity != 0 || m.Code != "" {
 			return errors.New("workerv1: invalid attach_route")
 		}
 	case RouteReady, DetachRoute, RouteDrained:
-		if m.Route == nil || m.Capacity != 0 || m.Endpoint != nil || m.WorkerPrivateKey != "" || m.Code != "" {
+		if m.Route == nil || m.RouteCapacity != 0 || m.PublisherTransport != nil || m.TailcatDialerPrivateKey != "" || m.Code != "" {
 			return fmt.Errorf("workerv1: invalid %s", m.Type)
 		}
 	case Error:
-		if m.Code != InvalidMessage && m.Code != StaleAssignment && m.Code != AtCapacity && m.Code != Internal {
+		if m.Code != InvalidMessage && m.Code != StaleRouteVersion && m.Code != RouteCapacityExceeded && m.Code != Internal {
 			return errors.New("workerv1: invalid error code")
 		}
-		if m.Capacity != 0 || m.Endpoint != nil || m.WorkerPrivateKey != "" {
+		if m.RouteCapacity != 0 || m.PublisherTransport != nil || m.TailcatDialerPrivateKey != "" {
 			return errors.New("workerv1: invalid error")
 		}
 	default:
@@ -138,11 +138,11 @@ func (m Message) Validate() error {
 }
 
 func (h DataHeader) Validate() error {
-	return (&RouteRef{RouteID: h.RouteID, Version: h.Version}).validate()
+	return (&RouteRef{RouteID: h.RouteID, RouteVersion: h.RouteVersion}).validate()
 }
 
 func (r *RouteRef) validate() error {
-	if r == nil || strings.TrimSpace(r.RouteID) == "" || r.RouteID != strings.TrimSpace(r.RouteID) || r.Version == 0 {
+	if r == nil || strings.TrimSpace(r.RouteID) == "" || r.RouteID != strings.TrimSpace(r.RouteID) || r.RouteVersion == 0 {
 		return errors.New("workerv1: invalid route reference")
 	}
 	return nil

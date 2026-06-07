@@ -13,11 +13,11 @@ import (
 
 const descriptorVersion = transportv1.TailcatDescriptorVersion
 
-// Endpoint is the trusted subset of Tailcat connection information exchanged
+// TransportDescriptor is the trusted subset of Tailcat connection information exchanged
 // between a publisher and worker.
-type Endpoint = transportv1.TailcatDescriptor
+type TransportDescriptor = transportv1.TailcatDescriptor
 
-func connBlob(e Endpoint, regions map[string]*tailcfg.DERPRegion) (tailcat.ConnBlob, error) {
+func connBlob(e TransportDescriptor, regions map[string]*tailcfg.DERPRegion) (tailcat.ConnBlob, error) {
 	if e.Version != descriptorVersion {
 		return "", fmt.Errorf("unsupported tailcat descriptor version %d", e.Version)
 	}

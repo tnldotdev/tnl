@@ -18,7 +18,7 @@ type publishEvent struct {
 	TunnelID      string     `json:"tunnel_id"`
 	Target        string     `json:"target,omitempty"`
 	URL           string     `json:"url,omitempty"`
-	Version       uint64     `json:"version,omitempty"`
+	RouteVersion  uint64     `json:"route_version,omitempty"`
 	IP            string     `json:"ip,omitempty"`
 	Message       string     `json:"message,omitempty"`
 	Retryable     *bool      `json:"retryable,omitempty"`
@@ -55,7 +55,7 @@ func (o *publishOutput) starting(tunnelID, target string) error {
 	return o.emitLocked(publishEvent{Type: "starting", Target: target})
 }
 
-func (o *publishOutput) ready(url string, version uint64) error {
+func (o *publishOutput) ready(url string, routeVersion uint64) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if o.mode == "human" {
@@ -65,7 +65,7 @@ func (o *publishOutput) ready(url string, version uint64) error {
 				return err
 			}
 		}
-	} else if err := o.emitLocked(publishEvent{Type: "ready", URL: url, Version: version}); err != nil {
+	} else if err := o.emitLocked(publishEvent{Type: "ready", URL: url, RouteVersion: routeVersion}); err != nil {
 		return err
 	}
 	if o.openURL != nil && !o.opened {

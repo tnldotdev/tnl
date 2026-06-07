@@ -126,7 +126,7 @@ func (q *Queries) GetInstallationID(ctx context.Context) (string, error) {
 }
 
 const getRouteCertificate = `-- name: GetRouteCertificate :one
-SELECT server_origin, route_id, phase, hostname, key_der, csr_der, certificate_pem, renew_at, issuance_id, version, installed, updated_at
+SELECT server_origin, route_id, phase, hostname, key_der, csr_der, certificate_pem, renew_at, issuance_id, route_version, installed, updated_at
 FROM route_certificates
 WHERE server_origin = ?1
   AND route_id = ?2
@@ -152,7 +152,7 @@ func (q *Queries) GetRouteCertificate(ctx context.Context, arg GetRouteCertifica
 		&i.CertificatePem,
 		&i.RenewAt,
 		&i.IssuanceID,
-		&i.Version,
+		&i.RouteVersion,
 		&i.Installed,
 		&i.UpdatedAt,
 	)
@@ -202,7 +202,7 @@ INSERT INTO local_tunnels (
     target,
     framework,
     route_id,
-    session_version,
+    route_version,
     state,
     started_at,
     updated_at,
@@ -252,7 +252,7 @@ func (q *Queries) InsertTunnel(ctx context.Context, arg InsertTunnelParams) erro
 }
 
 const listOpenTunnels = `-- name: ListOpenTunnels :many
-SELECT id, command, process_id, server_origin, hostname, target, framework, route_id, session_version, state, started_at, updated_at, heartbeat_at, lease_expires_at, stopped_at, last_error
+SELECT id, command, process_id, server_origin, hostname, target, framework, route_id, route_version, state, started_at, updated_at, heartbeat_at, lease_expires_at, stopped_at, last_error
 FROM local_tunnels
 WHERE stopped_at IS NULL
 ORDER BY started_at, id
@@ -276,7 +276,7 @@ func (q *Queries) ListOpenTunnels(ctx context.Context) ([]LocalTunnel, error) {
 			&i.Target,
 			&i.Framework,
 			&i.RouteID,
-			&i.SessionVersion,
+			&i.RouteVersion,
 			&i.State,
 			&i.StartedAt,
 			&i.UpdatedAt,
@@ -369,20 +369,20 @@ func (q *Queries) SetTunnelDraining(ctx context.Context, arg SetTunnelDrainingPa
 
 const setTunnelProvisioning = `-- name: SetTunnelProvisioning :execrows
 UPDATE local_tunnels
-SET session_version = ?1,
+SET route_version = ?1,
     state = 'provisioning',
     updated_at = ?2
 WHERE id = ?3 AND stopped_at IS NULL
 `
 
 type SetTunnelProvisioningParams struct {
-	SessionVersion int64
-	Now            int64
-	ID             string
+	RouteVersion int64
+	Now          int64
+	ID           string
 }
 
 func (q *Queries) SetTunnelProvisioning(ctx context.Context, arg SetTunnelProvisioningParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, setTunnelProvisioning, arg.SessionVersion, arg.Now, arg.ID)
+	result, err := q.db.ExecContext(ctx, setTunnelProvisioning, arg.RouteVersion, arg.Now, arg.ID)
 	if err != nil {
 		return 0, err
 	}
@@ -392,23 +392,23 @@ func (q *Queries) SetTunnelProvisioning(ctx context.Context, arg SetTunnelProvis
 const setTunnelReady = `-- name: SetTunnelReady :execrows
 UPDATE local_tunnels
 SET hostname = ?1,
-    session_version = ?2,
+    route_version = ?2,
     state = 'ready',
     updated_at = ?3
 WHERE id = ?4 AND stopped_at IS NULL
 `
 
 type SetTunnelReadyParams struct {
-	Hostname       string
-	SessionVersion int64
-	Now            int64
-	ID             string
+	Hostname     string
+	RouteVersion int64
+	Now          int64
+	ID           string
 }
 
 func (q *Queries) SetTunnelReady(ctx context.Context, arg SetTunnelReadyParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, setTunnelReady,
 		arg.Hostname,
-		arg.SessionVersion,
+		arg.RouteVersion,
 		arg.Now,
 		arg.ID,
 	)
@@ -538,7 +538,7 @@ INSERT INTO route_certificates (
     certificate_pem,
     renew_at,
     issuance_id,
-    version,
+    route_version,
     installed,
     updated_at
 ) VALUES (
@@ -562,7 +562,7 @@ ON CONFLICT (server_origin, route_id, phase) DO UPDATE SET
     certificate_pem = excluded.certificate_pem,
     renew_at = excluded.renew_at,
     issuance_id = excluded.issuance_id,
-    version = excluded.version,
+    route_version = excluded.route_version,
     installed = excluded.installed,
     updated_at = excluded.updated_at
 `
@@ -577,7 +577,7 @@ type UpsertRouteCertificateParams struct {
 	CertificatePem []byte
 	RenewAt        sql.NullInt64
 	IssuanceID     string
-	Version        int64
+	RouteVersion   int64
 	Installed      int64
 	UpdatedAt      int64
 }
@@ -593,7 +593,7 @@ func (q *Queries) UpsertRouteCertificate(ctx context.Context, arg UpsertRouteCer
 		arg.CertificatePem,
 		arg.RenewAt,
 		arg.IssuanceID,
-		arg.Version,
+		arg.RouteVersion,
 		arg.Installed,
 		arg.UpdatedAt,
 	)

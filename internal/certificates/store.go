@@ -2,13 +2,12 @@ package certificates
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/state/statedb"
 )
 
@@ -89,17 +88,17 @@ func (s *store) createIssuance(
 	}
 	now := time.Unix(0, s.now().UnixNano()).UTC()
 	err = s.queries.InsertCertificateIssuance(ctx, statedb.InsertCertificateIssuanceParams{
-		ID:          id,
-		RouteID:     routeID,
-		Version:     int64(version),
-		Hostname:    hostname,
-		AcmeProfile: acmeProfile,
-		Status:      StatusCreatingOrder,
-		CsrDer:      csrDER,
-		CsrHash:     csrHash[:],
-		SpkiHash:    spkiHash[:],
-		CreatedAt:   now.UnixNano(),
-		UpdatedAt:   now.UnixNano(),
+		ID:           id,
+		RouteID:      routeID,
+		RouteVersion: int64(version),
+		Hostname:     hostname,
+		AcmeProfile:  acmeProfile,
+		Status:       StatusCreatingOrder,
+		CsrDer:       csrDER,
+		CsrHash:      csrHash[:],
+		SpkiHash:     spkiHash[:],
+		CreatedAt:    now.UnixNano(),
+		UpdatedAt:    now.UnixNano(),
 	})
 	if err != nil {
 		return Issuance{}, false, fmt.Errorf("certificates: create issuance: %w", err)
@@ -112,10 +111,10 @@ func (s *store) createIssuance(
 }
 
 func (s *store) routeHostname(ctx context.Context, routeID string, version uint64) (string, error) {
-	hostname, err := s.queries.GetActiveRouteHostname(ctx, statedb.GetActiveRouteHostnameParams{
-		RouteID: routeID,
-		Version: int64(version),
-		Now:     sql.NullInt64{Int64: s.now().UnixNano(), Valid: true},
+	hostname, err := s.queries.GetEnabledRouteHostname(ctx, statedb.GetEnabledRouteHostnameParams{
+		RouteID:      routeID,
+		RouteVersion: int64(version),
+		Now:          sql.NullInt64{Int64: s.now().UnixNano(), Valid: true},
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", ErrInvalidStatus
@@ -132,9 +131,9 @@ func (s *store) getIssuance(ctx context.Context, id string) (Issuance, error) {
 
 func (s *store) findBoundIssuance(ctx context.Context, routeID string, version uint64, csrHash [32]byte) (Issuance, error) {
 	return issuanceFromDB(s.queries.FindBoundCertificateIssuance(ctx, statedb.FindBoundCertificateIssuanceParams{
-		RouteID: routeID,
-		Version: int64(version),
-		CsrHash: csrHash[:],
+		RouteID:      routeID,
+		RouteVersion: int64(version),
+		CsrHash:      csrHash[:],
 	}))
 }
 
@@ -149,9 +148,9 @@ func (s *store) findResumableIssuance(ctx context.Context, routeID string, csrHa
 func (s *store) rebindIssuance(ctx context.Context, id string, version uint64) (Issuance, error) {
 	now := time.Unix(0, s.now().UnixNano()).UTC()
 	count, err := s.queries.RebindCertificateIssuance(ctx, statedb.RebindCertificateIssuanceParams{
-		Version:   int64(version),
-		UpdatedAt: now.UnixNano(),
-		ID:        id,
+		RouteVersion: int64(version),
+		UpdatedAt:    now.UnixNano(),
+		ID:           id,
 	})
 	if err != nil {
 		return Issuance{}, fmt.Errorf("certificates: rebind issuance: %w", err)
@@ -170,10 +169,10 @@ func (s *store) allowIssuanceCreation(
 	now time.Time,
 ) error {
 	blocked, err := s.queries.HasBlockingCertificateIssuance(ctx, statedb.HasBlockingCertificateIssuanceParams{
-		RouteID: routeID,
-		Version: int64(version),
-		CsrHash: csrHash[:],
-		Now:     now.UnixNano(),
+		RouteID:      routeID,
+		RouteVersion: int64(version),
+		CsrHash:      csrHash[:],
+		Now:          now.UnixNano(),
 	})
 	if err != nil {
 		return fmt.Errorf("certificates: check active issuances: %w", err)
@@ -248,7 +247,7 @@ func issuanceFromDB(value statedb.CertificateIssuance, err error) (Issuance, err
 	issuance := Issuance{
 		ID:               value.ID,
 		RouteID:          value.RouteID,
-		Version:          uint64(value.Version),
+		RouteVersion:     uint64(value.RouteVersion),
 		Hostname:         value.Hostname,
 		ACMEProfile:      value.AcmeProfile,
 		Status:           value.Status,
@@ -329,9 +328,9 @@ func requireRow(count int64) error {
 }
 
 func issuanceID() (string, error) {
-	var material [16]byte
-	if _, err := rand.Read(material[:]); err != nil {
+	id, err := opaqueid.New("issuance_")
+	if err != nil {
 		return "", fmt.Errorf("certificates: generate issuance ID: %w", err)
 	}
-	return "issuance_" + hex.EncodeToString(material[:]), nil
+	return id, nil
 }

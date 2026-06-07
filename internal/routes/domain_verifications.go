@@ -52,10 +52,10 @@ const (
 
 func (s *Store) CreateDomainVerification(
 	ctx context.Context,
-	identityID, domain, requestKey string,
+	identityID, domain, idempotencyKey string,
 ) (DomainVerification, error) {
-	if s.domainVerifier == nil || strings.TrimSpace(identityID) == "" || requestKey == "" ||
-		strings.TrimSpace(requestKey) != requestKey || len(requestKey) > 128 {
+	if s.domainVerifier == nil || strings.TrimSpace(identityID) == "" || idempotencyKey == "" ||
+		strings.TrimSpace(idempotencyKey) != idempotencyKey || len(idempotencyKey) > 128 {
 		return DomainVerification{}, ErrInvalidArgument
 	}
 	domain, apex, err := naming.CustomDomain(domain, s.hostnameSuffix)
@@ -80,7 +80,7 @@ func (s *Store) CreateDomainVerification(
 	queries := s.queries.WithTx(tx)
 	replayed, err := queries.GetDomainVerificationRequest(ctx, statedb.GetDomainVerificationRequestParams{
 		IdentityID: identityID,
-		RequestKey: requestKey,
+		RequestKey: idempotencyKey,
 	})
 	if err == nil {
 		if replayed.Domain != domain {
@@ -108,7 +108,7 @@ func (s *Store) CreateDomainVerification(
 	}
 	target := token + "." + s.verificationSuffix
 	if err := queries.InsertDomainVerification(ctx, statedb.InsertDomainVerificationParams{
-		ID: id, IdentityID: identityID, RequestKey: requestKey, Domain: domain,
+		ID: id, IdentityID: identityID, RequestKey: idempotencyKey, Domain: domain,
 		Token: token, VerificationTarget: target, IsApex: boolInt(apex), CreatedAt: now.UnixNano(),
 	}); err != nil {
 		return DomainVerification{}, fmt.Errorf("routes: insert domain verification: %w", err)
@@ -117,7 +117,7 @@ func (s *Store) CreateDomainVerification(
 		return DomainVerification{}, fmt.Errorf("routes: commit domain verification: %w", err)
 	}
 	return s.domainVerificationFromDB(statedb.DomainVerification{
-		ID: id, IdentityID: identityID, RequestKey: requestKey, Domain: domain,
+		ID: id, IdentityID: identityID, RequestKey: idempotencyKey, Domain: domain,
 		Token: token, VerificationTarget: target, IsApex: boolInt(apex),
 		Status: DomainVerificationStatusPending, CreatedAt: now.UnixNano(),
 	}), nil
@@ -138,40 +138,21 @@ func (s *Store) CompleteDomainVerification(
 	ctx context.Context,
 	identityID, id string,
 ) (Hostname, error) {
-	if err := s.checkDomainVerification(ctx, identityID, id); err != nil {
-		return Hostname{}, err
-	}
-	return s.activateDomainVerification(ctx, identityID, id)
-}
-
-func (s *Store) checkDomainVerification(ctx context.Context, identityID, id string) error {
-	verification, err := s.GetDomainVerification(ctx, identityID, id)
-	if err != nil {
-		return err
-	}
-	if verification.Status == DomainVerificationStatusVerified && verification.HostnameID != "" {
-		return nil
-	}
-	if verification.Status != DomainVerificationStatusPending {
-		return ErrInvalidStatus
-	}
-	if err := s.domainVerifier.CheckDomain(ctx, verification.Domain, verification.VerificationTarget, verification.Apex); err != nil {
-		return fmt.Errorf("%w: %v", ErrDNSProofPending, err)
-	}
-	return nil
-}
-
-func (s *Store) activateDomainVerification(ctx context.Context, identityID, id string) (Hostname, error) {
 	verification, err := s.GetDomainVerification(ctx, identityID, id)
 	if err != nil {
 		return Hostname{}, err
 	}
-	if verification.Status == DomainVerificationStatusVerified && verification.HostnameID != "" {
-		return readHostnameByName(ctx, s.queries, verification.Domain)
+	if verification.Status == "verified" && verification.HostnameID != "" {
+		hostname, err := readHostnameByHostname(ctx, s.queries, verification.Domain)
+		return hostname, err
 	}
 	if verification.Status != DomainVerificationStatusPending {
 		return Hostname{}, ErrInvalidStatus
 	}
+	if err := s.domainVerifier.CheckDomain(ctx, verification.Domain, verification.VerificationTarget, verification.Apex); err != nil {
+		return Hostname{}, fmt.Errorf("%w: %v", ErrDNSProofPending, err)
+	}
+
 	now := time.Unix(0, s.now().UnixNano()).UTC()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

@@ -273,7 +273,7 @@ func TestDialerOpenNormalizesTypedNil(t *testing.T) {
 	}
 }
 
-func TestServerSnapshotsProfileAndDrainsTCP(t *testing.T) {
+func TestServerSnapshotsRelayRegionAndDrainsTCP(t *testing.T) {
 	region := testRegion()
 	server, err := NewServer(ServerConfig{
 		AllowedClient: key.NewNode().Public(),
@@ -361,11 +361,11 @@ func TestServerDrainTCPFollowsStreams(t *testing.T) {
 	})
 }
 
-func TestDialerSnapshotsProfile(t *testing.T) {
+func TestDialerSnapshotsRelayRegion(t *testing.T) {
 	region := testRegion()
 	serverKey := key.NewNode().Public()
 	dialer, err := NewDialer(DialerConfig{
-		Endpoint: Endpoint{Version: descriptorVersion, PublisherPublicKey: serverKey.String(), RelayRegion: "test"},
+		Endpoint: TransportDescriptor{Version: descriptorVersion, PublisherPublicKey: serverKey.String(), RelayRegion: "test"},
 		Regions:  map[string]*tailcfg.DERPRegion{"test": region},
 		Key:      key.NewNode(),
 	})
@@ -434,7 +434,7 @@ func newTestDialer(t *testing.T) *Dialer {
 	t.Helper()
 	serverKey := key.NewNode().Public()
 	dialer, err := NewDialer(DialerConfig{
-		Endpoint: Endpoint{Version: descriptorVersion, PublisherPublicKey: serverKey.String(), RelayRegion: "test"},
+		Endpoint: TransportDescriptor{Version: descriptorVersion, PublisherPublicKey: serverKey.String(), RelayRegion: "test"},
 		Regions:  map[string]*tailcfg.DERPRegion{"test": testRegion()},
 		Key:      key.NewNode(),
 	})

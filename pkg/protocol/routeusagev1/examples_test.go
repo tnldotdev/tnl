@@ -16,7 +16,7 @@ func TestExamplesMatchGeneratedModels(t *testing.T) {
 	}{
 		{name: "route registration", path: "../../../api/fixtures/route-usage/v1/route-registration.json", model: &RouteRegistration{}},
 		{name: "lifecycle event", path: "../../../api/fixtures/route-usage/v1/lifecycle-event.json", model: &RouteLifecycleEvent{}},
-		{name: "usage snapshot", path: "../../../api/fixtures/route-usage/v1/usage-snapshot.json", model: &RouteUsageSnapshot{}},
+		{name: "usage bucket report", path: "../../../api/fixtures/route-usage/v1/usage-bucket-report.json", model: &RouteUsageBucketReport{}},
 	}
 
 	for _, test := range tests {

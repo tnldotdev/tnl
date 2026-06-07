@@ -2,11 +2,10 @@ package clientstate
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"strings"
+
+	"github.com/tnldotdev/tnl/internal/opaqueid"
 )
 
 const installationIDPrefix = "installation_"
@@ -23,11 +22,10 @@ func (d *Database) InstallationID(ctx context.Context) (string, error) {
 		}
 		return id, nil
 	}
-	var material [16]byte
-	if _, err := rand.Read(material[:]); err != nil {
+	generated, err := opaqueid.New(installationIDPrefix)
+	if err != nil {
 		return "", fmt.Errorf("clientstate: generate installation ID: %w", err)
 	}
-	generated := installationIDPrefix + hex.EncodeToString(material[:])
 	if err := d.queries.SetInstallationID(ctx, generated); err != nil {
 		return "", fmt.Errorf("clientstate: save installation ID: %w", err)
 	}
@@ -42,10 +40,5 @@ func (d *Database) InstallationID(ctx context.Context) (string, error) {
 }
 
 func validInstallationID(id string) bool {
-	encoded, found := strings.CutPrefix(id, installationIDPrefix)
-	if !found || len(encoded) != 32 || encoded != strings.ToLower(encoded) {
-		return false
-	}
-	_, err := hex.DecodeString(encoded)
-	return err == nil
+	return opaqueid.Valid(id, installationIDPrefix)
 }

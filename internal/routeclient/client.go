@@ -3,10 +3,8 @@ package routeclient
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/authorityclient"
 	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/serverclient"
 	"github.com/tnldotdev/tnl/pkg/protocol/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/protocol/serverv1"
@@ -26,10 +25,10 @@ import (
 var authorizationRenewalInterval = 15 * time.Minute
 
 type Client struct {
-	core                  *serverclient.Client
+	server                *serverclient.Client
 	authority             *authorityclient.Client
 	authorityCapabilities *authorityv1.Capabilities
-	coreEndpoint          string
+	authorizationReceiver string
 
 	mu      sync.Mutex
 	routes  map[string]routeAuthorization
@@ -37,8 +36,8 @@ type Client struct {
 }
 
 type pendingAuthorization struct {
-	requestKey string
-	envelope   *authorityv1.AuthorizationEnvelope
+	idempotencyKey string
+	envelope       *authorityv1.AuthorizationEnvelope
 }
 
 type routeAuthorization struct {
@@ -51,31 +50,32 @@ type routeAuthorization struct {
 	routeToken     credentials.RouteToken
 }
 
-func NewLocal(core *serverclient.Client) (*Client, error) {
-	if core == nil {
-		return nil, errors.New("routeclient: Core client is required")
+func NewLocal(server *serverclient.Client) (*Client, error) {
+	if server == nil {
+		return nil, errors.New("routeclient: server client is required")
 	}
-	return &Client{core: core}, nil
+	return &Client{server: server}, nil
 }
 
 func NewSigned(
-	coreEndpoint string,
-	core *serverclient.Client,
+	authorizationReceiver string,
+	server *serverclient.Client,
 	authority *authorityclient.Client,
 	capabilities authorityv1.Capabilities,
 ) (*Client, error) {
-	if core == nil || authority == nil || coreEndpoint == "" || capabilities.AuthorizationIssuer == "" {
+	if server == nil || authority == nil || authorizationReceiver == "" || capabilities.AuthorizationIssuer == "" {
 		return nil, errors.New("routeclient: signed route configuration is incomplete")
 	}
 	return &Client{
-		core: core, authority: authority, authorityCapabilities: &capabilities, coreEndpoint: coreEndpoint,
-		routes: make(map[string]routeAuthorization), pending: make(map[string]pendingAuthorization),
+		server: server, authority: authority, authorityCapabilities: &capabilities,
+		authorizationReceiver: authorizationReceiver,
+		routes:                make(map[string]routeAuthorization), pending: make(map[string]pendingAuthorization),
 	}, nil
 }
 
 func (c *Client) CreateRoute(ctx context.Context, body serverv1.CreateRouteRequest) (serverv1.SessionSetup, error) {
 	if c.authority == nil {
-		return c.core.CreateRoute(ctx, body)
+		return c.server.CreateRoute(ctx, body)
 	}
 	body.SignedAuthorization = nil
 	allowed, err := canonicalizeIPPrefixes(body.AllowedIpPrefixes)
@@ -99,15 +99,15 @@ func (c *Client) CreateRoute(ctx context.Context, body serverv1.CreateRouteReque
 	if err != nil {
 		return serverv1.SessionSetup{}, err
 	}
-	setup, err := c.core.CreateRouteAuthorized(ctx, body, authorization.Authorization)
+	setup, err := c.server.CreateRouteAuthorized(ctx, body, authorization.Authorization)
 	if err != nil {
-		c.finishCoreAuthorization(cacheKey, err)
+		c.finishServerAuthorization(cacheKey, err)
 		return setup, err
 	}
-	c.finishCoreAuthorization(cacheKey, nil)
+	c.finishServerAuthorization(cacheKey, nil)
 	if setup.Route.Id == "" || setup.Route.Hostname != body.Hostname || setup.Route.LocalTarget != body.LocalTarget ||
-		setup.Route.Version != setup.Session.Version || setup.Session.RouteId != setup.Route.Id || setup.Route.Version < 1 {
-		return serverv1.SessionSetup{}, errors.New("routeclient: Core returned an invalid signed route setup")
+		setup.Route.RouteVersion != setup.Session.RouteVersion || setup.Session.RouteId != setup.Route.Id || setup.Route.RouteVersion < 1 {
+		return serverv1.SessionSetup{}, errors.New("routeclient: server returned an invalid signed route setup")
 	}
 	routeToken := credentials.RouteToken(body.RouteToken)
 	if _, _, err := credentials.ParseRouteToken(routeToken); err != nil {
@@ -115,7 +115,7 @@ func (c *Client) CreateRoute(ctx context.Context, body serverv1.CreateRouteReque
 	}
 	c.mu.Lock()
 	c.routes[setup.Route.Id] = routeAuthorization{
-		hostname: body.Hostname, version: setup.Session.Version, allowed: clonePrefixes(body.AllowedIpPrefixes),
+		hostname: body.Hostname, version: setup.Session.RouteVersion, allowed: clonePrefixes(body.AllowedIpPrefixes),
 		authorization: authorization, nextRenewal: nextRenewal(authorization), routeToken: routeToken,
 	}
 	c.mu.Unlock()
@@ -124,13 +124,13 @@ func (c *Client) CreateRoute(ctx context.Context, body serverv1.CreateRouteReque
 
 func (c *Client) ListRoutes(ctx context.Context) ([]serverv1.Route, error) {
 	if c.authority == nil {
-		return c.core.ListRoutes(ctx)
+		return c.server.ListRoutes(ctx)
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	routes := make([]serverv1.Route, 0, len(c.routes))
 	for routeID, route := range c.routes {
-		routes = append(routes, serverv1.Route{Id: routeID, Hostname: route.hostname, Version: route.version})
+		routes = append(routes, serverv1.Route{Id: routeID, Hostname: route.hostname, RouteVersion: route.version})
 	}
 	return routes, nil
 }
@@ -146,7 +146,7 @@ func (c *Client) CreateRouteSession(
 		return serverv1.SessionSetup{}, err
 	}
 	if c.authority == nil {
-		return c.core.CreateRouteSession(ctx, routeID, routeToken, allowedIPPrefixes)
+		return c.server.CreateRouteSession(ctx, routeID, routeToken, allowedIPPrefixes)
 	}
 	c.mu.Lock()
 	route, found := c.routes[routeID]
@@ -175,15 +175,15 @@ func (c *Client) CreateRouteSession(
 	if err != nil {
 		return serverv1.SessionSetup{}, err
 	}
-	setup, err := c.core.CreateRouteSessionAuthorized(ctx, routeID, body, authorization.Authorization)
+	setup, err := c.server.CreateRouteSessionAuthorized(ctx, routeID, body, authorization.Authorization)
 	if err != nil {
-		c.finishCoreAuthorization(cacheKey, err)
+		c.finishServerAuthorization(cacheKey, err)
 		return setup, err
 	}
-	c.finishCoreAuthorization(cacheKey, nil)
-	if setup.Route.Id != routeID || setup.Route.Hostname != route.hostname || setup.Route.Version != nextVersion ||
-		setup.Session.RouteId != routeID || setup.Session.Version != nextVersion {
-		return serverv1.SessionSetup{}, errors.New("routeclient: Core returned an invalid signed route session")
+	c.finishServerAuthorization(cacheKey, nil)
+	if setup.Route.Id != routeID || setup.Route.Hostname != route.hostname || setup.Route.RouteVersion != nextVersion ||
+		setup.Session.RouteId != routeID || setup.Session.RouteVersion != nextVersion {
+		return serverv1.SessionSetup{}, errors.New("routeclient: server returned an invalid signed route session")
 	}
 	c.mu.Lock()
 	route.version, route.allowed = nextVersion, clonePrefixes(allowed)
@@ -195,7 +195,7 @@ func (c *Client) CreateRouteSession(
 
 func (c *Client) DeleteRoute(ctx context.Context, routeID string) error {
 	if c.authority == nil {
-		return c.core.DeleteRoute(ctx, routeID)
+		return c.server.DeleteRoute(ctx, routeID)
 	}
 	c.mu.Lock()
 	route, found := c.routes[routeID]
@@ -203,7 +203,7 @@ func (c *Client) DeleteRoute(ctx context.Context, routeID string) error {
 	if !found {
 		return errors.New("routeclient: signed route credential is unavailable")
 	}
-	if err := c.core.DeleteRouteAuthorized(ctx, routeID, route.routeToken); err != nil {
+	if err := c.server.DeleteRouteAuthorized(ctx, routeID, route.routeToken); err != nil {
 		return err
 	}
 	c.mu.Lock()
@@ -212,14 +212,14 @@ func (c *Client) DeleteRoute(ctx context.Context, routeID string) error {
 	return nil
 }
 
-func (c *Client) RegisterTransport(
+func (c *Client) AttachRouteTransport(
 	ctx context.Context,
 	routeID string,
 	version uint64,
 	sessionToken credentials.SessionToken,
 	endpoint transportv1.TailcatDescriptor,
 ) error {
-	return c.core.RegisterTransport(ctx, routeID, version, sessionToken, endpoint)
+	return c.server.AttachRouteTransport(ctx, routeID, version, sessionToken, endpoint)
 }
 
 func (c *Client) Ready(
@@ -228,7 +228,7 @@ func (c *Client) Ready(
 	version uint64,
 	sessionToken credentials.SessionToken,
 ) error {
-	return c.core.Ready(ctx, routeID, version, sessionToken)
+	return c.server.Ready(ctx, routeID, version, sessionToken)
 }
 
 func (c *Client) Heartbeat(
@@ -238,16 +238,16 @@ func (c *Client) Heartbeat(
 	sessionToken credentials.SessionToken,
 ) (serverv1.HeartbeatResponse, error) {
 	if c.authority == nil {
-		return c.core.Heartbeat(ctx, routeID, version, sessionToken)
+		return c.server.Heartbeat(ctx, routeID, version, sessionToken)
 	}
 	authorization, renewed, err := c.routeAuthorization(ctx, routeID, int(version))
 	if err != nil {
 		return serverv1.HeartbeatResponse{}, err
 	}
 	if !renewed {
-		return c.core.Heartbeat(ctx, routeID, version, sessionToken)
+		return c.server.Heartbeat(ctx, routeID, version, sessionToken)
 	}
-	response, err := c.core.HeartbeatAuthorized(ctx, routeID, version, sessionToken, authorization)
+	response, err := c.server.HeartbeatAuthorized(ctx, routeID, version, sessionToken, authorization)
 	if err != nil {
 		if !errors.Is(err, serverclient.ErrUnavailable) {
 			c.mu.Lock()
@@ -282,7 +282,7 @@ func (c *Client) CreateCertificateIssuance(
 	profile string,
 	csr []byte,
 ) (serverv1.CertificateIssuance, error) {
-	return c.core.CreateCertificateIssuance(ctx, routeID, version, sessionToken, profile, csr)
+	return c.server.CreateCertificateIssuance(ctx, routeID, version, sessionToken, profile, csr)
 }
 
 func (c *Client) CertificateChallengeReady(
@@ -290,7 +290,7 @@ func (c *Client) CertificateChallengeReady(
 	issuanceID string,
 	sessionToken credentials.SessionToken,
 ) (serverv1.CertificateIssuance, error) {
-	return c.core.CertificateChallengeReady(ctx, issuanceID, sessionToken)
+	return c.server.CertificateChallengeReady(ctx, issuanceID, sessionToken)
 }
 
 func (c *Client) CertificateChallengeRemoved(
@@ -298,7 +298,7 @@ func (c *Client) CertificateChallengeRemoved(
 	issuanceID string,
 	sessionToken credentials.SessionToken,
 ) error {
-	return c.core.CertificateChallengeRemoved(ctx, issuanceID, sessionToken)
+	return c.server.CertificateChallengeRemoved(ctx, issuanceID, sessionToken)
 }
 
 func (c *Client) CertificateInstalled(
@@ -308,7 +308,7 @@ func (c *Client) CertificateInstalled(
 	issuanceID string,
 	sessionToken credentials.SessionToken,
 ) error {
-	return c.core.CertificateInstalled(ctx, routeID, version, issuanceID, sessionToken)
+	return c.server.CertificateInstalled(ctx, routeID, version, issuanceID, sessionToken)
 }
 
 func (c *Client) routeAuthorization(ctx context.Context, routeID string, version int) (string, bool, error) {
@@ -324,7 +324,7 @@ func (c *Client) routeAuthorization(ctx context.Context, routeID string, version
 	if route.pendingRenewal == nil && time.Now().Before(route.nextRenewal) {
 		return "", false, nil
 	}
-	body := serverv1.HeartbeatRouteSessionRequest{Version: version}
+	body := serverv1.HeartbeatRouteSessionRequest{RouteVersion: version}
 	hash, err := canonicalHash(body)
 	if err != nil {
 		return "", false, err
@@ -339,14 +339,14 @@ func (c *Client) routeAuthorization(ctx context.Context, routeID string, version
 		CanonicalRequestHash: hash, IpPolicyHash: ipHash,
 	}
 	if route.pendingRenewal == nil {
-		requestKey, err := randomRequestKey()
+		idempotencyKey, err := randomIdempotencyKey()
 		if err != nil {
 			return "", false, err
 		}
-		route.pendingRenewal = &pendingAuthorization{requestKey: requestKey}
+		route.pendingRenewal = &pendingAuthorization{idempotencyKey: idempotencyKey}
 		c.routes[routeID] = route
 	}
-	issued, err := c.authority.IssueAuthorization(ctx, request, route.pendingRenewal.requestKey)
+	issued, err := c.authority.IssueAuthorization(ctx, request, route.pendingRenewal.idempotencyKey)
 	if err != nil {
 		if !errors.Is(err, authorityclient.ErrUnavailable) {
 			route.pendingRenewal = nil
@@ -385,14 +385,14 @@ func (c *Client) authorization(
 		return *pending.envelope, nil
 	}
 	if !found || pending.envelope != nil {
-		requestKey, err := randomRequestKey()
+		idempotencyKey, err := randomIdempotencyKey()
 		if err != nil {
 			return authorityv1.AuthorizationEnvelope{}, err
 		}
-		pending = pendingAuthorization{requestKey: requestKey}
+		pending = pendingAuthorization{idempotencyKey: idempotencyKey}
 		c.pending[cacheKey] = pending
 	}
-	issued, err := c.authority.IssueAuthorization(ctx, request, pending.requestKey)
+	issued, err := c.authority.IssueAuthorization(ctx, request, pending.idempotencyKey)
 	if err != nil {
 		if !errors.Is(err, authorityclient.ErrUnavailable) {
 			delete(c.pending, cacheKey)
@@ -408,7 +408,7 @@ func (c *Client) authorization(
 	return issued, nil
 }
 
-func (c *Client) finishCoreAuthorization(cacheKey string, err error) {
+func (c *Client) finishServerAuthorization(cacheKey string, err error) {
 	if err != nil && errors.Is(err, serverclient.ErrUnavailable) {
 		return
 	}
@@ -426,7 +426,7 @@ func (c *Client) validateAuthorization(
 		claims.Version != authorityv1.N1 || claims.Alg != authorityv1.AuthorizationClaimsAlgEdDSA ||
 		claims.Kid != c.authorityCapabilities.AuthorizationKey.Kid ||
 		string(claims.Operation) != string(request.Operation) || claims.Issuer != c.authorityCapabilities.AuthorizationIssuer ||
-		claims.Receiver != c.coreEndpoint || claims.Hostname != request.Hostname ||
+		claims.Receiver != c.authorizationReceiver || claims.Hostname != request.Hostname ||
 		claims.CanonicalRequestHash != request.CanonicalRequestHash || !equalDigest(claims.IpPolicyHash, request.IpPolicyHash) ||
 		!equalOptional(claims.RouteId, request.RouteId) || !equalOptionalInt(claims.RouteVersion, request.RouteVersion) ||
 		claims.IssuedAt.IsZero() || claims.IssuedAt.After(time.Now().Add(30*time.Second)) ||
@@ -441,7 +441,7 @@ func (c *Client) validateAuthorization(
 func canonicalHash(value any) (string, error) {
 	canonical, err := json.Marshal(value)
 	if err != nil {
-		return "", fmt.Errorf("routeclient: canonicalize Core request: %w", err)
+		return "", fmt.Errorf("routeclient: canonicalize authorized operation request: %w", err)
 	}
 	digest := sha256.Sum256(canonical)
 	return base64.RawURLEncoding.EncodeToString(digest[:]), nil
@@ -519,17 +519,13 @@ func equalOptionalInt(left, right *int) bool {
 }
 
 func validID(value, prefix string) bool {
-	if len(value) != len(prefix)+32 || value[:len(prefix)] != prefix {
-		return false
-	}
-	_, err := hex.DecodeString(value[len(prefix):])
-	return err == nil
+	return opaqueid.Valid(value, prefix)
 }
 
-func randomRequestKey() (string, error) {
-	var material [16]byte
-	if _, err := rand.Read(material[:]); err != nil {
+func randomIdempotencyKey() (string, error) {
+	key, err := opaqueid.New("random_")
+	if err != nil {
 		return "", fmt.Errorf("routeclient: generate idempotency key: %w", err)
 	}
-	return "random_" + hex.EncodeToString(material[:]), nil
+	return key, nil
 }

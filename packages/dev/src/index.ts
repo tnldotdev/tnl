@@ -55,14 +55,14 @@ export type TnlPublicEnvironment<Prefix extends string> = Readonly<
 >;
 
 /** Options for the public development tunnel. */
-export interface TnlOptions {
-  /** Server to use. `--server` or `TNL_SERVER` overrides this value. */
-  readonly server?: string;
+export interface TnlTunnelOptions {
+  /** Control server URL to use. `--server` or `TNL_SERVER` overrides this value. */
+  readonly controlURL?: string;
   /**
-   * Public name to use. This may be a managed name or a hostname under a name
-   * you own. Command-line host selection overrides this value.
+   * Public hostname to use. This may be a managed hostname or a child hostname
+   * under one you own. `--host` or `TNL_HOST` overrides this value.
    */
-  readonly name?: string;
+  readonly host?: string;
   /** IP addresses or CIDR ranges allowed to access the tunnel. */
   readonly allowIP?: readonly string[];
   /**
@@ -85,7 +85,7 @@ export interface TnlWorktree {
 }
 
 /** Values available when computing tunnel options. */
-export interface TnlOptionsContext {
+export interface TnlTunnelOptionsContext {
   /** The framework's absolute working directory. */
   readonly cwd: string;
   /** A read-only copy of the framework's environment variables. */
@@ -98,16 +98,16 @@ export interface TnlOptionsContext {
  * Tunnel options or a function that computes them at startup. The function
  * runs only when the framework is started by `tnl dev`.
  */
-export type TnlOptionsInput =
-  | TnlOptions
-  | ((context: TnlOptionsContext) => TnlOptions | Promise<TnlOptions>);
+export type TnlTunnelOptionsInput =
+  | TnlTunnelOptions
+  | ((context: TnlTunnelOptionsContext) => TnlTunnelOptions | Promise<TnlTunnelOptions>);
 
 /** Tunnel configuration supplied by a framework integration. */
 export interface TnlTunnelConfiguration {
   /** Lowercase framework name, such as `vite` or `next`. */
   readonly framework: string;
   /** Options supplied by the project. */
-  readonly options?: TnlOptionsInput;
+  readonly options?: TnlTunnelOptionsInput;
 }
 
 /** Reads the private environment variables set by `tnl dev`. */
@@ -177,10 +177,13 @@ export function publicTunnelEnvironment<const Prefix extends string>(
   }) as TnlPublicEnvironment<Prefix>;
 }
 
-/** Tells `tnl dev` which port the framework is listening on. */
-export async function registerTarget(assignment: TnlTunnelAssignment, port: number): Promise<void> {
+/** Tells `tnl dev` which local port the framework is listening on. */
+export async function registerLocalPort(
+  assignment: TnlTunnelAssignment,
+  port: number,
+): Promise<void> {
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error("tnl target port must be between 1 and 65535");
+    throw new Error("tnl local port must be between 1 and 65535");
   }
   const body = JSON.stringify({ protocol: 1, framework: assignment.framework, port });
   await sendRequest(assignment, assignment.framework, "/v1/target", body, 204);
@@ -258,7 +261,7 @@ function sendRequest(
 async function runtimeContext(
   cwd: string,
   environment: TnlDevEnvironment,
-): Promise<TnlOptionsContext> {
+): Promise<TnlTunnelOptionsContext> {
   if (cwd === "") {
     throw new Error("tnl options cwd must not be empty");
   }
@@ -306,12 +309,12 @@ function worktreeLabel(name: string, root: string): string {
   return `${stem}-${suffix}`;
 }
 
-function validateOptions(value: unknown): TnlOptions {
+function validateOptions(value: unknown): TnlTunnelOptions {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error("tnl options must be an object");
   }
   const record = value as Record<string, unknown>;
-  const allowedKeys = new Set(["allowCurrentIP", "allowIP", "name", "server"]);
+  const allowedKeys = new Set(["allowCurrentIP", "allowIP", "controlURL", "host"]);
   for (const key of Object.keys(record)) {
     if (!allowedKeys.has(key)) {
       throw new Error(`unknown tnl option ${JSON.stringify(key)}`);
@@ -321,14 +324,14 @@ function validateOptions(value: unknown): TnlOptions {
   const options: {
     allowCurrentIP?: boolean;
     allowIP?: readonly string[];
-    name?: string;
-    server?: string;
+    controlURL?: string;
+    host?: string;
   } = {};
-  if (record.server !== undefined) {
-    options.server = boundedString(record.server, "server", 2048);
+  if (record.controlURL !== undefined) {
+    options.controlURL = boundedString(record.controlURL, "controlURL", 2048);
   }
-  if (record.name !== undefined) {
-    options.name = boundedString(record.name, "name", 253);
+  if (record.host !== undefined) {
+    options.host = boundedString(record.host, "host", 253);
   }
   if (record.allowIP !== undefined) {
     if (!Array.isArray(record.allowIP) || record.allowIP.length > 64) {
@@ -353,7 +356,7 @@ function validateAssignment(
   framework: string,
 ): TnlTunnelAssignment {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error("tnl dev returned an invalid target assignment");
+    throw new Error("tnl dev returned an invalid tunnel assignment");
   }
   const assignment = value as Record<string, unknown>;
   const expectedKeys = ["hostname", "protocol", "publicURL", "tunnelID"];
@@ -361,10 +364,10 @@ function validateAssignment(
     Object.keys(assignment).length !== expectedKeys.length ||
     expectedKeys.some((key) => !(key in assignment))
   ) {
-    throw new Error("tnl dev returned an invalid target assignment");
+    throw new Error("tnl dev returned an invalid tunnel assignment");
   }
   if (assignment.protocol !== 1) {
-    throw new Error("tnl dev returned an inconsistent target assignment");
+    throw new Error("tnl dev returned an inconsistent tunnel assignment");
   }
   if (!validTunnelID(assignment.tunnelID)) {
     throw new Error("tnl dev returned an invalid tunnel ID");

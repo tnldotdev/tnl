@@ -1,7 +1,6 @@
 package ingress
 
 import (
-	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -20,32 +19,31 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/proxyproto"
-	"github.com/tnldotdev/tnl/internal/sourceauth"
 	"github.com/tnldotdev/tnl/internal/sourcelimiter"
 	"github.com/tnldotdev/tnl/internal/worker"
 )
-
-var testSourceKey = [32]byte{1, 2, 3}
 
 func TestIngressRoutesTLSWithProxyMetadata(t *testing.T) {
 	certificate := testCertificate(t, "route.example")
 	backend := &tlsBackend{certificate: certificate, result: make(chan backendResult, 1)}
 	usage := &testUsageConnection{closed: make(chan struct{})}
+	metrics := new(testMetrics)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	server, err := New(listener, Config{
 		Lookup: func(hostname string) (Route, bool) {
-			return Route{ID: "route_test", Version: 1, Backend: backend, SourceKey: testSourceKey}, hostname == "route.example"
+			return Route{ID: "route_test", RouteVersion: 1, Backend: backend}, hostname == "route.example"
 		},
-		OpenUsage: func(routeID string, version uint64, source netip.Addr, at time.Time) UsageConnection {
+		OpenUsage: func(routeID string, routeVersion uint64, source netip.Addr, at time.Time) UsageConnection {
 			usage.routeID = routeID
-			usage.version = version
+			usage.routeVersion = routeVersion
 			usage.source = source
 			usage.openedAt = at
 			return usage
 		},
+		Metrics:             metrics,
 		MaxConnections:      8,
 		MaxRouteConnections: 2,
 	})
@@ -93,9 +91,15 @@ func TestIngressRoutesTLSWithProxyMetadata(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("usage connection did not close")
 	}
+	metrics.forwardedMu.Lock()
+	if len(metrics.forwardedBytes) != 2 || metrics.forwardedBytes["visitor_to_publisher"] <= 0 ||
+		metrics.forwardedBytes["publisher_to_visitor"] <= 0 {
+		t.Fatalf("forwarded byte directions = %#v", metrics.forwardedBytes)
+	}
+	metrics.forwardedMu.Unlock()
 	usage.mu.Lock()
 	defer usage.mu.Unlock()
-	if usage.routeID != "route_test" || usage.version != 1 || !usage.source.IsLoopback() || usage.openedAt.IsZero() || usage.closedAt.IsZero() {
+	if usage.routeID != "route_test" || usage.routeVersion != 1 || !usage.source.IsLoopback() || usage.openedAt.IsZero() || usage.closedAt.IsZero() {
 		t.Fatalf("usage identity = %#v", usage)
 	}
 	if usage.publisherOpeningAt.IsZero() || usage.publisherOpenedAt.IsZero() || usage.streams != 1 {
@@ -120,8 +124,8 @@ func TestIngressUsesProvisioningRouteOnlyForACMETLSALPN(t *testing.T) {
 		Lookup: func(string) (Route, bool) {
 			return Route{AllowedIPPrefixes: []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}}, true
 		},
-		LookupChallenge: func(hostname string) (Route, bool) {
-			return Route{ID: "route_test", Version: 1, Backend: backend, SourceKey: testSourceKey}, hostname == "route.example"
+		LookupChallenge: func(hostname string) (worker.RouteBackend, bool) {
+			return backend, hostname == "route.example"
 		},
 		OpenUsage: func(string, uint64, netip.Addr, time.Time) UsageConnection {
 			usageOpened.Store(true)
@@ -181,8 +185,7 @@ func TestIngressEnforcesProxySourceLimitsAndRouteAllowlistInOrder(t *testing.T) 
 		Lookup: func(hostname string) (Route, bool) {
 			lookups.Add(1)
 			return Route{
-				ID: "route_test", Version: 1, Backend: backend,
-				SourceKey:         testSourceKey,
+				ID: "route_test", RouteVersion: 1, Backend: backend,
 				AllowedIPPrefixes: []netip.Prefix{netip.MustParsePrefix("198.51.100.0/24")},
 			}, hostname == "route.example"
 		},
@@ -286,7 +289,7 @@ func TestIngressRecordsRouteCapacityAndPublisherOpenFailure(t *testing.T) {
 	usage := new(testUsageRecorder)
 	server, err := New(listener, Config{
 		Lookup: func(hostname string) (Route, bool) {
-			return Route{ID: "route_test", Version: 1, Backend: backend, SourceKey: testSourceKey}, hostname == "route.example"
+			return Route{ID: "route_test", RouteVersion: 1, Backend: backend}, hostname == "route.example"
 		},
 		OpenUsage: usage.Open, OpenTimeout: time.Second,
 		MaxConnections: 4, MaxRouteConnections: 1,
@@ -452,7 +455,7 @@ func TestDrainDeadlineForcesBackendClosed(t *testing.T) {
 	backend := &holdingBackend{opened: make(chan struct{}), closed: make(chan struct{})}
 	server, err := New(listener, Config{
 		Lookup: func(string) (Route, bool) {
-			return Route{ID: "route_test", Version: 1, Backend: backend, SourceKey: testSourceKey}, true
+			return Route{ID: "route_test", RouteVersion: 1, Backend: backend}, true
 		},
 		MaxConnections: 2, MaxRouteConnections: 2,
 	})
@@ -508,8 +511,7 @@ func TestAdmissionRegistersBeforeDrainWait(t *testing.T) {
 	}
 	connection, peer := net.Pipe()
 	defer peer.Close()
-	accounted, ok := server.admit(connection)
-	if !ok {
+	if !server.admit(connection) {
 		t.Fatal("connection was not admitted")
 	}
 	waited := make(chan struct{})
@@ -522,53 +524,13 @@ func TestAdmissionRegistersBeforeDrainWait(t *testing.T) {
 		t.Fatal("wait completed before the admitted handler")
 	case <-time.After(20 * time.Millisecond):
 	}
-	_ = accounted.Close()
+	server.release(connection)
 	server.active.Done()
 	select {
 	case <-waited:
 	case <-time.After(time.Second):
 		t.Fatal("wait did not complete after the handler")
 	}
-}
-
-func TestTransferredControlConnectionRetainsAdmissionSlot(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer listener.Close()
-	server, err := New(listener, Config{
-		Lookup: func(string) (Route, bool) { return Route{}, false }, MaxConnections: 1, MaxRouteConnections: 1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	first, firstPeer := net.Pipe()
-	defer firstPeer.Close()
-	accounted, ok := server.admit(first)
-	if !ok {
-		t.Fatal("first connection was not admitted")
-	}
-	server.transfer(accounted)
-	server.active.Done()
-	second, secondPeer := net.Pipe()
-	defer secondPeer.Close()
-	if admitted, ok := server.admit(second); ok {
-		_ = admitted.Close()
-		t.Fatal("transferred connection released its admission slot")
-	}
-	_ = second.Close()
-	if err := accounted.Close(); err != nil {
-		t.Fatal(err)
-	}
-	third, thirdPeer := net.Pipe()
-	defer thirdPeer.Close()
-	admitted, ok := server.admit(third)
-	if !ok {
-		t.Fatal("slot was not released when transferred connection closed")
-	}
-	_ = admitted.Close()
-	server.active.Done()
 }
 
 type tlsBackend struct {
@@ -604,7 +566,7 @@ type writeFailConn struct {
 type testUsageConnection struct {
 	mu                 sync.Mutex
 	routeID            string
-	version            uint64
+	routeVersion       uint64
 	source             netip.Addr
 	openedAt           time.Time
 	closedAt           time.Time
@@ -624,9 +586,9 @@ type testUsageRecorder struct {
 	connections []*testUsageConnection
 }
 
-func (r *testUsageRecorder) Open(routeID string, version uint64, source netip.Addr, at time.Time) UsageConnection {
+func (r *testUsageRecorder) Open(routeID string, routeVersion uint64, source netip.Addr, at time.Time) UsageConnection {
 	connection := &testUsageConnection{
-		routeID: routeID, version: version, source: source, openedAt: at, closed: make(chan struct{}),
+		routeID: routeID, routeVersion: routeVersion, source: source, openedAt: at, closed: make(chan struct{}),
 	}
 	r.mu.Lock()
 	r.connections = append(r.connections, connection)
@@ -700,13 +662,13 @@ func (b *holdingBackend) Open(context.Context) (net.Conn, error) {
 	go func() {
 		defer close(b.closed)
 		defer peer.Close()
-		_, err := sourceauth.Server(peer, testSourceKey)
+		_, replay, err := proxyproto.Decode(peer)
 		if err != nil {
 			return
 		}
-		// Authenticating the claim proves the server has tracked the backend.
+		// Decoding the header proves the server has tracked the backend.
 		close(b.opened)
-		_, _ = io.Copy(io.Discard, peer)
+		_, _ = io.Copy(io.Discard, replay)
 	}()
 	return ingress, nil
 }
@@ -758,12 +720,12 @@ func (b *tlsBackend) Open(context.Context) (net.Conn, error) {
 	ingress, publisher := net.Pipe()
 	go func() {
 		defer publisher.Close()
-		claim, err := sourceauth.Server(publisher, testSourceKey)
+		header, replay, err := proxyproto.Decode(publisher)
 		if err != nil {
 			b.result <- backendResult{err: err}
 			return
 		}
-		server := tls.Server(publisher, &tls.Config{
+		server := tls.Server(&testReaderConn{Conn: publisher, reader: replay}, &tls.Config{
 			Certificates: []tls.Certificate{b.certificate},
 			MinVersion:   tls.VersionTLS12,
 			NextProtos:   b.nextProtos,
@@ -776,7 +738,7 @@ func (b *tlsBackend) Open(context.Context) (net.Conn, error) {
 		if _, err = io.ReadFull(server, request); err == nil {
 			_, err = server.Write([]byte("pong"))
 		}
-		b.result <- backendResult{header: claim.Header, request: string(request), err: err}
+		b.result <- backendResult{header: header, request: string(request), err: err}
 	}()
 	return ingress, nil
 }
@@ -785,6 +747,8 @@ type testMetrics struct {
 	sourceLimiterRejections atomic.Int32
 	sourceLimiterEntries    atomic.Int32
 	ipAllowlistDenials      atomic.Int32
+	forwardedMu             sync.Mutex
+	forwardedBytes          map[string]int64
 }
 
 func (*testMetrics) IncCapacityRejection(string)  {}
@@ -792,9 +756,16 @@ func (m *testMetrics) IncSourceLimiterRejection() { m.sourceLimiterRejections.Ad
 func (m *testMetrics) SetSourceLimiterEntries(entries int) {
 	m.sourceLimiterEntries.Store(int32(entries))
 }
-func (m *testMetrics) IncIPAllowlistDenial()         { m.ipAllowlistDenials.Add(1) }
-func (*testMetrics) AddForwardedBytes(string, int64) {}
-func (*testMetrics) SetStreams(int)                  {}
+func (m *testMetrics) IncIPAllowlistDenial() { m.ipAllowlistDenials.Add(1) }
+func (m *testMetrics) AddForwardedBytes(direction string, bytes int64) {
+	m.forwardedMu.Lock()
+	defer m.forwardedMu.Unlock()
+	if m.forwardedBytes == nil {
+		m.forwardedBytes = make(map[string]int64)
+	}
+	m.forwardedBytes[direction] += bytes
+}
+func (*testMetrics) SetStreams(int) {}
 
 func dialProxyTLS(address, source string) (*tls.Conn, error) {
 	connection, err := net.Dial("tcp", address)
@@ -829,7 +800,7 @@ func testIngressPublisherSetupFailure(
 	usage := new(testUsageRecorder)
 	server, err := New(listener, Config{
 		Lookup: func(hostname string) (Route, bool) {
-			return Route{ID: "route_test", Version: 1, Backend: backend, SourceKey: testSourceKey}, hostname == "route.example"
+			return Route{ID: "route_test", RouteVersion: 1, Backend: backend}, hostname == "route.example"
 		},
 		OpenUsage: usage.Open, OpenTimeout: time.Second,
 		MaxConnections: 2, MaxRouteConnections: 1,
@@ -896,9 +867,15 @@ func writeProxyHeader(connection net.Conn, source string) error {
 	if err != nil {
 		return err
 	}
-	_, err = io.Copy(connection, bytes.NewReader(header))
-	return err
+	return writeAll(connection, header)
 }
+
+type testReaderConn struct {
+	net.Conn
+	reader io.Reader
+}
+
+func (c *testReaderConn) Read(destination []byte) (int, error) { return c.reader.Read(destination) }
 
 func testCertificate(t *testing.T, hostname string) tls.Certificate {
 	t.Helper()

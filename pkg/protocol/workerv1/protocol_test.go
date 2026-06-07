@@ -16,31 +16,46 @@ import (
 )
 
 func TestControlFramesAreStrictAndBounded(t *testing.T) {
-	valid := []Message{
-		{Type: Hello, Capacity: 500},
-		{Type: Accepted},
-		{Type: AttachRoute, Route: &RouteRef{RouteID: "route", Version: 2}, Endpoint: &transportv1.TailcatDescriptor{Version: 1, PublisherPublicKey: "nodekey:key", RelayRegion: "test"}, WorkerPrivateKey: "privkey:key"},
-		{Type: RouteReady, Route: &RouteRef{RouteID: "route", Version: 2}},
-		{Type: DetachRoute, Route: &RouteRef{RouteID: "route", Version: 2}},
-		{Type: RouteDrained, Route: &RouteRef{RouteID: "route", Version: 2}},
-		{Type: WorkerDraining},
-		{Type: Error, Route: &RouteRef{RouteID: "route", Version: 2}, Code: StaleAssignment},
+	valid := []struct {
+		message Message
+		payload string
+	}{
+		{Message{Type: Hello, RouteCapacity: 500}, `{"type":"hello","route_capacity":500}`},
+		{Message{Type: HelloAccepted}, `{"type":"hello_accepted"}`},
+		{
+			Message{Type: AttachRoute, Route: &RouteRef{RouteID: "route", RouteVersion: 2}, PublisherTransport: &transportv1.TailcatDescriptor{Version: 1, PublisherPublicKey: "nodekey:key", RelayRegion: "test"}, TailcatDialerPrivateKey: "privkey:key"},
+			`{"type":"attach_route","route":{"route_id":"route","route_version":2},"publisher_transport":{"version":1,"publisher_public_key":"nodekey:key","relay_region":"test"},"tailcat_dialer_private_key":"privkey:key"}`,
+		},
+		{Message{Type: RouteReady, Route: &RouteRef{RouteID: "route", RouteVersion: 2}}, `{"type":"route_ready","route":{"route_id":"route","route_version":2}}`},
+		{Message{Type: DetachRoute, Route: &RouteRef{RouteID: "route", RouteVersion: 2}}, `{"type":"detach_route","route":{"route_id":"route","route_version":2}}`},
+		{Message{Type: RouteDrained, Route: &RouteRef{RouteID: "route", RouteVersion: 2}}, `{"type":"route_drained","route":{"route_id":"route","route_version":2}}`},
+		{Message{Type: WorkerDraining}, `{"type":"worker_draining"}`},
+		{Message{Type: Error, Route: &RouteRef{RouteID: "route", RouteVersion: 2}, Code: StaleRouteVersion}, `{"type":"error","route":{"route_id":"route","route_version":2},"code":"stale_route_version"}`},
 	}
-	for _, message := range valid {
+	for _, test := range valid {
 		var wire bytes.Buffer
-		if err := WriteControl(&wire, message); err != nil {
-			t.Fatalf("WriteControl(%s): %v", message.Type, err)
+		if err := WriteControl(&wire, test.message); err != nil {
+			t.Fatalf("WriteControl(%s): %v", test.message.Type, err)
+		}
+		if got := string(wire.Bytes()[4:]); got != test.payload {
+			t.Fatalf("WriteControl(%s) payload = %s, want %s", test.message.Type, got, test.payload)
 		}
 		got, err := ReadControl(&wire)
-		if err != nil || got.Type != message.Type {
-			t.Fatalf("ReadControl(%s) = %#v, %v", message.Type, got, err)
+		if err != nil || got.Type != test.message.Type {
+			t.Fatalf("ReadControl(%s) = %#v, %v", test.message.Type, got, err)
 		}
 	}
 
 	for name, payload := range map[string]string{
-		"unknown field": `{"type":"accepted","extra":true}`,
-		"unknown type":  `{"type":"future"}`,
-		"invalid route": `{"type":"route_ready","route":{"route_id":"route","version":0}}`,
+		"unknown field":         `{"type":"hello_accepted","extra":true}`,
+		"unknown type":          `{"type":"future"}`,
+		"invalid route":         `{"type":"route_ready","route":{"route_id":"route","route_version":0}}`,
+		"legacy accepted type":  `{"type":"accepted"}`,
+		"legacy capacity field": `{"type":"hello","capacity":500}`,
+		"legacy route field":    `{"type":"route_ready","route":{"route_id":"route","version":2}}`,
+		"legacy attach fields":  `{"type":"attach_route","route":{"route_id":"route","route_version":2},"endpoint":{},"worker_private_key":"private"}`,
+		"legacy stale code":     `{"type":"error","code":"stale_assignment"}`,
+		"legacy capacity code":  `{"type":"error","code":"at_capacity"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			var wire bytes.Buffer
@@ -61,6 +76,45 @@ func TestControlFramesAreStrictAndBounded(t *testing.T) {
 	oversized.WriteString(strings.Repeat("x", MaxControlBytes+1))
 	if _, err := ReadControl(&oversized); err == nil {
 		t.Fatal("oversized frame succeeded")
+	}
+}
+
+func TestDataHeadersAreStrictAndBounded(t *testing.T) {
+	var wire bytes.Buffer
+	header := DataHeader{RouteID: "route", RouteVersion: 2}
+	if err := WriteDataHeader(&wire, header); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(wire.Bytes()[4:]), `{"route_id":"route","route_version":2}`; got != want {
+		t.Fatalf("WriteDataHeader payload = %s, want %s", got, want)
+	}
+	if got, err := ReadDataHeader(&wire); err != nil || got != header {
+		t.Fatalf("ReadDataHeader = %#v, %v", got, err)
+	}
+
+	for name, payload := range map[string]string{
+		"legacy route field": `{"route_id":"route","version":2}`,
+		"unknown field":      `{"route_id":"route","route_version":2,"extra":true}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			var wire bytes.Buffer
+			var frameHeader [4]byte
+			binary.BigEndian.PutUint32(frameHeader[:], uint32(len(payload)))
+			wire.Write(frameHeader[:])
+			wire.WriteString(payload)
+			if _, err := ReadDataHeader(&wire); err == nil {
+				t.Fatal("ReadDataHeader succeeded")
+			}
+		})
+	}
+
+	var oversized bytes.Buffer
+	var frameHeader [4]byte
+	binary.BigEndian.PutUint32(frameHeader[:], MaxDataHeaderBytes+1)
+	oversized.Write(frameHeader[:])
+	oversized.WriteString(strings.Repeat("x", MaxDataHeaderBytes+1))
+	if _, err := ReadDataHeader(&oversized); err == nil {
+		t.Fatal("oversized data header succeeded")
 	}
 }
 
@@ -93,7 +147,7 @@ func TestControlSchemaTracksMessageTypes(t *testing.T) {
 		got = append(got, schema.Defs[name].Properties["type"].Const)
 	}
 	want := []string{
-		string(Hello), string(Accepted), string(AttachRoute), string(RouteReady),
+		string(Hello), string(HelloAccepted), string(AttachRoute), string(RouteReady),
 		string(DetachRoute), string(RouteDrained), string(WorkerDraining), string(Error),
 	}
 	sort.Strings(got)
@@ -113,14 +167,14 @@ func TestControlSchemaTracksMessageTypes(t *testing.T) {
 
 func FuzzReadFrames(f *testing.F) {
 	controls := []Message{
-		{Type: Hello, Capacity: 500},
-		{Type: Accepted},
-		{Type: AttachRoute, Route: &RouteRef{RouteID: "route", Version: 2}, Endpoint: &transportv1.TailcatDescriptor{Version: 1, PublisherPublicKey: "nodekey:key", RelayRegion: "test"}, WorkerPrivateKey: "privkey:key"},
-		{Type: RouteReady, Route: &RouteRef{RouteID: "route", Version: 2}},
-		{Type: DetachRoute, Route: &RouteRef{RouteID: "route", Version: 2}},
-		{Type: RouteDrained, Route: &RouteRef{RouteID: "route", Version: 2}},
+		{Type: Hello, RouteCapacity: 500},
+		{Type: HelloAccepted},
+		{Type: AttachRoute, Route: &RouteRef{RouteID: "route", RouteVersion: 2}, PublisherTransport: &transportv1.TailcatDescriptor{Version: 1, PublisherPublicKey: "nodekey:key", RelayRegion: "test"}, TailcatDialerPrivateKey: "privkey:key"},
+		{Type: RouteReady, Route: &RouteRef{RouteID: "route", RouteVersion: 2}},
+		{Type: DetachRoute, Route: &RouteRef{RouteID: "route", RouteVersion: 2}},
+		{Type: RouteDrained, Route: &RouteRef{RouteID: "route", RouteVersion: 2}},
 		{Type: WorkerDraining},
-		{Type: Error, Route: &RouteRef{RouteID: "route", Version: 2}, Code: StaleAssignment},
+		{Type: Error, Route: &RouteRef{RouteID: "route", RouteVersion: 2}, Code: StaleRouteVersion},
 	}
 	for _, message := range controls {
 		var wire bytes.Buffer
@@ -130,7 +184,7 @@ func FuzzReadFrames(f *testing.F) {
 		f.Add(uint8(0), wire.Bytes(), uint8(1))
 	}
 	var dataWire bytes.Buffer
-	if err := WriteDataHeader(&dataWire, DataHeader{RouteID: "route", Version: 2}); err != nil {
+	if err := WriteDataHeader(&dataWire, DataHeader{RouteID: "route", RouteVersion: 2}); err != nil {
 		f.Fatal(err)
 	}
 	f.Add(uint8(1), dataWire.Bytes(), uint8(1))

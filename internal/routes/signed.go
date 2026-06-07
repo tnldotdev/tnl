@@ -14,17 +14,17 @@ import (
 	"github.com/tnldotdev/tnl/internal/state/statedb"
 )
 
-func (s *Store) ActiveSignedRouteID(ctx context.Context, hostname string) (string, error) {
+func (s *Store) CurrentSignedRouteID(ctx context.Context, hostname string) (string, error) {
 	hostname, err := s.canonicalRouteHostname(hostname)
 	if err != nil {
 		return "", err
 	}
-	routeID, err := s.queries.GetActiveSignedRouteIDByHostname(ctx, hostname)
+	routeID, err := s.queries.GetCurrentSignedRouteIDByHostname(ctx, hostname)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("routes: find active signed route: %w", err)
+		return "", fmt.Errorf("routes: find current signed route: %w", err)
 	}
 	return routeID, nil
 }
@@ -83,24 +83,24 @@ func (s *Store) CreateSigned(
 		return replay, err
 	}
 
-	version := uint64(1)
-	existingRoute, err := queries.GetActiveRouteByHostname(ctx, hostname)
+	routeVersion := uint64(1)
+	existingRoute, err := queries.GetCurrentRouteByHostname(ctx, hostname)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return Provisioning{}, fmt.Errorf("routes: check existing signed route: %w", err)
 	}
 	if err == nil {
 		existing := routeFromDB(existingRoute)
-		if existing.Status != "active" {
+		if existing.Status != RouteStatusEnabled {
 			return Provisioning{}, ErrInvalidStatus
 		}
 		if existing.AuthorizationID == "" {
 			return Provisioning{}, ErrRouteExists
 		}
-		version = existing.Version + 1
-		if version > math.MaxInt32 {
+		routeVersion = existing.RouteVersion + 1
+		if routeVersion > math.MaxInt32 {
 			return Provisioning{}, ErrInvalidStatus
 		}
-		if err := s.recordLifecycle(ctx, queries, existing.ID, existing.Version, now, LifecycleDisconnected); err != nil {
+		if err := s.recordLifecycle(ctx, queries, existing.ID, existing.RouteVersion, now, LifecycleDisconnected); err != nil {
 			return Provisioning{}, err
 		}
 		count, err := queries.RotateRouteCredential(ctx, statedb.RotateRouteCredentialParams{
@@ -116,7 +116,7 @@ func (s *Store) CreateSigned(
 		if err := queries.ExpireRouteSessions(ctx, existing.ID); err != nil {
 			return Provisioning{}, fmt.Errorf("routes: expire replaced signed session: %w", err)
 		}
-		count, err = queries.ReplaceSignedRoute(ctx, signedReplacementParams(existing.ID, localTarget, version, claims))
+		count, err = queries.ReplaceSignedRoute(ctx, signedReplacementParams(existing.ID, localTarget, routeVersion, claims))
 		if err != nil {
 			return Provisioning{}, fmt.Errorf("routes: replace signed route: %w", err)
 		}
@@ -152,32 +152,32 @@ func (s *Store) CreateSigned(
 			return Provisioning{}, fmt.Errorf("routes: create signed route credential: %w", err)
 		}
 	}
-	if err := insertAllowedIPPrefixes(ctx, queries, routeID, version, prefixes); err != nil {
+	if err := insertAllowedIPPrefixes(ctx, queries, routeID, routeVersion, prefixes); err != nil {
 		return Provisioning{}, err
 	}
 	expiresAt := minTime(now.Add(s.sessionLifetime), claims.ExpiresAt)
-	dbVersion, _ := versionToInt64(version)
+	dbRouteVersion, _ := routeVersionToInt64(routeVersion)
 	if err := queries.InsertRouteSession(ctx, statedb.InsertRouteSessionParams{
-		SessionID: sessionID, RouteID: routeID, Version: dbVersion,
+		SessionID: sessionID, RouteID: routeID, RouteVersion: dbRouteVersion,
 		TokenID: sessionTokenID.String(), SecretHash: sessionHash[:], ServerInstanceID: serverInstanceID,
 		CreatedAt: now.UnixNano(), ExpiresAt: expiresAt.UnixNano(),
 	}); err != nil {
 		return Provisioning{}, fmt.Errorf("routes: create signed session: %w", err)
 	}
-	if err := insertAuthorizationUse(ctx, queries, claims, routeID, version, now); err != nil {
+	if err := insertAuthorizationUse(ctx, queries, claims, routeID, routeVersion, now); err != nil {
 		return Provisioning{}, err
 	}
-	if err := s.recordLifecycle(ctx, queries, routeID, version, now, LifecycleVersionStarted); err != nil {
+	if err := s.recordLifecycle(ctx, queries, routeID, routeVersion, now, LifecycleRouteVersionStarted); err != nil {
 		return Provisioning{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return Provisioning{}, fmt.Errorf("routes: commit signed create: %w", err)
 	}
-	route := routeFromClaims(routeID, hostname, localTarget, version, now, claims, prefixes)
+	route := routeFromClaims(routeID, hostname, localTarget, routeVersion, now, claims, prefixes)
 	return Provisioning{
 		Route: route,
 		Session: Session{
-			ID: sessionID, RouteID: routeID, Version: version, Status: "pending",
+			ID: sessionID, RouteID: routeID, RouteVersion: routeVersion, Status: SessionStatusPending,
 			ServerInstanceID: serverInstanceID, CreatedAt: now, LastHeartbeatAt: now, ExpiresAt: expiresAt,
 		},
 		SessionToken: sessionToken,
@@ -267,16 +267,16 @@ func (s *Store) CreateSignedSession(
 	if revoked || !credentials.SecretHashMatches(storedHash, candidate) {
 		return Provisioning{}, ErrUnauthenticated
 	}
-	if route.Status != "active" || route.AuthorizationID == "" || !route.AuthorizationExpiresAt.After(now) {
+	if route.Status != RouteStatusEnabled || route.AuthorizationID == "" || !route.AuthorizationExpiresAt.After(now) {
 		return Provisioning{}, ErrInvalidStatus
 	}
 	if claims.Revision < route.AuthorizationRevision {
-		return Provisioning{}, ErrAuthorizationReplayed
+		return Provisioning{}, ErrAuthorizationReuseRejected
 	}
-	if claims.RouteVersion == route.Version {
+	if claims.RouteVersion == route.RouteVersion {
 		if err := claims.Validate(authorization.Expected{
 			Operation: authorization.OperationRouteSessionCreate, Hostname: route.Hostname,
-			RouteID: route.ID, RouteVersion: route.Version,
+			RouteID: route.ID, RouteVersion: route.RouteVersion,
 			CanonicalRequestHash: requestHash, IPPolicyHash: ipPolicyHash,
 		}); err != nil {
 			return Provisioning{}, ErrUnauthenticated
@@ -286,12 +286,12 @@ func (s *Store) CreateSignedSession(
 		); err != nil || found {
 			return replay, err
 		}
-		return Provisioning{}, ErrAuthorizationReplayed
+		return Provisioning{}, ErrAuthorizationReuseRejected
 	}
-	nextVersion := route.Version + 1
-	if nextVersion > math.MaxInt32 || claims.Validate(authorization.Expected{
+	nextRouteVersion := route.RouteVersion + 1
+	if nextRouteVersion > math.MaxInt32 || claims.Validate(authorization.Expected{
 		Operation: authorization.OperationRouteSessionCreate, Hostname: route.Hostname,
-		RouteID: route.ID, RouteVersion: nextVersion,
+		RouteID: route.ID, RouteVersion: nextRouteVersion,
 		CanonicalRequestHash: requestHash, IPPolicyHash: ipPolicyHash,
 	}) != nil {
 		return Provisioning{}, ErrUnauthenticated
@@ -300,25 +300,25 @@ func (s *Store) CreateSignedSession(
 		ctx, queries, claims, routeToken, sessionToken, serverInstanceID, prefixes, now,
 	); err != nil || found {
 		if err == nil {
-			err = ErrAuthorizationReplayed
+			err = ErrAuthorizationReuseRejected
 		}
 		return Provisioning{}, err
 	}
-	if err := s.recordLifecycle(ctx, queries, routeID, route.Version, now, LifecycleDisconnected); err != nil {
+	if err := s.recordLifecycle(ctx, queries, routeID, route.RouteVersion, now, LifecycleDisconnected); err != nil {
 		return Provisioning{}, err
 	}
 	if err := queries.ExpireRouteSessions(ctx, routeID); err != nil {
 		return Provisioning{}, fmt.Errorf("routes: expire previous signed session: %w", err)
 	}
-	dbVersion, _ := versionToInt64(nextVersion)
-	count, err := queries.AdvanceSignedRouteVersion(ctx, signedAdvanceParams(route, dbVersion, now, claims))
+	dbRouteVersion, _ := routeVersionToInt64(nextRouteVersion)
+	count, err := queries.AdvanceSignedRouteVersion(ctx, signedAdvanceParams(route, dbRouteVersion, now, claims))
 	if err != nil {
 		return Provisioning{}, fmt.Errorf("routes: advance signed route: %w", err)
 	}
 	if err := requireCount(count, ErrInvalidStatus); err != nil {
 		return Provisioning{}, err
 	}
-	if err := insertAllowedIPPrefixes(ctx, queries, routeID, nextVersion, prefixes); err != nil {
+	if err := insertAllowedIPPrefixes(ctx, queries, routeID, nextRouteVersion, prefixes); err != nil {
 		return Provisioning{}, err
 	}
 	sessionID, err := newID("session")
@@ -327,26 +327,26 @@ func (s *Store) CreateSignedSession(
 	}
 	expiresAt := minTime(now.Add(s.sessionLifetime), claims.ExpiresAt)
 	if err := queries.InsertRouteSession(ctx, statedb.InsertRouteSessionParams{
-		SessionID: sessionID, RouteID: routeID, Version: dbVersion,
+		SessionID: sessionID, RouteID: routeID, RouteVersion: dbRouteVersion,
 		TokenID: sessionTokenID.String(), SecretHash: sessionHash[:], ServerInstanceID: serverInstanceID,
 		CreatedAt: now.UnixNano(), ExpiresAt: expiresAt.UnixNano(),
 	}); err != nil {
 		return Provisioning{}, fmt.Errorf("routes: create replacement signed session: %w", err)
 	}
-	if err := insertAuthorizationUse(ctx, queries, claims, routeID, nextVersion, now); err != nil {
+	if err := insertAuthorizationUse(ctx, queries, claims, routeID, nextRouteVersion, now); err != nil {
 		return Provisioning{}, err
 	}
-	if err := s.recordLifecycle(ctx, queries, routeID, nextVersion, now, LifecycleVersionStarted); err != nil {
+	if err := s.recordLifecycle(ctx, queries, routeID, nextRouteVersion, now, LifecycleRouteVersionStarted); err != nil {
 		return Provisioning{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return Provisioning{}, fmt.Errorf("routes: commit signed session creation: %w", err)
 	}
-	route = routeFromClaims(route.ID, route.Hostname, route.LocalTarget, nextVersion, route.CreatedAt, claims, prefixes)
+	route = routeFromClaims(route.ID, route.Hostname, route.LocalTarget, nextRouteVersion, route.CreatedAt, claims, prefixes)
 	return Provisioning{
 		Route: route,
 		Session: Session{
-			ID: sessionID, RouteID: routeID, Version: nextVersion, Status: "pending",
+			ID: sessionID, RouteID: routeID, RouteVersion: nextRouteVersion, Status: SessionStatusPending,
 			ServerInstanceID: serverInstanceID, CreatedAt: now, LastHeartbeatAt: now, ExpiresAt: expiresAt,
 		},
 		SessionToken: sessionToken,
@@ -364,14 +364,14 @@ func (s *Store) HeartbeatSigned(
 	if s.authorizationVerifier == nil {
 		return time.Time{}, ErrInvalidArgument
 	}
-	wantHash, err := authorization.CanonicalRequestHash(authorization.CoreRequest{
-		Operation: authorization.OperationRenew, Version: session.Version,
+	wantHash, err := authorization.CanonicalRequestHash(authorization.OperationRequest{
+		Operation: authorization.OperationRenew, RouteVersion: session.RouteVersion,
 	})
 	if err != nil || wantHash != requestHash {
 		return time.Time{}, ErrInvalidArgument
 	}
 	now := time.Unix(0, s.now().UnixNano()).UTC()
-	dbVersion, err := versionToInt64(session.Version)
+	dbRouteVersion, err := routeVersionToInt64(session.RouteVersion)
 	if err != nil {
 		return time.Time{}, ErrInvalidArgument
 	}
@@ -389,7 +389,7 @@ func (s *Store) HeartbeatSigned(
 		return time.Time{}, fmt.Errorf("routes: read signed heartbeat route: %w", err)
 	}
 	route := routeFromDB(dbRoute)
-	if route.Status != "active" || route.Version != session.Version || route.AuthorizationID == "" ||
+	if route.Status != RouteStatusEnabled || route.RouteVersion != session.RouteVersion || route.AuthorizationID == "" ||
 		signedAuthorization == "" && !route.AuthorizationExpiresAt.After(now) {
 		return time.Time{}, ErrStaleSession
 	}
@@ -397,7 +397,7 @@ func (s *Store) HeartbeatSigned(
 	if signedAuthorization != "" {
 		claims, err := s.authorizationVerifier.Verify(signedAuthorization, authorization.Expected{
 			Operation: authorization.OperationRenew, Hostname: route.Hostname,
-			RouteID: route.ID, RouteVersion: route.Version,
+			RouteID: route.ID, RouteVersion: route.RouteVersion,
 			CanonicalRequestHash: requestHash, IPPolicyHash: route.AuthorizationIPPolicyHash,
 		})
 		if err != nil {
@@ -405,7 +405,7 @@ func (s *Store) HeartbeatSigned(
 		}
 		if claims.Issuer != route.AuthorizationIssuer || claims.KeyID != route.AuthorizationKeyID ||
 			claims.Revision < route.AuthorizationRevision || !claims.ExpiresAt.After(route.AuthorizationExpiresAt) {
-			return time.Time{}, ErrAuthorizationReplayed
+			return time.Time{}, ErrAuthorizationReuseRejected
 		}
 		if err := requireUnusedAuthorization(ctx, queries, claims); err != nil {
 			return time.Time{}, err
@@ -432,10 +432,10 @@ func (s *Store) HeartbeatSigned(
 		if err != nil {
 			return time.Time{}, fmt.Errorf("routes: renew authorization: %w", err)
 		}
-		if err := requireCount(count, ErrAuthorizationReplayed); err != nil {
+		if err := requireCount(count, ErrAuthorizationReuseRejected); err != nil {
 			return time.Time{}, err
 		}
-		if err := insertAuthorizationUse(ctx, queries, claims, route.ID, route.Version, now); err != nil {
+		if err := insertAuthorizationUse(ctx, queries, claims, route.ID, route.RouteVersion, now); err != nil {
 			return time.Time{}, err
 		}
 		authorizationExpiresAt = claims.ExpiresAt
@@ -445,12 +445,12 @@ func (s *Store) HeartbeatSigned(
 	if signedAuthorization == "" {
 		count, err = queries.HeartbeatRouteSession(ctx, statedb.HeartbeatRouteSessionParams{
 			LastHeartbeatAt: now.UnixNano(), ExpiresAt: expiresAt.UnixNano(),
-			SessionID: session.ID, RouteID: session.RouteID, Version: dbVersion, Now: now.UnixNano(),
+			SessionID: session.ID, RouteID: session.RouteID, RouteVersion: dbRouteVersion, Now: now.UnixNano(),
 		})
 	} else {
 		count, err = queries.HeartbeatRenewedRouteSession(ctx, statedb.HeartbeatRenewedRouteSessionParams{
 			LastHeartbeatAt: now.UnixNano(), ExpiresAt: expiresAt.UnixNano(),
-			SessionID: session.ID, RouteID: session.RouteID, Version: dbVersion,
+			SessionID: session.ID, RouteID: session.RouteID, RouteVersion: dbRouteVersion,
 			Now: sql.NullInt64{Int64: now.UnixNano(), Valid: true},
 		})
 	}
@@ -487,10 +487,10 @@ func (s *Store) DeleteSigned(ctx context.Context, routeID string, token credenti
 	if route.AuthorizationID == "" || revoked || !credentials.SecretHashMatches(storedHash, candidate) {
 		return ErrUnauthenticated
 	}
-	if route.Status != "active" {
+	if route.Status != RouteStatusEnabled {
 		return ErrNotFound
 	}
-	count, err := queries.DeleteActiveSignedRoute(ctx, statedb.DeleteActiveSignedRouteParams{
+	count, err := queries.DeleteEnabledSignedRoute(ctx, statedb.DeleteEnabledSignedRouteParams{
 		DeletedAt: now.UnixNano(), RouteID: routeID,
 	})
 	if err != nil {
@@ -507,10 +507,10 @@ func (s *Store) DeleteSigned(ctx context.Context, routeID string, token credenti
 	if err := queries.ExpireRouteSessions(ctx, routeID); err != nil {
 		return fmt.Errorf("routes: expire deleted signed route: %w", err)
 	}
-	if err := s.recordLifecycle(ctx, queries, routeID, route.Version, now, LifecycleDisconnected); err != nil {
+	if err := s.recordLifecycle(ctx, queries, routeID, route.RouteVersion, now, LifecycleDisconnected); err != nil {
 		return err
 	}
-	if err := s.recordLifecycle(ctx, queries, routeID, route.Version, now, LifecycleDeleted); err != nil {
+	if err := s.recordLifecycle(ctx, queries, routeID, route.RouteVersion, now, LifecycleDeleted); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -523,7 +523,7 @@ func canonicalSignedRequest(
 	operation authorization.Operation,
 	hostname, localTarget string,
 	routeToken credentials.RouteToken,
-	version uint64,
+	routeVersion uint64,
 	request SignedRequest,
 ) ([]string, authorization.Digest, *authorization.Digest, error) {
 	prefixes, err := authorization.CanonicalizeIPPrefixes(request.AllowedIPPrefixes)
@@ -531,9 +531,9 @@ func canonicalSignedRequest(
 		!slices.Equal(prefixes, request.AllowedIPPrefixes) {
 		return nil, authorization.Digest{}, nil, ErrInvalidArgument
 	}
-	requestHash, err := authorization.CanonicalRequestHash(authorization.CoreRequest{
+	requestHash, err := authorization.CanonicalRequestHash(authorization.OperationRequest{
 		Operation: operation, Hostname: hostname, LocalTarget: localTarget,
-		RouteToken: routeToken.String(), AllowedIPPrefixes: prefixes, Version: version,
+		RouteToken: routeToken.String(), AllowedIPPrefixes: prefixes, RouteVersion: routeVersion,
 	})
 	if err != nil || requestHash != request.RequestHash {
 		return nil, authorization.Digest{}, nil, ErrInvalidArgument
@@ -568,22 +568,22 @@ func (s *Store) signedReplay(
 		if idErr != nil {
 			return Provisioning{}, false, fmt.Errorf("routes: check authorization replay: %w", idErr)
 		}
-		return Provisioning{}, false, ErrAuthorizationReplayed
+		return Provisioning{}, false, ErrAuthorizationReuseRejected
 	}
 	if err != nil {
 		return Provisioning{}, false, fmt.Errorf("routes: check authorization retry: %w", err)
 	}
 	if !authorizationUseMatches(use, claims) {
-		return Provisioning{}, false, ErrAuthorizationReplayed
+		return Provisioning{}, false, ErrAuthorizationReuseRejected
 	}
 	dbRoute, err := queries.GetRouteByID(ctx, use.RouteID)
 	if err != nil {
-		return Provisioning{}, false, ErrAuthorizationReplayed
+		return Provisioning{}, false, ErrAuthorizationReuseRejected
 	}
 	route := routeFromDB(dbRoute)
-	if route.Status != "active" || route.Version != uint64(use.RouteVersion) ||
+	if route.Status != RouteStatusEnabled || route.RouteVersion != uint64(use.RouteVersion) ||
 		!routeAuthorizationMatches(route, claims) || !route.AuthorizationExpiresAt.After(now) {
-		return Provisioning{}, false, ErrAuthorizationReplayed
+		return Provisioning{}, false, ErrAuthorizationReuseRejected
 	}
 	credentialID, candidate, err := credentials.ParseRouteToken(routeToken)
 	if err != nil {
@@ -594,36 +594,36 @@ func (s *Store) signedReplay(
 		return Provisioning{}, false, ErrUnauthenticated
 	}
 	dbSession, err := queries.GetRouteSessionByVersion(ctx, statedb.GetRouteSessionByVersionParams{
-		RouteID: route.ID, Version: use.RouteVersion,
+		RouteID: route.ID, RouteVersion: use.RouteVersion,
 	})
 	if err != nil {
-		return Provisioning{}, false, ErrAuthorizationReplayed
+		return Provisioning{}, false, ErrAuthorizationReuseRejected
 	}
 	tokenID, tokenHash, err := credentials.ParseSessionToken(sessionToken)
 	if err != nil || dbSession.TokenID != tokenID.String() || !credentials.SecretHashMatches(dbSession.SecretHash, tokenHash) {
-		return Provisioning{}, false, ErrAuthorizationReplayed
+		return Provisioning{}, false, ErrAuthorizationReuseRejected
 	}
 	storedPrefixes, err := queries.ListRouteAllowedIPPrefixes(ctx, statedb.ListRouteAllowedIPPrefixesParams{
-		RouteID: route.ID, RouteVersion: int64(route.Version),
+		RouteID: route.ID, RouteVersion: int64(route.RouteVersion),
 	})
 	if err != nil || !slices.Equal(storedPrefixes, prefixes) {
-		return Provisioning{}, false, ErrAuthorizationReplayed
+		return Provisioning{}, false, ErrAuthorizationReuseRejected
 	}
-	restored := dbSession.ServerInstanceID != serverInstanceID || dbSession.Status == "expired" ||
+	restored := dbSession.ServerInstanceID != serverInstanceID || SessionStatus(dbSession.Status) == SessionStatusExpired ||
 		dbSession.ExpiresAt <= now.UnixNano()
 	if restored {
 		expiresAt := minTime(now.Add(s.sessionLifetime), route.AuthorizationExpiresAt)
 		count, err := queries.RestoreSignedRouteSessionRetry(ctx, statedb.RestoreSignedRouteSessionRetryParams{
 			ServerInstanceID: serverInstanceID, Now: now.UnixNano(), ExpiresAt: expiresAt.UnixNano(),
-			SessionID: dbSession.ID, RouteID: route.ID, Version: use.RouteVersion, TokenID: tokenID.String(),
+			SessionID: dbSession.ID, RouteID: route.ID, RouteVersion: use.RouteVersion, TokenID: tokenID.String(),
 		})
 		if err != nil {
 			return Provisioning{}, false, fmt.Errorf("routes: restore authorization retry session: %w", err)
 		}
-		if err := requireCount(count, ErrAuthorizationReplayed); err != nil {
+		if err := requireCount(count, ErrAuthorizationReuseRejected); err != nil {
 			return Provisioning{}, false, err
 		}
-		dbSession.Status = "pending"
+		dbSession.Status = string(SessionStatusPending)
 		dbSession.ServerInstanceID = serverInstanceID
 		dbSession.PublisherPublicKey = sql.NullString{}
 		dbSession.RelayRegion = sql.NullString{}
@@ -632,7 +632,7 @@ func (s *Store) signedReplay(
 	}
 	route.AllowedIPPrefixes = storedPrefixes
 	return Provisioning{
-		Route: route, Session: sessionFromDB(dbSession), SessionToken: sessionToken, Replayed: true, Restored: restored,
+		Route: route, Session: sessionFromDB(dbSession), SessionToken: sessionToken, ReusedResult: true, Restored: restored,
 	}, true, nil
 }
 
@@ -658,7 +658,7 @@ func insertAuthorizationUse(
 	queries *statedb.Queries,
 	claims authorization.Claims,
 	routeID string,
-	version uint64,
+	routeVersion uint64,
 	now time.Time,
 ) error {
 	var ipPolicyHash []byte
@@ -669,7 +669,7 @@ func insertAuthorizationUse(
 		AuthorizationIssuer: claims.Issuer, AuthorizationID: claims.AuthorizationID,
 		AuthorizationKeyID: claims.KeyID, AuthorizationRetryID: claims.RetryID,
 		AuthorizationRevision: int64(claims.Revision), AuthorizationExpiresAt: claims.ExpiresAt.UnixNano(),
-		Operation: string(claims.Operation), RouteID: routeID, RouteVersion: int64(version),
+		Operation: string(claims.Operation), RouteID: routeID, RouteVersion: int64(routeVersion),
 		Hostname: claims.Hostname, RequestHash: claims.CanonicalRequestHash[:],
 		IpPolicyHash: ipPolicyHash, CreatedAt: now.UnixNano(),
 	}); err != nil {
@@ -689,7 +689,7 @@ func requireUnusedAuthorization(
 		if err != nil {
 			return fmt.Errorf("routes: check authorization ID: %w", err)
 		}
-		return ErrAuthorizationReplayed
+		return ErrAuthorizationReuseRejected
 	}
 	if _, err := queries.GetRouteAuthorizationUseByRetry(ctx, statedb.GetRouteAuthorizationUseByRetryParams{
 		AuthorizationIssuer: claims.Issuer, AuthorizationRetryID: claims.RetryID,
@@ -697,7 +697,7 @@ func requireUnusedAuthorization(
 		if err != nil {
 			return fmt.Errorf("routes: check authorization retry ID: %w", err)
 		}
-		return ErrAuthorizationReplayed
+		return ErrAuthorizationReuseRejected
 	}
 	return nil
 }
@@ -706,16 +706,16 @@ func insertAllowedIPPrefixes(
 	ctx context.Context,
 	queries *statedb.Queries,
 	routeID string,
-	version uint64,
+	routeVersion uint64,
 	prefixes []string,
 ) error {
-	dbVersion, err := versionToInt64(version)
+	dbRouteVersion, err := routeVersionToInt64(routeVersion)
 	if err != nil {
 		return ErrInvalidArgument
 	}
 	for position, prefix := range prefixes {
 		if err := queries.InsertRouteAllowedIPPrefix(ctx, statedb.InsertRouteAllowedIPPrefixParams{
-			RouteID: routeID, RouteVersion: dbVersion, Position: int64(position), Prefix: prefix,
+			RouteID: routeID, RouteVersion: dbRouteVersion, Position: int64(position), Prefix: prefix,
 		}); err != nil {
 			return fmt.Errorf("routes: store allowed IP prefix: %w", err)
 		}
@@ -743,11 +743,11 @@ func signedInsertParams(
 
 func signedReplacementParams(
 	routeID, localTarget string,
-	version uint64,
+	routeVersion uint64,
 	claims authorization.Claims,
 ) statedb.ReplaceSignedRouteParams {
 	return statedb.ReplaceSignedRouteParams{
-		RouteID: routeID, LocalTarget: localTarget, Version: int64(version),
+		RouteID: routeID, LocalTarget: localTarget, RouteVersion: int64(routeVersion),
 		AuthorizationIssuer:       sql.NullString{String: claims.Issuer, Valid: true},
 		AuthorizationID:           sql.NullString{String: claims.AuthorizationID, Valid: true},
 		AuthorizationKeyID:        sql.NullString{String: claims.KeyID, Valid: true},
@@ -761,12 +761,12 @@ func signedReplacementParams(
 
 func signedAdvanceParams(
 	route Route,
-	version int64,
+	routeVersion int64,
 	now time.Time,
 	claims authorization.Claims,
 ) statedb.AdvanceSignedRouteVersionParams {
 	return statedb.AdvanceSignedRouteVersionParams{
-		RouteID: route.ID, PreviousVersion: int64(route.Version), Version: version,
+		RouteID: route.ID, PreviousRouteVersion: int64(route.RouteVersion), RouteVersion: routeVersion,
 		AuthorizationIssuer:       sql.NullString{String: claims.Issuer, Valid: true},
 		AuthorizationID:           sql.NullString{String: claims.AuthorizationID, Valid: true},
 		AuthorizationKeyID:        sql.NullString{String: claims.KeyID, Valid: true},
@@ -781,13 +781,13 @@ func signedAdvanceParams(
 
 func routeFromClaims(
 	routeID, hostname, localTarget string,
-	version uint64,
+	routeVersion uint64,
 	createdAt time.Time,
 	claims authorization.Claims,
 	prefixes []string,
 ) Route {
 	return Route{
-		ID: routeID, Hostname: hostname, LocalTarget: localTarget, Status: "active", Version: version,
+		ID: routeID, Hostname: hostname, LocalTarget: localTarget, Status: RouteStatusEnabled, RouteVersion: routeVersion,
 		AuthorizationIssuer: claims.Issuer, AuthorizationID: claims.AuthorizationID,
 		AuthorizationKeyID: claims.KeyID, AuthorizationRetryID: claims.RetryID,
 		AuthorizationRevision: claims.Revision, AuthorizationExpiresAt: claims.ExpiresAt,

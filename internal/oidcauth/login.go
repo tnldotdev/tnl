@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
-	"github.com/tnldotdev/tnl/internal/oidcnonce"
 	"golang.org/x/oauth2"
 )
 
@@ -24,13 +23,12 @@ const (
 )
 
 type Config struct {
-	Issuer       string
-	ClientID     string
-	LoginFlow    string
-	Scopes       []string
-	CoreEndpoint string
-	HTTPClient   *http.Client
-	OpenURL      func(string) error
+	Issuer     string
+	ClientID   string
+	LoginFlow  string
+	Scopes     []string
+	HTTPClient *http.Client
+	OpenURL    func(string) error
 }
 
 type Result struct {
@@ -61,12 +59,7 @@ func Login(ctx context.Context, config Config, output io.Writer) (Result, error)
 	if err != nil {
 		return Result{}, fmt.Errorf("oidcauth: discover provider: %w", err)
 	}
-	var nonce string
-	if config.CoreEndpoint == "" {
-		nonce, err = randomValue()
-	} else {
-		nonce, err = oidcnonce.New(config.CoreEndpoint)
-	}
+	nonce, err := randomValue()
 	if err != nil {
 		return Result{}, err
 	}

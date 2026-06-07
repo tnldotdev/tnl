@@ -30,7 +30,7 @@ type AdminAuditEvent struct {
 type CertificateIssuance struct {
 	ID                 string
 	RouteID            string
-	Version            int64
+	RouteVersion       int64
 	Hostname           string
 	AcmeProfile        string
 	Status             string
@@ -130,18 +130,18 @@ type Identity struct {
 	CreatedAt   int64
 }
 
-type OidcAssertionExchange struct {
-	AssertionHash []byte
-	ConsumedAt    int64
-	ExpiresAt     int64
-}
-
-type OperationalSwitch struct {
+type MaintenanceControl struct {
 	Name      string
 	Enabled   int64
 	Revision  int64
 	UpdatedAt int64
 	UpdatedBy string
+}
+
+type OidcAssertionExchange struct {
+	AssertionHash []byte
+	ConsumedAt    int64
+	ExpiresAt     int64
 }
 
 type Route struct {
@@ -151,7 +151,7 @@ type Route struct {
 	Hostname                  string
 	LocalTarget               string
 	Status                    string
-	Version                   int64
+	RouteVersion              int64
 	SuspensionRevision        int64
 	SuspensionReason          sql.NullString
 	SuspendedAt               sql.NullInt64
@@ -200,13 +200,13 @@ type RouteCredential struct {
 }
 
 type RouteLifecycleEvent struct {
-	ID         int64
-	EventID    string
-	RouteID    string
-	Version    int64
-	Sequence   int64
-	OccurredAt int64
-	Transition string
+	ID           int64
+	EventID      string
+	RouteID      string
+	RouteVersion int64
+	Sequence     int64
+	OccurredAt   int64
+	Transition   string
 }
 
 type RouteRegistration struct {
@@ -226,7 +226,7 @@ type RouteRegistration struct {
 type RouteSession struct {
 	ID                 string
 	RouteID            string
-	Version            int64
+	RouteVersion       int64
 	Status             string
 	TokenID            string
 	SecretHash         []byte
@@ -270,7 +270,7 @@ type RouteUsageReport struct {
 type RouteUsageSnapshot struct {
 	ID                           int64
 	RouteID                      string
-	Version                      int64
+	RouteVersion                 int64
 	Resolution                   string
 	BucketStart                  int64
 	Revision                     int64

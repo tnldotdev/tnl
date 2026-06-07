@@ -4,6 +4,14 @@
 package routeusagev1
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
 	"time"
 )
 
@@ -69,10 +77,10 @@ func (e ProblemCode) Valid() bool {
 
 // Defines values for RouteLifecycleEventTransition.
 const (
-	Deleted        RouteLifecycleEventTransition = "deleted"
-	Disconnected   RouteLifecycleEventTransition = "disconnected"
-	Ready          RouteLifecycleEventTransition = "ready"
-	VersionStarted RouteLifecycleEventTransition = "version_started"
+	Deleted             RouteLifecycleEventTransition = "deleted"
+	Disconnected        RouteLifecycleEventTransition = "disconnected"
+	Ready               RouteLifecycleEventTransition = "ready"
+	RouteVersionStarted RouteLifecycleEventTransition = "route_version_started"
 )
 
 // Valid indicates whether the value is a known member of the RouteLifecycleEventTransition enum.
@@ -84,21 +92,21 @@ func (e RouteLifecycleEventTransition) Valid() bool {
 		return true
 	case Ready:
 		return true
-	case VersionStarted:
+	case RouteVersionStarted:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for RouteUsageSnapshotResolution.
+// Defines values for RouteUsageBucketReportResolution.
 const (
-	Hour   RouteUsageSnapshotResolution = "hour"
-	Minute RouteUsageSnapshotResolution = "minute"
+	Hour   RouteUsageBucketReportResolution = "hour"
+	Minute RouteUsageBucketReportResolution = "minute"
 )
 
-// Valid indicates whether the value is a known member of the RouteUsageSnapshotResolution enum.
-func (e RouteUsageSnapshotResolution) Valid() bool {
+// Valid indicates whether the value is a known member of the RouteUsageBucketReportResolution enum.
+func (e RouteUsageBucketReportResolution) Valid() bool {
 	switch e {
 	case Hour:
 		return true
@@ -144,12 +152,14 @@ type ProblemCode string
 
 // RouteLifecycleEvent defines model for RouteLifecycleEvent.
 type RouteLifecycleEvent struct {
-	ItemId     string                        `json:"item_id"`
-	OccurredAt time.Time                     `json:"occurred_at"`
-	RouteId    string                        `json:"route_id"`
-	Sequence   PositiveInteger               `json:"sequence"`
-	Transition RouteLifecycleEventTransition `json:"transition"`
-	Version    PositiveInteger               `json:"version"`
+	ItemId     string    `json:"item_id"`
+	OccurredAt time.Time `json:"occurred_at"`
+	RouteId    string    `json:"route_id"`
+
+	// RouteVersion Route version in which the transition occurred.
+	RouteVersion PositiveInteger               `json:"route_version"`
+	Sequence     PositiveInteger               `json:"sequence"`
+	Transition   RouteLifecycleEventTransition `json:"transition"`
 }
 
 // RouteLifecycleEventTransition defines model for RouteLifecycleEvent.Transition.
@@ -176,8 +186,8 @@ type RouteRegistration struct {
 	SigningKeyId    string    `json:"signing_key_id"`
 }
 
-// RouteUsageSnapshot defines model for RouteUsageSnapshot.
-type RouteUsageSnapshot struct {
+// RouteUsageBucketReport defines model for RouteUsageBucketReport.
+type RouteUsageBucketReport struct {
 	BucketStart time.Time `json:"bucket_start"`
 
 	// CapacityDenials Matched attempts rejected by the route connection limit.
@@ -205,10 +215,13 @@ type RouteUsageSnapshot struct {
 	PublisherOpenFailures UnsignedInteger `json:"publisher_open_failures"`
 
 	// PublisherOpenLatency Latency of publisher open calls, including failed calls, attributed when the call returns. Absent when the bucket has no observations; absence is undefined and is not a zero-valued observation.
-	PublisherOpenLatency *DurationHistogram           `json:"publisher_open_latency,omitempty"`
-	Resolution           RouteUsageSnapshotResolution `json:"resolution"`
-	Revision             PositiveInteger              `json:"revision"`
-	RouteId              string                       `json:"route_id"`
+	PublisherOpenLatency *DurationHistogram               `json:"publisher_open_latency,omitempty"`
+	Resolution           RouteUsageBucketReportResolution `json:"resolution"`
+	Revision             PositiveInteger                  `json:"revision"`
+	RouteId              string                           `json:"route_id"`
+
+	// RouteVersion Route version measured by this report.
+	RouteVersion PositiveInteger `json:"route_version"`
 
 	// SuccessfulConnectionDuration End-to-end duration of successful forwarding streams, attributed when a stream closes. Absent when the bucket has no observations; absence is undefined and is not a zero-valued observation.
 	SuccessfulConnectionDuration *DurationHistogram `json:"successful_connection_duration,omitempty"`
@@ -218,25 +231,24 @@ type RouteUsageSnapshot struct {
 
 	// TimeToFirstPublisherByte Time from route match until the first publisher byte is forwarded to the visitor, attributed when that byte is written. Absent when the bucket has no observations; absence is undefined and is not a zero-valued observation.
 	TimeToFirstPublisherByte *DurationHistogram `json:"time_to_first_publisher_byte,omitempty"`
-	Version                  PositiveInteger    `json:"version"`
 
-	// VisitorNetworkEstimate Precision-12 HyperLogLog estimate of distinct visitor networks for this route and bucket. The sketch is shared by route versions, so version snapshots for the same route and bucket carry the same estimate and must not be summed.
+	// VisitorNetworkEstimate Precision-12 HyperLogLog estimate of distinct visitor networks for this route and bucket. The sketch is shared by route versions, so reports for the same route and bucket carry the same estimate and must not be summed.
 	VisitorNetworkEstimate UnsignedInteger `json:"visitor_network_estimate"`
 
-	// VisitorNetworkHll Versioned precision-12 HyperLogLog checkpoint. Decoded bytes start with version 1, precision 12, and an encoding byte. Sparse encoding 0 continues with a big-endian uint16 entry count followed by sorted (big-endian uint16 register index, uint8 register value) entries; dense encoding 1 continues with 4096 uint8 registers. Inputs are IPv4 /32 or IPv6 /64 networks HMACed with a route-scoped secret derived daily from the daemon's stable master secret; no source identifier is included. Merge registers by their maximum rather than summing estimates when aggregating snapshots.
+	// VisitorNetworkHll Versioned precision-12 HyperLogLog checkpoint. Decoded bytes start with version 1, precision 12, and an encoding byte. Sparse encoding 0 continues with a big-endian uint16 entry count followed by sorted (big-endian uint16 register index, uint8 register value) entries; dense encoding 1 continues with 4096 uint8 registers. Inputs are IPv4 /32 or IPv6 /64 networks HMACed with a route-scoped secret derived daily from the daemon's stable master secret; no source identifier is included. Merge registers by their maximum rather than summing estimates when aggregating reports.
 	VisitorNetworkHll []byte `json:"visitor_network_hll"`
 }
 
-// RouteUsageSnapshotResolution defines model for RouteUsageSnapshot.Resolution.
-type RouteUsageSnapshotResolution string
+// RouteUsageBucketReportResolution defines model for RouteUsageBucketReport.Resolution.
+type RouteUsageBucketReportResolution string
 
-// RouteUsageSnapshotBatch defines model for RouteUsageSnapshotBatch.
-type RouteUsageSnapshotBatch struct {
-	Items []RouteUsageSnapshot `json:"items"`
+// RouteUsageBucketReportBatch defines model for RouteUsageBucketReportBatch.
+type RouteUsageBucketReportBatch struct {
+	Items []RouteUsageBucketReport `json:"items"`
 }
 
-// RouteUsageSnapshotBatchResponse defines model for RouteUsageSnapshotBatchResponse.
-type RouteUsageSnapshotBatchResponse struct {
+// RouteUsageBucketReportBatchResponse defines model for RouteUsageBucketReportBatchResponse.
+type RouteUsageBucketReportBatchResponse struct {
 	Results []BatchResult `json:"results"`
 }
 
@@ -249,5 +261,979 @@ type RegisterRouteJSONRequestBody = RouteRegistration
 // IngestRouteLifecycleEventsJSONRequestBody defines body for IngestRouteLifecycleEvents for application/json ContentType.
 type IngestRouteLifecycleEventsJSONRequestBody = RouteLifecycleEventBatch
 
-// IngestRouteUsageSnapshotsJSONRequestBody defines body for IngestRouteUsageSnapshots for application/json ContentType.
-type IngestRouteUsageSnapshotsJSONRequestBody = RouteUsageSnapshotBatch
+// IngestRouteUsageBucketReportsJSONRequestBody defines body for IngestRouteUsageBucketReports for application/json ContentType.
+type IngestRouteUsageBucketReportsJSONRequestBody = RouteUsageBucketReportBatch
+
+// RequestEditorFn is the function signature for the RequestEditor callback function
+type RequestEditorFn func(ctx context.Context, req *http.Request) error
+
+// Doer performs HTTP requests.
+//
+// The standard http.Client implements this interface.
+type HttpRequestDoer interface {
+	Do(req *http.Request) (*http.Response, error)
+}
+
+// Client which conforms to the OpenAPI3 specification for this service.
+type Client struct {
+	// The endpoint of the server conforming to this interface, with scheme,
+	// https://api.deepmap.com for example. This can contain a path relative
+	// to the server, such as https://api.deepmap.com/dev-test, and all the
+	// paths in the swagger spec will be appended to the server.
+	Server string
+
+	// Doer for performing requests, typically a *http.Client with any
+	// customized settings, such as certificate chains.
+	Client HttpRequestDoer
+
+	// A list of callbacks for modifying requests which are generated before sending over
+	// the network.
+	RequestEditors []RequestEditorFn
+}
+
+// ClientOption allows setting custom parameters during construction
+type ClientOption func(*Client) error
+
+// Creates a new Client, with reasonable defaults
+func NewClient(server string, opts ...ClientOption) (*Client, error) {
+	// create a client with sane default values
+	client := Client{
+		Server: server,
+	}
+	// mutate client and add all optional params
+	for _, o := range opts {
+		if err := o(&client); err != nil {
+			return nil, err
+		}
+	}
+	// ensure the server URL always has a trailing slash
+	if !strings.HasSuffix(client.Server, "/") {
+		client.Server += "/"
+	}
+	// create httpClient, if not already present
+	if client.Client == nil {
+		client.Client = &http.Client{}
+	}
+	return &client, nil
+}
+
+// WithHTTPClient allows overriding the default Doer, which is
+// automatically created using http.Client. This is useful for tests.
+func WithHTTPClient(doer HttpRequestDoer) ClientOption {
+	return func(c *Client) error {
+		c.Client = doer
+		return nil
+	}
+}
+
+// WithRequestEditorFn allows setting up a callback function, which will be
+// called right before sending the request. This can be used to mutate the request.
+func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
+	return func(c *Client) error {
+		c.RequestEditors = append(c.RequestEditors, fn)
+		return nil
+	}
+}
+
+// The interface specification for the client above.
+type ClientInterface interface {
+
+	// RegisterRouteWithBody Register immutable route authorization metadata
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/routes (the `RegisterRoute` operationId).
+	RegisterRouteWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RegisterRoute Register immutable route authorization metadata
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/routes (the `RegisterRoute` operationId).
+	RegisterRoute(ctx context.Context, body RegisterRouteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// IngestRouteLifecycleEventsWithBody Ingest ordered route lifecycle events
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/routes/lifecycle-events (the `IngestRouteLifecycleEvents` operationId).
+	IngestRouteLifecycleEventsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// IngestRouteLifecycleEvents Ingest ordered route lifecycle events
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/routes/lifecycle-events (the `IngestRouteLifecycleEvents` operationId).
+	IngestRouteLifecycleEvents(ctx context.Context, body IngestRouteLifecycleEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// IngestRouteUsageBucketReportsWithBody Ingest route usage bucket reports
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/routes/usage-bucket-reports (the `IngestRouteUsageBucketReports` operationId).
+	IngestRouteUsageBucketReportsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// IngestRouteUsageBucketReports Ingest route usage bucket reports
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/routes/usage-bucket-reports (the `IngestRouteUsageBucketReports` operationId).
+	IngestRouteUsageBucketReports(ctx context.Context, body IngestRouteUsageBucketReportsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+}
+
+// RegisterRouteWithBody Register immutable route authorization metadata
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/routes (the `RegisterRoute` operationId).
+func (c *Client) RegisterRouteWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRegisterRouteRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RegisterRoute Register immutable route authorization metadata
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/routes (the `RegisterRoute` operationId).
+func (c *Client) RegisterRoute(ctx context.Context, body RegisterRouteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRegisterRouteRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// IngestRouteLifecycleEventsWithBody Ingest ordered route lifecycle events
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/routes/lifecycle-events (the `IngestRouteLifecycleEvents` operationId).
+func (c *Client) IngestRouteLifecycleEventsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIngestRouteLifecycleEventsRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// IngestRouteLifecycleEvents Ingest ordered route lifecycle events
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/routes/lifecycle-events (the `IngestRouteLifecycleEvents` operationId).
+func (c *Client) IngestRouteLifecycleEvents(ctx context.Context, body IngestRouteLifecycleEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIngestRouteLifecycleEventsRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// IngestRouteUsageBucketReportsWithBody Ingest route usage bucket reports
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/routes/usage-bucket-reports (the `IngestRouteUsageBucketReports` operationId).
+func (c *Client) IngestRouteUsageBucketReportsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIngestRouteUsageBucketReportsRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// IngestRouteUsageBucketReports Ingest route usage bucket reports
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/routes/usage-bucket-reports (the `IngestRouteUsageBucketReports` operationId).
+func (c *Client) IngestRouteUsageBucketReports(ctx context.Context, body IngestRouteUsageBucketReportsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIngestRouteUsageBucketReportsRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// NewRegisterRouteRequest calls the generic RegisterRoute builder with application/json body
+func NewRegisterRouteRequest(server string, body RegisterRouteJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRegisterRouteRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewRegisterRouteRequestWithBody constructs an http.Request for the RegisterRoute method, with any body, and a specified content type
+func NewRegisterRouteRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/routes")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewIngestRouteLifecycleEventsRequest calls the generic IngestRouteLifecycleEvents builder with application/json body
+func NewIngestRouteLifecycleEventsRequest(server string, body IngestRouteLifecycleEventsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewIngestRouteLifecycleEventsRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewIngestRouteLifecycleEventsRequestWithBody constructs an http.Request for the IngestRouteLifecycleEvents method, with any body, and a specified content type
+func NewIngestRouteLifecycleEventsRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/routes/lifecycle-events")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewIngestRouteUsageBucketReportsRequest calls the generic IngestRouteUsageBucketReports builder with application/json body
+func NewIngestRouteUsageBucketReportsRequest(server string, body IngestRouteUsageBucketReportsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewIngestRouteUsageBucketReportsRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewIngestRouteUsageBucketReportsRequestWithBody constructs an http.Request for the IngestRouteUsageBucketReports method, with any body, and a specified content type
+func NewIngestRouteUsageBucketReportsRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/routes/usage-bucket-reports")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+func (c *Client) applyEditors(ctx context.Context, req *http.Request, additionalEditors []RequestEditorFn) error {
+	for _, r := range c.RequestEditors {
+		if err := r(ctx, req); err != nil {
+			return err
+		}
+	}
+	for _, r := range additionalEditors {
+		if err := r(ctx, req); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ClientWithResponses builds on ClientInterface to offer response payloads
+type ClientWithResponses struct {
+	ClientInterface
+}
+
+// NewClientWithResponses creates a new ClientWithResponses, which wraps
+// Client with return type handling
+func NewClientWithResponses(server string, opts ...ClientOption) (*ClientWithResponses, error) {
+	client, err := NewClient(server, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &ClientWithResponses{client}, nil
+}
+
+// WithBaseURL overrides the baseURL.
+func WithBaseURL(baseURL string) ClientOption {
+	return func(c *Client) error {
+		newBaseURL, err := url.Parse(baseURL)
+		if err != nil {
+			return err
+		}
+		c.Server = newBaseURL.String()
+		return nil
+	}
+}
+
+// ClientWithResponsesInterface is the interface specification for the client with responses above.
+type ClientWithResponsesInterface interface {
+
+	// RegisterRouteWithBodyWithResponse Register immutable route authorization metadata
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/routes (the `RegisterRoute` operationId).
+	RegisterRouteWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterRouteResponse, error)
+
+	// RegisterRouteWithResponse Register immutable route authorization metadata
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/routes (the `RegisterRoute` operationId).
+	RegisterRouteWithResponse(ctx context.Context, body RegisterRouteJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterRouteResponse, error)
+
+	// IngestRouteLifecycleEventsWithBodyWithResponse Ingest ordered route lifecycle events
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/routes/lifecycle-events (the `IngestRouteLifecycleEvents` operationId).
+	IngestRouteLifecycleEventsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IngestRouteLifecycleEventsResponse, error)
+
+	// IngestRouteLifecycleEventsWithResponse Ingest ordered route lifecycle events
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/routes/lifecycle-events (the `IngestRouteLifecycleEvents` operationId).
+	IngestRouteLifecycleEventsWithResponse(ctx context.Context, body IngestRouteLifecycleEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestRouteLifecycleEventsResponse, error)
+
+	// IngestRouteUsageBucketReportsWithBodyWithResponse Ingest route usage bucket reports
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/routes/usage-bucket-reports (the `IngestRouteUsageBucketReports` operationId).
+	IngestRouteUsageBucketReportsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IngestRouteUsageBucketReportsResponse, error)
+
+	// IngestRouteUsageBucketReportsWithResponse Ingest route usage bucket reports
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/routes/usage-bucket-reports (the `IngestRouteUsageBucketReports` operationId).
+	IngestRouteUsageBucketReportsWithResponse(ctx context.Context, body IngestRouteUsageBucketReportsJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestRouteUsageBucketReportsResponse, error)
+}
+
+type RegisterRouteResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Problem
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem
+	// ApplicationproblemJSON413 the response for an HTTP 413 `application/problem+json` response
+	ApplicationproblemJSON413 *Problem
+	// ApplicationproblemJSON415 the response for an HTTP 415 `application/problem+json` response
+	ApplicationproblemJSON415 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r RegisterRouteResponse) GetApplicationproblemJSON400() *Problem {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r RegisterRouteResponse) GetApplicationproblemJSON401() *Problem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r RegisterRouteResponse) GetApplicationproblemJSON409() *Problem {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON413 returns the response for an HTTP 413 `application/problem+json` response
+func (r RegisterRouteResponse) GetApplicationproblemJSON413() *Problem {
+	return r.ApplicationproblemJSON413
+}
+
+// GetApplicationproblemJSON415 returns the response for an HTTP 415 `application/problem+json` response
+func (r RegisterRouteResponse) GetApplicationproblemJSON415() *Problem {
+	return r.ApplicationproblemJSON415
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RegisterRouteResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RegisterRouteResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RegisterRouteResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RegisterRouteResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RegisterRouteResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type IngestRouteLifecycleEventsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *RouteLifecycleEventBatchResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Problem
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem
+	// ApplicationproblemJSON413 the response for an HTTP 413 `application/problem+json` response
+	ApplicationproblemJSON413 *Problem
+	// ApplicationproblemJSON415 the response for an HTTP 415 `application/problem+json` response
+	ApplicationproblemJSON415 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r IngestRouteLifecycleEventsResponse) GetJSON200() *RouteLifecycleEventBatchResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r IngestRouteLifecycleEventsResponse) GetApplicationproblemJSON400() *Problem {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r IngestRouteLifecycleEventsResponse) GetApplicationproblemJSON401() *Problem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r IngestRouteLifecycleEventsResponse) GetApplicationproblemJSON404() *Problem {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r IngestRouteLifecycleEventsResponse) GetApplicationproblemJSON409() *Problem {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON413 returns the response for an HTTP 413 `application/problem+json` response
+func (r IngestRouteLifecycleEventsResponse) GetApplicationproblemJSON413() *Problem {
+	return r.ApplicationproblemJSON413
+}
+
+// GetApplicationproblemJSON415 returns the response for an HTTP 415 `application/problem+json` response
+func (r IngestRouteLifecycleEventsResponse) GetApplicationproblemJSON415() *Problem {
+	return r.ApplicationproblemJSON415
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r IngestRouteLifecycleEventsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r IngestRouteLifecycleEventsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r IngestRouteLifecycleEventsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r IngestRouteLifecycleEventsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r IngestRouteLifecycleEventsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type IngestRouteUsageBucketReportsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *RouteUsageBucketReportBatchResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Problem
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem
+	// ApplicationproblemJSON413 the response for an HTTP 413 `application/problem+json` response
+	ApplicationproblemJSON413 *Problem
+	// ApplicationproblemJSON415 the response for an HTTP 415 `application/problem+json` response
+	ApplicationproblemJSON415 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r IngestRouteUsageBucketReportsResponse) GetJSON200() *RouteUsageBucketReportBatchResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r IngestRouteUsageBucketReportsResponse) GetApplicationproblemJSON400() *Problem {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r IngestRouteUsageBucketReportsResponse) GetApplicationproblemJSON401() *Problem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r IngestRouteUsageBucketReportsResponse) GetApplicationproblemJSON404() *Problem {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r IngestRouteUsageBucketReportsResponse) GetApplicationproblemJSON409() *Problem {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON413 returns the response for an HTTP 413 `application/problem+json` response
+func (r IngestRouteUsageBucketReportsResponse) GetApplicationproblemJSON413() *Problem {
+	return r.ApplicationproblemJSON413
+}
+
+// GetApplicationproblemJSON415 returns the response for an HTTP 415 `application/problem+json` response
+func (r IngestRouteUsageBucketReportsResponse) GetApplicationproblemJSON415() *Problem {
+	return r.ApplicationproblemJSON415
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r IngestRouteUsageBucketReportsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r IngestRouteUsageBucketReportsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r IngestRouteUsageBucketReportsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r IngestRouteUsageBucketReportsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r IngestRouteUsageBucketReportsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// RegisterRouteWithBodyWithResponse Register immutable route authorization metadata
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/routes (the `RegisterRoute` operationId).
+func (c *ClientWithResponses) RegisterRouteWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterRouteResponse, error) {
+	rsp, err := c.RegisterRouteWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRegisterRouteResponse(rsp)
+}
+
+// RegisterRouteWithResponse Register immutable route authorization metadata
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/routes (the `RegisterRoute` operationId).
+func (c *ClientWithResponses) RegisterRouteWithResponse(ctx context.Context, body RegisterRouteJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterRouteResponse, error) {
+	rsp, err := c.RegisterRoute(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRegisterRouteResponse(rsp)
+}
+
+// IngestRouteLifecycleEventsWithBodyWithResponse Ingest ordered route lifecycle events
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/routes/lifecycle-events (the `IngestRouteLifecycleEvents` operationId).
+func (c *ClientWithResponses) IngestRouteLifecycleEventsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IngestRouteLifecycleEventsResponse, error) {
+	rsp, err := c.IngestRouteLifecycleEventsWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIngestRouteLifecycleEventsResponse(rsp)
+}
+
+// IngestRouteLifecycleEventsWithResponse Ingest ordered route lifecycle events
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/routes/lifecycle-events (the `IngestRouteLifecycleEvents` operationId).
+func (c *ClientWithResponses) IngestRouteLifecycleEventsWithResponse(ctx context.Context, body IngestRouteLifecycleEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestRouteLifecycleEventsResponse, error) {
+	rsp, err := c.IngestRouteLifecycleEvents(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIngestRouteLifecycleEventsResponse(rsp)
+}
+
+// IngestRouteUsageBucketReportsWithBodyWithResponse Ingest route usage bucket reports
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/routes/usage-bucket-reports (the `IngestRouteUsageBucketReports` operationId).
+func (c *ClientWithResponses) IngestRouteUsageBucketReportsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IngestRouteUsageBucketReportsResponse, error) {
+	rsp, err := c.IngestRouteUsageBucketReportsWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIngestRouteUsageBucketReportsResponse(rsp)
+}
+
+// IngestRouteUsageBucketReportsWithResponse Ingest route usage bucket reports
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/routes/usage-bucket-reports (the `IngestRouteUsageBucketReports` operationId).
+func (c *ClientWithResponses) IngestRouteUsageBucketReportsWithResponse(ctx context.Context, body IngestRouteUsageBucketReportsJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestRouteUsageBucketReportsResponse, error) {
+	rsp, err := c.IngestRouteUsageBucketReports(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIngestRouteUsageBucketReportsResponse(rsp)
+}
+
+// ParseRegisterRouteResponse parses an HTTP response from a RegisterRouteWithResponse call
+func ParseRegisterRouteResponse(rsp *http.Response) (*RegisterRouteResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RegisterRouteResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON415 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseIngestRouteLifecycleEventsResponse parses an HTTP response from a IngestRouteLifecycleEventsWithResponse call
+func ParseIngestRouteLifecycleEventsResponse(rsp *http.Response) (*IngestRouteLifecycleEventsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &IngestRouteLifecycleEventsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest RouteLifecycleEventBatchResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON415 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseIngestRouteUsageBucketReportsResponse parses an HTTP response from a IngestRouteUsageBucketReportsWithResponse call
+func ParseIngestRouteUsageBucketReportsResponse(rsp *http.Response) (*IngestRouteUsageBucketReportsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &IngestRouteUsageBucketReportsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest RouteUsageBucketReportBatchResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON415 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}

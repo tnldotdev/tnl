@@ -3,9 +3,7 @@ package clientauth
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/base64"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -19,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/oidcauth"
+	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/serverclient"
 	"github.com/tnldotdev/tnl/pkg/protocol/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/protocol/serverv1"
@@ -27,7 +26,7 @@ import (
 const refreshSafetyMargin = 30 * time.Second
 
 type Config struct {
-	CoreEndpoint    string
+	ServerEndpoint  string
 	State           *clientstate.Database
 	AccessToken     string
 	HTTPClient      *http.Client
@@ -39,22 +38,22 @@ type Config struct {
 }
 
 type Client struct {
-	CoreEndpoint          string
+	ServerEndpoint        string
 	Kind                  clientstate.ControlSessionKind
-	CoreCapabilities      serverv1.Capabilities
+	ServerCapabilities    serverv1.Capabilities
 	AuthorityCapabilities *authorityv1.Capabilities
-	Core                  *serverclient.Client
+	Server                *serverclient.Client
 	Authority             *authorityclient.Client
 }
 
 type control struct {
-	coreEndpoint          string
+	serverEndpoint        string
 	kind                  clientstate.ControlSessionKind
 	controlEndpoint       string
-	coreCapabilities      serverv1.Capabilities
+	serverCapabilities    serverv1.Capabilities
 	authorityCapabilities *authorityv1.Capabilities
 	rawHTTP               *http.Client
-	rawCore               *serverclient.Client
+	rawServer             *serverclient.Client
 	rawAuthority          *authorityclient.Client
 }
 
@@ -62,7 +61,7 @@ func Authenticate(ctx context.Context, config Config) (*Client, error) {
 	if config.Diagnostics == nil {
 		return nil, errors.New("clientauth: diagnostics output is required")
 	}
-	resolved, err := resolveControl(ctx, config.CoreEndpoint, config.HTTPClient)
+	resolved, err := resolveControl(ctx, config.ServerEndpoint, config.HTTPClient)
 	if err != nil {
 		return nil, err
 	}
@@ -79,27 +78,27 @@ func Authenticate(ctx context.Context, config Config) (*Client, error) {
 		if config.State == nil {
 			return nil, errors.New("clientauth: client state is required")
 		}
-		source.store, err = config.State.Server(ctx, resolved.coreEndpoint)
+		source.store, err = config.State.Server(ctx, resolved.serverEndpoint)
 		if err != nil {
 			return nil, err
 		}
 		if _, err := source.accessToken(ctx, config.ForceLogin, ""); err != nil {
 			return nil, err
 		}
-		if err := config.State.SaveServer(ctx, resolved.coreEndpoint); err != nil {
+		if err := config.State.SaveServer(ctx, resolved.serverEndpoint); err != nil {
 			return nil, err
 		}
 	}
 
 	authenticatedHTTP := authenticatedClient(resolved.rawHTTP, source)
 	result := &Client{
-		CoreEndpoint: resolved.coreEndpoint, Kind: resolved.kind,
-		CoreCapabilities: resolved.coreCapabilities, AuthorityCapabilities: resolved.authorityCapabilities,
+		ServerEndpoint: resolved.serverEndpoint, Kind: resolved.kind,
+		ServerCapabilities: resolved.serverCapabilities, AuthorityCapabilities: resolved.authorityCapabilities,
 	}
-	if resolved.kind == clientstate.ControlSessionKindCore {
-		result.Core, err = serverclient.NewExternallyAuthenticated(resolved.coreEndpoint, authenticatedHTTP)
+	if resolved.kind == clientstate.ControlSessionKindServer {
+		result.Server, err = serverclient.NewExternallyAuthenticated(resolved.serverEndpoint, authenticatedHTTP)
 	} else {
-		result.Core = resolved.rawCore
+		result.Server = resolved.rawServer
 		result.Authority, err = authorityclient.New(resolved.controlEndpoint, authenticatedHTTP)
 	}
 	if err != nil {
@@ -109,14 +108,14 @@ func Authenticate(ctx context.Context, config Config) (*Client, error) {
 }
 
 func Logout(ctx context.Context, config Config) error {
-	resolved, err := resolveControl(ctx, config.CoreEndpoint, config.HTTPClient)
+	resolved, err := resolveControl(ctx, config.ServerEndpoint, config.HTTPClient)
 	if err != nil {
 		return err
 	}
 	if config.State == nil {
 		return errors.New("clientauth: client state is required")
 	}
-	store, err := config.State.Server(ctx, resolved.coreEndpoint)
+	store, err := config.State.Server(ctx, resolved.serverEndpoint)
 	if err != nil {
 		return err
 	}
@@ -133,7 +132,7 @@ func Logout(ctx context.Context, config Config) error {
 		return errors.New("no saved login")
 	}
 	if !sessionMatches(stored, resolved) {
-		return errors.New("saved login does not match the selected Core authentication authority")
+		return errors.New("saved login does not match the selected server authentication authority")
 	}
 	if err := revokeSession(ctx, resolved, stored, store); err != nil &&
 		!errors.Is(err, serverclient.ErrUnauthenticated) && !errors.Is(err, authorityclient.ErrUnauthenticated) {
@@ -142,38 +141,38 @@ func Logout(ctx context.Context, config Config) error {
 	return store.RemoveControlSession(ctx)
 }
 
-func resolveControl(ctx context.Context, coreEndpoint string, httpClient *http.Client) (control, error) {
-	coreEndpoint, err := clientstate.CanonicalServer(coreEndpoint)
+func resolveControl(ctx context.Context, serverEndpoint string, httpClient *http.Client) (control, error) {
+	serverEndpoint, err := clientstate.CanonicalServer(serverEndpoint)
 	if err != nil {
 		return control{}, err
 	}
 	if httpClient == nil {
 		httpClient = &http.Client{}
 	}
-	core, err := serverclient.New(coreEndpoint, httpClient, "")
+	server, err := serverclient.New(serverEndpoint, httpClient, "")
 	if err != nil {
 		return control{}, err
 	}
-	capabilities, err := core.Capabilities(ctx)
+	capabilities, err := server.Capabilities(ctx)
 	if err != nil {
-		return control{}, fmt.Errorf("read Core capabilities: %w", err)
+		return control{}, fmt.Errorf("read server capabilities: %w", err)
 	}
 	resolved := control{
-		coreEndpoint: coreEndpoint, kind: clientstate.ControlSessionKindCore, controlEndpoint: coreEndpoint,
-		coreCapabilities: capabilities, rawHTTP: httpClient, rawCore: core,
+		serverEndpoint: serverEndpoint, kind: clientstate.ControlSessionKindServer, controlEndpoint: serverEndpoint,
+		serverCapabilities: capabilities, rawHTTP: httpClient, rawServer: server,
 	}
 	if capabilities.AuthorizationAuthorityEndpoint == nil {
 		if capabilities.Authentication.Required != serverv1.True ||
 			authenticationMethodAvailable(capabilities, serverv1.Oidc) != (capabilities.Oidc != nil) ||
 			!hasHostnameAuthorization(capabilities, serverv1.LocalHostnames) {
-			return control{}, errors.New("clientauth: Core returned inconsistent local authentication capabilities")
+			return control{}, errors.New("clientauth: server returned inconsistent local authentication capabilities")
 		}
 		return resolved, nil
 	}
 	authorityEndpoint, err := clientstate.CanonicalServer(*capabilities.AuthorizationAuthorityEndpoint)
 	if err != nil || authorityEndpoint != *capabilities.AuthorizationAuthorityEndpoint ||
 		!hasHostnameAuthorization(capabilities, serverv1.SignedAuthorization) {
-		return control{}, errors.New("clientauth: Core returned an invalid authorization authority endpoint")
+		return control{}, errors.New("clientauth: server returned an invalid authorization authority endpoint")
 	}
 	authority, err := authorityclient.New(authorityEndpoint, httpClient)
 	if err != nil {
@@ -217,7 +216,7 @@ func (s *tokenSource) accessToken(ctx context.Context, force bool, usedToken str
 		return "", err
 	}
 	if found && !sessionMatches(stored, s.control) {
-		return "", errors.New("saved login does not match the selected Core authentication authority")
+		return "", errors.New("saved login does not match the selected server authentication authority")
 	}
 	now := time.Now()
 	if found && !s.config.ForceLogin && (!force || usedToken != stored.AccessToken) &&
@@ -286,35 +285,34 @@ func (s *tokenSource) login(ctx context.Context) (clientstate.ControlSession, er
 		}, nil
 	}
 
-	capabilities := s.control.coreCapabilities
+	capabilities := s.control.serverCapabilities
 	useOIDC := authenticationMethodAvailable(capabilities, serverv1.Oidc) && !s.config.ForceLoginToken
 	if useOIDC {
 		if capabilities.Oidc == nil {
-			return clientstate.ControlSession{}, errors.New("clientauth: Core returned inconsistent OIDC capabilities")
+			return clientstate.ControlSession{}, errors.New("clientauth: server returned inconsistent OIDC capabilities")
 		}
 		result, err := oidcauth.Login(ctx, oidcauth.Config{
 			Issuer: capabilities.Oidc.Issuer, ClientID: capabilities.Oidc.ClientId,
 			LoginFlow: string(capabilities.Oidc.LoginFlow), Scopes: []string{"openid"},
-			CoreEndpoint: s.control.coreEndpoint,
-			HTTPClient:   s.control.rawHTTP, OpenURL: s.config.OpenURL,
+			HTTPClient: s.control.rawHTTP, OpenURL: s.config.OpenURL,
 		}, s.config.Diagnostics)
 		if err != nil {
 			return clientstate.ControlSession{}, err
 		}
-		issued, err := s.control.rawCore.ExchangeOIDC(ctx, result.IDToken)
+		issued, err := s.control.rawServer.ExchangeOIDC(ctx, result.IDToken)
 		if err != nil {
 			return clientstate.ControlSession{}, fmt.Errorf("exchange OIDC login: %w", err)
 		}
-		stored, err := coreSession(issued, "", time.Time{})
+		stored, err := serverSession(issued, "", time.Time{})
 		if err != nil {
 			return clientstate.ControlSession{}, err
 		}
-		stored.ControlEndpoint = s.control.coreEndpoint
+		stored.ControlEndpoint = s.control.serverEndpoint
 		stored.Issuer, stored.ClientID = result.Issuer, result.ClientID
 		return stored, nil
 	}
 	if !authenticationMethodAvailable(capabilities, serverv1.LoginToken) {
-		return clientstate.ControlSession{}, errors.New("clientauth: Core does not support an available interactive authentication method")
+		return clientstate.ControlSession{}, errors.New("clientauth: server does not support an available interactive authentication method")
 	}
 	if s.config.LoginToken == nil {
 		return clientstate.ControlSession{}, errors.New("login-token authentication requires an interactive terminal")
@@ -323,15 +321,15 @@ func (s *tokenSource) login(ctx context.Context) (clientstate.ControlSession, er
 	if err != nil {
 		return clientstate.ControlSession{}, err
 	}
-	issued, err := s.control.rawCore.Exchange(ctx, loginToken)
+	issued, err := s.control.rawServer.Exchange(ctx, loginToken)
 	if err != nil {
 		return clientstate.ControlSession{}, fmt.Errorf("exchange login token: %w", err)
 	}
-	stored, err := coreSession(issued, "", time.Time{})
+	stored, err := serverSession(issued, "", time.Time{})
 	if err != nil {
 		return clientstate.ControlSession{}, err
 	}
-	stored.ControlEndpoint, stored.Issuer = s.control.coreEndpoint, s.control.coreEndpoint
+	stored.ControlEndpoint, stored.Issuer = s.control.serverEndpoint, s.control.serverEndpoint
 	return stored, nil
 }
 
@@ -340,12 +338,12 @@ func refreshSession(
 	resolved control,
 	stored clientstate.ControlSession,
 ) (clientstate.ControlSession, error) {
-	if resolved.kind == clientstate.ControlSessionKindCore {
-		issued, err := resolved.rawCore.Refresh(ctx, credentials.RefreshToken(stored.RefreshToken))
+	if resolved.kind == clientstate.ControlSessionKindServer {
+		issued, err := resolved.rawServer.Refresh(ctx, credentials.RefreshToken(stored.RefreshToken))
 		if err != nil {
 			return clientstate.ControlSession{}, err
 		}
-		refreshed, err := coreSession(issued, stored.SessionID, stored.RefreshExpiresAt)
+		refreshed, err := serverSession(issued, stored.SessionID, stored.RefreshExpiresAt)
 		if err != nil {
 			return clientstate.ControlSession{}, err
 		}
@@ -382,7 +380,7 @@ func revokeSession(
 	if stored.Kind == clientstate.ControlSessionKindAuthorizationAuthority {
 		return resolved.rawAuthority.RevokeOAuth(ctx, stored.Issuer, stored.ClientID, stored.RefreshToken)
 	}
-	err := resolved.rawCore.LogoutWithAccessToken(ctx, credentials.AccessToken(stored.AccessToken))
+	err := resolved.rawServer.LogoutWithAccessToken(ctx, credentials.AccessToken(stored.AccessToken))
 	if !errors.Is(err, serverclient.ErrUnauthenticated) || !refreshUsable(stored, time.Now()) {
 		return err
 	}
@@ -395,10 +393,10 @@ func revokeSession(
 			return err
 		}
 	}
-	return resolved.rawCore.LogoutWithAccessToken(ctx, credentials.AccessToken(refreshed.AccessToken))
+	return resolved.rawServer.LogoutWithAccessToken(ctx, credentials.AccessToken(refreshed.AccessToken))
 }
 
-func coreSession(
+func serverSession(
 	response serverv1.ControlSessionResponse,
 	expectedSessionID string,
 	expectedRefreshExpiry time.Time,
@@ -407,7 +405,7 @@ func coreSession(
 	if err != nil {
 		return clientstate.ControlSession{}, err
 	}
-	stored.Kind = clientstate.ControlSessionKindCore
+	stored.Kind = clientstate.ControlSessionKindServer
 	return stored, nil
 }
 
@@ -508,7 +506,7 @@ func qualifyingUnauthorized(response *http.Response) bool {
 }
 
 func validateExplicitToken(kind clientstate.ControlSessionKind, token string) error {
-	if kind == clientstate.ControlSessionKindCore {
+	if kind == clientstate.ControlSessionKindServer {
 		if _, _, err := credentials.ParseAccessToken(credentials.AccessToken(token)); err != nil {
 			return errors.New("invalid access token")
 		}
@@ -521,7 +519,7 @@ func validateExplicitToken(kind clientstate.ControlSessionKind, token string) er
 }
 
 func validateAuthorityCapabilities(
-	core serverv1.Capabilities,
+	server serverv1.Capabilities,
 	authority authorityv1.Capabilities,
 ) error {
 	publicKey, keyErr := base64.RawURLEncoding.DecodeString(authority.AuthorizationKey.PublicKey)
@@ -530,13 +528,13 @@ func validateAuthorityCapabilities(
 		authority.Oidc.Issuer == "" || authority.AuthorizationKey.Alg != authorityv1.AuthorizationKeyAlgEdDSA ||
 		authority.AuthorizationKey.Kid == "" || len(authority.AuthorizationKey.Kid) > 128 || keyErr != nil ||
 		len(publicKey) != 32 || base64.RawURLEncoding.EncodeToString(publicKey) != authority.AuthorizationKey.PublicKey ||
-		authority.AuthorizationIssuer == "" || authority.HostnameSuffix != core.HostnameSuffix ||
-		int(authority.HostnamePolicy.MaximumSubdomainDepth) != core.MaximumSubdomainDepth ||
-		bool(authority.HostnamePolicy.TemporaryNameSupport) != core.TemporaryNameSupport ||
-		bool(authority.HostnamePolicy.PersistentBaseSupport) != core.PersistentBaseSupport ||
-		bool(authority.HostnamePolicy.CustomDomainSupport) != core.CustomDomainSupport ||
+		authority.AuthorizationIssuer == "" || authority.HostnameSuffix != server.HostnameSuffix ||
+		int(authority.HostnamePolicy.MaximumSubdomainDepth) != server.MaximumSubdomainDepth ||
+		bool(authority.HostnamePolicy.TemporaryNameSupport) != server.TemporaryNameSupport ||
+		bool(authority.HostnamePolicy.PersistentBaseSupport) != server.PersistentBaseSupport ||
+		bool(authority.HostnamePolicy.CustomDomainSupport) != server.CustomDomainSupport ||
 		!validAuthorityScopes(authority.Oidc.Scopes) {
-		return errors.New("authorization authority capabilities do not match Core")
+		return errors.New("authorization authority capabilities do not match server")
 	}
 	return nil
 }
@@ -588,9 +586,9 @@ func authorityScopes(values []authorityv1.OIDCCapabilitiesScopes) []string {
 }
 
 func randomSessionID() (string, error) {
-	var material [16]byte
-	if _, err := rand.Read(material[:]); err != nil {
+	id, err := opaqueid.New("oauth_session_")
+	if err != nil {
 		return "", fmt.Errorf("clientauth: generate OAuth session ID: %w", err)
 	}
-	return "oauth_session_" + hex.EncodeToString(material[:]), nil
+	return id, nil
 }

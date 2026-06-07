@@ -2,9 +2,7 @@ package clientstate
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/url"
@@ -16,6 +14,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientstate/clientstatedb"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/opaqueid"
 )
 
 const tunnelSnapshotSchemaVersion = 1
@@ -87,7 +86,7 @@ type TunnelInfo struct {
 	ProcessID      int           `json:"process_id"`
 	Server         string        `json:"server"`
 	RouteID        string        `json:"route_id,omitempty"`
-	SessionVersion uint64        `json:"session_version,omitempty"`
+	RouteVersion   uint64        `json:"route_version,omitempty"`
 	Hostname       string        `json:"hostname,omitempty"`
 	PublicURL      string        `json:"public_url,omitempty"`
 	Target         string        `json:"target,omitempty"`
@@ -171,18 +170,18 @@ func (t *Tunnel) SetRoute(ctx context.Context, routeID, hostname string) error {
 	return tunnelUpdateResult(rows, err)
 }
 
-func (t *Tunnel) SetProvisioning(ctx context.Context, version uint64) error {
-	versionValue, err := databaseVersion(version)
-	if err != nil || version == 0 {
-		return errors.New("clientstate: invalid tunnel session version")
+func (t *Tunnel) SetProvisioning(ctx context.Context, routeVersion uint64) error {
+	versionValue, err := databaseVersion(routeVersion)
+	if err != nil || routeVersion == 0 {
+		return errors.New("clientstate: invalid tunnel route version")
 	}
 	rows, err := t.database.queries.SetTunnelProvisioning(ctx, clientstatedb.SetTunnelProvisioningParams{
-		SessionVersion: versionValue, Now: t.database.now().UTC().UnixNano(), ID: t.id,
+		RouteVersion: versionValue, Now: t.database.now().UTC().UnixNano(), ID: t.id,
 	})
 	return tunnelUpdateResult(rows, err)
 }
 
-func (t *Tunnel) SetReady(ctx context.Context, publicURL string, version uint64) error {
+func (t *Tunnel) SetReady(ctx context.Context, publicURL string, routeVersion uint64) error {
 	parsed, err := url.Parse(publicURL)
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Port() != "" ||
 		parsed.Path != "" && parsed.Path != "/" || parsed.RawQuery != "" || parsed.Fragment != "" {
@@ -192,12 +191,12 @@ func (t *Tunnel) SetReady(ctx context.Context, publicURL string, version uint64)
 	if err != nil || hostname != parsed.Hostname() {
 		return errors.New("clientstate: invalid tunnel public URL")
 	}
-	versionValue, err := databaseVersion(version)
-	if err != nil || version == 0 {
-		return errors.New("clientstate: invalid tunnel session version")
+	versionValue, err := databaseVersion(routeVersion)
+	if err != nil || routeVersion == 0 {
+		return errors.New("clientstate: invalid tunnel route version")
 	}
 	rows, err := t.database.queries.SetTunnelReady(ctx, clientstatedb.SetTunnelReadyParams{
-		Hostname: hostname, SessionVersion: versionValue, Now: t.database.now().UTC().UnixNano(), ID: t.id,
+		Hostname: hostname, RouteVersion: versionValue, Now: t.database.now().UTC().UnixNano(), ID: t.id,
 	})
 	return tunnelUpdateResult(rows, err)
 }
@@ -257,7 +256,7 @@ func (d *Database) Snapshot(ctx context.Context) (TunnelSnapshot, error) {
 		}
 		info := TunnelInfo{
 			ID: row.ID, Command: TunnelCommand(row.Command), State: state, ProcessID: int(row.ProcessID),
-			Server: row.ServerOrigin, RouteID: row.RouteID, SessionVersion: uint64(row.SessionVersion),
+			Server: row.ServerOrigin, RouteID: row.RouteID, RouteVersion: uint64(row.RouteVersion),
 			Hostname: row.Hostname, Target: row.Target, Framework: row.Framework,
 			StartedAt: unixNanoTime(row.StartedAt), UpdatedAt: unixNanoTime(row.UpdatedAt),
 			HeartbeatAt: unixNanoTime(row.HeartbeatAt), LeaseExpiresAt: unixNanoTime(row.LeaseExpiresAt),
@@ -305,11 +304,11 @@ func (t *Tunnel) heartbeat(ctx context.Context) {
 }
 
 func newTunnelID() (string, error) {
-	var material [16]byte
-	if _, err := rand.Read(material[:]); err != nil {
+	id, err := opaqueid.New("tunnel_")
+	if err != nil {
 		return "", fmt.Errorf("clientstate: generate tunnel ID: %w", err)
 	}
-	return "tunnel_" + hex.EncodeToString(material[:]), nil
+	return id, nil
 }
 
 func tunnelUpdateResult(rows int64, err error) error {

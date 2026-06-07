@@ -300,7 +300,7 @@ func (s *Service) Installed(ctx context.Context, id, routeID string, version uin
 	if err != nil {
 		return Issuance{}, err
 	}
-	if issuance.RouteID != routeID || issuance.Version != version || len(issuance.CertificatePEM) == 0 ||
+	if issuance.RouteID != routeID || issuance.RouteVersion != version || len(issuance.CertificatePEM) == 0 ||
 		issuance.Status != StatusWaitingForInstall && issuance.Status != StatusInstalled || issuance.ChallengeRemoved.IsZero() {
 		return Issuance{}, ErrInvalidStatus
 	}
@@ -685,7 +685,7 @@ func (s *Service) routeLock(routeID string) *sync.Mutex {
 }
 
 func (s *Service) ensureCurrent(ctx context.Context, issuance Issuance) error {
-	hostname, err := s.store.routeHostname(ctx, issuance.RouteID, issuance.Version)
+	hostname, err := s.store.routeHostname(ctx, issuance.RouteID, issuance.RouteVersion)
 	if err != nil {
 		return err
 	}

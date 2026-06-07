@@ -22,7 +22,7 @@ func TestVerifierStrictlyBindsAuthorization(t *testing.T) {
 	ipHash := Digest(sha256.Sum256([]byte("policy")))
 	payload := authorizationPayload{
 		Version: 1, KeyID: "key-1", Algorithm: Algorithm, Operation: OperationRouteSessionCreate,
-		Issuer: "https://authority.example", Receiver: "https://core.example",
+		Issuer: "https://authority.example", Receiver: "https://server.example",
 		AuthorizationID: "authorization_0123456789abcdef0123456789abcdef",
 		Hostname:        "route.example", RouteID: stringPointer("route_0123456789abcdef0123456789abcdef"),
 		RouteVersion: uint64Pointer(2), Revision: 1, IssuedAt: now.Add(-time.Minute),
@@ -134,7 +134,7 @@ func TestCanonicalRequestAndIPPolicyHashes(t *testing.T) {
 	}
 	request := []byte(`{"allowed_ip_prefixes":["192.0.2.0/24","2001:db8::/64"],"hostname":"route.example","local_target":"http://127.0.0.1:3000","route_token":"token"}`)
 	wantRequestHash := Digest(sha256.Sum256(request))
-	requestHash, err := CanonicalRequestHash(CoreRequest{
+	requestHash, err := CanonicalRequestHash(OperationRequest{
 		Operation: OperationRouteCreate, Hostname: "route.example", LocalTarget: "http://127.0.0.1:3000",
 		RouteToken: "token", AllowedIPPrefixes: prefixes,
 	})

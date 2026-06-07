@@ -2,6 +2,7 @@
 package: serverv1
 output: openapi.gen.go
 generate:
+  client: true
   models: true
 output-options:
   skip-prune: true

@@ -47,30 +47,30 @@ const (
 	HostnameSourceGenerated = "generated"
 )
 
-func (s *Store) AddManagedHostname(
+func (s *Store) ClaimManagedHostname(
 	ctx context.Context,
-	identityID, label, requestKey string,
+	identityID, label, idempotencyKey string,
 ) (hostname Hostname, err error) {
-	return s.AddHostname(ctx, identityID, HostnameKindManaged, label, requestKey)
+	return s.ClaimHostname(ctx, identityID, HostnameKindManaged, label, idempotencyKey)
 }
 
-func (s *Store) AddHostname(
+func (s *Store) ClaimHostname(
 	ctx context.Context,
-	identityID, kind, name, requestKey string,
+	identityID, kind, label, idempotencyKey string,
 ) (hostname Hostname, err error) {
 	started := time.Now()
-	defer func() { s.observe(StoreOperationHostname, started, err) }()
-	if strings.TrimSpace(identityID) == "" || strings.TrimSpace(requestKey) != requestKey ||
-		requestKey == "" || len(requestKey) > 128 {
+	defer func() { s.observe(StoreOperationHostnameClaim, started, err) }()
+	if strings.TrimSpace(identityID) == "" || strings.TrimSpace(idempotencyKey) != idempotencyKey ||
+		idempotencyKey == "" || len(idempotencyKey) > 128 {
 		return Hostname{}, ErrInvalidArgument
 	}
 	if kind != HostnameKindManaged && kind != HostnameKindTemporary {
 		return Hostname{}, ErrInvalidArgument
 	}
-	if kind == HostnameKindTemporary && name != "" {
+	if kind == HostnameKindTemporary && label != "" {
 		return Hostname{}, ErrInvalidArgument
 	}
-	canonicalLabel, err := s.canonicalBaseName(name)
+	canonicalLabel, err := s.canonicalClaimLabel(label)
 	if err != nil {
 		return Hostname{}, err
 	}
@@ -82,8 +82,8 @@ func (s *Store) AddHostname(
 	defer tx.Rollback()
 	queries := s.queries.WithTx(tx)
 
-	// Resolve request-key replays before quota checks or allocation.
-	hostname, requestedLabel, requestedKind, found, err := readHostnameRequest(ctx, queries, identityID, requestKey)
+	// Resolve idempotency-key replays before quota checks or allocation.
+	hostname, requestedLabel, requestedKind, found, err := readHostnameRequest(ctx, queries, identityID, idempotencyKey)
 	if err != nil {
 		return Hostname{}, err
 	}
@@ -94,7 +94,7 @@ func (s *Store) AddHostname(
 		return hostname, nil
 	}
 	if canonicalLabel != "" {
-		hostname, err = readHostnameByName(ctx, queries, canonicalLabel+"."+s.hostnameSuffix)
+		hostname, err = readHostnameByHostname(ctx, queries, canonicalLabel+"."+s.hostnameSuffix)
 		if err == nil {
 			if hostname.IdentityID != identityID || hostname.Kind != HostnameKindManaged {
 				return Hostname{}, ErrNameUnavailable
@@ -115,7 +115,7 @@ func (s *Store) AddHostname(
 			} else if hostname.Status != HostnameStatusActive {
 				return Hostname{}, ErrNameUnavailable
 			}
-			if err := s.recordHostnameRequest(ctx, queries, identityID, requestKey, canonicalLabel, kind, hostname.ID, now); err != nil {
+			if err := s.recordHostnameRequest(ctx, queries, identityID, idempotencyKey, canonicalLabel, kind, hostname.ID, now); err != nil {
 				return Hostname{}, err
 			}
 			if err := tx.Commit(); err != nil {
@@ -157,7 +157,7 @@ func (s *Store) AddHostname(
 			return Hostname{}, err
 		}
 		if !found {
-			hostname, err = readHostnameByName(ctx, queries, canonicalLabel+"."+s.hostnameSuffix)
+			hostname, err = readHostnameByHostname(ctx, queries, canonicalLabel+"."+s.hostnameSuffix)
 			if err != nil {
 				return Hostname{}, err
 			}
@@ -166,7 +166,7 @@ func (s *Store) AddHostname(
 			}
 		}
 	}
-	if err := s.recordHostnameRequest(ctx, queries, identityID, requestKey, canonicalLabel, kind, hostname.ID, now); err != nil {
+	if err := s.recordHostnameRequest(ctx, queries, identityID, idempotencyKey, canonicalLabel, kind, hostname.ID, now); err != nil {
 		return Hostname{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -186,17 +186,17 @@ func (s *Store) checkActiveHostnameQuota(ctx context.Context, queries *statedb.Q
 	return nil
 }
 
-// FriendlyNameCapacity returns total allocator capacity and a conservative
-// remaining count. Every managed base is counted because a custom label may
-// also be a member of the friendly corpus.
-func (s *Store) FriendlyNameCapacity(ctx context.Context) (int64, int64, error) {
-	manifest, err := naming.FriendlyCorpusManifest()
+// GeneratedHostnameCapacity returns total allocator capacity and a conservative
+// remaining count. Every managed or temporary hostname is counted because a
+// custom label may also be a member of the generated hostname namespace.
+func (s *Store) GeneratedHostnameCapacity(ctx context.Context) (int64, int64, error) {
+	manifest, err := naming.GeneratedHostnameCorpusManifest()
 	if err != nil {
 		return 0, 0, err
 	}
-	consumed, err := s.queries.CountFriendlyNameCapacityConsumers(ctx)
+	consumed, err := s.queries.CountGeneratedHostnameCapacityConsumers(ctx)
 	if err != nil {
-		return 0, 0, fmt.Errorf("routes: count friendly name capacity: %w", err)
+		return 0, 0, fmt.Errorf("routes: count generated hostname capacity: %w", err)
 	}
 	remaining := manifest.RemainingNamespaceCapacity - consumed
 	if remaining < 0 {
@@ -244,8 +244,8 @@ func (s *Store) ListHostnamesPage(
 	return hostnames[:hostnamePageSize], next, nil
 }
 
-func (s *Store) ActiveRouteIDForHostname(ctx context.Context, identityID, hostnameID string) (string, error) {
-	routeIDs, err := s.ActiveRouteIDsForHostname(ctx, identityID, hostnameID)
+func (s *Store) EnabledRouteIDForHostname(ctx context.Context, identityID, hostnameID string) (string, error) {
+	routeIDs, err := s.EnabledRouteIDsForHostname(ctx, identityID, hostnameID)
 	if err != nil {
 		return "", err
 	}
@@ -255,8 +255,8 @@ func (s *Store) ActiveRouteIDForHostname(ctx context.Context, identityID, hostna
 	return routeIDs[0], nil
 }
 
-func (s *Store) ActiveRouteIDsForHostname(ctx context.Context, identityID, hostnameID string) ([]string, error) {
-	routes, err := s.queries.ListActiveRoutesForHostname(ctx, statedb.ListActiveRoutesForHostnameParams{
+func (s *Store) EnabledRouteIDsForHostname(ctx context.Context, identityID, hostnameID string) ([]string, error) {
+	routes, err := s.queries.ListEnabledRoutesForHostname(ctx, statedb.ListEnabledRoutesForHostnameParams{
 		HostnameID: hostnameID,
 		IdentityID: identityID,
 	})
@@ -275,13 +275,13 @@ func (s *Store) ActiveRouteIDsForHostname(ctx context.Context, identityID, hostn
 	return result, nil
 }
 
-func (s *Store) RemoveHostname(ctx context.Context, identityID, hostnameID string) (err error) {
+func (s *Store) ReleaseHostname(ctx context.Context, identityID, hostnameID string) (err error) {
 	started := time.Now()
-	defer func() { s.observe(StoreOperationHostnameRemove, started, err) }()
+	defer func() { s.observe(StoreOperationHostnameRelease, started, err) }()
 	now := time.Unix(0, s.now().UnixNano()).UTC()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("routes: begin hostname removal: %w", err)
+		return fmt.Errorf("routes: begin hostname release: %w", err)
 	}
 	defer tx.Rollback()
 	queries := s.queries.WithTx(tx)
@@ -290,7 +290,7 @@ func (s *Store) RemoveHostname(ctx context.Context, identityID, hostnameID strin
 		return ErrNotFound
 	}
 	if err != nil {
-		return fmt.Errorf("routes: read removed hostname: %w", err)
+		return fmt.Errorf("routes: read released hostname: %w", err)
 	}
 	var count int64
 	switch hostname.Kind {
@@ -306,7 +306,7 @@ func (s *Store) RemoveHostname(ctx context.Context, identityID, hostnameID strin
 		return ErrNotFound
 	}
 	if err != nil {
-		return fmt.Errorf("routes: remove hostname: %w", err)
+		return fmt.Errorf("routes: release hostname: %w", err)
 	}
 	if err := requireCount(count, ErrNotFound); err != nil {
 		return err
@@ -318,11 +318,11 @@ func (s *Store) RemoveHostname(ctx context.Context, identityID, hostnameID strin
 		if err := queries.InvalidateDomainVerificationsForHostname(ctx, statedb.InvalidateDomainVerificationsForHostnameParams{
 			InvalidatedAt: sql.NullInt64{Int64: now.UnixNano(), Valid: true}, Domain: hostname.Hostname,
 		}); err != nil {
-			return fmt.Errorf("routes: invalidate removed domain verifications: %w", err)
+			return fmt.Errorf("routes: invalidate released domain verifications: %w", err)
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("routes: commit hostname removal: %w", err)
+		return fmt.Errorf("routes: commit hostname release: %w", err)
 	}
 	return nil
 }
@@ -334,7 +334,7 @@ func (s *Store) stopHostnameRoutes(
 	now time.Time,
 ) ([]string, error) {
 	dbHostnameID := sql.NullString{String: hostnameID, Valid: true}
-	routes, err := queries.ListActiveHostnameRouteVersions(ctx, dbHostnameID)
+	routes, err := queries.ListEnabledHostnameRouteVersions(ctx, dbHostnameID)
 	if err != nil {
 		return nil, fmt.Errorf("routes: list stopped routes: %w", err)
 	}
@@ -350,11 +350,11 @@ func (s *Store) stopHostnameRoutes(
 	result := make([]string, 0, len(routes))
 	for _, route := range routes {
 		result = append(result, route.ID)
-		version := uint64(route.Version)
-		if err := s.recordLifecycle(ctx, queries, route.ID, version, now, LifecycleDisconnected); err != nil {
+		routeVersion := uint64(route.RouteVersion)
+		if err := s.recordLifecycle(ctx, queries, route.ID, routeVersion, now, LifecycleDisconnected); err != nil {
 			return nil, err
 		}
-		if err := s.recordLifecycle(ctx, queries, route.ID, version, now, LifecycleDeleted); err != nil {
+		if err := s.recordLifecycle(ctx, queries, route.ID, routeVersion, now, LifecycleDeleted); err != nil {
 			return nil, err
 		}
 	}
@@ -411,7 +411,7 @@ func (s *Store) insertHostname(
 func (s *Store) recordHostnameRequest(
 	ctx context.Context,
 	queries *statedb.Queries,
-	identityID, requestKey, requestedLabel, requestedKind, hostnameID string,
+	identityID, idempotencyKey, requestedLabel, requestedKind, hostnameID string,
 	now time.Time,
 ) error {
 	requests, err := queries.CountHostnameRequests(ctx, identityID)
@@ -423,7 +423,7 @@ func (s *Store) recordHostnameRequest(
 	}
 	if err := queries.InsertHostnameRequest(ctx, statedb.InsertHostnameRequestParams{
 		IdentityID:     identityID,
-		RequestKey:     requestKey,
+		RequestKey:     idempotencyKey,
 		RequestedLabel: requestedLabel,
 		RequestedKind:  requestedKind,
 		HostnameID:     hostnameID,
@@ -448,11 +448,11 @@ func (s *Store) canonicalLabel(label string) (string, error) {
 	return canonical, nil
 }
 
-func (s *Store) canonicalBaseName(name string) (string, error) {
-	if name == "" {
+func (s *Store) canonicalClaimLabel(label string) (string, error) {
+	if label == "" {
 		return "", nil
 	}
-	canonical, err := naming.CanonicalizeHostname(name)
+	canonical, err := naming.CanonicalizeHostname(label)
 	if err != nil {
 		return "", ErrInvalidArgument
 	}
@@ -479,7 +479,7 @@ func (s *Store) canonicalRouteHostname(hostname string) (string, error) {
 }
 
 func randomHostnameLabel() (string, error) {
-	return naming.FriendlyName()
+	return naming.GeneratedHostnameLabel()
 }
 
 func hostnameFromDB(hostname statedb.Hostname) Hostname {
@@ -505,7 +505,7 @@ func hostnameFromDB(hostname statedb.Hostname) Hostname {
 	return result
 }
 
-func readHostnameByName(ctx context.Context, queries *statedb.Queries, hostname string) (Hostname, error) {
+func readHostnameByHostname(ctx context.Context, queries *statedb.Queries, hostname string) (Hostname, error) {
 	stored, err := queries.GetHostnameByHostname(ctx, hostname)
 	if err != nil {
 		return Hostname{}, fmt.Errorf("routes: scan hostname: %w", err)
@@ -516,11 +516,11 @@ func readHostnameByName(ctx context.Context, queries *statedb.Queries, hostname 
 func readHostnameRequest(
 	ctx context.Context,
 	queries *statedb.Queries,
-	identityID, requestKey string,
+	identityID, idempotencyKey string,
 ) (Hostname, string, string, bool, error) {
 	request, err := queries.GetHostnameRequest(ctx, statedb.GetHostnameRequestParams{
 		IdentityID: identityID,
-		RequestKey: requestKey,
+		RequestKey: idempotencyKey,
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return Hostname{}, "", "", false, nil

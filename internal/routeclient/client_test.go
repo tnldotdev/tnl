@@ -20,7 +20,7 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/serverv1"
 )
 
-func TestSignedClientBindsCoreRequestsAndRenewsHeartbeatAuthorization(t *testing.T) {
+func TestSignedClientBindsServerRequestsAndRenewsHeartbeatAuthorization(t *testing.T) {
 	routeToken, _, _, err := credentials.NewRouteToken()
 	if err != nil {
 		t.Fatal(err)
@@ -32,8 +32,8 @@ func TestSignedClientBindsCoreRequestsAndRenewsHeartbeatAuthorization(t *testing
 	const routeID = "route_0123456789abcdef0123456789abcdef"
 	var mu sync.Mutex
 	var authorityRequests []authorityv1.IssueAuthorizationRequest
-	var coreAuthorizations []string
-	core := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+	var serverAuthorizations []string
+	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
 		switch request.URL.Path {
 		case "/v1/routes":
@@ -45,7 +45,7 @@ func TestSignedClientBindsCoreRequestsAndRenewsHeartbeatAuthorization(t *testing
 				t.Errorf("create prefixes = %v", body.AllowedIpPrefixes)
 			}
 			mu.Lock()
-			coreAuthorizations = append(coreAuthorizations, value(body.SignedAuthorization))
+			serverAuthorizations = append(serverAuthorizations, value(body.SignedAuthorization))
 			mu.Unlock()
 			_ = json.NewEncoder(response).Encode(setup(routeID, body.Hostname, 1, sessionToken))
 		case "/v1/routes/" + routeID + "/sessions":
@@ -57,7 +57,7 @@ func TestSignedClientBindsCoreRequestsAndRenewsHeartbeatAuthorization(t *testing
 				t.Errorf("session prefixes = %v", body.AllowedIpPrefixes)
 			}
 			mu.Lock()
-			coreAuthorizations = append(coreAuthorizations, value(body.SignedAuthorization))
+			serverAuthorizations = append(serverAuthorizations, value(body.SignedAuthorization))
 			mu.Unlock()
 			_ = json.NewEncoder(response).Encode(setup(routeID, "demo.example", 2, sessionToken))
 		case "/v1/routes/" + routeID + "/heartbeat":
@@ -69,7 +69,7 @@ func TestSignedClientBindsCoreRequestsAndRenewsHeartbeatAuthorization(t *testing
 				t.Error(err)
 			}
 			mu.Lock()
-			coreAuthorizations = append(coreAuthorizations, value(body.SignedAuthorization))
+			serverAuthorizations = append(serverAuthorizations, value(body.SignedAuthorization))
 			mu.Unlock()
 			_ = json.NewEncoder(response).Encode(serverv1.HeartbeatResponse{ExpiresAt: time.Now().Add(time.Minute)})
 		case "/v1/routes/" + routeID:
@@ -81,7 +81,7 @@ func TestSignedClientBindsCoreRequestsAndRenewsHeartbeatAuthorization(t *testing
 			http.NotFound(response, request)
 		}
 	}))
-	defer core.Close()
+	defer server.Close()
 
 	var authority *httptest.Server
 	authority = httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -111,7 +111,7 @@ func TestSignedClientBindsCoreRequestsAndRenewsHeartbeatAuthorization(t *testing
 			Claims: authorityv1.AuthorizationClaims{
 				Version: authorityv1.N1, Kid: "key-1", Alg: authorityv1.AuthorizationClaimsAlgEdDSA,
 				Operation: authorityv1.AuthorizationClaimsOperation(body.Operation), Issuer: authority.URL,
-				Receiver: core.URL, AuthorizationId: authorizationID,
+				Receiver: server.URL, AuthorizationId: authorizationID,
 				Hostname: body.Hostname, RouteId: body.RouteId, RouteVersion: body.RouteVersion,
 				Revision: revision, IssuedAt: now, ExpiresAt: now.Add(time.Hour),
 				RetryId: retryID, CanonicalRequestHash: body.CanonicalRequestHash,
@@ -121,8 +121,8 @@ func TestSignedClientBindsCoreRequestsAndRenewsHeartbeatAuthorization(t *testing
 	}))
 	defer authority.Close()
 
-	httpClient := core.Client()
-	coreClient, err := serverclient.New(core.URL, httpClient, "")
+	httpClient := server.Client()
+	serverClient, err := serverclient.New(server.URL, httpClient, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestSignedClientBindsCoreRequestsAndRenewsHeartbeatAuthorization(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, err := NewSigned(core.URL, coreClient, authorityClient, authorityv1.Capabilities{
+	client, err := NewSigned(server.URL, serverClient, authorityClient, authorityv1.Capabilities{
 		AuthorizationIssuer: authority.URL,
 		AuthorizationKey:    authorityv1.AuthorizationKey{Kid: "key-1", Alg: authorityv1.AuthorizationKeyAlgEdDSA},
 	})
@@ -187,7 +187,7 @@ func TestSignedClientBindsCoreRequestsAndRenewsHeartbeatAuthorization(t *testing
 		`{"allowed_ip_prefixes":["192.0.2.0/24","2001:db8::/64"],"route_token":%q}`,
 		routeToken.String(),
 	))
-	wantHeartbeatHash := hashLiteral(`{"version":2}`)
+	wantHeartbeatHash := hashLiteral(`{"route_version":2}`)
 	wantPolicyHash := hashLiteral(`["192.0.2.0/24","2001:db8::/64"]`)
 	if authorityRequests[0].Operation != authorityv1.IssueAuthorizationRequestOperationRouteCreate ||
 		authorityRequests[0].CanonicalRequestHash != wantCreateHash || value(authorityRequests[0].IpPolicyHash) != wantPolicyHash {
@@ -204,8 +204,8 @@ func TestSignedClientBindsCoreRequestsAndRenewsHeartbeatAuthorization(t *testing
 		t.Fatalf("authorization.renew request = %#v", authorityRequests[2])
 	}
 	wantAuthorizations := []string{"signed-1", "", "signed-2", "", "signed-3"}
-	if fmt.Sprint(coreAuthorizations) != fmt.Sprint(wantAuthorizations) {
-		t.Fatalf("Core authorizations = %v, want %v", coreAuthorizations, wantAuthorizations)
+	if fmt.Sprint(serverAuthorizations) != fmt.Sprint(wantAuthorizations) {
+		t.Fatalf("server authorizations = %v, want %v", serverAuthorizations, wantAuthorizations)
 	}
 }
 
@@ -248,10 +248,10 @@ func TestSignedClientPreservesIdempotencyAcrossAmbiguousFailures(t *testing.T) {
 	var mu sync.Mutex
 	authorityKeys := make(map[string][]string)
 	authorityAttempts := make(map[string]int)
-	coreAuthorizations := make(map[string][]string)
-	coreAttempts := make(map[string]int)
+	serverAuthorizations := make(map[string][]string)
+	serverAttempts := make(map[string]int)
 
-	core := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
 		operation := ""
 		authorization := ""
@@ -282,9 +282,9 @@ func TestSignedClientPreservesIdempotencyAcrossAmbiguousFailures(t *testing.T) {
 			return
 		}
 		mu.Lock()
-		coreAttempts[operation]++
-		attempt := coreAttempts[operation]
-		coreAuthorizations[operation] = append(coreAuthorizations[operation], authorization)
+		serverAttempts[operation]++
+		attempt := serverAttempts[operation]
+		serverAuthorizations[operation] = append(serverAuthorizations[operation], authorization)
 		mu.Unlock()
 		if attempt == 1 {
 			response.WriteHeader(http.StatusServiceUnavailable)
@@ -303,7 +303,7 @@ func TestSignedClientPreservesIdempotencyAcrossAmbiguousFailures(t *testing.T) {
 			_ = json.NewEncoder(response).Encode(serverv1.HeartbeatResponse{ExpiresAt: time.Now().Add(time.Minute)})
 		}
 	}))
-	defer core.Close()
+	defer server.Close()
 
 	var authority *httptest.Server
 	authority = httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -335,7 +335,7 @@ func TestSignedClientPreservesIdempotencyAcrossAmbiguousFailures(t *testing.T) {
 			Claims: authorityv1.AuthorizationClaims{
 				Version: authorityv1.N1, Kid: "key-1", Alg: authorityv1.AuthorizationClaimsAlgEdDSA,
 				Operation: authorityv1.AuthorizationClaimsOperation(body.Operation), Issuer: authority.URL,
-				Receiver: core.URL, AuthorizationId: fmt.Sprintf("authorization_%032x", sequence),
+				Receiver: server.URL, AuthorizationId: fmt.Sprintf("authorization_%032x", sequence),
 				Hostname: body.Hostname, RouteId: body.RouteId, RouteVersion: body.RouteVersion,
 				Revision: 1, IssuedAt: issuedAt, ExpiresAt: issuedAt.Add(time.Hour),
 				RetryId: fmt.Sprintf("retry_%032x", sequence), CanonicalRequestHash: body.CanonicalRequestHash,
@@ -345,8 +345,8 @@ func TestSignedClientPreservesIdempotencyAcrossAmbiguousFailures(t *testing.T) {
 	}))
 	defer authority.Close()
 
-	httpClient := core.Client()
-	coreClient, err := serverclient.New(core.URL, httpClient, "")
+	httpClient := server.Client()
+	serverClient, err := serverclient.New(server.URL, httpClient, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -354,7 +354,7 @@ func TestSignedClientPreservesIdempotencyAcrossAmbiguousFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, err := NewSigned(core.URL, coreClient, authorityClient, authorityv1.Capabilities{
+	client, err := NewSigned(server.URL, serverClient, authorityClient, authorityv1.Capabilities{
 		AuthorizationIssuer: authority.URL,
 		AuthorizationKey:    authorityv1.AuthorizationKey{Kid: "key-1", Alg: authorityv1.AuthorizationKeyAlgEdDSA},
 	})
@@ -368,7 +368,7 @@ func TestSignedClientPreservesIdempotencyAcrossAmbiguousFailures(t *testing.T) {
 		t.Fatalf("authority create failure = %v", err)
 	}
 	if _, err := client.CreateRoute(t.Context(), create); !errors.Is(err, serverclient.ErrUnavailable) {
-		t.Fatalf("Core create failure = %v", err)
+		t.Fatalf("server create failure = %v", err)
 	}
 	if _, err := client.CreateRoute(t.Context(), create); err != nil {
 		t.Fatal(err)
@@ -377,7 +377,7 @@ func TestSignedClientPreservesIdempotencyAcrossAmbiguousFailures(t *testing.T) {
 		t.Fatalf("authority session failure = %v", err)
 	}
 	if _, err := client.CreateRouteSession(t.Context(), routeID, routeToken, nil); !errors.Is(err, serverclient.ErrUnavailable) {
-		t.Fatalf("Core session failure = %v", err)
+		t.Fatalf("server session failure = %v", err)
 	}
 	if _, err := client.CreateRouteSession(t.Context(), routeID, routeToken, nil); err != nil {
 		t.Fatal(err)
@@ -391,7 +391,7 @@ func TestSignedClientPreservesIdempotencyAcrossAmbiguousFailures(t *testing.T) {
 		t.Fatalf("authority renewal failure = %v", err)
 	}
 	if _, err := client.Heartbeat(t.Context(), routeID, 2, sessionToken); !errors.Is(err, serverclient.ErrUnavailable) {
-		t.Fatalf("Core renewal failure = %v", err)
+		t.Fatalf("server renewal failure = %v", err)
 	}
 	if _, err := client.Heartbeat(t.Context(), routeID, 2, sessionToken); err != nil {
 		t.Fatal(err)
@@ -404,9 +404,9 @@ func TestSignedClientPreservesIdempotencyAcrossAmbiguousFailures(t *testing.T) {
 		if len(keys) != 2 || keys[0] == "" || keys[0] != keys[1] {
 			t.Errorf("%s authority keys = %#v", operation, keys)
 		}
-		authorizations := coreAuthorizations[operation]
+		authorizations := serverAuthorizations[operation]
 		if len(authorizations) != 2 || authorizations[0] == "" || authorizations[0] != authorizations[1] {
-			t.Errorf("%s Core authorizations = %#v", operation, authorizations)
+			t.Errorf("%s server authorizations = %#v", operation, authorizations)
 		}
 	}
 }
@@ -414,9 +414,9 @@ func TestSignedClientPreservesIdempotencyAcrossAmbiguousFailures(t *testing.T) {
 func setup(routeID, hostname string, version int, sessionToken credentials.SessionToken) serverv1.SessionSetup {
 	return serverv1.SessionSetup{
 		Route: serverv1.Route{
-			Id: routeID, Hostname: hostname, LocalTarget: "http://127.0.0.1:3000", Version: version,
+			Id: routeID, Hostname: hostname, LocalTarget: "http://127.0.0.1:3000", RouteVersion: version,
 		},
-		Session:      serverv1.RouteSession{RouteId: routeID, Version: version},
+		Session:      serverv1.RouteSession{RouteId: routeID, RouteVersion: version},
 		SessionToken: sessionToken.String(), WorkerPublicKey: "nodekey:" + fmt.Sprintf("%064x", 1),
 	}
 }

@@ -5,7 +5,7 @@ import { describe, expect, onTestFinished, test } from "vitest";
 import {
   publicTunnelEnvironment,
   readDevEnvironment,
-  registerTarget,
+  registerLocalPort,
   requestTunnelAssignment,
   type TnlTunnelAssignment,
 } from "./dist/index.js";
@@ -50,11 +50,11 @@ describe("tnl dev environment", () => {
   });
 });
 
-describe("tunnel assignment and target registration", () => {
+describe("tunnel assignment and local port registration", () => {
   test("sends exact authenticated requests and provides worktree context", async () => {
     const bootstrap = await startTestBootstrap();
     onTestFinished(() => bootstrap.close());
-    let requestedName = "";
+    let worktreeLabel = "";
 
     const assignment = await requestTunnelAssignment(
       {
@@ -62,16 +62,12 @@ describe("tunnel assignment and target registration", () => {
         options: ({ cwd, env, worktree }) => {
           expect(cwd).toBe(process.cwd());
           expect(env.DEPLOYMENT_SLOT).toBe("review-3");
-          expect(worktree).toMatchObject({
-            isGit: true,
-            name: path.basename(process.cwd()),
-            root: process.cwd(),
-          });
-          expect(worktree.label).not.toHaveLength(0);
-          requestedName = `${worktree.label}.example.com`;
+          expect(worktree).toMatchObject({ isGit: true, name: "tnl", root: process.cwd() });
+          expect(worktree.label).toMatch(/^tnl-[a-f0-9]{6}$/);
+          worktreeLabel = worktree.label;
           return {
-            server: "https://tnl.example.com",
-            name: requestedName,
+            controlURL: "https://tnl.example.com",
+            host: `${worktree.label}.example.com`,
             allowIP: ["198.51.100.0/24"],
             allowCurrentIP: true,
           };
@@ -94,7 +90,7 @@ describe("tunnel assignment and target registration", () => {
       NEXT_PUBLIC_TNL_TUNNEL_ID: `tunnel_${"b".repeat(32)}`,
       NEXT_PUBLIC_TNL_URL: "https://demo.tnl.dev",
     });
-    await registerTarget(assignment, 5174);
+    await registerLocalPort(assignment, 5174);
 
     expect(bootstrap.requests).toEqual([
       {
@@ -103,8 +99,8 @@ describe("tunnel assignment and target registration", () => {
           protocol: 1,
           framework: "vite",
           options: {
-            server: "https://tnl.example.com",
-            name: requestedName,
+            controlURL: "https://tnl.example.com",
+            host: `${worktreeLabel}.example.com`,
             allowIP: ["198.51.100.0/24"],
             allowCurrentIP: true,
           },
@@ -150,7 +146,7 @@ describe("tunnel assignment and target registration", () => {
           expect(worktree.root).toBe(directory);
           expect(worktree.name).toBe(path.basename(directory));
           observedLabel = worktree.label;
-          return { name: `${worktree.label}.example.com` };
+          return { host: `${worktree.label}.example.com` };
         },
       },
       bootstrap.environment,
@@ -177,15 +173,15 @@ describe("tunnel assignment and target registration", () => {
     await expect(
       requestTunnelAssignment({ framework: "Next.js" }, bootstrap.environment),
     ).rejects.toThrow(/framework name/);
-    await expect(registerTarget(fakeAssignment(bootstrap.environment), 0)).rejects.toThrow(
-      /target port/,
+    await expect(registerLocalPort(fakeAssignment(bootstrap.environment), 0)).rejects.toThrow(
+      /local port/,
     );
     expect(bootstrap.requests).toHaveLength(0);
   });
 
   test.each([
     [{ unknown: true }, /unknown tnl option/],
-    [{ name: "" }, /tnl name must be a non-empty string/],
+    [{ host: "" }, /tnl host must be a non-empty string/],
     [{ allowIP: "198.51.100.1" }, /tnl allowIP must be an array/],
     [{ allowCurrentIP: "yes" }, /tnl allowCurrentIP must be a boolean/],
   ])("rejects invalid options before sending", async (options, expected) => {

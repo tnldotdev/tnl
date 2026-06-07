@@ -35,24 +35,24 @@ func (q *Queries) ActivateTemporaryHostname(ctx context.Context, arg ActivateTem
 
 const advanceRouteVersion = `-- name: AdvanceRouteVersion :exec
 UPDATE routes
-SET version = ?1
+SET route_version = ?1
 WHERE id = ?2
 `
 
 type AdvanceRouteVersionParams struct {
-	Version int64
-	RouteID string
+	RouteVersion int64
+	RouteID      string
 }
 
 func (q *Queries) AdvanceRouteVersion(ctx context.Context, arg AdvanceRouteVersionParams) error {
-	_, err := q.db.ExecContext(ctx, advanceRouteVersion, arg.Version, arg.RouteID)
+	_, err := q.db.ExecContext(ctx, advanceRouteVersion, arg.RouteVersion, arg.RouteID)
 	return err
 }
 
 const advanceSignedRouteVersion = `-- name: AdvanceSignedRouteVersion :execrows
 UPDATE routes
 SET
-    version = ?1,
+    route_version = ?1,
     authorization_issuer = ?2,
     authorization_id = ?3,
     authorization_key_id = ?4,
@@ -62,13 +62,13 @@ SET
     authorization_request_hash = ?8,
     authorization_ip_policy_hash = ?9
 WHERE id = ?10
-    AND version = ?11
-    AND status = 'active'
+    AND route_version = ?11
+    AND status = 'enabled'
     AND authorization_expires_at > ?12
 `
 
 type AdvanceSignedRouteVersionParams struct {
-	Version                   int64
+	RouteVersion              int64
 	AuthorizationIssuer       sql.NullString
 	AuthorizationID           sql.NullString
 	AuthorizationKeyID        sql.NullString
@@ -78,13 +78,13 @@ type AdvanceSignedRouteVersionParams struct {
 	AuthorizationRequestHash  []byte
 	AuthorizationIpPolicyHash []byte
 	RouteID                   string
-	PreviousVersion           int64
+	PreviousRouteVersion      int64
 	Now                       sql.NullInt64
 }
 
 func (q *Queries) AdvanceSignedRouteVersion(ctx context.Context, arg AdvanceSignedRouteVersionParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, advanceSignedRouteVersion,
-		arg.Version,
+		arg.RouteVersion,
 		arg.AuthorizationIssuer,
 		arg.AuthorizationID,
 		arg.AuthorizationKeyID,
@@ -94,7 +94,7 @@ func (q *Queries) AdvanceSignedRouteVersion(ctx context.Context, arg AdvanceSign
 		arg.AuthorizationRequestHash,
 		arg.AuthorizationIpPolicyHash,
 		arg.RouteID,
-		arg.PreviousVersion,
+		arg.PreviousRouteVersion,
 		arg.Now,
 	)
 	if err != nil {
@@ -103,67 +103,67 @@ func (q *Queries) AdvanceSignedRouteVersion(ctx context.Context, arg AdvanceSign
 	return result.RowsAffected()
 }
 
-const countActiveRoutesByIdentity = `-- name: CountActiveRoutesByIdentity :one
+const countEnabledRoutesByIdentity = `-- name: CountEnabledRoutesByIdentity :one
 SELECT COUNT(*)
 FROM routes
 WHERE id = ?1
     AND identity_id = CAST(?2 AS TEXT)
-    AND status = 'active'
+    AND status = 'enabled'
 `
 
-type CountActiveRoutesByIdentityParams struct {
+type CountEnabledRoutesByIdentityParams struct {
 	RouteID    string
 	IdentityID string
 }
 
-func (q *Queries) CountActiveRoutesByIdentity(ctx context.Context, arg CountActiveRoutesByIdentityParams) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countActiveRoutesByIdentity, arg.RouteID, arg.IdentityID)
+func (q *Queries) CountEnabledRoutesByIdentity(ctx context.Context, arg CountEnabledRoutesByIdentityParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countEnabledRoutesByIdentity, arg.RouteID, arg.IdentityID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
 }
 
-const deleteActiveRoute = `-- name: DeleteActiveRoute :execrows
+const deleteEnabledRoute = `-- name: DeleteEnabledRoute :execrows
 UPDATE routes
 SET
     status = 'deleted',
     deleted_at = CAST(?1 AS INTEGER)
 WHERE id = ?2
     AND identity_id = CAST(?3 AS TEXT)
-    AND status = 'active'
+    AND status = 'enabled'
 `
 
-type DeleteActiveRouteParams struct {
+type DeleteEnabledRouteParams struct {
 	DeletedAt  int64
 	RouteID    string
 	IdentityID string
 }
 
-func (q *Queries) DeleteActiveRoute(ctx context.Context, arg DeleteActiveRouteParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, deleteActiveRoute, arg.DeletedAt, arg.RouteID, arg.IdentityID)
+func (q *Queries) DeleteEnabledRoute(ctx context.Context, arg DeleteEnabledRouteParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteEnabledRoute, arg.DeletedAt, arg.RouteID, arg.IdentityID)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected()
 }
 
-const deleteActiveSignedRoute = `-- name: DeleteActiveSignedRoute :execrows
+const deleteEnabledSignedRoute = `-- name: DeleteEnabledSignedRoute :execrows
 UPDATE routes
 SET
     status = 'deleted',
     deleted_at = CAST(?1 AS INTEGER)
 WHERE id = ?2
     AND authorization_id IS NOT NULL
-    AND status = 'active'
+    AND status = 'enabled'
 `
 
-type DeleteActiveSignedRouteParams struct {
+type DeleteEnabledSignedRouteParams struct {
 	DeletedAt int64
 	RouteID   string
 }
 
-func (q *Queries) DeleteActiveSignedRoute(ctx context.Context, arg DeleteActiveSignedRouteParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, deleteActiveSignedRoute, arg.DeletedAt, arg.RouteID)
+func (q *Queries) DeleteEnabledSignedRoute(ctx context.Context, arg DeleteEnabledSignedRouteParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteEnabledSignedRoute, arg.DeletedAt, arg.RouteID)
 	if err != nil {
 		return 0, err
 	}
@@ -174,17 +174,17 @@ const expireRouteSession = `-- name: ExpireRouteSession :execrows
 UPDATE route_sessions
 SET status = 'expired'
 WHERE route_id = ?1
-    AND version = ?2
+    AND route_version = ?2
     AND status != 'expired'
 `
 
 type ExpireRouteSessionParams struct {
-	RouteID string
-	Version int64
+	RouteID      string
+	RouteVersion int64
 }
 
 func (q *Queries) ExpireRouteSession(ctx context.Context, arg ExpireRouteSessionParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, expireRouteSession, arg.RouteID, arg.Version)
+	result, err := q.db.ExecContext(ctx, expireRouteSession, arg.RouteID, arg.RouteVersion)
 	if err != nil {
 		return 0, err
 	}
@@ -200,76 +200,6 @@ WHERE route_id = ?1 AND status != 'expired'
 func (q *Queries) ExpireRouteSessions(ctx context.Context, routeID string) error {
 	_, err := q.db.ExecContext(ctx, expireRouteSessions, routeID)
 	return err
-}
-
-const getActiveRouteByHostname = `-- name: GetActiveRouteByHostname :one
-SELECT routes.id, routes.hostname_id, routes.identity_id, routes.hostname, routes.local_target, routes.status, routes.version, routes.suspension_revision, routes.suspension_reason, routes.suspended_at, routes.authorization_issuer, routes.authorization_id, routes.authorization_key_id, routes.authorization_retry_id, routes.authorization_revision, routes.authorization_expires_at, routes.authorization_request_hash, routes.authorization_ip_policy_hash, routes.lifecycle_sequence, routes.created_at, routes.deleted_at
-FROM routes
-WHERE hostname = ?1 AND status IN ('active', 'suspended')
-`
-
-func (q *Queries) GetActiveRouteByHostname(ctx context.Context, hostname string) (Route, error) {
-	row := q.db.QueryRowContext(ctx, getActiveRouteByHostname, hostname)
-	var i Route
-	err := row.Scan(
-		&i.ID,
-		&i.HostnameID,
-		&i.IdentityID,
-		&i.Hostname,
-		&i.LocalTarget,
-		&i.Status,
-		&i.Version,
-		&i.SuspensionRevision,
-		&i.SuspensionReason,
-		&i.SuspendedAt,
-		&i.AuthorizationIssuer,
-		&i.AuthorizationID,
-		&i.AuthorizationKeyID,
-		&i.AuthorizationRetryID,
-		&i.AuthorizationRevision,
-		&i.AuthorizationExpiresAt,
-		&i.AuthorizationRequestHash,
-		&i.AuthorizationIpPolicyHash,
-		&i.LifecycleSequence,
-		&i.CreatedAt,
-		&i.DeletedAt,
-	)
-	return i, err
-}
-
-const getActiveRouteIDByHostname = `-- name: GetActiveRouteIDByHostname :one
-SELECT id
-FROM routes
-WHERE identity_id = CAST(?1 AS TEXT)
-    AND hostname = ?2
-    AND status = 'active'
-`
-
-type GetActiveRouteIDByHostnameParams struct {
-	IdentityID string
-	Hostname   string
-}
-
-func (q *Queries) GetActiveRouteIDByHostname(ctx context.Context, arg GetActiveRouteIDByHostnameParams) (string, error) {
-	row := q.db.QueryRowContext(ctx, getActiveRouteIDByHostname, arg.IdentityID, arg.Hostname)
-	var id string
-	err := row.Scan(&id)
-	return id, err
-}
-
-const getActiveSignedRouteIDByHostname = `-- name: GetActiveSignedRouteIDByHostname :one
-SELECT id
-FROM routes
-WHERE hostname = ?1
-    AND status IN ('active', 'suspended')
-    AND authorization_id IS NOT NULL
-`
-
-func (q *Queries) GetActiveSignedRouteIDByHostname(ctx context.Context, hostname string) (string, error) {
-	row := q.db.QueryRowContext(ctx, getActiveSignedRouteIDByHostname, hostname)
-	var id string
-	err := row.Scan(&id)
-	return id, err
 }
 
 const getAuthorizingRouteHostname = `-- name: GetAuthorizingRouteHostname :one
@@ -310,6 +240,76 @@ func (q *Queries) GetAuthorizingRouteHostname(ctx context.Context, arg GetAuthor
 		&i.Status,
 	)
 	return i, err
+}
+
+const getCurrentRouteByHostname = `-- name: GetCurrentRouteByHostname :one
+SELECT routes.id, routes.hostname_id, routes.identity_id, routes.hostname, routes.local_target, routes.status, routes.route_version, routes.suspension_revision, routes.suspension_reason, routes.suspended_at, routes.authorization_issuer, routes.authorization_id, routes.authorization_key_id, routes.authorization_retry_id, routes.authorization_revision, routes.authorization_expires_at, routes.authorization_request_hash, routes.authorization_ip_policy_hash, routes.lifecycle_sequence, routes.created_at, routes.deleted_at
+FROM routes
+WHERE hostname = ?1 AND status IN ('enabled', 'suspended')
+`
+
+func (q *Queries) GetCurrentRouteByHostname(ctx context.Context, hostname string) (Route, error) {
+	row := q.db.QueryRowContext(ctx, getCurrentRouteByHostname, hostname)
+	var i Route
+	err := row.Scan(
+		&i.ID,
+		&i.HostnameID,
+		&i.IdentityID,
+		&i.Hostname,
+		&i.LocalTarget,
+		&i.Status,
+		&i.RouteVersion,
+		&i.SuspensionRevision,
+		&i.SuspensionReason,
+		&i.SuspendedAt,
+		&i.AuthorizationIssuer,
+		&i.AuthorizationID,
+		&i.AuthorizationKeyID,
+		&i.AuthorizationRetryID,
+		&i.AuthorizationRevision,
+		&i.AuthorizationExpiresAt,
+		&i.AuthorizationRequestHash,
+		&i.AuthorizationIpPolicyHash,
+		&i.LifecycleSequence,
+		&i.CreatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const getCurrentSignedRouteIDByHostname = `-- name: GetCurrentSignedRouteIDByHostname :one
+SELECT id
+FROM routes
+WHERE hostname = ?1
+    AND status IN ('enabled', 'suspended')
+    AND authorization_id IS NOT NULL
+`
+
+func (q *Queries) GetCurrentSignedRouteIDByHostname(ctx context.Context, hostname string) (string, error) {
+	row := q.db.QueryRowContext(ctx, getCurrentSignedRouteIDByHostname, hostname)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
+const getEnabledRouteIDByHostname = `-- name: GetEnabledRouteIDByHostname :one
+SELECT id
+FROM routes
+WHERE identity_id = CAST(?1 AS TEXT)
+    AND hostname = ?2
+    AND status = 'enabled'
+`
+
+type GetEnabledRouteIDByHostnameParams struct {
+	IdentityID string
+	Hostname   string
+}
+
+func (q *Queries) GetEnabledRouteIDByHostname(ctx context.Context, arg GetEnabledRouteIDByHostnameParams) (string, error) {
+	row := q.db.QueryRowContext(ctx, getEnabledRouteIDByHostname, arg.IdentityID, arg.Hostname)
+	var id string
+	err := row.Scan(&id)
+	return id, err
 }
 
 const getKnownRouteSessionTokenMarker = `-- name: GetKnownRouteSessionTokenMarker :one
@@ -392,7 +392,7 @@ func (q *Queries) GetRouteAuthorizationUseByRetry(ctx context.Context, arg GetRo
 }
 
 const getRouteByID = `-- name: GetRouteByID :one
-SELECT id, hostname_id, identity_id, hostname, local_target, status, version, suspension_revision, suspension_reason, suspended_at, authorization_issuer, authorization_id, authorization_key_id, authorization_retry_id, authorization_revision, authorization_expires_at, authorization_request_hash, authorization_ip_policy_hash, lifecycle_sequence, created_at, deleted_at FROM routes WHERE id = ?1
+SELECT id, hostname_id, identity_id, hostname, local_target, status, route_version, suspension_revision, suspension_reason, suspended_at, authorization_issuer, authorization_id, authorization_key_id, authorization_retry_id, authorization_revision, authorization_expires_at, authorization_request_hash, authorization_ip_policy_hash, lifecycle_sequence, created_at, deleted_at FROM routes WHERE id = ?1
 `
 
 func (q *Queries) GetRouteByID(ctx context.Context, routeID string) (Route, error) {
@@ -405,7 +405,7 @@ func (q *Queries) GetRouteByID(ctx context.Context, routeID string) (Route, erro
 		&i.Hostname,
 		&i.LocalTarget,
 		&i.Status,
-		&i.Version,
+		&i.RouteVersion,
 		&i.SuspensionRevision,
 		&i.SuspensionReason,
 		&i.SuspendedAt,
@@ -426,7 +426,7 @@ func (q *Queries) GetRouteByID(ctx context.Context, routeID string) (Route, erro
 
 const getRouteCredential = `-- name: GetRouteCredential :one
 SELECT
-    routes.id, routes.hostname_id, routes.identity_id, routes.hostname, routes.local_target, routes.status, routes.version, routes.suspension_revision, routes.suspension_reason, routes.suspended_at, routes.authorization_issuer, routes.authorization_id, routes.authorization_key_id, routes.authorization_retry_id, routes.authorization_revision, routes.authorization_expires_at, routes.authorization_request_hash, routes.authorization_ip_policy_hash, routes.lifecycle_sequence, routes.created_at, routes.deleted_at,
+    routes.id, routes.hostname_id, routes.identity_id, routes.hostname, routes.local_target, routes.status, routes.route_version, routes.suspension_revision, routes.suspension_reason, routes.suspended_at, routes.authorization_issuer, routes.authorization_id, routes.authorization_key_id, routes.authorization_retry_id, routes.authorization_revision, routes.authorization_expires_at, routes.authorization_request_hash, routes.authorization_ip_policy_hash, routes.lifecycle_sequence, routes.created_at, routes.deleted_at,
     route_credentials.secret_hash,
     route_credentials.revoked_at
 FROM routes
@@ -456,7 +456,7 @@ func (q *Queries) GetRouteCredential(ctx context.Context, arg GetRouteCredential
 		&i.Route.Hostname,
 		&i.Route.LocalTarget,
 		&i.Route.Status,
-		&i.Route.Version,
+		&i.Route.RouteVersion,
 		&i.Route.SuspensionRevision,
 		&i.Route.SuspensionReason,
 		&i.Route.SuspendedAt,
@@ -478,23 +478,23 @@ func (q *Queries) GetRouteCredential(ctx context.Context, arg GetRouteCredential
 }
 
 const getRouteSessionByVersion = `-- name: GetRouteSessionByVersion :one
-SELECT id, route_id, version, status, token_id, secret_hash, server_instance_id, publisher_public_key, relay_region, created_at, last_heartbeat_at, expires_at
+SELECT id, route_id, route_version, status, token_id, secret_hash, server_instance_id, publisher_public_key, relay_region, created_at, last_heartbeat_at, expires_at
 FROM route_sessions
-WHERE route_id = ?1 AND version = ?2
+WHERE route_id = ?1 AND route_version = ?2
 `
 
 type GetRouteSessionByVersionParams struct {
-	RouteID string
-	Version int64
+	RouteID      string
+	RouteVersion int64
 }
 
 func (q *Queries) GetRouteSessionByVersion(ctx context.Context, arg GetRouteSessionByVersionParams) (RouteSession, error) {
-	row := q.db.QueryRowContext(ctx, getRouteSessionByVersion, arg.RouteID, arg.Version)
+	row := q.db.QueryRowContext(ctx, getRouteSessionByVersion, arg.RouteID, arg.RouteVersion)
 	var i RouteSession
 	err := row.Scan(
 		&i.ID,
 		&i.RouteID,
-		&i.Version,
+		&i.RouteVersion,
 		&i.Status,
 		&i.TokenID,
 		&i.SecretHash,
@@ -509,30 +509,30 @@ func (q *Queries) GetRouteSessionByVersion(ctx context.Context, arg GetRouteSess
 }
 
 const getRouteSessionForAuthentication = `-- name: GetRouteSessionForAuthentication :one
-SELECT route_sessions.id, route_sessions.route_id, route_sessions.version, route_sessions.status, route_sessions.token_id, route_sessions.secret_hash, route_sessions.server_instance_id, route_sessions.publisher_public_key, route_sessions.relay_region, route_sessions.created_at, route_sessions.last_heartbeat_at, route_sessions.expires_at
+SELECT route_sessions.id, route_sessions.route_id, route_sessions.route_version, route_sessions.status, route_sessions.token_id, route_sessions.secret_hash, route_sessions.server_instance_id, route_sessions.publisher_public_key, route_sessions.relay_region, route_sessions.created_at, route_sessions.last_heartbeat_at, route_sessions.expires_at
 FROM route_sessions
 JOIN routes ON routes.id = route_sessions.route_id
 WHERE route_sessions.route_id = ?1
-    AND route_sessions.version = ?2
+    AND route_sessions.route_version = ?2
     AND route_sessions.token_id = ?3
-    AND routes.status = 'active'
-    AND routes.version = route_sessions.version
+    AND routes.status = 'enabled'
+    AND routes.route_version = route_sessions.route_version
     AND route_sessions.status != 'expired'
     AND route_sessions.expires_at > ?4
     AND (routes.authorization_expires_at IS NULL OR routes.authorization_expires_at > ?4)
 `
 
 type GetRouteSessionForAuthenticationParams struct {
-	RouteID string
-	Version int64
-	TokenID string
-	Now     int64
+	RouteID      string
+	RouteVersion int64
+	TokenID      string
+	Now          int64
 }
 
 func (q *Queries) GetRouteSessionForAuthentication(ctx context.Context, arg GetRouteSessionForAuthenticationParams) (RouteSession, error) {
 	row := q.db.QueryRowContext(ctx, getRouteSessionForAuthentication,
 		arg.RouteID,
-		arg.Version,
+		arg.RouteVersion,
 		arg.TokenID,
 		arg.Now,
 	)
@@ -540,7 +540,7 @@ func (q *Queries) GetRouteSessionForAuthentication(ctx context.Context, arg GetR
 	err := row.Scan(
 		&i.ID,
 		&i.RouteID,
-		&i.Version,
+		&i.RouteVersion,
 		&i.Status,
 		&i.TokenID,
 		&i.SecretHash,
@@ -559,29 +559,29 @@ SELECT status
 FROM route_sessions
 WHERE route_sessions.id = ?1
     AND route_sessions.route_id = ?2
-    AND route_sessions.version = ?3
+    AND route_sessions.route_version = ?3
     AND route_sessions.expires_at > ?4
     AND EXISTS (
         SELECT 1 FROM routes
         WHERE routes.id = route_sessions.route_id
-            AND routes.status = 'active'
-            AND routes.version = route_sessions.version
+            AND routes.status = 'enabled'
+            AND routes.route_version = route_sessions.route_version
             AND (routes.authorization_expires_at IS NULL OR routes.authorization_expires_at > ?4)
     )
 `
 
 type GetRouteSessionStatusParams struct {
-	SessionID string
-	RouteID   string
-	Version   int64
-	Now       int64
+	SessionID    string
+	RouteID      string
+	RouteVersion int64
+	Now          int64
 }
 
 func (q *Queries) GetRouteSessionStatus(ctx context.Context, arg GetRouteSessionStatusParams) (string, error) {
 	row := q.db.QueryRowContext(ctx, getRouteSessionStatus,
 		arg.SessionID,
 		arg.RouteID,
-		arg.Version,
+		arg.RouteVersion,
 		arg.Now,
 	)
 	var status string
@@ -590,16 +590,16 @@ func (q *Queries) GetRouteSessionStatus(ctx context.Context, arg GetRouteSession
 }
 
 const getRouteVersion = `-- name: GetRouteVersion :one
-SELECT version
+SELECT route_version
 FROM routes
 WHERE id = ?1
 `
 
 func (q *Queries) GetRouteVersion(ctx context.Context, routeID string) (int64, error) {
 	row := q.db.QueryRowContext(ctx, getRouteVersion, routeID)
-	var version int64
-	err := row.Scan(&version)
-	return version, err
+	var route_version int64
+	err := row.Scan(&route_version)
+	return route_version, err
 }
 
 const heartbeatRenewedRouteSession = `-- name: HeartbeatRenewedRouteSession :execrows
@@ -609,13 +609,13 @@ SET
     expires_at = ?2
 WHERE route_sessions.id = ?3
     AND route_sessions.route_id = ?4
-    AND route_sessions.version = ?5
+    AND route_sessions.route_version = ?5
     AND route_sessions.status != 'expired'
     AND EXISTS (
         SELECT 1 FROM routes
         WHERE routes.id = route_sessions.route_id
-            AND routes.status = 'active'
-            AND routes.version = route_sessions.version
+            AND routes.status = 'enabled'
+            AND routes.route_version = route_sessions.route_version
             AND routes.authorization_expires_at > ?6
     )
 `
@@ -625,7 +625,7 @@ type HeartbeatRenewedRouteSessionParams struct {
 	ExpiresAt       int64
 	SessionID       string
 	RouteID         string
-	Version         int64
+	RouteVersion    int64
 	Now             sql.NullInt64
 }
 
@@ -635,7 +635,7 @@ func (q *Queries) HeartbeatRenewedRouteSession(ctx context.Context, arg Heartbea
 		arg.ExpiresAt,
 		arg.SessionID,
 		arg.RouteID,
-		arg.Version,
+		arg.RouteVersion,
 		arg.Now,
 	)
 	if err != nil {
@@ -651,7 +651,7 @@ SET
     expires_at = ?2
 WHERE route_sessions.id = ?3
     AND route_sessions.route_id = ?4
-    AND route_sessions.version = ?5
+    AND route_sessions.route_version = ?5
     AND route_sessions.status != 'expired'
     AND route_sessions.expires_at > ?6
     AND EXISTS (
@@ -666,7 +666,7 @@ type HeartbeatRouteSessionParams struct {
 	ExpiresAt       int64
 	SessionID       string
 	RouteID         string
-	Version         int64
+	RouteVersion    int64
 	Now             int64
 }
 
@@ -676,7 +676,7 @@ func (q *Queries) HeartbeatRouteSession(ctx context.Context, arg HeartbeatRouteS
 		arg.ExpiresAt,
 		arg.SessionID,
 		arg.RouteID,
-		arg.Version,
+		arg.RouteVersion,
 		arg.Now,
 	)
 	if err != nil {
@@ -689,7 +689,7 @@ const insertInitialRouteSession = `-- name: InsertInitialRouteSession :exec
 INSERT INTO route_sessions (
     id,
     route_id,
-    version,
+    route_version,
     status,
     token_id,
     secret_hash,
@@ -742,7 +742,7 @@ INSERT INTO routes (
     hostname,
     local_target,
     status,
-    version,
+    route_version,
     created_at
 ) VALUES (
     ?1,
@@ -750,7 +750,7 @@ INSERT INTO routes (
     CAST(?3 AS TEXT),
     ?4,
     ?5,
-    'active',
+    'enabled',
     1,
     ?6
 )
@@ -901,7 +901,7 @@ const insertRouteSession = `-- name: InsertRouteSession :exec
 INSERT INTO route_sessions (
     id,
     route_id,
-    version,
+    route_version,
     status,
     token_id,
     secret_hash,
@@ -926,7 +926,7 @@ INSERT INTO route_sessions (
 type InsertRouteSessionParams struct {
 	SessionID        string
 	RouteID          string
-	Version          int64
+	RouteVersion     int64
 	TokenID          string
 	SecretHash       []byte
 	ServerInstanceID string
@@ -938,7 +938,7 @@ func (q *Queries) InsertRouteSession(ctx context.Context, arg InsertRouteSession
 	_, err := q.db.ExecContext(ctx, insertRouteSession,
 		arg.SessionID,
 		arg.RouteID,
-		arg.Version,
+		arg.RouteVersion,
 		arg.TokenID,
 		arg.SecretHash,
 		arg.ServerInstanceID,
@@ -954,7 +954,7 @@ INSERT INTO routes (
     hostname,
     local_target,
     status,
-    version,
+    route_version,
     authorization_issuer,
     authorization_id,
     authorization_key_id,
@@ -968,7 +968,7 @@ INSERT INTO routes (
     ?1,
     ?2,
     ?3,
-    'active',
+    'enabled',
     1,
     ?4,
     ?5,
@@ -1032,7 +1032,7 @@ FROM hostnames
 JOIN routes ON routes.hostname_id = hostnames.id
 WHERE hostnames.kind = 'temporary'
     AND hostnames.status = 'active'
-    AND routes.status = 'active'
+    AND routes.status = 'enabled'
     AND NOT EXISTS (
         SELECT 1
         FROM route_sessions
@@ -1070,28 +1070,28 @@ func (q *Queries) ListAbandonedTemporaryRoutes(ctx context.Context, expiredBefor
 	return items, nil
 }
 
-const listActiveHostnameRouteVersions = `-- name: ListActiveHostnameRouteVersions :many
-SELECT id, version
+const listEnabledHostnameRouteVersions = `-- name: ListEnabledHostnameRouteVersions :many
+SELECT id, route_version
 FROM routes
-WHERE hostname_id = ?1 AND status = 'active'
+WHERE hostname_id = ?1 AND status = 'enabled'
 ORDER BY id
 `
 
-type ListActiveHostnameRouteVersionsRow struct {
-	ID      string
-	Version int64
+type ListEnabledHostnameRouteVersionsRow struct {
+	ID           string
+	RouteVersion int64
 }
 
-func (q *Queries) ListActiveHostnameRouteVersions(ctx context.Context, hostnameID sql.NullString) ([]ListActiveHostnameRouteVersionsRow, error) {
-	rows, err := q.db.QueryContext(ctx, listActiveHostnameRouteVersions, hostnameID)
+func (q *Queries) ListEnabledHostnameRouteVersions(ctx context.Context, hostnameID sql.NullString) ([]ListEnabledHostnameRouteVersionsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listEnabledHostnameRouteVersions, hostnameID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListActiveHostnameRouteVersionsRow
+	var items []ListEnabledHostnameRouteVersionsRow
 	for rows.Next() {
-		var i ListActiveHostnameRouteVersionsRow
-		if err := rows.Scan(&i.ID, &i.Version); err != nil {
+		var i ListEnabledHostnameRouteVersionsRow
+		if err := rows.Scan(&i.ID, &i.RouteVersion); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -1105,15 +1105,15 @@ func (q *Queries) ListActiveHostnameRouteVersions(ctx context.Context, hostnameI
 	return items, nil
 }
 
-const listActiveRoutes = `-- name: ListActiveRoutes :many
-SELECT routes.id, routes.hostname_id, routes.identity_id, routes.hostname, routes.local_target, routes.status, routes.version, routes.suspension_revision, routes.suspension_reason, routes.suspended_at, routes.authorization_issuer, routes.authorization_id, routes.authorization_key_id, routes.authorization_retry_id, routes.authorization_revision, routes.authorization_expires_at, routes.authorization_request_hash, routes.authorization_ip_policy_hash, routes.lifecycle_sequence, routes.created_at, routes.deleted_at
+const listEnabledRoutes = `-- name: ListEnabledRoutes :many
+SELECT routes.id, routes.hostname_id, routes.identity_id, routes.hostname, routes.local_target, routes.status, routes.route_version, routes.suspension_revision, routes.suspension_reason, routes.suspended_at, routes.authorization_issuer, routes.authorization_id, routes.authorization_key_id, routes.authorization_retry_id, routes.authorization_revision, routes.authorization_expires_at, routes.authorization_request_hash, routes.authorization_ip_policy_hash, routes.lifecycle_sequence, routes.created_at, routes.deleted_at
 FROM routes
-WHERE identity_id = CAST(?1 AS TEXT) AND status = 'active'
+WHERE identity_id = CAST(?1 AS TEXT) AND status = 'enabled'
 ORDER BY created_at, id
 `
 
-func (q *Queries) ListActiveRoutes(ctx context.Context, identityID string) ([]Route, error) {
-	rows, err := q.db.QueryContext(ctx, listActiveRoutes, identityID)
+func (q *Queries) ListEnabledRoutes(ctx context.Context, identityID string) ([]Route, error) {
+	rows, err := q.db.QueryContext(ctx, listEnabledRoutes, identityID)
 	if err != nil {
 		return nil, err
 	}
@@ -1128,7 +1128,7 @@ func (q *Queries) ListActiveRoutes(ctx context.Context, identityID string) ([]Ro
 			&i.Hostname,
 			&i.LocalTarget,
 			&i.Status,
-			&i.Version,
+			&i.RouteVersion,
 			&i.SuspensionRevision,
 			&i.SuspensionReason,
 			&i.SuspendedAt,
@@ -1158,15 +1158,15 @@ func (q *Queries) ListActiveRoutes(ctx context.Context, identityID string) ([]Ro
 }
 
 const listOtherServerInstanceRouteSessions = `-- name: ListOtherServerInstanceRouteSessions :many
-SELECT route_id, version
+SELECT route_id, route_version
 FROM route_sessions
 WHERE server_instance_id != ?1 AND status != 'expired'
-ORDER BY route_id, version
+ORDER BY route_id, route_version
 `
 
 type ListOtherServerInstanceRouteSessionsRow struct {
-	RouteID string
-	Version int64
+	RouteID      string
+	RouteVersion int64
 }
 
 func (q *Queries) ListOtherServerInstanceRouteSessions(ctx context.Context, serverInstanceID string) ([]ListOtherServerInstanceRouteSessionsRow, error) {
@@ -1178,7 +1178,7 @@ func (q *Queries) ListOtherServerInstanceRouteSessions(ctx context.Context, serv
 	var items []ListOtherServerInstanceRouteSessionsRow
 	for rows.Next() {
 		var i ListOtherServerInstanceRouteSessionsRow
-		if err := rows.Scan(&i.RouteID, &i.Version); err != nil {
+		if err := rows.Scan(&i.RouteID, &i.RouteVersion); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -1233,30 +1233,30 @@ UPDATE route_sessions
 SET status = 'ready'
 WHERE route_sessions.id = ?1
     AND route_sessions.route_id = ?2
-    AND route_sessions.version = ?3
+    AND route_sessions.route_version = ?3
     AND route_sessions.status = 'starting'
     AND route_sessions.expires_at > ?4
     AND EXISTS (
         SELECT 1 FROM routes
         WHERE routes.id = route_sessions.route_id
-            AND routes.status = 'active'
-            AND routes.version = route_sessions.version
+            AND routes.status = 'enabled'
+            AND routes.route_version = route_sessions.route_version
             AND (routes.authorization_expires_at IS NULL OR routes.authorization_expires_at > ?4)
     )
 `
 
 type ReadyRouteSessionParams struct {
-	SessionID string
-	RouteID   string
-	Version   int64
-	Now       int64
+	SessionID    string
+	RouteID      string
+	RouteVersion int64
+	Now          int64
 }
 
 func (q *Queries) ReadyRouteSession(ctx context.Context, arg ReadyRouteSessionParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, readyRouteSession,
 		arg.SessionID,
 		arg.RouteID,
-		arg.Version,
+		arg.RouteVersion,
 		arg.Now,
 	)
 	if err != nil {
@@ -1273,14 +1273,14 @@ SET
     status = 'starting'
 WHERE route_sessions.id = ?3
     AND route_sessions.route_id = ?4
-    AND route_sessions.version = ?5
+    AND route_sessions.route_version = ?5
     AND route_sessions.status IN ('pending', 'starting')
     AND route_sessions.expires_at > ?6
     AND EXISTS (
         SELECT 1 FROM routes
         WHERE routes.id = route_sessions.route_id
-            AND routes.status = 'active'
-            AND routes.version = route_sessions.version
+            AND routes.status = 'enabled'
+            AND routes.route_version = route_sessions.route_version
             AND (routes.authorization_expires_at IS NULL OR routes.authorization_expires_at > ?6)
     )
 `
@@ -1290,7 +1290,7 @@ type RegisterRouteSessionTransportParams struct {
 	RelayRegion        sql.NullString
 	SessionID          string
 	RouteID            string
-	Version            int64
+	RouteVersion       int64
 	Now                int64
 }
 
@@ -1300,7 +1300,7 @@ func (q *Queries) RegisterRouteSessionTransport(ctx context.Context, arg Registe
 		arg.RelayRegion,
 		arg.SessionID,
 		arg.RouteID,
-		arg.Version,
+		arg.RouteVersion,
 		arg.Now,
 	)
 	if err != nil {
@@ -1321,7 +1321,7 @@ SET
     authorization_request_hash = ?7,
     authorization_ip_policy_hash = ?8
 WHERE id = ?9
-    AND status = 'active'
+    AND status = 'enabled'
     AND authorization_issuer = ?10
     AND authorization_id = ?11
     AND authorization_key_id = ?12
@@ -1372,41 +1372,30 @@ func (q *Queries) RenewRouteAuthorization(ctx context.Context, arg RenewRouteAut
 	return result.RowsAffected()
 }
 
-const replaceRoute = `-- name: ReplaceRoute :execrows
+const replaceRoute = `-- name: ReplaceRoute :exec
 UPDATE routes
 SET
     local_target = ?1,
-    version = ?2
+    route_version = ?2
 WHERE id = ?3
-    AND identity_id = CAST(?4 AS TEXT)
-    AND status = 'active'
 `
 
 type ReplaceRouteParams struct {
-	LocalTarget string
-	Version     int64
-	RouteID     string
-	IdentityID  string
+	LocalTarget  string
+	RouteVersion int64
+	RouteID      string
 }
 
-func (q *Queries) ReplaceRoute(ctx context.Context, arg ReplaceRouteParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, replaceRoute,
-		arg.LocalTarget,
-		arg.Version,
-		arg.RouteID,
-		arg.IdentityID,
-	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
+func (q *Queries) ReplaceRoute(ctx context.Context, arg ReplaceRouteParams) error {
+	_, err := q.db.ExecContext(ctx, replaceRoute, arg.LocalTarget, arg.RouteVersion, arg.RouteID)
+	return err
 }
 
 const replaceSignedRoute = `-- name: ReplaceSignedRoute :execrows
 UPDATE routes
 SET
     local_target = ?1,
-    version = ?2,
+    route_version = ?2,
     authorization_issuer = ?3,
     authorization_id = ?4,
     authorization_key_id = ?5,
@@ -1415,12 +1404,12 @@ SET
     authorization_expires_at = ?8,
     authorization_request_hash = ?9,
     authorization_ip_policy_hash = ?10
-WHERE id = ?11 AND status = 'active'
+WHERE id = ?11 AND status = 'enabled'
 `
 
 type ReplaceSignedRouteParams struct {
 	LocalTarget               string
-	Version                   int64
+	RouteVersion              int64
 	AuthorizationIssuer       sql.NullString
 	AuthorizationID           sql.NullString
 	AuthorizationKeyID        sql.NullString
@@ -1435,7 +1424,7 @@ type ReplaceSignedRouteParams struct {
 func (q *Queries) ReplaceSignedRoute(ctx context.Context, arg ReplaceSignedRouteParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, replaceSignedRoute,
 		arg.LocalTarget,
-		arg.Version,
+		arg.RouteVersion,
 		arg.AuthorizationIssuer,
 		arg.AuthorizationID,
 		arg.AuthorizationKeyID,
@@ -1463,7 +1452,7 @@ SET
     expires_at = ?3
 WHERE id = ?4
     AND route_id = ?5
-    AND version = ?6
+    AND route_version = ?6
     AND token_id = ?7
     AND (
         status = 'expired'
@@ -1478,7 +1467,7 @@ type RestoreSignedRouteSessionRetryParams struct {
 	ExpiresAt        int64
 	SessionID        string
 	RouteID          string
-	Version          int64
+	RouteVersion     int64
 	TokenID          string
 }
 
@@ -1489,7 +1478,7 @@ func (q *Queries) RestoreSignedRouteSessionRetry(ctx context.Context, arg Restor
 		arg.ExpiresAt,
 		arg.SessionID,
 		arg.RouteID,
-		arg.Version,
+		arg.RouteVersion,
 		arg.TokenID,
 	)
 	if err != nil {

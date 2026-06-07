@@ -27,7 +27,7 @@ func TestDevCommandPassesThroughCommandArguments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	parsed, err := parser.Parse([]string{"dev", "--name", "demo", "--", "npm", "run", "dev", "--", "--host"})
+	parsed, err := parser.Parse([]string{"dev", "--host", "demo", "--", "npm", "run", "dev", "--", "--host"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,8 +35,8 @@ func TestDevCommandPassesThroughCommandArguments(t *testing.T) {
 		t.Fatalf("command = %q", parsed.Command())
 	}
 	want := []string{"--", "npm", "run", "dev", "--", "--host"}
-	if flags.Dev.Name != "demo" || !reflect.DeepEqual(flags.Dev.Command, want) {
-		t.Fatalf("name = %q, command = %#v", flags.Dev.Name, flags.Dev.Command)
+	if flags.Dev.Host != "demo" || !reflect.DeepEqual(flags.Dev.Command, want) {
+		t.Fatalf("host = %q, command = %#v", flags.Dev.Host, flags.Dev.Command)
 	}
 }
 
@@ -96,7 +96,8 @@ func TestDevBootstrapConfiguresAndRegistersOneTarget(t *testing.T) {
 		}
 	})
 
-	name := "agent-feature.example"
+	host := "agent-feature.example"
+	controlURL := "https://tnl.example.com"
 	premature := postDevRequest(bootstrap, bootstrap.token, "/v1/target", devTargetRequest{
 		Protocol: 1, Framework: "vite", Port: 5173,
 	})
@@ -105,11 +106,16 @@ func TestDevBootstrapConfiguresAndRegistersOneTarget(t *testing.T) {
 	}
 	configuration := devConfigurationRequest{
 		Protocol: 1, Framework: "vite",
-		Options: devTunnelOptions{Name: &name, AllowCurrentIP: true},
+		Options: devTunnelOptions{ControlURL: &controlURL, Host: &host, AllowCurrentIP: true},
 	}
 	configurationDone := make(chan devHTTPResult, 1)
 	go func() {
-		configurationDone <- postDevRequest(bootstrap, bootstrap.token, "/v1/configure", configuration)
+		configurationDone <- postDevJSON(
+			bootstrap,
+			bootstrap.token,
+			"/v1/configure",
+			[]byte(`{"protocol":1,"framework":"vite","options":{"controlURL":"https://tnl.example.com","host":"agent-feature.example","allowCurrentIP":true}}`),
+		)
 	}()
 	configured, err := bootstrap.Configuration(context.Background())
 	if err != nil || !reflect.DeepEqual(configured, configuration) {
@@ -218,27 +224,6 @@ func TestDevEnvironmentReplacesProtocolAndRemovesAccessToken(t *testing.T) {
 	}
 }
 
-func TestDevRejectsOccupiedExplicitPortBeforeStartingChild(t *testing.T) {
-	listener, err := net.Listen("tcp4", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer listener.Close()
-	port := listener.Addr().(*net.TCPAddr).Port
-	marker := filepath.Join(t.TempDir(), "child-started")
-	t.Setenv("TNL_TEST_CHILD_MARKER", marker)
-	err = runDev(context.Background(), devCommand{
-		Command: []string{"sh", "-c", `touch "$TNL_TEST_CHILD_MARKER"`},
-		Port:    port, StartupTimeout: time.Second,
-	}, nil, io.Discard, io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "already in use") {
-		t.Fatalf("occupied port error = %v", err)
-	}
-	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("child process started: %v", err)
-	}
-}
-
 func TestChildResultPreservesExitStatus(t *testing.T) {
 	process, err := startDevProcess([]string{"sh", "-c", "exit 23"}, os.Environ(), nil, io.Discard, io.Discard)
 	if err != nil {
@@ -329,6 +314,10 @@ func postDevRequest(bootstrap *devBootstrap, token, path string, value any) devH
 	if err != nil {
 		return devHTTPResult{err: err}
 	}
+	return postDevJSON(bootstrap, token, path, body)
+}
+
+func postDevJSON(bootstrap *devBootstrap, token, path string, body []byte) devHTTPResult {
 	transport := &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, "unix", bootstrap.socket)

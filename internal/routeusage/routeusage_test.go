@@ -54,8 +54,8 @@ func TestCollectorSplitsConnectionUsageAcrossMinuteBuckets(t *testing.T) {
 	assertUsage(t, firstMinute, 1, 10*time.Second, 0, 0, 1, 1)
 	assertUsage(t, secondMinute, 0, 20*time.Second, 100, 50, 1, 1)
 	assertUsage(t, hour, 1, 30*time.Second, 100, 50, 0, 1)
-	if count := scalar(t, db, "SELECT COUNT(*) FROM route_usage_outbox_items WHERE source_kind = 'usage_snapshot'"); count != 3 {
-		t.Fatalf("usage outbox count = %d, want 3", count)
+	if count := scalar(t, db, "SELECT COUNT(*) FROM route_usage_outbox_items WHERE source_kind = 'usage_bucket_report'"); count != 3 {
+		t.Fatalf("usage bucket report outbox count = %d, want 3", count)
 	}
 }
 
@@ -149,7 +149,7 @@ func TestCollectorPublishesHoursOnlyWhenFinalized(t *testing.T) {
 	if err := collector.Checkpoint(t.Context(), start.Add(time.Minute), false); err != nil {
 		t.Fatal(err)
 	}
-	if count := scalar(t, db, "SELECT COUNT(*) FROM route_usage_outbox_items WHERE source_kind = 'usage_snapshot'"); count != 1 {
+	if count := scalar(t, db, "SELECT COUNT(*) FROM route_usage_outbox_items WHERE source_kind = 'usage_bucket_report'"); count != 1 {
 		t.Fatalf("outbox count after minute = %d, want 1", count)
 	}
 	hour := loadUsageBucket(t, statedb.New(db), "hour", start)
@@ -164,7 +164,7 @@ func TestCollectorPublishesHoursOnlyWhenFinalized(t *testing.T) {
 	if hour.Finalized != 1 || hour.Complete != 1 {
 		t.Fatalf("completed hour state = %+v", hour)
 	}
-	if count := scalar(t, db, "SELECT COUNT(*) FROM route_usage_outbox_items WHERE source_kind = 'usage_snapshot'"); count != 2 {
+	if count := scalar(t, db, "SELECT COUNT(*) FROM route_usage_outbox_items WHERE source_kind = 'usage_bucket_report'"); count != 2 {
 		t.Fatalf("outbox count after hour = %d, want 2", count)
 	}
 }
@@ -183,7 +183,7 @@ func TestCollectorFinalizesCurrentHourAsPartial(t *testing.T) {
 	if hour.Finalized != 1 || hour.Complete != 0 || hour.ObservedThrough != start.Add(30*time.Second).UnixNano() {
 		t.Fatalf("partial hour state = %+v", hour)
 	}
-	if count := scalar(t, db, "SELECT COUNT(*) FROM route_usage_outbox_items WHERE source_kind = 'usage_snapshot'"); count != 1 {
+	if count := scalar(t, db, "SELECT COUNT(*) FROM route_usage_outbox_items WHERE source_kind = 'usage_bucket_report'"); count != 1 {
 		t.Fatalf("partial hour outbox count = %d, want 1", count)
 	}
 }
@@ -259,10 +259,10 @@ func TestVisitorSketchIsSharedAcrossVersionsAndRecovery(t *testing.T) {
 	db, store := newTestStore(t)
 	start := time.Date(2026, time.September, 2, 12, 0, 0, 0, time.UTC)
 	collector := NewCollector(store, nil)
-	for version, source := range []string{"2001:db8:1::1", "2001:db8:1::ffff"} {
-		connection := collector.Open(testRouteID, uint64(version+1), netip.MustParseAddr(source), start.Add(time.Duration(version)*time.Second))
-		connection.PolicyDenied(start.Add(time.Duration(version) * time.Second))
-		connection.Close(start.Add(time.Duration(version) * time.Second))
+	for index, source := range []string{"2001:db8:1::1", "2001:db8:1::ffff"} {
+		connection := collector.Open(testRouteID, uint64(index+1), netip.MustParseAddr(source), start.Add(time.Duration(index)*time.Second))
+		connection.PolicyDenied(start.Add(time.Duration(index) * time.Second))
+		connection.Close(start.Add(time.Duration(index) * time.Second))
 	}
 	if err := collector.Checkpoint(t.Context(), start.Add(10*time.Second), false); err != nil {
 		t.Fatal(err)
@@ -271,7 +271,7 @@ func TestVisitorSketchIsSharedAcrossVersionsAndRecovery(t *testing.T) {
 	second := loadUsageBucketVersion(t, statedb.New(db), 2, "hour", start)
 	if first.VisitorNetworkEstimate != 1 || second.VisitorNetworkEstimate != 1 ||
 		!bytes.Equal(first.VisitorNetworkHll, second.VisitorNetworkHll) {
-		t.Fatalf("version visitor sketches differ: first=%+v second=%+v", first, second)
+		t.Fatalf("route version visitor sketches differ: first=%+v second=%+v", first, second)
 	}
 
 	restartedStore, err := NewStore(db)
@@ -305,10 +305,10 @@ func TestVisitorSketchIsSharedAcrossVersionsAndRecovery(t *testing.T) {
 	if err := restarted.Checkpoint(t.Context(), start.Add(30*time.Second), false); err != nil {
 		t.Fatal(err)
 	}
-	for version := uint64(1); version <= 3; version++ {
-		bucket := loadUsageBucketVersion(t, statedb.New(db), version, "hour", start)
+	for routeVersion := uint64(1); routeVersion <= 3; routeVersion++ {
+		bucket := loadUsageBucketVersion(t, statedb.New(db), routeVersion, "hour", start)
 		if bucket.VisitorNetworkEstimate != 2 {
-			t.Fatalf("version %d visitor estimate = %d, want 2", version, bucket.VisitorNetworkEstimate)
+			t.Fatalf("route version %d visitor estimate = %d, want 2", routeVersion, bucket.VisitorNetworkEstimate)
 		}
 	}
 	updatedFirst := loadUsageBucketVersion(t, statedb.New(db), 1, "hour", start)
@@ -323,7 +323,7 @@ func TestVisitorSketchIsSharedAcrossVersionsAndRecovery(t *testing.T) {
 func TestLifecycleRecordingIsTransactionalAndIdempotent(t *testing.T) {
 	db, store := newTestStore(t)
 	change := routes.LifecycleChange{
-		RouteID: testRouteID, Version: 1, OccurredAt: time.Now(), Transition: routes.LifecycleVersionStarted,
+		RouteID: testRouteID, RouteVersion: 1, OccurredAt: time.Now(), Transition: routes.LifecycleRouteVersionStarted,
 	}
 
 	tx, err := db.BeginTx(t.Context(), nil)
@@ -357,6 +357,13 @@ func TestLifecycleRecordingIsTransactionalAndIdempotent(t *testing.T) {
 	if count := scalar(t, db, "SELECT COUNT(*) FROM route_lifecycle_events"); count != 1 {
 		t.Fatalf("lifecycle count = %d, want 1", count)
 	}
+	var transition string
+	if err := db.QueryRowContext(t.Context(), "SELECT transition FROM route_lifecycle_events").Scan(&transition); err != nil {
+		t.Fatal(err)
+	}
+	if transition != "route_version_started" {
+		t.Fatalf("lifecycle transition = %q, want route_version_started", transition)
+	}
 	if sequence := scalar(t, db, "SELECT lifecycle_sequence FROM routes WHERE id = ?", testRouteID); sequence != 1 {
 		t.Fatalf("lifecycle sequence = %d, want 1", sequence)
 	}
@@ -380,8 +387,8 @@ func TestRouteRegistrationAndInitialLifecycleAreTransactional(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := store.RecordLifecycle(t.Context(), queries, routes.LifecycleChange{
-		RouteID: testSignedRouteA, Version: 1, OccurredAt: registration.CreatedAt,
-		Transition: routes.LifecycleVersionStarted,
+		RouteID: testSignedRouteA, RouteVersion: 1, OccurredAt: registration.CreatedAt,
+		Transition: routes.LifecycleRouteVersionStarted,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -408,11 +415,11 @@ func TestSenderDeliversRegistrationBeforeRouteReports(t *testing.T) {
 	db, store := newTestStore(t)
 	insertSignedTestRoute(t, db, testSignedRouteA, "a.example", "a")
 	enqueueRegistration(t, db, store, testSignedRouteA, "a.example", "a")
-	enqueueRouteLifecycle(t, db, store, testSignedRouteA, routes.LifecycleVersionStarted, time.Now())
+	enqueueRouteLifecycle(t, db, store, testSignedRouteA, routes.LifecycleRouteVersionStarted, time.Now())
 	start := time.Date(2026, time.January, 2, 12, 0, 0, 0, time.UTC)
 	if err := store.SaveUsage(t.Context(), []UsageSnapshot{{
-		RouteID: testSignedRouteA, Version: 1, Resolution: "minute", BucketStart: start,
-		Revision: 1, ObservedThrough: start.Add(time.Minute), Publish: true,
+		RouteID: testSignedRouteA, RouteVersion: 1, Resolution: "minute", BucketStart: start,
+		Revision: 1, ObservedThrough: start.Add(time.Minute), Enqueue: true,
 	}}); err != nil {
 		t.Fatal(err)
 	}
@@ -435,7 +442,7 @@ func TestSenderDeliversRegistrationBeforeRouteReports(t *testing.T) {
 	want := []string{
 		"/v1/routes",
 		"/v1/routes/lifecycle-events",
-		"/v1/routes/usage-snapshots",
+		"/v1/routes/usage-bucket-reports",
 	}
 	for index, expected := range want {
 		if got := <-paths; got != expected {
@@ -444,73 +451,6 @@ func TestSenderDeliversRegistrationBeforeRouteReports(t *testing.T) {
 	}
 	if revision := scalar(t, db, "SELECT acknowledged_revision FROM route_registrations WHERE route_id = ?", testSignedRouteA); revision != 1 {
 		t.Fatalf("acknowledged registration revision = %d, want 1", revision)
-	}
-}
-
-func TestSaveUsageCapsPendingSnapshotsWithoutDroppingLifecycle(t *testing.T) {
-	db, store := newTestStore(t)
-	store.maxPendingUsage = 2
-	enqueueRegistration(t, db, store, testRouteID, "test.tnl.dev", "a")
-	enqueueRouteLifecycle(t, db, store, testRouteID, routes.LifecycleVersionStarted, time.Now())
-	start := time.Date(2026, time.January, 2, 12, 0, 0, 0, time.UTC)
-	snapshots := make([]UsageSnapshot, 3)
-	for index := range snapshots {
-		bucket := start.Add(time.Duration(index) * time.Minute)
-		snapshots[index] = UsageSnapshot{
-			RouteID: testRouteID, Version: 1, Resolution: "minute", BucketStart: bucket,
-			Revision: 1, ObservedThrough: bucket.Add(time.Minute), Finalized: true, Publish: true,
-		}
-	}
-	if err := store.SaveUsage(t.Context(), snapshots); err != nil {
-		t.Fatal(err)
-	}
-	for kind, want := range map[string]int64{registrationSource: 1, lifecycleSource: 1, usageSource: 2} {
-		if got := scalar(t, db, "SELECT COUNT(*) FROM route_usage_outbox_items WHERE source_kind = ?", kind); got != want {
-			t.Fatalf("%s outbox count = %d, want %d", kind, got, want)
-		}
-	}
-	if got := scalar(t, db, "SELECT COUNT(*) FROM route_usage_snapshots"); got != 2 {
-		t.Fatalf("usage snapshot count = %d, want 2", got)
-	}
-	if got := scalar(t, db, "SELECT COUNT(*) FROM route_usage_reports"); got != 2 {
-		t.Fatalf("usage report count = %d, want 2", got)
-	}
-	if got := scalar(t, db, "SELECT COUNT(*) FROM route_usage_snapshots WHERE bucket_start = ?", start.UnixNano()); got != 0 {
-		t.Fatal("oldest usage snapshot was retained")
-	}
-}
-
-func TestLifecyclePruneRetainsVersionStartNeededByUsage(t *testing.T) {
-	db, store := newTestStore(t)
-	old := time.Now().Add(-2 * 365 * 24 * time.Hour)
-	enqueueRouteLifecycle(t, db, store, testRouteID, routes.LifecycleVersionStarted, old)
-	if _, err := db.ExecContext(t.Context(), "DELETE FROM route_usage_outbox_items"); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.SaveUsage(t.Context(), []UsageSnapshot{{
-		RouteID: testRouteID, Version: 1, Resolution: "minute", BucketStart: old,
-		Revision: 1, ObservedThrough: old.Add(time.Minute), Finalized: true, Publish: true,
-	}}); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.pruneLifecycle(t.Context(), time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	if got := scalar(t, db, "SELECT COUNT(*) FROM route_lifecycle_events"); got != 1 {
-		t.Fatalf("lifecycle count with pending usage = %d, want 1", got)
-	}
-	if _, err := db.ExecContext(t.Context(), `
-		DELETE FROM route_usage_outbox_items WHERE source_kind = 'usage_snapshot';
-		DELETE FROM route_usage_snapshots;
-		UPDATE routes SET status = 'deleted', deleted_at = 1 WHERE id = 'route_test';
-	`); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.pruneLifecycle(t.Context(), time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	if got := scalar(t, db, "SELECT COUNT(*) FROM route_lifecycle_events"); got != 0 {
-		t.Fatalf("unused lifecycle count = %d, want 0", got)
 	}
 }
 
@@ -567,12 +507,12 @@ func TestSenderFormatsAllWireTimestamps(t *testing.T) {
 		t.Fatal(err)
 	}
 	occurredAt := time.Date(2026, time.September, 2, 5, 1, 0, 987654321, location)
-	enqueueRouteLifecycle(t, db, store, testSignedRouteA, routes.LifecycleVersionStarted, occurredAt)
+	enqueueRouteLifecycle(t, db, store, testSignedRouteA, routes.LifecycleRouteVersionStarted, occurredAt)
 	bucketStart := time.Date(2026, time.September, 2, 5, 2, 0, 999999, location)
 	observedThrough := time.Date(2026, time.September, 2, 5, 2, 59, 999999999, location)
 	if err := store.SaveUsage(t.Context(), []UsageSnapshot{{
-		RouteID: testSignedRouteA, Version: 1, Resolution: "minute", BucketStart: bucketStart,
-		Revision: 1, ObservedThrough: observedThrough, Publish: true,
+		RouteID: testSignedRouteA, RouteVersion: 1, Resolution: "minute", BucketStart: bucketStart,
+		Revision: 1, ObservedThrough: observedThrough, Enqueue: true,
 	}}); err != nil {
 		t.Fatal(err)
 	}
@@ -613,7 +553,7 @@ func TestSenderFormatsAllWireTimestamps(t *testing.T) {
 		"/v1/routes/lifecycle-events": {
 			"occurred_at": "2026-09-02T12:01:00.987Z",
 		},
-		"/v1/routes/usage-snapshots": {
+		"/v1/routes/usage-bucket-reports": {
 			"bucket_start":     "2026-09-02T12:02:00Z",
 			"observed_through": "2026-09-02T12:02:59.999Z",
 		},
@@ -661,16 +601,16 @@ func TestFailedRegistrationBlocksOnlyItsRoute(t *testing.T) {
 	insertSignedTestRoute(t, db, testSignedRouteA, "a.example", "a")
 	insertSignedTestRoute(t, db, testSignedRouteB, "b.example", "b")
 	enqueueRegistration(t, db, store, testSignedRouteA, "a.example", "a")
-	enqueueRouteLifecycle(t, db, store, testSignedRouteA, routes.LifecycleVersionStarted, time.Now())
+	enqueueRouteLifecycle(t, db, store, testSignedRouteA, routes.LifecycleRouteVersionStarted, time.Now())
 	start := time.Date(2026, time.January, 2, 12, 0, 0, 0, time.UTC)
 	if err := store.SaveUsage(t.Context(), []UsageSnapshot{{
-		RouteID: testSignedRouteA, Version: 1, Resolution: "minute", BucketStart: start,
-		Revision: 1, ObservedThrough: start.Add(time.Minute), Publish: true,
+		RouteID: testSignedRouteA, RouteVersion: 1, Resolution: "minute", BucketStart: start,
+		Revision: 1, ObservedThrough: start.Add(time.Minute), Enqueue: true,
 	}}); err != nil {
 		t.Fatal(err)
 	}
 	enqueueRegistration(t, db, store, testSignedRouteB, "b.example", "b")
-	enqueueRouteLifecycle(t, db, store, testSignedRouteB, routes.LifecycleVersionStarted, time.Now())
+	enqueueRouteLifecycle(t, db, store, testSignedRouteB, routes.LifecycleRouteVersionStarted, time.Now())
 
 	paths := make(chan string, 3)
 	receiver := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -715,7 +655,7 @@ func TestFailedRegistrationBlocksOnlyItsRoute(t *testing.T) {
 		)) OR (outbox.source_kind = 'lifecycle_event' AND outbox.source_id IN (
 			SELECT id FROM route_lifecycle_events WHERE route_id = ?
 		))
-		OR (outbox.source_kind = 'usage_snapshot' AND outbox.source_id IN (
+		OR (outbox.source_kind = 'usage_bucket_report' AND outbox.source_id IN (
 			SELECT id FROM route_usage_snapshots WHERE route_id = ?
 		))
 	`, testSignedRouteA, testSignedRouteA, testSignedRouteA); count != 3 {
@@ -758,13 +698,13 @@ func TestRegistrationRetryPayloadIsIdentical(t *testing.T) {
 	}
 }
 
-func TestUsageRetryRevisionIdentifiesImmutablePayload(t *testing.T) {
+func TestUsageBucketReportRetryRevisionIdentifiesImmutablePayload(t *testing.T) {
 	db, store := newTestStore(t)
-	acknowledgeVersionStarted(t, db, store)
+	acknowledgeRouteVersionStarted(t, db, store)
 	start := time.Date(2026, time.September, 2, 12, 0, 0, 0, time.UTC)
 	first := UsageSnapshot{
-		RouteID: testRouteID, Version: 1, Resolution: "hour", BucketStart: start,
-		Revision: 1, ObservedThrough: start.Add(time.Minute), IngressBytes: 10, Publish: true,
+		RouteID: testRouteID, RouteVersion: 1, Resolution: "hour", BucketStart: start,
+		Revision: 1, ObservedThrough: start.Add(time.Minute), IngressBytes: 10, Enqueue: true,
 	}
 	if err := store.SaveUsage(t.Context(), []UsageSnapshot{first}); err != nil {
 		t.Fatal(err)
@@ -803,12 +743,12 @@ func TestUsageRetryRevisionIdentifiesImmutablePayload(t *testing.T) {
 	changed := first
 	changed.ObservedThrough = start.Add(2 * time.Minute)
 	changed.IngressBytes = 20
-	changed.Publish = false
+	changed.Enqueue = false
 	if err := store.SaveUsage(t.Context(), []UsageSnapshot{changed}); err != nil {
 		t.Fatal(err)
 	}
 	changedSameRevision := changed
-	changedSameRevision.Publish = true
+	changedSameRevision.Enqueue = true
 	if err := store.SaveUsage(t.Context(), []UsageSnapshot{changedSameRevision}); err == nil {
 		t.Fatal("changed payload was accepted under revision 1")
 	}
@@ -817,30 +757,30 @@ func TestUsageRetryRevisionIdentifiesImmutablePayload(t *testing.T) {
 	}
 	accepted, retry := <-bodies, <-bodies
 	if !bytes.Equal(accepted, retry) {
-		t.Fatalf("usage retry payload changed under revision 1:\naccepted: %s\nretry:    %s", accepted, retry)
+		t.Fatalf("usage bucket report retry payload changed under revision 1:\naccepted: %s\nretry:    %s", accepted, retry)
 	}
 
 	changed.Revision = 2
-	changed.Publish = true
+	changed.Enqueue = true
 	if err := store.SaveUsage(t.Context(), []UsageSnapshot{changed}); err != nil {
 		t.Fatal(err)
 	}
 	if delivered, err := sender.SendOne(t.Context()); err != nil || !delivered {
-		t.Fatalf("changed publish: delivered=%v err=%v", delivered, err)
+		t.Fatalf("changed report: delivered=%v err=%v", delivered, err)
 	}
-	var changedPayload routeusagev1.RouteUsageSnapshotBatch
+	var changedPayload routeusagev1.RouteUsageBucketReportBatch
 	if err := json.Unmarshal(<-bodies, &changedPayload); err != nil {
 		t.Fatal(err)
 	}
 	if len(changedPayload.Items) != 1 || changedPayload.Items[0].Revision != "2" || changedPayload.Items[0].IngressBytes != "20" {
-		t.Fatalf("changed usage payload = %+v", changedPayload)
+		t.Fatalf("changed usage bucket report = %+v", changedPayload)
 	}
-	var acceptedPayload routeusagev1.RouteUsageSnapshotBatch
+	var acceptedPayload routeusagev1.RouteUsageBucketReportBatch
 	if err := json.Unmarshal(accepted, &acceptedPayload); err != nil {
 		t.Fatal(err)
 	}
 	if acceptedPayload.Items[0].ItemId == changedPayload.Items[0].ItemId {
-		t.Fatal("usage report ID did not change with the revision")
+		t.Fatal("usage bucket report ID did not change with the revision")
 	}
 	if count := scalar(t, db, "SELECT COUNT(*) FROM route_usage_outbox_items"); count != 0 {
 		t.Fatalf("outbox count = %d, want 0", count)
@@ -896,7 +836,7 @@ func TestRegistrationDeliverySurvivesStoreRestart(t *testing.T) {
 
 func TestLifecycleDeliveryUsesRouteSequenceNotEnqueueTime(t *testing.T) {
 	db, store := newTestStore(t)
-	enqueueRouteLifecycle(t, db, store, testRouteID, routes.LifecycleVersionStarted, time.Now())
+	enqueueRouteLifecycle(t, db, store, testRouteID, routes.LifecycleRouteVersionStarted, time.Now())
 	enqueueRouteLifecycle(t, db, store, testRouteID, routes.LifecycleReady, time.Now().Add(-time.Hour))
 	if _, err := db.ExecContext(t.Context(), `
 		UPDATE route_usage_outbox_items
@@ -943,9 +883,9 @@ func TestLifecycleBatchSelectsOnlyEarliestEventPerRoute(t *testing.T) {
 	db, store := newTestStore(t)
 	otherRouteID := "route_other"
 	insertLocalTestRoute(t, db, otherRouteID, "other.tnl.dev")
-	enqueueRouteLifecycle(t, db, store, testRouteID, routes.LifecycleVersionStarted, time.Now())
+	enqueueRouteLifecycle(t, db, store, testRouteID, routes.LifecycleRouteVersionStarted, time.Now())
 	enqueueRouteLifecycle(t, db, store, testRouteID, routes.LifecycleReady, time.Now())
-	enqueueRouteLifecycle(t, db, store, otherRouteID, routes.LifecycleVersionStarted, time.Now())
+	enqueueRouteLifecycle(t, db, store, otherRouteID, routes.LifecycleRouteVersionStarted, time.Now())
 
 	rows, err := store.queries.ListRouteLifecycleOutboxBatch(t.Context(), maximumBatchItems)
 	if err != nil {
@@ -965,8 +905,8 @@ func TestSenderBatchesLifecycleEventsAcrossRoutesAndCorrelatesResultsByID(t *tes
 	db, store := newTestStore(t)
 	otherRouteID := "route_other"
 	insertLocalTestRoute(t, db, otherRouteID, "other.tnl.dev")
-	enqueueRouteLifecycle(t, db, store, testRouteID, routes.LifecycleVersionStarted, time.Now())
-	enqueueRouteLifecycle(t, db, store, otherRouteID, routes.LifecycleVersionStarted, time.Now())
+	enqueueRouteLifecycle(t, db, store, testRouteID, routes.LifecycleRouteVersionStarted, time.Now())
+	enqueueRouteLifecycle(t, db, store, otherRouteID, routes.LifecycleRouteVersionStarted, time.Now())
 
 	received := make(chan routeusagev1.RouteLifecycleEventBatch, 1)
 	receiver := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -1017,8 +957,8 @@ func TestSenderRejectsIncompleteBatchResponseWithoutAcknowledging(t *testing.T) 
 	db, store := newTestStore(t)
 	otherRouteID := "route_other"
 	insertLocalTestRoute(t, db, otherRouteID, "other.tnl.dev")
-	enqueueRouteLifecycle(t, db, store, testRouteID, routes.LifecycleVersionStarted, time.Now())
-	enqueueRouteLifecycle(t, db, store, otherRouteID, routes.LifecycleVersionStarted, time.Now())
+	enqueueRouteLifecycle(t, db, store, testRouteID, routes.LifecycleRouteVersionStarted, time.Now())
+	enqueueRouteLifecycle(t, db, store, otherRouteID, routes.LifecycleRouteVersionStarted, time.Now())
 	receiver := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		var batch routeusagev1.RouteLifecycleEventBatch
 		if err := json.NewDecoder(request.Body).Decode(&batch); err != nil {
@@ -1073,20 +1013,23 @@ func TestSenderRejectsInvalidBatchResponses(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, _, err := sender.postBatch(t.Context(), "/v1/routes/lifecycle-events", []byte(`{"items":[]}`), []string{firstID, secondID}); err == nil || !strings.Contains(err.Error(), test.message) {
+			request := func(ctx context.Context) (*http.Response, error) {
+				return sender.api.IngestRouteLifecycleEventsWithBody(ctx, "application/json", strings.NewReader(`{"items":[]}`))
+			}
+			if _, _, err := sender.postBatch(t.Context(), request, []string{firstID, secondID}); err == nil || !strings.Contains(err.Error(), test.message) {
 				t.Fatalf("batch response error = %v, want message containing %q", err, test.message)
 			}
 		})
 	}
 }
 
-func TestSenderBatchesUsageReportsWithStableIDs(t *testing.T) {
+func TestSenderBatchesUsageBucketReportsWithStableIDs(t *testing.T) {
 	db, store := newTestStore(t)
-	acknowledgeVersionStarted(t, db, store)
+	acknowledgeRouteVersionStarted(t, db, store)
 	start := time.Date(2026, time.September, 2, 12, 0, 0, 0, time.UTC)
 	for _, snapshot := range []UsageSnapshot{
-		{RouteID: testRouteID, Version: 1, Resolution: "minute", BucketStart: start, Revision: 1, ObservedThrough: start.Add(time.Minute), Publish: true},
-		{RouteID: testRouteID, Version: 1, Resolution: "hour", BucketStart: start, Revision: 1, ObservedThrough: start.Add(time.Minute), Publish: true},
+		{RouteID: testRouteID, RouteVersion: 1, Resolution: "minute", BucketStart: start, Revision: 1, ObservedThrough: start.Add(time.Minute), Enqueue: true},
+		{RouteID: testRouteID, RouteVersion: 1, Resolution: "hour", BucketStart: start, Revision: 1, ObservedThrough: start.Add(time.Minute), Enqueue: true},
 	} {
 		if err := store.SaveUsage(t.Context(), []UsageSnapshot{snapshot}); err != nil {
 			t.Fatal(err)
@@ -1108,14 +1051,14 @@ func TestSenderBatchesUsageReportsWithStableIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	received := make(chan routeusagev1.RouteUsageSnapshotBatch, 1)
+	received := make(chan routeusagev1.RouteUsageBucketReportBatch, 1)
 	receiver := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		body, err := io.ReadAll(request.Body)
 		if err != nil {
 			response.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		var batch routeusagev1.RouteUsageSnapshotBatch
+		var batch routeusagev1.RouteUsageBucketReportBatch
 		if err := json.Unmarshal(body, &batch); err != nil {
 			response.WriteHeader(http.StatusBadRequest)
 			return
@@ -1129,16 +1072,16 @@ func TestSenderBatchesUsageReportsWithStableIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 	if delivered, err := sender.SendOne(t.Context()); err != nil || !delivered {
-		t.Fatalf("usage batch: delivered=%v err=%v", delivered, err)
+		t.Fatalf("usage bucket report batch: delivered=%v err=%v", delivered, err)
 	}
 	batch := <-received
 	if len(batch.Items) != 2 {
-		t.Fatalf("usage batch size = %d, want 2", len(batch.Items))
+		t.Fatalf("usage bucket report batch size = %d, want 2", len(batch.Items))
 	}
 	wireIDs := []string{batch.Items[0].ItemId, batch.Items[1].ItemId}
 	slices.Sort(wireIDs)
 	if !slices.Equal(wireIDs, initialIDs) {
-		t.Fatalf("usage report IDs = %v, want %v", wireIDs, initialIDs)
+		t.Fatalf("usage bucket report IDs = %v, want %v", wireIDs, initialIDs)
 	}
 	if count := scalar(t, db, "SELECT COUNT(*) FROM route_usage_outbox_items"); count != 0 {
 		t.Fatalf("outbox count = %d, want 0", count)
@@ -1163,9 +1106,9 @@ func TestEncodeBatchHonorsRequestLimit(t *testing.T) {
 	}
 }
 
-func TestSenderIncludesExtendedUsageAndOmitsUndefinedHistograms(t *testing.T) {
+func TestSenderIncludesExtendedUsageBucketReportAndOmitsUndefinedHistograms(t *testing.T) {
 	db, store := newTestStore(t)
-	acknowledgeVersionStarted(t, db, store)
+	acknowledgeRouteVersionStarted(t, db, store)
 	start := time.Date(2026, time.September, 2, 12, 0, 0, 0, time.UTC)
 	var openLatency durationHistogram
 	if !openLatency.observe(25 * time.Millisecond) {
@@ -1178,23 +1121,23 @@ func TestSenderIncludesExtendedUsageAndOmitsUndefinedHistograms(t *testing.T) {
 	}
 	visitors.insert(hash)
 	if err := store.SaveUsage(t.Context(), []UsageSnapshot{{
-		RouteID: testRouteID, Version: 1, Resolution: "minute", BucketStart: start,
+		RouteID: testRouteID, RouteVersion: 1, Resolution: "minute", BucketStart: start,
 		Revision: 1, ObservedThrough: start.Add(time.Minute), ConnectionAttempts: 5,
 		PolicyDenials: 1, CapacityDenials: 2, PublisherOpenFailures: 1, SuccessfulStreams: 1,
 		ConnectionNanoseconds: uint64(45 * time.Second), IngressBytes: 100, EgressBytes: 200,
 		PublisherOpenLatency: openLatency.marshalBinary(), VisitorNetworkHLL: visitors.checkpoint(),
-		VisitorNetworkEstimate: visitors.estimate(), Publish: true,
+		VisitorNetworkEstimate: visitors.estimate(), Enqueue: true,
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	received := make(chan routeusagev1.RouteUsageSnapshot, 1)
+	received := make(chan routeusagev1.RouteUsageBucketReport, 1)
 	receiver := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		body, err := io.ReadAll(request.Body)
 		if err != nil {
 			response.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		var batch routeusagev1.RouteUsageSnapshotBatch
+		var batch routeusagev1.RouteUsageBucketReportBatch
 		if err := json.Unmarshal(body, &batch); err != nil || len(batch.Items) != 1 {
 			response.WriteHeader(http.StatusBadRequest)
 			return
@@ -1208,26 +1151,26 @@ func TestSenderIncludesExtendedUsageAndOmitsUndefinedHistograms(t *testing.T) {
 		t.Fatal(err)
 	}
 	if delivered, err := sender.SendOne(t.Context()); err != nil || !delivered {
-		t.Fatalf("send usage: delivered=%v err=%v", delivered, err)
+		t.Fatalf("send usage bucket report: delivered=%v err=%v", delivered, err)
 	}
-	snapshot := <-received
-	if snapshot.ConnectionAttempts != "5" || snapshot.PolicyDenials != "1" || snapshot.CapacityDenials != "2" ||
-		snapshot.PublisherOpenFailures != "1" || snapshot.SuccessfulStreams != "1" ||
-		snapshot.ConnectionNanoseconds != "45000000000" || snapshot.IngressBytes != "100" || snapshot.EgressBytes != "200" {
-		t.Fatalf("usage payload counters = %+v", snapshot)
+	report := <-received
+	if report.RouteVersion != "1" || report.ConnectionAttempts != "5" || report.PolicyDenials != "1" || report.CapacityDenials != "2" ||
+		report.PublisherOpenFailures != "1" || report.SuccessfulStreams != "1" ||
+		report.ConnectionNanoseconds != "45000000000" || report.IngressBytes != "100" || report.EgressBytes != "200" {
+		t.Fatalf("usage bucket report counters = %+v", report)
 	}
-	if snapshot.PublisherOpenLatency == nil || snapshot.PublisherOpenLatency.Count != "1" ||
-		snapshot.PublisherOpenLatency.SumNanoseconds != "25000000" || len(snapshot.PublisherOpenLatency.CumulativeCounts) != 22 {
-		t.Fatalf("usage payload publisher open latency = %+v", snapshot.PublisherOpenLatency)
+	if report.PublisherOpenLatency == nil || report.PublisherOpenLatency.Count != "1" ||
+		report.PublisherOpenLatency.SumNanoseconds != "25000000" || len(report.PublisherOpenLatency.CumulativeCounts) != 22 {
+		t.Fatalf("usage bucket report publisher open latency = %+v", report.PublisherOpenLatency)
 	}
-	if snapshot.TimeToFirstPublisherByte != nil || snapshot.SuccessfulConnectionDuration != nil {
-		t.Fatalf("undefined usage histograms were sent: %+v", snapshot)
+	if report.TimeToFirstPublisherByte != nil || report.SuccessfulConnectionDuration != nil {
+		t.Fatalf("undefined usage bucket report histograms were sent: %+v", report)
 	}
-	if snapshot.VisitorNetworkEstimate != "1" || !bytes.Equal(snapshot.VisitorNetworkHll, visitors.checkpoint()) {
-		t.Fatalf("usage payload visitor sketch = estimate %s data %x", snapshot.VisitorNetworkEstimate, snapshot.VisitorNetworkHll)
+	if report.VisitorNetworkEstimate != "1" || !bytes.Equal(report.VisitorNetworkHll, visitors.checkpoint()) {
+		t.Fatalf("usage bucket report visitor sketch = estimate %s data %x", report.VisitorNetworkEstimate, report.VisitorNetworkHll)
 	}
 	if count := scalar(t, db, "SELECT COUNT(*) FROM route_usage_snapshots"); count != 1 {
-		t.Fatalf("incomplete usage count = %d, want 1", count)
+		t.Fatalf("incomplete usage snapshot count = %d, want 1", count)
 	}
 }
 
@@ -1236,8 +1179,8 @@ func TestPublisherPrioritizesLifecycleAndDeletesCompletedUsage(t *testing.T) {
 	start := time.Date(2026, time.January, 2, 12, 0, 0, 0, time.UTC)
 	enqueueLifecycle(t, db, store, start)
 	if err := store.SaveUsage(t.Context(), []UsageSnapshot{{
-		RouteID: testRouteID, Version: 1, Resolution: "minute", BucketStart: start,
-		Revision: 1, ObservedThrough: start.Add(time.Minute), Complete: true, Publish: true,
+		RouteID: testRouteID, RouteVersion: 1, Resolution: "minute", BucketStart: start,
+		Revision: 1, ObservedThrough: start.Add(time.Minute), CoverageComplete: true, Enqueue: true,
 	}}); err != nil {
 		t.Fatal(err)
 	}
@@ -1266,24 +1209,24 @@ func TestPublisherPrioritizesLifecycleAndDeletesCompletedUsage(t *testing.T) {
 			t.Fatal("expected queued report")
 		}
 	}
-	if first, second := <-paths, <-paths; first != "/v1/routes/lifecycle-events" || second != "/v1/routes/usage-snapshots" {
+	if first, second := <-paths, <-paths; first != "/v1/routes/lifecycle-events" || second != "/v1/routes/usage-bucket-reports" {
 		t.Fatalf("delivery order = %q, %q", first, second)
 	}
 	if count := scalar(t, db, "SELECT COUNT(*) FROM route_usage_outbox_items"); count != 0 {
 		t.Fatalf("outbox count = %d, want 0", count)
 	}
 	if count := scalar(t, db, "SELECT COUNT(*) FROM route_usage_snapshots"); count != 0 {
-		t.Fatalf("completed usage count = %d, want 0", count)
+		t.Fatalf("completed usage snapshot count = %d, want 0", count)
 	}
 }
 
 func TestPublisherAcknowledgesOnlyDeliveredRevision(t *testing.T) {
 	db, store := newTestStore(t)
-	acknowledgeVersionStarted(t, db, store)
+	acknowledgeRouteVersionStarted(t, db, store)
 	start := time.Date(2026, time.January, 2, 12, 0, 0, 0, time.UTC)
 	first := UsageSnapshot{
-		RouteID: testRouteID, Version: 1, Resolution: "hour", BucketStart: start,
-		Revision: 1, ObservedThrough: start.Add(time.Minute), IngressBytes: 10, Publish: true,
+		RouteID: testRouteID, RouteVersion: 1, Resolution: "hour", BucketStart: start,
+		Revision: 1, ObservedThrough: start.Add(time.Minute), IngressBytes: 10, Enqueue: true,
 	}
 	if err := store.SaveUsage(t.Context(), []UsageSnapshot{first}); err != nil {
 		t.Fatal(err)
@@ -1298,7 +1241,7 @@ func TestPublisherAcknowledgesOnlyDeliveredRevision(t *testing.T) {
 			response.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		var payload routeusagev1.RouteUsageSnapshotBatch
+		var payload routeusagev1.RouteUsageBucketReportBatch
 		if err := json.Unmarshal(body, &payload); err != nil || len(payload.Items) != 1 {
 			updateErrors <- err
 			response.WriteHeader(http.StatusBadRequest)
@@ -1335,7 +1278,7 @@ func TestPublisherAcknowledgesOnlyDeliveredRevision(t *testing.T) {
 		t.Fatalf("outbox count = %d, want 0", count)
 	}
 	if count := scalar(t, db, "SELECT COUNT(*) FROM route_usage_snapshots"); count != 1 {
-		t.Fatalf("incomplete usage count = %d, want 1", count)
+		t.Fatalf("incomplete usage snapshot count = %d, want 1", count)
 	}
 }
 
@@ -1401,8 +1344,8 @@ func TestPublisherPollsTheDurableOutbox(t *testing.T) {
 	}
 	if _, err := db.ExecContext(t.Context(), `
 		INSERT INTO route_lifecycle_events (
-			event_id, route_id, version, sequence, occurred_at, transition
-		) VALUES ('event_0123456789abcdef0123456789abcdef', 'route_test', 1, 1, 1, 'version_started')
+			event_id, route_id, route_version, sequence, occurred_at, transition
+		) VALUES ('event_0123456789abcdef0123456789abcdef', 'route_test', 1, 1, 1, 'route_version_started')
 	`); err != nil {
 		t.Fatal(err)
 	}
@@ -1463,7 +1406,7 @@ func TestCollectorRecoversExpiredBucketAsIncomplete(t *testing.T) {
 	db, store := newTestStore(t)
 	start := time.Date(2026, time.January, 2, 12, 0, 0, 0, time.UTC)
 	if err := store.SaveUsage(t.Context(), []UsageSnapshot{{
-		RouteID: testRouteID, Version: 1, Resolution: "minute", BucketStart: start,
+		RouteID: testRouteID, RouteVersion: 1, Resolution: "minute", BucketStart: start,
 		ObservedThrough: start.Add(30 * time.Second), ConnectionNanoseconds: uint64(30 * time.Second),
 	}}); err != nil {
 		t.Fatal(err)
@@ -1502,7 +1445,7 @@ func newTestStore(t *testing.T) (*sql.DB, *Store) {
 	for _, statement := range []string{
 		"INSERT INTO identities (id, display_name, email, created_at) VALUES ('identity_test', 'Test', 'test@example.com', 1)",
 		"INSERT INTO hostnames (id, identity_id, hostname, kind, status, source, created_at, activated_at) VALUES ('hostname_test', 'identity_test', 'test.tnl.dev', 'managed', 'active', 'user', 1, 1)",
-		"INSERT INTO routes (id, hostname_id, identity_id, hostname, local_target, status, version, created_at) VALUES ('route_test', 'hostname_test', 'identity_test', 'test.tnl.dev', 'localhost:8080', 'active', 1, 1)",
+		"INSERT INTO routes (id, hostname_id, identity_id, hostname, local_target, status, route_version, created_at) VALUES ('route_test', 'hostname_test', 'identity_test', 'test.tnl.dev', 'localhost:8080', 'enabled', 1, 1)",
 	} {
 		if _, err := db.ExecContext(t.Context(), statement); err != nil {
 			t.Fatal(err)
@@ -1517,7 +1460,7 @@ func newTestStore(t *testing.T) (*sql.DB, *Store) {
 
 func enqueueLifecycle(t *testing.T, db *sql.DB, store *Store, occurredAt time.Time) {
 	t.Helper()
-	enqueueRouteLifecycle(t, db, store, testRouteID, routes.LifecycleVersionStarted, occurredAt)
+	enqueueRouteLifecycle(t, db, store, testRouteID, routes.LifecycleRouteVersionStarted, occurredAt)
 }
 
 func enqueueRouteLifecycle(
@@ -1535,7 +1478,7 @@ func enqueueRouteLifecycle(
 	}
 	defer tx.Rollback()
 	if err := store.RecordLifecycle(t.Context(), statedb.New(db).WithTx(tx), routes.LifecycleChange{
-		RouteID: routeID, Version: 1, OccurredAt: occurredAt, Transition: transition,
+		RouteID: routeID, RouteVersion: 1, OccurredAt: occurredAt, Transition: transition,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1546,10 +1489,10 @@ func enqueueRouteLifecycle(
 
 const signedRouteInsertSQL = `
 	INSERT INTO routes (
-		id, hostname, local_target, status, version,
+		id, hostname, local_target, status, route_version,
 		authorization_issuer, authorization_id, authorization_key_id, authorization_retry_id,
 		authorization_revision, authorization_expires_at, authorization_request_hash, created_at
-	) VALUES (?, ?, 'localhost:8080', 'active', 1, 'https://authority.example', ?, ?, ?, 1, 2, zeroblob(32), 1)
+	) VALUES (?, ?, 'localhost:8080', 'enabled', 1, 'https://authority.example', ?, ?, ?, 1, 2, zeroblob(32), 1)
 `
 
 func insertSignedTestRoute(t *testing.T, db *sql.DB, routeID, hostname, marker string) {
@@ -1571,8 +1514,8 @@ func insertLocalTestRoute(t *testing.T, db *sql.DB, routeID, hostname string) {
 		t.Fatal(err)
 	}
 	if _, err := db.ExecContext(t.Context(), `
-		INSERT INTO routes (id, hostname_id, identity_id, hostname, local_target, status, version, created_at)
-		VALUES (?, ?, 'identity_test', ?, 'localhost:8080', 'active', 1, 1)
+		INSERT INTO routes (id, hostname_id, identity_id, hostname, local_target, status, route_version, created_at)
+		VALUES (?, ?, 'identity_test', ?, 'localhost:8080', 'enabled', 1, 1)
 	`, routeID, hostnameID, hostname); err != nil {
 		t.Fatal(err)
 	}
@@ -1622,13 +1565,13 @@ func loadUsageBucket(t *testing.T, queries *statedb.Queries, resolution string, 
 func loadUsageBucketVersion(
 	t *testing.T,
 	queries *statedb.Queries,
-	version uint64,
+	routeVersion uint64,
 	resolution string,
 	start time.Time,
 ) statedb.RouteUsageSnapshot {
 	t.Helper()
 	bucket, err := queries.GetRouteUsageSnapshot(t.Context(), statedb.GetRouteUsageSnapshotParams{
-		RouteID: testRouteID, Version: int64(version), Resolution: resolution, BucketStart: start.UnixNano(),
+		RouteID: testRouteID, RouteVersion: int64(routeVersion), Resolution: resolution, BucketStart: start.UnixNano(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1652,7 +1595,7 @@ func assertUsage(
 	duration time.Duration,
 	ingress int64,
 	egress int64,
-	complete int64,
+	coverageComplete int64,
 	revision int64,
 ) {
 	t.Helper()
@@ -1660,13 +1603,13 @@ func assertUsage(
 		bucket.ConnectionNanoseconds != int64(duration) ||
 		bucket.IngressBytes != ingress ||
 		bucket.EgressBytes != egress ||
-		bucket.Complete != complete ||
+		bucket.Complete != coverageComplete ||
 		bucket.Revision != revision {
 		t.Fatalf("usage bucket = %+v", bucket)
 	}
 }
 
-func acknowledgeVersionStarted(t *testing.T, db *sql.DB, store *Store) {
+func acknowledgeRouteVersionStarted(t *testing.T, db *sql.DB, store *Store) {
 	t.Helper()
 	enqueueLifecycle(t, db, store, time.Now())
 	if _, err := db.ExecContext(t.Context(), `

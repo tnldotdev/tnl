@@ -8,8 +8,8 @@ import (
 type StoreOperation string
 
 const (
-	StoreOperationHostname            StoreOperation = "hostname"
-	StoreOperationHostnameRemove      StoreOperation = "hostname_remove"
+	StoreOperationHostnameClaim       StoreOperation = "hostname_claim"
+	StoreOperationHostnameRelease     StoreOperation = "hostname_release"
 	StoreOperationRouteCreate         StoreOperation = "route_create"
 	StoreOperationSessionCreate       StoreOperation = "session_create"
 	StoreOperationTransportRegister   StoreOperation = "transport_register"
@@ -43,18 +43,18 @@ const (
 type RouteRemovalReason string
 
 const (
-	RouteRemovalHostnameRemoved     RouteRemovalReason = "hostname_removed"
-	RouteRemovalDeleted             RouteRemovalReason = "deleted"
-	RouteRemovalSessionExpired      RouteRemovalReason = "session_expired"
-	RouteRemovalWorkerDisconnected  RouteRemovalReason = "worker_disconnected"
-	RouteRemovalWorkerDraining      RouteRemovalReason = "worker_draining"
-	RouteRemovalVersionReplaced     RouteRemovalReason = "version_replaced"
-	RouteRemovalSuspended           RouteRemovalReason = "suspended"
-	RouteRemovalHostnameQuarantined RouteRemovalReason = "hostname_quarantined"
+	RouteRemovalHostnameRemoved      RouteRemovalReason = "hostname_removed"
+	RouteRemovalDeleted              RouteRemovalReason = "deleted"
+	RouteRemovalSessionExpired       RouteRemovalReason = "session_expired"
+	RouteRemovalWorkerDisconnected   RouteRemovalReason = "worker_disconnected"
+	RouteRemovalWorkerDraining       RouteRemovalReason = "worker_draining"
+	RouteRemovalRouteVersionReplaced RouteRemovalReason = "route_version_replaced"
+	RouteRemovalSuspended            RouteRemovalReason = "suspended"
+	RouteRemovalHostnameQuarantined  RouteRemovalReason = "hostname_quarantined"
 )
 
 type CoordinatorConfig struct {
-	PublishReady                   func(context.Context, string) error
+	CheckHostnamePublishability    func(context.Context, string) error
 	ObserveHeartbeat               func(HeartbeatResult)
 	ObserveRouteRemoval            func(RouteRemovalReason)
 	ObserveWorkerCapacityRejection func()
@@ -63,8 +63,8 @@ type CoordinatorConfig struct {
 
 type HealthStats struct {
 	Provisioning                      int
-	Active                            int
+	Routable                          int
 	ConnectedWorkers                  int
 	MinimumProvisioningSessionSeconds float64
-	MinimumActiveSessionSeconds       float64
+	MinimumRoutableSessionSeconds     float64
 }
