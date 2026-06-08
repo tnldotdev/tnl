@@ -227,7 +227,7 @@ func (c TNLD) Validate() error {
 		edgeURL, err := url.Parse(c.EdgeURL)
 		if err != nil || edgeURL.Scheme != "wss" || edgeURL.Host == "" || edgeURL.User != nil ||
 			edgeURL.Path != workerv1.Endpoint || edgeURL.RawQuery != "" || edgeURL.Fragment != "" {
-			return errors.New("Worker endpoint must be a WSS URL with path /internal/v1/worker.")
+			return errors.New("worker endpoint must be a WSS URL with path /internal/v1/worker")
 		}
 	}
 	return nil
