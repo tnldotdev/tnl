@@ -89,3 +89,33 @@ func TestParseTNLDRejectsInvalidInput(t *testing.T) {
 		})
 	}
 }
+
+func TestTNLDValidateACME(t *testing.T) {
+	bootstrap, err := credentials.NewBootstrapToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid := TNLD{
+		Mode: TNLDModeStandalone, StateDir: "/state", ControlListen: "127.0.0.1:8443",
+		PublicListen: "127.0.0.1:443", ControlCertFile: "/control.crt", ControlKeyFile: "/control.key",
+		BootstrapToken: bootstrap.String(), RelayMapFile: "/relay.json", RelayProfile: "default",
+		WorkerCapacity: 1, WorkerStreamLimit: 1, PublicConnLimit: 1, RouteConnLimit: 1, DrainTimeout: 30,
+		ACMEDirectoryURL: "https://acme.example/directory", ACMEEmail: "operator@example.com", ACMEProfile: "tlsserver",
+	}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("valid ACME config: %v", err)
+	}
+	for name, mutate := range map[string]func(*TNLD){
+		"non-HTTPS directory": func(config *TNLD) { config.ACMEDirectoryURL = "http://acme.example/directory" },
+		"invalid email":       func(config *TNLD) { config.ACMEEmail = "Operator <operator@example.com>" },
+		"missing ingress":     func(config *TNLD) { config.PublicListen = "" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			config := valid
+			mutate(&config)
+			if err := config.Validate(); err == nil {
+				t.Fatal("Validate succeeded")
+			}
+		})
+	}
+}

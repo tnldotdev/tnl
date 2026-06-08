@@ -49,9 +49,9 @@ func (e *ClientHelloError) Error() string {
 }
 
 type ClientHello struct {
-	ServerName        string
-	OffersACMETLSALPN bool
-	Replay            io.Reader
+	ServerName  string
+	ACMETLSALPN bool
+	Replay      io.Reader
 }
 
 func InspectClientHello(connection net.Conn) (ClientHello, error) {
@@ -102,14 +102,14 @@ func inspectClientHello(reader io.Reader) (ClientHello, error) {
 			continue
 		}
 
-		serverName, offersACME, err := parseClientHello(handshake[4:handshakeLength])
+		serverName, acmeTLSALPN, err := parseClientHello(handshake[4:handshakeLength])
 		if err != nil {
 			return ClientHello{}, err
 		}
 		return ClientHello{
-			ServerName:        serverName,
-			OffersACMETLSALPN: offersACME,
-			Replay:            io.MultiReader(bytes.NewReader(buffered.Bytes()), reader),
+			ServerName:  serverName,
+			ACMETLSALPN: acmeTLSALPN,
+			Replay:      io.MultiReader(bytes.NewReader(buffered.Bytes()), reader),
 		}, nil
 	}
 	return ClientHello{}, clientHelloError(ErrorTooManyTLSRecords)
@@ -134,7 +134,7 @@ func parseClientHello(body []byte) (string, bool, error) {
 	}
 
 	var serverName string
-	offersACME := false
+	acmeTLSALPN := false
 	seenSNI := false
 	seenALPN := false
 	for !extensions.Empty() {
@@ -160,11 +160,11 @@ func parseClientHello(body []byte) (string, bool, error) {
 				return "", false, clientHelloError(ErrorMalformedClientHello)
 			}
 			seenALPN = true
-			parsedOffersACME, err := parseALPN(extension)
+			parsedACMETLSALPN, err := parseALPN(extension)
 			if err != nil {
 				return "", false, err
 			}
-			offersACME = parsedOffersACME
+			acmeTLSALPN = parsedACMETLSALPN
 		case echExt:
 			return "", false, clientHelloError(ErrorECHUnsupported)
 		}
@@ -173,7 +173,7 @@ func parseClientHello(body []byte) (string, bool, error) {
 	if serverName == "" {
 		return "", false, clientHelloError(ErrorMissingSNI)
 	}
-	return serverName, offersACME, nil
+	return serverName, acmeTLSALPN, nil
 }
 
 func parseServerName(data cryptobyte.String) (string, error) {
@@ -208,15 +208,17 @@ func parseALPN(data cryptobyte.String) (bool, error) {
 		return false, clientHelloError(ErrorMalformedClientHello)
 	}
 
-	offersACME := false
+	count := 0
+	onlyACME := false
 	for !protocols.Empty() {
 		var protocol cryptobyte.String
 		if !protocols.ReadUint8LengthPrefixed(&protocol) || protocol.Empty() {
 			return false, clientHelloError(ErrorMalformedClientHello)
 		}
-		offersACME = offersACME || bytes.Equal(protocol, []byte(acmeTLSALPN))
+		count++
+		onlyACME = bytes.Equal(protocol, []byte(acmeTLSALPN))
 	}
-	return offersACME, nil
+	return count == 1 && onlyACME, nil
 }
 
 func clientHelloError(code ClientHelloErrorCode) error {

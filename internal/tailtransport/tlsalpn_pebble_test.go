@@ -336,7 +336,7 @@ func (i *tlsALPNIngress) handle(public net.Conn) {
 		i.report(err)
 		return
 	}
-	if hello.ServerName != i.hostname || !hello.OffersACMETLSALPN {
+	if hello.ServerName != i.hostname || !hello.ACMETLSALPN {
 		return
 	}
 

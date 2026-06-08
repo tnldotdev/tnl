@@ -74,6 +74,57 @@ func TestIngressRoutesTLSWithProxyMetadata(t *testing.T) {
 	}
 }
 
+func TestIngressUsesProvisioningRouteOnlyForACMETLSALPN(t *testing.T) {
+	backend := &tlsBackend{
+		certificate: testCertificate(t, "route.example"), result: make(chan backendResult, 1),
+		nextProtos: []string{"acme-tls/1"},
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := New(listener, Config{
+		Lookup: func(string) (worker.RouteBackend, bool) { return nil, false },
+		LookupChallenge: func(hostname string) (worker.RouteBackend, bool) {
+			return backend, hostname == "route.example"
+		},
+		MaxConnections: 8, MaxRouteConnections: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	served := make(chan error, 1)
+	go func() { served <- server.Serve() }()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = server.Drain(ctx)
+		<-served
+	})
+
+	client, err := tls.Dial("tcp", listener.Addr().String(), &tls.Config{
+		ServerName: "route.example", NextProtos: []string{"acme-tls/1"}, MinVersion: tls.VersionTLS12,
+		InsecureSkipVerify: true, // The test certificate is self-signed.
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.ConnectionState().NegotiatedProtocol != "acme-tls/1" {
+		t.Fatalf("negotiated ALPN = %q", client.ConnectionState().NegotiatedProtocol)
+	}
+	if _, err := client.Write([]byte("ping")); err != nil {
+		t.Fatal(err)
+	}
+	response := make([]byte, 4)
+	if _, err := io.ReadFull(client, response); err != nil {
+		t.Fatal(err)
+	}
+	_ = client.Close()
+	if result := <-backend.result; result.err != nil {
+		t.Fatal(result.err)
+	}
+}
+
 func TestDrainDeadlineForcesBackendClosed(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -161,6 +212,7 @@ func TestAdmissionRegistersBeforeDrainWait(t *testing.T) {
 type tlsBackend struct {
 	certificate tls.Certificate
 	result      chan backendResult
+	nextProtos  []string
 }
 
 type holdingBackend struct {
@@ -197,6 +249,7 @@ func (b *tlsBackend) Open(context.Context) (net.Conn, error) {
 		server := tls.Server(&testReaderConn{Conn: agent, reader: replay}, &tls.Config{
 			Certificates: []tls.Certificate{b.certificate},
 			MinVersion:   tls.VersionTLS12,
+			NextProtos:   b.nextProtos,
 		})
 		if err := server.Handshake(); err != nil {
 			b.result <- backendResult{err: err}

@@ -32,7 +32,7 @@ func TestInspectClientHelloFromTLSClient(t *testing.T) {
 	if result.ServerName != "demo.example" {
 		t.Fatalf("got SNI %q", result.ServerName)
 	}
-	if result.OffersACMETLSALPN {
+	if result.ACMETLSALPN {
 		t.Fatal("unexpected ACME ALPN")
 	}
 
@@ -55,8 +55,8 @@ func TestInspectClientHelloFragmentsAndReplays(t *testing.T) {
 	if result.ServerName != "demo.example" {
 		t.Fatalf("got SNI %q", result.ServerName)
 	}
-	if !result.OffersACMETLSALPN {
-		t.Fatal("ACME ALPN was not detected")
+	if result.ACMETLSALPN {
+		t.Fatal("mixed ALPN was accepted as ACME TLS-ALPN-01")
 	}
 	replayed, err := io.ReadAll(result.Replay)
 	if err != nil {
@@ -64,6 +64,17 @@ func TestInspectClientHelloFragmentsAndReplays(t *testing.T) {
 	}
 	if !bytes.Equal(replayed, input) {
 		t.Fatal("replayed bytes differ from input")
+	}
+}
+
+func TestInspectClientHelloDetectsSoleACMETLSALPN(t *testing.T) {
+	input := tlsRecords(buildClientHello(sni("demo.example"), alpnExtension(acmeTLSALPN)))
+	result, err := inspectClientHello(bytes.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.ACMETLSALPN {
+		t.Fatal("sole ACME ALPN was not detected")
 	}
 }
 
