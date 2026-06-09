@@ -82,6 +82,18 @@ func (s *Store) CreateSigned(
 	); err != nil || found {
 		return replay, err
 	}
+	maxAuthorizationRevision, err := queries.GetMaxSignedRouteAuthorizationRevision(
+		ctx, statedb.GetMaxSignedRouteAuthorizationRevisionParams{
+			AuthorizationIssuer: claims.Issuer,
+			Hostname:            hostname,
+		},
+	)
+	if err != nil {
+		return Provisioning{}, fmt.Errorf("routes: read signed authorization revision floor: %w", err)
+	}
+	if int64(claims.Revision) < maxAuthorizationRevision {
+		return Provisioning{}, ErrAuthorizationReplayed
+	}
 
 	routeVersion := uint64(1)
 	existingRoute, err := queries.GetCurrentRouteByHostname(ctx, hostname)

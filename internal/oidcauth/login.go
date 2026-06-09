@@ -210,10 +210,15 @@ func verifiedResult(
 		return Result{}, errors.New("oidcauth: invalid ID token subject")
 	}
 	var claims struct {
-		Nonce string `json:"nonce"`
+		Nonce           string `json:"nonce"`
+		AuthorizedParty string `json:"azp"`
 	}
 	if err := verified.Claims(&claims); err != nil || claims.Nonce != nonce {
 		return Result{}, errors.New("oidcauth: invalid ID token nonce")
+	}
+	if claims.AuthorizedParty != "" && claims.AuthorizedParty != clientID ||
+		len(verified.Audience) > 1 && claims.AuthorizedParty != clientID {
+		return Result{}, errors.New("oidcauth: invalid ID token authorized party")
 	}
 	if !validOAuthToken(token.AccessToken) || !validOAuthToken(token.RefreshToken) || !strings.EqualFold(token.Type(), "Bearer") ||
 		token.Expiry.IsZero() || !token.Expiry.After(time.Now()) {

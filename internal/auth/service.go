@@ -123,9 +123,12 @@ func (s *Service) ExchangeOIDC(ctx context.Context, token string) (IssuedControl
 	if err != nil {
 		return IssuedControlSession{}, err
 	}
+	if oidcIdentity.AssertionIdentity == "" {
+		return IssuedControlSession{}, ErrUnauthenticated
+	}
 	digest := sha256.Sum256([]byte(oidcIdentity.Issuer + "\x00" + oidcIdentity.Subject))
 	identity := state.Identity{ID: "identity_oidc_" + hex.EncodeToString(digest[:])}
-	assertionHash := sha256.Sum256([]byte(token))
+	assertionHash := sha256.Sum256([]byte(oidcIdentity.AssertionIdentity))
 	issued, err := s.issue(ctx, identity, state.AuthenticationMethodOIDC, 1, []Grant{GrantPublish}, assertionHash[:], oidcIdentity.ExpiresAt)
 	if errors.Is(err, state.ErrOIDCAssertionAlreadyExchanged) {
 		return IssuedControlSession{}, ErrUnauthenticated

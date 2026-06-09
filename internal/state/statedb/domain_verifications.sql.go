@@ -220,7 +220,7 @@ UPDATE domain_verifications
 SET status = 'invalidated', invalidated_at = ?1
 WHERE domain = ?2
     AND id != ?3
-    AND status = 'pending'
+    AND status IN ('pending', 'verified')
 `
 
 type InvalidateOtherDomainVerificationsParams struct {
@@ -275,4 +275,28 @@ func (q *Queries) ListActiveCustomDomainHostnames(ctx context.Context) ([]Hostna
 		return nil, err
 	}
 	return items, nil
+}
+
+const transferActiveCustomDomainHostname = `-- name: TransferActiveCustomDomainHostname :execrows
+UPDATE hostnames
+SET identity_id = CAST(?1 AS TEXT),
+    activated_at = ?2, deactivated_at = NULL
+WHERE id = ?3
+    AND kind = 'custom_domain'
+    AND status = 'active'
+    AND identity_id != CAST(?1 AS TEXT)
+`
+
+type TransferActiveCustomDomainHostnameParams struct {
+	IdentityID  string
+	ActivatedAt sql.NullInt64
+	ID          string
+}
+
+func (q *Queries) TransferActiveCustomDomainHostname(ctx context.Context, arg TransferActiveCustomDomainHostnameParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, transferActiveCustomDomainHostname, arg.IdentityID, arg.ActivatedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }

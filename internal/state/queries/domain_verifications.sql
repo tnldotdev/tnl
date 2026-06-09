@@ -50,6 +50,15 @@ WHERE id = sqlc.arg(id)
     AND kind = 'custom_domain'
     AND status = 'available';
 
+-- name: TransferActiveCustomDomainHostname :execrows
+UPDATE hostnames
+SET identity_id = CAST(sqlc.arg(identity_id) AS TEXT),
+    activated_at = sqlc.arg(activated_at), deactivated_at = NULL
+WHERE id = sqlc.arg(id)
+    AND kind = 'custom_domain'
+    AND status = 'active'
+    AND identity_id != CAST(sqlc.arg(identity_id) AS TEXT);
+
 -- name: CompleteDomainVerification :execrows
 UPDATE domain_verifications
 SET status = 'verified', hostname_id = sqlc.arg(hostname_id),
@@ -63,7 +72,7 @@ UPDATE domain_verifications
 SET status = 'invalidated', invalidated_at = sqlc.arg(invalidated_at)
 WHERE domain = sqlc.arg(domain)
     AND id != sqlc.arg(id)
-    AND status = 'pending';
+    AND status IN ('pending', 'verified');
 
 -- name: InvalidateDomainVerificationsForHostname :exec
 UPDATE domain_verifications

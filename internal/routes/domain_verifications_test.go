@@ -9,6 +9,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/state"
 	"github.com/tnldotdev/tnl/internal/state/statedb"
+	"tailscale.com/types/key"
 )
 
 type domainVerifierStub struct {
@@ -93,7 +94,7 @@ func TestCustomDomainVerificationLifecycleAndTransfer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = store.Create(ctx, "owner", "a.b.c.d.e.f.g.h.other.com", "localhost:3000", "instance", routeToken, nil)
+	created, err := store.Create(ctx, "owner", "a.b.c.d.e.f.g.h.other.com", "localhost:3000", "instance", routeToken, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,19 +102,6 @@ func TestCustomDomainVerificationLifecycleAndTransfer(t *testing.T) {
 		t.Fatalf("ninth-level route error = %v", err)
 	}
 
-	blocked, err := store.CreateDomainVerification(ctx, "other", "other.com", "blocked-transfer")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.CompleteDomainVerification(ctx, "other", blocked.ID); !errors.Is(err, ErrNameUnavailable) {
-		t.Fatalf("active domain transfer error = %v", err)
-	}
-	if err := store.ReleaseHostname(ctx, "owner", hostname.ID); err != nil {
-		t.Fatal(err)
-	}
-	if routes, err := store.List(ctx, "owner"); err != nil || len(routes) != 0 {
-		t.Fatalf("old owner routes = %#v, %v", routes, err)
-	}
 	transfer, err := store.CreateDomainVerification(ctx, "other", "other.com", "transfer")
 	if err != nil {
 		t.Fatal(err)
@@ -124,6 +112,102 @@ func TestCustomDomainVerificationLifecycleAndTransfer(t *testing.T) {
 	}
 	if transferred.ID != hostname.ID || transferred.IdentityID != "other" {
 		t.Fatalf("transfer = %#v", transferred)
+	}
+	if routes, err := store.List(ctx, "owner"); err != nil || len(routes) != 0 {
+		t.Fatalf("old owner routes = %#v, %v", routes, err)
+	}
+	if _, err := store.AuthenticateSession(ctx, created.Route.ID, created.Route.RouteVersion, created.SessionToken, "instance"); !errors.Is(err, ErrStaleSession) {
+		t.Fatalf("old owner session error = %v", err)
+	}
+	previous, err := store.GetDomainVerification(ctx, "owner", verification.ID)
+	if err != nil || previous.Status != DomainVerificationStatusInvalidated {
+		t.Fatalf("previous verification = %#v, %v", previous, err)
+	}
+}
+
+func TestCoordinatorCustomDomainTransferDeactivatesRoutes(t *testing.T) {
+	ctx := context.Background()
+	db, err := state.Open(ctx, filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	queries := statedb.New(db)
+	upsertTestIdentity(t, ctx, queries, "owner", "Owner", 1)
+	upsertTestIdentity(t, ctx, queries, "other", "Other", 1)
+	store, err := NewStore(db, "routes.test", StoreConfig{
+		VerificationSuffix: "domains.routes.test",
+		DomainVerifier:     &domainVerifierStub{addresses: []string{"192.0.2.10"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var removals []RouteRemovalReason
+	coordinator, err := NewCoordinator(ctx, store, "instance", CoordinatorConfig{
+		ObserveRouteRemoval: func(reason RouteRemovalReason) { removals = append(removals, reason) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = coordinator.Close() })
+	attachedWorker := &fakeWorker{limit: 1}
+	if err := coordinator.AddWorker("local", attachedWorker); err != nil {
+		t.Fatal(err)
+	}
+
+	verification, err := coordinator.CreateDomainVerification(ctx, "owner", "other.com", "owner-proof")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostname, err := coordinator.CompleteDomainVerification(ctx, "owner", verification.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	routeToken, _, _, err := credentials.NewRouteToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := coordinator.Create(ctx, "owner", "app.other.com", "localhost:3000", routeToken, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := coordinator.RegisterTransport(
+		ctx, created.Route.ID, created.Route.RouteVersion, created.SessionToken,
+		key.NewNode().Public().String(), "test",
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := coordinator.Ready(ctx, created.Route.ID, created.Route.RouteVersion, created.SessionToken); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := coordinator.Lookup(created.Route.Hostname); !ok {
+		t.Fatal("route was not published before transfer")
+	}
+
+	transfer, err := coordinator.CreateDomainVerification(ctx, "other", "other.com", "other-proof")
+	if err != nil {
+		t.Fatal(err)
+	}
+	transferred, err := coordinator.CompleteDomainVerification(ctx, "other", transfer.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if transferred.ID != hostname.ID || transferred.IdentityID != "other" {
+		t.Fatalf("transferred hostname = %#v", transferred)
+	}
+	if _, ok := coordinator.Lookup(created.Route.Hostname); ok {
+		t.Fatal("previous owner's route remained published")
+	}
+	if len(attachedWorker.routes) != 1 || attachedWorker.routes[0].closed.Load() != 1 {
+		t.Fatalf("previous owner's worker backend was not closed: %#v", attachedWorker.routes)
+	}
+	if len(removals) != 1 || removals[0] != RouteRemovalHostnameRemoved {
+		t.Fatalf("route removals = %v", removals)
+	}
+	if _, err := coordinator.Heartbeat(
+		ctx, created.Route.ID, created.Route.RouteVersion, created.SessionToken,
+	); !errors.Is(err, ErrStaleSession) {
+		t.Fatalf("previous owner heartbeat error = %v", err)
 	}
 }
 

@@ -669,7 +669,22 @@ func (c *Coordinator) CompleteDomainVerification(
 	if c.isClosed() {
 		return Hostname{}, net.ErrClosed
 	}
-	return c.store.CompleteDomainVerification(ctx, identityID, id)
+	if err := c.store.checkDomainVerification(ctx, identityID, id); err != nil {
+		return Hostname{}, err
+	}
+	hostname, stoppedRouteIDs, err := c.store.activateDomainVerification(ctx, identityID, id)
+	if err != nil {
+		return Hostname{}, err
+	}
+	for _, routeID := range stoppedRouteIDs {
+		unlockRoute := c.lockRoute(routeID)
+		removed := c.deactivate(routeID)
+		unlockRoute()
+		if removed {
+			c.observeRouteRemoval(RouteRemovalHostnameRemoved)
+		}
+	}
+	return hostname, nil
 }
 
 func (c *Coordinator) ReleaseHostname(ctx context.Context, identityID, hostnameID string) (err error) {

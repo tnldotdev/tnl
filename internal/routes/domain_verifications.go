@@ -138,42 +138,63 @@ func (s *Store) CompleteDomainVerification(
 	ctx context.Context,
 	identityID, id string,
 ) (Hostname, error) {
-	verification, err := s.GetDomainVerification(ctx, identityID, id)
-	if err != nil {
+	if err := s.checkDomainVerification(ctx, identityID, id); err != nil {
 		return Hostname{}, err
 	}
+	hostname, _, err := s.activateDomainVerification(ctx, identityID, id)
+	return hostname, err
+}
+
+func (s *Store) checkDomainVerification(ctx context.Context, identityID, id string) error {
+	verification, err := s.GetDomainVerification(ctx, identityID, id)
+	if err != nil {
+		return err
+	}
 	if verification.Status == "verified" && verification.HostnameID != "" {
-		hostname, err := readHostnameByHostname(ctx, s.queries, verification.Domain)
-		return hostname, err
+		return nil
 	}
 	if verification.Status != DomainVerificationStatusPending {
-		return Hostname{}, ErrInvalidStatus
+		return ErrInvalidStatus
 	}
 	if err := s.domainVerifier.CheckDomain(ctx, verification.Domain, verification.VerificationTarget, verification.Apex); err != nil {
-		return Hostname{}, fmt.Errorf("%w: %v", ErrDNSProofPending, err)
+		return fmt.Errorf("%w: %v", ErrDNSProofPending, err)
 	}
+	return nil
+}
 
+func (s *Store) activateDomainVerification(ctx context.Context, identityID, id string) (Hostname, []string, error) {
+	verification, err := s.GetDomainVerification(ctx, identityID, id)
+	if err != nil {
+		return Hostname{}, nil, err
+	}
+	if verification.Status == DomainVerificationStatusVerified && verification.HostnameID != "" {
+		hostname, err := readHostnameByHostname(ctx, s.queries, verification.Domain)
+		return hostname, nil, err
+	}
+	if verification.Status != DomainVerificationStatusPending {
+		return Hostname{}, nil, ErrInvalidStatus
+	}
 	now := time.Unix(0, s.now().UnixNano()).UTC()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return Hostname{}, fmt.Errorf("routes: begin domain verification: %w", err)
+		return Hostname{}, nil, fmt.Errorf("routes: begin domain verification: %w", err)
 	}
 	defer tx.Rollback()
 	queries := s.queries.WithTx(tx)
 	stored, err := queries.GetDomainVerification(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) || err == nil && stored.IdentityID != identityID {
-		return Hostname{}, ErrNotFound
+		return Hostname{}, nil, ErrNotFound
 	}
 	if err != nil {
-		return Hostname{}, fmt.Errorf("routes: reread domain verification: %w", err)
+		return Hostname{}, nil, fmt.Errorf("routes: reread domain verification: %w", err)
 	}
 	if stored.Status != DomainVerificationStatusPending {
-		return Hostname{}, ErrInvalidStatus
+		return Hostname{}, nil, ErrInvalidStatus
 	}
 
 	active, err := queries.ListActiveCustomDomainHostnames(ctx)
 	if err != nil {
-		return Hostname{}, fmt.Errorf("routes: list active custom domains: %w", err)
+		return Hostname{}, nil, fmt.Errorf("routes: list active custom domains: %w", err)
 	}
 	var existing *statedb.Hostname
 	for index := range active {
@@ -183,7 +204,7 @@ func (s *Store) CompleteDomainVerification(
 			continue
 		}
 		if naming.IsWithin(candidate.Hostname, stored.Domain) || naming.IsWithin(stored.Domain, candidate.Hostname) {
-			return Hostname{}, ErrNameUnavailable
+			return Hostname{}, nil, ErrNameUnavailable
 		}
 	}
 	if existing == nil {
@@ -191,24 +212,25 @@ func (s *Store) CompleteDomainVerification(
 		if readErr == nil {
 			existing = &candidate
 		} else if !errors.Is(readErr, sql.ErrNoRows) {
-			return Hostname{}, fmt.Errorf("routes: read available custom domain: %w", readErr)
+			return Hostname{}, nil, fmt.Errorf("routes: read available custom domain: %w", readErr)
 		}
 	}
 
 	var hostname Hostname
+	var stoppedRouteIDs []string
 	switch {
 	case existing == nil:
 		if err := s.checkActiveHostnameQuota(ctx, queries, identityID); err != nil {
-			return Hostname{}, err
+			return Hostname{}, nil, err
 		}
 		hostnameID, err := newID("hostname")
 		if err != nil {
-			return Hostname{}, err
+			return Hostname{}, nil, err
 		}
 		if err := queries.InsertCustomDomainHostname(ctx, statedb.InsertCustomDomainHostnameParams{
 			ID: hostnameID, IdentityID: identityID, Hostname: stored.Domain, CreatedAt: now.UnixNano(),
 		}); err != nil {
-			return Hostname{}, fmt.Errorf("routes: activate custom domain: %w", err)
+			return Hostname{}, nil, fmt.Errorf("routes: activate custom domain: %w", err)
 		}
 		hostname = Hostname{
 			ID: hostnameID, IdentityID: identityID, Hostname: stored.Domain,
@@ -216,42 +238,56 @@ func (s *Store) CompleteDomainVerification(
 			CreatedAt: now, ActivatedAt: now,
 		}
 	case existing.Kind != HostnameKindCustomDomain:
-		return Hostname{}, ErrNameUnavailable
+		return Hostname{}, nil, ErrNameUnavailable
 	case existing.Status == HostnameStatusAvailable:
 		if err := s.checkActiveHostnameQuota(ctx, queries, identityID); err != nil {
-			return Hostname{}, err
+			return Hostname{}, nil, err
 		}
 		count, err := queries.ActivateAvailableCustomDomainHostname(ctx, statedb.ActivateAvailableCustomDomainHostnameParams{
 			IdentityID: identityID, ActivatedAt: sql.NullInt64{Int64: now.UnixNano(), Valid: true}, ID: existing.ID,
 		})
 		if err != nil || count != 1 {
-			return Hostname{}, ErrInvalidStatus
+			return Hostname{}, nil, ErrInvalidStatus
 		}
 		hostname = hostnameFromDB(*existing)
 		hostname.IdentityID, hostname.Status, hostname.ActivatedAt, hostname.DeactivatedAt = identityID, HostnameStatusActive, now, time.Time{}
 	case existing.Status == HostnameStatusActive && existing.IdentityID.String == identityID:
 		hostname = hostnameFromDB(*existing)
 	case existing.Status == HostnameStatusActive:
-		return Hostname{}, ErrNameUnavailable
+		if err := s.checkActiveHostnameQuota(ctx, queries, identityID); err != nil {
+			return Hostname{}, nil, err
+		}
+		stoppedRouteIDs, err = s.stopHostnameRoutes(ctx, queries, existing.ID, now)
+		if err != nil {
+			return Hostname{}, nil, err
+		}
+		count, err := queries.TransferActiveCustomDomainHostname(ctx, statedb.TransferActiveCustomDomainHostnameParams{
+			IdentityID: identityID, ActivatedAt: sql.NullInt64{Int64: now.UnixNano(), Valid: true}, ID: existing.ID,
+		})
+		if err != nil || count != 1 {
+			return Hostname{}, nil, ErrInvalidStatus
+		}
+		hostname = hostnameFromDB(*existing)
+		hostname.IdentityID, hostname.ActivatedAt, hostname.DeactivatedAt = identityID, now, time.Time{}
 	default:
-		return Hostname{}, ErrInvalidStatus
+		return Hostname{}, nil, ErrInvalidStatus
 	}
 	verified, err := queries.CompleteDomainVerification(ctx, statedb.CompleteDomainVerificationParams{
 		HostnameID: sql.NullString{String: hostname.ID, Valid: true},
 		VerifiedAt: sql.NullInt64{Int64: now.UnixNano(), Valid: true}, ID: id, IdentityID: identityID,
 	})
 	if err != nil || verified != 1 {
-		return Hostname{}, ErrInvalidStatus
+		return Hostname{}, nil, ErrInvalidStatus
 	}
 	if err := queries.InvalidateOtherDomainVerifications(ctx, statedb.InvalidateOtherDomainVerificationsParams{
 		InvalidatedAt: sql.NullInt64{Int64: now.UnixNano(), Valid: true}, Domain: stored.Domain, ID: id,
 	}); err != nil {
-		return Hostname{}, fmt.Errorf("routes: invalidate old domain verifications: %w", err)
+		return Hostname{}, nil, fmt.Errorf("routes: invalidate old domain verifications: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return Hostname{}, fmt.Errorf("routes: commit domain verification: %w", err)
+		return Hostname{}, nil, fmt.Errorf("routes: commit domain verification: %w", err)
 	}
-	return hostname, nil
+	return hostname, stoppedRouteIDs, nil
 }
 
 func (s *Store) domainVerificationFromDB(stored statedb.DomainVerification) DomainVerification {
