@@ -17,7 +17,7 @@
     "typecheck:ci": "tsc --project packages/dev/type-test.tsconfig.json && tsc --project packages/next/type-test.tsconfig.json && tsc --project packages/vite/type-test.tsconfig.json && tsc --project tsconfig.test.json"
   },
   "devDependencies": {
-    "@types/node": "22.19.0",
+    "@types/node": "26.3.0",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.5",
     "@types/ws": "8.18.1",
@@ -26,7 +26,7 @@
     "oxlint": "1.80.0",
     "typescript": "7.0.2",
     "vitest": "4.1.11",
-    "ws": "8.18.3"
+    "ws": "8.21.3"
   },
   "engines": {
     "node": ">=20.9"
