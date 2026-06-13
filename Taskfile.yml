@@ -79,7 +79,7 @@ tasks:
     env:
       TNL_TEST_INTEGRATION: "1"
     cmds:
-      - go test -race -v ./internal/tailtransport -run='^TestIntegration' -count=1 -timeout=5m
+      - go test -race -v ./internal/tailtransport ./internal/publication -run='^TestIntegration' -count=1 -timeout=5m
 
   go:bench-tailcat-capacity:
     desc: Run the opt-in Tailcat route-capacity matrix
