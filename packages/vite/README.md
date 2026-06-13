@@ -107,4 +107,4 @@ makes no changes.
 
 ## Requirements
 
-Vite 6 or newer and Node.js 22.15 or newer are required.
+Vite 6.0.9 or newer and Node.js 22.15 or newer are required.

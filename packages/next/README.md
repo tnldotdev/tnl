@@ -103,4 +103,4 @@ changes.
 
 ## Requirements
 
-Next.js 15.2 or newer and Node.js 22.15 or newer are required.
+Next.js 16.3.4 or newer and Node.js 22.15 or newer are required.

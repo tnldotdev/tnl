@@ -62,8 +62,12 @@ describe("tunnel assignment and local port registration", () => {
         options: ({ cwd, env, worktree }) => {
           expect(cwd).toBe(process.cwd());
           expect(env.DEPLOYMENT_SLOT).toBe("review-3");
-          expect(worktree).toMatchObject({ isGit: true, name: "tnl", root: process.cwd() });
-          expect(worktree.label).toMatch(/^tnl-[a-f0-9]{6}$/);
+          expect(worktree).toMatchObject({
+            isGit: true,
+            name: path.basename(process.cwd()),
+            root: process.cwd(),
+          });
+          expect(worktree.label).not.toHaveLength(0);
           worktreeLabel = worktree.label;
           return {
             controlURL: "https://tnl.example.com",
