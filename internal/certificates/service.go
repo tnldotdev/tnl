@@ -151,6 +151,17 @@ func (s *Service) Create(
 	job, err := s.store.findBoundJob(ctx, routeID, generation, csrHash)
 	created := false
 	if errors.Is(err, ErrNotFound) {
+		resumable, resumeErr := s.store.findResumableJob(ctx, routeID, csrHash, s.now())
+		if resumeErr == nil {
+			job, err = s.store.rebindJob(ctx, resumable.ID, generation)
+			if err != nil {
+				return Job{}, err
+			}
+			return s.continueJob(ctx, job)
+		}
+		if !errors.Is(resumeErr, ErrNotFound) {
+			return Job{}, resumeErr
+		}
 		if err := s.store.allowJobCreation(ctx, routeID, generation, csrHash, s.now()); err != nil {
 			return Job{}, err
 		}
@@ -162,22 +173,7 @@ func (s *Service) Create(
 		return Job{}, err
 	}
 	if !created {
-		if job.RetryAt.After(s.now()) {
-			return job, nil
-		}
-		switch job.State {
-		case StateCreatingOrder:
-			return s.createOrder(ctx, job)
-		case StateAuthorizing:
-			return s.prepareAuthorization(ctx, job)
-		case StateReadyToFinalize, StateFinalizing, StateDownloading:
-			if job.ChallengeURL == "" {
-				return s.advance(ctx, job)
-			}
-			return job, nil
-		default:
-			return job, nil
-		}
+		return s.continueJob(ctx, job)
 	}
 	if created {
 		reusable, reuseErr := s.store.findReusableJob(ctx, routeID, csrHash, s.now().Add(24*time.Hour))
@@ -199,6 +195,25 @@ func (s *Service) Create(
 		}
 	}
 	return s.createOrder(ctx, job)
+}
+
+func (s *Service) continueJob(ctx context.Context, job Job) (Job, error) {
+	if job.RetryAt.After(s.now()) {
+		return job, nil
+	}
+	switch job.State {
+	case StateCreatingOrder:
+		return s.createOrder(ctx, job)
+	case StateAuthorizing:
+		return s.prepareAuthorization(ctx, job)
+	case StateReadyToFinalize, StateFinalizing, StateDownloading:
+		if job.ChallengeURL == "" {
+			return s.advance(ctx, job)
+		}
+		return job, nil
+	default:
+		return job, nil
+	}
 }
 
 func (s *Service) Get(ctx context.Context, id string) (Job, error) {
