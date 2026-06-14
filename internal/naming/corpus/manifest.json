@@ -4,7 +4,7 @@
   "upstream_commit": "f94b4639c71c26875f7684fa86a214c7f30deaad",
   "predicate_count": 1450,
   "object_count": 3062,
-  "friendly_words_sha256": "1f88939af33592487b8c736b8afb4259e4df1e2a0c0b5fc2f69daa06c90ff842",
+  "friendly_words_sha256": "d3baacc4880de753a5cfa5a05d6012cf8ad623aaf6b5ffd1fb825ff8fea81582",
   "exclusion_list_sha256": "d85d0828ac59ed5d1a5a88071d108d09d462533409325514a4769f60e7fe9db6",
   "pair_quarantine_sha256": "0afef8fb70ec39cbfebe57b6bf63274f21d47f6a9a9663655f40a699ce47927c",
   "remaining_namespace_capacity": 4429593
