@@ -8,6 +8,7 @@ export default defineConfig({
     hookTimeout: 10_000,
     include: [
       "packages/dev/register.test.ts",
+      "packages/dev/worktree.test.ts",
       "packages/next/index.test.ts",
       "packages/vite/index.test.ts",
     ],

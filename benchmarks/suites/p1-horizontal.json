@@ -7,11 +7,11 @@
   "region": "sjc",
   "transport": "forced-derp",
   "machines": {
-    "edge": {"size": "performance-2x", "count": 1},
-    "worker": {"size": "performance-1x", "capacity": 500},
-    "driver": {"size": "performance-2x"}
+    "edge": { "size": "performance-2x", "count": 1 },
+    "worker": { "size": "performance-1x", "capacity": 500 },
+    "driver": { "size": "performance-2x" }
   },
-  "hosted_worker_limits": {"minimum": 2, "maximum": 10},
+  "hosted_worker_limits": { "minimum": 2, "maximum": 10 },
   "required_inputs": [
     "Fly organization access",
     "Persistent tnl-bench app with a dedicated IPv4",

@@ -25,14 +25,14 @@
     "derp_share": 1
   },
   "phases": [
-    {"name": "activation", "duration_seconds": 30, "timeout_seconds": 300},
-    {"name": "idle", "duration_seconds": 60, "timeout_seconds": 90},
-    {"name": "development", "duration_seconds": 300, "timeout_seconds": 360},
-    {"name": "correctness", "duration_seconds": 60, "timeout_seconds": 300},
-    {"name": "burst", "duration_seconds": 30, "timeout_seconds": 60},
-    {"name": "churn", "duration_seconds": 60, "timeout_seconds": 120},
-    {"name": "settle", "duration_seconds": 60, "timeout_seconds": 120},
-    {"name": "cleanup", "duration_seconds": 60, "timeout_seconds": 180}
+    { "name": "activation", "duration_seconds": 30, "timeout_seconds": 300 },
+    { "name": "idle", "duration_seconds": 60, "timeout_seconds": 90 },
+    { "name": "development", "duration_seconds": 300, "timeout_seconds": 360 },
+    { "name": "correctness", "duration_seconds": 60, "timeout_seconds": 300 },
+    { "name": "burst", "duration_seconds": 30, "timeout_seconds": 60 },
+    { "name": "churn", "duration_seconds": 60, "timeout_seconds": 120 },
+    { "name": "settle", "duration_seconds": 60, "timeout_seconds": 120 },
+    { "name": "cleanup", "duration_seconds": 60, "timeout_seconds": 180 }
   ],
   "reference_notes": [
     "These values are assumptions, not observed customer measurements.",

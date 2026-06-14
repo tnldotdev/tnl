@@ -6,7 +6,11 @@
   "additionalProperties": false,
   "required": ["route_id", "route_version"],
   "properties": {
-    "route_id": {"type": "string", "minLength": 1, "pattern": "^\\S(?:.*\\S)?$"},
-    "route_version": {"type": "integer", "description": "Route version receiving the data stream.", "minimum": 1}
+    "route_id": { "type": "string", "minLength": 1, "pattern": "^\\S(?:.*\\S)?$" },
+    "route_version": {
+      "type": "integer",
+      "description": "Route version receiving the data stream.",
+      "minimum": 1
+    }
   }
 }
