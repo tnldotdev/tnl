@@ -171,7 +171,7 @@ func TestCoordinatorCustomDomainTransferDeactivatesRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := coordinator.RegisterTransport(
+	if err := coordinator.AttachRouteTransport(
 		ctx, created.Route.ID, created.Route.RouteVersion, created.SessionToken,
 		key.NewNode().Public().String(), "test",
 	); err != nil {

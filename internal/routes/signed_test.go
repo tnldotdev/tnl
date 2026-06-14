@@ -347,7 +347,7 @@ func TestCreateSignedAuthorizationRevisionFloor(t *testing.T) {
 		"authorization_00000000000000000000000000000011",
 		"retry_00000000000000000000000000000011",
 		2,
-	); !errors.Is(err, ErrAuthorizationReplayed) {
+	); !errors.Is(err, ErrAuthorizationReuseRejected) {
 		t.Fatalf("lower revision active replacement error = %v", err)
 	}
 	equal, err := create(
@@ -368,7 +368,7 @@ func TestCreateSignedAuthorizationRevisionFloor(t *testing.T) {
 		"authorization_00000000000000000000000000000013",
 		"retry_00000000000000000000000000000013",
 		2,
-	); !errors.Is(err, ErrAuthorizationReplayed) {
+	); !errors.Is(err, ErrAuthorizationReuseRejected) {
 		t.Fatalf("lower revision recreation error = %v", err)
 	}
 	routeToken, _, _, err = credentials.NewRouteToken()

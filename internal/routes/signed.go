@@ -92,7 +92,7 @@ func (s *Store) CreateSigned(
 		return Provisioning{}, fmt.Errorf("routes: read signed authorization revision floor: %w", err)
 	}
 	if int64(claims.Revision) < maxAuthorizationRevision {
-		return Provisioning{}, ErrAuthorizationReplayed
+		return Provisioning{}, ErrAuthorizationReuseRejected
 	}
 
 	routeVersion := uint64(1)
