@@ -139,6 +139,7 @@ func (e *Engine) Attach(ctx context.Context, assignment Assignment) (OwnedRoute,
 		_ = dialer.Close()
 		return nil, ErrAtCapacity
 	}
+	// Install first to fence the prior generation while Start runs unlocked.
 	e.routes[assignment.RouteID] = route
 	e.mu.Unlock()
 
@@ -150,6 +151,7 @@ func (e *Engine) Attach(ctx context.Context, assignment Assignment) (OwnedRoute,
 		_ = dialer.Close()
 		return nil, fmt.Errorf("worker: start route dialer: %w", err)
 	}
+	// Startup may race replacement or drain; only the current route becomes ready.
 	e.mu.Lock()
 	if e.routes[assignment.RouteID] != route || e.closed || e.draining {
 		e.mu.Unlock()

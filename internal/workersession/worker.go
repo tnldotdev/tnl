@@ -60,6 +60,7 @@ func RunWorker(ctx context.Context, config WorkerConfig) error {
 	if connection.Subprotocol() != workerv1.Subprotocol {
 		return errors.New("workersession: edge omitted worker subprotocol")
 	}
+	// Keep transport alive long enough to drain after ctx is canceled.
 	lifetime, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	network := websocket.NetConn(lifetime, connection, websocket.MessageBinary)
@@ -242,6 +243,7 @@ func (s *workerSession) shutdown() error {
 		return nil
 	}
 	_ = s.write(workerv1.Message{Type: workerv1.WorkerDraining})
+	// Serialize Add with Wait so shutdown cannot miss an accepted command.
 	s.commandMu.Lock()
 	s.commands.Wait()
 	s.commandMu.Unlock()

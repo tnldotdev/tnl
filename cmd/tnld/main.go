@@ -148,6 +148,7 @@ func (d *daemon) startCore(
 	if cfg.ACMEEnabled() {
 		control := new(certificateControl)
 		certificateService = control
+		// Let routing start while ACME initialization retries in the background.
 		go control.initialize(ctx, d.db, certificates.Config{
 			DirectoryURL: cfg.ACMEDirectoryURL,
 			Email:        cfg.ACMEEmail,
@@ -347,6 +348,7 @@ func startWorker(ctx context.Context, cfg config.TNLD, metrics *observability.Me
 	if _, err := credentials.ParseWorkerToken(token); err != nil {
 		return nil, fmt.Errorf("configure worker token: %w", err)
 	}
+	// Each session gets a fresh engine because disconnect closes its owner.
 	newOwner := func() (worker.RouteOwner, error) {
 		return worker.NewEngine(worker.EngineConfig{Capacity: cfg.WorkerCapacity, Profiles: profiles, Logf: log.Printf})
 	}
@@ -404,6 +406,7 @@ func (d *daemon) shutdown(timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	var result error
+	// Stop control mutations before draining streams and closing their owners.
 	if d.controlServer != nil {
 		if err := d.controlServer.Shutdown(ctx); err != nil {
 			result = errors.Join(result, err, d.controlServer.Close())
@@ -463,6 +466,7 @@ func capabilities(relayProfile, acmeProfile string, acmeEnabled bool) corev1.Cap
 }
 
 func newBootEpoch() (string, error) {
+	// Prior leases cannot use process-local keys and assignments after restart.
 	var material [16]byte
 	if _, err := rand.Read(material[:]); err != nil {
 		return "", err

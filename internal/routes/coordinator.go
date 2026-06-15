@@ -37,6 +37,7 @@ type ActiveRoute struct {
 	Backend    worker.RouteBackend
 }
 
+// routeSnapshot is immutable after publication for lock-free ingress reads.
 type routeSnapshot struct {
 	byHostname map[string]ActiveRoute
 }
@@ -66,6 +67,7 @@ type Coordinator struct {
 	store     *Store
 	bootEpoch string
 
+	// mutationMu sequences generation changes; routeLocks fence leases; mu guards runtime state.
 	mu          sync.Mutex
 	mutationMu  sync.Mutex
 	owners      map[string]*ownerState
@@ -252,6 +254,7 @@ func (c *Coordinator) RegisterTransport(
 			return fmt.Errorf("routes: attach worker route: %w", err)
 		}
 
+		// Attach runs without c.mu; recheck the owner and lease before storing its backend.
 		c.mu.Lock()
 		currentOwner := c.owners[owner.id]
 		currentPending, stillPending := c.pending[ref]
@@ -302,6 +305,7 @@ func (c *Coordinator) Ready(
 	if err := c.store.Ready(ctx, lease); err != nil {
 		return err
 	}
+	// Owner loss may race the durable update, so publish only the same assignment.
 	c.mu.Lock()
 	if c.assignments[routeID] != current {
 		c.mu.Unlock()
@@ -631,6 +635,7 @@ func (c *Coordinator) expireDue(ctx context.Context, now time.Time) {
 	}
 	c.mu.Unlock()
 
+	// A heartbeat may race the scan, so recheck each candidate under its route lock.
 	for ref := range due {
 		lock := c.routeLock(ref.RouteID)
 		lock.Lock()

@@ -629,6 +629,7 @@ func writeJSON(path string, value any) error {
 		return errors.New("clientstate: state file exceeds limit")
 	}
 	dir := filepath.Dir(path)
+	// Sync before rename and sync the directory after for crash-safe replacement.
 	temporary, err := os.CreateTemp(dir, ".tmp-*")
 	if err != nil {
 		return fmt.Errorf("clientstate: create temporary state: %w", err)
