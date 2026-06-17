@@ -1,6 +1,6 @@
 {
   "name": "@tnldotdev/dev",
-  "version": "0.1.0-rc.2",
+  "version": "0.1.0-rc.3",
   "description": "Support package for the official tnl framework integrations.",
   "license": "MIT",
   "repository": {
