@@ -79,12 +79,6 @@ type WorkerVerifier struct {
 	hash SecretHash
 }
 
-// ServiceVerifier is the nonsecret verification material for one service token.
-type ServiceVerifier struct {
-	id   CredentialID
-	hash SecretHash
-}
-
 // NewAccessToken creates an access token and its storage values.
 func NewAccessToken() (AccessToken, CredentialID, SecretHash, error) {
 	token, lookupID, hash, err := newToken(accessPrefix)
@@ -194,15 +188,15 @@ func ParseWorkerToken(token WorkerToken) (WorkerVerifier, error) {
 }
 
 // NewServiceToken creates a service-to-service credential.
-func NewServiceToken() (ServiceToken, ServiceVerifier, error) {
-	token, lookupID, hash, err := newToken(servicePrefix)
-	return ServiceToken(token), ServiceVerifier{id: lookupID, hash: hash}, err
+func NewServiceToken() (ServiceToken, error) {
+	token, _, _, err := newToken(servicePrefix)
+	return ServiceToken(token), err
 }
 
-// ParseServiceToken validates a service token and returns its verifier.
-func ParseServiceToken(token ServiceToken) (ServiceVerifier, error) {
-	lookupID, hash, err := parseToken(string(token), servicePrefix, ErrInvalidServiceToken)
-	return ServiceVerifier{id: lookupID, hash: hash}, err
+// ParseServiceToken validates a service token.
+func ParseServiceToken(token ServiceToken) error {
+	_, _, err := parseToken(string(token), servicePrefix, ErrInvalidServiceToken)
+	return err
 }
 
 // Matches reports whether token matches this verifier.
@@ -218,16 +212,6 @@ func (v LoginVerifier) Matches(token LoginToken) bool {
 // Matches reports whether token matches this verifier.
 func (v WorkerVerifier) Matches(token WorkerToken) bool {
 	candidate, err := ParseWorkerToken(token)
-	if err != nil {
-		return false
-	}
-	return subtle.ConstantTimeCompare([]byte(v.id), []byte(candidate.id)) == 1 &&
-		SecretHashMatches(v.hash[:], candidate.hash)
-}
-
-// Matches reports whether token matches this verifier.
-func (v ServiceVerifier) Matches(token ServiceToken) bool {
-	candidate, err := ParseServiceToken(token)
 	if err != nil {
 		return false
 	}

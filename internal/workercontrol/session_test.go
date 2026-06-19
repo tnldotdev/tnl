@@ -96,11 +96,19 @@ func TestRemoteOwnerMatchesLocalSemantics(t *testing.T) {
 		t.Fatalf("open after drain error = %v", err)
 	}
 
-	hub.Close()
+	if err := hub.Shutdown(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	select {
 	case <-workerDone:
 	case <-time.After(5 * time.Second):
 		t.Fatal("worker did not drain")
+	}
+	if local.closed.Load() != 0 {
+		t.Fatal("RunWorker closed its caller-owned worker")
+	}
+	if err := local.Close(); err != nil || local.closed.Load() != 1 {
+		t.Fatalf("caller close = %v, count = %d", err, local.closed.Load())
 	}
 }
 
@@ -138,7 +146,7 @@ func TestSessionObservers(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer hub.Close()
+			defer func() { _ = hub.Shutdown(context.Background()) }()
 			server := httptest.NewServer(hub)
 			defer server.Close()
 
@@ -305,6 +313,7 @@ func (r *testRegistry) RemoveWorker(id string) {
 type echoWorker struct {
 	limit    int
 	draining atomic.Bool
+	closed   atomic.Int32
 }
 
 func (o *echoWorker) Attach(context.Context, worker.Assignment) (worker.WorkerRoute, error) {
@@ -323,7 +332,10 @@ func (o *echoWorker) Drain(context.Context) error {
 	return nil
 }
 
-func (o *echoWorker) Close() error { return nil }
+func (o *echoWorker) Close() error {
+	o.closed.Add(1)
+	return nil
+}
 
 type echoRoute struct {
 	closed atomic.Bool

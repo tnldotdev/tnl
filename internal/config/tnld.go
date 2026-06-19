@@ -203,7 +203,7 @@ func (c TNLD) Validate() error {
 		if !c.Mode.UsesState() {
 			return errors.New("worker mode cannot report route usage")
 		}
-		if _, err := credentials.ParseServiceToken(credentials.ServiceToken(c.RouteUsageToken)); err != nil {
+		if err := credentials.ParseServiceToken(credentials.ServiceToken(c.RouteUsageToken)); err != nil {
 			return errors.New("route usage token is invalid")
 		}
 		routeUsageURL, err := url.Parse(c.RouteUsageURL)
@@ -312,10 +312,14 @@ func (c TNLD) validateAuthorization() error {
 		authorityEndpoint.Hostname() != strings.ToLower(authorityEndpoint.Hostname()) || authorityEndpoint.Port() == "443" {
 		return errors.New("authorization authority endpoint must be a canonical HTTPS origin")
 	}
-	for name, value := range map[string]string{
-		"authorization issuer":   c.AuthorizationIssuer,
-		"authorization receiver": c.AuthorizationReceiver,
+	for _, field := range []struct {
+		name  string
+		value string
+	}{
+		{name: "authorization issuer", value: c.AuthorizationIssuer},
+		{name: "authorization receiver", value: c.AuthorizationReceiver},
 	} {
+		name, value := field.name, field.value
 		parsed, err := url.Parse(value)
 		if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil ||
 			parsed.RawQuery != "" || parsed.Fragment != "" {

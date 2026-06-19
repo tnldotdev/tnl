@@ -135,15 +135,14 @@ func TestDataPlaneTokenClasses(t *testing.T) {
 		t.Fatal("worker verifier did not enforce its credential class")
 	}
 
-	service, serviceVerifier, err := NewServiceToken()
+	service, err := NewServiceToken()
 	if err != nil {
 		t.Fatal(err)
 	}
-	parsedService, err := ParseServiceToken(service)
-	if err != nil || !serviceVerifier.Matches(service) || !parsedService.Matches(service) {
+	if err := ParseServiceToken(service); err != nil {
 		t.Fatalf("service round trip failed: %v", err)
 	}
-	if _, err := ParseServiceToken(ServiceToken(worker)); !errors.Is(err, ErrInvalidServiceToken) {
+	if err := ParseServiceToken(ServiceToken(worker)); !errors.Is(err, ErrInvalidServiceToken) {
 		t.Fatalf("worker as service error = %v", err)
 	}
 }

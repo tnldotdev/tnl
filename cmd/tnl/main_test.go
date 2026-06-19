@@ -176,7 +176,7 @@ func TestAdminServerTokenCommands(t *testing.T) {
 			if tokenType == "worker" {
 				_, err = credentials.ParseWorkerToken(credentials.WorkerToken(value))
 			} else {
-				_, err = credentials.ParseServiceToken(credentials.ServiceToken(value))
+				err = credentials.ParseServiceToken(credentials.ServiceToken(value))
 			}
 			if err != nil || stderr.Len() != 0 {
 				t.Fatalf("parse token: %v; stderr = %q", err, stderr.String())

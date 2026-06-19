@@ -1,6 +1,7 @@
 package naming
 
 import (
+	"errors"
 	"net"
 	"strconv"
 	"strings"
@@ -114,8 +115,8 @@ func validALabel(label string) bool {
 }
 
 func ErrorCodeOf(err error) (ErrorCode, bool) {
-	validationError, ok := err.(*ValidationError)
-	if !ok {
+	var validationError *ValidationError
+	if !errors.As(err, &validationError) {
 		return "", false
 	}
 	return validationError.Code, true

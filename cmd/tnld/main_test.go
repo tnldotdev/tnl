@@ -276,7 +276,7 @@ func TestWorkerReconnectsWithFreshOwner(t *testing.T) {
 	})
 	server := httptest.NewTLSServer(mux)
 	defer server.Close()
-	defer hub.Close()
+	defer func() { _ = hub.Shutdown(context.Background()) }()
 	previousTransport := http.DefaultTransport
 	http.DefaultTransport = server.Client().Transport
 	t.Cleanup(func() { http.DefaultTransport = previousTransport })

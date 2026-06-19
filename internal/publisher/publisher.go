@@ -269,7 +269,7 @@ func runSession(
 	setup serverv1.SessionSetup,
 	state *clientstate.RouteCertificateHandle,
 	ready func() error,
-) error {
+) (result error) {
 	if setup.Route.Id == "" || setup.Session.RouteVersion <= 0 || setup.SessionToken == "" || setup.WorkerPublicKey == "" {
 		return errors.New("publisher: server returned incomplete session setup")
 	}
@@ -282,26 +282,40 @@ func runSession(
 		return errors.New("publisher: server returned invalid tailcat dialer key")
 	}
 	version := uint64(setup.Session.RouteVersion)
-	sessionCtx, cancelSession := context.WithCancel(ctx)
-	defer cancelSession()
+	parentCtx := ctx
+	sessionCtx, cancelSession := context.WithCancelCause(ctx)
 	// Refresh before setup consumes the session, then continue heartbeats in the background.
 	expiresAt, err := heartbeatOnce(
 		sessionCtx, config.Server, setup.Route.Id, version, sessionToken, setup.Session.ExpiresAt,
 	)
 	if err != nil {
+		cancelSession(nil)
 		return fmt.Errorf("publisher: heartbeat: %w", err)
 	}
 	if sessionCtx.Err() != nil {
+		cancelSession(nil)
 		return nil
 	}
-	heartbeatErrors := make(chan error, 1)
+	heartbeatDone := make(chan struct{})
 	go func() {
+		defer close(heartbeatDone)
 		if err := heartbeatSessionAfter(
 			sessionCtx, config.Server, setup.Route.Id, version, sessionToken, expiresAt,
 		); err != nil {
-			heartbeatErrors <- err
+			cancelSession(fmt.Errorf("publisher: heartbeat: %w", err))
 		}
 	}()
+	defer func() {
+		cancelSession(nil)
+		<-heartbeatDone
+		if parentCtx.Err() == nil {
+			cause := context.Cause(sessionCtx)
+			if cause != nil && !errors.Is(cause, context.Canceled) {
+				result = cause
+			}
+		}
+	}()
+	ctx = sessionCtx
 	certificate := config.Certificate
 	var material clientstate.Material
 	var hasMaterial bool
@@ -342,8 +356,6 @@ func runSession(
 		case <-ctx.Done():
 			return nil
 		case <-time.After(activationRetry):
-		case err := <-heartbeatErrors:
-			return err
 		}
 	}
 	var nextRenewal time.Time
@@ -351,7 +363,7 @@ func runSession(
 		if !hasMaterial {
 			material, err = issueCertificate(
 				ctx, config.Server, route, state, setup.Route.Id, version, sessionToken,
-				setup.Route.Hostname, config.ACMEProfile, heartbeatErrors,
+				setup.Route.Hostname, config.ACMEProfile,
 			)
 			if err != nil {
 				return err
@@ -360,7 +372,7 @@ func runSession(
 		} else if !material.Installed || !material.RenewAt.After(time.Now()) {
 			replacement, refreshErr := refreshCertificate(
 				ctx, config.Server, route, state, setup.Route.Id, version, sessionToken,
-				setup.Route.Hostname, config.ACMEProfile, material, heartbeatErrors,
+				setup.Route.Hostname, config.ACMEProfile, material,
 			)
 			if !replacement.NotAfter.IsZero() {
 				material = replacement
@@ -394,8 +406,6 @@ func runSession(
 		case <-ctx.Done():
 			return nil
 		case <-time.After(activationRetry):
-		case err := <-heartbeatErrors:
-			return err
 		}
 	}
 	if err := ready(); err != nil {
@@ -418,12 +428,13 @@ func runSession(
 	for {
 		select {
 		case <-ctx.Done():
+			if parentCtx.Err() == nil {
+				return context.Cause(ctx)
+			}
 			return errors.Join(
 				observe(config, Event{Type: EventDraining, RouteID: setup.Route.Id, Hostname: setup.Route.Hostname, RouteVersion: version}),
 				drainRoute(route, config.DrainTime),
 			)
-		case err := <-heartbeatErrors:
-			return fmt.Errorf("publisher: heartbeat: %w", err)
 		case <-relayCheck:
 			regions, relayErr := config.LoadRegions(ctx)
 			if relayErr != nil {
@@ -440,7 +451,7 @@ func runSession(
 		case <-renewal:
 			replacement, renewalErr := refreshCertificate(
 				ctx, config.Server, route, state, setup.Route.Id, version, sessionToken,
-				setup.Route.Hostname, config.ACMEProfile, material, heartbeatErrors,
+				setup.Route.Hostname, config.ACMEProfile, material,
 			)
 			if renewalErr != nil {
 				if errors.Is(renewalErr, serverclient.ErrStatusConflict) {
@@ -449,8 +460,11 @@ func runSession(
 				if !replacement.NotAfter.IsZero() {
 					material = replacement
 				}
-				if ctx.Err() != nil {
+				if parentCtx.Err() != nil {
 					return drainRoute(route, config.DrainTime)
+				}
+				if ctx.Err() != nil {
+					return context.Cause(ctx)
 				}
 				if !material.NotAfter.After(time.Now()) {
 					return fmt.Errorf("publisher: renew expired certificate: %w", renewalErr)
@@ -482,12 +496,11 @@ func refreshCertificate(
 	sessionToken credentials.SessionToken,
 	hostname, profile string,
 	material clientstate.Material,
-	heartbeatErrors <-chan error,
 ) (clientstate.Material, error) {
 	if !material.Installed && material.RenewAt.After(time.Now()) && material.NotAfter.After(time.Now().Add(24*time.Hour)) {
 		// Reconcile a committed certificate before issuing another issuance.
 		reconciled, err := reconcileCertificateInstallation(
-			ctx, server, route, state, routeID, version, sessionToken, hostname, profile, material, heartbeatErrors,
+			ctx, server, route, state, routeID, version, sessionToken, hostname, profile, material,
 		)
 		var terminal *terminalCertificateIssuanceError
 		if !errors.As(err, &terminal) {
@@ -495,7 +508,7 @@ func refreshCertificate(
 		}
 	}
 	return issueCertificate(
-		ctx, server, route, state, routeID, version, sessionToken, hostname, profile, heartbeatErrors,
+		ctx, server, route, state, routeID, version, sessionToken, hostname, profile,
 	)
 }
 
@@ -514,7 +527,6 @@ func issueCertificate(
 	version uint64,
 	sessionToken credentials.SessionToken,
 	hostname, profile string,
-	heartbeatErrors <-chan error,
 ) (clientstate.Material, error) {
 	pending, err := state.Pending(ctx, hostname)
 	if err != nil {
@@ -524,7 +536,7 @@ func issueCertificate(
 	createAndRecord := func() (serverv1.CertificateIssuance, error) {
 		for {
 			issuance, createErr := createCertificateIssuance(
-				ctx, server, routeID, version, sessionToken, hostname, profile, pending.CSRDER, heartbeatErrors,
+				ctx, server, routeID, version, sessionToken, hostname, profile, pending.CSRDER,
 			)
 			var terminal *terminalCertificateIssuanceError
 			if errors.As(createErr, &terminal) && !rotatedTerminalIssuance {
@@ -552,14 +564,14 @@ issuanceLoop:
 		if issuance.CertificatePem != nil {
 			if issuance.Challenge != nil {
 				route.RemoveChallenge(issuance.Challenge.Id)
-				if err := acknowledgeChallengeRemoval(ctx, server, issuance.Id, sessionToken, heartbeatErrors); err != nil {
+				if err := acknowledgeChallengeRemoval(ctx, server, issuance.Id, sessionToken); err != nil {
 					return clientstate.Material{}, err
 				}
 			}
 			break
 		}
 		if issuance.Challenge == nil {
-			if err := waitCertificateRetry(ctx, heartbeatErrors, certificateIssuanceRetry(issuance)); err != nil {
+			if err := waitCertificateRetry(ctx, certificateIssuanceRetry(issuance)); err != nil {
 				return clientstate.Material{}, err
 			}
 			issuance, err = createAndRecord()
@@ -607,7 +619,7 @@ issuanceLoop:
 				if issuance.CertificatePem != nil {
 					break
 				}
-				if err := waitCertificateRetry(ctx, heartbeatErrors, certificateIssuanceRetry(issuance)); err != nil {
+				if err := waitCertificateRetry(ctx, certificateIssuanceRetry(issuance)); err != nil {
 					return clientstate.Material{}, err
 				}
 				continue
@@ -615,12 +627,12 @@ issuanceLoop:
 			if !errors.Is(err, serverclient.ErrUnavailable) {
 				return clientstate.Material{}, err
 			}
-			if err := waitCertificateRetry(ctx, heartbeatErrors, activationRetry); err != nil {
+			if err := waitCertificateRetry(ctx, activationRetry); err != nil {
 				return clientstate.Material{}, err
 			}
 		}
 		route.RemoveChallenge(challenge.ID)
-		if err := acknowledgeChallengeRemoval(ctx, server, issuance.Id, sessionToken, heartbeatErrors); err != nil {
+		if err := acknowledgeChallengeRemoval(ctx, server, issuance.Id, sessionToken); err != nil {
 			return clientstate.Material{}, err
 		}
 	}
@@ -628,7 +640,7 @@ issuanceLoop:
 		return clientstate.Material{}, errors.New("publisher: server returned incomplete certificate material")
 	}
 	return installCertificateIssuance(
-		ctx, server, route, state, routeID, version, sessionToken, hostname, pending, issuance, heartbeatErrors,
+		ctx, server, route, state, routeID, version, sessionToken, hostname, pending, issuance,
 	)
 }
 
@@ -643,7 +655,6 @@ func installCertificateIssuance(
 	hostname string,
 	pending clientstate.Pending,
 	issuance serverv1.CertificateIssuance,
-	heartbeatErrors <-chan error,
 ) (clientstate.Material, error) {
 	// Persist and verify before acknowledging the server; MarkInstalled closes the recovery window.
 	material, err := state.Commit(
@@ -660,7 +671,7 @@ func installCertificateIssuance(
 		return material, err
 	}
 	if err := acknowledgeCertificate(
-		ctx, server, routeID, version, issuance.Id, sessionToken, heartbeatErrors,
+		ctx, server, routeID, version, issuance.Id, sessionToken,
 	); err != nil {
 		return material, err
 	}
@@ -679,7 +690,6 @@ func createCertificateIssuance(
 	sessionToken credentials.SessionToken,
 	hostname, profile string,
 	csrDER []byte,
-	heartbeatErrors <-chan error,
 ) (serverv1.CertificateIssuance, error) {
 	for {
 		issuance, err := server.CreateCertificateIssuance(ctx, routeID, version, sessionToken, profile, csrDER)
@@ -692,7 +702,7 @@ func createCertificateIssuance(
 		if !errors.Is(err, serverclient.ErrUnavailable) && !errors.Is(err, serverclient.ErrRateLimited) {
 			return serverv1.CertificateIssuance{}, err
 		}
-		if err := waitCertificateRetry(ctx, heartbeatErrors, certificateRetryDelay(err)); err != nil {
+		if err := waitCertificateRetry(ctx, certificateRetryDelay(err)); err != nil {
 			return serverv1.CertificateIssuance{}, err
 		}
 	}
@@ -708,20 +718,19 @@ func reconcileCertificateInstallation(
 	sessionToken credentials.SessionToken,
 	hostname, profile string,
 	material clientstate.Material,
-	heartbeatErrors <-chan error,
 ) (clientstate.Material, error) {
 	issuance, err := createCertificateIssuance(
-		ctx, server, routeID, version, sessionToken, hostname, profile, material.CSRDER, heartbeatErrors,
+		ctx, server, routeID, version, sessionToken, hostname, profile, material.CSRDER,
 	)
 	if err != nil {
 		return material, err
 	}
 	for issuance.CertificatePem == nil && issuance.Challenge == nil {
-		if err := waitCertificateRetry(ctx, heartbeatErrors, certificateIssuanceRetry(issuance)); err != nil {
+		if err := waitCertificateRetry(ctx, certificateIssuanceRetry(issuance)); err != nil {
 			return material, err
 		}
 		issuance, err = createCertificateIssuance(
-			ctx, server, routeID, version, sessionToken, hostname, profile, material.CSRDER, heartbeatErrors,
+			ctx, server, routeID, version, sessionToken, hostname, profile, material.CSRDER,
 		)
 		if err != nil {
 			return material, err
@@ -729,7 +738,7 @@ func reconcileCertificateInstallation(
 	}
 	if issuance.CertificatePem == nil {
 		return completeReboundCertificateIssuance(
-			ctx, server, route, state, routeID, version, sessionToken, hostname, profile, material, issuance, heartbeatErrors,
+			ctx, server, route, state, routeID, version, sessionToken, hostname, profile, material, issuance,
 		)
 	}
 	chain, err := decodeCertificateChain([]byte(*issuance.CertificatePem))
@@ -745,7 +754,7 @@ func reconcileCertificateInstallation(
 		return material, err
 	}
 	if err := acknowledgeCertificate(
-		ctx, server, routeID, version, issuance.Id, sessionToken, heartbeatErrors,
+		ctx, server, routeID, version, issuance.Id, sessionToken,
 	); err != nil {
 		return material, err
 	}
@@ -767,7 +776,6 @@ func completeReboundCertificateIssuance(
 	hostname, profile string,
 	current clientstate.Material,
 	issuance serverv1.CertificateIssuance,
-	heartbeatErrors <-chan error,
 ) (clientstate.Material, error) {
 	pending, err := state.CurrentKey(ctx, hostname)
 	if err != nil {
@@ -793,7 +801,7 @@ func completeReboundCertificateIssuance(
 			if !errors.Is(readyErr, serverclient.ErrUnavailable) {
 				return current, readyErr
 			}
-			if err := waitCertificateRetry(ctx, heartbeatErrors, activationRetry); err != nil {
+			if err := waitCertificateRetry(ctx, activationRetry); err != nil {
 				return current, err
 			}
 			continue
@@ -803,17 +811,17 @@ func completeReboundCertificateIssuance(
 		}
 		issuance = advanced
 		if issuance.CertificatePem == nil {
-			if err := waitCertificateRetry(ctx, heartbeatErrors, certificateIssuanceRetry(issuance)); err != nil {
+			if err := waitCertificateRetry(ctx, certificateIssuanceRetry(issuance)); err != nil {
 				return current, err
 			}
 		}
 	}
 	route.RemoveChallenge(challenge.ID)
-	if err := acknowledgeChallengeRemoval(ctx, server, issuance.Id, sessionToken, heartbeatErrors); err != nil {
+	if err := acknowledgeChallengeRemoval(ctx, server, issuance.Id, sessionToken); err != nil {
 		return current, err
 	}
 	replacement, err := installCertificateIssuance(
-		ctx, server, route, state, routeID, version, sessionToken, hostname, pending, issuance, heartbeatErrors,
+		ctx, server, route, state, routeID, version, sessionToken, hostname, pending, issuance,
 	)
 	if replacement.NotAfter.IsZero() {
 		return current, err
@@ -828,7 +836,6 @@ func acknowledgeCertificate(
 	version uint64,
 	issuanceID string,
 	sessionToken credentials.SessionToken,
-	heartbeatErrors <-chan error,
 ) error {
 	for {
 		err := server.CertificateInstalled(ctx, routeID, version, issuanceID, sessionToken)
@@ -838,7 +845,7 @@ func acknowledgeCertificate(
 		if !errors.Is(err, serverclient.ErrUnavailable) {
 			return err
 		}
-		if err := waitCertificateRetry(ctx, heartbeatErrors, activationRetry); err != nil {
+		if err := waitCertificateRetry(ctx, activationRetry); err != nil {
 			return err
 		}
 	}
@@ -849,7 +856,6 @@ func acknowledgeChallengeRemoval(
 	server RouteControlClient,
 	issuanceID string,
 	sessionToken credentials.SessionToken,
-	heartbeatErrors <-chan error,
 ) error {
 	for {
 		err := server.CertificateChallengeRemoved(ctx, issuanceID, sessionToken)
@@ -859,7 +865,7 @@ func acknowledgeChallengeRemoval(
 		if !errors.Is(err, serverclient.ErrUnavailable) {
 			return err
 		}
-		if err := waitCertificateRetry(ctx, heartbeatErrors, activationRetry); err != nil {
+		if err := waitCertificateRetry(ctx, activationRetry); err != nil {
 			return err
 		}
 	}
@@ -961,14 +967,12 @@ func drainRoute(route *Route, timeout time.Duration) error {
 	return route.Drain(drainCtx)
 }
 
-func waitCertificateRetry(ctx context.Context, heartbeatErrors <-chan error, delay time.Duration) error {
+func waitCertificateRetry(ctx context.Context, delay time.Duration) error {
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
-	case err := <-heartbeatErrors:
-		return fmt.Errorf("publisher: heartbeat: %w", err)
+		return context.Cause(ctx)
 	case <-timer.C:
 		return nil
 	}

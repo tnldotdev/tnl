@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -194,8 +195,7 @@ func (c planCommand) run(stdout io.Writer) error {
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(plan)
 	}
-	writeHumanPlan(stdout, plan)
-	return nil
+	return writeHumanPlan(stdout, plan)
 }
 
 func (c planCommand) build(now time.Time) (benchmarkPlan, error) {
@@ -515,7 +515,8 @@ func profileWarnings(now time.Time, profile suiteProfile, workload workloadProfi
 	return warnings
 }
 
-func writeHumanPlan(output io.Writer, plan benchmarkPlan) {
+func writeHumanPlan(destination io.Writer, plan benchmarkPlan) error {
+	output := new(bytes.Buffer)
 	fmt.Fprintln(output, "Benchmark plan (READ ONLY)")
 	fmt.Fprintf(output, "Profile: %s  Suite: %s  Region: %s  Transport: %s\n", plan.ProfileID, plan.Suite, plan.Region, plan.Transport)
 	fmt.Fprintf(output, "Machines: %dx %s edge, Nx %s workers, %s drivers\n\n",
@@ -543,7 +544,9 @@ func writeHumanPlan(output io.Writer, plan benchmarkPlan) {
 		fmt.Fprintf(table, "%s\t%d\t%d\t%.0f\t%d\t%s\t%s\n", cell.ID, cell.Workers, cell.Routes,
 			cell.RoutesPerWorker, cell.Drivers, durationString(cell.ExpectedDurationSeconds), durationString(cell.MaximumDurationSeconds))
 	}
-	_ = table.Flush()
+	if err := table.Flush(); err != nil {
+		return err
+	}
 	fmt.Fprintf(output, "\nTotals: %d cells, %d result rows, %s expected, %s maximum\n",
 		len(plan.Cells), plan.ExpectedResultRows, durationString(plan.ExpectedDurationSeconds), durationString(plan.MaximumDurationSeconds))
 	fmt.Fprintf(output, "Expected spend: $%.4f %s ($%.4f compute, $%.4f public egress)\n",
@@ -582,6 +585,8 @@ func writeHumanPlan(output io.Writer, plan benchmarkPlan) {
 	for _, note := range plan.Workload.ReferenceNotes {
 		fmt.Fprintf(output, "- %s\n", note)
 	}
+	_, err := io.Copy(destination, output)
+	return err
 }
 
 func durationString(seconds int64) string {

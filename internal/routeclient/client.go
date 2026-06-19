@@ -3,9 +3,6 @@ package routeclient
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -32,10 +29,11 @@ type Client struct {
 
 	mu      sync.Mutex
 	routes  map[string]routeAuthorization
-	pending map[string]pendingAuthorization
+	pending map[string]*pendingAuthorization
 }
 
 type pendingAuthorization struct {
+	mu             sync.Mutex
 	idempotencyKey string
 	envelope       *authorityv1.AuthorizationEnvelope
 }
@@ -69,7 +67,7 @@ func NewSigned(
 	return &Client{
 		server: server, authority: authority, authorityCapabilities: &capabilities,
 		authorizationReceiver: authorizationReceiver,
-		routes:                make(map[string]routeAuthorization), pending: make(map[string]pendingAuthorization),
+		routes:                make(map[string]routeAuthorization), pending: make(map[string]*pendingAuthorization),
 	}, nil
 }
 
@@ -83,11 +81,10 @@ func (c *Client) CreateRoute(ctx context.Context, body serverv1.CreateRouteReque
 		return serverv1.SessionSetup{}, err
 	}
 	body.AllowedIpPrefixes = allowed
-	hash, err := canonicalHash(body)
-	if err != nil {
-		return serverv1.SessionSetup{}, err
-	}
-	ipHash, err := ipPolicyHash(body.AllowedIpPrefixes)
+	hash, ipHash, err := authorizationHashes(authorization.OperationRequest{
+		Operation: authorization.OperationRouteCreate, Hostname: body.Hostname, LocalTarget: body.LocalTarget,
+		RouteToken: body.RouteToken, AllowedIPPrefixes: prefixValues(body.AllowedIpPrefixes),
+	})
 	if err != nil {
 		return serverv1.SessionSetup{}, err
 	}
@@ -158,11 +155,10 @@ func (c *Client) CreateRouteSession(
 	body := serverv1.CreateRouteSessionRequest{
 		RouteToken: routeToken.String(), AllowedIpPrefixes: allowed,
 	}
-	hash, err := canonicalHash(body)
-	if err != nil {
-		return serverv1.SessionSetup{}, err
-	}
-	ipHash, err := ipPolicyHash(body.AllowedIpPrefixes)
+	hash, ipHash, err := authorizationHashes(authorization.OperationRequest{
+		Operation: authorization.OperationRouteSessionCreate, RouteToken: body.RouteToken,
+		AllowedIPPrefixes: prefixValues(body.AllowedIpPrefixes),
+	})
 	if err != nil {
 		return serverv1.SessionSetup{}, err
 	}
@@ -313,24 +309,26 @@ func (c *Client) CertificateInstalled(
 
 func (c *Client) routeAuthorization(ctx context.Context, routeID string, version int) (string, bool, error) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	route, found := c.routes[routeID]
 	if !found || route.version != version {
+		c.mu.Unlock()
 		return "", false, errors.New("routeclient: signed route authorization is unavailable")
 	}
 	if route.pendingRenewal != nil && route.pendingRenewal.envelope != nil {
-		return route.pendingRenewal.envelope.Authorization, true, nil
+		authorization := route.pendingRenewal.envelope.Authorization
+		c.mu.Unlock()
+		return authorization, true, nil
 	}
 	if route.pendingRenewal == nil && time.Now().Before(route.nextRenewal) {
+		c.mu.Unlock()
 		return "", false, nil
 	}
-	body := serverv1.HeartbeatRouteSessionRequest{RouteVersion: version}
-	hash, err := canonicalHash(body)
+	hash, ipHash, err := authorizationHashes(authorization.OperationRequest{
+		Operation: authorization.OperationRenew, RouteVersion: uint64(version),
+		AllowedIPPrefixes: prefixValues(route.allowed),
+	})
 	if err != nil {
-		return "", false, err
-	}
-	ipHash, err := ipPolicyHash(route.allowed)
-	if err != nil {
+		c.mu.Unlock()
 		return "", false, err
 	}
 	request := authorityv1.IssueAuthorizationRequest{
@@ -341,23 +339,46 @@ func (c *Client) routeAuthorization(ctx context.Context, routeID string, version
 	if route.pendingRenewal == nil {
 		idempotencyKey, err := randomIdempotencyKey()
 		if err != nil {
+			c.mu.Unlock()
 			return "", false, err
 		}
 		route.pendingRenewal = &pendingAuthorization{idempotencyKey: idempotencyKey}
 		c.routes[routeID] = route
 	}
-	issued, err := c.authority.IssueAuthorization(ctx, request, route.pendingRenewal.idempotencyKey)
+	pending := route.pendingRenewal
+	c.mu.Unlock()
+
+	pending.mu.Lock()
+	defer pending.mu.Unlock()
+	c.mu.Lock()
+	route, found = c.routes[routeID]
+	if !found || route.version != version || route.pendingRenewal != pending {
+		c.mu.Unlock()
+		return "", false, errors.New("routeclient: signed route authorization is unavailable")
+	}
+	if pending.envelope != nil {
+		authorization := pending.envelope.Authorization
+		c.mu.Unlock()
+		return authorization, true, nil
+	}
+	c.mu.Unlock()
+
+	issued, err := c.authority.IssueAuthorization(ctx, request, pending.idempotencyKey)
 	if err != nil {
 		if !errors.Is(err, authorityclient.ErrUnavailable) {
-			route.pendingRenewal = nil
-			c.routes[routeID] = route
+			c.clearPendingRenewal(routeID, version, pending)
 		}
 		return "", false, mapAuthorityError(err)
 	}
 	if err := c.validateAuthorization(issued, request); err != nil {
-		route.pendingRenewal = nil
-		c.routes[routeID] = route
+		c.clearPendingRenewal(routeID, version, pending)
 		return "", false, err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	route, found = c.routes[routeID]
+	if !found || route.version != version || route.pendingRenewal != pending {
+		return "", false, errors.New("routeclient: signed route authorization is unavailable")
 	}
 	if issued.Claims.AuthorizationId == route.authorization.Claims.AuthorizationId ||
 		issued.Claims.RetryId == route.authorization.Claims.RetryId ||
@@ -368,7 +389,7 @@ func (c *Client) routeAuthorization(ctx context.Context, routeID string, version
 		c.routes[routeID] = route
 		return "", false, errors.New("routeclient: authorization authority returned an invalid renewal")
 	}
-	route.pendingRenewal.envelope = &issued
+	pending.envelope = &issued
 	c.routes[routeID] = route
 	return issued.Authorization, true, nil
 }
@@ -379,32 +400,43 @@ func (c *Client) authorization(
 	request authorityv1.IssueAuthorizationRequest,
 ) (authorityv1.AuthorizationEnvelope, error) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	pending, found := c.pending[cacheKey]
-	if found && pending.envelope != nil && pending.envelope.Claims.ExpiresAt.After(time.Now().Add(30*time.Second)) {
+	pending := c.pending[cacheKey]
+	if pending == nil {
+		idempotencyKey, err := randomIdempotencyKey()
+		if err != nil {
+			c.mu.Unlock()
+			return authorityv1.AuthorizationEnvelope{}, err
+		}
+		pending = &pendingAuthorization{idempotencyKey: idempotencyKey}
+		c.pending[cacheKey] = pending
+	}
+	c.mu.Unlock()
+
+	pending.mu.Lock()
+	defer pending.mu.Unlock()
+	if pending.envelope != nil && pending.envelope.Claims.ExpiresAt.After(time.Now().Add(30*time.Second)) {
 		return *pending.envelope, nil
 	}
-	if !found || pending.envelope != nil {
+	if pending.envelope != nil {
 		idempotencyKey, err := randomIdempotencyKey()
 		if err != nil {
 			return authorityv1.AuthorizationEnvelope{}, err
 		}
-		pending = pendingAuthorization{idempotencyKey: idempotencyKey}
-		c.pending[cacheKey] = pending
+		pending.idempotencyKey = idempotencyKey
+		pending.envelope = nil
 	}
 	issued, err := c.authority.IssueAuthorization(ctx, request, pending.idempotencyKey)
 	if err != nil {
 		if !errors.Is(err, authorityclient.ErrUnavailable) {
-			delete(c.pending, cacheKey)
+			c.removePending(cacheKey, pending)
 		}
 		return authorityv1.AuthorizationEnvelope{}, mapAuthorityError(err)
 	}
 	if err := c.validateAuthorization(issued, request); err != nil {
-		delete(c.pending, cacheKey)
+		c.removePending(cacheKey, pending)
 		return authorityv1.AuthorizationEnvelope{}, err
 	}
 	pending.envelope = &issued
-	c.pending[cacheKey] = pending
 	return issued, nil
 }
 
@@ -438,24 +470,45 @@ func (c *Client) validateAuthorization(
 	return nil
 }
 
-func canonicalHash(value any) (string, error) {
-	canonical, err := json.Marshal(value)
+func authorizationHashes(request authorization.OperationRequest) (string, *authorityv1.SHA256Digest, error) {
+	requestHash, err := authorization.CanonicalRequestHash(request)
 	if err != nil {
-		return "", fmt.Errorf("routeclient: canonicalize authorized operation request: %w", err)
+		return "", nil, fmt.Errorf("routeclient: canonicalize authorized operation request: %w", err)
 	}
-	digest := sha256.Sum256(canonical)
-	return base64.RawURLEncoding.EncodeToString(digest[:]), nil
+	policyHash, err := authorization.IPPolicyHash(request.AllowedIPPrefixes)
+	if err != nil {
+		return "", nil, fmt.Errorf("routeclient: hash IP policy: %w", err)
+	}
+	if policyHash == nil {
+		return requestHash.String(), nil, nil
+	}
+	wirePolicyHash := authorityv1.SHA256Digest(policyHash.String())
+	return requestHash.String(), &wirePolicyHash, nil
 }
 
-func ipPolicyHash(prefixes *serverv1.AllowedIPPrefixes) (*authorityv1.SHA256Digest, error) {
+func prefixValues(prefixes *serverv1.AllowedIPPrefixes) []string {
 	if prefixes == nil {
-		return nil, nil
+		return nil
 	}
-	digest, err := canonicalHash(*prefixes)
-	if err != nil {
-		return nil, err
+	return []string(*prefixes)
+}
+
+func (c *Client) removePending(cacheKey string, pending *pendingAuthorization) {
+	c.mu.Lock()
+	if c.pending[cacheKey] == pending {
+		delete(c.pending, cacheKey)
 	}
-	return &digest, nil
+	c.mu.Unlock()
+}
+
+func (c *Client) clearPendingRenewal(routeID string, version int, pending *pendingAuthorization) {
+	c.mu.Lock()
+	route, found := c.routes[routeID]
+	if found && route.version == version && route.pendingRenewal == pending {
+		route.pendingRenewal = nil
+		c.routes[routeID] = route
+	}
+	c.mu.Unlock()
 }
 
 func canonicalizeIPPrefixes(prefixes *serverv1.AllowedIPPrefixes) (*serverv1.AllowedIPPrefixes, error) {

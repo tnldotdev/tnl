@@ -126,13 +126,6 @@ func TestBenchmarkHostnameSuffix(t *testing.T) {
 	}
 }
 
-func TestSummarize(t *testing.T) {
-	got := summarize([]time.Duration{5 * time.Millisecond, time.Millisecond, 3 * time.Millisecond, 2 * time.Millisecond})
-	if got.P50Milliseconds != 2 || got.P95Milliseconds != 5 || got.MaxMilliseconds != 5 {
-		t.Fatalf("summary = %#v", got)
-	}
-}
-
 func TestParseMetrics(t *testing.T) {
 	values := parseMetrics("# HELP ignored\ntnl_worker_routes_routable 12\nprocess_resident_memory_bytes 4096\nprocess_max_fds 1048576\nmetric{label=\"x\"} 1\n")
 	if values["tnl_worker_routes_routable"] != 12 || values["process_resident_memory_bytes"] != 4096 ||
