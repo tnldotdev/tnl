@@ -118,15 +118,7 @@ async function publish(package_, tag) {
   }
 
   try {
-    await execFileAsync("npm", [
-      "publish",
-      package_.tarball,
-      "--access",
-      "public",
-      "--provenance",
-      "--tag",
-      tag,
-    ]);
+    await execFileAsync("npm", ["publish", package_.tarball, "--access", "public", "--tag", tag]);
   } catch (error) {
     const registry = await registryPackage(package_.name);
     if (
