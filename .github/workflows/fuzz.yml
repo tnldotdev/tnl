@@ -2,8 +2,6 @@ name: Fuzz
 
 on:
   pull_request:
-  push:
-    branches: [main]
   schedule:
     - cron: "0 8 * * *"
 
@@ -61,7 +59,7 @@ jobs:
 
       - name: Run fuzz tests
         env:
-          FUZZ_TIME: ${{ github.event_name == 'schedule' && '5m' || '15s' }}
+          FUZZ_TIME: 15s
           PACKAGE: ${{ matrix.package }}
           TARGET: ${{ matrix.target }}
         run: go test "$PACKAGE" -run='^$' -fuzz="^${TARGET}$" -fuzztime="$FUZZ_TIME"

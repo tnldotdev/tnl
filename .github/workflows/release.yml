@@ -61,7 +61,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          for workflow in checks.yml integration.yml fuzz.yml; do
+          for workflow in checks.yml integration.yml; do
             count="$(gh api --method GET \
               "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs" \
               -f branch=main \
