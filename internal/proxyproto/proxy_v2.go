@@ -17,6 +17,7 @@ const (
 	v2Signature = "\r\n\r\n\x00\r\nQUIT\n"
 	ipv4Length  = 12
 	ipv6Length  = 36
+	maxV2Length = 4 * 1024
 )
 
 type ErrorCode string
@@ -83,25 +84,25 @@ func Decode(reader io.Reader) (Header, io.Reader, error) {
 
 	family := fixed[13]
 	addressLength := int(binary.BigEndian.Uint16(fixed[14:]))
+	minimumLength := 0
 	switch family {
 	case byte(proxy.TCPv4):
-		if addressLength != ipv4Length {
-			return Header{}, nil, protocolError(ErrorInvalidLength)
-		}
+		minimumLength = ipv4Length
 	case byte(proxy.TCPv6):
-		if addressLength != ipv6Length {
-			return Header{}, nil, protocolError(ErrorInvalidLength)
-		}
+		minimumLength = ipv6Length
 	default:
 		return Header{}, nil, protocolError(ErrorUnsupportedTransport)
 	}
-	if _, err := buffered.Peek(16 + addressLength); err != nil {
-		return Header{}, nil, protocolError(ErrorTruncatedHeader)
+	if addressLength < minimumLength || addressLength > maxV2Length {
+		return Header{}, nil, protocolError(ErrorInvalidLength)
 	}
 
 	parsed, err := proxy.Read(buffered)
 	if err != nil {
 		return Header{}, nil, proxyReadError(err)
+	}
+	if _, err := parsed.TLVs(); err != nil {
+		return Header{}, nil, protocolError(ErrorInvalidLength)
 	}
 	source, destination, ok := parsed.TCPAddrs()
 	if !ok {
@@ -195,6 +196,8 @@ func validEndpoint(endpoint netip.AddrPort) bool {
 
 func proxyReadError(err error) error {
 	switch {
+	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+		return protocolError(ErrorTruncatedHeader)
 	case errors.Is(err, proxy.ErrInvalidLength):
 		return protocolError(ErrorInvalidLength)
 	case errors.Is(err, proxy.ErrInvalidAddress), errors.Is(err, proxy.ErrInvalidPortNumber):

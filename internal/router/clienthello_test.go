@@ -6,8 +6,11 @@ import (
 	"encoding/binary"
 	"io"
 	"net"
+	"os"
 	"testing"
 )
+
+const echExtension = 0xfe0d
 
 func TestInspectClientHelloFromTLSClient(t *testing.T) {
 	clientConnection, serverConnection := net.Pipe()
@@ -78,6 +81,55 @@ func TestInspectClientHelloDetectsSoleACMETLSALPN(t *testing.T) {
 	}
 }
 
+func TestInspectClientHelloAllowsECHGreaseAndReplays(t *testing.T) {
+	input := tlsRecords(buildClientHello(
+		sni("demo.example"),
+		extension{kind: echExtension, data: []byte{0, 1, 2, 3}},
+	))
+	result, err := inspectClientHello(bytes.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ServerName != "demo.example" {
+		t.Fatalf("got SNI %q", result.ServerName)
+	}
+	replayed, err := io.ReadAll(result.Replay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(replayed, input) {
+		t.Fatal("replayed bytes differ from input")
+	}
+}
+
+func TestInspectCapturedBrowserClientHellos(t *testing.T) {
+	for _, name := range []string{"chromium-ech-grease.bin", "firefox-ech-grease.bin"} {
+		t.Run(name, func(t *testing.T) {
+			input, err := os.ReadFile("testdata/" + name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Contains(input, []byte{0xfe, 0x0d}) {
+				t.Fatal("captured ClientHello does not contain ECH grease")
+			}
+			result, err := inspectClientHello(bytes.NewReader(input))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.ServerName != "route.example" || result.ACMETLSALPN {
+				t.Fatalf("captured ClientHello = %#v", result)
+			}
+			replayed, err := io.ReadAll(result.Replay)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(replayed, input) {
+				t.Fatal("replayed bytes differ from capture")
+			}
+		})
+	}
+}
+
 func TestInspectClientHelloAllowsEightRecords(t *testing.T) {
 	handshake := buildClientHello(
 		sni("demo.example"),
@@ -109,11 +161,6 @@ func TestInspectClientHelloRejectsInvalidInput(t *testing.T) {
 			name:  "multiple host names",
 			input: tlsRecords(buildClientHello(sni("one.example", "two.example"))),
 			code:  ErrorDuplicateSNI,
-		},
-		{
-			name:  "ECH",
-			input: tlsRecords(buildClientHello(validSNI, extension{kind: echExt})),
-			code:  ErrorECHUnsupported,
 		},
 		{
 			name:  "truncated record",
@@ -156,7 +203,7 @@ func FuzzInspectClientHello(f *testing.F) {
 	f.Add(tlsRecords(buildClientHello(sni("demo.example"), alpnExtension(acmeTLSALPN))))
 	f.Add(tlsRecords(buildClientHello(sni("demo.example"), alpnExtension("h2", acmeTLSALPN))))
 	f.Add(tlsRecords(buildClientHello(sni("demo.example"), extension{kind: alpnExt, data: []byte{0, 1, 0}})))
-	f.Add(tlsRecords(buildClientHello(sni("demo.example"), extension{kind: echExt})))
+	f.Add(tlsRecords(buildClientHello(sni("demo.example"), extension{kind: echExtension})))
 	f.Add(tlsRecords(buildClientHello(sni("demo.example"), sni("other.example"))))
 	f.Add(tlsRecords(buildClientHello(sni("demo.example")), 1, 2, 3, 4, 5, 6, 7))
 	f.Add([]byte{})
