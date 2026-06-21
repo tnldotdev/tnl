@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -32,9 +33,19 @@ import (
 	"tailscale.com/tailcfg"
 )
 
+func TestVersionCommand(t *testing.T) {
+	var output bytes.Buffer
+	if err := run(context.Background(), []string{"version"}, &output); err != nil {
+		t.Fatal(err)
+	}
+	if output.String() != "tnld devel\n" {
+		t.Fatalf("output = %q", output.String())
+	}
+}
+
 func TestStandaloneControlLifecycle(t *testing.T) {
 	directory := t.TempDir()
-	certificateFile, keyFile, roots := writeControlCertificate(t, directory)
+	certificateFile, keyFile, roots := writeControlCertificate(t, directory, "control.example")
 	relayFile := filepath.Join(directory, "relay.json")
 	relayData, err := json.Marshal(tailcfg.DERPMap{Regions: map[int]*tailcfg.DERPRegion{1: {
 		RegionID: 1, RegionCode: "test", Nodes: []*tailcfg.DERPNode{{
@@ -53,9 +64,11 @@ func TestStandaloneControlLifecycle(t *testing.T) {
 	}
 	cfg := config.TNLD{
 		Mode: config.TNLDModeStandalone, StateDir: filepath.Join(directory, "state"),
-		ControlListen: "127.0.0.1:0", ControlCertFile: certificateFile, ControlKeyFile: keyFile,
+		PublicListen: "127.0.0.1:0", ControlHostname: "control.example",
+		ControlCertFile: certificateFile, ControlKeyFile: keyFile, RouteSuffix: "example",
 		BootstrapToken: bootstrap.String(), RelayMapFile: relayFile, RelayProfile: "test",
 		WorkerCapacity: 10, WorkerStreamLimit: 10, PublicConnLimit: 10, RouteConnLimit: 5, DrainTimeout: time.Second,
+		MaxActiveHostnameClaims: 128, MaxHostnameClaimRequests: 1024,
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
@@ -66,14 +79,17 @@ func TestStandaloneControlLifecycle(t *testing.T) {
 	}
 	running := &daemon{db: db}
 	t.Cleanup(func() { _ = running.shutdown(time.Second) })
-	controlDone, _, err := running.startCore(context.Background(), cfg, observability.New("standalone"))
+	controlDone, ingressDone, err := running.startCore(context.Background(), cfg, observability.New("standalone"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	httpClient := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{
-		RootCAs: roots, MinVersion: tls.VersionTLS13,
-	}}, Timeout: 5 * time.Second}
-	baseURL := "https://" + running.controlListener.Addr().String()
+	httpClient := &http.Client{Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS13},
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return new(net.Dialer).DialContext(ctx, network, running.controlListener.Addr().String())
+		},
+	}, Timeout: 5 * time.Second}
+	baseURL := "https://control.example"
 	anonymous, err := coreclient.New(baseURL, httpClient, "")
 	if err != nil {
 		t.Fatal(err)
@@ -93,6 +109,13 @@ func TestStandaloneControlLifecycle(t *testing.T) {
 	if capabilities.Transport.RelayProfile != "test" || capabilities.Transport.Type != corev1.Tailcat {
 		t.Fatalf("capabilities = %#v", capabilities)
 	}
+	claim, err := client.ClaimHostname(context.Background(), "route", "standalone-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claims, err := client.ListHostnameClaims(context.Background()); err != nil || len(claims) != 1 || claims[0].Id != claim.Id {
+		t.Fatalf("hostname claims = %#v, %v", claims, err)
+	}
 	routeToken, _, _, err := credentials.NewRouteToken()
 	if err != nil {
 		t.Fatal(err)
@@ -109,10 +132,19 @@ func TestStandaloneControlLifecycle(t *testing.T) {
 	if err := client.DeleteRoute(context.Background(), setup.Route.Id); err != nil {
 		t.Fatal(err)
 	}
+	if err := client.ReleaseHostnameClaim(context.Background(), claim.Id); err != nil {
+		t.Fatal(err)
+	}
+	if claims, err := client.ListHostnameClaims(context.Background()); err != nil || len(claims) != 0 {
+		t.Fatalf("hostname claims after release = %#v, %v", claims, err)
+	}
 	if err := running.shutdown(time.Second); err != nil {
 		t.Fatal(err)
 	}
 	if err := <-controlDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-ingressDone; err != nil {
 		t.Fatal(err)
 	}
 	running = new(daemon)
@@ -198,15 +230,15 @@ func (*reconnectRegistry) DrainOwner(context.Context, string) error { return nil
 
 func (*reconnectRegistry) RemoveOwner(string) {}
 
-func writeControlCertificate(t *testing.T, directory string) (string, string, *x509.CertPool) {
+func writeControlCertificate(t *testing.T, directory, hostname string) (string, string, *x509.CertPool) {
 	t.Helper()
 	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
 	template := &x509.Certificate{
-		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "localhost"},
-		DNSNames: []string{"localhost"}, IPAddresses: []net.IP{net.ParseIP("127.0.0.1")},
+		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: hostname},
+		DNSNames:  []string{hostname},
 		NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(time.Hour),
 		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}

@@ -14,10 +14,16 @@ import (
 	"github.com/0xcadams/tnl/internal/naming"
 )
 
-const LeaseLifetime = 45 * time.Second
+const (
+	LeaseLifetime                   = 45 * time.Second
+	DefaultMaxActiveHostnameClaims  = 128
+	DefaultMaxHostnameClaimRequests = 1024
+	maximumHostnameClaimQuota       = 100_000
+)
 
 var (
 	ErrNameUnavailable = errors.New("routes: name unavailable")
+	ErrInvalidArgument = errors.New("routes: invalid argument")
 	ErrRouteExists     = errors.New("routes: route already exists")
 	ErrNotFound        = errors.New("routes: not found")
 	ErrUnauthenticated = errors.New("routes: unauthenticated")
@@ -54,25 +60,75 @@ type Provisioning struct {
 	LeaseToken credentials.LeaseToken
 }
 
-type Store struct {
-	db            *sql.DB
-	now           func() time.Time
-	leaseLifetime time.Duration
+type StoreConfig struct {
+	MaxActiveHostnameClaims  int
+	MaxHostnameClaimRequests int
+	ObserveOperation         StoreObserver
 }
 
-func NewStore(db *sql.DB) (*Store, error) {
+type Store struct {
+	db                       *sql.DB
+	routeSuffix              string
+	now                      func() time.Time
+	leaseLifetime            time.Duration
+	maxActiveHostnameClaims  int
+	maxHostnameClaimRequests int
+	observeOperation         StoreObserver
+}
+
+func NewStore(db *sql.DB, routeSuffix string, configs ...StoreConfig) (*Store, error) {
 	if db == nil {
 		return nil, errors.New("routes: nil state database")
 	}
-	return &Store{db: db, now: time.Now, leaseLifetime: LeaseLifetime}, nil
+	if len(configs) > 1 {
+		return nil, errors.New("routes: multiple store configurations")
+	}
+	config := StoreConfig{
+		MaxActiveHostnameClaims:  DefaultMaxActiveHostnameClaims,
+		MaxHostnameClaimRequests: DefaultMaxHostnameClaimRequests,
+	}
+	if len(configs) == 1 {
+		config = configs[0]
+		if config.MaxActiveHostnameClaims == 0 {
+			config.MaxActiveHostnameClaims = DefaultMaxActiveHostnameClaims
+		}
+		if config.MaxHostnameClaimRequests == 0 {
+			config.MaxHostnameClaimRequests = DefaultMaxHostnameClaimRequests
+		}
+	}
+	if config.MaxActiveHostnameClaims <= 0 || config.MaxHostnameClaimRequests <= 0 {
+		return nil, errors.New("routes: hostname claim quotas must be positive")
+	}
+	if config.MaxActiveHostnameClaims > maximumHostnameClaimQuota ||
+		config.MaxHostnameClaimRequests > maximumHostnameClaimQuota {
+		return nil, fmt.Errorf("routes: hostname claim quotas must not exceed %d", maximumHostnameClaimQuota)
+	}
+	if config.MaxHostnameClaimRequests < config.MaxActiveHostnameClaims {
+		return nil, errors.New("routes: hostname claim request quota must be at least the active claim quota")
+	}
+	canonical, err := naming.CanonicalizeHostname(routeSuffix)
+	if err != nil || canonical != routeSuffix || len(canonical) > naming.MaxHostnameBytes-naming.MaxLabelBytes-1 {
+		return nil, errors.New("routes: route suffix must be canonical and leave room for one DNS label")
+	}
+	return &Store{
+		db:                       db,
+		routeSuffix:              routeSuffix,
+		now:                      time.Now,
+		leaseLifetime:            LeaseLifetime,
+		maxActiveHostnameClaims:  config.MaxActiveHostnameClaims,
+		maxHostnameClaimRequests: config.MaxHostnameClaimRequests,
+		observeOperation:         config.ObserveOperation,
+	}, nil
 }
 
 func (s *Store) Create(
 	ctx context.Context,
 	principalID, hostname, displayTarget, bootEpoch string,
 	routeToken credentials.RouteToken,
-) (Provisioning, error) {
-	hostname, err := naming.CanonicalizeHostname(hostname)
+) (provisioning Provisioning, err error) {
+	started := time.Now()
+	defer func() { s.observe(StoreOperationRouteCreate, started, err) }()
+	hostname, err = s.canonicalHostname(hostname)
 	if err != nil {
 		return Provisioning{}, err
 	}
@@ -85,10 +141,6 @@ func (s *Store) Create(
 		return Provisioning{}, ErrUnauthenticated
 	}
 	leaseToken, leaseCredentialID, leaseHash, err := credentials.NewLeaseToken()
-	if err != nil {
-		return Provisioning{}, err
-	}
-	claimID, err := newID("claim")
 	if err != nil {
 		return Provisioning{}, err
 	}
@@ -108,20 +160,22 @@ func (s *Store) Create(
 		return Provisioning{}, fmt.Errorf("routes: begin create: %w", err)
 	}
 	defer tx.Rollback()
-	// Claims remain bound to their principal after route deletion.
-	if _, err := tx.ExecContext(ctx, `INSERT INTO hostname_claims
-		(id, principal_id, hostname, created_at) VALUES (?, ?, ?, ?)
-		ON CONFLICT (hostname) DO NOTHING`, claimID, principalID, hostname, now.Unix()); err != nil {
-		return Provisioning{}, fmt.Errorf("routes: claim hostname: %w", err)
-	}
+	// Claim ownership and irreversibility commit with route creation or rotation.
+	var claimID string
 	var claimPrincipal string
+	var tombstonedAt sql.NullInt64
 	if err := tx.QueryRowContext(ctx,
-		`SELECT id, principal_id FROM hostname_claims WHERE hostname = ?`, hostname,
-	).Scan(&claimID, &claimPrincipal); err != nil {
+		`SELECT id, principal_id, tombstoned_at FROM hostname_claims WHERE hostname = ?`, hostname,
+	).Scan(&claimID, &claimPrincipal, &tombstonedAt); errors.Is(err, sql.ErrNoRows) {
+		return Provisioning{}, ErrNameUnavailable
+	} else if err != nil {
 		return Provisioning{}, fmt.Errorf("routes: read hostname claim: %w", err)
 	}
-	if claimPrincipal != principalID {
+	if claimPrincipal != principalID || tombstonedAt.Valid {
 		return Provisioning{}, ErrNameUnavailable
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE hostname_claims SET irreversible = 1 WHERE id = ?`, claimID); err != nil {
+		return Provisioning{}, fmt.Errorf("routes: mark hostname irreversible: %w", err)
 	}
 	var existing Route
 	var existingCreatedAt int64
@@ -208,7 +262,9 @@ func (s *Store) Acquire(
 	ctx context.Context,
 	principalID, routeID, bootEpoch string,
 	routeToken credentials.RouteToken,
-) (Provisioning, error) {
+) (provisioning Provisioning, err error) {
+	started := time.Now()
+	defer func() { s.observe(StoreOperationRouteAcquire, started, err) }()
 	credentialID, candidate, err := credentials.ParseRouteToken(routeToken)
 	if err != nil {
 		return Provisioning{}, ErrUnauthenticated
@@ -300,7 +356,7 @@ func (s *Store) AuthorizePrincipal(ctx context.Context, principalID, routeID str
 }
 
 func (s *Store) ActiveRouteID(ctx context.Context, principalID, hostname string) (string, error) {
-	hostname, err := naming.CanonicalizeHostname(hostname)
+	hostname, err := s.canonicalHostname(hostname)
 	if err != nil {
 		return "", err
 	}
@@ -322,7 +378,9 @@ func (s *Store) AuthenticateLease(
 	generation uint64,
 	token credentials.LeaseToken,
 	bootEpoch string,
-) (Lease, error) {
+) (result Lease, err error) {
+	started := time.Now()
+	defer func() { s.observe(StoreOperationLeaseAuthenticate, started, err) }()
 	credentialID, candidate, err := credentials.ParseLeaseToken(token)
 	if err != nil {
 		return Lease{}, ErrUnauthenticated
@@ -379,7 +437,9 @@ func (s *Store) RegisterTransport(
 	ctx context.Context,
 	lease Lease,
 	serverPublicKey, relayProfile string,
-) error {
+) (err error) {
+	started := time.Now()
+	defer func() { s.observe(StoreOperationTransportRegister, started, err) }()
 	if strings.TrimSpace(serverPublicKey) == "" || strings.TrimSpace(relayProfile) == "" {
 		return errors.New("routes: transport descriptor is incomplete")
 	}
@@ -393,7 +453,9 @@ func (s *Store) RegisterTransport(
 	return requireUpdated(result, ErrStaleLease)
 }
 
-func (s *Store) Ready(ctx context.Context, lease Lease) error {
+func (s *Store) Ready(ctx context.Context, lease Lease) (err error) {
+	started := time.Now()
+	defer func() { s.observe(StoreOperationRouteReady, started, err) }()
 	result, err := s.db.ExecContext(ctx, `UPDATE route_leases SET status = 'ready'
 		WHERE id = ? AND route_id = ? AND generation = ? AND status IN ('starting', 'ready')`,
 		lease.ID, lease.RouteID, lease.Generation)
@@ -403,9 +465,11 @@ func (s *Store) Ready(ctx context.Context, lease Lease) error {
 	return requireUpdated(result, ErrInvalidState)
 }
 
-func (s *Store) Heartbeat(ctx context.Context, lease Lease) (time.Time, error) {
+func (s *Store) Heartbeat(ctx context.Context, lease Lease) (expiresAt time.Time, err error) {
+	started := time.Now()
+	defer func() { s.observe(StoreOperationLeaseHeartbeat, started, err) }()
 	now := time.Unix(s.now().Unix(), 0).UTC()
-	expiresAt := now.Add(s.leaseLifetime)
+	expiresAt = now.Add(s.leaseLifetime)
 	result, err := s.db.ExecContext(ctx, `UPDATE route_leases
 		SET last_heartbeat = ?, expires_at = ?
 		WHERE id = ? AND route_id = ? AND generation = ? AND status != 'expired'`,
@@ -430,7 +494,9 @@ func (s *Store) InvalidateOtherBoots(ctx context.Context, bootEpoch string) erro
 	return nil
 }
 
-func (s *Store) Expire(ctx context.Context, routeID string, generation uint64) error {
+func (s *Store) Expire(ctx context.Context, routeID string, generation uint64) (err error) {
+	started := time.Now()
+	defer func() { s.observe(StoreOperationLeaseExpire, started, err) }()
 	result, err := s.db.ExecContext(ctx, `UPDATE route_leases SET status = 'expired'
 		WHERE route_id = ? AND generation = ? AND status != 'expired'`, routeID, generation)
 	if err != nil {
@@ -541,4 +607,10 @@ func newID(prefix string) (string, error) {
 		return "", fmt.Errorf("routes: generate %s ID: %w", prefix, err)
 	}
 	return prefix + "_" + hex.EncodeToString(material[:]), nil
+}
+
+func (s *Store) observe(operation StoreOperation, started time.Time, err error) {
+	if s.observeOperation != nil {
+		s.observeOperation(operation, time.Since(started), err)
+	}
 }

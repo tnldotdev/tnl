@@ -29,6 +29,7 @@ const (
 
 var (
 	ErrUnauthenticated  = errors.New("coreclient: unauthenticated")
+	ErrNotFound         = errors.New("coreclient: not found")
 	ErrStateConflict    = errors.New("coreclient: state conflict")
 	ErrCertificateState = errors.New("coreclient: certificate precondition failed")
 	ErrRateLimited      = errors.New("coreclient: rate limited")
@@ -73,6 +74,74 @@ func (c *Client) CreateRoute(ctx context.Context, requestBody corev1.CreateRoute
 
 func (c *Client) ListRoutes(ctx context.Context) ([]corev1.Route, error) {
 	return request[[]corev1.Route](ctx, c, http.MethodGet, "/v1/routes", c.access.String(), nil)
+}
+
+func (c *Client) ClaimHostname(ctx context.Context, label, requestKey string) (corev1.HostnameClaim, error) {
+	requestBody := corev1.CreateHostnameClaimRequest{}
+	if label != "" {
+		requestBody.Label = &label
+	}
+	headers := make(http.Header)
+	headers.Set("Idempotency-Key", requestKey)
+	return requestWithTimeout[corev1.HostnameClaim](
+		ctx, c, c.timeout, http.MethodPost, "/v1/hostname-claims", c.access.String(), requestBody, headers,
+	)
+}
+
+func (c *Client) ListHostnameClaims(ctx context.Context) ([]corev1.HostnameClaim, error) {
+	var claims []corev1.HostnameClaim
+	cursor := ""
+	for {
+		page, next, err := c.ListHostnameClaimsPage(ctx, cursor)
+		if err != nil {
+			return nil, err
+		}
+		claims = append(claims, page...)
+		if next == "" {
+			return claims, nil
+		}
+		cursor = next
+	}
+}
+
+func (c *Client) ListHostnameClaimsPage(
+	ctx context.Context,
+	cursor string,
+) ([]corev1.HostnameClaim, string, error) {
+	query := make(url.Values)
+	if cursor != "" {
+		query.Set("cursor", cursor)
+	}
+	page, err := requestWithTimeoutAndQuery[corev1.HostnameClaimPage](
+		ctx, c, c.timeout, http.MethodGet, "/v1/hostname-claims", c.access.String(), nil, query,
+	)
+	if err != nil {
+		return nil, "", err
+	}
+	if len(page.Claims) > 100 {
+		return nil, "", errors.New("coreclient: oversized hostname claim page")
+	}
+	// Strict ordering prevents duplicates and non-advancing pagination.
+	previous := cursor
+	for _, claim := range page.Claims {
+		if !validHostnameClaimID(claim.Id) || claim.Id <= previous {
+			return nil, "", errors.New("coreclient: invalid hostname claim page")
+		}
+		previous = claim.Id
+	}
+	next := ""
+	if page.NextCursor != nil {
+		next = *page.NextCursor
+		if len(page.Claims) == 0 || next <= cursor || page.Claims[len(page.Claims)-1].Id != next {
+			return nil, "", errors.New("coreclient: invalid hostname claim cursor")
+		}
+	}
+	return page.Claims, next, nil
+}
+
+func (c *Client) ReleaseHostnameClaim(ctx context.Context, claimID string) error {
+	_, err := request[struct{}](ctx, c, http.MethodDelete, hostnameClaimPath(claimID), c.access.String(), nil)
+	return err
 }
 
 func (c *Client) AcquireLease(
@@ -195,6 +264,21 @@ func requestWithTimeout[T any](
 	timeout time.Duration,
 	method, path, token string,
 	requestBody any,
+	headers ...http.Header,
+) (T, error) {
+	return requestWithTimeoutAndQuery[T](
+		ctx, client, timeout, method, path, token, requestBody, nil, headers...,
+	)
+}
+
+func requestWithTimeoutAndQuery[T any](
+	ctx context.Context,
+	client *Client,
+	timeout time.Duration,
+	method, path, token string,
+	requestBody any,
+	query url.Values,
+	headers ...http.Header,
 ) (T, error) {
 	var zero T
 	requestCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -207,7 +291,9 @@ func requestWithTimeout[T any](
 		}
 		body = bytes.NewReader(encoded)
 	}
-	request, err := http.NewRequestWithContext(requestCtx, method, client.base.JoinPath(path).String(), body)
+	endpoint := client.base.JoinPath(path)
+	endpoint.RawQuery = query.Encode()
+	request, err := http.NewRequestWithContext(requestCtx, method, endpoint.String(), body)
 	if err != nil {
 		return zero, err
 	}
@@ -216,6 +302,11 @@ func requestWithTimeout[T any](
 	}
 	if token != "" {
 		request.Header.Set("Authorization", "Bearer "+token)
+	}
+	if len(headers) != 0 {
+		for name, values := range headers[0] {
+			request.Header[name] = append([]string(nil), values...)
+		}
 	}
 	request.Header.Set("Accept", "application/json, application/problem+json")
 	response, err := client.http.Do(request)
@@ -256,6 +347,8 @@ func responseError(status int, header http.Header, payload []byte) error {
 	switch problem.Code {
 	case corev1.Unauthenticated:
 		return ErrUnauthenticated
+	case corev1.NotFound:
+		return ErrNotFound
 	case corev1.StateConflict:
 		return ErrStateConflict
 	case corev1.PreconditionFailed:
@@ -294,6 +387,22 @@ func routePath(routeID, operation string) string {
 		path += "/" + operation
 	}
 	return path
+}
+
+func hostnameClaimPath(claimID string) string {
+	return "/v1/hostname-claims/" + url.PathEscape(claimID)
+}
+
+func validHostnameClaimID(value string) bool {
+	if len(value) != len("claim_")+32 || !strings.HasPrefix(value, "claim_") {
+		return false
+	}
+	for _, char := range value[len("claim_"):] {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func certificateOrderPath(orderID, operation string) string {

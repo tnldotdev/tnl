@@ -58,7 +58,9 @@ type PublicConfig struct {
 	Logf         logger.Logf
 	// OnRoute runs after creation or recovery, before activation.
 	OnRoute func(string)
-	OnReady func(string)
+	// OnReady runs once; OnLeaseReady runs for every generation and may abort publication.
+	OnReady      func(string)
+	OnLeaseReady func(string, uint64) error
 }
 
 func RunPublic(ctx context.Context, config PublicConfig) error {
@@ -77,7 +79,11 @@ func RunPublic(ctx context.Context, config PublicConfig) error {
 		if config.State == nil {
 			return errors.New("agent: client state is required for automatic certificates")
 		}
-	} else if err := validateCertificate(config.Certificate, hostname, false); err != nil {
+	} else if err := validateCertificate(config.Certificate, hostname, true); err != nil {
+		return err
+	}
+	config.Target, err = localproxy.NormalizeTarget(config.Target)
+	if err != nil {
 		return err
 	}
 	if err := localproxy.Preflight(ctx, config.Target); err != nil {
@@ -115,12 +121,18 @@ func RunPublic(ctx context.Context, config PublicConfig) error {
 		if setup.Route.Id != routeID {
 			return errors.New("agent: core changed route ID during lease acquisition")
 		}
-		err := runLease(ctx, config, setup, routeState, func() {
+		err := runLease(ctx, config, setup, routeState, func() error {
+			if config.OnLeaseReady != nil {
+				if err := config.OnLeaseReady("https://"+setup.Route.Hostname, uint64(setup.Lease.Generation)); err != nil {
+					return err
+				}
+			}
 			announced.Do(func() {
 				if config.OnReady != nil {
 					config.OnReady("https://" + setup.Route.Hostname)
 				}
 			})
+			return nil
 		})
 		if ctx.Err() != nil {
 			return nil
@@ -128,9 +140,19 @@ func RunPublic(ctx context.Context, config PublicConfig) error {
 		if !errors.Is(err, coreclient.ErrStateConflict) {
 			return err
 		}
-		setup, err = config.Core.AcquireLease(ctx, routeID, routeToken)
-		if err != nil {
-			return err
+		for {
+			setup, err = config.Core.AcquireLease(ctx, routeID, routeToken)
+			if err == nil {
+				break
+			}
+			if !errors.Is(err, coreclient.ErrUnavailable) {
+				return err
+			}
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.After(activationRetry):
+			}
 		}
 	}
 }
@@ -187,7 +209,7 @@ func runLease(
 	config PublicConfig,
 	setup corev1.LeaseSetup,
 	state *clientstate.Route,
-	ready func(),
+	ready func() error,
 ) error {
 	if setup.Route.Id == "" || setup.Lease.Generation <= 0 || setup.LeaseToken == "" || setup.IngressPublicKey == "" {
 		return errors.New("agent: core returned incomplete lease setup")
@@ -203,17 +225,25 @@ func runLease(
 	generation := uint64(setup.Lease.Generation)
 	leaseCtx, cancelLease := context.WithCancel(ctx)
 	defer cancelLease()
+	// Refresh before setup consumes the lease, then continue heartbeats in the background.
+	expiresAt, err := heartbeatOnce(
+		leaseCtx, config.Core, setup.Route.Id, generation, leaseToken, setup.Lease.ExpiresAt,
+	)
+	if err != nil {
+		return fmt.Errorf("agent: heartbeat: %w", err)
+	}
+	if leaseCtx.Err() != nil {
+		return nil
+	}
 	heartbeatErrors := make(chan error, 1)
-	// Start heartbeats before route and certificate setup consume the lease lifetime.
 	go func() {
-		if err := heartbeatLease(
-			leaseCtx, config.Core, setup.Route.Id, generation, leaseToken, setup.Lease.ExpiresAt,
+		if err := heartbeatLeaseAfter(
+			leaseCtx, config.Core, setup.Route.Id, generation, leaseToken, expiresAt,
 		); err != nil {
 			heartbeatErrors <- err
 		}
 	}()
 	certificate := config.Certificate
-	var err error
 	var material clientstate.Material
 	var hasMaterial bool
 	if state != nil {
@@ -229,7 +259,7 @@ func runLease(
 	}
 	route, err := NewRoute(RouteConfig{
 		Hostname: setup.Route.Hostname, Target: config.Target, Certificate: certificate,
-		StrictCertificate: state != nil,
+		StrictCertificate: true,
 		AllowedClient:     ingressKey, RelayProfile: config.RelayProfile, Profiles: config.Profiles, Logf: config.Logf,
 	})
 	if err != nil {
@@ -309,7 +339,9 @@ func runLease(
 			return err
 		}
 	}
-	ready()
+	if err := ready(); err != nil {
+		return err
+	}
 	var renewalTimer *time.Timer
 	var renewal <-chan time.Time
 	if state != nil {
@@ -866,6 +898,21 @@ func heartbeatLease(
 	leaseToken credentials.LeaseToken,
 	expiresAt time.Time,
 ) error {
+	expiresAt, err := heartbeatOnce(ctx, core, routeID, generation, leaseToken, expiresAt)
+	if err != nil || ctx.Err() != nil {
+		return err
+	}
+	return heartbeatLeaseAfter(ctx, core, routeID, generation, leaseToken, expiresAt)
+}
+
+func heartbeatLeaseAfter(
+	ctx context.Context,
+	core Core,
+	routeID string,
+	generation uint64,
+	leaseToken credentials.LeaseToken,
+	expiresAt time.Time,
+) error {
 	ticker := time.NewTicker(heartbeatInterval)
 	defer ticker.Stop()
 	for {
@@ -874,22 +921,37 @@ func heartbeatLease(
 			return nil
 		case <-ticker.C:
 		}
-		callCtx, cancel := context.WithTimeout(ctx, heartbeatCallTimeout)
-		response, err := core.Heartbeat(callCtx, routeID, generation, leaseToken)
-		cancel()
-		if err == nil {
-			expiresAt = response.ExpiresAt
-			continue
+		var err error
+		expiresAt, err = heartbeatOnce(ctx, core, routeID, generation, leaseToken, expiresAt)
+		if err != nil || ctx.Err() != nil {
+			return err
 		}
-		if ctx.Err() != nil {
-			return nil
-		}
-		if errors.Is(err, coreclient.ErrUnavailable) {
-			if time.Now().Before(expiresAt) {
-				continue
-			}
-			return coreclient.ErrStateConflict
-		}
-		return err
 	}
+}
+
+func heartbeatOnce(
+	ctx context.Context,
+	core Core,
+	routeID string,
+	generation uint64,
+	leaseToken credentials.LeaseToken,
+	expiresAt time.Time,
+) (time.Time, error) {
+	callCtx, cancel := context.WithTimeout(ctx, heartbeatCallTimeout)
+	response, err := core.Heartbeat(callCtx, routeID, generation, leaseToken)
+	cancel()
+	if err == nil {
+		return response.ExpiresAt, nil
+	}
+	if ctx.Err() != nil {
+		return expiresAt, nil
+	}
+	// A missed heartbeat is safe only while the last confirmed lease remains valid.
+	if errors.Is(err, coreclient.ErrUnavailable) && time.Now().Before(expiresAt) {
+		return expiresAt, nil
+	}
+	if errors.Is(err, coreclient.ErrUnavailable) {
+		return expiresAt, coreclient.ErrStateConflict
+	}
+	return expiresAt, err
 }

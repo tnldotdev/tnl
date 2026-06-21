@@ -7,6 +7,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/0xcadams/tnl/internal/tailtransport"
 	"tailscale.com/tailcfg"
@@ -56,9 +57,10 @@ type RouteOwner interface {
 }
 
 type EngineConfig struct {
-	Capacity int
-	Profiles map[string]*tailcfg.DERPRegion
-	Logf     logger.Logf
+	Capacity         int
+	Profiles         map[string]*tailcfg.DERPRegion
+	Logf             logger.Logf
+	OnTailcatFailure func(operation, reason string)
 }
 
 type leaseDialer interface {
@@ -69,9 +71,10 @@ type leaseDialer interface {
 }
 
 type Engine struct {
-	capacity int
-	profiles map[string]*tailcfg.DERPRegion
-	logf     logger.Logf
+	capacity         int
+	profiles         map[string]*tailcfg.DERPRegion
+	logf             logger.Logf
+	onTailcatFailure func(operation, reason string)
 
 	mu       sync.Mutex
 	routes   map[string]*ownedRoute
@@ -89,10 +92,11 @@ func NewEngine(config EngineConfig) (*Engine, error) {
 		return nil, errors.New("worker: relay profiles are required")
 	}
 	return &Engine{
-		capacity: config.Capacity,
-		profiles: cloneProfiles(config.Profiles),
-		logf:     config.Logf,
-		routes:   make(map[string]*ownedRoute),
+		capacity:         config.Capacity,
+		profiles:         cloneProfiles(config.Profiles),
+		logf:             config.Logf,
+		onTailcatFailure: config.OnTailcatFailure,
+		routes:           make(map[string]*ownedRoute),
 		newDialer: func(config tailtransport.DialerConfig) (leaseDialer, error) {
 			return tailtransport.NewDialer(config)
 		},
@@ -110,7 +114,9 @@ func (e *Engine) Attach(ctx context.Context, assignment Assignment) (OwnedRoute,
 		Logf:     e.logf,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("worker: create route dialer: %w", err)
+		wrappedErr := fmt.Errorf("worker: create route dialer: %w", err)
+		e.reportTailcatFailure("create", assignment.RouteRef, wrappedErr)
+		return nil, wrappedErr
 	}
 	route := &ownedRoute{engine: e, ref: assignment.RouteRef, dialer: dialer}
 
@@ -149,7 +155,9 @@ func (e *Engine) Attach(ctx context.Context, assignment Assignment) (OwnedRoute,
 	if err := dialer.Start(ctx); err != nil {
 		route.remove()
 		_ = dialer.Close()
-		return nil, fmt.Errorf("worker: start route dialer: %w", err)
+		wrappedErr := fmt.Errorf("worker: start route dialer: %w", err)
+		e.reportTailcatFailure("start", assignment.RouteRef, wrappedErr)
+		return nil, wrappedErr
 	}
 	// Startup may race replacement or drain; only the current route becomes ready.
 	e.mu.Lock()
@@ -226,6 +234,38 @@ func (e *Engine) snapshotLocked() []*ownedRoute {
 		routes = append(routes, route)
 	}
 	return routes
+}
+
+func (e *Engine) reportTailcatFailure(operation string, ref RouteRef, err error) {
+	reason := tailcatFailureReason(err)
+	capacity := e.Capacity()
+	if e.logf != nil {
+		e.logf(
+			"tailcat failure: operation=%s reason=%s route_id=%q generation=%d active=%d limit=%d err=%q",
+			operation, reason, ref.RouteID, ref.Generation, capacity.Active, capacity.Limit, err,
+		)
+	}
+	if e.onTailcatFailure != nil {
+		e.onTailcatFailure(operation, reason)
+	}
+}
+
+func tailcatFailureReason(err error) string {
+	switch {
+	case errors.Is(err, syscall.EMFILE):
+		return "process_file_limit"
+	case errors.Is(err, syscall.ENFILE):
+		return "system_file_limit"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	}
+	var networkError net.Error
+	if errors.As(err, &networkError) {
+		return "network"
+	}
+	return "other"
 }
 
 type ownedRoute struct {

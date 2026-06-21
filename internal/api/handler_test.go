@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/0xcadams/tnl/internal/auth"
 	"github.com/0xcadams/tnl/internal/certificates"
 	"github.com/0xcadams/tnl/internal/credentials"
+	"github.com/0xcadams/tnl/internal/routes"
 	"github.com/0xcadams/tnl/internal/state"
 	"github.com/0xcadams/tnl/pkg/protocol/corev1"
 )
@@ -41,6 +43,127 @@ func TestCapabilities(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("capabilities = %#v, want %#v", got, want)
 	}
+}
+
+func TestRequestObservation(t *testing.T) {
+	internalErr := errors.New("storage unavailable")
+	tests := map[string]struct {
+		method      string
+		path        string
+		body        string
+		contentType string
+		auth        AuthService
+		wantStatus  int
+		wantOp      Operation
+		wantResult  RequestResult
+	}{
+		"success": {
+			method: http.MethodGet, path: capabilitiesPath,
+			wantStatus: http.StatusOK, wantOp: OperationCapabilitiesGet, wantResult: RequestSuccess,
+		},
+		"client error": {
+			method: http.MethodPost, path: tokenExchangePath, body: `{}`, contentType: "application/json",
+			wantStatus: http.StatusBadRequest, wantOp: OperationTokenExchange, wantResult: RequestClientError,
+		},
+		"server error": {
+			method: http.MethodPost, path: tokenExchangePath,
+			body: `{"bootstrap_token":"tnl_bootstrap_test"}`, contentType: "application/json",
+			auth: tokenExchangerFunc(func(context.Context, credentials.BootstrapToken) (auth.IssuedAccessToken, error) {
+				return auth.IssuedAccessToken{}, internalErr
+			}),
+			wantStatus: http.StatusInternalServerError, wantOp: OperationTokenExchange, wantResult: RequestServerError,
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			observer := &recordingObserver{}
+			handler := NewHandlerWithServicesAndConfig(
+				fixtureCapabilities(t), test.auth, nil, nil, HandlerConfig{Observer: observer},
+			)
+			request := httptest.NewRequest(test.method, test.path, strings.NewReader(test.body))
+			if test.contentType != "" {
+				request.Header.Set("Content-Type", test.contentType)
+			}
+			response := httptest.NewRecorder()
+
+			handler.ServeHTTP(response, request)
+
+			if response.Code != test.wantStatus {
+				t.Fatalf("status = %d, want %d", response.Code, test.wantStatus)
+			}
+			if len(observer.observations) != 1 {
+				t.Fatalf("observations = %#v, want one", observer.observations)
+			}
+			got := observer.observations[0]
+			if got.operation != test.wantOp || got.result != test.wantResult || got.duration <= 0 {
+				t.Fatalf("observation = %#v, want operation %q and result %q", got, test.wantOp, test.wantResult)
+			}
+		})
+	}
+}
+
+func TestOperationNamesAreStableAndDoNotContainResourceIDs(t *testing.T) {
+	const want = "routes.heartbeat"
+	for _, path := range []string{
+		routePathPrefix + "route_first/heartbeat",
+		routePathPrefix + "route_second/heartbeat",
+	} {
+		operation := operationForRequest(http.MethodPost, path)
+		if operation != OperationRouteHeartbeat || string(operation) != want || strings.Contains(string(operation), "route_") {
+			t.Fatalf("operation for %q = %q, want %q", path, operation, want)
+		}
+	}
+}
+
+func TestUnexpectedAuthErrorIsReportedAndSanitized(t *testing.T) {
+	underlying := errors.New("database unavailable")
+	wrapped := fmt.Errorf("exchange access token: %w", underlying)
+	reporter := &recordingErrorReporter{}
+	exchanger := tokenExchangerFunc(func(
+		context.Context,
+		credentials.BootstrapToken,
+	) (auth.IssuedAccessToken, error) {
+		return auth.IssuedAccessToken{}, wrapped
+	})
+	const credential = "tnl_bootstrap_do-not-report"
+	request := httptest.NewRequest(
+		http.MethodPost,
+		tokenExchangePath,
+		strings.NewReader(`{"bootstrap_token":"`+credential+`"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(requestIDHeader, "req_authfailure")
+	response := httptest.NewRecorder()
+
+	NewHandlerWithServicesAndConfig(
+		fixtureCapabilities(t), exchanger, nil, nil, HandlerConfig{ErrorReporter: reporter},
+	).ServeHTTP(response, request)
+
+	assertUnexpectedErrorReport(t, reporter, wrapped, underlying, "req_authfailure", OperationTokenExchange)
+	assertSanitizedInternalProblem(t, response, "req_authfailure", credential, wrapped.Error())
+}
+
+func TestUnknownRouteErrorIsReportedOnceAndSanitized(t *testing.T) {
+	underlying := errors.New("database unavailable")
+	wrapped := fmt.Errorf("list routes: %w", underlying)
+	reporter := &recordingErrorReporter{}
+	handler := NewHandlerWithServicesAndConfig(
+		fixtureCapabilities(t),
+		authenticatingAuthService{AuthService: nil},
+		failingListRouteService{RouteService: nil, err: wrapped},
+		nil,
+		HandlerConfig{ErrorReporter: reporter},
+	)
+	request := httptest.NewRequest(http.MethodGet, routesPath, nil)
+	request.Header.Set(authorizationHeader, "Bearer credential-do-not-report")
+	request.Header.Set(requestIDHeader, "req_routefailure")
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	assertUnexpectedErrorReport(t, reporter, wrapped, underlying, "req_routefailure", OperationRoutesList)
+	assertSanitizedInternalProblem(t, response, "req_routefailure", "credential-do-not-report", wrapped.Error())
 }
 
 func TestCertificateRateLimitResponse(t *testing.T) {
@@ -383,6 +506,111 @@ func (tokenExchangerFunc) Revoke(
 	credentials.CredentialID,
 ) error {
 	panic("unexpected Revoke call")
+}
+
+type requestObservation struct {
+	operation Operation
+	result    RequestResult
+	duration  time.Duration
+}
+
+type recordingObserver struct {
+	observations []requestObservation
+}
+
+func (o *recordingObserver) ObserveRequest(operation Operation, result RequestResult, duration time.Duration) {
+	o.observations = append(o.observations, requestObservation{
+		operation: operation,
+		result:    result,
+		duration:  duration,
+	})
+}
+
+type errorReport struct {
+	err       error
+	requestID string
+	operation Operation
+}
+
+type recordingErrorReporter struct {
+	reports []errorReport
+}
+
+func (r *recordingErrorReporter) ReportError(err error, requestID string, operation Operation) {
+	r.reports = append(r.reports, errorReport{err: err, requestID: requestID, operation: operation})
+}
+
+type authenticatingAuthService struct {
+	AuthService
+}
+
+func (authenticatingAuthService) Authenticate(
+	context.Context,
+	credentials.AccessToken,
+) (state.Principal, error) {
+	return state.Principal{ID: "principal_test"}, nil
+}
+
+type failingListRouteService struct {
+	RouteService
+	err error
+}
+
+func (s failingListRouteService) List(context.Context, string) ([]routes.Route, error) {
+	return nil, s.err
+}
+
+func assertUnexpectedErrorReport(
+	t *testing.T,
+	reporter *recordingErrorReporter,
+	wantErr, underlying error,
+	requestID string,
+	operation Operation,
+) {
+	t.Helper()
+	if len(reporter.reports) != 1 {
+		t.Fatalf("error reports = %#v, want one", reporter.reports)
+	}
+	got := reporter.reports[0]
+	if got.err != wantErr || !errors.Is(got.err, underlying) {
+		t.Fatalf("reported error = %v, want wrapped error %v", got.err, wantErr)
+	}
+	if got.requestID != requestID || got.operation != operation {
+		t.Fatalf("error report = %#v, want request ID %q and operation %q", got, requestID, operation)
+	}
+}
+
+func assertSanitizedInternalProblem(
+	t *testing.T,
+	response *httptest.ResponseRecorder,
+	requestID string,
+	forbidden ...string,
+) {
+	t.Helper()
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusInternalServerError)
+	}
+	assertResponseHeaders(t, response, "application/problem+json", requestID)
+	var problem corev1.Problem
+	if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil {
+		t.Fatal(err)
+	}
+	want := corev1.Problem{
+		Type:      "https://tnl.dev/problems/internal",
+		Title:     "Internal server error",
+		Status:    http.StatusInternalServerError,
+		Code:      corev1.Internal,
+		RequestId: requestID,
+		Details:   map[string]interface{}{},
+	}
+	if !reflect.DeepEqual(problem, want) {
+		t.Fatalf("problem = %#v, want %#v", problem, want)
+	}
+	for _, value := range forbidden {
+		if strings.Contains(response.Body.String(), value) {
+			t.Fatalf("problem response disclosed %q: %s", value, response.Body.String())
+		}
+	}
 }
 
 func fixtureCapabilities(t *testing.T) corev1.Capabilities {

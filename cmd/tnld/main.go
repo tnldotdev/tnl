@@ -3,24 +3,27 @@ package main
 import (
 	"context"
 	"crypto/rand"
-	"crypto/tls"
 	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/0xcadams/tnl/internal/api"
 	"github.com/0xcadams/tnl/internal/auth"
+	"github.com/0xcadams/tnl/internal/buildinfo"
 	"github.com/0xcadams/tnl/internal/certificates"
 	"github.com/0xcadams/tnl/internal/config"
+	"github.com/0xcadams/tnl/internal/controltls"
 	"github.com/0xcadams/tnl/internal/credentials"
 	"github.com/0xcadams/tnl/internal/ingress"
 	"github.com/0xcadams/tnl/internal/observability"
@@ -36,13 +39,17 @@ import (
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := run(ctx, os.Args[1:]); err != nil {
+	if err := run(ctx, os.Args[1:], os.Stdout); err != nil {
 		fmt.Fprintf(os.Stderr, "tnld: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, args []string) error {
+func run(ctx context.Context, args []string, stdout io.Writer) error {
+	if len(args) == 1 && args[0] == "version" {
+		_, err := fmt.Fprintln(stdout, buildinfo.Line("tnld"))
+		return err
+	}
 	cfg, err := config.ParseTNLD(args)
 	if err != nil {
 		return err
@@ -80,6 +87,9 @@ func serve(ctx context.Context, cfg config.TNLD) error {
 			return err
 		}
 		running.db = db
+		if err := metrics.RegisterDatabase(db); err != nil {
+			return errors.Join(err, running.shutdown(cfg.DrainTimeout))
+		}
 	}
 
 	if cfg.MetricsListen != "" {
@@ -97,7 +107,7 @@ func serve(ctx context.Context, cfg config.TNLD) error {
 		}
 		running.workerDone = workerDone
 	}
-	if cfg.Mode.UsesState() && cfg.ControlListen != "" {
+	if cfg.Mode.UsesState() && cfg.PublicListen != "" {
 		controlDone, ingressDone, err := running.startCore(lifetime, cfg, metrics)
 		if err != nil {
 			return errors.Join(err, running.shutdown(cfg.DrainTimeout))
@@ -131,7 +141,13 @@ func (d *daemon) startCore(
 	if err != nil {
 		return nil, nil, err
 	}
-	store, err := routes.NewStore(d.db)
+	store, err := routes.NewStore(d.db, cfg.RouteSuffix, routes.StoreConfig{
+		MaxActiveHostnameClaims:  cfg.MaxActiveHostnameClaims,
+		MaxHostnameClaimRequests: cfg.MaxHostnameClaimRequests,
+		ObserveOperation: func(operation routes.StoreOperation, duration time.Duration, err error) {
+			metrics.ObserveSQLiteOperation(string(operation), duration, err)
+		},
+	})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -139,7 +155,17 @@ func (d *daemon) startCore(
 	if err != nil {
 		return nil, nil, err
 	}
-	d.coordinator, err = routes.NewCoordinator(ctx, store, bootEpoch)
+	d.coordinator, err = routes.NewCoordinator(ctx, store, bootEpoch, routes.CoordinatorConfig{
+		ObserveHeartbeat: func(result routes.HeartbeatResult) {
+			metrics.ObserveRouteLeaseHeartbeat(string(result))
+		},
+		ObserveRouteRemoval: func(reason routes.RouteRemovalReason) {
+			metrics.ObserveRouteRemoval(string(reason))
+		},
+		ObserveWorkerCapacityRejection: func() {
+			metrics.IncCapacityRejection("worker_routes")
+		},
+	})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -170,7 +196,10 @@ func (d *daemon) startCore(
 		if err != nil {
 			return nil, nil, err
 		}
-		owner, err := worker.NewEngine(worker.EngineConfig{Capacity: cfg.WorkerCapacity, Profiles: profiles, Logf: log.Printf})
+		owner, err := worker.NewEngine(worker.EngineConfig{
+			Capacity: cfg.WorkerCapacity, Profiles: profiles, Logf: log.Printf,
+			OnTailcatFailure: metrics.IncTailcatFailure,
+		})
 		if err != nil {
 			return nil, nil, err
 		}
@@ -187,6 +216,12 @@ func (d *daemon) startCore(
 		hub, err = workersession.NewHub(workersession.HubConfig{
 			Tokens: []credentials.WorkerVerifier{verifier}, Registry: d.coordinator,
 			MaxStreams: cfg.WorkerStreamLimit, DrainTime: cfg.DrainTimeout, OnError: report,
+			OnSessionEstablished: func(role workersession.SessionRole) {
+				metrics.ObserveWorkerSessionEstablished(string(role))
+			},
+			OnSessionDisconnected: func(role workersession.SessionRole, reason workersession.DisconnectReason) {
+				metrics.ObserveWorkerSessionDisconnected(string(role), string(reason))
+			},
 		})
 		if err != nil {
 			return nil, nil, err
@@ -194,15 +229,21 @@ func (d *daemon) startCore(
 		d.workerHub = hub
 	}
 
-	certificate, err := tls.LoadX509KeyPair(cfg.ControlCertFile, cfg.ControlKeyFile)
+	controlTLS, err := controltls.New(controltls.Config{
+		Hostname: cfg.ControlHostname, StateDir: cfg.StateDir,
+		DirectoryURL: cfg.ACMEDirectoryURL, Email: cfg.ACMEEmail, AcceptTerms: cfg.ACMEAcceptTerms,
+		CertFile: cfg.ControlCertFile, KeyFile: cfg.ControlKeyFile,
+	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("load control certificate: %w", err)
+		return nil, nil, err
 	}
-	handler := api.NewHandlerWithServices(
-		capabilities(cfg.RelayProfile, cfg.ACMEProfile, cfg.ACMEEnabled()),
+	apiMetrics := coreAPIObserver{metrics: metrics}
+	handler := api.NewHandlerWithServicesAndConfig(
+		capabilities(cfg.RouteSuffix, cfg.RelayProfile, cfg.ACMEProfile, cfg.ACMEEnabled()),
 		authService,
 		d.coordinator,
 		certificateService,
+		api.HandlerConfig{Observer: apiMetrics, ErrorReporter: apiMetrics},
 	)
 	if hub != nil {
 		mux := http.NewServeMux()
@@ -210,36 +251,23 @@ func (d *daemon) startCore(
 		mux.Handle("/", handler)
 		handler = mux
 	}
-	d.controlListener, err = net.Listen("tcp", cfg.ControlListen)
-	if err != nil {
-		return nil, nil, fmt.Errorf("listen for control API: %w", err)
-	}
-	d.controlServer = &http.Server{
-		Handler: handler, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10,
-		TLSConfig: &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS13},
-	}
-	controlDone := make(chan error, 1)
-	go func() {
-		err := d.controlServer.ServeTLS(d.controlListener, "", "")
-		if errors.Is(err, http.ErrServerClosed) || errors.Is(err, net.ErrClosed) {
-			err = nil
-		}
-		controlDone <- err
-		close(controlDone)
-	}()
-
-	if cfg.PublicListen == "" {
-		return controlDone, nil, nil
-	}
 	publicListener, err := net.Listen("tcp", cfg.PublicListen)
 	if err != nil {
 		return nil, nil, fmt.Errorf("listen for public ingress: %w", err)
+	}
+	controlListener := newConnectionListener(publicListener.Addr())
+	d.controlListener = controlListener
+	d.controlServer = &http.Server{
+		Handler: handler, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10,
+		TLSConfig: controlTLS,
 	}
 	ingressConfig := ingress.Config{
 		Lookup: func(hostname string) (worker.RouteBackend, bool) {
 			route, ok := d.coordinator.Lookup(hostname)
 			return route.Backend, ok
 		},
+		ControlHostname:    cfg.ControlHostname,
+		HandleControl:      controlListener.Enqueue,
 		RequireProxyHeader: cfg.RequireProxyHeader, MaxConnections: cfg.PublicConnLimit,
 		MaxRouteConnections: cfg.RouteConnLimit, Metrics: metrics, OnError: report,
 	}
@@ -252,8 +280,18 @@ func (d *daemon) startCore(
 	d.ingress, err = ingress.New(publicListener, ingressConfig)
 	if err != nil {
 		_ = publicListener.Close()
+		_ = d.controlListener.Close()
 		return nil, nil, err
 	}
+	controlDone := make(chan error, 1)
+	go func() {
+		err := d.controlServer.ServeTLS(d.controlListener, "", "")
+		if errors.Is(err, http.ErrServerClosed) || errors.Is(err, net.ErrClosed) {
+			err = nil
+		}
+		controlDone <- err
+		close(controlDone)
+	}()
 	ingressDone := make(chan error, 1)
 	go func() {
 		ingressDone <- d.ingress.Serve()
@@ -350,7 +388,10 @@ func startWorker(ctx context.Context, cfg config.TNLD, metrics *observability.Me
 	}
 	// Each session gets a fresh engine because disconnect closes its owner.
 	newOwner := func() (worker.RouteOwner, error) {
-		return worker.NewEngine(worker.EngineConfig{Capacity: cfg.WorkerCapacity, Profiles: profiles, Logf: log.Printf})
+		return worker.NewEngine(worker.EngineConfig{
+			Capacity: cfg.WorkerCapacity, Profiles: profiles, Logf: log.Printf,
+			OnTailcatFailure: metrics.IncTailcatFailure,
+		})
 	}
 	owner, err := newOwner()
 	if err != nil {
@@ -367,6 +408,12 @@ func startWorker(ctx context.Context, cfg config.TNLD, metrics *observability.Me
 			runErr := workersession.RunWorker(ctx, workersession.WorkerConfig{
 				URL: cfg.WorkerURL, Token: token, Owner: owner, MaxStreams: cfg.WorkerStreamLimit,
 				DrainTime: cfg.DrainTimeout, OnError: report,
+				OnSessionEstablished: func(role workersession.SessionRole) {
+					metrics.ObserveWorkerSessionEstablished(string(role))
+				},
+				OnSessionDisconnected: func(role workersession.SessionRole, reason workersession.DisconnectReason) {
+					metrics.ObserveWorkerSessionDisconnected(string(role), string(reason))
+				},
 			})
 			cancelSession()
 			closeErr := owner.Close()
@@ -451,10 +498,11 @@ func relayProfiles(cfg config.TNLD) (map[string]*tailcfg.DERPRegion, error) {
 	return profiles, nil
 }
 
-func capabilities(relayProfile, acmeProfile string, acmeEnabled bool) corev1.Capabilities {
+func capabilities(routeSuffix, relayProfile, acmeProfile string, acmeEnabled bool) corev1.Capabilities {
 	result := corev1.Capabilities{
 		ProtocolVersions:      []corev1.CapabilitiesProtocolVersions{corev1.CapabilitiesProtocolVersionsN1},
 		HostnameAuthorization: []corev1.CapabilitiesHostnameAuthorization{corev1.LocalClaim},
+		LocalClaim:            &corev1.LocalClaimCapabilities{Suffix: routeSuffix},
 		Transport: corev1.TransportCapabilities{
 			Type: corev1.Tailcat, Version: corev1.TransportCapabilitiesVersionN1, RelayProfile: relayProfile,
 		},
@@ -482,10 +530,58 @@ func forward(destination chan<- error, name string, source <-chan error) {
 	destination <- err
 }
 
+type connectionListener struct {
+	address     net.Addr
+	connections chan net.Conn
+	closed      chan struct{}
+	once        sync.Once
+}
+
+func newConnectionListener(address net.Addr) *connectionListener {
+	return &connectionListener{address: address, connections: make(chan net.Conn), closed: make(chan struct{})}
+}
+
+func (l *connectionListener) Accept() (net.Conn, error) {
+	select {
+	case connection := <-l.connections:
+		return connection, nil
+	case <-l.closed:
+		return nil, net.ErrClosed
+	}
+}
+
+func (l *connectionListener) Close() error {
+	l.once.Do(func() { close(l.closed) })
+	return nil
+}
+
+func (l *connectionListener) Addr() net.Addr { return l.address }
+
+func (l *connectionListener) Enqueue(connection net.Conn) bool {
+	select {
+	case l.connections <- connection:
+		return true
+	case <-l.closed:
+		return false
+	}
+}
+
 func report(err error) {
 	if err != nil {
 		log.Printf("tnld: %v", err)
 	}
+}
+
+type coreAPIObserver struct {
+	metrics *observability.Metrics
+}
+
+func (o coreAPIObserver) ObserveRequest(operation api.Operation, result api.RequestResult, duration time.Duration) {
+	o.metrics.ObserveAPIRequest(string(operation), string(result), duration)
+}
+
+func (coreAPIObserver) ReportError(err error, requestID string, operation api.Operation) {
+	report(fmt.Errorf("core API operation=%s request_id=%s: %w", operation, requestID, err))
 }
 
 func monitorWorker(ctx context.Context, owner worker.RouteOwner, metrics *observability.Metrics) {
@@ -508,9 +604,12 @@ func monitorRoutes(ctx context.Context, coordinator *routes.Coordinator, metrics
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
-		provisioning, active := coordinator.Stats()
-		metrics.SetRoutes("provisioning", provisioning)
-		metrics.SetRoutes("active", active)
+		stats := coordinator.HealthStats()
+		metrics.SetRoutes("provisioning", stats.Provisioning)
+		metrics.SetRoutes("active", stats.Active)
+		metrics.SetRouteLeaseMinSecondsRemaining("provisioning", stats.MinimumProvisioningLeaseSeconds)
+		metrics.SetRouteLeaseMinSecondsRemaining("active", stats.MinimumActiveLeaseSeconds)
+		metrics.SetWorkerOwnersConnected(stats.ConnectedOwners)
 		select {
 		case <-ctx.Done():
 			return
