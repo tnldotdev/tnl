@@ -279,6 +279,7 @@ func (s *systemFixture) fetchEventually(t *testing.T, rawURL string, validate fu
 		snapshot := responseSnapshot{status: response.StatusCode, body: string(body), header: response.Header.Clone()}
 		if readErr == nil && closeErr == nil {
 			if err := validate(snapshot); err == nil {
+				s.transport.CloseIdleConnections()
 				return snapshot
 			} else {
 				lastErr = err
