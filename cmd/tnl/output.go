@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/serverclient"
 )
 
@@ -21,6 +22,8 @@ type publishEvent struct {
 	RouteVersion  uint64     `json:"route_version,omitempty"`
 	IP            string     `json:"ip,omitempty"`
 	Message       string     `json:"message,omitempty"`
+	Code          string     `json:"code,omitempty"`
+	HelpURL       string     `json:"help_url,omitempty"`
 	Retryable     *bool      `json:"retryable,omitempty"`
 	RetryAt       *time.Time `json:"retry_at,omitempty"`
 	Reason        string     `json:"reason,omitempty"`
@@ -91,6 +94,10 @@ func (o *publishOutput) failed(err error) error {
 	}
 	retryable := errors.Is(err, serverclient.ErrUnavailable) || errors.Is(err, serverclient.ErrRateLimited)
 	event := publishEvent{Type: "error", Message: boundedOutputError(err), Retryable: &retryable}
+	if code, ok := diagnostic.CodeOf(err); ok {
+		event.Code = string(code)
+		event.HelpURL = diagnostic.HelpURL(code)
+	}
 	var limited *serverclient.RateLimitError
 	if errors.As(err, &limited) && limited.RetryAfter > 0 {
 		retryAt := time.Now().Add(limited.RetryAfter).UTC()

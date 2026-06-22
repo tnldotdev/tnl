@@ -128,7 +128,8 @@ tnl publish localhost:3000 --host=demo
 The publishing command stays in the foreground and obtains the route
 certificate automatically. It prints lifecycle messages to stderr; use
 `--output=ndjson` for newline-delimited JSON events on stdout. A second interrupt
-exits immediately.
+exits immediately. Diagnostic error events include additive `code` and
+`help_url` fields.
 
 The route becomes `https://demo.example.com`. Omit `--host` to have the server
 generate a temporary hostname for that invocation. A claimed managed hostname

@@ -134,6 +134,11 @@ claimed managed hostname or custom domain authorizes its exact hostname and
 child hostnames up to eight labels below it. `localhost:3000` is also accepted
 and normalized to the loopback target `http://127.0.0.1:3000`.
 
+Errors produced by the publisher's local proxy include a stable diagnostic code
+and a short `tnl.dev/e/...` help URL. Browser requests receive a minimal HTML
+wrapper around the plain-text ASCII diagnostic; other clients receive plain
+text. HTTP errors returned by the local service pass through unchanged.
+
 Restrict a route to specific visitor addresses or networks with repeatable
 `--allow-ip` options. Individual addresses are accepted and converted to host
 prefixes. `--allow-current-ip` adds the public address observed by the server
