@@ -38,25 +38,25 @@ func (h *handler) newRouter() http.Handler {
 	registry.handle(http.MethodDelete, hostnamePrefix+"{id}", OperationHostnameRelease, func(w http.ResponseWriter, r *http.Request, requestID string) {
 		h.serveHostname(w, r, requestID, r.PathValue("id"))
 	}, validPathValue("id", validHostnameID), nil)
-	registry.handle(http.MethodPost, domainVerificationsPath, OperationDomainVerificationCreate, h.serveDomainVerifications, nil, nil)
+	registry.handle(http.MethodPost, domainVerificationsPath, OperationDomainVerificationCreate, h.serveDomainVerificationCreate, nil, nil)
 	registry.handle(http.MethodGet, domainVerificationPrefix+"{id}", OperationDomainVerificationGet, func(w http.ResponseWriter, r *http.Request, requestID string) {
-		h.serveDomainVerification(w, r, requestID, r.PathValue("id"), "")
+		h.serveDomainVerificationGet(w, r, requestID, r.PathValue("id"))
 	}, nil, nil)
 	registry.handle(http.MethodPost, domainVerificationPrefix+"{id}/complete", OperationDomainVerificationComplete, func(w http.ResponseWriter, r *http.Request, requestID string) {
-		h.serveDomainVerification(w, r, requestID, r.PathValue("id"), "complete")
+		h.serveDomainVerificationComplete(w, r, requestID, r.PathValue("id"))
 	}, nil, nil)
-	registry.handle(http.MethodGet, routesPath, OperationRoutesList, h.serveRoutes, nil, nil)
-	registry.handle(http.MethodPost, routesPath, OperationRouteCreate, h.serveRoutes, nil, nil)
-	registry.handle(http.MethodDelete, routePathPrefix+"{id}", OperationRouteDelete, h.routeEndpoint(""), nil, nil)
-	registry.handle(http.MethodPost, routePathPrefix+"{id}/sessions", OperationRouteSessionCreate, h.routeEndpoint("sessions"), nil, nil)
-	registry.handle(http.MethodPost, routePathPrefix+"{id}/transport", OperationRouteTransportRegister, h.routeEndpoint("transport"), nil, nil)
-	registry.handle(http.MethodPost, routePathPrefix+"{id}/heartbeat", OperationRouteHeartbeat, h.routeEndpoint("heartbeat"), nil, nil)
-	registry.handle(http.MethodPost, routePathPrefix+"{id}/ready", OperationRouteReady, h.routeEndpoint("ready"), nil, nil)
-	registry.handle(http.MethodPost, routePathPrefix+"{id}/certificate-installed", OperationCertificateInstalled, h.routeEndpoint("certificate-installed"), nil, nil)
-	registry.handle(http.MethodPost, certificateIssuancesPath, OperationCertificateIssuanceCreate, h.serveCertificateIssuances, nil, nil)
-	registry.handle(http.MethodGet, certificateIssuancePrefix+"{id}", OperationCertificateIssuanceGet, h.certificateIssuanceEndpoint(""), validPathValue("id", validCertificateIssuanceID), nil)
-	registry.handle(http.MethodPost, certificateIssuancePrefix+"{id}/challenge-ready", OperationCertificateChallengeReady, h.certificateIssuanceEndpoint("challenge-ready"), validPathValue("id", validCertificateIssuanceID), nil)
-	registry.handle(http.MethodPost, certificateIssuancePrefix+"{id}/challenge-removed", OperationCertificateChallengeRemoved, h.certificateIssuanceEndpoint("challenge-removed"), validPathValue("id", validCertificateIssuanceID), nil)
+	registry.handle(http.MethodGet, routesPath, OperationRoutesList, h.serveRoutesList, nil, nil)
+	registry.handle(http.MethodPost, routesPath, OperationRouteCreate, h.serveRouteCreate, nil, nil)
+	registry.handle(http.MethodDelete, routePathPrefix+"{id}", OperationRouteDelete, pathValueEndpoint("id", h.serveRouteDelete), nil, nil)
+	registry.handle(http.MethodPost, routePathPrefix+"{id}/sessions", OperationRouteSessionCreate, pathValueEndpoint("id", h.serveSessionAcquisition), nil, nil)
+	registry.handle(http.MethodPost, routePathPrefix+"{id}/transport", OperationRouteTransportRegister, pathValueEndpoint("id", h.serveTransport), nil, nil)
+	registry.handle(http.MethodPost, routePathPrefix+"{id}/heartbeat", OperationRouteHeartbeat, pathValueEndpoint("id", h.serveHeartbeat), nil, nil)
+	registry.handle(http.MethodPost, routePathPrefix+"{id}/ready", OperationRouteReady, pathValueEndpoint("id", h.serveReady), nil, nil)
+	registry.handle(http.MethodPost, routePathPrefix+"{id}/certificate-installed", OperationCertificateInstalled, pathValueEndpoint("id", h.serveCertificateInstalled), nil, nil)
+	registry.handle(http.MethodPost, certificateIssuancesPath, OperationCertificateIssuanceCreate, h.serveCertificateIssuanceCreate, nil, nil)
+	registry.handle(http.MethodGet, certificateIssuancePrefix+"{id}", OperationCertificateIssuanceGet, pathValueEndpoint("id", h.serveCertificateIssuanceGet), validPathValue("id", validCertificateIssuanceID), nil)
+	registry.handle(http.MethodPost, certificateIssuancePrefix+"{id}/challenge-ready", OperationCertificateChallengeReady, pathValueEndpoint("id", h.serveCertificateChallengeReady), validPathValue("id", validCertificateIssuanceID), nil)
+	registry.handle(http.MethodPost, certificateIssuancePrefix+"{id}/challenge-removed", OperationCertificateChallengeRemoved, pathValueEndpoint("id", h.serveCertificateChallengeRemoved), validPathValue("id", validCertificateIssuanceID), nil)
 
 	h.registerAdminRoutes(registry)
 	return registry.handler(h)
@@ -64,51 +64,21 @@ func (h *handler) newRouter() http.Handler {
 
 func (h *handler) registerAdminRoutes(registry *routeRegistry) {
 	adminFallback := h.adminMethodNotAllowed(nil)
-	registry.handle(http.MethodGet, "/v1/admin/status", OperationAdminServerStatus, h.adminEndpoint(func(w http.ResponseWriter, r *http.Request, requestID string, _ auth.Principal) {
-		h.serveAdminStatus(w, r, requestID)
-	}), nil, adminFallback)
-	registry.handle(http.MethodGet, "/v1/admin/routes", OperationAdminRoutesList, h.adminEndpoint(func(w http.ResponseWriter, r *http.Request, requestID string, principal auth.Principal) {
-		h.serveAdminRoutes(w, r, requestID, principal, nil)
-	}), nil, adminFallback)
-	registry.handle(http.MethodGet, "/v1/admin/routes/{id}", OperationAdminRouteShow, h.adminEndpoint(func(w http.ResponseWriter, r *http.Request, requestID string, principal auth.Principal) {
-		h.serveAdminRoutes(w, r, requestID, principal, []string{r.PathValue("id")})
-	}), nil, h.adminMethodNotAllowed(validPathValue("id", validRouteID)))
-	registry.handle(http.MethodPost, "/v1/admin/routes/{id}/suspend", OperationAdminRouteSuspend, h.adminEndpoint(func(w http.ResponseWriter, r *http.Request, requestID string, principal auth.Principal) {
-		h.serveAdminRoutes(w, r, requestID, principal, []string{r.PathValue("id"), "suspend"})
-	}), nil, h.adminMethodNotAllowed(validPathValue("id", validRouteID)))
-	registry.handle(http.MethodPost, "/v1/admin/routes/{id}/resume", OperationAdminRouteResume, h.adminEndpoint(func(w http.ResponseWriter, r *http.Request, requestID string, principal auth.Principal) {
-		h.serveAdminRoutes(w, r, requestID, principal, []string{r.PathValue("id"), "resume"})
-	}), nil, h.adminMethodNotAllowed(validPathValue("id", validRouteID)))
-	registry.handle(http.MethodGet, "/v1/admin/hostnames", OperationAdminHostnamesList, h.adminEndpoint(func(w http.ResponseWriter, r *http.Request, requestID string, principal auth.Principal) {
-		h.serveAdminHostnames(w, r, requestID, principal, nil)
-	}), nil, adminFallback)
-	registry.handle(http.MethodGet, "/v1/admin/hostnames/{id}", OperationAdminHostnameShow, h.adminEndpoint(func(w http.ResponseWriter, r *http.Request, requestID string, principal auth.Principal) {
-		h.serveAdminHostnames(w, r, requestID, principal, []string{r.PathValue("id")})
-	}), nil, h.adminMethodNotAllowed(validPathValue("id", validHostnameID)))
-	registry.handle(http.MethodDelete, "/v1/admin/hostnames/{id}", OperationAdminHostnameRemove, h.adminEndpoint(func(w http.ResponseWriter, r *http.Request, requestID string, principal auth.Principal) {
-		h.serveAdminHostnames(w, r, requestID, principal, []string{r.PathValue("id")})
-	}), nil, h.adminMethodNotAllowed(validPathValue("id", validHostnameID)))
-	registry.handle(http.MethodPost, "/v1/admin/hostnames/{id}/quarantine", OperationAdminHostnameQuarantine, h.adminEndpoint(func(w http.ResponseWriter, r *http.Request, requestID string, principal auth.Principal) {
-		h.serveAdminHostnames(w, r, requestID, principal, []string{r.PathValue("id"), "quarantine"})
-	}), nil, h.adminMethodNotAllowed(validPathValue("id", validHostnameID)))
-	registry.handle(http.MethodGet, "/v1/admin/credentials", OperationAdminCredentialsList, h.adminEndpoint(func(w http.ResponseWriter, r *http.Request, requestID string, principal auth.Principal) {
-		h.serveAdminCredentials(w, r, requestID, principal, nil)
-	}), nil, adminFallback)
-	registry.handle(http.MethodDelete, "/v1/admin/credentials/{id}", OperationAdminCredentialRevoke, h.adminEndpoint(func(w http.ResponseWriter, r *http.Request, requestID string, principal auth.Principal) {
-		h.serveAdminCredentials(w, r, requestID, principal, []string{r.PathValue("id")})
-	}), nil, h.adminMethodNotAllowed(validPathValue("id", validCredentialID)))
-	registry.handle(http.MethodGet, "/v1/admin/control-sessions", OperationAdminControlSessionsList, h.adminEndpoint(func(w http.ResponseWriter, r *http.Request, requestID string, principal auth.Principal) {
-		h.serveAdminControlSessions(w, r, requestID, principal, nil)
-	}), nil, adminFallback)
-	registry.handle(http.MethodDelete, "/v1/admin/control-sessions/{id}", OperationAdminControlSessionRevoke, h.adminEndpoint(func(w http.ResponseWriter, r *http.Request, requestID string, principal auth.Principal) {
-		h.serveAdminControlSessions(w, r, requestID, principal, []string{r.PathValue("id")})
-	}), nil, h.adminMethodNotAllowed(validPathValue("id", validControlSessionID)))
-	registry.handle(http.MethodGet, "/v1/admin/maintenance-controls", OperationAdminMaintenanceControlsList, h.adminEndpoint(func(w http.ResponseWriter, r *http.Request, requestID string, principal auth.Principal) {
-		h.serveAdminMaintenanceControls(w, r, requestID, principal, nil)
-	}), nil, adminFallback)
-	registry.handle(http.MethodPut, "/v1/admin/maintenance-controls/{name}", OperationAdminMaintenanceControlSet, h.adminEndpoint(func(w http.ResponseWriter, r *http.Request, requestID string, principal auth.Principal) {
-		h.serveAdminMaintenanceControls(w, r, requestID, principal, []string{r.PathValue("name")})
-	}), nil, h.adminMethodNotAllowed(validPathValue("name", validAdminMaintenanceControl)))
+	registry.handle(http.MethodGet, "/v1/admin/status", OperationAdminServerStatus, h.adminEndpoint(h.serveAdminStatus), nil, adminFallback)
+	registry.handle(http.MethodGet, "/v1/admin/routes", OperationAdminRoutesList, h.adminEndpoint(h.serveAdminRoutesList), nil, adminFallback)
+	registry.handle(http.MethodGet, "/v1/admin/routes/{id}", OperationAdminRouteShow, h.adminPathValueEndpoint("id", validRouteID, h.serveAdminRoute), nil, h.adminMethodNotAllowed(validPathValue("id", validRouteID)))
+	registry.handle(http.MethodPost, "/v1/admin/routes/{id}/suspend", OperationAdminRouteSuspend, h.adminPathValueEndpoint("id", validRouteID, h.serveAdminRouteSuspend), nil, h.adminMethodNotAllowed(validPathValue("id", validRouteID)))
+	registry.handle(http.MethodPost, "/v1/admin/routes/{id}/resume", OperationAdminRouteResume, h.adminPathValueEndpoint("id", validRouteID, h.serveAdminRouteResume), nil, h.adminMethodNotAllowed(validPathValue("id", validRouteID)))
+	registry.handle(http.MethodGet, "/v1/admin/hostnames", OperationAdminHostnamesList, h.adminEndpoint(h.serveAdminHostnamesList), nil, adminFallback)
+	registry.handle(http.MethodGet, "/v1/admin/hostnames/{id}", OperationAdminHostnameShow, h.adminPathValueEndpoint("id", validHostnameID, h.serveAdminHostname), nil, h.adminMethodNotAllowed(validPathValue("id", validHostnameID)))
+	registry.handle(http.MethodDelete, "/v1/admin/hostnames/{id}", OperationAdminHostnameRemove, h.adminPathValueEndpoint("id", validHostnameID, h.serveAdminHostnameRemove), nil, h.adminMethodNotAllowed(validPathValue("id", validHostnameID)))
+	registry.handle(http.MethodPost, "/v1/admin/hostnames/{id}/quarantine", OperationAdminHostnameQuarantine, h.adminPathValueEndpoint("id", validHostnameID, h.serveAdminHostnameQuarantine), nil, h.adminMethodNotAllowed(validPathValue("id", validHostnameID)))
+	registry.handle(http.MethodGet, "/v1/admin/credentials", OperationAdminCredentialsList, h.adminEndpoint(h.serveAdminCredentialsList), nil, adminFallback)
+	registry.handle(http.MethodDelete, "/v1/admin/credentials/{id}", OperationAdminCredentialRevoke, h.adminPathValueEndpoint("id", validCredentialID, h.serveAdminCredentialRevoke), nil, h.adminMethodNotAllowed(validPathValue("id", validCredentialID)))
+	registry.handle(http.MethodGet, "/v1/admin/control-sessions", OperationAdminControlSessionsList, h.adminEndpoint(h.serveAdminControlSessionsList), nil, adminFallback)
+	registry.handle(http.MethodDelete, "/v1/admin/control-sessions/{id}", OperationAdminControlSessionRevoke, h.adminPathValueEndpoint("id", validControlSessionID, h.serveAdminControlSessionRevoke), nil, h.adminMethodNotAllowed(validPathValue("id", validControlSessionID)))
+	registry.handle(http.MethodGet, "/v1/admin/maintenance-controls", OperationAdminMaintenanceControlsList, h.adminEndpoint(h.serveAdminMaintenanceControlsList), nil, adminFallback)
+	registry.handle(http.MethodPut, "/v1/admin/maintenance-controls/{name}", OperationAdminMaintenanceControlSet, h.adminPathValueEndpoint("name", validAdminMaintenanceControl, h.serveAdminMaintenanceControlSet), nil, h.adminMethodNotAllowed(validPathValue("name", validAdminMaintenanceControl)))
 }
 
 func (r *routeRegistry) handle(
@@ -173,15 +143,9 @@ func (r *routeRegistry) handler(h *handler) http.Handler {
 	return r.mux
 }
 
-func (h *handler) routeEndpoint(operation string) endpointHandler {
+func pathValueEndpoint(name string, endpoint func(http.ResponseWriter, *http.Request, string, string)) endpointHandler {
 	return func(w http.ResponseWriter, r *http.Request, requestID string) {
-		h.serveRoute(w, r, requestID, r.PathValue("id"), operation)
-	}
-}
-
-func (h *handler) certificateIssuanceEndpoint(operation string) endpointHandler {
-	return func(w http.ResponseWriter, r *http.Request, requestID string) {
-		h.serveCertificateIssuance(w, r, requestID, r.PathValue("id"), operation)
+		endpoint(w, r, requestID, r.PathValue(name))
 	}
 }
 
@@ -193,6 +157,21 @@ func (h *handler) adminEndpoint(
 			endpoint(w, r, requestID, principal)
 		})
 	}
+}
+
+func (h *handler) adminPathValueEndpoint(
+	name string,
+	valid func(string) bool,
+	endpoint func(http.ResponseWriter, *http.Request, string, auth.Principal, string),
+) endpointHandler {
+	return h.adminEndpoint(func(w http.ResponseWriter, r *http.Request, requestID string, principal auth.Principal) {
+		value := r.PathValue(name)
+		if !valid(value) {
+			writeNotFound(w, requestID)
+			return
+		}
+		endpoint(w, r, requestID, principal, value)
+	})
 }
 
 func (h *handler) adminMethodNotAllowed(validate func(*http.Request) bool) methodNotAllowedHandler {

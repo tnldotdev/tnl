@@ -422,6 +422,7 @@ func (c *Coordinator) AttachRouteTransport(
 			continue
 		}
 		previous := c.assignments[routeID]
+		c.removeAssignmentLocked(previous)
 		assignment := &assignment{
 			ref: ref, hostname: currentPending.hostname, allowedIPPrefixes: currentPending.allowedIPPrefixes,
 			expiresAt: session.ExpiresAt, worker: selectedWorker, backend: backend,
@@ -958,6 +959,7 @@ func (c *Coordinator) Close() error {
 	clear(c.workers)
 	clear(c.pending)
 	clear(c.assignments)
+	clear(c.challenges)
 	c.snapshot.Store(&routeSnapshot{byHostname: map[string]RoutableRoute{}})
 	c.mu.Unlock()
 	stopReaper()
@@ -997,22 +999,7 @@ func (c *Coordinator) selectWorker(tried map[string]struct{}) *workerState {
 }
 
 func (c *Coordinator) deactivate(routeID string) bool {
-	c.mu.Lock()
-	for ref := range c.pending {
-		if ref.RouteID == routeID {
-			delete(c.pending, ref)
-		}
-	}
-	current := c.assignments[routeID]
-	if current != nil {
-		delete(c.assignments, routeID)
-		if c.challenges[current.hostname] == current {
-			delete(c.challenges, current.hostname)
-		}
-		delete(current.worker.routes, routeID)
-		c.unpublishLocked(routeID, current.ref.RouteVersion)
-	}
-	c.mu.Unlock()
+	current := c.removeRouteAssignment(routeID)
 	if current != nil {
 		_ = current.backend.Close()
 	}
@@ -1020,22 +1007,7 @@ func (c *Coordinator) deactivate(routeID string) bool {
 }
 
 func (c *Coordinator) deactivateDraining(ctx context.Context, routeID string) bool {
-	c.mu.Lock()
-	for ref := range c.pending {
-		if ref.RouteID == routeID {
-			delete(c.pending, ref)
-		}
-	}
-	current := c.assignments[routeID]
-	if current != nil {
-		delete(c.assignments, routeID)
-		if c.challenges[current.hostname] == current {
-			delete(c.challenges, current.hostname)
-		}
-		delete(current.worker.routes, routeID)
-		c.unpublishLocked(routeID, current.ref.RouteVersion)
-	}
-	c.mu.Unlock()
+	current := c.removeRouteAssignment(routeID)
 	if current != nil {
 		_ = current.backend.Drain(ctx)
 		_ = current.backend.Close()
@@ -1080,12 +1052,7 @@ func (c *Coordinator) removeWorker(worker *workerState, reason RouteRemovalReaso
 	delete(c.workers, worker.id)
 	assigned := c.ownerAssignmentsLocked(worker)
 	for _, current := range assigned {
-		delete(c.assignments, current.ref.RouteID)
-		if c.challenges[current.hostname] == current {
-			delete(c.challenges, current.hostname)
-		}
-		delete(c.pending, current.ref)
-		c.unpublishLocked(current.ref.RouteID, current.ref.RouteVersion)
+		c.removeAssignmentLocked(current)
 	}
 	c.mu.Unlock()
 	for range assigned {
@@ -1107,6 +1074,35 @@ func (c *Coordinator) ownerAssignmentsLocked(worker *workerState) []*assignment 
 		}
 	}
 	return assigned
+}
+
+func (c *Coordinator) removeAssignmentLocked(current *assignment) {
+	if current == nil {
+		return
+	}
+	routeID := current.ref.RouteID
+	if c.assignments[routeID] == current {
+		delete(c.assignments, routeID)
+	}
+	if c.challenges[current.hostname] == current {
+		delete(c.challenges, current.hostname)
+	}
+	delete(c.pending, current.ref)
+	delete(current.worker.routes, routeID)
+	c.unpublishLocked(routeID, current.ref.RouteVersion)
+}
+
+func (c *Coordinator) removeRouteAssignment(routeID string) *assignment {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for ref := range c.pending {
+		if ref.RouteID == routeID {
+			delete(c.pending, ref)
+		}
+	}
+	current := c.assignments[routeID]
+	c.removeAssignmentLocked(current)
+	return current
 }
 
 func (c *Coordinator) lockRoute(routeID string) func() {
@@ -1198,12 +1194,7 @@ func (c *Coordinator) expireMemory(ref worker.RouteRef, now time.Time) (worker.W
 	if current == nil || current.ref != ref || current.expiresAt.After(now) {
 		return nil, expired, false
 	}
-	delete(c.assignments, ref.RouteID)
-	if c.challenges[current.hostname] == current {
-		delete(c.challenges, current.hostname)
-	}
-	delete(current.worker.routes, ref.RouteID)
-	c.unpublishLocked(ref.RouteID, ref.RouteVersion)
+	c.removeAssignmentLocked(current)
 	return current.backend, true, true
 }
 

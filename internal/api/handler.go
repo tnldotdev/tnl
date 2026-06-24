@@ -136,8 +136,12 @@ type ErrorReporter interface {
 	ReportError(err error, requestID string, operation Operation)
 }
 
-// HandlerConfig configures production request observation and error reporting.
-type HandlerConfig struct {
+// Config configures the control API handler and its services.
+type Config struct {
+	Capabilities        serverv1.Capabilities
+	Auth                AuthService
+	Routes              RouteService
+	Certificates        CertificateService
 	Observer            Observer
 	ErrorReporter       ErrorReporter
 	RelayMap            []byte
@@ -232,43 +236,17 @@ type handler struct {
 	admin               AdminService
 }
 
-// NewHandler creates the server API handler without binding a listener.
-func NewHandler(capabilities serverv1.Capabilities, auth AuthService) http.Handler {
-	return NewHandlerWithRoutes(capabilities, auth, nil)
-}
-
-// NewHandlerWithRoutes enables hostname and route endpoints.
-func NewHandlerWithRoutes(capabilities serverv1.Capabilities, auth AuthService, routeService RouteService) http.Handler {
-	return NewHandlerWithServices(capabilities, auth, routeService, nil)
-}
-
-// NewHandlerWithServices enables hostname, route, and certificate endpoints.
-func NewHandlerWithServices(
-	capabilities serverv1.Capabilities,
-	auth AuthService,
-	routeService RouteService,
-	certificateService CertificateService,
-) http.Handler {
-	return NewHandlerWithServicesAndConfig(capabilities, auth, routeService, certificateService, HandlerConfig{})
-}
-
-// NewHandlerWithServicesAndConfig enables all API services and production observability hooks.
-func NewHandlerWithServicesAndConfig(
-	capabilities serverv1.Capabilities,
-	auth AuthService,
-	routeService RouteService,
-	certificateService CertificateService,
-	config HandlerConfig,
-) http.Handler {
+// NewHandler creates the control API handler without binding a listener.
+func NewHandler(config Config) http.Handler {
 	var oidcLimit *rate.Limiter
-	if _, ok := auth.(OIDCAuthService); ok {
+	if _, ok := config.Auth.(OIDCAuthService); ok {
 		oidcLimit = rate.NewLimiter(rate.Limit(5), 20)
 	}
 	h := &handler{
-		capabilities:        capabilities,
-		auth:                auth,
-		routes:              routeService,
-		certificates:        certificateService,
+		capabilities:        config.Capabilities,
+		auth:                config.Auth,
+		routes:              config.Routes,
+		certificates:        config.Certificates,
 		observer:            config.Observer,
 		errorReporter:       config.ErrorReporter,
 		relayMap:            append([]byte(nil), config.RelayMap...),
@@ -495,11 +473,7 @@ func (h *handler) serveHostname(w http.ResponseWriter, r *http.Request, requestI
 	writeNoContent(w)
 }
 
-func (h *handler) serveDomainVerifications(w http.ResponseWriter, r *http.Request, requestID string) {
-	if r.Method != http.MethodPost {
-		writeMethodNotAllowed(w, requestID, http.MethodPost)
-		return
-	}
+func (h *handler) serveDomainVerificationCreate(w http.ResponseWriter, r *http.Request, requestID string) {
 	identity, ok := h.authenticate(w, r, requestID)
 	if !ok {
 		return
@@ -525,29 +499,12 @@ func (h *handler) serveDomainVerifications(w http.ResponseWriter, r *http.Reques
 	writeModel(w, requestID, http.StatusCreated, domainVerificationResponse(challenge))
 }
 
-func (h *handler) serveDomainVerification(
+func (h *handler) serveDomainVerificationGet(
 	w http.ResponseWriter,
 	r *http.Request,
-	requestID, id, operation string,
+	requestID, verificationID string,
 ) {
-	wantMethod := r.Method
-	switch operation {
-	case "":
-		if r.Method != http.MethodGet {
-			writeMethodNotAllowed(w, requestID, http.MethodGet)
-			return
-		}
-	case "complete":
-		wantMethod = http.MethodPost
-	default:
-		writeNotFound(w, requestID)
-		return
-	}
-	if r.Method != wantMethod {
-		writeMethodNotAllowed(w, requestID, wantMethod)
-		return
-	}
-	if !validDomainVerificationID(id) {
+	if !validDomainVerificationID(verificationID) {
 		writeNotFound(w, requestID)
 		return
 	}
@@ -559,16 +516,32 @@ func (h *handler) serveDomainVerification(
 		writeInternalError(w, requestID, errRouteServiceMissing)
 		return
 	}
-	if operation == "" {
-		challenge, err := h.routes.GetDomainVerification(r.Context(), identity.ID, id)
-		if err != nil {
-			writeRouteError(w, requestID, err)
-			return
-		}
-		writeModel(w, requestID, http.StatusOK, domainVerificationResponse(challenge))
+	challenge, err := h.routes.GetDomainVerification(r.Context(), identity.ID, verificationID)
+	if err != nil {
+		writeRouteError(w, requestID, err)
 		return
 	}
-	hostname, err := h.routes.CompleteDomainVerification(r.Context(), identity.ID, id)
+	writeModel(w, requestID, http.StatusOK, domainVerificationResponse(challenge))
+}
+
+func (h *handler) serveDomainVerificationComplete(
+	w http.ResponseWriter,
+	r *http.Request,
+	requestID, verificationID string,
+) {
+	if !validDomainVerificationID(verificationID) {
+		writeNotFound(w, requestID)
+		return
+	}
+	identity, ok := h.authenticate(w, r, requestID)
+	if !ok {
+		return
+	}
+	if h.routes == nil {
+		writeInternalError(w, requestID, errRouteServiceMissing)
+		return
+	}
+	hostname, err := h.routes.CompleteDomainVerification(r.Context(), identity.ID, verificationID)
 	if err != nil {
 		writeRouteError(w, requestID, err)
 		return
@@ -782,13 +755,30 @@ func (h *handler) writeControlSession(
 	writeJSON(w, http.StatusOK, "application/json", body)
 }
 
-func (h *handler) serveRoutes(w http.ResponseWriter, r *http.Request, requestID string) {
-	if r.Method != http.MethodGet && r.Method != http.MethodPost {
-		writeMethodNotAllowed(w, requestID, http.MethodGet+", "+http.MethodPost)
+func (h *handler) serveRoutesList(w http.ResponseWriter, r *http.Request, requestID string) {
+	identity, ok := h.authenticate(w, r, requestID)
+	if !ok {
 		return
 	}
+	if h.routes == nil {
+		writeInternalError(w, requestID, errRouteServiceMissing)
+		return
+	}
+	stored, err := h.routes.List(r.Context(), identity.ID)
+	if err != nil {
+		writeRouteError(w, requestID, err)
+		return
+	}
+	response := make([]serverv1.Route, 0, len(stored))
+	for _, route := range stored {
+		response = append(response, routeResponse(route))
+	}
+	writeModel(w, requestID, http.StatusOK, response)
+}
+
+func (h *handler) serveRouteCreate(w http.ResponseWriter, r *http.Request, requestID string) {
 	var identity state.Identity
-	if r.Method == http.MethodGet || !h.signedAuthorization {
+	if !h.signedAuthorization {
 		var ok bool
 		identity, ok = h.authenticate(w, r, requestID)
 		if !ok {
@@ -797,19 +787,6 @@ func (h *handler) serveRoutes(w http.ResponseWriter, r *http.Request, requestID 
 	}
 	if h.routes == nil {
 		writeInternalError(w, requestID, errRouteServiceMissing)
-		return
-	}
-	if r.Method == http.MethodGet {
-		stored, err := h.routes.List(r.Context(), identity.ID)
-		if err != nil {
-			writeRouteError(w, requestID, err)
-			return
-		}
-		response := make([]serverv1.Route, 0, len(stored))
-		for _, route := range stored {
-			response = append(response, routeResponse(route))
-		}
-		writeModel(w, requestID, http.StatusOK, response)
 		return
 	}
 	if !h.requireMaintenanceControl(w, r, requestID, adminservice.MaintenanceControlRouteCreation) {
@@ -863,66 +840,39 @@ func (h *handler) serveRoutes(w http.ResponseWriter, r *http.Request, requestID 
 	writeModel(w, requestID, http.StatusCreated, sessionSetupResponse(setup))
 }
 
-func (h *handler) serveRoute(
-	w http.ResponseWriter,
-	r *http.Request,
-	requestID, routeID, operation string,
-) {
+func (h *handler) serveRouteDelete(w http.ResponseWriter, r *http.Request, requestID, routeID string) {
 	if h.routes == nil {
 		writeInternalError(w, requestID, errRouteServiceMissing)
 		return
 	}
-	switch operation {
-	case "":
-		if r.Method != http.MethodDelete {
-			writeMethodNotAllowed(w, requestID, http.MethodDelete)
+	var err error
+	if h.signedAuthorization {
+		signedService, ok := h.routes.(SignedRouteService)
+		if !ok {
+			writeInternalError(w, requestID, errRouteServiceMissing)
 			return
 		}
-		var err error
-		if h.signedAuthorization {
-			signedService, ok := h.routes.(SignedRouteService)
-			if !ok {
-				writeInternalError(w, requestID, errRouteServiceMissing)
-				return
-			}
-			token, ok := routeBearer(r.Header)
-			if !ok {
-				writeUnauthenticated(w, requestID)
-				return
-			}
-			err = signedService.DeleteSigned(r.Context(), routeID, token)
-		} else {
-			identity, ok := h.authenticate(w, r, requestID)
-			if !ok {
-				return
-			}
-			err = h.routes.Delete(r.Context(), identity.ID, routeID)
-		}
-		if err != nil {
-			writeRouteError(w, requestID, err)
+		token, ok := routeBearer(r.Header)
+		if !ok {
+			writeUnauthenticated(w, requestID)
 			return
 		}
-		writeNoContent(w)
-	case "sessions":
-		h.serveSessionAcquisition(w, r, requestID, routeID)
-	case "transport":
-		h.serveTransport(w, r, requestID, routeID)
-	case "heartbeat":
-		h.serveHeartbeat(w, r, requestID, routeID)
-	case "ready":
-		h.serveReady(w, r, requestID, routeID)
-	case "certificate-installed":
-		h.serveCertificateInstalled(w, r, requestID, routeID)
-	default:
-		writeNotFound(w, requestID)
+		err = signedService.DeleteSigned(r.Context(), routeID, token)
+	} else {
+		identity, ok := h.authenticate(w, r, requestID)
+		if !ok {
+			return
+		}
+		err = h.routes.Delete(r.Context(), identity.ID, routeID)
 	}
-}
-
-func (h *handler) serveCertificateIssuances(w http.ResponseWriter, r *http.Request, requestID string) {
-	if r.Method != http.MethodPost {
-		writeMethodNotAllowed(w, requestID, http.MethodPost)
+	if err != nil {
+		writeRouteError(w, requestID, err)
 		return
 	}
+	writeNoContent(w)
+}
+
+func (h *handler) serveCertificateIssuanceCreate(w http.ResponseWriter, r *http.Request, requestID string) {
 	if h.routes == nil {
 		writeInternalError(w, requestID, errRouteServiceMissing)
 		return
@@ -965,61 +915,77 @@ func (h *handler) serveCertificateIssuances(w http.ResponseWriter, r *http.Reque
 	writeModel(w, requestID, http.StatusCreated, certificateIssuanceResponse(issuance))
 }
 
-func (h *handler) serveCertificateIssuance(
+func (h *handler) authenticatedCertificateIssuance(
 	w http.ResponseWriter,
 	r *http.Request,
-	requestID, issuanceID, operation string,
-) {
+	requestID, issuanceID string,
+) (certificates.Issuance, bool) {
 	if h.routes == nil {
 		writeInternalError(w, requestID, errRouteServiceMissing)
-		return
+		return certificates.Issuance{}, false
 	}
 	if h.certificates == nil {
 		writeInternalError(w, requestID, errCertServiceMissing)
-		return
-	}
-	wantMethod := http.MethodPost
-	if operation == "" {
-		wantMethod = http.MethodGet
-	} else if operation != "challenge-ready" && operation != "challenge-removed" {
-		writeNotFound(w, requestID)
-		return
-	}
-	if r.Method != wantMethod {
-		writeMethodNotAllowed(w, requestID, wantMethod)
-		return
+		return certificates.Issuance{}, false
 	}
 	token, ok := sessionBearer(r.Header)
 	if !ok {
 		writeUnauthenticated(w, requestID)
-		return
+		return certificates.Issuance{}, false
 	}
 	issuance, err := h.certificates.Get(r.Context(), issuanceID)
 	if err != nil {
 		writeCertificateError(w, requestID, err)
-		return
+		return certificates.Issuance{}, false
 	}
 	if err := h.routes.AuthorizeSession(r.Context(), issuance.RouteID, issuance.RouteVersion, token); err != nil {
 		writeRouteError(w, requestID, err)
+		return certificates.Issuance{}, false
+	}
+	return issuance, true
+}
+
+func (h *handler) serveCertificateIssuanceGet(
+	w http.ResponseWriter,
+	r *http.Request,
+	requestID, issuanceID string,
+) {
+	issuance, ok := h.authenticatedCertificateIssuance(w, r, requestID, issuanceID)
+	if !ok {
 		return
 	}
-	switch operation {
-	case "":
-		writeModel(w, requestID, http.StatusOK, certificateIssuanceResponse(issuance))
-	case "challenge-ready":
-		issuance, err = h.certificates.ChallengeReady(r.Context(), issuanceID)
-		if err != nil {
-			writeCertificateError(w, requestID, err)
-			return
-		}
-		writeModel(w, requestID, http.StatusOK, certificateIssuanceResponse(issuance))
-	case "challenge-removed":
-		if _, err := h.certificates.ChallengeRemoved(r.Context(), issuanceID); err != nil {
-			writeCertificateError(w, requestID, err)
-			return
-		}
-		writeNoContent(w)
+	writeModel(w, requestID, http.StatusOK, certificateIssuanceResponse(issuance))
+}
+
+func (h *handler) serveCertificateChallengeReady(
+	w http.ResponseWriter,
+	r *http.Request,
+	requestID, issuanceID string,
+) {
+	if _, ok := h.authenticatedCertificateIssuance(w, r, requestID, issuanceID); !ok {
+		return
 	}
+	issuance, err := h.certificates.ChallengeReady(r.Context(), issuanceID)
+	if err != nil {
+		writeCertificateError(w, requestID, err)
+		return
+	}
+	writeModel(w, requestID, http.StatusOK, certificateIssuanceResponse(issuance))
+}
+
+func (h *handler) serveCertificateChallengeRemoved(
+	w http.ResponseWriter,
+	r *http.Request,
+	requestID, issuanceID string,
+) {
+	if _, ok := h.authenticatedCertificateIssuance(w, r, requestID, issuanceID); !ok {
+		return
+	}
+	if _, err := h.certificates.ChallengeRemoved(r.Context(), issuanceID); err != nil {
+		writeCertificateError(w, requestID, err)
+		return
+	}
+	writeNoContent(w)
 }
 
 func (h *handler) serveCertificateInstalled(w http.ResponseWriter, r *http.Request, requestID, routeID string) {

@@ -29,7 +29,7 @@ import (
 
 func TestCapabilities(t *testing.T) {
 	want := fixtureCapabilities(t)
-	handler := NewHandler(want, nil)
+	handler := NewHandler(Config{Capabilities: want})
 	request := httptest.NewRequest(http.MethodGet, capabilitiesPath, nil)
 	request.Header.Set(requestIDHeader, "req_client123")
 	response := httptest.NewRecorder()
@@ -59,9 +59,7 @@ func TestHealthAndReadiness(t *testing.T) {
 		}
 		return readinessErr
 	}
-	handler := NewHandlerWithServicesAndConfig(
-		fixtureCapabilities(t), nil, nil, nil, HandlerConfig{Readiness: readiness},
-	)
+	handler := NewHandler(Config{Capabilities: fixtureCapabilities(t), Readiness: readiness})
 
 	request := httptest.NewRequest(http.MethodGet, healthPath, nil)
 	request.Header.Set(requestIDHeader, "req_health")
@@ -94,7 +92,7 @@ func TestHealthAndReadinessRequireGET(t *testing.T) {
 			for _, method := range []string{http.MethodPost, http.MethodHead} {
 				request := httptest.NewRequest(method, path, nil)
 				response := httptest.NewRecorder()
-				NewHandler(fixtureCapabilities(t), nil).ServeHTTP(response, request)
+				NewHandler(Config{Capabilities: fixtureCapabilities(t)}).ServeHTTP(response, request)
 				if response.Code != http.StatusMethodNotAllowed || response.Header().Get("Allow") != http.MethodGet {
 					t.Fatalf("%s status = %d, Allow = %q", method, response.Code, response.Header().Get("Allow"))
 				}
@@ -109,9 +107,7 @@ func TestAdminEndpointsRequireAdminGrantAndCapability(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := func(service AuthService) *httptest.ResponseRecorder {
-		handler := NewHandlerWithServicesAndConfig(
-			fixtureCapabilities(t), service, nil, nil, HandlerConfig{},
-		)
+		handler := NewHandler(Config{Capabilities: fixtureCapabilities(t), Auth: service})
 		req := httptest.NewRequest(http.MethodGet, "/v1/admin/status", nil)
 		req.Header.Set("Authorization", "Bearer "+access.String())
 		response := httptest.NewRecorder()
@@ -150,13 +146,13 @@ func TestAdminStatusUsesAuthenticatedService(t *testing.T) {
 	}
 	started := time.Date(2026, time.September, 2, 1, 0, 0, 0, time.UTC)
 	current := started.Add(time.Hour)
-	handler := NewHandlerWithServicesAndConfig(
-		fixtureCapabilities(t), noPublishAuthService{}, nil, nil,
-		HandlerConfig{Admin: statusAdminService{status: adminservice.ServerStatus{
+	handler := NewHandler(Config{
+		Capabilities: fixtureCapabilities(t), Auth: noPublishAuthService{},
+		Admin: statusAdminService{status: adminservice.ServerStatus{
 			Mode: "standalone", StartedAt: started, CurrentTime: current,
 			EnabledRoutes: 2, SuspendedRoutes: 3, Provisioning: 4, ConnectedWorkers: 5,
-		}}},
-	)
+		}},
+	})
 	request := httptest.NewRequest(http.MethodGet, "/v1/admin/status", nil)
 	request.Header.Set("Authorization", "Bearer "+access.String())
 	response := httptest.NewRecorder()
@@ -185,9 +181,9 @@ func TestAdminMaintenanceControlsUseRegeneratedPathAndTypes(t *testing.T) {
 		{Name: adminservice.MaintenanceControlRouteCreation, Enabled: true, Revision: 1, UpdatedAt: now, UpdatedBy: "system"},
 		{Name: adminservice.MaintenanceControlRouteSessionCreation, Enabled: true, Revision: 1, UpdatedAt: now, UpdatedBy: "system"},
 	}}
-	handler := NewHandlerWithServicesAndConfig(
-		fixtureCapabilities(t), noPublishAuthService{}, nil, nil, HandlerConfig{Admin: service},
-	)
+	handler := NewHandler(Config{
+		Capabilities: fixtureCapabilities(t), Auth: noPublishAuthService{}, Admin: service,
+	})
 
 	request := httptest.NewRequest(http.MethodGet, "/v1/admin/maintenance-controls", nil)
 	request.Header.Set("Authorization", "Bearer "+access.String())
@@ -234,10 +230,10 @@ func TestMaintenanceControlBlocksNewRouteAndSessionBeforeMutation(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := NewHandlerWithServicesAndConfig(
-		fixtureCapabilities(t), authenticatingAuthService{}, failingListRouteService{}, nil,
-		HandlerConfig{Admin: disabledAdminService{}},
-	)
+	handler := NewHandler(Config{
+		Capabilities: fixtureCapabilities(t), Auth: authenticatingAuthService{},
+		Routes: failingListRouteService{}, Admin: disabledAdminService{},
+	})
 	for _, test := range []struct {
 		path string
 		body string
@@ -265,9 +261,7 @@ func TestMaintenanceControlBlocksNewRouteAndSessionBeforeMutation(t *testing.T) 
 
 func TestRelayMapReturnsConfiguredSelectedRegion(t *testing.T) {
 	relayMap := []byte(`{"Regions":{"1":{"RegionID":1}}}`)
-	handler := NewHandlerWithServicesAndConfig(
-		fixtureCapabilities(t), nil, nil, nil, HandlerConfig{RelayMap: relayMap},
-	)
+	handler := NewHandler(Config{Capabilities: fixtureCapabilities(t), RelayMap: relayMap})
 	request := httptest.NewRequest(http.MethodGet, relayMapPath, nil)
 	response := httptest.NewRecorder()
 
@@ -296,7 +290,7 @@ func TestOIDCTokenExchangeIsBoundedAndRateLimited(t *testing.T) {
 		RefreshToken: refresh, RefreshExpiresAt: time.Now().Add(24 * time.Hour).UTC(),
 		Grants: []auth.Grant{auth.GrantPublish},
 	}}
-	handler := NewHandler(fixtureCapabilities(t), service).(*handler)
+	handler := NewHandler(Config{Capabilities: fixtureCapabilities(t), Auth: service}).(*handler)
 	handler.oidcLimit = rate.NewLimiter(0, 1)
 
 	request := httptest.NewRequest(http.MethodPost, oidcExchangePath, strings.NewReader(`{"id_token":"id-token"}`))
@@ -349,9 +343,9 @@ func TestRequestObservation(t *testing.T) {
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
 			observer := &recordingObserver{}
-			handler := NewHandlerWithServicesAndConfig(
-				fixtureCapabilities(t), test.auth, nil, nil, HandlerConfig{Observer: observer},
-			)
+			handler := NewHandler(Config{
+				Capabilities: fixtureCapabilities(t), Auth: test.auth, Observer: observer,
+			})
 			request := httptest.NewRequest(test.method, test.path, strings.NewReader(test.body))
 			if test.contentType != "" {
 				request.Header.Set("Content-Type", test.contentType)
@@ -377,9 +371,7 @@ func TestRequestObservation(t *testing.T) {
 func TestOperationNamesAreStableAndDoNotContainResourceIDs(t *testing.T) {
 	operationForRequest := func(method, path string) Operation {
 		observer := &recordingObserver{}
-		handler := NewHandlerWithServicesAndConfig(
-			fixtureCapabilities(t), nil, nil, nil, HandlerConfig{Observer: observer},
-		)
+		handler := NewHandler(Config{Capabilities: fixtureCapabilities(t), Observer: observer})
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, httptest.NewRequest(method, path, nil))
 		if len(observer.observations) != 1 {
@@ -431,9 +423,9 @@ func TestUnexpectedAuthErrorIsReportedAndSanitized(t *testing.T) {
 	request.Header.Set(requestIDHeader, "req_authfailure")
 	response := httptest.NewRecorder()
 
-	NewHandlerWithServicesAndConfig(
-		fixtureCapabilities(t), exchanger, nil, nil, HandlerConfig{ErrorReporter: reporter},
-	).ServeHTTP(response, request)
+	NewHandler(Config{
+		Capabilities: fixtureCapabilities(t), Auth: exchanger, ErrorReporter: reporter,
+	}).ServeHTTP(response, request)
 
 	assertUnexpectedErrorReport(t, reporter, wrapped, underlying, "req_authfailure", OperationTokenExchange)
 	assertSanitizedInternalProblem(t, response, "req_authfailure", credential, wrapped.Error())
@@ -443,13 +435,10 @@ func TestUnknownRouteErrorIsReportedOnceAndSanitized(t *testing.T) {
 	underlying := errors.New("database unavailable")
 	wrapped := fmt.Errorf("list routes: %w", underlying)
 	reporter := &recordingErrorReporter{}
-	handler := NewHandlerWithServicesAndConfig(
-		fixtureCapabilities(t),
-		authenticatingAuthService{AuthService: nil},
-		failingListRouteService{RouteService: nil, err: wrapped},
-		nil,
-		HandlerConfig{ErrorReporter: reporter},
-	)
+	handler := NewHandler(Config{
+		Capabilities: fixtureCapabilities(t), Auth: authenticatingAuthService{AuthService: nil},
+		Routes: failingListRouteService{RouteService: nil, err: wrapped}, ErrorReporter: reporter,
+	})
 	request := httptest.NewRequest(http.MethodGet, routesPath, nil)
 	request.Header.Set(authorizationHeader, "Bearer credential-do-not-report")
 	request.Header.Set(requestIDHeader, "req_routefailure")
@@ -528,7 +517,7 @@ func TestCertificateStateResponseIsNotASessionConflict(t *testing.T) {
 }
 
 func TestRequestIDVersion(t *testing.T) {
-	handler := NewHandler(fixtureCapabilities(t), nil)
+	handler := NewHandler(Config{Capabilities: fixtureCapabilities(t)})
 	pattern := regexp.MustCompile(`^req_[A-Za-z0-9]+$`)
 
 	for name, incoming := range map[string][]string{
@@ -554,7 +543,7 @@ func TestRequestIDVersion(t *testing.T) {
 }
 
 func TestProblemResponses(t *testing.T) {
-	handler := NewHandler(fixtureCapabilities(t), nil)
+	handler := NewHandler(Config{Capabilities: fixtureCapabilities(t)})
 	tests := map[string]struct {
 		method      string
 		path        string
@@ -624,7 +613,7 @@ func TestCapabilitiesResponseIsBounded(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, capabilitiesPath, nil)
 	response := httptest.NewRecorder()
 
-	NewHandler(capabilities, nil).ServeHTTP(response, request)
+	NewHandler(Config{Capabilities: capabilities}).ServeHTTP(response, request)
 
 	if response.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusInternalServerError)
@@ -675,7 +664,7 @@ func TestTokenExchange(t *testing.T) {
 	request.Header.Set(requestIDHeader, "req_exchange")
 	response := httptest.NewRecorder()
 
-	NewHandler(fixtureCapabilities(t), exchanger).ServeHTTP(response, request)
+	NewHandler(Config{Capabilities: fixtureCapabilities(t), Auth: exchanger}).ServeHTTP(response, request)
 
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
@@ -723,7 +712,7 @@ func TestTokenExchangePersistsUsableAccessToken(t *testing.T) {
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 
-	NewHandler(fixtureCapabilities(t), exchange).ServeHTTP(response, request)
+	NewHandler(Config{Capabilities: fixtureCapabilities(t), Auth: exchange}).ServeHTTP(response, request)
 
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
@@ -766,7 +755,7 @@ func TestRefreshEndpointUsesRefreshTokenWithoutAccessAuthentication(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := NewHandler(fixtureCapabilities(t), service).(*handler)
+	handler := NewHandler(Config{Capabilities: fixtureCapabilities(t), Auth: service}).(*handler)
 	handler.refreshLimit = rate.NewLimiter(0, 1)
 	request := httptest.NewRequest(http.MethodPost, refreshPath, bytes.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
@@ -803,7 +792,7 @@ func TestPublishRoutesRequirePublishGrant(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, routesPath, nil)
 	request.Header.Set(authorizationHeader, "Bearer "+access.String())
 	response := httptest.NewRecorder()
-	NewHandlerWithRoutes(fixtureCapabilities(t), noPublishAuthService{}, nil).ServeHTTP(response, request)
+	NewHandler(Config{Capabilities: fixtureCapabilities(t), Auth: noPublishAuthService{}}).ServeHTTP(response, request)
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusForbidden, response.Body.String())
 	}
@@ -838,7 +827,7 @@ func TestTokenExchangeRejectsCredentialsWithoutDisclosure(t *testing.T) {
 			request.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()
 
-			NewHandler(fixtureCapabilities(t), exchanger).ServeHTTP(response, request)
+			NewHandler(Config{Capabilities: fixtureCapabilities(t), Auth: exchanger}).ServeHTTP(response, request)
 
 			if response.Code != test.status {
 				t.Fatalf("status = %d, want %d", response.Code, test.status)
@@ -878,7 +867,7 @@ func TestTokenExchangeRejectsInvalidRequests(t *testing.T) {
 			}
 			response := httptest.NewRecorder()
 
-			NewHandler(fixtureCapabilities(t), nil).ServeHTTP(response, request)
+			NewHandler(Config{Capabilities: fixtureCapabilities(t)}).ServeHTTP(response, request)
 
 			if response.Code != test.status {
 				t.Fatalf("status = %d, want %d: %s", response.Code, test.status, response.Body.String())

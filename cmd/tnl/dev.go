@@ -39,13 +39,11 @@ const (
 
 type devCommand struct {
 	openOptions    `embed:""`
+	remoteFlags    `embed:""`
 	Command        []string      `arg:"" name:"command" passthrough:"" help:"Development server command and arguments."`
 	Port           int           `name:"port" help:"Literal loopback target port; normally registered by a framework integration."`
 	StartupTimeout time.Duration `name:"startup-timeout" default:"2m" help:"Maximum time for target registration and startup."`
-	ServerURL      string        `name:"server" env:"TNL_SERVER" help:"tnl server HTTPS origin; defaults to the selected server or https://control.tnl.dev."`
-	AccessToken    string        `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Server access token; defaults to the saved login."`
 	Host           string        `name:"host" env:"TNL_HOST" help:"Requested public hostname; omit for a fresh temporary hostname."`
-	StateDir       string        `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent route state."`
 }
 
 type childExitError struct {

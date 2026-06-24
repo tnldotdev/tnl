@@ -384,17 +384,12 @@ func (d *daemon) startServer(
 	if err != nil {
 		return nil, nil, err
 	}
-	handler := api.NewHandlerWithServicesAndConfig(
-		capabilities(cfg, relayRegion),
-		authService,
-		d.coordinator,
-		certificateService,
-		api.HandlerConfig{
-			Observer: apiMetrics, ErrorReporter: apiMetrics, RelayMap: relayMap,
-			DNSReady: dns.Ready, IngressAddresses: dns.IngressAddresses,
-			Readiness: d.db.PingContext, SignedAuthorization: cfg.SignedAuthorizationEnabled(), Admin: adminService,
-		},
-	)
+	handler := api.NewHandler(api.Config{
+		Capabilities: capabilities(cfg, relayRegion), Auth: authService, Routes: d.coordinator,
+		Certificates: certificateService, Observer: apiMetrics, ErrorReporter: apiMetrics, RelayMap: relayMap,
+		DNSReady: dns.Ready, IngressAddresses: dns.IngressAddresses,
+		Readiness: d.db.PingContext, SignedAuthorization: cfg.SignedAuthorizationEnabled(), Admin: adminService,
+	})
 	if hub != nil {
 		mux := http.NewServeMux()
 		mux.Handle(workerv1.Endpoint, hub)
