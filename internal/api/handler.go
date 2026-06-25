@@ -965,6 +965,9 @@ func (h *handler) serveCertificateChallengeReady(
 	if _, ok := h.authenticatedCertificateIssuance(w, r, requestID, issuanceID); !ok {
 		return
 	}
+	if !h.requireMaintenanceControl(w, r, requestID, adminservice.MaintenanceControlCertificateIssuance) {
+		return
+	}
 	issuance, err := h.certificates.ChallengeReady(r.Context(), issuanceID)
 	if err != nil {
 		writeCertificateError(w, requestID, err)

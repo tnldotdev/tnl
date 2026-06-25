@@ -1,11 +1,9 @@
 package publisher
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/base64"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"reflect"
@@ -29,10 +27,11 @@ import (
 const heartbeatCallTimeout = 10 * time.Second
 
 var (
-	heartbeatInterval  = 15 * time.Second
-	activationRetry    = 2 * time.Second
-	renewalRetry       = time.Minute
-	relayCheckInterval = 15 * time.Second
+	errCertificateExpired = errors.New("publisher: application certificate expired")
+	heartbeatInterval     = 15 * time.Second
+	activationRetry       = 2 * time.Second
+	renewalRetry          = time.Minute
+	relayCheckInterval    = 15 * time.Second
 )
 
 type RouteControlClient interface {
@@ -339,6 +338,19 @@ func runSession(
 		return err
 	}
 	defer route.Close()
+	expirationDone := make(chan struct{})
+	go func() {
+		defer close(expirationDone)
+		select {
+		case <-ctx.Done():
+		case <-route.certificateExpiration():
+			cancelSession(errCertificateExpired)
+		}
+	}()
+	defer func() {
+		cancelSession(nil)
+		<-expirationDone
+	}()
 	endpoint, err := route.Start(ctx)
 	if err != nil {
 		return err
@@ -358,10 +370,9 @@ func runSession(
 		case <-time.After(activationRetry):
 		}
 	}
-	var nextRenewal time.Time
 	if state != nil {
 		if !hasMaterial {
-			material, err = issueCertificate(
+			material, err = issueInitialCertificate(
 				ctx, config.Server, route, state, setup.Route.Id, version, sessionToken,
 				setup.Route.Hostname, config.ACMEProfile,
 			)
@@ -369,37 +380,21 @@ func runSession(
 				return err
 			}
 			hasMaterial = true
-		} else if !material.Installed || !material.RenewAt.After(time.Now()) {
-			replacement, refreshErr := refreshCertificate(
-				ctx, config.Server, route, state, setup.Route.Id, version, sessionToken,
-				setup.Route.Hostname, config.ACMEProfile, material,
-			)
-			if !replacement.NotAfter.IsZero() {
-				material = replacement
-			}
-			if refreshErr != nil {
-				if errors.Is(refreshErr, serverclient.ErrStatusConflict) {
-					return refreshErr
-				}
-				if !material.NotAfter.After(time.Now()) {
-					return fmt.Errorf("publisher: renew expired certificate: %w", refreshErr)
-				}
-				logRenewalFailure(config.Logf, refreshErr)
-				nextRenewal = time.Now().Add(min(renewalRetry, time.Until(material.NotAfter)))
-			} else {
-				material = replacement
-			}
-		}
-		if nextRenewal.IsZero() {
-			nextRenewal = material.RenewAt
 		}
 	}
 	for {
-		err = config.Server.Ready(ctx, setup.Route.Id, version, sessionToken)
+		serverReady := false
+		err = route.withValidCertificate(func() error {
+			if err := config.Server.Ready(ctx, setup.Route.Id, version, sessionToken); err != nil {
+				return err
+			}
+			serverReady = true
+			return ready()
+		})
 		if err == nil {
 			break
 		}
-		if !errors.Is(err, serverclient.ErrUnavailable) {
+		if serverReady || !errors.Is(err, serverclient.ErrUnavailable) {
 			return err
 		}
 		select {
@@ -408,12 +403,13 @@ func runSession(
 		case <-time.After(activationRetry):
 		}
 	}
-	if err := ready(); err != nil {
-		return err
-	}
 	var renewalTimer *time.Timer
 	var renewal <-chan time.Time
 	if state != nil {
+		nextRenewal := material.RenewAt
+		if !material.Installed {
+			nextRenewal = time.Now()
+		}
 		renewalTimer = time.NewTimer(max(time.Until(nextRenewal), 0))
 		renewal = renewalTimer.C
 		defer renewalTimer.Stop()
@@ -449,16 +445,16 @@ func runSession(
 			}
 			relayTimer.Reset(relayCheckInterval)
 		case <-renewal:
-			replacement, renewalErr := refreshCertificate(
+			replacement, renewalErr := attemptCertificateTransaction(
 				ctx, config.Server, route, state, setup.Route.Id, version, sessionToken,
-				setup.Route.Hostname, config.ACMEProfile, material,
+				setup.Route.Hostname, config.ACMEProfile,
 			)
+			if replacement.Certificate.Leaf != nil {
+				material = replacement
+			}
 			if renewalErr != nil {
 				if errors.Is(renewalErr, serverclient.ErrStatusConflict) {
 					return renewalErr
-				}
-				if !replacement.NotAfter.IsZero() {
-					material = replacement
 				}
 				if parentCtx.Err() != nil {
 					return drainRoute(route, config.DrainTime)
@@ -466,14 +462,19 @@ func runSession(
 				if ctx.Err() != nil {
 					return context.Cause(ctx)
 				}
-				if !material.NotAfter.After(time.Now()) {
+				if !material.Certificate.Leaf.NotAfter.After(time.Now()) {
 					return fmt.Errorf("publisher: renew expired certificate: %w", renewalErr)
 				}
 				logRenewalFailure(config.Logf, renewalErr)
-				renewalTimer.Reset(min(renewalRetry, time.Until(material.NotAfter)))
+				retryIn := certificateRenewalRetryDelay(renewalErr, material.Certificate.Leaf.NotAfter)
+				expiresIn := time.Until(material.Certificate.Leaf.NotAfter)
+				if retryIn >= expiresIn {
+					renewal = nil
+				} else {
+					renewalTimer.Reset(retryIn)
+				}
 				continue
 			}
-			material = replacement
 			renewalTimer.Reset(max(time.Until(material.RenewAt), 0))
 		}
 	}
@@ -486,39 +487,13 @@ func observe(config Config, event Event) error {
 	return config.Observe(event)
 }
 
-func refreshCertificate(
-	ctx context.Context,
-	server RouteControlClient,
-	route *Route,
-	state *clientstate.RouteCertificateHandle,
-	routeID string,
-	version uint64,
-	sessionToken credentials.SessionToken,
-	hostname, profile string,
-	material clientstate.Material,
-) (clientstate.Material, error) {
-	if !material.Installed && material.RenewAt.After(time.Now()) && material.NotAfter.After(time.Now().Add(24*time.Hour)) {
-		// Reconcile a committed certificate before issuing another issuance.
-		reconciled, err := reconcileCertificateInstallation(
-			ctx, server, route, state, routeID, version, sessionToken, hostname, profile, material,
-		)
-		var terminal *terminalCertificateIssuanceError
-		if !errors.As(err, &terminal) {
-			return reconciled, err
-		}
-	}
-	return issueCertificate(
-		ctx, server, route, state, routeID, version, sessionToken, hostname, profile,
-	)
-}
-
 func logRenewalFailure(logf logger.Logf, err error) {
 	if logf != nil {
 		logf("certificate renewal failed; retrying while the current certificate remains valid: %v", err)
 	}
 }
 
-func issueCertificate(
+func issueInitialCertificate(
 	ctx context.Context,
 	server RouteControlClient,
 	route *Route,
@@ -528,87 +503,37 @@ func issueCertificate(
 	sessionToken credentials.SessionToken,
 	hostname, profile string,
 ) (clientstate.Material, error) {
-	pending, err := state.Pending(ctx, hostname)
-	if err != nil {
-		return clientstate.Material{}, err
-	}
-	rotatedTerminalIssuance := false
-	createAndRecord := func() (serverv1.CertificateIssuance, error) {
-		for {
-			issuance, createErr := createCertificateIssuance(
-				ctx, server, routeID, version, sessionToken, hostname, profile, pending.CSRDER,
-			)
-			var terminal *terminalCertificateIssuanceError
-			if errors.As(createErr, &terminal) && !rotatedTerminalIssuance {
-				// Retry one terminal issuance with fresh key material.
-				pending, createErr = state.NewPending(ctx, hostname)
-				if createErr != nil {
-					return serverv1.CertificateIssuance{}, createErr
-				}
-				rotatedTerminalIssuance = true
-				continue
-			}
-			if createErr != nil {
-				return serverv1.CertificateIssuance{}, createErr
-			}
-			pending, createErr = state.RecordIssuance(ctx, hostname, pending, issuance.Id, version)
-			return issuance, createErr
-		}
-	}
-	issuance, err := createAndRecord()
-	if err != nil {
-		return clientstate.Material{}, err
-	}
+	var material clientstate.Material
+	retriedTerminal := false
 	for {
-		if issuance.CertificatePem != nil {
-			if issuance.Challenge != nil {
-				route.RemoveChallenge(issuance.Challenge.Id)
-				if err := acknowledgeChallengeRemoval(ctx, server, issuance.Id, sessionToken); err != nil {
-					return clientstate.Material{}, err
-				}
-			}
-			break
-		}
-		if issuance.Challenge == nil {
-			if err := waitCertificateRetry(ctx, certificateIssuanceRetry(issuance)); err != nil {
-				return clientstate.Material{}, err
-			}
-			issuance, err = createAndRecord()
-			if err != nil {
-				return clientstate.Material{}, err
-			}
-			continue
-		}
-		issuance, err = completeCertificateChallenge(
-			ctx, server, route, routeID, version, sessionToken, hostname, profile, issuance,
+		attempted, err := attemptCertificateTransaction(
+			ctx, server, route, state, routeID, version, sessionToken, hostname, profile,
 		)
-		if err != nil {
-			var terminal *terminalCertificateIssuanceError
-			if errors.As(err, &terminal) && !rotatedTerminalIssuance {
-				pending, err = state.NewPending(ctx, hostname)
-				if err != nil {
-					return clientstate.Material{}, err
-				}
-				rotatedTerminalIssuance = true
-				issuance, err = createAndRecord()
-				if err != nil {
-					return clientstate.Material{}, err
-				}
-				continue
-			}
-			return clientstate.Material{}, err
+		if attempted.Certificate.Leaf != nil {
+			material = attempted
 		}
-		break
+		if err == nil {
+			return attempted, nil
+		}
+		if ctx.Err() != nil {
+			return material, context.Cause(ctx)
+		}
+		var terminal *terminalCertificateIssuanceError
+		if errors.As(err, &terminal) && !retriedTerminal {
+			retriedTerminal = true
+		} else if !errors.Is(err, serverclient.ErrUnavailable) && !errors.Is(err, serverclient.ErrRateLimited) {
+			return material, err
+		}
+		if err := waitCertificateRetry(ctx, certificateRetryDelay(err)); err != nil {
+			return material, err
+		}
 	}
-	if issuance.CertificatePem == nil || issuance.RenewAt == nil || issuance.Id == "" {
-		return clientstate.Material{}, errors.New("publisher: server returned incomplete certificate material")
-	}
-	return installCertificateIssuance(
-		ctx, server, route, state, routeID, version, sessionToken, hostname, pending, issuance,
-	)
 }
 
-func installCertificateIssuance(
+// attemptCertificateTransaction advances every issuance phase at most once.
+// Retrying this entire function is safe because CertificateAttempt preserves
+// the CSR until the server installation acknowledgement is durable locally.
+func attemptCertificateTransaction(
 	ctx context.Context,
 	server RouteControlClient,
 	route *Route,
@@ -616,27 +541,73 @@ func installCertificateIssuance(
 	routeID string,
 	version uint64,
 	sessionToken credentials.SessionToken,
-	hostname string,
-	pending clientstate.Pending,
-	issuance serverv1.CertificateIssuance,
+	hostname, profile string,
 ) (clientstate.Material, error) {
-	// Persist and verify before acknowledging the server; MarkInstalled closes the recovery window.
+	pending, err := state.CertificateAttempt(ctx, hostname)
+	if err != nil {
+		return clientstate.Material{}, err
+	}
+	issuance, err := server.CreateCertificateIssuance(
+		ctx, routeID, version, sessionToken, profile, pending.CSRDER,
+	)
+	if err != nil {
+		return clientstate.Material{}, err
+	}
+	if err := validateCertificateAttempt(
+		ctx, server, route, state, issuance, routeID, version, sessionToken, hostname, profile, "", "",
+	); err != nil {
+		return clientstate.Material{}, err
+	}
+	challenge := issuance.Challenge
+	if issuance.CertificatePem == nil && challenge == nil {
+		return clientstate.Material{}, &pendingCertificateIssuanceError{retryAt: issuance.RetryAt}
+	}
+	if issuance.CertificatePem == nil {
+		if issuance.Status != serverv1.CertificateIssuanceStatusWaitingForChallenge {
+			return clientstate.Material{}, &pendingCertificateIssuanceError{retryAt: issuance.RetryAt}
+		}
+		installedChallenge, err := certificateChallenge(challenge, hostname)
+		if err != nil {
+			return clientstate.Material{}, err
+		}
+		if err := route.InstallChallenge(installedChallenge); err != nil {
+			return clientstate.Material{}, err
+		}
+		issuanceID := issuance.Id
+		issuance, err = server.CertificateChallengeReady(ctx, issuanceID, sessionToken)
+		if err != nil {
+			return clientstate.Material{}, err
+		}
+		if err := validateCertificateAttempt(
+			ctx, server, route, state, issuance, routeID, version, sessionToken,
+			hostname, profile, issuanceID, challenge.Id,
+		); err != nil {
+			return clientstate.Material{}, err
+		}
+		if issuance.CertificatePem == nil {
+			return clientstate.Material{}, &pendingCertificateIssuanceError{retryAt: issuance.RetryAt}
+		}
+	}
+	if challenge != nil {
+		route.RemoveChallenge(challenge.Id)
+		if err := server.CertificateChallengeRemoved(ctx, issuance.Id, sessionToken); err != nil {
+			return clientstate.Material{}, err
+		}
+	}
 	material, err := state.Commit(
-		ctx,
-		hostname, pending, []byte(*issuance.CertificatePem), *issuance.RenewAt, issuance.Id, version,
+		ctx, hostname, pending, []byte(*issuance.CertificatePem), *issuance.RenewAt, issuance.Id, version,
 	)
 	if err != nil {
 		return material, err
+	}
+	if !material.Certificate.Leaf.NotBefore.Equal(*issuance.NotBefore) ||
+		!material.Certificate.Leaf.NotAfter.Equal(*issuance.NotAfter) {
+		return material, errors.New("publisher: server certificate validity does not match certificate material")
 	}
 	if err := route.InstallCertificate(material.Certificate); err != nil {
 		return material, err
 	}
-	if err := route.VerifyCertificate(material.Certificate); err != nil {
-		return material, err
-	}
-	if err := acknowledgeCertificate(
-		ctx, server, routeID, version, issuance.Id, sessionToken,
-	); err != nil {
+	if err := server.CertificateInstalled(ctx, routeID, version, issuance.Id, sessionToken); err != nil {
 		return material, err
 	}
 	installed, err := state.MarkInstalled(ctx, hostname, issuance.Id, version)
@@ -646,195 +617,48 @@ func installCertificateIssuance(
 	return installed, nil
 }
 
-func createCertificateIssuance(
-	ctx context.Context,
-	server RouteControlClient,
-	routeID string,
-	version uint64,
-	sessionToken credentials.SessionToken,
-	hostname, profile string,
-	csrDER []byte,
-) (serverv1.CertificateIssuance, error) {
-	for {
-		issuance, err := server.CreateCertificateIssuance(ctx, routeID, version, sessionToken, profile, csrDER)
-		if err == nil {
-			if err := validateCertificateIssuance(issuance, routeID, version, hostname, profile, ""); err != nil {
-				return serverv1.CertificateIssuance{}, err
-			}
-			return issuance, nil
-		}
-		if !errors.Is(err, serverclient.ErrUnavailable) && !errors.Is(err, serverclient.ErrRateLimited) {
-			return serverv1.CertificateIssuance{}, err
-		}
-		if err := waitCertificateRetry(ctx, certificateRetryDelay(err)); err != nil {
-			return serverv1.CertificateIssuance{}, err
-		}
+func certificateChallenge(challenge *serverv1.CertificateChallenge, hostname string) (tlschallenge.TLSALPNChallenge, error) {
+	digest, err := base64.RawURLEncoding.DecodeString(challenge.Digest)
+	if err != nil || len(digest) != 32 || base64.RawURLEncoding.EncodeToString(digest) != challenge.Digest ||
+		challenge.Id == "" || challenge.Hostname != hostname || !challenge.ExpiresAt.After(time.Now()) {
+		return tlschallenge.TLSALPNChallenge{}, errors.New("publisher: server returned an invalid TLS-ALPN challenge digest")
 	}
+	result := tlschallenge.TLSALPNChallenge{
+		ID: challenge.Id, Hostname: challenge.Hostname, ExpiresAt: challenge.ExpiresAt,
+	}
+	copy(result.Digest[:], digest)
+	return result, nil
 }
 
-func reconcileCertificateInstallation(
+func validateCertificateAttempt(
 	ctx context.Context,
 	server RouteControlClient,
 	route *Route,
 	state *clientstate.RouteCertificateHandle,
-	routeID string,
-	version uint64,
-	sessionToken credentials.SessionToken,
-	hostname, profile string,
-	material clientstate.Material,
-) (clientstate.Material, error) {
-	issuance, err := createCertificateIssuance(
-		ctx, server, routeID, version, sessionToken, hostname, profile, material.CSRDER,
-	)
-	if err != nil {
-		return material, err
-	}
-	for issuance.CertificatePem == nil && issuance.Challenge == nil {
-		if err := waitCertificateRetry(ctx, certificateIssuanceRetry(issuance)); err != nil {
-			return material, err
-		}
-		issuance, err = createCertificateIssuance(
-			ctx, server, routeID, version, sessionToken, hostname, profile, material.CSRDER,
-		)
-		if err != nil {
-			return material, err
-		}
-	}
-	if issuance.CertificatePem == nil {
-		issuance, err = completeCertificateChallenge(
-			ctx, server, route, routeID, version, sessionToken, hostname, profile, issuance,
-		)
-		if err != nil {
-			return material, err
-		}
-		pending, err := state.CurrentKey(ctx, hostname)
-		if err != nil {
-			return material, err
-		}
-		replacement, err := installCertificateIssuance(
-			ctx, server, route, state, routeID, version, sessionToken, hostname, pending, issuance,
-		)
-		if replacement.NotAfter.IsZero() {
-			return material, err
-		}
-		return replacement, err
-	}
-	chain, err := decodeCertificateChain([]byte(*issuance.CertificatePem))
-	if err != nil || !equalCertificateChain(chain, material.Certificate.Certificate) || !issuance.RenewAt.Equal(material.RenewAt) {
-		return material, errors.New("publisher: reused certificate does not match persisted material")
-	}
-	updated, err := state.RecordCurrentIssuance(ctx, hostname, issuance.Id, version)
-	if err != nil {
-		return material, err
-	}
-	material = updated
-	if err := route.VerifyCertificate(material.Certificate); err != nil {
-		return material, err
-	}
-	if err := acknowledgeCertificate(
-		ctx, server, routeID, version, issuance.Id, sessionToken,
-	); err != nil {
-		return material, err
-	}
-	installed, err := state.MarkInstalled(ctx, hostname, issuance.Id, version)
-	if err != nil {
-		return material, err
-	}
-	return installed, nil
-}
-
-func completeCertificateChallenge(
-	ctx context.Context,
-	server RouteControlClient,
-	route *Route,
-	routeID string,
-	version uint64,
-	sessionToken credentials.SessionToken,
-	hostname, profile string,
 	issuance serverv1.CertificateIssuance,
-) (serverv1.CertificateIssuance, error) {
-	digest, err := base64.RawURLEncoding.DecodeString(issuance.Challenge.Digest)
-	if err != nil || len(digest) != 32 || base64.RawURLEncoding.EncodeToString(digest) != issuance.Challenge.Digest ||
-		issuance.Challenge.Id == "" || issuance.Challenge.Hostname != hostname || !issuance.Challenge.ExpiresAt.After(time.Now()) {
-		return serverv1.CertificateIssuance{}, errors.New("publisher: server returned an invalid TLS-ALPN challenge digest")
-	}
-	challenge := tlschallenge.TLSALPNChallenge{
-		ID: issuance.Challenge.Id, Hostname: issuance.Challenge.Hostname, ExpiresAt: issuance.Challenge.ExpiresAt,
-	}
-	copy(challenge.Digest[:], digest)
-	if err := route.InstallChallenge(challenge); err != nil {
-		return serverv1.CertificateIssuance{}, err
-	}
-	defer route.RemoveChallenge(challenge.ID)
-	for issuance.CertificatePem == nil {
-		expectedIssuanceID := issuance.Id
-		advanced, readyErr := server.CertificateChallengeReady(ctx, expectedIssuanceID, sessionToken)
-		if readyErr != nil {
-			if !errors.Is(readyErr, serverclient.ErrUnavailable) {
-				return serverv1.CertificateIssuance{}, readyErr
-			}
-			if err := waitCertificateRetry(ctx, activationRetry); err != nil {
-				return serverv1.CertificateIssuance{}, err
-			}
-			continue
-		}
-		if err := validateCertificateIssuance(advanced, routeID, version, hostname, profile, expectedIssuanceID); err != nil {
-			return serverv1.CertificateIssuance{}, err
-		}
-		issuance = advanced
-		if issuance.CertificatePem == nil {
-			if err := waitCertificateRetry(ctx, certificateIssuanceRetry(issuance)); err != nil {
-				return serverv1.CertificateIssuance{}, err
-			}
-		}
-	}
-	route.RemoveChallenge(challenge.ID)
-	if err := acknowledgeChallengeRemoval(ctx, server, issuance.Id, sessionToken); err != nil {
-		return serverv1.CertificateIssuance{}, err
-	}
-	return issuance, nil
-}
-
-func acknowledgeCertificate(
-	ctx context.Context,
-	server RouteControlClient,
 	routeID string,
 	version uint64,
-	issuanceID string,
 	sessionToken credentials.SessionToken,
+	hostname, profile, expectedID, installedChallengeID string,
 ) error {
-	for {
-		err := server.CertificateInstalled(ctx, routeID, version, issuanceID, sessionToken)
-		if err == nil {
-			return nil
-		}
-		if !errors.Is(err, serverclient.ErrUnavailable) {
-			return err
-		}
-		if err := waitCertificateRetry(ctx, activationRetry); err != nil {
-			return err
+	err := validateCertificateIssuance(issuance, routeID, version, hostname, profile, expectedID)
+	var terminal *terminalCertificateIssuanceError
+	if !errors.As(err, &terminal) {
+		return err
+	}
+	if installedChallengeID == "" && issuance.Challenge != nil {
+		installedChallengeID = issuance.Challenge.Id
+	}
+	if installedChallengeID != "" {
+		route.RemoveChallenge(installedChallengeID)
+		if removeErr := server.CertificateChallengeRemoved(ctx, issuance.Id, sessionToken); removeErr != nil {
+			return removeErr
 		}
 	}
-}
-
-func acknowledgeChallengeRemoval(
-	ctx context.Context,
-	server RouteControlClient,
-	issuanceID string,
-	sessionToken credentials.SessionToken,
-) error {
-	for {
-		err := server.CertificateChallengeRemoved(ctx, issuanceID, sessionToken)
-		if err == nil {
-			return nil
-		}
-		if !errors.Is(err, serverclient.ErrUnavailable) {
-			return err
-		}
-		if err := waitCertificateRetry(ctx, activationRetry); err != nil {
-			return err
-		}
+	if _, rotateErr := state.NewPending(ctx, hostname); rotateErr != nil {
+		return rotateErr
 	}
+	return err
 }
 
 func validateCertificateIssuance(
@@ -851,9 +675,8 @@ func validateCertificateIssuance(
 	if !issuance.Status.Valid() {
 		return errors.New("publisher: server returned an unknown certificate issuance state")
 	}
-	switch issuance.Status {
-	case serverv1.CertificateIssuanceStatusFailed, serverv1.CertificateIssuanceStatusBlocked, serverv1.CertificateIssuanceStatusCanceled:
-		return &terminalCertificateIssuanceError{state: issuance.Status}
+	if err := certificateIssuanceStatusError(issuance.Status); err != nil {
+		return err
 	}
 	if issuance.CertificatePem != nil {
 		if issuance.Status != serverv1.CertificateIssuanceStatusWaitingForInstall && issuance.Status != serverv1.CertificateIssuanceStatusInstalled ||
@@ -864,14 +687,9 @@ func validateCertificateIssuance(
 		return errors.New("publisher: server returned an installed issuance without certificate material")
 	}
 	if issuance.Challenge != nil && issuance.CertificatePem == nil {
-		switch issuance.Status {
-		case serverv1.CertificateIssuanceStatusWaitingForChallenge, serverv1.CertificateIssuanceStatusValidating, serverv1.CertificateIssuanceStatusReadyToFinalize, serverv1.CertificateIssuanceStatusFinalizing, serverv1.CertificateIssuanceStatusDownloading:
-		default:
+		if !certificateIssuanceStatusAllowsChallenge(issuance.Status) {
 			return errors.New("publisher: server returned a challenge in an inconsistent issuance state")
 		}
-	}
-	if issuance.Challenge == nil && issuance.Status == serverv1.CertificateIssuanceStatusWaitingForChallenge {
-		return errors.New("publisher: server returned a challenge issuance without challenge material")
 	}
 	if issuance.Challenge != nil {
 		digest, err := base64.RawURLEncoding.DecodeString(issuance.Challenge.Digest)
@@ -883,6 +701,24 @@ func validateCertificateIssuance(
 	return nil
 }
 
+func certificateIssuanceStatusError(status serverv1.CertificateIssuanceStatus) error {
+	if status == serverv1.CertificateIssuanceStatusFailed {
+		return &terminalCertificateIssuanceError{state: status}
+	}
+	return nil
+}
+
+func certificateIssuanceStatusAllowsChallenge(status serverv1.CertificateIssuanceStatus) bool {
+	switch status {
+	case serverv1.CertificateIssuanceStatusWaitingForChallenge,
+		serverv1.CertificateIssuanceStatusReadyToFinalize,
+		serverv1.CertificateIssuanceStatusFinalizing:
+		return true
+	default:
+		return false
+	}
+}
+
 type terminalCertificateIssuanceError struct {
 	state serverv1.CertificateIssuanceStatus
 }
@@ -891,40 +727,25 @@ func (e *terminalCertificateIssuanceError) Error() string {
 	return fmt.Sprintf("publisher: certificate issuance became %s", e.state)
 }
 
-func decodeCertificateChain(certificatePEM []byte) ([][]byte, error) {
-	var chain [][]byte
-	remaining := bytes.TrimSpace(certificatePEM)
-	for len(remaining) != 0 {
-		block, rest := pem.Decode(remaining)
-		if block == nil || block.Type != "CERTIFICATE" || len(block.Bytes) == 0 {
-			return nil, errors.New("publisher: invalid certificate chain")
-		}
-		chain = append(chain, block.Bytes)
-		remaining = bytes.TrimSpace(rest)
-	}
-	if len(chain) == 0 {
-		return nil, errors.New("publisher: empty certificate chain")
-	}
-	return chain, nil
+type pendingCertificateIssuanceError struct {
+	retryAt *time.Time
 }
 
-func equalCertificateChain(left, right [][]byte) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if !bytes.Equal(left[index], right[index]) {
-			return false
-		}
-	}
-	return true
+func (*pendingCertificateIssuanceError) Error() string {
+	return "publisher: certificate issuance is pending"
 }
 
-func certificateIssuanceRetry(issuance serverv1.CertificateIssuance) time.Duration {
-	if issuance.RetryAt != nil && issuance.RetryAt.After(time.Now()) {
-		return min(time.Until(*issuance.RetryAt), time.Minute)
+func (*pendingCertificateIssuanceError) Unwrap() error { return serverclient.ErrUnavailable }
+
+func certificatePendingRetryDelay(err error) (time.Duration, bool) {
+	var pending *pendingCertificateIssuanceError
+	if !errors.As(err, &pending) {
+		return 0, false
 	}
-	return activationRetry
+	if pending.retryAt != nil && pending.retryAt.After(time.Now()) {
+		return time.Until(*pending.retryAt), true
+	}
+	return activationRetry, true
 }
 
 func drainRoute(route *Route, timeout time.Duration) error {
@@ -945,11 +766,27 @@ func waitCertificateRetry(ctx context.Context, delay time.Duration) error {
 }
 
 func certificateRetryDelay(err error) time.Duration {
+	if delay, ok := certificatePendingRetryDelay(err); ok {
+		return delay
+	}
 	var limited *serverclient.RateLimitError
 	if errors.As(err, &limited) && limited.RetryAfter > 0 {
-		return min(limited.RetryAfter, 24*time.Hour)
+		return limited.RetryAfter
 	}
 	return activationRetry
+}
+
+func certificateRenewalRetryDelay(err error, notAfter time.Time) time.Duration {
+	delay := renewalRetry
+	if pendingDelay, ok := certificatePendingRetryDelay(err); ok {
+		delay = pendingDelay
+	} else {
+		var limited *serverclient.RateLimitError
+		if errors.As(err, &limited) && limited.RetryAfter > 0 {
+			delay = limited.RetryAfter
+		}
+	}
+	return max(min(delay, time.Until(notAfter)), 0)
 }
 
 func heartbeatSession(

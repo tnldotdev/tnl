@@ -10,15 +10,11 @@ const (
 	StatusCreatingOrder     = "creating_order"
 	StatusAuthorizing       = "authorizing"
 	StatusWaitingChallenge  = "waiting_for_challenge"
-	StatusValidating        = "validating"
 	StatusReadyToFinalize   = "ready_to_finalize"
 	StatusFinalizing        = "finalizing"
-	StatusDownloading       = "downloading"
 	StatusWaitingForInstall = "waiting_for_install"
 	StatusInstalled         = "installed"
 	StatusFailed            = "failed"
-	StatusBlocked           = "blocked"
-	StatusCanceled          = "canceled"
 	tlsALPNChallengeType    = "tls-alpn-01"
 	defaultChallengeTimeout = 10 * time.Minute
 )
@@ -48,6 +44,7 @@ type Issuance struct {
 	RouteID      string
 	RouteVersion uint64
 	Hostname     string
+	DirectoryURL string
 	ACMEProfile  string
 	Status       string
 
@@ -55,15 +52,13 @@ type Issuance struct {
 	CSRHash  [sha256.Size]byte
 	SPKIHash [sha256.Size]byte
 
+	OrderStartedAt   time.Time
 	OrderURL         string
-	ACMEStatus       string
-	OrderAttempts    int
 	OrderExpires     time.Time
 	RetryAt          time.Time
 	AuthorizationURL string
 	FinalizeURL      string
 	ChallengeURL     string
-	ChallengeToken   string
 	ChallengeDigest  [sha256.Size]byte
 	ChallengeExpires time.Time
 	CertificateURL   string
@@ -71,8 +66,6 @@ type Issuance struct {
 	NotBefore        time.Time
 	NotAfter         time.Time
 	RenewAt          time.Time
-	InstalledAt      time.Time
-	ChallengeRemoved time.Time
 	LastError        string
 	CreatedAt        time.Time
 	UpdatedAt        time.Time

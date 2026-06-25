@@ -14,7 +14,10 @@ import (
 	tnlsqlite "github.com/tnldotdev/tnl/internal/sqlite"
 )
 
-const databaseName = "tnld.db"
+const (
+	databaseName  = "tnld.db"
+	schemaVersion = 2
+)
 
 // DatabasePath returns the state database path within dir.
 func DatabasePath(dir string) string { return filepath.Join(dir, databaseName) }
@@ -44,7 +47,7 @@ func OpenReadOnly(ctx context.Context, dir string) (*sql.DB, error) {
 	if err := RequireDirectoryOwner(dir); err != nil {
 		return nil, err
 	}
-	db, err := tnlsqlite.OpenReadOnly(ctx, DatabasePath(dir), 1)
+	db, err := tnlsqlite.OpenReadOnly(ctx, DatabasePath(dir), schemaVersion)
 	if err != nil {
 		return nil, fmt.Errorf("state: %w", err)
 	}

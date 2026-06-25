@@ -17,6 +17,7 @@ import (
 	"math/big"
 	"net"
 	"path/filepath"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -299,7 +300,7 @@ func TestIssueCertificatePersistsAndRotatesApplicationKey(t *testing.T) {
 	}
 	defer route.Close()
 	server := &issuanceServer{publisherServerStub: new(publisherServerStub), t: t}
-	material, err := issueCertificate(
+	material, err := issueInitialCertificate(
 		context.Background(), server, route, state, "route_0123456789abcdef0123456789abcdef", 1,
 		"session", "route.example", "tlsserver",
 	)
@@ -314,7 +315,7 @@ func TestIssueCertificatePersistsAndRotatesApplicationKey(t *testing.T) {
 		t.Fatalf("loaded certificate = %+v, %v, %v", loaded, found, err)
 	}
 	firstKey := material.Certificate.Leaf.RawSubjectPublicKeyInfo
-	second, err := issueCertificate(
+	second, err := attemptCertificateTransaction(
 		context.Background(), server, route, state, "route_0123456789abcdef0123456789abcdef", 1,
 		"session", "route.example", "tlsserver",
 	)
@@ -323,6 +324,98 @@ func TestIssueCertificatePersistsAndRotatesApplicationKey(t *testing.T) {
 	}
 	if string(firstKey) == string(second.Certificate.Leaf.RawSubjectPublicKeyInfo) {
 		t.Fatal("renewal reused the application key")
+	}
+}
+
+func TestInitialCertificateRetriesWholeTransactionAfterResponseLoss(t *testing.T) {
+	previousRetry := activationRetry
+	activationRetry = time.Millisecond
+	t.Cleanup(func() { activationRetry = previousRetry })
+	for _, test := range []struct {
+		phase string
+		calls []string
+	}{
+		{phase: "create", calls: []string{"create", "create", "challenge_ready", "challenge_removed", "certificate_installed"}},
+		{phase: "challenge_ready", calls: []string{"create", "challenge_ready", "create", "challenge_removed", "certificate_installed"}},
+		{phase: "challenge_removed", calls: []string{"create", "challenge_ready", "challenge_removed", "create", "certificate_installed"}},
+		{phase: "certificate_installed", calls: []string{"create", "challenge_ready", "challenge_removed", "certificate_installed", "create", "certificate_installed"}},
+	} {
+		t.Run(test.phase, func(t *testing.T) {
+			store := newPublisherState(t, filepath.Join(t.TempDir(), "state"), "https://server.example")
+			state, err := store.OpenRoute("route_0123456789abcdef0123456789abcdef")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer state.Close()
+			route := testCertificateRoute(t, true)
+			defer route.Close()
+			server := &certificateTransactionServer{
+				publisherServerStub: new(publisherServerStub), t: t, failPhase: test.phase,
+			}
+			material, err := issueInitialCertificate(
+				t.Context(), server, route, state, "route_0123456789abcdef0123456789abcdef", 1,
+				"session", "route.example", "tlsserver",
+			)
+			if err != nil || !material.Installed {
+				t.Fatalf("initial certificate = %+v, %v", material, err)
+			}
+			if server.orders != 1 || !slices.Equal(server.calls, test.calls) {
+				t.Fatalf("orders = %d, calls = %v, want %v", server.orders, server.calls, test.calls)
+			}
+		})
+	}
+}
+
+func TestInitialCertificateRetriesPendingIssuanceAtRetryAt(t *testing.T) {
+	previousRetry := activationRetry
+	activationRetry = time.Hour
+	t.Cleanup(func() { activationRetry = previousRetry })
+	store := newPublisherState(t, filepath.Join(t.TempDir(), "state"), "https://server.example")
+	state, err := store.OpenRoute("route_0123456789abcdef0123456789abcdef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	route := testCertificateRoute(t, true)
+	defer route.Close()
+	server := &certificateTransactionServer{
+		publisherServerStub: new(publisherServerStub), t: t, pendingOnce: true,
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	material, err := issueInitialCertificate(
+		ctx, server, route, state, "route_0123456789abcdef0123456789abcdef", 1,
+		"session", "route.example", "tlsserver",
+	)
+	if err != nil || !material.Installed {
+		t.Fatalf("initial pending certificate = %+v, %v", material, err)
+	}
+	if want := []string{"create", "create", "challenge_ready", "challenge_removed", "certificate_installed"}; server.orders != 1 || !slices.Equal(server.calls, want) {
+		t.Fatalf("orders = %d, calls = %v, want %v", server.orders, server.calls, want)
+	}
+}
+
+func TestCertificateWithoutChallengeSkipsChallengeAcknowledgements(t *testing.T) {
+	store := newPublisherState(t, filepath.Join(t.TempDir(), "state"), "https://server.example")
+	state, err := store.OpenRoute("route_0123456789abcdef0123456789abcdef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	route := testCertificateRoute(t, true)
+	defer route.Close()
+	server := &certificateTransactionServer{
+		publisherServerStub: new(publisherServerStub), t: t, certificateOnCreate: true,
+	}
+	material, err := attemptCertificateTransaction(
+		t.Context(), server, route, state, "route_0123456789abcdef0123456789abcdef", 1,
+		"session", "route.example", "tlsserver",
+	)
+	if err != nil || !material.Installed {
+		t.Fatalf("direct certificate = %+v, %v", material, err)
+	}
+	if want := []string{"create", "certificate_installed"}; !slices.Equal(server.calls, want) {
+		t.Fatalf("calls = %v, want %v", server.calls, want)
 	}
 }
 
@@ -335,8 +428,11 @@ func TestUnacknowledgedCertificateRebindsAfterRestart(t *testing.T) {
 	defer state.Close()
 	route := testCertificateRoute(t, true)
 	defer route.Close()
-	server := &issuanceServer{publisherServerStub: new(publisherServerStub), t: t, installErrors: []error{serverclient.ErrCertificateStatus}}
-	material, err := issueCertificate(
+	server := &issuanceServer{
+		publisherServerStub: new(publisherServerStub), t: t, renewalDue: true,
+		installErrors: []error{serverclient.ErrCertificateStatus},
+	}
+	material, err := issueInitialCertificate(
 		context.Background(), server, route, state, "route_0123456789abcdef0123456789abcdef", 1,
 		"session", "route.example", "tlsserver",
 	)
@@ -348,11 +444,11 @@ func TestUnacknowledgedCertificateRebindsAfterRestart(t *testing.T) {
 		t.Fatalf("unacknowledged current = %+v, %v, %v", loaded, found, err)
 	}
 	server.reuseCurrent = true
-	material, err = reconcileCertificateInstallation(
-		context.Background(), server, route, state, "route_0123456789abcdef0123456789abcdef", 2,
-		"session", "route.example", "tlsserver", loaded,
+	material, err = attemptCertificateTransaction(
+		context.Background(), server, route, state, "route_0123456789abcdef0123456789abcdef", 1,
+		"session", "route.example", "tlsserver",
 	)
-	if err != nil || !material.Installed || material.RouteVersion != 2 || server.issuances != 2 || server.installedCalls != 2 {
+	if err != nil || !material.Installed || material.RouteVersion != 1 || server.issuances != 2 || server.installedCalls != 2 {
 		t.Fatalf("reconciled material = %+v, issuances = %d, installs = %d, error = %v", material, server.issuances, server.installedCalls, err)
 	}
 }
@@ -375,19 +471,19 @@ func TestTerminalIssuanceRotatesPendingApplicationKey(t *testing.T) {
 	route := testCertificateRoute(t, true)
 	defer route.Close()
 	server := &issuanceServer{publisherServerStub: new(publisherServerStub), t: t, terminalFirst: true}
-	material, err := issueCertificate(
+	material, err := issueInitialCertificate(
 		context.Background(), server, route, state, "route_0123456789abcdef0123456789abcdef", 1,
 		"session", "route.example", "tlsserver",
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if server.issuances != 2 || string(initialKey) == string(material.Certificate.Leaf.RawSubjectPublicKeyInfo) {
-		t.Fatalf("issuances = %d; terminal issuance key was reused", server.issuances)
+	if server.issuances != 2 || server.removedCalls != 2 || string(initialKey) == string(material.Certificate.Leaf.RawSubjectPublicKeyInfo) {
+		t.Fatalf("issuances = %d, challenge removals = %d; terminal issuance key was reused", server.issuances, server.removedCalls)
 	}
 }
 
-func TestUnacknowledgedCertificatePastRenewalFallsBackToReplacement(t *testing.T) {
+func TestUnacknowledgedCertificatePastRenewalReconcilesBeforeReplacement(t *testing.T) {
 	store := newPublisherState(t, filepath.Join(t.TempDir(), "state"), "https://server.example")
 	state, err := store.OpenRoute("route_0123456789abcdef0123456789abcdef")
 	if err != nil {
@@ -411,14 +507,26 @@ func TestUnacknowledgedCertificatePastRenewalFallsBackToReplacement(t *testing.T
 		t.Fatal(err)
 	}
 	server := &issuanceServer{publisherServerStub: new(publisherServerStub), t: t}
-	replacement, err := refreshCertificate(
+	reconciled, err := attemptCertificateTransaction(
 		context.Background(), server, route, state, "route_0123456789abcdef0123456789abcdef", 2,
-		"session", "route.example", "tlsserver", current,
+		"session", "route.example", "tlsserver",
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if replacement.RouteVersion != 2 || bytes.Equal(
+	if !reconciled.Installed || reconciled.RouteVersion != 2 || !bytes.Equal(
+		current.Certificate.Leaf.RawSubjectPublicKeyInfo, reconciled.Certificate.Leaf.RawSubjectPublicKeyInfo,
+	) {
+		t.Fatalf("reconciled = %+v", reconciled)
+	}
+	replacement, err := attemptCertificateTransaction(
+		context.Background(), server, route, state, "route_0123456789abcdef0123456789abcdef", 2,
+		"session", "route.example", "tlsserver",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !replacement.Installed || replacement.RouteVersion != 2 || bytes.Equal(
 		current.Certificate.Leaf.RawSubjectPublicKeyInfo, replacement.Certificate.Leaf.RawSubjectPublicKeyInfo,
 	) {
 		t.Fatalf("replacement = %+v", replacement)
@@ -449,9 +557,9 @@ func TestUnacknowledgedCertificateCanCompleteFreshReboundIssuance(t *testing.T) 
 		t.Fatal(err)
 	}
 	server := &issuanceServer{publisherServerStub: new(publisherServerStub), t: t}
-	replacement, err := refreshCertificate(
+	replacement, err := attemptCertificateTransaction(
 		context.Background(), server, route, state, "route_0123456789abcdef0123456789abcdef", 2,
-		"session", "route.example", "tlsserver", current,
+		"session", "route.example", "tlsserver",
 	)
 	if err != nil || !replacement.Installed || replacement.RouteVersion != 2 || !bytes.Equal(
 		current.Certificate.Leaf.RawSubjectPublicKeyInfo, replacement.Certificate.Leaf.RawSubjectPublicKeyInfo,
@@ -471,7 +579,7 @@ func TestCertificateRetryPropagatesConsumedStaleSession(t *testing.T) {
 	defer route.Close()
 	ctx, cancel := context.WithCancelCause(context.Background())
 	server := &unavailableCertificateServer{publisherServerStub: new(publisherServerStub), cancel: cancel}
-	_, err = issueCertificate(
+	_, err = issueInitialCertificate(
 		ctx, server, route, state,
 		"route_0123456789abcdef0123456789abcdef", 1, "session", "route.example", "tlsserver",
 	)
@@ -483,7 +591,7 @@ func TestCertificateRetryPropagatesConsumedStaleSession(t *testing.T) {
 func TestCertificateIssuanceAcceptsChallengeBearingResumeStates(t *testing.T) {
 	digest := sha256.Sum256([]byte("key authorization"))
 	for _, state := range []serverv1.CertificateIssuanceStatus{
-		serverv1.CertificateIssuanceStatusWaitingForChallenge, serverv1.CertificateIssuanceStatusValidating, serverv1.CertificateIssuanceStatusReadyToFinalize, serverv1.CertificateIssuanceStatusFinalizing, serverv1.CertificateIssuanceStatusDownloading,
+		serverv1.CertificateIssuanceStatusWaitingForChallenge, serverv1.CertificateIssuanceStatusReadyToFinalize, serverv1.CertificateIssuanceStatusFinalizing,
 	} {
 		issuance := serverv1.CertificateIssuance{
 			Id: "issuance_id", RouteId: "route_id", RouteVersion: 2, Hostname: "route.example", AcmeProfile: "tlsserver", Status: state,
@@ -495,6 +603,28 @@ func TestCertificateIssuanceAcceptsChallengeBearingResumeStates(t *testing.T) {
 		if err := validateCertificateIssuance(issuance, "route_id", 2, "route.example", "tlsserver", "issuance_id"); err != nil {
 			t.Fatalf("state %q: %v", state, err)
 		}
+	}
+}
+
+func TestCertificateRenewalRetryDelayPreservesRateLimitHint(t *testing.T) {
+	err := &serverclient.RateLimitError{RetryAfter: 10 * time.Minute}
+	if delay := certificateRenewalRetryDelay(err, time.Now().Add(time.Hour)); delay != err.RetryAfter {
+		t.Fatalf("renewal retry delay = %v, want %v", delay, err.RetryAfter)
+	}
+	if delay := certificateRenewalRetryDelay(serverclient.ErrUnavailable, time.Now().Add(time.Hour)); delay != renewalRetry {
+		t.Fatalf("unavailable renewal retry delay = %v, want %v", delay, renewalRetry)
+	}
+	expiresAt := time.Now().Add(time.Second)
+	if delay := certificateRenewalRetryDelay(err, expiresAt); delay <= 0 || delay > time.Second {
+		t.Fatalf("expiry-bounded renewal retry delay = %v", delay)
+	}
+}
+
+func TestCertificateRetryDelayPreservesPendingRetryAt(t *testing.T) {
+	retryAt := time.Now().Add(time.Hour)
+	delay := certificateRetryDelay(&pendingCertificateIssuanceError{retryAt: &retryAt})
+	if delay < 59*time.Minute || delay > time.Hour {
+		t.Fatalf("pending retry delay = %v", delay)
 	}
 }
 
@@ -565,6 +695,124 @@ func TestRenewalFailureKeepsCurrentCertificateServing(t *testing.T) {
 	}
 }
 
+func TestPersistedCertificateIsReadyBeforeRenewal(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+	}{
+		{name: "unavailable", err: serverclient.ErrUnavailable},
+		{name: "rate limited", err: &serverclient.RateLimitError{RetryAfter: time.Hour}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := newPublisherState(t, filepath.Join(t.TempDir(), "state"), "https://server.example")
+			state, err := store.OpenRoute("route_0123456789abcdef0123456789abcdef")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer state.Close()
+			pending, err := state.Pending(t.Context(), "route.example")
+			if err != nil {
+				t.Fatal(err)
+			}
+			material, err := state.Commit(
+				t.Context(), "route.example", pending, signCSR(t, mustParseCSR(t, pending.CSRDER), "route.example"),
+				time.Now().Add(-time.Millisecond), "issuance_current", 1,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := state.MarkInstalled(t.Context(), "route.example", material.IssuanceID, material.RouteVersion); err != nil {
+				t.Fatal(err)
+			}
+			sessionToken, _, _, err := credentials.NewSessionToken()
+			if err != nil {
+				t.Fatal(err)
+			}
+			server := &renewalFailureServer{
+				publisherServerStub: new(publisherServerStub),
+				createErrors:        []error{test.err, serverclient.ErrCertificateStatus},
+				called:              make(chan struct{}, 1),
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			result := make(chan error, 1)
+			go func() {
+				result <- runSession(ctx, Config{
+					Server: server, Target: "http://127.0.0.1:3000", State: store, ACMEProfile: "tlsserver",
+					RelayRegion: "test", Regions: map[string]*tailcfg.DERPRegion{"test": {
+						RegionID: 1, Nodes: []*tailcfg.DERPNode{{RegionID: 1, HostName: "derp.example"}},
+					}}, DrainTime: time.Second,
+				}, serverv1.SessionSetup{
+					Route:        serverv1.Route{Id: "route_0123456789abcdef0123456789abcdef", Hostname: "route.example"},
+					Session:      serverv1.RouteSession{RouteVersion: 1, ExpiresAt: time.Now().Add(time.Minute)},
+					SessionToken: sessionToken.String(), WorkerPublicKey: key.NewNode().Public().String(),
+				}, state, func() error { return nil })
+			}()
+			select {
+			case <-server.called:
+			case <-time.After(time.Second):
+				cancel()
+				t.Fatal("renewal was not attempted")
+			}
+			cancel()
+			err = <-result
+			if err != nil || server.readyCalls != 1 || server.issuanceCalls != 1 || !server.renewedWhileReady {
+				t.Fatalf("runSession = %v, ready calls = %d, issuance calls = %d, renewed while ready = %t", err, server.readyCalls, server.issuanceCalls, server.renewedWhileReady)
+			}
+		})
+	}
+}
+
+func TestActiveRenewalStopsAtCertificateExpiry(t *testing.T) {
+	store := newPublisherState(t, filepath.Join(t.TempDir(), "state"), "https://server.example")
+	state, err := store.OpenRoute("route_0123456789abcdef0123456789abcdef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	pending, err := state.Pending(t.Context(), "route.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	material, err := state.Commit(
+		t.Context(), "route.example", pending,
+		signCSRUntil(t, mustParseCSR(t, pending.CSRDER), "route.example", now.Add(3*time.Second)),
+		now.Add(time.Second), "issuance_current", 1,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.MarkInstalled(t.Context(), "route.example", material.IssuanceID, material.RouteVersion); err != nil {
+		t.Fatal(err)
+	}
+	sessionToken, _, _, err := credentials.NewSessionToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &renewalFailureServer{
+		publisherServerStub: new(publisherServerStub),
+		createErrors:        []error{&serverclient.RateLimitError{RetryAfter: 24 * time.Hour}},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err = runSession(ctx, Config{
+		Server: server, Target: "http://127.0.0.1:3000", State: store, ACMEProfile: "tlsserver",
+		RelayRegion: "test", Regions: map[string]*tailcfg.DERPRegion{"test": {
+			RegionID: 1, Nodes: []*tailcfg.DERPNode{{RegionID: 1, HostName: "derp.example"}},
+		}}, DrainTime: time.Second,
+	}, serverv1.SessionSetup{
+		Route:        serverv1.Route{Id: "route_0123456789abcdef0123456789abcdef", Hostname: "route.example"},
+		Session:      serverv1.RouteSession{RouteVersion: 1, ExpiresAt: time.Now().Add(time.Minute)},
+		SessionToken: sessionToken.String(), WorkerPublicKey: key.NewNode().Public().String(),
+	}, state, func() error { return nil })
+	if !errors.Is(err, errCertificateExpired) || server.readyCalls != 1 || server.issuanceCalls != 1 || !server.renewedWhileReady {
+		t.Fatalf(
+			"runSession = %v, ready calls = %d, issuance calls = %d, active renewal = %t",
+			err, server.readyCalls, server.issuanceCalls, server.renewedWhileReady,
+		)
+	}
+}
+
 func mustParseCSR(t *testing.T, der []byte) *x509.CertificateRequest {
 	t.Helper()
 	request, err := x509.ParseCertificateRequest(der)
@@ -623,17 +871,182 @@ type issuanceServer struct {
 	reuseCurrent      bool
 	installErrors     []error
 	terminalFirst     bool
+	renewalDue        bool
 }
 
 type renewalFailureServer struct {
 	*publisherServerStub
-	issuanceCalls int
-	called        chan struct{}
+	issuanceCalls     int
+	called            chan struct{}
+	createErrors      []error
+	readyCalls        int
+	renewedWhileReady bool
 }
 
 type unavailableCertificateServer struct {
 	*publisherServerStub
 	cancel context.CancelCauseFunc
+}
+
+type certificateTransactionServer struct {
+	*publisherServerStub
+	t                   *testing.T
+	failPhase           string
+	failed              bool
+	pendingOnce         bool
+	certificateOnCreate bool
+	calls               []string
+	phaseAttempt        map[string]int
+	orders              int
+	csr                 []byte
+	request             *x509.CertificateRequest
+	challengeReady      bool
+	challengeRemoved    bool
+	installed           bool
+	certificate         string
+	notBefore           time.Time
+	notAfter            time.Time
+	renewAt             time.Time
+}
+
+func (s *certificateTransactionServer) CreateCertificateIssuance(
+	_ context.Context,
+	_ string,
+	version uint64,
+	_ credentials.SessionToken,
+	_ string,
+	csrDER []byte,
+) (serverv1.CertificateIssuance, error) {
+	s.calls = append(s.calls, "create")
+	s.phaseAttempt = make(map[string]int)
+	if s.csr == nil {
+		s.orders++
+		s.csr = bytes.Clone(csrDER)
+		request, err := x509.ParseCertificateRequest(csrDER)
+		if err != nil || request.CheckSignature() != nil {
+			s.t.Fatalf("CSR = %v, %v", request, err)
+		}
+		s.request = request
+	} else if !bytes.Equal(s.csr, csrDER) {
+		s.t.Fatal("certificate retry changed the persisted CSR")
+	}
+	if s.pendingOnce {
+		s.pendingOnce = false
+		retryAt := time.Now().Add(10 * time.Millisecond)
+		return s.issuance(version, serverv1.CertificateIssuanceStatusCreatingOrder, nil, nil, &retryAt), nil
+	}
+	if s.certificateOnCreate && !s.challengeReady {
+		s.issueCertificate()
+		s.challengeReady = true
+		s.challengeRemoved = true
+	}
+	if s.fail("create") {
+		return serverv1.CertificateIssuance{}, serverclient.ErrUnavailable
+	}
+	if !s.challengeReady {
+		return s.issuance(version, serverv1.CertificateIssuanceStatusWaitingForChallenge, s.challenge(), nil, nil), nil
+	}
+	status := serverv1.CertificateIssuanceStatusWaitingForInstall
+	if s.installed {
+		status = serverv1.CertificateIssuanceStatusInstalled
+	}
+	var challenge *serverv1.CertificateChallenge
+	if !s.challengeRemoved {
+		challenge = s.challenge()
+	}
+	return s.issuance(version, status, challenge, &s.certificate, nil), nil
+}
+
+func (s *certificateTransactionServer) CertificateChallengeReady(
+	_ context.Context, _ string, _ credentials.SessionToken,
+) (serverv1.CertificateIssuance, error) {
+	s.recordPhase("challenge_ready")
+	s.issueCertificate()
+	s.challengeReady = true
+	if s.fail("challenge_ready") {
+		return serverv1.CertificateIssuance{}, serverclient.ErrUnavailable
+	}
+	return s.issuance(
+		1, serverv1.CertificateIssuanceStatusWaitingForInstall, s.challenge(), &s.certificate, nil,
+	), nil
+}
+
+func (s *certificateTransactionServer) CertificateChallengeRemoved(
+	context.Context, string, credentials.SessionToken,
+) error {
+	s.recordPhase("challenge_removed")
+	s.challengeRemoved = true
+	if s.fail("challenge_removed") {
+		return serverclient.ErrUnavailable
+	}
+	return nil
+}
+
+func (s *certificateTransactionServer) CertificateInstalled(
+	context.Context, string, uint64, string, credentials.SessionToken,
+) error {
+	s.recordPhase("certificate_installed")
+	s.installed = true
+	if s.fail("certificate_installed") {
+		return serverclient.ErrUnavailable
+	}
+	return nil
+}
+
+func (s *certificateTransactionServer) recordPhase(phase string) {
+	s.calls = append(s.calls, phase)
+	s.phaseAttempt[phase]++
+	if s.phaseAttempt[phase] > 1 {
+		s.t.Fatalf("phase %q was called more than once in one transaction attempt", phase)
+	}
+}
+
+func (s *certificateTransactionServer) fail(phase string) bool {
+	if s.failed || s.failPhase != phase {
+		return false
+	}
+	s.failed = true
+	return true
+}
+
+func (s *certificateTransactionServer) issueCertificate() {
+	if s.certificate != "" {
+		return
+	}
+	s.certificate = string(signCSR(s.t, s.request, "route.example"))
+	block, _ := pem.Decode([]byte(s.certificate))
+	leaf, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	s.notBefore, s.notAfter = leaf.NotBefore, leaf.NotAfter
+	s.renewAt = time.Now().Add(30 * 24 * time.Hour).UTC()
+}
+
+func (s *certificateTransactionServer) challenge() *serverv1.CertificateChallenge {
+	digest := sha256.Sum256([]byte("key authorization"))
+	return &serverv1.CertificateChallenge{
+		Id: "challenge", Hostname: "route.example", Digest: base64.RawURLEncoding.EncodeToString(digest[:]),
+		ExpiresAt: time.Now().Add(time.Hour),
+	}
+}
+
+func (s *certificateTransactionServer) issuance(
+	version uint64,
+	status serverv1.CertificateIssuanceStatus,
+	challenge *serverv1.CertificateChallenge,
+	certificate *string,
+	retryAt *time.Time,
+) serverv1.CertificateIssuance {
+	result := serverv1.CertificateIssuance{
+		Id: "issuance_0123456789abcdef0123456789abcdef", RouteId: "route_0123456789abcdef0123456789abcdef",
+		RouteVersion: int(version), Hostname: "route.example", AcmeProfile: "tlsserver", Status: status,
+		Challenge: challenge, CertificatePem: certificate, RetryAt: retryAt, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}
+	if certificate != nil {
+		result.NotBefore, result.NotAfter, result.RenewAt = &s.notBefore, &s.notAfter, &s.renewAt
+	}
+	return result
 }
 
 func (s *unavailableCertificateServer) CreateCertificateIssuance(
@@ -656,12 +1069,22 @@ func (c *renewalFailureServer) CreateCertificateIssuance(
 	string,
 	[]byte,
 ) (serverv1.CertificateIssuance, error) {
+	index := c.issuanceCalls
 	c.issuanceCalls++
+	c.renewedWhileReady = c.renewedWhileReady || c.readyCalls != 0
 	select {
 	case c.called <- struct{}{}:
 	default:
 	}
+	if index < len(c.createErrors) {
+		return serverv1.CertificateIssuance{}, c.createErrors[index]
+	}
 	return serverv1.CertificateIssuance{}, serverclient.ErrCertificateStatus
+}
+
+func (c *renewalFailureServer) Ready(context.Context, string, uint64, credentials.SessionToken) error {
+	c.readyCalls++
+	return nil
 }
 
 func (c *issuanceServer) CreateCertificateIssuance(
@@ -681,13 +1104,6 @@ func (c *issuanceServer) CreateCertificateIssuance(
 		c.t.Fatalf("CSR = %v, %v", request, err)
 	}
 	c.lastCSR = request
-	if c.terminalFirst && c.issuances == 1 {
-		return serverv1.CertificateIssuance{
-			Id: c.currentIssuanceID, RouteId: "route_0123456789abcdef0123456789abcdef",
-			RouteVersion: c.currentVersion, Hostname: "route.example", AcmeProfile: "tlsserver", Status: serverv1.CertificateIssuanceStatusBlocked,
-			CreatedAt: time.Now(), UpdatedAt: time.Now(),
-		}, nil
-	}
 	if c.reuseCurrent {
 		return serverv1.CertificateIssuance{
 			Id: c.currentIssuanceID, RouteId: "route_0123456789abcdef0123456789abcdef",
@@ -708,6 +1124,14 @@ func (c *issuanceServer) CreateCertificateIssuance(
 	}, nil
 }
 
+func (c *issuanceServer) challenge() *serverv1.CertificateChallenge {
+	digest := sha256.Sum256([]byte(fmt.Sprintf("key authorization %d", c.issuances)))
+	return &serverv1.CertificateChallenge{
+		Id: fmt.Sprintf("challenge-%d", c.issuances), Hostname: "route.example",
+		Digest: base64.RawURLEncoding.EncodeToString(digest[:]), ExpiresAt: time.Now().Add(time.Hour),
+	}
+}
+
 func (c *issuanceServer) CertificateChallengeReady(
 	_ context.Context,
 	_ string,
@@ -715,6 +1139,15 @@ func (c *issuanceServer) CertificateChallengeReady(
 ) (serverv1.CertificateIssuance, error) {
 	c.t.Helper()
 	c.readyCalls++
+	if c.terminalFirst && c.issuances == 1 {
+		return serverv1.CertificateIssuance{
+			Id: c.currentIssuanceID, RouteId: "route_0123456789abcdef0123456789abcdef",
+			RouteVersion: c.currentVersion, Hostname: "route.example", AcmeProfile: "tlsserver",
+			Status:    serverv1.CertificateIssuanceStatusFailed,
+			Challenge: c.challenge(),
+			CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		}, nil
+	}
 	c.certificate = string(signCSR(c.t, c.lastCSR, "route.example"))
 	block, _ := pem.Decode([]byte(c.certificate))
 	leaf, err := x509.ParseCertificate(block.Bytes)
@@ -723,6 +1156,9 @@ func (c *issuanceServer) CertificateChallengeReady(
 	}
 	c.notBefore, c.notAfter = leaf.NotBefore, leaf.NotAfter
 	c.renewAt = time.Now().Add(30 * 24 * time.Hour).UTC()
+	if c.renewalDue {
+		c.renewAt = time.Now().Add(-time.Second).UTC()
+	}
 	return serverv1.CertificateIssuance{
 		Id: c.currentIssuanceID, RouteId: "route_0123456789abcdef0123456789abcdef",
 		RouteVersion: c.currentVersion, Hostname: "route.example", AcmeProfile: "tlsserver", Status: serverv1.CertificateIssuanceStatusWaitingForInstall,
@@ -747,6 +1183,10 @@ func (c *issuanceServer) CertificateInstalled(context.Context, string, uint64, s
 }
 
 func signCSR(t *testing.T, request *x509.CertificateRequest, hostname string) []byte {
+	return signCSRUntil(t, request, hostname, time.Now().Add(90*24*time.Hour))
+}
+
+func signCSRUntil(t *testing.T, request *x509.CertificateRequest, hostname string, notAfter time.Time) []byte {
 	t.Helper()
 	issuerKey, err := ecdsa.GenerateKey(request.PublicKey.(*ecdsa.PublicKey).Curve, rand.Reader)
 	if err != nil {
@@ -767,7 +1207,7 @@ func signCSR(t *testing.T, request *x509.CertificateRequest, hostname string) []
 	}
 	leaf := &x509.Certificate{
 		SerialNumber: big.NewInt(2), DNSNames: []string{hostname}, NotBefore: now.Add(-time.Minute),
-		NotAfter: now.Add(90 * 24 * time.Hour), KeyUsage: x509.KeyUsageDigitalSignature,
+		NotAfter: notAfter, KeyUsage: x509.KeyUsageDigitalSignature,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
 	leafDER, err := x509.CreateCertificate(rand.Reader, leaf, issuer, request.PublicKey, issuerKey)

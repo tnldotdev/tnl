@@ -2,6 +2,7 @@ package routes
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"time"
 
@@ -9,9 +10,32 @@ import (
 )
 
 const (
-	routeStateRetention = 365 * 24 * time.Hour
-	retentionBatchSize  = 5000
+	routeStateRetention     = 365 * 24 * time.Hour
+	routeStatePruneInterval = time.Hour
+	retentionBatchSize      = 5000
 )
+
+// RunStateRetention prunes obsolete route state immediately and at a bounded interval until ctx is canceled.
+func RunStateRetention(ctx context.Context, db *sql.DB, report func(error)) {
+	store := &Store{db: db, queries: statedb.New(db)}
+	for {
+		if err := store.pruneRouteState(ctx, time.Now()); err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			if report != nil {
+				report(err)
+			}
+		}
+		timer := time.NewTimer(routeStatePruneInterval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+	}
+}
 
 func (s *Store) pruneRouteState(ctx context.Context, now time.Time) error {
 	tx, err := s.db.BeginTx(ctx, nil)

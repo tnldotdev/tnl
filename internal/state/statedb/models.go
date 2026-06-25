@@ -32,20 +32,19 @@ type CertificateIssuance struct {
 	RouteID            string
 	RouteVersion       int64
 	Hostname           string
+	DirectoryUrl       string
 	AcmeProfile        string
 	Status             string
 	CsrDer             []byte
 	CsrHash            []byte
 	SpkiHash           []byte
+	OrderStartedAt     sql.NullInt64
 	OrderUrl           sql.NullString
-	AcmeStatus         sql.NullString
-	OrderAttempts      int64
 	OrderExpiresAt     sql.NullInt64
 	RetryAt            sql.NullInt64
 	AuthorizationUrl   sql.NullString
 	FinalizeUrl        sql.NullString
 	ChallengeUrl       sql.NullString
-	ChallengeToken     sql.NullString
 	ChallengeDigest    []byte
 	ChallengeExpiresAt sql.NullInt64
 	CertificateUrl     sql.NullString
@@ -53,8 +52,6 @@ type CertificateIssuance struct {
 	NotBefore          sql.NullInt64
 	NotAfter           sql.NullInt64
 	RenewAt            sql.NullInt64
-	InstalledAt        sql.NullInt64
-	ChallengeRemovedAt sql.NullInt64
 	LastError          sql.NullString
 	CreatedAt          int64
 	UpdatedAt          int64

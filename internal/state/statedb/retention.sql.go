@@ -40,13 +40,13 @@ WHERE id IN (
     FROM certificate_issuances AS issuance
     JOIN routes AS route ON route.id = issuance.route_id
     WHERE (
-        issuance.status IN ('failed', 'blocked', 'canceled')
+        issuance.status = 'failed'
             AND issuance.updated_at <= ?1
         OR issuance.status IN ('waiting_for_install', 'installed')
             AND issuance.not_after IS NOT NULL
             AND issuance.not_after <= CAST(?2 AS INTEGER)
         OR issuance.certificate_pem IS NULL
-            AND issuance.status NOT IN ('installed', 'failed', 'blocked', 'canceled')
+            AND issuance.status NOT IN ('installed', 'failed')
             AND issuance.order_expires_at IS NOT NULL
             AND issuance.order_expires_at <= CAST(?2 AS INTEGER)
 		OR issuance.route_version < route.route_version
@@ -54,8 +54,8 @@ WHERE id IN (
             AND issuance.updated_at <= ?3
     )
         AND NOT (
-            issuance.order_attempts > 0
-            AND issuance.created_at >= ?1
+            issuance.order_started_at IS NOT NULL
+            AND issuance.order_started_at >= ?1
         )
     ORDER BY issuance.updated_at, issuance.id
     LIMIT ?4

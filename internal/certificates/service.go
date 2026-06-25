@@ -51,6 +51,8 @@ type Service struct {
 	locks         [64]sync.Mutex
 }
 
+const retryDelay = 5 * time.Second
+
 // New constructs the durable ACME service and reconciles its persisted account.
 func New(ctx context.Context, db *sql.DB, config Config) (*Service, error) {
 	if strings.TrimSpace(config.DirectoryURL) == "" || strings.TrimSpace(config.Email) == "" ||
@@ -67,7 +69,7 @@ func New(ctx context.Context, db *sql.DB, config Config) (*Service, error) {
 	if config.HTTPClient == nil {
 		config.HTTPClient = &http.Client{Timeout: 30 * time.Second}
 	}
-	stored, err := newStore(db, config.Now)
+	stored, err := newStore(db, config.Now, config.DirectoryURL, config.ACMEProfile)
 	if err != nil {
 		return nil, err
 	}
@@ -135,90 +137,56 @@ func (s *Service) Create(
 	acmeProfile string,
 	csrDER []byte,
 ) (Issuance, error) {
+	if strings.TrimSpace(routeID) == "" || version == 0 || acmeProfile != s.acmeProfile {
+		return Issuance{}, ErrInvalidArgument
+	}
 	lock := s.routeLock(routeID)
 	lock.Lock()
 	defer lock.Unlock()
+
 	hostname, err := s.store.routeHostname(ctx, routeID, version)
 	if err != nil {
 		return Issuance{}, err
 	}
 	canonical, err := naming.CanonicalizeHostname(hostname)
-	if err != nil || canonical != hostname || strings.TrimSpace(routeID) == "" || version == 0 || acmeProfile != s.acmeProfile {
+	if err != nil || canonical != hostname {
 		return Issuance{}, ErrInvalidArgument
-	}
-	if s.hostnameReady != nil {
-		if err := s.hostnameReady(ctx, hostname); err != nil {
-			return Issuance{}, ErrUnavailable
-		}
 	}
 	_, csrHash, spkiHash, err := validateCSR(csrDER, hostname)
 	if err != nil {
 		return Issuance{}, err
 	}
-	// Recover bound or resumable work before allocating another ACME order.
+
 	issuance, err := s.store.findBoundIssuance(ctx, routeID, version, csrHash)
-	created := false
-	if errors.Is(err, ErrNotFound) {
-		resumable, resumeErr := s.store.findResumableIssuance(ctx, routeID, csrHash, s.now())
-		if resumeErr == nil {
-			issuance, err = s.store.rebindIssuance(ctx, resumable.ID, version)
-			if err != nil {
-				return Issuance{}, err
-			}
-			return s.continueIssuance(ctx, issuance)
-		}
-		if !errors.Is(resumeErr, ErrNotFound) {
-			return Issuance{}, resumeErr
-		}
-		if err := s.store.allowIssuanceCreation(ctx, routeID, version, csrHash, s.now()); err != nil {
+	if err == nil {
+		return s.drive(ctx, issuance, false)
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return Issuance{}, err
+	}
+
+	issuance, err = s.store.findRebindableIssuance(ctx, routeID, csrHash, s.now(), s.now().Add(24*time.Hour))
+	if err == nil {
+		issuance, err = s.store.rebindIssuance(ctx, issuance, version)
+		if err != nil {
 			return Issuance{}, err
 		}
-		issuance, created, err = s.store.createIssuance(
-			ctx, routeID, version, hostname, acmeProfile, csrDER, csrHash, spkiHash,
-		)
+		return s.drive(ctx, issuance, false)
 	}
+	if !errors.Is(err, ErrNotFound) {
+		return Issuance{}, err
+	}
+	if err := s.store.allowIssuanceCreation(ctx, routeID, version, csrHash, s.now()); err != nil {
+		return Issuance{}, err
+	}
+	if err := s.requireHostnameReady(ctx, hostname); err != nil {
+		return Issuance{}, err
+	}
+	issuance, _, err = s.store.createIssuance(ctx, routeID, version, hostname, csrDER, csrHash, spkiHash)
 	if err != nil {
 		return Issuance{}, err
 	}
-	if !created {
-		return s.continueIssuance(ctx, issuance)
-	}
-	if created {
-		reusable, reuseErr := s.store.findReusableIssuance(ctx, routeID, csrHash, s.now().Add(24*time.Hour))
-		if reuseErr == nil && reusable.RenewAt.After(s.now()) {
-			issuance.Status = StatusWaitingForInstall
-			issuance.CertificateURL = reusable.CertificateURL
-			issuance.CertificatePEM = bytes.Clone(reusable.CertificatePEM)
-			issuance.NotBefore = reusable.NotBefore
-			issuance.NotAfter = reusable.NotAfter
-			issuance.RenewAt = reusable.RenewAt
-			issuance.ChallengeRemoved = s.now()
-			if err := s.store.saveIssuance(ctx, issuance); err != nil {
-				return Issuance{}, err
-			}
-			return s.store.getIssuance(ctx, issuance.ID)
-		}
-		if reuseErr != nil && !errors.Is(reuseErr, ErrNotFound) {
-			return Issuance{}, reuseErr
-		}
-	}
-	return s.createOrder(ctx, issuance)
-}
-
-func (s *Service) continueIssuance(ctx context.Context, issuance Issuance) (Issuance, error) {
-	if issuance.RetryAt.After(s.now()) {
-		return issuance, nil
-	}
-	switch issuance.Status {
-	case StatusCreatingOrder:
-		return s.createOrder(ctx, issuance)
-	case StatusAuthorizing:
-		return s.prepareAuthorization(ctx, issuance)
-	case StatusReadyToFinalize, StatusFinalizing, StatusDownloading:
-		return s.advance(ctx, issuance)
-	default:
-		return issuance, nil
-	}
+	return s.drive(ctx, issuance, false)
 }
 
 func (s *Service) Get(ctx context.Context, id string) (Issuance, error) {
@@ -226,40 +194,18 @@ func (s *Service) Get(ctx context.Context, id string) (Issuance, error) {
 }
 
 func (s *Service) ChallengeReady(ctx context.Context, id string) (Issuance, error) {
-	issuance, err := s.store.getIssuance(ctx, id)
+	issuance, err := s.store.getCAIssuance(ctx, id)
 	if err != nil {
 		return Issuance{}, err
 	}
 	lock := s.routeLock(issuance.RouteID)
 	lock.Lock()
 	defer lock.Unlock()
-	issuance, err = s.store.getIssuance(ctx, id)
+	issuance, err = s.store.getCAIssuance(ctx, id)
 	if err != nil {
 		return Issuance{}, err
 	}
-	if issuance.Status == StatusWaitingForInstall || issuance.Status == StatusInstalled {
-		return issuance, nil
-	}
-	if issuance.RetryAt.After(s.now()) {
-		return Issuance{}, ErrUnavailable
-	}
-	if err := s.ensureCurrent(ctx, issuance); err != nil {
-		return Issuance{}, err
-	}
-	if issuance.ChallengeURL == "" || !issuance.ChallengeExpires.After(s.now()) {
-		return Issuance{}, ErrInvalidStatus
-	}
-	if err := s.probe(ctx, issuance); err != nil {
-		issuance.LastError = boundedError(err)
-		issuance.RetryAt = s.now().Add(5 * time.Second)
-		_ = s.store.saveIssuance(ctx, issuance)
-		return Issuance{}, fmt.Errorf("%w: routed TLS-ALPN probe: %v", ErrUnavailable, err)
-	}
-	// The probe may outlive this route version.
-	if err := s.ensureCurrent(ctx, issuance); err != nil {
-		return Issuance{}, err
-	}
-	return s.advance(ctx, issuance)
+	return s.drive(ctx, issuance, true)
 }
 
 func (s *Service) ChallengeRemoved(ctx context.Context, id string) (Issuance, error) {
@@ -270,22 +216,7 @@ func (s *Service) ChallengeRemoved(ctx context.Context, id string) (Issuance, er
 	lock := s.routeLock(issuance.RouteID)
 	lock.Lock()
 	defer lock.Unlock()
-	issuance, err = s.store.getIssuance(ctx, id)
-	if err != nil {
-		return Issuance{}, err
-	}
-	if len(issuance.CertificatePEM) == 0 {
-		return Issuance{}, ErrInvalidStatus
-	}
-	if err := s.ensureCurrent(ctx, issuance); err != nil {
-		return Issuance{}, err
-	}
-	issuance.ChallengeRemoved = s.now()
-	issuance.LastError = ""
-	if err := s.store.saveIssuance(ctx, issuance); err != nil {
-		return Issuance{}, err
-	}
-	return s.store.getIssuance(ctx, id)
+	return s.store.removeChallenge(ctx, id)
 }
 
 func (s *Service) Installed(ctx context.Context, id, routeID string, version uint64) (Issuance, error) {
@@ -296,50 +227,74 @@ func (s *Service) Installed(ctx context.Context, id, routeID string, version uin
 	lock := s.routeLock(issuance.RouteID)
 	lock.Lock()
 	defer lock.Unlock()
-	issuance, err = s.store.getIssuance(ctx, id)
-	if err != nil {
-		return Issuance{}, err
-	}
-	if issuance.RouteID != routeID || issuance.RouteVersion != version || len(issuance.CertificatePEM) == 0 ||
-		issuance.Status != StatusWaitingForInstall && issuance.Status != StatusInstalled || issuance.ChallengeRemoved.IsZero() {
+	return s.store.markInstalled(ctx, id, routeID, version)
+}
+
+func (s *Service) drive(ctx context.Context, issuance Issuance, challengeReady bool) (Issuance, error) {
+	if issuance.DirectoryURL != s.store.directoryURL || issuance.ACMEProfile != s.acmeProfile {
 		return Issuance{}, ErrInvalidStatus
 	}
-	if err := s.ensureCurrent(ctx, issuance); err != nil {
-		return Issuance{}, err
+	switch issuance.Status {
+	case StatusWaitingForInstall, StatusInstalled, StatusFailed:
+		return issuance, nil
+	case StatusCreatingOrder:
+		if !issuance.OrderStartedAt.IsZero() && issuance.OrderURL == "" {
+			return s.terminalFailure(ctx, issuance, "ACME order creation outcome is ambiguous; refusing to create a duplicate order")
+		}
+		if issuance.OrderURL != "" {
+			return s.terminalFailure(ctx, issuance, "creating ACME order has inconsistent persisted state")
+		}
+	case StatusAuthorizing, StatusReadyToFinalize, StatusFinalizing:
+		if !issuance.OrderExpires.IsZero() && !issuance.OrderExpires.After(s.now()) {
+			return s.terminalFailure(ctx, issuance, "ACME order expired")
+		}
+	case StatusWaitingChallenge:
+		if issuance.ChallengeURL == "" || issuance.ChallengeExpires.IsZero() {
+			return Issuance{}, ErrInvalidStatus
+		}
+		if !issuance.ChallengeExpires.After(s.now()) {
+			return s.reconcileExpiredChallenge(ctx, issuance)
+		}
+	default:
+		return Issuance{}, ErrInvalidStatus
 	}
-	issuance.Status = StatusInstalled
-	issuance.InstalledAt = s.now()
-	issuance.LastError = ""
-	if err := s.store.saveIssuance(ctx, issuance); err != nil {
-		return Issuance{}, err
+	if issuance.RetryAt.After(s.now()) {
+		return issuance, nil
 	}
-	return s.store.getIssuance(ctx, id)
+	switch issuance.Status {
+	case StatusCreatingOrder:
+		return s.createOrder(ctx, issuance)
+	case StatusAuthorizing:
+		return s.authorize(ctx, issuance)
+	case StatusWaitingChallenge:
+		if !challengeReady {
+			return issuance, nil
+		}
+		return s.completeChallenge(ctx, issuance)
+	case StatusReadyToFinalize:
+		return s.finalize(ctx, issuance)
+	case StatusFinalizing:
+		return s.reconcileFinalization(ctx, issuance)
+	default:
+		return issuance, nil
+	}
 }
 
 func (s *Service) createOrder(ctx context.Context, issuance Issuance) (Issuance, error) {
-	// A missing response URL makes blind retries risk duplicate orders.
-	if issuance.OrderAttempts != 0 {
-		issuance.Status = StatusBlocked
-		issuance.LastError = "ACME order creation outcome is ambiguous; refusing to create a duplicate order"
-		if err := s.store.saveIssuance(ctx, issuance); err != nil {
-			return Issuance{}, err
-		}
-		return Issuance{}, fmt.Errorf("%w: %s", ErrInvalidStatus, issuance.LastError)
-	}
-	issuance.OrderAttempts++
+	issuance.OrderStartedAt = s.now().UTC()
 	issuance.RetryAt = time.Time{}
+	issuance.LastError = ""
 	if err := s.store.saveIssuance(ctx, issuance); err != nil {
 		return Issuance{}, err
 	}
 	order, err := s.client.CreateOrder(ctx, []string{issuance.Hostname}, &legoapi.OrderOptions{Profile: issuance.ACMEProfile})
 	if err != nil {
-		return s.createOrderFailure(ctx, issuance, err)
+		return s.recordFailure(ctx, issuance, "create ACME order", err, true)
 	}
 	if order.Location == "" || order.Finalize == "" || len(order.Authorizations) != 1 || order.Profile != issuance.ACMEProfile {
 		return s.terminalFailure(ctx, issuance, "ACME order response is incomplete")
 	}
 	issuance.OrderURL = order.Location
-	issuance.ACMEStatus = order.Status
 	issuance.FinalizeURL = order.Finalize
 	if order.Expires != "" {
 		issuance.OrderExpires, err = time.Parse(time.RFC3339, order.Expires)
@@ -351,161 +306,208 @@ func (s *Service) createOrder(ctx context.Context, issuance Issuance) (Issuance,
 	issuance.Status = StatusAuthorizing
 	issuance.LastError = ""
 	issuance.RetryAt = time.Time{}
-	if err := s.store.saveIssuance(ctx, issuance); err != nil {
-		return Issuance{}, err
-	}
-	return s.prepareAuthorization(ctx, issuance)
+	return s.persist(ctx, issuance)
 }
 
-func (s *Service) prepareAuthorization(ctx context.Context, issuance Issuance) (Issuance, error) {
+func (s *Service) authorize(ctx context.Context, issuance Issuance) (Issuance, error) {
+	if issuance.AuthorizationURL == "" {
+		return s.terminalFailure(ctx, issuance, "ACME authorization URL is missing")
+	}
 	authorization, err := s.client.GetAuthorization(ctx, issuance.AuthorizationURL)
 	if err != nil {
-		return s.transientFailure(ctx, issuance, "read ACME authorization", err)
+		return s.recordFailure(ctx, issuance, "read ACME authorization", err, false)
 	}
-	if authorization.Identifier.Type != "dns" || authorization.Identifier.Value != issuance.Hostname || authorization.Wildcard {
-		return s.terminalFailure(ctx, issuance, "ACME authorization changed the identifier")
+	if err := validateAuthorization(authorization, issuance.Hostname); err != nil {
+		return s.terminalFailure(ctx, issuance, err.Error())
 	}
-	if authorization.Status == legoacme.StatusValid {
-		issuance.ACMEStatus = authorization.Status
+	switch authorization.Status {
+	case legoacme.StatusValid:
 		issuance.Status = StatusReadyToFinalize
-		if err := s.store.saveIssuance(ctx, issuance); err != nil {
-			return Issuance{}, err
+		issuance.RetryAt = time.Time{}
+		issuance.LastError = ""
+		return s.persist(ctx, issuance)
+	case legoacme.StatusPending:
+		challenge, digest, expires, err := s.challengeMaterial(authorization)
+		if err != nil {
+			return s.terminalFailure(ctx, issuance, err.Error())
 		}
-		return s.advance(ctx, issuance)
+		if !expires.After(s.now()) {
+			return s.terminalFailure(ctx, issuance, "ACME authorization is expired")
+		}
+		issuance.Status = StatusWaitingChallenge
+		issuance.ChallengeURL = challenge.URL
+		issuance.ChallengeDigest = digest
+		issuance.ChallengeExpires = expires
+		issuance.RetryAt = time.Time{}
+		issuance.LastError = ""
+		return s.persist(ctx, issuance)
+	default:
+		return s.terminalFailure(ctx, issuance, "ACME authorization is not pending or valid")
 	}
-	if authorization.Status != legoacme.StatusPending {
-		return s.terminalFailure(ctx, issuance, "ACME authorization is not pending")
+}
+
+func (s *Service) completeChallenge(ctx context.Context, issuance Issuance) (Issuance, error) {
+	if err := s.probe(ctx, issuance); err != nil {
+		return s.recordFailure(ctx, issuance, "probe routed TLS-ALPN challenge", err, false)
 	}
-	challenge, err := tlsALPNChallenge(authorization)
+	authorization, err := s.client.GetAuthorization(ctx, issuance.AuthorizationURL)
+	if err != nil {
+		return s.recordFailure(ctx, issuance, "reconcile ACME authorization", err, false)
+	}
+	if err := validateAuthorization(authorization, issuance.Hostname); err != nil {
+		return s.terminalFailure(ctx, issuance, err.Error())
+	}
+	challenge, digest, _, err := s.challengeMaterial(authorization)
 	if err != nil {
 		return s.terminalFailure(ctx, issuance, err.Error())
 	}
-	keyAuthorization, err := s.client.KeyAuthorization(challenge.Token)
-	if err != nil {
-		return s.terminalFailure(ctx, issuance, "derive ACME key authorization")
+	if challenge.URL != issuance.ChallengeURL || digest != issuance.ChallengeDigest {
+		return s.terminalFailure(ctx, issuance, "ACME TLS-ALPN-01 challenge changed")
 	}
-	issuance.ChallengeURL = challenge.URL
-	issuance.ChallengeToken = challenge.Token
-	issuance.ChallengeDigest = sha256.Sum256([]byte(keyAuthorization))
-	issuance.ChallengeExpires = authorization.Expires
-	if issuance.ChallengeExpires.IsZero() {
-		issuance.ChallengeExpires = s.now().Add(defaultChallengeTimeout)
+	switch authorization.Status {
+	case legoacme.StatusValid:
+		issuance.Status = StatusReadyToFinalize
+		issuance.RetryAt = time.Time{}
+		issuance.LastError = ""
+		return s.persist(ctx, issuance)
+	case legoacme.StatusProcessing:
+		return s.persistRetry(ctx, issuance, retryDelay)
+	case legoacme.StatusPending:
+		switch challenge.Status {
+		case legoacme.StatusPending:
+			hostname, err := s.store.routeHostname(ctx, issuance.RouteID, issuance.RouteVersion)
+			if err != nil {
+				return Issuance{}, err
+			}
+			if hostname != issuance.Hostname {
+				return Issuance{}, ErrInvalidStatus
+			}
+			accepted, err := s.client.AcceptChallenge(ctx, issuance.ChallengeURL)
+			if err != nil {
+				return s.recordFailure(ctx, issuance, "accept ACME challenge", err, false)
+			}
+			delay := accepted.RetryAfter
+			if delay <= 0 {
+				delay = retryDelay
+			}
+			return s.persistRetry(ctx, issuance, delay)
+		case legoacme.StatusProcessing, legoacme.StatusValid:
+			return s.persistRetry(ctx, issuance, retryDelay)
+		case legoacme.StatusInvalid:
+			return s.terminalFailure(ctx, issuance, "ACME TLS-ALPN-01 challenge became invalid")
+		default:
+			return s.terminalFailure(ctx, issuance, "ACME TLS-ALPN-01 challenge has an invalid status")
+		}
+	default:
+		return s.terminalFailure(ctx, issuance, "ACME authorization became invalid")
 	}
-	if !issuance.ChallengeExpires.After(s.now()) {
-		return s.terminalFailure(ctx, issuance, "ACME authorization is expired")
-	}
-	issuance.Status = StatusWaitingChallenge
-	issuance.ACMEStatus = authorization.Status
-	issuance.LastError = ""
-	issuance.RetryAt = time.Time{}
-	if err := s.store.saveIssuance(ctx, issuance); err != nil {
-		return Issuance{}, err
-	}
-	return s.store.getIssuance(ctx, issuance.ID)
 }
 
-func (s *Service) advance(ctx context.Context, issuance Issuance) (Issuance, error) {
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-	defer cancel()
-	if issuance.Status == StatusWaitingChallenge || issuance.Status == StatusValidating {
-		issuance.Status = StatusValidating
-		issuance.LastError = ""
-		if err := s.store.saveIssuance(ctx, issuance); err != nil {
-			return Issuance{}, err
-		}
-		authorization, err := s.client.GetAuthorization(ctx, issuance.AuthorizationURL)
-		if err != nil {
-			return s.transientFailure(ctx, issuance, "reconcile ACME authorization", err)
-		}
-		if authorization.Identifier.Type != "dns" || authorization.Identifier.Value != issuance.Hostname || authorization.Wildcard {
-			return s.terminalFailure(ctx, issuance, "ACME authorization changed the identifier")
-		}
-		switch authorization.Status {
-		case legoacme.StatusPending:
-			challenge, challengeErr := tlsALPNChallenge(authorization)
-			if challengeErr != nil {
-				return s.terminalFailure(ctx, issuance, challengeErr.Error())
-			}
-			if challenge.URL != issuance.ChallengeURL || challenge.Token != issuance.ChallengeToken {
-				return s.terminalFailure(ctx, issuance, "ACME TLS-ALPN-01 challenge changed")
-			}
-			switch challenge.Status {
-			case legoacme.StatusPending:
-				if err := s.ensureCurrent(ctx, issuance); err != nil {
-					return Issuance{}, err
-				}
-				if _, err := s.client.AcceptChallenge(ctx, issuance.ChallengeURL); err != nil {
-					return s.transientFailure(ctx, issuance, "accept ACME challenge", err)
-				}
-			case legoacme.StatusProcessing, legoacme.StatusValid:
-				// The previous acceptance reached the CA; reconcile instead of replaying it.
-			case legoacme.StatusInvalid:
-				return s.terminalFailure(ctx, issuance, "ACME TLS-ALPN-01 challenge became invalid")
-			default:
-				return s.terminalFailure(ctx, issuance, "ACME TLS-ALPN-01 challenge has an invalid status")
-			}
-		case legoacme.StatusProcessing, legoacme.StatusValid:
-		default:
-			return s.terminalFailure(ctx, issuance, "ACME authorization became invalid")
-		}
-		if authorization.Status != legoacme.StatusValid {
-			authorization, err = s.waitAuthorization(ctx, issuance.AuthorizationURL)
-			if err != nil {
-				return s.transientFailure(ctx, issuance, "wait for ACME authorization", err)
-			}
-		}
-		if authorization.Status != legoacme.StatusValid {
-			return s.terminalFailure(ctx, issuance, "ACME authorization became invalid")
-		}
-		issuance.ACMEStatus = authorization.Status
-		issuance.Status = StatusReadyToFinalize
-		if err := s.store.saveIssuance(ctx, issuance); err != nil {
-			return Issuance{}, err
-		}
+func (s *Service) reconcileExpiredChallenge(ctx context.Context, issuance Issuance) (Issuance, error) {
+	authorization, err := s.client.GetAuthorization(ctx, issuance.AuthorizationURL)
+	if err != nil {
+		return s.recordFailure(ctx, issuance, "reconcile expired ACME authorization", err, false)
 	}
+	if err := validateAuthorization(authorization, issuance.Hostname); err != nil {
+		return s.terminalFailure(ctx, issuance, err.Error())
+	}
+	if authorization.Status != legoacme.StatusValid {
+		return s.terminalFailure(ctx, issuance, "ACME authorization challenge expired")
+	}
+	issuance.Status = StatusReadyToFinalize
+	issuance.RetryAt = time.Time{}
+	issuance.LastError = ""
+	return s.persist(ctx, issuance)
+}
 
+func (s *Service) finalize(ctx context.Context, issuance Issuance) (Issuance, error) {
 	order, err := s.client.GetOrder(ctx, issuance.OrderURL)
 	if err != nil {
-		return s.transientFailure(ctx, issuance, "reconcile ACME order", err)
+		return s.recordFailure(ctx, issuance, "reconcile ACME order", err, false)
 	}
-	if order.Status == legoacme.StatusPending {
-		order, err = s.waitOrder(ctx, issuance.OrderURL, legoacme.StatusReady, legoacme.StatusValid)
-		if err != nil {
-			return s.transientFailure(ctx, issuance, "wait for ready ACME order", err)
-		}
+	if err := validateOrder(order, issuance.OrderURL, issuance.ACMEProfile); err != nil {
+		return s.terminalFailure(ctx, issuance, err.Error())
 	}
-	issuance.ACMEStatus = order.Status
-	if order.Status == legoacme.StatusReady {
-		if err := s.ensureCurrent(ctx, issuance); err != nil {
-			return Issuance{}, err
-		}
+	switch order.Status {
+	case legoacme.StatusPending, legoacme.StatusProcessing:
+		return s.persistRetry(ctx, issuance, retryDelay)
+	case legoacme.StatusValid:
+		return s.downloadOrderCertificate(ctx, issuance, order)
+	case legoacme.StatusReady:
 		issuance.Status = StatusFinalizing
-		if err := s.store.saveIssuance(ctx, issuance); err != nil {
+		issuance.RetryAt = time.Time{}
+		issuance.LastError = ""
+		var err error
+		issuance, err = s.persist(ctx, issuance)
+		if err != nil {
 			return Issuance{}, err
 		}
 		order, err = s.client.FinalizeOrder(ctx, issuance.FinalizeURL, issuance.CSRDER)
 		if err != nil {
-			return s.transientFailure(ctx, issuance, "finalize ACME order", err)
+			var limited *legoacme.RateLimitedError
+			var problem *legoacme.ProblemDetails
+			if errors.As(err, &limited) || errors.As(err, &problem) &&
+				(problem.Type == legoacme.BadNonceErrorType || problem.HTTPStatus == http.StatusTooManyRequests) {
+				issuance.Status = StatusReadyToFinalize
+			}
+			return s.recordFailure(ctx, issuance, "finalize ACME order", err, false)
 		}
-	}
-	if order.Status == legoacme.StatusProcessing || order.Status == legoacme.StatusReady {
-		order, err = s.waitOrder(ctx, issuance.OrderURL, legoacme.StatusValid)
-		if err != nil {
-			return s.transientFailure(ctx, issuance, "wait for finalized ACME order", err)
+		if err := validateOrder(order, issuance.OrderURL, issuance.ACMEProfile); err != nil {
+			return s.terminalFailure(ctx, issuance, err.Error())
 		}
+		switch order.Status {
+		case legoacme.StatusValid:
+			return s.downloadOrderCertificate(ctx, issuance, order)
+		case legoacme.StatusPending, legoacme.StatusProcessing, legoacme.StatusReady:
+			return s.persistRetry(ctx, issuance, retryDelay)
+		default:
+			return s.terminalFailure(ctx, issuance, "ACME finalization was rejected")
+		}
+	default:
+		return s.terminalFailure(ctx, issuance, "ACME order cannot be finalized")
 	}
-	if order.Status != legoacme.StatusValid || order.Certificate == "" {
-		return s.terminalFailure(ctx, issuance, "ACME order did not become valid")
+}
+
+func (s *Service) reconcileFinalization(ctx context.Context, issuance Issuance) (Issuance, error) {
+	order, err := s.client.GetOrder(ctx, issuance.OrderURL)
+	if err != nil {
+		return s.recordFailure(ctx, issuance, "reconcile finalized ACME order", err, false)
 	}
-	issuance.ACMEStatus = order.Status
-	issuance.Status = StatusDownloading
+	if err := validateOrder(order, issuance.OrderURL, issuance.ACMEProfile); err != nil {
+		return s.terminalFailure(ctx, issuance, err.Error())
+	}
+	switch order.Status {
+	case legoacme.StatusValid:
+		return s.downloadOrderCertificate(ctx, issuance, order)
+	case legoacme.StatusPending, legoacme.StatusProcessing, legoacme.StatusReady:
+		return s.persistRetry(ctx, issuance, retryDelay)
+	default:
+		return s.terminalFailure(ctx, issuance, "ACME finalized order became invalid")
+	}
+}
+
+func (s *Service) downloadOrderCertificate(
+	ctx context.Context,
+	issuance Issuance,
+	order legoacme.ExtendedOrder,
+) (Issuance, error) {
+	if order.Certificate == "" {
+		return s.terminalFailure(ctx, issuance, "ACME valid order omitted its certificate URL")
+	}
 	issuance.CertificateURL = order.Certificate
-	if err := s.store.saveIssuance(ctx, issuance); err != nil {
+	issuance.RetryAt = time.Time{}
+	issuance.LastError = ""
+	var err error
+	issuance, err = s.persist(ctx, issuance)
+	if err != nil {
 		return Issuance{}, err
 	}
 	raw, err := s.client.GetCertificate(ctx, issuance.CertificateURL)
 	if err != nil {
-		return s.transientFailure(ctx, issuance, "download ACME certificate", err)
+		return s.recordFailure(ctx, issuance, "download ACME certificate", err, false)
+	}
+	if raw == nil {
+		return s.terminalFailure(ctx, issuance, "ACME certificate response is empty")
 	}
 	certificatePEM := raw.Cert
 	if len(raw.Issuer) != 0 && !bytes.HasSuffix(certificatePEM, raw.Issuer) {
@@ -520,39 +522,27 @@ func (s *Service) advance(ctx context.Context, issuance Issuance) (Issuance, err
 	issuance.NotBefore = leaf.NotBefore.UTC()
 	issuance.NotAfter = leaf.NotAfter.UTC()
 	issuance.RenewAt = renewalTime(issuance.ID, issuance.NotBefore, issuance.NotAfter)
-	issuance.LastError = ""
 	issuance.RetryAt = time.Time{}
-	if err := s.store.saveIssuance(ctx, issuance); err != nil {
-		return Issuance{}, err
-	}
-	return s.store.getIssuance(ctx, issuance.ID)
+	issuance.LastError = ""
+	return s.persist(ctx, issuance)
 }
 
-func (s *Service) createOrderFailure(ctx context.Context, issuance Issuance, cause error) (Issuance, error) {
-	// Only explicit retryable rejections clear the duplicate-order fence.
-	var limited *legoacme.RateLimitedError
-	if errors.As(cause, &limited) {
-		issuance.OrderAttempts = 0
-		delay := limited.RetryAfter
-		if delay <= 0 {
-			delay = 5 * time.Second
-		}
-		issuance.LastError = boundedError(fmt.Errorf("create ACME order: %w", cause))
-		issuance.RetryAt = s.now().Add(delay)
-		if err := s.store.saveIssuance(ctx, issuance); err != nil {
-			return Issuance{}, err
-		}
-		return Issuance{}, &RateLimitError{RetryAt: issuance.RetryAt}
+func (s *Service) challengeMaterial(
+	authorization legoacme.Authorization,
+) (legoacme.Challenge, [sha256.Size]byte, time.Time, error) {
+	challenge, err := tlsALPNChallenge(authorization)
+	if err != nil {
+		return legoacme.Challenge{}, [sha256.Size]byte{}, time.Time{}, err
 	}
-	var problem *legoacme.ProblemDetails
-	if !errors.As(cause, &problem) || problem.HTTPStatus >= http.StatusInternalServerError {
-		return s.transientFailure(ctx, issuance, "create ACME order", cause)
+	keyAuthorization, err := s.client.KeyAuthorization(challenge.Token)
+	if err != nil {
+		return legoacme.Challenge{}, [sha256.Size]byte{}, time.Time{}, errors.New("derive ACME key authorization")
 	}
-	if problem.Type == legoacme.BadNonceErrorType {
-		issuance.OrderAttempts = 0
-		return s.transientFailure(ctx, issuance, "create ACME order", cause)
+	expires := authorization.Expires
+	if expires.IsZero() {
+		expires = s.now().Add(defaultChallengeTimeout)
 	}
-	return s.terminalFailure(ctx, issuance, boundedError(fmt.Errorf("create ACME order: %w", cause)))
+	return challenge, sha256.Sum256([]byte(keyAuthorization)), expires.UTC(), nil
 }
 
 func tlsALPNChallenge(authorization legoacme.Authorization) (legoacme.Challenge, error) {
@@ -567,54 +557,122 @@ func tlsALPNChallenge(authorization legoacme.Authorization) (legoacme.Challenge,
 	return legoacme.Challenge{}, errors.New("ACME authorization omitted TLS-ALPN-01")
 }
 
-func (s *Service) waitAuthorization(ctx context.Context, authorizationURL string) (legoacme.Authorization, error) {
-	for {
-		authorization, err := s.client.GetAuthorization(ctx, authorizationURL)
-		if err != nil {
-			return legoacme.Authorization{}, err
-		}
-		if authorization.Status != legoacme.StatusPending && authorization.Status != legoacme.StatusProcessing {
-			return authorization, nil
-		}
-		if err := waitPoll(ctx); err != nil {
-			return legoacme.Authorization{}, err
-		}
+func validateAuthorization(authorization legoacme.Authorization, hostname string) error {
+	if authorization.Identifier.Type != "dns" || authorization.Identifier.Value != hostname || authorization.Wildcard {
+		return errors.New("ACME authorization changed the identifier")
 	}
+	return nil
 }
 
-func (s *Service) waitOrder(ctx context.Context, orderURL string, wanted ...string) (legoacme.ExtendedOrder, error) {
-	for {
-		order, err := s.client.GetOrder(ctx, orderURL)
-		if err != nil {
-			return legoacme.ExtendedOrder{}, err
-		}
-		if order.Status == legoacme.StatusInvalid {
-			return order, errors.New("ACME order is invalid")
-		}
-		for _, status := range wanted {
-			if order.Status == status {
-				return order, nil
-			}
-		}
-		if err := waitPoll(ctx); err != nil {
-			return legoacme.ExtendedOrder{}, err
-		}
+func validateOrder(order legoacme.ExtendedOrder, orderURL, acmeProfile string) error {
+	if order.Location != "" && order.Location != orderURL {
+		return errors.New("ACME order response changed its URL")
 	}
+	if order.Profile != "" && order.Profile != acmeProfile {
+		return errors.New("ACME order response changed its profile")
+	}
+	return nil
 }
 
-func (s *Service) transientFailure(ctx context.Context, issuance Issuance, operation string, cause error) (Issuance, error) {
+func (s *Service) persistRetry(ctx context.Context, issuance Issuance, delay time.Duration) (Issuance, error) {
+	issuance.RetryAt = s.now().Add(delay).UTC()
+	issuance.LastError = ""
+	return s.persist(ctx, issuance)
+}
+
+func (s *Service) persist(ctx context.Context, issuance Issuance) (Issuance, error) {
+	if err := s.store.saveIssuance(ctx, issuance); err != nil {
+		return Issuance{}, err
+	}
+	return s.store.getIssuance(ctx, issuance.ID)
+}
+
+func (s *Service) recordFailure(
+	ctx context.Context,
+	issuance Issuance,
+	operation string,
+	cause error,
+	orderCreation bool,
+) (Issuance, error) {
+	if ctx.Err() != nil {
+		if context.Cause(ctx) != nil {
+			return Issuance{}, context.Cause(ctx)
+		}
+		return Issuance{}, ctx.Err()
+	}
 	issuance.LastError = boundedError(fmt.Errorf("%s: %w", operation, cause))
-	issuance.RetryAt = s.now().Add(5 * time.Second)
-	_ = s.store.saveIssuance(ctx, issuance)
-	return Issuance{}, fmt.Errorf("%w: %s: %v", ErrUnavailable, operation, cause)
+
+	var limited *legoacme.RateLimitedError
+	if errors.As(cause, &limited) {
+		if orderCreation {
+			issuance.OrderStartedAt = time.Time{}
+		}
+		delay := limited.RetryAfter
+		if delay <= 0 {
+			delay = retryDelay
+		}
+		issuance.RetryAt = s.now().Add(delay).UTC()
+		if _, err := s.persist(ctx, issuance); err != nil {
+			return Issuance{}, err
+		}
+		return Issuance{}, &RateLimitError{RetryAt: issuance.RetryAt}
+	}
+
+	var problem *legoacme.ProblemDetails
+	if errors.As(cause, &problem) {
+		if problem.Type == legoacme.BadNonceErrorType {
+			if orderCreation {
+				issuance.OrderStartedAt = time.Time{}
+			}
+			issuance.RetryAt = s.now().Add(retryDelay).UTC()
+			if _, err := s.persist(ctx, issuance); err != nil {
+				return Issuance{}, err
+			}
+			return Issuance{}, fmt.Errorf("%w: %s", ErrUnavailable, issuance.LastError)
+		}
+		if problem.HTTPStatus == http.StatusTooManyRequests {
+			if orderCreation {
+				issuance.OrderStartedAt = time.Time{}
+			}
+			issuance.RetryAt = s.now().Add(retryDelay).UTC()
+			if _, err := s.persist(ctx, issuance); err != nil {
+				return Issuance{}, err
+			}
+			return Issuance{}, &RateLimitError{RetryAt: issuance.RetryAt}
+		}
+		if problem.HTTPStatus >= http.StatusBadRequest && problem.HTTPStatus < http.StatusInternalServerError {
+			return s.terminalFailure(ctx, issuance, issuance.LastError)
+		}
+	}
+
+	issuance.RetryAt = s.now().Add(retryDelay).UTC()
+	if _, err := s.persist(ctx, issuance); err != nil {
+		return Issuance{}, err
+	}
+	return Issuance{}, fmt.Errorf("%w: %s", ErrUnavailable, issuance.LastError)
 }
 
 func (s *Service) terminalFailure(ctx context.Context, issuance Issuance, message string) (Issuance, error) {
 	issuance.Status = StatusFailed
 	issuance.LastError = boundedError(errors.New(message))
 	issuance.RetryAt = time.Time{}
-	_ = s.store.saveIssuance(ctx, issuance)
-	return Issuance{}, fmt.Errorf("%w: %s", ErrInvalidStatus, message)
+	return s.persist(ctx, issuance)
+}
+
+func (s *Service) requireHostnameReady(ctx context.Context, hostname string) error {
+	if s.hostnameReady == nil {
+		return nil
+	}
+	if err := s.hostnameReady(ctx, hostname); err != nil {
+		if ctx.Err() != nil {
+			if context.Cause(ctx) != nil {
+				return context.Cause(ctx)
+			}
+			return ctx.Err()
+		}
+		return fmt.Errorf("%w: hostname DNS is not ready: %v", ErrUnavailable, err)
+	}
+	return nil
 }
 
 func loadOrCreateAccount(
@@ -651,19 +709,6 @@ func loadOrCreateAccount(
 	return value, signer, nil
 }
 
-var pollInterval = time.Second
-
-func waitPoll(ctx context.Context) error {
-	timer := time.NewTimer(pollInterval)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
-}
-
 func boundedError(err error) string {
 	if err == nil {
 		return ""
@@ -682,15 +727,4 @@ func (s *Service) routeLock(routeID string) *sync.Mutex {
 		hash *= 16777619
 	}
 	return &s.locks[hash%uint32(len(s.locks))]
-}
-
-func (s *Service) ensureCurrent(ctx context.Context, issuance Issuance) error {
-	hostname, err := s.store.routeHostname(ctx, issuance.RouteID, issuance.RouteVersion)
-	if err != nil {
-		return err
-	}
-	if hostname != issuance.Hostname {
-		return ErrInvalidStatus
-	}
-	return nil
 }

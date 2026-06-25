@@ -11,6 +11,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -19,6 +20,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/proxyproto"
@@ -236,7 +238,91 @@ func TestManualCertificateRetainsStandardTLSCompatibility(t *testing.T) {
 	}
 }
 
+func TestManualCertificateExpires(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		certificate := routeTestCertificate(t, "route.example")
+		route, err := NewRoute(RouteConfig{
+			Hostname: "route.example", Target: "http://127.0.0.1:3000", Certificate: certificate,
+			AllowedClient: key.NewNode().Public(), RelayRegion: "test", Regions: map[string]*tailcfg.DERPRegion{"test": {
+				RegionID: 1, Nodes: []*tailcfg.DERPNode{{RegionID: 1, HostName: "derp.example"}},
+			}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer route.Close()
+
+		<-route.certificateExpiration()
+		if _, err := route.getCertificate(&tls.ClientHelloInfo{
+			ServerName: "route.example", SupportedProtos: []string{"http/1.1"},
+		}); !errors.Is(err, errCertificateExpired) {
+			t.Fatalf("certificate selection after expiry = %v", err)
+		}
+	})
+}
+
+func TestCertificateReplacementAndExpirationAreAtomic(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		first := routeTestCertificateUntil(t, "route.example", time.Now().Add(time.Hour))
+		route, err := NewRoute(RouteConfig{
+			Hostname: "route.example", Target: "http://127.0.0.1:3000", Certificate: first,
+			AllowedClient: key.NewNode().Public(), RelayRegion: "test", Regions: map[string]*tailcfg.DERPRegion{"test": {
+				RegionID: 1, Nodes: []*tailcfg.DERPNode{{RegionID: 1, HostName: "derp.example"}},
+			}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer route.Close()
+
+		time.Sleep(30 * time.Minute)
+		replacement := routeTestCertificateUntil(t, "route.example", time.Now().Add(2*time.Hour))
+		if err := route.InstallCertificate(replacement); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(31 * time.Minute)
+		select {
+		case <-route.certificateExpiration():
+			t.Fatal("replaced certificate's old timer expired the route")
+		default:
+		}
+		<-route.certificateExpiration()
+		if err := route.InstallCertificate(routeTestCertificate(t, "route.example")); !errors.Is(err, errCertificateExpired) {
+			t.Fatalf("replacement after expiration = %v", err)
+		}
+	})
+}
+
+func TestReadyCallbackIsNotCalledAfterCertificateExpiry(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		route, err := NewRoute(RouteConfig{
+			Hostname: "route.example", Target: "http://127.0.0.1:3000",
+			Certificate: routeTestCertificate(t, "route.example"), AllowedClient: key.NewNode().Public(),
+			RelayRegion: "test", Regions: map[string]*tailcfg.DERPRegion{"test": {
+				RegionID: 1, Nodes: []*tailcfg.DERPNode{{RegionID: 1, HostName: "derp.example"}},
+			}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer route.Close()
+		<-route.certificateExpiration()
+		calls := 0
+		err = route.withValidCertificate(func() error {
+			calls++
+			return nil
+		})
+		if !errors.Is(err, errCertificateExpired) || calls != 0 {
+			t.Fatalf("ready after expiration = %v, calls = %d", err, calls)
+		}
+	})
+}
+
 func routeTestCertificate(t *testing.T, hostname string) tls.Certificate {
+	return routeTestCertificateUntil(t, hostname, time.Now().Add(time.Hour))
+}
+
+func routeTestCertificateUntil(t *testing.T, hostname string, notAfter time.Time) tls.Certificate {
 	t.Helper()
 	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -244,7 +330,7 @@ func routeTestCertificate(t *testing.T, hostname string) tls.Certificate {
 	}
 	template := &x509.Certificate{
 		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: hostname}, DNSNames: []string{hostname},
-		NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(time.Hour),
+		NotBefore: time.Now().Add(-time.Minute), NotAfter: notAfter,
 		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
 	der, err := x509.CreateCertificate(rand.Reader, template, template, privateKey.Public(), privateKey)

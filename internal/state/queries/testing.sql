@@ -51,7 +51,7 @@ ORDER BY position;
 SELECT COUNT(*) FROM route_authorization_uses;
 
 -- name: GetLatestCertificateIssuanceStatus :one
-SELECT status, installed_at, challenge_removed_at
+SELECT status, challenge_url
 FROM certificate_issuances
 WHERE route_id = sqlc.arg(route_id)
 ORDER BY route_version DESC

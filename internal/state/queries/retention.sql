@@ -38,13 +38,13 @@ WHERE id IN (
     FROM certificate_issuances AS issuance
     JOIN routes AS route ON route.id = issuance.route_id
     WHERE (
-        issuance.status IN ('failed', 'blocked', 'canceled')
+        issuance.status = 'failed'
             AND issuance.updated_at <= sqlc.arg(attempt_cutoff)
         OR issuance.status IN ('waiting_for_install', 'installed')
             AND issuance.not_after IS NOT NULL
             AND issuance.not_after <= CAST(sqlc.arg(now) AS INTEGER)
         OR issuance.certificate_pem IS NULL
-            AND issuance.status NOT IN ('installed', 'failed', 'blocked', 'canceled')
+            AND issuance.status NOT IN ('installed', 'failed')
             AND issuance.order_expires_at IS NOT NULL
             AND issuance.order_expires_at <= CAST(sqlc.arg(now) AS INTEGER)
 		OR issuance.route_version < route.route_version
@@ -52,8 +52,8 @@ WHERE id IN (
             AND issuance.updated_at <= sqlc.arg(retention_cutoff)
     )
         AND NOT (
-            issuance.order_attempts > 0
-            AND issuance.created_at >= sqlc.arg(attempt_cutoff)
+            issuance.order_started_at IS NOT NULL
+            AND issuance.order_started_at >= sqlc.arg(attempt_cutoff)
         )
     ORDER BY issuance.updated_at, issuance.id
     LIMIT sqlc.arg(batch_size)
