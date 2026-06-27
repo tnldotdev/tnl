@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -17,7 +16,7 @@ import (
 const testLoginToken = "tnl_login_AAECAwQFBgcICQoLDA0ODw.EBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8"
 
 func TestHealthAndReadiness(t *testing.T) {
-	cfg := config.TNLD{ServerDomain: "example.com", ManagedDeploymentDomain: "example.com"}
+	cfg := Config{ServerDomain: "example.com", ManagedDeploymentDomain: "example.com"}
 	ready := new(bool)
 	handler := NewHandler(cfg, nil, func(context.Context) error {
 		if !*ready {
@@ -50,7 +49,7 @@ func TestHealthAndReadiness(t *testing.T) {
 }
 
 func TestUnavailableOperationsFailClosed(t *testing.T) {
-	handler := NewHandler(config.TNLD{ServerDomain: "example.com", ManagedDeploymentDomain: "example.com"}, nil, func(context.Context) error { return nil })
+	handler := NewHandler(Config{ServerDomain: "example.com", ManagedDeploymentDomain: "example.com"}, nil, func(context.Context) error { return nil })
 	for _, path := range []string{"/v1/admin/status", "/v1/teams", "/not-an-api"} {
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
@@ -85,7 +84,7 @@ func TestPublisherConnectionResponsesExposeClosedSlotsAsReplacing(t *testing.T) 
 
 func TestControlDiscoveryAdvertisesAuthorityEndpoint(t *testing.T) {
 	endpoint := "https://authority.example"
-	result := controlDiscovery(config.TNLD{
+	result := controlDiscovery(Config{
 		ManagedDeploymentDomain: "example",
 		AuthorityEndpoint:       endpoint,
 		LoginToken:              testLoginToken,

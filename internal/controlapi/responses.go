@@ -6,7 +6,6 @@ import (
 	"encoding/binary"
 
 	openapi_types "github.com/oapi-codegen/runtime/types"
-	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -118,7 +117,7 @@ func serviceEnrollmentTokenResponse(token controlstate.ServiceEnrollmentToken) c
 }
 
 func serviceEnrollmentResponse(
-	cfg config.TNLD,
+	cfg Config,
 	enrollment controlstate.ServiceEnrollment,
 ) controlv1.ServiceEnrollmentResponse {
 	response := controlv1.ServiceEnrollmentResponse{
@@ -126,10 +125,10 @@ func serviceEnrollmentResponse(
 		TrustBundle: enrollment.TrustBundlePEM, CertificateExpiresAt: enrollment.CertificateExpiresAt,
 	}
 	if enrollment.Role == controlstate.ServiceEnrollmentRoleIngress {
-		response.InternalControlEndpoint = cfg.IngressControlEndpoint()
+		response.InternalControlEndpoint = cfg.IngressControlEndpoint
 		return response
 	}
-	response.InternalControlEndpoint = cfg.RelayControlEndpoint()
+	response.InternalControlEndpoint = cfg.RelayControlEndpoint
 	response.RelayServiceId = &enrollment.RelayServiceID
 	response.RelayAddress = &enrollment.RelayAddress
 	response.TlsServerName = &enrollment.TLSServerName

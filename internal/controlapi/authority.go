@@ -24,7 +24,7 @@ func (h *handler) ExchangeLoginToken(response http.ResponseWriter, request *http
 		return
 	}
 	issued, err := h.store.CreateBuiltinControlSession(
-		request.Context(), h.config.ManagedDomain(), h.loginSourceRevision,
+		request.Context(), h.config.ManagedDeploymentDomain, h.loginSourceRevision,
 		h.config.AccessTokenLifetime, h.config.RefreshTokenLifetime, time.Now(),
 	)
 	if err != nil {
