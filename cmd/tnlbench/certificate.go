@@ -8,7 +8,6 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"errors"
-	"fmt"
 	"math/big"
 	"os"
 	"time"
@@ -26,7 +25,7 @@ func loadCertPool(path string) (*x509.CertPool, error) {
 	return pool, nil
 }
 
-func benchmarkCertificates(suffix string, count int) ([]tls.Certificate, *x509.CertPool, error) {
+func benchmarkCertificates(hostnames []string) ([]tls.Certificate, *x509.CertPool, error) {
 	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, nil, err
@@ -45,9 +44,9 @@ func benchmarkCertificates(suffix string, count int) ([]tls.Certificate, *x509.C
 	if err != nil {
 		return nil, nil, err
 	}
-	certificates := make([]tls.Certificate, count)
+	certificates := make([]tls.Certificate, len(hostnames))
 	for index := range certificates {
-		hostname := fmt.Sprintf("r%05d.%s", index, suffix)
+		hostname := hostnames[index]
 		leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		if err != nil {
 			return nil, nil, err
