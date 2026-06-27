@@ -165,6 +165,9 @@ func (d *daemon) startCore(
 		ObserveWorkerCapacityRejection: func() {
 			metrics.IncCapacityRejection("worker_routes")
 		},
+		ObserveStage: func(stage routes.CoordinatorStage, duration time.Duration) {
+			metrics.ObserveRouteCoordinatorStage(string(stage), duration)
+		},
 	})
 	if err != nil {
 		return nil, nil, err

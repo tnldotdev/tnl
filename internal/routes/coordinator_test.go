@@ -345,6 +345,50 @@ func TestCoordinatorObservesHeartbeatResults(t *testing.T) {
 	}
 }
 
+func TestCoordinatorObservesStages(t *testing.T) {
+	observed := make(map[CoordinatorStage]int)
+	coordinator, _ := newCoordinatorFixture(t, CoordinatorConfig{
+		ObserveStage: func(stage CoordinatorStage, duration time.Duration) {
+			if duration < 0 {
+				t.Errorf("stage %q duration = %v", stage, duration)
+			}
+			observed[stage]++
+		},
+	})
+	routeToken, _, _, err := credentials.NewRouteToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := coordinator.Create(context.Background(), "owner", "route.example", "localhost:3000", routeToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := coordinator.RegisterTransport(
+		context.Background(), created.Route.ID, 1, created.LeaseToken,
+		key.NewNode().Public().String(), "test",
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := coordinator.Ready(context.Background(), created.Route.ID, 1, created.LeaseToken); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := coordinator.Heartbeat(context.Background(), created.Route.ID, 1, created.LeaseToken); err != nil {
+		t.Fatal(err)
+	}
+	for _, stage := range []CoordinatorStage{
+		CoordinatorStageTransportRouteLockWait,
+		CoordinatorStageTransportWorkerAttach,
+		CoordinatorStageReadyRouteLockWait,
+		CoordinatorStageReadyPublish,
+		CoordinatorStageHeartbeatRouteLockWait,
+		CoordinatorStageHeartbeatStateUpdate,
+	} {
+		if observed[stage] != 1 {
+			t.Errorf("stage %q observations = %d, want 1", stage, observed[stage])
+		}
+	}
+}
+
 func TestCoordinatorObservesDeletedAndDrainingRemovals(t *testing.T) {
 	for _, test := range []struct {
 		name   string

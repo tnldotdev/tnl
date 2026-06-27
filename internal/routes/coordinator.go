@@ -227,10 +227,13 @@ func (c *Coordinator) RegisterTransport(
 	serverPublicKey, relayProfile string,
 ) (err error) {
 	lock := c.routeLock(routeID)
+	lockStarted := time.Now()
 	lock.Lock()
+	lockWait := time.Since(lockStarted)
 	replaced := false
 	defer func() {
 		lock.Unlock()
+		c.observeStage(CoordinatorStageTransportRouteLockWait, lockWait)
 		if replaced {
 			c.observeRouteRemoval(RouteRemovalReplaced)
 		}
@@ -281,7 +284,9 @@ func (c *Coordinator) RegisterTransport(
 			return ErrNoWorkerCapacity
 		}
 		tried[owner.id] = struct{}{}
+		attachStarted := time.Now()
 		backend, err := owner.owner.Attach(ctx, worker.Assignment{RouteRef: ref, Endpoint: endpoint, Key: pending.key})
+		c.observeStage(CoordinatorStageTransportWorkerAttach, time.Since(attachStarted))
 		if errors.Is(err, worker.ErrAtCapacity) || errors.Is(err, worker.ErrDraining) || errors.Is(err, net.ErrClosed) {
 			continue
 		}
@@ -325,8 +330,13 @@ func (c *Coordinator) Ready(
 	token credentials.LeaseToken,
 ) error {
 	lock := c.routeLock(routeID)
+	lockStarted := time.Now()
 	lock.Lock()
-	defer lock.Unlock()
+	lockWait := time.Since(lockStarted)
+	defer func() {
+		lock.Unlock()
+		c.observeStage(CoordinatorStageReadyRouteLockWait, lockWait)
+	}()
 	lease, err := c.store.AuthenticateLease(ctx, routeID, generation, token, c.bootEpoch)
 	if err != nil {
 		return err
@@ -342,14 +352,17 @@ func (c *Coordinator) Ready(
 		return err
 	}
 	// Owner loss may race the durable update, so publish only the same assignment.
+	publishStarted := time.Now()
 	c.mu.Lock()
 	if c.assignments[routeID] != current {
 		c.mu.Unlock()
+		c.observeStage(CoordinatorStageReadyPublish, time.Since(publishStarted))
 		return ErrStaleLease
 	}
 	c.publishLocked(current)
 	delete(c.pending, current.ref)
 	c.mu.Unlock()
+	c.observeStage(CoordinatorStageReadyPublish, time.Since(publishStarted))
 	return nil
 }
 
@@ -360,9 +373,12 @@ func (c *Coordinator) Heartbeat(
 	token credentials.LeaseToken,
 ) (expiresAt time.Time, err error) {
 	lock := c.routeLock(routeID)
+	lockStarted := time.Now()
 	lock.Lock()
+	lockWait := time.Since(lockStarted)
 	defer func() {
 		lock.Unlock()
+		c.observeStage(CoordinatorStageHeartbeatRouteLockWait, lockWait)
 		c.observeHeartbeat(heartbeatResult(err))
 	}()
 	lease, err := c.store.AuthenticateLease(ctx, routeID, generation, token, c.bootEpoch)
@@ -374,6 +390,7 @@ func (c *Coordinator) Heartbeat(
 		return time.Time{}, err
 	}
 	ref := worker.RouteRef{RouteID: routeID, Generation: generation}
+	stateStarted := time.Now()
 	c.mu.Lock()
 	updated := false
 	if pending, ok := c.pending[ref]; ok {
@@ -386,6 +403,7 @@ func (c *Coordinator) Heartbeat(
 		updated = true
 	}
 	c.mu.Unlock()
+	c.observeStage(CoordinatorStageHeartbeatStateUpdate, time.Since(stateStarted))
 	if !updated {
 		return time.Time{}, ErrStaleLease
 	}
@@ -835,6 +853,12 @@ func (c *Coordinator) observeRouteRemoval(reason RouteRemovalReason) {
 func (c *Coordinator) observeWorkerCapacityRejection() {
 	if c.config.ObserveWorkerCapacityRejection != nil {
 		c.config.ObserveWorkerCapacityRejection()
+	}
+}
+
+func (c *Coordinator) observeStage(stage CoordinatorStage, duration time.Duration) {
+	if c.config.ObserveStage != nil {
+		c.config.ObserveStage(stage, duration)
 	}
 }
 
