@@ -77,6 +77,15 @@ async function verifyPackageManager(packageManager, registryURL) {
     const executable = path.join(consumer, "node_modules", ".bin", "tnl");
     const { stdout } = await run(executable, ["version"], consumer);
     assert.equal(stdout.trim(), `tnl ${metadata.version} (${metadata.commit})`);
+    await writeFile(
+      path.join(consumer, "verify-config.mjs"),
+      `import assert from "node:assert/strict";
+import { defineConfig } from "@tnldotdev/tnl/config";
+const config = { tunnel: { public: true } };
+assert.equal(defineConfig(config), config);
+`,
+    );
+    await run(process.execPath, ["verify-config.mjs"], consumer);
     await assert.rejects(
       () => readFile(path.join(consumer, "node_modules", ".bin", "tnld")),
       /ENOENT/,

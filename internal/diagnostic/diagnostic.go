@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/tnldotdev/tnl/internal/clioutput"
 )
 
 type Code string
@@ -26,28 +28,20 @@ type definition struct {
 	title   string
 	summary string
 	path    string
-	diagram []string
+	flow    []clioutput.FlowNode
 }
 
 var definitions = []definition{
 	{
-		code:  TargetUnavailable,
-		title: "local service unavailable",
-		summary: "the request reached the publisher, but the publisher could not\n" +
-			"connect to the target. start the local service, then try again.",
-		path: "/e/target",
-		diagram: []string{
-			"browser",
-			"   |",
-			"   v",
-			"tnl server",
-			"   |",
-			"   v",
-			"publisher",
-			"   |",
-			"   x  target unavailable",
-			"   |",
-			"local service",
+		code:    TargetUnavailable,
+		title:   "local service unavailable",
+		summary: "the request reached the publisher, but the publisher could not connect to the target. start the local service, then try again.",
+		path:    "/e/target",
+		flow: []clioutput.FlowNode{
+			{Label: "visitor"},
+			{Label: "tnl server"},
+			{Label: "publisher", Detail: "target unavailable", Failure: true},
+			{Label: "local service"},
 		},
 	},
 	{
@@ -55,15 +49,10 @@ var definitions = []definition{
 		title:   "invalid target",
 		summary: "tnl could not use the target configured for the local service.",
 		path:    "/e/config",
-		diagram: []string{
-			"tnl publish / tnl dev",
-			"          |",
-			"          v",
-			"target configuration",
-			"          |",
-			"          x  invalid host or port",
-			"          |",
-			"local service (not contacted)",
+		flow: []clioutput.FlowNode{
+			{Label: "tnl publish / tnl dev"},
+			{Label: "target configuration", Detail: "invalid host or port", Failure: true},
+			{Label: "local service (not contacted)"},
 		},
 	},
 	{
@@ -71,12 +60,9 @@ var definitions = []definition{
 		title:   "invalid route",
 		summary: "the publisher could not use the hostname assigned to the route.",
 		path:    "/e/route",
-		diagram: []string{
-			"tnl server",
-			"    |",
-			"    x  invalid hostname",
-			"    |",
-			"publisher (not started)",
+		flow: []clioutput.FlowNode{
+			{Label: "tnl server", Detail: "invalid hostname", Failure: true},
+			{Label: "publisher (not started)"},
 		},
 	},
 	{
@@ -84,18 +70,11 @@ var definitions = []definition{
 		title:   "request rejected",
 		summary: "the publisher rejected the request before contacting the local service.",
 		path:    "/e/request",
-		diagram: []string{
-			"browser",
-			"   |",
-			"   v",
-			"tnl server",
-			"   |",
-			"   v",
-			"publisher",
-			"   |",
-			"   x  request rejected",
-			"   |",
-			"local service (not contacted)",
+		flow: []clioutput.FlowNode{
+			{Label: "visitor"},
+			{Label: "tnl server"},
+			{Label: "publisher", Detail: "request rejected", Failure: true},
+			{Label: "local service (not contacted)"},
 		},
 	},
 }
@@ -143,22 +122,28 @@ func Codes() []Code {
 
 func Text(code Code) string {
 	definition := definitionFor(code)
-	return renderText(code, definition.summary)
+	return renderText("tnl", code, definition.summary)
 }
 
 func TextForError(err error) (string, bool) {
+	return TextForCommandError("tnl", err)
+}
+
+// TextForCommandError renders a classified error for one canonical command.
+func TextForCommandError(command string, err error) (string, bool) {
 	code, ok := CodeOf(err)
 	if !ok {
 		return "", false
 	}
 	definition := definitionFor(code)
 	detail := err.Error()
+	details := []string{definition.summary}
 	if detail == "" || detail == definition.summary || detail == definition.title {
-		detail = definition.summary
+		details = details[:1]
 	} else {
-		detail = definition.summary + "\n\n" + detail
+		details = append(details, detail)
 	}
-	return renderText(code, detail), true
+	return renderText(command, code, details...), true
 }
 
 func WriteHTTP(response http.ResponseWriter, request *http.Request, status int, code Code) {
@@ -182,10 +167,26 @@ func WriteHTTP(response http.ResponseWriter, request *http.Request, status int, 
 	}
 }
 
-func renderText(code Code, detail string) string {
+func renderText(command string, code Code, details ...string) string {
 	definition := definitionFor(code)
-	return "[ tnl ]\n\n" + definition.title + "\n\n" + detail + "\n\n" +
-		box(definition.diagram) + "\n\n" + string(code) + "\n" + HelpURL(code) + "\n"
+	blocks := make([]clioutput.Block, 0, len(details)+2)
+	for _, detail := range details {
+		blocks = append(blocks, clioutput.Text(detail))
+	}
+	blocks = append(blocks,
+		clioutput.Flow(definition.flow...),
+		clioutput.Fields(clioutput.Field{Label: "help", Value: HelpURL(code)}),
+	)
+	text, err := clioutput.Render(clioutput.Frame{
+		Command: command,
+		State:   definition.title,
+		Blocks:  blocks,
+		Footer:  string(code),
+	})
+	if err != nil {
+		panic(err)
+	}
+	return text
 }
 
 func renderHTML(code Code) string {
@@ -213,27 +214,6 @@ a:focus-visible{outline:1px dashed #111;outline-offset:4px}
 </body>
 </html>
 `
-}
-
-func box(lines []string) string {
-	width := 0
-	for _, line := range lines {
-		width = max(width, len(line))
-	}
-	var output strings.Builder
-	output.WriteByte('+')
-	output.WriteString(strings.Repeat("-", width+2))
-	output.WriteString("+\n")
-	for _, line := range lines {
-		output.WriteString("| ")
-		output.WriteString(line)
-		output.WriteString(strings.Repeat(" ", width-len(line)))
-		output.WriteString(" |\n")
-	}
-	output.WriteByte('+')
-	output.WriteString(strings.Repeat("-", width+2))
-	output.WriteByte('+')
-	return output.String()
 }
 
 func acceptsHTML(accept string) bool {

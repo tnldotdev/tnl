@@ -16,10 +16,16 @@
     "lib"
   ],
   "type": "module",
+  "exports": {
+    "./config": {
+      "types": "./lib/config.d.ts",
+      "import": "./lib/config.mjs"
+    }
+  },
   "publishConfig": {
     "access": "public"
   },
   "engines": {
-    "node": ">=22.15"
+    "node": ">=22.18"
   }
 }

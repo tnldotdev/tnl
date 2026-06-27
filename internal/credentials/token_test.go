@@ -105,14 +105,6 @@ func TestRefreshTokenRoundTripAndClassIsolation(t *testing.T) {
 }
 
 func TestDataPlaneTokenClasses(t *testing.T) {
-	route, routeID, routeHash, err := NewRouteToken()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if gotID, gotHash, err := ParseRouteToken(route); err != nil || gotID != routeID || gotHash != routeHash {
-		t.Fatalf("route round trip = %q, %x, %v", gotID, gotHash, err)
-	}
-
 	session, sessionID, sessionHash, err := NewSessionToken()
 	if err != nil {
 		t.Fatal(err)
@@ -120,19 +112,30 @@ func TestDataPlaneTokenClasses(t *testing.T) {
 	if gotID, gotHash, err := ParseSessionToken(session); err != nil || gotID != sessionID || gotHash != sessionHash {
 		t.Fatalf("session round trip = %q, %x, %v", gotID, gotHash, err)
 	}
-	if _, _, err := ParseRouteToken(RouteToken(session)); !errors.Is(err, ErrInvalidRouteToken) {
-		t.Fatalf("session as route error = %v", err)
-	}
-	if _, _, err := ParseSessionToken(SessionToken(route)); !errors.Is(err, ErrInvalidSessionToken) {
-		t.Fatalf("route as session error = %v", err)
-	}
-
-	worker, verifier, err := NewWorkerToken()
+	connection, connectionHash, err := NewPublisherConnectionCredential()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !verifier.Matches(worker) || verifier.Matches(WorkerToken(route)) {
-		t.Fatal("worker verifier did not enforce its credential class")
+	if gotHash, err := ParsePublisherConnectionCredential(connection); err != nil || gotHash != connectionHash {
+		t.Fatalf("publisher connection round trip = %x, %v", gotHash, err)
+	}
+	if _, err := ParsePublisherConnectionCredential(PublisherConnectionCredential(session)); !errors.Is(err, ErrInvalidPublisherConnectionCredential) {
+		t.Fatalf("session as publisher connection error = %v", err)
+	}
+	derivedConnection, derivedHash, err := DerivePublisherConnectionCredential(session, "connection_1/1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repeatedConnection, repeatedHash, err := DerivePublisherConnectionCredential(session, "connection_1/1")
+	if err != nil || repeatedConnection != derivedConnection || repeatedHash != derivedHash {
+		t.Fatalf("repeated derived publisher connection = %q, %x, %v", repeatedConnection, repeatedHash, err)
+	}
+	otherConnection, _, err := DerivePublisherConnectionCredential(session, "connection_2/1")
+	if err != nil || otherConnection == derivedConnection {
+		t.Fatalf("other derived publisher connection = %q, %v", otherConnection, err)
+	}
+	if parsedHash, err := ParsePublisherConnectionCredential(derivedConnection); err != nil || parsedHash != derivedHash {
+		t.Fatalf("derived publisher connection parse = %x, %v", parsedHash, err)
 	}
 
 	service, err := NewServiceToken()
@@ -142,8 +145,26 @@ func TestDataPlaneTokenClasses(t *testing.T) {
 	if err := ParseServiceToken(service); err != nil {
 		t.Fatalf("service round trip failed: %v", err)
 	}
-	if err := ParseServiceToken(ServiceToken(worker)); !errors.Is(err, ErrInvalidServiceToken) {
-		t.Fatalf("worker as service error = %v", err)
+	if err := ParseServiceToken(ServiceToken(session)); !errors.Is(err, ErrInvalidServiceToken) {
+		t.Fatalf("session as service error = %v", err)
+	}
+}
+
+func TestServiceEnrollmentTokenRoundTripAndClassIsolation(t *testing.T) {
+	token, lookupID, hash, err := NewServiceEnrollmentToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsedID, parsedHash, err := ParseServiceEnrollmentToken(token)
+	if err != nil || parsedID != lookupID || parsedHash != hash || !strings.HasPrefix(token.String(), enrollmentPrefix) {
+		t.Fatalf("enrollment round trip = %q, %x, %v", parsedID, parsedHash, err)
+	}
+	service, err := NewServiceToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ParseServiceEnrollmentToken(ServiceEnrollmentToken(service)); !errors.Is(err, ErrInvalidServiceEnrollmentToken) {
+		t.Fatalf("service token as enrollment token error = %v", err)
 	}
 }
 
@@ -151,7 +172,7 @@ func TestTokenExchangeFixturesUseCanonicalCredentials(t *testing.T) {
 	var request struct {
 		LoginToken LoginToken `json:"login_token"`
 	}
-	readJSONFixture(t, "../../api/fixtures/server/v1/token-exchange-request.json", &request)
+	readJSONFixture(t, "../../api/fixtures/authority/v1/token-exchange-request.json", &request)
 	if _, err := ParseLoginToken(request.LoginToken); err != nil {
 		t.Fatalf("login fixture: %v", err)
 	}
@@ -160,7 +181,7 @@ func TestTokenExchangeFixturesUseCanonicalCredentials(t *testing.T) {
 		AccessToken  AccessToken  `json:"access_token"`
 		RefreshToken RefreshToken `json:"refresh_token"`
 	}
-	readJSONFixture(t, "../../api/fixtures/server/v1/token-exchange-response.json", &response)
+	readJSONFixture(t, "../../api/fixtures/authority/v1/token-exchange-response.json", &response)
 	if _, _, err := ParseAccessToken(response.AccessToken); err != nil {
 		t.Fatalf("access fixture: %v", err)
 	}

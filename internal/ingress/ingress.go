@@ -12,25 +12,29 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/proxyproto"
-	"github.com/tnldotdev/tnl/internal/relay"
+	"github.com/tnldotdev/tnl/internal/routebackend"
 	"github.com/tnldotdev/tnl/internal/router"
 	"github.com/tnldotdev/tnl/internal/sourcelimiter"
-	"github.com/tnldotdev/tnl/internal/worker"
+	"github.com/tnldotdev/tnl/internal/streamcopy"
 )
 
 const defaultOpenTimeout = 10 * time.Second
 
+const visitorConnectionIDPrefix = "visitor_connection_"
+
 type Route struct {
 	ID                string
 	RouteVersion      uint64
+	RecoveryEpisodeID uint64
 	AllowedIPPrefixes []netip.Prefix
-	Backend           worker.RouteBackend
+	Backends          []routebackend.Backend
 }
 
 type LookupFunc func(string) (Route, bool)
 
-type BackendLookupFunc func(string) (worker.RouteBackend, bool)
+type BackendLookupFunc func(string) ([]routebackend.Backend, bool)
 
 type UsageConnection interface {
 	PolicyDenied(time.Time)
@@ -58,12 +62,15 @@ type Config struct {
 	LookupChallenge     BackendLookupFunc
 	ServerHostname      string
 	HandleControl       func(net.Conn) bool
+	RelayHostname       string
+	HandleRelay         func(net.Conn) bool
 	RequireProxyHeader  bool
 	MaxConnections      int
 	MaxRouteConnections int
 	OpenTimeout         time.Duration
 	Metrics             Metrics
 	OpenUsage           func(string, uint64, netip.Addr, time.Time) UsageConnection
+	ObserveRecovery     func(string, uint64, uint64, time.Time)
 	OnError             func(error)
 }
 
@@ -76,6 +83,7 @@ type Server struct {
 	connections map[net.Conn]struct{}
 	backends    map[net.Conn]struct{}
 	byRoute     map[string]int
+	serving     bool
 	closing     bool
 	done        chan struct{}
 	active      sync.WaitGroup
@@ -90,6 +98,12 @@ func New(listener net.Listener, config Config) (*Server, error) {
 	}
 	if config.ServerHostname == "" != (config.HandleControl == nil) {
 		return nil, errors.New("ingress: control hostname and handler must be configured together")
+	}
+	if config.RelayHostname == "" != (config.HandleRelay == nil) {
+		return nil, errors.New("ingress: relay hostname and handler must be configured together")
+	}
+	if config.RelayHostname != "" && config.RelayHostname == config.ServerHostname {
+		return nil, errors.New("ingress: control and relay hostnames must be distinct")
 	}
 	if config.OpenTimeout <= 0 {
 		config.OpenTimeout = defaultOpenTimeout
@@ -116,7 +130,15 @@ func New(listener net.Listener, config Config) (*Server, error) {
 }
 
 func (s *Server) Serve() error {
-	defer close(s.done)
+	s.mu.Lock()
+	s.serving = true
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.serving = false
+		s.mu.Unlock()
+		close(s.done)
+	}()
 	for {
 		connection, err := s.listener.Accept()
 		if err != nil {
@@ -166,6 +188,19 @@ func (s *Server) Drain(ctx context.Context) error {
 
 func (s *Server) Done() <-chan struct{} { return s.done }
 
+func (s *Server) Ready() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.serving && !s.closing
+}
+
+// Load reports the number of admitted public visitor connections.
+func (s *Server) Load() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return int64(len(s.connections))
+}
+
 func (s *Server) handle(public net.Conn) error {
 	if err := public.SetReadDeadline(time.Now().Add(router.ClientHelloReadTimeout)); err != nil {
 		return nil
@@ -187,27 +222,31 @@ func (s *Server) handle(public net.Conn) error {
 		return nil
 	}
 	if hello.ServerName == s.config.ServerHostname {
-		connection := &readerConn{
-			Conn:   &addressConn{Conn: public, remote: source, local: destination},
-			reader: hello.Replay,
-		}
-		if !s.config.HandleControl(connection) {
+		if !s.handoff(public, source, destination, hello, s.config.HandleControl) {
 			return nil
 		}
 		// The HTTP server owns control connections after a successful handoff.
 		s.transfer(public)
 		return nil
 	}
+	if hello.ServerName == s.config.RelayHostname {
+		if !s.handoff(public, source, destination, hello, s.config.HandleRelay) {
+			return nil
+		}
+		// The relay publisher transport owns the connection after a successful handoff.
+		s.transfer(public)
+		return nil
+	}
 	route, ok := s.config.Lookup(hello.ServerName)
-	backend := route.Backend
+	backends := route.Backends
 	routeID := route.ID
 	challenge := hello.ACMETLSALPN && s.config.LookupChallenge != nil
 	// Challenge lookup replaces ordinary routing to prevent fallback.
 	if challenge {
-		backend, ok = s.config.LookupChallenge(hello.ServerName)
+		backends, ok = s.config.LookupChallenge(hello.ServerName)
 		routeID = hello.ServerName
 	}
-	if !ok {
+	if !ok || len(backends) == 0 {
 		return nil
 	}
 	var usage UsageConnection
@@ -250,44 +289,115 @@ func (s *Server) handle(public net.Conn) error {
 			}
 		}()
 	}
-	openCtx, cancel := context.WithTimeout(context.Background(), s.config.OpenTimeout)
-	stream, err := backend.Open(openCtx)
-	cancel()
-	if err != nil {
-		return fmt.Errorf("ingress: open route: %w", err)
-	}
-	if usage != nil {
-		usage.PublisherOpened(time.Now().UTC())
-	}
-	if !s.trackBackend(stream) {
-		_ = stream.Close()
-		return net.ErrClosed
-	}
-	defer s.releaseBackend(stream)
-	defer stream.Close()
 	header, err := proxyproto.Encode(proxyproto.Header{Source: source, Destination: destination})
 	if err != nil {
 		return fmt.Errorf("ingress: encode proxy header: %w", err)
 	}
-	if err := writeAll(stream, header); err != nil {
-		return fmt.Errorf("ingress: write proxy header: %w", err)
+	visitorConnectionID, err := opaqueid.New(visitorConnectionIDPrefix)
+	if err != nil {
+		return fmt.Errorf("ingress: create visitor connection ID: %w", err)
 	}
+	openCtx, cancel := context.WithTimeout(context.Background(), s.config.OpenTimeout)
+	var (
+		stream       net.Conn
+		committed    int64
+		committedErr error
+		lastErr      error
+		opened       bool
+	)
+	for _, backend := range backends {
+		if backend == nil {
+			lastErr = errors.New("ingress: route backend is nil")
+			continue
+		}
+		candidate, openErr := backend.Open(openCtx, visitorConnectionID)
+		if openErr != nil {
+			lastErr = fmt.Errorf("ingress: open route: %w", openErr)
+			continue
+		}
+		if usage != nil && !opened {
+			usage.PublisherOpened(time.Now().UTC())
+			opened = true
+		}
+		if !s.trackBackend(candidate) {
+			_ = candidate.Close()
+			cancel()
+			return net.ErrClosed
+		}
+		if writeErr := writeAll(candidate, header); writeErr != nil {
+			lastErr = fmt.Errorf("ingress: write proxy header: %w", writeErr)
+			s.releaseBackend(candidate)
+			continue
+		}
+		written, writeErr := writeAllCount(candidate, hello.Prefix)
+		if writeErr != nil && written == 0 {
+			lastErr = fmt.Errorf("ingress: write ClientHello: %w", writeErr)
+			s.releaseBackend(candidate)
+			continue
+		}
+		stream = candidate
+		committed = written
+		committedErr = writeErr
+		break
+	}
+	cancel()
+	if stream == nil {
+		if lastErr == nil {
+			lastErr = errors.New("ingress: route has no usable backend")
+		}
+		return lastErr
+	}
+	defer s.releaseBackend(stream)
+	defer stream.Close()
 	if usage != nil {
 		usage.StreamOpened(time.Now().UTC())
+		usage.AddIngress(committed, time.Now().UTC())
 		streamOpened = true
 	}
-	replayed := &readerConn{Conn: public, reader: hello.Replay}
+	if s.config.Metrics != nil {
+		s.config.Metrics.AddForwardedBytes("visitor_to_publisher", committed)
+	}
+	if committedErr != nil {
+		return fmt.Errorf("ingress: write ClientHello after %d bytes: %w", committed, committedErr)
+	}
+	replayed := &readerConn{Conn: public, reader: hello.Remainder}
 	var observeIngress, observeEgress func(int64)
 	if usage != nil {
 		observeIngress = func(bytes int64) { usage.AddIngress(bytes, time.Now().UTC()) }
-		observeEgress = func(bytes int64) { usage.AddEgress(bytes, time.Now().UTC()) }
 	}
-	result, err := relay.CopyObserved(replayed, stream, observeIngress, observeEgress)
+	if usage != nil || route.RecoveryEpisodeID != 0 && s.config.ObserveRecovery != nil {
+		var recoveryOnce sync.Once
+		observeEgress = func(bytes int64) {
+			now := time.Now().UTC()
+			if usage != nil {
+				usage.AddEgress(bytes, now)
+			}
+			if route.RecoveryEpisodeID != 0 && s.config.ObserveRecovery != nil {
+				recoveryOnce.Do(func() {
+					s.config.ObserveRecovery(route.ID, route.RouteVersion, route.RecoveryEpisodeID, now)
+				})
+			}
+		}
+	}
+	result, err := streamcopy.CopyObserved(replayed, stream, observeIngress, observeEgress)
 	if s.config.Metrics != nil {
 		s.config.Metrics.AddForwardedBytes("visitor_to_publisher", result.LeftToRight)
 		s.config.Metrics.AddForwardedBytes("publisher_to_visitor", result.RightToLeft)
 	}
 	return err
+}
+
+func (s *Server) handoff(
+	public net.Conn,
+	source, destination netip.AddrPort,
+	hello router.ClientHello,
+	handler func(net.Conn) bool,
+) bool {
+	connection := &readerConn{
+		Conn:   &addressConn{Conn: public, remote: source, local: destination},
+		reader: hello.Replay(),
+	}
+	return handler(connection)
 }
 
 func (s *Server) connectionMetadata(public net.Conn) (netip.AddrPort, netip.AddrPort, io.Reader, error) {
@@ -456,6 +566,10 @@ func tcpAddress(endpoint netip.AddrPort) net.Addr {
 }
 
 func writeAll(writer io.Writer, data []byte) error {
-	_, err := io.Copy(writer, bytes.NewReader(data))
+	_, err := writeAllCount(writer, data)
 	return err
+}
+
+func writeAllCount(writer io.Writer, data []byte) (int64, error) {
+	return io.Copy(writer, bytes.NewReader(data))
 }

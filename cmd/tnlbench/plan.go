@@ -17,15 +17,17 @@ import (
 
 const profileStaleAfter = 90 * 24 * time.Hour
 
+const benchmarkPublisherConnectionsPerRoute = 2
+
 type planCommand struct {
-	Suite           string `name:"suite" env:"BENCH_SUITE" default:"smoke" help:"Named suite to expand."`
-	ProfileFile     string `name:"profile" env:"BENCH_PROFILE" default:"benchmarks/suites/p1-horizontal.json" type:"path" help:"Benchmark suite profile."`
-	WorkloadFile    string `name:"workload" env:"BENCH_WORKLOAD" default:"benchmarks/workloads/agent-worktrees-assumed-v1.json" type:"path" help:"Workload profile."`
-	PricingFile     string `name:"pricing" env:"BENCH_PRICING" default:"benchmarks/pricing/fly-sjc.json" type:"path" help:"Pricing snapshot."`
-	Workers         string `name:"workers" env:"BENCH_WORKERS" help:"Comma-separated worker counts overriding the suite."`
-	RoutesPerWorker int    `name:"routes-per-worker" env:"BENCH_ROUTES_PER_WORKER" help:"Route density overriding the suite."`
-	Repetitions     int    `name:"repetitions" env:"BENCH_REPETITIONS" help:"Repetitions overriding the suite."`
-	Format          string `name:"format" env:"BENCH_PLAN_FORMAT" enum:"human,json" default:"human" help:"Plan output format."`
+	Suite               string `name:"suite" env:"BENCH_SUITE" default:"smoke" help:"Named suite to expand."`
+	ProfileFile         string `name:"profile" env:"BENCH_PROFILE" default:"benchmarks/suites/p1-horizontal.json" type:"path" help:"Benchmark suite profile."`
+	WorkloadFile        string `name:"workload" env:"BENCH_WORKLOAD" default:"benchmarks/workloads/agent-worktrees-assumed-v1.json" type:"path" help:"Workload profile."`
+	PricingFile         string `name:"pricing" env:"BENCH_PRICING" default:"benchmarks/pricing/fly-sjc.json" type:"path" help:"Pricing snapshot."`
+	Relays              string `name:"relays" env:"BENCH_RELAYS" help:"Comma-separated relay process counts overriding the suite."`
+	ConnectionsPerRelay int    `name:"publisher-connections-per-relay" env:"BENCH_PUBLISHER_CONNECTIONS_PER_RELAY" help:"Publisher connection density overriding the suite."`
+	Repetitions         int    `name:"repetitions" env:"BENCH_REPETITIONS" help:"Repetitions overriding the suite."`
+	Format              string `name:"format" env:"BENCH_PLAN_FORMAT" enum:"human,json" default:"human" help:"Plan output format."`
 }
 
 type workloadProfile struct {
@@ -60,8 +62,8 @@ type workloadTraffic struct {
 }
 
 type workloadTransport struct {
-	CapacityMode string  `json:"capacity_mode"`
-	DERPShare    float64 `json:"derp_share"`
+	Mode      string  `json:"mode"`
+	QUICShare float64 `json:"quic_share"`
 }
 
 type workloadPhase struct {
@@ -71,52 +73,52 @@ type workloadPhase struct {
 }
 
 type suiteProfile struct {
-	SchemaVersion      int                        `json:"schema_version"`
-	ID                 string                     `json:"id"`
-	UpdatedDate        string                     `json:"updated_date"`
-	Workload           string                     `json:"workload"`
-	Pricing            string                     `json:"pricing"`
-	Region             string                     `json:"region"`
-	Transport          string                     `json:"transport"`
-	Machines           suiteMachines              `json:"machines"`
-	HostedWorkerLimits workerLimits               `json:"hosted_worker_limits"`
-	RequiredInputs     []string                   `json:"required_inputs"`
-	Suites             map[string]suiteDefinition `json:"suites"`
+	SchemaVersion     int                        `json:"schema_version"`
+	ID                string                     `json:"id"`
+	UpdatedDate       string                     `json:"updated_date"`
+	Workload          string                     `json:"workload"`
+	Pricing           string                     `json:"pricing"`
+	Region            string                     `json:"region"`
+	Transport         string                     `json:"transport"`
+	Machines          suiteMachines              `json:"machines"`
+	HostedRelayLimits relayLimits                `json:"hosted_relay_limits"`
+	RequiredInputs    []string                   `json:"required_inputs"`
+	Suites            map[string]suiteDefinition `json:"suites"`
 }
 
 type suiteMachines struct {
-	Edge   edgeMachine   `json:"edge"`
-	Worker workerMachine `json:"worker"`
-	Driver driverMachine `json:"driver"`
+	Control controlMachine `json:"control"`
+	Relay   relayMachine   `json:"relay"`
+	Driver  driverMachine  `json:"driver"`
 }
 
-type edgeMachine struct {
+type controlMachine struct {
 	Size  string `json:"size"`
 	Count int    `json:"count"`
 }
 
-type workerMachine struct {
-	Size     string `json:"size"`
-	Capacity int    `json:"capacity"`
+type relayMachine struct {
+	Size                        string `json:"size"`
+	PublisherConnectionCapacity int    `json:"publisher_connection_capacity"`
 }
 
 type driverMachine struct {
 	Size string `json:"size"`
 }
 
-type workerLimits struct {
+type relayLimits struct {
 	Minimum int `json:"minimum"`
 	Maximum int `json:"maximum"`
 }
 
 type suiteDefinition struct {
-	Workers                  []int   `json:"workers"`
-	TotalRoutes              []int   `json:"total_routes,omitempty"`
-	RoutesPerWorker          int     `json:"routes_per_worker,omitempty"`
-	Repetitions              int     `json:"repetitions"`
-	RoutesPerDriver          int     `json:"routes_per_driver"`
-	PhaseDurationScale       float64 `json:"phase_duration_scale"`
-	RequiresSchedulingTarget bool    `json:"requires_scheduling_target,omitempty"`
+	Relays                       []int   `json:"relays"`
+	TotalRoutes                  []int   `json:"total_routes,omitempty"`
+	PublisherConnectionsPerRelay int     `json:"publisher_connections_per_relay,omitempty"`
+	Repetitions                  int     `json:"repetitions"`
+	RoutesPerDriver              int     `json:"routes_per_driver"`
+	PhaseDurationScale           float64 `json:"phase_duration_scale"`
+	RequiresSchedulingTarget     bool    `json:"requires_scheduling_target,omitempty"`
 }
 
 type pricingProfile struct {
@@ -147,7 +149,7 @@ type benchmarkPlan struct {
 	Workload                workloadProfile   `json:"workload"`
 	Pricing                 planPricing       `json:"pricing"`
 	Machines                suiteMachines     `json:"machines"`
-	HostedWorkerLimits      workerLimits      `json:"hosted_worker_limits"`
+	HostedRelayLimits       relayLimits       `json:"hosted_relay_limits"`
 	Cells                   []planCell        `json:"cells"`
 	ExpectedDurationSeconds int64             `json:"expected_duration_seconds"`
 	MaximumDurationSeconds  int64             `json:"maximum_duration_seconds"`
@@ -168,15 +170,15 @@ type planPricing struct {
 }
 
 type planCell struct {
-	ID                      string  `json:"id"`
-	Repetition              int     `json:"repetition"`
-	Workers                 int     `json:"workers"`
-	Routes                  int     `json:"routes"`
-	RoutesPerWorker         float64 `json:"routes_per_worker"`
-	Drivers                 int     `json:"drivers"`
-	ExpectedDurationSeconds int64   `json:"expected_duration_seconds"`
-	MaximumDurationSeconds  int64   `json:"maximum_duration_seconds"`
-	ExpectedNetworkGB       float64 `json:"expected_network_gb"`
+	ID                           string  `json:"id"`
+	Repetition                   int     `json:"repetition"`
+	Relays                       int     `json:"relays"`
+	Routes                       int     `json:"routes"`
+	PublisherConnectionsPerRelay float64 `json:"publisher_connections_per_relay"`
+	Drivers                      int     `json:"drivers"`
+	ExpectedDurationSeconds      int64   `json:"expected_duration_seconds"`
+	MaximumDurationSeconds       int64   `json:"maximum_duration_seconds"`
+	ExpectedNetworkGB            float64 `json:"expected_network_gb"`
 }
 
 type planSpend struct {
@@ -222,15 +224,19 @@ func (c planCommand) build(now time.Time) (benchmarkPlan, error) {
 		return benchmarkPlan{}, err
 	}
 	overrides := configuredOverrides()
-	if c.Workers != "" {
-		workers, err := parseWorkerCounts(c.Workers, profile.HostedWorkerLimits.Maximum)
+	if c.Relays != "" {
+		relays, err := parseRelayCounts(
+			c.Relays,
+			profile.HostedRelayLimits.Minimum,
+			profile.HostedRelayLimits.Maximum,
+		)
 		if err != nil {
 			return benchmarkPlan{}, err
 		}
-		definition.Workers = workers
+		definition.Relays = relays
 	}
-	if c.RoutesPerWorker != 0 {
-		definition.RoutesPerWorker = c.RoutesPerWorker
+	if c.ConnectionsPerRelay != 0 {
+		definition.PublisherConnectionsPerRelay = c.ConnectionsPerRelay
 		definition.TotalRoutes = nil
 	}
 	if c.Repetitions != 0 {
@@ -239,13 +245,13 @@ func (c planCommand) build(now time.Time) (benchmarkPlan, error) {
 	if definition.Repetitions <= 0 || definition.Repetitions > 10 {
 		return benchmarkPlan{}, errors.New("repetitions must be between 1 and 10")
 	}
-	if definition.RequiresSchedulingTarget && definition.RoutesPerWorker == 0 {
-		return benchmarkPlan{}, fmt.Errorf("suite %q requires a qualified scheduling target via BENCH_ROUTES_PER_WORKER", c.Suite)
+	if definition.RequiresSchedulingTarget && definition.PublisherConnectionsPerRelay == 0 {
+		return benchmarkPlan{}, fmt.Errorf("suite %q requires a qualified scheduling target via BENCH_PUBLISHER_CONNECTIONS_PER_RELAY", c.Suite)
 	}
-	if definition.RoutesPerWorker > profile.Machines.Worker.Capacity {
+	if definition.PublisherConnectionsPerRelay > profile.Machines.Relay.PublisherConnectionCapacity {
 		return benchmarkPlan{}, fmt.Errorf(
-			"routes per worker %d exceeds configured worker capacity %d",
-			definition.RoutesPerWorker, profile.Machines.Worker.Capacity,
+			"publisher connections per relay %d exceeds configured relay capacity %d",
+			definition.PublisherConnectionsPerRelay, profile.Machines.Relay.PublisherConnectionCapacity,
 		)
 	}
 
@@ -260,18 +266,18 @@ func (c planCommand) build(now time.Time) (benchmarkPlan, error) {
 		"Maximum network spend uses modeled traffic; only compute is extended to each cell timeout.",
 	)
 	plan := benchmarkPlan{
-		SchemaVersion: 1, ReadOnly: true, ProfileID: profile.ID, Suite: c.Suite,
+		SchemaVersion: 2, ReadOnly: true, ProfileID: profile.ID, Suite: c.Suite,
 		Region: profile.Region, Transport: profile.Transport, Workload: workload,
 		Pricing:  planPricing{ID: pricing.ID, SnapshotDate: pricing.SnapshotDate, SourceURL: pricing.SourceURL, Currency: pricing.Currency},
-		Machines: profile.Machines, HostedWorkerLimits: profile.HostedWorkerLimits,
+		Machines: profile.Machines, HostedRelayLimits: profile.HostedRelayLimits,
 		Cells: cells, RequiredInputs: profile.RequiredInputs, Dependencies: []string{}, Overrides: overrides, Warnings: warnings,
 	}
 	for _, cell := range cells {
 		plan.ExpectedDurationSeconds += cell.ExpectedDurationSeconds
 		plan.MaximumDurationSeconds += cell.MaximumDurationSeconds
 		plan.ExpectedResultRows += cell.Drivers
-		rate := machineRate(pricing, profile.Machines.Edge.Size, profile.Machines.Edge.Count) +
-			machineRate(pricing, profile.Machines.Worker.Size, cell.Workers) +
+		rate := machineRate(pricing, profile.Machines.Control.Size, profile.Machines.Control.Count) +
+			machineRate(pricing, profile.Machines.Relay.Size, cell.Relays) +
 			machineRate(pricing, profile.Machines.Driver.Size, cell.Drivers)
 		plan.ExpectedSpend.ComputeUSD += rate * float64(cell.ExpectedDurationSeconds)
 		plan.MaximumSpend.ComputeUSD += rate * float64(cell.MaximumDurationSeconds)
@@ -304,8 +310,8 @@ func decodeProfile(path string, destination any) error {
 }
 
 func validateProfiles(profile suiteProfile, workload workloadProfile, pricing pricingProfile) error {
-	if profile.SchemaVersion != 1 || workload.SchemaVersion != 1 || pricing.SchemaVersion != 1 {
-		return errors.New("profile schema_version must be 1")
+	if profile.SchemaVersion != 3 || workload.SchemaVersion != 3 || pricing.SchemaVersion != 1 {
+		return errors.New("suite and workload schema_version must be 3 and pricing schema_version must be 1")
 	}
 	if profile.ID == "" || workload.ID == "" || pricing.ID == "" {
 		return errors.New("profile IDs must not be empty")
@@ -325,14 +331,16 @@ func validateProfiles(profile suiteProfile, workload workloadProfile, pricing pr
 	if profile.Region == "" || profile.Region != pricing.Region {
 		return errors.New("suite and pricing regions must match")
 	}
-	if profile.Transport != "forced-derp" && profile.Transport != "auto" {
+	if profile.Transport != "quic" && profile.Transport != "tls-yamux" && profile.Transport != "auto" {
 		return fmt.Errorf("unsupported suite transport %q", profile.Transport)
 	}
-	if workload.Transport.CapacityMode != profile.Transport {
+	if workload.Transport.Mode != profile.Transport {
 		return errors.New("suite transport does not match the workload capacity transport")
 	}
-	if profile.Transport == "forced-derp" && workload.Transport.DERPShare != 1 {
-		return errors.New("forced DERP workloads must declare a DERP share of 1")
+	if workload.Transport.QUICShare < 0 || workload.Transport.QUICShare > 1 ||
+		profile.Transport == "quic" && workload.Transport.QUICShare != 1 ||
+		profile.Transport == "tls-yamux" && workload.Transport.QUICShare != 0 {
+		return errors.New("workload QUIC share does not match the selected transport")
 	}
 	if workload.Classification != "assumed" && workload.Classification != "observed" {
 		return errors.New("workload classification must be assumed or observed")
@@ -363,15 +371,15 @@ func validateProfiles(profile suiteProfile, workload workloadProfile, pricing pr
 		}
 		phaseNames[phase.Name] = struct{}{}
 	}
-	if profile.Machines.Edge.Count != 1 || profile.Machines.Edge.Size == "" ||
-		profile.Machines.Worker.Size == "" || profile.Machines.Worker.Capacity <= 0 ||
+	if profile.Machines.Control.Count != 1 || profile.Machines.Control.Size == "" ||
+		profile.Machines.Relay.Size == "" || profile.Machines.Relay.PublisherConnectionCapacity <= 0 ||
 		profile.Machines.Driver.Size == "" {
-		return errors.New("suite Machine configuration is invalid")
+		return errors.New("suite machine configuration is invalid")
 	}
-	if profile.HostedWorkerLimits.Minimum != 2 || profile.HostedWorkerLimits.Maximum < profile.HostedWorkerLimits.Minimum {
-		return errors.New("hosted worker limits must have a two-worker floor")
+	if profile.HostedRelayLimits.Minimum != 2 || profile.HostedRelayLimits.Maximum < profile.HostedRelayLimits.Minimum {
+		return errors.New("hosted relay limits must have a two-relay floor")
 	}
-	for _, size := range []string{profile.Machines.Edge.Size, profile.Machines.Worker.Size, profile.Machines.Driver.Size} {
+	for _, size := range []string{profile.Machines.Control.Size, profile.Machines.Relay.Size, profile.Machines.Driver.Size} {
 		if pricing.MachinePerSecond[size] <= 0 {
 			return fmt.Errorf("pricing is missing Machine size %q", size)
 		}
@@ -383,19 +391,19 @@ func validateProfiles(profile suiteProfile, workload workloadProfile, pricing pr
 }
 
 func validateSuiteDefinition(name string, definition suiteDefinition, profile suiteProfile) error {
-	if len(definition.Workers) == 0 || definition.RoutesPerDriver <= 0 ||
+	if len(definition.Relays) == 0 || definition.RoutesPerDriver <= 0 ||
 		definition.PhaseDurationScale <= 0 || definition.PhaseDurationScale > 1 {
 		return fmt.Errorf("suite %q has invalid matrix settings", name)
 	}
-	if len(definition.TotalRoutes) != 0 && definition.RoutesPerWorker != 0 {
-		return fmt.Errorf("suite %q cannot set total_routes and routes_per_worker together", name)
+	if len(definition.TotalRoutes) != 0 && definition.PublisherConnectionsPerRelay != 0 {
+		return fmt.Errorf("suite %q cannot set total_routes and publisher_connections_per_relay together", name)
 	}
-	if len(definition.TotalRoutes) == 0 && definition.RoutesPerWorker == 0 && !definition.RequiresSchedulingTarget {
+	if len(definition.TotalRoutes) == 0 && definition.PublisherConnectionsPerRelay == 0 && !definition.RequiresSchedulingTarget {
 		return fmt.Errorf("suite %q does not define routes", name)
 	}
-	for _, workers := range definition.Workers {
-		if workers <= 0 || workers > profile.HostedWorkerLimits.Maximum {
-			return fmt.Errorf("suite %q worker count %d is outside benchmark limits", name, workers)
+	for _, relays := range definition.Relays {
+		if relays < profile.HostedRelayLimits.Minimum || relays > profile.HostedRelayLimits.Maximum {
+			return fmt.Errorf("suite %q relay count %d is outside benchmark limits", name, relays)
 		}
 	}
 	for _, routes := range definition.TotalRoutes {
@@ -406,22 +414,22 @@ func validateSuiteDefinition(name string, definition suiteDefinition, profile su
 	return nil
 }
 
-func parseWorkerCounts(value string, maximum int) ([]int, error) {
+func parseRelayCounts(value string, minimum, maximum int) ([]int, error) {
 	parts := strings.Split(value, ",")
-	workers := make([]int, 0, len(parts))
+	relays := make([]int, 0, len(parts))
 	seen := make(map[int]struct{}, len(parts))
 	for _, part := range parts {
 		count, err := strconv.Atoi(strings.TrimSpace(part))
-		if err != nil || count <= 0 || count > maximum {
-			return nil, fmt.Errorf("BENCH_WORKERS must contain counts between 1 and %d", maximum)
+		if err != nil || count < minimum || count > maximum {
+			return nil, fmt.Errorf("BENCH_RELAYS must contain counts between %d and %d", minimum, maximum)
 		}
 		if _, found := seen[count]; found {
-			return nil, fmt.Errorf("BENCH_WORKERS contains duplicate count %d", count)
+			return nil, fmt.Errorf("BENCH_RELAYS contains duplicate count %d", count)
 		}
 		seen[count] = struct{}{}
-		workers = append(workers, count)
+		relays = append(relays, count)
 	}
-	return workers, nil
+	return relays, nil
 }
 
 func workloadDurations(workload workloadProfile, scale float64) (int64, int64) {
@@ -441,21 +449,28 @@ func expandCells(
 	expectedSeconds, maximumSeconds int64,
 ) ([]planCell, error) {
 	var cells []planCell
-	for _, workers := range definition.Workers {
+	for _, relays := range definition.Relays {
 		routeCounts := definition.TotalRoutes
-		if definition.RoutesPerWorker != 0 {
-			routeCounts = []int{workers * definition.RoutesPerWorker}
+		if definition.PublisherConnectionsPerRelay != 0 {
+			connectionCapacity := relays * definition.PublisherConnectionsPerRelay
+			if connectionCapacity%benchmarkPublisherConnectionsPerRoute != 0 {
+				return nil, fmt.Errorf(
+					"suite %q cell with %d relays and %d publisher connections per relay does not produce a whole route count",
+					suiteName, relays, definition.PublisherConnectionsPerRelay,
+				)
+			}
+			routeCounts = []int{connectionCapacity / benchmarkPublisherConnectionsPerRoute}
 		}
 		for _, routes := range routeCounts {
-			if routes > workers*profile.Machines.Worker.Capacity {
-				return nil, fmt.Errorf("suite %q cell with %d workers cannot hold %d routes", suiteName, workers, routes)
+			if routes*benchmarkPublisherConnectionsPerRoute > relays*profile.Machines.Relay.PublisherConnectionCapacity {
+				return nil, fmt.Errorf("suite %q cell with %d relays cannot hold %d routes", suiteName, relays, routes)
 			}
 			drivers := max((routes+definition.RoutesPerDriver-1)/definition.RoutesPerDriver, 1)
 			for repetition := 1; repetition <= definition.Repetitions; repetition++ {
 				cells = append(cells, planCell{
-					ID:         fmt.Sprintf("%s-w%d-r%d-rep%d", suiteName, workers, routes, repetition),
-					Repetition: repetition, Workers: workers, Routes: routes,
-					RoutesPerWorker: float64(routes) / float64(workers), Drivers: drivers,
+					ID:         fmt.Sprintf("%s-relay%d-r%d-rep%d", suiteName, relays, routes, repetition),
+					Repetition: repetition, Relays: relays, Routes: routes,
+					PublisherConnectionsPerRelay: float64(routes*benchmarkPublisherConnectionsPerRoute) / float64(relays), Drivers: drivers,
 					ExpectedDurationSeconds: expectedSeconds, MaximumDurationSeconds: maximumSeconds,
 					ExpectedNetworkGB: modeledNetworkGB(routes, expectedSeconds, definition.PhaseDurationScale, workload),
 				})
@@ -489,8 +504,8 @@ func machineRate(pricing pricingProfile, size string, count int) float64 {
 func configuredOverrides() map[string]string {
 	overrides := make(map[string]string)
 	for _, name := range []string{
-		"BENCH_SUITE", "BENCH_PROFILE", "BENCH_WORKLOAD", "BENCH_PRICING", "BENCH_WORKERS",
-		"BENCH_ROUTES_PER_WORKER", "BENCH_REPETITIONS",
+		"BENCH_SUITE", "BENCH_PROFILE", "BENCH_WORKLOAD", "BENCH_PRICING", "BENCH_RELAYS",
+		"BENCH_PUBLISHER_CONNECTIONS_PER_RELAY", "BENCH_REPETITIONS",
 	} {
 		if value, found := os.LookupEnv(name); found {
 			overrides[name] = value
@@ -519,8 +534,8 @@ func writeHumanPlan(destination io.Writer, plan benchmarkPlan) error {
 	output := new(bytes.Buffer)
 	fmt.Fprintln(output, "Benchmark plan (READ ONLY)")
 	fmt.Fprintf(output, "Profile: %s  Suite: %s  Region: %s  Transport: %s\n", plan.ProfileID, plan.Suite, plan.Region, plan.Transport)
-	fmt.Fprintf(output, "Machines: %dx %s edge, Nx %s workers, %s drivers\n\n",
-		plan.Machines.Edge.Count, plan.Machines.Edge.Size, plan.Machines.Worker.Size, plan.Machines.Driver.Size)
+	fmt.Fprintf(output, "Machines: %dx %s control, Nx %s relays, %s drivers\n\n",
+		plan.Machines.Control.Count, plan.Machines.Control.Size, plan.Machines.Relay.Size, plan.Machines.Driver.Size)
 
 	fmt.Fprintln(output, "WORKLOAD ASSUMPTIONS (NOT OBSERVED)")
 	fmt.Fprintf(output, "Workload: %s  Classification: %s  Seed: %d\n", plan.Workload.ID, plan.Workload.Classification, plan.Workload.Seed)
@@ -535,14 +550,14 @@ func writeHumanPlan(destination io.Writer, plan benchmarkPlan) error {
 		time.Duration(plan.Workload.Model.AverageRouteRestartIntervalSeconds)*time.Second,
 		time.Duration(plan.Workload.Model.TypicalActiveSessionSeconds)*time.Second,
 		plan.Workload.Model.ActiveWeekdaysPerMonth)
-	fmt.Fprintf(output, "Capacity transport: %.0f%% DERP\n\n", plan.Workload.Transport.DERPShare*100)
+	fmt.Fprintf(output, "Transport: %s, %.0f%% QUIC\n\n", plan.Workload.Transport.Mode, plan.Workload.Transport.QUICShare*100)
 
 	fmt.Fprintln(output, "Cells")
 	table := tabwriter.NewWriter(output, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(table, "ID\tWORKERS\tROUTES\tROUTES/WORKER\tDRIVERS\tEXPECTED\tTIMEOUT")
+	fmt.Fprintln(table, "ID\tRELAYS\tROUTES\tCONNECTIONS/RELAY\tDRIVERS\tEXPECTED\tTIMEOUT")
 	for _, cell := range plan.Cells {
-		fmt.Fprintf(table, "%s\t%d\t%d\t%.0f\t%d\t%s\t%s\n", cell.ID, cell.Workers, cell.Routes,
-			cell.RoutesPerWorker, cell.Drivers, durationString(cell.ExpectedDurationSeconds), durationString(cell.MaximumDurationSeconds))
+		fmt.Fprintf(table, "%s\t%d\t%d\t%.0f\t%d\t%s\t%s\n", cell.ID, cell.Relays, cell.Routes,
+			cell.PublisherConnectionsPerRelay, cell.Drivers, durationString(cell.ExpectedDurationSeconds), durationString(cell.MaximumDurationSeconds))
 	}
 	if err := table.Flush(); err != nil {
 		return err

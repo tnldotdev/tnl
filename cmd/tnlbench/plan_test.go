@@ -16,10 +16,10 @@ func TestBuildSmokePlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !plan.ReadOnly || plan.Transport != "forced-derp" || plan.Workload.Classification != "assumed" {
+	if !plan.ReadOnly || plan.Transport != "auto" || plan.Workload.Classification != "assumed" {
 		t.Fatalf("plan metadata = %#v", plan)
 	}
-	if len(plan.Cells) != 1 || plan.Cells[0].Workers != 1 || plan.Cells[0].Routes != 25 || plan.Cells[0].Drivers != 1 {
+	if plan.SchemaVersion != 2 || len(plan.Cells) != 1 || plan.Cells[0].Relays != 2 || plan.Cells[0].Routes != 25 || plan.Cells[0].Drivers != 1 {
 		t.Fatalf("cells = %#v", plan.Cells)
 	}
 	if plan.ExpectedResultRows != 1 || plan.ExpectedSpend.TotalUSD <= 0 ||
@@ -34,12 +34,12 @@ func TestBuildScalePlanRequiresAndUsesSchedulingTarget(t *testing.T) {
 	if _, err := command.build(time.Now()); err == nil || !strings.Contains(err.Error(), "qualified scheduling target") {
 		t.Fatalf("missing target error = %v", err)
 	}
-	command.RoutesPerWorker = 300
+	command.ConnectionsPerRelay = 300
 	plan, err := command.build(time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan.Cells) != 15 || plan.Cells[len(plan.Cells)-1].Routes != 3000 || plan.ExpectedResultRows != 51 {
+	if len(plan.Cells) != 12 || plan.Cells[len(plan.Cells)-1].Routes != 1500 || plan.ExpectedResultRows != 27 {
 		t.Fatalf("scale plan = %d cells, final %#v, %d rows", len(plan.Cells), plan.Cells[len(plan.Cells)-1], plan.ExpectedResultRows)
 	}
 }

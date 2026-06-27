@@ -12,15 +12,15 @@ import (
 )
 
 const (
-	accessPrefix  = "tnl_access_"
-	loginPrefix   = "tnl_login_"
-	refreshPrefix = "tnl_refresh_"
-	routePrefix   = "tnl_route_"
-	sessionPrefix = "tnl_session_"
-	workerPrefix  = "tnl_worker_"
-	servicePrefix = "tnl_service_"
-	lookupBytes   = 16
-	secretBytes   = 32
+	accessPrefix     = "tnl_access_"
+	loginPrefix      = "tnl_login_"
+	refreshPrefix    = "tnl_refresh_"
+	sessionPrefix    = "tnl_session_"
+	connectionPrefix = "tnl_connection_"
+	servicePrefix    = "tnl_service_"
+	enrollmentPrefix = "tnl_enrollment_"
+	lookupBytes      = 16
+	secretBytes      = 32
 )
 
 var (
@@ -30,14 +30,14 @@ var (
 	ErrInvalidLoginToken = errors.New("invalid login token")
 	// ErrInvalidRefreshToken is returned for malformed or rejected refresh tokens.
 	ErrInvalidRefreshToken = errors.New("invalid refresh token")
-	// ErrInvalidRouteToken is returned for malformed or rejected route tokens.
-	ErrInvalidRouteToken = errors.New("invalid route token")
 	// ErrInvalidSessionToken is returned for malformed or rejected session tokens.
 	ErrInvalidSessionToken = errors.New("invalid session token")
-	// ErrInvalidWorkerToken is returned for malformed or rejected worker tokens.
-	ErrInvalidWorkerToken = errors.New("invalid worker token")
+	// ErrInvalidPublisherConnectionCredential is returned for malformed publisher connection credentials.
+	ErrInvalidPublisherConnectionCredential = errors.New("invalid publisher connection credential")
 	// ErrInvalidServiceToken is returned for malformed service tokens.
 	ErrInvalidServiceToken = errors.New("invalid service token")
+	// ErrInvalidServiceEnrollmentToken is returned for malformed service enrollment tokens.
+	ErrInvalidServiceEnrollmentToken = errors.New("invalid service enrollment token")
 )
 
 // AccessToken authenticates a identity to the tnl server API.
@@ -49,17 +49,17 @@ type LoginToken string
 // RefreshToken rotates one control session's access and refresh credentials.
 type RefreshToken string
 
-// RouteToken authorizes session acquisition for one route.
-type RouteToken string
-
 // SessionToken authorizes operations on one route version.
 type SessionToken string
 
-// WorkerToken authenticates one worker session to an edge.
-type WorkerToken string
+// PublisherConnectionCredential authorizes one publisher connection assignment claim.
+type PublisherConnectionCredential string
 
 // ServiceToken authenticates one service-to-service request.
 type ServiceToken string
+
+// ServiceEnrollmentToken authorizes service certificate enrollment.
+type ServiceEnrollmentToken string
 
 // CredentialID is the nonsecret lookup portion of a credential.
 type CredentialID string
@@ -69,12 +69,6 @@ type SecretHash [sha256.Size]byte
 
 // LoginVerifier is the verification material for one login token.
 type LoginVerifier struct {
-	id   CredentialID
-	hash SecretHash
-}
-
-// WorkerVerifier is the nonsecret verification material for one worker token.
-type WorkerVerifier struct {
 	id   CredentialID
 	hash SecretHash
 }
@@ -113,35 +107,22 @@ func ParseRefreshToken(token RefreshToken) (CredentialID, SecretHash, error) {
 	return parseToken(string(token), refreshPrefix, ErrInvalidRefreshToken)
 }
 
-// NewRouteToken creates a route token and its storage values.
-func NewRouteToken() (RouteToken, CredentialID, SecretHash, error) {
-	token, lookupID, hash, err := newToken(routePrefix)
-	return RouteToken(token), lookupID, hash, err
-}
-
-// ParseRouteToken validates a route token and returns its storage lookup values.
-func ParseRouteToken(token RouteToken) (CredentialID, SecretHash, error) {
-	return parseToken(string(token), routePrefix, ErrInvalidRouteToken)
-}
-
 // NewSessionToken creates a session token and its storage values.
 func NewSessionToken() (SessionToken, CredentialID, SecretHash, error) {
 	token, lookupID, hash, err := newToken(sessionPrefix)
 	return SessionToken(token), lookupID, hash, err
 }
 
-// DeriveSessionToken deterministically derives a session credential for one
-// authenticated retry. The route token remains the only secret input.
-func DeriveSessionToken(routeToken RouteToken, retryContext string) (SessionToken, CredentialID, SecretHash, error) {
-	_, _, err := ParseRouteToken(routeToken)
-	if err != nil || retryContext == "" {
-		return "", "", SecretHash{}, ErrInvalidRouteToken
+// DeriveSessionToken deterministically derives a session credential from the
+// authenticated request so retrying the same idempotent mutation is stable.
+func DeriveSessionToken(retrySecret []byte, retryContext string) (SessionToken, CredentialID, SecretHash, error) {
+	if len(retrySecret) < secretBytes || retryContext == "" {
+		return "", "", SecretHash{}, ErrInvalidSessionToken
 	}
-	routeSecret := validatedTokenSecret(routeToken.String(), routePrefix)
-	idMAC := hmac.New(sha256.New, routeSecret)
+	idMAC := hmac.New(sha256.New, retrySecret)
 	_, _ = idMAC.Write([]byte("tnl/session-id/v1\x00" + retryContext))
 	lookupID := CredentialID(base64.RawURLEncoding.EncodeToString(idMAC.Sum(nil)[:lookupBytes]))
-	secretMAC := hmac.New(sha256.New, routeSecret)
+	secretMAC := hmac.New(sha256.New, retrySecret)
 	_, _ = secretMAC.Write([]byte("tnl/session-secret/v1\x00" + retryContext))
 	secret := secretMAC.Sum(nil)
 	hash := sha256.Sum256(secret)
@@ -175,16 +156,34 @@ func ParseSessionToken(token SessionToken) (CredentialID, SecretHash, error) {
 	return parseToken(string(token), sessionPrefix, ErrInvalidSessionToken)
 }
 
-// NewWorkerToken creates a worker token and its verifier.
-func NewWorkerToken() (WorkerToken, WorkerVerifier, error) {
-	token, lookupID, hash, err := newToken(workerPrefix)
-	return WorkerToken(token), WorkerVerifier{id: lookupID, hash: hash}, err
+// NewPublisherConnectionCredential creates an opaque credential for one publisher connection assignment.
+func NewPublisherConnectionCredential() (PublisherConnectionCredential, SecretHash, error) {
+	token, _, hash, err := newToken(connectionPrefix)
+	return PublisherConnectionCredential(token), hash, err
 }
 
-// ParseWorkerToken validates a worker token and returns its verifier.
-func ParseWorkerToken(token WorkerToken) (WorkerVerifier, error) {
-	lookupID, hash, err := parseToken(string(token), workerPrefix, ErrInvalidWorkerToken)
-	return WorkerVerifier{id: lookupID, hash: hash}, err
+// ParsePublisherConnectionCredential validates a publisher connection credential and returns its storage digest.
+func ParsePublisherConnectionCredential(credential PublisherConnectionCredential) (SecretHash, error) {
+	_, hash, err := parseToken(string(credential), connectionPrefix, ErrInvalidPublisherConnectionCredential)
+	return hash, err
+}
+
+// DerivePublisherConnectionCredential deterministically derives one assignment credential
+// from its route-session token so retrying session setup returns the same secret.
+func DerivePublisherConnectionCredential(sessionToken SessionToken, assignmentContext string) (PublisherConnectionCredential, SecretHash, error) {
+	if _, _, err := ParseSessionToken(sessionToken); err != nil || assignmentContext == "" {
+		return "", SecretHash{}, ErrInvalidSessionToken
+	}
+	sessionSecret := validatedTokenSecret(sessionToken.String(), sessionPrefix)
+	idMAC := hmac.New(sha256.New, sessionSecret)
+	_, _ = idMAC.Write([]byte("tnl/publisher-connection-id/v1\x00" + assignmentContext))
+	lookupID := CredentialID(base64.RawURLEncoding.EncodeToString(idMAC.Sum(nil)[:lookupBytes]))
+	secretMAC := hmac.New(sha256.New, sessionSecret)
+	_, _ = secretMAC.Write([]byte("tnl/publisher-connection-secret/v1\x00" + assignmentContext))
+	secret := secretMAC.Sum(nil)
+	hash := sha256.Sum256(secret)
+	credential := connectionPrefix + lookupID.String() + "." + base64.RawURLEncoding.EncodeToString(secret)
+	return PublisherConnectionCredential(credential), hash, nil
 }
 
 // NewServiceToken creates a service-to-service credential.
@@ -199,19 +198,20 @@ func ParseServiceToken(token ServiceToken) error {
 	return err
 }
 
-// Matches reports whether token matches this verifier.
-func (v LoginVerifier) Matches(token LoginToken) bool {
-	candidate, err := ParseLoginToken(token)
-	if err != nil {
-		return false
-	}
-	return subtle.ConstantTimeCompare([]byte(v.id), []byte(candidate.id)) == 1 &&
-		SecretHashMatches(v.hash[:], candidate.hash)
+// NewServiceEnrollmentToken creates a reusable enrollment token and its storage values.
+func NewServiceEnrollmentToken() (ServiceEnrollmentToken, CredentialID, SecretHash, error) {
+	token, lookupID, hash, err := newToken(enrollmentPrefix)
+	return ServiceEnrollmentToken(token), lookupID, hash, err
+}
+
+// ParseServiceEnrollmentToken validates an enrollment token and returns its storage values.
+func ParseServiceEnrollmentToken(token ServiceEnrollmentToken) (CredentialID, SecretHash, error) {
+	return parseToken(string(token), enrollmentPrefix, ErrInvalidServiceEnrollmentToken)
 }
 
 // Matches reports whether token matches this verifier.
-func (v WorkerVerifier) Matches(token WorkerToken) bool {
-	candidate, err := ParseWorkerToken(token)
+func (v LoginVerifier) Matches(token LoginToken) bool {
+	candidate, err := ParseLoginToken(token)
 	if err != nil {
 		return false
 	}
@@ -228,17 +228,17 @@ func (t LoginToken) String() string { return string(t) }
 // String returns the serialized refresh token.
 func (t RefreshToken) String() string { return string(t) }
 
-// String returns the serialized route token.
-func (t RouteToken) String() string { return string(t) }
-
 // String returns the serialized session token.
 func (t SessionToken) String() string { return string(t) }
 
-// String returns the serialized worker token.
-func (t WorkerToken) String() string { return string(t) }
+// String returns the serialized publisher connection credential.
+func (t PublisherConnectionCredential) String() string { return string(t) }
 
 // String returns the serialized service token.
 func (t ServiceToken) String() string { return string(t) }
+
+// String returns the serialized service enrollment token.
+func (t ServiceEnrollmentToken) String() string { return string(t) }
 
 // String returns the nonsecret credential ID.
 func (id CredentialID) String() string { return string(id) }

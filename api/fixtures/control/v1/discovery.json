@@ -1,0 +1,8 @@
+{
+  "managed_deployment_domain": "example",
+  "dns_automation": true,
+  "authority_endpoint": "https://control.example",
+  "authentication": {
+    "methods": ["login_token"]
+  }
+}

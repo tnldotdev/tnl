@@ -1,0 +1,489 @@
+openapi: 3.1.0
+info:
+  title: tnl relay service API
+  version: 1.0.0
+  license:
+    name: MIT
+    identifier: MIT
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+servers:
+  - url: https://relay-control.internal
+security:
+  - relayMutualTLS: []
+paths:
+  /internal/v1/relays/register:
+    post:
+      operationId: registerRelay
+      summary: Register one relay process run
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RelayRegistration"
+      responses:
+        "200":
+          description: Relay lease created or idempotently renewed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RelayLease"
+        default:
+          $ref: "#/components/responses/Problem"
+  /internal/v1/relays/{relay_id}/renew:
+    post:
+      operationId: renewRelay
+      summary: Renew one exact relay lease
+      parameters:
+        - $ref: "#/components/parameters/RelayID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RelayRenewal"
+      responses:
+        "200":
+          description: Relay lease renewed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RelayLease"
+        default:
+          $ref: "#/components/responses/Problem"
+  /internal/v1/relays/{relay_id}/drain:
+    post:
+      operationId: drainRelay
+      summary: Remove one exact relay process from new work
+      parameters:
+        - $ref: "#/components/parameters/RelayID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RelayDrainRequest"
+      responses:
+        "200":
+          description: Relay drain recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RelayLease"
+        default:
+          $ref: "#/components/responses/Problem"
+  /internal/v1/publisher-connections/{publisher_connection_id}/claim:
+    post:
+      operationId: claimPublisherConnection
+      summary: Atomically redeem one publisher connection credential
+      parameters:
+        - $ref: "#/components/parameters/PublisherConnectionID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PublisherConnectionClaim"
+      responses:
+        "200":
+          description: Publisher connection claimed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimedPublisherConnection"
+        default:
+          $ref: "#/components/responses/Problem"
+  /internal/v1/publisher-connections/{publisher_connection_id}/ready:
+    post:
+      operationId: markPublisherConnectionReady
+      summary: Mark one connected publisher connection ready
+      parameters:
+        - $ref: "#/components/parameters/PublisherConnectionID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PublisherConnectionTransition"
+      responses:
+        "200":
+          description: Publisher connection is ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimedPublisherConnection"
+        default:
+          $ref: "#/components/responses/Problem"
+  /internal/v1/publisher-connections/{publisher_connection_id}/disconnect:
+    post:
+      operationId: disconnectPublisherConnection
+      summary: Close one exact publisher connection lifecycle
+      parameters:
+        - $ref: "#/components/parameters/PublisherConnectionID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PublisherConnectionDisconnect"
+      responses:
+        "200":
+          description: Publisher connection closed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimedPublisherConnection"
+        default:
+          $ref: "#/components/responses/Problem"
+components:
+  securitySchemes:
+    relayMutualTLS:
+      type: mutualTLS
+  parameters:
+    RelayID:
+      name: relay_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Identifier"
+    PublisherConnectionID:
+      name: publisher_connection_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Identifier"
+  responses:
+    Problem:
+      description: Request failed
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+  schemas:
+    Identifier:
+      type: string
+      minLength: 1
+      maxLength: 256
+      pattern: '^\S(?:.*\S)?$'
+    RelayRegistration:
+      type: object
+      additionalProperties: false
+      required:
+        - relay_service_id
+        - relay_id
+        - relay_run_id
+        - protocol_version
+        - relay_address
+        - tls_server_name
+        - internal_relay_address
+        - internal_networks
+        - connection_capacity
+        - stream_capacity
+      properties:
+        relay_service_id:
+          $ref: "#/components/schemas/Identifier"
+        relay_id:
+          $ref: "#/components/schemas/Identifier"
+        relay_run_id:
+          $ref: "#/components/schemas/Identifier"
+        protocol_version:
+          type: integer
+          format: int64
+          minimum: 1
+        relay_address:
+          $ref: "#/components/schemas/Identifier"
+        tls_server_name:
+          $ref: "#/components/schemas/Identifier"
+        internal_relay_address:
+          $ref: "#/components/schemas/Identifier"
+        internal_networks:
+          type: array
+          maxItems: 64
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 3
+            maxLength: 43
+        connection_capacity:
+          type: integer
+          format: int64
+          minimum: 1
+        stream_capacity:
+          type: integer
+          format: int64
+          minimum: 1
+    RelayLeaseIdentity:
+      type: object
+      additionalProperties: false
+      required: [relay_service_id, relay_id, relay_run_id, relay_lease_revision]
+      properties:
+        relay_service_id:
+          $ref: "#/components/schemas/Identifier"
+        relay_id:
+          $ref: "#/components/schemas/Identifier"
+        relay_run_id:
+          $ref: "#/components/schemas/Identifier"
+        relay_lease_revision:
+          type: integer
+          format: int64
+          minimum: 1
+    RelayRenewal:
+      unevaluatedProperties: false
+      allOf:
+        - $ref: "#/components/schemas/RelayLeaseIdentity"
+        - type: object
+          required: [reported_connections, reported_streams]
+          properties:
+            reported_connections:
+              type: integer
+              format: int64
+              minimum: 0
+            reported_streams:
+              type: integer
+              format: int64
+              minimum: 0
+    RelayDrainRequest:
+      unevaluatedProperties: false
+      allOf:
+        - $ref: "#/components/schemas/RelayLeaseIdentity"
+        - type: object
+          required: [deadline]
+          properties:
+            deadline:
+              type: string
+              format: date-time
+    RelayLease:
+      type: object
+      additionalProperties: false
+      required:
+        - relay_service_id
+        - relay_id
+        - relay_run_id
+        - relay_lease_revision
+        - protocol_version
+        - relay_address
+        - tls_server_name
+        - internal_relay_address
+        - internal_networks
+        - connection_capacity
+        - stream_capacity
+        - reported_connections
+        - reported_streams
+        - draining
+        - registered_at
+        - renewed_at
+        - lease_expires_at
+      properties:
+        relay_service_id:
+          $ref: "#/components/schemas/Identifier"
+        relay_id:
+          $ref: "#/components/schemas/Identifier"
+        relay_run_id:
+          $ref: "#/components/schemas/Identifier"
+        relay_lease_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        protocol_version:
+          type: integer
+          format: int64
+          minimum: 1
+        relay_address:
+          $ref: "#/components/schemas/Identifier"
+        tls_server_name:
+          $ref: "#/components/schemas/Identifier"
+        internal_relay_address:
+          $ref: "#/components/schemas/Identifier"
+        observed_address:
+          type: string
+        internal_networks:
+          type: array
+          items:
+            type: string
+        connection_capacity:
+          type: integer
+          format: int64
+          minimum: 1
+        stream_capacity:
+          type: integer
+          format: int64
+          minimum: 1
+        reported_connections:
+          type: integer
+          format: int64
+          minimum: 0
+        reported_streams:
+          type: integer
+          format: int64
+          minimum: 0
+        draining:
+          type: boolean
+        drain_deadline:
+          type: string
+          format: date-time
+        registered_at:
+          type: string
+          format: date-time
+        renewed_at:
+          type: string
+          format: date-time
+        lease_expires_at:
+          type: string
+          format: date-time
+    PublisherConnectionIdentity:
+      type: object
+      additionalProperties: false
+      required:
+        - route_session_id
+        - route_id
+        - route_version
+        - publisher_connection_id
+        - connection_slot
+        - connection_assignment_revision
+        - relay_service_id
+      properties:
+        route_session_id:
+          $ref: "#/components/schemas/Identifier"
+        route_id:
+          $ref: "#/components/schemas/Identifier"
+        route_version:
+          type: integer
+          format: int64
+          minimum: 1
+        publisher_connection_id:
+          $ref: "#/components/schemas/Identifier"
+        connection_slot:
+          type: integer
+          minimum: 0
+          maximum: 1
+        connection_assignment_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        relay_service_id:
+          $ref: "#/components/schemas/Identifier"
+    PublisherConnectionProcessIdentity:
+      type: object
+      additionalProperties: false
+      required: [relay_id, relay_run_id, relay_lease_revision, claim_id]
+      properties:
+        relay_id:
+          $ref: "#/components/schemas/Identifier"
+        relay_run_id:
+          $ref: "#/components/schemas/Identifier"
+        relay_lease_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        claim_id:
+          $ref: "#/components/schemas/Identifier"
+    PublisherConnectionTransition:
+      unevaluatedProperties: false
+      allOf:
+        - $ref: "#/components/schemas/PublisherConnectionIdentity"
+        - $ref: "#/components/schemas/PublisherConnectionProcessIdentity"
+    PublisherConnectionClaim:
+      unevaluatedProperties: false
+      allOf:
+        - $ref: "#/components/schemas/PublisherConnectionIdentity"
+        - $ref: "#/components/schemas/PublisherConnectionProcessIdentity"
+        - type: object
+          required: [publisher_connection_credential]
+          properties:
+            publisher_connection_credential:
+              type: string
+              minLength: 1
+              maxLength: 128
+              pattern: '^tnl_connection_[A-Za-z0-9_-]{21}[AQgw]\.[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$'
+    PublisherConnectionDisconnect:
+      unevaluatedProperties: false
+      allOf:
+        - $ref: "#/components/schemas/PublisherConnectionTransition"
+        - type: object
+          required: [unexpected]
+          properties:
+            unexpected:
+              type: boolean
+    ClaimedPublisherConnection:
+      type: object
+      additionalProperties: false
+      required:
+        - route_session_id
+        - route_id
+        - route_version
+        - publisher_connection_id
+        - connection_slot
+        - connection_assignment_revision
+        - relay_service_id
+        - relay_id
+        - relay_run_id
+        - relay_lease_revision
+        - claim_id
+        - relay_address
+        - tls_server_name
+        - state
+        - publisher_connection_credential_expires_at
+        - connected_at
+      properties:
+        route_session_id:
+          $ref: "#/components/schemas/Identifier"
+        route_id:
+          $ref: "#/components/schemas/Identifier"
+        route_version:
+          type: integer
+          format: int64
+          minimum: 1
+        publisher_connection_id:
+          $ref: "#/components/schemas/Identifier"
+        connection_slot:
+          type: integer
+          minimum: 0
+          maximum: 1
+        connection_assignment_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        relay_service_id:
+          $ref: "#/components/schemas/Identifier"
+        relay_id:
+          $ref: "#/components/schemas/Identifier"
+        relay_run_id:
+          $ref: "#/components/schemas/Identifier"
+        relay_lease_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        claim_id:
+          $ref: "#/components/schemas/Identifier"
+        relay_address:
+          $ref: "#/components/schemas/Identifier"
+        tls_server_name:
+          $ref: "#/components/schemas/Identifier"
+        state:
+          type: string
+          enum: [connected, ready, closed]
+        publisher_connection_credential_expires_at:
+          type: string
+          format: date-time
+        connected_at:
+          type: string
+          format: date-time
+        ready_at:
+          type: string
+          format: date-time
+    Problem:
+      type: object
+      additionalProperties: false
+      required: [type, title, status, detail]
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string

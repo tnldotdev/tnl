@@ -4,21 +4,17 @@ import {
   registerLocalPort,
   requestTunnelAssignment,
 } from "@tnldotdev/dev";
-import type { TnlTunnelAssignment, TnlTunnelOptionsInput } from "@tnldotdev/dev";
+import type { TnlTunnelAssignment } from "@tnldotdev/dev";
 import type { Plugin } from "vite";
-
-export type {
-  TnlTunnelOptions,
-  TnlTunnelOptionsContext,
-  TnlTunnelOptionsInput,
-  TnlWorktree,
-} from "@tnldotdev/dev";
 
 /**
  * Adds tnl support to the Vite development server. It does nothing during
  * builds, previews, or development started without `tnl dev`.
  */
-export default function tnl(options: TnlTunnelOptionsInput = {}): Plugin {
+export default function tnl(...arguments_: never[]): Plugin {
+  if (arguments_.length !== 0) {
+    throw new Error("tnl() does not accept tunnel options; use project configuration");
+  }
   let assignment: TnlTunnelAssignment | null = null;
   let localPortRegistered = false;
   return {
@@ -36,7 +32,7 @@ export default function tnl(options: TnlTunnelOptionsInput = {}): Plugin {
       }
 
       const server = userConfig.server ?? {};
-      assignment = await requestTunnelAssignment({ framework: "vite", options });
+      assignment = await requestTunnelAssignment({ framework: "vite" });
       if (assignment === null) {
         return undefined;
       }

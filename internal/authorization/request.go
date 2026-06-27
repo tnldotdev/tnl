@@ -2,48 +2,78 @@ package authorization
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"net/netip"
 	"slices"
-	"strconv"
-	"unicode/utf8"
 )
 
 const MaxIPPrefixes = 64
 
-// OperationRequest is one of the three fixed request bodies covered by the
-// authorization protocol. SignedAuthorization is intentionally absent.
-type OperationRequest struct {
-	Operation         Operation
-	Hostname          string
-	LocalTarget       string
-	RouteToken        string
-	AllowedIPPrefixes []string
-	RouteVersion      uint64
+type CertificatePlan struct {
+	CacheKey        string   `json:"cache_key"`
+	Scope           string   `json:"scope"`
+	Identifiers     []string `json:"identifiers"`
+	ChallengeMethod string   `json:"challenge_method"`
 }
 
-// CanonicalRequestHash hashes the RFC 8785 representation of an exact authorized
-// operation request shape. It intentionally does not implement general JSON canonicalization.
+// OperationRequest contains every control mutation value covered by a signed
+// authorization. The wire token itself is intentionally absent.
+type OperationRequest struct {
+	Operation         Operation
+	TeamID            string
+	MembershipID      string
+	DomainID          string
+	CanonicalHostname string
+	RouteScope        string
+	RouteID           string
+	RouteVersion      uint64
+	PolicyRevision    uint64
+	Target            string
+	AllowedIPPrefixes []string
+	CertificatePlan   *CertificatePlan
+}
+
+// CanonicalRequestHash hashes the fixed JSON shape for one authorized control mutation.
 func CanonicalRequestHash(request OperationRequest) (Digest, error) {
-	var canonical []byte
-	var err error
+	var value any
 	switch request.Operation {
 	case OperationRouteCreate:
-		canonical, err = appendObject(nil, request.AllowedIPPrefixes,
-			[]field{{"hostname", request.Hostname}, {"local_target", request.LocalTarget}, {"route_token", request.RouteToken}})
+		value = struct {
+			AllowedIPPrefixes []string `json:"allowed_ip_prefixes,omitempty"`
+			CanonicalHostname string   `json:"canonical_hostname"`
+			DomainID          string   `json:"domain_id"`
+			MembershipID      string   `json:"membership_id,omitempty"`
+			RouteScope        string   `json:"route_scope"`
+			Target            string   `json:"target"`
+			TeamID            string   `json:"team_id"`
+		}{request.AllowedIPPrefixes, request.CanonicalHostname, request.DomainID, request.MembershipID, request.RouteScope, request.Target, request.TeamID}
 	case OperationRouteSessionCreate:
-		canonical, err = appendObject(nil, request.AllowedIPPrefixes, []field{{"route_token", request.RouteToken}})
-	case OperationRenew:
-		if request.RouteVersion == 0 {
-			return Digest{}, invalid("renewal route version is required")
+		if request.RouteID == "" || request.RouteVersion == 0 || request.CertificatePlan == nil || request.AllowedIPPrefixes == nil {
+			return Digest{}, invalid("route session bindings are required")
 		}
-		canonical = strconv.AppendUint([]byte(`{"route_version":`), request.RouteVersion, 10)
-		canonical = append(canonical, '}')
+		value = struct {
+			AllowedIPPrefixes []string        `json:"allowed_ip_prefixes"`
+			CertificatePlan   CertificatePlan `json:"certificate_plan"`
+			MembershipID      string          `json:"membership_id,omitempty"`
+			PolicyRevision    uint64          `json:"policy_revision"`
+			RouteID           string          `json:"route_id"`
+			RouteVersion      uint64          `json:"route_version"`
+			TeamID            string          `json:"team_id"`
+		}{request.AllowedIPPrefixes, *request.CertificatePlan, request.MembershipID, request.PolicyRevision, request.RouteID, request.RouteVersion, request.TeamID}
+	case OperationRouteDelete:
+		if request.RouteID == "" {
+			return Digest{}, invalid("route ID is required")
+		}
+		value = struct {
+			RouteID string `json:"route_id"`
+		}{request.RouteID}
 	default:
 		return Digest{}, invalid("unknown request operation")
 	}
+	canonical, err := json.Marshal(value)
 	if err != nil {
-		return Digest{}, err
+		return Digest{}, invalid("encode request")
 	}
 	return Digest(sha256.Sum256(canonical)), nil
 }
@@ -99,8 +129,7 @@ func canonicalIPPrefix(value string) (netip.Prefix, error) {
 	return netip.PrefixFrom(address, bits).Masked(), nil
 }
 
-// IPPolicyHash hashes the RFC 8785 representation of the canonical prefix
-// array. A nil policy has no hash; an explicitly empty policy hashes "[]".
+// IPPolicyHash hashes the canonical prefix array. A nil policy has no digest.
 func IPPolicyHash(prefixes []string) (*Digest, error) {
 	if prefixes == nil {
 		return nil, nil
@@ -109,90 +138,10 @@ func IPPolicyHash(prefixes []string) (*Digest, error) {
 	if err != nil {
 		return nil, err
 	}
-	encoded, err := appendStringArray(nil, canonical)
+	encoded, err := json.Marshal(canonical)
 	if err != nil {
-		return nil, err
+		return nil, invalid("encode IP policy")
 	}
 	digest := Digest(sha256.Sum256(encoded))
 	return &digest, nil
-}
-
-type field struct {
-	name  string
-	value string
-}
-
-func appendObject(destination []byte, prefixes []string, fields []field) ([]byte, error) {
-	destination = append(destination, '{')
-	wrote := false
-	if prefixes != nil {
-		destination = append(destination, `"allowed_ip_prefixes":`...)
-		var err error
-		destination, err = appendStringArray(destination, prefixes)
-		if err != nil {
-			return nil, err
-		}
-		wrote = true
-	}
-	for _, field := range fields {
-		if wrote {
-			destination = append(destination, ',')
-		}
-		destination = append(destination, '"')
-		destination = append(destination, field.name...)
-		destination = append(destination, '"', ':')
-		var err error
-		destination, err = appendJSONString(destination, field.value)
-		if err != nil {
-			return nil, err
-		}
-		wrote = true
-	}
-	return append(destination, '}'), nil
-}
-
-func appendStringArray(destination []byte, values []string) ([]byte, error) {
-	destination = append(destination, '[')
-	for index, value := range values {
-		if index != 0 {
-			destination = append(destination, ',')
-		}
-		var err error
-		destination, err = appendJSONString(destination, value)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return append(destination, ']'), nil
-}
-
-func appendJSONString(destination []byte, value string) ([]byte, error) {
-	if !utf8.ValidString(value) {
-		return nil, errors.New("authorization: request contains invalid UTF-8")
-	}
-	destination = append(destination, '"')
-	for _, char := range value {
-		switch char {
-		case '"', '\\':
-			destination = append(destination, '\\', byte(char))
-		case '\b':
-			destination = append(destination, `\b`...)
-		case '\t':
-			destination = append(destination, `\t`...)
-		case '\n':
-			destination = append(destination, `\n`...)
-		case '\f':
-			destination = append(destination, `\f`...)
-		case '\r':
-			destination = append(destination, `\r`...)
-		default:
-			if char >= 0 && char <= 0x1f {
-				destination = append(destination, `\u00`...)
-				destination = append(destination, "0123456789abcdef"[char>>4], "0123456789abcdef"[char&0xf])
-			} else {
-				destination = utf8.AppendRune(destination, char)
-			}
-		}
-	}
-	return append(destination, '"'), nil
 }

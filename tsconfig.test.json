@@ -12,6 +12,7 @@
     "vitest.config.ts",
     "packages/**/*.test.ts",
     "packages/dev/test-helper.ts",
+    "packages/tnl/config-type-test.ts",
     "packages/next/fixtures/**/*.ts",
     "packages/next/fixtures/**/*.tsx",
     "packages/vite/fixtures/**/*.ts"

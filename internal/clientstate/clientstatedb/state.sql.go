@@ -86,7 +86,7 @@ func (q *Queries) FinishTunnel(ctx context.Context, arg FinishTunnelParams) (int
 }
 
 const getControlSession = `-- name: GetControlSession :one
-SELECT server_origin, kind, control_endpoint, session_id, issuer, client_id, access_token, access_expires_at, refresh_token, refresh_expires_at, grants, scopes, updated_at
+SELECT server_origin, authority_endpoint, session_id, access_token, access_expires_at, refresh_token, refresh_expires_at, updated_at
 FROM control_sessions
 WHERE server_origin = ?1
 `
@@ -96,17 +96,12 @@ func (q *Queries) GetControlSession(ctx context.Context, serverOrigin string) (C
 	var i ControlSession
 	err := row.Scan(
 		&i.ServerOrigin,
-		&i.Kind,
-		&i.ControlEndpoint,
+		&i.AuthorityEndpoint,
 		&i.SessionID,
-		&i.Issuer,
-		&i.ClientID,
 		&i.AccessToken,
 		&i.AccessExpiresAt,
 		&i.RefreshToken,
 		&i.RefreshExpiresAt,
-		&i.Grants,
-		&i.Scopes,
 		&i.UpdatedAt,
 	)
 	return i, err
@@ -170,6 +165,19 @@ func (q *Queries) GetSelectedServer(ctx context.Context) (sql.NullString, error)
 	var selected_server_origin sql.NullString
 	err := row.Scan(&selected_server_origin)
 	return selected_server_origin, err
+}
+
+const getSelectedTeam = `-- name: GetSelectedTeam :one
+SELECT selected_team_id
+FROM server_profiles
+WHERE origin = ?1
+`
+
+func (q *Queries) GetSelectedTeam(ctx context.Context, origin string) (string, error) {
+	row := q.db.QueryRowContext(ctx, getSelectedTeam, origin)
+	var selected_team_id string
+	err := row.Scan(&selected_team_id)
+	return selected_team_id, err
 }
 
 const heartbeatTunnel = `-- name: HeartbeatTunnel :execrows
@@ -320,6 +328,24 @@ func (q *Queries) SetSelectedServer(ctx context.Context, origin sql.NullString) 
 	return err
 }
 
+const setSelectedTeam = `-- name: SetSelectedTeam :exec
+UPDATE server_profiles
+SET selected_team_id = ?1,
+    last_used_at = ?2
+WHERE origin = ?3
+`
+
+type SetSelectedTeamParams struct {
+	TeamID string
+	Now    int64
+	Origin string
+}
+
+func (q *Queries) SetSelectedTeam(ctx context.Context, arg SetSelectedTeamParams) error {
+	_, err := q.db.ExecContext(ctx, setSelectedTeam, arg.TeamID, arg.Now, arg.Origin)
+	return err
+}
+
 const setTunnelDevTarget = `-- name: SetTunnelDevTarget :execrows
 UPDATE local_tunnels
 SET target = ?1,
@@ -450,17 +476,12 @@ func (q *Queries) SetTunnelRoute(ctx context.Context, arg SetTunnelRouteParams) 
 const upsertControlSession = `-- name: UpsertControlSession :exec
 INSERT INTO control_sessions (
     server_origin,
-    kind,
-    control_endpoint,
+    authority_endpoint,
     session_id,
-    issuer,
-    client_id,
     access_token,
     access_expires_at,
     refresh_token,
     refresh_expires_at,
-    grants,
-    scopes,
     updated_at
 ) VALUES (
     ?1,
@@ -470,58 +491,38 @@ INSERT INTO control_sessions (
     ?5,
     ?6,
     ?7,
-    ?8,
-    ?9,
-    ?10,
-    ?11,
-    ?12,
-    ?13
+    ?8
 )
 ON CONFLICT (server_origin) DO UPDATE SET
-    kind = excluded.kind,
-    control_endpoint = excluded.control_endpoint,
+    authority_endpoint = excluded.authority_endpoint,
     session_id = excluded.session_id,
-    issuer = excluded.issuer,
-    client_id = excluded.client_id,
     access_token = excluded.access_token,
     access_expires_at = excluded.access_expires_at,
     refresh_token = excluded.refresh_token,
     refresh_expires_at = excluded.refresh_expires_at,
-    grants = excluded.grants,
-    scopes = excluded.scopes,
     updated_at = excluded.updated_at
 `
 
 type UpsertControlSessionParams struct {
-	ServerOrigin     string
-	Kind             string
-	ControlEndpoint  string
-	SessionID        string
-	Issuer           string
-	ClientID         string
-	AccessToken      []byte
-	AccessExpiresAt  int64
-	RefreshToken     []byte
-	RefreshExpiresAt int64
-	Grants           []byte
-	Scopes           []byte
-	UpdatedAt        int64
+	ServerOrigin      string
+	AuthorityEndpoint string
+	SessionID         string
+	AccessToken       []byte
+	AccessExpiresAt   int64
+	RefreshToken      []byte
+	RefreshExpiresAt  int64
+	UpdatedAt         int64
 }
 
 func (q *Queries) UpsertControlSession(ctx context.Context, arg UpsertControlSessionParams) error {
 	_, err := q.db.ExecContext(ctx, upsertControlSession,
 		arg.ServerOrigin,
-		arg.Kind,
-		arg.ControlEndpoint,
+		arg.AuthorityEndpoint,
 		arg.SessionID,
-		arg.Issuer,
-		arg.ClientID,
 		arg.AccessToken,
 		arg.AccessExpiresAt,
 		arg.RefreshToken,
 		arg.RefreshExpiresAt,
-		arg.Grants,
-		arg.Scopes,
 		arg.UpdatedAt,
 	)
 	return err

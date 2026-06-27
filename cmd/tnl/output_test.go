@@ -9,13 +9,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
-	"github.com/tnldotdev/tnl/internal/serverclient"
 )
 
 func TestPublishOutputNDJSONLifecycle(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	output, err := newPublishOutput("ndjson", &stdout, &stderr, nil)
+	output, err := newPublishOutput("ndjson", "tnl publish", &stdout, &stderr, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +31,7 @@ func TestPublishOutputNDJSONLifecycle(t *testing.T) {
 	if err := output.ready("https://demo.example", 2); err != nil {
 		t.Fatal(err)
 	}
-	if err := output.failed(&serverclient.RateLimitError{RetryAfter: time.Second}); err != nil {
+	if err := output.failed(&controlclient.RateLimitError{RetryAfter: time.Second}); err != nil {
 		t.Fatal(err)
 	}
 	if err := output.stopped(); err != nil {
@@ -73,17 +73,20 @@ func TestPublishOutputNDJSONLifecycle(t *testing.T) {
 func TestPublishOutputHumanPrintsURLOnce(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	var opened []string
-	output, err := newPublishOutput("human", &stdout, &stderr, func(target string) error {
+	output, err := newPublishOutput("human", "tnl publish", &stdout, &stderr, func(target string) error {
 		opened = append(opened, target)
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := output.ready("https://demo.example", 1); err != nil {
+	if err := output.starting("tunnel_0123456789abcdef0123456789abcdef", "http://127.0.0.1:3000"); err != nil {
 		t.Fatal(err)
 	}
 	if err := output.currentIP("2001:db8::1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := output.ready("https://demo.example", 1); err != nil {
 		t.Fatal(err)
 	}
 	if err := output.ready("https://demo.example", 2); err != nil {
@@ -92,7 +95,10 @@ func TestPublishOutputHumanPrintsURLOnce(t *testing.T) {
 	if err := output.failed(errors.New("failure")); err != nil {
 		t.Fatal(err)
 	}
-	if stdout.Len() != 0 || stderr.String() != "https://demo.example\nCurrent IP: 2001:db8::1\n" {
+	if stdout.Len() != 0 || !strings.HasPrefix(stderr.String(), "+--[ tnl publish ]-- ready ") ||
+		!strings.Contains(stderr.String(), "https://demo.example") ||
+		!strings.Contains(stderr.String(), "IP policy") || !strings.Contains(stderr.String(), "2001:db8::1") ||
+		!strings.Contains(stderr.String(), "+-- opened in browser; ctrl+c to stop ") {
 		t.Fatalf("stdout = %q, stderr = %q", stdout.String(), stderr.String())
 	}
 	if len(opened) != 1 || opened[0] != "https://demo.example" {
@@ -102,7 +108,7 @@ func TestPublishOutputHumanPrintsURLOnce(t *testing.T) {
 
 func TestPublishOutputNDJSONIncludesDiagnosticFields(t *testing.T) {
 	var stdout bytes.Buffer
-	output, err := newPublishOutput("ndjson", &stdout, io.Discard, nil)
+	output, err := newPublishOutput("ndjson", "tnl publish", &stdout, io.Discard, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +128,7 @@ func TestPublishOutputNDJSONIncludesDiagnosticFields(t *testing.T) {
 func TestPublishOutputNDJSONWarnsWhenBrowserCannotOpen(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	openCount := 0
-	output, err := newPublishOutput("ndjson", &stdout, &stderr, func(string) error {
+	output, err := newPublishOutput("ndjson", "tnl publish", &stdout, &stderr, func(string) error {
 		openCount++
 		return errors.New("browser unavailable")
 	})
@@ -151,6 +157,42 @@ func TestPublishOutputNDJSONWarnsWhenBrowserCannotOpen(t *testing.T) {
 	}
 	if first.Type != "ready" || second.Type != "ready" {
 		t.Fatalf("events = %#v, %#v", first, second)
+	}
+}
+
+func TestPublishOutputHumanFramesBrowserFailure(t *testing.T) {
+	var stderr bytes.Buffer
+	output, err := newPublishOutput("human", "tnl dev", io.Discard, &stderr, func(string) error {
+		return errors.New("browser\x1b unavailable")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := output.starting("tunnel_0123456789abcdef0123456789abcdef", "http://127.0.0.1:5173"); err != nil {
+		t.Fatal(err)
+	}
+	if err := output.ready("https://demo.example", 1); err != nil {
+		t.Fatal(err)
+	}
+	got := stderr.String()
+	if strings.Count(got, "+--[ tnl dev ]-- ") != 2 ||
+		!strings.Contains(got, "]-- ready ") || !strings.Contains(got, "]-- browser not opened ") ||
+		!strings.Contains(got, `browser\x1b unavailable`) || strings.ContainsRune(got, '\x1b') {
+		t.Fatalf("stderr = %q", got)
+	}
+}
+
+func TestPublishOutputHumanFramesConnectionDisruption(t *testing.T) {
+	var stderr bytes.Buffer
+	output, err := newPublishOutput("human", "tnl publish", io.Discard, &stderr, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output.logf("connection %s", "lost")
+	got := stderr.String()
+	if !strings.HasPrefix(got, "+--[ tnl publish ]-- publisher connection disrupted ") ||
+		!strings.Contains(got, "connection lost") || !strings.Contains(got, "+-- reconnecting ") {
+		t.Fatalf("stderr = %q", got)
 	}
 }
 

@@ -1,0 +1,115 @@
+package controlstate
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
+	"golang.org/x/crypto/acme/autocert"
+)
+
+const (
+	controlTLSLeadershipKey    int64 = 0x746e6c63746c7301
+	maximumControlTLSCacheKey        = 512
+	maximumControlTLSCacheData       = 2 << 20
+)
+
+type ControlTLSCache struct {
+	database     *Database
+	directoryURL string
+}
+
+func (d *Database) ControlTLSCache(directoryURL string) (*ControlTLSCache, error) {
+	if err := d.requireOpen(); err != nil {
+		return nil, err
+	}
+	if !validStateText(directoryURL) {
+		return nil, errors.New("controlstate: invalid control TLS cache directory")
+	}
+	return &ControlTLSCache{database: d, directoryURL: directoryURL}, nil
+}
+
+func (c *ControlTLSCache) Get(ctx context.Context, key string) ([]byte, error) {
+	if c == nil || c.database == nil || !validControlTLSCacheKey(key) {
+		return nil, autocert.ErrCacheMiss
+	}
+	data, err := controlstatedb.New(c.database.pool).GetControlTLSCacheEntry(ctx, controlstatedb.GetControlTLSCacheEntryParams{
+		DirectoryUrl: c.directoryURL, CacheKey: key,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, autocert.ErrCacheMiss
+	}
+	if err != nil {
+		return nil, fmt.Errorf("controlstate: get control TLS cache entry: %w", err)
+	}
+	return append([]byte(nil), data...), nil
+}
+
+func (c *ControlTLSCache) Put(ctx context.Context, key string, data []byte) error {
+	if c == nil || c.database == nil || !validControlTLSCacheKey(key) || len(data) == 0 || len(data) > maximumControlTLSCacheData {
+		return errors.New("controlstate: invalid control TLS cache entry")
+	}
+	if err := controlstatedb.New(c.database.pool).PutControlTLSCacheEntry(ctx, controlstatedb.PutControlTLSCacheEntryParams{
+		DirectoryUrl: c.directoryURL, CacheKey: key, CacheData: append([]byte(nil), data...), UpdatedAt: timestamptz(time.Now()),
+	}); err != nil {
+		return fmt.Errorf("controlstate: put control TLS cache entry: %w", err)
+	}
+	return nil
+}
+
+func (c *ControlTLSCache) Delete(ctx context.Context, key string) error {
+	if c == nil || c.database == nil || !validControlTLSCacheKey(key) {
+		return nil
+	}
+	if err := controlstatedb.New(c.database.pool).DeleteControlTLSCacheEntry(ctx, controlstatedb.DeleteControlTLSCacheEntryParams{
+		DirectoryUrl: c.directoryURL, CacheKey: key,
+	}); err != nil {
+		return fmt.Errorf("controlstate: delete control TLS cache entry: %w", err)
+	}
+	return nil
+}
+
+func (d *Database) RunControlTLSLeader(ctx context.Context, run func(context.Context) error) error {
+	if run == nil {
+		return errors.New("controlstate: control TLS leader function is required")
+	}
+	if err := d.requireOpen(); err != nil {
+		return err
+	}
+	retry := time.NewTicker(time.Second)
+	defer retry.Stop()
+	for {
+		connection, err := d.pool.Acquire(ctx)
+		if err != nil {
+			return fmt.Errorf("controlstate: acquire control TLS leadership connection: %w", err)
+		}
+		var acquired bool
+		err = connection.QueryRow(ctx, `SELECT pg_try_advisory_lock($1)`, controlTLSLeadershipKey).Scan(&acquired)
+		if err != nil {
+			connection.Release()
+			return fmt.Errorf("controlstate: acquire control TLS leadership: %w", err)
+		}
+		if acquired {
+			defer connection.Release()
+			defer func() {
+				unlockCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_, _ = connection.Exec(unlockCtx, `SELECT pg_advisory_unlock($1)`, controlTLSLeadershipKey)
+			}()
+			return run(ctx)
+		}
+		connection.Release()
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-retry.C:
+		}
+	}
+}
+
+func validControlTLSCacheKey(key string) bool {
+	return key != "" && len(key) <= maximumControlTLSCacheKey
+}

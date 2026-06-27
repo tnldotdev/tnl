@@ -1,0 +1,366 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tnl.dev/schema/v1.json",
+  "$defs": {
+    "Dev": {
+      "properties": {
+        "command": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "minItems": 1
+        },
+        "port": {
+          "type": "integer",
+          "maximum": 65535,
+          "minimum": 1
+        },
+        "startup_timeout": {
+          "type": "string",
+          "pattern": "^[0-9]+(ns|us|\\u00b5s|ms|s|m|h)([0-9]+(ns|us|\\u00b5s|ms|s|m|h))*$"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "Publish": {
+      "properties": {
+        "target": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "integer",
+              "maximum": 65535,
+              "minimum": 1
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "TNL": {
+      "properties": {
+        "server": {
+          "type": "string"
+        },
+        "tunnel": {
+          "allOf": [
+            {
+              "not": {
+                "required": ["host", "subdomain"]
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "public": {
+                    "const": true
+                  }
+                },
+                "required": ["public"]
+              },
+              "then": {
+                "not": {
+                  "required": ["allow_ip"]
+                }
+              }
+            }
+          ],
+          "properties": {
+            "host": {
+              "type": "string"
+            },
+            "subdomain": {
+              "type": "string"
+            },
+            "allow_ip": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array",
+              "maxItems": 63,
+              "uniqueItems": true
+            },
+            "public": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "publish": {
+          "$ref": "#/$defs/Publish"
+        },
+        "dev": {
+          "$ref": "#/$defs/Dev"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    }
+  },
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Configuration format version."
+    },
+    "tnl": {
+      "$ref": "#/$defs/TNL"
+    },
+    "tnld": {
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["standalone", "control", "ingress", "relay"],
+          "description": "Process role: ${enum}.",
+          "default": "standalone"
+        },
+        "database_url": {
+          "type": "string",
+          "description": "Pooled PostgreSQL URL used by control and standalone."
+        },
+        "metrics_listen": {
+          "type": "string",
+          "description": "Private Prometheus listen address; empty disables metrics.",
+          "default": "127.0.0.1:9090"
+        },
+        "control_listen": {
+          "type": "string",
+          "description": "Public control HTTPS listen address."
+        },
+        "ingress_control_listen": {
+          "type": "string",
+          "description": "Private service-mTLS ingress API listen address."
+        },
+        "relay_control_listen": {
+          "type": "string",
+          "description": "Private service-mTLS relay API listen address."
+        },
+        "ingress_listen": {
+          "type": "string",
+          "description": "Public visitor TCP listen address."
+        },
+        "relay_tcp_listen": {
+          "type": "string",
+          "description": "Public TLS/TCP publisher-connection listen address."
+        },
+        "relay_udp_listen": {
+          "type": "string",
+          "description": "Public QUIC publisher-connection listen address."
+        },
+        "internal_relay_listen": {
+          "type": "string",
+          "description": "Internal service-mTLS forwarding listen address."
+        },
+        "dns_server": {
+          "type": "string",
+          "description": "DNS resolver used for readiness checks; defaults to the system resolver."
+        },
+        "server_domain": {
+          "type": "string",
+          "description": "Infrastructure DNS suffix used to derive control, ingress, and relay hostnames."
+        },
+        "control_hostname": {
+          "type": "string",
+          "description": "Control API hostname used by ingress and relay processes."
+        },
+        "managed_deployment_domain": {
+          "type": "string",
+          "description": "Managed public route DNS domain."
+        },
+        "reserved_route_name": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "DNS labels unavailable for routes; repeat for each label."
+        },
+        "control_tls_certificate_file": {
+          "type": "string",
+          "description": "Optional static public control certificate chain override."
+        },
+        "control_tls_private_key_file": {
+          "type": "string",
+          "description": "Optional static public control private key override."
+        },
+        "acme_directory_url": {
+          "type": "string",
+          "description": "ACME directory URL for automatic public certificates."
+        },
+        "acme_email": {
+          "type": "string",
+          "description": "ACME account contact email."
+        },
+        "acme_accept_terms": {
+          "type": "boolean",
+          "description": "Explicitly accept the ACME directory terms."
+        },
+        "acme_profile": {
+          "type": "string",
+          "description": "ACME certificate profile.",
+          "default": "tlsserver"
+        },
+        "oidc_issuer": {
+          "type": "string",
+          "description": "OIDC issuer used by the authority."
+        },
+        "oidc_client_id": {
+          "type": "string",
+          "description": "OIDC client ID used by the authority."
+        },
+        "oidc_login_flow": {
+          "type": "string",
+          "description": "OIDC login flow: device_code or authorization_code_pkce."
+        },
+        "oidc_scope": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "OIDC scope requested by clients; repeat for each scope."
+        },
+        "login_token": {
+          "type": "string",
+          "description": "Bootstrap login token for the built-in administrator identity."
+        },
+        "authority_endpoint": {
+          "type": "string",
+          "description": "Exact external authority HTTPS origin; defaults to the control origin."
+        },
+        "authorization_issuer": {
+          "type": "string",
+          "description": "Exact trusted signed-authorization issuer."
+        },
+        "authorization_receiver": {
+          "type": "string",
+          "description": "Expected signed-authorization receiver."
+        },
+        "authorization_key_id": {
+          "type": "string",
+          "description": "Trusted authorization Ed25519 key ID."
+        },
+        "authorization_public_key": {
+          "type": "string",
+          "description": "Trusted Ed25519 public key in unpadded base64url form."
+        },
+        "access_token_lifetime": {
+          "type": "string",
+          "description": "Lifetime of newly issued access tokens.",
+          "default": "1h"
+        },
+        "refresh_token_lifetime": {
+          "type": "string",
+          "description": "Absolute lifetime of newly issued control sessions.",
+          "default": "720h"
+        },
+        "route_usage_url": {
+          "type": "string",
+          "description": "Route usage receiver base URL."
+        },
+        "route_usage_token": {
+          "type": "string",
+          "description": "Service token for the route usage receiver."
+        },
+        "service_enrollment_token": {
+          "type": "string",
+          "description": "Reusable role-scoped service enrollment token."
+        },
+        "ingress_id": {
+          "type": "string",
+          "description": "Stable ingress process identity."
+        },
+        "relay_id": {
+          "type": "string",
+          "description": "Stable relay process identity."
+        },
+        "internal_relay_address": {
+          "type": "string",
+          "description": "Internal hostname and port advertised by this relay process."
+        },
+        "public_connection_limit": {
+          "type": "integer",
+          "description": "Maximum concurrent public visitor connections.",
+          "default": 20000
+        },
+        "route_connection_limit": {
+          "type": "integer",
+          "description": "Maximum concurrent visitor connections per route.",
+          "default": 500
+        },
+        "publisher_connection_limit": {
+          "type": "integer",
+          "description": "Maximum publisher connections held by one relay process.",
+          "default": 1000
+        },
+        "relay_stream_capacity": {
+          "type": "integer",
+          "description": "Maximum concurrent visitor streams held by one relay process.",
+          "default": 4096
+        },
+        "require_proxy_header": {
+          "type": "boolean",
+          "description": "Require one trusted outer PROXY v2 header on public ingress."
+        },
+        "quic_max_incoming_streams": {
+          "type": "integer",
+          "description": "Maximum incoming QUIC streams per publisher connection.",
+          "default": 4096
+        },
+        "quic_idle_timeout": {
+          "type": "string",
+          "description": "Publisher connection QUIC idle timeout.",
+          "default": "45s"
+        },
+        "tunnel_fallback_delay": {
+          "type": "string",
+          "description": "Delay before racing TLS/TCP against QUIC.",
+          "default": "250ms"
+        },
+        "ingress_lease_duration": {
+          "type": "string",
+          "description": "Control-owned ingress lease duration.",
+          "default": "30s"
+        },
+        "relay_lease_duration": {
+          "type": "string",
+          "description": "Control-owned relay lease duration.",
+          "default": "30s"
+        },
+        "lease_renewal_interval": {
+          "type": "string",
+          "description": "Ingress and relay lease renewal interval.",
+          "default": "10s"
+        },
+        "control_retry_interval": {
+          "type": "string",
+          "description": "Delay before retrying a transient control failure.",
+          "default": "1s"
+        },
+        "routing_table_wait": {
+          "type": "string",
+          "description": "Ingress routing-table long-poll duration.",
+          "default": "25s"
+        },
+        "drain_timeout": {
+          "type": "string",
+          "description": "Graceful connection drain deadline.",
+          "default": "30s"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "type": "object",
+  "required": ["version"]
+}

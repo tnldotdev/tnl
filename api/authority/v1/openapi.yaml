@@ -1,0 +1,952 @@
+openapi: 3.1.0
+info:
+  title: tnl authorization authority API
+  version: 1.0.0
+  license:
+    name: MIT
+    identifier: MIT
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+servers:
+  - url: https://authority.example
+paths:
+  /v1/auth/token:
+    post:
+      operationId: exchangeLoginToken
+      summary: Exchange the bootstrap login token for a control session
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginTokenExchangeRequest"
+      responses:
+        "200":
+          description: Control session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ControlSessionResponse"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/auth/oidc:
+    post:
+      operationId: exchangeOIDCToken
+      summary: Exchange an OIDC ID token for a control session
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OIDCTokenExchangeRequest"
+      responses:
+        "200":
+          description: Control session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ControlSessionResponse"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/auth/refresh:
+    post:
+      operationId: refreshControlSession
+      summary: Rotate a control session's access and refresh tokens
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshControlSessionRequest"
+      responses:
+        "200":
+          description: Rotated control session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ControlSessionResponse"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/auth/logout:
+    post:
+      operationId: logoutControlSession
+      summary: Revoke the authenticated control session
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Control session revoked
+        default:
+          $ref: "#/components/responses/BearerProblem"
+  /v1/identity:
+    get:
+      operationId: getIdentityContext
+      summary: Read the authenticated identity and memberships
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Identity context
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityContext"
+        default:
+          $ref: "#/components/responses/BearerProblem"
+  /v1/teams:
+    get:
+      operationId: listTeams
+      summary: List teams visible through current memberships
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Team page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamPage"
+        default:
+          $ref: "#/components/responses/BearerProblem"
+    post:
+      operationId: createTeam
+      summary: Create an organization team
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTeamRequest"
+      responses:
+        "201":
+          description: Team created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Team"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/teams/{team_id}:
+    get:
+      operationId: getTeam
+      summary: Read one team
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TeamID"
+      responses:
+        "200":
+          description: Team
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Team"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/teams/{team_id}/memberships:
+    get:
+      operationId: listTeamMemberships
+      summary: List team memberships
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TeamID"
+      responses:
+        "200":
+          description: Membership page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MembershipPage"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/teams/{team_id}/memberships/{membership_id}:
+    patch:
+      operationId: setMembershipRole
+      summary: Change one membership's team role
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TeamID"
+        - $ref: "#/components/parameters/MembershipID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetMembershipRoleRequest"
+      responses:
+        "200":
+          description: Updated membership
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Membership"
+        default:
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: removeMembership
+      summary: Remove one membership
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TeamID"
+        - $ref: "#/components/parameters/MembershipID"
+      responses:
+        "204":
+          description: Membership removed
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/teams/{team_id}/invitations:
+    get:
+      operationId: listTeamInvitations
+      summary: List team invitations
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TeamID"
+      responses:
+        "200":
+          description: Invitation page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvitationPage"
+        default:
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: createTeamInvitation
+      summary: Create an expiring invitation
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TeamID"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateInvitationRequest"
+      responses:
+        "201":
+          description: Invitation and one-time secret
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvitationSecret"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/teams/{team_id}/invitations/{invitation_id}:
+    delete:
+      operationId: revokeTeamInvitation
+      summary: Revoke one pending invitation
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TeamID"
+        - $ref: "#/components/parameters/InvitationID"
+      responses:
+        "204":
+          description: Invitation revoked
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/invitations/accept:
+    post:
+      operationId: acceptInvitation
+      summary: Consume an invitation secret
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcceptInvitationRequest"
+      responses:
+        "200":
+          description: Membership created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Membership"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/teams/{team_id}/domains:
+    get:
+      operationId: listTeamDomains
+      summary: List managed and claimed domains available to the team
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TeamID"
+      responses:
+        "200":
+          description: Domain page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DomainPage"
+        default:
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: claimTeamDomain
+      summary: Begin claiming one domain
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TeamID"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClaimDomainRequest"
+      responses:
+        "201":
+          description: Domain claim
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Domain"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/teams/{team_id}/domains/{domain_id}/default:
+    post:
+      operationId: setTeamDefaultDomain
+      summary: Select a ready default domain
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TeamID"
+        - $ref: "#/components/parameters/DomainID"
+      responses:
+        "200":
+          description: Updated team
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Team"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/teams/{team_id}/domains/{domain_id}:
+    delete:
+      operationId: releaseTeamDomain
+      summary: Release one claimed domain
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TeamID"
+        - $ref: "#/components/parameters/DomainID"
+      responses:
+        "204":
+          description: Domain release started
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/authorizations:
+    post:
+      operationId: issueAuthorization
+      summary: Issue a short-lived team authorization for one control mutation
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IssueAuthorizationRequest"
+      responses:
+        "201":
+          description: Signed authorization
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthorizationEnvelope"
+        default:
+          $ref: "#/components/responses/Problem"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: OAuth access token
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+        pattern: '^\S(?:.*\S)?$'
+    TeamID:
+      name: team_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/TeamID"
+    MembershipID:
+      name: membership_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/MembershipID"
+    InvitationID:
+      name: invitation_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/InvitationID"
+    DomainID:
+      name: domain_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/DomainID"
+  responses:
+    Problem:
+      description: Request failed
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    BearerProblem:
+      description: Authentication failed
+      headers:
+        WWW-Authenticate:
+          required: true
+          schema:
+            type: string
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+  schemas:
+    ResourceID:
+      type: string
+      minLength: 1
+      maxLength: 256
+      pattern: '^\S(?:.*\S)?$'
+    IdentityID:
+      $ref: "#/components/schemas/ResourceID"
+    TeamID:
+      $ref: "#/components/schemas/ResourceID"
+    MembershipID:
+      $ref: "#/components/schemas/ResourceID"
+    InvitationID:
+      $ref: "#/components/schemas/ResourceID"
+    DomainID:
+      $ref: "#/components/schemas/ResourceID"
+    RouteID:
+      $ref: "#/components/schemas/ResourceID"
+    CanonicalHostname:
+      type: string
+      minLength: 1
+      maxLength: 253
+      pattern: "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+    CanonicalLabel:
+      type: string
+      minLength: 1
+      maxLength: 63
+      pattern: "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+    LoginTokenExchangeRequest:
+      type: object
+      additionalProperties: false
+      required: [login_token]
+      properties:
+        login_token:
+          type: string
+          minLength: 1
+          maxLength: 4096
+    OIDCTokenExchangeRequest:
+      type: object
+      additionalProperties: false
+      required: [id_token]
+      properties:
+        id_token:
+          type: string
+          minLength: 1
+          maxLength: 65536
+    RefreshControlSessionRequest:
+      type: object
+      additionalProperties: false
+      required: [refresh_token]
+      properties:
+        refresh_token:
+          type: string
+          minLength: 1
+          maxLength: 4096
+    ControlSessionResponse:
+      type: object
+      additionalProperties: false
+      required:
+        [session_id, access_token, access_expires_at, refresh_token, refresh_expires_at, identity]
+      properties:
+        session_id:
+          $ref: "#/components/schemas/ResourceID"
+        access_token:
+          type: string
+          minLength: 1
+        access_expires_at:
+          type: string
+          format: date-time
+        refresh_token:
+          type: string
+          minLength: 1
+        refresh_expires_at:
+          type: string
+          format: date-time
+        identity:
+          $ref: "#/components/schemas/IdentityContext"
+    Identity:
+      type: object
+      additionalProperties: false
+      required: [id, display_name, administrator, created_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/IdentityID"
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 256
+        normalized_email:
+          type: string
+          format: email
+        email_verified:
+          type: boolean
+          default: false
+        administrator:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+    IdentityContext:
+      type: object
+      additionalProperties: false
+      required: [identity, personal_team_id, memberships]
+      properties:
+        identity:
+          $ref: "#/components/schemas/Identity"
+        personal_team_id:
+          $ref: "#/components/schemas/TeamID"
+        memberships:
+          type: array
+          items:
+            $ref: "#/components/schemas/Membership"
+    TeamRole:
+      type: string
+      enum: [member, admin, owner]
+    TeamKind:
+      type: string
+      enum: [personal, organization]
+    Team:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          id,
+          kind,
+          display_name,
+          managed_label,
+          default_domain_id,
+          policy_revision,
+          created_at,
+          updated_at,
+        ]
+      properties:
+        id:
+          $ref: "#/components/schemas/TeamID"
+        kind:
+          $ref: "#/components/schemas/TeamKind"
+        display_name:
+          type: string
+        managed_label:
+          $ref: "#/components/schemas/CanonicalLabel"
+        default_domain_id:
+          $ref: "#/components/schemas/DomainID"
+        policy_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    TeamPage:
+      type: object
+      additionalProperties: false
+      required: [teams]
+      properties:
+        teams:
+          type: array
+          items:
+            $ref: "#/components/schemas/Team"
+        next_cursor:
+          $ref: "#/components/schemas/TeamID"
+    CreateTeamRequest:
+      type: object
+      additionalProperties: false
+      required: [display_name, member_slug]
+      properties:
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        member_slug:
+          $ref: "#/components/schemas/CanonicalLabel"
+    Membership:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          id,
+          team_id,
+          identity_id,
+          team_display_name,
+          team_kind,
+          role,
+          member_slug,
+          managed_label,
+          policy_revision,
+          created_at,
+          updated_at,
+        ]
+      properties:
+        id:
+          $ref: "#/components/schemas/MembershipID"
+        team_id:
+          $ref: "#/components/schemas/TeamID"
+        identity_id:
+          $ref: "#/components/schemas/IdentityID"
+        team_display_name:
+          type: string
+        team_kind:
+          $ref: "#/components/schemas/TeamKind"
+        role:
+          $ref: "#/components/schemas/TeamRole"
+        member_slug:
+          $ref: "#/components/schemas/CanonicalLabel"
+        managed_label:
+          $ref: "#/components/schemas/CanonicalLabel"
+        policy_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    MembershipPage:
+      type: object
+      additionalProperties: false
+      required: [memberships]
+      properties:
+        memberships:
+          type: array
+          items:
+            $ref: "#/components/schemas/Membership"
+        next_cursor:
+          $ref: "#/components/schemas/MembershipID"
+    SetMembershipRoleRequest:
+      type: object
+      additionalProperties: false
+      required: [role]
+      properties:
+        role:
+          $ref: "#/components/schemas/TeamRole"
+    InvitationState:
+      type: string
+      enum: [pending, accepted, revoked, expired]
+    Invitation:
+      type: object
+      additionalProperties: false
+      required: [id, team_id, member_slug, initial_role, state, created_at, expires_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/InvitationID"
+        team_id:
+          $ref: "#/components/schemas/TeamID"
+        member_slug:
+          $ref: "#/components/schemas/CanonicalLabel"
+        initial_role:
+          $ref: "#/components/schemas/TeamRole"
+        normalized_email_restriction:
+          type: string
+          format: email
+        state:
+          $ref: "#/components/schemas/InvitationState"
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+    InvitationPage:
+      type: object
+      additionalProperties: false
+      required: [invitations]
+      properties:
+        invitations:
+          type: array
+          items:
+            $ref: "#/components/schemas/Invitation"
+        next_cursor:
+          $ref: "#/components/schemas/InvitationID"
+    InvitationSecret:
+      type: object
+      additionalProperties: false
+      required: [invitation, secret]
+      properties:
+        invitation:
+          $ref: "#/components/schemas/Invitation"
+        secret:
+          type: string
+          minLength: 32
+          maxLength: 4096
+    CreateInvitationRequest:
+      type: object
+      additionalProperties: false
+      required: [member_slug, initial_role, expires_at]
+      properties:
+        member_slug:
+          $ref: "#/components/schemas/CanonicalLabel"
+        initial_role:
+          $ref: "#/components/schemas/TeamRole"
+        expires_at:
+          type: string
+          format: date-time
+        email_restriction:
+          type: string
+          format: email
+    AcceptInvitationRequest:
+      type: object
+      additionalProperties: false
+      required: [secret]
+      properties:
+        secret:
+          type: string
+          minLength: 32
+          maxLength: 4096
+    DomainKind:
+      type: string
+      enum: [managed, claimed]
+    DomainState:
+      type: string
+      enum: [pending, ready, releasing, failed]
+    DNSRecord:
+      type: object
+      additionalProperties: false
+      required: [name, type, value]
+      properties:
+        name:
+          $ref: "#/components/schemas/CanonicalHostname"
+        type:
+          type: string
+          enum: [NS, TXT, CNAME, A, AAAA]
+        value:
+          type: string
+    Domain:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          id,
+          kind,
+          canonical_domain,
+          state,
+          authority_revision,
+          required_records,
+          created_at,
+          updated_at,
+        ]
+      properties:
+        id:
+          $ref: "#/components/schemas/DomainID"
+        kind:
+          $ref: "#/components/schemas/DomainKind"
+        team_id:
+          $ref: "#/components/schemas/TeamID"
+        canonical_domain:
+          $ref: "#/components/schemas/CanonicalHostname"
+        state:
+          $ref: "#/components/schemas/DomainState"
+        authority_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        required_records:
+          type: array
+          items:
+            $ref: "#/components/schemas/DNSRecord"
+        verified_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    DomainPage:
+      type: object
+      additionalProperties: false
+      required: [domains]
+      properties:
+        domains:
+          type: array
+          items:
+            $ref: "#/components/schemas/Domain"
+        next_cursor:
+          $ref: "#/components/schemas/DomainID"
+    ClaimDomainRequest:
+      type: object
+      additionalProperties: false
+      required: [domain]
+      properties:
+        domain:
+          $ref: "#/components/schemas/CanonicalHostname"
+        make_default:
+          type: boolean
+          default: false
+    RouteScope:
+      type: string
+      enum: [member, shared]
+    CertificateChallengeMethod:
+      type: string
+      enum: [dns-01, tls-alpn-01]
+    CertificatePlan:
+      type: object
+      additionalProperties: false
+      required: [cache_key, scope, identifiers, challenge_method]
+      properties:
+        cache_key:
+          type: string
+          minLength: 1
+          maxLength: 256
+        scope:
+          type: string
+          minLength: 1
+          maxLength: 256
+        identifiers:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/CanonicalHostname"
+        challenge_method:
+          $ref: "#/components/schemas/CertificateChallengeMethod"
+    AuthorizationOperation:
+      type: string
+      enum: [route.create, route_session.create, route.delete]
+    IssueAuthorizationRequest:
+      type: object
+      additionalProperties: false
+      required:
+        [operation, team_id, domain_id, canonical_hostname, route_scope, request_digest, retry_id]
+      properties:
+        operation:
+          $ref: "#/components/schemas/AuthorizationOperation"
+        team_id:
+          $ref: "#/components/schemas/TeamID"
+        membership_id:
+          $ref: "#/components/schemas/MembershipID"
+        domain_id:
+          $ref: "#/components/schemas/DomainID"
+        canonical_hostname:
+          $ref: "#/components/schemas/CanonicalHostname"
+        route_scope:
+          $ref: "#/components/schemas/RouteScope"
+        route_id:
+          $ref: "#/components/schemas/RouteID"
+        route_version:
+          type: integer
+          format: int64
+          minimum: 1
+        certificate_plan:
+          $ref: "#/components/schemas/CertificatePlan"
+        request_digest:
+          type: string
+          minLength: 43
+          maxLength: 43
+        ip_policy_digest:
+          type: string
+          minLength: 43
+          maxLength: 43
+        retry_id:
+          type: string
+          minLength: 1
+          maxLength: 256
+    AuthorizationEnvelope:
+      type: object
+      additionalProperties: false
+      required: [authorization_id, authorization, team_policy_revision, expires_at]
+      properties:
+        authorization_id:
+          $ref: "#/components/schemas/ResourceID"
+        authorization:
+          type: string
+          minLength: 1
+          maxLength: 4096
+        team_policy_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        expires_at:
+          type: string
+          format: date-time
+    Problem:
+      type: object
+      additionalProperties: false
+      required: [type, title, status, code, request_id]
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+          minLength: 1
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        code:
+          type: string
+          enum:
+            [
+              invalid_request,
+              unauthenticated,
+              forbidden,
+              not_found,
+              conflict,
+              rate_limited,
+              unavailable,
+              internal,
+              name_unavailable,
+              policy_revision_stale,
+              dns_setup_pending,
+            ]
+        request_id:
+          type: string
+          minLength: 1
+        detail:
+          type: string
+        retry_at:
+          type: string
+          format: date-time
+        details:
+          type: object
+          additionalProperties: true

@@ -98,7 +98,7 @@ func readBenchmarkResults(path string) ([]benchmarkResult, error) {
 		if err := json.Unmarshal(scanner.Bytes(), &result); err != nil {
 			return nil, fmt.Errorf("decode result line %d: %w", line, err)
 		}
-		if result.SchemaVersion != 2 || result.CellID == "" || result.Shard.Count <= 0 ||
+		if result.SchemaVersion != 4 || result.CellID == "" || result.Shard.Count <= 0 ||
 			result.Shard.Index < 0 || result.Shard.Index >= result.Shard.Count {
 			return nil, fmt.Errorf("result line %d has invalid schema or identity", line)
 		}
@@ -219,7 +219,7 @@ func formatReportMarkdown(report benchmarkReport) string {
 	var output strings.Builder
 	fmt.Fprintf(&output, "# Fly Benchmark Report\n\nStatus: **%s**\n\n", report.Status)
 	fmt.Fprintf(&output, "Result rows: %d passed, %d failed, %d total.\n\n", report.PassedRows, report.FailedRows, report.ResultRows)
-	output.WriteString("Workload inputs are assumptions unless the named workload explicitly says otherwise. Existing streams are not transferred during worker loss, and no stream bytes are replayed.\n\n")
+	output.WriteString("Workload inputs are assumptions unless the named workload explicitly says otherwise. Existing streams are not transferred during relay loss, and no stream bytes are replayed.\n\n")
 	output.WriteString("| Cell | Status | Rows | Attempts | Successes | Errors | Bytes |\n")
 	output.WriteString("| --- | --- | ---: | ---: | ---: | ---: | ---: |\n")
 	for _, cell := range report.Cells {

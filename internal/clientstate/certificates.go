@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/clientstate/clientstatedb"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"golang.org/x/sys/unix"
@@ -315,7 +316,8 @@ func validateCSR(csrDER []byte, key any, hostname string) error {
 	expected, expectedOK := signer.Public().(*ecdsa.PublicKey)
 	if request.CheckSignature() != nil || !keyOK || !expectedOK || !publicKey.Equal(expected) ||
 		len(request.DNSNames) != 1 || request.DNSNames[0] != hostname || len(request.EmailAddresses) != 0 ||
-		len(request.IPAddresses) != 0 || len(request.URIs) != 0 || request.Subject.String() != "" {
+		len(request.IPAddresses) != 0 || len(request.URIs) != 0 || request.Subject.String() != "" ||
+		!certificateidentity.DNSNamesOnly(request.Extensions, request.DNSNames) {
 		return errors.New("clientstate: pending CSR is invalid")
 	}
 	return nil
@@ -340,7 +342,8 @@ func certificate(keyDER, certificatePEM []byte, hostname string) (tls.Certificat
 	}
 	if len(leaf.DNSNames) != 1 || leaf.DNSNames[0] != hostname || len(leaf.EmailAddresses) != 0 ||
 		len(leaf.IPAddresses) != 0 || len(leaf.URIs) != 0 || leaf.IsCA ||
-		leaf.NotBefore.After(time.Now().Add(5*time.Minute)) {
+		leaf.NotBefore.After(time.Now().Add(5*time.Minute)) ||
+		!certificateidentity.DNSNamesOnly(leaf.Extensions, leaf.DNSNames) {
 		return tls.Certificate{}, errors.New("clientstate: application certificate identity or validity is invalid")
 	}
 	serverAuth := false

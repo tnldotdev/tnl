@@ -8,8 +8,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/clioutput"
+	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
-	"github.com/tnldotdev/tnl/internal/serverclient"
 )
 
 type publishEvent struct {
@@ -30,28 +31,33 @@ type publishEvent struct {
 }
 
 type publishOutput struct {
-	mode     string
-	stdout   io.Writer
-	stderr   io.Writer
-	mu       sync.Mutex
-	cursor   uint64
-	tunnelID string
-	printed  bool
-	opened   bool
-	openURL  func(string) error
+	mode      string
+	stdout    io.Writer
+	stderr    io.Writer
+	mu        sync.Mutex
+	cursor    uint64
+	tunnelID  string
+	printed   bool
+	opened    bool
+	command   string
+	target    string
+	current   string
+	framework string
+	openURL   func(string) error
 }
 
-func newPublishOutput(mode string, stdout, stderr io.Writer, openURL func(string) error) (*publishOutput, error) {
+func newPublishOutput(mode, command string, stdout, stderr io.Writer, openURL func(string) error) (*publishOutput, error) {
 	if mode != "human" && mode != "ndjson" {
 		return nil, errors.New("output must be human or ndjson")
 	}
-	return &publishOutput{mode: mode, stdout: stdout, stderr: stderr, openURL: openURL}, nil
+	return &publishOutput{mode: mode, command: command, stdout: stdout, stderr: stderr, openURL: openURL}, nil
 }
 
 func (o *publishOutput) starting(tunnelID, target string) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.tunnelID = tunnelID
+	o.target = target
 	if o.mode == "human" {
 		return nil
 	}
@@ -64,14 +70,45 @@ func (o *publishOutput) ready(url string, routeVersion uint64) error {
 	if o.mode == "human" {
 		if !o.printed {
 			o.printed = true
-			if _, err := io.WriteString(o.stderr, url+"\n"); err != nil {
+			footer := "ctrl+c to stop"
+			var openErr error
+			if o.openURL != nil && !o.opened {
+				o.opened = true
+				openErr = o.openURL(url)
+				if openErr == nil {
+					footer = "opened in browser; ctrl+c to stop"
+				}
+			}
+			fields := []clioutput.Field{{Label: "route version", Value: fmt.Sprint(routeVersion)}}
+			if o.framework != "" {
+				fields = append(fields, clioutput.Field{Label: "framework", Value: o.framework})
+			}
+			if o.current != "" {
+				fields = append(fields, clioutput.Field{Label: "IP policy", Value: o.current})
+			}
+			if err := writeHumanFrame(o.stderr, o.command, "ready", footer,
+				clioutput.Flow(
+					clioutput.FlowNode{Label: url},
+					clioutput.FlowNode{Label: "publisher"},
+					clioutput.FlowNode{Label: o.target},
+				),
+				clioutput.Fields(fields...),
+			); err != nil {
 				return err
+			}
+			if openErr != nil {
+				_ = writeHumanFrame(o.stderr, o.command, "browser not opened", "route remains ready",
+					clioutput.Fields(
+						clioutput.Field{Label: "public", Value: url},
+						clioutput.Field{Label: "reason", Value: openErr.Error()},
+					),
+				)
 			}
 		}
 	} else if err := o.emitLocked(publishEvent{Type: "ready", URL: url, RouteVersion: routeVersion}); err != nil {
 		return err
 	}
-	if o.openURL != nil && !o.opened {
+	if o.mode != "human" && o.openURL != nil && !o.opened {
 		o.opened = true
 		if err := o.openURL(url); err != nil {
 			_, _ = fmt.Fprintf(o.stderr, "tnl: could not open %s: %v\n", url, err)
@@ -82,23 +119,42 @@ func (o *publishOutput) ready(url string, routeVersion uint64) error {
 
 func (o *publishOutput) currentIP(ip string) error {
 	if o.mode == "human" {
-		_, err := io.WriteString(o.stderr, "Current IP: "+ip+"\n")
-		return err
+		o.mu.Lock()
+		o.current = ip
+		o.mu.Unlock()
+		return nil
 	}
 	return o.emit(publishEvent{Type: "current_ip", IP: ip})
+}
+
+func (o *publishOutput) setFramework(framework string) {
+	o.mu.Lock()
+	o.framework = framework
+	o.mu.Unlock()
+}
+
+func (o *publishOutput) logf(format string, arguments ...any) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	message := fmt.Sprintf(format, arguments...)
+	if o.mode == "human" {
+		_ = writeHumanFrame(o.stderr, o.command, "publisher connection disrupted", "reconnecting", clioutput.Text(message))
+		return
+	}
+	_, _ = fmt.Fprintf(o.stderr, "tnl: %s\n", message)
 }
 
 func (o *publishOutput) failed(err error) error {
 	if o.mode == "human" {
 		return nil
 	}
-	retryable := errors.Is(err, serverclient.ErrUnavailable) || errors.Is(err, serverclient.ErrRateLimited)
+	retryable := errors.Is(err, controlclient.ErrUnavailable) || errors.Is(err, controlclient.ErrRateLimited)
 	event := publishEvent{Type: "error", Message: boundedOutputError(err), Retryable: &retryable}
 	if code, ok := diagnostic.CodeOf(err); ok {
 		event.Code = string(code)
 		event.HelpURL = diagnostic.HelpURL(code)
 	}
-	var limited *serverclient.RateLimitError
+	var limited *controlclient.RateLimitError
 	if errors.As(err, &limited) && limited.RetryAfter > 0 {
 		retryAt := time.Now().Add(limited.RetryAfter).UTC()
 		event.RetryAt = &retryAt

@@ -1,0 +1,61 @@
+-- name: EnsureExternalAuthorityPrincipal :one
+INSERT INTO control.identities (
+    id,
+    kind,
+    display_name,
+    administrator,
+    created_at,
+    updated_at
+) VALUES (
+    sqlc.arg(identity_id),
+    'authority',
+    sqlc.arg(identity_id),
+    false,
+    sqlc.arg(created_at),
+    sqlc.arg(created_at)
+)
+ON CONFLICT (id) DO UPDATE SET
+    updated_at = GREATEST(control.identities.updated_at, EXCLUDED.updated_at)
+WHERE control.identities.kind = 'authority'
+  AND control.identities.disabled_at IS NULL
+RETURNING *;
+
+-- name: EnsureExternalRetryMasterKey :one
+INSERT INTO control.runtime_secrets (
+    singleton,
+    external_retry_master_key,
+    created_at
+) VALUES (
+    true,
+    sqlc.arg(external_retry_master_key),
+    sqlc.arg(created_at)
+)
+ON CONFLICT (singleton) DO UPDATE SET singleton = EXCLUDED.singleton
+RETURNING external_retry_master_key;
+
+-- name: ListExternalAuthorityRoutes :many
+SELECT routes.*,
+    COALESCE((
+        SELECT sessions.id
+        FROM control.route_sessions AS sessions
+        WHERE sessions.route_id = routes.id
+          AND sessions.closed_at IS NULL
+    ), '')::text AS attached_session_id
+FROM control.routes AS routes
+WHERE routes.team_id = sqlc.arg(team_id)
+  AND routes.lifecycle_state <> 'deleted'
+  AND (sqlc.narg(cursor)::text IS NULL OR routes.id > sqlc.narg(cursor))
+ORDER BY routes.id
+LIMIT 101;
+
+-- name: GetExternalAuthorityRoute :one
+SELECT routes.*,
+    COALESCE((
+        SELECT sessions.id
+        FROM control.route_sessions AS sessions
+        WHERE sessions.route_id = routes.id
+          AND sessions.closed_at IS NULL
+    ), '')::text AS attached_session_id
+FROM control.routes AS routes
+WHERE routes.id = sqlc.arg(route_id)
+  AND routes.lifecycle_state <> 'deleted';

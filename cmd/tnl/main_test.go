@@ -2,162 +2,19 @@ package main
 
 import (
 	"bytes"
-	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
-	"net"
-	"net/http"
-	"net/http/httptest"
-	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/alecthomas/kong"
+	"github.com/tnldotdev/tnl/internal/buildinfo"
+	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/credentials"
-	"github.com/tnldotdev/tnl/internal/diagnostic"
-	"github.com/tnldotdev/tnl/internal/serverclient"
-	"github.com/tnldotdev/tnl/internal/state"
-	"github.com/tnldotdev/tnl/pkg/protocol/serverv1"
+	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
-type telemetryReporterFunc func(telemetryPayload)
-
-func (f telemetryReporterFunc) Report(payload telemetryPayload) { f(payload) }
-
-func TestWriteCommandErrorRendersDiagnostics(t *testing.T) {
-	var output bytes.Buffer
-	writeCommandError(&output, diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("invalid port 70000")))
-	text := output.String()
-	if !strings.HasPrefix(text, "[ tnl ]\n\ninvalid target\n") || !strings.Contains(text, "invalid port 70000") ||
-		!strings.HasSuffix(text, "https://tnl.dev/e/config\n") {
-		t.Fatalf("output = %q", text)
-	}
-
-	output.Reset()
-	writeCommandError(&output, errors.New("ordinary failure"))
-	if output.String() != "tnl: ordinary failure\n" {
-		t.Fatalf("ordinary output = %q", output.String())
-	}
-}
-
-func TestVersionCommand(t *testing.T) {
-	var output, errors bytes.Buffer
-	if err := run(context.Background(), []string{"version"}, &output, &errors); err != nil {
-		t.Fatal(err)
-	}
-	if output.String() != "tnl devel\n" || errors.Len() != 0 {
-		t.Fatalf("stdout = %q, stderr = %q", output.String(), errors.String())
-	}
-}
-
-func TestCommandTelemetryIsSafeAndOptional(t *testing.T) {
-	t.Setenv("TNL_NO_TELEMETRY", "false")
-	stateRoot := t.TempDir()
-	var payloads []telemetryPayload
-	factoryCalls := 0
-	factory := func(root string) telemetryReporter {
-		factoryCalls++
-		if root != stateRoot {
-			t.Fatalf("telemetry state root = %q, want %q", root, stateRoot)
-		}
-		return telemetryReporterFunc(func(payload telemetryPayload) {
-			payloads = append(payloads, payload)
-		})
-	}
-
-	var stdout, stderr bytes.Buffer
-	err := run(t.Context(), []string{
-		"publish", "sensitive.example:3000", "--access-token", "secret-token", "--state-dir", stateRoot,
-	}, &stdout, &stderr, factory)
-	if err == nil {
-		t.Fatal("publish accepted an invalid target")
-	}
-	if factoryCalls != 1 || len(payloads) != 1 || payloads[0].Event != "command" || payloads[0].Command != "publish" {
-		t.Fatalf("factory calls = %d, payloads = %#v", factoryCalls, payloads)
-	}
-	encoded, err := json.Marshal(payloads[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(encoded, &fields); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"installation_id", "event", "command", "version", "os", "arch", "ci"} {
-		if _, found := fields[name]; !found {
-			t.Errorf("telemetry field %q is missing", name)
-		}
-	}
-	if len(fields) != 7 || strings.Contains(string(encoded), "sensitive") || strings.Contains(string(encoded), "secret-token") {
-		t.Fatalf("telemetry payload = %s", encoded)
-	}
-
-	stdout.Reset()
-	stderr.Reset()
-	if err := run(t.Context(), []string{"version", "--no-telemetry"}, &stdout, &stderr, factory); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("TNL_NO_TELEMETRY", "true")
-	if err := run(t.Context(), []string{"version"}, &stdout, &stderr, factory); err != nil {
-		t.Fatal(err)
-	}
-	if factoryCalls != 1 {
-		t.Fatalf("opt-out telemetry factory calls = %d", factoryCalls)
-	}
-}
-
-func TestTelemetryStateRoot(t *testing.T) {
-	t.Setenv("TNL_NO_TELEMETRY", "false")
-	environmentRoot := filepath.Join(t.TempDir(), "environment")
-	t.Setenv("TNL_STATE_DIR", environmentRoot)
-
-	var roots []string
-	factory := func(root string) telemetryReporter {
-		roots = append(roots, root)
-		return telemetryReporterFunc(func(telemetryPayload) {})
-	}
-	var stdout, stderr bytes.Buffer
-	if err := run(t.Context(), []string{"version"}, &stdout, &stderr, factory); err != nil {
-		t.Fatal(err)
-	}
-	if len(roots) != 1 || roots[0] != environmentRoot {
-		t.Fatalf("version telemetry roots = %q, want [%q]", roots, environmentRoot)
-	}
-
-	explicitRoot := filepath.Join(t.TempDir(), "explicit")
-	if err := run(t.Context(), []string{
-		"publish", "invalid", "--state-dir", explicitRoot,
-	}, &stdout, &stderr, factory); err == nil {
-		t.Fatal("publish accepted an invalid target")
-	}
-	if len(roots) != 2 || roots[1] != explicitRoot {
-		t.Fatalf("publish telemetry roots = %q, want second root %q", roots, explicitRoot)
-	}
-
-	serverRoot := filepath.Join(t.TempDir(), "server")
-	t.Setenv("TNLD_STATE_DIR", serverRoot)
-	var flags cli
-	parser, err := kong.New(&flags)
-	if err != nil {
-		t.Fatal(err)
-	}
-	parsed, err := parser.Parse([]string{"admin", "server", "login-token"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	root, err := telemetryStateRoot(parsed)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if root != environmentRoot {
-		t.Fatalf("server command telemetry root = %q, want %q", root, environmentRoot)
-	}
-}
-
-func TestAdminCommandTree(t *testing.T) {
+func TestCLIExposesTeamDomainRouteAndFinalAdminCommands(t *testing.T) {
 	var flags cli
 	parser, err := kong.New(&flags)
 	if err != nil {
@@ -168,240 +25,70 @@ func TestAdminCommandTree(t *testing.T) {
 		commands[command.Path()] = true
 	}
 	for _, command := range []string{
-		"admin server status", "admin server login-token", "admin server token worker",
-		"admin server token service", "admin server relay refresh", "admin routes list",
-		"admin routes show", "admin routes suspend", "admin routes resume", "admin hostnames list",
-		"admin hostnames show", "admin hostnames remove", "admin hostnames quarantine",
-		"admin credentials list", "admin credentials revoke", "admin control-sessions list",
-		"admin control-sessions revoke", "admin maintenance list", "admin maintenance enable", "admin maintenance disable",
+		"team current", "team list", "team use", "team create", "team members", "team invite create",
+		"team invite list", "team invite revoke", "team join", "team member set-role", "team member remove",
+		"domain claim", "domain default", "domain list", "domain release", "route list", "route delete",
+		"admin server status", "admin relays list", "admin relays drain", "admin maintenance list",
+		"admin maintenance enable", "admin maintenance disable",
 	} {
 		if !commands[command] {
 			t.Fatalf("command %q missing from help model", command)
 		}
 	}
-}
-
-func TestAdminServerTokenCommands(t *testing.T) {
-	for _, tokenType := range []string{"worker", "service"} {
-		t.Run(tokenType, func(t *testing.T) {
-			var stdout, stderr bytes.Buffer
-			if err := run(t.Context(), []string{"admin", "server", "token", tokenType}, &stdout, &stderr); err != nil {
-				t.Fatal(err)
-			}
-			value := strings.TrimSpace(stdout.String())
-			var err error
-			if tokenType == "worker" {
-				_, err = credentials.ParseWorkerToken(credentials.WorkerToken(value))
-			} else {
-				err = credentials.ParseServiceToken(credentials.ServiceToken(value))
-			}
-			if err != nil || stderr.Len() != 0 {
-				t.Fatalf("parse token: %v; stderr = %q", err, stderr.String())
-			}
-		})
+	if _, err := parser.Parse([]string{"host", "list"}); err == nil {
+		t.Fatal("obsolete host command was accepted")
 	}
 }
 
-func TestAdminServerLoginTokenRequiresLockForRotation(t *testing.T) {
-	directory := t.TempDir()
-	lock, err := state.LockDirectory(directory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	db, err := state.Open(t.Context(), directory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	token, _, err := state.EnsureLoginToken(t.Context(), db)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	var stdout, stderr bytes.Buffer
-	args := []string{"admin", "server", "login-token", "--state-dir", directory}
-	if err := run(t.Context(), args, &stdout, &stderr); err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.TrimSpace(stdout.String()); got != token.String() {
-		t.Fatalf("login token = %q", got)
-	}
-	if err := run(t.Context(), append(args, "--rotate"), &stdout, &stderr); !errors.Is(err, state.ErrLocked) {
-		t.Fatalf("rotation error = %v, want locked", err)
-	}
-	if err := lock.Close(); err != nil {
-		t.Fatal(err)
-	}
-	stdout.Reset()
-	if err := run(t.Context(), append(args, "--rotate"), &stdout, &stderr); err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.TrimSpace(stdout.String()); got == token.String() {
-		t.Fatal("rotation returned the previous login token")
-	}
-}
-
-func TestPublishHostOption(t *testing.T) {
-	t.Setenv("TNL_HOST", "env-host")
+func TestPublishHostnameOptions(t *testing.T) {
+	t.Setenv("TNL_HOST", "env.example")
 	var flags cli
 	parser, err := kong.New(&flags)
 	if err != nil {
 		t.Fatal(err)
 	}
-	parsed, err := parser.Parse([]string{"publish", "3000", "--host", "flag-host"})
+	parsed, err := parser.Parse([]string{"publish", "3000", "--host", "flag.example", "--subdomain", "api"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parsed.Command() != "publish <target>" || flags.Publish.Host != "flag-host" {
-		t.Fatalf("command = %q, host = %q", parsed.Command(), flags.Publish.Host)
+	if parsed.Command() != "publish <target>" || flags.Publish.Host != "flag.example" || flags.Publish.Subdomain != "api" {
+		t.Fatalf("publish flags = %#v", flags.Publish)
 	}
+}
 
-	var envFlags cli
-	envParser, err := kong.New(&envFlags)
+func TestResolvePublishHostnameUsesMemberNamespace(t *testing.T) {
+	current := teamContext{
+		team: authorityv1.Team{Id: "team_1", DefaultDomainId: "domain_1", PolicyRevision: 4},
+		membership: authorityv1.Membership{
+			Id: "membership_1", TeamId: "team_1", Role: authorityv1.TeamRoleMember,
+			MemberSlug: "chase", ManagedLabel: "chase-abc",
+		},
+		domains: []authorityv1.Domain{{
+			Id: "domain_1", Kind: authorityv1.Managed, CanonicalDomain: "tnl.dev", State: authorityv1.DomainStateReady,
+		}},
+	}
+	hostname, domain, scope, plan, err := resolvePublishHostname("", "api", current, controlv1.ControlDiscovery{DnsAutomation: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := envParser.Parse([]string{"publish", "3000"}); err != nil {
-		t.Fatal(err)
+	if hostname != "api.chase-abc.tnl.dev" || domain.Id != "domain_1" || scope != controlv1.Member ||
+		plan.Scope != "chase-abc.tnl.dev" || len(plan.Identifiers) != 2 || plan.ChallengeMethod != controlv1.Dns01 {
+		t.Fatalf("resolution = %q, %#v, %q, %#v", hostname, domain, scope, plan)
 	}
-	if envFlags.Publish.Host != "env-host" {
-		t.Fatalf("environment host = %q", envFlags.Publish.Host)
+	if _, _, _, _, err := resolvePublishHostname("shared.tnl.dev", "", current, controlv1.ControlDiscovery{}); err == nil {
+		t.Fatal("member was allowed to create a shared route")
 	}
-}
-
-func TestPublishAndDevOpenOptions(t *testing.T) {
-	for _, test := range []struct {
-		arguments []string
-		open      func(cli) bool
-	}{
-		{arguments: []string{"publish", "3000", "--open"}, open: func(flags cli) bool { return flags.Publish.Open }},
-		{arguments: []string{"dev", "--open", "--", "pnpm", "dev"}, open: func(flags cli) bool { return flags.Dev.Open }},
-	} {
-		var flags cli
-		parser, err := kong.New(&flags)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := parser.Parse(test.arguments); err != nil {
-			t.Fatalf("parse %q: %v", test.arguments, err)
-		}
-		if !test.open(flags) {
-			t.Fatalf("open was false for %q", test.arguments)
-		}
-	}
-}
-
-func TestCLIHardCutoverCommandsAndFlags(t *testing.T) {
-	for _, args := range [][]string{
-		{"host", "claim", "demo"},
-		{"host", "release", "demo.example"},
-		{"admin", "maintenance", "enable", "route_creation"},
-		{"admin", "maintenance", "enable", "route_session_creation"},
-		{"admin", "maintenance", "enable", "certificate_issuance"},
-	} {
-		var flags cli
-		parser, err := kong.New(&flags)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := parser.Parse(args); err != nil {
-			t.Fatalf("parse %q: %v", args, err)
-		}
-	}
-	for _, args := range [][]string{
-		{"publish", "3000", "--unknown-host-option", "demo"},
-		{"host", "unknown", "demo"},
-		{"admin", "unknown", "list"},
-		{"admin", "maintenance", "enable", "new_routes"},
-	} {
-		var flags cli
-		parser, err := kong.New(&flags)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := parser.Parse(args); err == nil {
-			t.Fatalf("unknown CLI input accepted %q", args)
-		}
-	}
-	t.Setenv("TNL_HOST", "")
-	t.Setenv("TNL_UNKNOWN_HOST", "ignored")
-	var flags cli
-	parser, err := kong.New(&flags)
+	generated, _, generatedScope, _, err := resolvePublishHostname("", "", current, controlv1.ControlDiscovery{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := parser.Parse([]string{"publish", "3000"}); err != nil {
-		t.Fatal(err)
-	}
-	if flags.Publish.Host != "" {
-		t.Fatalf("unknown environment variable set host to %q", flags.Publish.Host)
+	label, found := strings.CutSuffix(generated, ".chase-abc.tnl.dev")
+	if !found || strings.Count(label, "-") != 1 || generatedScope != controlv1.Member {
+		t.Fatalf("generated route = %q, %q", generated, generatedScope)
 	}
 }
 
-func TestPublishIPAllowlistOptions(t *testing.T) {
-	var flags cli
-	parser, err := kong.New(&flags)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := parser.Parse([]string{
-		"publish", "3000", "--allow-ip", "192.0.2.1", "--allow-ip=2001:db8::/64", "--allow-current-ip",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if fmt.Sprint(flags.Publish.AllowIP) != "[192.0.2.1 2001:db8::/64]" || !flags.Publish.AllowCurrentIP {
-		t.Fatalf("publish allowlist flags = %#v", flags.Publish)
-	}
-}
-
-func TestHostnameAndPublishHostResolution(t *testing.T) {
-	kind, label, err := classifyClaimHostname("com", "tnl.dev")
-	if err != nil || kind != serverv1.ClaimHostnameRequestKindManaged || label != "com" {
-		t.Fatalf("managed com = %q, %q, %v", kind, label, err)
-	}
-	kind, label, err = classifyClaimHostname("com.tnl.dev", "tnl.dev")
-	if err != nil || kind != serverv1.ClaimHostnameRequestKindManaged || label != "com" {
-		t.Fatalf("managed hostname = %q, %q, %v", kind, label, err)
-	}
-	if _, _, err := classifyClaimHostname("com.", "tnl.dev"); err == nil {
-		t.Fatal("absolute public suffix accepted")
-	}
-	if _, _, err := classifyClaimHostname("api.chase.tnl.dev", "tnl.dev"); err == nil {
-		t.Fatal("managed descendant accepted as a claim")
-	}
-
-	managed := serverv1.Hostname{
-		Id: "hostname_00000000000000000000000000000001", Hostname: "com.tnl.dev",
-		Kind: serverv1.HostnameKindManaged, Status: serverv1.HostnameStatusActive,
-	}
-	custom := serverv1.Hostname{
-		Id: "hostname_00000000000000000000000000000002", Hostname: "example.com",
-		Kind: serverv1.HostnameKindCustomDomain, Status: serverv1.HostnameStatusActive,
-	}
-	hostname, base, isManaged, implicit, err := resolvePublishHostname("example.com", "tnl.dev", 8, []serverv1.Hostname{managed})
-	if err != nil || hostname != "example.com.tnl.dev" || base != "com.tnl.dev" || !isManaged || implicit {
-		t.Fatalf("relative managed = %q, %q, %v, %v, %v", hostname, base, isManaged, implicit, err)
-	}
-	hostname, base, isManaged, _, err = resolvePublishHostname("example.com", "tnl.dev", 8, []serverv1.Hostname{managed, custom})
-	if err != nil || hostname != "example.com" || base != "example.com" || isManaged {
-		t.Fatalf("owned custom precedence = %q, %q, %v, %v", hostname, base, isManaged, err)
-	}
-	hostname, base, isManaged, _, err = resolvePublishHostname("example.com.tnl.dev", "tnl.dev", 8, []serverv1.Hostname{managed, custom})
-	if err != nil || hostname != "example.com.tnl.dev" || base != "com.tnl.dev" || !isManaged {
-		t.Fatalf("canonical managed = %q, %q, %v, %v", hostname, base, isManaged, err)
-	}
-	hostname, _, isManaged, _, err = resolvePublishHostname("example.com.", "tnl.dev", 8, []serverv1.Hostname{custom})
-	if err != nil || hostname != "example.com" || isManaged {
-		t.Fatalf("absolute custom = %q, %v, %v", hostname, isManaged, err)
-	}
-	if _, _, _, _, err := resolvePublishHostname("a.b.c.d.e.f.g.h.i.com", "tnl.dev", 8, []serverv1.Hostname{managed}); err == nil {
-		t.Fatal("ninth-level managed descendant accepted")
-	}
-}
-
-func TestReadLoginToken(t *testing.T) {
+func TestParseLoginInput(t *testing.T) {
 	token, err := credentials.NewLoginToken()
 	if err != nil {
 		t.Fatal(err)
@@ -410,311 +97,39 @@ func TestReadLoginToken(t *testing.T) {
 	if err != nil || parsed != token {
 		t.Fatalf("token = %q, error = %v", parsed, err)
 	}
-	if _, err := parseLoginInput([]byte("invalid")); err == nil {
-		t.Fatal("invalid token accepted")
-	}
-	if _, err := readLoginToken(strings.NewReader(token.String()), &bytes.Buffer{}); err == nil ||
-		!strings.Contains(err.Error(), "interactive terminal") {
-		t.Fatalf("noninteractive login-token error = %v", err)
+}
+
+func TestCanonicalCommandTitle(t *testing.T) {
+	for command, want := range map[string]string{
+		"publish <target>":                     "tnl publish",
+		"dev <command>":                        "tnl dev",
+		"team member set-role <membership-id>": "tnl team member set-role",
+		"status":                               "tnl status",
+	} {
+		if got := clioutput.CommandTitle("tnl", command); got != want {
+			t.Fatalf("CommandTitle(%q) = %q, want %q", command, got, want)
+		}
 	}
 }
 
-func TestClaimTemporaryHostnameAllocatesFreshHostname(t *testing.T) {
-	var idempotencyKeys []string
-	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodPost || request.URL.Path != "/v1/hostnames" {
-			http.NotFound(response, request)
-			return
-		}
-		var body serverv1.ClaimHostnameRequest
-		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-			t.Error(err)
-			response.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		if body.Label != nil || body.Kind != serverv1.ClaimHostnameRequestKindTemporary {
-			t.Errorf("temporary hostname request = %#v", body)
-		}
-		idempotencyKeys = append(idempotencyKeys, request.Header.Get("Idempotency-Key"))
-		response.Header().Set("Content-Type", "application/json")
-		response.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(response).Encode(serverv1.Hostname{
-			Id: "hostname_0123456789abcdef0123456789abcdef", Hostname: "random.example",
-			Kind: serverv1.HostnameKindTemporary, Status: serverv1.HostnameStatusPendingRoute,
-			Source: serverv1.Generated, CreatedAt: time.Now(),
-		})
-	}))
-	defer server.Close()
-	access, _, _, err := credentials.NewAccessToken()
-	if err != nil {
-		t.Fatal(err)
-	}
-	client, err := serverclient.New(server.URL, server.Client(), access)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for range 2 {
-		hostname, err := claimPublishHostname(
-			context.Background(), client, "", serverv1.Capabilities{HostnameSuffix: "example", MaximumSubdomainDepth: 8},
-		)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if hostname != "random.example" {
-			t.Fatalf("hostname = %q", hostname)
-		}
-	}
-	if len(idempotencyKeys) != 2 || idempotencyKeys[0] == "" || idempotencyKeys[1] == "" || idempotencyKeys[0] == idempotencyKeys[1] {
-		t.Fatalf("idempotency keys = %#v", idempotencyKeys)
-	}
-}
-
-func TestRunPublishPreflightsBeforeServerRequests(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	target := "http://" + listener.Addr().String()
-	if err := listener.Close(); err != nil {
-		t.Fatal(err)
-	}
-	var requests atomic.Int32
-	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		requests.Add(1)
-	}))
-	defer server.Close()
-	var stdout, stderr bytes.Buffer
-	err = runPublish(context.Background(), publishCommand{
-		Target: target, ServerURL: server.URL, AccessToken: "invalid",
-		StateDir: filepath.Join(t.TempDir(), "state"), Output: "ndjson",
-	}, &stdout, &stderr)
-	if err == nil {
-		t.Fatal("runPublish accepted an offline target")
-	}
-	if requests.Load() != 0 {
-		t.Fatalf("server requests = %d", requests.Load())
-	}
-	var starting, failed publishEvent
-	decoder := json.NewDecoder(&stdout)
-	if err := decoder.Decode(&starting); err != nil {
-		t.Fatal(err)
-	}
-	if err := decoder.Decode(&failed); err != nil {
-		t.Fatal(err)
-	}
-	if starting.Type != "starting" || failed.Type != "error" {
-		t.Fatalf("events = %#v, %#v", starting, failed)
-	}
-	if starting.TunnelID == "" || failed.TunnelID != starting.TunnelID {
-		t.Fatalf("uncorrelated events = %#v, %#v", starting, failed)
-	}
-}
-
-func TestRunPublishReadsCurrentIPAfterAuthentication(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer listener.Close()
-	access, _, _, err := credentials.NewAccessToken()
-	if err != nil {
-		t.Fatal(err)
-	}
-	var requests []string
-	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		requests = append(requests, request.URL.Path)
-		response.Header().Set("Content-Type", "application/json")
-		switch request.URL.Path {
-		case "/v1/capabilities":
-			if request.Header.Get("Authorization") != "" {
-				t.Errorf("capabilities authorization = %q", request.Header.Get("Authorization"))
-			}
-			_ = json.NewEncoder(response).Encode(testNamingCapabilities())
-		case "/v1/client-ip":
-			if request.Header.Get("Authorization") != "Bearer "+access.String() {
-				t.Errorf("client IP authorization = %q", request.Header.Get("Authorization"))
-			}
-			_ = json.NewEncoder(response).Encode(serverv1.ClientIPResponse{Ip: "invalid"})
-		default:
-			http.NotFound(response, request)
-		}
-	}))
-	defer server.Close()
-	previousTransport := http.DefaultTransport
-	http.DefaultTransport = server.Client().Transport
-	t.Cleanup(func() { http.DefaultTransport = previousTransport })
-
-	var stdout, stderr bytes.Buffer
-	_, port, err := net.SplitHostPort(listener.Addr().String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = runPublish(t.Context(), publishCommand{
-		Target: port, ServerURL: server.URL, AccessToken: access.String(),
-		StateDir: filepath.Join(t.TempDir(), "state"), Output: "ndjson", AllowCurrentIP: true,
-	}, &stdout, &stderr)
-	if err == nil || !strings.Contains(err.Error(), "invalid current IP") {
-		t.Fatalf("runPublish error = %v", err)
-	}
-	if fmt.Sprint(requests) != "[/v1/capabilities /v1/client-ip]" {
-		t.Fatalf("request order = %v", requests)
-	}
-}
-
-func TestRunPublishNDJSONReportsInvalidTarget(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	err := runPublish(context.Background(), publishCommand{Target: "example.com:3000", Output: "ndjson"}, &stdout, &stderr)
-	if err == nil {
-		t.Fatal("runPublish accepted an invalid target")
-	}
-	var event publishEvent
-	if err := json.NewDecoder(&stdout).Decode(&event); err != nil {
-		t.Fatal(err)
-	}
-	if event.Type != "error" || event.Cursor != 1 || event.Message == "" {
-		t.Fatalf("event = %#v", event)
-	}
-}
-
-func TestRunPublishNDJSONStopsOnEarlyCancellation(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer listener.Close()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	var stdout, stderr bytes.Buffer
-	err = runPublish(ctx, publishCommand{
-		Target:   listener.Addr().String()[strings.LastIndex(listener.Addr().String(), ":")+1:],
-		StateDir: t.TempDir(), Output: "ndjson",
-	}, &stdout, &stderr)
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("runPublish error = %v", err)
-	}
-	decoder := json.NewDecoder(&stdout)
-	var event publishEvent
-	if err := decoder.Decode(&event); err != nil {
-		t.Fatal(err)
-	}
-	if event.Type != "stopped" {
-		t.Fatalf("event = %#v, want stopped", event)
-	}
-}
-
-func TestHostReleaseRecoversAfterAmbiguousDelete(t *testing.T) {
-	access, _, _, err := credentials.NewAccessToken()
-	if err != nil {
-		t.Fatal(err)
-	}
-	var deleted atomic.Bool
-	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		switch {
-		case request.Method == http.MethodGet && request.URL.Path == "/v1/capabilities":
-			response.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(response).Encode(testNamingCapabilities())
-		case request.Method == http.MethodGet && request.URL.Path == "/v1/hostnames":
-			response.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(response).Encode(serverv1.HostnamePage{Hostnames: []serverv1.Hostname{{
-				Id: "hostname_0123456789abcdef0123456789abcdef", Hostname: "random.example",
-				Kind: serverv1.HostnameKindManaged, Status: serverv1.HostnameStatusActive,
-				Source: serverv1.User, CreatedAt: time.Now(),
-			}}})
-		case request.Method == http.MethodDelete && request.URL.Path == "/v1/hostnames/hostname_0123456789abcdef0123456789abcdef":
-			if deleted.Load() {
-				response.Header().Set("Content-Type", "application/problem+json")
-				response.WriteHeader(http.StatusNotFound)
-				_ = json.NewEncoder(response).Encode(serverv1.Problem{Code: serverv1.NotFound})
-				return
-			}
-			deleted.Store(true)
-			connection, _, err := response.(http.Hijacker).Hijack()
-			if err != nil {
-				t.Error(err)
-				return
-			}
-			_ = connection.Close() // Simulate a committed delete whose response was lost.
-		default:
-			t.Errorf("request = %s %s", request.Method, request.URL.Path)
-			http.NotFound(response, request)
-		}
-	}))
-	defer server.Close()
-	previousTransport := http.DefaultTransport
-	http.DefaultTransport = server.Client().Transport
-	t.Cleanup(func() { http.DefaultTransport = previousTransport })
+func TestWriteCommandErrorUsesContextAndSharedFrame(t *testing.T) {
 	var output bytes.Buffer
-	flags := hostReleaseCommand{
-		Hostname: "random.example", ServerURL: server.URL, AccessToken: access.String(), StateDir: filepath.Join(t.TempDir(), "state"),
-	}
-	if err := runHostRelease(context.Background(), flags, &output); !errors.Is(err, serverclient.ErrUnavailable) {
-		t.Fatalf("ambiguous release error = %v", err)
-	}
-	if err := runHostRelease(context.Background(), flags, &output); err != nil {
-		t.Fatal(err)
-	}
-	if output.String() != "random.example\n" {
-		t.Fatalf("output = %q", output.String())
+	writeCommandError(&output, clioutput.WrapCommand("tnl team use", errors.New("team not found")))
+	if got := output.String(); !strings.HasPrefix(got, "+--[ tnl team use ]-- command failed ") ||
+		!strings.Contains(got, "team not found") {
+		t.Fatalf("error output = %q", got)
 	}
 }
 
-func TestHostListWithExplicitTokenUsesClientState(t *testing.T) {
-	access, _, _, err := credentials.NewAccessToken()
-	if err != nil {
+func TestVersionOutputRemainsRaw(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if err := run(t.Context(), []string{"version"}, &stdout, &stderr); err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		response.Header().Set("Content-Type", "application/json")
-		if request.URL.Path == "/v1/capabilities" {
-			_ = json.NewEncoder(response).Encode(testNamingCapabilities())
-			return
-		}
-		if request.URL.Path != "/v1/hostnames" || request.Header.Get("Authorization") != "Bearer "+access.String() {
-			t.Errorf("request = %s %s authorization %q", request.Method, request.URL.Path, request.Header.Get("Authorization"))
-		}
-		_ = json.NewEncoder(response).Encode(serverv1.HostnamePage{Hostnames: []serverv1.Hostname{{
-			Id: "hostname_0123456789abcdef0123456789abcdef", Hostname: "random.example",
-			Kind: serverv1.HostnameKindTemporary, Status: serverv1.HostnameStatusPendingRoute,
-		}}})
-	}))
-	defer server.Close()
-	previousTransport := http.DefaultTransport
-	http.DefaultTransport = server.Client().Transport
-	t.Cleanup(func() { http.DefaultTransport = previousTransport })
-
-	statePath := filepath.Join(t.TempDir(), "state")
-	var output bytes.Buffer
-	if err := runHostList(context.Background(), hostListCommand{
-		ServerURL: server.URL, AccessToken: access.String(), StateDir: statePath,
-	}, &output); err != nil {
-		t.Fatal(err)
+	if want := buildinfo.Line("tnl") + "\n"; stdout.String() != want {
+		t.Fatalf("stdout = %q, want %q", stdout.String(), want)
 	}
-	if output.String() != "HOSTNAME\tTYPE\tSTATE\nrandom.example\ttemporary\tpending_route\n" {
-		t.Fatalf("output = %q", output.String())
-	}
-}
-
-func TestResolveReleaseHostnameRejectsTemporaryHostname(t *testing.T) {
-	_, _, err := resolveReleaseHostname("random", "example", []serverv1.Hostname{{
-		Id: "hostname_0123456789abcdef0123456789abcdef", Hostname: "random.example",
-		Kind: serverv1.HostnameKindTemporary, Status: serverv1.HostnameStatusActive,
-	}})
-	if err == nil || err.Error() != "temporary hostnames are retired with their route and cannot be released" {
-		t.Fatalf("error = %v", err)
-	}
-}
-
-func testNamingCapabilities() serverv1.Capabilities {
-	return serverv1.Capabilities{
-		HostnameSuffix: "example", MaximumSubdomainDepth: 8, CustomDomainSupport: true,
-		IngressIpv4: []string{}, IngressIpv6: []string{},
-		ProtocolVersions: []serverv1.CapabilitiesProtocolVersions{serverv1.CapabilitiesProtocolVersionsN1},
-		Authentication: serverv1.AuthenticationCapabilities{
-			Required: serverv1.True, Methods: []serverv1.AuthenticationCapabilitiesMethods{serverv1.LoginToken},
-		},
-		HostnameAuthorization: []serverv1.CapabilitiesHostnameAuthorization{serverv1.LocalHostnames},
-		Transport: serverv1.TransportCapabilities{
-			Type: serverv1.Tailcat, Version: serverv1.TransportCapabilitiesVersionN1, RelayRegion: "default",
-		},
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q", stderr.String())
 	}
 }

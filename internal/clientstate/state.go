@@ -43,6 +43,28 @@ type Store struct {
 	secrets         secretProtector
 }
 
+// SelectedTeam returns the stable team selection for this server origin.
+func (s *Store) SelectedTeam(ctx context.Context) (string, bool, error) {
+	teamID, err := s.database.queries.GetSelectedTeam(ctx, s.controlEndpoint)
+	if err != nil {
+		return "", false, fmt.Errorf("clientstate: read selected team: %w", err)
+	}
+	return teamID, teamID != "", nil
+}
+
+// SaveSelectedTeam records the selected team for this server origin.
+func (s *Store) SaveSelectedTeam(ctx context.Context, teamID string) error {
+	if strings.TrimSpace(teamID) != teamID || teamID == "" {
+		return errors.New("clientstate: invalid selected team")
+	}
+	if err := s.database.queries.SetSelectedTeam(ctx, clientstatedb.SetSelectedTeamParams{
+		TeamID: teamID, Now: s.database.now().UTC().UnixNano(), Origin: s.controlEndpoint,
+	}); err != nil {
+		return fmt.Errorf("clientstate: save selected team: %w", err)
+	}
+	return nil
+}
+
 // DatabasePath returns the shared client database path within root.
 func DatabasePath(root string) string { return filepath.Join(root, databaseName) }
 

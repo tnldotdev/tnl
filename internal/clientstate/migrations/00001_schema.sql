@@ -1,6 +1,7 @@
 -- +goose Up
 CREATE TABLE server_profiles (
     origin TEXT PRIMARY KEY,
+    selected_team_id TEXT NOT NULL DEFAULT '',
     created_at INTEGER NOT NULL,
     last_used_at INTEGER NOT NULL
 ) STRICT;
@@ -22,17 +23,12 @@ INSERT INTO client_settings (id, installation_id) VALUES (1, '');
 
 CREATE TABLE control_sessions (
     server_origin TEXT PRIMARY KEY REFERENCES server_profiles (origin) ON DELETE CASCADE,
-    kind TEXT NOT NULL CHECK (kind IN ('server', 'authorization_authority')),
-    control_endpoint TEXT NOT NULL,
+    authority_endpoint TEXT NOT NULL,
     session_id TEXT NOT NULL,
-    issuer TEXT NOT NULL,
-    client_id TEXT NOT NULL,
     access_token BLOB NOT NULL,
     access_expires_at INTEGER NOT NULL,
     refresh_token BLOB NOT NULL,
     refresh_expires_at INTEGER NOT NULL,
-    grants BLOB NOT NULL,
-    scopes BLOB NOT NULL,
     updated_at INTEGER NOT NULL
 ) STRICT;
 

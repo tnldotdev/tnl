@@ -63,10 +63,14 @@ func TestResolveDevCommandFindsProjectLocalExecutable(t *testing.T) {
 	if err := os.WriteFile(executable, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Chdir(directory)
-	t.Setenv("PATH", t.TempDir())
+	globalDirectory := t.TempDir()
+	globalExecutable := filepath.Join(globalDirectory, "next")
+	if err := os.WriteFile(globalExecutable, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", globalDirectory)
 
-	command, err := resolveDevCommand([]string{"next", "dev"})
+	command, err := resolveDevCommand([]string{"next", "dev"}, directory)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,25 +100,29 @@ func TestDevBootstrapConfiguresAndRegistersOneTarget(t *testing.T) {
 		}
 	})
 
-	host := "agent-feature.example"
-	controlURL := "https://tnl.example.com"
 	premature := postDevRequest(bootstrap, bootstrap.token, "/v1/target", devTargetRequest{
 		Protocol: 1, Framework: "vite", Port: 5173,
 	})
 	if premature.err != nil || premature.status != http.StatusConflict {
 		t.Fatalf("premature target result = %#v", premature)
 	}
-	configuration := devConfigurationRequest{
-		Protocol: 1, Framework: "vite",
-		Options: devTunnelOptions{ControlURL: &controlURL, Host: &host, AllowCurrentIP: true},
+	legacy := postDevJSON(
+		bootstrap,
+		bootstrap.token,
+		"/v1/configure",
+		[]byte(`{"protocol":1,"framework":"vite","options":{}}`),
+	)
+	if legacy.err != nil || legacy.status != http.StatusBadRequest {
+		t.Fatalf("legacy configuration result = %#v", legacy)
 	}
+	configuration := devConfigurationRequest{Protocol: 1, Framework: "vite"}
 	configurationDone := make(chan devHTTPResult, 1)
 	go func() {
 		configurationDone <- postDevJSON(
 			bootstrap,
 			bootstrap.token,
 			"/v1/configure",
-			[]byte(`{"protocol":1,"framework":"vite","options":{"controlURL":"https://tnl.example.com","host":"agent-feature.example","allowCurrentIP":true}}`),
+			[]byte(`{"protocol":1,"framework":"vite"}`),
 		)
 	}()
 	configured, err := bootstrap.Configuration(context.Background())
@@ -224,47 +232,6 @@ func TestDevEnvironmentReplacesProtocolAndRemovesAccessToken(t *testing.T) {
 	}
 }
 
-func TestDevServerValueBindsExplicitTokenToUserSelectedServer(t *testing.T) {
-	projectServer := "https://project.example"
-	tests := []struct {
-		name          string
-		serverURL     string
-		accessToken   string
-		projectServer *string
-		want          string
-		wantError     string
-	}{
-		{
-			name: "reject project server with explicit token", accessToken: "token", projectServer: &projectServer,
-			wantError: "an explicit access token with a project-provided server requires --server or TNL_SERVER",
-		},
-		{
-			name: "allow user server override", serverURL: "https://user.example", accessToken: "token",
-			projectServer: &projectServer, want: "https://user.example",
-		},
-		{
-			name: "allow project server without explicit token", projectServer: &projectServer,
-			want: "https://project.example",
-		},
-		{
-			name: "preserve fallback without project server", accessToken: "token",
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			got, err := devServerValue(test.serverURL, test.accessToken, test.projectServer)
-			if err != nil && err.Error() != test.wantError {
-				t.Fatalf("error = %v, want %q", err, test.wantError)
-			}
-			if err == nil && test.wantError != "" {
-				t.Fatalf("error = nil, want %q", test.wantError)
-			}
-			if got != test.want {
-				t.Fatalf("server = %q, want %q", got, test.want)
-			}
-		})
-	}
-}
 func TestChildResultPreservesExitStatus(t *testing.T) {
 	process, err := startDevProcess([]string{"sh", "-c", "exit 23"}, os.Environ(), nil, io.Discard, io.Discard)
 	if err != nil {

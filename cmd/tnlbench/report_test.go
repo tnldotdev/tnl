@@ -47,7 +47,7 @@ func TestReportCommandWritesArtifacts(t *testing.T) {
 
 func reportTestResult(shard int, samples []time.Duration) benchmarkResult {
 	return benchmarkResult{
-		SchemaVersion: 2, CellID: "smoke-w1-r25-rep1", Status: "passed", Suite: "smoke",
+		SchemaVersion: 4, CellID: "smoke-relay2-r25-rep1", Status: "passed", Suite: "smoke",
 		Workload: "agent-worktrees-assumed-v1", Repetition: 1, Shard: resultShard{Index: shard, Count: 2},
 		Phases: []phaseResult{{
 			Name: "correctness", Attempts: len(samples), Successes: len(samples), Latency: newDurationHistogram(samples),

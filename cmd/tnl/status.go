@@ -3,11 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
-	"text/tabwriter"
+	"strconv"
+	"strings"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
+	"github.com/tnldotdev/tnl/internal/clioutput"
 )
 
 type statusCommand struct {
@@ -33,20 +34,56 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 		return json.NewEncoder(output).Encode(snapshot)
 	}
 	if len(snapshot.Tunnels) == 0 {
-		_, err := fmt.Fprintln(output, "No local tunnels.")
-		return err
+		return writeHumanFrame(output, "tnl status", "no local tunnels", "",
+			clioutput.Tree(clioutput.TreeNode{Label: "start one with", Children: []clioutput.TreeNode{
+				{Label: "tnl publish 3000"},
+				{Label: "tnl dev -- pnpm dev"},
+			}}),
+		)
 	}
-	table := tabwriter.NewWriter(output, 0, 4, 2, ' ', 0)
-	if _, err := fmt.Fprintln(table, "TUNNEL ID\tSTATE\tURL\tTARGET\tCOMMAND"); err != nil {
-		return err
-	}
+	blocks := make([]clioutput.Block, 0, len(snapshot.Tunnels))
 	for _, tunnel := range snapshot.Tunnels {
-		if _, err := fmt.Fprintf(
-			table, "%s\t%s\t%s\t%s\t%s\n",
-			tunnel.ID, tunnel.State, tunnel.PublicURL, tunnel.Target, tunnel.Command,
-		); err != nil {
-			return err
+		fields := make([]clioutput.Field, 0, 8)
+		if tunnel.PublicURL != "" {
+			fields = append(fields, clioutput.Field{Label: "public", Value: tunnel.PublicURL})
+		} else if tunnel.Hostname != "" {
+			fields = append(fields, clioutput.Field{Label: "hostname", Value: tunnel.Hostname})
+		}
+		if tunnel.Target != "" {
+			fields = append(fields, clioutput.Field{Label: "target", Value: tunnel.Target})
+		}
+		fields = append(fields,
+			clioutput.Field{Label: "command", Value: string(tunnel.Command)},
+			clioutput.Field{Label: "server", Value: tunnel.Server},
+		)
+		if tunnel.Framework != "" {
+			fields = append(fields, clioutput.Field{Label: "framework", Value: tunnel.Framework})
+		}
+		if tunnel.RouteVersion != 0 {
+			fields = append(fields, clioutput.Field{Label: "route version", Value: strconv.FormatUint(tunnel.RouteVersion, 10)})
+		}
+		fields = append(fields, clioutput.Field{Label: "tunnel", Value: tunnel.ID})
+		blocks = append(blocks, clioutput.Section(string(tunnel.State), clioutput.Fields(fields...)))
+	}
+	return writeHumanFrame(output, "tnl status", countState(len(snapshot.Tunnels), "local tunnel", "local tunnels"),
+		statusSummary(snapshot.Summary), blocks...)
+}
+
+func statusSummary(summary clientstate.TunnelSummary) string {
+	parts := make([]string, 0, 5)
+	for _, value := range []struct {
+		count int
+		state string
+	}{
+		{summary.Starting, "starting"},
+		{summary.Provisioning, "provisioning"},
+		{summary.Ready, "ready"},
+		{summary.Draining, "draining"},
+		{summary.Stale, "stale"},
+	} {
+		if value.count != 0 {
+			parts = append(parts, strconv.Itoa(value.count)+" "+value.state)
 		}
 	}
-	return table.Flush()
+	return strings.Join(parts, " / ")
 }

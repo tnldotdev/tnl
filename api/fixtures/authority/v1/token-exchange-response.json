@@ -1,0 +1,31 @@
+{
+  "session_id": "control_session_000102030405060708090a0b0c0d0e0f",
+  "access_token": "tnl_access_AAECAwQFBgcICQoLDA0ODw.EBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8",
+  "access_expires_at": "2026-09-28T12:00:00Z",
+  "refresh_token": "tnl_refresh_AAECAwQFBgcICQoLDA0ODw.EBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8",
+  "refresh_expires_at": "2026-10-27T12:00:00Z",
+  "identity": {
+    "identity": {
+      "id": "identity_000102030405060708090a0b0c0d0e0f",
+      "display_name": "Local administrator",
+      "administrator": true,
+      "created_at": "2026-09-01T12:00:00Z"
+    },
+    "personal_team_id": "team_000102030405060708090a0b0c0d0e0f",
+    "memberships": [
+      {
+        "id": "membership_000102030405060708090a0b0c0d0e0f",
+        "team_id": "team_000102030405060708090a0b0c0d0e0f",
+        "identity_id": "identity_000102030405060708090a0b0c0d0e0f",
+        "team_display_name": "Local administrator",
+        "team_kind": "personal",
+        "role": "owner",
+        "member_slug": "local",
+        "managed_label": "local",
+        "policy_revision": 1,
+        "created_at": "2026-09-01T12:00:00Z",
+        "updated_at": "2026-09-01T12:00:00Z"
+      }
+    ]
+  }
+}

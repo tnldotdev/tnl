@@ -4,7 +4,6 @@ import {
   registerLocalPort,
   requestTunnelAssignment,
 } from "@tnldotdev/dev";
-import type { TnlTunnelOptionsInput } from "@tnldotdev/dev";
 import type { NextConfig } from "next";
 
 const developmentServerPhase = "phase-development-server";
@@ -20,23 +19,16 @@ export type NextConfigFactory = (
   context: NextConfigContext,
 ) => NextConfig | Promise<NextConfig>;
 
-type NextConfigInput = NextConfig | Promise<NextConfig> | NextConfigFactory;
-
-export type {
-  TnlTunnelOptions,
-  TnlTunnelOptionsContext,
-  TnlTunnelOptionsInput,
-  TnlWorktree,
-} from "@tnldotdev/dev";
+export type NextConfigInput = NextConfig | Promise<NextConfig> | NextConfigFactory;
 
 /**
  * Adds tnl support to a Next.js development server. It preserves the original
  * Next.js configuration and does nothing when started without `tnl dev`.
  */
-export function withTnl(
-  config: NextConfigInput = {},
-  options: TnlTunnelOptionsInput = {},
-): NextConfigFactory {
+export function withTnl(config: NextConfigInput = {}, ...extra: never[]): NextConfigFactory {
+  if (extra.length !== 0) {
+    throw new Error("withTnl() does not accept tunnel options; use project configuration");
+  }
   return async function tnlNextConfig(phase, context) {
     const resolved = typeof config === "function" ? await config(phase, context) : await config;
     const nextConfig = resolved ?? {};
@@ -50,7 +42,7 @@ export function withTnl(
       throw new Error("Next.js allowedDevOrigins must be an array when used with tnl");
     }
     const port = session.port ?? nextPort(process.env, process.argv);
-    const assignment = await requestTunnelAssignment({ framework: "next", options });
+    const assignment = await requestTunnelAssignment({ framework: "next" });
     if (assignment === null) {
       return nextConfig;
     }

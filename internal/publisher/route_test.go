@@ -23,11 +23,12 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/proxyproto"
 	"github.com/tnldotdev/tnl/internal/tlschallenge"
+	"github.com/tnldotdev/tnl/internal/tunnel"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 	"golang.org/x/crypto/acme"
-	"tailscale.com/tailcfg"
-	"tailscale.com/types/key"
 )
 
 func TestRouteTerminatesTLSAndProxiesLoopbackHTTP(t *testing.T) {
@@ -76,6 +77,137 @@ func TestRouteTerminatesTLSAndProxiesLoopbackHTTP(t *testing.T) {
 	case <-handled:
 	case <-time.After(time.Second):
 		t.Fatal("route handler did not close")
+	}
+}
+
+func TestRouteServesTransportNeutralPublisherConnection(t *testing.T) {
+	forwarded := make(chan string, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		forwarded <- request.Header.Get("X-Forwarded-For")
+		_, _ = response.Write([]byte("local response"))
+	}))
+	defer upstream.Close()
+
+	routeCertificate := routeTestCertificate(t, "route.example")
+	route, err := NewRoute(RouteConfig{
+		Hostname: "route.example", Target: upstream.URL, Certificate: routeCertificate,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := route.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = route.Close() })
+
+	transportCertificate := routeTestCertificate(t, "relay.example")
+	roots := x509.NewCertPool()
+	roots.AddCert(transportCertificate.Leaf)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	type accepted struct {
+		session *tunnel.Session
+		err     error
+	}
+	relayResult := make(chan accepted, 1)
+	go func() {
+		connection, err := listener.Accept()
+		if err != nil {
+			relayResult <- accepted{err: err}
+			return
+		}
+		transport, err := muxsession.AcceptTLSYamux(context.Background(), connection, &tls.Config{
+			Certificates: []tls.Certificate{transportCertificate},
+		}, muxsession.TLSYamuxConfig{})
+		if err != nil {
+			relayResult <- accepted{err: err}
+			return
+		}
+		session, _, err := tunnel.Accept(context.Background(), transport, func(context.Context, tunnelv1.Message) error {
+			return nil
+		})
+		relayResult <- accepted{session: session, err: err}
+	}()
+
+	ref := tunnelv1.PublisherConnectionRef{
+		RouteSessionID: "route_session_1", RouteID: "route_1", RouteVersion: 1,
+		PublisherConnectionID: "connection_1", ConnectionSlot: 0,
+		ConnectionAssignmentRevision: 1, RelayServiceID: "relay_service_1",
+	}
+	publisherTransport, err := (muxsession.TLSYamuxConnector{TLSConfig: &tls.Config{RootCAs: roots}}).Connect(
+		t.Context(),
+		muxsession.Endpoint{Address: listener.Addr().String(), ServerName: "relay.example"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publisherSession, err := tunnel.Dial(t.Context(), publisherTransport, tunnelv1.Message{
+		Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version, Role: tunnelv1.Publisher,
+		Credential: "credential", PublisherConnection: &ref,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = publisherSession.Close() })
+	acceptedRelay := <-relayResult
+	if acceptedRelay.err != nil {
+		t.Fatal(acceptedRelay.err)
+	}
+	t.Cleanup(func() { _ = acceptedRelay.session.Close() })
+	serveContext, stopServing := context.WithCancel(context.Background())
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- route.ServePublisherConnection(serveContext, publisherSession, ref) }()
+	t.Cleanup(func() {
+		stopServing()
+		_ = publisherSession.Close()
+		<-serveDone
+	})
+
+	stream, err := acceptedRelay.session.OpenPublisherStream(t.Context(), tunnelv1.PublisherStreamHeader{
+		ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.VisitorStream,
+		VisitorConnectionID: "visitor_connection_1", RouteID: ref.RouteID,
+		RouteSessionID: ref.RouteSessionID, RouteVersion: ref.RouteVersion,
+		PublisherConnectionID:        ref.PublisherConnectionID,
+		ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	header, err := proxyproto.Encode(proxyproto.Header{
+		Source:      netip.MustParseAddrPort("192.0.2.10:1234"),
+		Destination: netip.MustParseAddrPort("127.0.0.1:443"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stream.Write(header); err != nil {
+		t.Fatal(err)
+	}
+	client := tls.Client(stream, &tls.Config{
+		ServerName: "route.example", MinVersion: tls.VersionTLS13,
+		RootCAs: rootsForCertificate(t, routeCertificate),
+	})
+	if _, err := fmt.Fprint(client, "GET / HTTP/1.1\r\nHost: route.example\r\nConnection: close\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	response, err := http.ReadResponse(bufio.NewReader(client), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	_ = client.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK || string(body) != "local response" {
+		t.Fatalf("response = %d %q", response.StatusCode, body)
+	}
+	if got := <-forwarded; got != "192.0.2.10" {
+		t.Fatalf("X-Forwarded-For = %q", got)
 	}
 }
 
@@ -131,22 +263,14 @@ func TestRouteNegotiatesHTTP2AndProxiesLoopbackHTTP(t *testing.T) {
 func startHTTPTestRoute(t *testing.T, target string) *Route {
 	t.Helper()
 	route, err := NewRoute(RouteConfig{
-		Hostname:      "route.example",
-		Target:        target,
-		Certificate:   routeTestCertificate(t, "route.example"),
-		AllowedClient: key.NewNode().Public(),
-		RelayRegion:   "test",
-		Regions: map[string]*tailcfg.DERPRegion{"test": {
-			RegionID: 1, Nodes: []*tailcfg.DERPNode{{RegionID: 1, HostName: "derp.example"}},
-		}},
+		Hostname: "route.example", Target: target, Certificate: routeTestCertificate(t, "route.example"),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	route.mu.Lock()
-	route.started = true
-	route.mu.Unlock()
-	route.startHTTP()
+	if err := route.Start(); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { _ = route.Close() })
 	return route
 }
@@ -173,10 +297,7 @@ func openHTTPTestRoute(route *Route, handled chan struct{}) (net.Conn, error) {
 
 func TestRouteSelectsChallengeAndInstalledCertificate(t *testing.T) {
 	route, err := NewRoute(RouteConfig{
-		Hostname: "route.example", Target: "http://127.0.0.1:3000", AllowedClient: key.NewNode().Public(),
-		RelayRegion: "test", Regions: map[string]*tailcfg.DERPRegion{"test": {
-			RegionID: 1, Nodes: []*tailcfg.DERPNode{{RegionID: 1, HostName: "derp.example"}},
-		}},
+		Hostname: "route.example", Target: "http://127.0.0.1:3000",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -243,9 +364,6 @@ func TestManualCertificateExpires(t *testing.T) {
 		certificate := routeTestCertificate(t, "route.example")
 		route, err := NewRoute(RouteConfig{
 			Hostname: "route.example", Target: "http://127.0.0.1:3000", Certificate: certificate,
-			AllowedClient: key.NewNode().Public(), RelayRegion: "test", Regions: map[string]*tailcfg.DERPRegion{"test": {
-				RegionID: 1, Nodes: []*tailcfg.DERPNode{{RegionID: 1, HostName: "derp.example"}},
-			}},
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -266,9 +384,6 @@ func TestCertificateReplacementAndExpirationAreAtomic(t *testing.T) {
 		first := routeTestCertificateUntil(t, "route.example", time.Now().Add(time.Hour))
 		route, err := NewRoute(RouteConfig{
 			Hostname: "route.example", Target: "http://127.0.0.1:3000", Certificate: first,
-			AllowedClient: key.NewNode().Public(), RelayRegion: "test", Regions: map[string]*tailcfg.DERPRegion{"test": {
-				RegionID: 1, Nodes: []*tailcfg.DERPNode{{RegionID: 1, HostName: "derp.example"}},
-			}},
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -297,10 +412,7 @@ func TestReadyCallbackIsNotCalledAfterCertificateExpiry(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		route, err := NewRoute(RouteConfig{
 			Hostname: "route.example", Target: "http://127.0.0.1:3000",
-			Certificate: routeTestCertificate(t, "route.example"), AllowedClient: key.NewNode().Public(),
-			RelayRegion: "test", Regions: map[string]*tailcfg.DERPRegion{"test": {
-				RegionID: 1, Nodes: []*tailcfg.DERPNode{{RegionID: 1, HostName: "derp.example"}},
-			}},
+			Certificate: routeTestCertificate(t, "route.example"),
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -342,4 +454,18 @@ func routeTestCertificateUntil(t *testing.T, hostname string, notAfter time.Time
 		t.Fatal(err)
 	}
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: privateKey, Leaf: leaf}
+}
+
+func rootsForCertificate(t *testing.T, certificate tls.Certificate) *x509.CertPool {
+	t.Helper()
+	if certificate.Leaf == nil {
+		leaf, err := x509.ParseCertificate(certificate.Certificate[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		certificate.Leaf = leaf
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(certificate.Leaf)
+	return roots
 }

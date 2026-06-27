@@ -21,23 +21,18 @@ import (
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/proxyproto"
-	"github.com/tnldotdev/tnl/internal/tailtransport"
 	"github.com/tnldotdev/tnl/internal/tlschallenge"
+	"github.com/tnldotdev/tnl/internal/tunnel"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 	"golang.org/x/crypto/acme"
-	"tailscale.com/tailcfg"
-	"tailscale.com/types/key"
-	"tailscale.com/types/logger"
 )
 
+// RouteConfig configures publisher TLS termination and local HTTP forwarding.
 type RouteConfig struct {
 	Hostname          string
 	Target            string
 	Certificate       tls.Certificate
 	StrictCertificate bool
-	AllowedClient     key.NodePublic
-	RelayRegion       string
-	Regions           map[string]*tailcfg.DERPRegion
-	Logf              logger.Logf
 }
 
 type Route struct {
@@ -50,15 +45,14 @@ type Route struct {
 	challenges         tlschallenge.TLSALPNChallenges
 	queue              *routeListener
 	http               *http.Server
-	tailcat            *tailtransport.Server
-
-	mu        sync.Mutex
-	started   bool
-	closed    bool
-	httpDone  chan error
-	closeOnce sync.Once
+	mu                 sync.Mutex
+	started            bool
+	closed             bool
+	httpDone           chan error
+	closeOnce          sync.Once
 }
 
+// NewRoute creates a publisher route served by publisher connections.
 func NewRoute(config RouteConfig) (*Route, error) {
 	hostname, err := naming.CanonicalizeHostname(config.Hostname)
 	if err != nil || hostname != config.Hostname {
@@ -89,20 +83,9 @@ func NewRoute(config RouteConfig) (*Route, error) {
 		certificateExpired: make(chan struct{}),
 	}
 	route.tls.GetCertificate = route.getCertificate
-	tailcat, err := tailtransport.NewServer(tailtransport.ServerConfig{
-		AllowedClient: config.AllowedClient,
-		RelayRegion:   config.RelayRegion,
-		Regions:       config.Regions,
-		Handler:       route.handle,
-		Logf:          config.Logf,
-	})
-	if err != nil {
-		return nil, err
-	}
-	route.tailcat = tailcat
 	if len(config.Certificate.Certificate) != 0 || config.Certificate.PrivateKey != nil {
 		if err := route.InstallCertificate(config.Certificate); err != nil {
-			_ = tailcat.Close()
+			_ = route.Close()
 			return nil, err
 		}
 	}
@@ -210,32 +193,83 @@ func (r *Route) getCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, er
 	return certificate, nil
 }
 
-func (r *Route) Start(ctx context.Context) (tailtransport.TransportDescriptor, error) {
+// Start starts publisher TLS termination and local HTTP forwarding.
+func (r *Route) Start() error {
+	return r.start()
+}
+
+func (r *Route) start() error {
 	r.mu.Lock()
 	if r.closed {
 		r.mu.Unlock()
-		return tailtransport.TransportDescriptor{}, net.ErrClosed
+		return net.ErrClosed
 	}
 	if r.started {
 		r.mu.Unlock()
-		return tailtransport.TransportDescriptor{}, errors.New("publisher: route already started")
+		return errors.New("publisher: route already started")
 	}
 	r.started = true
 	r.mu.Unlock()
 	r.startHTTP()
-	endpoint, err := r.tailcat.Start(ctx)
-	if err != nil {
-		_ = r.Close()
-		return tailtransport.TransportDescriptor{}, err
+	return nil
+}
+
+// ServePublisherConnection accepts visitor streams for one exact publisher
+// connection. The caller owns the session and closes it to end active streams.
+func (r *Route) ServePublisherConnection(
+	ctx context.Context,
+	session *tunnel.Session,
+	ref tunnelv1.PublisherConnectionRef,
+) error {
+	if session == nil {
+		return errors.New("publisher: tunnel session is required")
 	}
-	return endpoint, nil
+	if err := ref.Validate(); err != nil {
+		return err
+	}
+	for {
+		incoming, err := session.AcceptPublisherStream(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			return err
+		}
+		code := r.validateIncomingRoute(incoming.Header, ref)
+		if code != "" {
+			_ = incoming.Reject(code)
+			continue
+		}
+		if err := incoming.Accept(); err != nil {
+			return err
+		}
+		go r.handle(incoming.Stream)
+	}
+}
+
+func (r *Route) validateIncomingRoute(
+	header tunnelv1.PublisherStreamHeader,
+	ref tunnelv1.PublisherConnectionRef,
+) tunnelv1.ErrorCode {
+	r.mu.Lock()
+	closed := r.closed
+	r.mu.Unlock()
+	if closed {
+		return tunnelv1.Unavailable
+	}
+	if header.RouteID != ref.RouteID || header.RouteSessionID != ref.RouteSessionID ||
+		header.RouteVersion != ref.RouteVersion {
+		return tunnelv1.StaleRouteVersion
+	}
+	if header.PublisherConnectionID != ref.PublisherConnectionID ||
+		header.ConnectionAssignmentRevision != ref.ConnectionAssignmentRevision {
+		return tunnelv1.StaleConnectionAssignment
+	}
+	return ""
 }
 
 func (r *Route) Drain(ctx context.Context) error {
-	tailcatDone := make(chan error, 1)
-	go func() { tailcatDone <- r.tailcat.Drain(ctx) }()
-	httpErr := r.http.Shutdown(ctx)
-	return errors.Join(<-tailcatDone, httpErr)
+	return r.http.Shutdown(ctx)
 }
 
 func (r *Route) Close() error {
@@ -249,7 +283,7 @@ func (r *Route) Close() error {
 		}
 		started := r.started
 		r.mu.Unlock()
-		result = errors.Join(r.http.Close(), r.queue.Close(), r.tailcat.Close())
+		result = errors.Join(r.http.Close(), r.queue.Close())
 		if started {
 			result = errors.Join(result, <-r.httpDone)
 		}
@@ -394,7 +428,7 @@ func (l *routeListener) enqueue(connection net.Conn) bool {
 
 type routeAddress string
 
-func (routeAddress) Network() string  { return "tailcat" }
+func (routeAddress) Network() string  { return "tnl" }
 func (a routeAddress) String() string { return string(a) }
 
 type routeReaderConn struct {

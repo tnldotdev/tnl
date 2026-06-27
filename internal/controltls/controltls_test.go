@@ -1,40 +1,58 @@
 package controltls
 
 import (
+	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
-	"errors"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"fmt"
 	"io"
-	"net"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"sync"
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/state"
-	"github.com/tnldotdev/tnl/internal/testutil/integrationtest"
 	"golang.org/x/crypto/acme"
 	"golang.org/x/crypto/acme/autocert"
 )
 
-func TestAutomaticCertificate(t *testing.T) {
-	config, err := New(Config{
-		Hostname: "control.example", Cache: testCache(t, "https://acme.example/directory"),
-		DirectoryURL: "https://acme.example/directory", Email: "operator@example.com", AcceptTerms: true,
+func TestAutomaticCertificateConfiguration(t *testing.T) {
+	cache := newMemoryCache()
+	source, err := New(Config{
+		Hostname: "control.example", Cache: cache, DirectoryURL: "https://acme.example/directory",
+		Email: "operator@example.com", AcceptTerms: true, AccountKey: testAccountKey(t),
+		RunLeader: func(ctx context.Context, run func(context.Context) error) error { return run(ctx) },
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.GetCertificate == nil {
-		t.Fatal("automatic certificate callback is missing")
+	config := source.TLSConfig()
+	if config.GetCertificate == nil || config.MinVersion != tls.VersionTLS13 || !slices.Contains(config.NextProtos, acme.ALPNProto) {
+		t.Fatalf("automatic TLS config = %#v", config)
 	}
-	foundACME := false
-	for _, protocol := range config.NextProtos {
-		foundACME = foundACME || protocol == acme.ALPNProto
+	if source.Ready(time.Now()) {
+		t.Fatal("source is ready without a certificate")
 	}
-	if !foundACME {
-		t.Fatal("automatic certificate TLS-ALPN support is missing")
+	if err := cache.Put(t.Context(), "control.example", testCertificate(t, "control.example")); err != nil {
+		t.Fatal(err)
+	}
+	if !source.Ready(time.Now()) {
+		t.Fatal("source is not ready with a certificate")
+	}
+	certificate, err := source.GetCertificate(&tls.ClientHelloInfo{ServerName: "control.example"})
+	if err != nil || certificate.Leaf == nil || certificate.Leaf.DNSNames[0] != "control.example" {
+		t.Fatalf("certificate = %#v, %v", certificate, err)
+	}
+	if _, err := source.GetCertificate(&tls.ClientHelloInfo{ServerName: "other.example"}); err == nil {
+		t.Fatal("unexpected SNI was accepted")
 	}
 }
 
@@ -65,12 +83,8 @@ func TestACMEHTTPClientRestoresOrderLocation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := io.Copy(io.Discard, created.Body); err != nil {
-				t.Fatal(err)
-			}
-			if err := created.Body.Close(); err != nil {
-				t.Fatal(err)
-			}
+			_, _ = io.Copy(io.Discard, created.Body)
+			_ = created.Body.Close()
 			finalized, err := client.Post(origin+"/finalize", "application/json", nil)
 			if err != nil {
 				t.Fatal(err)
@@ -79,81 +93,76 @@ func TestACMEHTTPClientRestoresOrderLocation(t *testing.T) {
 			if location := finalized.Header.Get("Location"); location != origin+"/order/1" {
 				t.Fatalf("finalize Location = %q", location)
 			}
-			transport := client.Transport.(*orderLocationTransport)
-			transport.mu.Lock()
-			remaining := len(transport.orders)
-			transport.mu.Unlock()
-			if remaining != 0 {
-				t.Fatalf("remembered orders = %d, want 0", remaining)
-			}
 		})
 	}
 }
 
-func TestIntegrationAutomaticControlCertificate(t *testing.T) {
-	pebblePath := integrationtest.RequirePebble(t)
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	dnsAddress := integrationtest.StartChallengeDNS(t)
-	pebble := integrationtest.StartPebble(
-		t, pebblePath, listener.Addr().(*net.TCPAddr).Port, dnsAddress,
-	)
-	tlsConfig, err := New(Config{
-		Hostname: "control.tnl.test", Cache: testCache(t, pebble.DirectoryURL()), DirectoryURL: pebble.DirectoryURL(),
-		Email: "operator@example.com", AcceptTerms: true, HTTPClient: pebble.HTTPClient(),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	server := &http.Server{
-		Handler: http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
-			_, _ = io.WriteString(response, "ready")
-		}),
-		TLSConfig: tlsConfig,
-	}
-	done := make(chan error, 1)
-	go func() { done <- server.ServeTLS(listener, "", "") }()
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := server.Shutdown(ctx); err != nil {
-			t.Error(err)
-		}
-		if err := <-done; !errors.Is(err, http.ErrServerClosed) {
-			t.Errorf("serve control TLS: %v", err)
-		}
-	})
-
-	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{RootCAs: pebble.IssuerRoots(t), MinVersion: tls.VersionTLS13},
-		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
-			return new(net.Dialer).DialContext(ctx, network, listener.Addr().String())
-		},
-	}
-	t.Cleanup(transport.CloseIdleConnections)
-	client := &http.Client{Transport: transport, Timeout: 30 * time.Second}
-	response, err := client.Get("https://control.tnl.test/")
-	if err != nil {
-		t.Fatalf("request control API: %v; Pebble logs:\n%s", err, pebble.Logs())
-	}
-	body, readErr := io.ReadAll(response.Body)
-	closeErr := response.Body.Close()
-	if err := errors.Join(readErr, closeErr); err != nil {
-		t.Fatal(err)
-	}
-	if response.StatusCode != http.StatusOK || string(body) != "ready" {
-		t.Fatalf("control response = %s %q", response.Status, body)
-	}
+type memoryCache struct {
+	mu      sync.Mutex
+	entries map[string][]byte
 }
 
-func testCache(t *testing.T, directoryURL string) autocert.Cache {
+func newMemoryCache() *memoryCache { return &memoryCache{entries: make(map[string][]byte)} }
+
+func (c *memoryCache) Get(_ context.Context, key string) ([]byte, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	data, ok := c.entries[key]
+	if !ok {
+		return nil, autocert.ErrCacheMiss
+	}
+	return bytes.Clone(data), nil
+}
+
+func (c *memoryCache) Put(_ context.Context, key string, data []byte) error {
+	c.mu.Lock()
+	c.entries[key] = bytes.Clone(data)
+	c.mu.Unlock()
+	return nil
+}
+
+func (c *memoryCache) Delete(_ context.Context, key string) error {
+	c.mu.Lock()
+	delete(c.entries, key)
+	c.mu.Unlock()
+	return nil
+}
+
+func testAccountKey(t *testing.T) []byte {
 	t.Helper()
-	db, err := state.Open(t.Context(), t.TempDir())
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = db.Close() })
-	return state.ControlTLSCache(db, directoryURL)
+	data, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+func testCertificate(t *testing.T, hostname string) []byte {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1), Subject: pkix.Name{}, DNSNames: []string{hostname},
+		NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour),
+		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	certificateDER, err := x509.CreateCertificate(rand.Reader, template, template, key.Public(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return append(
+		pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}),
+		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificateDER})...,
+	)
 }

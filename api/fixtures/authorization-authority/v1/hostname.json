@@ -1,9 +1,0 @@
-{
-  "id": "hostname_0123456789abcdef0123456789abcdef",
-  "hostname": "demo.example.com",
-  "kind": "managed",
-  "status": "active",
-  "source": "user",
-  "created_at": "2026-09-01T12:00:00Z",
-  "activated_at": "2026-09-01T12:01:00Z"
-}

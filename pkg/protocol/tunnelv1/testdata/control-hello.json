@@ -1,0 +1,15 @@
+{
+  "type": "hello",
+  "protocol_version": 1,
+  "role": "publisher",
+  "credential": "credential",
+  "publisher_connection": {
+    "route_session_id": "route_session_1",
+    "route_id": "route_1",
+    "route_version": 2,
+    "publisher_connection_id": "publisher_connection_1",
+    "connection_slot": 1,
+    "connection_assignment_revision": 3,
+    "relay_service_id": "relay_service_1"
+  }
+}

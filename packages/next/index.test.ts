@@ -23,6 +23,7 @@ describe("withTnl", () => {
   test("leaves production and local development unchanged", async () => {
     const config = { reactStrictMode: true };
     const wrapped = withTnl(config);
+    expect(() => withTnl({}, {} as never)).toThrow(/does not accept tunnel options/);
 
     await expect(wrapped(productionPhase, context)).resolves.toBe(config);
     await expect(wrapped(developmentPhase, context)).resolves.toBe(config);
@@ -34,29 +35,20 @@ describe("withTnl", () => {
     const originalContext: NextConfigContext = { defaultConfig: { reactStrictMode: false } };
     let receivedPhase: string | undefined;
     let receivedContext: NextConfigContext | undefined;
-    let requestedHost = "";
 
     await withProcessEnvironment({ ...bootstrap.environment, TNL_DEV_PORT: "3200" }, async () => {
-      const wrapped = withTnl(
-        async (phase, factoryContext) => {
-          receivedPhase = phase;
-          receivedContext = factoryContext;
-          return {
-            allowedDevOrigins: ["existing.example", "demo.tnl.dev"],
-            env: {
-              EXISTING_PUBLIC_VALUE: "existing",
-              NEXT_PUBLIC_TNL_URL: "https://stale.example",
-            },
-            reactStrictMode: true,
-          };
-        },
-        ({ cwd, env, worktree }) => {
-          expect(cwd).toBe(process.cwd());
-          expect(env.TNL_DEV_PORT).toBe("3200");
-          requestedHost = `${worktree.label}.example.com`;
-          return { host: requestedHost, allowCurrentIP: true };
-        },
-      );
+      const wrapped = withTnl(async (phase, factoryContext) => {
+        receivedPhase = phase;
+        receivedContext = factoryContext;
+        return {
+          allowedDevOrigins: ["existing.example", "demo.tnl.dev"],
+          env: {
+            EXISTING_PUBLIC_VALUE: "existing",
+            NEXT_PUBLIC_TNL_URL: "https://stale.example",
+          },
+          reactStrictMode: true,
+        };
+      });
 
       await expect(wrapped(developmentPhase, originalContext)).resolves.toMatchObject({
         allowedDevOrigins: ["existing.example", "demo.tnl.dev"],
@@ -77,10 +69,6 @@ describe("withTnl", () => {
       body: {
         protocol: 1,
         framework: "next",
-        options: {
-          host: requestedHost,
-          allowCurrentIP: true,
-        },
       },
     });
     expect(bootstrap.requests[1]).toMatchObject({
@@ -131,7 +119,6 @@ describe("withTnl", () => {
     expect(bootstrap.requests[0]?.body).toEqual({
       protocol: 1,
       framework: "next",
-      options: {},
     });
     expect(bootstrap.requests[1]?.body).toEqual({
       protocol: 1,
@@ -172,7 +159,7 @@ test("runs Next.js with protected development assets and HMR", { timeout: 60_000
   try {
     const assignment = await waitForBootstrapRequest(bootstrap);
     expect(assignment).toMatchObject({
-      body: { protocol: 1, framework: "next", options: {} },
+      body: { protocol: 1, framework: "next" },
       path: "/v1/configure",
     });
     const target = await waitForBootstrapRequest(bootstrap, 1);

@@ -9,6 +9,10 @@ import (
 	"github.com/tnldotdev/tnl/internal/publisher"
 )
 
+type telemetryReporterFunc func(telemetryPayload)
+
+func (f telemetryReporterFunc) Report(payload telemetryPayload) { f(payload) }
+
 func TestTelemetryInstallationIDRetries(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "state")
 	if err := os.WriteFile(root, []byte("not a directory"), 0o600); err != nil {

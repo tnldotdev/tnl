@@ -8,6 +8,17 @@ SELECT selected_server_origin
 FROM client_settings
 WHERE id = 1;
 
+-- name: GetSelectedTeam :one
+SELECT selected_team_id
+FROM server_profiles
+WHERE origin = sqlc.arg(origin);
+
+-- name: SetSelectedTeam :exec
+UPDATE server_profiles
+SET selected_team_id = sqlc.arg(team_id),
+    last_used_at = sqlc.arg(now)
+WHERE origin = sqlc.arg(origin);
+
 -- name: SetSelectedServer :exec
 UPDATE client_settings
 SET selected_server_origin = sqlc.arg(origin)
@@ -31,45 +42,30 @@ WHERE server_origin = sqlc.arg(server_origin);
 -- name: UpsertControlSession :exec
 INSERT INTO control_sessions (
     server_origin,
-    kind,
-    control_endpoint,
+    authority_endpoint,
     session_id,
-    issuer,
-    client_id,
     access_token,
     access_expires_at,
     refresh_token,
     refresh_expires_at,
-    grants,
-    scopes,
     updated_at
 ) VALUES (
     sqlc.arg(server_origin),
-    sqlc.arg(kind),
-    sqlc.arg(control_endpoint),
+    sqlc.arg(authority_endpoint),
     sqlc.arg(session_id),
-    sqlc.arg(issuer),
-    sqlc.arg(client_id),
     sqlc.arg(access_token),
     sqlc.arg(access_expires_at),
     sqlc.arg(refresh_token),
     sqlc.arg(refresh_expires_at),
-    sqlc.arg(grants),
-    sqlc.arg(scopes),
     sqlc.arg(updated_at)
 )
 ON CONFLICT (server_origin) DO UPDATE SET
-    kind = excluded.kind,
-    control_endpoint = excluded.control_endpoint,
+    authority_endpoint = excluded.authority_endpoint,
     session_id = excluded.session_id,
-    issuer = excluded.issuer,
-    client_id = excluded.client_id,
     access_token = excluded.access_token,
     access_expires_at = excluded.access_expires_at,
     refresh_token = excluded.refresh_token,
     refresh_expires_at = excluded.refresh_expires_at,
-    grants = excluded.grants,
-    scopes = excluded.scopes,
     updated_at = excluded.updated_at;
 
 -- name: DeleteControlSession :exec

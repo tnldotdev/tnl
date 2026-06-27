@@ -15,19 +15,14 @@ type ClientSetting struct {
 }
 
 type ControlSession struct {
-	ServerOrigin     string
-	Kind             string
-	ControlEndpoint  string
-	SessionID        string
-	Issuer           string
-	ClientID         string
-	AccessToken      []byte
-	AccessExpiresAt  int64
-	RefreshToken     []byte
-	RefreshExpiresAt int64
-	Grants           []byte
-	Scopes           []byte
-	UpdatedAt        int64
+	ServerOrigin      string
+	AuthorityEndpoint string
+	SessionID         string
+	AccessToken       []byte
+	AccessExpiresAt   int64
+	RefreshToken      []byte
+	RefreshExpiresAt  int64
+	UpdatedAt         int64
 }
 
 type LocalTunnel struct {
@@ -65,7 +60,8 @@ type RouteCertificate struct {
 }
 
 type ServerProfile struct {
-	Origin     string
-	CreatedAt  int64
-	LastUsedAt int64
+	Origin         string
+	SelectedTeamID string
+	CreatedAt      int64
+	LastUsedAt     int64
 }

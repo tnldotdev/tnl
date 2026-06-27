@@ -1,0 +1,671 @@
+openapi: 3.1.0
+info:
+  title: tnl ingress service API
+  version: 1.0.0
+  license:
+    name: MIT
+    identifier: MIT
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+servers:
+  - url: https://ingress-control.internal
+security:
+  - ingressMutualTLS: []
+paths:
+  /internal/v1/ingresses/register:
+    post:
+      operationId: registerIngress
+      summary: Register one ingress process run
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IngressRegistration"
+      responses:
+        "200":
+          description: Ingress lease created or idempotently renewed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IngressLease"
+        default:
+          $ref: "#/components/responses/Problem"
+  /internal/v1/ingresses/{ingress_id}/renew:
+    post:
+      operationId: renewIngress
+      summary: Renew one exact ingress lease
+      parameters:
+        - $ref: "#/components/parameters/IngressID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IngressRenewal"
+      responses:
+        "200":
+          description: Ingress lease renewed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IngressLease"
+        default:
+          $ref: "#/components/responses/Problem"
+  /internal/v1/ingresses/{ingress_id}/drain:
+    post:
+      operationId: drainIngress
+      summary: Remove one exact ingress process from new visitor traffic
+      parameters:
+        - $ref: "#/components/parameters/IngressID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IngressDrainRequest"
+      responses:
+        "200":
+          description: Ingress drain recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IngressLease"
+        default:
+          $ref: "#/components/responses/Problem"
+  /internal/v1/ingresses/{ingress_id}/routing-table/snapshot:
+    get:
+      operationId: getIngressRoutingTableSnapshot
+      summary: Load a repeatable-read ingress routing-table snapshot
+      parameters:
+        - $ref: "#/components/parameters/IngressID"
+        - $ref: "#/components/parameters/IngressRunID"
+        - $ref: "#/components/parameters/IngressLeaseRevision"
+      responses:
+        "200":
+          description: Current ingress routing-table snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IngressRoutingTableSnapshot"
+        default:
+          $ref: "#/components/responses/Problem"
+  /internal/v1/ingresses/{ingress_id}/routing-table/events:
+    get:
+      operationId: getIngressRoutingTableEvents
+      summary: Long-poll ordered ingress routing-table events
+      parameters:
+        - $ref: "#/components/parameters/IngressID"
+        - $ref: "#/components/parameters/IngressRunID"
+        - $ref: "#/components/parameters/IngressLeaseRevision"
+        - name: after
+          in: query
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 256
+        - name: wait
+          in: query
+          description: Maximum long-poll wait as a whole-second duration.
+          schema:
+            type: string
+            pattern: "^(?:[0-9]|1[0-9]|2[0-5])s$"
+            default: 25s
+      responses:
+        "200":
+          description: Ordered ingress routing-table event page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IngressRoutingTablePage"
+        "409":
+          description: Revision was compacted and a new snapshot is required
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /internal/v1/ingresses/{ingress_id}/usage-reports:
+    post:
+      operationId: reportIngressUsage
+      summary: Ingest cumulative route usage from one ingress process run
+      parameters:
+        - $ref: "#/components/parameters/IngressID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IngressUsageReportBatch"
+      responses:
+        "204":
+          description: Usage reports committed or replayed
+        default:
+          $ref: "#/components/responses/Problem"
+  /internal/v1/ingresses/{ingress_id}/route-recovery/{episode_id}/observed:
+    post:
+      operationId: observeRouteRecovery
+      summary: Observe the first successful publisher byte after public recovery
+      parameters:
+        - $ref: "#/components/parameters/IngressID"
+        - name: episode_id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RouteRecoveryObservationRequest"
+      responses:
+        "200":
+          description: Recovery observation committed or replayed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RouteRecoveryObservation"
+        default:
+          $ref: "#/components/responses/Problem"
+components:
+  securitySchemes:
+    ingressMutualTLS:
+      type: mutualTLS
+  parameters:
+    IngressID:
+      name: ingress_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Identifier"
+    IngressRunID:
+      name: ingress_run_id
+      in: query
+      required: true
+      schema:
+        $ref: "#/components/schemas/Identifier"
+    IngressLeaseRevision:
+      name: ingress_lease_revision
+      in: query
+      required: true
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+  responses:
+    Problem:
+      description: Request failed
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+  schemas:
+    Identifier:
+      type: string
+      minLength: 1
+      maxLength: 256
+      pattern: '^\S(?:.*\S)?$'
+    IngressRegistration:
+      type: object
+      additionalProperties: false
+      required: [ingress_id, ingress_run_id, protocol_version, connection_capacity]
+      properties:
+        ingress_id:
+          $ref: "#/components/schemas/Identifier"
+        ingress_run_id:
+          $ref: "#/components/schemas/Identifier"
+        protocol_version:
+          type: integer
+          format: int64
+          minimum: 1
+        connection_capacity:
+          type: integer
+          format: int64
+          minimum: 1
+    IngressLeaseIdentity:
+      type: object
+      additionalProperties: false
+      required: [ingress_id, ingress_run_id, ingress_lease_revision]
+      properties:
+        ingress_id:
+          $ref: "#/components/schemas/Identifier"
+        ingress_run_id:
+          $ref: "#/components/schemas/Identifier"
+        ingress_lease_revision:
+          type: integer
+          format: int64
+          minimum: 1
+    IngressRenewal:
+      unevaluatedProperties: false
+      allOf:
+        - $ref: "#/components/schemas/IngressLeaseIdentity"
+        - type: object
+          required: [reported_connections, routing_table_revision]
+          properties:
+            reported_connections:
+              type: integer
+              format: int64
+              minimum: 0
+            routing_table_revision:
+              type: integer
+              format: int64
+              minimum: 0
+    IngressDrainRequest:
+      unevaluatedProperties: false
+      allOf:
+        - $ref: "#/components/schemas/IngressLeaseIdentity"
+        - type: object
+          required: [deadline]
+          properties:
+            deadline:
+              type: string
+              format: date-time
+    IngressLease:
+      type: object
+      additionalProperties: false
+      required:
+        - ingress_id
+        - ingress_run_id
+        - ingress_lease_revision
+        - protocol_version
+        - connection_capacity
+        - reported_connections
+        - routing_table_revision
+        - visitor_network_hash_keys
+        - draining
+        - registered_at
+        - renewed_at
+        - lease_expires_at
+      properties:
+        ingress_id:
+          $ref: "#/components/schemas/Identifier"
+        ingress_run_id:
+          $ref: "#/components/schemas/Identifier"
+        ingress_lease_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        protocol_version:
+          type: integer
+          format: int64
+          minimum: 1
+        connection_capacity:
+          type: integer
+          format: int64
+          minimum: 1
+        reported_connections:
+          type: integer
+          format: int64
+          minimum: 0
+        routing_table_revision:
+          type: integer
+          format: int64
+          minimum: 0
+        visitor_network_hash_keys:
+          type: array
+          minItems: 2
+          maxItems: 2
+          description: Current and next UTC-date keys used only to derive route-scoped visitor-network hashes.
+          items:
+            $ref: "#/components/schemas/VisitorNetworkHashKey"
+        draining:
+          type: boolean
+        drain_deadline:
+          type: string
+          format: date-time
+        registered_at:
+          type: string
+          format: date-time
+        renewed_at:
+          type: string
+          format: date-time
+        lease_expires_at:
+          type: string
+          format: date-time
+    IngressRoutingPublisherConnection:
+      type: object
+      additionalProperties: false
+      required:
+        - connection_slot
+        - publisher_connection_id
+        - connection_assignment_revision
+        - relay_service_id
+        - relay_id
+        - relay_run_id
+        - relay_lease_revision
+        - internal_relay_address
+        - tls_server_name
+        - lease_expires_at
+      properties:
+        connection_slot:
+          type: integer
+          minimum: 0
+          maximum: 1
+        publisher_connection_id:
+          $ref: "#/components/schemas/Identifier"
+        connection_assignment_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        relay_service_id:
+          $ref: "#/components/schemas/Identifier"
+        relay_id:
+          $ref: "#/components/schemas/Identifier"
+        relay_run_id:
+          $ref: "#/components/schemas/Identifier"
+        relay_lease_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        internal_relay_address:
+          $ref: "#/components/schemas/Identifier"
+        tls_server_name:
+          $ref: "#/components/schemas/Identifier"
+        lease_expires_at:
+          type: string
+          format: date-time
+    IngressRoutingTableEntry:
+      type: object
+      additionalProperties: false
+      required:
+        - route_id
+        - route_session_id
+        - route_version
+        - canonical_hostname
+        - policy_revision
+        - ip_policy
+        - allowed_ip_prefixes
+        - route_expires_at
+        - publisher_connections
+      properties:
+        route_id:
+          $ref: "#/components/schemas/Identifier"
+        route_session_id:
+          $ref: "#/components/schemas/Identifier"
+        route_version:
+          type: integer
+          format: int64
+          minimum: 1
+        canonical_hostname:
+          type: string
+          minLength: 1
+          maxLength: 253
+        policy_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        ip_policy:
+          type: string
+          enum: [allow_all, allowlist]
+        allowed_ip_prefixes:
+          type: array
+          maxItems: 64
+          uniqueItems: true
+          items:
+            type: string
+        route_expires_at:
+          type: string
+          format: date-time
+        recovery_episode_id:
+          type: integer
+          format: int64
+          minimum: 1
+        publisher_connections:
+          type: array
+          maxItems: 2
+          items:
+            $ref: "#/components/schemas/IngressRoutingPublisherConnection"
+    IngressRoutingTableEvent:
+      type: object
+      additionalProperties: false
+      required:
+        - routing_table_revision
+        - kind
+        - route_id
+        - route_version
+        - canonical_hostname
+        - entry_revision
+        - entry
+        - created_at
+      properties:
+        routing_table_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        kind:
+          type: string
+          enum: [route_upsert, route_tombstone, challenge_upsert, challenge_tombstone]
+        route_id:
+          $ref: "#/components/schemas/Identifier"
+        route_version:
+          type: integer
+          format: int64
+          minimum: 1
+        canonical_hostname:
+          type: string
+        entry_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        entry:
+          $ref: "#/components/schemas/IngressRoutingTableEntry"
+        route_expires_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+    IngressRoutingTableSnapshot:
+      type: object
+      additionalProperties: false
+      required: [through_revision, retained_after_revision, entries]
+      properties:
+        through_revision:
+          type: integer
+          format: int64
+          minimum: 0
+        retained_after_revision:
+          type: integer
+          format: int64
+          minimum: 0
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/IngressRoutingTableEvent"
+    IngressRoutingTablePage:
+      type: object
+      additionalProperties: false
+      required: [through_revision, retained_after_revision, next_revision, more, events]
+      properties:
+        through_revision:
+          type: integer
+          format: int64
+          minimum: 0
+        retained_after_revision:
+          type: integer
+          format: int64
+          minimum: 0
+        next_revision:
+          type: integer
+          format: int64
+          minimum: 0
+        more:
+          type: boolean
+        events:
+          type: array
+          maxItems: 1000
+          items:
+            $ref: "#/components/schemas/IngressRoutingTableEvent"
+    IngressUsageReport:
+      type: object
+      additionalProperties: false
+      required:
+        - route_id
+        - route_version
+        - bucket_start
+        - bucket_end
+        - observed_through
+        - report_revision
+        - connection_attempts
+        - policy_denials
+        - capacity_denials
+        - publisher_open_failures
+        - successful_streams
+        - connection_nanoseconds
+        - ingress_bytes
+        - egress_bytes
+        - histogram_data
+        - final
+      properties:
+        route_id:
+          $ref: "#/components/schemas/Identifier"
+        route_version:
+          type: integer
+          format: int64
+          minimum: 1
+        bucket_start:
+          type: string
+          format: date-time
+        bucket_end:
+          type: string
+          format: date-time
+        observed_through:
+          type: string
+          format: date-time
+        report_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        connection_attempts:
+          type: integer
+          format: int64
+          minimum: 0
+        policy_denials:
+          type: integer
+          format: int64
+          minimum: 0
+        capacity_denials:
+          type: integer
+          format: int64
+          minimum: 0
+        publisher_open_failures:
+          type: integer
+          format: int64
+          minimum: 0
+        successful_streams:
+          type: integer
+          format: int64
+          minimum: 0
+        connection_nanoseconds:
+          type: integer
+          format: int64
+          minimum: 0
+        ingress_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+        egress_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+        histogram_data:
+          type: string
+          format: byte
+        final:
+          type: boolean
+    VisitorNetworkHashKey:
+      type: object
+      additionalProperties: false
+      required: [utc_date, key]
+      properties:
+        utc_date:
+          type: string
+          format: date
+        key:
+          type: string
+          format: byte
+    IngressUsageReportBatch:
+      unevaluatedProperties: false
+      allOf:
+        - $ref: "#/components/schemas/IngressLeaseIdentity"
+        - type: object
+          required: [complete, reports]
+          properties:
+            observed_through:
+              type: string
+              format: date-time
+            complete:
+              type: boolean
+            reports:
+              type: array
+              maxItems: 256
+              items:
+                $ref: "#/components/schemas/IngressUsageReport"
+    RouteRecoveryObservationRequest:
+      unevaluatedProperties: false
+      allOf:
+        - $ref: "#/components/schemas/IngressLeaseIdentity"
+        - type: object
+          required: [route_id, route_version, observed_at]
+          properties:
+            route_id:
+              $ref: "#/components/schemas/Identifier"
+            route_version:
+              type: integer
+              format: int64
+              minimum: 1
+            observed_at:
+              type: string
+              format: date-time
+    RouteRecoveryObservation:
+      type: object
+      additionalProperties: false
+      required: [episode_id, route_id, route_version, opened_at, observed_at, observed_seconds]
+      properties:
+        episode_id:
+          type: integer
+          format: int64
+          minimum: 1
+        route_id:
+          $ref: "#/components/schemas/Identifier"
+        route_version:
+          type: integer
+          format: int64
+          minimum: 1
+        opened_at:
+          type: string
+          format: date-time
+        observed_at:
+          type: string
+          format: date-time
+        observed_seconds:
+          type: number
+          format: double
+          minimum: 0
+    Problem:
+      type: object
+      additionalProperties: false
+      required: [type, title, status, detail]
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string

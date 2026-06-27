@@ -1,0 +1,339 @@
+package controlstate
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"slices"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/opaqueid"
+)
+
+var ErrACMEWorkFenced = errors.New("controlstate: ACME work lease is fenced")
+
+type ACMEAuthorizationWork struct {
+	ID                 string
+	Identifier         string
+	AuthorizationURL   string
+	ChallengeType      string
+	ChallengeURL       string
+	ChallengeToken     string
+	ChallengeDigest    [32]byte
+	State              string
+	Revision           uint64
+	Attempts           uint64
+	AvailableAt        time.Time
+	PresentedAt        *time.Time
+	ValidatedAt        *time.Time
+	CleanupCompletedAt *time.Time
+	ExpiresAt          *time.Time
+	LastError          string
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+}
+
+type ACMEOrderWork struct {
+	ID                     string
+	Account                ACMEAccount
+	RouteSessionID         string
+	RouteID                string
+	RouteVersion           uint64
+	CertificateCacheKey    string
+	CertificateScope       string
+	CertificateIdentifiers []string
+	ChallengeMethod        string
+	CSRDER                 []byte
+	CSRDigest              [32]byte
+	State                  string
+	OrderRevision          uint64
+	OrderURL               string
+	FinalizeURL            string
+	CertificateURL         string
+	CertificatePEM         []byte
+	NotBefore              *time.Time
+	NotAfter               *time.Time
+	RenewAt                *time.Time
+	Attempts               uint64
+	AvailableAt            time.Time
+	LastError              string
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
+	WorkerID               string
+	WorkEpoch              uint64
+	WorkExpiresAt          time.Time
+	Authorizations         []ACMEAuthorizationWork
+}
+
+func (d *Database) UpdateACMEAccountRegistration(
+	ctx context.Context,
+	accountID string,
+	contactEmail string,
+	accountURL string,
+	acceptedTermsURL string,
+	now time.Time,
+) (ACMEAccount, error) {
+	if !validStateText(accountID) || !validStateText(contactEmail) || !validStateText(accountURL) ||
+		acceptedTermsURL != "" && !validStateText(acceptedTermsURL) {
+		return ACMEAccount{}, ErrCertificateIssuanceInvalid
+	}
+	if err := d.requireOpen(); err != nil {
+		return ACMEAccount{}, err
+	}
+	row, err := controlstatedb.New(d.pool).UpdateACMEAccountRegistration(ctx, controlstatedb.UpdateACMEAccountRegistrationParams{
+		ContactEmail: contactEmail, AccountUrl: text(accountURL), AcceptedTermsUrl: nullableText(acceptedTermsURL),
+		UpdatedAt: timestamptz(now), AccountID: accountID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ACMEAccount{}, ErrCertificateIssuanceInvalid
+	}
+	if err != nil {
+		return ACMEAccount{}, fmt.Errorf("controlstate: update ACME account registration: %w", err)
+	}
+	return acmeAccount(row), nil
+}
+
+func (d *Database) ClaimACMEOrderWork(
+	ctx context.Context,
+	workerID string,
+	now time.Time,
+	leaseDuration time.Duration,
+) (work ACMEOrderWork, found bool, retErr error) {
+	if !validStateText(workerID) || leaseDuration <= 0 {
+		return ACMEOrderWork{}, false, ErrCertificateIssuanceInvalid
+	}
+	if err := d.requireOpen(); err != nil {
+		return ACMEOrderWork{}, false, err
+	}
+	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		return ACMEOrderWork{}, false, fmt.Errorf("controlstate: claim ACME order work: begin transaction: %w", err)
+	}
+	defer rollback(ctx, tx, "claim ACME order work", &retErr)()
+	queries := controlstatedb.New(tx)
+	order, err := queries.ClaimACMEOrderWork(ctx, controlstatedb.ClaimACMEOrderWorkParams{
+		WorkOwner: text(workerID), WorkExpiresAt: timestamptz(now.Add(leaseDuration)), ClaimedAt: timestamptz(now),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		if err := tx.Commit(ctx); err != nil {
+			return ACMEOrderWork{}, false, fmt.Errorf("controlstate: claim ACME order work: commit empty claim: %w", err)
+		}
+		return ACMEOrderWork{}, false, nil
+	}
+	if err != nil {
+		return ACMEOrderWork{}, false, fmt.Errorf("controlstate: claim ACME order work: claim order: %w", err)
+	}
+	account, err := getACMEAccountByID(ctx, tx, order.AccountID)
+	if err != nil {
+		return ACMEOrderWork{}, false, err
+	}
+	authorizations, err := queries.ListACMEOrderAuthorizations(ctx, order.ID)
+	if err != nil {
+		return ACMEOrderWork{}, false, fmt.Errorf("controlstate: claim ACME order work: list authorizations: %w", err)
+	}
+	work, err = acmeOrderWork(order, account, authorizations, true)
+	if err != nil {
+		return ACMEOrderWork{}, false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ACMEOrderWork{}, false, fmt.Errorf("controlstate: claim ACME order work: commit: %w", err)
+	}
+	return work, true, nil
+}
+
+func (d *Database) SaveACMEOrderWork(
+	ctx context.Context,
+	work ACMEOrderWork,
+	now time.Time,
+) (result ACMEOrderWork, retErr error) {
+	if err := validateACMEOrderWork(work); err != nil {
+		return ACMEOrderWork{}, err
+	}
+	if err := d.requireOpen(); err != nil {
+		return ACMEOrderWork{}, err
+	}
+	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		return ACMEOrderWork{}, fmt.Errorf("controlstate: save ACME order work: begin transaction: %w", err)
+	}
+	defer rollback(ctx, tx, "save ACME order work", &retErr)()
+	queries := controlstatedb.New(tx)
+	order, err := queries.SaveACMEOrderWork(ctx, controlstatedb.SaveACMEOrderWorkParams{
+		State: work.State, OrderUrl: nullableText(work.OrderURL), FinalizeUrl: nullableText(work.FinalizeURL),
+		CertificateUrl: nullableText(work.CertificateURL), CertificatePem: slices.Clone(work.CertificatePEM),
+		NotBefore: nullableTime(work.NotBefore), NotAfter: nullableTime(work.NotAfter), RenewAt: nullableTime(work.RenewAt),
+		AvailableAt: timestamptz(work.AvailableAt), LastError: nullableText(work.LastError),
+		CompletedAt: timestamptz(now), IssuanceID: work.ID, WorkOwner: text(work.WorkerID),
+		WorkEpoch: positive(work.WorkEpoch), ExpectedOrderRevision: positive(work.OrderRevision),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ACMEOrderWork{}, ErrACMEWorkFenced
+	}
+	if err != nil {
+		return ACMEOrderWork{}, fmt.Errorf("controlstate: save ACME order work: update order: %w", err)
+	}
+	for index := range work.Authorizations {
+		authorization := &work.Authorizations[index]
+		if authorization.ID == "" {
+			authorization.ID, err = opaqueid.New("acme_authorization_")
+			if err != nil {
+				return ACMEOrderWork{}, fmt.Errorf("controlstate: generate ACME authorization ID: %w", err)
+			}
+		}
+		createdAt := authorization.CreatedAt
+		if createdAt.IsZero() {
+			createdAt = now
+		}
+		if _, err := queries.SaveACMEAuthorizationWork(ctx, controlstatedb.SaveACMEAuthorizationWorkParams{
+			ID: authorization.ID, OrderID: work.ID, Identifier: authorization.Identifier,
+			AuthorizationUrl: authorization.AuthorizationURL, ChallengeType: authorization.ChallengeType,
+			ChallengeUrl: authorization.ChallengeURL, ChallengeToken: authorization.ChallengeToken,
+			ChallengeDigest: authorization.ChallengeDigest[:], State: authorization.State,
+			AuthorizationRevision: positive(max(authorization.Revision, 1)), Attempts: nonnegative(authorization.Attempts),
+			AvailableAt: timestamptz(authorization.AvailableAt), PresentedAt: nullableTime(authorization.PresentedAt),
+			ValidatedAt: nullableTime(authorization.ValidatedAt), CleanupCompletedAt: nullableTime(authorization.CleanupCompletedAt),
+			ExpiresAt: nullableTime(authorization.ExpiresAt), LastError: nullableText(authorization.LastError),
+			CreatedAt: timestamptz(createdAt), UpdatedAt: timestamptz(now),
+			ExpectedAuthorizationRevision: nonnegative(authorization.Revision),
+		}); errors.Is(err, pgx.ErrNoRows) {
+			return ACMEOrderWork{}, ErrACMEWorkFenced
+		} else if err != nil {
+			return ACMEOrderWork{}, fmt.Errorf("controlstate: save ACME order work: update authorization: %w", err)
+		}
+	}
+	account, err := getACMEAccountByID(ctx, tx, order.AccountID)
+	if err != nil {
+		return ACMEOrderWork{}, err
+	}
+	authorizations, err := queries.ListACMEOrderAuthorizations(ctx, order.ID)
+	if err != nil {
+		return ACMEOrderWork{}, fmt.Errorf("controlstate: save ACME order work: reload authorizations: %w", err)
+	}
+	result, err = acmeOrderWork(order, account, authorizations, false)
+	if err != nil {
+		return ACMEOrderWork{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ACMEOrderWork{}, fmt.Errorf("controlstate: save ACME order work: commit: %w", err)
+	}
+	return result, nil
+}
+
+func getACMEAccountByID(ctx context.Context, db controlstatedb.DBTX, accountID string) (controlstatedb.ControlAcmeAccount, error) {
+	var account controlstatedb.ControlAcmeAccount
+	err := db.QueryRow(ctx, `
+		SELECT id, directory_url, contact_email, account_key_der, account_url,
+			accepted_terms_url, created_at, updated_at
+		FROM control.acme_accounts
+		WHERE id = $1
+	`, accountID).Scan(
+		&account.ID, &account.DirectoryUrl, &account.ContactEmail, &account.AccountKeyDer,
+		&account.AccountUrl, &account.AcceptedTermsUrl, &account.CreatedAt, &account.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return controlstatedb.ControlAcmeAccount{}, errors.New("controlstate: ACME work references a missing account")
+	}
+	if err != nil {
+		return controlstatedb.ControlAcmeAccount{}, fmt.Errorf("controlstate: read ACME work account: %w", err)
+	}
+	return account, nil
+}
+
+func acmeOrderWork(
+	order controlstatedb.ControlAcmeOrder,
+	account controlstatedb.ControlAcmeAccount,
+	authorizations []controlstatedb.ControlAcmeAuthorization,
+	requireLease bool,
+) (ACMEOrderWork, error) {
+	if order.RouteVersion <= 0 || order.OrderRevision <= 0 || order.WorkEpoch <= 0 ||
+		requireLease && (!order.WorkOwner.Valid || !order.WorkExpiresAt.Valid) ||
+		order.Attempts <= 0 || !order.AvailableAt.Valid || !order.CreatedAt.Valid || !order.UpdatedAt.Valid ||
+		len(order.CsrDigest) != 32 {
+		return ACMEOrderWork{}, errors.New("controlstate: invalid ACME order work row")
+	}
+	work := ACMEOrderWork{
+		ID: order.ID, Account: acmeAccount(account), RouteSessionID: order.RouteSessionID,
+		RouteID: order.RouteID, RouteVersion: uint64(order.RouteVersion), CertificateCacheKey: order.CertificateCacheKey,
+		CertificateScope: order.CertificateScope, CertificateIdentifiers: slices.Clone(order.CertificateIdentifiers),
+		ChallengeMethod: order.ChallengeMethod, CSRDER: slices.Clone(order.CsrDer), State: order.State,
+		OrderRevision: uint64(order.OrderRevision), OrderURL: order.OrderUrl.String, FinalizeURL: order.FinalizeUrl.String,
+		CertificateURL: order.CertificateUrl.String, CertificatePEM: slices.Clone(order.CertificatePem),
+		Attempts: uint64(order.Attempts), AvailableAt: order.AvailableAt.Time, LastError: order.LastError.String,
+		CreatedAt: order.CreatedAt.Time, UpdatedAt: order.UpdatedAt.Time,
+		WorkerID: order.WorkOwner.String, WorkEpoch: uint64(order.WorkEpoch), WorkExpiresAt: order.WorkExpiresAt.Time,
+		Authorizations: make([]ACMEAuthorizationWork, len(authorizations)),
+	}
+	copy(work.CSRDigest[:], order.CsrDigest)
+	work.NotBefore = optionalTime(order.NotBefore)
+	work.NotAfter = optionalTime(order.NotAfter)
+	work.RenewAt = optionalTime(order.RenewAt)
+	for index, authorization := range authorizations {
+		if len(authorization.ChallengeDigest) != 32 || authorization.AuthorizationRevision <= 0 || authorization.Attempts < 0 ||
+			!authorization.AvailableAt.Valid || !authorization.CreatedAt.Valid || !authorization.UpdatedAt.Valid {
+			return ACMEOrderWork{}, errors.New("controlstate: invalid ACME authorization work row")
+		}
+		value := ACMEAuthorizationWork{
+			ID: authorization.ID, Identifier: authorization.Identifier, AuthorizationURL: authorization.AuthorizationUrl,
+			ChallengeType: authorization.ChallengeType, ChallengeURL: authorization.ChallengeUrl,
+			ChallengeToken: authorization.ChallengeToken, State: authorization.State,
+			Revision: uint64(authorization.AuthorizationRevision), Attempts: uint64(authorization.Attempts),
+			AvailableAt: authorization.AvailableAt.Time, PresentedAt: optionalTime(authorization.PresentedAt),
+			ValidatedAt: optionalTime(authorization.ValidatedAt), CleanupCompletedAt: optionalTime(authorization.CleanupCompletedAt),
+			ExpiresAt: optionalTime(authorization.ExpiresAt), LastError: authorization.LastError.String,
+			CreatedAt: authorization.CreatedAt.Time, UpdatedAt: authorization.UpdatedAt.Time,
+		}
+		copy(value.ChallengeDigest[:], authorization.ChallengeDigest)
+		work.Authorizations[index] = value
+	}
+	return work, nil
+}
+
+func validateACMEOrderWork(work ACMEOrderWork) error {
+	_, workEpochOK := positiveInt64(work.WorkEpoch)
+	_, orderRevisionOK := positiveInt64(work.OrderRevision)
+	_, attemptsOK := nonnegativeInt64(work.Attempts)
+	if !validStateText(work.ID) || !validStateText(work.WorkerID) || !workEpochOK || !orderRevisionOK || !attemptsOK ||
+		work.WorkExpiresAt.IsZero() ||
+		work.State != "pending" && work.State != "authorizing" && work.State != "ready_to_finalize" &&
+			work.State != "finalizing" && work.State != "waiting_for_install" && work.State != "failed" && work.State != "canceled" ||
+		work.AvailableAt.IsZero() || len(work.LastError) > 1024 {
+		return ErrCertificateIssuanceInvalid
+	}
+	for _, authorization := range work.Authorizations {
+		_, revisionOK := nonnegativeInt64(authorization.Revision)
+		_, authorizationAttemptsOK := nonnegativeInt64(authorization.Attempts)
+		if !validStateText(authorization.Identifier) || !validStateText(authorization.AuthorizationURL) ||
+			!validStateText(authorization.ChallengeURL) || !validStateText(authorization.ChallengeToken) ||
+			authorization.ChallengeType != "tls-alpn-01" && authorization.ChallengeType != "dns-01" ||
+			!revisionOK || !authorizationAttemptsOK || authorization.State == "" || authorization.AvailableAt.IsZero() ||
+			len(authorization.LastError) > 1024 {
+			return ErrCertificateIssuanceInvalid
+		}
+	}
+	return nil
+}
+
+func nullableTime(value *time.Time) pgtype.Timestamptz {
+	if value == nil {
+		return pgtype.Timestamptz{}
+	}
+	return timestamptz(*value)
+}
+
+func optionalTime(value pgtype.Timestamptz) *time.Time {
+	if !value.Valid {
+		return nil
+	}
+	result := value.Time
+	return &result
+}
+
+func nonnegative(value uint64) int64 {
+	if value > uint64(^uint64(0)>>1) {
+		return int64(^uint64(0) >> 1)
+	}
+	return int64(value)
+}

@@ -1,4 +1,3 @@
-import path from "node:path";
 import { describe, expect, onTestFinished, test } from "vitest";
 import {
   publicTunnelEnvironment,
@@ -12,20 +11,7 @@ import { startTestBootstrap } from "./test-helper.js";
 describe("tnl dev environment", () => {
   test("is inert outside tnl dev", async () => {
     expect(readDevEnvironment({})).toBeNull();
-    let configured = false;
-    await expect(
-      requestTunnelAssignment(
-        {
-          framework: "INVALID",
-          options: () => {
-            configured = true;
-            return {};
-          },
-        },
-        {},
-      ),
-    ).resolves.toBeNull();
-    expect(configured).toBe(false);
+    await expect(requestTunnelAssignment({ framework: "INVALID" }, {})).resolves.toBeNull();
   });
 
   test("rejects unsupported protocols", () => {
@@ -70,32 +56,12 @@ describe("tnl dev environment", () => {
 });
 
 describe("tunnel assignment and local port registration", () => {
-  test("sends exact authenticated requests and provides worktree context", async () => {
+  test("sends exact authenticated requests", async () => {
     const bootstrap = await startTestBootstrap();
     onTestFinished(() => bootstrap.close());
-    let worktreeLabel = "";
 
     const assignment = await requestTunnelAssignment(
-      {
-        framework: "vite",
-        options: ({ cwd, env, worktree }) => {
-          expect(cwd).toBe(process.cwd());
-          expect(env.DEPLOYMENT_SLOT).toBe("review-3");
-          expect(worktree).toMatchObject({
-            isGit: true,
-            name: path.basename(process.cwd()),
-            root: process.cwd(),
-          });
-          expect(worktree.label).not.toHaveLength(0);
-          worktreeLabel = worktree.label;
-          return {
-            controlURL: "https://tnl.example.com",
-            host: `${worktree.label}.example.com`,
-            allowIP: ["198.51.100.0/24"],
-            allowCurrentIP: true,
-          };
-        },
-      },
+      { framework: "vite" },
       { ...bootstrap.environment, DEPLOYMENT_SLOT: "review-3" },
     );
     expect(assignment).not.toBeNull();
@@ -121,12 +87,6 @@ describe("tunnel assignment and local port registration", () => {
         body: {
           protocol: 1,
           framework: "vite",
-          options: {
-            controlURL: "https://tnl.example.com",
-            host: `${worktreeLabel}.example.com`,
-            allowIP: ["198.51.100.0/24"],
-            allowCurrentIP: true,
-          },
         },
         contentType: "application/json",
         method: "POST",
@@ -173,26 +133,6 @@ describe("tunnel assignment and local port registration", () => {
     await expect(registerLocalPort(fakeAssignment(bootstrap.environment), 0)).rejects.toThrow(
       /local port/,
     );
-    expect(bootstrap.requests).toHaveLength(0);
-  });
-
-  test.each([
-    [[], /tnl options must be an object/],
-    [{ host: "" }, /tnl host must be a non-empty string/],
-    [{ host: "a".repeat(254) }, /tnl host must be a non-empty string/],
-    [{ allowIP: "198.51.100.1" }, /tnl allowIP must be an array/],
-    [{ allowIP: Array.from({ length: 65 }, () => "198.51.100.1") }, /at most 64 entries/],
-    [{ allowCurrentIP: "yes" }, /tnl allowCurrentIP must be a boolean/],
-  ])("rejects invalid options %# before sending", async (options, expected) => {
-    const bootstrap = await startTestBootstrap();
-    onTestFinished(() => bootstrap.close());
-
-    await expect(
-      requestTunnelAssignment(
-        { framework: "vite", options: options as never },
-        bootstrap.environment,
-      ),
-    ).rejects.toThrow(expected);
     expect(bootstrap.requests).toHaveLength(0);
   });
 
