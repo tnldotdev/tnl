@@ -1,5 +1,6 @@
 .git
 .github
+.local
 .buildkit-cache-dance
 .buildkit-go-cache
 .env

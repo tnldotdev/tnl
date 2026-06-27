@@ -3,8 +3,8 @@
 tnl releases provide combined `tnl` and `tnld` archives for macOS and Linux on
 amd64 and arm64, a multi-platform `tnld` image in GHCR, and the project-local
 `@tnldotdev/tnl` client package. The npm framework integrations are versioned
-and released independently. Releases before 1.0 are previews and may include
-forward-only state migrations.
+and released independently. Releases before 1.0 are previews and may require a
+PostgreSQL schema migration before serving processes can start.
 
 ## Install With Homebrew
 
@@ -36,7 +36,7 @@ The launcher has exact-version optional dependencies for macOS and Linux on
 arm64 and x64. npm and pnpm install only the package matching the current
 platform, and no install script downloads executable code. Do not disable
 optional dependencies. The reported client version must match the selected
-root release tag without its leading `v`. Node.js 22.15 or newer is required.
+root release tag without its leading `v`. Node.js 22.18 or newer is required.
 
 ## Verify A Release
 
@@ -122,98 +122,110 @@ gh attestation verify "oci://$TNL_IMAGE" --repo tnldotdev/tnl
 docker buildx imagetools inspect "$TNL_IMAGE" --format '{{ json .SBOM }}'
 ```
 
-The image runs as non-root UID/GID 65532, uses unprivileged internal ports 8443 and 9090,
-and contains no shell. Its OCI index carries BuildKit provenance and an SBOM;
-GitHub also publishes an image provenance attestation. Project and third-party
-license files are available under `/licenses/tnl` in the image filesystem.
+The image runs as non-root UID/GID 65532, uses unprivileged internal ports, and
+contains no shell. Its OCI index carries BuildKit provenance and an SBOM; GitHub
+also publishes an image provenance attestation. Project and third-party license
+files are available under `/licenses/tnl` in the image filesystem.
 
-## Pre-1.0 Configuration Changes
+## Server Configuration
 
-`tnld` derives the control API hostname `tnl.<domain>` and deployment hostname
-suffix `<domain>` from `TNLD_DOMAIN`. Set `TNLD_DOMAIN` to a lowercase DNS
-domain without a trailing dot. `TNLD_CONTROL_HOSTNAME` and
-`TNLD_HOSTNAME_SUFFIX` set those values independently. Public ingress requires
-automatic ACME configuration.
+`TNLD_SERVER_DOMAIN` is the infrastructure DNS suffix used to derive control,
+ingress, and relay hostnames. `TNLD_MANAGED_DEPLOYMENT_DOMAIN` independently
+defines public route namespaces. Both must be lowercase canonical DNS names
+without trailing dots.
 
-The daemon creates its login token in the state directory. Retrieve it with
-`tnl admin server login-token --state-dir DIR`, and use `tnl login` to save a revocable
-control session. Worker and service credentials are generated with `tnl admin
-server token worker` and `tnl admin server token service`.
+Set `TNLD_MODE` to `standalone`, `control`, `ingress`, or `relay`. Standalone and
+control require the pooled runtime `TNLD_DATABASE_URL`. Ingress and relay are
+stateless, enroll through the public control API, and must not receive database
+credentials. Run `tnld migrate` separately with the direct
+`TNLD_DATABASE_DIRECT_URL`; serving processes never apply migrations.
+
+Generate the bootstrap credential with `tnld login-token`, provide it as
+`TNLD_LOGIN_TOKEN` to control and standalone processes, and use `tnl login` to
+save a revocable control session. Rotating the configured token invalidates
+control sessions issued from the previous token.
 
 `TNLD_ACCESS_TOKEN_LIFETIME` controls rotating access tokens from five minutes
 through 30 days and defaults to one hour. `TNLD_REFRESH_TOKEN_LIFETIME` controls
 the fixed absolute session lifetime through 365 days and defaults to 30 days.
 Existing control sessions retain their stored absolute expiry.
 
-Use `TNLD_RELAY_PROVIDER=tailcat` to explicitly opt into automatic hosted relay
-selection, or use `TNLD_RELAY_MAP_FILE` for an operator-approved custom map.
-Public ingress requires exactly one of those relay configurations.
-Review the matching release's [self-hosting guide](SELF-HOSTING.md) before
+Control and standalone obtain the public control certificate through ACME and
+do not require certificate files. Split ingress and relay processes require only
+their control hostname, scoped service-enrollment token, and process identity;
+relay additionally requires its internal relay address. Control issues
+short-lived service and relay transport certificates from its durable service
+CA. Review the matching release's [self-hosting guide](SELF-HOSTING.md) before
 recreating containers.
 
-## Cold Backup
+## PostgreSQL Backup
 
-Run these commands from `deploy`. Set `TNL_STATE_VOLUME` to the value in
-`.env`; the default is shown below. In production, select a reviewed backup
-utility image by digest; `alpine:3.22` is shown as a portable example.
+Use the PostgreSQL platform's supported physical or logical backup tooling. The
+following logical-backup example requires a direct URL whose role can read all
+tnl schemas:
 
 ```console
+umask 077
 mkdir -p backups
-chmod 700 backups
-export TNL_STATE_VOLUME=tnl_tnld-state
-docker compose stop tnld
-docker run --rm \
-  --volume "$TNL_STATE_VOLUME:/state:ro" \
-  --volume "$PWD/backups:/backup" \
-  alpine:3.22 \
-  tar -C /state -czf "/backup/tnl-state-$(date +%Y%m%d%H%M%S).tar.gz" .
-docker compose start tnld
+pg_dump --format=custom \
+  --file="backups/tnl-$(date -u +%Y%m%d%H%M%S).dump" \
+  "$TNLD_DATABASE_DIRECT_URL"
 ```
 
-Confirm `tnld` is stopped before the archive starts. Back up the whole volume,
-including SQLite files, ACME state, the login token, and the stored relay map.
-Encrypt the archive and retain the matching daemon version alongside it.
+Retain the matching `tnld` version and schema version with the backup. Encrypt
+backups and restrict access because PostgreSQL contains identity, route,
+certificate, session, service CA, enrollment-token digest, and relay transport
+key state. Back up the deployment secret store separately; it owns database
+credentials, the bootstrap management token, enrollment tokens, and optional
+DNS or static public TLS credentials.
 
-Test restoration with a new disposable volume:
+Test restoration into a new disposable database, never over the live database:
 
 ```console
-export RESTORE_VOLUME=tnl-restore-test
-docker volume create "$RESTORE_VOLUME"
-docker run --rm \
-  --volume "$RESTORE_VOLUME:/state" \
-  --volume "$PWD/backups:/backup:ro" \
-  alpine:3.22 \
-  tar -C /state -xzf /backup/tnl-state-YYYYMMDDHHMMSS.tar.gz
+createdb tnl_restore_test
+pg_restore --exit-on-error --no-owner \
+  --dbname=tnl_restore_test \
+  backups/tnl-YYYYMMDDHHMMSS.dump
 ```
 
-Attach that volume only to an isolated test deployment. Do not restore over a
-running daemon or an existing non-empty volume.
+Start only an isolated test deployment against the restored database. Verify
+that its schema is accepted by the matching `tnld` version and exercise login,
+team/domain reads, route creation, and route-session establishment.
 
 ## Upgrade
 
 1. Verify the new archives, image digest, signatures, SBOMs, and provenance.
-2. Stop all publishing clients or expect routes to disconnect during restart.
-3. Take and test a cold backup with the currently running version recorded.
-4. Set `TNL_IMAGE` to the new digest and run `docker compose pull`.
-5. Run `docker compose up -d --force-recreate` and inspect `docker compose logs tnld`.
-6. Query `/v1/ready`, inspect `/v1/capabilities`, and publish a test route.
-7. Upgrade every `tnl` client to the same version before normal use resumes.
+2. Record the running `tnld` version and take a tested PostgreSQL backup.
+3. Gate route creation, route-session creation, and certificate issuance when
+   the running version supports those maintenance controls.
+4. Pull the new digest and stop control and standalone processes. Ingress and
+   relay processes must not be given the migration URL.
+5. Run the new image's `tnld migrate` once with
+   `TNLD_DATABASE_DIRECT_URL`.
+6. Start controls or standalone processes, then roll ingress and relay services.
+   Inspect logs, service certificate expiry, leases, routing-table progress, and
+   ready publisher connections.
+7. Query `/v1/ready`, inspect control discovery, and publish a test route.
+8. Re-enable maintenance controls and upgrade `tnl` clients before normal use
+   resumes.
 
-The daemon applies embedded SQLite migrations at startup. It refuses a database
-whose schema is newer than the binary supports.
+Serving controls and standalone processes require the exact PostgreSQL schema
+version supported by the binary. They fail closed on an older or newer schema.
 
 ## Rollback
 
-Never start an older daemon against a database that a newer daemon has opened.
+Never start an older control or standalone process against a database migrated
+for a newer release.
 To roll back after an upgrade:
 
-1. Stop the new daemon.
-2. Preserve the failed state volume for diagnosis.
-3. Restore the complete pre-upgrade cold backup into an empty volume.
+1. Stop the new controls, standalone processes, ingress, and relays.
+2. Preserve a diagnostic backup of the failed database.
+3. Restore the complete pre-upgrade PostgreSQL backup into a new database.
 4. Set `TNL_IMAGE` to the previous verified digest.
-5. Set `TNL_STATE_VOLUME` to the restored volume name.
-6. Run `docker compose pull` and `docker compose up -d --force-recreate`.
-7. Confirm `/v1/ready`, inspect `/v1/capabilities` and logs, and publish a test route.
+5. Point the old control or standalone configuration at the restored database.
+6. Run `docker compose pull` and recreate the deployment without running the
+   newer migration image.
+7. Confirm `/v1/ready`, inspect control discovery and logs, and publish a test route.
 8. Restore matching previous `tnl` clients.
 
 If no pre-upgrade backup exists, stop rather than attempting an in-place schema

@@ -1,17 +1,17 @@
 {
-  "schema_version": 1,
+  "schema_version": 3,
   "id": "p1-horizontal",
   "updated_date": "2026-09-02",
   "workload": "agent-worktrees-assumed-v1",
   "pricing": "fly-sjc",
   "region": "sjc",
-  "transport": "forced-derp",
+  "transport": "auto",
   "machines": {
-    "edge": { "size": "performance-2x", "count": 1 },
-    "worker": { "size": "performance-1x", "capacity": 500 },
+    "control": { "size": "performance-2x", "count": 1 },
+    "relay": { "size": "performance-1x", "publisher_connection_capacity": 500 },
     "driver": { "size": "performance-2x" }
   },
-  "hosted_worker_limits": { "minimum": 2, "maximum": 10 },
+  "hosted_relay_limits": { "minimum": 2, "maximum": 10 },
   "required_inputs": [
     "Fly organization access",
     "Persistent tnl-bench app with a dedicated IPv4",
@@ -21,22 +21,22 @@
   ],
   "suites": {
     "smoke": {
-      "workers": [1],
+      "relays": [2],
       "total_routes": [25],
       "repetitions": 1,
       "routes_per_driver": 500,
       "phase_duration_scale": 0.1
     },
     "density": {
-      "workers": [1],
+      "relays": [2],
       "total_routes": [100, 200, 300, 400, 500],
       "repetitions": 1,
       "routes_per_driver": 500,
       "phase_duration_scale": 1
     },
     "scale": {
-      "workers": [1, 2, 4, 8, 10],
-      "routes_per_worker": 0,
+      "relays": [2, 4, 8, 10],
+      "publisher_connections_per_relay": 0,
       "repetitions": 3,
       "routes_per_driver": 500,
       "phase_duration_scale": 1,

@@ -2,48 +2,100 @@ name: tnl-split
 
 x-tnld: &tnld
   image: ${TNL_IMAGE:?set TNL_IMAGE to a verified digest-pinned image}
-  restart: unless-stopped
   read_only: true
   cap_drop:
     - ALL
   security_opt:
     - no-new-privileges:true
-  stop_grace_period: 45s
-  env_file:
-    - ${TNL_ENV_FILE:-.env}
   tmpfs:
     - /tmp:size=16m,mode=1777
 
 services:
-  edge:
+  migrate:
     <<: *tnld
+    command: migrate
+    env_file:
+      - ${TNL_ENV_FILE:-.env}
+    restart: "no"
+
+  control:
+    <<: *tnld
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    env_file:
+      - ${TNL_ENV_FILE:-.env}
     environment:
-      TNLD_MODE: edge
-      TNLD_STATE_DIR: /var/lib/tnl
-      TNLD_PUBLIC_LISTEN: :8443
+      TNLD_CONTROL_LISTEN: :8443
+      TNLD_INGRESS_CONTROL_LISTEN: :9443
       TNLD_METRICS_LISTEN: 0.0.0.0:9090
-      TNLD_WORKER_TOKEN: ${TNLD_WORKER_TOKEN:?set TNLD_WORKER_TOKEN to the output of tnl admin server token worker}
+      TNLD_MODE: control
+      TNLD_RELAY_CONTROL_LISTEN: :9444
     ports:
-      - "${TNL_PUBLIC_BIND:-0.0.0.0}:443:8443/tcp"
+      - "${TNL_CONTROL_BIND:?set TNL_CONTROL_BIND}:443:8443/tcp"
+      - "${TNL_CONTROL_BIND}:9443:9443/tcp"
+      - "${TNL_CONTROL_BIND}:9444:9444/tcp"
     expose:
       - "9090"
-    volumes:
-      - tnld-edge-state:/var/lib/tnl
 
-  worker:
+  ingress:
     <<: *tnld
-    env_file: []
+    restart: unless-stopped
+    depends_on:
+      - control
     environment:
-      TNLD_MODE: worker
+      TNLD_CONTROL_HOSTNAME: ${TNL_CONTROL_HOSTNAME:?set TNL_CONTROL_HOSTNAME}
+      TNLD_INGRESS_ID: ingress-a
+      TNLD_INGRESS_LISTEN: :8443
       TNLD_METRICS_LISTEN: 0.0.0.0:9090
-      TNLD_EDGE_URL: wss://tnl.${TNLD_DOMAIN:?set TNLD_DOMAIN}/internal/v1/worker
-      TNLD_WORKER_TOKEN: ${TNLD_WORKER_TOKEN:?set TNLD_WORKER_TOKEN to the output of tnl admin server token worker}
-      TNLD_WORKER_CAPACITY: ${TNLD_WORKER_CAPACITY:-500}
-      TNLD_WORKER_STREAM_LIMIT: ${TNLD_WORKER_STREAM_LIMIT:-4096}
-      TNLD_DRAIN_TIMEOUT: ${TNLD_DRAIN_TIMEOUT:-30s}
+      TNLD_MODE: ingress
+      TNLD_SERVICE_ENROLLMENT_TOKEN: ${TNL_INGRESS_ENROLLMENT_TOKEN:?set TNL_INGRESS_ENROLLMENT_TOKEN}
+    ports:
+      - "${TNL_INGRESS_BIND:?set TNL_INGRESS_BIND}:443:8443/tcp"
     expose:
       - "9090"
 
-volumes:
-  tnld-edge-state:
-    name: ${TNL_STATE_VOLUME:-tnl_tnld-edge-state}
+  relay-a:
+    <<: *tnld
+    restart: unless-stopped
+    depends_on:
+      - control
+    environment:
+      TNLD_CONTROL_HOSTNAME: ${TNL_CONTROL_HOSTNAME:?set TNL_CONTROL_HOSTNAME}
+      TNLD_INTERNAL_RELAY_ADDRESS: relay-a:9445
+      TNLD_INTERNAL_RELAY_LISTEN: :9445
+      TNLD_METRICS_LISTEN: 0.0.0.0:9090
+      TNLD_MODE: relay
+      TNLD_RELAY_ID: relay-a-1
+      TNLD_RELAY_TCP_LISTEN: :8443
+      TNLD_RELAY_UDP_LISTEN: :8443
+      TNLD_SERVICE_ENROLLMENT_TOKEN: ${TNL_RELAY_A_ENROLLMENT_TOKEN:?set TNL_RELAY_A_ENROLLMENT_TOKEN}
+    ports:
+      - "${TNL_RELAY_A_BIND:?set TNL_RELAY_A_BIND}:443:8443/tcp"
+      - "${TNL_RELAY_A_BIND}:443:8443/udp"
+    expose:
+      - "9090"
+      - "9445"
+
+  relay-b:
+    <<: *tnld
+    restart: unless-stopped
+    depends_on:
+      - control
+    environment:
+      TNLD_CONTROL_HOSTNAME: ${TNL_CONTROL_HOSTNAME:?set TNL_CONTROL_HOSTNAME}
+      TNLD_INTERNAL_RELAY_ADDRESS: relay-b:9445
+      TNLD_INTERNAL_RELAY_LISTEN: :9445
+      TNLD_METRICS_LISTEN: 0.0.0.0:9090
+      TNLD_MODE: relay
+      TNLD_RELAY_ID: relay-b-1
+      TNLD_RELAY_TCP_LISTEN: :8443
+      TNLD_RELAY_UDP_LISTEN: :8443
+      TNLD_SERVICE_ENROLLMENT_TOKEN: ${TNL_RELAY_B_ENROLLMENT_TOKEN:?set TNL_RELAY_B_ENROLLMENT_TOKEN}
+    ports:
+      - "${TNL_RELAY_B_BIND:?set TNL_RELAY_B_BIND}:443:8443/tcp"
+      - "${TNL_RELAY_B_BIND}:443:8443/udp"
+    expose:
+      - "9090"
+      - "9445"

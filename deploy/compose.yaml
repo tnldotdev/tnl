@@ -1,31 +1,38 @@
 name: tnl
 
+x-tnld: &tnld
+  image: ${TNL_IMAGE:?set TNL_IMAGE to a verified digest-pinned image}
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  env_file:
+    - ${TNL_ENV_FILE:-.env}
+  tmpfs:
+    - /tmp:size=16m,mode=1777
+
 services:
+  migrate:
+    <<: *tnld
+    command: migrate
+    restart: "no"
+
   tnld:
-    image: ${TNL_IMAGE:?set TNL_IMAGE to a verified digest-pinned image}
+    <<: *tnld
     restart: unless-stopped
-    read_only: true
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     stop_grace_period: 45s
-    env_file:
-      - ${TNL_ENV_FILE:-.env}
     environment:
-      TNLD_MODE: standalone
-      TNLD_STATE_DIR: /var/lib/tnl
-      TNLD_PUBLIC_LISTEN: :8443
+      TNLD_CONTROL_LISTEN: :8443
+      TNLD_INGRESS_LISTEN: :8443
       TNLD_METRICS_LISTEN: 0.0.0.0:9090
+      TNLD_MODE: standalone
+      TNLD_RELAY_UDP_LISTEN: :8443
     ports:
       - "${TNL_PUBLIC_BIND:-0.0.0.0}:443:8443/tcp"
+      - "${TNL_PUBLIC_BIND:-0.0.0.0}:443:8443/udp"
     expose:
       - "9090"
-    tmpfs:
-      - /tmp:size=16m,mode=1777
-    volumes:
-      - tnld-state:/var/lib/tnl
-
-volumes:
-  tnld-state:
-    name: ${TNL_STATE_VOLUME:-tnl_tnld-state}
