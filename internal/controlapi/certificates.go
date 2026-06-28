@@ -20,7 +20,7 @@ func (h *handler) CreateCertificateIssuance(
 		return
 	}
 	var body controlv1.CreateCertificateIssuanceRequest
-	if err := decodeJSON(request, &body); err != nil || body.RouteVersion <= 0 {
+	if err := decodeJSON(response, request, &body); err != nil || body.RouteVersion <= 0 {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
 		return
 	}

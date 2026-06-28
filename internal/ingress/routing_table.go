@@ -137,7 +137,7 @@ func (t *RoutingTable) lookup(
 	challenge bool,
 ) (ingressv1.IngressRoutingTableEntry, bool) {
 	canonical, err := naming.CanonicalizeHostname(canonicalHostname)
-	if err != nil || canonical != canonicalHostname {
+	if err != nil {
 		return ingressv1.IngressRoutingTableEntry{}, false
 	}
 	t.mu.RLock()
@@ -145,7 +145,7 @@ func (t *RoutingTable) lookup(
 	if challenge {
 		entries = t.challenges
 	}
-	stored, exists := entries[canonicalHostname]
+	stored, exists := entries[canonical]
 	initialized := t.initialized
 	t.mu.RUnlock()
 	if !initialized || !exists || stored.tombstone || !stored.entry.RouteExpiresAt.After(now) {

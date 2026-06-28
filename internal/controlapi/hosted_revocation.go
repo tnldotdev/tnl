@@ -16,7 +16,7 @@ func (h *handler) RevokeHostedPolicy(response http.ResponseWriter, request *http
 		return
 	}
 	var body controlv1.HostedPolicyRevocation
-	if err := decodeJSON(request, &body); err != nil || body.PolicyRevision <= 0 {
+	if err := decodeJSON(response, request, &body); err != nil || body.PolicyRevision <= 0 {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
 		return
 	}

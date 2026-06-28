@@ -63,8 +63,9 @@ func writeControlStateProblem(response http.ResponseWriter, operation string, er
 	}
 }
 
-func decodeJSON(request *http.Request, target any) error {
-	decoder := json.NewDecoder(io.LimitReader(request.Body, 64<<10))
+func decodeJSON(response http.ResponseWriter, request *http.Request, target any) error {
+	request.Body = http.MaxBytesReader(response, request.Body, 64<<10)
+	decoder := json.NewDecoder(request.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		return err

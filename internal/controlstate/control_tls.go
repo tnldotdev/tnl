@@ -12,9 +12,10 @@ import (
 )
 
 const (
-	controlTLSLeadershipKey    int64 = 0x746e6c63746c7301
-	maximumControlTLSCacheKey        = 512
-	maximumControlTLSCacheData       = 2 << 20
+	controlTLSLeadershipKey           int64 = 0x746e6c63746c7301
+	controlTLSLeadershipCheckInterval       = time.Second
+	maximumControlTLSCacheKey               = 512
+	maximumControlTLSCacheData              = 2 << 20
 )
 
 type ControlTLSCache struct {
@@ -115,13 +116,39 @@ func (d *Database) RunControlTLSLeader(ctx context.Context, run func(context.Con
 			return fmt.Errorf("controlstate: acquire control TLS leadership: %w", err)
 		}
 		if acquired {
+			connectionLost := false
 			defer connection.Release()
 			defer func() {
+				if connectionLost {
+					return
+				}
 				unlockCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 				_, _ = connection.Exec(unlockCtx, `SELECT pg_advisory_unlock($1)`, controlTLSLeadershipKey)
 			}()
-			return run(ctx)
+			leaderCtx, cancelLeader := context.WithCancel(ctx)
+			defer cancelLeader()
+			result := make(chan error, 1)
+			go func() { result <- run(leaderCtx) }()
+			check := time.NewTicker(controlTLSLeadershipCheckInterval)
+			defer check.Stop()
+			for {
+				select {
+				case err := <-result:
+					return err
+				case <-ctx.Done():
+					return nil
+				case <-check.C:
+					pingCtx, cancel := context.WithTimeout(context.Background(), controlTLSLeadershipCheckInterval)
+					err := connection.Ping(pingCtx)
+					cancel()
+					if err != nil {
+						connectionLost = true
+						cancelLeader()
+						return fmt.Errorf("controlstate: control TLS leadership connection lost: %w", err)
+					}
+				}
+			}
 		}
 		connection.Release()
 		select {

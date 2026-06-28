@@ -21,7 +21,7 @@ func (h *handler) CreateDNSAuthority(
 		return
 	}
 	var body controlv1.CreateDNSAuthorityRequest
-	if err := decodeJSON(request, &body); err != nil {
+	if err := decodeJSON(response, request, &body); err != nil {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
 		return
 	}

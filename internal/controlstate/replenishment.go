@@ -55,12 +55,12 @@ func replenishRouteSessionConnections(
 	replace := make([]bool, len(rows))
 	removedReady := false
 	for index, row := range rows {
-		valid := row.PublisherConnectionCredentialExpiresAt.Valid &&
-			row.PublisherConnectionCredentialExpiresAt.Time.After(now)
+		valid := true
 		switch row.State {
 		case "assigned":
 			_, serviceAvailable := serviceConfigurations[row.RelayServiceID]
-			valid = valid && serviceAvailable
+			valid = row.PublisherConnectionCredentialExpiresAt.Valid &&
+				row.PublisherConnectionCredentialExpiresAt.Time.After(now) && serviceAvailable
 		case "connected", "ready":
 			if !row.ConnectedRelayID.Valid || !row.ConnectedRelayRunID.Valid ||
 				!row.ConnectedRelayLeaseRevision.Valid {
@@ -73,6 +73,10 @@ func replenishRouteSessionConnections(
 				relayLeaseRevision: row.ConnectedRelayLeaseRevision.Int64,
 			}]
 			valid = valid && leaseAvailable
+			if row.State == "connected" {
+				valid = valid && row.PublisherConnectionCredentialExpiresAt.Valid &&
+					row.PublisherConnectionCredentialExpiresAt.Time.After(now)
+			}
 		default:
 			valid = false
 		}

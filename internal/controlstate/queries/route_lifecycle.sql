@@ -68,10 +68,7 @@ SELECT connections.route_session_id,
     connections.connected_relay_lease_revision,
     relays.internal_relay_address,
     services.tls_server_name,
-    LEAST(
-        connections.publisher_connection_credential_expires_at,
-        relays.lease_expires_at
-    )::timestamptz AS lease_expires_at
+    relays.lease_expires_at
 FROM control.route_session_connections AS connections
 JOIN control.relay_leases AS relays
   ON relays.relay_service_id = connections.relay_service_id
@@ -82,7 +79,6 @@ JOIN control.relay_services AS services
   ON services.relay_service_id = connections.relay_service_id
 WHERE connections.route_session_id = sqlc.arg(route_session_id)
   AND connections.state = 'ready'
-  AND connections.publisher_connection_credential_expires_at > sqlc.arg(now)
   AND relays.lease_expires_at > sqlc.arg(now)
   AND NOT relays.draining
   AND services.enabled
@@ -100,8 +96,7 @@ LEFT JOIN control.relay_services AS services
   ON services.relay_service_id = connections.relay_service_id
 WHERE connections.state = 'ready'
   AND (
-      connections.publisher_connection_credential_expires_at <= sqlc.arg(now)
-      OR relays.relay_id IS NULL
+      relays.relay_id IS NULL
       OR relays.lease_expires_at <= sqlc.arg(now)
       OR relays.draining
       OR NOT services.enabled

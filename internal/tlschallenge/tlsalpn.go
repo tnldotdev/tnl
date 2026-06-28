@@ -111,15 +111,19 @@ func (s *TLSALPNChallenges) Remove(id string) bool {
 }
 
 // GetCertificate selects a challenge certificate for crypto/tls. It accepts
-// only canonical exact SNI and the sole ALPN protocol acme-tls/1. The serving
+// only exact DNS SNI and the sole ALPN protocol acme-tls/1. The serving
 // TLS config must disable session tickets so every handshake is rechecked.
 func (s *TLSALPNChallenges) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 	if hello == nil || len(hello.SupportedProtos) != 1 || hello.SupportedProtos[0] != acme.ALPNProto {
 		return nil, errors.New("publisher: not a TLS-ALPN challenge handshake")
 	}
+	hostname, err := naming.CanonicalizeHostname(hello.ServerName)
+	if err != nil {
+		return nil, errors.New("publisher: no active TLS-ALPN challenge")
+	}
 
 	s.mu.RLock()
-	certificate := s.byHostname[hello.ServerName]
+	certificate := s.byHostname[hostname]
 	if certificate == nil || !certificate.challenge.ExpiresAt.After(time.Now()) {
 		s.mu.RUnlock()
 		return nil, errors.New("publisher: no active TLS-ALPN challenge")

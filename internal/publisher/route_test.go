@@ -45,7 +45,7 @@ func TestRouteTerminatesTLSAndProxiesLoopbackHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := tls.Client(ingress, &tls.Config{
-		ServerName: "route.example", MinVersion: tls.VersionTLS12, MaxVersion: tls.VersionTLS12,
+		ServerName: "ROUTE.EXAMPLE", MinVersion: tls.VersionTLS12, MaxVersion: tls.VersionTLS12,
 		InsecureSkipVerify: true, // The test route certificate is self-signed.
 	})
 	if err := client.HandshakeContext(context.Background()); err != nil {
@@ -77,6 +77,33 @@ func TestRouteTerminatesTLSAndProxiesLoopbackHTTP(t *testing.T) {
 	case <-handled:
 	case <-time.After(time.Second):
 		t.Fatal("route handler did not close")
+	}
+}
+
+func TestRouteClosesStreamAfterMalformedProxyHeader(t *testing.T) {
+	publisher, relay := net.Pipe()
+	defer relay.Close()
+	handled := make(chan struct{})
+	go func() {
+		new(Route).handle(publisher)
+		close(handled)
+	}()
+	if _, err := relay.Write([]byte("not-a-proxy-head")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-handled:
+	case <-time.After(time.Second):
+		t.Fatal("route did not reject malformed PROXY metadata")
+	}
+	if err := relay.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		return
+	}
+	var buffer [1]byte
+	if _, err := relay.Read(buffer[:]); err == nil {
+		t.Fatal("malformed publisher stream remained open")
+	} else if networkError, ok := err.(net.Error); ok && networkError.Timeout() {
+		t.Fatal("malformed publisher stream was not closed")
 	}
 }
 

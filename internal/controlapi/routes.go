@@ -35,7 +35,7 @@ func (h *handler) ListRoutes(response http.ResponseWriter, request *http.Request
 
 func (h *handler) CreateRoute(response http.ResponseWriter, request *http.Request, _ controlv1.CreateRouteParams) {
 	var body controlv1.CreateRouteRequest
-	if err := decodeJSON(request, &body); err != nil {
+	if err := decodeJSON(response, request, &body); err != nil {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
 		return
 	}
@@ -208,7 +208,7 @@ func (h *handler) externalAuthorityIssuer() string {
 
 func (h *handler) HeartbeatRouteSession(response http.ResponseWriter, request *http.Request, routeSessionID controlv1.RouteSessionID) {
 	var body controlv1.RouteSessionVersionRequest
-	if err := decodeJSON(request, &body); err != nil || body.RouteVersion <= 0 {
+	if err := decodeJSON(response, request, &body); err != nil || body.RouteVersion <= 0 {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
 		return
 	}
@@ -235,7 +235,7 @@ func (h *handler) MarkRouteSessionCertificateInstalled(
 	routeSessionID controlv1.RouteSessionID,
 ) {
 	var body controlv1.CertificateInstalledRequest
-	if err := decodeJSON(request, &body); err != nil || body.RouteVersion <= 0 {
+	if err := decodeJSON(response, request, &body); err != nil || body.RouteVersion <= 0 {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
 		return
 	}
@@ -260,7 +260,7 @@ func (h *handler) MarkRouteSessionCertificateInstalled(
 
 func (h *handler) MarkRouteSessionReady(response http.ResponseWriter, request *http.Request, routeSessionID controlv1.RouteSessionID) {
 	var body controlv1.RouteSessionVersionRequest
-	if err := decodeJSON(request, &body); err != nil || body.RouteVersion <= 0 {
+	if err := decodeJSON(response, request, &body); err != nil || body.RouteVersion <= 0 {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
 		return
 	}

@@ -157,7 +157,11 @@ func validRequest(request *http.Request, hostname string) bool {
 		return false
 	}
 	authority, err := naming.CanonicalizeAuthority(request.Host)
-	if err != nil || authority != hostname || request.TLS == nil || request.TLS.ServerName != hostname {
+	if err != nil || authority != hostname || request.TLS == nil {
+		return false
+	}
+	serverName, err := naming.CanonicalizeHostname(request.TLS.ServerName)
+	if err != nil || serverName != hostname {
 		return false
 	}
 	fields := 0

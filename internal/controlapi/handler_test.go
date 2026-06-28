@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -94,5 +95,14 @@ func TestControlDiscoveryAdvertisesAuthorityEndpoint(t *testing.T) {
 	}
 	if len(result.Authentication.Methods) != 1 || result.Authentication.Methods[0] != controlv1.LoginToken {
 		t.Fatalf("authentication facts = %#v", result.Authentication)
+	}
+}
+
+func TestDecodeJSONRejectsContentBeyondLimit(t *testing.T) {
+	body := "{}" + strings.Repeat(" ", 64<<10-2) + "{}"
+	request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	response := httptest.NewRecorder()
+	if err := decodeJSON(response, request, &struct{}{}); err == nil {
+		t.Fatal("content beyond the request limit was accepted")
 	}
 }

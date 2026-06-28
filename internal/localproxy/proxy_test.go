@@ -44,7 +44,7 @@ func TestProxyForwardsOnlyExactTrustedRequests(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/test", nil)
 	request.Host = "route.example"
 	request.RemoteAddr = "192.0.2.10:1234"
-	request.TLS = &tls.ConnectionState{ServerName: "route.example"}
+	request.TLS = &tls.ConnectionState{ServerName: "ROUTE.EXAMPLE"}
 	request.Header.Set("Forwarded", "for=attacker")
 	request.Header.Set("X-Forwarded-For", "198.51.100.1")
 	request.Header.Set("X-Real-IP", "198.51.100.1")

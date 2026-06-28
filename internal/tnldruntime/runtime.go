@@ -68,6 +68,7 @@ type daemon struct {
 	serviceHTTP            *http.Client
 	clusterSecret          string
 	clusterSecrets         serviceapi.BearerSecrets
+	relayClientTLS         *tls.Config
 	cancel                 context.CancelFunc
 	done                   chan error
 	forwarded              sync.WaitGroup
@@ -103,6 +104,15 @@ func serveWithHTTPClients(
 	cfg config.TNLD,
 	acmeHTTPClient, serviceHTTPClient *http.Client,
 ) (retErr error) {
+	return serveWithRelayClientTLS(ctx, cfg, acmeHTTPClient, serviceHTTPClient, nil)
+}
+
+func serveWithRelayClientTLS(
+	ctx context.Context,
+	cfg config.TNLD,
+	acmeHTTPClient, serviceHTTPClient *http.Client,
+	relayClientTLS *tls.Config,
+) (retErr error) {
 	if acmeHTTPClient == nil || serviceHTTPClient == nil {
 		return errors.New("ACME and service HTTP clients are required")
 	}
@@ -121,7 +131,7 @@ func serveWithHTTPClients(
 	lifetime, cancel := context.WithCancel(ctx)
 	d := &daemon{
 		serviceHTTP: serviceHTTPClient, clusterSecret: clusterSecret, clusterSecrets: clusterSecrets,
-		cancel: cancel, done: make(chan error, 32),
+		relayClientTLS: relayClientTLS, cancel: cancel, done: make(chan error, 32),
 	}
 	defer func() { retErr = errors.Join(retErr, d.shutdown(cfg.DrainTimeout)) }()
 
@@ -482,8 +492,15 @@ func (d *daemon) startIngressRuntime(
 		return err
 	}
 	runtime.recovery = recovery
+	forwardingTLS := d.relayClientTLS
+	if forwardingTLS == nil {
+		forwardingTLS = &tls.Config{MinVersion: tls.VersionTLS13}
+	} else {
+		forwardingTLS = forwardingTLS.Clone()
+		forwardingTLS.MinVersion = tls.VersionTLS13
+	}
 	forwarder, err := ingress.NewForwarder(ingress.ForwarderConfig{
-		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13}, ClusterSecret: runtimeConfig.clusterSecret,
+		TLSConfig: forwardingTLS, ClusterSecret: runtimeConfig.clusterSecret,
 	})
 	if err != nil {
 		return err
@@ -883,6 +900,7 @@ func (d *daemon) startStandalone(
 			ingressConfig.HandleControl = controlListener.Enqueue
 			ingressConfig.RelayHostname = settings.relayHostname
 			ingressConfig.HandleRelay = relayListener.Enqueue
+			ingressConfig.HandleRelayChallenge = controlListener.Enqueue
 		},
 	}); err != nil {
 		return err

@@ -21,7 +21,10 @@ import (
 	"golang.org/x/crypto/acme/autocert"
 )
 
-const certificateRefreshInterval = 5 * time.Minute
+const (
+	certificateRefreshInterval    = 5 * time.Minute
+	maximumACMEOrderResponseBytes = 1 << 20
+)
 
 type Config struct {
 	Hostname            string
@@ -116,7 +119,11 @@ func (s *Source) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, e
 	if hello == nil {
 		return nil, errors.New("controltls: unexpected server name")
 	}
-	if _, ok := s.hostSet[hello.ServerName]; !ok {
+	hostname, err := naming.CanonicalizeHostname(hello.ServerName)
+	if err != nil {
+		return nil, errors.New("controltls: unexpected server name")
+	}
+	if _, ok := s.hostSet[hostname]; !ok {
 		return nil, errors.New("controltls: unexpected server name")
 	}
 	if len(hello.SupportedProtos) == 1 && hello.SupportedProtos[0] == acme.ALPNProto {
@@ -124,13 +131,13 @@ func (s *Source) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, e
 	}
 	now := time.Now()
 	s.mu.RLock()
-	certificate, refreshAt := s.certificates[hello.ServerName], s.refreshAt[hello.ServerName]
+	certificate, refreshAt := s.certificates[hostname], s.refreshAt[hostname]
 	s.mu.RUnlock()
 	if certificate != nil && certificate.Leaf != nil && !now.Before(certificate.Leaf.NotBefore) &&
 		certificate.Leaf.NotAfter.After(now) && refreshAt.After(now) {
 		return certificate, nil
 	}
-	return s.loadCertificate(hello.ServerName, now)
+	return s.loadCertificate(hostname, now)
 }
 
 func (s *Source) Run(ctx context.Context) error {
@@ -243,10 +250,13 @@ func (t *orderLocationTransport) RoundTrip(request *http.Request) (*http.Respons
 		return response, nil
 	}
 
-	body, err := io.ReadAll(response.Body)
+	body, err := io.ReadAll(io.LimitReader(response.Body, maximumACMEOrderResponseBytes+1))
 	closeErr := response.Body.Close()
 	if err != nil || closeErr != nil {
 		return nil, errors.Join(err, closeErr)
+	}
+	if len(body) > maximumACMEOrderResponseBytes {
+		return nil, errors.New("controltls: ACME order response is too large")
 	}
 	response.Body = io.NopCloser(bytes.NewReader(body))
 	var order struct {

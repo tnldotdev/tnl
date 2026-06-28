@@ -63,9 +63,11 @@ func (a *ForwardingAcceptor) Accept(ctx context.Context, transport muxsession.Se
 		_ = session.Close()
 		return &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
 	}
-	defer session.Close()
 	var group sync.WaitGroup
-	defer group.Wait()
+	defer func() {
+		_ = session.Close()
+		group.Wait()
+	}()
 	for {
 		incoming, err := session.AcceptInternalForwardingStream(ctx)
 		if err != nil {

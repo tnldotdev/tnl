@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/proxyproto"
 	"github.com/tnldotdev/tnl/internal/routebackend"
@@ -58,20 +59,21 @@ type Metrics interface {
 }
 
 type Config struct {
-	Lookup              LookupFunc
-	LookupChallenge     BackendLookupFunc
-	ServerHostname      string
-	HandleControl       func(net.Conn) bool
-	RelayHostname       string
-	HandleRelay         func(net.Conn) bool
-	RequireProxyHeader  bool
-	MaxConnections      int
-	MaxRouteConnections int
-	OpenTimeout         time.Duration
-	Metrics             Metrics
-	OpenUsage           func(string, uint64, netip.Addr, time.Time) UsageConnection
-	ObserveRecovery     func(string, uint64, uint64, time.Time)
-	OnError             func(error)
+	Lookup               LookupFunc
+	LookupChallenge      BackendLookupFunc
+	ServerHostname       string
+	HandleControl        func(net.Conn) bool
+	RelayHostname        string
+	HandleRelay          func(net.Conn) bool
+	HandleRelayChallenge func(net.Conn) bool
+	RequireProxyHeader   bool
+	MaxConnections       int
+	MaxRouteConnections  int
+	OpenTimeout          time.Duration
+	Metrics              Metrics
+	OpenUsage            func(string, uint64, netip.Addr, time.Time) UsageConnection
+	ObserveRecovery      func(string, uint64, uint64, time.Time)
+	OnError              func(error)
 }
 
 type Server struct {
@@ -101,6 +103,9 @@ func New(listener net.Listener, config Config) (*Server, error) {
 	}
 	if config.RelayHostname == "" != (config.HandleRelay == nil) {
 		return nil, errors.New("ingress: relay hostname and handler must be configured together")
+	}
+	if config.HandleRelayChallenge != nil && config.RelayHostname == "" {
+		return nil, errors.New("ingress: relay challenge handling requires a relay hostname")
 	}
 	if config.RelayHostname != "" && config.RelayHostname == config.ServerHostname {
 		return nil, errors.New("ingress: control and relay hostnames must be distinct")
@@ -221,6 +226,11 @@ func (s *Server) handle(public net.Conn) error {
 	if err != nil {
 		return nil
 	}
+	serverName, err := naming.CanonicalizeHostname(hello.ServerName)
+	if err != nil {
+		return nil
+	}
+	hello.ServerName = serverName
 	if hello.ServerName == s.config.ServerHostname {
 		if !s.handoff(public, source, destination, hello, s.config.HandleControl) {
 			return nil
@@ -230,10 +240,14 @@ func (s *Server) handle(public net.Conn) error {
 		return nil
 	}
 	if hello.ServerName == s.config.RelayHostname {
-		if !s.handoff(public, source, destination, hello, s.config.HandleRelay) {
+		handler := s.config.HandleRelay
+		if hello.ACMETLSALPN && s.config.HandleRelayChallenge != nil {
+			handler = s.config.HandleRelayChallenge
+		}
+		if !s.handoff(public, source, destination, hello, handler) {
 			return nil
 		}
-		// The relay publisher transport owns the connection after a successful handoff.
+		// The selected relay-hostname handler owns the connection after a successful handoff.
 		s.transfer(public)
 		return nil
 	}
