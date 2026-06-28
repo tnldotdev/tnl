@@ -22,7 +22,7 @@ func TestControlFramesAreStrictAndBounded(t *testing.T) {
 	}
 	valid := []Message{
 		{Type: Hello, ProtocolVersion: Version, Role: Publisher, Credential: "secret", PublisherConnection: connection},
-		{Type: Hello, ProtocolVersion: Version, Role: Ingress},
+		{Type: Hello, ProtocolVersion: Version, Role: Ingress, Credential: "cluster-secret"},
 		{Type: HelloAccepted, ProtocolVersion: Version},
 		{Type: Ping, ProtocolVersion: Version, RequestID: "request_1"},
 		{Type: Pong, ProtocolVersion: Version, RequestID: "request_1"},
@@ -47,15 +47,15 @@ func TestControlFramesAreStrictAndBounded(t *testing.T) {
 	}
 
 	for name, payload := range map[string]string{
-		"unknown field":           `{"type":"hello_accepted","protocol_version":1,"extra":true}`,
-		"unknown type":            `{"type":"future","protocol_version":1}`,
-		"wrong version":           `{"type":"hello_accepted","protocol_version":2}`,
-		"publisher no connection": `{"type":"hello","protocol_version":1,"role":"publisher","credential":"secret"}`,
-		"ingress with credential": `{"type":"hello","protocol_version":1,"role":"ingress","credential":"secret"}`,
-		"accepted with code":      `{"type":"hello_accepted","protocol_version":1,"code":"internal"}`,
-		"request without ID":      `{"type":"ping","protocol_version":1}`,
-		"unknown error code":      `{"type":"error","protocol_version":1,"code":"future"}`,
-		"legacy connection":       `{"type":"hello","protocol_version":1,"role":"publisher","credential":"secret","link":{"route_session_id":"session"}}`,
+		"unknown field":              `{"type":"hello_accepted","protocol_version":1,"extra":true}`,
+		"unknown type":               `{"type":"future","protocol_version":1}`,
+		"wrong version":              `{"type":"hello_accepted","protocol_version":2}`,
+		"publisher no connection":    `{"type":"hello","protocol_version":1,"role":"publisher","credential":"secret"}`,
+		"ingress without credential": `{"type":"hello","protocol_version":1,"role":"ingress"}`,
+		"accepted with code":         `{"type":"hello_accepted","protocol_version":1,"code":"internal"}`,
+		"request without ID":         `{"type":"ping","protocol_version":1}`,
+		"unknown error code":         `{"type":"error","protocol_version":1,"code":"future"}`,
+		"legacy connection":          `{"type":"hello","protocol_version":1,"role":"publisher","credential":"secret","link":{"route_session_id":"session"}}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := ReadControl(frame(payload)); err == nil {

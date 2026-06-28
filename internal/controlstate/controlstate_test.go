@@ -104,6 +104,7 @@ func TestBaselineSchemaContract(t *testing.T) {
 	schema := strings.ToLower(string(migration))
 	for _, table := range []string{
 		"identities",
+		"managed_label_reservations",
 		"teams",
 		"member_slug_reservations",
 		"team_memberships",
@@ -113,9 +114,6 @@ func TestBaselineSchemaContract(t *testing.T) {
 		"routes",
 		"route_sessions",
 		"relay_services",
-		"service_authorities",
-		"service_enrollment_tokens",
-		"service_enrollment_events",
 		"relay_leases",
 		"ingress_leases",
 		"route_session_connections",

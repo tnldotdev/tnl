@@ -2,8 +2,7 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/subtle"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -23,9 +22,11 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
+	tnlconfig "github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -76,7 +77,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		}
 	}
 
-	bootstrap, err := newDevBootstrap(forcedTarget)
+	bootstrap, err := newDevBootstrap(ctx, forcedTarget, flags.commandDir)
 	if err != nil {
 		return err
 	}
@@ -347,9 +348,8 @@ func waitForDevTarget(ctx context.Context, bootstrap *devBootstrap, child *devPr
 }
 
 type devBootstrap struct {
-	dir            string
 	socket         string
-	token          string
+	lock           *os.File
 	forcedTarget   string
 	server         *http.Server
 	done           chan struct{}
@@ -387,28 +387,51 @@ type devTargetRequest struct {
 	Port      int    `json:"port"`
 }
 
-func newDevBootstrap(forcedTarget string) (*devBootstrap, error) {
-	// Unix socket paths are short on macOS, so avoid potentially deep custom state paths.
-	dir, err := os.MkdirTemp("", "tnl-dev-")
+func newDevBootstrap(ctx context.Context, forcedTarget, cwd string) (*devBootstrap, error) {
+	if cwd == "" {
+		var err error
+		cwd, err = os.Getwd()
+		if err != nil {
+			return nil, fmt.Errorf("resolve development worktree: %w", err)
+		}
+	}
+	worktree, err := tnlconfig.ResolveWorktree(ctx, cwd)
 	if err != nil {
-		return nil, fmt.Errorf("create development session directory: %w", err)
+		return nil, fmt.Errorf("resolve development worktree: %w", err)
 	}
-	cleanup := func() { _ = os.RemoveAll(dir) }
-	if err := os.Chmod(dir, 0o700); err != nil {
-		cleanup()
-		return nil, fmt.Errorf("secure development session directory: %w", err)
+	dir, err := devRuntimeDirectory()
+	if err != nil {
+		return nil, err
 	}
-	var material [32]byte
-	if _, err := rand.Read(material[:]); err != nil {
-		cleanup()
-		return nil, fmt.Errorf("generate development session token: %w", err)
+	digest := sha256.Sum256([]byte(worktree.Root))
+	stem := "dev-" + hex.EncodeToString(digest[:8])
+	lock, err := acquireDevLock(filepath.Join(dir, stem+".lock"))
+	if err != nil {
+		return nil, err
+	}
+	cleanup := func() {
+		_ = unix.Flock(int(lock.Fd()), unix.LOCK_UN)
+		_ = lock.Close()
 	}
 	bootstrap := &devBootstrap{
-		dir: dir, socket: filepath.Join(dir, "control.sock"), token: hex.EncodeToString(material[:]),
+		socket: filepath.Join(dir, stem+".sock"), lock: lock,
 		forcedTarget: forcedTarget,
 		done:         make(chan struct{}), closing: make(chan struct{}),
 		configurations: make(chan devConfigurationRequest, 1), targets: make(chan devTargetRequest, 1),
 		resolved: make(chan struct{}),
+	}
+	if info, statErr := os.Lstat(bootstrap.socket); statErr == nil {
+		if info.Mode()&os.ModeSocket == 0 {
+			cleanup()
+			return nil, errors.New("development session socket path is occupied by a non-socket file")
+		}
+		if err := os.Remove(bootstrap.socket); err != nil {
+			cleanup()
+			return nil, fmt.Errorf("remove stale development session socket: %w", err)
+		}
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		cleanup()
+		return nil, fmt.Errorf("inspect development session socket: %w", statErr)
 	}
 	listener, err := net.Listen("unix", bootstrap.socket)
 	if err != nil {
@@ -417,6 +440,7 @@ func newDevBootstrap(forcedTarget string) (*devBootstrap, error) {
 	}
 	if err := os.Chmod(bootstrap.socket, 0o600); err != nil {
 		_ = listener.Close()
+		_ = os.Remove(bootstrap.socket)
 		cleanup()
 		return nil, fmt.Errorf("secure development session socket: %w", err)
 	}
@@ -441,6 +465,60 @@ func newDevBootstrap(forcedTarget string) (*devBootstrap, error) {
 	return bootstrap, nil
 }
 
+func devRuntimeDirectory() (string, error) {
+	base := os.Getenv("XDG_RUNTIME_DIR")
+	if base == "" {
+		base = os.TempDir()
+	}
+	dir := filepath.Join(base, fmt.Sprintf("tnl-%d", os.Getuid()))
+	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+		return "", fmt.Errorf("create development runtime directory: %w", err)
+	}
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return "", fmt.Errorf("inspect development runtime directory: %w", err)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || !info.IsDir() || info.Mode().Perm() != 0o700 || stat.Uid != uint32(os.Getuid()) {
+		return "", errors.New("development runtime directory must be a user-owned directory with mode 0700")
+	}
+	return dir, nil
+}
+
+func acquireDevLock(path string) (*os.File, error) {
+	descriptor, err := unix.Open(path, unix.O_CREAT|unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("open development worktree lock: %w", err)
+	}
+	file := os.NewFile(uintptr(descriptor), path)
+	closeWithError := func(err error) (*os.File, error) {
+		_ = file.Close()
+		return nil, err
+	}
+	var stat unix.Stat_t
+	if err := unix.Fstat(descriptor, &stat); err != nil {
+		return closeWithError(fmt.Errorf("inspect development worktree lock: %w", err))
+	}
+	if stat.Uid != uint32(os.Getuid()) || stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Mode&0o777 != 0o600 {
+		return closeWithError(errors.New("development worktree lock must be a user-owned regular file with mode 0600"))
+	}
+	if err := unix.Flock(descriptor, unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		if errors.Is(err, unix.EWOULDBLOCK) {
+			return closeWithError(errors.New("another tnl dev is already running for this worktree"))
+		}
+		return closeWithError(fmt.Errorf("lock development worktree: %w", err))
+	}
+	return file, nil
+}
+
+func removeDevSocket(path string) error {
+	err := os.Remove(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
 func (b *devBootstrap) Close() error {
 	if b == nil {
 		return nil
@@ -452,7 +530,10 @@ func (b *devBootstrap) Close() error {
 		b.mu.Lock()
 		serveErr := b.serveErr
 		b.mu.Unlock()
-		b.closeErr = errors.Join(err, serveErr, os.RemoveAll(b.dir))
+		b.closeErr = errors.Join(
+			err, serveErr, removeDevSocket(b.socket),
+			unix.Flock(int(b.lock.Fd()), unix.LOCK_UN), b.lock.Close(),
+		)
 	})
 	return b.closeErr
 }
@@ -506,7 +587,7 @@ func resolveDevCommand(command []string, directories ...string) ([]string, error
 		command = command[1:]
 	}
 	if len(command) == 0 {
-		return nil, errors.New("development server command is required after --")
+		return nil, nil
 	}
 	path := ""
 	var err error
@@ -534,12 +615,6 @@ func resolveDevCommand(command []string, directories ...string) ([]string, error
 func (b *devBootstrap) handle(response http.ResponseWriter, request *http.Request) {
 	if request.Method != http.MethodPost || (request.URL.Path != "/v1/configure" && request.URL.Path != "/v1/target") {
 		http.NotFound(response, request)
-		return
-	}
-	wantAuthorization := "Bearer " + b.token
-	gotAuthorization := request.Header.Get("Authorization")
-	if len(gotAuthorization) != len(wantAuthorization) || subtle.ConstantTimeCompare([]byte(gotAuthorization), []byte(wantAuthorization)) != 1 {
-		http.Error(response, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 	contentType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
@@ -688,7 +763,6 @@ func devEnvironment(bootstrap *devBootstrap, port int) []string {
 	replacements := map[string]string{
 		"TNL_DEV_PROTOCOL": devProtocolVersion,
 		"TNL_DEV_SOCKET":   bootstrap.socket,
-		"TNL_DEV_TOKEN":    bootstrap.token,
 	}
 	if port != 0 {
 		replacements["TNL_DEV_PORT"] = strconv.Itoa(port)
@@ -704,7 +778,7 @@ func devEnvironment(bootstrap *devBootstrap, port int) []string {
 	environment := make([]string, 0, len(os.Environ())+len(replacements))
 	for _, entry := range os.Environ() {
 		key, _, _ := strings.Cut(entry, "=")
-		if _, found := blocked[key]; !found {
+		if _, found := blocked[key]; !found && !strings.HasPrefix(key, "TNL_DEV_") {
 			environment = append(environment, entry)
 		}
 	}
@@ -722,6 +796,9 @@ type devProcess struct {
 
 func startDevProcess(command, environment []string, stdin io.Reader, stdout, stderr io.Writer, directories ...string) (*devProcess, error) {
 	process := &devProcess{done: make(chan struct{})}
+	if len(command) == 0 {
+		return process, nil
+	}
 	process.command = exec.Command(command[0], command[1:]...)
 	if len(directories) != 0 {
 		process.command.Dir = directories[0]

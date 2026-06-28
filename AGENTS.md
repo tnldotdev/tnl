@@ -17,7 +17,7 @@ Use these terms consistently in code, APIs, CLI help, and documentation.
 | **relay process**   | One running `tnld` process configured with the relay role and belonging to a relay service.                                                   |
 | **standalone**      | A `tnld` role that composes control, ingress, and two logical relay services in one process against PostgreSQL.                               |
 | **control API**     | The server HTTP API used by clients and administrators.                                                                                       |
-| **authority API**   | The HTTP API that owns identities, teams, memberships, invitations, domains, authentication, and signed authorizations.                       |
+| **authority API**   | The HTTP API that owns identities, teams, memberships, invitations, domains, authentication, and current authorization decisions.             |
 
 ## People And Local Processes
 
@@ -99,18 +99,15 @@ Use these terms consistently in code, APIs, CLI help, and documentation.
 
 ## Internal Security
 
-| Term                         | Definition                                                                                                                        |
-| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| **service CA**               | The control-owned private certificate authority persisted in PostgreSQL and used for internal and relay transport certificates.   |
-| **service mTLS**             | Certificate-authenticated TLS used for internal communication among control, ingress, and relays.                                 |
-| **service enrollment**       | Token-authenticated issuance or renewal of a process-local service identity through the public control API.                       |
-| **service enrollment token** | A reusable, revocable, role-scoped secret used by ingress or relay processes to enroll without pre-provisioned certificate files. |
-| **service certificate**      | A short-lived certificate carrying one process role and identity for service mTLS.                                                |
-| **service identity**         | The role and process identity carried by a service certificate.                                                                   |
-| **ingress identity**         | A service identity authorized to receive routing information and forward visitor connections.                                     |
-| **relay identity**           | A service identity authorized to accept connection assignments and publisher connections.                                         |
-| **relay transport TLS**      | Server-authenticated TLS on a public relay address using a one-hour relay-service certificate issued by the service CA.           |
-| **trust bundle**             | The service CA certificates used in a scoped TLS configuration to verify service identities or relay transport certificates.      |
+| Term                       | Definition                                                                                                                    |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| **cluster authentication** | Shared-secret authentication for private communication among control, ingress, and relays in one trusted deployment boundary. |
+| **cluster secret**         | The current secret configured as `TNLD_CLUSTER_SECRET`; split ingress and relay processes use it to authenticate to control.  |
+| **hosted secret**          | The secret shared only by control and `tnl.dev` for hosted authorization, revocation, and DNS-authority service calls.        |
+| **storage key**            | The symmetric key available only to control and standalone for encrypting recoverable secrets in PostgreSQL.                  |
+| **ingress identity**       | The configured ingress process identity bound to ingress leases and internal-forwarding sessions.                             |
+| **relay identity**         | The configured relay process identity bound to relay leases and publisher connection claims.                                  |
+| **relay transport TLS**    | Server-authenticated TLS on a public relay address using an exact-hostname WebPKI certificate managed by control.             |
 
 ## Teams And Domains
 
@@ -148,7 +145,7 @@ Use these terms consistently in code, APIs, CLI help, and documentation.
 | Internal relay address          | `internal_relay_address`          |
 | Ingress routing-table revision  | `routing_table_revision`          |
 | Transport                       | `transport`                       |
-| Service enrollment token        | `service_enrollment_token`        |
+| Cluster secret                  | `cluster_secret`                  |
 
 ## Retired And Replaced Terms
 
@@ -191,6 +188,12 @@ Use these terms consistently in code, APIs, CLI help, and documentation.
 | relay provider                | Removed                                                      |
 | edge                          | ingress or control, depending on the old responsibility      |
 | worker                        | relay or publisher connection handling, depending on context |
+| service CA                    | Removed                                                      |
+| service mTLS                  | cluster authentication                                       |
+| service enrollment            | Removed                                                      |
+| service enrollment token      | cluster secret                                               |
+| service certificate           | Removed                                                      |
+| trust bundle                  | system trust roots                                           |
 
 - Never introduce `Core` as a tnl architectural term. Use tnl server, `tnld` process, control API, control, ingress, relay, or authorization receiver as appropriate.
 - In prose, always write the product and binaries as lowercase `tnl` and `tnld`. Use uppercase only where required by case-sensitive identifiers such as `TNLD_*` environment variables.
@@ -233,11 +236,12 @@ Frames follow this general form:
 - `cmd/tnl` is the client CLI, `cmd/tnld` is the server process, and `cmd/tnlbench` is the benchmark driver. Product releases contain `tnl` and `tnld`.
 - The runtime architecture and implementation sequence in [QUIC.md](https://md.cormo-turtle.ts.net/git/personal/tnl/QUIC.md) are authoritative when another document conflicts with them.
 - A standalone `tnld` process composes control, ingress, and two logical relay services against PostgreSQL. Split deployments run a control service, an ingress service, and at least two independently addressable relay services.
-- Control serves the control API and separate service-mTLS APIs for ingress and relay processes. Ingress accepts public route TLS. Relay processes accept publisher connections over QUIC or TLS/TCP with yamux and accept internal forwarding from ingress.
+- Control serves the control API and separate cluster-authenticated APIs for ingress and relay processes. Ingress accepts public route TLS. Relay processes accept publisher connections over QUIC or TLS/TCP with yamux and accept internal forwarding from ingress.
 - `TNLD_SERVER_DOMAIN` is an infrastructure suffix independent from `TNLD_MANAGED_DEPLOYMENT_DOMAIN`. It derives `control.<server-domain>`, `ingress.<server-domain>`, and standalone or relay-service hostnames.
-- Split ingress and relay processes bootstrap through the public control API using reusable role-scoped service enrollment tokens. They generate service private keys locally, receive one-hour certificates, and renew after approximately thirty minutes. Standalone uses the same authorization boundaries through in-process calls and does not enroll itself.
-- Control persists the private service CA in PostgreSQL. The same CA issues role-constrained service certificates and one-hour relay-service server certificates; publishers use a control-provided trust bundle only for relay transport connections. ACME is not used for relay transport TLS.
-- Control and standalone require a bootstrap management token and obtain their public control certificate automatically through ACME. Static public certificates are optional advanced overrides; static service-mTLS files are not part of the final configuration.
+- Split ingress and relay processes start with `TNLD_CLUSTER_SECRET`, register with their role-specific private control API, and remain authorized only while their exact process run ID and lease revision are current. Standalone uses direct in-process calls and does not require a cluster secret.
+- Control manages exact-hostname WebPKI certificates for relay services. Publishers verify them with system trust roots, while relays authenticate publishers using short-lived publisher connection credentials.
+- Control and standalone require a bootstrap management token and obtain their public control certificate automatically through ACME. Static public certificates are optional advanced overrides.
+- Control and standalone require `TNLD_STORAGE_KEY` for recoverable secrets in PostgreSQL. Ingress and relays never receive the storage key, hosted secret, PostgreSQL credentials, DNS credentials, or ACME account keys.
 - Route TLS terminates in the publisher. Ingress creates exactly one PROXY v2 metadata header, and relays preserve it unchanged to the publisher.
 - A route version first becomes routable after its certificate is installed and both publisher connections are ready on distinct relay services. After that first transition it remains routable with one ready publisher connection and replenishes toward two.
 - Ingress and relays never connect to PostgreSQL or own durable product state. Only ingress receives the ingress routing table; relays know only their own lease and locally connected publishers.

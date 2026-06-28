@@ -136,8 +136,8 @@ without trailing dots.
 
 Set `TNLD_MODE` to `standalone`, `control`, `ingress`, or `relay`. Standalone and
 control require the pooled runtime `TNLD_DATABASE_URL`. Ingress and relay are
-stateless, enroll through the public control API, and must not receive database
-credentials. Run `tnld migrate` separately with the direct
+stateless, register through the cluster-authenticated private control API, and
+must not receive database credentials. Run `tnld migrate` separately with the direct
 `TNLD_DATABASE_DIRECT_URL`; serving processes never apply migrations.
 
 Generate the bootstrap credential with `tnld login-token`, provide it as
@@ -150,13 +150,14 @@ through 30 days and defaults to one hour. `TNLD_REFRESH_TOKEN_LIFETIME` controls
 the fixed absolute session lifetime through 365 days and defaults to 30 days.
 Existing control sessions retain their stored absolute expiry.
 
-Control and standalone obtain the public control certificate through ACME and
-do not require certificate files. Split ingress and relay processes require only
-their control hostname, scoped service-enrollment token, and process identity;
-relay additionally requires its internal relay address. Control issues
-short-lived service and relay transport certificates from its durable service
-CA. Review the matching release's [self-hosting guide](SELF-HOSTING.md) before
-recreating containers.
+Control and standalone obtain public control certificates through ACME and do
+not require certificate files. Standalone also obtains its exact physical relay
+certificate automatically. Split ingress and relay processes use the control
+hostname, cluster secret, and process identity; relay additionally requires its
+relay service, public relay address, and internal relay address. Control issues
+exact WebPKI relay certificates through DNS-01 when
+`TNLD_ROUTE53_SERVER_ZONE_ID` is configured. Review the matching release's
+[self-hosting guide](SELF-HOSTING.md) before recreating containers.
 
 ## PostgreSQL Backup
 
@@ -174,10 +175,10 @@ pg_dump --format=custom \
 
 Retain the matching `tnld` version and schema version with the backup. Encrypt
 backups and restrict access because PostgreSQL contains identity, route,
-certificate, session, service CA, enrollment-token digest, and relay transport
-key state. Back up the deployment secret store separately; it owns database
-credentials, the bootstrap management token, enrollment tokens, and optional
-DNS or static public TLS credentials.
+certificate, session, encrypted ACME, and relay transport key state. Back up the
+deployment secret store separately; it owns database credentials, the bootstrap
+management token, storage and cluster secrets, and optional DNS or static public
+TLS credentials.
 
 Test restoration into a new disposable database, never over the live database:
 
@@ -203,7 +204,7 @@ team/domain reads, route creation, and route-session establishment.
 5. Run the new image's `tnld migrate` once with
    `TNLD_DATABASE_DIRECT_URL`.
 6. Start controls or standalone processes, then roll ingress and relay services.
-   Inspect logs, service certificate expiry, leases, routing-table progress, and
+   Inspect logs, public certificate expiry, leases, routing-table progress, and
    ready publisher connections.
 7. Query `/v1/ready`, inspect control discovery, and publish a test route.
 8. Re-enable maintenance controls and upgrade `tnl` clients before normal use

@@ -497,6 +497,8 @@ type RouteUsageDeliveryWork struct {
 	SourceRevision        uint64
 	RouteID               string
 	RouteVersion          uint64
+	TeamID                string
+	ActingIdentityID      string
 	BucketStart           time.Time
 	BucketEnd             time.Time
 	ObservedThrough       time.Time
@@ -621,6 +623,7 @@ func routeUsageDeliveryWork(
 	}
 	if delivery.DeliveryID <= 0 || !opaqueid.Valid(delivery.DeliveryKey, "usage_report_") ||
 		delivery.SourceRevision <= 0 || delivery.SourceRevision != bucket.BucketRevision || bucket.RouteVersion <= 0 ||
+		!validStateText(bucket.TeamID) || !validStateText(bucket.ActingIdentityID) ||
 		!bucket.BucketStart.Valid || !bucket.BucketEnd.Valid || !bucket.ObservedThrough.Valid ||
 		!delivery.WorkOwner.Valid || delivery.WorkEpoch <= 0 || !delivery.WorkExpiresAt.Valid || delivery.Attempts <= 0 {
 		return RouteUsageDeliveryWork{}, ErrRouteUsageDeliveryInvalid
@@ -637,8 +640,9 @@ func routeUsageDeliveryWork(
 	return RouteUsageDeliveryWork{
 		DeliveryID: uint64(delivery.DeliveryID), DeliveryKey: delivery.DeliveryKey,
 		SourceRevision: uint64(delivery.SourceRevision), RouteID: bucket.RouteID,
-		RouteVersion: uint64(bucket.RouteVersion), BucketStart: bucket.BucketStart.Time,
-		BucketEnd: bucket.BucketEnd.Time, ObservedThrough: bucket.ObservedThrough.Time,
+		RouteVersion: uint64(bucket.RouteVersion), TeamID: bucket.TeamID, ActingIdentityID: bucket.ActingIdentityID,
+		BucketStart: bucket.BucketStart.Time,
+		BucketEnd:   bucket.BucketEnd.Time, ObservedThrough: bucket.ObservedThrough.Time,
 		ConnectionAttempts: uint64(bucket.ConnectionAttempts), PolicyDenials: uint64(bucket.PolicyDenials),
 		CapacityDenials: uint64(bucket.CapacityDenials), PublisherOpenFailures: uint64(bucket.PublisherOpenFailures),
 		SuccessfulStreams: uint64(bucket.SuccessfulStreams), ConnectionNanoseconds: uint64(bucket.ConnectionNanoseconds),

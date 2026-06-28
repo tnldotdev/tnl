@@ -82,6 +82,21 @@ func (q *Queries) CloseRouteSessionConnections(ctx context.Context, arg CloseRou
 const deleteRoute = `-- name: DeleteRoute :execrows
 UPDATE control.routes
 SET lifecycle_state = 'deleted',
+    dns_state = CASE
+        WHEN dns_state NOT IN ('unmanaged', 'removed') THEN 'removing'
+        ELSE dns_state
+    END,
+    dns_revision = CASE
+        WHEN dns_state NOT IN ('unmanaged', 'removed') THEN dns_revision + 1
+        ELSE dns_revision
+    END,
+    dns_work_owner = NULL,
+    dns_work_expires_at = NULL,
+    dns_available_at = CASE
+        WHEN dns_state NOT IN ('unmanaged', 'removed') THEN $1
+        ELSE dns_available_at
+    END,
+    dns_last_error = NULL,
     deleted_at = $1,
     updated_at = $1
 WHERE id = $2
@@ -102,7 +117,7 @@ func (q *Queries) DeleteRoute(ctx context.Context, arg DeleteRouteParams) (int64
 }
 
 const getIdentityRoute = `-- name: GetIdentityRoute :one
-SELECT r.id, r.team_id, r.domain_id, r.membership_id, r.created_by_identity_id, r.idempotency_key, r.request_digest, r.canonical_hostname, r.target, r.route_scope, r.policy_revision, r.ip_policy, r.allowed_ip_prefixes, r.lifecycle_state, r.dns_state, r.dns_revision, r.next_route_version, r.suspension_revision, r.suspension_reason, r.created_at, r.updated_at, r.suspended_at, r.deleted_at,
+SELECT r.id, r.team_id, r.domain_id, r.membership_id, r.created_by_identity_id, r.idempotency_key, r.request_digest, r.canonical_hostname, r.target, r.route_scope, r.policy_revision, r.ip_policy, r.allowed_ip_prefixes, r.lifecycle_state, r.dns_authority_reference, r.dns_state, r.dns_revision, r.dns_work_owner, r.dns_work_epoch, r.dns_work_expires_at, r.dns_attempts, r.dns_available_at, r.dns_last_error, r.next_route_version, r.suspension_revision, r.suspension_reason, r.created_at, r.updated_at, r.suspended_at, r.deleted_at,
     COALESCE((
         SELECT s.id
         FROM control.route_sessions AS s
@@ -127,30 +142,37 @@ type GetIdentityRouteParams struct {
 }
 
 type GetIdentityRouteRow struct {
-	ID                  string
-	TeamID              string
-	DomainID            string
-	MembershipID        pgtype.Text
-	CreatedByIdentityID string
-	IdempotencyKey      string
-	RequestDigest       []byte
-	CanonicalHostname   string
-	Target              string
-	RouteScope          string
-	PolicyRevision      int64
-	IpPolicy            string
-	AllowedIpPrefixes   []netip.Prefix
-	LifecycleState      string
-	DnsState            string
-	DnsRevision         int64
-	NextRouteVersion    int64
-	SuspensionRevision  int64
-	SuspensionReason    pgtype.Text
-	CreatedAt           pgtype.Timestamptz
-	UpdatedAt           pgtype.Timestamptz
-	SuspendedAt         pgtype.Timestamptz
-	DeletedAt           pgtype.Timestamptz
-	AttachedSessionID   string
+	ID                    string
+	TeamID                string
+	DomainID              string
+	MembershipID          pgtype.Text
+	CreatedByIdentityID   string
+	IdempotencyKey        string
+	RequestDigest         []byte
+	CanonicalHostname     string
+	Target                string
+	RouteScope            string
+	PolicyRevision        int64
+	IpPolicy              string
+	AllowedIpPrefixes     []netip.Prefix
+	LifecycleState        string
+	DnsAuthorityReference pgtype.Text
+	DnsState              string
+	DnsRevision           int64
+	DnsWorkOwner          pgtype.Text
+	DnsWorkEpoch          int64
+	DnsWorkExpiresAt      pgtype.Timestamptz
+	DnsAttempts           int64
+	DnsAvailableAt        pgtype.Timestamptz
+	DnsLastError          pgtype.Text
+	NextRouteVersion      int64
+	SuspensionRevision    int64
+	SuspensionReason      pgtype.Text
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+	SuspendedAt           pgtype.Timestamptz
+	DeletedAt             pgtype.Timestamptz
+	AttachedSessionID     string
 }
 
 func (q *Queries) GetIdentityRoute(ctx context.Context, arg GetIdentityRouteParams) (GetIdentityRouteRow, error) {
@@ -171,8 +193,15 @@ func (q *Queries) GetIdentityRoute(ctx context.Context, arg GetIdentityRoutePara
 		&i.IpPolicy,
 		&i.AllowedIpPrefixes,
 		&i.LifecycleState,
+		&i.DnsAuthorityReference,
 		&i.DnsState,
 		&i.DnsRevision,
+		&i.DnsWorkOwner,
+		&i.DnsWorkEpoch,
+		&i.DnsWorkExpiresAt,
+		&i.DnsAttempts,
+		&i.DnsAvailableAt,
+		&i.DnsLastError,
 		&i.NextRouteVersion,
 		&i.SuspensionRevision,
 		&i.SuspensionReason,
@@ -186,7 +215,7 @@ func (q *Queries) GetIdentityRoute(ctx context.Context, arg GetIdentityRoutePara
 }
 
 const getRouteByCreatorIdempotency = `-- name: GetRouteByCreatorIdempotency :one
-SELECT r.id, r.team_id, r.domain_id, r.membership_id, r.created_by_identity_id, r.idempotency_key, r.request_digest, r.canonical_hostname, r.target, r.route_scope, r.policy_revision, r.ip_policy, r.allowed_ip_prefixes, r.lifecycle_state, r.dns_state, r.dns_revision, r.next_route_version, r.suspension_revision, r.suspension_reason, r.created_at, r.updated_at, r.suspended_at, r.deleted_at,
+SELECT r.id, r.team_id, r.domain_id, r.membership_id, r.created_by_identity_id, r.idempotency_key, r.request_digest, r.canonical_hostname, r.target, r.route_scope, r.policy_revision, r.ip_policy, r.allowed_ip_prefixes, r.lifecycle_state, r.dns_authority_reference, r.dns_state, r.dns_revision, r.dns_work_owner, r.dns_work_epoch, r.dns_work_expires_at, r.dns_attempts, r.dns_available_at, r.dns_last_error, r.next_route_version, r.suspension_revision, r.suspension_reason, r.created_at, r.updated_at, r.suspended_at, r.deleted_at,
     COALESCE((
         SELECT s.id
         FROM control.route_sessions AS s
@@ -204,30 +233,37 @@ type GetRouteByCreatorIdempotencyParams struct {
 }
 
 type GetRouteByCreatorIdempotencyRow struct {
-	ID                  string
-	TeamID              string
-	DomainID            string
-	MembershipID        pgtype.Text
-	CreatedByIdentityID string
-	IdempotencyKey      string
-	RequestDigest       []byte
-	CanonicalHostname   string
-	Target              string
-	RouteScope          string
-	PolicyRevision      int64
-	IpPolicy            string
-	AllowedIpPrefixes   []netip.Prefix
-	LifecycleState      string
-	DnsState            string
-	DnsRevision         int64
-	NextRouteVersion    int64
-	SuspensionRevision  int64
-	SuspensionReason    pgtype.Text
-	CreatedAt           pgtype.Timestamptz
-	UpdatedAt           pgtype.Timestamptz
-	SuspendedAt         pgtype.Timestamptz
-	DeletedAt           pgtype.Timestamptz
-	AttachedSessionID   string
+	ID                    string
+	TeamID                string
+	DomainID              string
+	MembershipID          pgtype.Text
+	CreatedByIdentityID   string
+	IdempotencyKey        string
+	RequestDigest         []byte
+	CanonicalHostname     string
+	Target                string
+	RouteScope            string
+	PolicyRevision        int64
+	IpPolicy              string
+	AllowedIpPrefixes     []netip.Prefix
+	LifecycleState        string
+	DnsAuthorityReference pgtype.Text
+	DnsState              string
+	DnsRevision           int64
+	DnsWorkOwner          pgtype.Text
+	DnsWorkEpoch          int64
+	DnsWorkExpiresAt      pgtype.Timestamptz
+	DnsAttempts           int64
+	DnsAvailableAt        pgtype.Timestamptz
+	DnsLastError          pgtype.Text
+	NextRouteVersion      int64
+	SuspensionRevision    int64
+	SuspensionReason      pgtype.Text
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+	SuspendedAt           pgtype.Timestamptz
+	DeletedAt             pgtype.Timestamptz
+	AttachedSessionID     string
 }
 
 func (q *Queries) GetRouteByCreatorIdempotency(ctx context.Context, arg GetRouteByCreatorIdempotencyParams) (GetRouteByCreatorIdempotencyRow, error) {
@@ -248,8 +284,15 @@ func (q *Queries) GetRouteByCreatorIdempotency(ctx context.Context, arg GetRoute
 		&i.IpPolicy,
 		&i.AllowedIpPrefixes,
 		&i.LifecycleState,
+		&i.DnsAuthorityReference,
 		&i.DnsState,
 		&i.DnsRevision,
+		&i.DnsWorkOwner,
+		&i.DnsWorkEpoch,
+		&i.DnsWorkExpiresAt,
+		&i.DnsAttempts,
+		&i.DnsAvailableAt,
+		&i.DnsLastError,
 		&i.NextRouteVersion,
 		&i.SuspensionRevision,
 		&i.SuspensionReason,
@@ -275,7 +318,8 @@ SELECT
     d.kind AS domain_kind,
     d.team_id AS domain_team_id,
     d.canonical_domain,
-    d.state AS domain_state
+    d.state AS domain_state,
+    d.dns_authority_reference
 FROM control.teams AS t
 JOIN control.identities AS i
   ON i.id = $1
@@ -313,6 +357,7 @@ type GetRouteCreationContextRow struct {
 	DomainTeamID          pgtype.Text
 	CanonicalDomain       string
 	DomainState           string
+	DnsAuthorityReference pgtype.Text
 }
 
 func (q *Queries) GetRouteCreationContext(ctx context.Context, arg GetRouteCreationContextParams) (GetRouteCreationContextRow, error) {
@@ -331,6 +376,7 @@ func (q *Queries) GetRouteCreationContext(ctx context.Context, arg GetRouteCreat
 		&i.DomainTeamID,
 		&i.CanonicalDomain,
 		&i.DomainState,
+		&i.DnsAuthorityReference,
 	)
 	return i, err
 }
@@ -351,7 +397,9 @@ INSERT INTO control.routes (
     ip_policy,
     allowed_ip_prefixes,
     lifecycle_state,
+    dns_authority_reference,
     dns_state,
+    dns_available_at,
     created_at,
     updated_at
 ) VALUES (
@@ -371,27 +419,30 @@ INSERT INTO control.routes (
     'enabled',
     $14,
     $15,
-    $15
+    CASE WHEN $15::text = 'pending' THEN $16::timestamptz END,
+    $16,
+    $16
 )
-RETURNING id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key, request_digest, canonical_hostname, target, route_scope, policy_revision, ip_policy, allowed_ip_prefixes, lifecycle_state, dns_state, dns_revision, next_route_version, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at
+RETURNING id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key, request_digest, canonical_hostname, target, route_scope, policy_revision, ip_policy, allowed_ip_prefixes, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_route_version, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at
 `
 
 type InsertRouteParams struct {
-	ID                  string
-	TeamID              string
-	DomainID            string
-	MembershipID        pgtype.Text
-	CreatedByIdentityID string
-	IdempotencyKey      string
-	RequestDigest       []byte
-	CanonicalHostname   string
-	Target              string
-	RouteScope          string
-	PolicyRevision      int64
-	IpPolicy            string
-	AllowedIpPrefixes   []netip.Prefix
-	DnsState            string
-	CreatedAt           pgtype.Timestamptz
+	ID                    string
+	TeamID                string
+	DomainID              string
+	MembershipID          pgtype.Text
+	CreatedByIdentityID   string
+	IdempotencyKey        string
+	RequestDigest         []byte
+	CanonicalHostname     string
+	Target                string
+	RouteScope            string
+	PolicyRevision        int64
+	IpPolicy              string
+	AllowedIpPrefixes     []netip.Prefix
+	DnsAuthorityReference pgtype.Text
+	DnsState              string
+	CreatedAt             pgtype.Timestamptz
 }
 
 func (q *Queries) InsertRoute(ctx context.Context, arg InsertRouteParams) (ControlRoute, error) {
@@ -409,6 +460,7 @@ func (q *Queries) InsertRoute(ctx context.Context, arg InsertRouteParams) (Contr
 		arg.PolicyRevision,
 		arg.IpPolicy,
 		arg.AllowedIpPrefixes,
+		arg.DnsAuthorityReference,
 		arg.DnsState,
 		arg.CreatedAt,
 	)
@@ -428,8 +480,15 @@ func (q *Queries) InsertRoute(ctx context.Context, arg InsertRouteParams) (Contr
 		&i.IpPolicy,
 		&i.AllowedIpPrefixes,
 		&i.LifecycleState,
+		&i.DnsAuthorityReference,
 		&i.DnsState,
 		&i.DnsRevision,
+		&i.DnsWorkOwner,
+		&i.DnsWorkEpoch,
+		&i.DnsWorkExpiresAt,
+		&i.DnsAttempts,
+		&i.DnsAvailableAt,
+		&i.DnsLastError,
 		&i.NextRouteVersion,
 		&i.SuspensionRevision,
 		&i.SuspensionReason,
@@ -516,7 +575,7 @@ func (q *Queries) InsertRouteDeleteAuditEvent(ctx context.Context, arg InsertRou
 }
 
 const listIdentityRoutes = `-- name: ListIdentityRoutes :many
-SELECT r.id, r.team_id, r.domain_id, r.membership_id, r.created_by_identity_id, r.idempotency_key, r.request_digest, r.canonical_hostname, r.target, r.route_scope, r.policy_revision, r.ip_policy, r.allowed_ip_prefixes, r.lifecycle_state, r.dns_state, r.dns_revision, r.next_route_version, r.suspension_revision, r.suspension_reason, r.created_at, r.updated_at, r.suspended_at, r.deleted_at,
+SELECT r.id, r.team_id, r.domain_id, r.membership_id, r.created_by_identity_id, r.idempotency_key, r.request_digest, r.canonical_hostname, r.target, r.route_scope, r.policy_revision, r.ip_policy, r.allowed_ip_prefixes, r.lifecycle_state, r.dns_authority_reference, r.dns_state, r.dns_revision, r.dns_work_owner, r.dns_work_epoch, r.dns_work_expires_at, r.dns_attempts, r.dns_available_at, r.dns_last_error, r.next_route_version, r.suspension_revision, r.suspension_reason, r.created_at, r.updated_at, r.suspended_at, r.deleted_at,
     COALESCE((
         SELECT s.id
         FROM control.route_sessions AS s
@@ -545,30 +604,37 @@ type ListIdentityRoutesParams struct {
 }
 
 type ListIdentityRoutesRow struct {
-	ID                  string
-	TeamID              string
-	DomainID            string
-	MembershipID        pgtype.Text
-	CreatedByIdentityID string
-	IdempotencyKey      string
-	RequestDigest       []byte
-	CanonicalHostname   string
-	Target              string
-	RouteScope          string
-	PolicyRevision      int64
-	IpPolicy            string
-	AllowedIpPrefixes   []netip.Prefix
-	LifecycleState      string
-	DnsState            string
-	DnsRevision         int64
-	NextRouteVersion    int64
-	SuspensionRevision  int64
-	SuspensionReason    pgtype.Text
-	CreatedAt           pgtype.Timestamptz
-	UpdatedAt           pgtype.Timestamptz
-	SuspendedAt         pgtype.Timestamptz
-	DeletedAt           pgtype.Timestamptz
-	AttachedSessionID   string
+	ID                    string
+	TeamID                string
+	DomainID              string
+	MembershipID          pgtype.Text
+	CreatedByIdentityID   string
+	IdempotencyKey        string
+	RequestDigest         []byte
+	CanonicalHostname     string
+	Target                string
+	RouteScope            string
+	PolicyRevision        int64
+	IpPolicy              string
+	AllowedIpPrefixes     []netip.Prefix
+	LifecycleState        string
+	DnsAuthorityReference pgtype.Text
+	DnsState              string
+	DnsRevision           int64
+	DnsWorkOwner          pgtype.Text
+	DnsWorkEpoch          int64
+	DnsWorkExpiresAt      pgtype.Timestamptz
+	DnsAttempts           int64
+	DnsAvailableAt        pgtype.Timestamptz
+	DnsLastError          pgtype.Text
+	NextRouteVersion      int64
+	SuspensionRevision    int64
+	SuspensionReason      pgtype.Text
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+	SuspendedAt           pgtype.Timestamptz
+	DeletedAt             pgtype.Timestamptz
+	AttachedSessionID     string
 }
 
 func (q *Queries) ListIdentityRoutes(ctx context.Context, arg ListIdentityRoutesParams) ([]ListIdentityRoutesRow, error) {
@@ -595,8 +661,15 @@ func (q *Queries) ListIdentityRoutes(ctx context.Context, arg ListIdentityRoutes
 			&i.IpPolicy,
 			&i.AllowedIpPrefixes,
 			&i.LifecycleState,
+			&i.DnsAuthorityReference,
 			&i.DnsState,
 			&i.DnsRevision,
+			&i.DnsWorkOwner,
+			&i.DnsWorkEpoch,
+			&i.DnsWorkExpiresAt,
+			&i.DnsAttempts,
+			&i.DnsAvailableAt,
+			&i.DnsLastError,
 			&i.NextRouteVersion,
 			&i.SuspensionRevision,
 			&i.SuspensionReason,
@@ -650,7 +723,7 @@ func (q *Queries) ListTeamMemberNamespaceLabels(ctx context.Context, teamID stri
 }
 
 const lockIdentityRouteForDelete = `-- name: LockIdentityRouteForDelete :one
-SELECT r.id, r.team_id, r.domain_id, r.membership_id, r.created_by_identity_id, r.idempotency_key, r.request_digest, r.canonical_hostname, r.target, r.route_scope, r.policy_revision, r.ip_policy, r.allowed_ip_prefixes, r.lifecycle_state, r.dns_state, r.dns_revision, r.next_route_version, r.suspension_revision, r.suspension_reason, r.created_at, r.updated_at, r.suspended_at, r.deleted_at, m.id AS actor_membership_id, m.role AS actor_role
+SELECT r.id, r.team_id, r.domain_id, r.membership_id, r.created_by_identity_id, r.idempotency_key, r.request_digest, r.canonical_hostname, r.target, r.route_scope, r.policy_revision, r.ip_policy, r.allowed_ip_prefixes, r.lifecycle_state, r.dns_authority_reference, r.dns_state, r.dns_revision, r.dns_work_owner, r.dns_work_epoch, r.dns_work_expires_at, r.dns_attempts, r.dns_available_at, r.dns_last_error, r.next_route_version, r.suspension_revision, r.suspension_reason, r.created_at, r.updated_at, r.suspended_at, r.deleted_at, m.id AS actor_membership_id, m.role AS actor_role
 FROM control.routes AS r
 JOIN control.team_memberships AS m
   ON m.team_id = r.team_id
@@ -667,31 +740,38 @@ type LockIdentityRouteForDeleteParams struct {
 }
 
 type LockIdentityRouteForDeleteRow struct {
-	ID                  string
-	TeamID              string
-	DomainID            string
-	MembershipID        pgtype.Text
-	CreatedByIdentityID string
-	IdempotencyKey      string
-	RequestDigest       []byte
-	CanonicalHostname   string
-	Target              string
-	RouteScope          string
-	PolicyRevision      int64
-	IpPolicy            string
-	AllowedIpPrefixes   []netip.Prefix
-	LifecycleState      string
-	DnsState            string
-	DnsRevision         int64
-	NextRouteVersion    int64
-	SuspensionRevision  int64
-	SuspensionReason    pgtype.Text
-	CreatedAt           pgtype.Timestamptz
-	UpdatedAt           pgtype.Timestamptz
-	SuspendedAt         pgtype.Timestamptz
-	DeletedAt           pgtype.Timestamptz
-	ActorMembershipID   string
-	ActorRole           string
+	ID                    string
+	TeamID                string
+	DomainID              string
+	MembershipID          pgtype.Text
+	CreatedByIdentityID   string
+	IdempotencyKey        string
+	RequestDigest         []byte
+	CanonicalHostname     string
+	Target                string
+	RouteScope            string
+	PolicyRevision        int64
+	IpPolicy              string
+	AllowedIpPrefixes     []netip.Prefix
+	LifecycleState        string
+	DnsAuthorityReference pgtype.Text
+	DnsState              string
+	DnsRevision           int64
+	DnsWorkOwner          pgtype.Text
+	DnsWorkEpoch          int64
+	DnsWorkExpiresAt      pgtype.Timestamptz
+	DnsAttempts           int64
+	DnsAvailableAt        pgtype.Timestamptz
+	DnsLastError          pgtype.Text
+	NextRouteVersion      int64
+	SuspensionRevision    int64
+	SuspensionReason      pgtype.Text
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+	SuspendedAt           pgtype.Timestamptz
+	DeletedAt             pgtype.Timestamptz
+	ActorMembershipID     string
+	ActorRole             string
 }
 
 func (q *Queries) LockIdentityRouteForDelete(ctx context.Context, arg LockIdentityRouteForDeleteParams) (LockIdentityRouteForDeleteRow, error) {
@@ -712,8 +792,15 @@ func (q *Queries) LockIdentityRouteForDelete(ctx context.Context, arg LockIdenti
 		&i.IpPolicy,
 		&i.AllowedIpPrefixes,
 		&i.LifecycleState,
+		&i.DnsAuthorityReference,
 		&i.DnsState,
 		&i.DnsRevision,
+		&i.DnsWorkOwner,
+		&i.DnsWorkEpoch,
+		&i.DnsWorkExpiresAt,
+		&i.DnsAttempts,
+		&i.DnsAvailableAt,
+		&i.DnsLastError,
 		&i.NextRouteVersion,
 		&i.SuspensionRevision,
 		&i.SuspensionReason,

@@ -109,7 +109,7 @@ func (d *Database) CreateBuiltinControlSession(
 		return ControlSession{}, ErrManagedDomainMismatch
 	}
 
-	result, err = createControlSession(
+	result, err = d.createControlSession(
 		ctx, queries, identity.ID, identity.Administrator, loginAuthenticationMethod,
 		authenticationSourceRevision, accessLifetime, refreshLifetime, now,
 	)
@@ -166,7 +166,7 @@ func bootstrapBuiltinIdentity(
 		return controlstatedb.ControlIdentity{}, ErrManagedDomainMismatch
 	}
 
-	label, err := availableManagedLabel(ctx, queries)
+	label, err := availableManagedLabel(ctx, queries, now)
 	if err != nil {
 		return controlstatedb.ControlIdentity{}, err
 	}
@@ -203,24 +203,24 @@ func bootstrapBuiltinIdentity(
 	return queries.FindBuiltinIdentity(ctx)
 }
 
-func availableManagedLabel(ctx context.Context, queries *controlstatedb.Queries) (string, error) {
+func availableManagedLabel(ctx context.Context, queries *controlstatedb.Queries, now time.Time) (string, error) {
 	for range 32 {
 		label, err := naming.GeneratedHostnameLabel()
 		if err != nil {
 			return "", err
 		}
-		exists, err := queries.ManagedLabelExists(ctx, label)
-		if err != nil {
-			return "", fmt.Errorf("controlstate: check managed label: %w", err)
-		}
-		if !exists {
+		if _, err := queries.ReserveManagedLabel(ctx, controlstatedb.ReserveManagedLabelParams{
+			Label: label, CreatedAt: timestamp(now),
+		}); err == nil {
 			return label, nil
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return "", fmt.Errorf("controlstate: reserve managed label: %w", err)
 		}
 	}
 	return "", errors.New("controlstate: managed label selection exhausted")
 }
 
-func createControlSession(
+func (d *Database) createControlSession(
 	ctx context.Context,
 	queries *controlstatedb.Queries,
 	identityID string,
@@ -247,6 +247,10 @@ func createControlSession(
 	if _, err := rand.Read(retrySecret[:]); err != nil {
 		return ControlSession{}, fmt.Errorf("controlstate: generate retry secret: %w", err)
 	}
+	retrySecretCiphertext, err := d.sealSecret(controlSessionRetrySecretContext(sessionID), retrySecret[:])
+	if err != nil {
+		return ControlSession{}, fmt.Errorf("controlstate: encrypt retry secret: %w", err)
+	}
 	accessExpiresAt := now.Add(accessLifetime)
 	refreshExpiresAt := now.Add(refreshLifetime)
 	if err := queries.CreateControlSession(ctx, controlstatedb.CreateControlSessionParams{
@@ -254,8 +258,9 @@ func createControlSession(
 		AuthenticationSourceRevision: authenticationSourceRevision, Administrator: administrator,
 		AccessTokenID: accessTokenID.String(), AccessTokenDigest: accessTokenDigest[:],
 		AccessExpiresAt: timestamp(accessExpiresAt), RefreshTokenID: refreshTokenID.String(),
-		RefreshTokenDigest: refreshTokenDigest[:], RetrySecret: retrySecret[:],
-		RefreshExpiresAt: timestamp(refreshExpiresAt), CreatedAt: timestamp(now),
+		RefreshTokenDigest: refreshTokenDigest[:], RetrySecretCiphertext: retrySecretCiphertext,
+		RetrySecretStorageKeyID: d.storageKey.CurrentID(),
+		RefreshExpiresAt:        timestamp(refreshExpiresAt), CreatedAt: timestamp(now),
 	}); err != nil {
 		return ControlSession{}, fmt.Errorf("controlstate: create control session: %w", err)
 	}
@@ -286,14 +291,27 @@ func (d *Database) AuthenticateAccessToken(
 		row.AuthenticationMethod == loginAuthenticationMethod && row.AuthenticationSourceRevision != loginSourceRevision {
 		return ControlPrincipal{}, ErrControlAuthentication
 	}
-	if len(row.RetrySecret) != len((ControlPrincipal{}).RetrySecret) {
+	retrySecret, previous, err := d.openSecret(row.RetrySecretStorageKeyID, controlSessionRetrySecretContext(row.ID), row.RetrySecretCiphertext)
+	if err != nil || len(retrySecret) != len((ControlPrincipal{}).RetrySecret) {
 		return ControlPrincipal{}, errors.New("controlstate: control session has invalid retry secret")
+	}
+	if previous {
+		rotated, err := d.sealSecret(controlSessionRetrySecretContext(row.ID), retrySecret)
+		if err != nil {
+			return ControlPrincipal{}, fmt.Errorf("controlstate: re-encrypt control-session retry secret: %w", err)
+		}
+		if err := controlstatedb.New(d.pool).RotateControlSessionRetrySecret(ctx, controlstatedb.RotateControlSessionRetrySecretParams{
+			RetrySecretCiphertext: rotated, RetrySecretStorageKeyID: d.storageKey.CurrentID(), ID: row.ID,
+			PreviousKeyID: row.RetrySecretStorageKeyID, PreviousCiphertext: row.RetrySecretCiphertext,
+		}); err != nil {
+			return ControlPrincipal{}, fmt.Errorf("controlstate: store re-encrypted control-session retry secret: %w", err)
+		}
 	}
 	principal := ControlPrincipal{
 		SessionID: row.ID, IdentityID: row.IdentityID, Administrator: row.Administrator,
 		RefreshExpiresAt: row.RefreshExpiresAt.Time,
 	}
-	copy(principal.RetrySecret[:], row.RetrySecret)
+	copy(principal.RetrySecret[:], retrySecret)
 	return principal, nil
 }
 

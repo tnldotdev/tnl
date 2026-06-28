@@ -10,31 +10,45 @@ The tnl server runs `tnld` in one of four roles:
 | `relay`      | Publisher connections and internal forwarding to local publishers                         |
 
 Only standalone and control processes use PostgreSQL. Ingress and relay are
-stateless, receive no database credentials, and bootstrap through service
-enrollment. Run `tnld migrate` before starting control or standalone; serving
-processes never migrate the database.
+stateless, receive no database credentials, and register through the private
+cluster-authenticated control API. Run `tnld migrate` before starting control or
+standalone; serving processes never migrate the database.
 
 ## Required Configuration
 
-| Mode       | Required settings                                                                                                                                         |
-| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Standalone | `TNLD_MODE`, `TNLD_DATABASE_URL`, `TNLD_SERVER_DOMAIN`, `TNLD_MANAGED_DEPLOYMENT_DOMAIN`, `TNLD_ACME_EMAIL`, `TNLD_ACME_ACCEPT_TERMS`, `TNLD_LOGIN_TOKEN` |
-| Control    | The same control-owned settings as standalone                                                                                                             |
-| Ingress    | `TNLD_MODE`, `TNLD_CONTROL_HOSTNAME`, `TNLD_SERVICE_ENROLLMENT_TOKEN`, `TNLD_INGRESS_ID`                                                                  |
-| Relay      | `TNLD_MODE`, `TNLD_CONTROL_HOSTNAME`, `TNLD_SERVICE_ENROLLMENT_TOKEN`, `TNLD_RELAY_ID`, `TNLD_INTERNAL_RELAY_ADDRESS`                                     |
+| Mode       | Required settings                                                                                                                                                             |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Standalone | `TNLD_MODE`, `TNLD_DATABASE_URL`, `TNLD_SERVER_DOMAIN`, `TNLD_MANAGED_DEPLOYMENT_DOMAIN`, `TNLD_ACME_EMAIL`, `TNLD_ACME_ACCEPT_TERMS`, `TNLD_LOGIN_TOKEN`, `TNLD_STORAGE_KEY` |
+| Control    | The same control-owned settings as standalone, plus `TNLD_CLUSTER_SECRET`                                                                                                     |
+| Ingress    | `TNLD_MODE`, `TNLD_CONTROL_HOSTNAME`, `TNLD_CLUSTER_SECRET`, `TNLD_INGRESS_ID`                                                                                                |
+| Relay      | `TNLD_MODE`, `TNLD_CONTROL_HOSTNAME`, `TNLD_CLUSTER_SECRET`, `TNLD_RELAY_SERVICE_ID`, `TNLD_RELAY_ID`, `TNLD_RELAY_ADDRESS`, `TNLD_INTERNAL_RELAY_ADDRESS`                    |
 
 `TNLD_CONTROL_HOSTNAME` is a canonical hostname without a scheme, path, or
-port. HTTPS on port 443 is always implied. Process run IDs and service private
-keys are generated locally on each ingress or relay start.
+port. HTTPS on port 443 is always implied. Process run IDs are generated locally
+on each ingress or relay start.
 
 Listen addresses, limits, timing, metrics, a non-default ACME directory, and
-static public certificate overrides are optional advanced settings. Static
-service-mTLS certificate, private-key, and trust-bundle files are not part of
-the final configuration.
+static public certificate overrides are optional advanced settings. Private
+internal PKI and custom trust-root settings are not part of the configuration.
 
 The runtime URL belongs in `TNLD_DATABASE_URL`. The direct migration URL belongs
 in `TNLD_DATABASE_DIRECT_URL` and is read only by `tnld migrate`. Use a pooled
 runtime endpoint in replicated control deployments.
+
+## Storage Encryption And Recovery
+
+Control and standalone require `TNLD_STORAGE_KEY`, a canonical unpadded
+base64url encoding of exactly 32 random bytes. Keep an independent backup in the
+deployment secret store. Losing the current and previous keys makes ACME account
+keys, cached control certificate state, relay certificate keys, and retry
+secrets unrecoverable. Ingress and relay processes must never receive either
+storage key.
+
+To rotate the key, deploy every control process with the new value in
+`TNLD_STORAGE_KEY` and the old value in `TNLD_STORAGE_KEY_PREVIOUS`. Each process
+claims old-key rows in bounded transactions and re-encrypts them while holding
+row locks. Wait for every control replica to report that stored secrets were
+re-encrypted, then remove `TNLD_STORAGE_KEY_PREVIOUS` in a second rolling deploy.
 
 ## Addresses And DNS
 
@@ -58,18 +72,32 @@ relay-b.tnl.example.com       # split relay service B
 
 Public route hostnames beneath `tunnels.example.com` point to the ingress
 address. Relay placement never changes public route DNS. Split relay service
-labels come from enrollment-token scope rather than relay environment variables.
+labels come from `TNLD_RELAY_SERVICE_ID`.
 
-Control obtains and renews the public certificate for its control hostname
-through ACME. `TNLD_ACME_EMAIL` and `TNLD_ACME_ACCEPT_TERMS=true` are required;
-the ACME directory has a production default and may be overridden for private or
-test directories. Static public certificates are optional advanced overrides.
+Control obtains and renews exact public certificates through ACME.
+`TNLD_ACME_EMAIL` and `TNLD_ACME_ACCEPT_TERMS=true` are required; the ACME
+directory has a production default and may be overridden for private or test
+directories. Standalone obtains its control and physical relay certificates
+through TLS-ALPN-01. Static public certificates are optional advanced overrides.
 
-Relay transport TLS uses private PKI. Control's durable service CA issues a
-one-hour server certificate for each relay service hostname. Publishers
-receive the service CA certificate from authenticated route-session setup and
-use it only for relay transport connections. Browser-facing route TLS remains
-publicly trusted and terminates at the publisher.
+Relay transport TLS uses an exact-hostname WebPKI certificate managed by
+control. A relay retrieves its relay service certificate and decrypted private
+key only while its exact process run ID and relay lease revision remain current,
+then holds the material only in memory. Publishers use system trust roots and
+exact hostname verification. Browser-facing route TLS remains publicly trusted
+and terminates at the publisher.
+
+For split deployments, configure `TNLD_ROUTE53_SERVER_ZONE_ID` on control with
+the hosted zone containing `TNLD_SERVER_DOMAIN`. Control uses DNS-01 to issue and
+renew each relay service certificate. The Route 53 credentials belong only on
+control. A static relay certificate/key pair on each relay is the advanced
+alternative.
+
+To let control manage route A and AAAA records beneath the managed deployment
+domain, configure `TNLD_ROUTE53_MANAGED_ZONE_ID` and at least one stable ingress
+address through `TNLD_INGRESS_IPV4_ADDRESSES` or
+`TNLD_INGRESS_IPV6_ADDRESSES`. Leaving these unset keeps route DNS
+provider-free; operators must then publish the required records themselves.
 
 ## Bootstrap Management
 
@@ -86,45 +114,22 @@ administrator identity and that identity's permanent personal team; it is not a
 multi-user credential. Use OIDC for multiple users and retain the bootstrap
 token for operator recovery.
 
-## Service Enrollment
+## Cluster Authentication
 
-After authenticating as an administrator, create one reusable ingress token and
-one token for each relay service:
+Generate one high-entropy `TNLD_CLUSTER_SECRET` and provide it to control,
+ingress, and relay processes in a split deployment. It authenticates the private
+control API at `control.<server-domain>:9443`; keep that listener restricted to
+the deployment network. It is not a user credential and does not authorize the
+public control API.
 
-```console
-tnl admin enrollment-tokens create --role ingress
-tnl admin enrollment-tokens create --role relay --relay-service relay-a
-tnl admin enrollment-tokens create --role relay --relay-service relay-b
-```
+For rolling rotation, deploy the new value in `TNLD_CLUSTER_SECRET` and the old
+value in `TNLD_CLUSTER_SECRET_PREVIOUS`, update every split process, then remove
+the previous value. Standalone does not accept either setting because its
+components communicate in process.
 
-The raw `tnl_enrollment_...` token is returned exactly once. Control stores only
-its lookup ID, digest, role, relay-service scope, audit metadata, and revocation
-state. A token remains valid until revoked, so one ingress token supports all
-ingress replicas and one relay-service token supports all replicas in that
-service. Each replica still uses a unique ingress ID or relay ID.
-
-Each split process generates its service private key locally and sends a CSR,
-role, and process identity to `POST /v1/service-enrollments` on the public
-control HTTPS endpoint. Enrollment returns:
-
-- A one-hour service certificate.
-- The service CA trust bundle.
-- The role's internal control API endpoint.
-- Stable facts needed for lease registration.
-
-Relay enrollment also returns the relay service ID, derived relay address, TLS
-server name, and shared one-hour relay transport certificate/key. A process
-re-enrolls with the same token after approximately thirty minutes. Revoked or
-cross-role tokens cannot enroll. An expired service certificate makes the
-process unready and prevents lease renewal.
-
-The ingress control API uses `control.<server-domain>:9443`; the relay control
-API uses `control.<server-domain>:9444`. Keep both listeners private. Their
-contracts, certificates, permissions, and clients remain separate.
-
-Standalone does not enroll itself. Its control, ingress, and two logical relay
-services use the same authorization and stale-state boundaries through
-in-process calls.
+Each ingress and relay generates a process run ID at startup and registers its
+configured process identity through the private API. Lease renewal remains
+authorized only while the exact process run ID and lease revision are current.
 
 ## Standalone Compose
 
@@ -141,8 +146,8 @@ curl --fail https://control.tnl.example.com/v1/ready
 ```
 
 The image runs as a non-root user with a read-only root filesystem. No daemon
-state volume or certificate mount is required; PostgreSQL owns durable service
-CA, ACME, route, placement, and product state.
+state volume or certificate mount is required; PostgreSQL owns durable ACME,
+route, placement, and product state.
 
 Authenticate and publish from a local service:
 
@@ -161,11 +166,11 @@ deployment domain.
 
 The reference [`compose.split.yaml`](../deploy/compose.split.yaml) runs control,
 ingress, and at least two independently addressable relay services. Replicas in
-one relay service share an enrollment token, relay address, and short-lived
-relay transport certificate, but have unique relay IDs and process run IDs.
+one relay service share a relay address and managed relay transport certificate,
+but have unique relay IDs and process run IDs.
 
 Expose public TCP 443 for control and ingress and public TCP and UDP 443 for each
-relay service. Restrict TCP 9443 and 9444 plus internal relay addresses to the
+relay service. Restrict TCP 9443 plus internal relay addresses to the
 deployment network. Ingress and relay containers need no PostgreSQL, ACME,
 authority, or administrator credentials and no certificate mounts.
 
@@ -177,9 +182,10 @@ while the publisher replenishes toward two.
 ## Teams And Domains
 
 The authority API is the sole owner of identities, authentication, teams,
-memberships, invitations, domains, and signed authorizations. Self-hosted
-control serves the authority and control APIs at the same origin. Hosted
-deployments advertise their external authority origin through control discovery.
+memberships, invitations, domains, and current authorization decisions.
+Self-hosted control serves the authority and control APIs at the same origin.
+Hosted deployments advertise their external authority origin through control
+discovery.
 
 The bootstrap personal team starts with the managed deployment domain as its
 default. Organization teams and claimed domains use the regular CLI:
@@ -211,16 +217,6 @@ Draining rejects new work, removes the process from placement and ingress
 selection, and allows admitted streams to finish until the deadline. Live
 visitor streams are not replayed or migrated.
 
-Revoke an enrollment token to prevent future enrollment:
-
-```console
-tnl admin enrollment-tokens list
-tnl admin enrollment-tokens revoke <token-id>
-```
-
-Already issued service certificates remain valid only until their one-hour
-expiration.
-
 ## Route Usage
 
 Only ingress records route usage. Ingress processes report revisioned time
@@ -236,9 +232,10 @@ count of people or devices.
 ## Backups And Upgrades
 
 Back up PostgreSQL with the platform's supported physical or logical backup
-tools. The backup contains the service CA and other certificate state, so apply
-the same access controls used for deployment secrets. Test restoration into an
-isolated database and verify `tnld migrate` before changing production.
+tools. The backup contains encrypted certificate keys, identities, sessions,
+routes, and authority state, so apply the same access controls used for
+deployment secrets. Back up `TNLD_STORAGE_KEY` independently. Test restoration
+into an isolated database and verify `tnld migrate` before changing production.
 
 Upgrade in this order:
 
@@ -259,8 +256,8 @@ older or newer schemas.
 - Alert on certificate renewal failure, expired ingress or relay leases,
   insufficient ready publisher connections, capacity rejection, and control API
   failure.
-- Keep the management token, enrollment tokens, database credentials, service
-  CA state, and optional DNS credentials in appropriately protected stores.
+- Keep the management token, database credentials, storage key, cluster secret,
+  and optional DNS credentials in appropriately protected stores.
 - Preserve public TCP and UDP 443 through firewalls and load balancers.
 - Never give ingress or relay processes PostgreSQL credentials.
 

@@ -214,7 +214,7 @@ func (m Message) Validate() error {
 	switch m.Type {
 	case Hello:
 		publisherHello := m.Role == Publisher && validCredential(m.Credential) && m.PublisherConnection != nil
-		ingressHello := m.Role == Ingress && m.Credential == "" && m.PublisherConnection == nil
+		ingressHello := m.Role == Ingress && validCredential(m.Credential) && m.PublisherConnection == nil
 		if (!publisherHello && !ingressHello) || m.RequestID != "" || m.Code != "" {
 			return errors.New("tunnelv1: invalid hello")
 		}

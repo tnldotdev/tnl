@@ -41,6 +41,9 @@ func TestDevCommandPassesThroughCommandArguments(t *testing.T) {
 }
 
 func TestResolveDevCommandRemovesSeparatorAndFindsExecutable(t *testing.T) {
+	if command, err := resolveDevCommand(nil); err != nil || command != nil {
+		t.Fatalf("optional command = %#v, %v", command, err)
+	}
 	command, err := resolveDevCommand([]string{"--", "sh", "-c", "exit 0"})
 	if err != nil {
 		t.Fatal(err)
@@ -90,7 +93,7 @@ func TestRunDevReportsMissingFrameworkIntegration(t *testing.T) {
 }
 
 func TestDevBootstrapConfiguresAndRegistersOneTarget(t *testing.T) {
-	bootstrap, err := newDevBootstrap("")
+	bootstrap, err := newDevBootstrap(t.Context(), "", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +103,7 @@ func TestDevBootstrapConfiguresAndRegistersOneTarget(t *testing.T) {
 		}
 	})
 
-	premature := postDevRequest(bootstrap, bootstrap.token, "/v1/target", devTargetRequest{
+	premature := postDevRequest(bootstrap, "/v1/target", devTargetRequest{
 		Protocol: 1, Framework: "vite", Port: 5173,
 	})
 	if premature.err != nil || premature.status != http.StatusConflict {
@@ -108,7 +111,6 @@ func TestDevBootstrapConfiguresAndRegistersOneTarget(t *testing.T) {
 	}
 	legacy := postDevJSON(
 		bootstrap,
-		bootstrap.token,
 		"/v1/configure",
 		[]byte(`{"protocol":1,"framework":"vite","options":{}}`),
 	)
@@ -120,7 +122,6 @@ func TestDevBootstrapConfiguresAndRegistersOneTarget(t *testing.T) {
 	go func() {
 		configurationDone <- postDevJSON(
 			bootstrap,
-			bootstrap.token,
 			"/v1/configure",
 			[]byte(`{"protocol":1,"framework":"vite"}`),
 		)
@@ -140,19 +141,19 @@ func TestDevBootstrapConfiguresAndRegistersOneTarget(t *testing.T) {
 		!reflect.DeepEqual(response, want) {
 		t.Fatalf("configuration result = %#v, response = %#v", result, response)
 	}
-	result = postDevRequest(bootstrap, bootstrap.token, "/v1/configure", configuration)
+	result = postDevRequest(bootstrap, "/v1/configure", configuration)
 	if result.err != nil || result.status != http.StatusOK {
 		t.Fatalf("idempotent configuration result = %#v", result)
 	}
 	conflictingConfiguration := configuration
 	conflictingConfiguration.Framework = "next"
-	result = postDevRequest(bootstrap, bootstrap.token, "/v1/configure", conflictingConfiguration)
+	result = postDevRequest(bootstrap, "/v1/configure", conflictingConfiguration)
 	if result.err != nil || result.status != http.StatusConflict {
 		t.Fatalf("conflicting configuration result = %#v", result)
 	}
 
 	target := devTargetRequest{Protocol: 1, Framework: "vite", Port: 5173}
-	result = postDevRequest(bootstrap, bootstrap.token, "/v1/target", target)
+	result = postDevRequest(bootstrap, "/v1/target", target)
 	if result.err != nil || result.status != http.StatusNoContent {
 		t.Fatalf("target result = %#v", result)
 	}
@@ -160,28 +161,25 @@ func TestDevBootstrapConfiguresAndRegistersOneTarget(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(registered, target) {
 		t.Fatalf("target = %#v, err = %v", registered, err)
 	}
-	result = postDevRequest(bootstrap, bootstrap.token, "/v1/target", target)
+	result = postDevRequest(bootstrap, "/v1/target", target)
 	if result.err != nil || result.status != http.StatusNoContent {
 		t.Fatalf("idempotent target result = %#v", result)
 	}
-	result = postDevRequest(bootstrap, bootstrap.token, "/v1/target", devTargetRequest{
+	result = postDevRequest(bootstrap, "/v1/target", devTargetRequest{
 		Protocol: 1, Framework: "vite", Port: 3000,
 	})
 	if result.err != nil || result.status != http.StatusConflict {
 		t.Fatalf("conflicting target result = %#v", result)
 	}
-	result = postDevRequest(bootstrap, "invalid", "/v1/target", target)
-	if result.err != nil || result.status != http.StatusUnauthorized {
-		t.Fatalf("unauthorized target result = %#v", result)
-	}
 }
 
 func TestDevBootstrapTimesOutAndClosesIdempotently(t *testing.T) {
-	bootstrap, err := newDevBootstrap("")
+	worktree := t.TempDir()
+	bootstrap, err := newDevBootstrap(t.Context(), "", worktree)
 	if err != nil {
 		t.Fatal(err)
 	}
-	directory := bootstrap.dir
+	directory := filepath.Dir(bootstrap.socket)
 	info, err := os.Stat(directory)
 	if err != nil {
 		t.Fatal(err)
@@ -196,6 +194,10 @@ func TestDevBootstrapTimesOutAndClosesIdempotently(t *testing.T) {
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("session socket mode = %v", info.Mode().Perm())
 	}
+	if _, err := newDevBootstrap(t.Context(), "", worktree); err == nil ||
+		err.Error() != "another tnl dev is already running for this worktree" {
+		t.Fatalf("concurrent bootstrap error = %v", err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
 	defer cancel()
 	if _, err := bootstrap.Configuration(ctx); !errors.Is(err, context.DeadlineExceeded) {
@@ -207,9 +209,17 @@ func TestDevBootstrapTimesOutAndClosesIdempotently(t *testing.T) {
 	if err := bootstrap.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(directory); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("session directory still exists: %v", err)
+	if _, err := os.Stat(directory); err != nil {
+		t.Fatalf("shared runtime directory was removed: %v", err)
 	}
+	if _, err := os.Stat(bootstrap.socket); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("session socket still exists: %v", err)
+	}
+	replacement, err := newDevBootstrap(t.Context(), "", worktree)
+	if err != nil {
+		t.Fatalf("replacement bootstrap: %v", err)
+	}
+	defer replacement.Close()
 }
 
 func TestDevEnvironmentReplacesProtocolAndRemovesAccessToken(t *testing.T) {
@@ -219,10 +229,10 @@ func TestDevEnvironmentReplacesProtocolAndRemovesAccessToken(t *testing.T) {
 	t.Setenv("TNL_TUNNEL_ID", "stale")
 	t.Setenv("TNL_PUBLIC_HOSTNAME", "stale.example")
 	t.Setenv("TNL_PUBLIC_URL", "https://stale.example")
-	bootstrap := &devBootstrap{socket: "/private/control.sock", token: strings.Repeat("a", 64)}
+	bootstrap := &devBootstrap{socket: "/private/control.sock"}
 	environment := environmentMap(devEnvironment(bootstrap, 3000))
 	if environment["PORT"] != "3000" || environment["TNL_DEV_PORT"] != "3000" ||
-		environment["TNL_DEV_PROTOCOL"] != "1" {
+		environment["TNL_DEV_PROTOCOL"] != "1" || environment["TNL_DEV_SOCKET"] != bootstrap.socket {
 		t.Fatalf("environment = %#v", environment)
 	}
 	for _, name := range []string{"TNL_ACCESS_TOKEN", "TNL_TUNNEL_ID", "TNL_PUBLIC_HOSTNAME", "TNL_PUBLIC_URL"} {
@@ -246,7 +256,7 @@ func TestChildResultPreservesExitStatus(t *testing.T) {
 }
 
 func TestWaitForDevTargetStopsWhenCommandExits(t *testing.T) {
-	bootstrap, err := newDevBootstrap("")
+	bootstrap, err := newDevBootstrap(t.Context(), "", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -317,15 +327,15 @@ type devHTTPResult struct {
 	err    error
 }
 
-func postDevRequest(bootstrap *devBootstrap, token, path string, value any) devHTTPResult {
+func postDevRequest(bootstrap *devBootstrap, path string, value any) devHTTPResult {
 	body, err := json.Marshal(value)
 	if err != nil {
 		return devHTTPResult{err: err}
 	}
-	return postDevJSON(bootstrap, token, path, body)
+	return postDevJSON(bootstrap, path, body)
 }
 
-func postDevJSON(bootstrap *devBootstrap, token, path string, body []byte) devHTTPResult {
+func postDevJSON(bootstrap *devBootstrap, path string, body []byte) devHTTPResult {
 	transport := &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, "unix", bootstrap.socket)
@@ -336,7 +346,6 @@ func postDevJSON(bootstrap *devBootstrap, token, path string, body []byte) devHT
 	if err != nil {
 		return devHTTPResult{err: err}
 	}
-	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set("Content-Type", "application/json")
 	response, err := client.Do(request)
 	if err != nil {

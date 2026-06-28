@@ -2,7 +2,6 @@
 package serviceapi
 
 import (
-	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"io"
@@ -12,19 +11,6 @@ import (
 )
 
 const MaximumRequestBytes = 64 << 10
-
-type CertificateIdentityFunc func(*x509.Certificate) (string, error)
-
-func VerifiedIdentity(request *http.Request, identity CertificateIdentityFunc) (string, error) {
-	if request.TLS == nil || len(request.TLS.PeerCertificates) == 0 || len(request.TLS.VerifiedChains) == 0 {
-		return "", errors.New("serviceapi: client certificate is not verified")
-	}
-	value, err := identity(request.TLS.PeerCertificates[0])
-	if err != nil || !ValidIdentifiers(value) {
-		return "", errors.New("serviceapi: client certificate identity is invalid")
-	}
-	return value, nil
-}
 
 func DecodeJSON(response http.ResponseWriter, request *http.Request, destination any) bool {
 	mediaType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))

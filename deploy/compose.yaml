@@ -26,6 +26,8 @@ services:
         condition: service_completed_successfully
     stop_grace_period: 45s
     environment:
+      TNLD_CLUSTER_SECRET: ""
+      TNLD_CLUSTER_SECRET_PREVIOUS: ""
       TNLD_CONTROL_LISTEN: :8443
       TNLD_INGRESS_LISTEN: :8443
       TNLD_METRICS_LISTEN: 0.0.0.0:9090

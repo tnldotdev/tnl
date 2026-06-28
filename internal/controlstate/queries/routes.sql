@@ -36,7 +36,8 @@ SELECT
     d.kind AS domain_kind,
     d.team_id AS domain_team_id,
     d.canonical_domain,
-    d.state AS domain_state
+    d.state AS domain_state,
+    d.dns_authority_reference
 FROM control.teams AS t
 JOIN control.identities AS i
   ON i.id = sqlc.arg(identity_id)
@@ -77,7 +78,9 @@ INSERT INTO control.routes (
     ip_policy,
     allowed_ip_prefixes,
     lifecycle_state,
+    dns_authority_reference,
     dns_state,
+    dns_available_at,
     created_at,
     updated_at
 ) VALUES (
@@ -95,7 +98,9 @@ INSERT INTO control.routes (
     sqlc.arg(ip_policy),
     sqlc.arg(allowed_ip_prefixes),
     'enabled',
+    sqlc.narg(dns_authority_reference),
     sqlc.arg(dns_state),
+    CASE WHEN sqlc.arg(dns_state)::text = 'pending' THEN sqlc.arg(created_at)::timestamptz END,
     sqlc.arg(created_at),
     sqlc.arg(created_at)
 )
@@ -175,6 +180,21 @@ FOR UPDATE OF r, m;
 -- name: DeleteRoute :execrows
 UPDATE control.routes
 SET lifecycle_state = 'deleted',
+    dns_state = CASE
+        WHEN dns_state NOT IN ('unmanaged', 'removed') THEN 'removing'
+        ELSE dns_state
+    END,
+    dns_revision = CASE
+        WHEN dns_state NOT IN ('unmanaged', 'removed') THEN dns_revision + 1
+        ELSE dns_revision
+    END,
+    dns_work_owner = NULL,
+    dns_work_expires_at = NULL,
+    dns_available_at = CASE
+        WHEN dns_state NOT IN ('unmanaged', 'removed') THEN sqlc.arg(deleted_at)
+        ELSE dns_available_at
+    END,
+    dns_last_error = NULL,
     deleted_at = sqlc.arg(deleted_at),
     updated_at = sqlc.arg(deleted_at)
 WHERE id = sqlc.arg(route_id)

@@ -83,7 +83,7 @@ func (s *publisherControlStub) ListRoutes(context.Context, string) ([]controlv1.
 	return s.routes, nil
 }
 
-func (*publisherControlStub) CreateRouteSession(context.Context, controlv1.Route, controlv1.CreateRouteSessionRequest, uint64, string) (controlv1.RouteSessionSetup, error) {
+func (*publisherControlStub) CreateRouteSession(context.Context, string, string) (controlv1.RouteSessionSetup, error) {
 	return controlv1.RouteSessionSetup{}, errors.New("not implemented")
 }
 

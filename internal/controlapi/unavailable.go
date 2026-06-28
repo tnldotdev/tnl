@@ -38,7 +38,7 @@ type unavailableAuthorityServer struct{}
 func (unavailableAuthorityServer) ExchangeOIDCToken(w http.ResponseWriter, r *http.Request) {
 	unavailable(w, r)
 }
-func (unavailableAuthorityServer) IssueAuthorization(w http.ResponseWriter, r *http.Request, _ authorityv1.IssueAuthorizationParams) {
+func (unavailableAuthorityServer) AuthorizeServiceOperation(w http.ResponseWriter, r *http.Request) {
 	unavailable(w, r)
 }
 func (unavailableAuthorityServer) AcceptInvitation(w http.ResponseWriter, r *http.Request) {
@@ -72,5 +72,9 @@ func (unavailableAuthorityServer) RemoveMembership(w http.ResponseWriter, r *htt
 	unavailable(w, r)
 }
 func (unavailableAuthorityServer) SetMembershipRole(w http.ResponseWriter, r *http.Request, _ authorityv1.TeamID, _ authorityv1.MembershipID) {
+	unavailable(w, r)
+}
+
+func (unavailableControlServer) RevokeHostedPolicy(w http.ResponseWriter, r *http.Request) {
 	unavailable(w, r)
 }

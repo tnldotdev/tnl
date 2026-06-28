@@ -1,7 +1,10 @@
+// Package authorization defines direct operation authorization and canonical request helpers.
 package authorization
 
 import (
+	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/netip"
@@ -10,6 +13,25 @@ import (
 
 const MaxIPPrefixes = 64
 
+type Operation string
+
+const (
+	OperationRouteCreate        Operation = "route.create"
+	OperationRouteSessionCreate Operation = "route_session.create"
+	OperationRouteDelete        Operation = "route.delete"
+)
+
+var (
+	ErrInvalid         = errors.New("authorization: invalid request")
+	ErrUnauthenticated = errors.New("authorization: unauthenticated")
+	ErrForbidden       = errors.New("authorization: forbidden")
+	ErrUnavailable     = errors.New("authorization: unavailable")
+)
+
+type Digest [sha256.Size]byte
+
+func (d Digest) String() string { return base64.RawURLEncoding.EncodeToString(d[:]) }
+
 type CertificatePlan struct {
 	CacheKey        string   `json:"cache_key"`
 	Scope           string   `json:"scope"`
@@ -17,8 +39,45 @@ type CertificatePlan struct {
 	ChallengeMethod string   `json:"challenge_method"`
 }
 
-// OperationRequest contains every control mutation value covered by a signed
-// authorization. The wire token itself is intentionally absent.
+// Request contains the user credential and exact operation facts control asks
+// the authority to authorize.
+type Request struct {
+	AccessToken        string
+	Operation          Operation
+	TeamID             string
+	ActingMembershipID string
+	RouteMembershipID  string
+	DomainID           string
+	CanonicalHostname  string
+	RouteScope         string
+	Target             string
+	AllowedIPPrefixes  []string
+	RouteID            string
+	RouteVersion       uint64
+}
+
+// Decision contains current authority state accepted by control. RetrySecret is
+// internal key material and is never part of the authority wire response.
+type Decision struct {
+	IdentityID            string
+	TeamID                string
+	ActingMembershipID    string
+	ActingRole            string
+	RouteMembershipID     string
+	TeamPolicyRevision    uint64
+	DomainID              string
+	CanonicalHostname     string
+	RouteScope            string
+	DNSAuthorityReference string
+	CertificatePlan       *CertificatePlan
+	RetrySecret           [32]byte
+}
+
+type Authorizer interface {
+	Authorize(context.Context, Request) (Decision, error)
+}
+
+// OperationRequest contains every value covered by a canonical mutation digest.
 type OperationRequest struct {
 	Operation         Operation
 	TeamID            string
@@ -33,6 +92,8 @@ type OperationRequest struct {
 	AllowedIPPrefixes []string
 	CertificatePlan   *CertificatePlan
 }
+
+func invalid(message string) error { return errors.New("authorization: " + message) }
 
 // CanonicalRequestHash hashes the fixed JSON shape for one authorized control mutation.
 func CanonicalRequestHash(request OperationRequest) (Digest, error) {

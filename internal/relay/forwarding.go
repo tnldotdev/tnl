@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/muxsession"
+	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/internal/streamcopy"
 	"github.com/tnldotdev/tnl/internal/tunnel"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -16,6 +17,7 @@ import (
 
 type ForwardingAcceptorConfig struct {
 	Registry       *Registry
+	ClusterSecrets serviceapi.BearerSecrets
 	StreamCapacity int
 	Now            func() time.Time
 	Report         func(error)
@@ -25,14 +27,15 @@ type ForwardingAcceptorConfig struct {
 // connected publishers. It never receives the ingress routing table.
 type ForwardingAcceptor struct {
 	registry *Registry
+	secrets  serviceapi.BearerSecrets
 	streams  chan struct{}
 	now      func() time.Time
 	report   func(error)
 }
 
 func NewForwardingAcceptor(config ForwardingAcceptorConfig) (*ForwardingAcceptor, error) {
-	if config.Registry == nil || config.StreamCapacity <= 0 {
-		return nil, errors.New("relay: forwarding registry and positive stream capacity are required")
+	if config.Registry == nil || !config.ClusterSecrets.Valid() || config.StreamCapacity <= 0 {
+		return nil, errors.New("relay: forwarding registry, cluster secrets, and positive stream capacity are required")
 	}
 	if config.Now == nil {
 		config.Now = time.Now
@@ -41,14 +44,14 @@ func NewForwardingAcceptor(config ForwardingAcceptorConfig) (*ForwardingAcceptor
 		config.Report = func(error) {}
 	}
 	return &ForwardingAcceptor{
-		registry: config.Registry, streams: make(chan struct{}, config.StreamCapacity),
+		registry: config.Registry, secrets: config.ClusterSecrets, streams: make(chan struct{}, config.StreamCapacity),
 		now: config.Now, report: config.Report,
 	}, nil
 }
 
 func (a *ForwardingAcceptor) Accept(ctx context.Context, transport muxsession.Session) error {
 	session, hello, err := tunnel.Accept(ctx, transport, func(_ context.Context, message tunnelv1.Message) error {
-		if message.Role != tunnelv1.Ingress {
+		if message.Role != tunnelv1.Ingress || !a.secrets.Matches(message.Credential) {
 			return &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
 		}
 		return nil

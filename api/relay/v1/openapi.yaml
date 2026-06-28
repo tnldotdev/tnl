@@ -9,7 +9,7 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://relay-control.internal
 security:
-  - relayMutualTLS: []
+  - clusterAuth: []
 paths:
   /internal/v1/relays/register:
     post:
@@ -70,6 +70,44 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RelayLease"
+        default:
+          $ref: "#/components/responses/Problem"
+  /internal/v1/relay-services/{relay_service_id}/certificate:
+    get:
+      operationId: getRelayServiceCertificate
+      summary: Retrieve the current public relay certificate and private key
+      parameters:
+        - $ref: "#/components/parameters/RelayServiceID"
+        - name: relay_id
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+        - name: relay_run_id
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+        - name: relay_lease_revision
+          in: query
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        "200":
+          description: Current relay service certificate material
+          headers:
+            Cache-Control:
+              required: true
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RelayServiceCertificate"
         default:
           $ref: "#/components/responses/Problem"
   /internal/v1/publisher-connections/{publisher_connection_id}/claim:
@@ -137,11 +175,19 @@ paths:
           $ref: "#/components/responses/Problem"
 components:
   securitySchemes:
-    relayMutualTLS:
-      type: mutualTLS
+    clusterAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: tnl cluster secret
   parameters:
     RelayID:
       name: relay_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Identifier"
+    RelayServiceID:
+      name: relay_service_id
       in: path
       required: true
       schema:
@@ -328,6 +374,26 @@ components:
           type: string
           format: date-time
         lease_expires_at:
+          type: string
+          format: date-time
+    RelayServiceCertificate:
+      type: object
+      additionalProperties: false
+      required: [relay_service_id, tls_server_name, certificate_pem, private_key_pem, not_after]
+      properties:
+        relay_service_id:
+          $ref: "#/components/schemas/Identifier"
+        tls_server_name:
+          $ref: "#/components/schemas/Identifier"
+        certificate_pem:
+          type: string
+          minLength: 1
+          maxLength: 65536
+        private_key_pem:
+          type: string
+          minLength: 1
+          maxLength: 65536
+        not_after:
           type: string
           format: date-time
     PublisherConnectionIdentity:

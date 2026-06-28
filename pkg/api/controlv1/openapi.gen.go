@@ -110,6 +110,60 @@ func (e CertificateIssuanceState) Valid() bool {
 	}
 }
 
+// Defines values for DNSAuthorityState.
+const (
+	DNSAuthorityStateFailed    DNSAuthorityState = "failed"
+	DNSAuthorityStatePending   DNSAuthorityState = "pending"
+	DNSAuthorityStateReady     DNSAuthorityState = "ready"
+	DNSAuthorityStateReleased  DNSAuthorityState = "released"
+	DNSAuthorityStateReleasing DNSAuthorityState = "releasing"
+)
+
+// Valid indicates whether the value is a known member of the DNSAuthorityState enum.
+func (e DNSAuthorityState) Valid() bool {
+	switch e {
+	case DNSAuthorityStateFailed:
+		return true
+	case DNSAuthorityStatePending:
+		return true
+	case DNSAuthorityStateReady:
+		return true
+	case DNSAuthorityStateReleased:
+		return true
+	case DNSAuthorityStateReleasing:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DNSRecordType.
+const (
+	A    DNSRecordType = "A"
+	AAAA DNSRecordType = "AAAA"
+	NS   DNSRecordType = "NS"
+	SOA  DNSRecordType = "SOA"
+	TXT  DNSRecordType = "TXT"
+)
+
+// Valid indicates whether the value is a known member of the DNSRecordType enum.
+func (e DNSRecordType) Valid() bool {
+	switch e {
+	case A:
+		return true
+	case AAAA:
+		return true
+	case NS:
+		return true
+	case SOA:
+		return true
+	case TXT:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for HealthResponseStatus.
 const (
 	HealthResponseStatusOk HealthResponseStatus = "ok"
@@ -344,24 +398,6 @@ func (e RouteSessionState) Valid() bool {
 	}
 }
 
-// Defines values for ServiceEnrollmentRole.
-const (
-	Ingress ServiceEnrollmentRole = "ingress"
-	Relay   ServiceEnrollmentRole = "relay"
-)
-
-// Valid indicates whether the value is a known member of the ServiceEnrollmentRole enum.
-func (e ServiceEnrollmentRole) Valid() bool {
-	switch e {
-	case Ingress:
-		return true
-	case Relay:
-		return true
-	default:
-		return false
-	}
-}
-
 // AdminDrainRelayRequest defines model for AdminDrainRelayRequest.
 type AdminDrainRelayRequest struct {
 	Deadline           time.Time  `json:"deadline"`
@@ -466,7 +502,7 @@ type CertificateIssuanceState string
 type CertificatePlan struct {
 	CacheKey        string                     `json:"cache_key"`
 	ChallengeMethod CertificateChallengeMethod `json:"challenge_method"`
-	Identifiers     []CanonicalHostname        `json:"identifiers"`
+	Identifiers     []string                   `json:"identifiers"`
 	Scope           string                     `json:"scope"`
 }
 
@@ -489,6 +525,13 @@ type CreateCertificateIssuanceRequest struct {
 	RouteVersion int64  `json:"route_version"`
 }
 
+// CreateDNSAuthorityRequest defines model for CreateDNSAuthorityRequest.
+type CreateDNSAuthorityRequest struct {
+	CanonicalDomain CanonicalHostname `json:"canonical_domain"`
+	DomainId        DomainID          `json:"domain_id"`
+	TeamId          TeamID            `json:"team_id"`
+}
+
 // CreateRouteRequest defines model for CreateRouteRequest.
 type CreateRouteRequest struct {
 	AllowedIpPrefixes *[]string         `json:"allowed_ip_prefixes,omitempty"`
@@ -500,26 +543,31 @@ type CreateRouteRequest struct {
 	TeamId            TeamID            `json:"team_id"`
 }
 
-// CreateRouteSessionRequest defines model for CreateRouteSessionRequest.
-type CreateRouteSessionRequest struct {
-	AllowedIpPrefixes []string        `json:"allowed_ip_prefixes"`
-	CertificatePlan   CertificatePlan `json:"certificate_plan"`
-	MembershipId      *MembershipID   `json:"membership_id,omitempty"`
-	PolicyRevision    int64           `json:"policy_revision"`
-	TeamId            TeamID          `json:"team_id"`
+// DNSAuthority defines model for DNSAuthority.
+type DNSAuthority struct {
+	CanonicalDomain CanonicalHostname `json:"canonical_domain"`
+	CreatedAt       time.Time         `json:"created_at"`
+	DomainId        DomainID          `json:"domain_id"`
+	LastError       *string           `json:"last_error,omitempty"`
+	Reference       string            `json:"reference"`
+	RequiredRecords []DNSRecord       `json:"required_records"`
+	State           DNSAuthorityState `json:"state"`
+	TeamId          TeamID            `json:"team_id"`
+	UpdatedAt       time.Time         `json:"updated_at"`
 }
 
-// CreateServiceEnrollmentTokenRequest defines model for CreateServiceEnrollmentTokenRequest.
-type CreateServiceEnrollmentTokenRequest struct {
-	RelayServiceId *RelayServiceID       `json:"relay_service_id,omitempty"`
-	Role           ServiceEnrollmentRole `json:"role"`
+// DNSAuthorityState defines model for DNSAuthorityState.
+type DNSAuthorityState string
+
+// DNSRecord defines model for DNSRecord.
+type DNSRecord struct {
+	Name  CanonicalHostname `json:"name"`
+	Type  DNSRecordType     `json:"type"`
+	Value string            `json:"value"`
 }
 
-// CreatedServiceEnrollmentToken defines model for CreatedServiceEnrollmentToken.
-type CreatedServiceEnrollmentToken struct {
-	EnrollmentToken        ServiceEnrollmentToken `json:"enrollment_token"`
-	ServiceEnrollmentToken string                 `json:"service_enrollment_token"`
-}
+// DNSRecordType defines model for DNSRecord.Type.
+type DNSRecordType string
 
 // DomainID defines model for DomainID.
 type DomainID = ResourceID
@@ -531,6 +579,14 @@ type HealthResponse struct {
 
 // HealthResponseStatus defines model for HealthResponse.Status.
 type HealthResponseStatus string
+
+// HostedPolicyRevocation defines model for HostedPolicyRevocation.
+type HostedPolicyRevocation struct {
+	AllSessions    bool           `json:"all_sessions"`
+	MembershipIds  []MembershipID `json:"membership_ids"`
+	PolicyRevision int64          `json:"policy_revision"`
+	TeamId         TeamID         `json:"team_id"`
+}
 
 // IdempotencyKey defines model for IdempotencyKey.
 type IdempotencyKey = string
@@ -684,12 +740,11 @@ type RouteSessionID = ResourceID
 
 // RouteSessionSetup defines model for RouteSessionSetup.
 type RouteSessionSetup struct {
-	CertificatePlan           CertificatePlan           `json:"certificate_plan"`
-	PublisherConnections      []PublisherConnectionPlan `json:"publisher_connections"`
-	RelayTransportTrustBundle string                    `json:"relay_transport_trust_bundle"`
-	Route                     Route                     `json:"route"`
-	RouteSession              RouteSession              `json:"route_session"`
-	RouteSessionToken         string                    `json:"route_session_token"`
+	CertificatePlan      CertificatePlan           `json:"certificate_plan"`
+	PublisherConnections []PublisherConnectionPlan `json:"publisher_connections"`
+	Route                Route                     `json:"route"`
+	RouteSession         RouteSession              `json:"route_session"`
+	RouteSessionToken    string                    `json:"route_session_token"`
 }
 
 // RouteSessionState defines model for RouteSessionState.
@@ -698,47 +753,6 @@ type RouteSessionState string
 // RouteSessionVersionRequest defines model for RouteSessionVersionRequest.
 type RouteSessionVersionRequest struct {
 	RouteVersion int64 `json:"route_version"`
-}
-
-// ServiceEnrollmentRequest defines model for ServiceEnrollmentRequest.
-type ServiceEnrollmentRequest struct {
-	CertificateSigningRequest string                `json:"certificate_signing_request"`
-	IngressId                 *ResourceID           `json:"ingress_id,omitempty"`
-	RelayId                   *RelayID              `json:"relay_id,omitempty"`
-	Role                      ServiceEnrollmentRole `json:"role"`
-	ServiceEnrollmentToken    string                `json:"service_enrollment_token"`
-}
-
-// ServiceEnrollmentResponse defines model for ServiceEnrollmentResponse.
-type ServiceEnrollmentResponse struct {
-	CertificateExpiresAt      time.Time             `json:"certificate_expires_at"`
-	InternalControlEndpoint   string                `json:"internal_control_endpoint"`
-	RelayAddress              *string               `json:"relay_address,omitempty"`
-	RelayServiceId            *RelayServiceID       `json:"relay_service_id,omitempty"`
-	RelayTransportCertificate *string               `json:"relay_transport_certificate,omitempty"`
-	RelayTransportPrivateKey  *string               `json:"relay_transport_private_key,omitempty"`
-	Role                      ServiceEnrollmentRole `json:"role"`
-	ServiceCertificate        string                `json:"service_certificate"`
-	TlsServerName             *CanonicalHostname    `json:"tls_server_name,omitempty"`
-	TrustBundle               string                `json:"trust_bundle"`
-}
-
-// ServiceEnrollmentRole defines model for ServiceEnrollmentRole.
-type ServiceEnrollmentRole string
-
-// ServiceEnrollmentToken defines model for ServiceEnrollmentToken.
-type ServiceEnrollmentToken struct {
-	CreatedAt      time.Time             `json:"created_at"`
-	Id             ResourceID            `json:"id"`
-	LastUsedAt     *time.Time            `json:"last_used_at,omitempty"`
-	RelayServiceId *RelayServiceID       `json:"relay_service_id,omitempty"`
-	RevokedAt      *time.Time            `json:"revoked_at,omitempty"`
-	Role           ServiceEnrollmentRole `json:"role"`
-}
-
-// ServiceEnrollmentTokenPage defines model for ServiceEnrollmentTokenPage.
-type ServiceEnrollmentTokenPage struct {
-	EnrollmentTokens []ServiceEnrollmentToken `json:"enrollment_tokens"`
 }
 
 // SetMaintenanceControlRequest defines model for SetMaintenanceControlRequest.
@@ -752,8 +766,8 @@ type TeamID = ResourceID
 // Cursor defines model for Cursor.
 type Cursor = ResourceID
 
-// ServiceEnrollmentTokenID defines model for ServiceEnrollmentTokenID.
-type ServiceEnrollmentTokenID = ResourceID
+// DNSAuthorityReference defines model for DNSAuthorityReference.
+type DNSAuthorityReference = string
 
 // TeamIDQuery defines model for TeamIDQuery.
 type TeamIDQuery = TeamID
@@ -779,14 +793,21 @@ type CreateRouteSessionParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
 
+// CreateDNSAuthorityParams defines parameters for CreateDNSAuthority.
+type CreateDNSAuthorityParams struct {
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+}
+
+// ReleaseDNSAuthorityParams defines parameters for ReleaseDNSAuthority.
+type ReleaseDNSAuthorityParams struct {
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+}
+
 // SetMaintenanceControlJSONRequestBody defines body for SetMaintenanceControl for application/json ContentType.
 type SetMaintenanceControlJSONRequestBody = SetMaintenanceControlRequest
 
 // DrainAdminRelayJSONRequestBody defines body for DrainAdminRelay for application/json ContentType.
 type DrainAdminRelayJSONRequestBody = AdminDrainRelayRequest
-
-// CreateServiceEnrollmentTokenJSONRequestBody defines body for CreateServiceEnrollmentToken for application/json ContentType.
-type CreateServiceEnrollmentTokenJSONRequestBody = CreateServiceEnrollmentTokenRequest
 
 // MarkRouteSessionCertificateInstalledJSONRequestBody defines body for MarkRouteSessionCertificateInstalled for application/json ContentType.
 type MarkRouteSessionCertificateInstalledJSONRequestBody = CertificateInstalledRequest
@@ -803,11 +824,11 @@ type MarkRouteSessionReadyJSONRequestBody = RouteSessionVersionRequest
 // CreateRouteJSONRequestBody defines body for CreateRoute for application/json ContentType.
 type CreateRouteJSONRequestBody = CreateRouteRequest
 
-// CreateRouteSessionJSONRequestBody defines body for CreateRouteSession for application/json ContentType.
-type CreateRouteSessionJSONRequestBody = CreateRouteSessionRequest
+// CreateDNSAuthorityJSONRequestBody defines body for CreateDNSAuthority for application/json ContentType.
+type CreateDNSAuthorityJSONRequestBody = CreateDNSAuthorityRequest
 
-// EnrollServiceJSONRequestBody defines body for EnrollService for application/json ContentType.
-type EnrollServiceJSONRequestBody = ServiceEnrollmentRequest
+// RevokeHostedPolicyJSONRequestBody defines body for RevokeHostedPolicy for application/json ContentType.
+type RevokeHostedPolicyJSONRequestBody = HostedPolicyRevocation
 
 // RequestEditorFn is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
@@ -920,30 +941,6 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/admin/relays/{relay_id}/drain (the `DrainAdminRelay` operationId).
 	DrainAdminRelay(ctx context.Context, relayId RelayID, body DrainAdminRelayJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListServiceEnrollmentTokens List service enrollment tokens without their secrets
-	//
-	// Corresponds with GET /v1/admin/service-enrollment-tokens (the `ListServiceEnrollmentTokens` operationId).
-	ListServiceEnrollmentTokens(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateServiceEnrollmentTokenWithBody Create one reusable role-scoped service enrollment token
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/admin/service-enrollment-tokens (the `CreateServiceEnrollmentToken` operationId).
-	CreateServiceEnrollmentTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateServiceEnrollmentToken Create one reusable role-scoped service enrollment token
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/admin/service-enrollment-tokens (the `CreateServiceEnrollmentToken` operationId).
-	CreateServiceEnrollmentToken(ctx context.Context, body CreateServiceEnrollmentTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RevokeServiceEnrollmentToken Revoke one service enrollment token
-	//
-	// Corresponds with DELETE /v1/admin/service-enrollment-tokens/{service_enrollment_token_id} (the `RevokeServiceEnrollmentToken` operationId).
-	RevokeServiceEnrollmentToken(ctx context.Context, serviceEnrollmentTokenId ServiceEnrollmentTokenID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetAdminServerStatus Read control, ingress, and relay status
 	//
@@ -1075,33 +1072,48 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/routes/{route_id} (the `GetRoute` operationId).
 	GetRoute(ctx context.Context, routeId RouteID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateRouteSessionWithBody Create one publisher attachment and allocate its route version
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/routes/{route_id}/sessions (the `CreateRouteSession` operationId).
-	CreateRouteSessionWithBody(ctx context.Context, routeId RouteID, params *CreateRouteSessionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// CreateRouteSession Create one publisher attachment and allocate its route version
 	//
-	// Takes a body of the `application/json` content type.
-	//
 	// Corresponds with POST /v1/routes/{route_id}/sessions (the `CreateRouteSession` operationId).
-	CreateRouteSession(ctx context.Context, routeId RouteID, params *CreateRouteSessionParams, body CreateRouteSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	CreateRouteSession(ctx context.Context, routeId RouteID, params *CreateRouteSessionParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// EnrollServiceWithBody Issue or renew a process-local service identity
+	// CreateDNSAuthorityWithBody Create DNS execution state for one claimed domain
 	//
 	// Takes any type of body and a specified content type.
 	//
-	// Corresponds with POST /v1/service-enrollments (the `EnrollService` operationId).
-	EnrollServiceWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with POST /v1/service/dns-authorities (the `CreateDNSAuthority` operationId).
+	CreateDNSAuthorityWithBody(ctx context.Context, params *CreateDNSAuthorityParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// EnrollService Issue or renew a process-local service identity
+	// CreateDNSAuthority Create DNS execution state for one claimed domain
 	//
 	// Takes a body of the `application/json` content type.
 	//
-	// Corresponds with POST /v1/service-enrollments (the `EnrollService` operationId).
-	EnrollService(ctx context.Context, body EnrollServiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with POST /v1/service/dns-authorities (the `CreateDNSAuthority` operationId).
+	CreateDNSAuthority(ctx context.Context, params *CreateDNSAuthorityParams, body CreateDNSAuthorityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReleaseDNSAuthority Begin releasing one claimed domain's DNS execution state
+	//
+	// Corresponds with DELETE /v1/service/dns-authorities/{dns_authority_reference} (the `ReleaseDNSAuthority` operationId).
+	ReleaseDNSAuthority(ctx context.Context, dnsAuthorityReference DNSAuthorityReference, params *ReleaseDNSAuthorityParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetDNSAuthority Read DNS execution state for one claimed domain
+	//
+	// Corresponds with GET /v1/service/dns-authorities/{dns_authority_reference} (the `GetDNSAuthority` operationId).
+	GetDNSAuthority(ctx context.Context, dnsAuthorityReference DNSAuthorityReference, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeHostedPolicyWithBody Apply a hosted team policy revision and close affected route sessions
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
+	RevokeHostedPolicyWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeHostedPolicy Apply a hosted team policy revision and close affected route sessions
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
+	RevokeHostedPolicy(ctx context.Context, body RevokeHostedPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 // ListMaintenanceControls List maintenance controls
@@ -1192,70 +1204,6 @@ func (c *Client) DrainAdminRelayWithBody(ctx context.Context, relayId RelayID, c
 // Corresponds with POST /v1/admin/relays/{relay_id}/drain (the `DrainAdminRelay` operationId).
 func (c *Client) DrainAdminRelay(ctx context.Context, relayId RelayID, body DrainAdminRelayJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDrainAdminRelayRequest(c.Server, relayId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ListServiceEnrollmentTokens List service enrollment tokens without their secrets
-//
-// Corresponds with GET /v1/admin/service-enrollment-tokens (the `ListServiceEnrollmentTokens` operationId).
-func (c *Client) ListServiceEnrollmentTokens(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListServiceEnrollmentTokensRequest(c.Server)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateServiceEnrollmentTokenWithBody Create one reusable role-scoped service enrollment token
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/admin/service-enrollment-tokens (the `CreateServiceEnrollmentToken` operationId).
-func (c *Client) CreateServiceEnrollmentTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateServiceEnrollmentTokenRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateServiceEnrollmentToken Create one reusable role-scoped service enrollment token
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/admin/service-enrollment-tokens (the `CreateServiceEnrollmentToken` operationId).
-func (c *Client) CreateServiceEnrollmentToken(ctx context.Context, body CreateServiceEnrollmentTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateServiceEnrollmentTokenRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RevokeServiceEnrollmentToken Revoke one service enrollment token
-//
-// Corresponds with DELETE /v1/admin/service-enrollment-tokens/{service_enrollment_token_id} (the `RevokeServiceEnrollmentToken` operationId).
-func (c *Client) RevokeServiceEnrollmentToken(ctx context.Context, serviceEnrollmentTokenId ServiceEnrollmentTokenID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRevokeServiceEnrollmentTokenRequest(c.Server, serviceEnrollmentTokenId)
 	if err != nil {
 		return nil, err
 	}
@@ -1616,30 +1564,11 @@ func (c *Client) GetRoute(ctx context.Context, routeId RouteID, reqEditors ...Re
 	return c.Client.Do(req)
 }
 
-// CreateRouteSessionWithBody Create one publisher attachment and allocate its route version
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/routes/{route_id}/sessions (the `CreateRouteSession` operationId).
-func (c *Client) CreateRouteSessionWithBody(ctx context.Context, routeId RouteID, params *CreateRouteSessionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateRouteSessionRequestWithBody(c.Server, routeId, params, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // CreateRouteSession Create one publisher attachment and allocate its route version
 //
-// Takes a body of the `application/json` content type.
-//
 // Corresponds with POST /v1/routes/{route_id}/sessions (the `CreateRouteSession` operationId).
-func (c *Client) CreateRouteSession(ctx context.Context, routeId RouteID, params *CreateRouteSessionParams, body CreateRouteSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateRouteSessionRequest(c.Server, routeId, params, body)
+func (c *Client) CreateRouteSession(ctx context.Context, routeId RouteID, params *CreateRouteSessionParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateRouteSessionRequest(c.Server, routeId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1650,13 +1579,13 @@ func (c *Client) CreateRouteSession(ctx context.Context, routeId RouteID, params
 	return c.Client.Do(req)
 }
 
-// EnrollServiceWithBody Issue or renew a process-local service identity
+// CreateDNSAuthorityWithBody Create DNS execution state for one claimed domain
 //
 // Takes any type of body and a specified content type.
 //
-// Corresponds with POST /v1/service-enrollments (the `EnrollService` operationId).
-func (c *Client) EnrollServiceWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewEnrollServiceRequestWithBody(c.Server, contentType, body)
+// Corresponds with POST /v1/service/dns-authorities (the `CreateDNSAuthority` operationId).
+func (c *Client) CreateDNSAuthorityWithBody(ctx context.Context, params *CreateDNSAuthorityParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateDNSAuthorityRequestWithBody(c.Server, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1667,13 +1596,77 @@ func (c *Client) EnrollServiceWithBody(ctx context.Context, contentType string, 
 	return c.Client.Do(req)
 }
 
-// EnrollService Issue or renew a process-local service identity
+// CreateDNSAuthority Create DNS execution state for one claimed domain
 //
 // Takes a body of the `application/json` content type.
 //
-// Corresponds with POST /v1/service-enrollments (the `EnrollService` operationId).
-func (c *Client) EnrollService(ctx context.Context, body EnrollServiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewEnrollServiceRequest(c.Server, body)
+// Corresponds with POST /v1/service/dns-authorities (the `CreateDNSAuthority` operationId).
+func (c *Client) CreateDNSAuthority(ctx context.Context, params *CreateDNSAuthorityParams, body CreateDNSAuthorityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateDNSAuthorityRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReleaseDNSAuthority Begin releasing one claimed domain's DNS execution state
+//
+// Corresponds with DELETE /v1/service/dns-authorities/{dns_authority_reference} (the `ReleaseDNSAuthority` operationId).
+func (c *Client) ReleaseDNSAuthority(ctx context.Context, dnsAuthorityReference DNSAuthorityReference, params *ReleaseDNSAuthorityParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReleaseDNSAuthorityRequest(c.Server, dnsAuthorityReference, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetDNSAuthority Read DNS execution state for one claimed domain
+//
+// Corresponds with GET /v1/service/dns-authorities/{dns_authority_reference} (the `GetDNSAuthority` operationId).
+func (c *Client) GetDNSAuthority(ctx context.Context, dnsAuthorityReference DNSAuthorityReference, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetDNSAuthorityRequest(c.Server, dnsAuthorityReference)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RevokeHostedPolicyWithBody Apply a hosted team policy revision and close affected route sessions
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
+func (c *Client) RevokeHostedPolicyWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeHostedPolicyRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RevokeHostedPolicy Apply a hosted team policy revision and close affected route sessions
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
+func (c *Client) RevokeHostedPolicy(ctx context.Context, body RevokeHostedPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeHostedPolicyRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1828,107 +1821,6 @@ func NewDrainAdminRelayRequestWithBody(server string, relayId RelayID, contentTy
 	}
 
 	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewListServiceEnrollmentTokensRequest constructs an http.Request for the ListServiceEnrollmentTokens method
-func NewListServiceEnrollmentTokensRequest(server string) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/admin/service-enrollment-tokens")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewCreateServiceEnrollmentTokenRequest calls the generic CreateServiceEnrollmentToken builder with application/json body
-func NewCreateServiceEnrollmentTokenRequest(server string, body CreateServiceEnrollmentTokenJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewCreateServiceEnrollmentTokenRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewCreateServiceEnrollmentTokenRequestWithBody constructs an http.Request for the CreateServiceEnrollmentToken method, with any body, and a specified content type
-func NewCreateServiceEnrollmentTokenRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/admin/service-enrollment-tokens")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewRevokeServiceEnrollmentTokenRequest constructs an http.Request for the RevokeServiceEnrollmentToken method
-func NewRevokeServiceEnrollmentTokenRequest(server string, serviceEnrollmentTokenId ServiceEnrollmentTokenID) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_enrollment_token_id", serviceEnrollmentTokenId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/admin/service-enrollment-tokens/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
 
 	return req, nil
 }
@@ -2588,19 +2480,8 @@ func NewGetRouteRequest(server string, routeId RouteID) (*http.Request, error) {
 	return req, nil
 }
 
-// NewCreateRouteSessionRequest calls the generic CreateRouteSession builder with application/json body
-func NewCreateRouteSessionRequest(server string, routeId RouteID, params *CreateRouteSessionParams, body CreateRouteSessionJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewCreateRouteSessionRequestWithBody(server, routeId, params, "application/json", bodyReader)
-}
-
-// NewCreateRouteSessionRequestWithBody constructs an http.Request for the CreateRouteSession method, with any body, and a specified content type
-func NewCreateRouteSessionRequestWithBody(server string, routeId RouteID, params *CreateRouteSessionParams, contentType string, body io.Reader) (*http.Request, error) {
+// NewCreateRouteSessionRequest constructs an http.Request for the CreateRouteSession method
+func NewCreateRouteSessionRequest(server string, routeId RouteID, params *CreateRouteSessionParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -2616,6 +2497,57 @@ func NewCreateRouteSessionRequestWithBody(server string, routeId RouteID, params
 	}
 
 	operationPath := fmt.Sprintf("/v1/routes/%s/sessions", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewCreateDNSAuthorityRequest calls the generic CreateDNSAuthority builder with application/json body
+func NewCreateDNSAuthorityRequest(server string, params *CreateDNSAuthorityParams, body CreateDNSAuthorityJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateDNSAuthorityRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewCreateDNSAuthorityRequestWithBody constructs an http.Request for the CreateDNSAuthority method, with any body, and a specified content type
+func NewCreateDNSAuthorityRequestWithBody(server string, params *CreateDNSAuthorityParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/service/dns-authorities")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -2648,19 +2580,100 @@ func NewCreateRouteSessionRequestWithBody(server string, routeId RouteID, params
 	return req, nil
 }
 
-// NewEnrollServiceRequest calls the generic EnrollService builder with application/json body
-func NewEnrollServiceRequest(server string, body EnrollServiceJSONRequestBody) (*http.Request, error) {
+// NewReleaseDNSAuthorityRequest constructs an http.Request for the ReleaseDNSAuthority method
+func NewReleaseDNSAuthorityRequest(server string, dnsAuthorityReference DNSAuthorityReference, params *ReleaseDNSAuthorityParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "dns_authority_reference", dnsAuthorityReference, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/service/dns-authorities/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewGetDNSAuthorityRequest constructs an http.Request for the GetDNSAuthority method
+func NewGetDNSAuthorityRequest(server string, dnsAuthorityReference DNSAuthorityReference) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "dns_authority_reference", dnsAuthorityReference, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/service/dns-authorities/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewRevokeHostedPolicyRequest calls the generic RevokeHostedPolicy builder with application/json body
+func NewRevokeHostedPolicyRequest(server string, body RevokeHostedPolicyJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewEnrollServiceRequestWithBody(server, "application/json", bodyReader)
+	return NewRevokeHostedPolicyRequestWithBody(server, "application/json", bodyReader)
 }
 
-// NewEnrollServiceRequestWithBody constructs an http.Request for the EnrollService method, with any body, and a specified content type
-func NewEnrollServiceRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+// NewRevokeHostedPolicyRequestWithBody constructs an http.Request for the RevokeHostedPolicy method, with any body, and a specified content type
+func NewRevokeHostedPolicyRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -2668,7 +2681,7 @@ func NewEnrollServiceRequestWithBody(server string, contentType string, body io.
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/service-enrollments")
+	operationPath := fmt.Sprintf("/v1/service/revoke")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -2773,34 +2786,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/admin/relays/{relay_id}/drain (the `DrainAdminRelay` operationId).
 	DrainAdminRelayWithResponse(ctx context.Context, relayId RelayID, body DrainAdminRelayJSONRequestBody, reqEditors ...RequestEditorFn) (*DrainAdminRelayResponse, error)
-
-	// ListServiceEnrollmentTokensWithResponse List service enrollment tokens without their secrets
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /v1/admin/service-enrollment-tokens (the `ListServiceEnrollmentTokens` operationId).
-	ListServiceEnrollmentTokensWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListServiceEnrollmentTokensResponse, error)
-
-	// CreateServiceEnrollmentTokenWithBodyWithResponse Create one reusable role-scoped service enrollment token
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/admin/service-enrollment-tokens (the `CreateServiceEnrollmentToken` operationId).
-	CreateServiceEnrollmentTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateServiceEnrollmentTokenResponse, error)
-
-	// CreateServiceEnrollmentTokenWithResponse Create one reusable role-scoped service enrollment token
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/admin/service-enrollment-tokens (the `CreateServiceEnrollmentToken` operationId).
-	CreateServiceEnrollmentTokenWithResponse(ctx context.Context, body CreateServiceEnrollmentTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateServiceEnrollmentTokenResponse, error)
-
-	// RevokeServiceEnrollmentTokenWithResponse Revoke one service enrollment token
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with DELETE /v1/admin/service-enrollment-tokens/{service_enrollment_token_id} (the `RevokeServiceEnrollmentToken` operationId).
-	RevokeServiceEnrollmentTokenWithResponse(ctx context.Context, serviceEnrollmentTokenId ServiceEnrollmentTokenID, reqEditors ...RequestEditorFn) (*RevokeServiceEnrollmentTokenResponse, error)
 
 	// GetAdminServerStatusWithResponse Read control, ingress, and relay status
 	//
@@ -2956,33 +2941,54 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/routes/{route_id} (the `GetRoute` operationId).
 	GetRouteWithResponse(ctx context.Context, routeId RouteID, reqEditors ...RequestEditorFn) (*GetRouteResponse, error)
 
-	// CreateRouteSessionWithBodyWithResponse Create one publisher attachment and allocate its route version
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/routes/{route_id}/sessions (the `CreateRouteSession` operationId).
-	CreateRouteSessionWithBodyWithResponse(ctx context.Context, routeId RouteID, params *CreateRouteSessionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateRouteSessionResponse, error)
-
 	// CreateRouteSessionWithResponse Create one publisher attachment and allocate its route version
 	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/routes/{route_id}/sessions (the `CreateRouteSession` operationId).
-	CreateRouteSessionWithResponse(ctx context.Context, routeId RouteID, params *CreateRouteSessionParams, body CreateRouteSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateRouteSessionResponse, error)
+	CreateRouteSessionWithResponse(ctx context.Context, routeId RouteID, params *CreateRouteSessionParams, reqEditors ...RequestEditorFn) (*CreateRouteSessionResponse, error)
 
-	// EnrollServiceWithBodyWithResponse Issue or renew a process-local service identity
+	// CreateDNSAuthorityWithBodyWithResponse Create DNS execution state for one claimed domain
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/service-enrollments (the `EnrollService` operationId).
-	EnrollServiceWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*EnrollServiceResponse, error)
+	// Corresponds with POST /v1/service/dns-authorities (the `CreateDNSAuthority` operationId).
+	CreateDNSAuthorityWithBodyWithResponse(ctx context.Context, params *CreateDNSAuthorityParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateDNSAuthorityResponse, error)
 
-	// EnrollServiceWithResponse Issue or renew a process-local service identity
+	// CreateDNSAuthorityWithResponse Create DNS execution state for one claimed domain
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/service-enrollments (the `EnrollService` operationId).
-	EnrollServiceWithResponse(ctx context.Context, body EnrollServiceJSONRequestBody, reqEditors ...RequestEditorFn) (*EnrollServiceResponse, error)
+	// Corresponds with POST /v1/service/dns-authorities (the `CreateDNSAuthority` operationId).
+	CreateDNSAuthorityWithResponse(ctx context.Context, params *CreateDNSAuthorityParams, body CreateDNSAuthorityJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateDNSAuthorityResponse, error)
+
+	// ReleaseDNSAuthorityWithResponse Begin releasing one claimed domain's DNS execution state
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/service/dns-authorities/{dns_authority_reference} (the `ReleaseDNSAuthority` operationId).
+	ReleaseDNSAuthorityWithResponse(ctx context.Context, dnsAuthorityReference DNSAuthorityReference, params *ReleaseDNSAuthorityParams, reqEditors ...RequestEditorFn) (*ReleaseDNSAuthorityResponse, error)
+
+	// GetDNSAuthorityWithResponse Read DNS execution state for one claimed domain
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/service/dns-authorities/{dns_authority_reference} (the `GetDNSAuthority` operationId).
+	GetDNSAuthorityWithResponse(ctx context.Context, dnsAuthorityReference DNSAuthorityReference, reqEditors ...RequestEditorFn) (*GetDNSAuthorityResponse, error)
+
+	// RevokeHostedPolicyWithBodyWithResponse Apply a hosted team policy revision and close affected route sessions
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
+	RevokeHostedPolicyWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RevokeHostedPolicyResponse, error)
+
+	// RevokeHostedPolicyWithResponse Apply a hosted team policy revision and close affected route sessions
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
+	RevokeHostedPolicyWithResponse(ctx context.Context, body RevokeHostedPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*RevokeHostedPolicyResponse, error)
 }
 
 type ListMaintenanceControlsResponse struct {
@@ -3171,143 +3177,6 @@ func (r DrainAdminRelayResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r DrainAdminRelayResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type ListServiceEnrollmentTokensResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ServiceEnrollmentTokenPage
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListServiceEnrollmentTokensResponse) GetJSON200() *ServiceEnrollmentTokenPage {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r ListServiceEnrollmentTokensResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r ListServiceEnrollmentTokensResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ListServiceEnrollmentTokensResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ListServiceEnrollmentTokensResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ListServiceEnrollmentTokensResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type CreateServiceEnrollmentTokenResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *CreatedServiceEnrollmentToken
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r CreateServiceEnrollmentTokenResponse) GetJSON201() *CreatedServiceEnrollmentToken {
-	return r.JSON201
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r CreateServiceEnrollmentTokenResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r CreateServiceEnrollmentTokenResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r CreateServiceEnrollmentTokenResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r CreateServiceEnrollmentTokenResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r CreateServiceEnrollmentTokenResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type RevokeServiceEnrollmentTokenResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r RevokeServiceEnrollmentTokenResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r RevokeServiceEnrollmentTokenResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r RevokeServiceEnrollmentTokenResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r RevokeServiceEnrollmentTokenResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r RevokeServiceEnrollmentTokenResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -4171,32 +4040,32 @@ func (r CreateRouteSessionResponse) ContentType() string {
 	return ""
 }
 
-type EnrollServiceResponse struct {
+type CreateDNSAuthorityResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ServiceEnrollmentResponse
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *DNSAuthority
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
 }
 
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r EnrollServiceResponse) GetJSON200() *ServiceEnrollmentResponse {
-	return r.JSON200
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateDNSAuthorityResponse) GetJSON201() *DNSAuthority {
+	return r.JSON201
 }
 
 // GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r EnrollServiceResponse) GetApplicationproblemJSONDefault() *Problem {
+func (r CreateDNSAuthorityResponse) GetApplicationproblemJSONDefault() *Problem {
 	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
-func (r EnrollServiceResponse) GetBody() []byte {
+func (r CreateDNSAuthorityResponse) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r EnrollServiceResponse) Status() string {
+func (r CreateDNSAuthorityResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -4204,7 +4073,7 @@ func (r EnrollServiceResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r EnrollServiceResponse) StatusCode() int {
+func (r CreateDNSAuthorityResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -4212,7 +4081,144 @@ func (r EnrollServiceResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r EnrollServiceResponse) ContentType() string {
+func (r CreateDNSAuthorityResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ReleaseDNSAuthorityResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *DNSAuthority
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r ReleaseDNSAuthorityResponse) GetJSON202() *DNSAuthority {
+	return r.JSON202
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ReleaseDNSAuthorityResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ReleaseDNSAuthorityResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReleaseDNSAuthorityResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReleaseDNSAuthorityResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReleaseDNSAuthorityResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetDNSAuthorityResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *DNSAuthority
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetDNSAuthorityResponse) GetJSON200() *DNSAuthority {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetDNSAuthorityResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetDNSAuthorityResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetDNSAuthorityResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetDNSAuthorityResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetDNSAuthorityResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RevokeHostedPolicyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RevokeHostedPolicyResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RevokeHostedPolicyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokeHostedPolicyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokeHostedPolicyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RevokeHostedPolicyResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -4295,58 +4301,6 @@ func (c *ClientWithResponses) DrainAdminRelayWithResponse(ctx context.Context, r
 		return nil, err
 	}
 	return ParseDrainAdminRelayResponse(rsp)
-}
-
-// ListServiceEnrollmentTokensWithResponse List service enrollment tokens without their secrets
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /v1/admin/service-enrollment-tokens (the `ListServiceEnrollmentTokens` operationId).
-func (c *ClientWithResponses) ListServiceEnrollmentTokensWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListServiceEnrollmentTokensResponse, error) {
-	rsp, err := c.ListServiceEnrollmentTokens(ctx, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListServiceEnrollmentTokensResponse(rsp)
-}
-
-// CreateServiceEnrollmentTokenWithBodyWithResponse Create one reusable role-scoped service enrollment token
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/admin/service-enrollment-tokens (the `CreateServiceEnrollmentToken` operationId).
-func (c *ClientWithResponses) CreateServiceEnrollmentTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateServiceEnrollmentTokenResponse, error) {
-	rsp, err := c.CreateServiceEnrollmentTokenWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateServiceEnrollmentTokenResponse(rsp)
-}
-
-// CreateServiceEnrollmentTokenWithResponse Create one reusable role-scoped service enrollment token
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/admin/service-enrollment-tokens (the `CreateServiceEnrollmentToken` operationId).
-func (c *ClientWithResponses) CreateServiceEnrollmentTokenWithResponse(ctx context.Context, body CreateServiceEnrollmentTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateServiceEnrollmentTokenResponse, error) {
-	rsp, err := c.CreateServiceEnrollmentToken(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateServiceEnrollmentTokenResponse(rsp)
-}
-
-// RevokeServiceEnrollmentTokenWithResponse Revoke one service enrollment token
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with DELETE /v1/admin/service-enrollment-tokens/{service_enrollment_token_id} (the `RevokeServiceEnrollmentToken` operationId).
-func (c *ClientWithResponses) RevokeServiceEnrollmentTokenWithResponse(ctx context.Context, serviceEnrollmentTokenId ServiceEnrollmentTokenID, reqEditors ...RequestEditorFn) (*RevokeServiceEnrollmentTokenResponse, error) {
-	rsp, err := c.RevokeServiceEnrollmentToken(ctx, serviceEnrollmentTokenId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRevokeServiceEnrollmentTokenResponse(rsp)
 }
 
 // GetAdminServerStatusWithResponse Read control, ingress, and relay status
@@ -4635,56 +4589,95 @@ func (c *ClientWithResponses) GetRouteWithResponse(ctx context.Context, routeId 
 	return ParseGetRouteResponse(rsp)
 }
 
-// CreateRouteSessionWithBodyWithResponse Create one publisher attachment and allocate its route version
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/routes/{route_id}/sessions (the `CreateRouteSession` operationId).
-func (c *ClientWithResponses) CreateRouteSessionWithBodyWithResponse(ctx context.Context, routeId RouteID, params *CreateRouteSessionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateRouteSessionResponse, error) {
-	rsp, err := c.CreateRouteSessionWithBody(ctx, routeId, params, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateRouteSessionResponse(rsp)
-}
-
 // CreateRouteSessionWithResponse Create one publisher attachment and allocate its route version
 //
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/routes/{route_id}/sessions (the `CreateRouteSession` operationId).
-func (c *ClientWithResponses) CreateRouteSessionWithResponse(ctx context.Context, routeId RouteID, params *CreateRouteSessionParams, body CreateRouteSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateRouteSessionResponse, error) {
-	rsp, err := c.CreateRouteSession(ctx, routeId, params, body, reqEditors...)
+func (c *ClientWithResponses) CreateRouteSessionWithResponse(ctx context.Context, routeId RouteID, params *CreateRouteSessionParams, reqEditors ...RequestEditorFn) (*CreateRouteSessionResponse, error) {
+	rsp, err := c.CreateRouteSession(ctx, routeId, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseCreateRouteSessionResponse(rsp)
 }
 
-// EnrollServiceWithBodyWithResponse Issue or renew a process-local service identity
+// CreateDNSAuthorityWithBodyWithResponse Create DNS execution state for one claimed domain
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/service-enrollments (the `EnrollService` operationId).
-func (c *ClientWithResponses) EnrollServiceWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*EnrollServiceResponse, error) {
-	rsp, err := c.EnrollServiceWithBody(ctx, contentType, body, reqEditors...)
+// Corresponds with POST /v1/service/dns-authorities (the `CreateDNSAuthority` operationId).
+func (c *ClientWithResponses) CreateDNSAuthorityWithBodyWithResponse(ctx context.Context, params *CreateDNSAuthorityParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateDNSAuthorityResponse, error) {
+	rsp, err := c.CreateDNSAuthorityWithBody(ctx, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseEnrollServiceResponse(rsp)
+	return ParseCreateDNSAuthorityResponse(rsp)
 }
 
-// EnrollServiceWithResponse Issue or renew a process-local service identity
+// CreateDNSAuthorityWithResponse Create DNS execution state for one claimed domain
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/service-enrollments (the `EnrollService` operationId).
-func (c *ClientWithResponses) EnrollServiceWithResponse(ctx context.Context, body EnrollServiceJSONRequestBody, reqEditors ...RequestEditorFn) (*EnrollServiceResponse, error) {
-	rsp, err := c.EnrollService(ctx, body, reqEditors...)
+// Corresponds with POST /v1/service/dns-authorities (the `CreateDNSAuthority` operationId).
+func (c *ClientWithResponses) CreateDNSAuthorityWithResponse(ctx context.Context, params *CreateDNSAuthorityParams, body CreateDNSAuthorityJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateDNSAuthorityResponse, error) {
+	rsp, err := c.CreateDNSAuthority(ctx, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseEnrollServiceResponse(rsp)
+	return ParseCreateDNSAuthorityResponse(rsp)
+}
+
+// ReleaseDNSAuthorityWithResponse Begin releasing one claimed domain's DNS execution state
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/service/dns-authorities/{dns_authority_reference} (the `ReleaseDNSAuthority` operationId).
+func (c *ClientWithResponses) ReleaseDNSAuthorityWithResponse(ctx context.Context, dnsAuthorityReference DNSAuthorityReference, params *ReleaseDNSAuthorityParams, reqEditors ...RequestEditorFn) (*ReleaseDNSAuthorityResponse, error) {
+	rsp, err := c.ReleaseDNSAuthority(ctx, dnsAuthorityReference, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReleaseDNSAuthorityResponse(rsp)
+}
+
+// GetDNSAuthorityWithResponse Read DNS execution state for one claimed domain
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/service/dns-authorities/{dns_authority_reference} (the `GetDNSAuthority` operationId).
+func (c *ClientWithResponses) GetDNSAuthorityWithResponse(ctx context.Context, dnsAuthorityReference DNSAuthorityReference, reqEditors ...RequestEditorFn) (*GetDNSAuthorityResponse, error) {
+	rsp, err := c.GetDNSAuthority(ctx, dnsAuthorityReference, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetDNSAuthorityResponse(rsp)
+}
+
+// RevokeHostedPolicyWithBodyWithResponse Apply a hosted team policy revision and close affected route sessions
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
+func (c *ClientWithResponses) RevokeHostedPolicyWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RevokeHostedPolicyResponse, error) {
+	rsp, err := c.RevokeHostedPolicyWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeHostedPolicyResponse(rsp)
+}
+
+// RevokeHostedPolicyWithResponse Apply a hosted team policy revision and close affected route sessions
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
+func (c *ClientWithResponses) RevokeHostedPolicyWithResponse(ctx context.Context, body RevokeHostedPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*RevokeHostedPolicyResponse, error) {
+	rsp, err := c.RevokeHostedPolicy(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeHostedPolicyResponse(rsp)
 }
 
 // ParseListMaintenanceControlsResponse parses an HTTP response from a ListMaintenanceControlsWithResponse call
@@ -4806,101 +4799,6 @@ func ParseDrainAdminRelayResponse(rsp *http.Response) (*DrainAdminRelayResponse,
 			return nil, err
 		}
 		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseListServiceEnrollmentTokensResponse parses an HTTP response from a ListServiceEnrollmentTokensWithResponse call
-func ParseListServiceEnrollmentTokensResponse(rsp *http.Response) (*ListServiceEnrollmentTokensResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ListServiceEnrollmentTokensResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ServiceEnrollmentTokenPage
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseCreateServiceEnrollmentTokenResponse parses an HTTP response from a CreateServiceEnrollmentTokenWithResponse call
-func ParseCreateServiceEnrollmentTokenResponse(rsp *http.Response) (*CreateServiceEnrollmentTokenResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &CreateServiceEnrollmentTokenResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest CreatedServiceEnrollmentToken
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseRevokeServiceEnrollmentTokenResponse parses an HTTP response from a RevokeServiceEnrollmentTokenWithResponse call
-func ParseRevokeServiceEnrollmentTokenResponse(rsp *http.Response) (*RevokeServiceEnrollmentTokenResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &RevokeServiceEnrollmentTokenResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -5507,26 +5405,121 @@ func ParseCreateRouteSessionResponse(rsp *http.Response) (*CreateRouteSessionRes
 	return response, nil
 }
 
-// ParseEnrollServiceResponse parses an HTTP response from a EnrollServiceWithResponse call
-func ParseEnrollServiceResponse(rsp *http.Response) (*EnrollServiceResponse, error) {
+// ParseCreateDNSAuthorityResponse parses an HTTP response from a CreateDNSAuthorityWithResponse call
+func ParseCreateDNSAuthorityResponse(rsp *http.Response) (*CreateDNSAuthorityResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &EnrollServiceResponse{
+	response := &CreateDNSAuthorityResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest DNSAuthority
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReleaseDNSAuthorityResponse parses an HTTP response from a ReleaseDNSAuthorityWithResponse call
+func ParseReleaseDNSAuthorityResponse(rsp *http.Response) (*ReleaseDNSAuthorityResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReleaseDNSAuthorityResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest DNSAuthority
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetDNSAuthorityResponse parses an HTTP response from a GetDNSAuthorityWithResponse call
+func ParseGetDNSAuthorityResponse(rsp *http.Response) (*GetDNSAuthorityResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetDNSAuthorityResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ServiceEnrollmentResponse
+		var dest DNSAuthority
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRevokeHostedPolicyResponse parses an HTTP response from a RevokeHostedPolicyWithResponse call
+func ParseRevokeHostedPolicyResponse(rsp *http.Response) (*RevokeHostedPolicyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokeHostedPolicyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -5554,15 +5547,6 @@ type ServerInterface interface {
 	// DrainAdminRelay Remove one exact relay lease from placement and begin draining
 	// (POST /v1/admin/relays/{relay_id}/drain)
 	DrainAdminRelay(w http.ResponseWriter, r *http.Request, relayId RelayID)
-	// ListServiceEnrollmentTokens List service enrollment tokens without their secrets
-	// (GET /v1/admin/service-enrollment-tokens)
-	ListServiceEnrollmentTokens(w http.ResponseWriter, r *http.Request)
-	// CreateServiceEnrollmentToken Create one reusable role-scoped service enrollment token
-	// (POST /v1/admin/service-enrollment-tokens)
-	CreateServiceEnrollmentToken(w http.ResponseWriter, r *http.Request)
-	// RevokeServiceEnrollmentToken Revoke one service enrollment token
-	// (DELETE /v1/admin/service-enrollment-tokens/{service_enrollment_token_id})
-	RevokeServiceEnrollmentToken(w http.ResponseWriter, r *http.Request, serviceEnrollmentTokenId ServiceEnrollmentTokenID)
 	// GetAdminServerStatus Read control, ingress, and relay status
 	// (GET /v1/admin/status)
 	GetAdminServerStatus(w http.ResponseWriter, r *http.Request)
@@ -5617,9 +5601,18 @@ type ServerInterface interface {
 	// CreateRouteSession Create one publisher attachment and allocate its route version
 	// (POST /v1/routes/{route_id}/sessions)
 	CreateRouteSession(w http.ResponseWriter, r *http.Request, routeId RouteID, params CreateRouteSessionParams)
-	// EnrollService Issue or renew a process-local service identity
-	// (POST /v1/service-enrollments)
-	EnrollService(w http.ResponseWriter, r *http.Request)
+	// CreateDNSAuthority Create DNS execution state for one claimed domain
+	// (POST /v1/service/dns-authorities)
+	CreateDNSAuthority(w http.ResponseWriter, r *http.Request, params CreateDNSAuthorityParams)
+	// ReleaseDNSAuthority Begin releasing one claimed domain's DNS execution state
+	// (DELETE /v1/service/dns-authorities/{dns_authority_reference})
+	ReleaseDNSAuthority(w http.ResponseWriter, r *http.Request, dnsAuthorityReference DNSAuthorityReference, params ReleaseDNSAuthorityParams)
+	// GetDNSAuthority Read DNS execution state for one claimed domain
+	// (GET /v1/service/dns-authorities/{dns_authority_reference})
+	GetDNSAuthority(w http.ResponseWriter, r *http.Request, dnsAuthorityReference DNSAuthorityReference)
+	// RevokeHostedPolicy Apply a hosted team policy revision and close affected route sessions
+	// (POST /v1/service/revoke)
+	RevokeHostedPolicy(w http.ResponseWriter, r *http.Request)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -5702,60 +5695,6 @@ func (siw *ServerInterfaceWrapper) DrainAdminRelay(w http.ResponseWriter, r *htt
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.DrainAdminRelay(w, r, relayId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// ListServiceEnrollmentTokens operation middleware
-func (siw *ServerInterfaceWrapper) ListServiceEnrollmentTokens(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListServiceEnrollmentTokens(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// CreateServiceEnrollmentToken operation middleware
-func (siw *ServerInterfaceWrapper) CreateServiceEnrollmentToken(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreateServiceEnrollmentToken(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// RevokeServiceEnrollmentToken operation middleware
-func (siw *ServerInterfaceWrapper) RevokeServiceEnrollmentToken(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "service_enrollment_token_id" -------------
-	var serviceEnrollmentTokenId ServiceEnrollmentTokenID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "service_enrollment_token_id", r.PathValue("service_enrollment_token_id"), &serviceEnrollmentTokenId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_enrollment_token_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.RevokeServiceEnrollmentToken(w, r, serviceEnrollmentTokenId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -6268,11 +6207,136 @@ func (siw *ServerInterfaceWrapper) CreateRouteSession(w http.ResponseWriter, r *
 	handler.ServeHTTP(w, r)
 }
 
-// EnrollService operation middleware
-func (siw *ServerInterfaceWrapper) EnrollService(w http.ResponseWriter, r *http.Request) {
+// CreateDNSAuthority operation middleware
+func (siw *ServerInterfaceWrapper) CreateDNSAuthority(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreateDNSAuthorityParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.EnrollService(w, r)
+		siw.Handler.CreateDNSAuthority(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReleaseDNSAuthority operation middleware
+func (siw *ServerInterfaceWrapper) ReleaseDNSAuthority(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "dns_authority_reference" -------------
+	var dnsAuthorityReference DNSAuthorityReference
+
+	err = runtime.BindStyledParameterWithOptions("simple", "dns_authority_reference", r.PathValue("dns_authority_reference"), &dnsAuthorityReference, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "dns_authority_reference", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ReleaseDNSAuthorityParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReleaseDNSAuthority(w, r, dnsAuthorityReference, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetDNSAuthority operation middleware
+func (siw *ServerInterfaceWrapper) GetDNSAuthority(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "dns_authority_reference" -------------
+	var dnsAuthorityReference DNSAuthorityReference
+
+	err = runtime.BindStyledParameterWithOptions("simple", "dns_authority_reference", r.PathValue("dns_authority_reference"), &dnsAuthorityReference, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "dns_authority_reference", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetDNSAuthority(w, r, dnsAuthorityReference)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RevokeHostedPolicy operation middleware
+func (siw *ServerInterfaceWrapper) RevokeHostedPolicy(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RevokeHostedPolicy(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -6422,12 +6486,12 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/admin/status", wrapper.GetAdminServerStatus)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/admin/relays", wrapper.ListAdminRelays)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/admin/relays/{relay_id}/drain", wrapper.DrainAdminRelay)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/admin/service-enrollment-tokens", wrapper.ListServiceEnrollmentTokens)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/admin/service-enrollment-tokens", wrapper.CreateServiceEnrollmentToken)
-	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/admin/service-enrollment-tokens/{service_enrollment_token_id}", wrapper.RevokeServiceEnrollmentToken)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/admin/maintenance-controls", wrapper.ListMaintenanceControls)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/admin/maintenance-controls/{control_name}", wrapper.SetMaintenanceControl)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/service-enrollments", wrapper.EnrollService)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/service/revoke", wrapper.RevokeHostedPolicy)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/service/dns-authorities", wrapper.CreateDNSAuthority)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/service/dns-authorities/{dns_authority_reference}", wrapper.ReleaseDNSAuthority)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/service/dns-authorities/{dns_authority_reference}", wrapper.GetDNSAuthority)
 
 	return m
 }
@@ -6579,116 +6643,6 @@ type DrainAdminRelaydefaultApplicationProblemPlusJSONResponse struct {
 }
 
 func (response DrainAdminRelaydefaultApplicationProblemPlusJSONResponse) VisitDrainAdminRelayResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type ListServiceEnrollmentTokensRequestObject struct {
-}
-
-type ListServiceEnrollmentTokensResponseObject interface {
-	VisitListServiceEnrollmentTokensResponse(w http.ResponseWriter) error
-}
-
-type ListServiceEnrollmentTokens200JSONResponse ServiceEnrollmentTokenPage
-
-func (response ListServiceEnrollmentTokens200JSONResponse) VisitListServiceEnrollmentTokensResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type ListServiceEnrollmentTokensdefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response ListServiceEnrollmentTokensdefaultApplicationProblemPlusJSONResponse) VisitListServiceEnrollmentTokensResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type CreateServiceEnrollmentTokenRequestObject struct {
-	Body *CreateServiceEnrollmentTokenJSONRequestBody
-}
-
-type CreateServiceEnrollmentTokenResponseObject interface {
-	VisitCreateServiceEnrollmentTokenResponse(w http.ResponseWriter) error
-}
-
-type CreateServiceEnrollmentToken201JSONResponse CreatedServiceEnrollmentToken
-
-func (response CreateServiceEnrollmentToken201JSONResponse) VisitCreateServiceEnrollmentTokenResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(201)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type CreateServiceEnrollmentTokendefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response CreateServiceEnrollmentTokendefaultApplicationProblemPlusJSONResponse) VisitCreateServiceEnrollmentTokenResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type RevokeServiceEnrollmentTokenRequestObject struct {
-	ServiceEnrollmentTokenId ServiceEnrollmentTokenID `json:"service_enrollment_token_id"`
-}
-
-type RevokeServiceEnrollmentTokenResponseObject interface {
-	VisitRevokeServiceEnrollmentTokenResponse(w http.ResponseWriter) error
-}
-
-type RevokeServiceEnrollmentToken204Response struct {
-}
-
-func (response RevokeServiceEnrollmentToken204Response) VisitRevokeServiceEnrollmentTokenResponse(w http.ResponseWriter) error {
-	w.WriteHeader(204)
-	return nil
-}
-
-type RevokeServiceEnrollmentTokendefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response RevokeServiceEnrollmentTokendefaultApplicationProblemPlusJSONResponse) VisitRevokeServiceEnrollmentTokenResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -7369,7 +7323,6 @@ func (response GetRoutedefaultApplicationProblemPlusJSONResponse) VisitGetRouteR
 type CreateRouteSessionRequestObject struct {
 	RouteId RouteID `json:"route_id"`
 	Params  CreateRouteSessionParams
-	Body    *CreateRouteSessionJSONRequestBody
 }
 
 type CreateRouteSessionResponseObject interface {
@@ -7407,17 +7360,97 @@ func (response CreateRouteSessiondefaultApplicationProblemPlusJSONResponse) Visi
 	return err
 }
 
-type EnrollServiceRequestObject struct {
-	Body *EnrollServiceJSONRequestBody
+type CreateDNSAuthorityRequestObject struct {
+	Params CreateDNSAuthorityParams
+	Body   *CreateDNSAuthorityJSONRequestBody
 }
 
-type EnrollServiceResponseObject interface {
-	VisitEnrollServiceResponse(w http.ResponseWriter) error
+type CreateDNSAuthorityResponseObject interface {
+	VisitCreateDNSAuthorityResponse(w http.ResponseWriter) error
 }
 
-type EnrollService200JSONResponse ServiceEnrollmentResponse
+type CreateDNSAuthority201JSONResponse DNSAuthority
 
-func (response EnrollService200JSONResponse) VisitEnrollServiceResponse(w http.ResponseWriter) error {
+func (response CreateDNSAuthority201JSONResponse) VisitCreateDNSAuthorityResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateDNSAuthoritydefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response CreateDNSAuthoritydefaultApplicationProblemPlusJSONResponse) VisitCreateDNSAuthorityResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReleaseDNSAuthorityRequestObject struct {
+	DnsAuthorityReference DNSAuthorityReference `json:"dns_authority_reference"`
+	Params                ReleaseDNSAuthorityParams
+}
+
+type ReleaseDNSAuthorityResponseObject interface {
+	VisitReleaseDNSAuthorityResponse(w http.ResponseWriter) error
+}
+
+type ReleaseDNSAuthority202JSONResponse DNSAuthority
+
+func (response ReleaseDNSAuthority202JSONResponse) VisitReleaseDNSAuthorityResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReleaseDNSAuthoritydefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response ReleaseDNSAuthoritydefaultApplicationProblemPlusJSONResponse) VisitReleaseDNSAuthorityResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetDNSAuthorityRequestObject struct {
+	DnsAuthorityReference DNSAuthorityReference `json:"dns_authority_reference"`
+}
+
+type GetDNSAuthorityResponseObject interface {
+	VisitGetDNSAuthorityResponse(w http.ResponseWriter) error
+}
+
+type GetDNSAuthority200JSONResponse DNSAuthority
+
+func (response GetDNSAuthority200JSONResponse) VisitGetDNSAuthorityResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -7429,12 +7462,45 @@ func (response EnrollService200JSONResponse) VisitEnrollServiceResponse(w http.R
 	return err
 }
 
-type EnrollServicedefaultApplicationProblemPlusJSONResponse struct {
+type GetDNSAuthoritydefaultApplicationProblemPlusJSONResponse struct {
 	Body       Problem
 	StatusCode int
 }
 
-func (response EnrollServicedefaultApplicationProblemPlusJSONResponse) VisitEnrollServiceResponse(w http.ResponseWriter) error {
+func (response GetDNSAuthoritydefaultApplicationProblemPlusJSONResponse) VisitGetDNSAuthorityResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RevokeHostedPolicyRequestObject struct {
+	Body *RevokeHostedPolicyJSONRequestBody
+}
+
+type RevokeHostedPolicyResponseObject interface {
+	VisitRevokeHostedPolicyResponse(w http.ResponseWriter) error
+}
+
+type RevokeHostedPolicy204Response struct {
+}
+
+func (response RevokeHostedPolicy204Response) VisitRevokeHostedPolicyResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type RevokeHostedPolicydefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response RevokeHostedPolicydefaultApplicationProblemPlusJSONResponse) VisitRevokeHostedPolicyResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -7460,15 +7526,6 @@ type StrictServerInterface interface {
 	// DrainAdminRelay Remove one exact relay lease from placement and begin draining
 	// (POST /v1/admin/relays/{relay_id}/drain)
 	DrainAdminRelay(ctx context.Context, request DrainAdminRelayRequestObject) (DrainAdminRelayResponseObject, error)
-	// ListServiceEnrollmentTokens List service enrollment tokens without their secrets
-	// (GET /v1/admin/service-enrollment-tokens)
-	ListServiceEnrollmentTokens(ctx context.Context, request ListServiceEnrollmentTokensRequestObject) (ListServiceEnrollmentTokensResponseObject, error)
-	// CreateServiceEnrollmentToken Create one reusable role-scoped service enrollment token
-	// (POST /v1/admin/service-enrollment-tokens)
-	CreateServiceEnrollmentToken(ctx context.Context, request CreateServiceEnrollmentTokenRequestObject) (CreateServiceEnrollmentTokenResponseObject, error)
-	// RevokeServiceEnrollmentToken Revoke one service enrollment token
-	// (DELETE /v1/admin/service-enrollment-tokens/{service_enrollment_token_id})
-	RevokeServiceEnrollmentToken(ctx context.Context, request RevokeServiceEnrollmentTokenRequestObject) (RevokeServiceEnrollmentTokenResponseObject, error)
 	// GetAdminServerStatus Read control, ingress, and relay status
 	// (GET /v1/admin/status)
 	GetAdminServerStatus(ctx context.Context, request GetAdminServerStatusRequestObject) (GetAdminServerStatusResponseObject, error)
@@ -7523,9 +7580,18 @@ type StrictServerInterface interface {
 	// CreateRouteSession Create one publisher attachment and allocate its route version
 	// (POST /v1/routes/{route_id}/sessions)
 	CreateRouteSession(ctx context.Context, request CreateRouteSessionRequestObject) (CreateRouteSessionResponseObject, error)
-	// EnrollService Issue or renew a process-local service identity
-	// (POST /v1/service-enrollments)
-	EnrollService(ctx context.Context, request EnrollServiceRequestObject) (EnrollServiceResponseObject, error)
+	// CreateDNSAuthority Create DNS execution state for one claimed domain
+	// (POST /v1/service/dns-authorities)
+	CreateDNSAuthority(ctx context.Context, request CreateDNSAuthorityRequestObject) (CreateDNSAuthorityResponseObject, error)
+	// ReleaseDNSAuthority Begin releasing one claimed domain's DNS execution state
+	// (DELETE /v1/service/dns-authorities/{dns_authority_reference})
+	ReleaseDNSAuthority(ctx context.Context, request ReleaseDNSAuthorityRequestObject) (ReleaseDNSAuthorityResponseObject, error)
+	// GetDNSAuthority Read DNS execution state for one claimed domain
+	// (GET /v1/service/dns-authorities/{dns_authority_reference})
+	GetDNSAuthority(ctx context.Context, request GetDNSAuthorityRequestObject) (GetDNSAuthorityResponseObject, error)
+	// RevokeHostedPolicy Apply a hosted team policy revision and close affected route sessions
+	// (POST /v1/service/revoke)
+	RevokeHostedPolicy(ctx context.Context, request RevokeHostedPolicyRequestObject) (RevokeHostedPolicyResponseObject, error)
 }
 
 type StrictHandlerFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error)
@@ -7674,87 +7740,6 @@ func (sh *strictHandler) DrainAdminRelay(w http.ResponseWriter, r *http.Request,
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(DrainAdminRelayResponseObject); ok {
 		if err := validResponse.VisitDrainAdminRelayResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// ListServiceEnrollmentTokens operation middleware
-func (sh *strictHandler) ListServiceEnrollmentTokens(w http.ResponseWriter, r *http.Request) {
-	var request ListServiceEnrollmentTokensRequestObject
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.ListServiceEnrollmentTokens(ctx, request.(ListServiceEnrollmentTokensRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "ListServiceEnrollmentTokens")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(ListServiceEnrollmentTokensResponseObject); ok {
-		if err := validResponse.VisitListServiceEnrollmentTokensResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// CreateServiceEnrollmentToken operation middleware
-func (sh *strictHandler) CreateServiceEnrollmentToken(w http.ResponseWriter, r *http.Request) {
-	var request CreateServiceEnrollmentTokenRequestObject
-
-	var body CreateServiceEnrollmentTokenJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.CreateServiceEnrollmentToken(ctx, request.(CreateServiceEnrollmentTokenRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "CreateServiceEnrollmentToken")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(CreateServiceEnrollmentTokenResponseObject); ok {
-		if err := validResponse.VisitCreateServiceEnrollmentTokenResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// RevokeServiceEnrollmentToken operation middleware
-func (sh *strictHandler) RevokeServiceEnrollmentToken(w http.ResponseWriter, r *http.Request, serviceEnrollmentTokenId ServiceEnrollmentTokenID) {
-	var request RevokeServiceEnrollmentTokenRequestObject
-
-	request.ServiceEnrollmentTokenId = serviceEnrollmentTokenId
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.RevokeServiceEnrollmentToken(ctx, request.(RevokeServiceEnrollmentTokenRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "RevokeServiceEnrollmentToken")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(RevokeServiceEnrollmentTokenResponseObject); ok {
-		if err := validResponse.VisitRevokeServiceEnrollmentTokenResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -8237,13 +8222,6 @@ func (sh *strictHandler) CreateRouteSession(w http.ResponseWriter, r *http.Reque
 	request.RouteId = routeId
 	request.Params = params
 
-	var body CreateRouteSessionJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
 		return sh.ssi.CreateRouteSession(ctx, request.(CreateRouteSessionRequestObject))
 	}
@@ -8264,11 +8242,13 @@ func (sh *strictHandler) CreateRouteSession(w http.ResponseWriter, r *http.Reque
 	}
 }
 
-// EnrollService operation middleware
-func (sh *strictHandler) EnrollService(w http.ResponseWriter, r *http.Request) {
-	var request EnrollServiceRequestObject
+// CreateDNSAuthority operation middleware
+func (sh *strictHandler) CreateDNSAuthority(w http.ResponseWriter, r *http.Request, params CreateDNSAuthorityParams) {
+	var request CreateDNSAuthorityRequestObject
 
-	var body EnrollServiceJSONRequestBody
+	request.Params = params
+
+	var body CreateDNSAuthorityJSONRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
 		return
@@ -8276,18 +8256,102 @@ func (sh *strictHandler) EnrollService(w http.ResponseWriter, r *http.Request) {
 	request.Body = &body
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.EnrollService(ctx, request.(EnrollServiceRequestObject))
+		return sh.ssi.CreateDNSAuthority(ctx, request.(CreateDNSAuthorityRequestObject))
 	}
 	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "EnrollService")
+		handler = middleware(handler, "CreateDNSAuthority")
 	}
 
 	response, err := handler(r.Context(), w, r, request)
 
 	if err != nil {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(EnrollServiceResponseObject); ok {
-		if err := validResponse.VisitEnrollServiceResponse(w); err != nil {
+	} else if validResponse, ok := response.(CreateDNSAuthorityResponseObject); ok {
+		if err := validResponse.VisitCreateDNSAuthorityResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ReleaseDNSAuthority operation middleware
+func (sh *strictHandler) ReleaseDNSAuthority(w http.ResponseWriter, r *http.Request, dnsAuthorityReference DNSAuthorityReference, params ReleaseDNSAuthorityParams) {
+	var request ReleaseDNSAuthorityRequestObject
+
+	request.DnsAuthorityReference = dnsAuthorityReference
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ReleaseDNSAuthority(ctx, request.(ReleaseDNSAuthorityRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ReleaseDNSAuthority")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ReleaseDNSAuthorityResponseObject); ok {
+		if err := validResponse.VisitReleaseDNSAuthorityResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetDNSAuthority operation middleware
+func (sh *strictHandler) GetDNSAuthority(w http.ResponseWriter, r *http.Request, dnsAuthorityReference DNSAuthorityReference) {
+	var request GetDNSAuthorityRequestObject
+
+	request.DnsAuthorityReference = dnsAuthorityReference
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetDNSAuthority(ctx, request.(GetDNSAuthorityRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetDNSAuthority")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetDNSAuthorityResponseObject); ok {
+		if err := validResponse.VisitGetDNSAuthorityResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RevokeHostedPolicy operation middleware
+func (sh *strictHandler) RevokeHostedPolicy(w http.ResponseWriter, r *http.Request) {
+	var request RevokeHostedPolicyRequestObject
+
+	var body RevokeHostedPolicyJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RevokeHostedPolicy(ctx, request.(RevokeHostedPolicyRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RevokeHostedPolicy")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RevokeHostedPolicyResponseObject); ok {
+		if err := validResponse.VisitRevokeHostedPolicyResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

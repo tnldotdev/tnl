@@ -210,6 +210,51 @@ func (q *Queries) GetRelayLeaseForClaim(ctx context.Context, relayID string) (Ge
 	return i, err
 }
 
+const getRelayServiceCertificate = `-- name: GetRelayServiceCertificate :one
+SELECT services.relay_service_id, services.relay_address, services.tls_server_name, services.transport_certificate_pem, services.transport_private_key_ciphertext, services.transport_private_key_storage_key_id, services.transport_certificate_serial, services.transport_certificate_expires_at, services.enabled, services.created_at, services.updated_at
+FROM control.relay_services AS services
+JOIN control.relay_leases AS leases USING (relay_service_id)
+WHERE services.relay_service_id = $1
+  AND services.enabled
+  AND leases.relay_id = $2
+  AND leases.relay_run_id = $3
+  AND leases.relay_lease_revision = $4
+  AND leases.lease_expires_at > $5
+`
+
+type GetRelayServiceCertificateParams struct {
+	RelayServiceID     string
+	RelayID            string
+	RelayRunID         string
+	RelayLeaseRevision int64
+	Now                pgtype.Timestamptz
+}
+
+func (q *Queries) GetRelayServiceCertificate(ctx context.Context, arg GetRelayServiceCertificateParams) (ControlRelayService, error) {
+	row := q.db.QueryRow(ctx, getRelayServiceCertificate,
+		arg.RelayServiceID,
+		arg.RelayID,
+		arg.RelayRunID,
+		arg.RelayLeaseRevision,
+		arg.Now,
+	)
+	var i ControlRelayService
+	err := row.Scan(
+		&i.RelayServiceID,
+		&i.RelayAddress,
+		&i.TlsServerName,
+		&i.TransportCertificatePem,
+		&i.TransportPrivateKeyCiphertext,
+		&i.TransportPrivateKeyStorageKeyID,
+		&i.TransportCertificateSerial,
+		&i.TransportCertificateExpiresAt,
+		&i.Enabled,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const lockEligibleRelayLeases = `-- name: LockEligibleRelayLeases :many
 SELECT leases.relay_id, leases.relay_service_id, leases.relay_run_id, leases.relay_lease_revision, leases.protocol_version, leases.internal_relay_address, leases.observed_address, leases.internal_networks, leases.connection_capacity, leases.stream_capacity, leases.reported_connections, leases.reported_streams, leases.draining, leases.drain_deadline, leases.registered_at, leases.renewed_at, leases.lease_expires_at, services.relay_address, services.tls_server_name
 FROM control.relay_leases AS leases
@@ -559,6 +604,90 @@ func (q *Queries) RenewRelay(ctx context.Context, arg RenewRelayParams) (RenewRe
 		&i.LeaseExpiresAt,
 		&i.RelayAddress,
 		&i.TlsServerName,
+	)
+	return i, err
+}
+
+const rotateRelayServicePrivateKey = `-- name: RotateRelayServicePrivateKey :exec
+UPDATE control.relay_services
+SET transport_private_key_ciphertext = $1,
+    transport_private_key_storage_key_id = $2,
+    updated_at = GREATEST(updated_at, $3)
+WHERE relay_service_id = $4
+  AND transport_private_key_storage_key_id = $5
+  AND transport_private_key_ciphertext = $6
+`
+
+type RotateRelayServicePrivateKeyParams struct {
+	TransportPrivateKeyCiphertext   []byte
+	TransportPrivateKeyStorageKeyID pgtype.Text
+	UpdatedAt                       pgtype.Timestamptz
+	RelayServiceID                  string
+	PreviousKeyID                   pgtype.Text
+	PreviousCiphertext              []byte
+}
+
+func (q *Queries) RotateRelayServicePrivateKey(ctx context.Context, arg RotateRelayServicePrivateKeyParams) error {
+	_, err := q.db.Exec(ctx, rotateRelayServicePrivateKey,
+		arg.TransportPrivateKeyCiphertext,
+		arg.TransportPrivateKeyStorageKeyID,
+		arg.UpdatedAt,
+		arg.RelayServiceID,
+		arg.PreviousKeyID,
+		arg.PreviousCiphertext,
+	)
+	return err
+}
+
+const storeRelayServiceCertificate = `-- name: StoreRelayServiceCertificate :one
+UPDATE control.relay_services
+SET transport_certificate_pem = $1,
+    transport_private_key_ciphertext = $2,
+    transport_private_key_storage_key_id = $3,
+    transport_certificate_serial = $4,
+    transport_certificate_expires_at = $5,
+    updated_at = GREATEST(updated_at, $6)
+WHERE relay_service_id = $7
+  AND tls_server_name = $8
+  AND enabled
+RETURNING relay_service_id, relay_address, tls_server_name, transport_certificate_pem, transport_private_key_ciphertext, transport_private_key_storage_key_id, transport_certificate_serial, transport_certificate_expires_at, enabled, created_at, updated_at
+`
+
+type StoreRelayServiceCertificateParams struct {
+	TransportCertificatePem         pgtype.Text
+	TransportPrivateKeyCiphertext   []byte
+	TransportPrivateKeyStorageKeyID pgtype.Text
+	TransportCertificateSerial      pgtype.Text
+	TransportCertificateExpiresAt   pgtype.Timestamptz
+	UpdatedAt                       pgtype.Timestamptz
+	RelayServiceID                  string
+	TlsServerName                   string
+}
+
+func (q *Queries) StoreRelayServiceCertificate(ctx context.Context, arg StoreRelayServiceCertificateParams) (ControlRelayService, error) {
+	row := q.db.QueryRow(ctx, storeRelayServiceCertificate,
+		arg.TransportCertificatePem,
+		arg.TransportPrivateKeyCiphertext,
+		arg.TransportPrivateKeyStorageKeyID,
+		arg.TransportCertificateSerial,
+		arg.TransportCertificateExpiresAt,
+		arg.UpdatedAt,
+		arg.RelayServiceID,
+		arg.TlsServerName,
+	)
+	var i ControlRelayService
+	err := row.Scan(
+		&i.RelayServiceID,
+		&i.RelayAddress,
+		&i.TlsServerName,
+		&i.TransportCertificatePem,
+		&i.TransportPrivateKeyCiphertext,
+		&i.TransportPrivateKeyStorageKeyID,
+		&i.TransportCertificateSerial,
+		&i.TransportCertificateExpiresAt,
+		&i.Enabled,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }

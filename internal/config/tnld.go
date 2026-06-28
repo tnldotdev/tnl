@@ -1,21 +1,21 @@
 package config
 
 import (
-	"crypto/ed25519"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"net"
 	"net/mail"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/alecthomas/kong"
-	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/serviceapi"
+	"github.com/tnldotdev/tnl/internal/storagekey"
 )
 
 const defaultACMEDirectoryURL = "https://acme-v02.api.letsencrypt.org/directory"
@@ -54,13 +54,12 @@ type TNLD struct {
 	MetricsListen string `name:"metrics-listen" env:"TNLD_METRICS_LISTEN" default:"127.0.0.1:9090" help:"Private Prometheus listen address; empty disables metrics."`
 
 	ControlListen        string `name:"control-listen" env:"TNLD_CONTROL_LISTEN" help:"Public control HTTPS listen address."`
-	IngressControlListen string `name:"ingress-control-listen" env:"TNLD_INGRESS_CONTROL_LISTEN" help:"Private service-mTLS ingress API listen address."`
-	RelayControlListen   string `name:"relay-control-listen" env:"TNLD_RELAY_CONTROL_LISTEN" help:"Private service-mTLS relay API listen address."`
+	PrivateControlListen string `name:"private-control-listen" env:"TNLD_PRIVATE_CONTROL_LISTEN" help:"Private cluster-authenticated ingress and relay API listen address."`
 	IngressListen        string `name:"ingress-listen" env:"TNLD_INGRESS_LISTEN" help:"Public visitor TCP listen address."`
 	RelayTCPListen       string `name:"relay-tcp-listen" env:"TNLD_RELAY_TCP_LISTEN" help:"Public TLS/TCP publisher-connection listen address."`
 	RelayUDPListen       string `name:"relay-udp-listen" env:"TNLD_RELAY_UDP_LISTEN" help:"Public QUIC publisher-connection listen address."`
-	InternalRelayListen  string `name:"internal-relay-listen" env:"TNLD_INTERNAL_RELAY_LISTEN" help:"Internal service-mTLS forwarding listen address."`
-	DNSServer            string `name:"dns-server" env:"TNLD_DNS_SERVER" help:"DNS resolver used for readiness checks; defaults to the system resolver."`
+	InternalRelayListen  string `name:"internal-relay-listen" env:"TNLD_INTERNAL_RELAY_LISTEN" help:"Internal forwarding listen address."`
+	DNSServer            string `name:"dns-server" env:"TNLD_DNS_SERVER" help:"DNS resolver used for authoritative verification; defaults to the system resolver."`
 
 	ServerDomain            string   `name:"server-domain" env:"TNLD_SERVER_DOMAIN" help:"Infrastructure DNS suffix used to derive control, ingress, and relay hostnames."`
 	ControlHostname         string   `name:"control-hostname" env:"TNLD_CONTROL_HOSTNAME" help:"Control API hostname used by ingress and relay processes."`
@@ -69,31 +68,43 @@ type TNLD struct {
 
 	ControlTLSCertificateFile string `name:"control-tls-certificate-file" env:"TNLD_CONTROL_TLS_CERTIFICATE_FILE" type:"path" help:"Optional static public control certificate chain override."`
 	ControlTLSPrivateKeyFile  string `name:"control-tls-private-key-file" env:"TNLD_CONTROL_TLS_PRIVATE_KEY_FILE" type:"path" help:"Optional static public control private key override."`
+	RelayTLSCertificateFile   string `name:"relay-tls-certificate-file" env:"TNLD_RELAY_TLS_CERTIFICATE_FILE" type:"path" help:"Optional static public relay certificate chain override."`
+	RelayTLSPrivateKeyFile    string `name:"relay-tls-private-key-file" env:"TNLD_RELAY_TLS_PRIVATE_KEY_FILE" type:"path" help:"Optional static public relay private key override."`
 	ACMEDirectoryURL          string `name:"acme-directory-url" env:"TNLD_ACME_DIRECTORY_URL" help:"ACME directory URL for automatic public certificates."`
 	ACMEEmail                 string `name:"acme-email" env:"TNLD_ACME_EMAIL" help:"ACME account contact email."`
 	ACMEAcceptTerms           bool   `name:"acme-accept-terms" env:"TNLD_ACME_ACCEPT_TERMS" help:"Explicitly accept the ACME directory terms."`
 	ACMEProfile               string `name:"acme-profile" env:"TNLD_ACME_PROFILE" default:"tlsserver" help:"ACME certificate profile."`
 
-	OIDCIssuer             string        `name:"oidc-issuer" env:"TNLD_OIDC_ISSUER" help:"OIDC issuer used by the authority."`
-	OIDCClientID           string        `name:"oidc-client-id" env:"TNLD_OIDC_CLIENT_ID" help:"OIDC client ID used by the authority."`
-	OIDCLoginFlow          OIDCLoginFlow `name:"oidc-login-flow" env:"TNLD_OIDC_LOGIN_FLOW" help:"OIDC login flow: device_code or authorization_code_pkce."`
-	OIDCScopes             []string      `name:"oidc-scope" env:"TNLD_OIDC_SCOPES" help:"OIDC scope requested by clients; repeat for each scope."`
-	LoginToken             string        `name:"login-token" env:"TNLD_LOGIN_TOKEN" help:"Bootstrap login token for the built-in administrator identity."`
-	AuthorityEndpoint      string        `name:"authority-endpoint" env:"TNLD_AUTHORITY_ENDPOINT" help:"Exact external authority HTTPS origin; defaults to the control origin."`
-	AuthorizationIssuer    string        `name:"authorization-issuer" env:"TNLD_AUTHORIZATION_ISSUER" help:"Exact trusted signed-authorization issuer."`
-	AuthorizationReceiver  string        `name:"authorization-receiver" env:"TNLD_AUTHORIZATION_RECEIVER" help:"Expected signed-authorization receiver."`
-	AuthorizationKeyID     string        `name:"authorization-key-id" env:"TNLD_AUTHORIZATION_KEY_ID" help:"Trusted authorization Ed25519 key ID."`
-	AuthorizationPublicKey string        `name:"authorization-public-key" env:"TNLD_AUTHORIZATION_PUBLIC_KEY" help:"Trusted Ed25519 public key in unpadded base64url form."`
-	AccessTokenLifetime    time.Duration `name:"access-token-lifetime" env:"TNLD_ACCESS_TOKEN_LIFETIME" default:"1h" help:"Lifetime of newly issued access tokens."`
-	RefreshTokenLifetime   time.Duration `name:"refresh-token-lifetime" env:"TNLD_REFRESH_TOKEN_LIFETIME" default:"720h" help:"Absolute lifetime of newly issued control sessions."`
+	OIDCIssuer           string        `name:"oidc-issuer" env:"TNLD_OIDC_ISSUER" help:"OIDC issuer used by the authority."`
+	OIDCClientID         string        `name:"oidc-client-id" env:"TNLD_OIDC_CLIENT_ID" help:"OIDC client ID used by the authority."`
+	OIDCLoginFlow        OIDCLoginFlow `name:"oidc-login-flow" env:"TNLD_OIDC_LOGIN_FLOW" help:"OIDC login flow: device_code or authorization_code_pkce."`
+	OIDCScopes           []string      `name:"oidc-scope" env:"TNLD_OIDC_SCOPES" help:"OIDC scope requested by clients; repeat for each scope."`
+	LoginToken           string        `name:"login-token" env:"TNLD_LOGIN_TOKEN" help:"Bootstrap login token for the built-in administrator identity."`
+	AuthorityEndpoint    string        `name:"authority-endpoint" env:"TNLD_AUTHORITY_ENDPOINT" help:"Exact external authority HTTPS origin; defaults to the control origin."`
+	AccessTokenLifetime  time.Duration `name:"access-token-lifetime" env:"TNLD_ACCESS_TOKEN_LIFETIME" default:"1h" help:"Lifetime of newly issued access tokens."`
+	RefreshTokenLifetime time.Duration `name:"refresh-token-lifetime" env:"TNLD_REFRESH_TOKEN_LIFETIME" default:"720h" help:"Absolute lifetime of newly issued control sessions."`
 
 	RouteUsageURL   string `name:"route-usage-url" env:"TNLD_ROUTE_USAGE_URL" help:"Route usage receiver base URL."`
 	RouteUsageToken string `name:"route-usage-token" env:"TNLD_ROUTE_USAGE_TOKEN" help:"Service token for the route usage receiver."`
 
-	ServiceEnrollmentToken string `name:"service-enrollment-token" env:"TNLD_SERVICE_ENROLLMENT_TOKEN" help:"Reusable role-scoped service enrollment token."`
-	IngressID              string `name:"ingress-id" env:"TNLD_INGRESS_ID" help:"Stable ingress process identity."`
-	RelayID                string `name:"relay-id" env:"TNLD_RELAY_ID" help:"Stable relay process identity."`
-	InternalRelayAddress   string `name:"internal-relay-address" env:"TNLD_INTERNAL_RELAY_ADDRESS" help:"Internal hostname and port advertised by this relay process."`
+	Route53Region        string   `name:"route53-region" env:"TNLD_ROUTE53_REGION" default:"us-east-1" help:"AWS region used to sign Route 53 requests."`
+	Route53ManagedZoneID string   `name:"route53-managed-zone-id" env:"TNLD_ROUTE53_MANAGED_ZONE_ID" help:"Existing Route 53 hosted zone ID for the managed deployment domain; enables DNS automation."`
+	Route53ServerZoneID  string   `name:"route53-server-zone-id" env:"TNLD_ROUTE53_SERVER_ZONE_ID" help:"Existing Route 53 hosted zone ID for the server domain; enables relay certificate DNS-01."`
+	IngressIPv4Addresses []string `name:"ingress-ipv4-address" env:"TNLD_INGRESS_IPV4_ADDRESSES" help:"Stable ingress IPv4 address published in owned route records; repeat for each address."`
+	IngressIPv6Addresses []string `name:"ingress-ipv6-address" env:"TNLD_INGRESS_IPV6_ADDRESSES" help:"Stable ingress IPv6 address published in owned route records; repeat for each address."`
+
+	ClusterSecret         string `name:"cluster-secret" env:"TNLD_CLUSTER_SECRET" help:"Current shared secret for private communication among control, ingress, and relays."`
+	ClusterSecretPrevious string `name:"cluster-secret-previous" env:"TNLD_CLUSTER_SECRET_PREVIOUS" help:"Previous cluster secret accepted only during rotation."`
+	HostedSecret          string `name:"hosted-secret" env:"TNLD_HOSTED_SECRET" help:"Current secret shared by control and the hosted authority."`
+	HostedSecretPrevious  string `name:"hosted-secret-previous" env:"TNLD_HOSTED_SECRET_PREVIOUS" help:"Previous hosted secret accepted only during rotation."`
+	StorageKey            string `name:"storage-key" env:"TNLD_STORAGE_KEY" help:"Canonical base64url AES-256 key used to encrypt recoverable PostgreSQL secrets."`
+	StorageKeyPrevious    string `name:"storage-key-previous" env:"TNLD_STORAGE_KEY_PREVIOUS" help:"Previous storage key retained only during re-encryption."`
+
+	IngressID            string `name:"ingress-id" env:"TNLD_INGRESS_ID" help:"Stable ingress process identity."`
+	RelayServiceID       string `name:"relay-service-id" env:"TNLD_RELAY_SERVICE_ID" help:"Stable relay service identity for this relay process."`
+	RelayID              string `name:"relay-id" env:"TNLD_RELAY_ID" help:"Stable relay process identity."`
+	RelayAddress         string `name:"relay-address" env:"TNLD_RELAY_ADDRESS" help:"Stable public relay hostname and port advertised by this relay service."`
+	InternalRelayAddress string `name:"internal-relay-address" env:"TNLD_INTERNAL_RELAY_ADDRESS" help:"Internal hostname and port advertised by this relay process."`
 
 	PublicConnectionLimit    int64         `name:"public-connection-limit" env:"TNLD_PUBLIC_CONNECTION_LIMIT" default:"20000" help:"Maximum concurrent public visitor connections."`
 	RouteConnectionLimit     int64         `name:"route-connection-limit" env:"TNLD_ROUTE_CONNECTION_LIMIT" default:"500" help:"Maximum concurrent visitor connections per route."`
@@ -126,24 +137,37 @@ func (c TNLD) Validate() error {
 		if err := validateControlHostname(c.ControlHostname); err != nil {
 			return err
 		}
-		if !validServiceEnrollmentToken(c.ServiceEnrollmentToken) {
-			return errors.New("service enrollment token is invalid")
+		if _, err := serviceapi.NewBearerSecrets(c.ClusterSecret, c.ClusterSecretPrevious); err != nil {
+			return errors.New("cluster secret configuration is invalid")
+		}
+		if c.HostedSecret != "" || c.HostedSecretPrevious != "" || c.StorageKey != "" || c.StorageKeyPrevious != "" ||
+			c.Route53ManagedZoneID != "" || c.Route53ServerZoneID != "" ||
+			len(c.IngressIPv4Addresses) != 0 || len(c.IngressIPv6Addresses) != 0 {
+			return errors.New("ingress and relay modes cannot receive hosted, storage, or DNS provider configuration")
 		}
 	}
 	if c.Mode == TNLDModeIngress && !validProcessID(c.IngressID) {
 		return errors.New("ingress ID is required and must be canonical")
 	}
 	if c.Mode == TNLDModeRelay {
-		if !validProcessID(c.RelayID) {
-			return errors.New("relay ID is required and must be canonical")
+		if !validProcessID(c.RelayServiceID) || !validProcessID(c.RelayID) {
+			return errors.New("relay service ID and relay ID are required and must be canonical")
+		}
+		if err := validateRelayAddress(c.RelayAddress); err != nil {
+			return err
 		}
 		if err := validateListenAddress(c.InternalRelayAddress); err != nil {
 			return fmt.Errorf("internal relay address: %w", err)
 		}
 	}
+	if (c.RelayTLSCertificateFile == "") != (c.RelayTLSPrivateKeyFile == "") {
+		return errors.New("relay TLS certificate and private key must be configured together")
+	}
+	if c.Mode != TNLDModeRelay && c.Mode != TNLDModeStandalone && (c.RelayTLSCertificateFile != "" || c.RelayTLSPrivateKeyFile != "") {
+		return errors.New("relay TLS overrides are valid only for relay and standalone modes")
+	}
 	for name, address := range map[string]string{
-		"metrics": c.MetricsListen, "control": c.ControlListen,
-		"ingress control": c.IngressControlListen, "relay control": c.RelayControlListen,
+		"metrics": c.MetricsListen, "control": c.ControlListen, "private control": c.PrivateControlListen,
 		"ingress": c.IngressListen, "relay TCP": c.RelayTCPListen,
 		"relay UDP": c.RelayUDPListen, "internal relay": c.InternalRelayListen,
 		"DNS server": c.DNSServer,
@@ -170,8 +194,8 @@ func (c TNLD) validateControl() error {
 	if err := validatePostgresURL(c.DatabaseURL); err != nil {
 		return err
 	}
-	if c.ControlListen == "" || c.IngressControlListen == "" || c.RelayControlListen == "" {
-		return errors.New("control and private service listen addresses are required")
+	if c.ControlListen == "" || c.PrivateControlListen == "" {
+		return errors.New("control and private control listen addresses are required")
 	}
 	if err := validateCanonicalHostname(c.ServerDomain, "server domain"); err != nil {
 		return err
@@ -179,8 +203,15 @@ func (c TNLD) validateControl() error {
 	if err := validateCanonicalHostname(c.ManagedDeploymentDomain, "managed deployment domain"); err != nil {
 		return err
 	}
-	if c.ControlHostname != "" || c.ServiceEnrollmentToken != "" || c.IngressID != "" || c.RelayID != "" || c.InternalRelayAddress != "" {
+	if c.ControlHostname != "" || c.IngressID != "" || c.RelayServiceID != "" || c.RelayID != "" || c.RelayAddress != "" || c.InternalRelayAddress != "" {
 		return errors.New("split-process configuration is invalid for control and standalone")
+	}
+	if c.Mode == TNLDModeStandalone {
+		if c.ClusterSecret != "" || c.ClusterSecretPrevious != "" {
+			return errors.New("standalone does not accept a configured cluster secret")
+		}
+	} else if _, err := serviceapi.NewBearerSecrets(c.ClusterSecret, c.ClusterSecretPrevious); err != nil {
+		return errors.New("cluster secret configuration is invalid")
 	}
 	if c.LoginToken == "" {
 		return errors.New("login token is required for control and standalone")
@@ -194,14 +225,24 @@ func (c TNLD) validateControl() error {
 	if err := c.validateOIDC(); err != nil {
 		return err
 	}
-	if err := c.validateAuthorization(); err != nil {
+	if err := c.validateHostedAuthority(); err != nil {
 		return err
+	}
+	if _, err := storagekey.New(c.StorageKey, c.StorageKeyPrevious); err != nil {
+		return errors.New("storage key configuration is invalid")
 	}
 	if err := c.validateACME(); err != nil {
 		return err
 	}
 	if err := c.validateRouteUsage(); err != nil {
 		return err
+	}
+	if err := c.validateDNSAutomation(); err != nil {
+		return err
+	}
+	if c.Mode == TNLDModeStandalone && c.ControlTLSCertificateFile != "" &&
+		c.RelayTLSCertificateFile == "" && c.Route53ServerZoneID == "" {
+		return errors.New("standalone with a static control certificate requires relay certificate automation or a static relay TLS override")
 	}
 	if c.AccessTokenLifetime < minimumAccessTokenLifetime || c.AccessTokenLifetime > maximumAccessTokenLifetime {
 		return fmt.Errorf("access token lifetime must be between %s and %s", minimumAccessTokenLifetime, maximumAccessTokenLifetime)
@@ -264,6 +305,54 @@ func (c TNLD) validateRouteUsage() error {
 	return nil
 }
 
+func (c TNLD) validateDNSAutomation() error {
+	configured := c.Route53ManagedZoneID != "" || c.Route53ServerZoneID != "" ||
+		len(c.IngressIPv4Addresses) != 0 || len(c.IngressIPv6Addresses) != 0
+	if !configured {
+		return nil
+	}
+	for name, zoneID := range map[string]string{
+		"managed": c.Route53ManagedZoneID, "server": c.Route53ServerZoneID,
+	} {
+		if zoneID != "" && (strings.TrimSpace(zoneID) != zoneID || strings.ContainsAny(zoneID, "/ ")) {
+			return fmt.Errorf("route 53 %s zone ID must be a canonical bare hosted zone ID", name)
+		}
+	}
+	if !validDNSLabel(c.Route53Region) {
+		return errors.New("route 53 region is invalid")
+	}
+	if c.Route53ManagedZoneID == "" && (len(c.IngressIPv4Addresses) != 0 || len(c.IngressIPv6Addresses) != 0) {
+		return errors.New("ingress IP addresses require a Route 53 managed zone ID")
+	}
+	if c.Route53ManagedZoneID == "" {
+		return nil
+	}
+	if len(c.IngressIPv4Addresses) == 0 && len(c.IngressIPv6Addresses) == 0 {
+		return errors.New("DNS automation requires at least one ingress IP address")
+	}
+	seen := make(map[netip.Addr]struct{}, len(c.IngressIPv4Addresses)+len(c.IngressIPv6Addresses))
+	for _, values := range []struct {
+		name string
+		want func(netip.Addr) bool
+		all  []string
+	}{
+		{name: "ingress IPv4 address", want: netip.Addr.Is4, all: c.IngressIPv4Addresses},
+		{name: "ingress IPv6 address", want: netip.Addr.Is6, all: c.IngressIPv6Addresses},
+	} {
+		for _, value := range values.all {
+			address, err := netip.ParseAddr(value)
+			if err != nil || address.String() != value || !values.want(address) {
+				return fmt.Errorf("%s %q is not canonical", values.name, value)
+			}
+			if _, exists := seen[address]; exists {
+				return fmt.Errorf("%s %q is configured more than once", values.name, value)
+			}
+			seen[address] = struct{}{}
+		}
+	}
+	return nil
+}
+
 func (c TNLD) OIDCEnabled() bool { return c.OIDCIssuer != "" }
 
 func (c TNLD) EffectiveOIDCScopes() []string {
@@ -305,58 +394,35 @@ func (c TNLD) validateOIDC() error {
 	return nil
 }
 
-func (c TNLD) SignedAuthorizationEnabled() bool { return c.AuthorityEndpoint != "" }
-
-func (c TNLD) AuthorizationConfig() authorization.Config {
-	publicKey, _ := base64.RawURLEncoding.DecodeString(c.AuthorizationPublicKey)
-	return authorization.Config{
-		Issuer: c.AuthorizationIssuer, Receiver: c.AuthorizationReceiver,
-		KeyID: c.AuthorizationKeyID, PublicKey: ed25519.PublicKey(publicKey),
-	}
-}
-
-func (c TNLD) validateAuthorization() error {
-	values := []string{c.AuthorityEndpoint, c.AuthorizationIssuer, c.AuthorizationReceiver, c.AuthorizationKeyID, c.AuthorizationPublicKey}
-	configured, complete := false, true
-	for _, value := range values {
-		configured = configured || value != ""
-		complete = complete && value != ""
-	}
-	if !configured {
+func (c TNLD) validateHostedAuthority() error {
+	if c.AuthorityEndpoint == "" {
+		if c.HostedSecret != "" || c.HostedSecretPrevious != "" {
+			return errors.New("hosted secret requires an external authority endpoint")
+		}
 		return nil
-	}
-	if !complete {
-		return errors.New("authority signing configuration is incomplete")
-	}
-	if !c.Mode.RunsControl() {
-		return errors.New("authority signing configuration is valid only for control and standalone")
 	}
 	if err := validateHTTPSOrigin(c.AuthorityEndpoint, "authority endpoint"); err != nil {
 		return err
 	}
-	for _, field := range []struct{ name, value string }{
-		{name: "authorization issuer", value: c.AuthorizationIssuer},
-		{name: "authorization receiver", value: c.AuthorizationReceiver},
-	} {
-		parsed, err := url.Parse(field.value)
-		if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
-			return fmt.Errorf("%s must be an HTTPS URL without credentials, query, or fragment", field.name)
-		}
-	}
-	if strings.TrimSpace(c.AuthorizationKeyID) != c.AuthorizationKeyID || c.AuthorizationKeyID == "" || len(c.AuthorizationKeyID) > 128 {
-		return errors.New("authorization key ID is invalid")
-	}
-	publicKey, err := base64.RawURLEncoding.DecodeString(c.AuthorizationPublicKey)
-	if err != nil || len(publicKey) != ed25519.PublicKeySize || base64.RawURLEncoding.EncodeToString(publicKey) != c.AuthorizationPublicKey {
-		return errors.New("authorization public key must be a canonical unpadded base64url Ed25519 key")
-	}
-	if _, err := authorization.NewVerifier(c.AuthorizationConfig()); err != nil {
-		return fmt.Errorf("authority signing configuration: %w", err)
+	if _, err := serviceapi.NewBearerSecrets(c.HostedSecret, c.HostedSecretPrevious); err != nil {
+		return errors.New("hosted secret configuration is invalid")
 	}
 	return nil
 }
 
 func (c TNLD) ACMEEnabled() bool { return c.Mode.RunsControl() }
+
+func (c TNLD) DNSAutomationEnabled() bool {
+	return c.Mode.RunsControl() && c.Route53ManagedZoneID != ""
+}
+
+func (c TNLD) DNSProviderEnabled() bool {
+	return c.Mode.RunsControl() && (c.Route53ManagedZoneID != "" || c.Route53ServerZoneID != "")
+}
+
+func (c TNLD) RelayCertificateAutomationEnabled() bool {
+	return c.Mode.RunsControl() && c.Route53ServerZoneID != ""
+}
 
 func (c TNLD) ServerHostname() string {
 	if !c.Mode.RunsControl() || c.ServerDomain == "" {
@@ -387,18 +453,14 @@ func (c TNLD) RelayServiceHostname(relayServiceID string) string {
 	return relayServiceID + "." + c.ServerDomain
 }
 
-// IngressControlEndpoint is the fixed private control endpoint returned during ingress enrollment.
-func (c TNLD) IngressControlEndpoint() string {
-	if hostname := c.ServerHostname(); hostname != "" {
-		return "https://" + net.JoinHostPort(hostname, "9443")
+// PrivateControlEndpoint is the fixed private endpoint used by ingress and relay processes.
+func (c TNLD) PrivateControlEndpoint() string {
+	hostname := c.ServerHostname()
+	if hostname == "" {
+		hostname = c.ControlHostname
 	}
-	return ""
-}
-
-// RelayControlEndpoint is the fixed private control endpoint returned during relay enrollment.
-func (c TNLD) RelayControlEndpoint() string {
-	if hostname := c.ServerHostname(); hostname != "" {
-		return "https://" + net.JoinHostPort(hostname, "9444")
+	if hostname != "" {
+		return "https://" + net.JoinHostPort(hostname, "9443")
 	}
 	return ""
 }
@@ -496,11 +558,8 @@ func setControlDefaults(config *TNLD) {
 	if config.ControlListen == "" {
 		config.ControlListen = ":443"
 	}
-	if config.IngressControlListen == "" {
-		config.IngressControlListen = ":9443"
-	}
-	if config.RelayControlListen == "" {
-		config.RelayControlListen = ":9444"
+	if config.PrivateControlListen == "" {
+		config.PrivateControlListen = ":9443"
 	}
 	if config.ACMEDirectoryURL == "" {
 		config.ACMEDirectoryURL = defaultACMEDirectoryURL
@@ -561,9 +620,20 @@ func validateListenAddress(value string) error {
 	return nil
 }
 
-func validServiceEnrollmentToken(value string) bool {
-	return strings.HasPrefix(value, "tnl_enrollment_") && len(value) >= 32 && len(value) <= 4096 &&
-		strings.TrimSpace(value) == value && !strings.ContainsAny(value, " \t\r\n")
+func validateRelayAddress(value string) error {
+	host, port, err := net.SplitHostPort(value)
+	if err != nil || port == "" {
+		return errors.New("relay address must be a canonical hostname and port")
+	}
+	canonical, err := naming.CanonicalizeHostname(host)
+	if err != nil || canonical != host {
+		return errors.New("relay address must use a canonical hostname")
+	}
+	number, err := strconv.Atoi(port)
+	if err != nil || number < 1 || number > 65535 || strconv.Itoa(number) != port {
+		return errors.New("relay address port must be between 1 and 65535")
+	}
+	return nil
 }
 
 func validProcessID(value string) bool {

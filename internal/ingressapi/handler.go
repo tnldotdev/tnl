@@ -1,9 +1,8 @@
-// Package ingressapi serves the private mTLS-authenticated control API for ingress.
+// Package ingressapi serves the cluster-authenticated private control API for ingress.
 package ingressapi
 
 import (
 	"context"
-	"crypto/x509"
 	"errors"
 	"log"
 	"net/http"
@@ -28,11 +27,9 @@ type Store interface {
 	ObserveRouteRecovery(context.Context, controlstate.IngressLeaseIdentity, string, uint64, uint64, time.Time) (controlstate.RouteRecoveryObservation, error)
 }
 
-type IngressIdentityFunc func(*x509.Certificate) (string, error)
-
 type Config struct {
 	Store               Store
-	IngressIdentity     IngressIdentityFunc
+	ClusterSecrets      serviceapi.BearerSecrets
 	LeaseDuration       time.Duration
 	RoutingPollInterval time.Duration
 	Now                 func() time.Time
@@ -41,7 +38,7 @@ type Config struct {
 
 type handler struct {
 	store               Store
-	ingressIdentity     IngressIdentityFunc
+	clusterSecrets      serviceapi.BearerSecrets
 	leaseDuration       time.Duration
 	routingPollInterval time.Duration
 	now                 func() time.Time
@@ -49,11 +46,10 @@ type handler struct {
 	mux                 *http.ServeMux
 }
 
-// NewHandler constructs the private ingress service. Its enclosing TLS server
-// must require and verify client certificates.
+// NewHandler constructs the private ingress service.
 func NewHandler(config Config) (http.Handler, error) {
-	if config.Store == nil || config.IngressIdentity == nil {
-		return nil, errors.New("ingressapi: store and ingress certificate identity are required")
+	if config.Store == nil || !config.ClusterSecrets.Valid() {
+		return nil, errors.New("ingressapi: store and cluster secrets are required")
 	}
 	if config.LeaseDuration <= 0 {
 		return nil, errors.New("ingressapi: ingress lease duration must be positive")
@@ -68,7 +64,7 @@ func NewHandler(config Config) (http.Handler, error) {
 		config.Report = func(err error) { log.Printf("ingress service: %v", err) }
 	}
 	h := &handler{
-		store: config.Store, ingressIdentity: config.IngressIdentity, leaseDuration: config.LeaseDuration,
+		store: config.Store, clusterSecrets: config.ClusterSecrets, leaseDuration: config.LeaseDuration,
 		routingPollInterval: config.RoutingPollInterval, now: config.Now, report: config.Report,
 		mux: http.NewServeMux(),
 	}
@@ -86,18 +82,17 @@ func NewHandler(config Config) (http.Handler, error) {
 
 func (h *handler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
 	response.Header().Set("Cache-Control", "no-store")
-	identity, err := serviceapi.VerifiedIdentity(request, serviceapi.CertificateIdentityFunc(h.ingressIdentity))
-	if err != nil {
-		serviceapi.WriteProblem(response, http.StatusUnauthorized, "unauthenticated", "A verified ingress client certificate is required")
+	if !h.clusterSecrets.Authenticate(request.Header) {
+		response.Header().Set("WWW-Authenticate", "Bearer")
+		serviceapi.WriteProblem(response, http.StatusUnauthorized, "unauthenticated", "A valid cluster secret is required")
 		return
 	}
-	request = request.WithContext(context.WithValue(request.Context(), ingressIdentityKey{}, identity))
 	h.mux.ServeHTTP(response, request)
 }
 
 func (h *handler) registerIngress(response http.ResponseWriter, request *http.Request) {
 	var body ingressv1.IngressRegistration
-	if !serviceapi.DecodeJSON(response, request, &body) || !h.authorizeIngress(response, request, body.IngressId) {
+	if !serviceapi.DecodeJSON(response, request, &body) {
 		return
 	}
 	if !serviceapi.ValidIdentifiers(body.IngressId, body.IngressRunId) {
@@ -124,8 +119,7 @@ func (h *handler) registerIngress(response http.ResponseWriter, request *http.Re
 func (h *handler) renewIngress(response http.ResponseWriter, request *http.Request) {
 	var body ingressv1.IngressRenewal
 	if !serviceapi.DecodeJSON(response, request, &body) ||
-		!serviceapi.MatchingPathValue(response, request, "ingress_id", body.IngressId) ||
-		!h.authorizeIngress(response, request, body.IngressId) {
+		!serviceapi.MatchingPathValue(response, request, "ingress_id", body.IngressId) {
 		return
 	}
 	identity, ok := ingressLeaseIdentity(body.IngressId, body.IngressRunId, body.IngressLeaseRevision)
@@ -149,8 +143,7 @@ func (h *handler) renewIngress(response http.ResponseWriter, request *http.Reque
 func (h *handler) drainIngress(response http.ResponseWriter, request *http.Request) {
 	var body ingressv1.IngressDrainRequest
 	if !serviceapi.DecodeJSON(response, request, &body) ||
-		!serviceapi.MatchingPathValue(response, request, "ingress_id", body.IngressId) ||
-		!h.authorizeIngress(response, request, body.IngressId) {
+		!serviceapi.MatchingPathValue(response, request, "ingress_id", body.IngressId) {
 		return
 	}
 	identity, ok := ingressLeaseIdentity(body.IngressId, body.IngressRunId, body.IngressLeaseRevision)
@@ -231,8 +224,7 @@ func (h *handler) routingTableEvents(response http.ResponseWriter, request *http
 func (h *handler) reportUsage(response http.ResponseWriter, request *http.Request) {
 	var body ingressv1.IngressUsageReportBatch
 	if !serviceapi.DecodeJSON(response, request, &body) ||
-		!serviceapi.MatchingPathValue(response, request, "ingress_id", body.IngressId) ||
-		!h.authorizeIngress(response, request, body.IngressId) {
+		!serviceapi.MatchingPathValue(response, request, "ingress_id", body.IngressId) {
 		return
 	}
 	identity, ok := ingressLeaseIdentity(body.IngressId, body.IngressRunId, body.IngressLeaseRevision)
@@ -260,8 +252,7 @@ func (h *handler) observeRecovery(response http.ResponseWriter, request *http.Re
 	}
 	var body ingressv1.RouteRecoveryObservationRequest
 	if !serviceapi.DecodeJSON(response, request, &body) ||
-		!serviceapi.MatchingPathValue(response, request, "ingress_id", body.IngressId) ||
-		!h.authorizeIngress(response, request, body.IngressId) {
+		!serviceapi.MatchingPathValue(response, request, "ingress_id", body.IngressId) {
 		return
 	}
 	identity, ok := ingressLeaseIdentity(body.IngressId, body.IngressRunId, body.IngressLeaseRevision)
@@ -289,9 +280,6 @@ func (h *handler) ingressIdentityFromQuery(
 	request *http.Request,
 ) (controlstate.IngressLeaseIdentity, bool) {
 	ingressID := request.PathValue("ingress_id")
-	if !h.authorizeIngress(response, request, ingressID) {
-		return controlstate.IngressLeaseIdentity{}, false
-	}
 	revision, err := strconv.ParseInt(request.URL.Query().Get("ingress_lease_revision"), 10, 64)
 	if err != nil {
 		serviceapi.WriteProblem(response, http.StatusBadRequest, "invalid_request", "ingress_lease_revision must be positive")
@@ -303,15 +291,6 @@ func (h *handler) ingressIdentityFromQuery(
 		return controlstate.IngressLeaseIdentity{}, false
 	}
 	return identity, true
-}
-
-func (h *handler) authorizeIngress(response http.ResponseWriter, request *http.Request, ingressID string) bool {
-	identity, _ := request.Context().Value(ingressIdentityKey{}).(string)
-	if ingressID == identity {
-		return true
-	}
-	serviceapi.WriteProblem(response, http.StatusForbidden, "ingress_identity_mismatch", "The client certificate does not authorize this ingress ID")
-	return false
 }
 
 func (h *handler) writeStoreError(response http.ResponseWriter, err error) {
@@ -492,5 +471,3 @@ func queryWholeSecondDuration(
 	parsed, err := time.ParseDuration(value)
 	return parsed, err == nil && parsed >= 0 && parsed <= maximum && parsed%time.Second == 0
 }
-
-type ingressIdentityKey struct{}

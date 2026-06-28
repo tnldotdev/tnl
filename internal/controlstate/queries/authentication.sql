@@ -13,18 +13,11 @@ FROM control.domains
 WHERE kind = 'managed'
   AND released_at IS NULL;
 
--- name: ManagedLabelExists :one
-SELECT EXISTS (
-    SELECT 1
-    FROM control.teams AS t
-    WHERE t.managed_label = sqlc.arg(label)
-      AND t.deleted_at IS NULL
-    UNION ALL
-    SELECT 1
-    FROM control.team_memberships AS m
-    WHERE m.managed_label = sqlc.arg(label)
-      AND m.removed_at IS NULL
-);
+-- name: ReserveManagedLabel :one
+INSERT INTO control.managed_label_reservations (label, created_at)
+VALUES (sqlc.arg(label), sqlc.arg(created_at))
+ON CONFLICT (label) DO NOTHING
+RETURNING label;
 
 -- name: CreateIdentity :exec
 INSERT INTO control.identities (
@@ -189,7 +182,8 @@ INSERT INTO control.control_sessions (
     access_expires_at,
     refresh_token_id,
     refresh_token_digest,
-    retry_secret,
+    retry_secret_ciphertext,
+    retry_secret_storage_key_id,
     refresh_expires_at,
     created_at,
     last_refreshed_at
@@ -204,7 +198,8 @@ INSERT INTO control.control_sessions (
     sqlc.arg(access_expires_at),
     sqlc.arg(refresh_token_id),
     sqlc.arg(refresh_token_digest),
-    sqlc.arg(retry_secret),
+    sqlc.arg(retry_secret_ciphertext),
+    sqlc.arg(retry_secret_storage_key_id),
     sqlc.arg(refresh_expires_at),
     sqlc.arg(created_at),
     sqlc.arg(created_at)
@@ -218,7 +213,8 @@ SELECT
     s.authentication_source_revision,
     s.access_token_digest,
     s.access_expires_at,
-    s.retry_secret,
+    s.retry_secret_ciphertext,
+    s.retry_secret_storage_key_id,
     s.refresh_expires_at,
     i.administrator
 FROM control.control_sessions AS s
@@ -242,6 +238,14 @@ WHERE s.refresh_token_id = sqlc.arg(refresh_token_id)
   AND s.revoked_at IS NULL
   AND i.disabled_at IS NULL
 FOR UPDATE OF s;
+
+-- name: RotateControlSessionRetrySecret :exec
+UPDATE control.control_sessions
+SET retry_secret_ciphertext = sqlc.arg(retry_secret_ciphertext),
+    retry_secret_storage_key_id = sqlc.arg(retry_secret_storage_key_id)
+WHERE id = sqlc.arg(id)
+  AND retry_secret_storage_key_id = sqlc.arg(previous_key_id)
+  AND retry_secret_ciphertext = sqlc.arg(previous_ciphertext);
 
 -- name: RotateControlSessionCredentials :execrows
 UPDATE control.control_sessions

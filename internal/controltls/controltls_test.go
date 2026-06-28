@@ -28,7 +28,8 @@ func TestAutomaticCertificateConfiguration(t *testing.T) {
 	cache := newMemoryCache()
 	source, err := New(Config{
 		Hostname: "control.example", Cache: cache, DirectoryURL: "https://acme.example/directory",
-		Email: "operator@example.com", AcceptTerms: true, AccountKey: testAccountKey(t),
+		AdditionalHostnames: []string{"relay.example"},
+		Email:               "operator@example.com", AcceptTerms: true, AccountKey: testAccountKey(t),
 		RunLeader: func(ctx context.Context, run func(context.Context) error) error { return run(ctx) },
 	})
 	if err != nil {
@@ -44,6 +45,12 @@ func TestAutomaticCertificateConfiguration(t *testing.T) {
 	if err := cache.Put(t.Context(), "control.example", testCertificate(t, "control.example")); err != nil {
 		t.Fatal(err)
 	}
+	if source.Ready(time.Now()) {
+		t.Fatal("source is ready without every certificate")
+	}
+	if err := cache.Put(t.Context(), "relay.example", testCertificate(t, "relay.example")); err != nil {
+		t.Fatal(err)
+	}
 	if !source.Ready(time.Now()) {
 		t.Fatal("source is not ready with a certificate")
 	}
@@ -53,6 +60,10 @@ func TestAutomaticCertificateConfiguration(t *testing.T) {
 	}
 	if _, err := source.GetCertificate(&tls.ClientHelloInfo{ServerName: "other.example"}); err == nil {
 		t.Fatal("unexpected SNI was accepted")
+	}
+	relayCertificate, err := source.GetCertificate(&tls.ClientHelloInfo{ServerName: "relay.example"})
+	if err != nil || relayCertificate.Leaf == nil || relayCertificate.Leaf.DNSNames[0] != "relay.example" {
+		t.Fatalf("relay certificate = %#v, %v", relayCertificate, err)
 	}
 }
 

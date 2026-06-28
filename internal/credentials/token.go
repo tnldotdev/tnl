@@ -15,10 +15,10 @@ const (
 	accessPrefix     = "tnl_access_"
 	loginPrefix      = "tnl_login_"
 	refreshPrefix    = "tnl_refresh_"
+	invitationPrefix = "tnl_invitation_"
 	sessionPrefix    = "tnl_session_"
 	connectionPrefix = "tnl_connection_"
 	servicePrefix    = "tnl_service_"
-	enrollmentPrefix = "tnl_enrollment_"
 	lookupBytes      = 16
 	secretBytes      = 32
 )
@@ -30,14 +30,14 @@ var (
 	ErrInvalidLoginToken = errors.New("invalid login token")
 	// ErrInvalidRefreshToken is returned for malformed or rejected refresh tokens.
 	ErrInvalidRefreshToken = errors.New("invalid refresh token")
+	// ErrInvalidInvitationToken is returned for malformed or rejected invitation tokens.
+	ErrInvalidInvitationToken = errors.New("invalid invitation token")
 	// ErrInvalidSessionToken is returned for malformed or rejected session tokens.
 	ErrInvalidSessionToken = errors.New("invalid session token")
 	// ErrInvalidPublisherConnectionCredential is returned for malformed publisher connection credentials.
 	ErrInvalidPublisherConnectionCredential = errors.New("invalid publisher connection credential")
 	// ErrInvalidServiceToken is returned for malformed service tokens.
 	ErrInvalidServiceToken = errors.New("invalid service token")
-	// ErrInvalidServiceEnrollmentToken is returned for malformed service enrollment tokens.
-	ErrInvalidServiceEnrollmentToken = errors.New("invalid service enrollment token")
 )
 
 // AccessToken authenticates a identity to the tnl server API.
@@ -49,6 +49,9 @@ type LoginToken string
 // RefreshToken rotates one control session's access and refresh credentials.
 type RefreshToken string
 
+// InvitationToken authorizes accepting one team invitation.
+type InvitationToken string
+
 // SessionToken authorizes operations on one route version.
 type SessionToken string
 
@@ -57,9 +60,6 @@ type PublisherConnectionCredential string
 
 // ServiceToken authenticates one service-to-service request.
 type ServiceToken string
-
-// ServiceEnrollmentToken authorizes service certificate enrollment.
-type ServiceEnrollmentToken string
 
 // CredentialID is the nonsecret lookup portion of a credential.
 type CredentialID string
@@ -105,6 +105,35 @@ func NewRefreshToken() (RefreshToken, CredentialID, SecretHash, error) {
 // ParseRefreshToken validates a refresh token and returns its storage lookup values.
 func ParseRefreshToken(token RefreshToken) (CredentialID, SecretHash, error) {
 	return parseToken(string(token), refreshPrefix, ErrInvalidRefreshToken)
+}
+
+// NewInvitationToken creates a one-time team invitation token.
+func NewInvitationToken() (InvitationToken, SecretHash, error) {
+	token, _, hash, err := newToken(invitationPrefix)
+	return InvitationToken(token), hash, err
+}
+
+// DeriveInvitationToken deterministically derives an invitation credential so
+// retrying the same idempotent mutation returns the same one-time secret.
+func DeriveInvitationToken(retrySecret []byte, retryContext string) (InvitationToken, SecretHash, error) {
+	if len(retrySecret) < secretBytes || retryContext == "" {
+		return "", SecretHash{}, ErrInvalidInvitationToken
+	}
+	idMAC := hmac.New(sha256.New, retrySecret)
+	_, _ = idMAC.Write([]byte("tnl/invitation-id/v1\x00" + retryContext))
+	lookupID := CredentialID(base64.RawURLEncoding.EncodeToString(idMAC.Sum(nil)[:lookupBytes]))
+	secretMAC := hmac.New(sha256.New, retrySecret)
+	_, _ = secretMAC.Write([]byte("tnl/invitation-secret/v1\x00" + retryContext))
+	secret := secretMAC.Sum(nil)
+	hash := sha256.Sum256(secret)
+	token := invitationPrefix + lookupID.String() + "." + base64.RawURLEncoding.EncodeToString(secret)
+	return InvitationToken(token), hash, nil
+}
+
+// ParseInvitationToken validates an invitation token and returns its stored digest.
+func ParseInvitationToken(token InvitationToken) (SecretHash, error) {
+	_, hash, err := parseToken(string(token), invitationPrefix, ErrInvalidInvitationToken)
+	return hash, err
 }
 
 // NewSessionToken creates a session token and its storage values.
@@ -198,17 +227,6 @@ func ParseServiceToken(token ServiceToken) error {
 	return err
 }
 
-// NewServiceEnrollmentToken creates a reusable enrollment token and its storage values.
-func NewServiceEnrollmentToken() (ServiceEnrollmentToken, CredentialID, SecretHash, error) {
-	token, lookupID, hash, err := newToken(enrollmentPrefix)
-	return ServiceEnrollmentToken(token), lookupID, hash, err
-}
-
-// ParseServiceEnrollmentToken validates an enrollment token and returns its storage values.
-func ParseServiceEnrollmentToken(token ServiceEnrollmentToken) (CredentialID, SecretHash, error) {
-	return parseToken(string(token), enrollmentPrefix, ErrInvalidServiceEnrollmentToken)
-}
-
 // Matches reports whether token matches this verifier.
 func (v LoginVerifier) Matches(token LoginToken) bool {
 	candidate, err := ParseLoginToken(token)
@@ -228,6 +246,9 @@ func (t LoginToken) String() string { return string(t) }
 // String returns the serialized refresh token.
 func (t RefreshToken) String() string { return string(t) }
 
+// String returns the serialized invitation token.
+func (t InvitationToken) String() string { return string(t) }
+
 // String returns the serialized session token.
 func (t SessionToken) String() string { return string(t) }
 
@@ -236,9 +257,6 @@ func (t PublisherConnectionCredential) String() string { return string(t) }
 
 // String returns the serialized service token.
 func (t ServiceToken) String() string { return string(t) }
-
-// String returns the serialized service enrollment token.
-func (t ServiceEnrollmentToken) String() string { return string(t) }
 
 // String returns the nonsecret credential ID.
 func (id CredentialID) String() string { return string(id) }

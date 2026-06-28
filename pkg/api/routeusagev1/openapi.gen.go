@@ -77,30 +77,6 @@ func (e ProblemCode) Valid() bool {
 	}
 }
 
-// Defines values for RouteLifecycleEventTransition.
-const (
-	Deleted             RouteLifecycleEventTransition = "deleted"
-	Disconnected        RouteLifecycleEventTransition = "disconnected"
-	Ready               RouteLifecycleEventTransition = "ready"
-	RouteVersionStarted RouteLifecycleEventTransition = "route_version_started"
-)
-
-// Valid indicates whether the value is a known member of the RouteLifecycleEventTransition enum.
-func (e RouteLifecycleEventTransition) Valid() bool {
-	switch e {
-	case Deleted:
-		return true
-	case Disconnected:
-		return true
-	case Ready:
-		return true
-	case RouteVersionStarted:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for RouteUsageBucketReportResolution.
 const (
 	Hour   RouteUsageBucketReportResolution = "hour"
@@ -136,6 +112,9 @@ type DurationHistogram struct {
 	SumNanoseconds   UnsignedInteger   `json:"sum_nanoseconds"`
 }
 
+// IdentityID defines model for IdentityID.
+type IdentityID = ResourceID
+
 // PositiveInteger defines model for PositiveInteger.
 type PositiveInteger = string
 
@@ -152,45 +131,17 @@ type Problem struct {
 // ProblemCode defines model for Problem.Code.
 type ProblemCode string
 
-// RouteLifecycleEvent defines model for RouteLifecycleEvent.
-type RouteLifecycleEvent struct {
-	ItemId     string    `json:"item_id"`
-	OccurredAt time.Time `json:"occurred_at"`
-	RouteId    string    `json:"route_id"`
+// ResourceID defines model for ResourceID.
+type ResourceID = string
 
-	// RouteVersion Route version in which the transition occurred.
-	RouteVersion PositiveInteger               `json:"route_version"`
-	Sequence     PositiveInteger               `json:"sequence"`
-	Transition   RouteLifecycleEventTransition `json:"transition"`
-}
-
-// RouteLifecycleEventTransition defines model for RouteLifecycleEvent.Transition.
-type RouteLifecycleEventTransition string
-
-// RouteLifecycleEventBatch defines model for RouteLifecycleEventBatch.
-type RouteLifecycleEventBatch struct {
-	Items []RouteLifecycleEvent `json:"items"`
-}
-
-// RouteLifecycleEventBatchResponse defines model for RouteLifecycleEventBatchResponse.
-type RouteLifecycleEventBatchResponse struct {
-	Results []BatchResult `json:"results"`
-}
-
-// RouteRegistration defines model for RouteRegistration.
-type RouteRegistration struct {
-	AuthorizationId string    `json:"authorization_id"`
-	CreatedAt       time.Time `json:"created_at"`
-	Hostname        string    `json:"hostname"`
-	RegistrationId  string    `json:"registration_id"`
-	RetryId         string    `json:"retry_id"`
-	RouteId         string    `json:"route_id"`
-	SigningKeyId    string    `json:"signing_key_id"`
-}
+// RouteID defines model for RouteID.
+type RouteID = ResourceID
 
 // RouteUsageBucketReport defines model for RouteUsageBucketReport.
 type RouteUsageBucketReport struct {
-	BucketStart time.Time `json:"bucket_start"`
+	// ActingIdentityId Immutable acting identity attribution captured for this route version.
+	ActingIdentityId IdentityID `json:"acting_identity_id"`
+	BucketStart      time.Time  `json:"bucket_start"`
 
 	// CapacityDenials Matched attempts rejected by the route connection limit.
 	CapacityDenials UnsignedInteger `json:"capacity_denials"`
@@ -220,7 +171,7 @@ type RouteUsageBucketReport struct {
 	PublisherOpenLatency *DurationHistogram               `json:"publisher_open_latency,omitempty"`
 	Resolution           RouteUsageBucketReportResolution `json:"resolution"`
 	Revision             PositiveInteger                  `json:"revision"`
-	RouteId              string                           `json:"route_id"`
+	RouteId              RouteID                          `json:"route_id"`
 
 	// RouteVersion Route version measured by this report.
 	RouteVersion PositiveInteger `json:"route_version"`
@@ -230,6 +181,9 @@ type RouteUsageBucketReport struct {
 
 	// SuccessfulStreams Publisher streams that entered bidirectional forwarding.
 	SuccessfulStreams UnsignedInteger `json:"successful_streams"`
+
+	// TeamId Immutable team attribution captured for this route version.
+	TeamId TeamID `json:"team_id"`
 
 	// TimeToFirstPublisherByte Time from route match until the first publisher byte is forwarded to the visitor, attributed when that byte is written. Absent when the bucket has no observations; absence is undefined and is not a zero-valued observation.
 	TimeToFirstPublisherByte *DurationHistogram `json:"time_to_first_publisher_byte,omitempty"`
@@ -254,14 +208,11 @@ type RouteUsageBucketReportBatchResponse struct {
 	Results []BatchResult `json:"results"`
 }
 
+// TeamID defines model for TeamID.
+type TeamID = ResourceID
+
 // UnsignedInteger defines model for UnsignedInteger.
 type UnsignedInteger = string
-
-// RegisterRouteJSONRequestBody defines body for RegisterRoute for application/json ContentType.
-type RegisterRouteJSONRequestBody = RouteRegistration
-
-// IngestRouteLifecycleEventsJSONRequestBody defines body for IngestRouteLifecycleEvents for application/json ContentType.
-type IngestRouteLifecycleEventsJSONRequestBody = RouteLifecycleEventBatch
 
 // IngestRouteUsageBucketReportsJSONRequestBody defines body for IngestRouteUsageBucketReports for application/json ContentType.
 type IngestRouteUsageBucketReportsJSONRequestBody = RouteUsageBucketReportBatch
@@ -340,34 +291,6 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 // The interface specification for the client above.
 type ClientInterface interface {
 
-	// RegisterRouteWithBody Register immutable route authorization metadata
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/routes (the `RegisterRoute` operationId).
-	RegisterRouteWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RegisterRoute Register immutable route authorization metadata
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/routes (the `RegisterRoute` operationId).
-	RegisterRoute(ctx context.Context, body RegisterRouteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// IngestRouteLifecycleEventsWithBody Ingest ordered route lifecycle events
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/routes/lifecycle-events (the `IngestRouteLifecycleEvents` operationId).
-	IngestRouteLifecycleEventsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// IngestRouteLifecycleEvents Ingest ordered route lifecycle events
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/routes/lifecycle-events (the `IngestRouteLifecycleEvents` operationId).
-	IngestRouteLifecycleEvents(ctx context.Context, body IngestRouteLifecycleEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// IngestRouteUsageBucketReportsWithBody Ingest route usage bucket reports
 	//
 	// Takes any type of body and a specified content type.
@@ -381,74 +304,6 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/routes/usage-bucket-reports (the `IngestRouteUsageBucketReports` operationId).
 	IngestRouteUsageBucketReports(ctx context.Context, body IngestRouteUsageBucketReportsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-}
-
-// RegisterRouteWithBody Register immutable route authorization metadata
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/routes (the `RegisterRoute` operationId).
-func (c *Client) RegisterRouteWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRegisterRouteRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RegisterRoute Register immutable route authorization metadata
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/routes (the `RegisterRoute` operationId).
-func (c *Client) RegisterRoute(ctx context.Context, body RegisterRouteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRegisterRouteRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// IngestRouteLifecycleEventsWithBody Ingest ordered route lifecycle events
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/routes/lifecycle-events (the `IngestRouteLifecycleEvents` operationId).
-func (c *Client) IngestRouteLifecycleEventsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewIngestRouteLifecycleEventsRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// IngestRouteLifecycleEvents Ingest ordered route lifecycle events
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/routes/lifecycle-events (the `IngestRouteLifecycleEvents` operationId).
-func (c *Client) IngestRouteLifecycleEvents(ctx context.Context, body IngestRouteLifecycleEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewIngestRouteLifecycleEventsRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
 }
 
 // IngestRouteUsageBucketReportsWithBody Ingest route usage bucket reports
@@ -483,86 +338,6 @@ func (c *Client) IngestRouteUsageBucketReports(ctx context.Context, body IngestR
 		return nil, err
 	}
 	return c.Client.Do(req)
-}
-
-// NewRegisterRouteRequest calls the generic RegisterRoute builder with application/json body
-func NewRegisterRouteRequest(server string, body RegisterRouteJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewRegisterRouteRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewRegisterRouteRequestWithBody constructs an http.Request for the RegisterRoute method, with any body, and a specified content type
-func NewRegisterRouteRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/routes")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewIngestRouteLifecycleEventsRequest calls the generic IngestRouteLifecycleEvents builder with application/json body
-func NewIngestRouteLifecycleEventsRequest(server string, body IngestRouteLifecycleEventsJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewIngestRouteLifecycleEventsRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewIngestRouteLifecycleEventsRequestWithBody constructs an http.Request for the IngestRouteLifecycleEvents method, with any body, and a specified content type
-func NewIngestRouteLifecycleEventsRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/routes/lifecycle-events")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
 }
 
 // NewIngestRouteUsageBucketReportsRequest calls the generic IngestRouteUsageBucketReports builder with application/json body
@@ -649,34 +424,6 @@ func WithBaseURL(baseURL string) ClientOption {
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
 
-	// RegisterRouteWithBodyWithResponse Register immutable route authorization metadata
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/routes (the `RegisterRoute` operationId).
-	RegisterRouteWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterRouteResponse, error)
-
-	// RegisterRouteWithResponse Register immutable route authorization metadata
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/routes (the `RegisterRoute` operationId).
-	RegisterRouteWithResponse(ctx context.Context, body RegisterRouteJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterRouteResponse, error)
-
-	// IngestRouteLifecycleEventsWithBodyWithResponse Ingest ordered route lifecycle events
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/routes/lifecycle-events (the `IngestRouteLifecycleEvents` operationId).
-	IngestRouteLifecycleEventsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IngestRouteLifecycleEventsResponse, error)
-
-	// IngestRouteLifecycleEventsWithResponse Ingest ordered route lifecycle events
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/routes/lifecycle-events (the `IngestRouteLifecycleEvents` operationId).
-	IngestRouteLifecycleEventsWithResponse(ctx context.Context, body IngestRouteLifecycleEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestRouteLifecycleEventsResponse, error)
-
 	// IngestRouteUsageBucketReportsWithBodyWithResponse Ingest route usage bucket reports
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -690,172 +437,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/routes/usage-bucket-reports (the `IngestRouteUsageBucketReports` operationId).
 	IngestRouteUsageBucketReportsWithResponse(ctx context.Context, body IngestRouteUsageBucketReportsJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestRouteUsageBucketReportsResponse, error)
-}
-
-type RegisterRouteResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *Problem
-	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
-	ApplicationproblemJSON401 *Problem
-	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
-	ApplicationproblemJSON409 *Problem
-	// ApplicationproblemJSON413 the response for an HTTP 413 `application/problem+json` response
-	ApplicationproblemJSON413 *Problem
-	// ApplicationproblemJSON415 the response for an HTTP 415 `application/problem+json` response
-	ApplicationproblemJSON415 *Problem
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r RegisterRouteResponse) GetApplicationproblemJSON400() *Problem {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
-func (r RegisterRouteResponse) GetApplicationproblemJSON401() *Problem {
-	return r.ApplicationproblemJSON401
-}
-
-// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
-func (r RegisterRouteResponse) GetApplicationproblemJSON409() *Problem {
-	return r.ApplicationproblemJSON409
-}
-
-// GetApplicationproblemJSON413 returns the response for an HTTP 413 `application/problem+json` response
-func (r RegisterRouteResponse) GetApplicationproblemJSON413() *Problem {
-	return r.ApplicationproblemJSON413
-}
-
-// GetApplicationproblemJSON415 returns the response for an HTTP 415 `application/problem+json` response
-func (r RegisterRouteResponse) GetApplicationproblemJSON415() *Problem {
-	return r.ApplicationproblemJSON415
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r RegisterRouteResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r RegisterRouteResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r RegisterRouteResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r RegisterRouteResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r RegisterRouteResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type IngestRouteLifecycleEventsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *RouteLifecycleEventBatchResponse
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *Problem
-	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
-	ApplicationproblemJSON401 *Problem
-	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
-	ApplicationproblemJSON404 *Problem
-	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
-	ApplicationproblemJSON409 *Problem
-	// ApplicationproblemJSON413 the response for an HTTP 413 `application/problem+json` response
-	ApplicationproblemJSON413 *Problem
-	// ApplicationproblemJSON415 the response for an HTTP 415 `application/problem+json` response
-	ApplicationproblemJSON415 *Problem
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r IngestRouteLifecycleEventsResponse) GetJSON200() *RouteLifecycleEventBatchResponse {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r IngestRouteLifecycleEventsResponse) GetApplicationproblemJSON400() *Problem {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
-func (r IngestRouteLifecycleEventsResponse) GetApplicationproblemJSON401() *Problem {
-	return r.ApplicationproblemJSON401
-}
-
-// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
-func (r IngestRouteLifecycleEventsResponse) GetApplicationproblemJSON404() *Problem {
-	return r.ApplicationproblemJSON404
-}
-
-// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
-func (r IngestRouteLifecycleEventsResponse) GetApplicationproblemJSON409() *Problem {
-	return r.ApplicationproblemJSON409
-}
-
-// GetApplicationproblemJSON413 returns the response for an HTTP 413 `application/problem+json` response
-func (r IngestRouteLifecycleEventsResponse) GetApplicationproblemJSON413() *Problem {
-	return r.ApplicationproblemJSON413
-}
-
-// GetApplicationproblemJSON415 returns the response for an HTTP 415 `application/problem+json` response
-func (r IngestRouteLifecycleEventsResponse) GetApplicationproblemJSON415() *Problem {
-	return r.ApplicationproblemJSON415
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r IngestRouteLifecycleEventsResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r IngestRouteLifecycleEventsResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r IngestRouteLifecycleEventsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r IngestRouteLifecycleEventsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r IngestRouteLifecycleEventsResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
 }
 
 type IngestRouteUsageBucketReportsResponse struct {
@@ -948,58 +529,6 @@ func (r IngestRouteUsageBucketReportsResponse) ContentType() string {
 	return ""
 }
 
-// RegisterRouteWithBodyWithResponse Register immutable route authorization metadata
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/routes (the `RegisterRoute` operationId).
-func (c *ClientWithResponses) RegisterRouteWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterRouteResponse, error) {
-	rsp, err := c.RegisterRouteWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRegisterRouteResponse(rsp)
-}
-
-// RegisterRouteWithResponse Register immutable route authorization metadata
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/routes (the `RegisterRoute` operationId).
-func (c *ClientWithResponses) RegisterRouteWithResponse(ctx context.Context, body RegisterRouteJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterRouteResponse, error) {
-	rsp, err := c.RegisterRoute(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRegisterRouteResponse(rsp)
-}
-
-// IngestRouteLifecycleEventsWithBodyWithResponse Ingest ordered route lifecycle events
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/routes/lifecycle-events (the `IngestRouteLifecycleEvents` operationId).
-func (c *ClientWithResponses) IngestRouteLifecycleEventsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IngestRouteLifecycleEventsResponse, error) {
-	rsp, err := c.IngestRouteLifecycleEventsWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseIngestRouteLifecycleEventsResponse(rsp)
-}
-
-// IngestRouteLifecycleEventsWithResponse Ingest ordered route lifecycle events
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/routes/lifecycle-events (the `IngestRouteLifecycleEvents` operationId).
-func (c *ClientWithResponses) IngestRouteLifecycleEventsWithResponse(ctx context.Context, body IngestRouteLifecycleEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestRouteLifecycleEventsResponse, error) {
-	rsp, err := c.IngestRouteLifecycleEvents(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseIngestRouteLifecycleEventsResponse(rsp)
-}
-
 // IngestRouteUsageBucketReportsWithBodyWithResponse Ingest route usage bucket reports
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -1024,145 +553,6 @@ func (c *ClientWithResponses) IngestRouteUsageBucketReportsWithResponse(ctx cont
 		return nil, err
 	}
 	return ParseIngestRouteUsageBucketReportsResponse(rsp)
-}
-
-// ParseRegisterRouteResponse parses an HTTP response from a RegisterRouteWithResponse call
-func ParseRegisterRouteResponse(rsp *http.Response) (*RegisterRouteResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &RegisterRouteResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON409 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON413 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON415 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseIngestRouteLifecycleEventsResponse parses an HTTP response from a IngestRouteLifecycleEventsWithResponse call
-func ParseIngestRouteLifecycleEventsResponse(rsp *http.Response) (*IngestRouteLifecycleEventsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &IngestRouteLifecycleEventsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest RouteLifecycleEventBatchResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON409 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON413 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON415 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
 }
 
 // ParseIngestRouteUsageBucketReportsResponse parses an HTTP response from a IngestRouteUsageBucketReportsWithResponse call
@@ -1242,12 +632,6 @@ func ParseIngestRouteUsageBucketReportsResponse(rsp *http.Response) (*IngestRout
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
-	// RegisterRoute Register immutable route authorization metadata
-	// (POST /v1/routes)
-	RegisterRoute(w http.ResponseWriter, r *http.Request)
-	// IngestRouteLifecycleEvents Ingest ordered route lifecycle events
-	// (POST /v1/routes/lifecycle-events)
-	IngestRouteLifecycleEvents(w http.ResponseWriter, r *http.Request)
 	// IngestRouteUsageBucketReports Ingest route usage bucket reports
 	// (POST /v1/routes/usage-bucket-reports)
 	IngestRouteUsageBucketReports(w http.ResponseWriter, r *http.Request)
@@ -1261,34 +645,6 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
-
-// RegisterRoute operation middleware
-func (siw *ServerInterfaceWrapper) RegisterRoute(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.RegisterRoute(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// IngestRouteLifecycleEvents operation middleware
-func (siw *ServerInterfaceWrapper) IngestRouteLifecycleEvents(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.IngestRouteLifecycleEvents(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
 
 // IngestRouteUsageBucketReports operation middleware
 func (siw *ServerInterfaceWrapper) IngestRouteUsageBucketReports(w http.ResponseWriter, r *http.Request) {
@@ -1424,244 +780,12 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/routes", wrapper.RegisterRoute)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/routes/lifecycle-events", wrapper.IngestRouteLifecycleEvents)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/routes/usage-bucket-reports", wrapper.IngestRouteUsageBucketReports)
 
 	return m
 }
 
 type ProblemApplicationProblemPlusJSONResponse Problem
-
-type RegisterRouteRequestObject struct {
-	Body *RegisterRouteJSONRequestBody
-}
-
-type RegisterRouteResponseObject interface {
-	VisitRegisterRouteResponse(w http.ResponseWriter) error
-}
-
-type RegisterRoute204Response struct {
-}
-
-func (response RegisterRoute204Response) VisitRegisterRouteResponse(w http.ResponseWriter) error {
-	w.WriteHeader(204)
-	return nil
-}
-
-type RegisterRoute400ApplicationProblemPlusJSONResponse struct {
-	ProblemApplicationProblemPlusJSONResponse
-}
-
-func (response RegisterRoute400ApplicationProblemPlusJSONResponse) VisitRegisterRouteResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(400)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type RegisterRoute401ApplicationProblemPlusJSONResponse Problem
-
-func (response RegisterRoute401ApplicationProblemPlusJSONResponse) VisitRegisterRouteResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(401)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type RegisterRoute409ApplicationProblemPlusJSONResponse Problem
-
-func (response RegisterRoute409ApplicationProblemPlusJSONResponse) VisitRegisterRouteResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(409)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type RegisterRoute413ApplicationProblemPlusJSONResponse Problem
-
-func (response RegisterRoute413ApplicationProblemPlusJSONResponse) VisitRegisterRouteResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(413)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type RegisterRoute415ApplicationProblemPlusJSONResponse Problem
-
-func (response RegisterRoute415ApplicationProblemPlusJSONResponse) VisitRegisterRouteResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(415)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type RegisterRoutedefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response RegisterRoutedefaultApplicationProblemPlusJSONResponse) VisitRegisterRouteResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type IngestRouteLifecycleEventsRequestObject struct {
-	Body *IngestRouteLifecycleEventsJSONRequestBody
-}
-
-type IngestRouteLifecycleEventsResponseObject interface {
-	VisitIngestRouteLifecycleEventsResponse(w http.ResponseWriter) error
-}
-
-type IngestRouteLifecycleEvents200JSONResponse RouteLifecycleEventBatchResponse
-
-func (response IngestRouteLifecycleEvents200JSONResponse) VisitIngestRouteLifecycleEventsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type IngestRouteLifecycleEvents400ApplicationProblemPlusJSONResponse struct {
-	ProblemApplicationProblemPlusJSONResponse
-}
-
-func (response IngestRouteLifecycleEvents400ApplicationProblemPlusJSONResponse) VisitIngestRouteLifecycleEventsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(400)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type IngestRouteLifecycleEvents401ApplicationProblemPlusJSONResponse Problem
-
-func (response IngestRouteLifecycleEvents401ApplicationProblemPlusJSONResponse) VisitIngestRouteLifecycleEventsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(401)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type IngestRouteLifecycleEvents404ApplicationProblemPlusJSONResponse Problem
-
-func (response IngestRouteLifecycleEvents404ApplicationProblemPlusJSONResponse) VisitIngestRouteLifecycleEventsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(404)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type IngestRouteLifecycleEvents409ApplicationProblemPlusJSONResponse Problem
-
-func (response IngestRouteLifecycleEvents409ApplicationProblemPlusJSONResponse) VisitIngestRouteLifecycleEventsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(409)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type IngestRouteLifecycleEvents413ApplicationProblemPlusJSONResponse Problem
-
-func (response IngestRouteLifecycleEvents413ApplicationProblemPlusJSONResponse) VisitIngestRouteLifecycleEventsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(413)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type IngestRouteLifecycleEvents415ApplicationProblemPlusJSONResponse Problem
-
-func (response IngestRouteLifecycleEvents415ApplicationProblemPlusJSONResponse) VisitIngestRouteLifecycleEventsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(415)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type IngestRouteLifecycleEventsdefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response IngestRouteLifecycleEventsdefaultApplicationProblemPlusJSONResponse) VisitIngestRouteLifecycleEventsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
 
 type IngestRouteUsageBucketReportsRequestObject struct {
 	Body *IngestRouteUsageBucketReportsJSONRequestBody
@@ -1790,12 +914,6 @@ func (response IngestRouteUsageBucketReportsdefaultApplicationProblemPlusJSONRes
 
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
-	// RegisterRoute Register immutable route authorization metadata
-	// (POST /v1/routes)
-	RegisterRoute(ctx context.Context, request RegisterRouteRequestObject) (RegisterRouteResponseObject, error)
-	// IngestRouteLifecycleEvents Ingest ordered route lifecycle events
-	// (POST /v1/routes/lifecycle-events)
-	IngestRouteLifecycleEvents(ctx context.Context, request IngestRouteLifecycleEventsRequestObject) (IngestRouteLifecycleEventsResponseObject, error)
 	// IngestRouteUsageBucketReports Ingest route usage bucket reports
 	// (POST /v1/routes/usage-bucket-reports)
 	IngestRouteUsageBucketReports(ctx context.Context, request IngestRouteUsageBucketReportsRequestObject) (IngestRouteUsageBucketReportsResponseObject, error)
@@ -1838,68 +956,6 @@ type strictHandler struct {
 	ssi         StrictServerInterface
 	middlewares []StrictMiddlewareFunc
 	options     StrictHTTPServerOptions
-}
-
-// RegisterRoute operation middleware
-func (sh *strictHandler) RegisterRoute(w http.ResponseWriter, r *http.Request) {
-	var request RegisterRouteRequestObject
-
-	var body RegisterRouteJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.RegisterRoute(ctx, request.(RegisterRouteRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "RegisterRoute")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(RegisterRouteResponseObject); ok {
-		if err := validResponse.VisitRegisterRouteResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// IngestRouteLifecycleEvents operation middleware
-func (sh *strictHandler) IngestRouteLifecycleEvents(w http.ResponseWriter, r *http.Request) {
-	var request IngestRouteLifecycleEventsRequestObject
-
-	var body IngestRouteLifecycleEventsJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.IngestRouteLifecycleEvents(ctx, request.(IngestRouteLifecycleEventsRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "IngestRouteLifecycleEvents")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(IngestRouteLifecycleEventsResponseObject); ok {
-		if err := validResponse.VisitIngestRouteLifecycleEventsResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
 }
 
 // IngestRouteUsageBucketReports operation middleware

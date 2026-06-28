@@ -452,7 +452,7 @@ func (q *Queries) ListRouteSessionConnections(ctx context.Context, routeSessionI
 }
 
 const lockRouteForSession = `-- name: LockRouteForSession :one
-SELECT id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key, request_digest, canonical_hostname, target, route_scope, policy_revision, ip_policy, allowed_ip_prefixes, lifecycle_state, dns_state, dns_revision, next_route_version, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at
+SELECT id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key, request_digest, canonical_hostname, target, route_scope, policy_revision, ip_policy, allowed_ip_prefixes, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_route_version, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at
 FROM control.routes
 WHERE id = $1
 FOR UPDATE
@@ -476,8 +476,15 @@ func (q *Queries) LockRouteForSession(ctx context.Context, routeID string) (Cont
 		&i.IpPolicy,
 		&i.AllowedIpPrefixes,
 		&i.LifecycleState,
+		&i.DnsAuthorityReference,
 		&i.DnsState,
 		&i.DnsRevision,
+		&i.DnsWorkOwner,
+		&i.DnsWorkEpoch,
+		&i.DnsWorkExpiresAt,
+		&i.DnsAttempts,
+		&i.DnsAvailableAt,
+		&i.DnsLastError,
 		&i.NextRouteVersion,
 		&i.SuspensionRevision,
 		&i.SuspensionReason,

@@ -3,14 +3,16 @@ INSERT INTO control.acme_accounts (
     id,
     directory_url,
     contact_email,
-    account_key_der,
+    account_key_ciphertext,
+    account_key_storage_key_id,
     created_at,
     updated_at
 ) VALUES (
     sqlc.arg(id),
     sqlc.arg(directory_url),
     sqlc.arg(contact_email),
-    sqlc.arg(account_key_der),
+    sqlc.arg(account_key_ciphertext),
+    sqlc.arg(account_key_storage_key_id),
     sqlc.arg(created_at),
     sqlc.arg(created_at)
 )
@@ -18,6 +20,15 @@ ON CONFLICT (directory_url) DO UPDATE
 SET contact_email = excluded.contact_email,
     updated_at = GREATEST(control.acme_accounts.updated_at, excluded.updated_at)
 RETURNING *;
+
+-- name: RotateACMEAccountKey :exec
+UPDATE control.acme_accounts
+SET account_key_ciphertext = sqlc.arg(account_key_ciphertext),
+    account_key_storage_key_id = sqlc.arg(account_key_storage_key_id),
+    updated_at = GREATEST(updated_at, sqlc.arg(updated_at))
+WHERE id = sqlc.arg(account_id)
+  AND account_key_storage_key_id = sqlc.arg(previous_key_id)
+  AND account_key_ciphertext = sqlc.arg(previous_ciphertext);
 
 -- name: GetACMEAccountByDirectory :one
 SELECT *
@@ -34,7 +45,7 @@ WHERE id = sqlc.arg(account_id)
 RETURNING *;
 
 -- name: GetControlTLSCacheEntry :one
-SELECT cache_data
+SELECT cache_ciphertext, cache_storage_key_id
 FROM control.control_tls_cache
 WHERE directory_url = sqlc.arg(directory_url)
   AND cache_key = sqlc.arg(cache_key);
@@ -43,17 +54,30 @@ WHERE directory_url = sqlc.arg(directory_url)
 INSERT INTO control.control_tls_cache (
     directory_url,
     cache_key,
-    cache_data,
+    cache_ciphertext,
+    cache_storage_key_id,
     updated_at
 ) VALUES (
     sqlc.arg(directory_url),
     sqlc.arg(cache_key),
-    sqlc.arg(cache_data),
+    sqlc.arg(cache_ciphertext),
+    sqlc.arg(cache_storage_key_id),
     sqlc.arg(updated_at)
 )
 ON CONFLICT (directory_url, cache_key) DO UPDATE SET
-    cache_data = EXCLUDED.cache_data,
+    cache_ciphertext = EXCLUDED.cache_ciphertext,
+    cache_storage_key_id = EXCLUDED.cache_storage_key_id,
     updated_at = EXCLUDED.updated_at;
+
+-- name: RotateControlTLSCacheEntry :exec
+UPDATE control.control_tls_cache
+SET cache_ciphertext = sqlc.arg(cache_ciphertext),
+    cache_storage_key_id = sqlc.arg(cache_storage_key_id),
+    updated_at = sqlc.arg(updated_at)
+WHERE directory_url = sqlc.arg(directory_url)
+  AND cache_key = sqlc.arg(cache_key)
+  AND cache_storage_key_id = sqlc.arg(previous_key_id)
+  AND cache_ciphertext = sqlc.arg(previous_ciphertext);
 
 -- name: DeleteControlTLSCacheEntry :exec
 DELETE FROM control.control_tls_cache
@@ -214,12 +238,21 @@ INSERT INTO control.admin_audit_events (
 
 -- name: ClaimACMEOrderWork :one
 WITH candidate AS (
-    SELECT id
-    FROM control.acme_orders
-    WHERE state IN ('pending', 'authorizing', 'ready_to_finalize', 'finalizing')
-      AND available_at <= sqlc.arg(claimed_at)
-      AND (work_owner IS NULL OR work_expires_at <= sqlc.arg(claimed_at))
-    ORDER BY available_at, id
+    SELECT orders.id
+    FROM control.acme_orders AS orders
+    WHERE (
+          orders.state IN ('pending', 'authorizing', 'ready_to_finalize', 'finalizing')
+          OR orders.state IN ('failed', 'canceled') AND EXISTS (
+              SELECT 1
+              FROM control.acme_authorizations AS authorizations
+              WHERE authorizations.order_id = orders.id
+                AND authorizations.challenge_type = 'dns-01'
+                AND authorizations.state = 'cleaning'
+          )
+      )
+      AND orders.available_at <= sqlc.arg(claimed_at)
+      AND (orders.work_owner IS NULL OR orders.work_expires_at <= sqlc.arg(claimed_at))
+    ORDER BY orders.available_at, orders.id
     FOR UPDATE SKIP LOCKED
     LIMIT 1
 )
@@ -266,6 +299,7 @@ INSERT INTO control.acme_authorizations (
     challenge_url,
     challenge_token,
     challenge_digest,
+    presentation_reference,
     state,
     authorization_revision,
     attempts,
@@ -286,6 +320,7 @@ INSERT INTO control.acme_authorizations (
     sqlc.arg(challenge_url),
     sqlc.arg(challenge_token),
     sqlc.arg(challenge_digest),
+    sqlc.narg(presentation_reference),
     sqlc.arg(state),
     sqlc.arg(authorization_revision),
     sqlc.arg(attempts),
@@ -314,5 +349,35 @@ WHERE control.acme_authorizations.authorization_url = excluded.authorization_url
   AND control.acme_authorizations.challenge_url = excluded.challenge_url
   AND control.acme_authorizations.challenge_token = excluded.challenge_token
   AND control.acme_authorizations.challenge_digest = excluded.challenge_digest
+  AND control.acme_authorizations.presentation_reference IS NOT DISTINCT FROM excluded.presentation_reference
   AND control.acme_authorizations.authorization_revision = sqlc.arg(expected_authorization_revision)
 RETURNING *;
+
+-- name: CancelRouteSessionACMEOrders :exec
+UPDATE control.acme_orders
+SET state = 'canceled',
+    order_revision = order_revision + 1,
+    work_owner = NULL,
+    work_expires_at = NULL,
+    available_at = sqlc.arg(canceled_at),
+    updated_at = GREATEST(updated_at, sqlc.arg(canceled_at))
+WHERE route_session_id = sqlc.arg(route_session_id)
+  AND state IN ('pending', 'authorizing', 'ready_to_finalize', 'finalizing', 'waiting_for_install', 'failed');
+
+-- name: CancelRouteSessionACMEAuthorizations :exec
+UPDATE control.acme_authorizations AS authorizations
+SET state = CASE
+        WHEN challenge_type = 'dns-01' THEN 'cleaning'
+        ELSE 'canceled'
+    END,
+    authorization_revision = authorization_revision + 1,
+    cleanup_completed_at = CASE
+        WHEN challenge_type = 'tls-alpn-01' THEN COALESCE(cleanup_completed_at, sqlc.arg(canceled_at))
+        ELSE cleanup_completed_at
+    END,
+    available_at = sqlc.arg(canceled_at),
+    updated_at = GREATEST(authorizations.updated_at, sqlc.arg(canceled_at))
+FROM control.acme_orders AS orders
+WHERE orders.id = authorizations.order_id
+  AND orders.route_session_id = sqlc.arg(route_session_id)
+  AND authorizations.state NOT IN ('complete', 'canceled');

@@ -690,11 +690,7 @@ func runRouteDelete(ctx context.Context, command routeDeleteCommand, output, dia
 }
 
 func routeAPI(authenticated *clientauth.Client) (*routeclient.Client, error) {
-	return routeclient.New(
-		authenticated.Control,
-		authenticated.Authority,
-		authenticated.Discovery.AuthorityEndpoint != authenticated.ServerEndpoint,
-	)
+	return routeclient.New(authenticated.Control)
 }
 
 func membershipForTeam(memberships []authorityv1.Membership, teamID string) (authorityv1.Membership, bool) {

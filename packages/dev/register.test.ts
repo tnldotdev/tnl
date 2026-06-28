@@ -24,23 +24,12 @@ describe("tnl dev environment", () => {
     const environment: Record<string, string> = {
       TNL_DEV_PROTOCOL: "1",
       TNL_DEV_SOCKET: "/tmp/tnl-test.sock",
-      TNL_DEV_TOKEN: "a".repeat(64),
     };
-    for (const name of ["TNL_DEV_SOCKET", "TNL_DEV_TOKEN"]) {
+    for (const name of ["TNL_DEV_SOCKET"]) {
       const incomplete = { ...environment };
       delete incomplete[name];
       expect(() => readDevEnvironment(incomplete), name).toThrow(new RegExp(`${name} is required`));
     }
-  });
-
-  test("rejects invalid tokens", () => {
-    expect(() =>
-      readDevEnvironment({
-        TNL_DEV_PROTOCOL: "1",
-        TNL_DEV_SOCKET: "/tmp/tnl-test.sock",
-        TNL_DEV_TOKEN: "invalid",
-      }),
-    ).toThrow(/TNL_DEV_TOKEN is invalid/);
   });
 
   test.each(["0", "65536", "1.5"])("rejects invalid port %s", (port) => {
@@ -49,14 +38,13 @@ describe("tnl dev environment", () => {
         TNL_DEV_PORT: port,
         TNL_DEV_PROTOCOL: "1",
         TNL_DEV_SOCKET: "/tmp/tnl-test.sock",
-        TNL_DEV_TOKEN: "a".repeat(64),
       }),
     ).toThrow(/TNL_DEV_PORT must be a port/);
   });
 });
 
 describe("tunnel assignment and local port registration", () => {
-  test("sends exact authenticated requests", async () => {
+  test("sends exact local requests", async () => {
     const bootstrap = await startTestBootstrap();
     onTestFinished(() => bootstrap.close());
 
@@ -83,7 +71,7 @@ describe("tunnel assignment and local port registration", () => {
 
     expect(bootstrap.requests).toEqual([
       {
-        authorization: `Bearer ${"a".repeat(64)}`,
+        authorization: undefined,
         body: {
           protocol: 1,
           framework: "vite",
@@ -93,7 +81,7 @@ describe("tunnel assignment and local port registration", () => {
         path: "/v1/configure",
       },
       {
-        authorization: `Bearer ${"a".repeat(64)}`,
+        authorization: undefined,
         body: { protocol: 1, framework: "vite", port: 5174 },
         contentType: "application/json",
         method: "POST",
@@ -178,6 +166,5 @@ function fakeAssignment(environment: Record<string, string>): TnlTunnelAssignmen
     publicURL: "https://demo.tnl.dev",
     tunnelID: `tunnel_${"b".repeat(32)}`,
     socket: environment.TNL_DEV_SOCKET ?? "",
-    token: environment.TNL_DEV_TOKEN ?? "",
   } as unknown as TnlTunnelAssignment;
 }

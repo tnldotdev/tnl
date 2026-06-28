@@ -12,6 +12,44 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const advanceAuthorityRevision = `-- name: AdvanceAuthorityRevision :one
+INSERT INTO control.authority_revision_floors (
+    issuer,
+    team_id,
+    policy_revision,
+    updated_at
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4
+)
+ON CONFLICT (issuer, team_id) DO UPDATE SET
+    policy_revision = EXCLUDED.policy_revision,
+    updated_at = GREATEST(control.authority_revision_floors.updated_at, EXCLUDED.updated_at)
+WHERE control.authority_revision_floors.policy_revision < EXCLUDED.policy_revision
+RETURNING policy_revision
+`
+
+type AdvanceAuthorityRevisionParams struct {
+	Issuer         string
+	TeamID         string
+	PolicyRevision int64
+	UpdatedAt      pgtype.Timestamptz
+}
+
+func (q *Queries) AdvanceAuthorityRevision(ctx context.Context, arg AdvanceAuthorityRevisionParams) (int64, error) {
+	row := q.db.QueryRow(ctx, advanceAuthorityRevision,
+		arg.Issuer,
+		arg.TeamID,
+		arg.PolicyRevision,
+		arg.UpdatedAt,
+	)
+	var policy_revision int64
+	err := row.Scan(&policy_revision)
+	return policy_revision, err
+}
+
 const ensureExternalAuthorityPrincipal = `-- name: EnsureExternalAuthorityPrincipal :one
 INSERT INTO control.identities (
     id,
@@ -62,31 +100,39 @@ func (q *Queries) EnsureExternalAuthorityPrincipal(ctx context.Context, arg Ensu
 const ensureExternalRetryMasterKey = `-- name: EnsureExternalRetryMasterKey :one
 INSERT INTO control.runtime_secrets (
     singleton,
-    external_retry_master_key,
+    external_retry_master_key_ciphertext,
+    external_retry_master_key_storage_key_id,
     created_at
 ) VALUES (
     true,
     $1,
-    $2
+    $2,
+    $3
 )
 ON CONFLICT (singleton) DO UPDATE SET singleton = EXCLUDED.singleton
-RETURNING external_retry_master_key
+RETURNING external_retry_master_key_ciphertext, external_retry_master_key_storage_key_id
 `
 
 type EnsureExternalRetryMasterKeyParams struct {
-	ExternalRetryMasterKey []byte
-	CreatedAt              pgtype.Timestamptz
+	ExternalRetryMasterKeyCiphertext   []byte
+	ExternalRetryMasterKeyStorageKeyID string
+	CreatedAt                          pgtype.Timestamptz
 }
 
-func (q *Queries) EnsureExternalRetryMasterKey(ctx context.Context, arg EnsureExternalRetryMasterKeyParams) ([]byte, error) {
-	row := q.db.QueryRow(ctx, ensureExternalRetryMasterKey, arg.ExternalRetryMasterKey, arg.CreatedAt)
-	var external_retry_master_key []byte
-	err := row.Scan(&external_retry_master_key)
-	return external_retry_master_key, err
+type EnsureExternalRetryMasterKeyRow struct {
+	ExternalRetryMasterKeyCiphertext   []byte
+	ExternalRetryMasterKeyStorageKeyID string
+}
+
+func (q *Queries) EnsureExternalRetryMasterKey(ctx context.Context, arg EnsureExternalRetryMasterKeyParams) (EnsureExternalRetryMasterKeyRow, error) {
+	row := q.db.QueryRow(ctx, ensureExternalRetryMasterKey, arg.ExternalRetryMasterKeyCiphertext, arg.ExternalRetryMasterKeyStorageKeyID, arg.CreatedAt)
+	var i EnsureExternalRetryMasterKeyRow
+	err := row.Scan(&i.ExternalRetryMasterKeyCiphertext, &i.ExternalRetryMasterKeyStorageKeyID)
+	return i, err
 }
 
 const getExternalAuthorityRoute = `-- name: GetExternalAuthorityRoute :one
-SELECT routes.id, routes.team_id, routes.domain_id, routes.membership_id, routes.created_by_identity_id, routes.idempotency_key, routes.request_digest, routes.canonical_hostname, routes.target, routes.route_scope, routes.policy_revision, routes.ip_policy, routes.allowed_ip_prefixes, routes.lifecycle_state, routes.dns_state, routes.dns_revision, routes.next_route_version, routes.suspension_revision, routes.suspension_reason, routes.created_at, routes.updated_at, routes.suspended_at, routes.deleted_at,
+SELECT routes.id, routes.team_id, routes.domain_id, routes.membership_id, routes.created_by_identity_id, routes.idempotency_key, routes.request_digest, routes.canonical_hostname, routes.target, routes.route_scope, routes.policy_revision, routes.ip_policy, routes.allowed_ip_prefixes, routes.lifecycle_state, routes.dns_authority_reference, routes.dns_state, routes.dns_revision, routes.dns_work_owner, routes.dns_work_epoch, routes.dns_work_expires_at, routes.dns_attempts, routes.dns_available_at, routes.dns_last_error, routes.next_route_version, routes.suspension_revision, routes.suspension_reason, routes.created_at, routes.updated_at, routes.suspended_at, routes.deleted_at,
     COALESCE((
         SELECT sessions.id
         FROM control.route_sessions AS sessions
@@ -99,30 +145,37 @@ WHERE routes.id = $1
 `
 
 type GetExternalAuthorityRouteRow struct {
-	ID                  string
-	TeamID              string
-	DomainID            string
-	MembershipID        pgtype.Text
-	CreatedByIdentityID string
-	IdempotencyKey      string
-	RequestDigest       []byte
-	CanonicalHostname   string
-	Target              string
-	RouteScope          string
-	PolicyRevision      int64
-	IpPolicy            string
-	AllowedIpPrefixes   []netip.Prefix
-	LifecycleState      string
-	DnsState            string
-	DnsRevision         int64
-	NextRouteVersion    int64
-	SuspensionRevision  int64
-	SuspensionReason    pgtype.Text
-	CreatedAt           pgtype.Timestamptz
-	UpdatedAt           pgtype.Timestamptz
-	SuspendedAt         pgtype.Timestamptz
-	DeletedAt           pgtype.Timestamptz
-	AttachedSessionID   string
+	ID                    string
+	TeamID                string
+	DomainID              string
+	MembershipID          pgtype.Text
+	CreatedByIdentityID   string
+	IdempotencyKey        string
+	RequestDigest         []byte
+	CanonicalHostname     string
+	Target                string
+	RouteScope            string
+	PolicyRevision        int64
+	IpPolicy              string
+	AllowedIpPrefixes     []netip.Prefix
+	LifecycleState        string
+	DnsAuthorityReference pgtype.Text
+	DnsState              string
+	DnsRevision           int64
+	DnsWorkOwner          pgtype.Text
+	DnsWorkEpoch          int64
+	DnsWorkExpiresAt      pgtype.Timestamptz
+	DnsAttempts           int64
+	DnsAvailableAt        pgtype.Timestamptz
+	DnsLastError          pgtype.Text
+	NextRouteVersion      int64
+	SuspensionRevision    int64
+	SuspensionReason      pgtype.Text
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+	SuspendedAt           pgtype.Timestamptz
+	DeletedAt             pgtype.Timestamptz
+	AttachedSessionID     string
 }
 
 func (q *Queries) GetExternalAuthorityRoute(ctx context.Context, routeID string) (GetExternalAuthorityRouteRow, error) {
@@ -143,8 +196,15 @@ func (q *Queries) GetExternalAuthorityRoute(ctx context.Context, routeID string)
 		&i.IpPolicy,
 		&i.AllowedIpPrefixes,
 		&i.LifecycleState,
+		&i.DnsAuthorityReference,
 		&i.DnsState,
 		&i.DnsRevision,
+		&i.DnsWorkOwner,
+		&i.DnsWorkEpoch,
+		&i.DnsWorkExpiresAt,
+		&i.DnsAttempts,
+		&i.DnsAvailableAt,
+		&i.DnsLastError,
 		&i.NextRouteVersion,
 		&i.SuspensionRevision,
 		&i.SuspensionReason,
@@ -158,7 +218,7 @@ func (q *Queries) GetExternalAuthorityRoute(ctx context.Context, routeID string)
 }
 
 const listExternalAuthorityRoutes = `-- name: ListExternalAuthorityRoutes :many
-SELECT routes.id, routes.team_id, routes.domain_id, routes.membership_id, routes.created_by_identity_id, routes.idempotency_key, routes.request_digest, routes.canonical_hostname, routes.target, routes.route_scope, routes.policy_revision, routes.ip_policy, routes.allowed_ip_prefixes, routes.lifecycle_state, routes.dns_state, routes.dns_revision, routes.next_route_version, routes.suspension_revision, routes.suspension_reason, routes.created_at, routes.updated_at, routes.suspended_at, routes.deleted_at,
+SELECT routes.id, routes.team_id, routes.domain_id, routes.membership_id, routes.created_by_identity_id, routes.idempotency_key, routes.request_digest, routes.canonical_hostname, routes.target, routes.route_scope, routes.policy_revision, routes.ip_policy, routes.allowed_ip_prefixes, routes.lifecycle_state, routes.dns_authority_reference, routes.dns_state, routes.dns_revision, routes.dns_work_owner, routes.dns_work_epoch, routes.dns_work_expires_at, routes.dns_attempts, routes.dns_available_at, routes.dns_last_error, routes.next_route_version, routes.suspension_revision, routes.suspension_reason, routes.created_at, routes.updated_at, routes.suspended_at, routes.deleted_at,
     COALESCE((
         SELECT sessions.id
         FROM control.route_sessions AS sessions
@@ -179,30 +239,37 @@ type ListExternalAuthorityRoutesParams struct {
 }
 
 type ListExternalAuthorityRoutesRow struct {
-	ID                  string
-	TeamID              string
-	DomainID            string
-	MembershipID        pgtype.Text
-	CreatedByIdentityID string
-	IdempotencyKey      string
-	RequestDigest       []byte
-	CanonicalHostname   string
-	Target              string
-	RouteScope          string
-	PolicyRevision      int64
-	IpPolicy            string
-	AllowedIpPrefixes   []netip.Prefix
-	LifecycleState      string
-	DnsState            string
-	DnsRevision         int64
-	NextRouteVersion    int64
-	SuspensionRevision  int64
-	SuspensionReason    pgtype.Text
-	CreatedAt           pgtype.Timestamptz
-	UpdatedAt           pgtype.Timestamptz
-	SuspendedAt         pgtype.Timestamptz
-	DeletedAt           pgtype.Timestamptz
-	AttachedSessionID   string
+	ID                    string
+	TeamID                string
+	DomainID              string
+	MembershipID          pgtype.Text
+	CreatedByIdentityID   string
+	IdempotencyKey        string
+	RequestDigest         []byte
+	CanonicalHostname     string
+	Target                string
+	RouteScope            string
+	PolicyRevision        int64
+	IpPolicy              string
+	AllowedIpPrefixes     []netip.Prefix
+	LifecycleState        string
+	DnsAuthorityReference pgtype.Text
+	DnsState              string
+	DnsRevision           int64
+	DnsWorkOwner          pgtype.Text
+	DnsWorkEpoch          int64
+	DnsWorkExpiresAt      pgtype.Timestamptz
+	DnsAttempts           int64
+	DnsAvailableAt        pgtype.Timestamptz
+	DnsLastError          pgtype.Text
+	NextRouteVersion      int64
+	SuspensionRevision    int64
+	SuspensionReason      pgtype.Text
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+	SuspendedAt           pgtype.Timestamptz
+	DeletedAt             pgtype.Timestamptz
+	AttachedSessionID     string
 }
 
 func (q *Queries) ListExternalAuthorityRoutes(ctx context.Context, arg ListExternalAuthorityRoutesParams) ([]ListExternalAuthorityRoutesRow, error) {
@@ -229,8 +296,15 @@ func (q *Queries) ListExternalAuthorityRoutes(ctx context.Context, arg ListExter
 			&i.IpPolicy,
 			&i.AllowedIpPrefixes,
 			&i.LifecycleState,
+			&i.DnsAuthorityReference,
 			&i.DnsState,
 			&i.DnsRevision,
+			&i.DnsWorkOwner,
+			&i.DnsWorkEpoch,
+			&i.DnsWorkExpiresAt,
+			&i.DnsAttempts,
+			&i.DnsAvailableAt,
+			&i.DnsLastError,
 			&i.NextRouteVersion,
 			&i.SuspensionRevision,
 			&i.SuspensionReason,
@@ -248,4 +322,128 @@ func (q *Queries) ListExternalAuthorityRoutes(ctx context.Context, arg ListExter
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockHostedTeamRoutes = `-- name: LockHostedTeamRoutes :many
+SELECT id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key, request_digest, canonical_hostname, target, route_scope, policy_revision, ip_policy, allowed_ip_prefixes, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_route_version, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at
+FROM control.routes
+WHERE team_id = $1
+  AND deleted_at IS NULL
+ORDER BY id
+FOR UPDATE
+`
+
+func (q *Queries) LockHostedTeamRoutes(ctx context.Context, teamID string) ([]ControlRoute, error) {
+	rows, err := q.db.Query(ctx, lockHostedTeamRoutes, teamID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ControlRoute
+	for rows.Next() {
+		var i ControlRoute
+		if err := rows.Scan(
+			&i.ID,
+			&i.TeamID,
+			&i.DomainID,
+			&i.MembershipID,
+			&i.CreatedByIdentityID,
+			&i.IdempotencyKey,
+			&i.RequestDigest,
+			&i.CanonicalHostname,
+			&i.Target,
+			&i.RouteScope,
+			&i.PolicyRevision,
+			&i.IpPolicy,
+			&i.AllowedIpPrefixes,
+			&i.LifecycleState,
+			&i.DnsAuthorityReference,
+			&i.DnsState,
+			&i.DnsRevision,
+			&i.DnsWorkOwner,
+			&i.DnsWorkEpoch,
+			&i.DnsWorkExpiresAt,
+			&i.DnsAttempts,
+			&i.DnsAvailableAt,
+			&i.DnsLastError,
+			&i.NextRouteVersion,
+			&i.SuspensionRevision,
+			&i.SuspensionReason,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.SuspendedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const observeAuthorityRevision = `-- name: ObserveAuthorityRevision :one
+INSERT INTO control.authority_revision_floors (
+    issuer,
+    team_id,
+    policy_revision,
+    updated_at
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4
+)
+ON CONFLICT (issuer, team_id) DO UPDATE SET
+    policy_revision = EXCLUDED.policy_revision,
+    updated_at = EXCLUDED.updated_at
+WHERE control.authority_revision_floors.policy_revision <= EXCLUDED.policy_revision
+RETURNING policy_revision
+`
+
+type ObserveAuthorityRevisionParams struct {
+	Issuer         string
+	TeamID         string
+	PolicyRevision int64
+	UpdatedAt      pgtype.Timestamptz
+}
+
+func (q *Queries) ObserveAuthorityRevision(ctx context.Context, arg ObserveAuthorityRevisionParams) (int64, error) {
+	row := q.db.QueryRow(ctx, observeAuthorityRevision,
+		arg.Issuer,
+		arg.TeamID,
+		arg.PolicyRevision,
+		arg.UpdatedAt,
+	)
+	var policy_revision int64
+	err := row.Scan(&policy_revision)
+	return policy_revision, err
+}
+
+const rotateExternalRetryMasterKey = `-- name: RotateExternalRetryMasterKey :exec
+UPDATE control.runtime_secrets
+SET external_retry_master_key_ciphertext = $1,
+    external_retry_master_key_storage_key_id = $2
+WHERE singleton = true
+  AND external_retry_master_key_storage_key_id = $3
+  AND external_retry_master_key_ciphertext = $4
+`
+
+type RotateExternalRetryMasterKeyParams struct {
+	ExternalRetryMasterKeyCiphertext   []byte
+	ExternalRetryMasterKeyStorageKeyID string
+	PreviousKeyID                      string
+	PreviousCiphertext                 []byte
+}
+
+func (q *Queries) RotateExternalRetryMasterKey(ctx context.Context, arg RotateExternalRetryMasterKeyParams) error {
+	_, err := q.db.Exec(ctx, rotateExternalRetryMasterKey,
+		arg.ExternalRetryMasterKeyCiphertext,
+		arg.ExternalRetryMasterKeyStorageKeyID,
+		arg.PreviousKeyID,
+		arg.PreviousCiphertext,
+	)
+	return err
 }

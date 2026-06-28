@@ -1,6 +1,6 @@
 openapi: 3.1.0
 info:
-  title: tnl authorization authority API
+  title: tnl authority API
   version: 1.0.0
   license:
     name: MIT
@@ -350,27 +350,25 @@ paths:
           description: Domain release started
         default:
           $ref: "#/components/responses/Problem"
-  /v1/authorizations:
+  /v1/service/authorize:
     post:
-      operationId: issueAuthorization
-      summary: Issue a short-lived team authorization for one control mutation
+      operationId: authorizeServiceOperation
+      summary: Authorize one control operation against current authority state
       security:
-        - bearerAuth: []
-      parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
+        - hostedServiceAuth: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/IssueAuthorizationRequest"
+              $ref: "#/components/schemas/ServiceAuthorizationRequest"
       responses:
-        "201":
-          description: Signed authorization
+        "200":
+          description: Current authorization decision
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AuthorizationEnvelope"
+                $ref: "#/components/schemas/ServiceAuthorizationDecision"
         default:
           $ref: "#/components/responses/Problem"
 components:
@@ -379,6 +377,10 @@ components:
       type: http
       scheme: bearer
       bearerFormat: OAuth access token
+    hostedServiceAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: tnl hosted service secret
   parameters:
     IdempotencyKey:
       name: Idempotency-Key
@@ -844,25 +846,44 @@ components:
         identifiers:
           type: array
           minItems: 1
+          maxItems: 2
           uniqueItems: true
           items:
-            $ref: "#/components/schemas/CanonicalHostname"
+            type: string
+            minLength: 1
+            maxLength: 253
+            pattern: "^(?:\\*\\.)?[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
         challenge_method:
           $ref: "#/components/schemas/CertificateChallengeMethod"
     AuthorizationOperation:
       type: string
       enum: [route.create, route_session.create, route.delete]
-    IssueAuthorizationRequest:
+    ServiceAuthorizationRequest:
       type: object
       additionalProperties: false
       required:
-        [operation, team_id, domain_id, canonical_hostname, route_scope, request_digest, retry_id]
+        [
+          access_token,
+          operation,
+          team_id,
+          domain_id,
+          canonical_hostname,
+          route_scope,
+          target,
+          allowed_ip_prefixes,
+        ]
       properties:
+        access_token:
+          type: string
+          minLength: 1
+          maxLength: 4096
         operation:
           $ref: "#/components/schemas/AuthorizationOperation"
         team_id:
           $ref: "#/components/schemas/TeamID"
-        membership_id:
+        acting_membership_id:
+          $ref: "#/components/schemas/MembershipID"
+        route_membership_id:
           $ref: "#/components/schemas/MembershipID"
         domain_id:
           $ref: "#/components/schemas/DomainID"
@@ -876,38 +897,58 @@ components:
           type: integer
           format: int64
           minimum: 1
-        certificate_plan:
-          $ref: "#/components/schemas/CertificatePlan"
-        request_digest:
+        target:
           type: string
-          minLength: 43
-          maxLength: 43
-        ip_policy_digest:
-          type: string
-          minLength: 43
-          maxLength: 43
-        retry_id:
-          type: string
-          minLength: 1
-          maxLength: 256
-    AuthorizationEnvelope:
+          format: uri
+          pattern: "^http://"
+        allowed_ip_prefixes:
+          type: array
+          maxItems: 64
+          uniqueItems: true
+          items:
+            type: string
+    ServiceAuthorizationDecision:
       type: object
       additionalProperties: false
-      required: [authorization_id, authorization, team_policy_revision, expires_at]
+      required:
+        [
+          identity_id,
+          team_id,
+          acting_membership_id,
+          acting_role,
+          team_policy_revision,
+          domain_id,
+          canonical_hostname,
+          route_scope,
+          dns_authority_reference,
+        ]
       properties:
-        authorization_id:
-          $ref: "#/components/schemas/ResourceID"
-        authorization:
-          type: string
-          minLength: 1
-          maxLength: 4096
+        identity_id:
+          $ref: "#/components/schemas/IdentityID"
+        team_id:
+          $ref: "#/components/schemas/TeamID"
+        acting_membership_id:
+          $ref: "#/components/schemas/MembershipID"
+        acting_role:
+          $ref: "#/components/schemas/TeamRole"
+        route_membership_id:
+          $ref: "#/components/schemas/MembershipID"
         team_policy_revision:
           type: integer
           format: int64
           minimum: 1
-        expires_at:
+        domain_id:
+          $ref: "#/components/schemas/DomainID"
+        canonical_hostname:
+          $ref: "#/components/schemas/CanonicalHostname"
+        route_scope:
+          $ref: "#/components/schemas/RouteScope"
+        dns_authority_reference:
           type: string
-          format: date-time
+          minLength: 1
+          maxLength: 512
+        certificate_plan:
+          $ref: "#/components/schemas/CertificatePlan"
     Problem:
       type: object
       additionalProperties: false

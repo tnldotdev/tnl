@@ -9,7 +9,7 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://ingress-control.internal
 security:
-  - ingressMutualTLS: []
+  - clusterAuth: []
 paths:
   /internal/v1/ingresses/register:
     post:
@@ -180,8 +180,10 @@ paths:
           $ref: "#/components/responses/Problem"
 components:
   securitySchemes:
-    ingressMutualTLS:
-      type: mutualTLS
+    clusterAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: tnl cluster secret
   parameters:
     IngressID:
       name: ingress_id

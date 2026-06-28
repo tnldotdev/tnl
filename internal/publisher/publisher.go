@@ -34,7 +34,7 @@ var (
 type RouteControlClient interface {
 	CreateRoute(context.Context, controlv1.CreateRouteRequest, string) (controlv1.Route, error)
 	ListRoutes(context.Context, string) ([]controlv1.Route, error)
-	CreateRouteSession(context.Context, controlv1.Route, controlv1.CreateRouteSessionRequest, uint64, string) (controlv1.RouteSessionSetup, error)
+	CreateRouteSession(context.Context, string, string) (controlv1.RouteSessionSetup, error)
 	CloseRouteSession(context.Context, string, credentials.SessionToken) error
 	Ready(context.Context, string, uint64, credentials.SessionToken) error
 	Heartbeat(context.Context, string, uint64, credentials.SessionToken) (controlv1.RouteSessionHeartbeat, error)
@@ -215,15 +215,8 @@ func createRouteSession(ctx context.Context, config Config, route controlv1.Rout
 	if err != nil {
 		return controlv1.RouteSessionSetup{}, err
 	}
-	body := controlv1.CreateRouteSessionRequest{
-		TeamId: config.TeamID, PolicyRevision: int64(config.PolicyRevision), CertificatePlan: config.CertificatePlan,
-		AllowedIpPrefixes: append([]string{}, config.AllowedIPPrefixes...),
-	}
-	if config.MembershipID != "" {
-		body.MembershipId = &config.MembershipID
-	}
 	for {
-		setup, err := config.Control.CreateRouteSession(ctx, route, body, uint64(route.NextRouteVersion), idempotencyKey)
+		setup, err := config.Control.CreateRouteSession(ctx, route.Id, idempotencyKey)
 		if err == nil || !errors.Is(err, controlclient.ErrUnavailable) {
 			return setup, err
 		}

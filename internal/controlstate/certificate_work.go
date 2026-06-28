@@ -16,24 +16,25 @@ import (
 var ErrACMEWorkFenced = errors.New("controlstate: ACME work lease is fenced")
 
 type ACMEAuthorizationWork struct {
-	ID                 string
-	Identifier         string
-	AuthorizationURL   string
-	ChallengeType      string
-	ChallengeURL       string
-	ChallengeToken     string
-	ChallengeDigest    [32]byte
-	State              string
-	Revision           uint64
-	Attempts           uint64
-	AvailableAt        time.Time
-	PresentedAt        *time.Time
-	ValidatedAt        *time.Time
-	CleanupCompletedAt *time.Time
-	ExpiresAt          *time.Time
-	LastError          string
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	ID                    string
+	Identifier            string
+	AuthorizationURL      string
+	ChallengeType         string
+	ChallengeURL          string
+	ChallengeToken        string
+	ChallengeDigest       [32]byte
+	PresentationReference string
+	State                 string
+	Revision              uint64
+	Attempts              uint64
+	AvailableAt           time.Time
+	PresentedAt           *time.Time
+	ValidatedAt           *time.Time
+	CleanupCompletedAt    *time.Time
+	ExpiresAt             *time.Time
+	LastError             string
+	CreatedAt             time.Time
+	UpdatedAt             time.Time
 }
 
 type ACMEOrderWork struct {
@@ -93,7 +94,7 @@ func (d *Database) UpdateACMEAccountRegistration(
 	if err != nil {
 		return ACMEAccount{}, fmt.Errorf("controlstate: update ACME account registration: %w", err)
 	}
-	return acmeAccount(row), nil
+	return d.acmeAccount(ctx, controlstatedb.New(d.pool), row)
 }
 
 func (d *Database) ClaimACMEOrderWork(
@@ -126,7 +127,7 @@ func (d *Database) ClaimACMEOrderWork(
 	if err != nil {
 		return ACMEOrderWork{}, false, fmt.Errorf("controlstate: claim ACME order work: claim order: %w", err)
 	}
-	account, err := getACMEAccountByID(ctx, tx, order.AccountID)
+	account, err := d.getACMEAccountByID(ctx, tx, order.AccountID)
 	if err != nil {
 		return ACMEOrderWork{}, false, err
 	}
@@ -149,6 +150,16 @@ func (d *Database) SaveACMEOrderWork(
 	work ACMEOrderWork,
 	now time.Time,
 ) (result ACMEOrderWork, retErr error) {
+	for index := range work.Authorizations {
+		authorization := &work.Authorizations[index]
+		if authorization.ChallengeType == "dns-01" && authorization.PresentationReference == "" {
+			var err error
+			authorization.PresentationReference, err = opaqueid.New("acme_presentation_")
+			if err != nil {
+				return ACMEOrderWork{}, fmt.Errorf("controlstate: generate ACME presentation reference: %w", err)
+			}
+		}
+	}
 	if err := validateACMEOrderWork(work); err != nil {
 		return ACMEOrderWork{}, err
 	}
@@ -191,7 +202,8 @@ func (d *Database) SaveACMEOrderWork(
 			ID: authorization.ID, OrderID: work.ID, Identifier: authorization.Identifier,
 			AuthorizationUrl: authorization.AuthorizationURL, ChallengeType: authorization.ChallengeType,
 			ChallengeUrl: authorization.ChallengeURL, ChallengeToken: authorization.ChallengeToken,
-			ChallengeDigest: authorization.ChallengeDigest[:], State: authorization.State,
+			ChallengeDigest: authorization.ChallengeDigest[:], PresentationReference: nullableText(authorization.PresentationReference),
+			State:                 authorization.State,
 			AuthorizationRevision: positive(max(authorization.Revision, 1)), Attempts: nonnegative(authorization.Attempts),
 			AvailableAt: timestamptz(authorization.AvailableAt), PresentedAt: nullableTime(authorization.PresentedAt),
 			ValidatedAt: nullableTime(authorization.ValidatedAt), CleanupCompletedAt: nullableTime(authorization.CleanupCompletedAt),
@@ -204,7 +216,7 @@ func (d *Database) SaveACMEOrderWork(
 			return ACMEOrderWork{}, fmt.Errorf("controlstate: save ACME order work: update authorization: %w", err)
 		}
 	}
-	account, err := getACMEAccountByID(ctx, tx, order.AccountID)
+	account, err := d.getACMEAccountByID(ctx, tx, order.AccountID)
 	if err != nil {
 		return ACMEOrderWork{}, err
 	}
@@ -222,29 +234,29 @@ func (d *Database) SaveACMEOrderWork(
 	return result, nil
 }
 
-func getACMEAccountByID(ctx context.Context, db controlstatedb.DBTX, accountID string) (controlstatedb.ControlAcmeAccount, error) {
+func (d *Database) getACMEAccountByID(ctx context.Context, db controlstatedb.DBTX, accountID string) (ACMEAccount, error) {
 	var account controlstatedb.ControlAcmeAccount
 	err := db.QueryRow(ctx, `
-		SELECT id, directory_url, contact_email, account_key_der, account_url,
+		SELECT id, directory_url, contact_email, account_key_ciphertext, account_key_storage_key_id, account_url,
 			accepted_terms_url, created_at, updated_at
 		FROM control.acme_accounts
 		WHERE id = $1
 	`, accountID).Scan(
-		&account.ID, &account.DirectoryUrl, &account.ContactEmail, &account.AccountKeyDer,
+		&account.ID, &account.DirectoryUrl, &account.ContactEmail, &account.AccountKeyCiphertext, &account.AccountKeyStorageKeyID,
 		&account.AccountUrl, &account.AcceptedTermsUrl, &account.CreatedAt, &account.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return controlstatedb.ControlAcmeAccount{}, errors.New("controlstate: ACME work references a missing account")
+		return ACMEAccount{}, errors.New("controlstate: ACME work references a missing account")
 	}
 	if err != nil {
-		return controlstatedb.ControlAcmeAccount{}, fmt.Errorf("controlstate: read ACME work account: %w", err)
+		return ACMEAccount{}, fmt.Errorf("controlstate: read ACME work account: %w", err)
 	}
-	return account, nil
+	return d.acmeAccount(ctx, controlstatedb.New(db), account)
 }
 
 func acmeOrderWork(
 	order controlstatedb.ControlAcmeOrder,
-	account controlstatedb.ControlAcmeAccount,
+	account ACMEAccount,
 	authorizations []controlstatedb.ControlAcmeAuthorization,
 	requireLease bool,
 ) (ACMEOrderWork, error) {
@@ -255,7 +267,7 @@ func acmeOrderWork(
 		return ACMEOrderWork{}, errors.New("controlstate: invalid ACME order work row")
 	}
 	work := ACMEOrderWork{
-		ID: order.ID, Account: acmeAccount(account), RouteSessionID: order.RouteSessionID,
+		ID: order.ID, Account: account, RouteSessionID: order.RouteSessionID,
 		RouteID: order.RouteID, RouteVersion: uint64(order.RouteVersion), CertificateCacheKey: order.CertificateCacheKey,
 		CertificateScope: order.CertificateScope, CertificateIdentifiers: slices.Clone(order.CertificateIdentifiers),
 		ChallengeMethod: order.ChallengeMethod, CSRDER: slices.Clone(order.CsrDer), State: order.State,
@@ -278,7 +290,8 @@ func acmeOrderWork(
 		value := ACMEAuthorizationWork{
 			ID: authorization.ID, Identifier: authorization.Identifier, AuthorizationURL: authorization.AuthorizationUrl,
 			ChallengeType: authorization.ChallengeType, ChallengeURL: authorization.ChallengeUrl,
-			ChallengeToken: authorization.ChallengeToken, State: authorization.State,
+			ChallengeToken: authorization.ChallengeToken, PresentationReference: authorization.PresentationReference.String,
+			State:    authorization.State,
 			Revision: uint64(authorization.AuthorizationRevision), Attempts: uint64(authorization.Attempts),
 			AvailableAt: authorization.AvailableAt.Time, PresentedAt: optionalTime(authorization.PresentedAt),
 			ValidatedAt: optionalTime(authorization.ValidatedAt), CleanupCompletedAt: optionalTime(authorization.CleanupCompletedAt),
@@ -308,6 +321,7 @@ func validateACMEOrderWork(work ACMEOrderWork) error {
 		if !validStateText(authorization.Identifier) || !validStateText(authorization.AuthorizationURL) ||
 			!validStateText(authorization.ChallengeURL) || !validStateText(authorization.ChallengeToken) ||
 			authorization.ChallengeType != "tls-alpn-01" && authorization.ChallengeType != "dns-01" ||
+			(authorization.ChallengeType == "dns-01") != validStateText(authorization.PresentationReference) ||
 			!revisionOK || !authorizationAttemptsOK || authorization.State == "" || authorization.AvailableAt.IsZero() ||
 			len(authorization.LastError) > 1024 {
 			return ErrCertificateIssuanceInvalid

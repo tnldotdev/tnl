@@ -37,6 +37,13 @@ type Config struct {
 	OperationTimeout time.Duration
 	PollInterval     time.Duration
 	IdleInterval     time.Duration
+	DNSChallenges    DNSChallenges
+}
+
+type DNSChallenges interface {
+	Present(context.Context, string, string) error
+	Verify(context.Context, string, string) (bool, error)
+	Cleanup(context.Context, string, string) error
 }
 
 // Store is the durable certificate work state consumed by a Worker.
@@ -193,14 +200,19 @@ func (w *Worker) advance(ctx context.Context, client acmeAPI, work *controlstate
 		return w.finalizeOrder(ctx, client, work, now)
 	case "finalizing":
 		return w.collectCertificate(ctx, client, work, now)
+	case "failed", "canceled":
+		return w.cleanupFailedOrder(ctx, work, now)
 	default:
 		return terminalf("cannot process order in state %q", work.State)
 	}
 }
 
 func (w *Worker) createOrder(ctx context.Context, client acmeAPI, work *controlstate.ACMEOrderWork, now time.Time) error {
-	if work.ChallengeMethod != "tls-alpn-01" {
+	if work.ChallengeMethod != "tls-alpn-01" && work.ChallengeMethod != "dns-01" {
 		return terminalf("challenge method %q is not supported", work.ChallengeMethod)
+	}
+	if work.ChallengeMethod == "dns-01" && w.config.DNSChallenges == nil {
+		return terminalf("DNS-01 challenge automation is not configured")
 	}
 	order, err := client.NewOrder(ctx, work.CertificateIdentifiers, w.config.Profile)
 	if err != nil {
@@ -242,7 +254,7 @@ func (w *Worker) authorizeOrder(ctx context.Context, client acmeAPI, work *contr
 			if err != nil {
 				return err
 			}
-			value, err := authorizationWork(client, authorization, order.Expires, now)
+			value, err := authorizationWork(client, authorization, work.ChallengeMethod, order.Expires, now)
 			if err != nil {
 				return err
 			}
@@ -275,7 +287,29 @@ func (w *Worker) authorizeOrder(ctx context.Context, client acmeAPI, work *contr
 		}
 		switch authorization.State {
 		case "presenting":
+			if authorization.ChallengeType == "dns-01" {
+				if err := w.config.DNSChallenges.Present(ctx, work.RouteID, authorization.ID); err != nil {
+					return err
+				}
+				authorization.State = "presented"
+				authorization.Attempts++
+				authorization.PresentedAt = timePointer(now)
+				authorization.AvailableAt = now.Add(w.config.PollInterval)
+				work.AvailableAt = authorization.AvailableAt
+				return nil
+			}
 		case "presented":
+			if authorization.ChallengeType == "dns-01" {
+				verified, err := w.config.DNSChallenges.Verify(ctx, work.RouteID, authorization.ID)
+				if err != nil {
+					return err
+				}
+				if !verified {
+					authorization.AvailableAt = now.Add(w.config.PollInterval)
+					work.AvailableAt = authorization.AvailableAt
+					return nil
+				}
+			}
 			retryAfter, err := client.AcceptChallenge(ctx, authorization.ChallengeURL)
 			if err != nil {
 				return err
@@ -291,7 +325,7 @@ func (w *Worker) authorizeOrder(ctx context.Context, client acmeAPI, work *contr
 				return err
 			}
 			if remote.URL != authorization.AuthorizationURL || remote.Identifier.Type != "dns" ||
-				remote.Identifier.Value != authorization.Identifier {
+				authorizationIdentifier(remote) != authorization.Identifier {
 				return terminalf("authorization identity changed for %q", authorization.Identifier)
 			}
 			switch remote.Status {
@@ -359,6 +393,15 @@ func (w *Worker) finalizeOrder(ctx context.Context, client acmeAPI, work *contro
 }
 
 func (w *Worker) collectCertificate(ctx context.Context, client acmeAPI, work *controlstate.ACMEOrderWork, now time.Time) error {
+	if len(work.CertificatePEM) != 0 {
+		handled, err := w.continueDNSCleanup(ctx, work, now)
+		if err != nil || handled {
+			return err
+		}
+		work.State = "waiting_for_install"
+		work.AvailableAt = *work.RenewAt
+		return nil
+	}
 	order, err := client.GetOrder(ctx, work.OrderURL)
 	if err != nil {
 		return err
@@ -399,6 +442,9 @@ func (w *Worker) collectCertificate(ctx context.Context, client acmeAPI, work *c
 		work.NotAfter = &notAfter
 		renewAt := notBefore.Add(notAfter.Sub(notBefore) * 2 / 3).UTC()
 		work.RenewAt = &renewAt
+		if handled, err := w.continueDNSCleanup(ctx, work, now); err != nil || handled {
+			return err
+		}
 		work.State = "waiting_for_install"
 		work.AvailableAt = renewAt
 		return nil
@@ -440,6 +486,16 @@ func (w *Worker) applyFailure(work *controlstate.ACMEOrderWork, operationErr err
 	work.AvailableAt = now.Add(5 * time.Second)
 	var acmeError *acmeclient.Error
 	var terminal *terminalError
+	if work.State == "failed" || work.State == "canceled" {
+		for index := range work.Authorizations {
+			if work.Authorizations[index].State == "cleaning" {
+				work.Authorizations[index].LastError = work.LastError
+				work.Authorizations[index].AvailableAt = now.Add(5 * time.Second)
+			}
+		}
+		work.AvailableAt = now.Add(5 * time.Second)
+		return
+	}
 	if errors.As(operationErr, &acmeError) && !acmeError.RetryAfter.IsZero() {
 		work.AvailableAt = acmeError.RetryAfter
 	}
@@ -447,18 +503,32 @@ func (w *Worker) applyFailure(work *controlstate.ACMEOrderWork, operationErr err
 		work.State = "failed"
 		work.AvailableAt = now
 		for index := range work.Authorizations {
-			if work.Authorizations[index].State != "complete" && work.Authorizations[index].State != "canceled" {
-				work.Authorizations[index].State = "failed"
-				work.Authorizations[index].LastError = work.LastError
-				work.Authorizations[index].AvailableAt = now
+			authorization := &work.Authorizations[index]
+			if authorization.State != "complete" && authorization.State != "canceled" {
+				if authorization.ChallengeType == "dns-01" &&
+					(authorization.State == "presenting" || authorization.State == "presented" ||
+						authorization.State == "validating" || authorization.State == "cleaning" ||
+						authorization.PresentedAt != nil) {
+					authorization.State = "cleaning"
+				} else {
+					authorization.State = "failed"
+				}
+				authorization.LastError = work.LastError
+				authorization.AvailableAt = now
 			}
 		}
 	}
 }
 
-func authorizationWork(client acmeAPI, authorization acmeclient.Authorization, orderExpires *time.Time, now time.Time) (controlstate.ACMEAuthorizationWork, error) {
+func authorizationWork(
+	client acmeAPI,
+	authorization acmeclient.Authorization,
+	challengeMethod string,
+	orderExpires *time.Time,
+	now time.Time,
+) (controlstate.ACMEAuthorizationWork, error) {
 	result := controlstate.ACMEAuthorizationWork{
-		Identifier: authorization.Identifier.Value, AuthorizationURL: authorization.URL,
+		Identifier: authorizationIdentifier(authorization), AuthorizationURL: authorization.URL,
 		AvailableAt: now, CreatedAt: now, UpdatedAt: now,
 	}
 	expiresAt := authorization.Expires
@@ -471,7 +541,7 @@ func authorizationWork(client acmeAPI, authorization acmeclient.Authorization, o
 	}
 	result.ExpiresAt = timePointer(expiresAt.UTC())
 	for _, challenge := range authorization.Challenges {
-		if challenge.Type != "tls-alpn-01" {
+		if challenge.Type != challengeMethod {
 			continue
 		}
 		keyAuthorization, err := client.KeyAuthorization(challenge.Token)
@@ -485,7 +555,7 @@ func authorizationWork(client acmeAPI, authorization acmeclient.Authorization, o
 		break
 	}
 	if result.ChallengeType == "" {
-		return result, terminalf("authorization for %q has no TLS-ALPN-01 challenge", result.Identifier)
+		return result, terminalf("authorization for %q has no %s challenge", result.Identifier, challengeMethod)
 	}
 	switch authorization.Status {
 	case "valid":
@@ -500,6 +570,58 @@ func authorizationWork(client acmeAPI, authorization acmeclient.Authorization, o
 	}
 	result.State = "presenting"
 	return result, nil
+}
+
+func (w *Worker) continueDNSCleanup(
+	ctx context.Context,
+	work *controlstate.ACMEOrderWork,
+	now time.Time,
+) (bool, error) {
+	for index := range work.Authorizations {
+		authorization := &work.Authorizations[index]
+		if authorization.ChallengeType != "dns-01" || authorization.State == "complete" || authorization.State == "canceled" {
+			continue
+		}
+		if authorization.State == "valid" && authorization.PresentedAt == nil {
+			authorization.State = "complete"
+			authorization.CleanupCompletedAt = timePointer(now)
+			authorization.AvailableAt = now
+			continue
+		}
+		if authorization.State == "valid" {
+			authorization.State = "cleaning"
+			authorization.AvailableAt = now
+			work.AvailableAt = now
+			return true, nil
+		}
+		if authorization.State != "cleaning" {
+			return false, terminalf("cannot clean DNS authorization for %q in state %q", authorization.Identifier, authorization.State)
+		}
+		if err := w.config.DNSChallenges.Cleanup(ctx, work.RouteID, authorization.ID); err != nil {
+			return false, err
+		}
+		authorization.State = "complete"
+		authorization.CleanupCompletedAt = timePointer(now)
+		authorization.AvailableAt = now
+		work.AvailableAt = now
+		return true, nil
+	}
+	return false, nil
+}
+
+func (w *Worker) cleanupFailedOrder(ctx context.Context, work *controlstate.ACMEOrderWork, now time.Time) error {
+	if w.config.DNSChallenges == nil {
+		return terminalf("DNS-01 challenge cleanup is not configured")
+	}
+	_, err := w.continueDNSCleanup(ctx, work, now)
+	return err
+}
+
+func authorizationIdentifier(authorization acmeclient.Authorization) string {
+	if authorization.Wildcard {
+		return "*." + authorization.Identifier.Value
+	}
+	return authorization.Identifier.Value
 }
 
 func validateOrder(order acmeclient.Order, identifiers []string) error {

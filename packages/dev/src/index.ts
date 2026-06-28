@@ -1,4 +1,9 @@
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import * as fs from "node:fs";
 import * as http from "node:http";
+import * as os from "node:os";
+import * as path from "node:path";
 import {
   gte,
   hostname,
@@ -31,16 +36,11 @@ const localPortError = "tnl local port must be between 1 and 65535";
 const publicURLError = "tnl dev returned an invalid public URL";
 const environmentPortError = "TNL_DEV_PORT must be a port between 1 and 65535";
 const socketRequiredError = `TNL_DEV_SOCKET is required by tnl dev protocol ${protocolVersion}`;
-const tokenRequiredError = `TNL_DEV_TOKEN is required by tnl dev protocol ${protocolVersion}`;
 
 const frameworkSchema = string(frameworkError).check(regex(/^[a-z]{1,32}$/, frameworkError));
 const localPortSchema = portSchema(localPortError);
 const devEnvironmentSchema = object({
   TNL_DEV_SOCKET: string(socketRequiredError).check(minLength(1, socketRequiredError)),
-  TNL_DEV_TOKEN: string(tokenRequiredError).check(
-    minLength(1, tokenRequiredError),
-    regex(/^[a-f0-9]{64}$/, "TNL_DEV_TOKEN is invalid"),
-  ),
   TNL_DEV_PORT: optional(
     string(environmentPortError).check(
       refine(
@@ -101,8 +101,6 @@ export interface TnlDevBootstrap {
   readonly port?: number;
   /** The local socket used to communicate with `tnl dev`. */
   readonly socket: string;
-  /** The private token used to authenticate local requests. */
-  readonly token: string;
 }
 
 /** Public tunnel details assigned by `tnl dev`. */
@@ -136,7 +134,8 @@ export function readDevEnvironment(
 ): TnlDevBootstrap | null {
   const protocol = environment.TNL_DEV_PROTOCOL;
   if (protocol === undefined) {
-    return null;
+    const socket = discoverDevSocket(environment);
+    return socket === null ? null : Object.freeze({ socket });
   }
   if (protocol !== protocolVersion) {
     throw new Error(
@@ -146,7 +145,7 @@ export function readDevEnvironment(
 
   const values = parseSchema(devEnvironmentSchema, environment);
   const port = values.TNL_DEV_PORT ? Number(values.TNL_DEV_PORT) : undefined;
-  return Object.freeze({ port, socket: values.TNL_DEV_SOCKET, token: values.TNL_DEV_TOKEN });
+  return Object.freeze({ port, socket: values.TNL_DEV_SOCKET });
 }
 
 /**
@@ -209,7 +208,6 @@ function sendRequest(
         path: requestPath,
         method: "POST",
         headers: {
-          Authorization: `Bearer ${bootstrap.token}`,
           "Content-Length": Buffer.byteLength(body),
           "Content-Type": "application/json",
         },
@@ -262,6 +260,52 @@ function sendRequest(
     request.on("error", reject);
     request.end(body);
   });
+}
+
+function discoverDevSocket(environment: TnlDevEnvironment): string | null {
+  let root = path.resolve(process.cwd());
+  try {
+    const discovered = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    if (discovered !== "") {
+      root = path.resolve(discovered);
+    }
+  } catch {
+    // A non-Git project uses its current directory as its stable identity.
+  }
+  const getuid = process.getuid;
+  if (getuid === undefined) {
+    return null;
+  }
+  const base = environment.XDG_RUNTIME_DIR || os.tmpdir();
+  const directory = path.join(base, `tnl-${getuid()}`);
+  const digest = createHash("sha256").update(root).digest("hex").slice(0, 16);
+  const socket = path.join(directory, `dev-${digest}.sock`);
+  let directoryStat: fs.Stats;
+  let socketStat: fs.Stats;
+  try {
+    directoryStat = fs.lstatSync(directory);
+    socketStat = fs.lstatSync(socket);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+  if (
+    !directoryStat.isDirectory() ||
+    directoryStat.uid !== getuid() ||
+    (directoryStat.mode & 0o777) !== 0o700 ||
+    !socketStat.isSocket() ||
+    socketStat.uid !== getuid() ||
+    (socketStat.mode & 0o777) !== 0o600
+  ) {
+    throw new Error("tnl dev runtime directory or socket has unsafe ownership or permissions");
+  }
+  return socket;
 }
 
 function validateAssignment(

@@ -259,14 +259,6 @@ type AcceptInvitationRequest struct {
 	Secret string `json:"secret"`
 }
 
-// AuthorizationEnvelope defines model for AuthorizationEnvelope.
-type AuthorizationEnvelope struct {
-	Authorization      string     `json:"authorization"`
-	AuthorizationId    ResourceID `json:"authorization_id"`
-	ExpiresAt          time.Time  `json:"expires_at"`
-	TeamPolicyRevision int64      `json:"team_policy_revision"`
-}
-
 // AuthorizationOperation defines model for AuthorizationOperation.
 type AuthorizationOperation string
 
@@ -283,7 +275,7 @@ type CertificateChallengeMethod string
 type CertificatePlan struct {
 	CacheKey        string                     `json:"cache_key"`
 	ChallengeMethod CertificateChallengeMethod `json:"challenge_method"`
-	Identifiers     []CanonicalHostname        `json:"identifiers"`
+	Identifiers     []string                   `json:"identifiers"`
 	Scope           string                     `json:"scope"`
 }
 
@@ -406,22 +398,6 @@ type InvitationSecret struct {
 // InvitationState defines model for InvitationState.
 type InvitationState string
 
-// IssueAuthorizationRequest defines model for IssueAuthorizationRequest.
-type IssueAuthorizationRequest struct {
-	CanonicalHostname CanonicalHostname      `json:"canonical_hostname"`
-	CertificatePlan   *CertificatePlan       `json:"certificate_plan,omitempty"`
-	DomainId          DomainID               `json:"domain_id"`
-	IpPolicyDigest    *string                `json:"ip_policy_digest,omitempty"`
-	MembershipId      *MembershipID          `json:"membership_id,omitempty"`
-	Operation         AuthorizationOperation `json:"operation"`
-	RequestDigest     string                 `json:"request_digest"`
-	RetryId           string                 `json:"retry_id"`
-	RouteId           *RouteID               `json:"route_id,omitempty"`
-	RouteScope        RouteScope             `json:"route_scope"`
-	RouteVersion      *int64                 `json:"route_version,omitempty"`
-	TeamId            TeamID                 `json:"team_id"`
-}
-
 // LoginTokenExchangeRequest defines model for LoginTokenExchangeRequest.
 type LoginTokenExchangeRequest struct {
 	LoginToken string `json:"login_token"`
@@ -485,6 +461,37 @@ type RouteID = ResourceID
 // RouteScope defines model for RouteScope.
 type RouteScope string
 
+// ServiceAuthorizationDecision defines model for ServiceAuthorizationDecision.
+type ServiceAuthorizationDecision struct {
+	ActingMembershipId    MembershipID      `json:"acting_membership_id"`
+	ActingRole            TeamRole          `json:"acting_role"`
+	CanonicalHostname     CanonicalHostname `json:"canonical_hostname"`
+	CertificatePlan       *CertificatePlan  `json:"certificate_plan,omitempty"`
+	DnsAuthorityReference string            `json:"dns_authority_reference"`
+	DomainId              DomainID          `json:"domain_id"`
+	IdentityId            IdentityID        `json:"identity_id"`
+	RouteMembershipId     *MembershipID     `json:"route_membership_id,omitempty"`
+	RouteScope            RouteScope        `json:"route_scope"`
+	TeamId                TeamID            `json:"team_id"`
+	TeamPolicyRevision    int64             `json:"team_policy_revision"`
+}
+
+// ServiceAuthorizationRequest defines model for ServiceAuthorizationRequest.
+type ServiceAuthorizationRequest struct {
+	AccessToken        string                 `json:"access_token"`
+	ActingMembershipId *MembershipID          `json:"acting_membership_id,omitempty"`
+	AllowedIpPrefixes  []string               `json:"allowed_ip_prefixes"`
+	CanonicalHostname  CanonicalHostname      `json:"canonical_hostname"`
+	DomainId           DomainID               `json:"domain_id"`
+	Operation          AuthorizationOperation `json:"operation"`
+	RouteId            *RouteID               `json:"route_id,omitempty"`
+	RouteMembershipId  *MembershipID          `json:"route_membership_id,omitempty"`
+	RouteScope         RouteScope             `json:"route_scope"`
+	RouteVersion       *int64                 `json:"route_version,omitempty"`
+	Target             string                 `json:"target"`
+	TeamId             TeamID                 `json:"team_id"`
+}
+
 // SetMembershipRoleRequest defines model for SetMembershipRoleRequest.
 type SetMembershipRoleRequest struct {
 	Role TeamRole `json:"role"`
@@ -523,11 +530,6 @@ type IdempotencyKey = string
 // BearerProblem defines model for BearerProblem.
 type BearerProblem = Problem
 
-// IssueAuthorizationParams defines parameters for IssueAuthorization.
-type IssueAuthorizationParams struct {
-	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
-}
-
 // CreateTeamParams defines parameters for CreateTeam.
 type CreateTeamParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
@@ -552,11 +554,11 @@ type RefreshControlSessionJSONRequestBody = RefreshControlSessionRequest
 // ExchangeLoginTokenJSONRequestBody defines body for ExchangeLoginToken for application/json ContentType.
 type ExchangeLoginTokenJSONRequestBody = LoginTokenExchangeRequest
 
-// IssueAuthorizationJSONRequestBody defines body for IssueAuthorization for application/json ContentType.
-type IssueAuthorizationJSONRequestBody = IssueAuthorizationRequest
-
 // AcceptInvitationJSONRequestBody defines body for AcceptInvitation for application/json ContentType.
 type AcceptInvitationJSONRequestBody = AcceptInvitationRequest
+
+// AuthorizeServiceOperationJSONRequestBody defines body for AuthorizeServiceOperation for application/json ContentType.
+type AuthorizeServiceOperationJSONRequestBody = ServiceAuthorizationRequest
 
 // CreateTeamJSONRequestBody defines body for CreateTeam for application/json ContentType.
 type CreateTeamJSONRequestBody = CreateTeamRequest
@@ -691,20 +693,6 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/auth/token (the `ExchangeLoginToken` operationId).
 	ExchangeLoginToken(ctx context.Context, body ExchangeLoginTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// IssueAuthorizationWithBody Issue a short-lived team authorization for one control mutation
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/authorizations (the `IssueAuthorization` operationId).
-	IssueAuthorizationWithBody(ctx context.Context, params *IssueAuthorizationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// IssueAuthorization Issue a short-lived team authorization for one control mutation
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/authorizations (the `IssueAuthorization` operationId).
-	IssueAuthorization(ctx context.Context, params *IssueAuthorizationParams, body IssueAuthorizationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// GetIdentityContext Read the authenticated identity and memberships
 	//
 	// Corresponds with GET /v1/identity (the `GetIdentityContext` operationId).
@@ -723,6 +711,20 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/invitations/accept (the `AcceptInvitation` operationId).
 	AcceptInvitation(ctx context.Context, body AcceptInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AuthorizeServiceOperationWithBody Authorize one control operation against current authority state
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/service/authorize (the `AuthorizeServiceOperation` operationId).
+	AuthorizeServiceOperationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AuthorizeServiceOperation Authorize one control operation against current authority state
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/service/authorize (the `AuthorizeServiceOperation` operationId).
+	AuthorizeServiceOperation(ctx context.Context, body AuthorizeServiceOperationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListTeams List teams visible through current memberships
 	//
@@ -943,40 +945,6 @@ func (c *Client) ExchangeLoginToken(ctx context.Context, body ExchangeLoginToken
 	return c.Client.Do(req)
 }
 
-// IssueAuthorizationWithBody Issue a short-lived team authorization for one control mutation
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/authorizations (the `IssueAuthorization` operationId).
-func (c *Client) IssueAuthorizationWithBody(ctx context.Context, params *IssueAuthorizationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewIssueAuthorizationRequestWithBody(c.Server, params, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// IssueAuthorization Issue a short-lived team authorization for one control mutation
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/authorizations (the `IssueAuthorization` operationId).
-func (c *Client) IssueAuthorization(ctx context.Context, params *IssueAuthorizationParams, body IssueAuthorizationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewIssueAuthorizationRequest(c.Server, params, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // GetIdentityContext Read the authenticated identity and memberships
 //
 // Corresponds with GET /v1/identity (the `GetIdentityContext` operationId).
@@ -1016,6 +984,40 @@ func (c *Client) AcceptInvitationWithBody(ctx context.Context, contentType strin
 // Corresponds with POST /v1/invitations/accept (the `AcceptInvitation` operationId).
 func (c *Client) AcceptInvitation(ctx context.Context, body AcceptInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAcceptInvitationRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AuthorizeServiceOperationWithBody Authorize one control operation against current authority state
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/service/authorize (the `AuthorizeServiceOperation` operationId).
+func (c *Client) AuthorizeServiceOperationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAuthorizeServiceOperationRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AuthorizeServiceOperation Authorize one control operation against current authority state
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/service/authorize (the `AuthorizeServiceOperation` operationId).
+func (c *Client) AuthorizeServiceOperation(ctx context.Context, body AuthorizeServiceOperationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAuthorizeServiceOperationRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1444,59 +1446,6 @@ func NewExchangeLoginTokenRequestWithBody(server string, contentType string, bod
 	return req, nil
 }
 
-// NewIssueAuthorizationRequest calls the generic IssueAuthorization builder with application/json body
-func NewIssueAuthorizationRequest(server string, params *IssueAuthorizationParams, body IssueAuthorizationJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewIssueAuthorizationRequestWithBody(server, params, "application/json", bodyReader)
-}
-
-// NewIssueAuthorizationRequestWithBody constructs an http.Request for the IssueAuthorization method, with any body, and a specified content type
-func NewIssueAuthorizationRequestWithBody(server string, params *IssueAuthorizationParams, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/authorizations")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	if params != nil {
-
-		var headerParam0 string
-
-		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
-		if err != nil {
-			return nil, err
-		}
-
-		req.Header.Set("Idempotency-Key", headerParam0)
-
-	}
-
-	return req, nil
-}
-
 // NewGetIdentityContextRequest constructs an http.Request for the GetIdentityContext method
 func NewGetIdentityContextRequest(server string) (*http.Request, error) {
 	var err error
@@ -1545,6 +1494,46 @@ func NewAcceptInvitationRequestWithBody(server string, contentType string, body 
 	}
 
 	operationPath := fmt.Sprintf("/v1/invitations/accept")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewAuthorizeServiceOperationRequest calls the generic AuthorizeServiceOperation builder with application/json body
+func NewAuthorizeServiceOperationRequest(server string, body AuthorizeServiceOperationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAuthorizeServiceOperationRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewAuthorizeServiceOperationRequestWithBody constructs an http.Request for the AuthorizeServiceOperation method, with any body, and a specified content type
+func NewAuthorizeServiceOperationRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/service/authorize")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -2211,20 +2200,6 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/auth/token (the `ExchangeLoginToken` operationId).
 	ExchangeLoginTokenWithResponse(ctx context.Context, body ExchangeLoginTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*ExchangeLoginTokenResponse, error)
 
-	// IssueAuthorizationWithBodyWithResponse Issue a short-lived team authorization for one control mutation
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/authorizations (the `IssueAuthorization` operationId).
-	IssueAuthorizationWithBodyWithResponse(ctx context.Context, params *IssueAuthorizationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IssueAuthorizationResponse, error)
-
-	// IssueAuthorizationWithResponse Issue a short-lived team authorization for one control mutation
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/authorizations (the `IssueAuthorization` operationId).
-	IssueAuthorizationWithResponse(ctx context.Context, params *IssueAuthorizationParams, body IssueAuthorizationJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueAuthorizationResponse, error)
-
 	// GetIdentityContextWithResponse Read the authenticated identity and memberships
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -2245,6 +2220,20 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/invitations/accept (the `AcceptInvitation` operationId).
 	AcceptInvitationWithResponse(ctx context.Context, body AcceptInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*AcceptInvitationResponse, error)
+
+	// AuthorizeServiceOperationWithBodyWithResponse Authorize one control operation against current authority state
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/service/authorize (the `AuthorizeServiceOperation` operationId).
+	AuthorizeServiceOperationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizeServiceOperationResponse, error)
+
+	// AuthorizeServiceOperationWithResponse Authorize one control operation against current authority state
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/service/authorize (the `AuthorizeServiceOperation` operationId).
+	AuthorizeServiceOperationWithResponse(ctx context.Context, body AuthorizeServiceOperationJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeServiceOperationResponse, error)
 
 	// ListTeamsWithResponse List teams visible through current memberships
 	//
@@ -2558,54 +2547,6 @@ func (r ExchangeLoginTokenResponse) ContentType() string {
 	return ""
 }
 
-type IssueAuthorizationResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *AuthorizationEnvelope
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r IssueAuthorizationResponse) GetJSON201() *AuthorizationEnvelope {
-	return r.JSON201
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r IssueAuthorizationResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r IssueAuthorizationResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r IssueAuthorizationResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r IssueAuthorizationResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r IssueAuthorizationResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 // GetIdentityContextResponseDefaultHeaders the declared response headers of an HTTP default response for GetIdentityContext
 type GetIdentityContextResponseDefaultHeaders struct {
 	WWWAuthenticate string
@@ -2703,6 +2644,54 @@ func (r AcceptInvitationResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r AcceptInvitationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AuthorizeServiceOperationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ServiceAuthorizationDecision
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r AuthorizeServiceOperationResponse) GetJSON200() *ServiceAuthorizationDecision {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r AuthorizeServiceOperationResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r AuthorizeServiceOperationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AuthorizeServiceOperationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AuthorizeServiceOperationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AuthorizeServiceOperationResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -3410,32 +3399,6 @@ func (c *ClientWithResponses) ExchangeLoginTokenWithResponse(ctx context.Context
 	return ParseExchangeLoginTokenResponse(rsp)
 }
 
-// IssueAuthorizationWithBodyWithResponse Issue a short-lived team authorization for one control mutation
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/authorizations (the `IssueAuthorization` operationId).
-func (c *ClientWithResponses) IssueAuthorizationWithBodyWithResponse(ctx context.Context, params *IssueAuthorizationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IssueAuthorizationResponse, error) {
-	rsp, err := c.IssueAuthorizationWithBody(ctx, params, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseIssueAuthorizationResponse(rsp)
-}
-
-// IssueAuthorizationWithResponse Issue a short-lived team authorization for one control mutation
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/authorizations (the `IssueAuthorization` operationId).
-func (c *ClientWithResponses) IssueAuthorizationWithResponse(ctx context.Context, params *IssueAuthorizationParams, body IssueAuthorizationJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueAuthorizationResponse, error) {
-	rsp, err := c.IssueAuthorization(ctx, params, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseIssueAuthorizationResponse(rsp)
-}
-
 // GetIdentityContextWithResponse Read the authenticated identity and memberships
 //
 // Returns a wrapper object for the known response body format(s).
@@ -3473,6 +3436,32 @@ func (c *ClientWithResponses) AcceptInvitationWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseAcceptInvitationResponse(rsp)
+}
+
+// AuthorizeServiceOperationWithBodyWithResponse Authorize one control operation against current authority state
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/service/authorize (the `AuthorizeServiceOperation` operationId).
+func (c *ClientWithResponses) AuthorizeServiceOperationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizeServiceOperationResponse, error) {
+	rsp, err := c.AuthorizeServiceOperationWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAuthorizeServiceOperationResponse(rsp)
+}
+
+// AuthorizeServiceOperationWithResponse Authorize one control operation against current authority state
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/service/authorize (the `AuthorizeServiceOperation` operationId).
+func (c *ClientWithResponses) AuthorizeServiceOperationWithResponse(ctx context.Context, body AuthorizeServiceOperationJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeServiceOperationResponse, error) {
+	rsp, err := c.AuthorizeServiceOperation(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAuthorizeServiceOperationResponse(rsp)
 }
 
 // ListTeamsWithResponse List teams visible through current memberships
@@ -3837,39 +3826,6 @@ func ParseExchangeLoginTokenResponse(rsp *http.Response) (*ExchangeLoginTokenRes
 	return response, nil
 }
 
-// ParseIssueAuthorizationResponse parses an HTTP response from a IssueAuthorizationWithResponse call
-func ParseIssueAuthorizationResponse(rsp *http.Response) (*IssueAuthorizationResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &IssueAuthorizationResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest AuthorizationEnvelope
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseGetIdentityContextResponse parses an HTTP response from a GetIdentityContextWithResponse call
 func ParseGetIdentityContextResponse(rsp *http.Response) (*GetIdentityContextResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -3932,6 +3888,39 @@ func ParseAcceptInvitationResponse(rsp *http.Response) (*AcceptInvitationRespons
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest Membership
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAuthorizeServiceOperationResponse parses an HTTP response from a AuthorizeServiceOperationWithResponse call
+func ParseAuthorizeServiceOperationResponse(rsp *http.Response) (*AuthorizeServiceOperationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AuthorizeServiceOperationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ServiceAuthorizationDecision
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -4393,15 +4382,15 @@ type ServerInterface interface {
 	// ExchangeLoginToken Exchange the bootstrap login token for a control session
 	// (POST /v1/auth/token)
 	ExchangeLoginToken(w http.ResponseWriter, r *http.Request)
-	// IssueAuthorization Issue a short-lived team authorization for one control mutation
-	// (POST /v1/authorizations)
-	IssueAuthorization(w http.ResponseWriter, r *http.Request, params IssueAuthorizationParams)
 	// GetIdentityContext Read the authenticated identity and memberships
 	// (GET /v1/identity)
 	GetIdentityContext(w http.ResponseWriter, r *http.Request)
 	// AcceptInvitation Consume an invitation secret
 	// (POST /v1/invitations/accept)
 	AcceptInvitation(w http.ResponseWriter, r *http.Request)
+	// AuthorizeServiceOperation Authorize one control operation against current authority state
+	// (POST /v1/service/authorize)
+	AuthorizeServiceOperation(w http.ResponseWriter, r *http.Request)
 	// ListTeams List teams visible through current memberships
 	// (GET /v1/teams)
 	ListTeams(w http.ResponseWriter, r *http.Request)
@@ -4508,51 +4497,6 @@ func (siw *ServerInterfaceWrapper) ExchangeLoginToken(w http.ResponseWriter, r *
 	handler.ServeHTTP(w, r)
 }
 
-// IssueAuthorization operation middleware
-func (siw *ServerInterfaceWrapper) IssueAuthorization(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params IssueAuthorizationParams
-
-	headers := r.Header
-
-	// ------------- Required header parameter "Idempotency-Key" -------------
-	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
-		var IdempotencyKey IdempotencyKey
-		n := len(valueList)
-		if n != 1 {
-			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
-			return
-		}
-
-		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
-		if err != nil {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
-			return
-		}
-
-		params.IdempotencyKey = IdempotencyKey
-
-	} else {
-		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
-		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.IssueAuthorization(w, r, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // GetIdentityContext operation middleware
 func (siw *ServerInterfaceWrapper) GetIdentityContext(w http.ResponseWriter, r *http.Request) {
 
@@ -4572,6 +4516,20 @@ func (siw *ServerInterfaceWrapper) AcceptInvitation(w http.ResponseWriter, r *ht
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.AcceptInvitation(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AuthorizeServiceOperation operation middleware
+func (siw *ServerInterfaceWrapper) AuthorizeServiceOperation(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AuthorizeServiceOperation(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -5166,7 +5124,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/teams/{team_id}/domains", wrapper.ClaimTeamDomain)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/teams/{team_id}/domains/{domain_id}/default", wrapper.SetTeamDefaultDomain)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/teams/{team_id}/domains/{domain_id}", wrapper.ReleaseTeamDomain)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/authorizations", wrapper.IssueAuthorization)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/service/authorize", wrapper.AuthorizeServiceOperation)
 
 	return m
 }
@@ -5333,46 +5291,6 @@ func (response ExchangeLoginTokendefaultApplicationProblemPlusJSONResponse) Visi
 	return err
 }
 
-type IssueAuthorizationRequestObject struct {
-	Params IssueAuthorizationParams
-	Body   *IssueAuthorizationJSONRequestBody
-}
-
-type IssueAuthorizationResponseObject interface {
-	VisitIssueAuthorizationResponse(w http.ResponseWriter) error
-}
-
-type IssueAuthorization201JSONResponse AuthorizationEnvelope
-
-func (response IssueAuthorization201JSONResponse) VisitIssueAuthorizationResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(201)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type IssueAuthorizationdefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response IssueAuthorizationdefaultApplicationProblemPlusJSONResponse) VisitIssueAuthorizationResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
 type GetIdentityContextRequestObject struct {
 }
 
@@ -5441,6 +5359,45 @@ type AcceptInvitationdefaultApplicationProblemPlusJSONResponse struct {
 }
 
 func (response AcceptInvitationdefaultApplicationProblemPlusJSONResponse) VisitAcceptInvitationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AuthorizeServiceOperationRequestObject struct {
+	Body *AuthorizeServiceOperationJSONRequestBody
+}
+
+type AuthorizeServiceOperationResponseObject interface {
+	VisitAuthorizeServiceOperationResponse(w http.ResponseWriter) error
+}
+
+type AuthorizeServiceOperation200JSONResponse ServiceAuthorizationDecision
+
+func (response AuthorizeServiceOperation200JSONResponse) VisitAuthorizeServiceOperationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AuthorizeServiceOperationdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response AuthorizeServiceOperationdefaultApplicationProblemPlusJSONResponse) VisitAuthorizeServiceOperationResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -5967,15 +5924,15 @@ type StrictServerInterface interface {
 	// ExchangeLoginToken Exchange the bootstrap login token for a control session
 	// (POST /v1/auth/token)
 	ExchangeLoginToken(ctx context.Context, request ExchangeLoginTokenRequestObject) (ExchangeLoginTokenResponseObject, error)
-	// IssueAuthorization Issue a short-lived team authorization for one control mutation
-	// (POST /v1/authorizations)
-	IssueAuthorization(ctx context.Context, request IssueAuthorizationRequestObject) (IssueAuthorizationResponseObject, error)
 	// GetIdentityContext Read the authenticated identity and memberships
 	// (GET /v1/identity)
 	GetIdentityContext(ctx context.Context, request GetIdentityContextRequestObject) (GetIdentityContextResponseObject, error)
 	// AcceptInvitation Consume an invitation secret
 	// (POST /v1/invitations/accept)
 	AcceptInvitation(ctx context.Context, request AcceptInvitationRequestObject) (AcceptInvitationResponseObject, error)
+	// AuthorizeServiceOperation Authorize one control operation against current authority state
+	// (POST /v1/service/authorize)
+	AuthorizeServiceOperation(ctx context.Context, request AuthorizeServiceOperationRequestObject) (AuthorizeServiceOperationResponseObject, error)
 	// ListTeams List teams visible through current memberships
 	// (GET /v1/teams)
 	ListTeams(ctx context.Context, request ListTeamsRequestObject) (ListTeamsResponseObject, error)
@@ -6173,39 +6130,6 @@ func (sh *strictHandler) ExchangeLoginToken(w http.ResponseWriter, r *http.Reque
 	}
 }
 
-// IssueAuthorization operation middleware
-func (sh *strictHandler) IssueAuthorization(w http.ResponseWriter, r *http.Request, params IssueAuthorizationParams) {
-	var request IssueAuthorizationRequestObject
-
-	request.Params = params
-
-	var body IssueAuthorizationJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.IssueAuthorization(ctx, request.(IssueAuthorizationRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "IssueAuthorization")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(IssueAuthorizationResponseObject); ok {
-		if err := validResponse.VisitIssueAuthorizationResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
 // GetIdentityContext operation middleware
 func (sh *strictHandler) GetIdentityContext(w http.ResponseWriter, r *http.Request) {
 	var request GetIdentityContextRequestObject
@@ -6254,6 +6178,37 @@ func (sh *strictHandler) AcceptInvitation(w http.ResponseWriter, r *http.Request
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(AcceptInvitationResponseObject); ok {
 		if err := validResponse.VisitAcceptInvitationResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// AuthorizeServiceOperation operation middleware
+func (sh *strictHandler) AuthorizeServiceOperation(w http.ResponseWriter, r *http.Request) {
+	var request AuthorizeServiceOperationRequestObject
+
+	var body AuthorizeServiceOperationJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.AuthorizeServiceOperation(ctx, request.(AuthorizeServiceOperationRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "AuthorizeServiceOperation")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(AuthorizeServiceOperationResponseObject); ok {
+		if err := validResponse.VisitAuthorizeServiceOperationResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
