@@ -12,3 +12,6 @@ docs/adr/
 /tnld
 /tnlbench
 /bench-results/
+/deploy/backups/
+/deploy/certs/
+/deploy/derp-map.json
