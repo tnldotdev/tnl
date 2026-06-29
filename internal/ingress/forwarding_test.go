@@ -107,6 +107,14 @@ func TestForwarderRejectsMismatchedRelayCertificate(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "certificate") {
 		t.Fatalf("Open error = %v; want relay hostname rejection", err)
 	}
+	select {
+	case err := <-server.errors:
+		if !strings.Contains(err.Error(), "tls: bad certificate") {
+			t.Fatalf("server handshake error = %v; want client certificate rejection", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("server did not observe the client certificate rejection")
+	}
 	if got := server.accepted.Load(); got != 0 {
 		t.Fatalf("accepted sessions = %d; want no authenticated session", got)
 	}
