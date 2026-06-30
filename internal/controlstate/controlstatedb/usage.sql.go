@@ -785,6 +785,20 @@ func (q *Queries) InsertRouteUsageDelivery(ctx context.Context, arg InsertRouteU
 	return i, err
 }
 
+const lockRouteForUsage = `-- name: LockRouteForUsage :one
+SELECT id
+FROM control.routes
+WHERE id = $1
+FOR KEY SHARE
+`
+
+func (q *Queries) LockRouteForUsage(ctx context.Context, routeID string) (string, error) {
+	row := q.db.QueryRow(ctx, lockRouteForUsage, routeID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
 const lockRouteSessionForUsage = `-- name: LockRouteSessionForUsage :one
 SELECT id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason
 FROM control.route_sessions

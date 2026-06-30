@@ -149,6 +149,7 @@ type Querier interface {
 	LockRouteCreationControl(ctx context.Context) (bool, error)
 	LockRouteCreator(ctx context.Context, identityID string) (string, error)
 	LockRouteForSession(ctx context.Context, routeID string) (ControlRoute, error)
+	LockRouteForUsage(ctx context.Context, routeID string) (string, error)
 	LockRouteRecoveryEpisode(ctx context.Context, episodeID int64) (ControlRouteRecoveryEpisode, error)
 	LockRouteSession(ctx context.Context, routeSessionID string) (ControlRouteSession, error)
 	LockRouteSessionCreationControl(ctx context.Context) (bool, error)
