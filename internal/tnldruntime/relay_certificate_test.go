@@ -11,12 +11,12 @@ import (
 
 func TestRelayCertificateSourceValidatesAndReloads(t *testing.T) {
 	const hostname = "relay-a.example.test"
-	certificateFile, privateKeyFile, _ := standaloneTestCertificate(t, hostname)
-	certificatePEM, err := os.ReadFile(certificateFile)
+	certificate := newIntegrationTestCA(t).issueServer(t, hostname)
+	certificatePEM, err := os.ReadFile(certificate.certificateFile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	privateKeyPEM, err := os.ReadFile(privateKeyFile)
+	privateKeyPEM, err := os.ReadFile(certificate.privateKeyFile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,19 +36,19 @@ func TestRelayCertificateSourceValidatesAndReloads(t *testing.T) {
 	if _, err := config.GetCertificate(nil); err == nil {
 		t.Fatal("empty relay certificate source returned a certificate")
 	}
-	certificate := relayv1.RelayServiceCertificate{
+	relayCertificate := relayv1.RelayServiceCertificate{
 		RelayServiceId: "relay-a", TlsServerName: hostname,
 		CertificatePem: string(certificatePEM), PrivateKeyPem: string(privateKeyPEM), NotAfter: leaf.NotAfter,
 	}
-	if err := source.Install(certificate); err != nil {
+	if err := source.Install(relayCertificate); err != nil {
 		t.Fatal(err)
 	}
 	installed, err := config.GetCertificate(nil)
 	if err != nil || installed.Leaf == nil || !installed.Leaf.NotAfter.Equal(leaf.NotAfter) {
 		t.Fatalf("installed relay certificate = %#v, %v", installed, err)
 	}
-	certificate.TlsServerName = "relay-b.example.test"
-	if err := source.Install(certificate); err == nil {
+	relayCertificate.TlsServerName = "relay-b.example.test"
+	if err := source.Install(relayCertificate); err == nil {
 		t.Fatal("mismatched relay certificate identity was accepted")
 	}
 }

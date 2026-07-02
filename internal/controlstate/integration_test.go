@@ -34,41 +34,7 @@ import (
 const testStorageKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 
 func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
-	directURL := os.Getenv("TNL_TEST_POSTGRES_URL")
-	if directURL == "" {
-		t.Skip("TNL_TEST_POSTGRES_URL is not set")
-	}
-
-	adminConfig, err := parseDirectConfig(directURL)
-	if err != nil {
-		t.Fatalf("parse TNL_TEST_POSTGRES_URL: %v", err)
-	}
-	adminDB := stdlib.OpenDB(*adminConfig)
-	t.Cleanup(func() { _ = adminDB.Close() })
-	if err := adminDB.PingContext(t.Context()); err != nil {
-		t.Fatalf("connect using TNL_TEST_POSTGRES_URL: %v", err)
-	}
-
-	databaseName := "tnl_controlstate_" + randomHex(t, 8)
-	identifier := pgx.Identifier{databaseName}.Sanitize()
-	if _, err := adminDB.ExecContext(t.Context(), "CREATE DATABASE "+identifier); err != nil {
-		t.Skipf("fixed control schema requires a disposable database and the configured role cannot create one: %v", err)
-	}
-	t.Cleanup(func() {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), bootstrapRetryDelay*400)
-		defer cancel()
-		_, _ = adminDB.ExecContext(cleanupCtx, `
-			SELECT pg_terminate_backend(pid)
-			FROM pg_stat_activity
-			WHERE datname = $1 AND pid <> pg_backend_pid()
-		`, databaseName)
-		_, _ = adminDB.ExecContext(cleanupCtx, "DROP DATABASE IF EXISTS "+identifier)
-	})
-
-	testURL, err := databaseURLWithName(directURL, databaseName)
-	if err != nil {
-		t.Fatal(err)
-	}
+	testURL := newDisposableControlStateDatabaseURL(t, "migration")
 	const migrationCallers = 4
 	migrationErrors := make(chan error, migrationCallers)
 	var migrations sync.WaitGroup
@@ -2564,6 +2530,45 @@ func seedRelayRouteSession(
 	}
 }
 
+func newDisposableControlStateDatabaseURL(t *testing.T, suffix string) string {
+	t.Helper()
+	directURL := os.Getenv("TNL_TEST_POSTGRES_URL")
+	if directURL == "" {
+		t.Skip("TNL_TEST_POSTGRES_URL is not set")
+	}
+	adminConfig, err := parseDirectConfig(directURL)
+	if err != nil {
+		t.Fatalf("parse TNL_TEST_POSTGRES_URL: %v", err)
+	}
+	adminDB := stdlib.OpenDB(*adminConfig)
+	t.Cleanup(func() { _ = adminDB.Close() })
+	if err := adminDB.PingContext(t.Context()); err != nil {
+		t.Fatalf("connect using TNL_TEST_POSTGRES_URL: %v", err)
+	}
+	databaseName := "tnl_controlstate_" + suffix + "_" + randomHex(t, 8)
+	identifier := pgx.Identifier{databaseName}.Sanitize()
+	if _, err := adminDB.ExecContext(t.Context(), "CREATE DATABASE "+identifier); err != nil {
+		t.Skipf("fixed control schema requires a disposable database and the configured role cannot create one: %v", err)
+	}
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), bootstrapRetryDelay*400)
+		defer cancel()
+		_, _ = adminDB.ExecContext(cleanupCtx, `
+			SELECT pg_terminate_backend(pid)
+			FROM pg_stat_activity
+			WHERE datname = $1 AND pid <> pg_backend_pid()
+		`, databaseName)
+		_, _ = adminDB.ExecContext(cleanupCtx, "DROP DATABASE IF EXISTS "+identifier)
+	})
+	parsed, err := url.Parse(directURL)
+	if err != nil {
+		t.Fatalf("parse PostgreSQL test URL: %v", err)
+	}
+	parsed.Path = "/" + databaseName
+	parsed.RawPath = ""
+	return parsed.String()
+}
+
 func randomHex(t *testing.T, bytes int) string {
 	t.Helper()
 	random := make([]byte, bytes)
@@ -2571,14 +2576,4 @@ func randomHex(t *testing.T, bytes int) string {
 		t.Fatal(err)
 	}
 	return hex.EncodeToString(random)
-}
-
-func databaseURLWithName(rawURL, databaseName string) (string, error) {
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
-		return "", fmt.Errorf("parse PostgreSQL test URL: %w", err)
-	}
-	parsed.Path = "/" + databaseName
-	parsed.RawPath = ""
-	return parsed.String(), nil
 }

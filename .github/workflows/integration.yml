@@ -68,7 +68,11 @@ jobs:
       - name: Install pinned tools
         run: go install github.com/letsencrypt/pebble/v2/cmd/pebble@v2.10.1
 
+      - name: Allow unprivileged port 443
+        run: sudo sysctl --write net.ipv4.ip_unprivileged_port_start=443
+
       - name: Run integration tests
         env:
+          TNL_TEST_BINARY_INTEGRATION: "1"
           TNL_TEST_POSTGRES_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
         run: task go:test-integration
