@@ -90,7 +90,10 @@ func TestIntegrationBinaryStandalonePublish(t *testing.T) {
 	server := startIntegrationBinaryProcess(t, repositoryRoot, serveEnvironment, tnldPath, "serve")
 	waitForIntegrationBinaryReady(t, server, metricsAddress)
 
-	stateDirectory := t.TempDir()
+	stateDirectory := filepath.Join(t.TempDir(), "state")
+	if err := os.Mkdir(stateDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	clientEnvironment := integrationBinaryEnvironment(map[string]string{
 		"SSL_CERT_FILE":    trustFile,
 		"TNL_LOGIN_TOKEN":  testLoginToken,
