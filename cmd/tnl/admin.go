@@ -182,6 +182,7 @@ func withRemoteAdminClient(ctx context.Context, flags remoteFlags, command strin
 		ServerEndpoint: serverURL, State: state, AccessToken: flags.AccessToken,
 		Diagnostics: diagnostics, LoginToken: loginTokenPrompt(os.Stdin, diagnostics),
 		AuthenticationPrompt: authenticationPrompt(diagnostics, command),
+		OpenURL:              interactiveBrowserOpener(os.Stdin),
 	})
 	if err != nil {
 		return err

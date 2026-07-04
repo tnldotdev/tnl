@@ -30,6 +30,8 @@ type LocalTunnel struct {
 	Command        string
 	ProcessID      int64
 	ServerOrigin   string
+	ProjectRoot    string
+	Service        string
 	Hostname       string
 	Target         string
 	Framework      string

@@ -18,7 +18,7 @@
         },
         "startup_timeout": {
           "type": "string",
-          "pattern": "^[0-9]+(ns|us|\\u00b5s|ms|s|m|h)([0-9]+(ns|us|\\u00b5s|ms|s|m|h))*$"
+          "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
         }
       },
       "additionalProperties": false,
@@ -46,6 +46,9 @@
     "TNL": {
       "properties": {
         "server": {
+          "type": "string"
+        },
+        "team": {
           "type": "string"
         },
         "tunnel": {
@@ -88,6 +91,9 @@
             },
             "public": {
               "type": "boolean"
+            },
+            "ephemeral": {
+              "type": "boolean"
             }
           },
           "additionalProperties": false,
@@ -98,6 +104,83 @@
         },
         "dev": {
           "$ref": "#/$defs/Dev"
+        },
+        "services": {
+          "additionalProperties": {
+            "properties": {
+              "directory": {
+                "type": "string",
+                "minLength": 1
+              },
+              "server": {
+                "type": "string"
+              },
+              "team": {
+                "type": "string"
+              },
+              "tunnel": {
+                "allOf": [
+                  {
+                    "not": {
+                      "required": ["host", "subdomain"]
+                    }
+                  },
+                  {
+                    "if": {
+                      "properties": {
+                        "public": {
+                          "const": true
+                        }
+                      },
+                      "required": ["public"]
+                    },
+                    "then": {
+                      "not": {
+                        "required": ["allow_ip"]
+                      }
+                    }
+                  }
+                ],
+                "properties": {
+                  "host": {
+                    "type": "string"
+                  },
+                  "subdomain": {
+                    "type": "string"
+                  },
+                  "allow_ip": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "maxItems": 63,
+                    "uniqueItems": true
+                  },
+                  "public": {
+                    "type": "boolean"
+                  },
+                  "ephemeral": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object"
+              },
+              "publish": {
+                "$ref": "#/$defs/Publish"
+              },
+              "dev": {
+                "$ref": "#/$defs/Dev"
+              }
+            },
+            "additionalProperties": false,
+            "type": "object"
+          },
+          "propertyNames": {
+            "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+          },
+          "type": "object",
+          "maxProperties": 32
         }
       },
       "additionalProperties": false,

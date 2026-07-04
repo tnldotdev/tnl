@@ -96,7 +96,7 @@ func routeResponse(route controlstate.Route) controlv1.Route {
 		CanonicalHostname: route.CanonicalHostname, Target: route.Target,
 		RouteScope: controlv1.RouteScope(route.RouteScope), PolicyRevision: route.PolicyRevision,
 		LifecycleState: controlv1.RouteLifecycleState(route.LifecycleState), NextRouteVersion: route.NextRouteVersion,
-		CreatedAt: route.CreatedAt, UpdatedAt: route.UpdatedAt,
+		Ephemeral: route.Ephemeral, ExpiresAt: route.ExpiresAt, CreatedAt: route.CreatedAt, UpdatedAt: route.UpdatedAt,
 	}
 	if route.MembershipID != "" {
 		result.MembershipId = &route.MembershipID

@@ -238,11 +238,15 @@ CREATE INDEX control_sessions_authentication_source
     ON control.control_sessions (authentication_method, authentication_source_revision)
     WHERE revoked_at IS NULL;
 
-CREATE TABLE control.authority_revision_floors (
+CREATE TABLE control.authority_revision_state (
     issuer text NOT NULL CHECK (issuer <> ''),
     team_id text NOT NULL CHECK (team_id <> ''),
-    policy_revision bigint NOT NULL CHECK (policy_revision >= 1),
-    updated_at timestamptz NOT NULL,
+    observed_policy_revision bigint NOT NULL DEFAULT 0 CHECK (observed_policy_revision >= 0),
+    applied_policy_revision bigint NOT NULL DEFAULT 0 CHECK (applied_policy_revision >= 0),
+    observed_at timestamptz,
+    applied_at timestamptz,
+    CHECK ((observed_policy_revision = 0) = (observed_at IS NULL)),
+    CHECK ((applied_policy_revision = 0) = (applied_at IS NULL)),
     PRIMARY KEY (issuer, team_id)
 );
 
@@ -278,6 +282,9 @@ CREATE TABLE control.routes (
     dns_available_at timestamptz,
     dns_last_error text,
     next_route_version bigint NOT NULL DEFAULT 1 CHECK (next_route_version >= 1),
+    mutation_revision bigint NOT NULL DEFAULT 1 CHECK (mutation_revision >= 1),
+    ephemeral boolean NOT NULL DEFAULT false,
+    expires_at timestamptz,
     suspension_revision bigint NOT NULL DEFAULT 0 CHECK (suspension_revision >= 0),
     suspension_reason text,
     created_at timestamptz NOT NULL,
@@ -286,7 +293,10 @@ CREATE TABLE control.routes (
     deleted_at timestamptz,
     CHECK ((route_scope = 'member') = (membership_id IS NOT NULL)),
     CHECK ((ip_policy = 'allowlist') = (cardinality(allowed_ip_prefixes) > 0)),
+    CHECK (cardinality(allowed_ip_prefixes) <= 64),
     CHECK (array_position(allowed_ip_prefixes, NULL) IS NULL),
+    CHECK (ephemeral = (expires_at IS NOT NULL)),
+    CHECK (expires_at IS NULL OR expires_at > created_at),
     CHECK ((dns_work_owner IS NULL) = (dns_work_expires_at IS NULL)),
     CHECK ((dns_state IN ('pending', 'removing')) = (dns_available_at IS NOT NULL)),
     CHECK (dns_authority_reference IS NULL OR dns_authority_reference <> ''),
@@ -310,6 +320,9 @@ CREATE INDEX routes_domain
 CREATE INDEX routes_available_dns_work
     ON control.routes (dns_available_at, id)
     WHERE dns_state IN ('pending', 'removing');
+CREATE INDEX routes_ephemeral_expiration
+    ON control.routes (expires_at, id)
+    WHERE ephemeral AND lifecycle_state <> 'deleted';
 
 CREATE TABLE control.route_sessions (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -323,6 +336,7 @@ CREATE TABLE control.route_sessions (
     session_token_id text NOT NULL UNIQUE CHECK (session_token_id <> ''),
     session_token_digest bytea NOT NULL UNIQUE CHECK (octet_length(session_token_digest) = 32),
     policy_revision bigint NOT NULL CHECK (policy_revision >= 1),
+    policy_denials bigint NOT NULL DEFAULT 0 CHECK (policy_denials >= 0),
     certificate_cache_key text NOT NULL CHECK (certificate_cache_key <> ''),
     certificate_scope text NOT NULL CHECK (certificate_scope <> ''),
     certificate_identifiers text[] NOT NULL CHECK (cardinality(certificate_identifiers) > 0),

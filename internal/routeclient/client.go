@@ -37,6 +37,18 @@ func (c *Client) ListRoutes(ctx context.Context, teamID string) ([]controlv1.Rou
 	return c.control.ListRoutes(ctx, teamID)
 }
 
+func (c *Client) UpdateRoute(ctx context.Context, routeID string, body controlv1.UpdateRouteRequest) (controlv1.Route, error) {
+	canonical, err := authorization.CanonicalizeIPPrefixes(body.AllowedIpPrefixes)
+	if err != nil {
+		return controlv1.Route{}, fmt.Errorf("routeclient: canonicalize allowed IP prefixes: %w", err)
+	}
+	if canonical == nil {
+		canonical = []string{}
+	}
+	body.AllowedIpPrefixes = canonical
+	return c.control.UpdateRoute(ctx, routeID, body)
+}
+
 func (c *Client) CreateRouteSession(ctx context.Context, routeID, idempotencyKey string) (controlv1.RouteSessionSetup, error) {
 	return c.control.CreateRouteSession(ctx, routeID, idempotencyKey)
 }

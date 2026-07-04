@@ -93,7 +93,7 @@ func TestIntegrationPostgresPebbleCertificateWorker(t *testing.T) {
 		RequestDigest: sha256.Sum256([]byte("worker-session-" + suffix)), PolicyRevision: uint64(route.PolicyRevision),
 		CertificateCacheKey: "worker-certificate-" + suffix, CertificateScope: "route",
 		CertificateIdentifiers: []string{hostname}, CertificateChallenge: "tls-alpn-01",
-		AllowedIPPrefixes: []string{},
+		ExpectedMutationRevision: route.MutationRevision,
 	}, now, 30*time.Second, time.Minute)
 	if err != nil {
 		t.Fatal(err)
@@ -159,7 +159,28 @@ func TestIntegrationPostgresPebbleCertificateWorker(t *testing.T) {
 	if issuance.State != "authorizing" || issuance.Challenges[0].Method != "tls-alpn-01" {
 		t.Fatalf("presenting issuance = %#v", issuance)
 	}
+	ingressNow := time.Now().UTC()
+	ingressLease, err := database.RegisterIngress(t.Context(), controlstate.IngressRegistration{
+		IngressID: "worker-ingress-" + suffix, IngressRunID: "worker-ingress-run-" + suffix,
+		ProtocolVersion: 1, ConnectionCapacity: 10,
+	}, ingressNow, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := database.MarkCertificateChallengeReady(t.Context(), issuance.ID, setup.SessionToken, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	snapshotNow := time.Now().UTC()
+	snapshot, err := database.ReadIngressRoutingTableSnapshot(
+		t.Context(), ingressLease.IngressLeaseIdentity, snapshotNow,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.RenewIngress(t.Context(), controlstate.IngressRenewal{
+		IngressLeaseIdentity: ingressLease.IngressLeaseIdentity,
+		RoutingTableRevision: snapshot.RoutingTableRevision,
+	}, snapshotNow, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	issuance = advanceUntil(t, database, worker, issuance.ID, setup.SessionToken, func(value controlstate.CertificateIssuance) bool {

@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -7,47 +8,49 @@ import { promisify } from "node:util";
 const run = promisify(execFile);
 const root = path.resolve(import.meta.dirname, "..");
 const directory = await mkdtemp(path.join(tmpdir(), "tnl-packages-"));
-const packageNames = ["@tnldotdev/dev", "@tnldotdev/next", "@tnldotdev/vite"];
-const entrypoints = [...packageNames, "@tnldotdev/next/env", "@tnldotdev/vite/env"];
+const packageName = "@tnldotdev/tnl";
+const entrypoints = [
+  "@tnldotdev/tnl",
+  "@tnldotdev/tnl/config",
+  "@tnldotdev/tnl/next",
+  "@tnldotdev/tnl/vite",
+];
 
 try {
-  const tarballs = {};
-  for (const packageName of packageNames) {
-    const before = new Set(await readdir(directory));
-    await run("pnpm", ["--filter", packageName, "pack", "--pack-destination", directory], {
-      cwd: root,
-    });
-    const filename = (await readdir(directory)).find(
-      (entry) => entry.endsWith(".tgz") && !before.has(entry),
-    );
-    if (!filename) throw new Error(`${packageName} did not produce a tarball`);
-    tarballs[packageName] = `file:${path.join(directory, filename)}`;
+  await run("pnpm", ["--filter", packageName, "pack", "--pack-destination", directory], {
+    cwd: root,
+  });
+  const filename = (await readdir(directory)).find((entry) => entry.endsWith(".tgz"));
+  if (!filename) {
+    throw new Error(`${packageName} did not produce a tarball`);
   }
+  const tarball = path.join(directory, filename);
+  const { stdout: manifestData } = await run("tar", ["-xOzf", tarball, "package/package.json"]);
+  const manifest = JSON.parse(manifestData);
+  assert.equal(manifest.name, packageName);
+  assert.deepEqual(Object.keys(manifest.exports).sort(), [".", "./config", "./next", "./vite"]);
+  assert(!JSON.stringify(manifest).includes("workspace:"));
 
   await writeFile(
     path.join(directory, "package.json"),
     JSON.stringify({
       private: true,
       dependencies: {
-        ...tarballs,
-        next: "16.3.3",
-        react: "19.2.8",
-        "react-dom": "19.2.8",
-        vite: "8.2.2",
+        [packageName]: `file:${tarball}`,
       },
     }),
   );
-  await writeFile(
-    path.join(directory, "pnpm-workspace.yaml"),
-    `overrides:\n  "@tnldotdev/dev": "${tarballs["@tnldotdev/dev"]}"\n`,
-  );
-  await run("pnpm", ["install"], { cwd: directory });
+  await run("pnpm", ["install", "--ignore-scripts"], { cwd: directory });
   await run(
     process.execPath,
     [
       "--input-type=module",
       "--eval",
-      `await Promise.all(${JSON.stringify(entrypoints)}.map((name) => import(name)));`,
+      `const modules = await Promise.all(${JSON.stringify(entrypoints)}.map((name) => import(name)));
+if (!("tnl" in modules[0])) throw new Error("missing root runtime export");
+if (typeof modules[1].defineConfig !== "function") throw new Error("missing config export");
+if (typeof modules[2].withTnl !== "function") throw new Error("missing Next.js export");
+if (typeof modules[3].default !== "function") throw new Error("missing Vite export");`,
     ],
     { cwd: directory },
   );

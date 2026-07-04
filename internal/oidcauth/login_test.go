@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -105,10 +106,18 @@ func TestLoginDiscoversProviderAndValidatesNonce(t *testing.T) {
 			defer provider.Close()
 
 			var output bytes.Buffer
+			openCount := 0
 			result, err := Login(context.Background(), Config{
 				Issuer: provider.URL, ClientID: "tnl-cli", LoginFlow: LoginFlowDeviceCode,
 				Scopes: []string{"openid"}, HTTPClient: provider.Client(),
+				OpenURL: func(string) error {
+					openCount++
+					return errors.New("browser unavailable")
+				},
 			}, &output)
+			if openCount != 1 {
+				t.Fatalf("browser open count = %d", openCount)
+			}
 			if test.valid && (err != nil || result.IDToken == "" || result.Issuer != provider.URL ||
 				result.ClientID != "tnl-cli" || result.Subject != "user-123" ||
 				result.AccessToken != "provider-access" || result.RefreshToken != "provider-refresh" ||

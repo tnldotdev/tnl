@@ -73,19 +73,15 @@ jobs:
         env:
           FRAMEWORK: ${{ matrix.framework }}
           VERSION: ${{ matrix.version }}
-        run: pnpm --filter "@tnldotdev/$FRAMEWORK" add --save-dev --save-exact --ignore-scripts "$FRAMEWORK@$VERSION" # zizmor: ignore[adhoc-packages] compatibility matrix
+        run: pnpm --filter @tnldotdev/tnl add --save-dev --save-exact --ignore-scripts "$FRAMEWORK@$VERSION" # zizmor: ignore[adhoc-packages] compatibility matrix
 
-      - name: Build adapter
+      - name: Build integrations
+        run: pnpm --filter @tnldotdev/tnl build
+
+      - name: Test integration
         env:
           FRAMEWORK: ${{ matrix.framework }}
-        run: |
-          pnpm --filter @tnldotdev/dev build
-          pnpm --filter "@tnldotdev/$FRAMEWORK" build:self
-
-      - name: Test adapter
-        env:
-          FRAMEWORK: ${{ matrix.framework }}
-        run: pnpm exec vitest run "packages/$FRAMEWORK/index.test.ts"
+        run: pnpm exec vitest run "packages/tnl/$FRAMEWORK.test.ts"
 
   go:
     name: Go

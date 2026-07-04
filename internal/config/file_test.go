@@ -92,3 +92,157 @@ func TestUnmarshalTypeScriptTNLRejectsStaticFieldNames(t *testing.T) {
 		t.Fatal("static snake_case field was accepted as TypeScript configuration")
 	}
 }
+
+func TestServicesShareOneModelAndInheritRootDefaults(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tnl.yml")
+	contents := `version: 1
+tnl:
+  server: https://root.example
+  team: Root Team
+  tunnel:
+    subdomain: root
+    allow_ip: [192.0.2.0/24]
+    ephemeral: true
+  publish:
+    target: 3000
+  dev:
+    command: [pnpm, dev]
+    startup_timeout: 30s
+  services:
+    web:
+      team: Web Team
+      tunnel:
+        subdomain: web
+        public: true
+      publish:
+        target: 4000
+      dev:
+        startup_timeout: 45s
+`
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	document, err := LoadDocument(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	effective, err := document.TNL.EffectiveService("web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if effective.Server == nil || *effective.Server != "https://root.example" ||
+		effective.Team == nil || *effective.Team != "Web Team" ||
+		effective.Tunnel == nil || effective.Tunnel.Subdomain == nil || *effective.Tunnel.Subdomain != "web" ||
+		effective.Tunnel.Public == nil || !*effective.Tunnel.Public || effective.Tunnel.AllowIP != nil ||
+		effective.Tunnel.Ephemeral == nil || !*effective.Tunnel.Ephemeral ||
+		effective.Publish == nil || effective.Publish.Target == nil || string(*effective.Publish.Target) != "4000" ||
+		effective.Dev == nil || effective.Dev.StartupTimeout == nil || effective.Dev.StartupTimeout.Value() != 45*time.Second ||
+		len(effective.Dev.Command) != 2 {
+		t.Fatalf("effective service = %#v", effective)
+	}
+	if _, err := document.TNL.EffectiveService("missing"); err == nil {
+		t.Fatal("missing service was accepted")
+	}
+}
+
+func TestTypeScriptServicesUseCamelCaseFields(t *testing.T) {
+	value, err := UnmarshalTypeScriptTNL([]byte(`{
+  "team":"Team One",
+  "services":{"web":{"tunnel":{"allowIP":["192.0.2.1"],"ephemeral":true},"dev":{"startupTimeout":"30s"}}}
+}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := value.Services["web"]
+	if service.Tunnel == nil || len(service.Tunnel.AllowIP) != 1 || service.Tunnel.Ephemeral == nil || !*service.Tunnel.Ephemeral ||
+		service.Dev == nil || service.Dev.StartupTimeout == nil || service.Dev.StartupTimeout.Value() != 30*time.Second {
+		t.Fatalf("service = %#v", service)
+	}
+	if _, err := UnmarshalTypeScriptTNL([]byte(`{"services":{"web":{"dev":{"startup_timeout":"30s"}}}}`)); err == nil {
+		t.Fatal("static service field name was accepted in TypeScript")
+	}
+}
+
+func TestValidateTNLRejectsInvalidServiceNames(t *testing.T) {
+	for _, name := range []string{"", "Web", "1web", "web.example", "web-"} {
+		if err := ValidateTNL(TNL{Services: map[string]Service{name: {}}}); err == nil {
+			t.Fatalf("service name %q was accepted", name)
+		}
+	}
+}
+
+func TestValidateTNLRejectsInvalidTargetsAndCanonicalIPDuplicates(t *testing.T) {
+	invalidTarget := Target("https://example.com")
+	for name, value := range map[string]TNL{
+		"target":            {Publish: &Publish{Target: &invalidTarget}},
+		"masked prefix":     {Tunnel: &Tunnel{AllowIP: []string{"192.0.2.7/24"}}},
+		"duplicate address": {Tunnel: &Tunnel{AllowIP: []string{"192.0.2.1", "192.0.2.1/32"}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := ValidateTNL(value); err == nil {
+				t.Fatalf("invalid configuration was accepted: %#v", value)
+			}
+		})
+	}
+}
+
+func TestServiceDirectoryRejectsTraversalAndSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(root, "outside")); err != nil {
+		t.Fatal(err)
+	}
+	for name, directory := range map[string]string{
+		"absolute":  outside,
+		"traversal": "apps/../web",
+		"nul":       "web\x00app",
+		"symlink":   "outside",
+	} {
+		t.Run(name, func(t *testing.T) {
+			config := TNL{Services: Services{"web": {Directory: &directory}}}
+			if err := ValidateTNL(config); err == nil {
+				if _, _, err := config.ServiceDirectory(root, "web"); err == nil {
+					t.Fatalf("directory %q was accepted", directory)
+				}
+			}
+		})
+	}
+	directory := "."
+	config := TNL{Services: Services{"web": {Directory: &directory}}}
+	resolved, relative, err := config.ServiceDirectory(root, "web")
+	if err != nil || resolved != root || relative != "." {
+		t.Fatalf("default directory = %q, %q, %v", resolved, relative, err)
+	}
+}
+
+func TestStaticFormatsShareTargetIPAndDurationValidation(t *testing.T) {
+	for extension, valid := range map[string]string{
+		"json": `{"version":1,"tnl":{"tunnel":{"allow_ip":["192.0.2.1"]},"publish":{"target":3000},"dev":{"startup_timeout":"1.5s"}}}`,
+		"yml":  "version: 1\ntnl:\n  tunnel:\n    allow_ip: [192.0.2.1]\n  publish:\n    target: 3000\n  dev:\n    startup_timeout: 1.5s\n",
+	} {
+		t.Run(extension, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "tnl."+extension)
+			if err := os.WriteFile(path, []byte(valid), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := LoadDocument(path); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+	for name, invalid := range map[string]string{
+		"duration": "version: 1\ntnl:\n  dev:\n    startup_timeout: +1s\n",
+		"target":   "version: 1\ntnl:\n  publish:\n    target: https://example.com\n",
+		"ip":       "version: 1\ntnl:\n  tunnel:\n    allow_ip: [192.0.2.7/24]\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "tnl.yml")
+			if err := os.WriteFile(path, []byte(invalid), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := LoadDocument(path); err == nil {
+				t.Fatal("invalid static configuration was accepted")
+			}
+		})
+	}
+}

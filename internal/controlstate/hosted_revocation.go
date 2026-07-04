@@ -22,10 +22,11 @@ func (d *Database) ApplyHostedPolicyRevocation(
 	policyRevision uint64,
 	allSessions bool,
 	membershipIDs []string,
+	domainIDs []string,
 	now time.Time,
 ) (applied bool, closed int, retErr error) {
 	if !validStateText(issuer) || !validStateText(teamID) || policyRevision == 0 || policyRevision > math.MaxInt64 ||
-		len(membershipIDs) > 1000 {
+		len(membershipIDs) > 1000 || len(domainIDs) > 1000 {
 		return false, 0, ErrHostedPolicyRevocationInvalid
 	}
 	memberships := make(map[string]struct{}, len(membershipIDs))
@@ -37,6 +38,16 @@ func (d *Database) ApplyHostedPolicyRevocation(
 			return false, 0, ErrHostedPolicyRevocationInvalid
 		}
 		memberships[membershipID] = struct{}{}
+	}
+	domains := make(map[string]struct{}, len(domainIDs))
+	for _, domainID := range domainIDs {
+		if !validStateText(domainID) {
+			return false, 0, ErrHostedPolicyRevocationInvalid
+		}
+		if _, duplicate := domains[domainID]; duplicate {
+			return false, 0, ErrHostedPolicyRevocationInvalid
+		}
+		domains[domainID] = struct{}{}
 	}
 	if err := d.requireOpen(); err != nil {
 		return false, 0, err
@@ -67,25 +78,28 @@ func (d *Database) ApplyHostedPolicyRevocation(
 	}
 
 	for _, route := range routes {
+		_, domainAffected := domains[route.DomainID]
 		session, err := queries.GetOpenRouteSession(ctx, route.ID)
-		if errors.Is(err, pgx.ErrNoRows) {
-			continue
-		}
-		if err != nil {
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return false, 0, fmt.Errorf("controlstate: apply hosted policy revocation: read route session: %w", err)
 		}
-		if session.PolicyRevision >= int64(policyRevision) {
-			continue
-		}
-		if !allSessions {
-			if _, affected := memberships[session.MembershipID.String]; !session.MembershipID.Valid || !affected {
-				continue
+		if err == nil && session.PolicyRevision < int64(policyRevision) {
+			_, membershipAffected := memberships[session.MembershipID.String]
+			if allSessions || domainAffected || session.MembershipID.Valid && membershipAffected {
+				if err := closeRouteSession(ctx, queries, route, session, RouteSessionClosed, now, "hosted_policy_revoked"); err != nil {
+					return false, 0, err
+				}
+				closed++
 			}
 		}
-		if err := closeRouteSession(ctx, queries, route, session, now, "hosted_policy_revoked"); err != nil {
-			return false, 0, err
+		if domainAffected {
+			updated, err := queries.SuspendAuthorityRoute(ctx, controlstatedb.SuspendAuthorityRouteParams{
+				SuspensionReason: text("domain_releasing"), SuspendedAt: timestamptz(now), RouteID: route.ID,
+			})
+			if err != nil || updated != 1 {
+				return false, 0, authorityRowsError("apply hosted policy revocation: suspend route", updated, err)
+			}
 		}
-		closed++
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return false, 0, fmt.Errorf("controlstate: apply hosted policy revocation: commit: %w", err)

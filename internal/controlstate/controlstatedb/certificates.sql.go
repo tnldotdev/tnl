@@ -424,7 +424,7 @@ func (q *Queries) GetControlTLSCacheEntry(ctx context.Context, arg GetControlTLS
 }
 
 const getRouteSessionByTokenID = `-- name: GetRouteSessionByTokenID :one
-SELECT id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason
+SELECT id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason
 FROM control.route_sessions
 WHERE session_token_id = $1
 `
@@ -444,6 +444,7 @@ func (q *Queries) GetRouteSessionByTokenID(ctx context.Context, sessionTokenID s
 		&i.SessionTokenID,
 		&i.SessionTokenDigest,
 		&i.PolicyRevision,
+		&i.PolicyDenials,
 		&i.CertificateCacheKey,
 		&i.CertificateScope,
 		&i.CertificateIdentifiers,

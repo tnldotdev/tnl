@@ -4,16 +4,20 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"os"
 	"strconv"
 	"strings"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/clioutput"
+	projectconfig "github.com/tnldotdev/tnl/internal/config"
 )
 
 type statusCommand struct {
 	Output   string `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
 	StateDir string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent client state."`
+	All      bool   `name:"all" help:"Show tunnels from every local project."`
+	Project  string `kong:"-"`
 }
 
 func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error {
@@ -26,7 +30,18 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 		return err
 	}
 	defer state.Close()
-	snapshot, err := state.Snapshot(ctx)
+	var snapshot clientstate.TunnelSnapshot
+	if flags.All {
+		snapshot, err = state.Snapshot(ctx)
+	} else {
+		if flags.Project == "" {
+			flags.Project, err = currentProjectRoot(ctx)
+			if err != nil {
+				return err
+			}
+		}
+		snapshot, err = state.SnapshotProject(ctx, flags.Project)
+	}
 	if err != nil {
 		return err
 	}
@@ -56,6 +71,12 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 			clioutput.Field{Label: "command", Value: string(tunnel.Command)},
 			clioutput.Field{Label: "server", Value: tunnel.Server},
 		)
+		if tunnel.Service != "" {
+			fields = append(fields, clioutput.Field{Label: "service", Value: tunnel.Service})
+		}
+		if flags.All {
+			fields = append(fields, clioutput.Field{Label: "project", Value: tunnel.Project})
+		}
 		if tunnel.Framework != "" {
 			fields = append(fields, clioutput.Field{Label: "framework", Value: tunnel.Framework})
 		}
@@ -86,4 +107,16 @@ func statusSummary(summary clientstate.TunnelSummary) string {
 		}
 	}
 	return strings.Join(parts, " / ")
+}
+
+func currentProjectRoot(ctx context.Context) (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	worktree, err := projectconfig.ResolveWorktree(ctx, cwd)
+	if err != nil {
+		return "", err
+	}
+	return worktree.Root, nil
 }

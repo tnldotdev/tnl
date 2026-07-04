@@ -9,9 +9,8 @@ The repository contains:
 
 - `tnl`, the client CLI and publisher.
 - `tnld`, the server process for standalone, control, ingress, and relay roles.
-- `@tnldotdev/tnl`, the npm launcher for the native client.
-- `@tnldotdev/dev`, the private `tnl dev` integration protocol.
-- `@tnldotdev/next` and `@tnldotdev/vite`, framework integrations.
+- `@tnldotdev/tnl`, the npm launcher, project configuration types, and framework
+  integrations for the native client.
 
 ## Install
 
@@ -99,10 +98,21 @@ Each worktree uses a deterministic private Unix socket and exclusive lock.
 Framework integrations register the actual loopback port without receiving
 server access tokens.
 
+Applications can consume generated project metadata from the browser-safe root
+module during development:
+
+```ts
+import { tnl } from "@tnldotdev/tnl";
+
+if (tnl) {
+  console.log(tnl.services.api.url, tnl.runningUnderTnlDev);
+}
+```
+
 ### Next.js
 
 ```ts
-import { withTnl } from "@tnldotdev/next";
+import { withTnl } from "@tnldotdev/tnl/next";
 
 export default withTnl({ reactStrictMode: true });
 ```
@@ -111,19 +121,21 @@ export default withTnl({ reactStrictMode: true });
 
 ```ts
 import { defineConfig } from "vite";
-import tnl from "@tnldotdev/vite";
+import tnl from "@tnldotdev/tnl/vite";
 
 export default defineConfig({ plugins: [tnl()] });
 ```
 
-Both integrations remain inert outside `tnl dev`. They only connect the
-framework's actual loopback port to `tnl dev`; hostname, policy, server, and
-command settings belong in project configuration.
+During ordinary development both integrations can inject generated
+`.tnl/project.json` metadata without changing network configuration. During
+builds, previews, and production they remain inert. Under `tnl dev`, they also
+connect the framework's exact loopback port to the tunnel; hostname, policy,
+server, and command settings belong in project configuration.
 
 ## Project Configuration
 
 `tnl publish` and `tnl dev` discover the nearest `tnl.yml`, `tnl.yaml`,
-`tnl.json`, or `tnl.ts`, stopping at the Git worktree root. If more than one
+`tnl.json`, or `tnl.config.ts`, stopping at the Git worktree root. If more than one
 candidate exists in the same directory, select one explicitly with `--config`
 or `TNL_CONFIG`. Use `--no-config` to disable discovery.
 
@@ -157,7 +169,7 @@ export default defineConfig(({ worktree }) => ({
 
 The TypeScript factory receives a frozen working directory, sanitized
 environment without `TNL_*` or `TNLD_*` values, and Git worktree metadata.
-Node.js 22.18 or newer is required to evaluate `tnl.ts`.
+Node.js 22.18 or newer is required to evaluate `tnl.config.ts`.
 
 Command-line values take precedence over supported `TNL_*` environment values,
 which take precedence over project configuration. Run `tnl config path` to see

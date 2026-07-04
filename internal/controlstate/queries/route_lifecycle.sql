@@ -46,8 +46,8 @@ RETURNING sessions.*;
 
 -- name: HeartbeatRouteSession :one
 UPDATE control.route_sessions
-SET last_heartbeat_at = sqlc.arg(heartbeat_at),
-    publisher_expires_at = sqlc.arg(expires_at)
+SET last_heartbeat_at = GREATEST(last_heartbeat_at, sqlc.arg(heartbeat_at)),
+    publisher_expires_at = GREATEST(publisher_expires_at, sqlc.arg(expires_at))
 WHERE id = sqlc.arg(route_session_id)
   AND route_id = sqlc.arg(route_id)
   AND route_version = sqlc.arg(route_version)

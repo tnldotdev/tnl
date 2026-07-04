@@ -35,6 +35,7 @@ func runLogin(ctx context.Context, flags loginCommand, input io.Reader, output, 
 	authenticated, err := clientauth.Authenticate(ctx, clientauth.Config{
 		ServerEndpoint: serverURL, State: state, Diagnostics: errorOutput,
 		LoginToken: prompt, AuthenticationPrompt: authenticationPrompt(errorOutput, "tnl login"),
+		OpenURL:    interactiveBrowserOpener(input),
 		ForceLogin: true, ForceLoginToken: flags.Token,
 	})
 	if err != nil {
@@ -67,6 +68,14 @@ func loginTokenPrompt(input io.Reader, output io.Writer) func() (credentials.Log
 		return nil
 	}
 	return func() (credentials.LoginToken, error) { return readLoginToken(input, output) }
+}
+
+func interactiveBrowserOpener(input io.Reader) func(string) error {
+	file, ok := input.(*os.File)
+	if !ok || !term.IsTerminal(int(file.Fd())) {
+		return nil
+	}
+	return openBrowser
 }
 
 func parseLoginInput(data []byte) (credentials.LoginToken, error) {

@@ -81,6 +81,8 @@ INSERT INTO control.routes (
     dns_authority_reference,
     dns_state,
     dns_available_at,
+    ephemeral,
+    expires_at,
     created_at,
     updated_at
 ) VALUES (
@@ -101,10 +103,51 @@ INSERT INTO control.routes (
     sqlc.narg(dns_authority_reference),
     sqlc.arg(dns_state),
     CASE WHEN sqlc.arg(dns_state)::text = 'pending' THEN sqlc.arg(created_at)::timestamptz END,
+    sqlc.arg(ephemeral),
+    sqlc.narg(expires_at),
     sqlc.arg(created_at),
     sqlc.arg(created_at)
 )
 RETURNING *;
+
+-- name: UpdateRoute :one
+UPDATE control.routes
+SET target = sqlc.arg(target),
+    policy_revision = sqlc.arg(policy_revision),
+    ip_policy = sqlc.arg(ip_policy),
+    allowed_ip_prefixes = sqlc.arg(allowed_ip_prefixes),
+    mutation_revision = mutation_revision + 1,
+    updated_at = sqlc.arg(updated_at)
+WHERE id = sqlc.arg(route_id)
+  AND lifecycle_state = 'enabled'
+  AND mutation_revision = sqlc.arg(expected_mutation_revision)
+  AND mutation_revision < 9223372036854775807
+RETURNING *;
+
+-- name: RenewEphemeralRouteExpiry :one
+UPDATE control.routes
+SET expires_at = GREATEST(expires_at, sqlc.arg(expires_at))
+WHERE id = sqlc.arg(route_id)
+  AND ephemeral
+  AND lifecycle_state <> 'deleted'
+RETURNING expires_at;
+
+-- name: LockExpiredEphemeralRoutes :many
+SELECT *
+FROM control.routes
+WHERE ephemeral
+  AND lifecycle_state <> 'deleted'
+  AND expires_at <= sqlc.arg(now)
+  AND NOT EXISTS (
+      SELECT 1
+      FROM control.route_sessions AS sessions
+      WHERE sessions.route_id = control.routes.id
+        AND sessions.closed_at IS NULL
+        AND sessions.publisher_expires_at > sqlc.arg(now)
+  )
+ORDER BY expires_at, id
+LIMIT sqlc.arg(batch_size)
+FOR UPDATE SKIP LOCKED;
 
 -- name: InsertRouteCreateAuditEvent :exec
 INSERT INTO control.admin_audit_events (
@@ -195,10 +238,13 @@ SET lifecycle_state = 'deleted',
         ELSE dns_available_at
     END,
     dns_last_error = NULL,
+    mutation_revision = mutation_revision + 1,
     deleted_at = sqlc.arg(deleted_at),
     updated_at = sqlc.arg(deleted_at)
 WHERE id = sqlc.arg(route_id)
-  AND lifecycle_state <> 'deleted';
+  AND lifecycle_state <> 'deleted'
+  AND mutation_revision = sqlc.arg(expected_mutation_revision)
+  AND mutation_revision < 9223372036854775807;
 
 -- name: InsertRouteDeleteAuditEvent :exec
 INSERT INTO control.admin_audit_events (
@@ -219,9 +265,45 @@ INSERT INTO control.admin_audit_events (
     sqlc.arg(occurred_at)
 );
 
+-- name: InsertRouteUpdateAuditEvent :exec
+INSERT INTO control.admin_audit_events (
+    actor_identity_id,
+    actor,
+    request_id,
+    operation,
+    target_kind,
+    target_id,
+    occurred_at
+) VALUES (
+    sqlc.arg(actor_identity_id),
+    sqlc.arg(actor_identity_id),
+    sqlc.arg(request_id),
+    'route.update',
+    'route',
+    sqlc.arg(route_id),
+    sqlc.arg(occurred_at)
+);
+
+-- name: InsertExpiredEphemeralRouteDeleteAuditEvent :exec
+INSERT INTO control.admin_audit_events (
+    actor,
+    request_id,
+    operation,
+    target_kind,
+    target_id,
+    occurred_at
+) VALUES (
+    'system',
+    sqlc.arg(request_id),
+    'route.delete',
+    'route',
+    sqlc.arg(route_id),
+    sqlc.arg(occurred_at)
+);
+
 -- name: CloseRouteSession :one
 UPDATE control.route_sessions
-SET state = 'closed',
+SET state = sqlc.arg(state),
     closed_at = sqlc.arg(closed_at),
     close_reason = sqlc.arg(close_reason)
 WHERE id = sqlc.arg(route_session_id)

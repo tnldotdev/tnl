@@ -44,11 +44,11 @@ WHERE singleton = true
   AND external_retry_master_key_ciphertext = sqlc.arg(previous_ciphertext);
 
 -- name: ObserveAuthorityRevision :one
-INSERT INTO control.authority_revision_floors (
+INSERT INTO control.authority_revision_state (
     issuer,
     team_id,
-    policy_revision,
-    updated_at
+    observed_policy_revision,
+    observed_at
 ) VALUES (
     sqlc.arg(issuer),
     sqlc.arg(team_id),
@@ -56,28 +56,40 @@ INSERT INTO control.authority_revision_floors (
     sqlc.arg(updated_at)
 )
 ON CONFLICT (issuer, team_id) DO UPDATE SET
-    policy_revision = EXCLUDED.policy_revision,
-    updated_at = EXCLUDED.updated_at
-WHERE control.authority_revision_floors.policy_revision <= EXCLUDED.policy_revision
-RETURNING policy_revision;
+    observed_policy_revision = EXCLUDED.observed_policy_revision,
+    observed_at = GREATEST(control.authority_revision_state.observed_at, EXCLUDED.observed_at)
+WHERE GREATEST(
+    control.authority_revision_state.observed_policy_revision,
+    control.authority_revision_state.applied_policy_revision
+) <= EXCLUDED.observed_policy_revision
+RETURNING observed_policy_revision;
 
 -- name: AdvanceAuthorityRevision :one
-INSERT INTO control.authority_revision_floors (
+INSERT INTO control.authority_revision_state (
     issuer,
     team_id,
-    policy_revision,
-    updated_at
+    observed_policy_revision,
+    applied_policy_revision,
+    observed_at,
+    applied_at
 ) VALUES (
     sqlc.arg(issuer),
     sqlc.arg(team_id),
     sqlc.arg(policy_revision),
+    sqlc.arg(policy_revision),
+    sqlc.arg(updated_at),
     sqlc.arg(updated_at)
 )
 ON CONFLICT (issuer, team_id) DO UPDATE SET
-    policy_revision = EXCLUDED.policy_revision,
-    updated_at = GREATEST(control.authority_revision_floors.updated_at, EXCLUDED.updated_at)
-WHERE control.authority_revision_floors.policy_revision < EXCLUDED.policy_revision
-RETURNING policy_revision;
+    observed_policy_revision = GREATEST(
+        control.authority_revision_state.observed_policy_revision,
+        EXCLUDED.observed_policy_revision
+    ),
+    applied_policy_revision = EXCLUDED.applied_policy_revision,
+    observed_at = GREATEST(control.authority_revision_state.observed_at, EXCLUDED.observed_at),
+    applied_at = GREATEST(control.authority_revision_state.applied_at, EXCLUDED.applied_at)
+WHERE control.authority_revision_state.applied_policy_revision < EXCLUDED.applied_policy_revision
+RETURNING applied_policy_revision;
 
 -- name: LockHostedTeamRoutes :many
 SELECT *
@@ -109,7 +121,13 @@ SELECT routes.*,
         FROM control.route_sessions AS sessions
         WHERE sessions.route_id = routes.id
           AND sessions.closed_at IS NULL
-    ), '')::text AS attached_session_id
+    ), '')::text AS attached_session_id,
+    COALESCE((
+        SELECT sessions.route_version
+        FROM control.route_sessions AS sessions
+        WHERE sessions.route_id = routes.id
+          AND sessions.idempotency_key = sqlc.arg(route_session_idempotency_key)
+    ), routes.next_route_version)::bigint AS authorization_route_version
 FROM control.routes AS routes
 WHERE routes.id = sqlc.arg(route_id)
   AND routes.lifecycle_state <> 'deleted';

@@ -170,6 +170,7 @@ type teamSession struct {
 	authenticated *clientauth.Client
 	api           teamAPI
 	identity      authorityv1.IdentityContext
+	projectTeam   string
 }
 
 func openTeamSession(ctx context.Context, flags remoteFlags, command string, diagnostics io.Writer) (*teamSession, error) {
@@ -186,6 +187,7 @@ func openTeamSession(ctx context.Context, flags remoteFlags, command string, dia
 		ServerEndpoint: serverURL, State: database, AccessToken: flags.AccessToken,
 		Diagnostics: diagnostics, LoginToken: loginTokenPrompt(os.Stdin, diagnostics),
 		AuthenticationPrompt: authenticationPrompt(diagnostics, command),
+		OpenURL:              interactiveBrowserOpener(os.Stdin),
 	})
 	if err != nil {
 		database.Close()
@@ -197,29 +199,43 @@ func openTeamSession(ctx context.Context, flags remoteFlags, command string, dia
 		database.Close()
 		return nil, err
 	}
-	return &teamSession{database: database, store: store, authenticated: authenticated, api: api, identity: identity}, nil
+	return &teamSession{
+		database: database, store: store, authenticated: authenticated, api: api,
+		identity: identity, projectTeam: flags.ProjectTeam,
+	}, nil
 }
 
 func (s *teamSession) Close() error { return s.database.Close() }
 
 func (s *teamSession) current(ctx context.Context) (teamContext, error) {
-	teamID, found, err := s.store.SelectedTeam(ctx)
-	if err != nil {
-		return teamContext{}, err
-	}
-	if !found {
-		teamID = s.identity.PersonalTeamId
-	}
-	membership, found := membershipForTeam(s.identity.Memberships, teamID)
-	if !found {
-		teamID = s.identity.PersonalTeamId
+	var teamID string
+	var membership authorityv1.Membership
+	if s.projectTeam != "" {
+		selected, err := s.resolveMembership(ctx, s.projectTeam)
+		if err != nil {
+			return teamContext{}, fmt.Errorf("resolve project team: %w", err)
+		}
+		teamID, membership = selected.TeamId, selected
+	} else {
+		selected, found, err := s.store.SelectedTeam(ctx)
+		if err != nil {
+			return teamContext{}, err
+		}
+		teamID = selected
+		if !found {
+			teamID = s.identity.PersonalTeamId
+		}
 		membership, found = membershipForTeam(s.identity.Memberships, teamID)
 		if !found {
-			return teamContext{}, errors.New("authenticated identity has no personal-team membership")
+			teamID = s.identity.PersonalTeamId
+			membership, found = membershipForTeam(s.identity.Memberships, teamID)
+			if !found {
+				return teamContext{}, errors.New("authenticated identity has no personal-team membership")
+			}
 		}
-	}
-	if err := s.store.SaveSelectedTeam(ctx, teamID); err != nil {
-		return teamContext{}, err
+		if err := s.store.SaveSelectedTeam(ctx, teamID); err != nil {
+			return teamContext{}, err
+		}
 	}
 	team, err := s.api.GetTeam(ctx, teamID)
 	if err != nil {
@@ -365,7 +381,11 @@ func runTeamMembers(ctx context.Context, command teamMembersCommand, output, dia
 		return err
 	}
 	defer session.Close()
-	membership, err := session.resolveMembership(ctx, command.Team)
+	team := command.Team
+	if team == "" {
+		team = session.projectTeam
+	}
+	membership, err := session.resolveMembership(ctx, team)
 	if err != nil {
 		return err
 	}

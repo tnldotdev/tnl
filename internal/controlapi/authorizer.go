@@ -22,10 +22,41 @@ type localAuthorizer struct {
 	sourceRevision int64
 }
 
+type routeReadPrincipal struct {
+	identityID string
+	teamIDs    map[string]struct{}
+}
+
+type routeAuthorizer interface {
+	authorization.Authorizer
+	AuthorizeRouteReads(context.Context, string) (routeReadPrincipal, error)
+}
+
 type localAuthorizationStore interface {
 	AuthenticateAccessToken(context.Context, credentials.AccessToken, int64, time.Time) (controlstate.ControlPrincipal, error)
 	IdentityContext(context.Context, string) (controlstate.IdentityContext, error)
 	ListTeamDomains(context.Context, string, string) ([]controlstate.Domain, error)
+}
+
+func (a localAuthorizer) AuthorizeRouteReads(ctx context.Context, accessToken string) (routeReadPrincipal, error) {
+	principal, err := a.store.AuthenticateAccessToken(
+		ctx, credentials.AccessToken(accessToken), a.sourceRevision, time.Now(),
+	)
+	if errors.Is(err, controlstate.ErrControlAuthentication) {
+		return routeReadPrincipal{}, authorization.ErrUnauthenticated
+	}
+	if err != nil {
+		return routeReadPrincipal{}, authorization.ErrUnavailable
+	}
+	identity, err := a.store.IdentityContext(ctx, principal.IdentityID)
+	if err != nil {
+		return routeReadPrincipal{}, authorization.ErrUnavailable
+	}
+	teamIDs := make(map[string]struct{}, len(identity.Memberships))
+	for _, membership := range identity.Memberships {
+		teamIDs[membership.TeamID] = struct{}{}
+	}
+	return routeReadPrincipal{identityID: principal.IdentityID, teamIDs: teamIDs}, nil
 }
 
 func (a localAuthorizer) Authorize(ctx context.Context, request authorization.Request) (authorization.Decision, error) {
@@ -64,15 +95,20 @@ func (a localAuthorizer) Authorize(ctx context.Context, request authorization.Re
 			break
 		}
 	}
-	if domain.ID == "" || domain.State != "ready" {
+	if domain.ID == "" || domain.State != "ready" && request.Operation != authorization.OperationRouteDelete {
 		return authorization.Decision{}, authorization.ErrForbidden
 	}
 	routeMembershipID := request.RouteMembershipID
 	if request.RouteScope == string(controlv1.Member) {
 		if routeMembershipID == "" {
-			routeMembershipID = acting.ID
+			if request.Operation == authorization.OperationRouteCreate {
+				routeMembershipID = acting.ID
+			} else {
+				return authorization.Decision{}, authorization.ErrForbidden
+			}
 		}
-		if routeMembershipID != acting.ID {
+		if routeMembershipID != acting.ID && (request.Operation != authorization.OperationRouteDelete ||
+			acting.Role != "admin" && acting.Role != "owner") {
 			return authorization.Decision{}, authorization.ErrForbidden
 		}
 	} else if request.RouteScope != string(controlv1.Shared) || routeMembershipID != "" ||
@@ -105,12 +141,30 @@ type externalPrincipalStore interface {
 	EnsureExternalAuthorityPrincipal(context.Context, string, time.Time) ([32]byte, error)
 }
 
+func (a hostedAuthorizer) AuthorizeRouteReads(ctx context.Context, accessToken string) (routeReadPrincipal, error) {
+	identity, err := a.client.IdentityContextWithAccessToken(ctx, credentials.AccessToken(accessToken))
+	if err != nil {
+		return routeReadPrincipal{}, hostedAuthorizationError(err)
+	}
+	if identity.Identity.Id == "" {
+		return routeReadPrincipal{}, authorization.ErrUnavailable
+	}
+	teamIDs := make(map[string]struct{}, len(identity.Memberships))
+	for _, membership := range identity.Memberships {
+		if membership.TeamId == "" {
+			return routeReadPrincipal{}, authorization.ErrUnavailable
+		}
+		teamIDs[membership.TeamId] = struct{}{}
+	}
+	return routeReadPrincipal{identityID: identity.Identity.Id, teamIDs: teamIDs}, nil
+}
+
 func (a hostedAuthorizer) Authorize(ctx context.Context, request authorization.Request) (authorization.Decision, error) {
 	body := authorityv1.ServiceAuthorizationRequest{
 		AccessToken: request.AccessToken, Operation: authorityv1.AuthorizationOperation(request.Operation),
 		TeamId: request.TeamID, DomainId: request.DomainID, CanonicalHostname: request.CanonicalHostname,
 		RouteScope: authorityv1.RouteScope(request.RouteScope), Target: request.Target,
-		AllowedIpPrefixes: slices.Clone(request.AllowedIPPrefixes),
+		AllowedIpPrefixes: slices.Clone(request.AllowedIPPrefixes), Ephemeral: request.Ephemeral,
 	}
 	if body.AllowedIpPrefixes == nil {
 		body.AllowedIpPrefixes = []string{}
@@ -130,6 +184,13 @@ func (a hostedAuthorizer) Authorize(ctx context.Context, request authorization.R
 		}
 		value := int64(request.RouteVersion)
 		body.RouteVersion = &value
+	}
+	if request.RouteMutationRevision != 0 {
+		if request.RouteMutationRevision > math.MaxInt64 {
+			return authorization.Decision{}, authorization.ErrForbidden
+		}
+		value := int64(request.RouteMutationRevision)
+		body.RouteMutationRevision = &value
 	}
 	wire, err := a.client.AuthorizeServiceOperation(ctx, a.secret, body)
 	if err != nil {
@@ -225,4 +286,44 @@ func (h *handler) authorizeMutation(
 		return decision, true
 	}
 	return authorization.Decision{}, false
+}
+
+func (h *handler) authorizeExistingRouteMutation(
+	response http.ResponseWriter,
+	request *http.Request,
+	principal routeReadPrincipal,
+	operation authorization.Request,
+) (authorization.Decision, bool) {
+	if _, authorized := principal.teamIDs[operation.TeamID]; !authorized {
+		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "resource not found")
+		return authorization.Decision{}, false
+	}
+	return h.authorizeMutation(response, request, operation)
+}
+
+func (h *handler) authorizeRouteReads(
+	response http.ResponseWriter,
+	request *http.Request,
+) (routeReadPrincipal, bool) {
+	token, ok := requestBearerToken(request)
+	if !ok {
+		writeBearerProblem(response)
+		return routeReadPrincipal{}, false
+	}
+	if h.authorizer == nil {
+		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "authorization is unavailable")
+		return routeReadPrincipal{}, false
+	}
+	principal, err := h.authorizer.AuthorizeRouteReads(request.Context(), token)
+	switch {
+	case errors.Is(err, authorization.ErrUnauthenticated):
+		writeBearerProblem(response)
+	case errors.Is(err, authorization.ErrForbidden):
+		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "operation is not authorized")
+	case err != nil:
+		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "authorization is unavailable")
+	default:
+		return principal, true
+	}
+	return routeReadPrincipal{}, false
 }

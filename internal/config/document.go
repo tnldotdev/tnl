@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,10 +32,24 @@ type Document struct {
 
 // TNL contains project-local client configuration.
 type TNL struct {
-	Server  *string  `json:"server,omitempty" yaml:"server,omitempty"`
-	Tunnel  *Tunnel  `json:"tunnel,omitempty" yaml:"tunnel,omitempty"`
-	Publish *Publish `json:"publish,omitempty" yaml:"publish,omitempty"`
-	Dev     *Dev     `json:"dev,omitempty" yaml:"dev,omitempty"`
+	Server   *string  `json:"server,omitempty" yaml:"server,omitempty"`
+	Team     *string  `json:"team,omitempty" yaml:"team,omitempty"`
+	Tunnel   *Tunnel  `json:"tunnel,omitempty" yaml:"tunnel,omitempty"`
+	Publish  *Publish `json:"publish,omitempty" yaml:"publish,omitempty"`
+	Dev      *Dev     `json:"dev,omitempty" yaml:"dev,omitempty"`
+	Services Services `json:"services,omitempty" yaml:"services,omitempty"`
+}
+
+type Services map[string]Service
+
+// Service contains project-local overrides for one named local service.
+type Service struct {
+	Directory *string  `json:"directory,omitempty" yaml:"directory,omitempty"`
+	Server    *string  `json:"server,omitempty" yaml:"server,omitempty"`
+	Team      *string  `json:"team,omitempty" yaml:"team,omitempty"`
+	Tunnel    *Tunnel  `json:"tunnel,omitempty" yaml:"tunnel,omitempty"`
+	Publish   *Publish `json:"publish,omitempty" yaml:"publish,omitempty"`
+	Dev       *Dev     `json:"dev,omitempty" yaml:"dev,omitempty"`
 }
 
 type Tunnel struct {
@@ -41,6 +57,7 @@ type Tunnel struct {
 	Subdomain *string  `json:"subdomain,omitempty" yaml:"subdomain,omitempty" tnlts:"subdomain"`
 	AllowIP   []string `json:"allow_ip,omitempty" yaml:"allow_ip,omitempty" tnlts:"allowIP" jsonschema:"maxItems=63,uniqueItems=true"`
 	Public    *bool    `json:"public,omitempty" yaml:"public,omitempty" tnlts:"public"`
+	Ephemeral *bool    `json:"ephemeral,omitempty" yaml:"ephemeral,omitempty" tnlts:"ephemeral"`
 }
 
 type Publish struct {
@@ -88,16 +105,19 @@ func normalizeTypeScriptObject(object map[string]any, objectType reflect.Type) e
 		}
 		fields[typeScriptName] = field
 	}
+	names := make([]string, 0, len(object))
 	for name := range object {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	for _, name := range names {
 		if _, ok := fields[name]; !ok {
 			return fmt.Errorf("unknown TypeScript configuration field %q", name)
 		}
 	}
-	for typeScriptName, field := range fields {
-		value, ok := object[typeScriptName]
-		if !ok {
-			continue
-		}
+	for _, typeScriptName := range names {
+		field := fields[typeScriptName]
+		value := object[typeScriptName]
 		staticName, _, _ := strings.Cut(field.Tag.Get("json"), ",")
 		if typeScriptName != staticName {
 			delete(object, typeScriptName)
@@ -113,13 +133,34 @@ func normalizeTypeScriptObject(object map[string]any, objectType reflect.Type) e
 					return err
 				}
 			}
+		} else if fieldType.Kind() == reflect.Map {
+			elementType := fieldType.Elem()
+			if elementType.Kind() == reflect.Pointer {
+				elementType = elementType.Elem()
+			}
+			if elementType.Kind() == reflect.Struct {
+				if children, ok := value.(map[string]any); ok {
+					childNames := make([]string, 0, len(children))
+					for childName := range children {
+						childNames = append(childNames, childName)
+					}
+					slices.Sort(childNames)
+					for _, childName := range childNames {
+						childValue := children[childName]
+						if child, ok := childValue.(map[string]any); ok {
+							if err := normalizeTypeScriptObject(child, elementType); err != nil {
+								return err
+							}
+						}
+					}
+				}
+			}
 		}
 	}
 	return nil
 }
 
-// Target accepts either a loopback HTTP URL or a literal port. Command-level
-// validation performs the final loopback and port checks.
+// Target accepts either a loopback HTTP URL or a literal port.
 type Target string
 
 func (t *Target) UnmarshalJSON(data []byte) error {
@@ -155,6 +196,12 @@ func (t *Target) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
+// DurationPattern describes the positive Go duration syntax accepted by
+// project configuration. Semantic bounds are checked after decoding.
+const DurationPattern = `^([0-9]+(\.[0-9]+)?|\.[0-9]+)(ns|us|\u00b5s|ms|s|m|h)(([0-9]+(\.[0-9]+)?|\.[0-9]+)(ns|us|\u00b5s|ms|s|m|h))*$`
+
+var durationSyntax = regexp.MustCompile(strings.ReplaceAll(DurationPattern, `\u00b5`, `\x{00b5}`))
+
 // Duration is a Go duration string in project configuration.
 type Duration time.Duration
 
@@ -164,6 +211,9 @@ func (d *Duration) UnmarshalJSON(data []byte) error {
 	var value string
 	if err := json.Unmarshal(data, &value); err != nil {
 		return errors.New("duration must be a string")
+	}
+	if !durationSyntax.MatchString(value) {
+		return errors.New("invalid duration syntax")
 	}
 	parsed, err := time.ParseDuration(value)
 	if err != nil {
@@ -176,6 +226,9 @@ func (d *Duration) UnmarshalJSON(data []byte) error {
 func (d *Duration) UnmarshalYAML(node *yaml.Node) error {
 	if node.Kind != yaml.ScalarNode || node.Tag != "!!str" {
 		return errors.New("duration must be a string")
+	}
+	if !durationSyntax.MatchString(node.Value) {
+		return errors.New("invalid duration syntax")
 	}
 	parsed, err := time.ParseDuration(node.Value)
 	if err != nil {

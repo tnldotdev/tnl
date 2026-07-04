@@ -857,7 +857,7 @@ components:
           $ref: "#/components/schemas/CertificateChallengeMethod"
     AuthorizationOperation:
       type: string
-      enum: [route.create, route_session.create, route.delete]
+      enum: [route.create, route.update, route_session.create, route.delete]
     ServiceAuthorizationRequest:
       type: object
       additionalProperties: false
@@ -871,6 +871,7 @@ components:
           route_scope,
           target,
           allowed_ip_prefixes,
+          ephemeral,
         ]
       properties:
         access_token:
@@ -897,6 +898,10 @@ components:
           type: integer
           format: int64
           minimum: 1
+        route_mutation_revision:
+          type: integer
+          format: int64
+          minimum: 1
         target:
           type: string
           format: uri
@@ -907,6 +912,11 @@ components:
           uniqueItems: true
           items:
             type: string
+            minLength: 1
+            maxLength: 64
+            pattern: "^\\S+$"
+        ephemeral:
+          type: boolean
     ServiceAuthorizationDecision:
       type: object
       additionalProperties: false

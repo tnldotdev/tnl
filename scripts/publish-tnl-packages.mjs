@@ -97,6 +97,7 @@ async function verifyLocalPackage(expected) {
     assert.deepEqual(manifest.os, [expected.os]);
     assert.deepEqual(manifest.cpu, [expected.cpu]);
   } else {
+    assert.deepEqual(Object.keys(manifest.exports).sort(), [".", "./config", "./next", "./vite"]);
     assert.deepEqual(
       manifest.optionalDependencies,
       Object.fromEntries(

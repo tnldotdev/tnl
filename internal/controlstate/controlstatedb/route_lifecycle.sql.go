@@ -126,7 +126,7 @@ func (q *Queries) GetOpenRouteRecoveryEpisode(ctx context.Context, arg GetOpenRo
 }
 
 const getRouteSession = `-- name: GetRouteSession :one
-SELECT id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason
+SELECT id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason
 FROM control.route_sessions
 WHERE id = $1
 `
@@ -146,6 +146,7 @@ func (q *Queries) GetRouteSession(ctx context.Context, routeSessionID string) (C
 		&i.SessionTokenID,
 		&i.SessionTokenDigest,
 		&i.PolicyRevision,
+		&i.PolicyDenials,
 		&i.CertificateCacheKey,
 		&i.CertificateScope,
 		&i.CertificateIdentifiers,
@@ -166,14 +167,14 @@ func (q *Queries) GetRouteSession(ctx context.Context, routeSessionID string) (C
 
 const heartbeatRouteSession = `-- name: HeartbeatRouteSession :one
 UPDATE control.route_sessions
-SET last_heartbeat_at = $1,
-    publisher_expires_at = $2
+SET last_heartbeat_at = GREATEST(last_heartbeat_at, $1),
+    publisher_expires_at = GREATEST(publisher_expires_at, $2)
 WHERE id = $3
   AND route_id = $4
   AND route_version = $5
   AND closed_at IS NULL
   AND publisher_expires_at > $1
-RETURNING id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason
+RETURNING id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason
 `
 
 type HeartbeatRouteSessionParams struct {
@@ -205,6 +206,7 @@ func (q *Queries) HeartbeatRouteSession(ctx context.Context, arg HeartbeatRouteS
 		&i.SessionTokenID,
 		&i.SessionTokenDigest,
 		&i.PolicyRevision,
+		&i.PolicyDenials,
 		&i.CertificateCacheKey,
 		&i.CertificateScope,
 		&i.CertificateIdentifiers,
@@ -395,7 +397,7 @@ func (q *Queries) LockRouteRecoveryEpisode(ctx context.Context, episodeID int64)
 }
 
 const lockRouteSession = `-- name: LockRouteSession :one
-SELECT id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason
+SELECT id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason
 FROM control.route_sessions
 WHERE id = $1
 FOR UPDATE
@@ -416,6 +418,7 @@ func (q *Queries) LockRouteSession(ctx context.Context, routeSessionID string) (
 		&i.SessionTokenID,
 		&i.SessionTokenDigest,
 		&i.PolicyRevision,
+		&i.PolicyDenials,
 		&i.CertificateCacheKey,
 		&i.CertificateScope,
 		&i.CertificateIdentifiers,
@@ -450,7 +453,7 @@ WHERE id = $4
           AND certificate_not_after = $3
       )
   )
-RETURNING id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason
+RETURNING id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason
 `
 
 type MarkRouteSessionCertificateInstalledParams struct {
@@ -484,6 +487,7 @@ func (q *Queries) MarkRouteSessionCertificateInstalled(ctx context.Context, arg 
 		&i.SessionTokenID,
 		&i.SessionTokenDigest,
 		&i.PolicyRevision,
+		&i.PolicyDenials,
 		&i.CertificateCacheKey,
 		&i.CertificateScope,
 		&i.CertificateIdentifiers,
@@ -517,7 +521,7 @@ WHERE sessions.id = $2
       WHERE connections.route_session_id = $2
         AND connections.state = 'ready'
   ) = 2
-RETURNING sessions.id, sessions.route_id, sessions.team_id, sessions.membership_id, sessions.acting_identity_id, sessions.route_version, sessions.idempotency_key, sessions.request_digest, sessions.session_token_id, sessions.session_token_digest, sessions.policy_revision, sessions.certificate_cache_key, sessions.certificate_scope, sessions.certificate_identifiers, sessions.certificate_challenge, sessions.state, sessions.created_at, sessions.last_heartbeat_at, sessions.publisher_expires_at, sessions.certificate_installed_at, sessions.certificate_issuance_id, sessions.certificate_not_after, sessions.ready_at, sessions.closed_at, sessions.close_reason
+RETURNING sessions.id, sessions.route_id, sessions.team_id, sessions.membership_id, sessions.acting_identity_id, sessions.route_version, sessions.idempotency_key, sessions.request_digest, sessions.session_token_id, sessions.session_token_digest, sessions.policy_revision, sessions.policy_denials, sessions.certificate_cache_key, sessions.certificate_scope, sessions.certificate_identifiers, sessions.certificate_challenge, sessions.state, sessions.created_at, sessions.last_heartbeat_at, sessions.publisher_expires_at, sessions.certificate_installed_at, sessions.certificate_issuance_id, sessions.certificate_not_after, sessions.ready_at, sessions.closed_at, sessions.close_reason
 `
 
 type MarkRouteSessionReadyParams struct {
@@ -547,6 +551,7 @@ func (q *Queries) MarkRouteSessionReady(ctx context.Context, arg MarkRouteSessio
 		&i.SessionTokenID,
 		&i.SessionTokenDigest,
 		&i.PolicyRevision,
+		&i.PolicyDenials,
 		&i.CertificateCacheKey,
 		&i.CertificateScope,
 		&i.CertificateIdentifiers,

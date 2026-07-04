@@ -140,6 +140,28 @@ func (q *Queries) ApplyIngressUsageDelta(ctx context.Context, arg ApplyIngressUs
 	return i, err
 }
 
+const applyRouteSessionPolicyDenials = `-- name: ApplyRouteSessionPolicyDenials :one
+UPDATE control.route_sessions
+SET policy_denials = policy_denials + $1::bigint
+WHERE route_id = $2
+  AND route_version = $3
+  AND policy_denials <= 9223372036854775807 - $1::bigint
+RETURNING policy_denials
+`
+
+type ApplyRouteSessionPolicyDenialsParams struct {
+	PolicyDenials int64
+	RouteID       string
+	RouteVersion  int64
+}
+
+func (q *Queries) ApplyRouteSessionPolicyDenials(ctx context.Context, arg ApplyRouteSessionPolicyDenialsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, applyRouteSessionPolicyDenials, arg.PolicyDenials, arg.RouteID, arg.RouteVersion)
+	var policy_denials int64
+	err := row.Scan(&policy_denials)
+	return policy_denials, err
+}
+
 const claimRouteUsageDeliveries = `-- name: ClaimRouteUsageDeliveries :many
 WITH candidates AS (
     SELECT delivery_id
@@ -800,7 +822,7 @@ func (q *Queries) LockRouteForUsage(ctx context.Context, routeID string) (string
 }
 
 const lockRouteSessionForUsage = `-- name: LockRouteSessionForUsage :one
-SELECT id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason
+SELECT id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason
 FROM control.route_sessions
 WHERE route_id = $1
   AND route_version = $2
@@ -827,6 +849,7 @@ func (q *Queries) LockRouteSessionForUsage(ctx context.Context, arg LockRouteSes
 		&i.SessionTokenID,
 		&i.SessionTokenDigest,
 		&i.PolicyRevision,
+		&i.PolicyDenials,
 		&i.CertificateCacheKey,
 		&i.CertificateScope,
 		&i.CertificateIdentifiers,

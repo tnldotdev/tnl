@@ -25,6 +25,12 @@ func TestPublishOutputNDJSONLifecycle(t *testing.T) {
 	if err := output.currentIP("192.0.2.1"); err != nil {
 		t.Fatal(err)
 	}
+	if err := output.provisioning("demo.example", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := output.blockedVisitors(1, 3); err != nil {
+		t.Fatal(err)
+	}
 	if err := output.ready("https://demo.example", 1); err != nil {
 		t.Fatal(err)
 	}
@@ -125,6 +131,87 @@ func TestPublishOutputNDJSONIncludesDiagnosticFields(t *testing.T) {
 	}
 }
 
+func TestPublishOutputProvisioningStalledWarning(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	output, err := newPublishOutput("ndjson", "tnl publish", &stdout, &stderr, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := output.starting("tunnel_0123456789abcdef0123456789abcdef", "http://127.0.0.1:3000"); err != nil {
+		t.Fatal(err)
+	}
+	if err := output.provisioning("demo.example", 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := output.provisioningStalled(1); err != nil {
+		t.Fatal(err)
+	}
+	if err := output.provisioningStalled(2); err != nil {
+		t.Fatal(err)
+	}
+	if err := output.provisioningStalled(2); err != nil {
+		t.Fatal(err)
+	}
+
+	decoder := json.NewDecoder(&stdout)
+	var starting, warning publishEvent
+	if err := decoder.Decode(&starting); err != nil {
+		t.Fatal(err)
+	}
+	if err := decoder.Decode(&warning); err != nil {
+		t.Fatal(err)
+	}
+	if starting.Type != "starting" || warning.Type != "warning" || warning.RouteVersion != 2 ||
+		warning.Code != string(diagnostic.ProvisioningStalled) ||
+		warning.HelpURL != diagnostic.HelpURL(diagnostic.ProvisioningStalled) ||
+		warning.Message != diagnostic.Summary(diagnostic.ProvisioningStalled) ||
+		warning.Retryable == nil || !*warning.Retryable {
+		t.Fatalf("events = %#v, %#v", starting, warning)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		t.Fatalf("trailing event: %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestPublishOutputHumanProvisioningWarningStopsAtReady(t *testing.T) {
+	var stderr bytes.Buffer
+	output, err := newPublishOutput("human", "tnl dev", io.Discard, &stderr, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := output.starting("tunnel_0123456789abcdef0123456789abcdef", "http://127.0.0.1:3000"); err != nil {
+		t.Fatal(err)
+	}
+	if err := output.provisioning("demo.example", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := output.provisioningStalled(1); err != nil {
+		t.Fatal(err)
+	}
+	if err := output.provisioningStalled(1); err != nil {
+		t.Fatal(err)
+	}
+	if err := output.provisioning("demo.example", 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := output.ready("https://demo.example", 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := output.provisioningStalled(2); err != nil {
+		t.Fatal(err)
+	}
+	got := stderr.String()
+	if strings.Count(got, string(diagnostic.ProvisioningStalled)) != 1 ||
+		!strings.Contains(got, diagnostic.HelpURL(diagnostic.ProvisioningStalled)) ||
+		strings.Count(got, "]-- provisioning stalled ") != 1 {
+		t.Fatalf("human warning output = %q", got)
+	}
+}
+
 func TestPublishOutputNDJSONWarnsWhenBrowserCannotOpen(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	openCount := 0
@@ -193,6 +280,39 @@ func TestPublishOutputHumanFramesConnectionDisruption(t *testing.T) {
 	if !strings.HasPrefix(got, "+--[ tnl publish ]-- publisher connection disrupted ") ||
 		!strings.Contains(got, "connection lost") || !strings.Contains(got, "+-- reconnecting ") {
 		t.Fatalf("stderr = %q", got)
+	}
+}
+
+func TestPublishOutputHumanProvisioningAndAggregateDenials(t *testing.T) {
+	var stderr bytes.Buffer
+	output, err := newPublishOutput("human", "tnl publish", io.Discard, &stderr, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := output.starting("tunnel_0123456789abcdef0123456789abcdef", "http://127.0.0.1:3000"); err != nil {
+		t.Fatal(err)
+	}
+	for _, version := range []uint64{2, 2, 3} {
+		if err := output.provisioning("demo.example", version); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, total := range []uint64{2, 2, 5} {
+		if err := output.blockedVisitors(3, total); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := stderr.String()
+	if strings.Count(got, "]-- provisioning ") != 2 || strings.Count(got, "]-- visitors blocked ") != 2 ||
+		!strings.Contains(got, "certificate and publisher connections") ||
+		!strings.Contains(got, "newly blocked") || !strings.Contains(got, "total blocked") ||
+		strings.Contains(got, "192.0.2") || strings.ContainsRune(got, '\x1b') {
+		t.Fatalf("human lifecycle output = %q", got)
+	}
+	for _, line := range strings.Split(got, "\n") {
+		if len(line) > 72 {
+			t.Fatalf("line exceeds 72 columns: %q", line)
+		}
 	}
 }
 

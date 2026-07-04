@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,9 +9,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
+	"github.com/tnldotdev/tnl/internal/publisher"
 )
 
 type publishEvent struct {
@@ -31,19 +34,82 @@ type publishEvent struct {
 }
 
 type publishOutput struct {
-	mode      string
-	stdout    io.Writer
-	stderr    io.Writer
-	mu        sync.Mutex
-	cursor    uint64
-	tunnelID  string
-	printed   bool
-	opened    bool
-	command   string
-	target    string
-	current   string
-	framework string
-	openURL   func(string) error
+	mode              string
+	stdout            io.Writer
+	stderr            io.Writer
+	mu                sync.Mutex
+	cursor            uint64
+	tunnelID          string
+	printed           bool
+	opened            bool
+	provision         uint64
+	stalled           uint64
+	readyRouteVersion uint64
+	blockRoute        uint64
+	blocked           uint64
+	command           string
+	target            string
+	current           string
+	framework         string
+	openURL           func(string) error
+}
+
+func (o *publishOutput) provisioning(hostname string, routeVersion uint64) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if routeVersion <= o.provision {
+		return nil
+	}
+	o.provision = routeVersion
+	if o.mode != "human" {
+		return nil
+	}
+	return writeHumanTransition(
+		o.stderr, o.command, "provisioning", hostname,
+		"certificate and publisher connections", o.target, "waiting for route readiness",
+		clioutput.Field{Label: "route version", Value: fmt.Sprint(routeVersion)},
+	)
+}
+
+func (o *publishOutput) provisioningStalled(routeVersion uint64) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if routeVersion != o.provision || routeVersion <= o.stalled || routeVersion <= o.readyRouteVersion {
+		return nil
+	}
+	o.stalled = routeVersion
+	if o.mode == "human" {
+		return diagnostic.WriteWarning(o.stderr, o.command, diagnostic.ProvisioningStalled)
+	}
+	retryable := true
+	return o.emitLocked(publishEvent{
+		Type: "warning", Message: diagnostic.Summary(diagnostic.ProvisioningStalled),
+		Code: string(diagnostic.ProvisioningStalled), HelpURL: diagnostic.HelpURL(diagnostic.ProvisioningStalled),
+		Retryable: &retryable, RouteVersion: routeVersion,
+	})
+}
+
+// blockedVisitors presents aggregate policy denials without exposing visitor IPs.
+func (o *publishOutput) blockedVisitors(routeVersion, total uint64) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if routeVersion != o.blockRoute {
+		o.blockRoute, o.blocked = routeVersion, 0
+	}
+	if total <= o.blocked {
+		return nil
+	}
+	increase := total - o.blocked
+	o.blocked = total
+	if o.mode != "human" {
+		return nil
+	}
+	return writeHumanFrame(o.stderr, o.command, "visitors blocked", "IP policy remains active",
+		clioutput.Fields(
+			clioutput.Field{Label: "newly blocked", Value: fmt.Sprint(increase)},
+			clioutput.Field{Label: "total blocked", Value: fmt.Sprint(total)},
+		),
+	)
 }
 
 func newPublishOutput(mode, command string, stdout, stderr io.Writer, openURL func(string) error) (*publishOutput, error) {
@@ -67,6 +133,7 @@ func (o *publishOutput) starting(tunnelID, target string) error {
 func (o *publishOutput) ready(url string, routeVersion uint64) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	o.readyRouteVersion = max(o.readyRouteVersion, routeVersion)
 	if o.mode == "human" {
 		if !o.printed {
 			o.printed = true
@@ -190,4 +257,30 @@ func boundedOutputError(err error) string {
 		return message[:1024]
 	}
 	return message
+}
+
+// handlePublisherEvent is the single CLI integration point for publisher
+// lifecycle and aggregate policy events.
+func handlePublisherEvent(ctx context.Context, tunnel *clientstate.Tunnel, output *publishOutput, event publisher.Event) error {
+	switch event.Type {
+	case publisher.EventRouteAssigned:
+		return tunnel.SetRoute(ctx, event.RouteID, event.Hostname)
+	case publisher.EventProvisioning:
+		if err := tunnel.SetProvisioning(ctx, event.RouteVersion); err != nil {
+			return err
+		}
+		return output.provisioning(event.Hostname, event.RouteVersion)
+	case publisher.EventProvisioningStalled:
+		return output.provisioningStalled(event.RouteVersion)
+	case publisher.EventReady:
+		if err := tunnel.SetReady(ctx, event.PublicURL, event.RouteVersion); err != nil {
+			return err
+		}
+		return output.ready(event.PublicURL, event.RouteVersion)
+	case publisher.EventDraining:
+		return tunnel.SetDraining(context.WithoutCancel(ctx))
+	case publisher.EventIPPolicyDenials:
+		return output.blockedVisitors(event.RouteVersion, event.PolicyDenials)
+	}
+	return nil
 }

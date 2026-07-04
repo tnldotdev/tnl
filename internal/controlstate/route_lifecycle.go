@@ -258,6 +258,14 @@ func (d *Database) HeartbeatRouteSession(
 	if err != nil {
 		return RouteSessionSetup{}, err
 	}
+	if route.Ephemeral {
+		if _, err := queries.RenewEphemeralRouteExpiry(ctx, controlstatedb.RenewEphemeralRouteExpiryParams{
+			ExpiresAt: timestamptz(now.Add(ephemeralRouteGracePeriod)), RouteID: route.ID,
+		}); err != nil {
+			return RouteSessionSetup{}, fmt.Errorf("controlstate: heartbeat route session: renew ephemeral route: %w", err)
+		}
+	}
+	previousExpiresAt := session.PublisherExpiresAt.Time
 	session, err = queries.HeartbeatRouteSession(ctx, controlstatedb.HeartbeatRouteSessionParams{
 		HeartbeatAt: timestamptz(now), ExpiresAt: timestamptz(now.Add(leaseDuration)),
 		RouteSessionID: session.ID, RouteID: route.ID, RouteVersion: session.RouteVersion,
@@ -268,11 +276,15 @@ func (d *Database) HeartbeatRouteSession(
 	if err != nil {
 		return RouteSessionSetup{}, fmt.Errorf("controlstate: heartbeat route session: update lease: %w", err)
 	}
+	leaseExtended := session.PublisherExpiresAt.Time.After(previousExpiresAt)
 	removedReadyConnection, err := replenishRouteSessionConnections(
 		ctx, queries, session, authentication.SessionToken, now, connectionCredentialDuration,
 	)
 	if err != nil {
 		return RouteSessionSetup{}, err
+	}
+	if session.PolicyDenials < 0 {
+		return RouteSessionSetup{}, errors.New("controlstate: heartbeat route session: invalid policy denial count")
 	}
 	connections, err := validReadyPublisherConnections(ctx, queries, session.ID, now)
 	if err != nil {
@@ -283,13 +295,13 @@ func (d *Database) HeartbeatRouteSession(
 			return RouteSessionSetup{}, err
 		}
 	}
-	if session.ReadyAt.Valid && (len(connections) > 0 || removedReadyConnection) {
+	if session.ReadyAt.Valid && (leaseExtended && len(connections) > 0 || removedReadyConnection) {
 		eventKind := routeRoutingTableEventKind(len(connections) > 0)
 		if _, _, err := emitRouteRoutingTableEvent(ctx, queries, route, session, connections, eventKind, now); err != nil {
 			return RouteSessionSetup{}, err
 		}
 	}
-	if len(connections) > 0 || removedReadyConnection {
+	if leaseExtended && len(connections) > 0 || removedReadyConnection {
 		if err := emitCurrentChallengeRoutingTableEvent(ctx, queries, route, session, connections, now); err != nil {
 			return RouteSessionSetup{}, err
 		}
@@ -298,6 +310,7 @@ func (d *Database) HeartbeatRouteSession(
 	if err != nil {
 		return RouteSessionSetup{}, err
 	}
+	setup.PolicyDenials = uint64(session.PolicyDenials)
 	if err := tx.Commit(ctx); err != nil {
 		return RouteSessionSetup{}, fmt.Errorf("controlstate: heartbeat route session: commit: %w", err)
 	}

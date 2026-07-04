@@ -67,3 +67,34 @@ func WorktreeLabel(name, root string) string {
 	digest := sha256.Sum256([]byte(root))
 	return stem + "-" + hex.EncodeToString(digest[:3])
 }
+
+// ValidServiceName reports whether value is a canonical service DNS label.
+func ValidServiceName(value string) bool {
+	if len(value) == 0 || len(value) > 32 || value[0] < 'a' || value[0] > 'z' || value[len(value)-1] == '-' {
+		return false
+	}
+	for _, character := range value {
+		if character < 'a' || character > 'z' {
+			if character < '0' || character > '9' {
+				if character != '-' {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
+
+// ServiceWorktreeLabel returns the built-in hostname label for one service.
+func ServiceWorktreeLabel(service, worktreeLabel string) string {
+	if service == "" {
+		return worktreeLabel
+	}
+	maximumWorktreeLength := 63 - len(service) - 1
+	if len(worktreeLabel) > maximumWorktreeLength {
+		digest := worktreeLabel[len(worktreeLabel)-7:]
+		stem := strings.TrimRight(worktreeLabel[:maximumWorktreeLength-7], "-")
+		worktreeLabel = stem + digest
+	}
+	return service + "-" + worktreeLabel
+}

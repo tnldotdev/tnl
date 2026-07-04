@@ -11,11 +11,9 @@
   "include": [
     "vitest.config.ts",
     "packages/**/*.test.ts",
-    "packages/dev/test-helper.ts",
-    "packages/tnl/config-type-test.ts",
-    "packages/next/fixtures/**/*.ts",
-    "packages/next/fixtures/**/*.tsx",
-    "packages/vite/fixtures/**/*.ts"
+    "packages/tnl/test-helper.ts",
+    "packages/tnl/fixtures/**/*.ts",
+    "packages/tnl/fixtures/**/*.tsx"
   ],
   "exclude": ["**/.next/**", "**/dist/**", "**/node_modules/**"]
 }

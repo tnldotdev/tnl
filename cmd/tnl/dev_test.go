@@ -19,6 +19,8 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
+	"github.com/tnldotdev/tnl/internal/diagnostic"
+	"github.com/tnldotdev/tnl/internal/projectmeta"
 )
 
 func TestDevCommandPassesThroughCommandArguments(t *testing.T) {
@@ -27,15 +29,20 @@ func TestDevCommandPassesThroughCommandArguments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	parsed, err := parser.Parse([]string{"dev", "--host", "demo", "--", "npm", "run", "dev", "--", "--host"})
+	arguments, command, err := splitDevPassthrough([]string{"dev", "web", "--host", "demo", "--", "npm", "run", "dev", "--", "--host"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parsed.Command() != "dev <command>" {
+	parsed, err := parser.Parse(arguments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	flags.Dev.Command = command
+	if parsed.Command() != "dev <service>" {
 		t.Fatalf("command = %q", parsed.Command())
 	}
-	want := []string{"--", "npm", "run", "dev", "--", "--host"}
-	if flags.Dev.Host != "demo" || !reflect.DeepEqual(flags.Dev.Command, want) {
+	want := []string{"npm", "run", "dev", "--", "--host"}
+	if flags.Dev.Service != "web" || flags.Dev.Host != "demo" || !reflect.DeepEqual(flags.Dev.Command, want) {
 		t.Fatalf("host = %q, command = %#v", flags.Dev.Host, flags.Dev.Command)
 	}
 }
@@ -82,16 +89,6 @@ func TestResolveDevCommandFindsProjectLocalExecutable(t *testing.T) {
 	}
 }
 
-func TestRunDevReportsMissingFrameworkIntegration(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	err := runDev(t.Context(), devCommand{
-		Command: []string{"sh", "-c", "sleep 1"}, StartupTimeout: 10 * time.Millisecond,
-	}, nil, &stdout, &stderr)
-	if err == nil || err.Error() != "development server did not connect to tnl; install and configure @tnldotdev/next or @tnldotdev/vite, or use --port" {
-		t.Fatalf("runDev error = %v", err)
-	}
-}
-
 func TestDevBootstrapConfiguresAndRegistersOneTarget(t *testing.T) {
 	bootstrap, err := newDevBootstrap(t.Context(), "", t.TempDir())
 	if err != nil {
@@ -104,18 +101,18 @@ func TestDevBootstrapConfiguresAndRegistersOneTarget(t *testing.T) {
 	})
 
 	premature := postDevRequest(bootstrap, "/v1/target", devTargetRequest{
-		Protocol: 1, Framework: "vite", Port: 5173,
+		Protocol: 1, Framework: "vite", Target: "http://127.0.0.1:5173",
 	})
 	if premature.err != nil || premature.status != http.StatusConflict {
 		t.Fatalf("premature target result = %#v", premature)
 	}
-	legacy := postDevJSON(
+	invalid := postDevJSON(
 		bootstrap,
 		"/v1/configure",
 		[]byte(`{"protocol":1,"framework":"vite","options":{}}`),
 	)
-	if legacy.err != nil || legacy.status != http.StatusBadRequest {
-		t.Fatalf("legacy configuration result = %#v", legacy)
+	if invalid.err != nil || invalid.status != http.StatusBadRequest {
+		t.Fatalf("unknown-field configuration result = %#v", invalid)
 	}
 	configuration := devConfigurationRequest{Protocol: 1, Framework: "vite"}
 	configurationDone := make(chan devHTTPResult, 1)
@@ -132,7 +129,17 @@ func TestDevBootstrapConfiguresAndRegistersOneTarget(t *testing.T) {
 	}
 	want := devConfigurationResponse{
 		Protocol: 1, TunnelID: "tunnel_0123456789abcdef0123456789abcdef",
+		Service: nullableService("web"), MemberNamespace: "member.example",
 		Hostname: "agent-feature.example", PublicURL: "https://agent-feature.example",
+		Project: projectmeta.PublicMetadata{
+			MemberNamespace: "member.example", RunningUnderTnlDev: true,
+			Services: map[string]projectmeta.Service{
+				"web": {
+					MemberNamespace: "member.example", Hostname: "agent-feature.example",
+					URL: "https://agent-feature.example",
+				},
+			},
+		},
 	}
 	bootstrap.Resolve(want, nil)
 	result := <-configurationDone
@@ -152,8 +159,10 @@ func TestDevBootstrapConfiguresAndRegistersOneTarget(t *testing.T) {
 		t.Fatalf("conflicting configuration result = %#v", result)
 	}
 
-	target := devTargetRequest{Protocol: 1, Framework: "vite", Port: 5173}
-	result = postDevRequest(bootstrap, "/v1/target", target)
+	target := devTargetRequest{Protocol: 1, Framework: "vite", Target: "http://127.0.0.1:5173"}
+	result = postDevRequest(bootstrap, "/v1/target", devTargetRequest{
+		Protocol: 1, Framework: "vite", Target: "HTTP://LOCALHOST:05173",
+	})
 	if result.err != nil || result.status != http.StatusNoContent {
 		t.Fatalf("target result = %#v", result)
 	}
@@ -166,10 +175,143 @@ func TestDevBootstrapConfiguresAndRegistersOneTarget(t *testing.T) {
 		t.Fatalf("idempotent target result = %#v", result)
 	}
 	result = postDevRequest(bootstrap, "/v1/target", devTargetRequest{
-		Protocol: 1, Framework: "vite", Port: 3000,
+		Protocol: 1, Framework: "vite", Target: "http://127.0.0.1:3000",
 	})
 	if result.err != nil || result.status != http.StatusConflict {
 		t.Fatalf("conflicting target result = %#v", result)
+	}
+	result = postDevRequest(bootstrap, "/v1/target", devTargetRequest{
+		Protocol: 1, Framework: "vite", Target: "http://192.0.2.1:5173",
+	})
+	if result.err != nil || result.status != http.StatusBadRequest {
+		t.Fatalf("non-loopback target result = %#v", result)
+	}
+}
+
+func TestDevBootstrapRequiresTheForcedPortAndPreservesTheLoopbackHost(t *testing.T) {
+	bootstrap, err := newDevBootstrap(t.Context(), "http://127.0.0.1:5173", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := bootstrap.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+
+	configurationDone := make(chan devHTTPResult, 1)
+	go func() {
+		configurationDone <- postDevRequest(bootstrap, "/v1/configure", devConfigurationRequest{
+			Protocol: 1, Framework: "next",
+		})
+	}()
+	if _, err := bootstrap.Configuration(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	bootstrap.Resolve(devConfigurationResponse{Protocol: 1}, nil)
+	if result := <-configurationDone; result.err != nil || result.status != http.StatusOK {
+		t.Fatalf("configuration result = %#v", result)
+	}
+
+	result := postDevRequest(bootstrap, "/v1/target", devTargetRequest{
+		Protocol: 1, Framework: "next", Target: "http://[::1]:5173",
+	})
+	if result.err != nil || result.status != http.StatusNoContent {
+		t.Fatalf("forced target result = %#v", result)
+	}
+	registered, err := bootstrap.Target(t.Context())
+	if err != nil || registered.Target != "http://[::1]:5173" {
+		t.Fatalf("registered target = %#v, err = %v", registered, err)
+	}
+}
+
+func TestDevBootstrapReturnsTargetMismatchDiagnostic(t *testing.T) {
+	bootstrap, err := newDevBootstrap(t.Context(), "http://127.0.0.1:5173", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bootstrap.Close()
+
+	configurationDone := make(chan devHTTPResult, 1)
+	go func() {
+		configurationDone <- postDevRequest(bootstrap, "/v1/configure", devConfigurationRequest{
+			Protocol: 1, Framework: "vite",
+		})
+	}()
+	if _, err := bootstrap.Configuration(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	bootstrap.Resolve(devConfigurationResponse{Protocol: 1}, nil)
+	if result := <-configurationDone; result.err != nil || result.status != http.StatusOK {
+		t.Fatalf("configuration result = %#v", result)
+	}
+
+	result := postDevRequest(bootstrap, "/v1/target", devTargetRequest{
+		Protocol: 1, Framework: "vite", Target: "http://127.0.0.2:5174",
+	})
+	if result.err != nil || result.status != http.StatusConflict {
+		t.Fatalf("mismatched target result = %#v", result)
+	}
+	_, err = bootstrap.Target(t.Context())
+	if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.TargetMismatch {
+		t.Fatalf("target error = %v, diagnostic = %q", err, code)
+	}
+}
+
+func TestDevSocketDigestGoldenVectors(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "dev-socket-vectors.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vectors []struct {
+		ProjectRoot string `json:"projectRoot"`
+		Service     string `json:"service"`
+		Digest      string `json:"digest"`
+	}
+	if err := json.Unmarshal(data, &vectors); err != nil {
+		t.Fatal(err)
+	}
+	for _, vector := range vectors {
+		if got := devSocketDigest(vector.ProjectRoot, vector.Service); got != vector.Digest {
+			t.Fatalf("digest(%q, %q) = %q, want %q", vector.ProjectRoot, vector.Service, got, vector.Digest)
+		}
+	}
+}
+
+func TestDevProtocolUsesExplicitNullForAdHocService(t *testing.T) {
+	data, err := json.Marshal(devConfigurationResponse{
+		Protocol: 1, TunnelID: "tunnel_0123456789abcdef0123456789abcdef",
+		MemberNamespace: "member.example", Hostname: "route.member.example",
+		PublicURL: "https://route.member.example",
+		Project: projectmeta.PublicMetadata{
+			MemberNamespace: "member.example", Services: map[string]projectmeta.Service{}, RunningUnderTnlDev: true,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(data, []byte(`"service":null`)) || bytes.Contains(data, []byte("serviceDirectories")) {
+		t.Fatalf("response = %s", data)
+	}
+}
+
+func TestRuntimeProjectMetadataUsesTheSelectedTunnelAssignment(t *testing.T) {
+	metadata := projectmeta.Metadata{
+		Version: projectmeta.Version, MemberNamespace: "root.example",
+		Services: map[string]projectmeta.Service{
+			"api": {
+				MemberNamespace: "configured.example", Hostname: "api.configured.example",
+				URL: "https://api.configured.example",
+			},
+		},
+		ServiceDirectories: map[string]string{"api": "."},
+	}
+	project := runtimeProjectMetadata(metadata, "api", "runtime.example", "override.runtime.example")
+	if project.MemberNamespace != "root.example" || !project.RunningUnderTnlDev ||
+		project.Services["api"].MemberNamespace != "runtime.example" ||
+		project.Services["api"].Hostname != "override.runtime.example" ||
+		metadata.Services["api"].Hostname != "api.configured.example" {
+		t.Fatalf("runtime project = %#v, metadata = %#v", project, metadata)
 	}
 }
 
@@ -195,8 +337,19 @@ func TestDevBootstrapTimesOutAndClosesIdempotently(t *testing.T) {
 		t.Fatalf("session socket mode = %v", info.Mode().Perm())
 	}
 	if _, err := newDevBootstrap(t.Context(), "", worktree); err == nil ||
-		err.Error() != "another tnl dev is already running for this worktree" {
+		err.Error() != "another tnl dev is already running for this project service" {
 		t.Fatalf("concurrent bootstrap error = %v", err)
+	}
+	serviceBootstrap, err := newDevBootstrap(t.Context(), "", worktree, "web")
+	if err != nil {
+		t.Fatalf("parallel service bootstrap: %v", err)
+	}
+	defer serviceBootstrap.Close()
+	if serviceBootstrap.socket == bootstrap.socket {
+		t.Fatal("parallel service reused the project socket")
+	}
+	if _, err := newDevBootstrap(t.Context(), "", worktree, "web"); err == nil {
+		t.Fatal("duplicate service bootstrap was accepted")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
 	defer cancel()
@@ -229,13 +382,14 @@ func TestDevEnvironmentReplacesProtocolAndRemovesAccessToken(t *testing.T) {
 	t.Setenv("TNL_TUNNEL_ID", "stale")
 	t.Setenv("TNL_PUBLIC_HOSTNAME", "stale.example")
 	t.Setenv("TNL_PUBLIC_URL", "https://stale.example")
+	t.Setenv("TNL_PROJECT_RUNTIME", `{"memberNamespace":"stale.example"}`)
 	bootstrap := &devBootstrap{socket: "/private/control.sock"}
 	environment := environmentMap(devEnvironment(bootstrap, 3000))
 	if environment["PORT"] != "3000" || environment["TNL_DEV_PORT"] != "3000" ||
 		environment["TNL_DEV_PROTOCOL"] != "1" || environment["TNL_DEV_SOCKET"] != bootstrap.socket {
 		t.Fatalf("environment = %#v", environment)
 	}
-	for _, name := range []string{"TNL_ACCESS_TOKEN", "TNL_TUNNEL_ID", "TNL_PUBLIC_HOSTNAME", "TNL_PUBLIC_URL"} {
+	for _, name := range []string{"TNL_ACCESS_TOKEN", "TNL_PROJECT_RUNTIME", "TNL_TUNNEL_ID", "TNL_PUBLIC_HOSTNAME", "TNL_PUBLIC_URL"} {
 		if _, found := environment[name]; found {
 			t.Fatalf("%s was passed to the development server", name)
 		}

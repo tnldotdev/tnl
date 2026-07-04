@@ -291,12 +291,14 @@ SET lifecycle_state = 'suspended',
         ELSE dns_available_at
     END,
     dns_last_error = NULL,
+    mutation_revision = mutation_revision + 1,
     suspension_revision = suspension_revision + 1,
     suspension_reason = sqlc.arg(suspension_reason),
     suspended_at = sqlc.arg(suspended_at),
     updated_at = sqlc.arg(suspended_at)
 WHERE id = sqlc.arg(route_id)
-  AND lifecycle_state <> 'deleted';
+  AND lifecycle_state <> 'deleted'
+  AND mutation_revision < 9223372036854775807;
 
 -- name: ExpireTeamInvitations :many
 UPDATE control.team_invitations

@@ -25,6 +25,7 @@ const (
 	RouteCreate        AuthorizationOperation = "route.create"
 	RouteDelete        AuthorizationOperation = "route.delete"
 	RouteSessionCreate AuthorizationOperation = "route_session.create"
+	RouteUpdate        AuthorizationOperation = "route.update"
 )
 
 // Valid indicates whether the value is a known member of the AuthorizationOperation enum.
@@ -35,6 +36,8 @@ func (e AuthorizationOperation) Valid() bool {
 	case RouteDelete:
 		return true
 	case RouteSessionCreate:
+		return true
+	case RouteUpdate:
 		return true
 	default:
 		return false
@@ -478,18 +481,20 @@ type ServiceAuthorizationDecision struct {
 
 // ServiceAuthorizationRequest defines model for ServiceAuthorizationRequest.
 type ServiceAuthorizationRequest struct {
-	AccessToken        string                 `json:"access_token"`
-	ActingMembershipId *MembershipID          `json:"acting_membership_id,omitempty"`
-	AllowedIpPrefixes  []string               `json:"allowed_ip_prefixes"`
-	CanonicalHostname  CanonicalHostname      `json:"canonical_hostname"`
-	DomainId           DomainID               `json:"domain_id"`
-	Operation          AuthorizationOperation `json:"operation"`
-	RouteId            *RouteID               `json:"route_id,omitempty"`
-	RouteMembershipId  *MembershipID          `json:"route_membership_id,omitempty"`
-	RouteScope         RouteScope             `json:"route_scope"`
-	RouteVersion       *int64                 `json:"route_version,omitempty"`
-	Target             string                 `json:"target"`
-	TeamId             TeamID                 `json:"team_id"`
+	AccessToken           string                 `json:"access_token"`
+	ActingMembershipId    *MembershipID          `json:"acting_membership_id,omitempty"`
+	AllowedIpPrefixes     []string               `json:"allowed_ip_prefixes"`
+	CanonicalHostname     CanonicalHostname      `json:"canonical_hostname"`
+	DomainId              DomainID               `json:"domain_id"`
+	Ephemeral             bool                   `json:"ephemeral"`
+	Operation             AuthorizationOperation `json:"operation"`
+	RouteId               *RouteID               `json:"route_id,omitempty"`
+	RouteMembershipId     *MembershipID          `json:"route_membership_id,omitempty"`
+	RouteMutationRevision *int64                 `json:"route_mutation_revision,omitempty"`
+	RouteScope            RouteScope             `json:"route_scope"`
+	RouteVersion          *int64                 `json:"route_version,omitempty"`
+	Target                string                 `json:"target"`
+	TeamId                TeamID                 `json:"team_id"`
 }
 
 // SetMembershipRoleRequest defines model for SetMembershipRoleRequest.

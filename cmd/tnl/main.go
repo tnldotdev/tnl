@@ -7,11 +7,13 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/alecthomas/kong"
 	"github.com/tnldotdev/tnl/internal/buildinfo"
+	"github.com/tnldotdev/tnl/internal/clientauth"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
@@ -23,17 +25,18 @@ type cli struct {
 	ConfigPath  string         `name:"config" help:"Use an explicit project configuration file." type:"path"`
 	NoConfig    bool           `name:"no-config" help:"Disable project configuration discovery."`
 	NoTelemetry bool           `name:"no-telemetry" env:"TNL_NO_TELEMETRY" help:"Disable pseudonymous usage telemetry."`
-	Publish     publishCommand `cmd:"" help:"Publish one local HTTP service."`
-	Dev         devCommand     `cmd:"" help:"Run and publish a development server."`
-	Config      configCommand  `cmd:"" help:"Inspect project configuration."`
-	Status      statusCommand  `cmd:"" help:"Show local tunnel status."`
-	Team        teamCommand    `cmd:"" help:"Manage teams and memberships."`
-	Domain      domainCommand  `cmd:"" help:"Manage team domains."`
-	Route       routeCommand   `cmd:"" help:"Manage durable routes."`
-	Login       loginCommand   `cmd:"" help:"Authenticate to a tnl server."`
-	Logout      logoutCommand  `cmd:"" help:"Revoke and remove the saved control session."`
-	Admin       adminCommand   `cmd:"" help:"Administer a self-hosted tnl server."`
-	Version     struct{}       `cmd:"" help:"Print release version information."`
+	Init        initCommand    `cmd:"" help:"Set up tnl for the current project." group:"start"`
+	Dev         devCommand     `cmd:"" help:"Run and publish one development service; pass a command after --." group:"start"`
+	Publish     publishCommand `cmd:"" help:"Publish one local HTTP service." group:"start"`
+	Status      statusCommand  `cmd:"" help:"Show this project's local tunnels." group:"start"`
+	Login       loginCommand   `cmd:"" help:"Authenticate to a tnl server." group:"start"`
+	Config      configCommand  `cmd:"" help:"Inspect project configuration." group:"manage"`
+	Team        teamCommand    `cmd:"" help:"Manage teams and memberships." group:"manage"`
+	Domain      domainCommand  `cmd:"" help:"Manage team domains." group:"manage"`
+	Route       routeCommand   `cmd:"" help:"Manage durable routes." group:"manage"`
+	Logout      logoutCommand  `cmd:"" help:"Revoke and remove the saved control session." group:"manage"`
+	Admin       adminCommand   `cmd:"" help:"Administer a self-hosted tnl server." group:"operate"`
+	Version     struct{}       `cmd:"" help:"Print release version information." group:"operate"`
 }
 
 type openOptions struct {
@@ -41,31 +44,45 @@ type openOptions struct {
 }
 
 type tunnelFlags struct {
+	Team      string   `name:"team" env:"TNL_TEAM" help:"Team ID or unambiguous display name."`
 	Host      string   `name:"host" env:"TNL_HOST" help:"Exact hostname to publish; defaults to the current member namespace."`
 	Subdomain string   `name:"subdomain" env:"TNL_SUBDOMAIN" help:"One label beneath the current member namespace."`
 	AllowIP   []string `name:"allow-ip" help:"Allow a visitor IP address or prefix; repeat for each value."`
-	Public    bool     `name:"public" help:"Allow visitors from every IP address."`
+	Public    bool     `name:"public" env:"TNL_PUBLIC" help:"Allow visitors from every IP address."`
+	Ephemeral bool     `name:"ephemeral" env:"TNL_EPHEMERAL" help:"Remove the route when this tunnel stops."`
+
+	publicFromCLI    bool
+	ephemeralFromCLI bool
 }
 
 type remoteFlags struct {
 	ServerURL   string `name:"server" env:"TNL_SERVER" help:"tnl server HTTPS origin; defaults to the selected server or https://control.tnl.dev."`
 	AccessToken string `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Server access token; defaults to the saved login."`
 	StateDir    string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent client state."`
+	ProjectTeam string `kong:"-"`
 }
 
 type publishCommand struct {
 	openOptions `embed:""`
 	remoteFlags `embed:""`
 	tunnelFlags `embed:""`
-	Target      string `arg:"" name:"target" optional:"" help:"Local port or loopback-only HTTP URL."`
+	Target      string `arg:"" name:"service-or-target" optional:"" help:"Configured service name, local port, or loopback-only HTTP URL."`
 	Output      string `name:"output" enum:"human,ndjson" default:"human" help:"Output format: ${enum}."`
 
 	serverFromConfig bool
+	selectedTeam     string
+	projectRoot      string
+	Service          string `kong:"-"`
 }
 
 type configCommand struct {
-	Path  struct{} `cmd:"" help:"Show the selected project configuration path."`
-	Check struct{} `cmd:"" help:"Validate the selected project configuration."`
+	Path     struct{}              `cmd:"" help:"Show the selected project configuration path."`
+	Check    struct{}              `cmd:"" help:"Validate the selected project configuration."`
+	Generate configGenerateCommand `cmd:"" help:"Generate project metadata and literal TypeScript declarations."`
+}
+
+type configGenerateCommand struct {
+	StateDir string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent client state."`
 }
 
 type loginCommand struct {
@@ -109,6 +126,7 @@ func main() {
 }
 
 func writeCommandError(output io.Writer, err error) {
+	err = classifyCommandError(err)
 	command := "tnl"
 	if contextual, ok := clioutput.CommandOf(err); ok {
 		command = contextual
@@ -124,37 +142,77 @@ func writeCommandError(output io.Writer, err error) {
 	})
 }
 
+func classifyCommandError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if _, classified := diagnostic.CodeOf(err); classified {
+		return err
+	}
+	if errors.Is(err, clientauth.ErrAuthenticationTimeout) {
+		return diagnostic.Wrap(diagnostic.AuthenticationTimeout, err)
+	}
+	return err
+}
+
 func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterFactories ...telemetryReporterFactory) (result error) {
 	command := ""
 	defer func() {
+		result = classifyCommandError(result)
 		if result != nil && command != "" {
 			result = clioutput.WrapCommand(command, result)
 		}
 	}()
+	parseArgs, devCommand, err := splitDevPassthrough(args)
+	if err != nil {
+		return err
+	}
 	var flags cli
-	parser, err := kong.New(&flags, kong.Name("tnl"), kong.Description("public urls for localhost."))
+	parser, err := kong.New(
+		&flags,
+		kong.Name("tnl"),
+		kong.Description("Publish local services at stable public URLs."),
+		kong.ExplicitGroups([]kong.Group{
+			{Key: "start", Title: "Start here:"},
+			{Key: "manage", Title: "Manage:"},
+			{Key: "operate", Title: "Operate:"},
+		}),
+		kong.HelpOptions{Compact: true, FlagsLast: true, WrapUpperBound: 72},
+	)
 	if err != nil {
 		return err
 	}
-	parsed, err := parser.Parse(args)
+	parsed, err := parser.Parse(parseArgs)
 	if err != nil {
 		return err
 	}
+	flags.Dev.Command = devCommand
+	applyTunnelCLIUnits(parseArgs, parsed.Command(), &flags)
 	command = clioutput.CommandTitle("tnl", parsed.Command())
 	var project projectConfiguration
 	switch parsed.Command() {
-	case "publish <target>", "dev <command>":
+	case "publish <service-or-target>", "dev <service>":
 		project, err = loadProjectConfiguration(ctx, flags)
 		if err != nil {
 			return err
 		}
-		if parsed.Command() == "publish <target>" {
+		if parsed.Command() == "publish <service-or-target>" {
 			err = project.applyPublish(&flags.Publish)
 		} else {
 			err = project.applyDev(&flags.Dev)
 		}
 		if err != nil {
 			return err
+		}
+	default:
+		if projectSensitiveCommand(parsed.Command()) {
+			project, err = loadProjectConfiguration(ctx, flags)
+			if err != nil {
+				return err
+			}
+			if err := applyProjectCommandContext(parsed.Command(), project, &flags); err != nil {
+				return err
+			}
 		}
 	}
 	var telemetry telemetryReporter
@@ -169,10 +227,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		}
 	}
 	switch parsed.Command() {
+	case "init":
+		return runInit(ctx, flags.Init, stdout, stderr)
 	case "config path":
 		return runConfigPath(flags, stdout)
 	case "config check":
 		return runConfigCheck(ctx, flags, stdout)
+	case "config generate":
+		return runConfigGenerate(ctx, flags, flags.Config.Generate, stdout, stderr)
 	case "login":
 		return runLogin(ctx, flags.Login, os.Stdin, stdout, stderr)
 	case "logout":
@@ -180,11 +242,17 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	case "version":
 		_, err := fmt.Fprintln(stdout, buildinfo.Line("tnl"))
 		return err
-	case "publish <target>":
+	case "publish <service-or-target>":
 		return runPublish(ctx, flags.Publish, stdout, stderr, telemetry)
-	case "dev <command>":
+	case "dev <service>":
 		return runDev(ctx, flags.Dev, os.Stdin, stdout, stderr, telemetry)
 	case "status":
+		if !flags.Status.All {
+			flags.Status.Project, err = projectRoot(ctx, flags)
+			if err != nil {
+				return err
+			}
+		}
 		return runStatus(ctx, flags.Status, stdout)
 	case "team current":
 		return runTeamCurrent(ctx, flags.Team.Current, stdout, stderr)
@@ -237,6 +305,81 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	}
 }
 
+func applyTunnelCLIUnits(args []string, command string, flags *cli) {
+	host, subdomain, allowIP, public, ephemeral := false, false, false, false, false
+	commandIndex := rootCommandIndex(args)
+	for index, argument := range args {
+		if index <= commandIndex {
+			continue
+		}
+		switch {
+		case argument == "--host" || strings.HasPrefix(argument, "--host="):
+			host = true
+		case argument == "--subdomain" || strings.HasPrefix(argument, "--subdomain="):
+			subdomain = true
+		case argument == "--allow-ip" || strings.HasPrefix(argument, "--allow-ip="):
+			allowIP = true
+		case argument == "--public" || argument == "--no-public" || strings.HasPrefix(argument, "--public="):
+			public = true
+		case argument == "--ephemeral" || argument == "--no-ephemeral" || strings.HasPrefix(argument, "--ephemeral="):
+			ephemeral = true
+		}
+	}
+	apply := func(tunnel *tunnelFlags) {
+		tunnel.publicFromCLI = public
+		tunnel.ephemeralFromCLI = ephemeral
+		if host && !subdomain {
+			tunnel.Subdomain = ""
+		}
+		if subdomain && !host {
+			tunnel.Host = ""
+		}
+		if allowIP && !public {
+			tunnel.Public = false
+		}
+	}
+	switch command {
+	case "publish <service-or-target>":
+		apply(&flags.Publish.tunnelFlags)
+	case "dev <service>":
+		apply(&flags.Dev.tunnelFlags)
+	}
+}
+
+func splitDevPassthrough(args []string) ([]string, []string, error) {
+	commandIndex := rootCommandIndex(args)
+	if commandIndex < 0 || args[commandIndex] != "dev" {
+		return args, nil, nil
+	}
+	for index := commandIndex + 1; index < len(args); index++ {
+		if args[index] != "--" {
+			continue
+		}
+		if index == len(args)-1 {
+			return nil, nil, errors.New("development command after -- must not be empty")
+		}
+		parsed := append([]string(nil), args[:index]...)
+		return parsed, append([]string(nil), args[index+1:]...), nil
+	}
+	return args, nil, nil
+}
+
+func rootCommandIndex(args []string) int {
+	for index := 0; index < len(args); index++ {
+		argument := args[index]
+		switch {
+		case argument == "--config":
+			index++
+		case strings.HasPrefix(argument, "--config="), argument == "--no-config", argument == "--no-telemetry":
+		case strings.HasPrefix(argument, "-"):
+			return -1
+		default:
+			return index
+		}
+	}
+	return -1
+}
+
 func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Writer, reporters ...telemetryReporter) (result error) {
 	telemetry := optionalTelemetryReporter(reporters)
 	output, err := newPublishOutput(flags.Output, "tnl publish", stdout, stderr, browserOpener(flags.Open))
@@ -244,7 +387,9 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		return err
 	}
 	fail := func(err error) error {
+		err = classifyCommandError(err)
 		if cause := context.Cause(ctx); cause != nil {
+			cause = classifyCommandError(cause)
 			if errors.Is(cause, context.Canceled) {
 				return errors.Join(cause, output.stopped())
 			}
@@ -265,6 +410,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	defer state.Close()
 	tunnel, err := state.BeginTunnel(ctx, clientstate.BeginTunnelOptions{
 		Command: clientstate.TunnelCommandPublish, Server: serverURL, Target: target,
+		Project: flags.projectRoot, Service: flags.Service,
 	})
 	if err != nil {
 		return fail(err)
@@ -294,27 +440,16 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 			return err
 		}
 	}
-	services, err := preparePublisherServices(ctx, state, serverURL, flags.Host, flags.Subdomain, authenticated)
+	services, err := preparePublisherServices(
+		ctx, state, serverURL, flags.Host, flags.Subdomain, flags.selectedTeam, flags.Ephemeral, authenticated,
+	)
 	if err != nil {
 		return fail(err)
 	}
 	publisherConfig := services.config(target, allowedIPPrefixes)
 	publisherConfig.Logf = output.logf
 	publisherConfig.Observe = withTelemetryObserver(telemetry, "publish", serverURL, "", func(event publisher.Event) error {
-		switch event.Type {
-		case publisher.EventRouteAssigned:
-			return tunnel.SetRoute(ctx, event.RouteID, event.Hostname)
-		case publisher.EventProvisioning:
-			return tunnel.SetProvisioning(ctx, event.RouteVersion)
-		case publisher.EventReady:
-			if err := tunnel.SetReady(ctx, event.PublicURL, event.RouteVersion); err != nil {
-				return err
-			}
-			return output.ready(event.PublicURL, event.RouteVersion)
-		case publisher.EventDraining:
-			return tunnel.SetDraining(context.WithoutCancel(ctx))
-		}
-		return nil
+		return handlePublisherEvent(ctx, tunnel, output, event)
 	})
 	err = publisher.Run(ctx, publisherConfig)
 	if cause := context.Cause(ctx); cause != nil {

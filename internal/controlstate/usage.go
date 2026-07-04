@@ -231,6 +231,13 @@ func applyIngressUsageReport(
 	} else if err != nil {
 		return fmt.Errorf("controlstate: report ingress usage: apply aggregate delta: %w", err)
 	}
+	if _, err := queries.ApplyRouteSessionPolicyDenials(ctx, controlstatedb.ApplyRouteSessionPolicyDenialsParams{
+		PolicyDenials: delta.policyDenials, RouteID: report.RouteID, RouteVersion: routeVersion,
+	}); errors.Is(err, pgx.ErrNoRows) {
+		return errors.New("controlstate: route-session policy denial counter is exhausted")
+	} else if err != nil {
+		return fmt.Errorf("controlstate: report ingress usage: apply route-session policy denials: %w", err)
+	}
 	return nil
 }
 

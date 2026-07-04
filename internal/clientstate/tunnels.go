@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -49,6 +50,8 @@ type BeginTunnelOptions struct {
 	Command TunnelCommand
 	Server  string
 	Target  string
+	Project string
+	Service string
 }
 
 // Tunnel is the write handle for one local publish or dev invocation.
@@ -85,6 +88,8 @@ type TunnelInfo struct {
 	State          TunnelState   `json:"state"`
 	ProcessID      int           `json:"process_id"`
 	Server         string        `json:"server"`
+	Project        string        `json:"project"`
+	Service        string        `json:"service,omitempty"`
 	RouteID        string        `json:"route_id,omitempty"`
 	RouteVersion   uint64        `json:"route_version,omitempty"`
 	Hostname       string        `json:"hostname,omitempty"`
@@ -114,6 +119,13 @@ func (d *Database) BeginTunnel(ctx context.Context, options BeginTunnelOptions) 
 	} else if options.Command != TunnelCommandDev {
 		return nil, errors.New("clientstate: publish tunnel target is required")
 	}
+	if options.Project == "" || !filepath.IsAbs(options.Project) {
+		return nil, errors.New("clientstate: absolute tunnel project path is required")
+	}
+	options.Project = filepath.Clean(options.Project)
+	if options.Service != "" && !validServiceName(options.Service) {
+		return nil, errors.New("clientstate: invalid tunnel service")
+	}
 	if _, err := d.Server(ctx, server); err != nil {
 		return nil, err
 	}
@@ -128,10 +140,14 @@ func (d *Database) BeginTunnel(ctx context.Context, options BeginTunnelOptions) 
 	if err != nil {
 		return nil, err
 	}
-	if err := d.queries.InsertTunnel(ctx, clientstatedb.InsertTunnelParams{
-		ID: id, Command: string(options.Command), ProcessID: int64(os.Getpid()), ServerOrigin: server,
-		Target: options.Target, Now: now.UnixNano(), LeaseExpiresAt: now.Add(tunnelLeaseDuration).UnixNano(),
-	}); err != nil {
+	if _, err := d.db.ExecContext(ctx, `
+INSERT INTO local_tunnels (
+    id, command, process_id, server_origin, project_root, service, hostname,
+    target, framework, route_id, route_version, state, started_at, updated_at,
+    heartbeat_at, lease_expires_at, last_error
+) VALUES (?, ?, ?, ?, ?, ?, '', ?, '', '', 0, 'starting', ?, ?, ?, ?, '')
+`, id, string(options.Command), int64(os.Getpid()), server, options.Project, options.Service,
+		options.Target, now.UnixNano(), now.UnixNano(), now.UnixNano(), now.Add(tunnelLeaseDuration).UnixNano()); err != nil {
 		return nil, fmt.Errorf("clientstate: begin tunnel: %w", err)
 	}
 	leaseCtx, cancel := context.WithCancelCause(ctx)
@@ -231,15 +247,58 @@ func (t *Tunnel) Finish(ctx context.Context, runErr error) error {
 
 // Snapshot returns one consistent view of all nonterminal local tunnels.
 func (d *Database) Snapshot(ctx context.Context) (TunnelSnapshot, error) {
+	return d.snapshot(ctx, "")
+}
+
+// SnapshotProject returns one consistent view of a project's nonterminal tunnels.
+func (d *Database) SnapshotProject(ctx context.Context, projectRoot string) (TunnelSnapshot, error) {
+	if projectRoot == "" || !filepath.IsAbs(projectRoot) {
+		return TunnelSnapshot{}, errors.New("clientstate: absolute tunnel project path is required")
+	}
+	return d.snapshot(ctx, filepath.Clean(projectRoot))
+}
+
+func (d *Database) snapshot(ctx context.Context, projectRoot string) (TunnelSnapshot, error) {
 	observedAt := d.now().UTC()
 	tx, err := d.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return TunnelSnapshot{}, fmt.Errorf("clientstate: begin tunnel snapshot: %w", err)
 	}
 	defer tx.Rollback()
-	rows, err := d.queries.WithTx(tx).ListOpenTunnels(ctx)
+	query := `
+SELECT id, command, process_id, server_origin, project_root, service, hostname,
+       target, framework, route_id, route_version, state, started_at, updated_at,
+       heartbeat_at, lease_expires_at
+FROM local_tunnels
+WHERE stopped_at IS NULL`
+	arguments := []any{}
+	if projectRoot != "" {
+		query += " AND project_root = ?"
+		arguments = append(arguments, projectRoot)
+	}
+	query += " ORDER BY started_at, id"
+	rows, err := tx.QueryContext(ctx, query, arguments...)
 	if err != nil {
 		return TunnelSnapshot{}, fmt.Errorf("clientstate: list tunnels: %w", err)
+	}
+	defer rows.Close()
+	var records []tunnelRecord
+	for rows.Next() {
+		var row tunnelRecord
+		if err := rows.Scan(
+			&row.id, &row.command, &row.processID, &row.server, &row.project, &row.service,
+			&row.hostname, &row.target, &row.framework, &row.routeID, &row.routeVersion,
+			&row.state, &row.startedAt, &row.updatedAt, &row.heartbeatAt, &row.leaseExpiresAt,
+		); err != nil {
+			return TunnelSnapshot{}, fmt.Errorf("clientstate: scan tunnel: %w", err)
+		}
+		records = append(records, row)
+	}
+	if err := rows.Err(); err != nil {
+		return TunnelSnapshot{}, fmt.Errorf("clientstate: list tunnels: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return TunnelSnapshot{}, fmt.Errorf("clientstate: close tunnel rows: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return TunnelSnapshot{}, fmt.Errorf("clientstate: commit tunnel snapshot: %w", err)
@@ -247,19 +306,20 @@ func (d *Database) Snapshot(ctx context.Context) (TunnelSnapshot, error) {
 	snapshot := TunnelSnapshot{
 		SchemaVersion: tunnelSnapshotSchemaVersion,
 		ObservedAt:    observedAt,
-		Tunnels:       make([]TunnelInfo, 0, len(rows)),
+		Tunnels:       make([]TunnelInfo, 0, len(records)),
 	}
-	for _, row := range rows {
-		state := TunnelState(row.State)
-		if !unixNanoTime(row.LeaseExpiresAt).After(observedAt) {
+	for _, row := range records {
+		state := TunnelState(row.state)
+		if !unixNanoTime(row.leaseExpiresAt).After(observedAt) {
 			state = TunnelStateStale
 		}
 		info := TunnelInfo{
-			ID: row.ID, Command: TunnelCommand(row.Command), State: state, ProcessID: int(row.ProcessID),
-			Server: row.ServerOrigin, RouteID: row.RouteID, RouteVersion: uint64(row.RouteVersion),
-			Hostname: row.Hostname, Target: row.Target, Framework: row.Framework,
-			StartedAt: unixNanoTime(row.StartedAt), UpdatedAt: unixNanoTime(row.UpdatedAt),
-			HeartbeatAt: unixNanoTime(row.HeartbeatAt), LeaseExpiresAt: unixNanoTime(row.LeaseExpiresAt),
+			ID: row.id, Command: TunnelCommand(row.command), State: state, ProcessID: int(row.processID),
+			Server: row.server, Project: row.project, Service: row.service,
+			RouteID: row.routeID, RouteVersion: uint64(row.routeVersion),
+			Hostname: row.hostname, Target: row.target, Framework: row.framework,
+			StartedAt: unixNanoTime(row.startedAt), UpdatedAt: unixNanoTime(row.updatedAt),
+			HeartbeatAt: unixNanoTime(row.heartbeatAt), LeaseExpiresAt: unixNanoTime(row.leaseExpiresAt),
 		}
 		if info.Hostname != "" {
 			info.PublicURL = "https://" + info.Hostname
@@ -280,6 +340,11 @@ func (d *Database) Snapshot(ctx context.Context) (TunnelSnapshot, error) {
 		}
 	}
 	return snapshot, nil
+}
+
+type tunnelRecord struct {
+	id, command, server, project, service, hostname, target, framework, routeID, state string
+	processID, routeVersion, startedAt, updatedAt, heartbeatAt, leaseExpiresAt         int64
 }
 
 func (t *Tunnel) heartbeat(ctx context.Context) {
@@ -331,4 +396,20 @@ func validFramework(value string) bool {
 		}
 	}
 	return strings.TrimSpace(value) == value
+}
+
+func validServiceName(value string) bool {
+	if len(value) == 0 || len(value) > 32 || value[0] < 'a' || value[0] > 'z' || value[len(value)-1] == '-' {
+		return false
+	}
+	for _, character := range value {
+		if character < 'a' || character > 'z' {
+			if character < '0' || character > '9' {
+				if character != '-' {
+					return false
+				}
+			}
+		}
+	}
+	return true
 }

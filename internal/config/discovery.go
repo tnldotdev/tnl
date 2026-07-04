@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-var ProjectConfigNames = []string{"tnl.yml", "tnl.yaml", "tnl.json", "tnl.ts"}
+var ProjectConfigNames = []string{"tnl.yml", "tnl.yaml", "tnl.json", "tnl.config.ts"}
 
 type Selection struct {
 	Path     string
@@ -33,6 +33,9 @@ func SelectProjectConfig(cwd, flagPath, environmentPath string, disabled bool) (
 		path, err := absolutePath(cwd, explicit)
 		if err != nil {
 			return Selection{}, err
+		}
+		if strings.EqualFold(filepath.Ext(path), ".ts") && filepath.Base(path) != "tnl.config.ts" {
+			return Selection{}, errors.New("TypeScript project configuration must be named tnl.config.ts")
 		}
 		if info, err := os.Stat(path); err != nil {
 			return Selection{}, fmt.Errorf("select config %s: %w", path, err)

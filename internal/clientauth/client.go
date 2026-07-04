@@ -19,9 +19,15 @@ import (
 	"github.com/tnldotdev/tnl/internal/oidcauth"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"golang.org/x/oauth2"
 )
 
-const refreshSafetyMargin = 30 * time.Second
+const (
+	refreshSafetyMargin            = 30 * time.Second
+	defaultInteractiveLoginTimeout = 10 * time.Minute
+)
+
+var ErrAuthenticationTimeout = errors.New("clientauth: authentication timed out")
 
 type Config struct {
 	ServerEndpoint       string
@@ -34,6 +40,7 @@ type Config struct {
 	AuthenticationPrompt func(oidcauth.Prompt) error
 	ForceLogin           bool
 	ForceLoginToken      bool
+	loginTimeout         time.Duration
 }
 
 type Client struct {
@@ -236,12 +243,21 @@ func (s *tokenSource) login(ctx context.Context) (clientstate.ControlSession, er
 			return clientstate.ControlSession{}, errors.New("clientauth: control returned inconsistent OIDC authentication facts")
 		}
 		oidc := discovery.Authentication.Oidc
-		result, err := oidcauth.Login(ctx, oidcauth.Config{
+		timeout := s.config.loginTimeout
+		if timeout == 0 {
+			timeout = defaultInteractiveLoginTimeout
+		}
+		loginCtx, cancel := context.WithTimeout(ctx, timeout)
+		result, err := oidcauth.Login(loginCtx, oidcauth.Config{
 			Issuer: oidc.Issuer, ClientID: oidc.ClientId,
 			LoginFlow: string(oidc.LoginFlow), Scopes: slices.Clone(oidc.Scopes),
 			HTTPClient: s.control.rawHTTP, OpenURL: s.config.OpenURL, Prompt: s.config.AuthenticationPrompt,
 		}, s.config.Diagnostics)
+		cancel()
 		if err != nil {
+			if interactiveAuthenticationTimedOut(ctx, err) {
+				return clientstate.ControlSession{}, fmt.Errorf("%w: %w", ErrAuthenticationTimeout, err)
+			}
 			return clientstate.ControlSession{}, err
 		}
 		issued, err := s.control.rawAuthority.ExchangeOIDC(ctx, result.IDToken)
@@ -275,6 +291,17 @@ func (s *tokenSource) login(ctx context.Context) (clientstate.ControlSession, er
 	}
 	stored.AuthorityEndpoint = s.control.authorityEndpoint
 	return stored, nil
+}
+
+func interactiveAuthenticationTimedOut(ctx context.Context, err error) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var retrieval *oauth2.RetrieveError
+	return errors.As(err, &retrieval) && retrieval.ErrorCode == "expired_token"
 }
 
 func refreshSession(

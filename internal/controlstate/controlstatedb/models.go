@@ -94,11 +94,13 @@ type ControlAdminAuditEvent struct {
 	OccurredAt      pgtype.Timestamptz
 }
 
-type ControlAuthorityRevisionFloor struct {
-	Issuer         string
-	TeamID         string
-	PolicyRevision int64
-	UpdatedAt      pgtype.Timestamptz
+type ControlAuthorityRevisionState struct {
+	Issuer                 string
+	TeamID                 string
+	ObservedPolicyRevision int64
+	AppliedPolicyRevision  int64
+	ObservedAt             pgtype.Timestamptz
+	AppliedAt              pgtype.Timestamptz
 }
 
 type ControlControlSession struct {
@@ -375,6 +377,9 @@ type ControlRoute struct {
 	DnsAvailableAt        pgtype.Timestamptz
 	DnsLastError          pgtype.Text
 	NextRouteVersion      int64
+	MutationRevision      int64
+	Ephemeral             bool
+	ExpiresAt             pgtype.Timestamptz
 	SuspensionRevision    int64
 	SuspensionReason      pgtype.Text
 	CreatedAt             pgtype.Timestamptz
@@ -424,6 +429,7 @@ type ControlRouteSession struct {
 	SessionTokenID         string
 	SessionTokenDigest     []byte
 	PolicyRevision         int64
+	PolicyDenials          int64
 	CertificateCacheKey    string
 	CertificateScope       string
 	CertificateIdentifiers []string

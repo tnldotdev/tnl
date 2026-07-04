@@ -1134,7 +1134,7 @@ func (q *Queries) ListTeamMembershipContexts(ctx context.Context, teamID string)
 }
 
 const lockDomainRoutes = `-- name: LockDomainRoutes :many
-SELECT id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key, request_digest, canonical_hostname, target, route_scope, policy_revision, ip_policy, allowed_ip_prefixes, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_route_version, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at
+SELECT id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key, request_digest, canonical_hostname, target, route_scope, policy_revision, ip_policy, allowed_ip_prefixes, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_route_version, mutation_revision, ephemeral, expires_at, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at
 FROM control.routes
 WHERE team_id = $1
   AND domain_id = $2
@@ -1182,6 +1182,9 @@ func (q *Queries) LockDomainRoutes(ctx context.Context, arg LockDomainRoutesPara
 			&i.DnsAvailableAt,
 			&i.DnsLastError,
 			&i.NextRouteVersion,
+			&i.MutationRevision,
+			&i.Ephemeral,
+			&i.ExpiresAt,
 			&i.SuspensionRevision,
 			&i.SuspensionReason,
 			&i.CreatedAt,
@@ -1326,7 +1329,7 @@ func (q *Queries) LockManagedDomainForClaim(ctx context.Context) (ControlDomain,
 }
 
 const lockMembershipRoutes = `-- name: LockMembershipRoutes :many
-SELECT routes.id, routes.team_id, routes.domain_id, routes.membership_id, routes.created_by_identity_id, routes.idempotency_key, routes.request_digest, routes.canonical_hostname, routes.target, routes.route_scope, routes.policy_revision, routes.ip_policy, routes.allowed_ip_prefixes, routes.lifecycle_state, routes.dns_authority_reference, routes.dns_state, routes.dns_revision, routes.dns_work_owner, routes.dns_work_epoch, routes.dns_work_expires_at, routes.dns_attempts, routes.dns_available_at, routes.dns_last_error, routes.next_route_version, routes.suspension_revision, routes.suspension_reason, routes.created_at, routes.updated_at, routes.suspended_at, routes.deleted_at
+SELECT routes.id, routes.team_id, routes.domain_id, routes.membership_id, routes.created_by_identity_id, routes.idempotency_key, routes.request_digest, routes.canonical_hostname, routes.target, routes.route_scope, routes.policy_revision, routes.ip_policy, routes.allowed_ip_prefixes, routes.lifecycle_state, routes.dns_authority_reference, routes.dns_state, routes.dns_revision, routes.dns_work_owner, routes.dns_work_epoch, routes.dns_work_expires_at, routes.dns_attempts, routes.dns_available_at, routes.dns_last_error, routes.next_route_version, routes.mutation_revision, routes.ephemeral, routes.expires_at, routes.suspension_revision, routes.suspension_reason, routes.created_at, routes.updated_at, routes.suspended_at, routes.deleted_at
 FROM control.routes AS routes
 WHERE routes.team_id = $1
   AND (
@@ -1383,6 +1386,9 @@ func (q *Queries) LockMembershipRoutes(ctx context.Context, arg LockMembershipRo
 			&i.DnsAvailableAt,
 			&i.DnsLastError,
 			&i.NextRouteVersion,
+			&i.MutationRevision,
+			&i.Ephemeral,
+			&i.ExpiresAt,
 			&i.SuspensionRevision,
 			&i.SuspensionReason,
 			&i.CreatedAt,
@@ -1906,12 +1912,14 @@ SET lifecycle_state = 'suspended',
         ELSE dns_available_at
     END,
     dns_last_error = NULL,
+    mutation_revision = mutation_revision + 1,
     suspension_revision = suspension_revision + 1,
     suspension_reason = $2,
     suspended_at = $1,
     updated_at = $1
 WHERE id = $3
   AND lifecycle_state <> 'deleted'
+  AND mutation_revision < 9223372036854775807
 `
 
 type SuspendAuthorityRouteParams struct {

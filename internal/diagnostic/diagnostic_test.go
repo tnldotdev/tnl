@@ -1,6 +1,7 @@
 package diagnostic
 
 import (
+	"bytes"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -41,6 +42,21 @@ func TestDefinitionsHaveStableBoundedASCIIOutput(t *testing.T) {
 	}
 }
 
+func TestActionableDiagnosticHelpURLsAreStable(t *testing.T) {
+	for code, want := range map[Code]string{
+		FrameworkRegistrationTimeout: "https://tnl.dev/e/framework-registration-timeout",
+		TargetMismatch:               "https://tnl.dev/e/target-mismatch",
+		AuthenticationTimeout:        "https://tnl.dev/e/authentication-timeout",
+		ServiceAmbiguous:             "https://tnl.dev/e/ambiguous-service",
+		RouteConflict:                "https://tnl.dev/e/route-conflict",
+		ProvisioningStalled:          "https://tnl.dev/e/provisioning-stalled",
+	} {
+		if got := HelpURL(code); got != want {
+			t.Fatalf("HelpURL(%q) = %q, want %q", code, got, want)
+		}
+	}
+}
+
 func TestErrorPreservesCauseAndRendersDetail(t *testing.T) {
 	cause := errors.New("dial tcp 127.0.0.1:3000: connection refused")
 	err := WrapMessage(TargetUnavailable, "development server did not listen before timeout", cause)
@@ -54,6 +70,19 @@ func TestErrorPreservesCauseAndRendersDetail(t *testing.T) {
 	if !ok || !strings.Contains(text, err.Error()) || !strings.Contains(text, "help  "+HelpURL(TargetUnavailable)) ||
 		!strings.Contains(text, "+-- "+string(TargetUnavailable)+" ") {
 		t.Fatalf("TextForError() = %q, %t", text, ok)
+	}
+}
+
+func TestWriteWarningUsesDiagnosticFrame(t *testing.T) {
+	var output bytes.Buffer
+	if err := WriteWarning(&output, "tnl publish", ProvisioningStalled); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	if !strings.HasPrefix(text, "+--[ tnl publish ]-- provisioning stalled ") ||
+		!strings.Contains(text, "help  "+HelpURL(ProvisioningStalled)) ||
+		!strings.Contains(text, "+-- "+string(ProvisioningStalled)+" ") {
+		t.Fatalf("warning = %q", text)
 	}
 }
 

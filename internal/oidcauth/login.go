@@ -79,7 +79,7 @@ func Login(ctx context.Context, config Config, output io.Writer) (Result, error)
 	var token *oauth2.Token
 	switch config.LoginFlow {
 	case LoginFlowDeviceCode:
-		token, err = deviceLogin(ctx, oauthConfig, nonce, output, config.Prompt)
+		token, err = deviceLogin(ctx, oauthConfig, nonce, output, config.OpenURL, config.Prompt)
 	case LoginFlowAuthorizationCodePKCE:
 		token, err = authorizationCodeLogin(ctx, oauthConfig, nonce, output, config.OpenURL, config.Prompt)
 	}
@@ -94,6 +94,7 @@ func deviceLogin(
 	oauthConfig oauth2.Config,
 	nonce string,
 	output io.Writer,
+	openURL func(string) error,
 	prompt func(Prompt) error,
 ) (*oauth2.Token, error) {
 	if oauthConfig.Endpoint.DeviceAuthURL == "" || oauthConfig.Endpoint.TokenURL == "" {
@@ -112,6 +113,9 @@ func deviceLogin(
 	}
 	if err := writePrompt(output, prompt, Prompt{URL: verificationURL, Code: authorization.UserCode}); err != nil {
 		return nil, err
+	}
+	if openURL != nil {
+		_ = openURL(verificationURL)
 	}
 	token, err := oauthConfig.DeviceAccessToken(ctx, authorization)
 	if err != nil {
@@ -183,9 +187,7 @@ func authorizationCodeLogin(
 		return nil, err
 	}
 	if openURL != nil {
-		if err := openURL(authorizationURL); err != nil {
-			return nil, fmt.Errorf("oidcauth: open authorization URL: %w", err)
-		}
+		_ = openURL(authorizationURL)
 	}
 	var authorizationCode string
 	select {

@@ -30,7 +30,7 @@ SET dns_work_owner = $1,
     updated_at = GREATEST(routes.updated_at, $3)
 FROM candidate
 WHERE routes.id = candidate.id
-RETURNING routes.id, routes.team_id, routes.domain_id, routes.membership_id, routes.created_by_identity_id, routes.idempotency_key, routes.request_digest, routes.canonical_hostname, routes.target, routes.route_scope, routes.policy_revision, routes.ip_policy, routes.allowed_ip_prefixes, routes.lifecycle_state, routes.dns_authority_reference, routes.dns_state, routes.dns_revision, routes.dns_work_owner, routes.dns_work_epoch, routes.dns_work_expires_at, routes.dns_attempts, routes.dns_available_at, routes.dns_last_error, routes.next_route_version, routes.suspension_revision, routes.suspension_reason, routes.created_at, routes.updated_at, routes.suspended_at, routes.deleted_at
+RETURNING routes.id, routes.team_id, routes.domain_id, routes.membership_id, routes.created_by_identity_id, routes.idempotency_key, routes.request_digest, routes.canonical_hostname, routes.target, routes.route_scope, routes.policy_revision, routes.ip_policy, routes.allowed_ip_prefixes, routes.lifecycle_state, routes.dns_authority_reference, routes.dns_state, routes.dns_revision, routes.dns_work_owner, routes.dns_work_epoch, routes.dns_work_expires_at, routes.dns_attempts, routes.dns_available_at, routes.dns_last_error, routes.next_route_version, routes.mutation_revision, routes.ephemeral, routes.expires_at, routes.suspension_revision, routes.suspension_reason, routes.created_at, routes.updated_at, routes.suspended_at, routes.deleted_at
 `
 
 type ClaimDNSRouteWorkParams struct {
@@ -67,6 +67,9 @@ func (q *Queries) ClaimDNSRouteWork(ctx context.Context, arg ClaimDNSRouteWorkPa
 		&i.DnsAvailableAt,
 		&i.DnsLastError,
 		&i.NextRouteVersion,
+		&i.MutationRevision,
+		&i.Ephemeral,
+		&i.ExpiresAt,
 		&i.SuspensionRevision,
 		&i.SuspensionReason,
 		&i.CreatedAt,
@@ -91,7 +94,7 @@ WHERE id = $5
   AND dns_work_epoch = $7
   AND dns_work_expires_at > $4
   AND dns_revision = $8
-RETURNING id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key, request_digest, canonical_hostname, target, route_scope, policy_revision, ip_policy, allowed_ip_prefixes, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_route_version, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at
+RETURNING id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key, request_digest, canonical_hostname, target, route_scope, policy_revision, ip_policy, allowed_ip_prefixes, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_route_version, mutation_revision, ephemeral, expires_at, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at
 `
 
 type SaveDNSRouteWorkParams struct {
@@ -142,6 +145,9 @@ func (q *Queries) SaveDNSRouteWork(ctx context.Context, arg SaveDNSRouteWorkPara
 		&i.DnsAvailableAt,
 		&i.DnsLastError,
 		&i.NextRouteVersion,
+		&i.MutationRevision,
+		&i.Ephemeral,
+		&i.ExpiresAt,
 		&i.SuspensionRevision,
 		&i.SuspensionReason,
 		&i.CreatedAt,

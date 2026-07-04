@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "declaration": false,
+    "lib": ["DOM", "DOM.Iterable", "ESNext"],
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["node", "react", "react-dom"]
+  },
+  "files": ["config-type-test.ts", "next-type-test.ts", "runtime-type-test.ts", "vite-type-test.ts"]
+}

@@ -9,7 +9,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
-	"github.com/tnldotdev/tnl/internal/opaqueid"
 )
 
 var ErrExternalAuthorityPrincipal = errors.New("controlstate: external authority principal is invalid")
@@ -21,7 +20,7 @@ func (d *Database) EnsureExternalAuthorityPrincipal(
 	identityID string,
 	now time.Time,
 ) (result [32]byte, retErr error) {
-	if !opaqueid.Valid(identityID, "identity_") {
+	if !validStateText(identityID) {
 		return result, ErrExternalAuthorityPrincipal
 	}
 	if err := d.requireOpen(); err != nil {
@@ -81,22 +80,42 @@ func (d *Database) EnsureExternalAuthorityPrincipal(
 // GetRouteForAuthorization returns durable route facts used to construct an
 // online authority request. Callers must not expose the result before authorization.
 func (d *Database) GetRouteForAuthorization(ctx context.Context, routeID string) (Route, error) {
+	return d.getRouteForAuthorization(ctx, routeID, "")
+}
+
+// GetRouteForSessionAuthorization returns the route version bound to an
+// idempotent route-session retry, or the next route version for a new request.
+func (d *Database) GetRouteForSessionAuthorization(
+	ctx context.Context,
+	routeID, idempotencyKey string,
+) (Route, error) {
+	if !validStateText(idempotencyKey) || len(idempotencyKey) > 128 {
+		return Route{}, ErrRouteInvalid
+	}
+	return d.getRouteForAuthorization(ctx, routeID, idempotencyKey)
+}
+
+func (d *Database) getRouteForAuthorization(ctx context.Context, routeID, routeSessionIdempotencyKey string) (Route, error) {
 	if !validStateText(routeID) {
 		return Route{}, ErrRouteInvalid
 	}
 	if err := d.requireOpen(); err != nil {
 		return Route{}, err
 	}
-	row, err := controlstatedb.New(d.pool).GetExternalAuthorityRoute(ctx, routeID)
+	row, err := controlstatedb.New(d.pool).GetExternalAuthorityRoute(ctx, controlstatedb.GetExternalAuthorityRouteParams{
+		RouteID: routeID, RouteSessionIdempotencyKey: routeSessionIdempotencyKey,
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Route{}, ErrRouteNotFound
 	}
 	if err != nil {
 		return Route{}, fmt.Errorf("controlstate: get route for authorization: %w", err)
 	}
-	return routeFromValues(
+	result := routeFromValues(
 		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target,
 		row.RouteScope, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState, row.AllowedIpPrefixes,
-		row.NextRouteVersion, row.AttachedSessionID, row.CreatedAt, row.UpdatedAt,
-	), nil
+		row.NextRouteVersion, row.MutationRevision, row.Ephemeral, row.ExpiresAt, row.AttachedSessionID, row.CreatedAt, row.UpdatedAt,
+	)
+	result.AuthorizationRouteVersion = uint64(row.AuthorizationRouteVersion)
+	return result, nil
 }

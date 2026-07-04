@@ -3,6 +3,7 @@ package clientstate
 import (
 	"context"
 	"encoding/json"
+	"io/fs"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,8 +18,10 @@ func TestTunnelSnapshotTracksLifecycleConsistently(t *testing.T) {
 	defer database.Close()
 	now := time.Date(2026, time.September, 2, 12, 0, 0, 0, time.UTC)
 	database.now = func() time.Time { return now }
+	project := t.TempDir()
 	tunnel, err := database.BeginTunnel(t.Context(), BeginTunnelOptions{
 		Command: TunnelCommandPublish, Server: "https://server.example", Target: "3000",
+		Project: project, Service: "web",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -38,8 +41,16 @@ func TestTunnelSnapshotTracksLifecycleConsistently(t *testing.T) {
 	snapshot := assertTunnelSnapshot(t, database, TunnelStateReady, TunnelSummary{Total: 1, Ready: 1})
 	got := snapshot.Tunnels[0]
 	if got.ID != tunnel.ID() || got.RouteID != testRouteID || got.RouteVersion != 3 ||
-		got.PublicURL != "https://route.example" || got.Target != "http://127.0.0.1:3000" {
+		got.PublicURL != "https://route.example" || got.Target != "http://127.0.0.1:3000" ||
+		got.Project != project || got.Service != "web" {
 		t.Fatalf("tunnel = %#v", got)
+	}
+	projectSnapshot, err := database.SnapshotProject(t.Context(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(projectSnapshot.Tunnels) != 0 || projectSnapshot.Summary.Total != 0 {
+		t.Fatalf("other project snapshot = %#v", projectSnapshot)
 	}
 	encoded, err := json.Marshal(snapshot)
 	if err != nil {
@@ -63,6 +74,28 @@ func TestTunnelSnapshotTracksLifecycleConsistently(t *testing.T) {
 	}
 }
 
+func TestTunnelProjectStateIsPartOfInitialV1Migration(t *testing.T) {
+	entries, err := fs.ReadDir(migrationFiles, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "00001_schema.sql" {
+		t.Fatalf("client-state migrations = %#v", entries)
+	}
+	data, err := migrationFiles.ReadFile("migrations/00001_schema.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"project_root TEXT NOT NULL", "service TEXT NOT NULL", "local_tunnels_project_open_idx"} {
+		if !strings.Contains(string(data), required) {
+			t.Fatalf("initial migration does not contain %q", required)
+		}
+	}
+	if tunnelSnapshotSchemaVersion != 1 {
+		t.Fatalf("tunnel snapshot schema version = %d", tunnelSnapshotSchemaVersion)
+	}
+}
+
 func TestTunnelSnapshotIsSharedAcrossProcesses(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "state")
 	owner, err := Open(t.Context(), root)
@@ -71,7 +104,7 @@ func TestTunnelSnapshotIsSharedAcrossProcesses(t *testing.T) {
 	}
 	defer owner.Close()
 	tunnel, err := owner.BeginTunnel(t.Context(), BeginTunnelOptions{
-		Command: TunnelCommandDev, Server: "https://server.example",
+		Command: TunnelCommandDev, Server: "https://server.example", Project: t.TempDir(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -103,7 +136,7 @@ func TestTunnelCancelsContextWhenLeaseCannotBeMaintained(t *testing.T) {
 	}
 	database.heartbeatInterval = time.Millisecond
 	tunnel, err := database.BeginTunnel(t.Context(), BeginTunnelOptions{
-		Command: TunnelCommandPublish, Server: "https://server.example", Target: "3000",
+		Command: TunnelCommandPublish, Server: "https://server.example", Target: "3000", Project: t.TempDir(),
 	})
 	if err != nil {
 		t.Fatal(err)
