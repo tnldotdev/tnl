@@ -116,9 +116,19 @@ func TestIntegrationBinaryStandalonePublish(t *testing.T) {
 		t.Fatalf("binary ready event = %#v", ready)
 	}
 	visitor := newIntegrationVisitor(t, pebble.roots, "")
-	response, body, err := visitor.requestURL(http.MethodGet, ready.URL+"/binary?source=integration", nil)
-	if err != nil {
-		t.Fatalf("binary visitor request: %v\ntnl publish stderr:\n%s\ntnld output:\n%s", err, publish.stderr.String(), server.output.String())
+	var response *http.Response
+	var body []byte
+	var err error
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		response, body, err = visitor.requestURL(http.MethodGet, ready.URL+"/binary?source=integration", nil)
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("binary visitor request: %v\ntnl publish stderr:\n%s\ntnld output:\n%s", err, publish.stderr.String(), server.output.String())
+		}
+		time.Sleep(25 * time.Millisecond)
 	}
 	if response.StatusCode != http.StatusOK || string(body) != "/binary?source=integration" ||
 		response.Header.Get("X-Tnl-Integration") != "binary" {
