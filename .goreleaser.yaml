@@ -60,6 +60,7 @@ archives:
     files:
       - LICENSE
       - NOTICE
+      - THIRD_PARTY_LICENSES.txt
 
 checksum:
   name_template: checksums.txt

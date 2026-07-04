@@ -90,8 +90,8 @@ docker buildx imagetools inspect "$TNL_IMAGE" --format '{{ json .SBOM }}'
 
 The image runs as non-root UID/GID 65532, uses unprivileged internal ports 8443 and 9090,
 and contains no shell. Its OCI index carries BuildKit provenance and an SBOM;
-GitHub also publishes an image provenance attestation. Project license files
-are available under `/licenses/tnl` in the image filesystem.
+GitHub also publishes an image provenance attestation. Project and third-party
+license files are available under `/licenses/tnl` in the image filesystem.
 
 ## Cold Backup
 
