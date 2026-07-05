@@ -77,9 +77,6 @@ func (p *Route53Provider) PublishRoute(ctx context.Context, record RouteRecord) 
 				ResourceRecordSet: simpleRecordSet(record.CanonicalHostname, recordType, values),
 			})
 		} else if existing != nil {
-			if !plainRecordSet(existing) {
-				return Zone{}, terminalf("owned route address record uses an unsupported routing policy")
-			}
 			changes = append(changes, types.Change{Action: types.ChangeActionDelete, ResourceRecordSet: existing})
 		}
 	}
@@ -114,9 +111,6 @@ func (p *Route53Provider) RemoveRoute(ctx context.Context, record RouteRecord) (
 	changes := make([]types.Change, 0, len(addressRecords)+1)
 	for _, recordType := range []types.RRType{types.RRTypeA, types.RRTypeAaaa} {
 		if existing := addressRecords[recordType]; existing != nil {
-			if !plainRecordSet(existing) {
-				return Zone{}, terminalf("owned route address record uses an unsupported routing policy")
-			}
 			changes = append(changes, types.Change{Action: types.ChangeActionDelete, ResourceRecordSet: existing})
 		}
 	}
@@ -367,7 +361,13 @@ func (p *Route53Provider) routeRecords(
 	result := make(map[types.RRType]*types.ResourceRecordSet, 2)
 	for index := range addresses {
 		item := &addresses[index]
+		if item.Type == types.RRTypeCname {
+			return nil, nil, terminalf("route hostname has a conflicting CNAME record")
+		}
 		if item.Type == types.RRTypeA || item.Type == types.RRTypeAaaa {
+			if !plainRecordSet(item) {
+				return nil, nil, terminalf("route address record uses an unsupported routing policy")
+			}
 			if result[item.Type] != nil {
 				return nil, nil, terminalf("route hostname has multiple address record sets")
 			}

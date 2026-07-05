@@ -117,6 +117,10 @@ tasks:
     desc: Run all tests
     deps: [go:test, js:test]
 
+  coverage:
+    desc: Produce diagnostic Go and TypeScript coverage reports
+    deps: [go:test-coverage, js:test-coverage]
+
   build:
     desc: Build all packages and commands
     deps: [go:build, js:build]
@@ -135,7 +139,7 @@ tasks:
   go:generate-check:
     cmds:
       - task: go:generate
-      - git diff --exit-code -- pkg/api internal/clientstate/clientstatedb internal/controlstate/controlstatedb internal/tnlts/keys.gen.json packages/tnl/lib/config.d.ts schema/v1.json
+      - git diff --exit-code -- pkg/api internal/clientstate/clientstatedb internal/controlstate/controlstatedb internal/projectconfig/keys.gen.json packages/tnl/lib/config.d.ts schema/v1.json
 
   go:format:
     cmds:
@@ -157,6 +161,14 @@ tasks:
   go:test:
     cmds:
       - go test ./...
+
+  go:test-coverage:
+    desc: Produce a diagnostic Go coverage report
+    cmds:
+      - mkdir -p coverage/go
+      - go test ./... -coverprofile=coverage/go/coverage-with-generated.out
+      - go run scripts/filter-go-coverage.go coverage/go/coverage-with-generated.out coverage/go/coverage.out
+      - go tool cover -html=coverage/go/coverage.out -o=coverage/go/index.html
 
   go:test-race:
     desc: Run all Go tests with the race detector
@@ -203,6 +215,11 @@ tasks:
   js:test:
     cmds:
       - pnpm test
+
+  js:test-coverage:
+    desc: Produce a diagnostic TypeScript coverage report
+    cmds:
+      - pnpm test:coverage
 
   js:build:
     cmds:

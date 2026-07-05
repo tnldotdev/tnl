@@ -5,7 +5,7 @@ SELECT
     routes.domain_id,
     routes.dns_authority_reference,
     routes.canonical_hostname,
-    domains.canonical_domain,
+    COALESCE(authorities.canonical_domain, '')::text AS canonical_domain,
     authorizations.id AS authorization_id,
     authorizations.identifier,
     authorizations.challenge_digest,
@@ -14,7 +14,10 @@ SELECT
 FROM control.acme_authorizations AS authorizations
 JOIN control.acme_orders AS orders ON orders.id = authorizations.order_id
 JOIN control.routes AS routes ON routes.id = orders.route_id
-JOIN control.domains AS domains ON domains.id = routes.domain_id
+LEFT JOIN control.dns_authorities AS authorities
+    ON authorities.authority_reference = routes.dns_authority_reference
+    AND authorities.team_id = routes.team_id
+    AND authorities.domain_id = routes.domain_id
 WHERE routes.id = sqlc.arg(route_id)
   AND authorizations.id = sqlc.arg(authorization_id)
   AND authorizations.challenge_type = 'dns-01';

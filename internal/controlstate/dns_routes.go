@@ -14,8 +14,8 @@ import (
 )
 
 var (
-	ErrDNSRouteFenced  = errors.New("controlstate: DNS route work lease is stale")
-	ErrDNSRouteInvalid = errors.New("controlstate: DNS route work is invalid")
+	ErrDNSRouteWorkStale = errors.New("controlstate: DNS route work lease is stale")
+	ErrDNSRouteInvalid   = errors.New("controlstate: DNS route work is invalid")
 )
 
 type DNSRouteWork struct {
@@ -75,7 +75,7 @@ func (d *Database) SaveDNSRouteWork(ctx context.Context, work DNSRouteWork, now 
 		WorkEpoch: positive(work.WorkEpoch), ExpectedDnsRevision: positive(work.DNSRevision),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return DNSRouteWork{}, ErrDNSRouteFenced
+		return DNSRouteWork{}, ErrDNSRouteWorkStale
 	}
 	if err != nil {
 		return DNSRouteWork{}, fmt.Errorf("controlstate: save DNS route work: %w", err)

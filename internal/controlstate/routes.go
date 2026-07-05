@@ -116,6 +116,13 @@ func (d *Database) CreateRoute(ctx context.Context, request CreateRouteRequest, 
 	}
 	defer rollback(ctx, tx, "create route", &retErr)()
 	queries := controlstatedb.New(tx)
+	if request.AuthorityIssuer == "" {
+		if _, err := queries.LockLocalTeamForMutation(ctx, request.TeamID); errors.Is(err, pgx.ErrNoRows) {
+			return Route{}, ErrRouteAccess
+		} else if err != nil {
+			return Route{}, fmt.Errorf("controlstate: create route: lock team: %w", err)
+		}
+	}
 	if _, err := queries.LockRouteCreator(ctx, request.ActingIdentityID); errors.Is(err, pgx.ErrNoRows) {
 		return Route{}, ErrRouteAccess
 	} else if err != nil {
@@ -236,6 +243,21 @@ func (d *Database) UpdateAuthorizedRoute(
 	}
 	defer rollback(ctx, tx, "update route", &retErr)()
 	queries := controlstatedb.New(tx)
+	policyRevision := positive(request.PolicyRevision)
+	if request.AuthorityIssuer == "" {
+		if _, err := queries.LockLocalTeamForMutation(ctx, request.TeamID); errors.Is(err, pgx.ErrNoRows) {
+			return Route{}, ErrRouteAccess
+		} else if err != nil {
+			return Route{}, fmt.Errorf("controlstate: update route: lock team: %w", err)
+		}
+	} else if _, err := queries.ObserveAuthorityRevision(ctx, controlstatedb.ObserveAuthorityRevisionParams{
+		Issuer: request.AuthorityIssuer, TeamID: request.TeamID,
+		PolicyRevision: policyRevision, UpdatedAt: timestamptz(now),
+	}); errors.Is(err, pgx.ErrNoRows) {
+		return Route{}, ErrRouteAuthority
+	} else if err != nil {
+		return Route{}, fmt.Errorf("controlstate: update route: observe authority revision: %w", err)
+	}
 	route, err := queries.LockRouteForSession(ctx, request.RouteID)
 	if errors.Is(err, pgx.ErrNoRows) || err == nil &&
 		(route.TeamID != request.TeamID || RouteLifecycleState(route.LifecycleState) == RouteLifecycleDeleted) {
@@ -250,7 +272,6 @@ func (d *Database) UpdateAuthorizedRoute(
 	if !matchesPositiveInt64(route.MutationRevision, request.ExpectedMutationRevision) {
 		return Route{}, ErrRouteMutationStale
 	}
-	policyRevision := positive(request.PolicyRevision)
 	if route.PolicyRevision > policyRevision {
 		return Route{}, ErrRouteAuthority
 	}
@@ -277,13 +298,6 @@ func (d *Database) UpdateAuthorizedRoute(
 			route.RouteScope == string(RouteScopeShared) && membership.Role != "admin" && membership.Role != "owner" {
 			return Route{}, ErrRouteAccess
 		}
-	} else if _, err := queries.ObserveAuthorityRevision(ctx, controlstatedb.ObserveAuthorityRevisionParams{
-		Issuer: request.AuthorityIssuer, TeamID: request.TeamID,
-		PolicyRevision: policyRevision, UpdatedAt: timestamptz(now),
-	}); errors.Is(err, pgx.ErrNoRows) {
-		return Route{}, ErrRouteAuthority
-	} else if err != nil {
-		return Route{}, fmt.Errorf("controlstate: update route: observe authority revision: %w", err)
 	}
 	updated, err := queries.UpdateRoute(ctx, controlstatedb.UpdateRouteParams{
 		Target: request.Target, PolicyRevision: policyRevision, IpPolicy: routeIPPolicy(prefixes),
@@ -470,6 +484,11 @@ func (d *Database) deleteRoute(ctx context.Context, request AuthorizedRouteDelet
 	queries := controlstatedb.New(tx)
 	var route controlstatedb.ControlRoute
 	if request.AuthorityIssuer == "" {
+		if _, err := queries.LockLocalRouteTeamForMutation(ctx, routeID); errors.Is(err, pgx.ErrNoRows) {
+			return ErrRouteNotFound
+		} else if err != nil {
+			return fmt.Errorf("controlstate: delete route: lock team: %w", err)
+		}
 		row, err := queries.LockIdentityRouteForDelete(ctx, controlstatedb.LockIdentityRouteForDeleteParams{
 			IdentityID: identityID, RouteID: routeID,
 		})
@@ -484,6 +503,14 @@ func (d *Database) deleteRoute(ctx context.Context, request AuthorizedRouteDelet
 		}
 		route = routeModelFromDeleteRow(row)
 	} else {
+		if _, err := queries.ObserveAuthorityRevision(ctx, controlstatedb.ObserveAuthorityRevisionParams{
+			Issuer: request.AuthorityIssuer, TeamID: request.TeamID,
+			PolicyRevision: positive(request.PolicyRevision), UpdatedAt: timestamptz(now),
+		}); errors.Is(err, pgx.ErrNoRows) {
+			return ErrRouteAuthority
+		} else if err != nil {
+			return fmt.Errorf("controlstate: delete route: observe authority revision: %w", err)
+		}
 		var err error
 		route, err = queries.LockRouteForSession(ctx, routeID)
 		if errors.Is(err, pgx.ErrNoRows) || err == nil && route.TeamID != request.TeamID {
@@ -494,14 +521,6 @@ func (d *Database) deleteRoute(ctx context.Context, request AuthorizedRouteDelet
 		}
 		if !matchesPositiveInt64(route.MutationRevision, request.ExpectedMutationRevision) {
 			return ErrRouteMutationStale
-		}
-		if _, err := queries.ObserveAuthorityRevision(ctx, controlstatedb.ObserveAuthorityRevisionParams{
-			Issuer: request.AuthorityIssuer, TeamID: request.TeamID,
-			PolicyRevision: positive(request.PolicyRevision), UpdatedAt: timestamptz(now),
-		}); errors.Is(err, pgx.ErrNoRows) {
-			return ErrRouteAuthority
-		} else if err != nil {
-			return fmt.Errorf("controlstate: delete route: observe authority revision: %w", err)
 		}
 	}
 	expectedMutationRevision := route.MutationRevision
@@ -538,11 +557,11 @@ func (d *Database) deleteRoute(ctx context.Context, request AuthorizedRouteDelet
 	return nil
 }
 
-func (d *Database) CloseRouteSession(ctx context.Context, routeSessionID string, token credentials.SessionToken, now time.Time) (retErr error) {
+func (d *Database) CloseRouteSession(ctx context.Context, routeSessionID string, token credentials.RouteSessionToken, now time.Time) (retErr error) {
 	if !validStateText(routeSessionID) {
 		return ErrRouteSessionCredential
 	}
-	tokenID, tokenHash, err := credentials.ParseSessionToken(token)
+	tokenID, tokenHash, err := credentials.ParseRouteSessionToken(token)
 	if err != nil {
 		return ErrRouteSessionCredential
 	}

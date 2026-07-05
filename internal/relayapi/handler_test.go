@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -200,6 +201,7 @@ func TestRelayStoreErrorsHaveStableProblems(t *testing.T) {
 		{name: "draining", err: controlstate.ErrRelayDraining, status: http.StatusServiceUnavailable, problemType: "relay_draining"},
 		{name: "capacity", err: controlstate.ErrRelayConnectionCapacity, status: http.StatusServiceUnavailable, problemType: "relay_connection_capacity_exhausted"},
 		{name: "unavailable", err: controlstate.ErrPublisherConnectionUnavailable, status: http.StatusConflict, problemType: "publisher_connection_unavailable"},
+		{name: "internal", err: errors.New("private database failure"), status: http.StatusInternalServerError, problemType: "internal"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -220,6 +222,18 @@ func TestRelayStoreErrorsHaveStableProblems(t *testing.T) {
 			)
 			if response.Code != test.status {
 				t.Fatalf("status = %d, want %d: %s", response.Code, test.status, response.Body.String())
+			}
+			wire, err := relayv1.ParseClaimPublisherConnectionResponse(response.Result())
+			if err != nil {
+				t.Fatal(err)
+			}
+			client, err := NewDirectClient(store, 30*time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			direct, err := client.ClaimPublisherConnectionWithResponse(t.Context(), body.PublisherConnectionId, body)
+			if err != nil || direct.StatusCode() != wire.StatusCode() || direct.ApplicationproblemJSONDefault == nil || wire.ApplicationproblemJSONDefault == nil || *direct.ApplicationproblemJSONDefault != *wire.ApplicationproblemJSONDefault {
+				t.Fatalf("direct problem differs from HTTP: %#v, %v; HTTP %#v", direct, err, wire)
 			}
 			assertRelayProblemType(t, response, "https://tnl.dev/problems/"+test.problemType)
 		})

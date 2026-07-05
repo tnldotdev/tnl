@@ -26,13 +26,13 @@ const (
 )
 
 var (
-	ErrIngressUsageReportInvalid  = errors.New("controlstate: ingress usage report is invalid")
-	ErrIngressUsageReportStale    = errors.New("controlstate: ingress usage report revision is stale")
-	ErrIngressUsageReportConflict = errors.New("controlstate: ingress usage report conflicts with stored state")
-	ErrIngressUsageRouteNotFound  = errors.New("controlstate: ingress usage route version was not found")
-	ErrRouteUsageBucketFinalized  = errors.New("controlstate: route usage bucket is finalized")
-	ErrRouteUsageDeliveryFenced   = errors.New("controlstate: route usage delivery work is fenced")
-	ErrRouteUsageDeliveryInvalid  = errors.New("controlstate: route usage delivery work is invalid")
+	ErrIngressUsageReportInvalid   = errors.New("controlstate: ingress usage report is invalid")
+	ErrIngressUsageReportStale     = errors.New("controlstate: ingress usage report revision is stale")
+	ErrIngressUsageReportConflict  = errors.New("controlstate: ingress usage report conflicts with stored state")
+	ErrIngressUsageRouteNotFound   = errors.New("controlstate: ingress usage route version was not found")
+	ErrRouteUsageBucketFinalized   = errors.New("controlstate: route usage bucket is finalized")
+	ErrRouteUsageDeliveryWorkStale = errors.New("controlstate: route usage delivery work is stale")
+	ErrRouteUsageDeliveryInvalid   = errors.New("controlstate: route usage delivery work is invalid")
 )
 
 // IngressUsageReport contains cumulative usage for one ingress process, route
@@ -593,7 +593,7 @@ func (d *Database) CompleteRouteUsageDelivery(
 		CompletedAt: timestamptz(now), DeliveryID: int64(work.DeliveryID),
 		WorkOwner: text(work.WorkerID), WorkEpoch: positive(work.WorkEpoch),
 	}); errors.Is(err, pgx.ErrNoRows) {
-		return ErrRouteUsageDeliveryFenced
+		return ErrRouteUsageDeliveryWorkStale
 	} else if err != nil {
 		return fmt.Errorf("controlstate: complete route usage delivery: %w", err)
 	}
@@ -618,7 +618,7 @@ func (d *Database) RetryRouteUsageDelivery(
 		AvailableAt: timestamptz(availableAt), LastError: text(lastError), DeliveryID: int64(work.DeliveryID),
 		WorkOwner: text(work.WorkerID), WorkEpoch: positive(work.WorkEpoch), CompletedAt: timestamptz(now),
 	}); errors.Is(err, pgx.ErrNoRows) {
-		return ErrRouteUsageDeliveryFenced
+		return ErrRouteUsageDeliveryWorkStale
 	} else if err != nil {
 		return fmt.Errorf("controlstate: retry route usage delivery: %w", err)
 	}

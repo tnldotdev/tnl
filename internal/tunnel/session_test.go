@@ -160,6 +160,131 @@ func TestInternalForwardingStream(t *testing.T) {
 	}
 }
 
+func TestSessionPublisherDrainHandshake(t *testing.T) {
+	client, server := newAuthenticatedPair(t)
+	callbackStarted := make(chan struct{})
+	releaseCallback := make(chan struct{})
+	serverDone := make(chan error, 1)
+	go func() {
+		serverDone <- server.HandlePublisherDrain(context.Background(), func(context.Context) error {
+			close(callbackStarted)
+			<-releaseCallback
+			return nil
+		})
+	}()
+	clientDone := make(chan error, 1)
+	go func() { clientDone <- client.RequestPublisherDrain(context.Background(), "request_drain_1") }()
+	select {
+	case <-callbackStarted:
+	case <-time.After(time.Second):
+		t.Fatal("relay did not begin publisher drain")
+	}
+	select {
+	case err := <-clientDone:
+		t.Fatalf("publisher drain returned before relay callback completed: %v", err)
+	default:
+	}
+	close(releaseCallback)
+	if err := <-serverDone; err != nil {
+		t.Fatalf("HandlePublisherDrain: %v", err)
+	}
+	if err := <-clientDone; err != nil {
+		t.Fatalf("RequestPublisherDrain: %v", err)
+	}
+}
+
+func TestSessionPublisherDrainRejectsUnexpectedResponses(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		response tunnelv1.Message
+	}{
+		{"mismatched request ID", tunnelv1.Message{Type: tunnelv1.Draining, ProtocolVersion: tunnelv1.Version, RequestID: "request_other"}},
+		{"unexpected type", tunnelv1.Message{Type: tunnelv1.Drained, ProtocolVersion: tunnelv1.Version, RequestID: "request_drain_1"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client, server := newAuthenticatedPair(t)
+			serverDone := make(chan error, 1)
+			go func() {
+				request, err := tunnelv1.ReadControl(server.control)
+				if err == nil && (request.Type != tunnelv1.Drain || request.RequestID != "request_drain_1") {
+					err = errors.New("unexpected drain request")
+				}
+				if err == nil {
+					err = tunnelv1.WriteControl(server.control, test.response)
+				}
+				serverDone <- err
+			}()
+			if err := client.RequestPublisherDrain(t.Context(), "request_drain_1"); err == nil {
+				t.Fatal("RequestPublisherDrain accepted an unexpected response")
+			}
+			if err := <-serverDone; err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestSessionPublisherDrainPreservesProtocolError(t *testing.T) {
+	client, server := newAuthenticatedPair(t)
+	serverDone := make(chan error, 1)
+	go func() {
+		request, err := tunnelv1.ReadControl(server.control)
+		if err == nil {
+			err = tunnelv1.WriteControl(server.control, tunnelv1.Message{
+				Type: tunnelv1.Error, ProtocolVersion: tunnelv1.Version,
+				RequestID: request.RequestID, Code: tunnelv1.Internal,
+			})
+		}
+		serverDone <- err
+	}()
+	err := client.RequestPublisherDrain(t.Context(), "request_drain_1")
+	var protocolError *ProtocolError
+	if !errors.As(err, &protocolError) || protocolError.Code != tunnelv1.Internal {
+		t.Fatalf("RequestPublisherDrain error = %v; want internal protocol error", err)
+	}
+	if err := <-serverDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSessionPublisherDrainCancellationUnblocksRequester(t *testing.T) {
+	client, server := newAuthenticatedPair(t)
+	drainingSent := make(chan struct{})
+	serverDone := make(chan error, 1)
+	go func() {
+		request, err := tunnelv1.ReadControl(server.control)
+		if err == nil {
+			err = tunnelv1.WriteControl(server.control, tunnelv1.Message{
+				Type: tunnelv1.Draining, ProtocolVersion: tunnelv1.Version, RequestID: request.RequestID,
+			})
+		}
+		if err == nil {
+			close(drainingSent)
+		}
+		serverDone <- err
+	}()
+	ctx, cancel := context.WithCancel(context.Background())
+	clientDone := make(chan error, 1)
+	go func() { clientDone <- client.RequestPublisherDrain(ctx, "request_drain_1") }()
+	select {
+	case <-drainingSent:
+	case <-time.After(time.Second):
+		t.Fatal("relay did not send draining response")
+	}
+	cancel()
+	select {
+	case err := <-clientDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("RequestPublisherDrain error = %v; want context cancellation", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("publisher drain did not unblock on context cancellation")
+	}
+	if err := <-serverDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRaceUsesFallbackAfterPrimaryFailure(t *testing.T) {
 	var fallbackCalls atomic.Int32
 	fallback := authenticatedConnector(t, &fallbackCalls)

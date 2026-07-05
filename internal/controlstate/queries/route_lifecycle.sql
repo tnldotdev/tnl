@@ -11,20 +11,16 @@ WHERE id = sqlc.arg(route_session_id);
 
 -- name: MarkRouteSessionCertificateInstalled :one
 UPDATE control.route_sessions
-SET certificate_installed_at = COALESCE(certificate_installed_at, sqlc.arg(installed_at)),
-    certificate_issuance_id = COALESCE(certificate_issuance_id, sqlc.arg(issuance_id)),
-    certificate_not_after = COALESCE(certificate_not_after, sqlc.arg(not_after))
+SET certificate_installed_at = CASE
+        WHEN certificate_issuance_id = sqlc.arg(issuance_id) THEN certificate_installed_at
+        ELSE sqlc.arg(installed_at)
+    END,
+    certificate_issuance_id = sqlc.arg(issuance_id),
+    certificate_not_after = sqlc.arg(not_after)
 WHERE id = sqlc.arg(route_session_id)
   AND route_id = sqlc.arg(route_id)
   AND route_version = sqlc.arg(route_version)
   AND closed_at IS NULL
-  AND (
-      certificate_installed_at IS NULL
-      OR (
-          certificate_issuance_id = sqlc.arg(issuance_id)
-          AND certificate_not_after = sqlc.arg(not_after)
-      )
-  )
 RETURNING *;
 
 -- name: MarkRouteSessionReady :one

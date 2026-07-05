@@ -1,11 +1,12 @@
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { once } from "node:events";
-import { chmod as fsChmod, mkdtemp, rm } from "node:fs/promises";
+import { chmod as fsChmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import * as http from "node:http";
 import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { onTestFinished } from "vitest";
 import WebSocket, { type ClientOptions, type Data } from "ws";
 
 export interface BootstrapRequest {
@@ -122,6 +123,24 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
   };
 }
 
+export async function temporaryDirectory(prefix: string): Promise<string> {
+  const directory = await mkdtemp(path.join(os.tmpdir(), prefix));
+  onTestFinished(() => rm(directory, { force: true, recursive: true }));
+  return directory;
+}
+
+export async function createProjectFixture(prefix: string) {
+  const root = await temporaryDirectory(prefix);
+  const serviceDirectory = path.join(root, "apps", "api");
+  await mkdir(path.join(root, ".tnl"), { recursive: true });
+  await mkdir(serviceDirectory, { recursive: true });
+  await writeFile(
+    path.join(root, ".tnl", "project.json"),
+    `${JSON.stringify(testProjectDocument())}\n`,
+  );
+  return { root, serviceDirectory };
+}
+
 export function testProjectDocument() {
   return {
     memberNamespace: "member.example",
@@ -174,19 +193,6 @@ export async function withProcessEnvironment<T>(
         process.env[name] = value;
       }
     }
-  }
-}
-
-export async function withProcessArguments<T>(
-  arguments_: string[],
-  callback: () => T | Promise<T>,
-): Promise<T> {
-  const previous = process.argv;
-  process.argv = arguments_;
-  try {
-    return await callback();
-  } finally {
-    process.argv = previous;
   }
 }
 
@@ -273,25 +279,6 @@ export function startTestProcess(
   };
 }
 
-export async function waitForProcessExit(
-  process_: TestProcess,
-  timeout = 30_000,
-): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
-  const child = process_.child;
-  if (child.exitCode !== null || child.signalCode !== null) {
-    return { code: child.exitCode, signal: child.signalCode };
-  }
-  return await Promise.race([
-    once(child, "exit").then(([code, signal]) => ({
-      code: code as number | null,
-      signal: signal as NodeJS.Signals | null,
-    })),
-    delay(timeout, undefined, { ref: false }).then(() => {
-      throw new Error("framework process did not exit");
-    }),
-  ]);
-}
-
 export async function waitForBootstrapRequest(
   bootstrap: TestBootstrap,
   index = 0,
@@ -357,18 +344,6 @@ export async function requestOnce(
     request.on("error", reject);
     request.on("timeout", () => request.destroy(new Error("request timed out")));
   });
-}
-
-export function nonLoopbackIPv4Addresses(): string[] {
-  const addresses: string[] = [];
-  for (const entries of Object.values(os.networkInterfaces())) {
-    for (const entry of entries ?? []) {
-      if (entry.family === "IPv4" && !entry.internal) {
-        addresses.push(entry.address);
-      }
-    }
-  }
-  return addresses;
 }
 
 export async function openTestWebSocket(

@@ -3,7 +3,8 @@ SELECT id
 FROM control.identities
 WHERE id = sqlc.arg(identity_id)
   AND disabled_at IS NULL
-FOR UPDATE;
+-- Serialize creators without blocking session and audit foreign-key checks.
+FOR NO KEY UPDATE;
 
 -- name: GetRouteByCreatorIdempotency :one
 SELECT r.*,
@@ -220,6 +221,13 @@ WHERE r.id = sqlc.arg(route_id)
   AND r.lifecycle_state <> 'deleted'
 FOR UPDATE OF r, m;
 
+-- name: LockLocalRouteTeamForMutation :one
+SELECT teams.id
+FROM control.teams AS teams
+WHERE teams.id = (SELECT routes.team_id FROM control.routes AS routes WHERE routes.id = sqlc.arg(route_id))
+  AND teams.deleted_at IS NULL
+FOR NO KEY UPDATE;
+
 -- name: DeleteRoute :execrows
 UPDATE control.routes
 SET lifecycle_state = 'deleted',
@@ -239,6 +247,7 @@ SET lifecycle_state = 'deleted',
     END,
     dns_last_error = NULL,
     mutation_revision = mutation_revision + 1,
+    suspended_at = NULL,
     deleted_at = sqlc.arg(deleted_at),
     updated_at = sqlc.arg(deleted_at)
 WHERE id = sqlc.arg(route_id)

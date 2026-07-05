@@ -511,6 +511,19 @@ type ClientIPResponse struct {
 	Ip string `json:"ip"`
 }
 
+// ConnectionAssignment defines model for ConnectionAssignment.
+type ConnectionAssignment struct {
+	ConnectionAssignmentRevision           int64                    `json:"connection_assignment_revision"`
+	ConnectionSlot                         int                      `json:"connection_slot"`
+	PublisherConnectionCredential          string                   `json:"publisher_connection_credential"`
+	PublisherConnectionCredentialExpiresAt time.Time                `json:"publisher_connection_credential_expires_at"`
+	PublisherConnectionId                  PublisherConnectionID    `json:"publisher_connection_id"`
+	RelayAddress                           string                   `json:"relay_address"`
+	RelayServiceId                         RelayServiceID           `json:"relay_service_id"`
+	State                                  PublisherConnectionState `json:"state"`
+	TlsServerName                          CanonicalHostname        `json:"tls_server_name"`
+}
+
 // ControlDiscovery defines model for ControlDiscovery.
 type ControlDiscovery struct {
 	Authentication          AuthenticationFacts `json:"authentication"`
@@ -643,19 +656,6 @@ type ProblemCode string
 // PublisherConnectionID defines model for PublisherConnectionID.
 type PublisherConnectionID = ResourceID
 
-// PublisherConnectionPlan defines model for PublisherConnectionPlan.
-type PublisherConnectionPlan struct {
-	ConnectionAssignmentRevision           int64                    `json:"connection_assignment_revision"`
-	ConnectionSlot                         int                      `json:"connection_slot"`
-	PublisherConnectionCredential          string                   `json:"publisher_connection_credential"`
-	PublisherConnectionCredentialExpiresAt time.Time                `json:"publisher_connection_credential_expires_at"`
-	PublisherConnectionId                  PublisherConnectionID    `json:"publisher_connection_id"`
-	RelayAddress                           string                   `json:"relay_address"`
-	RelayServiceId                         RelayServiceID           `json:"relay_service_id"`
-	State                                  PublisherConnectionState `json:"state"`
-	TlsServerName                          CanonicalHostname        `json:"tls_server_name"`
-}
-
 // PublisherConnectionState defines model for PublisherConnectionState.
 type PublisherConnectionState string
 
@@ -736,9 +736,9 @@ type RouteSession struct {
 // RouteSessionHeartbeat defines model for RouteSessionHeartbeat.
 type RouteSessionHeartbeat struct {
 	// PolicyDenials Cumulative, eventually consistent IP policy denials for this route version.
-	PolicyDenials        int64                     `json:"policy_denials"`
-	PublisherConnections []PublisherConnectionPlan `json:"publisher_connections"`
-	RouteSession         RouteSession              `json:"route_session"`
+	PolicyDenials        int64                  `json:"policy_denials"`
+	PublisherConnections []ConnectionAssignment `json:"publisher_connections"`
+	RouteSession         RouteSession           `json:"route_session"`
 }
 
 // RouteSessionID defines model for RouteSessionID.
@@ -746,11 +746,11 @@ type RouteSessionID = ResourceID
 
 // RouteSessionSetup defines model for RouteSessionSetup.
 type RouteSessionSetup struct {
-	CertificatePlan      CertificatePlan           `json:"certificate_plan"`
-	PublisherConnections []PublisherConnectionPlan `json:"publisher_connections"`
-	Route                Route                     `json:"route"`
-	RouteSession         RouteSession              `json:"route_session"`
-	RouteSessionToken    string                    `json:"route_session_token"`
+	CertificatePlan      CertificatePlan        `json:"certificate_plan"`
+	PublisherConnections []ConnectionAssignment `json:"publisher_connections"`
+	Route                Route                  `json:"route"`
+	RouteSession         RouteSession           `json:"route_session"`
+	RouteSessionToken    string                 `json:"route_session_token"`
 }
 
 // RouteSessionState defines model for RouteSessionState.
@@ -783,6 +783,11 @@ type DNSAuthorityReference = string
 
 // TeamIDQuery defines model for TeamIDQuery.
 type TeamIDQuery = TeamID
+
+// ListAdminRelaysParams defines parameters for ListAdminRelays.
+type ListAdminRelaysParams struct {
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
 
 // CreateCertificateIssuanceParams defines parameters for CreateCertificateIssuance.
 type CreateCertificateIssuanceParams struct {
@@ -941,7 +946,7 @@ type ClientInterface interface {
 	// ListAdminRelays List relay leases
 	//
 	// Corresponds with GET /v1/admin/relays (the `ListAdminRelays` operationId).
-	ListAdminRelays(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ListAdminRelays(ctx context.Context, params *ListAdminRelaysParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DrainAdminRelayWithBody Remove one exact relay lease from placement and begin draining
 	//
@@ -1197,8 +1202,8 @@ func (c *Client) SetMaintenanceControl(ctx context.Context, controlName Maintena
 // ListAdminRelays List relay leases
 //
 // Corresponds with GET /v1/admin/relays (the `ListAdminRelays` operationId).
-func (c *Client) ListAdminRelays(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListAdminRelaysRequest(c.Server)
+func (c *Client) ListAdminRelays(ctx context.Context, params *ListAdminRelaysParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListAdminRelaysRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1815,7 +1820,7 @@ func NewSetMaintenanceControlRequestWithBody(server string, controlName Maintena
 }
 
 // NewListAdminRelaysRequest constructs an http.Request for the ListAdminRelays method
-func NewListAdminRelaysRequest(server string) (*http.Request, error) {
+func NewListAdminRelaysRequest(server string, params *ListAdminRelaysParams) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -1831,6 +1836,33 @@ func NewListAdminRelaysRequest(server string) (*http.Request, error) {
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
@@ -2881,7 +2913,7 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/admin/relays (the `ListAdminRelays` operationId).
-	ListAdminRelaysWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListAdminRelaysResponse, error)
+	ListAdminRelaysWithResponse(ctx context.Context, params *ListAdminRelaysParams, reqEditors ...RequestEditorFn) (*ListAdminRelaysResponse, error)
 
 	// DrainAdminRelayWithBodyWithResponse Remove one exact relay lease from placement and begin draining
 	//
@@ -4441,8 +4473,8 @@ func (c *ClientWithResponses) SetMaintenanceControlWithResponse(ctx context.Cont
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/admin/relays (the `ListAdminRelays` operationId).
-func (c *ClientWithResponses) ListAdminRelaysWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListAdminRelaysResponse, error) {
-	rsp, err := c.ListAdminRelays(ctx, reqEditors...)
+func (c *ClientWithResponses) ListAdminRelaysWithResponse(ctx context.Context, params *ListAdminRelaysParams, reqEditors ...RequestEditorFn) (*ListAdminRelaysResponse, error) {
+	rsp, err := c.ListAdminRelays(ctx, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -5774,7 +5806,7 @@ type ServerInterface interface {
 	SetMaintenanceControl(w http.ResponseWriter, r *http.Request, controlName MaintenanceControlName)
 	// ListAdminRelays List relay leases
 	// (GET /v1/admin/relays)
-	ListAdminRelays(w http.ResponseWriter, r *http.Request)
+	ListAdminRelays(w http.ResponseWriter, r *http.Request, params ListAdminRelaysParams)
 	// DrainAdminRelay Remove one exact relay lease from placement and begin draining
 	// (POST /v1/admin/relays/{relay_id}/drain)
 	DrainAdminRelay(w http.ResponseWriter, r *http.Request, relayId RelayID)
@@ -5901,8 +5933,27 @@ func (siw *ServerInterfaceWrapper) SetMaintenanceControl(w http.ResponseWriter, 
 // ListAdminRelays operation middleware
 func (siw *ServerInterfaceWrapper) ListAdminRelays(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListAdminRelaysParams
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListAdminRelays(w, r)
+		siw.Handler.ListAdminRelays(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -6838,6 +6889,7 @@ func (response SetMaintenanceControldefaultApplicationProblemPlusJSONResponse) V
 }
 
 type ListAdminRelaysRequestObject struct {
+	Params ListAdminRelaysParams
 }
 
 type ListAdminRelaysResponseObject interface {
@@ -7995,8 +8047,10 @@ func (sh *strictHandler) SetMaintenanceControl(w http.ResponseWriter, r *http.Re
 }
 
 // ListAdminRelays operation middleware
-func (sh *strictHandler) ListAdminRelays(w http.ResponseWriter, r *http.Request) {
+func (sh *strictHandler) ListAdminRelays(w http.ResponseWriter, r *http.Request, params ListAdminRelaysParams) {
 	var request ListAdminRelaysRequestObject
+
+	request.Params = params
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
 		return sh.ssi.ListAdminRelays(ctx, request.(ListAdminRelaysRequestObject))

@@ -72,7 +72,7 @@ func (m Metadata) Validate() error {
 	slices.Sort(names)
 	for _, name := range names {
 		service := m.Services[name]
-		if !validServiceName(name) {
+		if !naming.ValidServiceName(name) {
 			return fmt.Errorf("invalid project metadata service %q", name)
 		}
 		if err := canonicalHostname("service "+name+" member namespace", service.MemberNamespace); err != nil {
@@ -108,20 +108,4 @@ func canonicalHostname(kind, value string) error {
 		return fmt.Errorf("%s must be a canonical hostname", kind)
 	}
 	return nil
-}
-
-func validServiceName(value string) bool {
-	if len(value) == 0 || len(value) > 32 || value[0] < 'a' || value[0] > 'z' || value[len(value)-1] == '-' {
-		return false
-	}
-	for _, character := range value {
-		if character < 'a' || character > 'z' {
-			if character < '0' || character > '9' {
-				if character != '-' {
-					return false
-				}
-			}
-		}
-	}
-	return true
 }

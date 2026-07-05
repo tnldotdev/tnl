@@ -16,7 +16,7 @@ import (
 )
 
 var (
-	ErrDNSAuthorityFenced      = errors.New("controlstate: DNS authority work lease is stale")
+	ErrDNSAuthorityWorkStale   = errors.New("controlstate: DNS authority work lease is stale")
 	ErrDNSAuthorityIdempotency = errors.New("controlstate: DNS authority idempotency conflict")
 	ErrDNSAuthorityInvalid     = errors.New("controlstate: DNS authority request is invalid")
 	ErrDNSAuthorityNotFound    = errors.New("controlstate: DNS authority not found")
@@ -205,6 +205,12 @@ func (d *Database) SaveDNSAuthorityWork(
 	}
 	defer rollback(ctx, tx, "save DNS authority work", &retErr)()
 	queries := controlstatedb.New(tx)
+	if err := queries.LockDNSAuthorityLocalTeam(ctx, text(work.Reference)); err != nil {
+		return DNSAuthorityWork{}, fmt.Errorf("controlstate: save DNS authority work: lock local team: %w", err)
+	}
+	if err := queries.LockDNSAuthorityLocalDomain(ctx, text(work.Reference)); err != nil {
+		return DNSAuthorityWork{}, fmt.Errorf("controlstate: save DNS authority work: lock local domain: %w", err)
+	}
 	row, err := queries.SaveDNSAuthorityWork(ctx, controlstatedb.SaveDNSAuthorityWorkParams{
 		ProviderZoneID: nullableText(work.ProviderZoneID), State: work.State, Nameservers: slices.Clone(work.Nameservers),
 		AvailableAt: timestamptz(work.AvailableAt), LastError: nullableText(work.LastError), CompletedAt: timestamptz(now),
@@ -212,7 +218,7 @@ func (d *Database) SaveDNSAuthorityWork(
 		ExpectedWorkRevision: positive(work.WorkRevision),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return DNSAuthorityWork{}, ErrDNSAuthorityFenced
+		return DNSAuthorityWork{}, ErrDNSAuthorityWorkStale
 	}
 	if err != nil {
 		return DNSAuthorityWork{}, fmt.Errorf("controlstate: save DNS authority work: %w", err)

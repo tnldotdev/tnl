@@ -19,7 +19,7 @@ const testLoginToken = "tnl_login_AAECAwQFBgcICQoLDA0ODw.EBESExQVFhcYGRobHB0eHyA
 func TestHealthAndReadiness(t *testing.T) {
 	cfg := Config{ServerDomain: "example.com", ManagedDeploymentDomain: "example.com"}
 	ready := new(bool)
-	handler := NewHandler(cfg, nil, func(context.Context) error {
+	handler := NewHandler(cfg, nil, nil, func(context.Context) error {
 		if !*ready {
 			return errors.New("database unavailable")
 		}
@@ -49,24 +49,30 @@ func TestHealthAndReadiness(t *testing.T) {
 	}
 }
 
-func TestUnavailableOperationsFailClosed(t *testing.T) {
-	handler := NewHandler(Config{ServerDomain: "example.com", ManagedDeploymentDomain: "example.com"}, nil, func(context.Context) error { return nil })
-	for _, path := range []string{"/v1/admin/status", "/v1/teams", "/not-an-api"} {
+func TestUnknownOperationsReturnNotFound(t *testing.T) {
+	handler := NewHandler(Config{ServerDomain: "example.com", ManagedDeploymentDomain: "example.com"}, nil, nil, func(context.Context) error { return nil })
+	for _, path := range []string{"/v1/teams", "/not-an-api"} {
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
-		if response.Code != http.StatusServiceUnavailable && path != "/v1/teams" {
-			t.Fatalf("%s status = %d", path, response.Code)
-		}
-		if path == "/v1/teams" && response.Code != http.StatusUnauthorized {
+		if response.Code != http.StatusNotFound || !strings.Contains(response.Body.String(), `"code":"not_found"`) {
 			t.Fatalf("%s status = %d", path, response.Code)
 		}
 	}
 }
 
-func TestPublisherConnectionResponsesExposeClosedSlotsAsReplacing(t *testing.T) {
-	var connections [2]controlstate.PublisherConnectionPlan
-	for slot := range connections {
-		connections[slot] = controlstate.PublisherConnectionPlan{
+func TestAdminOperationsRequireAuthentication(t *testing.T) {
+	handler := NewHandler(Config{ServerDomain: "example.com", ManagedDeploymentDomain: "example.com"}, nil, nil, func(context.Context) error { return nil })
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/admin/status", nil))
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("admin status = %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestConnectionAssignmentResponsesExposeClosedSlotsAsReplacing(t *testing.T) {
+	var assignments [2]controlstate.ConnectionAssignment
+	for slot := range assignments {
+		assignments[slot] = controlstate.ConnectionAssignment{
 			ConnectionAssignmentIdentity: controlstate.ConnectionAssignmentIdentity{
 				PublisherConnectionID: "connection", RouteSessionID: "session", RouteID: "route", RouteVersion: 1,
 				ConnectionSlot: slot, ConnectionAssignmentRevision: 1, RelayServiceID: "relay-service",
@@ -76,7 +82,7 @@ func TestPublisherConnectionResponsesExposeClosedSlotsAsReplacing(t *testing.T) 
 			State: "closed",
 		}
 	}
-	for _, connection := range publisherConnectionResponses(connections) {
+	for _, connection := range connectionAssignmentResponses(assignments) {
 		if connection.State != controlv1.PublisherConnectionStateReplacing {
 			t.Fatalf("closed publisher connection state = %q, want replacing", connection.State)
 		}

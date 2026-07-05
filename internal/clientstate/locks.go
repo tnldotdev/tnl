@@ -9,19 +9,16 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
-	"golang.org/x/sys/unix"
+	"github.com/tnldotdev/tnl/internal/filelock"
 )
 
 var ErrLocked = errors.New("clientstate: state is locked by another process")
 
-type Lock struct {
-	file *os.File
-	once sync.Once
-}
+// Lock owns a local state lock. Store methods choose its scope and path.
+type Lock = filelock.Lock
 
 func (s *Store) LockHostname(hostname string) (*Lock, error) {
 	if strings.TrimSpace(hostname) == "" {
@@ -39,8 +36,12 @@ func LockControlSessionContext(ctx context.Context, store *Store) (*Lock, error)
 	if store == nil {
 		return nil, errors.New("clientstate: state store is required")
 	}
+	return retryLock(ctx, store.LockControlSession)
+}
+
+func retryLock(ctx context.Context, acquire func() (*Lock, error)) (*Lock, error) {
 	for {
-		lock, err := store.LockControlSession()
+		lock, err := acquire()
 		if !errors.Is(err, ErrLocked) {
 			return lock, err
 		}
@@ -52,17 +53,6 @@ func LockControlSessionContext(ctx context.Context, store *Store) (*Lock, error)
 		case <-timer.C:
 		}
 	}
-}
-
-func (l *Lock) Close() error {
-	if l == nil {
-		return nil
-	}
-	var result error
-	l.once.Do(func() {
-		result = errors.Join(unix.Flock(int(l.file.Fd()), unix.LOCK_UN), l.file.Close())
-	})
-	return result
 }
 
 func prepareRoot(root string) (string, error) {
@@ -149,36 +139,22 @@ func validateTrustedAncestors(path string) error {
 }
 
 func openLock(path, kind string) (*Lock, error) {
-	return openLockOperation(path, kind, unix.LOCK_EX|unix.LOCK_NB)
+	return openLockOperation(path, kind, filelock.Nonblocking)
 }
 
 func openBlockingLock(path, kind string) (*Lock, error) {
-	return openLockOperation(path, kind, unix.LOCK_EX)
+	return openLockOperation(path, kind, filelock.Blocking)
 }
 
-func openLockOperation(path, kind string, operation int) (*Lock, error) {
-	descriptor, err := unix.Open(path, unix.O_CREAT|unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0o600)
+func openLockOperation(path, kind string, mode filelock.Mode) (*Lock, error) {
+	lock, err := filelock.Acquire(path, mode, os.Geteuid())
+	if errors.Is(err, filelock.ErrLocked) {
+		return nil, ErrLocked
+	}
 	if err != nil {
-		return nil, fmt.Errorf("clientstate: open %s lock: %w", kind, err)
-	}
-	file := os.NewFile(uintptr(descriptor), path)
-	info, err := file.Stat()
-	if err != nil {
-		_ = file.Close()
-		return nil, fmt.Errorf("clientstate: inspect %s lock: %w", kind, err)
-	}
-	if err := validatePrivateFile(info, false); err != nil {
-		_ = file.Close()
-		return nil, fmt.Errorf("clientstate: %s lock: %w", kind, err)
-	}
-	if err := unix.Flock(descriptor, operation); err != nil {
-		_ = file.Close()
-		if operation&unix.LOCK_NB != 0 && errors.Is(err, unix.EWOULDBLOCK) {
-			return nil, ErrLocked
-		}
 		return nil, fmt.Errorf("clientstate: lock %s state: %w", kind, err)
 	}
-	return &Lock{file: file}, nil
+	return lock, nil
 }
 
 func ensurePrivateDir(path string) error {

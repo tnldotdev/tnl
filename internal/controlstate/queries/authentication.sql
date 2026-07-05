@@ -7,6 +7,66 @@ FROM control.identities
 WHERE kind = 'builtin'
   AND disabled_at IS NULL;
 
+-- name: FindOIDCIdentity :one
+SELECT *
+FROM control.identities
+WHERE kind = 'oidc'
+  AND issuer = sqlc.arg(issuer)
+  AND subject = sqlc.arg(subject);
+
+-- name: CreateOIDCIdentity :one
+INSERT INTO control.identities (
+    id,
+    kind,
+    issuer,
+    subject,
+    display_name,
+    normalized_email,
+    email_verified,
+    administrator,
+    created_at,
+    updated_at
+) VALUES (
+    sqlc.arg(id),
+    'oidc',
+    sqlc.arg(issuer),
+    sqlc.arg(subject),
+    sqlc.arg(display_name),
+    sqlc.narg(normalized_email),
+    sqlc.arg(email_verified),
+    false,
+    sqlc.arg(created_at),
+    sqlc.arg(created_at)
+)
+RETURNING *;
+
+-- name: UpdateOIDCIdentity :one
+UPDATE control.identities
+SET display_name = sqlc.arg(display_name),
+    normalized_email = sqlc.narg(normalized_email),
+    email_verified = sqlc.arg(email_verified),
+    updated_at = GREATEST(updated_at, sqlc.arg(updated_at))
+WHERE id = sqlc.arg(id)
+  AND kind = 'oidc'
+  AND disabled_at IS NULL
+RETURNING *;
+
+-- name: DeleteExpiredOIDCAssertionExchanges :exec
+DELETE FROM control.oidc_assertion_exchanges
+WHERE expires_at <= sqlc.arg(now);
+
+-- name: ConsumeOIDCAssertion :execrows
+INSERT INTO control.oidc_assertion_exchanges (
+    assertion_digest,
+    consumed_at,
+    expires_at
+) VALUES (
+    sqlc.arg(assertion_digest),
+    sqlc.arg(consumed_at),
+    sqlc.arg(expires_at)
+)
+ON CONFLICT (assertion_digest) DO NOTHING;
+
 -- name: FindManagedDomain :one
 SELECT *
 FROM control.domains

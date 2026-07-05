@@ -154,6 +154,16 @@ WHERE t.id = sqlc.arg(team_id)
   AND t.deleted_at IS NULL
 FOR UPDATE OF t, actor;
 
+-- Local authority mutations lock the team before identities, memberships,
+-- domains, DNS authorities, and routes. Authorization is rechecked under this
+-- transaction-held guard; hosted teams never require fabricated local rows.
+-- name: LockLocalTeamForMutation :one
+SELECT id
+FROM control.teams
+WHERE id = sqlc.arg(team_id)
+  AND deleted_at IS NULL
+FOR NO KEY UPDATE;
+
 -- name: ListTeamMembershipContexts :many
 SELECT
     m.id,

@@ -1,2 +1,2 @@
-// Package config parses command configuration.
+// Package config owns the versioned serialized static configuration contract.
 package config

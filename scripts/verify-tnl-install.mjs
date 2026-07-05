@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { promisify } from "node:util";
+import { nativePackageName as platformPackageName } from "../packages/tnl/lib/launcher.mjs";
 
 const execFileAsync = promisify(execFile);
 const packageDirectoryArgument = process.argv[2];
@@ -15,7 +16,7 @@ const packageDirectory = path.resolve(packageDirectoryArgument);
 const metadata = JSON.parse(
   await readFile(path.join(packageDirectory, "tnl-npm-packages.json"), "utf8"),
 );
-const nativePackageName = `@tnldotdev/tnl-${process.platform}-${process.arch}`;
+const nativePackageName = platformPackageName(process.platform, process.arch);
 exactlyOne(
   metadata.packages.filter((entry) => entry.name === nativePackageName),
   `${process.platform}-${process.arch} native package`,

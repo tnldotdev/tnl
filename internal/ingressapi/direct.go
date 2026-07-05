@@ -3,7 +3,9 @@ package ingressapi
 import (
 	"context"
 	"errors"
+	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
@@ -16,13 +18,19 @@ type DirectConfig struct {
 	LeaseDuration       time.Duration
 	RoutingPollInterval time.Duration
 	Now                 func() time.Time
+	Report              func(error)
 }
 
+// DirectClient implements controller operations inside standalone. It trusts
+// internally constructed request identities and ignores path IDs/request editors;
+// it does not perform HTTP authentication or expose raw response bodies. Domain
+// failures use the HTTP problem/status contract; caller cancellation is a Go error.
 type DirectClient struct {
 	store               Store
 	leaseDuration       time.Duration
 	routingPollInterval time.Duration
 	now                 func() time.Time
+	report              func(error)
 }
 
 func NewDirectClient(config DirectConfig) (*DirectClient, error) {
@@ -35,10 +43,19 @@ func NewDirectClient(config DirectConfig) (*DirectClient, error) {
 	if config.Now == nil {
 		config.Now = time.Now
 	}
+	if config.Report == nil {
+		config.Report = func(err error) { log.Printf("ingress service: %v", err) }
+	}
 	return &DirectClient{
 		store: config.Store, leaseDuration: config.LeaseDuration,
-		routingPollInterval: config.RoutingPollInterval, now: config.Now,
+		routingPollInterval: config.RoutingPollInterval, now: config.Now, report: config.Report,
 	}, nil
+}
+
+func (c *DirectClient) problem(err error) ingressv1.Problem {
+	status, kind, detail := storeProblem(err, c.report)
+	return ingressv1.Problem{Status: status, Type: "https://tnl.dev/problems/" + kind,
+		Title: strings.ReplaceAll(kind, "_", " "), Detail: detail}
 }
 
 func (c *DirectClient) RegisterIngressWithResponse(
@@ -56,10 +73,14 @@ func (c *DirectClient) RegisterIngressWithResponse(
 		ProtocolVersion: protocolVersion, ConnectionCapacity: connectionCapacity,
 	}, c.now(), c.leaseDuration)
 	if err != nil {
-		return nil, err
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		problem := c.problem(err)
+		return &ingressv1.RegisterIngressResponse{HTTPResponse: serviceapi.StatusResponse(problem.Status), ApplicationproblemJSONDefault: &problem}, nil
 	}
 	result := ingressLease(lease)
-	return &ingressv1.RegisterIngressResponse{JSON200: &result}, nil
+	return &ingressv1.RegisterIngressResponse{HTTPResponse: serviceapi.StatusResponse(http.StatusOK), JSON200: &result}, nil
 }
 
 func (c *DirectClient) RenewIngressWithResponse(
@@ -79,10 +100,14 @@ func (c *DirectClient) RenewIngressWithResponse(
 		RoutingTableRevision: routingRevision,
 	}, c.now(), c.leaseDuration)
 	if err != nil {
-		return nil, err
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		problem := c.problem(err)
+		return &ingressv1.RenewIngressResponse{HTTPResponse: serviceapi.StatusResponse(problem.Status), ApplicationproblemJSONDefault: &problem}, nil
 	}
 	result := ingressLease(lease)
-	return &ingressv1.RenewIngressResponse{JSON200: &result}, nil
+	return &ingressv1.RenewIngressResponse{HTTPResponse: serviceapi.StatusResponse(http.StatusOK), JSON200: &result}, nil
 }
 
 func (c *DirectClient) DrainIngressWithResponse(
@@ -97,10 +122,14 @@ func (c *DirectClient) DrainIngressWithResponse(
 	}
 	lease, err := c.store.BeginIngressDrain(ctx, identity, c.now(), body.Deadline)
 	if err != nil {
-		return nil, err
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		problem := c.problem(err)
+		return &ingressv1.DrainIngressResponse{HTTPResponse: serviceapi.StatusResponse(problem.Status), ApplicationproblemJSONDefault: &problem}, nil
 	}
 	result := ingressLease(lease)
-	return &ingressv1.DrainIngressResponse{JSON200: &result}, nil
+	return &ingressv1.DrainIngressResponse{HTTPResponse: serviceapi.StatusResponse(http.StatusOK), JSON200: &result}, nil
 }
 
 func (c *DirectClient) GetIngressRoutingTableSnapshotWithResponse(
@@ -118,10 +147,14 @@ func (c *DirectClient) GetIngressRoutingTableSnapshotWithResponse(
 	}
 	snapshot, err := c.store.ReadIngressRoutingTableSnapshot(ctx, identity, c.now())
 	if err != nil {
-		return nil, err
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		problem := c.problem(err)
+		return &ingressv1.GetIngressRoutingTableSnapshotResponse{HTTPResponse: serviceapi.StatusResponse(problem.Status), ApplicationproblemJSONDefault: &problem}, nil
 	}
 	result := routingTableSnapshot(snapshot)
-	return &ingressv1.GetIngressRoutingTableSnapshotResponse{JSON200: &result}, nil
+	return &ingressv1.GetIngressRoutingTableSnapshotResponse{HTTPResponse: serviceapi.StatusResponse(http.StatusOK), JSON200: &result}, nil
 }
 
 func (c *DirectClient) GetIngressRoutingTableEventsWithResponse(
@@ -139,11 +172,11 @@ func (c *DirectClient) GetIngressRoutingTableEventsWithResponse(
 	if params.Limit != nil {
 		limit = *params.Limit
 	}
-	wait := time.Duration(0)
+	wait := defaultRoutingTableWait
 	if params.Wait != nil {
 		var err error
 		wait, err = time.ParseDuration(*params.Wait)
-		if err != nil || wait < 0 || wait > 25*time.Second || wait%time.Second != 0 {
+		if err != nil || wait < 0 || wait > defaultRoutingTableWait || wait%time.Second != 0 {
 			return nil, errors.New("ingressapi: direct routing-table wait is invalid")
 		}
 	}
@@ -154,20 +187,31 @@ func (c *DirectClient) GetIngressRoutingTableEventsWithResponse(
 	for {
 		page, err := c.store.ReadIngressRoutingTableEvents(ctx, identity, after, limit, c.now())
 		if err != nil {
-			return nil, err
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			problem := c.problem(err)
+			response := &ingressv1.GetIngressRoutingTableEventsResponse{HTTPResponse: serviceapi.StatusResponse(problem.Status)}
+			// The generated HTTP parser places every 409 problem in this field.
+			if problem.Status == http.StatusConflict {
+				response.ApplicationproblemJSON409 = &problem
+			} else {
+				response.ApplicationproblemJSONDefault = &problem
+			}
+			return response, nil
 		}
 		if page.ResnapshotRequired {
 			problem := ingressv1.Problem{
-				Type: "https://tnl.dev/problems/routing_table_resnapshot_required", Title: "Conflict",
+				Type: "https://tnl.dev/problems/routing_table_resnapshot_required", Title: "routing table resnapshot required",
 				Status: http.StatusConflict, Detail: "The routing-table revision was compacted; load a new snapshot",
 			}
 			return &ingressv1.GetIngressRoutingTableEventsResponse{
-				HTTPResponse: httpStatusResponse(http.StatusConflict), ApplicationproblemJSON409: &problem,
+				HTTPResponse: serviceapi.StatusResponse(http.StatusConflict), ApplicationproblemJSON409: &problem,
 			}, nil
 		}
 		if len(page.Events) != 0 || page.More || wait == 0 || !time.Now().Before(deadline) {
 			result := routingTablePage(page)
-			return &ingressv1.GetIngressRoutingTableEventsResponse{JSON200: &result}, nil
+			return &ingressv1.GetIngressRoutingTableEventsResponse{HTTPResponse: serviceapi.StatusResponse(http.StatusOK), JSON200: &result}, nil
 		}
 		poll := c.routingPollInterval
 		if remaining := time.Until(deadline); poll > remaining {
@@ -195,9 +239,13 @@ func (c *DirectClient) ReportIngressUsageWithResponse(
 		return nil, errors.New("ingressapi: direct usage report is invalid")
 	}
 	if err := c.store.ReportIngressUsage(ctx, identity, batch, c.now()); err != nil {
-		return nil, err
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		problem := c.problem(err)
+		return &ingressv1.ReportIngressUsageResponse{HTTPResponse: serviceapi.StatusResponse(problem.Status), ApplicationproblemJSONDefault: &problem}, nil
 	}
-	return &ingressv1.ReportIngressUsageResponse{HTTPResponse: httpStatusResponse(http.StatusNoContent)}, nil
+	return &ingressv1.ReportIngressUsageResponse{HTTPResponse: serviceapi.StatusResponse(http.StatusNoContent)}, nil
 }
 
 func (c *DirectClient) ObserveRouteRecoveryWithResponse(
@@ -215,16 +263,16 @@ func (c *DirectClient) ObserveRouteRecoveryWithResponse(
 	}
 	observation, err := c.store.ObserveRouteRecovery(ctx, identity, body.RouteId, routeVersion, episode, body.ObservedAt)
 	if err != nil {
-		return nil, err
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		problem := c.problem(err)
+		return &ingressv1.ObserveRouteRecoveryResponse{HTTPResponse: serviceapi.StatusResponse(problem.Status), ApplicationproblemJSONDefault: &problem}, nil
 	}
 	result := ingressv1.RouteRecoveryObservation{
 		EpisodeId: int64(observation.EpisodeID), RouteId: observation.RouteID,
 		RouteVersion: int64(observation.RouteVersion), OpenedAt: observation.OpenedAt,
 		ObservedAt: observation.ObservedAt, ObservedSeconds: observation.ObservedSeconds,
 	}
-	return &ingressv1.ObserveRouteRecoveryResponse{JSON200: &result}, nil
-}
-
-func httpStatusResponse(status int) *http.Response {
-	return &http.Response{StatusCode: status, Status: http.StatusText(status), Header: make(http.Header)}
+	return &ingressv1.ObserveRouteRecoveryResponse{HTTPResponse: serviceapi.StatusResponse(http.StatusOK), JSON200: &result}, nil
 }

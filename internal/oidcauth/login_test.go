@@ -29,6 +29,7 @@ func TestLoginDiscoversProviderAndValidatesNonce(t *testing.T) {
 		valid           bool
 	}{
 		{name: "valid", subject: "user-123", valid: true},
+		{name: "valid without nonce", nonce: "missing", subject: "user-123", valid: true},
 		{name: "multiple audiences missing azp", subject: "user-123", audience: []string{"tnl-cli", "other-client"}},
 		{name: "multiple audiences wrong azp", subject: "user-123", audience: []string{"tnl-cli", "other-client"}, authorizedParty: "other-client"},
 		{name: "multiple audiences correct azp", subject: "user-123", audience: []string{"tnl-cli", "other-client"}, authorizedParty: "tnl-cli", valid: true},
@@ -78,7 +79,9 @@ func TestLoginDiscoversProviderAndValidatesNonce(t *testing.T) {
 					mu.Lock()
 					tokenNonce := nonce
 					mu.Unlock()
-					if test.nonce != "" {
+					if test.nonce == "missing" {
+						tokenNonce = ""
+					} else if test.nonce != "" {
 						tokenNonce = test.nonce
 					}
 					now := time.Now()
@@ -118,10 +121,8 @@ func TestLoginDiscoversProviderAndValidatesNonce(t *testing.T) {
 			if openCount != 1 {
 				t.Fatalf("browser open count = %d", openCount)
 			}
-			if test.valid && (err != nil || result.IDToken == "" || result.Issuer != provider.URL ||
-				result.ClientID != "tnl-cli" || result.Subject != "user-123" ||
-				result.AccessToken != "provider-access" || result.RefreshToken != "provider-refresh" ||
-				result.IDTokenExpiresAt.IsZero() || result.AccessExpiresAt.IsZero() || result.RefreshExpiresAt.IsZero() ||
+			if test.valid && (err != nil || result.IDToken == "" || result.Identity.Issuer != provider.URL ||
+				result.Identity.Subject != "user-123" || result.Identity.ExpiresAt.IsZero() ||
 				!strings.Contains(output.String(), "ABCD-1234")) {
 				t.Fatalf("result = %#v, output = %q, error = %v", result, output.String(), err)
 			}
@@ -206,8 +207,7 @@ func TestAuthorizationCodePKCELogin(t *testing.T) {
 			return err
 		},
 	}, &output)
-	if err != nil || result.IDToken == "" || result.AccessToken != "provider-access" ||
-		result.RefreshToken != "provider-refresh" || result.RefreshExpiresAt.IsZero() || result.Subject != "user-123" ||
+	if err != nil || result.IDToken == "" || result.Identity.Subject != "user-123" ||
 		!strings.Contains(output.String(), provider.URL+"/authorize") {
 		t.Fatalf("result = %#v, output = %q, error = %v", result, output.String(), err)
 	}

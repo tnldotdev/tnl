@@ -6,7 +6,6 @@ import (
 	"os"
 	"reflect"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,6 +14,7 @@ import (
 	"encoding/json/jsontext"
 	json "encoding/json/v2"
 
+	"github.com/tnldotdev/tnl/internal/tnldconfig"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -53,111 +53,21 @@ type Service struct {
 }
 
 type Tunnel struct {
-	Host      *string  `json:"host,omitempty" yaml:"host,omitempty" tnlts:"host"`
-	Subdomain *string  `json:"subdomain,omitempty" yaml:"subdomain,omitempty" tnlts:"subdomain"`
-	AllowIP   []string `json:"allow_ip,omitempty" yaml:"allow_ip,omitempty" tnlts:"allowIP" jsonschema:"maxItems=63,uniqueItems=true"`
-	Public    *bool    `json:"public,omitempty" yaml:"public,omitempty" tnlts:"public"`
-	Ephemeral *bool    `json:"ephemeral,omitempty" yaml:"ephemeral,omitempty" tnlts:"ephemeral"`
+	Host      *string  `json:"host,omitempty" yaml:"host,omitempty"`
+	Subdomain *string  `json:"subdomain,omitempty" yaml:"subdomain,omitempty"`
+	AllowIP   []string `json:"allow_ip,omitempty" yaml:"allow_ip,omitempty" jsonschema:"maxItems=63,uniqueItems=true"`
+	Public    *bool    `json:"public,omitempty" yaml:"public,omitempty"`
+	Ephemeral *bool    `json:"ephemeral,omitempty" yaml:"ephemeral,omitempty"`
 }
 
 type Publish struct {
-	Target *Target `json:"target,omitempty" yaml:"target,omitempty" tnlts:"target"`
+	Target *Target `json:"target,omitempty" yaml:"target,omitempty"`
 }
 
 type Dev struct {
-	Command        []string  `json:"command,omitempty" yaml:"command,omitempty" tnlts:"command" jsonschema:"minItems=1"`
-	Port           *int      `json:"port,omitempty" yaml:"port,omitempty" tnlts:"port" jsonschema:"minimum=1,maximum=65535"`
-	StartupTimeout *Duration `json:"startup_timeout,omitempty" yaml:"startup_timeout,omitempty" tnlts:"startupTimeout"`
-}
-
-// UnmarshalTypeScriptTNL maps camelCase names declared by tnlts tags onto the
-// same static Go model before strict decoding.
-func UnmarshalTypeScriptTNL(data []byte) (TNL, error) {
-	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return TNL{}, err
-	}
-	if err := normalizeTypeScriptObject(raw, reflect.TypeOf(TNL{})); err != nil {
-		return TNL{}, err
-	}
-	encoded, err := json.Marshal(raw)
-	if err != nil {
-		return TNL{}, err
-	}
-	var result TNL
-	if err := json.Unmarshal(encoded, &result, json.RejectUnknownMembers(true)); err != nil {
-		return TNL{}, err
-	}
-	return result, nil
-}
-
-func normalizeTypeScriptObject(object map[string]any, objectType reflect.Type) error {
-	fields := make(map[string]reflect.StructField, objectType.NumField())
-	for index := 0; index < objectType.NumField(); index++ {
-		field := objectType.Field(index)
-		staticName, _, _ := strings.Cut(field.Tag.Get("json"), ",")
-		if staticName == "" || staticName == "-" {
-			continue
-		}
-		typeScriptName := field.Tag.Get("tnlts")
-		if typeScriptName == "" {
-			typeScriptName = staticName
-		}
-		fields[typeScriptName] = field
-	}
-	names := make([]string, 0, len(object))
-	for name := range object {
-		names = append(names, name)
-	}
-	slices.Sort(names)
-	for _, name := range names {
-		if _, ok := fields[name]; !ok {
-			return fmt.Errorf("unknown TypeScript configuration field %q", name)
-		}
-	}
-	for _, typeScriptName := range names {
-		field := fields[typeScriptName]
-		value := object[typeScriptName]
-		staticName, _, _ := strings.Cut(field.Tag.Get("json"), ",")
-		if typeScriptName != staticName {
-			delete(object, typeScriptName)
-			object[staticName] = value
-		}
-		fieldType := field.Type
-		if fieldType.Kind() == reflect.Pointer {
-			fieldType = fieldType.Elem()
-		}
-		if fieldType.Kind() == reflect.Struct {
-			if child, ok := value.(map[string]any); ok {
-				if err := normalizeTypeScriptObject(child, fieldType); err != nil {
-					return err
-				}
-			}
-		} else if fieldType.Kind() == reflect.Map {
-			elementType := fieldType.Elem()
-			if elementType.Kind() == reflect.Pointer {
-				elementType = elementType.Elem()
-			}
-			if elementType.Kind() == reflect.Struct {
-				if children, ok := value.(map[string]any); ok {
-					childNames := make([]string, 0, len(children))
-					for childName := range children {
-						childNames = append(childNames, childName)
-					}
-					slices.Sort(childNames)
-					for _, childName := range childNames {
-						childValue := children[childName]
-						if child, ok := childValue.(map[string]any); ok {
-							if err := normalizeTypeScriptObject(child, elementType); err != nil {
-								return err
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-	return nil
+	Command        []string  `json:"command,omitempty" yaml:"command,omitempty" jsonschema:"minItems=1"`
+	Port           *int      `json:"port,omitempty" yaml:"port,omitempty" jsonschema:"minimum=1,maximum=65535"`
+	StartupTimeout *Duration `json:"startup_timeout,omitempty" yaml:"startup_timeout,omitempty"`
 }
 
 // Target accepts either a loopback HTTP URL or a literal port.
@@ -238,36 +148,37 @@ func (d *Duration) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-// TNLDSection is a presence-aware partial TNLD value. Its field names and
-// types are derived from TNLD so file configuration cannot drift from flags.
+// TNLDSection is a presence-aware partial tnldconfig.Config value. Its field
+// names and types are derived from Config so file configuration cannot drift
+// from flags.
 type TNLDSection struct {
-	value   TNLD
+	value   tnldconfig.Config
 	present map[int]bool
 }
 
-func (s TNLDSection) Value() TNLD { return s.value }
+func (s TNLDSection) Value() tnldconfig.Config { return s.value }
 
 // Apply replaces only fields explicitly present in the file.
-func (s TNLDSection) Apply(target *TNLD) {
+func (s TNLDSection) Apply(target *tnldconfig.Config) {
 	s.apply(target, nil, false)
 }
 
 // ApplyLowerPrecedence applies file fields unless a command-line flag or one
 // of the field's TNLD_* environment variables supplied a higher-precedence value.
-func (s TNLDSection) ApplyLowerPrecedence(target *TNLD, commandLine map[string]bool) map[string]bool {
+func (s TNLDSection) ApplyLowerPrecedence(target *tnldconfig.Config, commandLine map[string]bool) map[string]bool {
 	return s.apply(target, commandLine, true)
 }
 
-func (s TNLDSection) apply(target *TNLD, commandLine map[string]bool, respectHigherPrecedence bool) map[string]bool {
+func (s TNLDSection) apply(target *tnldconfig.Config, commandLine map[string]bool, respectHigherPrecedence bool) map[string]bool {
 	applied := make(map[string]bool)
 	if target == nil {
 		return applied
 	}
 	sourceValue := reflect.ValueOf(s.value)
 	targetValue := reflect.ValueOf(target).Elem()
-	typeOfTNLD := reflect.TypeOf(TNLD{})
+	typeOfConfig := reflect.TypeOf(tnldconfig.Config{})
 	for index := range s.present {
-		field := typeOfTNLD.Field(index)
+		field := typeOfConfig.Field(index)
 		name := strings.ReplaceAll(field.Tag.Get("name"), "-", "_")
 		if respectHigherPrecedence && (commandLine[name] || environmentConfigured(field.Tag.Get("env"))) {
 			continue
@@ -374,11 +285,11 @@ var (
 
 func tnldFields() map[string]tnldField {
 	tnldFieldsOnce.Do(func() {
-		typeOfTNLD := reflect.TypeOf(TNLD{})
+		typeOfConfig := reflect.TypeOf(tnldconfig.Config{})
 		durationType := reflect.TypeOf(time.Duration(0))
-		tnldFieldMap = make(map[string]tnldField, typeOfTNLD.NumField())
-		for index := 0; index < typeOfTNLD.NumField(); index++ {
-			field := typeOfTNLD.Field(index)
+		tnldFieldMap = make(map[string]tnldField, typeOfConfig.NumField())
+		for index := 0; index < typeOfConfig.NumField(); index++ {
+			field := typeOfConfig.Field(index)
 			name := strings.ReplaceAll(field.Tag.Get("name"), "-", "_")
 			if name == "" || name == "database_direct_url" {
 				continue

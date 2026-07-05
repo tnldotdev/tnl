@@ -242,6 +242,14 @@ type yamuxStream struct {
 	*yamux.Stream
 }
 
+func (s *yamuxStream) Close() error {
+	return normalizeYamuxError(s.Stream.Close())
+}
+
+func (s *yamuxStream) CloseWrite() error {
+	return normalizeYamuxError(s.Stream.CloseWrite())
+}
+
 func (s *yamuxStream) Reset(code uint32) error {
-	return s.Stream.ResetWithError(code)
+	return normalizeYamuxError(s.Stream.ResetWithError(code))
 }

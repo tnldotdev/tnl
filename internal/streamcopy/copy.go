@@ -21,10 +21,15 @@ type Result struct {
 	RightToLeft int64
 }
 
+// Copy waits for both directions, half-closing destinations when supported.
+// Callers own final closure and cancellation via connection closure/deadlines;
+// a non-normalized first-direction failure closes both to unblock the other.
 func Copy(left, right net.Conn) (Result, error) {
 	return CopyObserved(left, right, nil, nil)
 }
 
+// CopyObserved is Copy with synchronous per-write byte observations. The two
+// direction callbacks may run concurrently and must not block stream progress.
 func CopyObserved(
 	left, right net.Conn,
 	onLeftToRight, onRightToLeft func(int64),

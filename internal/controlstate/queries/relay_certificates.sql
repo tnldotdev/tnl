@@ -4,7 +4,14 @@ FROM control.relay_services AS services
 WHERE services.enabled
   AND (
       services.transport_certificate_expires_at IS NULL
-      OR services.transport_certificate_expires_at <= sqlc.arg(renew_before)
+      OR EXISTS (
+          SELECT 1
+          FROM control.relay_certificate_orders AS completed
+          WHERE completed.relay_service_id = services.relay_service_id
+            AND completed.state = 'complete'
+            AND completed.certificate_pem = convert_to(services.transport_certificate_pem, 'UTF8')
+            AND completed.renew_at <= sqlc.arg(now)
+      )
   )
   AND NOT EXISTS (
       SELECT 1

@@ -12,7 +12,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/buildinfo"
 	"github.com/tnldotdev/tnl/internal/clientauth"
 	"github.com/tnldotdev/tnl/internal/clioutput"
-	projectconfig "github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
@@ -44,6 +44,48 @@ func TestCLIExposesTeamDomainRouteAndFinalAdminCommands(t *testing.T) {
 	}
 	if _, err := parser.Parse([]string{"host", "list"}); err == nil {
 		t.Fatal("obsolete host command was accepted")
+	}
+}
+
+func TestTeamCommandsUseMemberSlugFlag(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		args []string
+		get  func(cli) string
+	}{
+		{
+			name: "create",
+			args: []string{"team", "create", "example", "--member-slug", "alice"},
+			get:  func(flags cli) string { return flags.Team.Create.MemberSlug },
+		},
+		{
+			name: "invitation",
+			args: []string{"team", "invite", "create", "--member-slug", "alice"},
+			get:  func(flags cli) string { return flags.Team.Invite.Create.MemberSlug },
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var flags cli
+			parser, err := kong.New(&flags)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := parser.Parse(test.args); err != nil {
+				t.Fatal(err)
+			}
+			if got := test.get(flags); got != "alice" {
+				t.Fatalf("member slug = %q", got)
+			}
+		})
+	}
+
+	var flags cli
+	parser, err := kong.New(&flags)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parser.Parse([]string{"team", "create", "example", "--slug", "alice"}); err == nil {
+		t.Fatal("obsolete --slug flag was accepted")
 	}
 }
 
@@ -96,7 +138,7 @@ func TestExplicitFalseTunnelFlagsOverrideProjectConfiguration(t *testing.T) {
 	}
 	applyTunnelCLIUnits(args, parsed.Command(), &flags)
 	configured := true
-	applyTunnelConfiguration(&flags.Publish.tunnelFlags, &projectconfig.Tunnel{
+	applyTunnelConfiguration(&flags.Publish.tunnelFlags, &config.Tunnel{
 		Public: &configured, Ephemeral: &configured,
 	})
 	if flags.Publish.Public || flags.Publish.Ephemeral {
@@ -115,18 +157,17 @@ func TestResolvePublishHostnameUsesMemberNamespace(t *testing.T) {
 			Id: "domain_1", Kind: authorityv1.Managed, CanonicalDomain: "tnl.dev", State: authorityv1.DomainStateReady,
 		}},
 	}
-	hostname, domain, scope, plan, err := resolvePublishHostname("", "api", current, controlv1.ControlDiscovery{DnsAutomation: true})
+	hostname, domain, scope, err := resolvePublishHostname("", "api", current)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if hostname != "api.chase-abc.tnl.dev" || domain.Id != "domain_1" || scope != controlv1.Member ||
-		plan.Scope != "chase-abc.tnl.dev" || len(plan.Identifiers) != 2 || plan.ChallengeMethod != controlv1.Dns01 {
-		t.Fatalf("resolution = %q, %#v, %q, %#v", hostname, domain, scope, plan)
+	if hostname != "api.chase-abc.tnl.dev" || domain.Id != "domain_1" || scope != controlv1.Member {
+		t.Fatalf("resolution = %q, %#v, %q", hostname, domain, scope)
 	}
-	if _, _, _, _, err := resolvePublishHostname("shared.tnl.dev", "", current, controlv1.ControlDiscovery{}); err == nil {
+	if _, _, _, err := resolvePublishHostname("shared.tnl.dev", "", current); err == nil {
 		t.Fatal("member was allowed to create a shared route")
 	}
-	generated, _, generatedScope, _, err := resolvePublishHostname("", "", current, controlv1.ControlDiscovery{})
+	generated, _, generatedScope, err := resolvePublishHostname("", "", current)
 	if err != nil {
 		t.Fatal(err)
 	}

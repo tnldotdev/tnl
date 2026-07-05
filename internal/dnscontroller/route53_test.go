@@ -2,7 +2,6 @@ package dnscontroller
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
@@ -49,39 +48,10 @@ func TestRoute53ProviderCreatesTagsAndReleasesOwnedZone(t *testing.T) {
 	}
 }
 
-func TestRoute53ProviderRefusesToReleaseUnownedZone(t *testing.T) {
-	work := testDNSWork(time.Now().UTC())
-	work.ProviderZoneID = "Z123"
-	zone := &types.HostedZone{
-		Id: aws.String("Z123"), Name: aws.String("claimed.example.test."), CallerReference: aws.String(work.Reference),
-	}
-	client := &route53Stub{get: &route53.GetHostedZoneOutput{HostedZone: zone}}
-	provider, err := NewRoute53Provider(client)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := provider.ReleaseClaimedZone(t.Context(), work); err == nil || client.deletedZoneID != "" {
-		t.Fatalf("unowned release = %v, deleted %q", err, client.deletedZoneID)
-	}
-}
-
 func TestRoute53ProviderPublishesAndRemovesOnlyOwnedRouteRecords(t *testing.T) {
-	zone := &types.HostedZone{
-		Id: aws.String("ZMANAGED"), Name: aws.String("tunnels.example.test."), CallerReference: aws.String("operator-zone"),
-	}
-	client := &route53Stub{
-		get: &route53.GetHostedZoneOutput{
-			HostedZone:    zone,
-			DelegationSet: &types.DelegationSet{NameServers: []string{"ns-1.example.test.", "ns-2.example.test."}},
-		},
-		recordSets: map[string][]types.ResourceRecordSet{},
-	}
-	provider, err := NewRoute53Provider(client)
-	if err != nil {
-		t.Fatal(err)
-	}
+	client, provider := route53TestProvider(t, "tunnels.example.test")
 	record := RouteRecord{
-		ZoneID: "ZMANAGED", ZoneDomain: "tunnels.example.test",
+		ZoneID: "Z123", ZoneDomain: "tunnels.example.test",
 		RouteID: "route_0123456789abcdef0123456789abcdef", CanonicalHostname: "api.tunnels.example.test",
 		IngressIPv4Addresses: []string{"192.0.2.10"}, IngressIPv6Addresses: []string{"2001:db8::10"},
 	}
@@ -113,50 +83,12 @@ func TestRoute53ProviderPublishesAndRemovesOnlyOwnedRouteRecords(t *testing.T) {
 	}
 }
 
-func TestRoute53ProviderRefusesToReplaceUnownedRouteRecords(t *testing.T) {
-	client := &route53Stub{
-		get: &route53.GetHostedZoneOutput{
-			HostedZone:    &types.HostedZone{Id: aws.String("ZMANAGED"), Name: aws.String("tunnels.example.test.")},
-			DelegationSet: &types.DelegationSet{NameServers: []string{"ns-1.example.test.", "ns-2.example.test."}},
-		},
-		recordSets: map[string][]types.ResourceRecordSet{
-			"api.tunnels.example.test.": {*simpleRecordSet("api.tunnels.example.test", types.RRTypeA, []string{"192.0.2.99"})},
-		},
-	}
-	provider, err := NewRoute53Provider(client)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = provider.PublishRoute(t.Context(), RouteRecord{
-		ZoneID: "ZMANAGED", ZoneDomain: "tunnels.example.test", RouteID: "route_0123456789abcdef0123456789abcdef",
-		CanonicalHostname: "api.tunnels.example.test", IngressIPv4Addresses: []string{"192.0.2.10"},
-	})
-	var terminalErr *terminalError
-	if err == nil || !errors.As(err, &terminalErr) || len(client.changes) != 0 {
-		t.Fatalf("replace unowned record = %v, changes %#v", err, client.changes)
-	}
-}
-
-func TestRoute53ProviderPreservesConcurrentChallengeValues(t *testing.T) {
+func TestRoute53ProviderPreservesForeignChallengeValuesDuringReplacementAndCleanup(t *testing.T) {
 	const recordName = "_acme-challenge.member.tunnels.example.test"
-	client := &route53Stub{
-		get: &route53.GetHostedZoneOutput{
-			HostedZone:    &types.HostedZone{Id: aws.String("ZMANAGED"), Name: aws.String("tunnels.example.test.")},
-			DelegationSet: &types.DelegationSet{NameServers: []string{"ns-1.example.test.", "ns-2.example.test."}},
-		},
-		recordSets: map[string][]types.ResourceRecordSet{
-			dnsName(recordName): {{
-				Name: aws.String(dnsName(recordName)), Type: types.RRTypeTxt, TTL: aws.Int64(60),
-				ResourceRecords: []types.ResourceRecord{{Value: aws.String(`"foreign"`)}, {Value: aws.String(`"old-owned"`)}},
-			}},
-		},
-	}
-	provider, err := NewRoute53Provider(client)
-	if err != nil {
-		t.Fatal(err)
-	}
+	client, provider := route53TestProvider(t, "tunnels.example.test")
+	client.recordSets[dnsName(recordName)] = []types.ResourceRecordSet{*simpleRecordSet(recordName, types.RRTypeTxt, []string{`"foreign"`, `"old-owned"`})}
 	record := ChallengeRecord{
-		ZoneID: "ZMANAGED", ZoneDomain: "tunnels.example.test", RecordName: recordName,
+		ZoneID: "Z123", ZoneDomain: "tunnels.example.test", RecordName: recordName,
 		DesiredOwnedValues: []string{"new-owned"}, PreviouslyOwnedValues: []string{"old-owned", "new-owned"},
 	}
 	if _, err := provider.ReconcileChallenge(t.Context(), record); err != nil {
@@ -196,6 +128,10 @@ type route53Stub struct {
 	createCalls   int
 	recordSets    map[string][]types.ResourceRecordSet
 	changes       []types.Change
+	createErr     error
+	listZones     func(*route53.ListHostedZonesByNameInput) (*route53.ListHostedZonesByNameOutput, error)
+	listRecords   func(context.Context, *route53.ListResourceRecordSetsInput) (*route53.ListResourceRecordSetsOutput, error)
+	changeRecords func(context.Context, *route53.ChangeResourceRecordSetsInput) (*route53.ChangeResourceRecordSetsOutput, error)
 }
 
 func (s *route53Stub) CreateHostedZone(
@@ -204,14 +140,17 @@ func (s *route53Stub) CreateHostedZone(
 	_ ...func(*route53.Options),
 ) (*route53.CreateHostedZoneOutput, error) {
 	s.createCalls++
-	return &route53.CreateHostedZoneOutput{HostedZone: s.created}, nil
+	return &route53.CreateHostedZoneOutput{HostedZone: s.created}, s.createErr
 }
 
 func (s *route53Stub) ListHostedZonesByName(
-	context.Context,
-	*route53.ListHostedZonesByNameInput,
-	...func(*route53.Options),
+	_ context.Context,
+	input *route53.ListHostedZonesByNameInput,
+	_ ...func(*route53.Options),
 ) (*route53.ListHostedZonesByNameOutput, error) {
+	if s.listZones != nil {
+		return s.listZones(input)
+	}
 	return &route53.ListHostedZonesByNameOutput{HostedZones: []types.HostedZone{}, MaxItems: aws.Int32(100)}, nil
 }
 
@@ -251,10 +190,13 @@ func (s *route53Stub) DeleteHostedZone(
 }
 
 func (s *route53Stub) ListResourceRecordSets(
-	_ context.Context,
+	ctx context.Context,
 	input *route53.ListResourceRecordSetsInput,
 	_ ...func(*route53.Options),
 ) (*route53.ListResourceRecordSetsOutput, error) {
+	if s.listRecords != nil {
+		return s.listRecords(ctx, input)
+	}
 	return &route53.ListResourceRecordSetsOutput{
 		ResourceRecordSets: append([]types.ResourceRecordSet(nil), s.recordSets[aws.ToString(input.StartRecordName)]...),
 		IsTruncated:        false, MaxItems: aws.Int32(10),
@@ -262,10 +204,33 @@ func (s *route53Stub) ListResourceRecordSets(
 }
 
 func (s *route53Stub) ChangeResourceRecordSets(
-	_ context.Context,
+	ctx context.Context,
 	input *route53.ChangeResourceRecordSetsInput,
 	_ ...func(*route53.Options),
 ) (*route53.ChangeResourceRecordSetsOutput, error) {
+	if s.changeRecords != nil {
+		return s.changeRecords(ctx, input)
+	}
 	s.changes = append([]types.Change(nil), input.ChangeBatch.Changes...)
 	return &route53.ChangeResourceRecordSetsOutput{}, nil
+}
+
+func route53TestProvider(t *testing.T, domain string) (*route53Stub, *Route53Provider) {
+	t.Helper()
+	client := &route53Stub{get: &route53.GetHostedZoneOutput{
+		HostedZone:    &types.HostedZone{Id: aws.String("Z123"), Name: aws.String(dnsName(domain))},
+		DelegationSet: &types.DelegationSet{NameServers: []string{"ns-1.example.test.", "ns-2.example.test."}},
+	}, recordSets: map[string][]types.ResourceRecordSet{}}
+	provider, err := NewRoute53Provider(client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return client, provider
+}
+
+func route53TestRoute(client *route53Stub) RouteRecord {
+	record := RouteRecord{ZoneID: "Z123", ZoneDomain: "tunnels.example.test", RouteID: "route_1", CanonicalHostname: "api.tunnels.example.test", IngressIPv4Addresses: []string{"192.0.2.10"}}
+	client.recordSets[dnsName(record.CanonicalHostname)] = []types.ResourceRecordSet{*simpleRecordSet(record.CanonicalHostname, types.RRTypeA, append([]string(nil), record.IngressIPv4Addresses...))}
+	client.recordSets[dnsName(routeOwnerName(record.CanonicalHostname))] = []types.ResourceRecordSet{*simpleRecordSet(routeOwnerName(record.CanonicalHostname), types.RRTypeTxt, []string{routeOwnerValue(record.RouteID)})}
+	return record
 }

@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { promisify } from "node:util";
+import { nativeTargets } from "../packages/tnl/lib/native-targets.mjs";
 
 const execFileAsync = promisify(execFile);
 const root = path.resolve(import.meta.dirname, "..");
@@ -38,36 +39,13 @@ if (expectedVersion !== undefined) {
 }
 assert.match(metadata.commit, /^[0-9a-f]{40}$/, "GoReleaser metadata has an invalid commit");
 
-const targets = [
-  {
-    architecture: "arm64",
-    goArchitecture: "arm64",
-    operatingSystem: "darwin",
-    packageName: "@tnldotdev/tnl-darwin-arm64",
-    sourceDirectory: "tnl/native/darwin-arm64",
-  },
-  {
-    architecture: "x64",
-    goArchitecture: "amd64",
-    operatingSystem: "darwin",
-    packageName: "@tnldotdev/tnl-darwin-x64",
-    sourceDirectory: "tnl/native/darwin-x64",
-  },
-  {
-    architecture: "arm64",
-    goArchitecture: "arm64",
-    operatingSystem: "linux",
-    packageName: "@tnldotdev/tnl-linux-arm64",
-    sourceDirectory: "tnl/native/linux-arm64",
-  },
-  {
-    architecture: "x64",
-    goArchitecture: "amd64",
-    operatingSystem: "linux",
-    packageName: "@tnldotdev/tnl-linux-x64",
-    sourceDirectory: "tnl/native/linux-x64",
-  },
-];
+const targets = nativeTargets.map(({ platform, architecture, packageName }) => ({
+  architecture,
+  packageName,
+  operatingSystem: platform,
+  goArchitecture: architecture === "x64" ? "amd64" : architecture,
+  sourceDirectory: `tnl/native/${platform}-${architecture}`,
+}));
 
 await rm(outputDirectory, { force: true, recursive: true });
 await mkdir(outputDirectory, { recursive: true });
@@ -189,6 +167,7 @@ try {
         "lib/config.d.ts",
         "lib/config.mjs",
         "lib/launcher.mjs",
+        "lib/native-targets.mjs",
         "package.json",
       ],
     }),

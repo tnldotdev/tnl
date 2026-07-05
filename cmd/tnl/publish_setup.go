@@ -32,7 +32,6 @@ type publisherServices struct {
 	routeScope      controlv1.RouteScope
 	policyRevision  uint64
 	ephemeral       bool
-	certificatePlan controlv1.CertificatePlan
 	routes          *routeclient.Client
 }
 
@@ -124,7 +123,7 @@ func preparePublisherServices(
 	if current.team.PolicyRevision < 0 {
 		return publisherServices{}, errors.New("authority returned an invalid team policy revision")
 	}
-	hostname, domain, routeScope, certificatePlan, err := resolvePublishHostname(hostname, subdomain, current, discovery)
+	hostname, domain, routeScope, err := resolvePublishHostname(hostname, subdomain, current)
 	if err != nil {
 		return publisherServices{}, err
 	}
@@ -143,7 +142,6 @@ func preparePublisherServices(
 		routeScope:      routeScope,
 		policyRevision:  uint64(current.team.PolicyRevision),
 		ephemeral:       ephemeral,
-		certificatePlan: certificatePlan,
 		routes:          routes,
 	}, nil
 }
@@ -151,38 +149,37 @@ func preparePublisherServices(
 func resolvePublishHostname(
 	hostname, subdomain string,
 	current teamContext,
-	discovery controlv1.ControlDiscovery,
-) (string, authorityv1.Domain, controlv1.RouteScope, controlv1.CertificatePlan, error) {
+) (string, authorityv1.Domain, controlv1.RouteScope, error) {
 	if hostname != "" && subdomain != "" {
-		return "", authorityv1.Domain{}, "", controlv1.CertificatePlan{}, errors.New("--host and --subdomain are mutually exclusive")
+		return "", authorityv1.Domain{}, "", errors.New("--host and --subdomain are mutually exclusive")
 	}
 	domain, err := defaultReadyDomain(current)
 	if err != nil {
-		return "", authorityv1.Domain{}, "", controlv1.CertificatePlan{}, err
+		return "", authorityv1.Domain{}, "", err
 	}
 	namespace := memberNamespace(current.membership, domain)
 	if subdomain != "" {
 		canonical, err := naming.CanonicalizeHostname(subdomain)
 		if err != nil || canonical != subdomain || strings.Contains(subdomain, ".") {
-			return "", authorityv1.Domain{}, "", controlv1.CertificatePlan{}, errors.New("subdomain must be one canonical DNS label")
+			return "", authorityv1.Domain{}, "", errors.New("subdomain must be one canonical DNS label")
 		}
 		hostname = subdomain + "." + namespace
 	}
 	if hostname == "" {
 		label, err := naming.GeneratedHostnameLabel()
 		if err != nil {
-			return "", authorityv1.Domain{}, "", controlv1.CertificatePlan{}, err
+			return "", authorityv1.Domain{}, "", err
 		}
 		hostname = label + "." + namespace
 	}
 	canonical, err := naming.CanonicalizeHostname(hostname)
 	if err != nil || canonical != hostname {
-		return "", authorityv1.Domain{}, "", controlv1.CertificatePlan{}, errors.New("hostname must be canonical")
+		return "", authorityv1.Domain{}, "", errors.New("hostname must be canonical")
 	}
 	if hostname != namespace && !strings.HasSuffix(hostname, "."+namespace) {
 		domain, err = readyDomainForHostname(current.domains, hostname)
 		if err != nil {
-			return "", authorityv1.Domain{}, "", controlv1.CertificatePlan{}, err
+			return "", authorityv1.Domain{}, "", err
 		}
 		namespace = memberNamespace(current.membership, domain)
 	}
@@ -190,20 +187,9 @@ func resolvePublishHostname(
 	if hostname == namespace || strings.HasSuffix(hostname, "."+namespace) && strings.Count(strings.TrimSuffix(hostname, "."+namespace), ".") == 0 {
 		routeScope = controlv1.Member
 	} else if current.membership.Role == authorityv1.TeamRoleMember {
-		return "", authorityv1.Domain{}, "", controlv1.CertificatePlan{}, errors.New("shared routes require a team administrator or owner")
+		return "", authorityv1.Domain{}, "", errors.New("shared routes require a team administrator or owner")
 	}
-	plan := controlv1.CertificatePlan{
-		CacheKey: hostname, Scope: hostname, Identifiers: []string{hostname}, ChallengeMethod: controlv1.TlsAlpn01,
-	}
-	if discovery.DnsAutomation {
-		plan.ChallengeMethod = controlv1.Dns01
-		if routeScope == controlv1.Member {
-			plan.CacheKey = namespace
-			plan.Scope = namespace
-			plan.Identifiers = []string{namespace, "*." + namespace}
-		}
-	}
-	return hostname, domain, routeScope, plan, nil
+	return hostname, domain, routeScope, nil
 }
 
 func defaultReadyDomain(current teamContext) (authorityv1.Domain, error) {
@@ -252,7 +238,6 @@ func (p publisherServices) config(target string, allowedIPPrefixes []string) pub
 		Hostname:          p.hostname,
 		RouteScope:        p.routeScope,
 		PolicyRevision:    p.policyRevision,
-		CertificatePlan:   p.certificatePlan,
 		Target:            target,
 		AllowedIPPrefixes: allowedIPPrefixes,
 		Ephemeral:         p.ephemeral,

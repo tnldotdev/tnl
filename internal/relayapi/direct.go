@@ -3,6 +3,9 @@ package relayapi
 import (
 	"context"
 	"errors"
+	"log"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
@@ -11,17 +14,29 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/relayv1"
 )
 
+// DirectClient implements controller operations inside standalone. It trusts
+// internally constructed request identities and ignores path IDs/request editors;
+// it does not perform HTTP authentication or expose raw response bodies. Domain
+// failures use the HTTP problem/status contract; caller cancellation is a Go error.
 type DirectClient struct {
 	store         Store
 	leaseDuration time.Duration
 	now           func() time.Time
+	report        func(error)
 }
 
 func NewDirectClient(store Store, leaseDuration time.Duration) (*DirectClient, error) {
 	if store == nil || leaseDuration <= 0 {
 		return nil, errors.New("relayapi: direct store and lease duration are required")
 	}
-	return &DirectClient{store: store, leaseDuration: leaseDuration, now: time.Now}, nil
+	return &DirectClient{store: store, leaseDuration: leaseDuration, now: time.Now,
+		report: func(err error) { log.Printf("relay service: %v", err) }}, nil
+}
+
+func (c *DirectClient) problem(err error) relayv1.Problem {
+	status, kind, detail := storeProblem(err, c.report)
+	return relayv1.Problem{Status: status, Type: "https://tnl.dev/problems/" + kind,
+		Title: strings.ReplaceAll(kind, "_", " "), Detail: detail}
 }
 
 func (c *DirectClient) RegisterRelayWithResponse(
@@ -43,10 +58,14 @@ func (c *DirectClient) RegisterRelayWithResponse(
 		ConnectionCapacity: connectionCapacity, StreamCapacity: streamCapacity,
 	}, c.now(), c.leaseDuration)
 	if err != nil {
-		return nil, err
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		problem := c.problem(err)
+		return &relayv1.RegisterRelayResponse{HTTPResponse: serviceapi.StatusResponse(problem.Status), ApplicationproblemJSONDefault: &problem}, nil
 	}
 	result := relayLease(lease)
-	return &relayv1.RegisterRelayResponse{JSON200: &result}, nil
+	return &relayv1.RegisterRelayResponse{HTTPResponse: serviceapi.StatusResponse(http.StatusOK), JSON200: &result}, nil
 }
 
 func (c *DirectClient) RenewRelayWithResponse(
@@ -65,10 +84,14 @@ func (c *DirectClient) RenewRelayWithResponse(
 		RelayLeaseIdentity: identity, ReportedConnections: reportedConnections, ReportedStreams: reportedStreams,
 	}, c.now(), c.leaseDuration)
 	if err != nil {
-		return nil, err
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		problem := c.problem(err)
+		return &relayv1.RenewRelayResponse{HTTPResponse: serviceapi.StatusResponse(problem.Status), ApplicationproblemJSONDefault: &problem}, nil
 	}
 	result := relayLease(lease)
-	return &relayv1.RenewRelayResponse{JSON200: &result}, nil
+	return &relayv1.RenewRelayResponse{HTTPResponse: serviceapi.StatusResponse(http.StatusOK), JSON200: &result}, nil
 }
 
 func (c *DirectClient) DrainRelayWithResponse(
@@ -83,10 +106,14 @@ func (c *DirectClient) DrainRelayWithResponse(
 	}
 	lease, err := c.store.BeginRelayDrain(ctx, identity, c.now(), body.Deadline)
 	if err != nil {
-		return nil, err
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		problem := c.problem(err)
+		return &relayv1.DrainRelayResponse{HTTPResponse: serviceapi.StatusResponse(problem.Status), ApplicationproblemJSONDefault: &problem}, nil
 	}
 	result := relayLease(lease)
-	return &relayv1.DrainRelayResponse{JSON200: &result}, nil
+	return &relayv1.DrainRelayResponse{HTTPResponse: serviceapi.StatusResponse(http.StatusOK), JSON200: &result}, nil
 }
 
 func (c *DirectClient) GetRelayServiceCertificateWithResponse(
@@ -104,14 +131,18 @@ func (c *DirectClient) GetRelayServiceCertificateWithResponse(
 	}
 	certificate, err := c.store.GetRelayServiceCertificate(ctx, identity, c.now())
 	if err != nil {
-		return nil, err
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		problem := c.problem(err)
+		return &relayv1.GetRelayServiceCertificateResponse{HTTPResponse: serviceapi.StatusResponse(problem.Status), ApplicationproblemJSONDefault: &problem}, nil
 	}
 	result := relayv1.RelayServiceCertificate{
 		RelayServiceId: certificate.RelayServiceID, TlsServerName: certificate.TLSServerName,
 		CertificatePem: certificate.CertificatePEM, PrivateKeyPem: certificate.PrivateKeyPEM,
 		NotAfter: certificate.NotAfter,
 	}
-	return &relayv1.GetRelayServiceCertificateResponse{JSON200: &result}, nil
+	return &relayv1.GetRelayServiceCertificateResponse{HTTPResponse: serviceapi.StatusResponse(http.StatusOK), JSON200: &result}, nil
 }
 
 func (c *DirectClient) ClaimPublisherConnectionWithResponse(
@@ -134,15 +165,20 @@ func (c *DirectClient) ClaimPublisherConnectionWithResponse(
 		credentials.PublisherConnectionCredential(body.PublisherConnectionCredential),
 	)
 	if err != nil {
-		return nil, err
+		problem := c.problem(err)
+		return &relayv1.ClaimPublisherConnectionResponse{HTTPResponse: serviceapi.StatusResponse(problem.Status), ApplicationproblemJSONDefault: &problem}, nil
 	}
 	claim.CredentialDigest = [32]byte(digest)
 	connection, err := c.store.ClaimPublisherConnection(ctx, claim, c.now())
 	if err != nil {
-		return nil, err
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		problem := c.problem(err)
+		return &relayv1.ClaimPublisherConnectionResponse{HTTPResponse: serviceapi.StatusResponse(problem.Status), ApplicationproblemJSONDefault: &problem}, nil
 	}
 	result := claimedPublisherConnection(connection)
-	return &relayv1.ClaimPublisherConnectionResponse{JSON200: &result}, nil
+	return &relayv1.ClaimPublisherConnectionResponse{HTTPResponse: serviceapi.StatusResponse(http.StatusOK), JSON200: &result}, nil
 }
 
 func (c *DirectClient) MarkPublisherConnectionReadyWithResponse(
@@ -163,10 +199,14 @@ func (c *DirectClient) MarkPublisherConnectionReadyWithResponse(
 	}
 	connection, err := c.store.MarkPublisherConnectionReady(ctx, claim, c.now())
 	if err != nil {
-		return nil, err
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		problem := c.problem(err)
+		return &relayv1.MarkPublisherConnectionReadyResponse{HTTPResponse: serviceapi.StatusResponse(problem.Status), ApplicationproblemJSONDefault: &problem}, nil
 	}
 	result := claimedPublisherConnection(connection)
-	return &relayv1.MarkPublisherConnectionReadyResponse{JSON200: &result}, nil
+	return &relayv1.MarkPublisherConnectionReadyResponse{HTTPResponse: serviceapi.StatusResponse(http.StatusOK), JSON200: &result}, nil
 }
 
 func (c *DirectClient) DisconnectPublisherConnectionWithResponse(
@@ -187,10 +227,14 @@ func (c *DirectClient) DisconnectPublisherConnectionWithResponse(
 	}
 	connection, err := c.store.DisconnectPublisherConnection(ctx, claim, c.now(), body.Unexpected)
 	if err != nil {
-		return nil, err
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		problem := c.problem(err)
+		return &relayv1.DisconnectPublisherConnectionResponse{HTTPResponse: serviceapi.StatusResponse(problem.Status), ApplicationproblemJSONDefault: &problem}, nil
 	}
 	result := claimedPublisherConnection(connection)
-	return &relayv1.DisconnectPublisherConnectionResponse{JSON200: &result}, nil
+	return &relayv1.DisconnectPublisherConnectionResponse{HTTPResponse: serviceapi.StatusResponse(http.StatusOK), JSON200: &result}, nil
 }
 
 func directPublisherConnectionClaim(fields publisherConnectionFields) (controlstate.PublisherConnectionClaimRequest, bool) {

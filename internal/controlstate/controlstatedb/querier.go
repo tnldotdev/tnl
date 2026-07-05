@@ -19,6 +19,7 @@ type Querier interface {
 	AllocateRouteVersion(ctx context.Context, arg AllocateRouteVersionParams) (int64, error)
 	ApplyIngressUsageDelta(ctx context.Context, arg ApplyIngressUsageDeltaParams) (ControlRouteUsageBucket, error)
 	ApplyRouteSessionPolicyDenials(ctx context.Context, arg ApplyRouteSessionPolicyDenialsParams) (int64, error)
+	BeginAdminRelayDrain(ctx context.Context, arg BeginAdminRelayDrainParams) (BeginAdminRelayDrainRow, error)
 	BeginDNSAuthorityRelease(ctx context.Context, arg BeginDNSAuthorityReleaseParams) (ControlDnsAuthority, error)
 	BeginIngressDrain(ctx context.Context, arg BeginIngressDrainParams) (ControlIngressLease, error)
 	BeginRelayDrain(ctx context.Context, arg BeginRelayDrainParams) (BeginRelayDrainRow, error)
@@ -36,6 +37,7 @@ type Querier interface {
 	CloseRouteSessionConnections(ctx context.Context, arg CloseRouteSessionConnectionsParams) error
 	CompleteACMEAuthorizationCleanup(ctx context.Context, arg CompleteACMEAuthorizationCleanupParams) (int64, error)
 	CompleteRouteUsageDelivery(ctx context.Context, arg CompleteRouteUsageDeliveryParams) (ControlRouteUsageDelivery, error)
+	ConsumeOIDCAssertion(ctx context.Context, arg ConsumeOIDCAssertionParams) (int64, error)
 	CountOpenRouteSessionAssignmentsByRelayService(ctx context.Context) ([]CountOpenRouteSessionAssignmentsByRelayServiceRow, error)
 	CountRelayActiveConnections(ctx context.Context, arg CountRelayActiveConnectionsParams) (int64, error)
 	CountTeamOwners(ctx context.Context, teamID string) (int64, error)
@@ -45,6 +47,7 @@ type Querier interface {
 	CreateControlSession(ctx context.Context, arg CreateControlSessionParams) error
 	CreateIdentity(ctx context.Context, arg CreateIdentityParams) error
 	CreateManagedDomain(ctx context.Context, arg CreateManagedDomainParams) error
+	CreateOIDCIdentity(ctx context.Context, arg CreateOIDCIdentityParams) (ControlIdentity, error)
 	CreateOrGetDNSAuthority(ctx context.Context, arg CreateOrGetDNSAuthorityParams) (ControlDnsAuthority, error)
 	CreateOrganizationTeam(ctx context.Context, arg CreateOrganizationTeamParams) (CreateOrganizationTeamRow, error)
 	CreateOwnerMembership(ctx context.Context, arg CreateOwnerMembershipParams) error
@@ -53,6 +56,7 @@ type Querier interface {
 	CreateTeamMembership(ctx context.Context, arg CreateTeamMembershipParams) error
 	DNSAuthorityReleaseReady(ctx context.Context, arg DNSAuthorityReleaseReadyParams) (pgtype.Bool, error)
 	DeleteControlTLSCacheEntry(ctx context.Context, arg DeleteControlTLSCacheEntryParams) error
+	DeleteExpiredOIDCAssertionExchanges(ctx context.Context, now pgtype.Timestamptz) error
 	DeleteRoute(ctx context.Context, arg DeleteRouteParams) (int64, error)
 	DisconnectPublisherConnection(ctx context.Context, arg DisconnectPublisherConnectionParams) (ControlRouteSessionConnection, error)
 	EnsureACMEAccount(ctx context.Context, arg EnsureACMEAccountParams) (ControlAcmeAccount, error)
@@ -66,11 +70,13 @@ type Querier interface {
 	FindBuiltinIdentity(ctx context.Context) (ControlIdentity, error)
 	FindInvitationTeamByTokenDigest(ctx context.Context, tokenDigest []byte) (string, error)
 	FindManagedDomain(ctx context.Context) (ControlDomain, error)
+	FindOIDCIdentity(ctx context.Context, arg FindOIDCIdentityParams) (ControlIdentity, error)
 	GetACMEAccountByDirectory(ctx context.Context, directoryUrl string) (ControlAcmeAccount, error)
 	GetACMEOrder(ctx context.Context, issuanceID string) (ControlAcmeOrder, error)
 	GetACMEOrderByIdempotency(ctx context.Context, arg GetACMEOrderByIdempotencyParams) (ControlAcmeOrder, error)
 	GetActiveRouteSessionChallengeExpiry(ctx context.Context, arg GetActiveRouteSessionChallengeExpiryParams) (pgtype.Timestamptz, error)
 	GetActiveRouteSessionMembership(ctx context.Context, arg GetActiveRouteSessionMembershipParams) (GetActiveRouteSessionMembershipRow, error)
+	GetAdminRuntimeCounts(ctx context.Context, now pgtype.Timestamptz) (GetAdminRuntimeCountsRow, error)
 	GetClaimedDomainByIdempotency(ctx context.Context, arg GetClaimedDomainByIdempotencyParams) (GetClaimedDomainByIdempotencyRow, error)
 	GetControlSessionByAccessID(ctx context.Context, accessTokenID string) (GetControlSessionByAccessIDRow, error)
 	GetControlTLSCacheEntry(ctx context.Context, arg GetControlTLSCacheEntryParams) (GetControlTLSCacheEntryRow, error)
@@ -103,6 +109,7 @@ type Querier interface {
 	GetTeamMembershipContext(ctx context.Context, arg GetTeamMembershipContextParams) (GetTeamMembershipContextRow, error)
 	HeartbeatRouteSession(ctx context.Context, arg HeartbeatRouteSessionParams) (ControlRouteSession, error)
 	InsertACMEOrder(ctx context.Context, arg InsertACMEOrderParams) (ControlAcmeOrder, error)
+	InsertAdminAuditEvent(ctx context.Context, arg InsertAdminAuditEventParams) error
 	InsertCertificateIssuanceAuditEvent(ctx context.Context, arg InsertCertificateIssuanceAuditEventParams) error
 	InsertExpiredEphemeralRouteDeleteAuditEvent(ctx context.Context, arg InsertExpiredEphemeralRouteDeleteAuditEventParams) error
 	InsertIngressRoutingTableEvent(ctx context.Context, arg InsertIngressRoutingTableEventParams) (int64, error)
@@ -118,6 +125,7 @@ type Querier interface {
 	InsertRouteUsageDelivery(ctx context.Context, arg InsertRouteUsageDeliveryParams) (ControlRouteUsageDelivery, error)
 	LatestIngressRoutingEntryRevision(ctx context.Context, arg LatestIngressRoutingEntryRevisionParams) (int64, error)
 	ListACMEOrderAuthorizations(ctx context.Context, issuanceID string) ([]ControlAcmeAuthorization, error)
+	ListAdminRelayLeases(ctx context.Context, arg ListAdminRelayLeasesParams) ([]ListAdminRelayLeasesRow, error)
 	ListCurrentDomainNames(ctx context.Context) ([]string, error)
 	ListDNSChallengePresentations(ctx context.Context, baseIdentifier string) ([]ListDNSChallengePresentationsRow, error)
 	ListExternalAuthorityRoutes(ctx context.Context, arg ListExternalAuthorityRoutesParams) ([]ListExternalAuthorityRoutesRow, error)
@@ -127,6 +135,7 @@ type Querier interface {
 	ListIdentityTeams(ctx context.Context, identityID string) ([]ListIdentityTeamsRow, error)
 	ListIngressRoutingTableEvents(ctx context.Context, arg ListIngressRoutingTableEventsParams) ([]ControlIngressRoutingTableEvent, error)
 	ListIngressRoutingTableSnapshot(ctx context.Context, arg ListIngressRoutingTableSnapshotParams) ([]ListIngressRoutingTableSnapshotRow, error)
+	ListMaintenanceControls(ctx context.Context) ([]ControlMaintenanceControl, error)
 	ListRelayDNSChallengePresentations(ctx context.Context, tlsServerName string) ([]ListRelayDNSChallengePresentationsRow, error)
 	ListRouteSessionConnections(ctx context.Context, routeSessionID string) ([]ControlRouteSessionConnection, error)
 	ListTeamInvitations(ctx context.Context, teamID string) ([]ListTeamInvitationsRow, error)
@@ -138,6 +147,8 @@ type Querier interface {
 	LockCertificateIssuanceControl(ctx context.Context) (bool, error)
 	LockControlSessionByRefreshID(ctx context.Context, refreshTokenID string) (LockControlSessionByRefreshIDRow, error)
 	LockDNSAuthority(ctx context.Context, authorityReference string) (ControlDnsAuthority, error)
+	LockDNSAuthorityLocalDomain(ctx context.Context, authorityReference pgtype.Text) error
+	LockDNSAuthorityLocalTeam(ctx context.Context, authorityReference pgtype.Text) error
 	LockDomainRoutes(ctx context.Context, arg LockDomainRoutesParams) ([]ControlRoute, error)
 	LockEligibleRelayLeases(ctx context.Context, arg LockEligibleRelayLeasesParams) ([]LockEligibleRelayLeasesRow, error)
 	LockExpiredEphemeralRoutes(ctx context.Context, arg LockExpiredEphemeralRoutesParams) ([]ControlRoute, error)
@@ -146,11 +157,20 @@ type Querier interface {
 	LockIdentityForTeamCreation(ctx context.Context, identityID string) (string, error)
 	LockIdentityRouteForDelete(ctx context.Context, arg LockIdentityRouteForDeleteParams) (LockIdentityRouteForDeleteRow, error)
 	LockIngressLease(ctx context.Context, arg LockIngressLeaseParams) (ControlIngressLease, error)
+	LockIngressRoutingTableClock(ctx context.Context) (int64, error)
 	LockInvalidReadyPublisherConnections(ctx context.Context, now pgtype.Timestamptz) ([]ControlRouteSessionConnection, error)
 	LockInvitationByTokenDigest(ctx context.Context, arg LockInvitationByTokenDigestParams) (LockInvitationByTokenDigestRow, error)
+	LockLocalRouteTeamForMutation(ctx context.Context, routeID string) (string, error)
+	// Local authority mutations lock the team before identities, memberships,
+	// domains, DNS authorities, and routes. Authorization is rechecked under this
+	// transaction-held guard; hosted teams never require fabricated local rows.
+	LockLocalTeamForMutation(ctx context.Context, teamID string) (string, error)
 	LockManagedDomainForClaim(ctx context.Context) (ControlDomain, error)
 	LockMembershipRoutes(ctx context.Context, arg LockMembershipRoutesParams) ([]ControlRoute, error)
+	LockRelayServiceForCertificate(ctx context.Context, relayServiceID string) (string, error)
+	LockRelayServicesForPlacement(ctx context.Context) ([]string, error)
 	LockRouteCreationControl(ctx context.Context) (bool, error)
+	// Serialize creators without blocking session and audit foreign-key checks.
 	LockRouteCreator(ctx context.Context, identityID string) (string, error)
 	LockRouteForSession(ctx context.Context, routeID string) (ControlRoute, error)
 	LockRouteForUsage(ctx context.Context, routeID string) (string, error)
@@ -207,6 +227,7 @@ type Querier interface {
 	SaveRelayCertificateOrderWork(ctx context.Context, arg SaveRelayCertificateOrderWorkParams) (ControlRelayCertificateOrder, error)
 	SetDNSReadyDomainDefault(ctx context.Context, arg SetDNSReadyDomainDefaultParams) (int64, error)
 	SetDomainAuthorityRevision(ctx context.Context, arg SetDomainAuthorityRevisionParams) error
+	SetMaintenanceControl(ctx context.Context, arg SetMaintenanceControlParams) (ControlMaintenanceControl, error)
 	SetPersonalTeamDefaultDomain(ctx context.Context, arg SetPersonalTeamDefaultDomainParams) error
 	SetTeamDefaultDomain(ctx context.Context, arg SetTeamDefaultDomainParams) (int64, error)
 	StoreRelayServiceCertificate(ctx context.Context, arg StoreRelayServiceCertificateParams) (ControlRelayService, error)
@@ -215,6 +236,7 @@ type Querier interface {
 	UpdateACMEAccountRegistration(ctx context.Context, arg UpdateACMEAccountRegistrationParams) (ControlAcmeAccount, error)
 	UpdateLocalDomainForDNSAuthority(ctx context.Context, arg UpdateLocalDomainForDNSAuthorityParams) (UpdateLocalDomainForDNSAuthorityRow, error)
 	UpdateMembershipRole(ctx context.Context, arg UpdateMembershipRoleParams) (int64, error)
+	UpdateOIDCIdentity(ctx context.Context, arg UpdateOIDCIdentityParams) (ControlIdentity, error)
 	UpdateRoute(ctx context.Context, arg UpdateRouteParams) (ControlRoute, error)
 	UpdateRouteRecoveryHistogram(ctx context.Context, arg UpdateRouteRecoveryHistogramParams) (ControlRouteRecoveryHistogram, error)
 	WakeACMEOrder(ctx context.Context, arg WakeACMEOrderParams) error

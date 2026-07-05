@@ -150,6 +150,75 @@ func (s *Session) OpenInternalForwardingStream(
 	})
 }
 
+// RequestPublisherDrain asks a relay to stop admitting visitor streams and
+// waits until all streams already admitted by that relay have closed.
+func (s *Session) RequestPublisherDrain(ctx context.Context, requestID string) error {
+	clearDeadline, err := setContextDeadline(ctx, s.control)
+	if err != nil {
+		return err
+	}
+	defer clearDeadline()
+	if err := tunnelv1.WriteControl(s.control, tunnelv1.Message{
+		Type: tunnelv1.Drain, ProtocolVersion: tunnelv1.Version, RequestID: requestID,
+	}); err != nil {
+		return controlContextError(ctx, fmt.Errorf("tunnel: write drain request: %w", err))
+	}
+	draining, err := tunnelv1.ReadControl(s.control)
+	if err != nil {
+		return controlContextError(ctx, fmt.Errorf("tunnel: read draining response: %w", err))
+	}
+	if draining.Type == tunnelv1.Error && draining.RequestID == requestID {
+		return &ProtocolError{Code: draining.Code}
+	}
+	if draining.Type != tunnelv1.Draining || draining.RequestID != requestID {
+		return errors.New("tunnel: unexpected draining response")
+	}
+	drained, err := tunnelv1.ReadControl(s.control)
+	if err != nil {
+		return controlContextError(ctx, fmt.Errorf("tunnel: read drained response: %w", err))
+	}
+	if drained.Type == tunnelv1.Error && drained.RequestID == requestID {
+		return &ProtocolError{Code: drained.Code}
+	}
+	if drained.Type != tunnelv1.Drained || drained.RequestID != requestID {
+		return errors.New("tunnel: unexpected drained response")
+	}
+	return nil
+}
+
+// HandlePublisherDrain handles one relay-side publisher drain request.
+func (s *Session) HandlePublisherDrain(ctx context.Context, drain func(context.Context) error) error {
+	if drain == nil {
+		return errors.New("tunnel: publisher drain callback is required")
+	}
+	clearDeadline, err := setContextDeadline(ctx, s.control)
+	if err != nil {
+		return err
+	}
+	defer clearDeadline()
+	request, err := tunnelv1.ReadControl(s.control)
+	if err != nil {
+		return controlContextError(ctx, fmt.Errorf("tunnel: read drain request: %w", err))
+	}
+	if request.Type != tunnelv1.Drain || request.RequestID == "" {
+		return errors.New("tunnel: unexpected drain request")
+	}
+	if err := tunnelv1.WriteControl(s.control, tunnelv1.Message{
+		Type: tunnelv1.Draining, ProtocolVersion: tunnelv1.Version, RequestID: request.RequestID,
+	}); err != nil {
+		return controlContextError(ctx, fmt.Errorf("tunnel: write draining response: %w", err))
+	}
+	if err := drain(ctx); err != nil {
+		return err
+	}
+	if err := tunnelv1.WriteControl(s.control, tunnelv1.Message{
+		Type: tunnelv1.Drained, ProtocolVersion: tunnelv1.Version, RequestID: request.RequestID,
+	}); err != nil {
+		return controlContextError(ctx, fmt.Errorf("tunnel: write drained response: %w", err))
+	}
+	return nil
+}
+
 func (s *Session) openAcknowledgedStream(
 	ctx context.Context,
 	kind string,
@@ -314,6 +383,34 @@ func setHandshakeDeadline(ctx context.Context, connection net.Conn) error {
 		return fmt.Errorf("tunnel: set handshake deadline: %w", err)
 	}
 	return nil
+}
+
+func setContextDeadline(ctx context.Context, connection net.Conn) (func(), error) {
+	if err := context.Cause(ctx); err != nil {
+		return nil, err
+	}
+	deadline, _ := ctx.Deadline()
+	if err := connection.SetDeadline(deadline); err != nil {
+		return nil, fmt.Errorf("tunnel: set control deadline: %w", err)
+	}
+	interrupted := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		_ = connection.SetDeadline(time.Now())
+		close(interrupted)
+	})
+	return func() {
+		if !stop() {
+			<-interrupted
+		}
+		_ = connection.SetDeadline(time.Time{})
+	}, nil
+}
+
+func controlContextError(ctx context.Context, err error) error {
+	if cause := context.Cause(ctx); cause != nil {
+		return cause
+	}
+	return err
 }
 
 func writeProtocolError(control muxsession.Stream, code tunnelv1.ErrorCode) error {

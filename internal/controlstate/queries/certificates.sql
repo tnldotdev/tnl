@@ -198,14 +198,22 @@ WHERE orders.route_session_id = sqlc.arg(route_session_id)
 -- name: LockACMEOrderForInstall :one
 SELECT orders.*
 FROM control.acme_orders AS orders
+JOIN control.route_sessions AS issued_session
+  ON issued_session.id = orders.route_session_id
+ AND issued_session.route_id = orders.route_id
+ AND issued_session.route_version = orders.route_version
 WHERE orders.id = sqlc.arg(issuance_id)
-  AND orders.route_id = sqlc.arg(route_id)
+  AND issued_session.team_id = sqlc.arg(team_id)
   AND orders.certificate_cache_key = sqlc.arg(certificate_cache_key)
+  AND orders.certificate_scope = sqlc.arg(certificate_scope)
+  AND orders.certificate_identifiers = sqlc.arg(certificate_identifiers)
+  AND orders.challenge_method = sqlc.arg(challenge_method)
   AND orders.state IN ('waiting_for_install', 'installed')
   AND orders.certificate_pem IS NOT NULL
+  AND orders.not_before <= sqlc.arg(installed_at)
   AND orders.not_after = sqlc.arg(not_after)
   AND orders.not_after > sqlc.arg(installed_at)
-FOR UPDATE;
+FOR UPDATE OF orders;
 
 -- name: MarkACMEOrderInstalled :one
 UPDATE control.acme_orders
@@ -339,10 +347,10 @@ INSERT INTO control.acme_authorizations (
     sqlc.arg(order_id),
     sqlc.arg(identifier),
     sqlc.arg(authorization_url),
-    sqlc.arg(challenge_type),
-    sqlc.arg(challenge_url),
-    sqlc.arg(challenge_token),
-    sqlc.arg(challenge_digest),
+    sqlc.narg(challenge_type),
+    sqlc.narg(challenge_url),
+    sqlc.narg(challenge_token),
+    sqlc.narg(challenge_digest),
     sqlc.narg(presentation_reference),
     sqlc.arg(state),
     sqlc.arg(authorization_revision),
@@ -368,10 +376,10 @@ SET state = excluded.state,
     last_error = excluded.last_error,
     updated_at = excluded.updated_at
 WHERE control.acme_authorizations.authorization_url = excluded.authorization_url
-  AND control.acme_authorizations.challenge_type = excluded.challenge_type
-  AND control.acme_authorizations.challenge_url = excluded.challenge_url
-  AND control.acme_authorizations.challenge_token = excluded.challenge_token
-  AND control.acme_authorizations.challenge_digest = excluded.challenge_digest
+  AND control.acme_authorizations.challenge_type IS NOT DISTINCT FROM excluded.challenge_type
+  AND control.acme_authorizations.challenge_url IS NOT DISTINCT FROM excluded.challenge_url
+  AND control.acme_authorizations.challenge_token IS NOT DISTINCT FROM excluded.challenge_token
+  AND control.acme_authorizations.challenge_digest IS NOT DISTINCT FROM excluded.challenge_digest
   AND control.acme_authorizations.presentation_reference IS NOT DISTINCT FROM excluded.presentation_reference
   AND control.acme_authorizations.authorization_revision = sqlc.arg(expected_authorization_revision)
 RETURNING *;
@@ -385,7 +393,8 @@ SET state = 'canceled',
     available_at = sqlc.arg(canceled_at),
     updated_at = GREATEST(updated_at, sqlc.arg(canceled_at))
 WHERE route_session_id = sqlc.arg(route_session_id)
-  AND state IN ('pending', 'authorizing', 'ready_to_finalize', 'finalizing', 'waiting_for_install', 'failed');
+  AND certificate_pem IS NULL
+  AND state IN ('pending', 'authorizing', 'ready_to_finalize', 'finalizing', 'failed');
 
 -- name: CancelRouteSessionACMEAuthorizations :exec
 UPDATE control.acme_authorizations AS authorizations

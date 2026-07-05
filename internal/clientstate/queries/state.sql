@@ -82,56 +82,55 @@ ON CONFLICT (server_origin) DO UPDATE SET
 DELETE FROM control_sessions
 WHERE server_origin = sqlc.arg(server_origin);
 
--- name: GetRouteCertificate :one
+-- name: GetCertificateMaterial :one
 SELECT *
-FROM route_certificates
+FROM certificate_material
 WHERE server_origin = sqlc.arg(server_origin)
-  AND route_id = sqlc.arg(route_id)
+  AND team_id = sqlc.arg(team_id)
+  AND cache_key = sqlc.arg(cache_key)
+  AND plan = sqlc.arg(plan)
   AND phase = sqlc.arg(phase);
 
--- name: UpsertRouteCertificate :exec
-INSERT INTO route_certificates (
+-- name: UpsertCertificateMaterial :exec
+INSERT INTO certificate_material (
     server_origin,
-    route_id,
+    team_id,
+    cache_key,
+    plan,
     phase,
-    hostname,
     key_der,
     csr_der,
     certificate_pem,
     renew_at,
     issuance_id,
-    route_version,
-    installed,
     updated_at
 ) VALUES (
     sqlc.arg(server_origin),
-    sqlc.arg(route_id),
+    sqlc.arg(team_id),
+    sqlc.arg(cache_key),
+    sqlc.arg(plan),
     sqlc.arg(phase),
-    sqlc.arg(hostname),
     sqlc.arg(key_der),
     sqlc.arg(csr_der),
     sqlc.narg(certificate_pem),
     sqlc.narg(renew_at),
     sqlc.arg(issuance_id),
-    sqlc.arg(route_version),
-    sqlc.arg(installed),
     sqlc.arg(updated_at)
 )
-ON CONFLICT (server_origin, route_id, phase) DO UPDATE SET
-    hostname = excluded.hostname,
+ON CONFLICT (server_origin, team_id, cache_key, plan, phase) DO UPDATE SET
     key_der = excluded.key_der,
     csr_der = excluded.csr_der,
     certificate_pem = excluded.certificate_pem,
     renew_at = excluded.renew_at,
     issuance_id = excluded.issuance_id,
-    route_version = excluded.route_version,
-    installed = excluded.installed,
     updated_at = excluded.updated_at;
 
--- name: DeleteRouteCertificate :exec
-DELETE FROM route_certificates
+-- name: DeleteCertificateMaterial :exec
+DELETE FROM certificate_material
 WHERE server_origin = sqlc.arg(server_origin)
-  AND route_id = sqlc.arg(route_id)
+  AND team_id = sqlc.arg(team_id)
+  AND cache_key = sqlc.arg(cache_key)
+  AND plan = sqlc.arg(plan)
   AND phase = sqlc.arg(phase);
 
 -- name: InsertTunnel :exec

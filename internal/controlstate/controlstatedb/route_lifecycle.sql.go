@@ -439,26 +439,22 @@ func (q *Queries) LockRouteSession(ctx context.Context, routeSessionID string) (
 
 const markRouteSessionCertificateInstalled = `-- name: MarkRouteSessionCertificateInstalled :one
 UPDATE control.route_sessions
-SET certificate_installed_at = COALESCE(certificate_installed_at, $1),
-    certificate_issuance_id = COALESCE(certificate_issuance_id, $2),
-    certificate_not_after = COALESCE(certificate_not_after, $3)
+SET certificate_installed_at = CASE
+        WHEN certificate_issuance_id = $1 THEN certificate_installed_at
+        ELSE $2
+    END,
+    certificate_issuance_id = $1,
+    certificate_not_after = $3
 WHERE id = $4
   AND route_id = $5
   AND route_version = $6
   AND closed_at IS NULL
-  AND (
-      certificate_installed_at IS NULL
-      OR (
-          certificate_issuance_id = $2
-          AND certificate_not_after = $3
-      )
-  )
 RETURNING id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason
 `
 
 type MarkRouteSessionCertificateInstalledParams struct {
-	InstalledAt    pgtype.Timestamptz
 	IssuanceID     pgtype.Text
+	InstalledAt    pgtype.Timestamptz
 	NotAfter       pgtype.Timestamptz
 	RouteSessionID string
 	RouteID        string
@@ -467,8 +463,8 @@ type MarkRouteSessionCertificateInstalledParams struct {
 
 func (q *Queries) MarkRouteSessionCertificateInstalled(ctx context.Context, arg MarkRouteSessionCertificateInstalledParams) (ControlRouteSession, error) {
 	row := q.db.QueryRow(ctx, markRouteSessionCertificateInstalled,
-		arg.InstalledAt,
 		arg.IssuanceID,
+		arg.InstalledAt,
 		arg.NotAfter,
 		arg.RouteSessionID,
 		arg.RouteID,

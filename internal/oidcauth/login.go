@@ -1,4 +1,4 @@
-// Package oidcauth implements OIDC authentication flows for the CLI.
+// Package oidcauth implements OIDC authentication and CLI login flows.
 package oidcauth
 
 import (
@@ -39,16 +39,8 @@ type Prompt struct {
 }
 
 type Result struct {
-	IDToken          string
-	IDTokenExpiresAt time.Time
-	AccessToken      string
-	AccessExpiresAt  time.Time
-	RefreshToken     string
-	RefreshExpiresAt time.Time
-	Issuer           string
-	ClientID         string
-	Subject          string
-	SessionID        string
+	IDToken  string
+	Identity Identity
 }
 
 func Login(ctx context.Context, config Config, output io.Writer) (Result, error) {
@@ -86,7 +78,7 @@ func Login(ctx context.Context, config Config, output io.Writer) (Result, error)
 	if err != nil {
 		return Result{}, err
 	}
-	return verifiedResult(ctx, provider, config.ClientID, nonce, token)
+	return verifiedResult(ctx, provider, config.ClientID, nonce, config.LoginFlow, token)
 }
 
 func deviceLogin(
@@ -221,75 +213,22 @@ func writePrompt(output io.Writer, render func(Prompt) error, prompt Prompt) err
 func verifiedResult(
 	ctx context.Context,
 	provider *oidc.Provider,
-	clientID, nonce string,
+	clientID, nonce, loginFlow string,
 	token *oauth2.Token,
 ) (Result, error) {
 	rawIDToken, ok := token.Extra("id_token").(string)
 	if !ok || rawIDToken == "" || len(rawIDToken) > 16384 {
 		return Result{}, errors.New("oidcauth: provider did not return an ID token")
 	}
-	verified, err := provider.Verifier(&oidc.Config{
-		ClientID: clientID, SupportedSigningAlgs: []string{"RS256"},
-	}).Verify(ctx, rawIDToken)
+	identity, err := verifyToken(ctx, provider, clientID, rawIDToken)
 	if err != nil {
-		return Result{}, errors.New("oidcauth: invalid ID token")
+		return Result{}, err
 	}
-	if strings.TrimSpace(verified.Subject) == "" || len(verified.Subject) > 256 {
-		return Result{}, errors.New("oidcauth: invalid ID token subject")
-	}
-	var claims struct {
-		Nonce           string `json:"nonce"`
-		AuthorizedParty string `json:"azp"`
-	}
-	if err := verified.Claims(&claims); err != nil || claims.Nonce != nonce {
+	if identity.Nonce != nonce &&
+		(loginFlow == LoginFlowAuthorizationCodePKCE || identity.Nonce != "") {
 		return Result{}, errors.New("oidcauth: invalid ID token nonce")
 	}
-	if claims.AuthorizedParty != "" && claims.AuthorizedParty != clientID ||
-		len(verified.Audience) > 1 && claims.AuthorizedParty != clientID {
-		return Result{}, errors.New("oidcauth: invalid ID token authorized party")
-	}
-	if !validOAuthToken(token.AccessToken) || !validOAuthToken(token.RefreshToken) || !strings.EqualFold(token.Type(), "Bearer") ||
-		token.Expiry.IsZero() || !token.Expiry.After(time.Now()) {
-		return Result{}, errors.New("oidcauth: provider returned invalid OAuth tokens")
-	}
-	sessionID, _ := token.Extra("session_id").(string)
-	if sessionID != "" && !validSessionID(sessionID) {
-		return Result{}, errors.New("oidcauth: provider returned an invalid session ID")
-	}
-	return Result{
-		IDToken: rawIDToken, IDTokenExpiresAt: verified.Expiry.UTC(),
-		AccessToken: token.AccessToken, AccessExpiresAt: token.Expiry.UTC(),
-		RefreshToken: token.RefreshToken, RefreshExpiresAt: refreshTokenExpiry(token),
-		Issuer: verified.Issuer, ClientID: clientID, Subject: verified.Subject, SessionID: sessionID,
-	}, nil
-}
-
-func refreshTokenExpiry(token *oauth2.Token) time.Time {
-	value := token.Extra("refresh_expires_in")
-	if value == nil {
-		value = token.Extra("refresh_token_expires_in")
-	}
-	var seconds int64
-	switch value := value.(type) {
-	case float64:
-		const maxDurationSeconds = int64((1<<63 - 1) / int64(time.Second))
-		if value <= 0 || value > float64(maxDurationSeconds) {
-			return time.Time{}
-		}
-		seconds = int64(value)
-		if float64(seconds) != value {
-			return time.Time{}
-		}
-	case int64:
-		seconds = value
-	default:
-		return time.Time{}
-	}
-	const maxDurationSeconds = int64((1<<63 - 1) / int64(time.Second))
-	if seconds <= 0 || seconds > maxDurationSeconds {
-		return time.Time{}
-	}
-	return time.Now().Add(time.Duration(seconds) * time.Second).UTC()
+	return Result{IDToken: rawIDToken, Identity: identity}, nil
 }
 
 func randomValue() (string, error) {
@@ -319,28 +258,4 @@ func validScopes(scopes []string) bool {
 		seen[scope] = struct{}{}
 	}
 	return hasOpenID
-}
-
-func validOAuthToken(token string) bool {
-	if len(token) == 0 || len(token) > 16<<10 || strings.TrimSpace(token) != token {
-		return false
-	}
-	for _, character := range token {
-		if character < 0x21 || character == 0x7f {
-			return false
-		}
-	}
-	return true
-}
-
-func validSessionID(value string) bool {
-	if len(value) == 0 || len(value) > 256 || strings.TrimSpace(value) != value {
-		return false
-	}
-	for _, character := range value {
-		if character < 0x21 || character == 0x7f {
-			return false
-		}
-	}
-	return true
 }

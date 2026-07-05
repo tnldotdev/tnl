@@ -83,7 +83,14 @@ FROM control.relay_services AS services
 WHERE services.enabled
   AND (
       services.transport_certificate_expires_at IS NULL
-      OR services.transport_certificate_expires_at <= $1
+      OR EXISTS (
+          SELECT 1
+          FROM control.relay_certificate_orders AS completed
+          WHERE completed.relay_service_id = services.relay_service_id
+            AND completed.state = 'complete'
+            AND completed.certificate_pem = convert_to(services.transport_certificate_pem, 'UTF8')
+            AND completed.renew_at <= $1
+      )
   )
   AND NOT EXISTS (
       SELECT 1
@@ -104,12 +111,12 @@ LIMIT 1
 `
 
 type ClaimRelayServiceForCertificateOrderParams struct {
-	RenewBefore      pgtype.Timestamptz
+	Now              pgtype.Timestamptz
 	RetryFailedAfter pgtype.Timestamptz
 }
 
 func (q *Queries) ClaimRelayServiceForCertificateOrder(ctx context.Context, arg ClaimRelayServiceForCertificateOrderParams) (ControlRelayService, error) {
-	row := q.db.QueryRow(ctx, claimRelayServiceForCertificateOrder, arg.RenewBefore, arg.RetryFailedAfter)
+	row := q.db.QueryRow(ctx, claimRelayServiceForCertificateOrder, arg.Now, arg.RetryFailedAfter)
 	var i ControlRelayService
 	err := row.Scan(
 		&i.RelayServiceID,

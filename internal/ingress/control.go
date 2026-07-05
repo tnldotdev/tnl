@@ -100,7 +100,7 @@ func (c *Controller) Run(ctx context.Context) error {
 			c.clearLease()
 			return err
 		}
-		var problem *ControlProblem
+		var problem *ControlProblemError
 		if errors.As(err, &problem) && problem.Status == http.StatusConflict {
 			c.clearLease()
 		}
@@ -419,14 +419,14 @@ func (c *Controller) markRoutingTableCurrent(current bool) {
 	c.mu.Unlock()
 }
 
-// ControlProblem is a non-success response from the private ingress API.
-type ControlProblem struct {
+// ControlProblemError is a non-success response from the private ingress API.
+type ControlProblemError struct {
 	Operation string
 	Status    int
 	Problem   *ingressv1.Problem
 }
 
-func (e *ControlProblem) Error() string {
+func (e *ControlProblemError) Error() string {
 	if e.Problem != nil {
 		return fmt.Sprintf("ingress: %s: control returned %d (%s): %s", e.Operation, e.Status, e.Problem.Type, e.Problem.Detail)
 	}
@@ -448,7 +448,7 @@ func retryableIngressControlError(operation string, err error) error {
 }
 
 func ingressResponseError(operation string, status int, problem *ingressv1.Problem) error {
-	return &ControlProblem{Operation: operation, Status: status, Problem: problem}
+	return &ControlProblemError{Operation: operation, Status: status, Problem: problem}
 }
 
 func (c *Controller) responseError(operation string, status int, problem *ingressv1.Problem) error {
@@ -464,7 +464,7 @@ func isRetryableIngressControlError(err error) bool {
 	if errors.As(err, &temporary) {
 		return true
 	}
-	var problem *ControlProblem
+	var problem *ControlProblemError
 	return errors.As(err, &problem) &&
 		(problem.Status == http.StatusConflict || problem.Status == http.StatusTooManyRequests || problem.Status >= 500)
 }

@@ -1295,6 +1295,24 @@ func (q *Queries) LockInvitationByTokenDigest(ctx context.Context, arg LockInvit
 	return i, err
 }
 
+const lockLocalTeamForMutation = `-- name: LockLocalTeamForMutation :one
+SELECT id
+FROM control.teams
+WHERE id = $1
+  AND deleted_at IS NULL
+FOR NO KEY UPDATE
+`
+
+// Local authority mutations lock the team before identities, memberships,
+// domains, DNS authorities, and routes. Authorization is rechecked under this
+// transaction-held guard; hosted teams never require fabricated local rows.
+func (q *Queries) LockLocalTeamForMutation(ctx context.Context, teamID string) (string, error) {
+	row := q.db.QueryRow(ctx, lockLocalTeamForMutation, teamID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
 const lockManagedDomainForClaim = `-- name: LockManagedDomainForClaim :one
 SELECT id, kind, team_id, canonical_domain, dns_authority_reference, state, authority_revision, verification_token_digest, created_by_identity_id, claim_idempotency_key, claim_request_digest, make_default_when_ready, created_at, verified_at, reusable_after, released_at, updated_at
 FROM control.domains

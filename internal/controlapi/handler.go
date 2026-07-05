@@ -1,4 +1,4 @@
-// Package controlapi serves the public control and authority APIs.
+// Package controlapi serves the public control API and control-side route authorization.
 package controlapi
 
 import (
@@ -12,7 +12,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -23,11 +22,11 @@ const (
 
 // Config contains the public API settings derived from tnld configuration.
 type Config struct {
+	Mode                    string
+	StartedAt               time.Time
 	ManagedDeploymentDomain string
 	AuthorityEndpoint       string
 	LoginToken              string
-	AccessTokenLifetime     time.Duration
-	RefreshTokenLifetime    time.Duration
 	OIDCIssuer              string
 	OIDCClientID            string
 	OIDCLoginFlow           string
@@ -41,79 +40,73 @@ type Config struct {
 	DNSAutomation           bool
 }
 
-// Store is the durable control state consumed by the public APIs.
+// Store is the durable control state consumed by the control API.
 type Store interface {
-	CreateBuiltinControlSession(context.Context, string, int64, time.Duration, time.Duration, time.Time) (controlstate.ControlSession, error)
-	RefreshControlSession(context.Context, credentials.RefreshToken, int64, time.Duration, time.Time) (controlstate.ControlSession, error)
-	RevokeControlSession(context.Context, controlstate.ControlPrincipal, time.Time) error
-	AuthenticateAccessToken(context.Context, credentials.AccessToken, int64, time.Time) (controlstate.ControlPrincipal, error)
 	EnsureExternalAuthorityPrincipal(context.Context, string, time.Time) ([32]byte, error)
-	IdentityContext(context.Context, string) (controlstate.IdentityContext, error)
-	ListTeams(context.Context, string) ([]controlstate.Team, error)
-	CreateTeam(context.Context, controlstate.CreateTeamRequest, time.Time) (controlstate.Team, error)
-	GetTeam(context.Context, string, string) (controlstate.Team, error)
-	ListTeamMemberships(context.Context, string, string) ([]controlstate.Membership, error)
-	SetMembershipRole(context.Context, string, string, string, string, time.Time) (controlstate.Membership, error)
-	RemoveMembership(context.Context, string, string, string, time.Time) error
-	ListTeamInvitations(context.Context, string, string, time.Time) ([]controlstate.Invitation, error)
-	CreateTeamInvitation(context.Context, controlstate.CreateInvitationRequest, time.Time) (controlstate.InvitationSecret, error)
-	RevokeTeamInvitation(context.Context, string, string, string, time.Time) error
-	AcceptInvitation(context.Context, string, credentials.InvitationToken, time.Time) (controlstate.Membership, error)
-	ListTeamDomains(context.Context, string, string) ([]controlstate.Domain, error)
-	ClaimTeamDomain(context.Context, controlstate.ClaimDomainRequest, time.Time) (controlstate.Domain, error)
-	SetTeamDefaultDomain(context.Context, string, string, string, time.Time) (controlstate.Team, error)
-	ReleaseTeamDomain(context.Context, string, string, string, time.Time) error
-	ListRoutes(context.Context, string, string, string) (controlstate.RoutePage, error)
 	ListAuthorizedRoutes(context.Context, string, string) (controlstate.RoutePage, error)
 	CreateRoute(context.Context, controlstate.CreateRouteRequest, time.Time) (controlstate.Route, error)
 	UpdateAuthorizedRoute(context.Context, controlstate.AuthorizedRouteUpdateRequest, time.Time) (controlstate.Route, error)
-	GetRoute(context.Context, string, string) (controlstate.Route, error)
 	GetRouteForAuthorization(context.Context, string) (controlstate.Route, error)
 	GetRouteForSessionAuthorization(context.Context, string, string) (controlstate.Route, error)
-	DeleteRoute(context.Context, string, string, time.Time) error
 	DeleteAuthorizedRoute(context.Context, controlstate.AuthorizedRouteDeleteRequest, time.Time) error
 	CreateRouteSession(context.Context, controlstate.RouteSessionRequest, time.Time, time.Duration, time.Duration) (controlstate.RouteSessionSetup, error)
-	RouteSessionAuthentication(context.Context, string, uint64, credentials.SessionToken) (controlstate.RouteSessionAuthentication, error)
+	RouteSessionAuthentication(context.Context, string, uint64, credentials.RouteSessionToken) (controlstate.RouteSessionAuthentication, error)
 	HeartbeatRouteSession(context.Context, controlstate.RouteSessionAuthentication, time.Time, time.Duration, time.Duration) (controlstate.RouteSessionSetup, error)
 	MarkRouteCertificateInstalled(context.Context, controlstate.RouteSessionAuthentication, string, time.Time, time.Time) (controlstate.RouteSessionLifecycle, error)
 	CreateCertificateIssuance(context.Context, controlstate.CreateCertificateIssuanceRequest, time.Time) (controlstate.CertificateIssuance, error)
-	GetCertificateIssuance(context.Context, string, credentials.SessionToken, time.Time) (controlstate.CertificateIssuance, error)
-	MarkCertificateChallengeReady(context.Context, string, credentials.SessionToken, time.Time) (controlstate.CertificateIssuance, error)
-	MarkCertificateChallengeRemoved(context.Context, string, credentials.SessionToken, time.Time) (controlstate.CertificateIssuance, error)
+	GetCertificateIssuance(context.Context, string, credentials.RouteSessionToken, time.Time) (controlstate.CertificateIssuance, error)
+	MarkCertificateChallengeReady(context.Context, string, credentials.RouteSessionToken, time.Time) (controlstate.CertificateIssuance, error)
+	MarkCertificateChallengeRemoved(context.Context, string, credentials.RouteSessionToken, time.Time) (controlstate.CertificateIssuance, error)
 	MarkRouteSessionReady(context.Context, controlstate.RouteSessionAuthentication, time.Time) (controlstate.RouteSessionLifecycle, error)
-	CloseRouteSession(context.Context, string, credentials.SessionToken, time.Time) error
+	CloseRouteSession(context.Context, string, credentials.RouteSessionToken, time.Time) error
 	ApplyHostedPolicyRevocation(context.Context, string, string, uint64, bool, []string, []string, time.Time) (bool, int, error)
 	CreateDNSAuthority(context.Context, controlstate.CreateDNSAuthorityRequest, time.Time) (controlstate.DNSAuthority, error)
 	GetDNSAuthority(context.Context, string) (controlstate.DNSAuthority, error)
 	ReleaseDNSAuthority(context.Context, string, string, time.Time) (controlstate.DNSAuthority, error)
+	AdminRuntimeCounts(context.Context, time.Time) (controlstate.AdminRuntimeCounts, error)
+	ListAdminRelayLeases(context.Context, string, time.Time) (controlstate.AdminRelayPage, error)
+	BeginAdminRelayDrain(context.Context, controlstate.RelayLeaseIdentity, string, string, time.Time, time.Time) (controlstate.RelayLease, error)
+	ListMaintenanceControls(context.Context) ([]controlstate.MaintenanceControl, error)
+	SetMaintenanceControl(context.Context, controlstate.MaintenanceControlName, bool, string, string, time.Time) (controlstate.MaintenanceControl, error)
+}
+
+// BuiltinAuthorizationStore provides the identity state needed for local route authorization.
+type BuiltinAuthorizationStore interface {
+	AuthenticateAccessToken(context.Context, credentials.AccessToken, int64, time.Time) (controlstate.ControlPrincipal, error)
+	IdentityContext(context.Context, string) (controlstate.IdentityContext, error)
+	ListTeamDomains(context.Context, string, string) ([]controlstate.Domain, error)
 }
 
 type handler struct {
-	unavailableControlServer
-	unavailableAuthorityServer
-
-	config              Config
-	store               Store
-	readiness           func(context.Context) error
-	loginVerifier       credentials.LoginVerifier
-	loginSourceRevision int64
-	authorizer          routeAuthorizer
-	hostedSecrets       serviceapi.BearerSecrets
+	config        Config
+	store         Store
+	readiness     func(context.Context) error
+	authorizer    routeAuthorizer
+	hostedSecrets serviceapi.BearerSecrets
 }
 
 var _ controlv1.ServerInterface = (*handler)(nil)
-var _ authorityv1.ServerInterface = (*handler)(nil)
 
-// NewHandler constructs the public APIs. Known but unavailable operations and
-// unknown paths retain the control-unavailable response used during rollout.
-func NewHandler(cfg Config, store Store, readiness func(context.Context) error) http.Handler {
+// NewHandler constructs the control API.
+func NewHandler(
+	cfg Config,
+	store Store,
+	builtinAuthorizationStore BuiltinAuthorizationStore,
+	readiness func(context.Context) error,
+) *http.ServeMux {
 	h := &handler{config: cfg, store: store, readiness: readiness}
-	if cfg.LoginToken != "" {
-		h.loginVerifier, _ = credentials.ParseLoginToken(credentials.LoginToken(cfg.LoginToken))
-		h.loginSourceRevision = credentialSourceRevision(cfg.LoginToken)
+	if h.config.StartedAt.IsZero() {
+		h.config.StartedAt = time.Now().UTC()
 	}
-	if store != nil {
-		h.authorizer = localAuthorizer{store: store, sourceRevision: h.loginSourceRevision}
+	loginSourceRevision := int64(0)
+	if cfg.LoginToken != "" {
+		verifier, _ := credentials.ParseLoginToken(credentials.LoginToken(cfg.LoginToken))
+		loginSourceRevision = verifier.SourceRevision()
+	}
+	if builtinAuthorizationStore != nil {
+		h.authorizer = localAuthorizer{
+			store: builtinAuthorizationStore, sourceRevision: loginSourceRevision, dnsAutomation: cfg.DNSAutomation,
+		}
 	}
 	if store != nil && cfg.HostedSecret != "" {
 		client, err := authorityclient.New(cfg.AuthorityEndpoint, cfg.HTTPClient, "")
@@ -131,10 +124,7 @@ func NewHandler(cfg Config, store Store, readiness func(context.Context) error) 
 	controlv1.HandlerWithOptions(h, controlv1.StdHTTPServerOptions{
 		BaseRouter: mux, ErrorHandlerFunc: parameterError,
 	})
-	authorityv1.HandlerWithOptions(h, authorityv1.StdHTTPServerOptions{
-		BaseRouter: mux, ErrorHandlerFunc: parameterError,
-	})
-	mux.HandleFunc("/", unavailable)
+	mux.HandleFunc("/", notFound)
 	return mux
 }
 

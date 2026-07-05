@@ -213,13 +213,17 @@ SELECT
         JOIN control.routes AS routes ON routes.id = orders.route_id
         WHERE routes.domain_id = $1
           AND (
-              orders.state NOT IN ('failed', 'canceled')
+              orders.state NOT IN ('waiting_for_install', 'installed', 'failed', 'canceled')
+              OR orders.not_after > $2
               OR EXISTS (
                   SELECT 1
                   FROM control.acme_authorizations AS authorizations
                   WHERE authorizations.order_id = orders.id
                     AND authorizations.challenge_type = 'dns-01'
-                    AND authorizations.state IN ('presenting', 'presented', 'validating', 'valid', 'cleaning')
+                    AND (
+                        authorizations.state IN ('presenting', 'presented', 'validating', 'valid', 'cleaning')
+                        OR authorizations.presented_at IS NOT NULL AND authorizations.cleanup_completed_at IS NULL
+                    )
               )
           )
     )
@@ -351,6 +355,33 @@ func (q *Queries) LockDNSAuthority(ctx context.Context, authorityReference strin
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const lockDNSAuthorityLocalDomain = `-- name: LockDNSAuthorityLocalDomain :exec
+SELECT id
+FROM control.domains
+WHERE dns_authority_reference = $1
+ORDER BY id
+FOR UPDATE
+`
+
+func (q *Queries) LockDNSAuthorityLocalDomain(ctx context.Context, authorityReference pgtype.Text) error {
+	_, err := q.db.Exec(ctx, lockDNSAuthorityLocalDomain, authorityReference)
+	return err
+}
+
+const lockDNSAuthorityLocalTeam = `-- name: LockDNSAuthorityLocalTeam :exec
+SELECT teams.id
+FROM control.teams AS teams
+JOIN control.domains AS domains ON domains.team_id = teams.id
+WHERE domains.dns_authority_reference = $1
+ORDER BY teams.id
+FOR NO KEY UPDATE OF teams
+`
+
+func (q *Queries) LockDNSAuthorityLocalTeam(ctx context.Context, authorityReference pgtype.Text) error {
+	_, err := q.db.Exec(ctx, lockDNSAuthorityLocalTeam, authorityReference)
+	return err
 }
 
 const saveDNSAuthorityWork = `-- name: SaveDNSAuthorityWork :one

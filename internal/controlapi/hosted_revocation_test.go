@@ -19,7 +19,7 @@ func TestRevokeHostedPolicyAuthenticatesAndAppliesRevision(t *testing.T) {
 	handler := NewHandler(Config{
 		AuthorityEndpoint: "https://authority.example.test", HostedSecret: testHostedSecret,
 		HostedSecretPrevious: testHostedSecretPrevious, HTTPClient: http.DefaultClient,
-	}, store, nil)
+	}, store, nil, nil)
 	for _, secret := range []string{testHostedSecret, testHostedSecretPrevious} {
 		request := httptest.NewRequest(http.MethodPost, "/v1/service/revoke", bytes.NewBufferString(`{
 			"team_id":"team_1",
@@ -48,7 +48,7 @@ func TestRevokeHostedPolicyRejectsWrongSecret(t *testing.T) {
 	handler := NewHandler(Config{
 		AuthorityEndpoint: "https://authority.example.test", HostedSecret: testHostedSecret,
 		HTTPClient: http.DefaultClient,
-	}, store, nil)
+	}, store, nil, nil)
 	request := httptest.NewRequest(http.MethodPost, "/v1/service/revoke", bytes.NewBufferString(`{
 		"team_id":"team_1","policy_revision":7,"all_sessions":true,"membership_ids":[],"domain_ids":[]
 	}`))

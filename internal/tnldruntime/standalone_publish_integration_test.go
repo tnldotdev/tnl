@@ -8,15 +8,14 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/tnldconfig"
 )
 
 func TestIntegrationStandalonePublishAndVisit(t *testing.T) {
@@ -261,11 +260,7 @@ type standalonePublishFixture struct {
 
 func newStandalonePublishFixture(t *testing.T, hostnameLabel string) *standalonePublishFixture {
 	t.Helper()
-	directURL := os.Getenv("TNL_TEST_POSTGRES_URL")
-	if directURL == "" {
-		t.Skip("TNL_TEST_POSTGRES_URL is not set")
-	}
-	databaseURL, inspect := standaloneTestDatabase(t, directURL)
+	databaseURL, inspect := standaloneTestDatabase(t)
 	publicAddress := unusedTCPAddress(t)
 	relayUDPAddress := unusedUDPAddress(t)
 	dnsAddress := startIntegrationDNS(t)
@@ -293,11 +288,11 @@ func newStandalonePublishFixture(t *testing.T, hostnameLabel string) *standalone
 func standalonePublishConfig(
 	t *testing.T,
 	databaseURL, publicAddress, relayUDPAddress, directoryURL string,
-) config.TNLD {
+) tnldconfig.Config {
 	t.Helper()
 	const serverDomain = "integration.test"
-	return config.TNLD{
-		Mode: config.TNLDModeStandalone, DatabaseURL: databaseURL, MetricsListen: unusedTCPAddress(t),
+	return tnldconfig.Config{
+		Mode: tnldconfig.RoleStandalone, DatabaseURL: databaseURL, MetricsListen: unusedTCPAddress(t),
 		ControlListen: unusedTCPAddress(t), PrivateControlListen: unusedTCPAddress(t), IngressListen: publicAddress,
 		RelayTCPListen: unusedTCPAddress(t), RelayUDPListen: relayUDPAddress, InternalRelayListen: unusedTCPAddress(t),
 		ServerDomain: serverDomain, ManagedDeploymentDomain: "routes." + serverDomain,

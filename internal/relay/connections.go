@@ -143,10 +143,10 @@ func (c *PublisherConnection) Close() error {
 		streams := c.snapshotLocked()
 		c.notifyLocked()
 		c.mu.Unlock()
-		c.closeErr = c.session.Close()
 		for _, stream := range streams {
 			_ = stream.Close()
 		}
+		c.closeErr = c.session.Close()
 		c.mu.Lock()
 		for c.opening != 0 || len(c.streams) != 0 {
 			changed := c.changed
@@ -351,7 +351,9 @@ func (r *Registry) Drain(ctx context.Context) error {
 	close(errorsFound)
 	var result error
 	for err := range errorsFound {
-		result = errors.Join(result, err)
+		if !errors.Is(err, net.ErrClosed) {
+			result = errors.Join(result, err)
+		}
 	}
 	return result
 }

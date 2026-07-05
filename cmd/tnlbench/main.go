@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +23,7 @@ import (
 
 	"github.com/alecthomas/kong"
 	"github.com/tnldotdev/tnl/internal/authorityclient"
+	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/muxsession"
@@ -43,8 +43,6 @@ type cli struct {
 	ServerURL           string        `name:"server" env:"TNL_BENCH_SERVER" required:"" help:"Server HTTPS origin."`
 	LoginToken          string        `name:"login-token" env:"TNL_BENCH_LOGIN_TOKEN" required:"" help:"Server login token."`
 	ControlCAFile       string        `name:"control-ca-file" env:"TNL_BENCH_CONTROL_CA_FILE" type:"path" help:"Optional PEM CA for the server endpoint; system roots are used when omitted."`
-	CertificateFile     string        `name:"certificate-file" env:"TNL_BENCH_CERTIFICATE_FILE" type:"path" help:"Optional PEM certificate chain shared by benchmark routes."`
-	CertificateKeyFile  string        `name:"certificate-key-file" env:"TNL_BENCH_CERTIFICATE_KEY_FILE" type:"path" help:"Private key for --certificate-file."`
 	PublicAddress       string        `name:"public-address" env:"TNL_BENCH_PUBLIC_ADDRESS" required:"" help:"Public ingress host:port to dial."`
 	HostnameSuffix      string        `name:"hostname-suffix" env:"TNL_BENCH_HOSTNAME_SUFFIX" required:"" help:"Suffix below which benchmark routes are created."`
 	RelayMetricsURLs    []string      `name:"relay-metrics-url" env:"TNL_BENCH_RELAY_METRICS_URLS" help:"Private relay metrics URL; repeat for each relay process."`
@@ -70,9 +68,6 @@ type benchmarkCLI struct {
 func (c cli) Validate() error {
 	if c.Repetition <= 0 {
 		return errors.New("repetition must be positive")
-	}
-	if (c.CertificateFile == "") != (c.CertificateKeyFile == "") {
-		return errors.New("certificate file and key file must be provided together")
 	}
 	if c.Routes <= 0 || c.Routes > 5000 {
 		return errors.New("routes must be between 1 and 5000")
@@ -311,9 +306,17 @@ func run(ctx context.Context, flags cli) (measurements, error) {
 	if err != nil {
 		return measurements{}, err
 	}
-	applicationCertificates, applicationRoots, err := benchmarkCertificates(
-		hostnames, flags.CertificateFile, flags.CertificateKeyFile,
-	)
+	stateRoot, err := os.MkdirTemp("", "tnlbench-state-")
+	if err != nil {
+		return measurements{}, err
+	}
+	defer os.RemoveAll(stateRoot)
+	stateDatabase, err := clientstate.Open(ctx, stateRoot)
+	if err != nil {
+		return measurements{}, err
+	}
+	defer stateDatabase.Close()
+	state, err := stateDatabase.Server(ctx, flags.ServerURL)
 	if err != nil {
 		return measurements{}, err
 	}
@@ -330,7 +333,7 @@ func run(ctx context.Context, flags cli) (measurements, error) {
 	activationStarted := time.Now().UTC()
 	processes, activation, err := activateRoutes(
 		ctx, flags, routes, routeContext, &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: controlRoots},
-		origin.URL, hostnames, applicationCertificates,
+		state, origin.URL, hostnames,
 	)
 	if err != nil {
 		writeFailureEvidence(flags)
@@ -363,7 +366,7 @@ func run(ctx context.Context, flags cli) (measurements, error) {
 		return measurements{}, err
 	}
 	requestStarted := time.Now().UTC()
-	firstByte, requests, elapsed, err := loadRoutes(ctx, flags, processes, applicationRoots, payload)
+	firstByte, requests, elapsed, err := loadRoutes(ctx, flags, processes, payload)
 	if err != nil {
 		return measurements{}, err
 	}
@@ -453,9 +456,9 @@ func activateRoutes(
 	routes *routeclient.Client,
 	routeContext benchmarkRouteContext,
 	transportTLS *tls.Config,
+	state *clientstate.Store,
 	target string,
 	hostnames []string,
-	certificates []tls.Certificate,
 ) ([]*routeProcess, []time.Duration, error) {
 	processes := make([]*routeProcess, flags.Routes)
 	activated := make(chan struct {
@@ -493,11 +496,7 @@ func activateRoutes(
 			err := publisher.Run(routeCtx, publisher.Config{
 				Control: routes, TeamID: routeContext.teamID, MembershipID: routeContext.membershipID,
 				DomainID: routeContext.domainID, Hostname: process.hostname, RouteScope: routeContext.routeScope,
-				PolicyRevision: routeContext.policyRevision, Target: target, Certificate: certificates[index],
-				CertificatePlan: controlv1.CertificatePlan{
-					CacheKey: process.hostname, Scope: process.hostname, Identifiers: []string{process.hostname},
-					ChallengeMethod: controlv1.TlsAlpn01,
-				},
+				PolicyRevision: routeContext.policyRevision, Target: target, State: state,
 				QUICConnector: muxsession.QUICConnector{TLSConfig: transportTLS},
 				TCPConnector:  muxsession.TLSYamuxConnector{TLSConfig: transportTLS},
 				Observe: func(event publisher.Event) error {
@@ -541,7 +540,6 @@ func loadRoutes(
 	ctx context.Context,
 	flags cli,
 	processes []*routeProcess,
-	roots *x509.CertPool,
 	wantPayload []byte,
 ) ([]time.Duration, []time.Duration, time.Duration, error) {
 	// Force a new ingress stream for every sample.
@@ -549,7 +547,7 @@ func loadRoutes(
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return new(net.Dialer).DialContext(ctx, "tcp", flags.PublicAddress)
 		},
-		TLSClientConfig:   &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"}},
+		TLSClientConfig:   &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"}},
 		DisableKeepAlives: true, ForceAttemptHTTP2: false, DisableCompression: true,
 	}
 	defer transport.CloseIdleConnections()

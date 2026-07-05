@@ -8,6 +8,20 @@ import (
 	"database/sql"
 )
 
+type CertificateMaterial struct {
+	ServerOrigin   string
+	TeamID         string
+	CacheKey       string
+	Plan           string
+	Phase          string
+	KeyDer         []byte
+	CsrDer         []byte
+	CertificatePem []byte
+	RenewAt        sql.NullInt64
+	IssuanceID     string
+	UpdatedAt      int64
+}
+
 type ClientSetting struct {
 	ID                   int64
 	SelectedServerOrigin sql.NullString
@@ -45,21 +59,6 @@ type LocalTunnel struct {
 	LeaseExpiresAt int64
 	StoppedAt      sql.NullInt64
 	LastError      string
-}
-
-type RouteCertificate struct {
-	ServerOrigin   string
-	RouteID        string
-	Phase          string
-	Hostname       string
-	KeyDer         []byte
-	CsrDer         []byte
-	CertificatePem []byte
-	RenewAt        sql.NullInt64
-	IssuanceID     string
-	RouteVersion   int64
-	Installed      int64
-	UpdatedAt      int64
 }
 
 type ServerProfile struct {

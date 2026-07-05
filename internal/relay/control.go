@@ -97,6 +97,10 @@ func (c *Controller) Run(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return nil
 		}
+		if c.Lease().Draining {
+			<-ctx.Done()
+			return nil
+		}
 		if err == nil {
 			return nil
 		}
@@ -107,7 +111,7 @@ func (c *Controller) Run(ctx context.Context) error {
 			c.clearLease()
 			return err
 		}
-		var problem *ControlProblem
+		var problem *ControlProblemError
 		if errors.As(err, &problem) && problem.Status == http.StatusConflict {
 			c.clearLease()
 		}
@@ -123,6 +127,10 @@ func (c *Controller) Run(ctx context.Context) error {
 }
 
 func (c *Controller) runOnce(ctx context.Context) error {
+	if c.Lease().Draining {
+		<-ctx.Done()
+		return nil
+	}
 	response, err := c.client.RegisterRelayWithResponse(ctx, c.registration)
 	if err != nil {
 		return retryableControlError("register relay", err)
@@ -432,6 +440,11 @@ func (c *Controller) setLease(lease relayv1.RelayLease) error {
 
 func (c *Controller) clearLease() {
 	c.mu.Lock()
+	// Drain acknowledgement is terminal for this process run, even after expiry.
+	if c.lease.Draining {
+		c.mu.Unlock()
+		return
+	}
 	previous := cloneLease(c.lease)
 	c.lease = relayv1.RelayLease{}
 	c.mu.Unlock()
@@ -440,14 +453,14 @@ func (c *Controller) clearLease() {
 	}
 }
 
-// ControlProblem is a non-success response from the private relay API.
-type ControlProblem struct {
+// ControlProblemError is a non-success response from the private relay API.
+type ControlProblemError struct {
 	Operation string
 	Status    int
 	Problem   *relayv1.Problem
 }
 
-func (e *ControlProblem) Error() string {
+func (e *ControlProblemError) Error() string {
 	if e.Problem != nil {
 		return fmt.Sprintf("relay: %s: control returned %d (%s): %s", e.Operation, e.Status, e.Problem.Type, e.Problem.Detail)
 	}
@@ -475,16 +488,16 @@ type controlResponse interface {
 
 func relayResponseError(operation string, response controlResponse) error {
 	if response == nil || reflect.ValueOf(response).Kind() == reflect.Pointer && reflect.ValueOf(response).IsNil() {
-		return &ControlProblem{Operation: operation}
+		return &ControlProblemError{Operation: operation}
 	}
-	return &ControlProblem{
+	return &ControlProblemError{
 		Operation: operation, Status: response.StatusCode(), Problem: response.GetApplicationproblemJSONDefault(),
 	}
 }
 
 func (c *Controller) responseError(operation string, response controlResponse) error {
 	err := relayResponseError(operation, response)
-	var problem *ControlProblem
+	var problem *ControlProblemError
 	if errors.As(err, &problem) && problem.Problem != nil &&
 		problem.Problem.Type == "https://tnl.dev/problems/relay_lease_stale" {
 		c.clearLease()
@@ -497,7 +510,7 @@ func isRetryableControlError(err error) bool {
 	if errors.As(err, &temporary) {
 		return true
 	}
-	var problem *ControlProblem
+	var problem *ControlProblemError
 	return errors.As(err, &problem) &&
 		(problem.Status == http.StatusConflict || problem.Status == http.StatusTooManyRequests || problem.Status >= 500)
 }
@@ -508,7 +521,7 @@ func ControlErrorCode(err error) tunnelv1.ErrorCode {
 	if errors.As(err, &temporary) {
 		return tunnelv1.Unavailable
 	}
-	var problem *ControlProblem
+	var problem *ControlProblemError
 	if !errors.As(err, &problem) || problem.Problem == nil {
 		return tunnelv1.Internal
 	}

@@ -403,6 +403,11 @@ func lockTeamActor(
 	queries *controlstatedb.Queries,
 	identityID, teamID string,
 ) (controlstatedb.LockTeamActorContextRow, error) {
+	if _, err := queries.LockLocalTeamForMutation(ctx, teamID); errors.Is(err, pgx.ErrNoRows) {
+		return controlstatedb.LockTeamActorContextRow{}, ErrTeamNotFound
+	} else if err != nil {
+		return controlstatedb.LockTeamActorContextRow{}, fmt.Errorf("controlstate: lock team: %w", err)
+	}
 	row, err := queries.LockTeamActorContext(ctx, controlstatedb.LockTeamActorContextParams{
 		IdentityID: identityID, TeamID: teamID,
 	})

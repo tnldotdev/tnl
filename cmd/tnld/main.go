@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/tnldconfig"
 	"github.com/tnldotdev/tnl/internal/tnldruntime"
 )
 
@@ -53,7 +54,7 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 		_, err = fmt.Fprintln(stdout, token)
 		return err
 	case "serve":
-		cfg, err := resolveTNLDCommand(flags.Serve.ConfigPath, config.TNLD(flags.Serve.Values), parsed)
+		cfg, err := resolveServeCommand(flags.Serve.ConfigPath, tnldconfig.Config(flags.Serve.Values), parsed)
 		if err != nil {
 			return err
 		}
@@ -62,11 +63,11 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 		if flags.Config.Check.ConfigPath == "" {
 			return errors.New("--config or TNLD_CONFIG is required")
 		}
-		base, err := parseTNLDDefaultsAndEnvironment()
+		base, err := parseDefaultsAndEnvironment()
 		if err != nil {
 			return err
 		}
-		_, err = resolveTNLDFile(flags.Config.Check.ConfigPath, base, nil)
+		_, err = resolveConfigFile(flags.Config.Check.ConfigPath, base, nil)
 		return err
 	case "version":
 		_, err := fmt.Fprintln(stdout, buildinfo.Line("tnld"))
@@ -85,7 +86,7 @@ type tnldServeCommand struct {
 	Values     tnldValues `embed:""`
 }
 
-type tnldValues config.TNLD
+type tnldValues tnldconfig.Config
 
 type tnldConfigCheckCommand struct {
 	ConfigPath string `name:"config" env:"TNLD_CONFIG" type:"path" help:"Validate YAML or JSON server configuration."`
@@ -103,9 +104,9 @@ type tnldCLI struct {
 	Version    struct{}          `cmd:"" help:"Print release version information."`
 }
 
-func resolveTNLDCommand(path string, base config.TNLD, parsed *kong.Context) (config.TNLD, error) {
+func resolveServeCommand(path string, base tnldconfig.Config, parsed *kong.Context) (tnldconfig.Config, error) {
 	if path == "" {
-		return config.ResolveTNLD(base)
+		return tnldconfig.Resolve(base)
 	}
 	commandLine := make(map[string]bool)
 	for _, element := range parsed.Path {
@@ -113,19 +114,19 @@ func resolveTNLDCommand(path string, base config.TNLD, parsed *kong.Context) (co
 			commandLine[strings.ReplaceAll(element.Flag.Name, "-", "_")] = true
 		}
 	}
-	return resolveTNLDFile(path, base, commandLine)
+	return resolveConfigFile(path, base, commandLine)
 }
 
-func resolveTNLDFile(path string, base config.TNLD, commandLine map[string]bool) (config.TNLD, error) {
+func resolveConfigFile(path string, base tnldconfig.Config, commandLine map[string]bool) (tnldconfig.Config, error) {
 	if strings.EqualFold(filepath.Ext(path), ".ts") {
-		return config.TNLD{}, errors.New("tnld configuration must use .yml, .yaml, or .json")
+		return tnldconfig.Config{}, errors.New("tnld configuration must use .yml, .yaml, or .json")
 	}
 	document, err := config.LoadDocument(path)
 	if err != nil {
-		return config.TNLD{}, err
+		return tnldconfig.Config{}, err
 	}
 	if document.TNLD == nil {
-		return config.TNLD{}, errors.New("tnld configuration section is required")
+		return tnldconfig.Config{}, errors.New("tnld configuration section is required")
 	}
 	applied := document.TNLD.ApplyLowerPrecedence(&base, commandLine)
 	directory := filepath.Dir(path)
@@ -137,17 +138,17 @@ func resolveTNLDFile(path string, base config.TNLD, commandLine map[string]bool)
 			*target = filepath.Join(directory, *target)
 		}
 	}
-	return config.ResolveTNLD(base)
+	return tnldconfig.Resolve(base)
 }
 
-func parseTNLDDefaultsAndEnvironment() (config.TNLD, error) {
+func parseDefaultsAndEnvironment() (tnldconfig.Config, error) {
 	var value tnldValues
 	parser, err := kong.New(&value, kong.Name("tnld"))
 	if err != nil {
-		return config.TNLD{}, err
+		return tnldconfig.Config{}, err
 	}
 	if _, err := parser.Parse(nil); err != nil {
-		return config.TNLD{}, err
+		return tnldconfig.Config{}, err
 	}
-	return config.TNLD(value), nil
+	return tnldconfig.Config(value), nil
 }

@@ -123,7 +123,7 @@ func (d *Database) BeginTunnel(ctx context.Context, options BeginTunnelOptions) 
 		return nil, errors.New("clientstate: absolute tunnel project path is required")
 	}
 	options.Project = filepath.Clean(options.Project)
-	if options.Service != "" && !validServiceName(options.Service) {
+	if options.Service != "" && !naming.ValidServiceName(options.Service) {
 		return nil, errors.New("clientstate: invalid tunnel service")
 	}
 	if _, err := d.Server(ctx, server); err != nil {
@@ -396,20 +396,4 @@ func validFramework(value string) bool {
 		}
 	}
 	return strings.TrimSpace(value) == value
-}
-
-func validServiceName(value string) bool {
-	if len(value) == 0 || len(value) > 32 || value[0] < 'a' || value[0] > 'z' || value[len(value)-1] == '-' {
-		return false
-	}
-	for _, character := range value {
-		if character < 'a' || character > 'z' {
-			if character < '0' || character > '9' {
-				if character != '-' {
-					return false
-				}
-			}
-		}
-	}
-	return true
 }

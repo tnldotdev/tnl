@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"time"
 
@@ -116,19 +117,32 @@ func (a *PublisherAcceptor) Accept(ctx context.Context, transport muxsession.Ses
 		return err
 	}
 	registered = true
-	claimed, err = control.MarkPublisherConnectionReady(ctx, claimed)
+	readyClaim, err := control.MarkPublisherConnectionReady(ctx, claimed)
 	if err != nil {
 		return err
 	}
+	claimed = readyClaim
 	ready = true
 	a.readyDelta(1)
-	select {
-	case <-ctx.Done():
+	retErr = session.HandlePublisherDrain(ctx, connection.Drain)
+	drained := retErr == nil
+	if retErr == nil {
+		select {
+		case <-ctx.Done():
+			retErr = context.Cause(ctx)
+		case <-session.Done():
+			retErr = session.Err()
+		}
+	} else if ctx.Err() != nil {
 		retErr = context.Cause(ctx)
-	case <-session.Done():
-		retErr = session.Err()
+	} else {
+		select {
+		case <-session.Done():
+			retErr = session.Err()
+		default:
+		}
 	}
-	if errors.Is(retErr, muxsession.ErrClosed) || errors.Is(retErr, net.ErrClosed) {
+	if drained && (errors.Is(retErr, muxsession.ErrClosed) || errors.Is(retErr, net.ErrClosed) || errors.Is(retErr, io.EOF) || errors.Is(retErr, io.ErrClosedPipe)) {
 		retErr = nil
 	}
 	return retErr

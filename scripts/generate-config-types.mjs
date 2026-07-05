@@ -6,7 +6,7 @@ import { compile } from "json-schema-to-typescript";
 const root = path.resolve(import.meta.dirname, "..");
 const schema = JSON.parse(await readFile(path.join(root, "schema", "v1.json"), "utf8"));
 const keys = JSON.parse(
-  await readFile(path.join(root, "internal", "tnlts", "keys.gen.json"), "utf8"),
+  await readFile(path.join(root, "internal", "projectconfig", "keys.gen.json"), "utf8"),
 );
 const client = structuredClone(schema.$defs.TNL);
 client.$schema = schema.$schema;

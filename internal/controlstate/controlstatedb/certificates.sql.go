@@ -49,7 +49,8 @@ SET state = 'canceled',
     available_at = $1,
     updated_at = GREATEST(updated_at, $1)
 WHERE route_session_id = $2
-  AND state IN ('pending', 'authorizing', 'ready_to_finalize', 'finalizing', 'waiting_for_install', 'failed')
+  AND certificate_pem IS NULL
+  AND state IN ('pending', 'authorizing', 'ready_to_finalize', 'finalizing', 'failed')
 `
 
 type CancelRouteSessionACMEOrdersParams struct {
@@ -712,31 +713,45 @@ func (q *Queries) LockACMEOrder(ctx context.Context, issuanceID string) (Control
 const lockACMEOrderForInstall = `-- name: LockACMEOrderForInstall :one
 SELECT orders.id, orders.account_id, orders.route_session_id, orders.route_id, orders.route_version, orders.idempotency_key, orders.request_digest, orders.certificate_cache_key, orders.certificate_scope, orders.certificate_identifiers, orders.challenge_method, orders.csr_der, orders.csr_digest, orders.state, orders.order_revision, orders.order_url, orders.finalize_url, orders.certificate_url, orders.certificate_pem, orders.not_before, orders.not_after, orders.renew_at, orders.installed_at, orders.work_owner, orders.work_epoch, orders.work_expires_at, orders.attempts, orders.available_at, orders.last_error, orders.created_at, orders.updated_at
 FROM control.acme_orders AS orders
+JOIN control.route_sessions AS issued_session
+  ON issued_session.id = orders.route_session_id
+ AND issued_session.route_id = orders.route_id
+ AND issued_session.route_version = orders.route_version
 WHERE orders.id = $1
-  AND orders.route_id = $2
+  AND issued_session.team_id = $2
   AND orders.certificate_cache_key = $3
+  AND orders.certificate_scope = $4
+  AND orders.certificate_identifiers = $5
+  AND orders.challenge_method = $6
   AND orders.state IN ('waiting_for_install', 'installed')
   AND orders.certificate_pem IS NOT NULL
-  AND orders.not_after = $4
-  AND orders.not_after > $5
-FOR UPDATE
+  AND orders.not_before <= $7
+  AND orders.not_after = $8
+  AND orders.not_after > $7
+FOR UPDATE OF orders
 `
 
 type LockACMEOrderForInstallParams struct {
-	IssuanceID          string
-	RouteID             string
-	CertificateCacheKey string
-	NotAfter            pgtype.Timestamptz
-	InstalledAt         pgtype.Timestamptz
+	IssuanceID             string
+	TeamID                 string
+	CertificateCacheKey    string
+	CertificateScope       string
+	CertificateIdentifiers []string
+	ChallengeMethod        string
+	InstalledAt            pgtype.Timestamptz
+	NotAfter               pgtype.Timestamptz
 }
 
 func (q *Queries) LockACMEOrderForInstall(ctx context.Context, arg LockACMEOrderForInstallParams) (ControlAcmeOrder, error) {
 	row := q.db.QueryRow(ctx, lockACMEOrderForInstall,
 		arg.IssuanceID,
-		arg.RouteID,
+		arg.TeamID,
 		arg.CertificateCacheKey,
-		arg.NotAfter,
+		arg.CertificateScope,
+		arg.CertificateIdentifiers,
+		arg.ChallengeMethod,
 		arg.InstalledAt,
+		arg.NotAfter,
 	)
 	var i ControlAcmeOrder
 	err := row.Scan(
@@ -1029,10 +1044,10 @@ SET state = excluded.state,
     last_error = excluded.last_error,
     updated_at = excluded.updated_at
 WHERE control.acme_authorizations.authorization_url = excluded.authorization_url
-  AND control.acme_authorizations.challenge_type = excluded.challenge_type
-  AND control.acme_authorizations.challenge_url = excluded.challenge_url
-  AND control.acme_authorizations.challenge_token = excluded.challenge_token
-  AND control.acme_authorizations.challenge_digest = excluded.challenge_digest
+  AND control.acme_authorizations.challenge_type IS NOT DISTINCT FROM excluded.challenge_type
+  AND control.acme_authorizations.challenge_url IS NOT DISTINCT FROM excluded.challenge_url
+  AND control.acme_authorizations.challenge_token IS NOT DISTINCT FROM excluded.challenge_token
+  AND control.acme_authorizations.challenge_digest IS NOT DISTINCT FROM excluded.challenge_digest
   AND control.acme_authorizations.presentation_reference IS NOT DISTINCT FROM excluded.presentation_reference
   AND control.acme_authorizations.authorization_revision = $21
 RETURNING id, order_id, identifier, authorization_url, challenge_type, challenge_url, challenge_token, challenge_digest, presentation_reference, state, authorization_revision, work_owner, work_epoch, work_expires_at, attempts, available_at, presented_at, validated_at, cleanup_completed_at, expires_at, last_error, created_at, updated_at
@@ -1043,9 +1058,9 @@ type SaveACMEAuthorizationWorkParams struct {
 	OrderID                       string
 	Identifier                    string
 	AuthorizationUrl              string
-	ChallengeType                 string
-	ChallengeUrl                  string
-	ChallengeToken                string
+	ChallengeType                 pgtype.Text
+	ChallengeUrl                  pgtype.Text
+	ChallengeToken                pgtype.Text
 	ChallengeDigest               []byte
 	PresentationReference         pgtype.Text
 	State                         string

@@ -13,9 +13,9 @@ import (
 )
 
 var (
-	ErrRelayServiceCertificateInvalid      = errors.New("controlstate: relay service certificate is invalid")
-	ErrRelayServiceCertificateNotFound     = errors.New("controlstate: relay service certificate is not available")
-	ErrRelayServiceCertificateLeaseInvalid = errors.New("controlstate: relay service certificate lease is stale")
+	ErrRelayServiceCertificateInvalid    = errors.New("controlstate: relay service certificate is invalid")
+	ErrRelayServiceCertificateNotFound   = errors.New("controlstate: relay service certificate is not available")
+	ErrRelayServiceCertificateLeaseStale = errors.New("controlstate: relay service certificate lease is stale")
 )
 
 // RelayServiceCertificate is the WebPKI certificate material returned only to
@@ -90,7 +90,7 @@ func (d *Database) GetRelayServiceCertificate(
 		RelayRunID: identity.RelayRunID, RelayLeaseRevision: revision,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return RelayServiceCertificate{}, ErrRelayServiceCertificateLeaseInvalid
+		return RelayServiceCertificate{}, ErrRelayServiceCertificateLeaseStale
 	}
 	if err != nil {
 		return RelayServiceCertificate{}, fmt.Errorf("controlstate: get relay service certificate: %w", err)

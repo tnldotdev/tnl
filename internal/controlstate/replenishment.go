@@ -24,7 +24,7 @@ func replenishRouteSessionConnections(
 	ctx context.Context,
 	queries *controlstatedb.Queries,
 	session controlstatedb.ControlRouteSession,
-	sessionToken credentials.SessionToken,
+	routeSessionToken credentials.RouteSessionToken,
 	now time.Time,
 	credentialDuration time.Duration,
 ) (bool, error) {
@@ -51,7 +51,10 @@ func replenishRouteSessionConnections(
 		}] = struct{}{}
 	}
 
-	activeServices := make(map[string]bool, routeSessionConnectionCount)
+	reservedServices := make(map[string]bool, routeSessionConnectionCount)
+	for _, row := range rows {
+		reservedServices[row.RelayServiceID] = true
+	}
 	replace := make([]bool, len(rows))
 	removedReady := false
 	for index, row := range rows {
@@ -80,30 +83,11 @@ func replenishRouteSessionConnections(
 		default:
 			valid = false
 		}
-		if valid && activeServices[row.RelayServiceID] {
-			valid = false
-		}
 		if valid {
-			activeServices[row.RelayServiceID] = true
 			continue
 		}
 		replace[index] = true
 		removedReady = removedReady || row.State == "ready"
-	}
-
-	for index, row := range rows {
-		if !replace[index] {
-			continue
-		}
-		placement, found := replacementRelayServicePlacement(
-			row.RelayServiceID, availableServices, serviceConfigurations, activeServices,
-		)
-		if !found {
-			continue
-		}
-		if row.ConnectionAssignmentRevision <= 0 || row.ConnectionAssignmentRevision == math.MaxInt64 {
-			return false, errors.New("controlstate: replenish route-session connections: assignment revision is exhausted")
-		}
 		if row.State != "closed" && row.State != "expired" {
 			if _, err := queries.ExpirePublisherConnection(ctx, controlstatedb.ExpirePublisherConnectionParams{
 				ExpiredAt: timestamptz(now), PublisherConnectionID: row.PublisherConnectionID,
@@ -113,6 +97,41 @@ func replenishRouteSessionConnections(
 			} else if err != nil {
 				return false, fmt.Errorf("controlstate: replenish route-session connections: expire slot %d: %w", row.ConnectionSlot, err)
 			}
+			if service, found := serviceConfigurations[row.RelayServiceID]; found {
+				service.assignments--
+				serviceConfigurations[row.RelayServiceID] = service
+			}
+		}
+	}
+
+	// Stored service IDs remain unique even on expired slots. Reserve both while
+	// planning, so a returning service stays in its original slot and each write
+	// is safe without temporarily weakening that constraint.
+	placements := make([]relayServicePlacement, len(rows))
+	for index, row := range rows {
+		if !replace[index] {
+			continue
+		}
+		if service := serviceConfigurations[row.RelayServiceID]; service.assignments < service.capacity {
+			placements[index] = service
+		} else {
+			for _, candidate := range availableServices {
+				service := serviceConfigurations[candidate.relayServiceID]
+				if !reservedServices[service.relayServiceID] && service.assignments < service.capacity {
+					placements[index] = service
+					reservedServices[service.relayServiceID] = true
+					break
+				}
+			}
+		}
+	}
+	for index, row := range rows {
+		placement := placements[index]
+		if placement.relayServiceID == "" {
+			continue
+		}
+		if row.ConnectionAssignmentRevision <= 0 || row.ConnectionAssignmentRevision == math.MaxInt64 {
+			return false, errors.New("controlstate: replenish route-session connections: assignment revision is exhausted")
 		}
 		publisherConnectionID, err := opaqueid.New("connection_")
 		if err != nil {
@@ -120,7 +139,7 @@ func replenishRouteSessionConnections(
 		}
 		revision := row.ConnectionAssignmentRevision + 1
 		credential, hash, err := credentials.DerivePublisherConnectionCredential(
-			sessionToken, publisherConnectionCredentialContext(publisherConnectionID, revision),
+			routeSessionToken, publisherConnectionCredentialContext(publisherConnectionID, revision),
 		)
 		if err != nil {
 			return false, fmt.Errorf("controlstate: replenish route-session connections: derive credential: %w", err)
@@ -140,27 +159,9 @@ func replenishRouteSessionConnections(
 		if err != nil {
 			return false, fmt.Errorf("controlstate: replenish route-session connections: replace slot %d: %w", row.ConnectionSlot, err)
 		}
-		if _, err := publisherConnectionPlan(updated, credential); err != nil {
+		if _, err := connectionAssignment(updated, credential); err != nil {
 			return false, err
 		}
-		activeServices[placement.relayServiceID] = true
 	}
 	return removedReady, nil
-}
-
-func replacementRelayServicePlacement(
-	currentRelayServiceID string,
-	available []relayServicePlacement,
-	configurations map[string]relayServicePlacement,
-	activeServices map[string]bool,
-) (relayServicePlacement, bool) {
-	if placement, found := configurations[currentRelayServiceID]; found && !activeServices[currentRelayServiceID] {
-		return placement, true
-	}
-	for _, placement := range available {
-		if !activeServices[placement.relayServiceID] {
-			return placement, true
-		}
-	}
-	return relayServicePlacement{}, false
 }

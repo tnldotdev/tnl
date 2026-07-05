@@ -22,12 +22,12 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
-	tnlconfig "github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
+	"github.com/tnldotdev/tnl/internal/filelock"
 	"github.com/tnldotdev/tnl/internal/localproxy"
+	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/projectmeta"
 	"github.com/tnldotdev/tnl/internal/publisher"
-	"golang.org/x/sys/unix"
 )
 
 const (
@@ -93,8 +93,8 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		return err
 	}
 	defer state.Close()
-	if flags.project.root == "" {
-		worktree, resolveErr := tnlconfig.ResolveWorktree(ctx, flags.projectRoot)
+	if flags.project.Root == "" {
+		worktree, resolveErr := projectconfig.ResolveWorktree(ctx, flags.projectRoot)
 		if resolveErr != nil {
 			return fmt.Errorf("resolve development worktree: %w", resolveErr)
 		}
@@ -103,18 +103,20 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 			return saltErr
 		}
 		flags.project = projectConfiguration{
-			root: flags.projectRoot, worktree: tnlconfig.ApplyWorktreeHashSalt(worktree, salt),
-			directories: map[string]string{}, relativeDirectories: map[string]string{},
+			Project: projectconfig.Project{
+				Root: flags.projectRoot, Worktree: projectconfig.ApplyWorktreeHashSalt(worktree, salt),
+				ServiceDirectories: map[string]string{}, RelativeServiceDirectories: map[string]string{},
+			},
 		}
 	}
 	metadataResolver := newProjectMetadataResolver(state, flags.project, stdin, stderr, "tnl dev")
 	if err := metadataResolver.LoadFallbackServer(ctx); err != nil {
 		return err
 	}
-	if !flags.project.found {
-		flags.project.tnl.Server = &serverURL
+	if !flags.project.Found() {
+		flags.project.Config.Server = &serverURL
 		if flags.selectedTeam != "" {
-			flags.project.tnl.Team = &flags.selectedTeam
+			flags.project.Config.Team = &flags.selectedTeam
 		}
 		metadataResolver.project = flags.project
 	}
@@ -127,8 +129,8 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	if err != nil {
 		return err
 	}
-	if flags.project.found {
-		if err := projectmeta.Write(flags.project.root, metadata); err != nil {
+	if flags.project.Found() {
+		if err := projectmeta.Write(flags.project.Root, metadata); err != nil {
 			return err
 		}
 	}
@@ -174,7 +176,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	if err != nil {
 		return err
 	}
-	defer child.Stop(devShutdownWait)
+	defer func() { result = errors.Join(result, child.Stop(devShutdownWait)) }()
 
 	assignment := devConfigurationResponse{
 		Protocol: 1, TunnelID: tunnel.ID(), Service: nullableService(flags.Service),
@@ -447,7 +449,7 @@ func waitForDevTarget(ctx context.Context, bootstrap *devBootstrap, child *devPr
 
 type devBootstrap struct {
 	socket         string
-	lock           *os.File
+	lock           *filelock.Lock
 	forcedPort     string
 	server         *http.Server
 	done           chan struct{}
@@ -531,7 +533,7 @@ func newDevBootstrap(ctx context.Context, forcedTarget, projectRoot string, serv
 		if err != nil {
 			return nil, fmt.Errorf("resolve development worktree: %w", err)
 		}
-		worktree, err := tnlconfig.ResolveWorktree(ctx, cwd)
+		worktree, err := projectconfig.ResolveWorktree(ctx, cwd)
 		if err != nil {
 			return nil, fmt.Errorf("resolve development worktree: %w", err)
 		}
@@ -551,7 +553,6 @@ func newDevBootstrap(ctx context.Context, forcedTarget, projectRoot string, serv
 		return nil, err
 	}
 	cleanup := func() {
-		_ = unix.Flock(int(lock.Fd()), unix.LOCK_UN)
 		_ = lock.Close()
 	}
 	bootstrap := &devBootstrap{
@@ -631,30 +632,15 @@ func devRuntimeDirectory() (string, error) {
 	return dir, nil
 }
 
-func acquireDevLock(path string) (*os.File, error) {
-	descriptor, err := unix.Open(path, unix.O_CREAT|unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0o600)
+func acquireDevLock(path string) (*filelock.Lock, error) {
+	lock, err := filelock.Acquire(path, filelock.Nonblocking, os.Getuid())
+	if errors.Is(err, filelock.ErrLocked) {
+		return nil, errors.New("another tnl dev is already running for this project service")
+	}
 	if err != nil {
-		return nil, fmt.Errorf("open development session lock: %w", err)
+		return nil, fmt.Errorf("lock development session: %w", err)
 	}
-	file := os.NewFile(uintptr(descriptor), path)
-	closeWithError := func(err error) (*os.File, error) {
-		_ = file.Close()
-		return nil, err
-	}
-	var stat unix.Stat_t
-	if err := unix.Fstat(descriptor, &stat); err != nil {
-		return closeWithError(fmt.Errorf("inspect development session lock: %w", err))
-	}
-	if stat.Uid != uint32(os.Getuid()) || stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Mode&0o777 != 0o600 {
-		return closeWithError(errors.New("development session lock must be a user-owned regular file with mode 0600"))
-	}
-	if err := unix.Flock(descriptor, unix.LOCK_EX|unix.LOCK_NB); err != nil {
-		if errors.Is(err, unix.EWOULDBLOCK) {
-			return closeWithError(errors.New("another tnl dev is already running for this project service"))
-		}
-		return closeWithError(fmt.Errorf("lock development session: %w", err))
-	}
-	return file, nil
+	return lock, nil
 }
 
 func removeDevSocket(path string) error {
@@ -678,7 +664,7 @@ func (b *devBootstrap) Close() error {
 		b.mu.Unlock()
 		b.closeErr = errors.Join(
 			err, serveErr, removeDevSocket(b.socket),
-			unix.Flock(int(b.lock.Fd()), unix.LOCK_UN), b.lock.Close(),
+			b.lock.Close(),
 		)
 	})
 	return b.closeErr
@@ -935,7 +921,7 @@ func devEnvironment(bootstrap *devBootstrap, port int) []string {
 		replacements["PORT"] = strconv.Itoa(port)
 	}
 	blocked := map[string]struct{}{
-		"TNL_ACCESS_TOKEN": {}, "TNL_PROJECT_RUNTIME": {}, "TNL_TUNNEL_ID": {},
+		"TNL_ACCESS_TOKEN": {}, "TNL_LOGIN_TOKEN": {}, "TNL_PROJECT_RUNTIME": {}, "TNL_TUNNEL_ID": {},
 		"TNL_PUBLIC_HOSTNAME": {}, "TNL_PUBLIC_URL": {},
 	}
 	for key := range replacements {
@@ -957,11 +943,15 @@ func devEnvironment(bootstrap *devBootstrap, port int) []string {
 type devProcess struct {
 	command *exec.Cmd
 	done    chan struct{}
+	stop    chan time.Duration
 	err     error
+
+	stopOnce   sync.Once
+	cleanupErr error
 }
 
 func startDevProcess(command, environment []string, stdin io.Reader, stdout, stderr io.Writer, directories ...string) (*devProcess, error) {
-	process := &devProcess{done: make(chan struct{})}
+	process := &devProcess{done: make(chan struct{}), stop: make(chan time.Duration, 1)}
 	if len(command) == 0 {
 		return process, nil
 	}
@@ -977,10 +967,13 @@ func startDevProcess(command, environment []string, stdin io.Reader, stdout, std
 	if err := process.command.Start(); err != nil {
 		return nil, fmt.Errorf("start development server command: %w", err)
 	}
-	go func() {
-		process.err = process.command.Wait()
-		close(process.done)
-	}()
+	processGroupID := process.command.Process.Pid
+	leaderExited, watcherErr := watchDevProcessExit(processGroupID)
+	go process.run(processGroupID, leaderExited, watcherErr)
+	if watcherErr != nil {
+		<-process.done
+		return nil, process.cleanupErr
+	}
 	return process, nil
 }
 
@@ -991,28 +984,68 @@ func (p *devProcess) Err() error {
 	return p.err
 }
 
+func (p *devProcess) run(processGroupID int, leaderExited <-chan error, watcherSetupErr error) {
+	if watcherSetupErr != nil {
+		p.cleanupErr = errors.Join(
+			fmt.Errorf("watch development server command: %w", watcherSetupErr),
+			signalDevProcessGroup(processGroupID, syscall.SIGKILL),
+		)
+	} else {
+		select {
+		case watcherErr := <-leaderExited:
+			p.cleanupErr = errors.Join(
+				devProcessWatcherError(watcherErr),
+				signalDevProcessGroup(processGroupID, syscall.SIGKILL),
+			)
+		case timeout := <-p.stop:
+			p.cleanupErr = signalDevProcessGroup(processGroupID, syscall.SIGTERM)
+			timer := time.NewTimer(timeout)
+			select {
+			case watcherErr := <-leaderExited:
+				if !timer.Stop() {
+					<-timer.C
+				}
+				p.cleanupErr = errors.Join(
+					p.cleanupErr,
+					devProcessWatcherError(watcherErr),
+					signalDevProcessGroup(processGroupID, syscall.SIGKILL),
+				)
+			case <-timer.C:
+				p.cleanupErr = errors.Join(
+					p.cleanupErr,
+					signalDevProcessGroup(processGroupID, syscall.SIGKILL),
+				)
+			}
+		}
+	}
+	p.err = p.command.Wait()
+	close(p.done)
+}
+
+func devProcessWatcherError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("watch development server command: %w", err)
+}
+
+func signalDevProcessGroup(processGroupID int, signal syscall.Signal) error {
+	err := syscall.Kill(-processGroupID, signal)
+	if err == nil || errors.Is(err, syscall.ESRCH) {
+		return nil
+	}
+	return fmt.Errorf("send %s to development server process group: %w", signal, err)
+}
+
 func (p *devProcess) Stop(timeout time.Duration) error {
 	if p == nil || p.command == nil || p.command.Process == nil {
 		return nil
 	}
-	pid := p.command.Process.Pid
-	signalErr := syscall.Kill(-pid, syscall.SIGTERM)
-	if errors.Is(signalErr, syscall.ESRCH) {
-		signalErr = nil
-	}
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-	select {
-	case <-p.done:
-		return signalErr
-	case <-timer.C:
-		killErr := syscall.Kill(-pid, syscall.SIGKILL)
-		if errors.Is(killErr, syscall.ESRCH) {
-			killErr = nil
-		}
-		<-p.done
-		return errors.Join(signalErr, killErr)
-	}
+	p.stopOnce.Do(func() {
+		p.stop <- timeout
+	})
+	<-p.done
+	return p.cleanupErr
 }
 
 func childResult(err error) error {

@@ -9,7 +9,6 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -18,7 +17,6 @@ import (
 	"math/big"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,12 +31,13 @@ import (
 	"github.com/miekg/dns"
 	"github.com/tnldotdev/tnl/internal/clientauth"
 	"github.com/tnldotdev/tnl/internal/clientstate"
-	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/routeclient"
+	"github.com/tnldotdev/tnl/internal/testutil"
+	"github.com/tnldotdev/tnl/internal/tnldconfig"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -70,7 +69,7 @@ type integrationProcess struct {
 
 func startIntegrationProcess(
 	t *testing.T,
-	cfg config.TNLD,
+	cfg tnldconfig.Config,
 	acmeHTTPClient, serviceHTTPClient *http.Client,
 ) *integrationProcess {
 	t.Helper()
@@ -81,7 +80,7 @@ func startIntegrationProcess(
 
 func startIntegrationProcessWithOptions(
 	t *testing.T,
-	cfg config.TNLD,
+	cfg tnldconfig.Config,
 	options integrationProcessOptions,
 ) *integrationProcess {
 	t.Helper()
@@ -155,15 +154,18 @@ func waitForProcessReady(t *testing.T, process *integrationProcess) {
 	waitForIntegrationCondition(t, 10*time.Second, func() (bool, error) {
 		select {
 		case <-process.done:
-			return false, fmt.Errorf("tnld process exited before readiness: %w", process.result())
+			t.Fatalf("tnld %s process exited before readiness: %v", process.name, process.result())
 		default:
 		}
 		response, err := client.Get("http://" + process.metricsAddress + "/ready")
 		if err != nil {
-			return false, nil
+			return false, fmt.Errorf("tnld %s process still running; metrics listener probe: %w", process.name, err)
 		}
 		_ = response.Body.Close()
-		return response.StatusCode == http.StatusNoContent, nil
+		if response.StatusCode != http.StatusNoContent {
+			return false, fmt.Errorf("tnld %s process still running; metrics listener reachable, /ready returned %s", process.name, response.Status)
+		}
+		return true, nil
 	})
 }
 
@@ -232,47 +234,13 @@ func waitForReadyPublisherConnections(
 	})
 }
 
-func standaloneTestDatabase(t *testing.T, directURL string) (string, *sql.DB) {
+func standaloneTestDatabase(t *testing.T) (string, *sql.DB) {
 	t.Helper()
-	databaseURL := standaloneTestDatabaseURL(t, directURL)
+	databaseURL := testutil.NewDisposablePostgresDatabaseURL(t, "standalone")
 	if err := controlstate.Migrate(t.Context(), databaseURL); err != nil {
 		t.Fatal(err)
 	}
 	return databaseURL, inspectStandaloneTestDatabase(t, databaseURL)
-}
-
-func standaloneTestDatabaseURL(t *testing.T, directURL string) string {
-	t.Helper()
-	adminConfig, err := pgx.ParseConfig(directURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	admin := stdlib.OpenDB(*adminConfig)
-	t.Cleanup(func() { _ = admin.Close() })
-	random := make([]byte, 8)
-	if _, err := rand.Read(random); err != nil {
-		t.Fatal(err)
-	}
-	databaseName := "tnl_standalone_" + hex.EncodeToString(random)
-	identifier := pgx.Identifier{databaseName}.Sanitize()
-	if _, err := admin.ExecContext(t.Context(), "CREATE DATABASE "+identifier); err != nil {
-		t.Skipf("standalone integration requires permission to create a database: %v", err)
-	}
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_, _ = admin.ExecContext(ctx, `
-			SELECT pg_terminate_backend(pid) FROM pg_stat_activity
-			WHERE datname = $1 AND pid <> pg_backend_pid()
-		`, databaseName)
-		_, _ = admin.ExecContext(ctx, "DROP DATABASE IF EXISTS "+identifier)
-	})
-	parsed, err := url.Parse(directURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	parsed.Path, parsed.RawPath = "/"+databaseName, ""
-	return parsed.String()
 }
 
 func inspectStandaloneTestDatabase(t *testing.T, databaseURL string) *sql.DB {
@@ -720,14 +688,16 @@ func integrationPublisherDiagnostics(database *sql.DB, pebbleLogPath string) str
 }
 
 type integrationPublishingIdentity struct {
-	controlOrigin  string
-	hostname       string
-	teamID         string
-	domainID       string
-	membershipID   string
-	policyRevision uint64
-	state          *clientstate.Store
-	routes         *routeclient.Client
+	controlOrigin   string
+	hostname        string
+	teamID          string
+	domainID        string
+	membershipID    string
+	policyRevision  uint64
+	state           *clientstate.Store
+	routes          *routeclient.Client
+	certificatePlan controlv1.CertificatePlan
+	routeScope      controlv1.RouteScope
 }
 
 func newIntegrationPublishingIdentity(
@@ -792,11 +762,16 @@ func newIntegrationPublishingIdentity(
 	if err != nil {
 		t.Fatal(err)
 	}
+	hostname := hostnameLabel + "." + membership.ManagedLabel + "." + domain.CanonicalDomain
 	return &integrationPublishingIdentity{
 		controlOrigin: controlOrigin,
-		hostname:      hostnameLabel + "." + membership.ManagedLabel + "." + domain.CanonicalDomain,
+		hostname:      hostname,
 		teamID:        team.Id, domainID: domain.Id, membershipID: membership.Id,
 		policyRevision: uint64(team.PolicyRevision), state: publisherState, routes: routes,
+		routeScope: controlv1.Member,
+		certificatePlan: controlv1.CertificatePlan{
+			CacheKey: hostname, Scope: hostname, Identifiers: []string{hostname}, ChallengeMethod: controlv1.TlsAlpn01,
+		},
 	}
 }
 
@@ -806,11 +781,7 @@ func (i *integrationPublishingIdentity) publisherConfig(
 ) publisher.Config {
 	return publisher.Config{
 		Control: i.routes, TeamID: i.teamID, DomainID: i.domainID, MembershipID: i.membershipID,
-		PolicyRevision: i.policyRevision, RouteScope: controlv1.Member,
-		CertificatePlan: controlv1.CertificatePlan{
-			CacheKey: i.hostname, Scope: i.hostname, Identifiers: []string{i.hostname},
-			ChallengeMethod: controlv1.TlsAlpn01,
-		},
+		PolicyRevision: i.policyRevision, RouteScope: i.routeScope,
 		Hostname: i.hostname, Target: target, AllowedIPPrefixes: []string{"127.0.0.1/32"},
 		State: i.state, QUICConnector: quicConnector, TCPConnector: tcpConnector,
 		FallbackDelay: 10 * time.Millisecond, DrainTime: time.Second,

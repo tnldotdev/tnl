@@ -4,10 +4,11 @@ package serviceapi
 import (
 	"encoding/json"
 	"errors"
-	"io"
 	"mime"
 	"net/http"
 	"strings"
+
+	"github.com/tnldotdev/tnl/internal/httpjson"
 )
 
 const MaximumRequestBytes = 64 << 10
@@ -19,25 +20,19 @@ func DecodeJSON(response http.ResponseWriter, request *http.Request, destination
 		return false
 	}
 	request.Body = http.MaxBytesReader(response, request.Body, MaximumRequestBytes)
-	decoder := json.NewDecoder(request.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(destination); err != nil {
-		WriteProblem(response, http.StatusBadRequest, "invalid_json", "Request body must be one JSON object matching the service schema")
-		return false
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		WriteProblem(response, http.StatusBadRequest, "invalid_json", "Request body must contain exactly one JSON value")
+	if err := httpjson.Decode(json.NewDecoder(request.Body), destination); err != nil {
+		detail := "Request body must be one JSON object matching the service schema"
+		if errors.Is(err, httpjson.ErrTrailingContent) {
+			detail = "Request body must contain exactly one JSON value"
+		}
+		WriteProblem(response, http.StatusBadRequest, "invalid_json", detail)
 		return false
 	}
 	return true
 }
 
 func WriteJSON(response http.ResponseWriter, status int, value any) {
-	response.Header().Set("Content-Type", "application/json")
-	response.WriteHeader(status)
-	if err := json.NewEncoder(response).Encode(value); err != nil {
-		panic(http.ErrAbortHandler)
-	}
+	httpjson.Write(response, status, value)
 }
 
 func WriteProblem(response http.ResponseWriter, status int, problemType, detail string) {

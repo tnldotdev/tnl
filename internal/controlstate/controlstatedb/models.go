@@ -27,9 +27,9 @@ type ControlAcmeAuthorization struct {
 	OrderID               string
 	Identifier            string
 	AuthorizationUrl      string
-	ChallengeType         string
-	ChallengeUrl          string
-	ChallengeToken        string
+	ChallengeType         pgtype.Text
+	ChallengeUrl          pgtype.Text
+	ChallengeToken        pgtype.Text
 	ChallengeDigest       []byte
 	PresentationReference pgtype.Text
 	State                 string
@@ -283,6 +283,12 @@ type ControlMemberSlugReservation struct {
 	QuarantinedAt        pgtype.Timestamptz
 	ReusableAfter        pgtype.Timestamptz
 	ReleasedAt           pgtype.Timestamptz
+}
+
+type ControlOidcAssertionExchange struct {
+	AssertionDigest []byte
+	ConsumedAt      pgtype.Timestamptz
+	ExpiresAt       pgtype.Timestamptz
 }
 
 type ControlRelayCertificateOrder struct {

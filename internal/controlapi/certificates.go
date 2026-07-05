@@ -47,7 +47,7 @@ func (h *handler) GetCertificateIssuance(response http.ResponseWriter, request *
 		return
 	}
 	issuance, err := h.store.GetCertificateIssuance(
-		request.Context(), string(issuanceID), credentials.SessionToken(token), time.Now(),
+		request.Context(), string(issuanceID), credentials.RouteSessionToken(token), time.Now(),
 	)
 	if err != nil {
 		writeControlStateProblem(response, "get certificate issuance", err)
@@ -63,7 +63,7 @@ func (h *handler) MarkCertificateChallengeReady(response http.ResponseWriter, re
 		return
 	}
 	issuance, err := h.store.MarkCertificateChallengeReady(
-		request.Context(), string(issuanceID), credentials.SessionToken(token), time.Now(),
+		request.Context(), string(issuanceID), credentials.RouteSessionToken(token), time.Now(),
 	)
 	if err != nil {
 		writeControlStateProblem(response, "mark certificate challenge ready", err)
@@ -79,7 +79,7 @@ func (h *handler) MarkCertificateChallengeRemoved(response http.ResponseWriter, 
 		return
 	}
 	issuance, err := h.store.MarkCertificateChallengeRemoved(
-		request.Context(), string(issuanceID), credentials.SessionToken(token), time.Now(),
+		request.Context(), string(issuanceID), credentials.RouteSessionToken(token), time.Now(),
 	)
 	if err != nil {
 		writeControlStateProblem(response, "mark certificate challenge removed", err)

@@ -6,6 +6,7 @@ import path from "node:path";
 import process from "node:process";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
+import { nativeTargets } from "../packages/tnl/lib/native-targets.mjs";
 
 const execFileAsync = promisify(execFile);
 const packageDirectoryArgument = process.argv[2];
@@ -16,10 +17,12 @@ assert(
 );
 
 const expectedPackages = [
-  { name: "@tnldotdev/tnl-darwin-arm64", kind: "native", os: "darwin", cpu: "arm64" },
-  { name: "@tnldotdev/tnl-darwin-x64", kind: "native", os: "darwin", cpu: "x64" },
-  { name: "@tnldotdev/tnl-linux-arm64", kind: "native", os: "linux", cpu: "arm64" },
-  { name: "@tnldotdev/tnl-linux-x64", kind: "native", os: "linux", cpu: "x64" },
+  ...nativeTargets.map(({ platform, architecture, packageName }) => ({
+    name: packageName,
+    kind: "native",
+    os: platform,
+    cpu: architecture,
+  })),
   { name: "@tnldotdev/tnl", kind: "launcher" },
 ];
 const packageDirectory = path.resolve(packageDirectoryArgument);

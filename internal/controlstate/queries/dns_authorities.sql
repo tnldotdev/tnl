@@ -96,6 +96,21 @@ WHERE authority_reference = sqlc.arg(authority_reference)
   AND work_revision = sqlc.arg(expected_work_revision)
 RETURNING *;
 
+-- name: LockDNSAuthorityLocalTeam :exec
+SELECT teams.id
+FROM control.teams AS teams
+JOIN control.domains AS domains ON domains.team_id = teams.id
+WHERE domains.dns_authority_reference = sqlc.arg(authority_reference)
+ORDER BY teams.id
+FOR NO KEY UPDATE OF teams;
+
+-- name: LockDNSAuthorityLocalDomain :exec
+SELECT id
+FROM control.domains
+WHERE dns_authority_reference = sqlc.arg(authority_reference)
+ORDER BY id
+FOR UPDATE;
+
 -- name: DNSAuthorityReleaseReady :one
 SELECT
     NOT EXISTS (
@@ -117,13 +132,17 @@ SELECT
         JOIN control.routes AS routes ON routes.id = orders.route_id
         WHERE routes.domain_id = sqlc.arg(authority_domain_id)
           AND (
-              orders.state NOT IN ('failed', 'canceled')
+              orders.state NOT IN ('waiting_for_install', 'installed', 'failed', 'canceled')
+              OR orders.not_after > sqlc.arg(observed_at)
               OR EXISTS (
                   SELECT 1
                   FROM control.acme_authorizations AS authorizations
                   WHERE authorizations.order_id = orders.id
                     AND authorizations.challenge_type = 'dns-01'
-                    AND authorizations.state IN ('presenting', 'presented', 'validating', 'valid', 'cleaning')
+                    AND (
+                        authorizations.state IN ('presenting', 'presented', 'validating', 'valid', 'cleaning')
+                        OR authorizations.presented_at IS NOT NULL AND authorizations.cleanup_completed_at IS NULL
+                    )
               )
           )
     )

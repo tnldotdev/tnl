@@ -59,13 +59,8 @@ func (d *Database) ApplyHostedPolicyRevocation(
 	defer rollback(ctx, tx, "apply hosted policy revocation", &retErr)()
 	queries := controlstatedb.New(tx)
 
-	// Route mutations lock a route before observing the authority revision. Lock
-	// the team's routes in the same order so an older in-flight mutation either
-	// completes before this revocation or observes the newer revision afterward.
-	routes, err := queries.LockHostedTeamRoutes(ctx, teamID)
-	if err != nil {
-		return false, 0, fmt.Errorf("controlstate: apply hosted policy revocation: lock routes: %w", err)
-	}
+	// Hosted mutations share the persisted issuer/team revision guard before
+	// locking routes, including routes created while this revocation is waiting.
 	if _, err := queries.AdvanceAuthorityRevision(ctx, controlstatedb.AdvanceAuthorityRevisionParams{
 		Issuer: issuer, TeamID: teamID, PolicyRevision: int64(policyRevision), UpdatedAt: timestamptz(now),
 	}); errors.Is(err, pgx.ErrNoRows) {
@@ -75,6 +70,10 @@ func (d *Database) ApplyHostedPolicyRevocation(
 		return false, 0, nil
 	} else if err != nil {
 		return false, 0, fmt.Errorf("controlstate: apply hosted policy revocation: advance revision: %w", err)
+	}
+	routes, err := queries.LockHostedTeamRoutes(ctx, teamID)
+	if err != nil {
+		return false, 0, fmt.Errorf("controlstate: apply hosted policy revocation: lock routes: %w", err)
 	}
 
 	for _, route := range routes {

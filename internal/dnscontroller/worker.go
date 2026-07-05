@@ -339,6 +339,8 @@ type terminalError struct{ message string }
 
 func (e *terminalError) Error() string { return e.message }
 
+func (e *terminalError) Terminal() bool { return true }
+
 func terminalf(format string, arguments ...any) error {
 	return &terminalError{message: fmt.Sprintf("dnscontroller: "+format, arguments...)}
 }

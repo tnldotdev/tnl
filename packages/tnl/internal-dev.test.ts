@@ -1,19 +1,106 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import * as os from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 import { describe, expect, onTestFinished, test } from "vitest";
 import {
   canonicalLoopbackTarget,
   discoverProject,
+  parseListenerPort,
   readDevelopmentContext,
   registerLocalTarget,
   requestTunnelAssignment,
   runtimePayload,
   socketIdentity,
 } from "./dist/internal/dev.js";
-import { startTestBootstrap, testProjectDocument, testPublicProject } from "./test-helper.js";
+import { parseRuntimePayload } from "./dist/internal/runtime.js";
+import {
+  createProjectFixture,
+  startTestBootstrap,
+  temporaryDirectory,
+  testProjectDocument,
+  testPublicProject,
+} from "./test-helper.js";
 
 describe("development context", () => {
+  test.each(["", "0", "65536", " 80", "+80", "8.0", "8e1", "80\n"])(
+    "rejects invalid string listener port %j",
+    (value) => expect(() => parseListenerPort(value, "test")).toThrow(/test must be a port/),
+  );
+
+  test.each([
+    ["1", 1],
+    ["65535", 65535],
+    ["00080", 80],
+  ] as const)("accepts string listener port %s", (value, expected) =>
+    expect(parseListenerPort(value, "test")).toBe(expected),
+  );
+
+  test.each([
+    [
+      "duplicate hostname",
+      { api: testProjectDocument().services.api, web: testProjectDocument().services.api },
+      false,
+    ],
+    [
+      "unknown service field",
+      { api: { ...testProjectDocument().services.api, secret: "not-public" } },
+      false,
+    ],
+    [
+      "URL mismatch",
+      { api: { ...testProjectDocument().services.api, url: "https://other.example" } },
+      false,
+    ],
+    ["invalid name", { "api-": testProjectDocument().services.api }, false],
+    ["32-byte name", { ["a".repeat(32)]: testProjectDocument().services.api }, true],
+    ["33-byte name", { ["a".repeat(33)]: testProjectDocument().services.api }, false],
+    [
+      "different namespace",
+      { api: { ...testProjectDocument().services.api, memberNamespace: "other.example" } },
+      true,
+    ],
+    ...[32, 33].map(
+      (count) =>
+        [
+          `${count} services`,
+          Object.fromEntries(
+            Array.from({ length: count }, (_, index) => [
+              `s${index}`,
+              {
+                memberNamespace: "member.example",
+                hostname: `s${index}.member.example`,
+                url: `https://s${index}.member.example`,
+              },
+            ]),
+          ),
+          count === 32,
+        ] as const,
+    ),
+  ] as const)("uses the same metadata contract for %s", async (_name, services, valid) => {
+    const root = await temporaryDirectory("tnl-metadata-contract-");
+    await mkdir(path.join(root, ".tnl"));
+    const project = { memberNamespace: "member.example", services, runningUnderTnlDev: false };
+    await writeFile(
+      path.join(root, ".tnl", "project.json"),
+      JSON.stringify({
+        ...project,
+        version: 1,
+        serviceDirectories: Object.fromEntries(Object.keys(services).map((name) => [name, name])),
+      }),
+    );
+    if (!valid) {
+      expect(() => parseRuntimePayload(JSON.stringify(project))).toThrow();
+      expect(() => discoverProject(root)).toThrow();
+      return;
+    }
+    const runtime = parseRuntimePayload(JSON.stringify(project));
+    const discovery = discoverProject(root);
+    expect(discovery?.project.services).toEqual(runtime?.services);
+    expect(Object.keys(discovery?.project ?? {}).sort()).toEqual(["memberNamespace", "services"]);
+    expect(Object.isFrozen(discovery?.project)).toBe(true);
+    expect(Object.isFrozen(discovery?.project.services)).toBe(true);
+    expect(Object.values(discovery?.project.services ?? {}).every(Object.isFrozen)).toBe(true);
+  });
+
   test("is inert without a project or tnl dev", async () => {
     const directory = await temporaryDirectory("tnl-empty-");
     expect(readDevelopmentContext({}, directory)).toEqual({
@@ -45,14 +132,7 @@ describe("development context", () => {
     if (process.getuid === undefined) {
       return;
     }
-    const projectRoot = await temporaryDirectory("tnl-project-");
-    const serviceDirectory = path.join(projectRoot, "apps", "api");
-    await mkdir(path.join(projectRoot, ".tnl"), { recursive: true });
-    await mkdir(serviceDirectory, { recursive: true });
-    await writeFile(
-      path.join(projectRoot, ".tnl", "project.json"),
-      `${JSON.stringify(testProjectDocument())}\n`,
-    );
+    const { root: projectRoot, serviceDirectory } = await createProjectFixture("tnl-project-");
     const runtimeRoot = await temporaryDirectory("tnl-runtime-");
     const runtimeDirectory = path.join(runtimeRoot, `tnl-${process.getuid()}`);
     await mkdir(runtimeDirectory, { mode: 0o700 });
@@ -293,10 +373,4 @@ function requiredBootstrap<T>(value: T | null): T {
     throw new Error("test bootstrap was not available");
   }
   return value;
-}
-
-async function temporaryDirectory(prefix: string): Promise<string> {
-  const directory = await mkdtemp(path.join(os.tmpdir(), prefix));
-  onTestFinished(() => rm(directory, { force: true, recursive: true }));
-  return directory;
 }

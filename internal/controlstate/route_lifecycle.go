@@ -22,12 +22,12 @@ var (
 	ErrRouteCertificate       = errors.New("controlstate: route certificate acknowledgement is invalid")
 )
 
-// RouteSessionAuthentication binds a session credential to one exact route version.
+// RouteSessionAuthentication binds a route session credential to one exact route version.
 type RouteSessionAuthentication struct {
-	RouteSessionID string
-	RouteID        string
-	RouteVersion   uint64
-	SessionToken   credentials.SessionToken
+	RouteSessionID    string
+	RouteID           string
+	RouteVersion      uint64
+	RouteSessionToken credentials.RouteSessionToken
 }
 
 // RouteSessionLifecycle reports durable readiness and current publisher-connection availability.
@@ -54,7 +54,7 @@ func (d *Database) RouteSessionAuthentication(
 	ctx context.Context,
 	routeSessionID string,
 	routeVersion uint64,
-	token credentials.SessionToken,
+	token credentials.RouteSessionToken,
 ) (RouteSessionAuthentication, error) {
 	if err := d.requireOpen(); err != nil {
 		return RouteSessionAuthentication{}, err
@@ -65,7 +65,7 @@ func (d *Database) RouteSessionAuthentication(
 	if _, ok := positiveInt64(routeVersion); !ok {
 		return RouteSessionAuthentication{}, ErrRouteSessionCredential
 	}
-	tokenID, tokenHash, err := credentials.ParseSessionToken(token)
+	tokenID, tokenHash, err := credentials.ParseRouteSessionToken(token)
 	if err != nil {
 		return RouteSessionAuthentication{}, ErrRouteSessionCredential
 	}
@@ -81,7 +81,7 @@ func (d *Database) RouteSessionAuthentication(
 		return RouteSessionAuthentication{}, ErrRouteSessionCredential
 	}
 	return RouteSessionAuthentication{
-		RouteSessionID: routeSessionID, RouteID: session.RouteID, RouteVersion: routeVersion, SessionToken: token,
+		RouteSessionID: routeSessionID, RouteID: session.RouteID, RouteVersion: routeVersion, RouteSessionToken: token,
 	}, nil
 }
 
@@ -191,17 +191,23 @@ func (d *Database) MarkRouteCertificateInstalled(
 	}
 	defer rollback(ctx, tx, "install route certificate", &retErr)()
 	queries := controlstatedb.New(tx)
-	_, session, err := lockAuthenticatedRouteSession(ctx, queries, authentication, now)
+	route, session, err := lockAuthenticatedRouteSession(ctx, queries, authentication, now)
 	if err != nil {
 		return RouteSessionLifecycle{}, err
 	}
-	if _, err := queries.LockACMEOrderForInstall(ctx, controlstatedb.LockACMEOrderForInstallParams{
-		IssuanceID: issuanceID, RouteID: session.RouteID, CertificateCacheKey: session.CertificateCacheKey,
-		NotAfter: timestamptz(notAfter), InstalledAt: timestamptz(now),
-	}); errors.Is(err, pgx.ErrNoRows) {
+	order, err := queries.LockACMEOrderForInstall(ctx, controlstatedb.LockACMEOrderForInstallParams{
+		IssuanceID: issuanceID, TeamID: session.TeamID, CertificateCacheKey: session.CertificateCacheKey,
+		CertificateScope: session.CertificateScope, CertificateIdentifiers: session.CertificateIdentifiers,
+		ChallengeMethod: session.CertificateChallenge,
+		NotAfter:        timestamptz(notAfter), InstalledAt: timestamptz(now),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
 		return RouteSessionLifecycle{}, ErrRouteCertificate
 	} else if err != nil {
 		return RouteSessionLifecycle{}, fmt.Errorf("controlstate: install route certificate: lock issuance: %w", err)
+	}
+	if !validInstalledCertificate(order, route.CanonicalHostname, now) {
+		return RouteSessionLifecycle{}, ErrRouteCertificate
 	}
 	if _, err := queries.MarkACMEOrderInstalled(ctx, controlstatedb.MarkACMEOrderInstalledParams{
 		InstalledAt: timestamptz(now), IssuanceID: issuanceID,
@@ -278,7 +284,7 @@ func (d *Database) HeartbeatRouteSession(
 	}
 	leaseExtended := session.PublisherExpiresAt.Time.After(previousExpiresAt)
 	removedReadyConnection, err := replenishRouteSessionConnections(
-		ctx, queries, session, authentication.SessionToken, now, connectionCredentialDuration,
+		ctx, queries, session, authentication.RouteSessionToken, now, connectionCredentialDuration,
 	)
 	if err != nil {
 		return RouteSessionSetup{}, err
@@ -306,7 +312,7 @@ func (d *Database) HeartbeatRouteSession(
 			return RouteSessionSetup{}, err
 		}
 	}
-	setup, err := loadRouteSessionSetupWithToken(ctx, queries, authentication.SessionToken, session)
+	setup, err := loadRouteSessionSetupWithToken(ctx, queries, authentication.RouteSessionToken, session)
 	if err != nil {
 		return RouteSessionSetup{}, err
 	}
@@ -498,7 +504,7 @@ func lockAuthenticatedRouteSession(
 		!session.PublisherExpiresAt.Valid || !session.PublisherExpiresAt.Time.After(now) {
 		return controlstatedb.ControlRoute{}, controlstatedb.ControlRouteSession{}, ErrRouteSessionStale
 	}
-	tokenID, tokenHash, err := credentials.ParseSessionToken(authentication.SessionToken)
+	tokenID, tokenHash, err := credentials.ParseRouteSessionToken(authentication.RouteSessionToken)
 	if err != nil || tokenID.String() != session.SessionTokenID ||
 		!credentials.SecretHashMatches(session.SessionTokenDigest, tokenHash) {
 		return controlstatedb.ControlRoute{}, controlstatedb.ControlRouteSession{}, ErrRouteSessionCredential
@@ -686,6 +692,11 @@ func emitIngressRoutingTableEvent(
 	if eventKind == IngressRouteUpsert || eventKind == IngressChallengeUpsert {
 		routeExpiresAt = timestamptz(projectionExpiresAt)
 	}
+	// Hold the clock through commit before the INSERT allocates a sequence value,
+	// so a committed ingress cursor can never skip an earlier uncommitted event.
+	if _, err := queries.LockIngressRoutingTableClock(ctx); err != nil {
+		return 0, 0, fmt.Errorf("controlstate: lock ingress routing-table clock: %w", err)
+	}
 	routingTableRevision, err := queries.InsertIngressRoutingTableEvent(ctx, controlstatedb.InsertIngressRoutingTableEventParams{
 		EventKind: string(eventKind), RouteID: route.ID, RouteVersion: session.RouteVersion,
 		CanonicalHostname: route.CanonicalHostname, EntryRevision: entryRevision,
@@ -753,7 +764,7 @@ func validateRouteSessionAuthentication(authentication RouteSessionAuthenticatio
 	if _, ok := positiveInt64(authentication.RouteVersion); !ok {
 		return errors.New("controlstate: route-session authentication has an invalid route version")
 	}
-	if _, _, err := credentials.ParseSessionToken(authentication.SessionToken); err != nil {
+	if _, _, err := credentials.ParseRouteSessionToken(authentication.RouteSessionToken); err != nil {
 		return ErrRouteSessionCredential
 	}
 	return nil

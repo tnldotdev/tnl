@@ -92,10 +92,25 @@ ON CONFLICT (relay_id) DO UPDATE SET
             THEN control.relay_leases.registered_at
         ELSE EXCLUDED.registered_at
     END,
-    renewed_at = EXCLUDED.renewed_at,
-    lease_expires_at = EXCLUDED.lease_expires_at
-WHERE control.relay_leases.relay_run_id = EXCLUDED.relay_run_id
-   OR control.relay_leases.lease_expires_at <= EXCLUDED.registered_at
+    renewed_at = CASE
+        WHEN control.relay_leases.relay_run_id = EXCLUDED.relay_run_id
+         AND control.relay_leases.lease_expires_at > EXCLUDED.registered_at
+         AND control.relay_leases.draining
+            THEN control.relay_leases.renewed_at
+        ELSE EXCLUDED.renewed_at
+    END,
+    lease_expires_at = CASE
+        WHEN control.relay_leases.relay_run_id = EXCLUDED.relay_run_id
+         AND control.relay_leases.lease_expires_at > EXCLUDED.registered_at
+         AND control.relay_leases.draining
+            THEN control.relay_leases.lease_expires_at
+        ELSE EXCLUDED.lease_expires_at
+    END
+WHERE (control.relay_leases.relay_run_id = EXCLUDED.relay_run_id
+    OR control.relay_leases.lease_expires_at <= EXCLUDED.registered_at)
+  AND NOT (control.relay_leases.relay_run_id = EXCLUDED.relay_run_id
+      AND control.relay_leases.draining
+      AND control.relay_leases.lease_expires_at <= EXCLUDED.registered_at)
 RETURNING *
 )
 SELECT relay_lease.*, relay_service.relay_address, relay_service.tls_server_name
@@ -103,7 +118,7 @@ FROM relay_lease
 JOIN relay_service USING (relay_service_id);
 
 -- name: RenewRelay :one
-WITH relay_lease AS (
+WITH renewed_lease AS (
 UPDATE control.relay_leases AS leases
 SET reported_connections = sqlc.arg(reported_connections),
     reported_streams = sqlc.arg(reported_streams),
@@ -114,36 +129,70 @@ WHERE leases.relay_service_id = sqlc.arg(relay_service_id)
   AND leases.relay_run_id = sqlc.arg(relay_run_id)
   AND leases.relay_lease_revision = sqlc.arg(relay_lease_revision)
   AND leases.lease_expires_at > sqlc.arg(renewed_at)
+  AND NOT leases.draining
 RETURNING leases.*
+), relay_lease AS (
+SELECT renewed_lease.* FROM renewed_lease
+UNION ALL
+SELECT leases.*
+FROM control.relay_leases AS leases
+WHERE leases.relay_service_id = sqlc.arg(relay_service_id)
+  AND leases.relay_id = sqlc.arg(relay_id)
+  AND leases.relay_run_id = sqlc.arg(relay_run_id)
+  AND leases.relay_lease_revision = sqlc.arg(relay_lease_revision)
+  AND leases.lease_expires_at > sqlc.arg(renewed_at)
+  AND leases.draining
+  AND NOT EXISTS (SELECT FROM renewed_lease)
 )
 SELECT relay_lease.*, services.relay_address, services.tls_server_name
 FROM relay_lease
 JOIN control.relay_services AS services USING (relay_service_id);
 
 -- name: BeginRelayDrain :one
-WITH relay_lease AS (
+WITH drained_lease AS (
 UPDATE control.relay_leases AS leases
 SET draining = true,
     drain_deadline = sqlc.arg(drain_deadline),
     renewed_at = sqlc.arg(renewed_at),
-    lease_expires_at = GREATEST(leases.lease_expires_at, sqlc.arg(drain_deadline))
+    lease_expires_at = sqlc.arg(drain_deadline)
 WHERE leases.relay_service_id = sqlc.arg(relay_service_id)
   AND leases.relay_id = sqlc.arg(relay_id)
   AND leases.relay_run_id = sqlc.arg(relay_run_id)
   AND leases.relay_lease_revision = sqlc.arg(relay_lease_revision)
   AND leases.lease_expires_at > sqlc.arg(renewed_at)
+  AND NOT leases.draining
 RETURNING leases.*
+), relay_lease AS (
+SELECT drained_lease.* FROM drained_lease
+UNION ALL
+SELECT leases.*
+FROM control.relay_leases AS leases
+WHERE leases.relay_service_id = sqlc.arg(relay_service_id)
+  AND leases.relay_id = sqlc.arg(relay_id)
+  AND leases.relay_run_id = sqlc.arg(relay_run_id)
+  AND leases.relay_lease_revision = sqlc.arg(relay_lease_revision)
+  AND leases.lease_expires_at > sqlc.arg(renewed_at)
+  AND leases.draining
+  AND NOT EXISTS (SELECT FROM drained_lease)
 )
 SELECT relay_lease.*, services.relay_address, services.tls_server_name
 FROM relay_lease
 JOIN control.relay_services AS services USING (relay_service_id);
 
 -- name: GetRelayLeaseForClaim :one
+WITH service AS MATERIALIZED (
+    SELECT services.*
+    FROM control.relay_services AS services
+    WHERE services.relay_service_id = (
+        SELECT relay_service_id FROM control.relay_leases WHERE relay_id = sqlc.arg(relay_id)
+    )
+    FOR UPDATE
+)
 SELECT leases.*, services.relay_address, services.tls_server_name
 FROM control.relay_leases AS leases
-JOIN control.relay_services AS services USING (relay_service_id)
+JOIN service AS services USING (relay_service_id)
 WHERE leases.relay_id = sqlc.arg(relay_id)
-FOR UPDATE OF leases, services;
+FOR UPDATE OF leases;
 
 -- name: CountRelayActiveConnections :one
 SELECT count(*)
@@ -153,18 +202,32 @@ WHERE connected_relay_id = sqlc.arg(relay_id)
   AND connected_relay_lease_revision = sqlc.arg(relay_lease_revision)
   AND state IN ('connected', 'ready', 'draining');
 
+-- name: LockRelayServicesForPlacement :many
+SELECT relay_service_id
+FROM control.relay_services
+WHERE enabled
+ORDER BY relay_service_id
+FOR UPDATE;
+
 -- name: LockEligibleRelayLeases :many
 SELECT leases.*, services.relay_address, services.tls_server_name
 FROM control.relay_leases AS leases
 JOIN control.relay_services AS services USING (relay_service_id)
 WHERE leases.lease_expires_at > sqlc.arg(now)
+  AND leases.relay_service_id = ANY(sqlc.arg(relay_service_ids)::text[])
   AND NOT leases.draining
   AND services.enabled
   AND leases.protocol_version = sqlc.arg(protocol_version)
   AND leases.connection_capacity > 0
   AND leases.stream_capacity > 0
 ORDER BY leases.relay_service_id, leases.relay_id
-FOR UPDATE OF leases, services;
+FOR UPDATE OF leases;
+
+-- name: LockRelayServiceForCertificate :one
+SELECT relay_service_id
+FROM control.relay_services
+WHERE relay_service_id = sqlc.arg(relay_service_id)
+FOR UPDATE;
 
 -- name: CountOpenRouteSessionAssignmentsByRelayService :many
 SELECT connections.relay_service_id,

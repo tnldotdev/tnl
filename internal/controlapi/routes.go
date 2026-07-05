@@ -251,6 +251,10 @@ func (h *handler) CreateRouteSession(
 		return
 	}
 	plan := *decision.CertificatePlan
+	if plan.ChallengeMethod == string(controlv1.Dns01) && !h.config.DNSAutomation {
+		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "certificate plan requires DNS-01 automation, which is not configured")
+		return
+	}
 	digest, err := authorization.CanonicalRequestHash(authorization.OperationRequest{
 		Operation: authorization.OperationRouteSessionCreate, TeamID: decision.TeamID, MembershipID: decision.ActingMembershipID,
 		DomainID: decision.DomainID, CanonicalHostname: decision.CanonicalHostname, RouteScope: decision.RouteScope,
@@ -313,7 +317,7 @@ func (h *handler) HeartbeatRouteSession(response http.ResponseWriter, request *h
 	}
 	writeJSON(response, http.StatusOK, controlv1.RouteSessionHeartbeat{
 		RouteSession:         routeSessionResponse(setup),
-		PublisherConnections: publisherConnectionResponses(setup.PublisherConnections),
+		PublisherConnections: connectionAssignmentResponses(setup.PublisherConnections),
 		PolicyDenials:        int64(setup.PolicyDenials),
 	})
 }
@@ -372,7 +376,7 @@ func (h *handler) CloseRouteSession(response http.ResponseWriter, request *http.
 		return
 	}
 	if err := h.store.CloseRouteSession(
-		request.Context(), string(routeSessionID), credentials.SessionToken(token), time.Now(),
+		request.Context(), string(routeSessionID), credentials.RouteSessionToken(token), time.Now(),
 	); err != nil {
 		writeControlStateProblem(response, "close route session", err)
 		return
