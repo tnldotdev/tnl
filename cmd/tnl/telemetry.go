@@ -134,7 +134,7 @@ func canonicalTelemetryCommand(parsed *kong.Context) string {
 	return strings.Join(command, " ")
 }
 
-func telemetryStateRoot(parsed *kong.Context) (string, error) {
+func commandStateRoot(parsed *kong.Context) (string, error) {
 	stateDir := os.Getenv("TNL_STATE_DIR")
 	if stateDir != "" {
 		stateDir = kong.ExpandPath(stateDir)

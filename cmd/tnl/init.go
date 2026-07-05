@@ -31,7 +31,6 @@ type initPlan struct {
 	configData       []byte
 	framework        string
 	frameworkPath    string
-	frameworkBefore  []byte
 	frameworkAfter   []byte
 	actions          []string
 	installBlocked   bool
@@ -40,7 +39,6 @@ type initPlan struct {
 
 type packageDocument struct {
 	PackageManager       string            `json:"packageManager"`
-	Type                 string            `json:"type"`
 	Workspaces           json.RawMessage   `json:"workspaces"`
 	Scripts              map[string]string `json:"scripts"`
 	Dependencies         map[string]string `json:"dependencies"`
@@ -78,7 +76,7 @@ func runInit(ctx context.Context, flags initCommand, stdout, stderr io.Writer) e
 	}
 	frameworkUpdated := false
 	if len(plan.frameworkAfter) != 0 {
-		if err := replaceRecognizedInitFile(plan.frameworkPath, plan.frameworkBefore, plan.frameworkAfter); err != nil {
+		if err := createInitFile(plan.frameworkPath, plan.frameworkAfter); err != nil {
 			return err
 		}
 		frameworkUpdated = true
@@ -87,9 +85,8 @@ func runInit(ctx context.Context, flags initCommand, stdout, stderr io.Writer) e
 	if err != nil {
 		return err
 	}
-	var typeUpdates []string
 	if plan.generatedService {
-		typeActions, updated, err := ensureProjectTypeIncludes(projectConfiguration{
+		typeActions, err := projectTypeIncludeActions(projectConfiguration{
 			root:                plan.root,
 			directories:         map[string]string{"app": plan.root},
 			relativeDirectories: map[string]string{"app": "."},
@@ -98,10 +95,9 @@ func runInit(ctx context.Context, flags initCommand, stdout, stderr io.Writer) e
 			return err
 		}
 		plan.actions = append(plan.actions, typeActions...)
-		typeUpdates = updated
 	}
 	state := "already configured"
-	if created || installed || frameworkUpdated || gitignoreUpdated || len(typeUpdates) != 0 {
+	if created || installed || frameworkUpdated || gitignoreUpdated {
 		state = "configured"
 	}
 	if len(plan.actions) != 0 {
@@ -121,9 +117,6 @@ func runInit(ctx context.Context, flags initCommand, stdout, stderr io.Writer) e
 	}
 	if gitignoreUpdated {
 		fields = append(fields, clioutput.Field{Label: "updated", Value: filepath.Join(plan.root, ".gitignore")})
-	}
-	for _, path := range typeUpdates {
-		fields = append(fields, clioutput.Field{Label: "updated", Value: path})
 	}
 	blocks := []clioutput.Block{clioutput.Fields(fields...)}
 	for _, action := range plan.actions {
@@ -192,7 +185,7 @@ func planInit(ctx context.Context, cwd string) (initPlan, error) {
 		plan.actions = append(plan.actions, "Create package.json, then install @tnldotdev/tnl as a development dependency.")
 	}
 	if plan.framework != "" {
-		if err := planFrameworkConfig(&plan, root, packageConfig.Type); err != nil {
+		if err := planFrameworkConfig(&plan, root); err != nil {
 			return initPlan{}, err
 		}
 	}
@@ -429,7 +422,7 @@ func frameworkConfigPaths(root, framework string) []string {
 	return paths
 }
 
-func planFrameworkConfig(plan *initPlan, root, packageType string) error {
+func planFrameworkConfig(plan *initPlan, root string) error {
 	paths := frameworkConfigPaths(root, plan.framework)
 	if len(paths) > 1 {
 		plan.actions = append(plan.actions, fmt.Sprintf("Configure @tnldotdev/tnl/%s in the intended framework config; multiple files were found.", plan.framework))
@@ -437,11 +430,7 @@ func planFrameworkConfig(plan *initPlan, root, packageType string) error {
 	}
 	if len(paths) == 0 {
 		plan.frameworkPath = filepath.Join(root, plan.framework+".config.ts")
-		if plan.framework == "next" {
-			plan.frameworkAfter = []byte("import { withTnl } from \"@tnldotdev/tnl/next\";\n\nexport default withTnl({});\n")
-		} else {
-			plan.frameworkAfter = []byte("import { defineConfig } from \"vite\";\nimport tnl from \"@tnldotdev/tnl/vite\";\n\nexport default defineConfig({\n  plugins: [tnl()],\n});\n")
-		}
+		plan.frameworkAfter = frameworkConfigSource(plan.framework)
 		return nil
 	}
 	path := paths[0]
@@ -450,36 +439,18 @@ func planFrameworkConfig(plan *initPlan, root, packageType string) error {
 		return err
 	}
 	plan.frameworkPath = path
-	if !recognizedESMConfigPath(path, packageType) {
-		plan.actions = append(plan.actions, frameworkConfigAction(plan.framework, path))
-		return nil
-	}
-	var updated []byte
-	if plan.framework == "next" {
-		updated = updateNextConfig(data)
-	} else {
-		updated = updateViteConfig(data)
-	}
-	if updated != nil {
-		if !bytes.Equal(updated, data) {
-			plan.frameworkBefore = data
-			plan.frameworkAfter = updated
-		}
+	if bytes.Equal(data, frameworkConfigSource(plan.framework)) {
 		return nil
 	}
 	plan.actions = append(plan.actions, frameworkConfigAction(plan.framework, path))
 	return nil
 }
 
-func recognizedESMConfigPath(path, packageType string) bool {
-	switch filepath.Ext(path) {
-	case ".ts", ".mts", ".mjs":
-		return true
-	case ".js":
-		return packageType == "module"
-	default:
-		return false
+func frameworkConfigSource(framework string) []byte {
+	if framework == "next" {
+		return []byte("import { withTnl } from \"@tnldotdev/tnl/next\";\n\nexport default withTnl({});\n")
 	}
+	return []byte("import { defineConfig } from \"vite\";\nimport tnl from \"@tnldotdev/tnl/vite\";\n\nexport default defineConfig({\n  plugins: [tnl()],\n});\n")
 }
 
 func frameworkConfigAction(framework, path string) string {
@@ -487,543 +458,6 @@ func frameworkConfigAction(framework, path string) string {
 		return fmt.Sprintf("Update %s: import { withTnl } from \"@tnldotdev/tnl/next\" and wrap the default export with withTnl(...).", path)
 	}
 	return fmt.Sprintf("Update %s: import tnl from \"@tnldotdev/tnl/vite\" and add tnl() to plugins.", path)
-}
-
-type initJSToken struct {
-	text       string
-	value      string
-	start, end int
-	kind       byte
-}
-
-const (
-	initJSIdentifier = 'i'
-	initJSString     = 's'
-)
-
-type initJSImport struct {
-	source         string
-	defaultBinding string
-	named          map[string]string
-	typeOnly       bool
-}
-
-func updateNextConfig(data []byte) []byte {
-	tokens, pairs, ok := lexInitJS(data)
-	if !ok || hasInitJSCJS(tokens) {
-		return nil
-	}
-	imports, ok := parseInitJSImports(tokens)
-	if !ok {
-		return nil
-	}
-	export, ok := initJSDefaultExport(tokens)
-	if !ok {
-		return nil
-	}
-	for _, imported := range imports {
-		if imported.source != "@tnldotdev/tnl/next" || imported.typeOnly {
-			continue
-		}
-		for local, name := range imported.named {
-			if name == "withTnl" && initJSDefaultCall(tokens, pairs, export, local) {
-				return data
-			}
-		}
-	}
-	for _, imported := range imports {
-		if imported.source == "@tnldotdev/tnl/next" || imported.source == "@tnldotdev/next" {
-			return nil
-		}
-	}
-	start, end, ok := initJSDefaultExpression(tokens, export)
-	if !ok || end-start != 1 || tokens[start].kind != initJSIdentifier || initJSHasIdentifier(tokens, "withTnl") {
-		return nil
-	}
-	identifier := tokens[start]
-	source := string(data)
-	return []byte("import { withTnl } from \"@tnldotdev/tnl/next\";" + initJSLineEnding(source) +
-		source[:identifier.start] + "withTnl(" + identifier.text + ")" + source[identifier.end:])
-}
-
-func updateViteConfig(data []byte) []byte {
-	tokens, pairs, ok := lexInitJS(data)
-	if !ok || hasInitJSCJS(tokens) || initJSHasToken(tokens, "...") || hasInitJSComputedProperty(tokens, pairs) {
-		return nil
-	}
-	imports, ok := parseInitJSImports(tokens)
-	if !ok {
-		return nil
-	}
-	export, ok := initJSDefaultExport(tokens)
-	if !ok {
-		return nil
-	}
-	object, ok := initJSViteObject(tokens, pairs, imports, export)
-	if !ok {
-		return nil
-	}
-	plugins, property, ok := initJSPluginsArray(tokens, pairs, object)
-	if !ok {
-		return nil
-	}
-	for _, imported := range imports {
-		if imported.source == "@tnldotdev/tnl/vite" && !imported.typeOnly && imported.defaultBinding != "" &&
-			initJSArrayHasCall(tokens, pairs, plugins, imported.defaultBinding) {
-			return data
-		}
-	}
-	for _, imported := range imports {
-		if imported.source == "@tnldotdev/tnl/vite" || imported.source == "@tnldotdev/vite" {
-			return nil
-		}
-	}
-	if initJSHasIdentifier(tokens, "tnl") {
-		return nil
-	}
-
-	source := string(data)
-	open := tokens[plugins]
-	first := plugins + 1
-	gap := source[open.end:tokens[first].start]
-	insertion := "tnl()"
-	if first != pairs[plugins] {
-		insertion += ","
-	}
-	if strings.ContainsAny(gap, "\r\n") {
-		indent := initJSLineIndent(source, tokens[first].start)
-		if first == pairs[plugins] {
-			indent = initJSLineIndent(source, tokens[property].start)
-			if strings.Contains(indent, "\t") {
-				indent += "\t"
-			} else {
-				indent += "  "
-			}
-		}
-		insertion = initJSLineEnding(source) + indent + "tnl(),"
-	} else if first != pairs[plugins] && (gap == "" || gap[0] != ' ' && gap[0] != '\t') {
-		insertion += " "
-	}
-	updated := source[:open.end] + insertion + source[open.end:]
-	return []byte("import tnl from \"@tnldotdev/tnl/vite\";" + initJSLineEnding(source) + updated)
-}
-
-func lexInitJS(data []byte) ([]initJSToken, []int, bool) {
-	if bytes.HasPrefix(data, []byte("#!")) {
-		return nil, nil, false
-	}
-	var tokens []initJSToken
-	for i := 0; i < len(data); {
-		if strings.ContainsRune(" \t\r\n\f\v", rune(data[i])) {
-			i++
-			continue
-		}
-		if data[i] >= 0x80 || data[i] == '`' {
-			return nil, nil, false
-		}
-		if data[i] == '/' {
-			if i+1 < len(data) && data[i+1] == '/' {
-				i += 2
-				for i < len(data) && data[i] != '\n' {
-					i++
-				}
-				continue
-			}
-			if i+1 < len(data) && data[i+1] == '*' {
-				i += 2
-				for i+1 < len(data) && (data[i] != '*' || data[i+1] != '/') {
-					i++
-				}
-				if i+1 >= len(data) {
-					return nil, nil, false
-				}
-				i += 2
-				continue
-			}
-			return nil, nil, false
-		}
-		if data[i] == '\'' || data[i] == '"' {
-			start, quote, plain := i, data[i], true
-			i++
-			for i < len(data) && data[i] != quote {
-				if data[i] == '\r' || data[i] == '\n' {
-					return nil, nil, false
-				}
-				if data[i] == '\\' {
-					plain = false
-					i += 2
-				} else {
-					i++
-				}
-			}
-			if i >= len(data) {
-				return nil, nil, false
-			}
-			i++
-			value := ""
-			if plain {
-				value = string(data[start+1 : i-1])
-			}
-			tokens = append(tokens, initJSToken{text: string(data[start:i]), value: value, start: start, end: i, kind: initJSString})
-			continue
-		}
-		if initJSIdentifierStart(data[i]) {
-			start := i
-			for i++; i < len(data) && initJSIdentifierPart(data[i]); i++ {
-			}
-			tokens = append(tokens, initJSToken{text: string(data[start:i]), start: start, end: i, kind: initJSIdentifier})
-			continue
-		}
-		start := i
-		switch {
-		case i+2 < len(data) && string(data[i:i+3]) == "...":
-			i += 3
-		case i+1 < len(data) && string(data[i:i+2]) == "=>":
-			i += 2
-		default:
-			i++
-		}
-		tokens = append(tokens, initJSToken{text: string(data[start:i]), start: start, end: i})
-	}
-
-	pairs := make([]int, len(tokens))
-	for i := range pairs {
-		pairs[i] = -1
-	}
-	var stack []int
-	for i, token := range tokens {
-		switch token.text {
-		case "(", "[", "{":
-			stack = append(stack, i)
-		case ")", "]", "}":
-			if len(stack) == 0 || !initJSMatchingPair(tokens[stack[len(stack)-1]].text, token.text) {
-				return nil, nil, false
-			}
-			open := stack[len(stack)-1]
-			stack = stack[:len(stack)-1]
-			pairs[open], pairs[i] = i, open
-		}
-	}
-	return tokens, pairs, len(stack) == 0
-}
-
-func initJSIdentifierStart(value byte) bool {
-	return value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z' || value == '_' || value == '$'
-}
-
-func initJSIdentifierPart(value byte) bool {
-	return initJSIdentifierStart(value) || value >= '0' && value <= '9'
-}
-
-func initJSMatchingPair(open, close string) bool {
-	return open == "(" && close == ")" || open == "[" && close == "]" || open == "{" && close == "}"
-}
-
-func parseInitJSImports(tokens []initJSToken) ([]initJSImport, bool) {
-	var imports []initJSImport
-	for i := 0; i < len(tokens); i++ {
-		if tokens[i].text != "import" || i+1 == len(tokens) || tokens[i+1].text == "(" || tokens[i+1].text == "." {
-			continue
-		}
-		imported := initJSImport{named: map[string]string{}}
-		j := i + 1
-		if tokens[j].text == "type" {
-			imported.typeOnly = true
-			j++
-		}
-		if j >= len(tokens) {
-			return nil, false
-		}
-		if tokens[j].kind == initJSString {
-			imported.source = tokens[j].value
-			imports = append(imports, imported)
-			i = j
-			continue
-		}
-		if tokens[j].kind == initJSIdentifier {
-			imported.defaultBinding = tokens[j].text
-			j++
-			if j < len(tokens) && tokens[j].text == "," {
-				j++
-			}
-		}
-		if j < len(tokens) && tokens[j].text == "{" {
-			j++
-			for j < len(tokens) && tokens[j].text != "}" {
-				if tokens[j].kind != initJSIdentifier {
-					return nil, false
-				}
-				name, local := tokens[j].text, tokens[j].text
-				j++
-				if j < len(tokens) && tokens[j].text == "as" {
-					j++
-					if j >= len(tokens) || tokens[j].kind != initJSIdentifier {
-						return nil, false
-					}
-					local = tokens[j].text
-					j++
-				}
-				imported.named[local] = name
-				if j < len(tokens) && tokens[j].text == "," {
-					j++
-				}
-			}
-			if j >= len(tokens) {
-				return nil, false
-			}
-			j++
-		} else if j < len(tokens) && tokens[j].text == "*" {
-			j += 3
-		}
-		if j+1 >= len(tokens) || tokens[j].text != "from" || tokens[j+1].kind != initJSString {
-			return nil, false
-		}
-		imported.source = tokens[j+1].value
-		imports = append(imports, imported)
-		i = j + 1
-	}
-	return imports, true
-}
-
-func initJSDefaultExport(tokens []initJSToken) (int, bool) {
-	found := -1
-	for i := 0; i+1 < len(tokens); i++ {
-		if tokens[i].text == "export" && tokens[i+1].text == "default" {
-			if found != -1 {
-				return -1, false
-			}
-			found = i
-		}
-	}
-	return found, found != -1
-}
-
-func initJSDefaultExpression(tokens []initJSToken, export int) (int, int, bool) {
-	start, end := export+2, len(tokens)
-	if end > start && tokens[end-1].text == ";" {
-		end--
-	}
-	return start, end, start < end
-}
-
-func initJSDefaultCall(tokens []initJSToken, pairs []int, export int, binding string) bool {
-	start, end, ok := initJSDefaultExpression(tokens, export)
-	return ok && end-start >= 3 && tokens[start].text == binding && tokens[start+1].text == "(" && pairs[start+1] == end-1
-}
-
-func initJSViteObject(tokens []initJSToken, pairs []int, imports []initJSImport, export int) (int, bool) {
-	start, end, ok := initJSDefaultExpression(tokens, export)
-	if !ok {
-		return -1, false
-	}
-	if tokens[start].text == "{" && pairs[start] == end-1 {
-		return start, true
-	}
-	if end-start < 4 || tokens[start].kind != initJSIdentifier || tokens[start+1].text != "(" || pairs[start+1] != end-1 {
-		return -1, false
-	}
-	defineConfig := false
-	for _, imported := range imports {
-		if imported.source == "vite" && !imported.typeOnly && imported.named[tokens[start].text] == "defineConfig" {
-			defineConfig = true
-		}
-	}
-	if !defineConfig {
-		return -1, false
-	}
-	argumentStart, argumentEnd := start+2, end-1
-	if argumentStart >= argumentEnd {
-		return -1, false
-	}
-	if tokens[argumentStart].text == "{" && pairs[argumentStart] == argumentEnd-1 {
-		return argumentStart, true
-	}
-	return initJSFactoryObject(tokens, pairs, argumentStart, argumentEnd)
-}
-
-func initJSFactoryObject(tokens []initJSToken, pairs []int, start, end int) (int, bool) {
-	arrow := -1
-	for i := start; i < end; i++ {
-		if tokens[i].text == "=>" {
-			if arrow != -1 {
-				return -1, false
-			}
-			arrow = i
-		}
-	}
-	if arrow != -1 {
-		parameters := start
-		if tokens[parameters].text == "async" {
-			parameters++
-		}
-		if parameters >= arrow || !(arrow-parameters == 1 && tokens[parameters].kind == initJSIdentifier ||
-			tokens[parameters].text == "(" && pairs[parameters] == arrow-1) {
-			return -1, false
-		}
-		return initJSReturnedObject(tokens, pairs, arrow+1, end)
-	}
-
-	function := start
-	if tokens[function].text == "async" {
-		function++
-	}
-	if function >= end || tokens[function].text != "function" {
-		return -1, false
-	}
-	function++
-	if function < end && tokens[function].kind == initJSIdentifier {
-		function++
-	}
-	if function >= end || tokens[function].text != "(" {
-		return -1, false
-	}
-	body := pairs[function] + 1
-	if body >= end || tokens[body].text != "{" || pairs[body] != end-1 {
-		return -1, false
-	}
-	return initJSReturnStatementObject(tokens, pairs, body+1, end-1)
-}
-
-func initJSReturnedObject(tokens []initJSToken, pairs []int, start, end int) (int, bool) {
-	if start >= end {
-		return -1, false
-	}
-	if tokens[start].text == "(" && pairs[start] == end-1 && start+1 < end && tokens[start+1].text == "{" && pairs[start+1] == end-2 {
-		return start + 1, true
-	}
-	if tokens[start].text == "{" && pairs[start] == end-1 {
-		return initJSReturnStatementObject(tokens, pairs, start+1, end-1)
-	}
-	return -1, false
-}
-
-func initJSReturnStatementObject(tokens []initJSToken, pairs []int, start, end int) (int, bool) {
-	if start+1 >= end || tokens[start].text != "return" || tokens[start+1].text != "{" {
-		return -1, false
-	}
-	object, after := start+1, pairs[start+1]+1
-	if after < end && tokens[after].text == ";" {
-		after++
-	}
-	return object, after == end
-}
-
-func initJSPluginsArray(tokens []initJSToken, pairs []int, object int) (int, int, bool) {
-	propertyCount, propertyToken := 0, -1
-	for i := 0; i+1 < len(tokens); i++ {
-		if tokens[i].kind == initJSIdentifier && tokens[i].text == "plugins" && tokens[i+1].text == ":" {
-			propertyCount++
-			propertyToken = i
-		}
-		if tokens[i].kind == initJSString && tokens[i].value == "plugins" && tokens[i+1].text == ":" {
-			return -1, -1, false
-		}
-	}
-	if propertyCount != 1 {
-		return -1, -1, false
-	}
-
-	for i, close := object+1, pairs[object]; i < close; {
-		if tokens[i].text == "," {
-			i++
-			continue
-		}
-		start := i
-		for i < close && tokens[i].text != "," {
-			if pairs[i] > i {
-				i = pairs[i] + 1
-			} else {
-				i++
-			}
-		}
-		end := i
-		if start >= end || tokens[start].text == "..." || tokens[start].text == "[" {
-			return -1, -1, false
-		}
-		if start == propertyToken {
-			if start+2 >= end || tokens[start+1].text != ":" || tokens[start+2].text != "[" || pairs[start+2] != end-1 {
-				return -1, -1, false
-			}
-			return start + 2, start, true
-		}
-	}
-	return -1, -1, false
-}
-
-func initJSArrayHasCall(tokens []initJSToken, pairs []int, array int, binding string) bool {
-	for i, close := array+1, pairs[array]; i < close; {
-		if tokens[i].text == "," {
-			i++
-			continue
-		}
-		start := i
-		for i < close && tokens[i].text != "," {
-			if pairs[i] > i {
-				i = pairs[i] + 1
-			} else {
-				i++
-			}
-		}
-		if i-start == 3 && tokens[start].text == binding && tokens[start+1].text == "(" && tokens[start+2].text == ")" {
-			return true
-		}
-	}
-	return false
-}
-
-func hasInitJSCJS(tokens []initJSToken) bool {
-	for i := range tokens {
-		if i+2 < len(tokens) && tokens[i].text == "module" && tokens[i+1].text == "." && tokens[i+2].text == "exports" ||
-			i+1 < len(tokens) && tokens[i].text == "exports" && tokens[i+1].text == "." ||
-			i+1 < len(tokens) && tokens[i].text == "require" && tokens[i+1].text == "(" {
-			return true
-		}
-	}
-	return false
-}
-
-func hasInitJSComputedProperty(tokens []initJSToken, pairs []int) bool {
-	for i, token := range tokens {
-		if token.text == "[" && pairs[i] > i && pairs[i]+1 < len(tokens) &&
-			(tokens[pairs[i]+1].text == ":" || tokens[pairs[i]+1].text == "(") {
-			return true
-		}
-	}
-	return false
-}
-
-func initJSHasIdentifier(tokens []initJSToken, identifier string) bool {
-	for _, token := range tokens {
-		if token.kind == initJSIdentifier && token.text == identifier {
-			return true
-		}
-	}
-	return false
-}
-
-func initJSHasToken(tokens []initJSToken, text string) bool {
-	for _, token := range tokens {
-		if token.text == text {
-			return true
-		}
-	}
-	return false
-}
-
-func initJSLineEnding(source string) string {
-	if strings.Contains(source, "\r\n") {
-		return "\r\n"
-	}
-	return "\n"
-}
-
-func initJSLineIndent(source string, offset int) string {
-	start := strings.LastIndexAny(source[:offset], "\r\n") + 1
-	indent := source[start:offset]
-	if strings.Trim(indent, " \t") != "" {
-		return ""
-	}
-	return indent
 }
 
 func packageInstallCommand(manager string, packages []string) []string {

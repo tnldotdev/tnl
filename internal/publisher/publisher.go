@@ -340,12 +340,12 @@ func runSession(
 	defer cancelSession(nil)
 	provisioningCtx, cancelProvisioning := context.WithCancel(sessionCtx)
 	provisioningDone := make(chan struct{})
-	go func() {
+	go func(provisioningSetup controlv1.RouteSessionSetup) {
 		defer close(provisioningDone)
-		if err := observeProvisioningStall(provisioningCtx, config, setup); err != nil {
+		if err := observeProvisioningStall(provisioningCtx, config, provisioningSetup); err != nil {
 			cancelSession(fmt.Errorf("publisher: observe provisioning warning: %w", err))
 		}
-	}()
+	}(setup)
 	defer func() {
 		cancelProvisioning()
 		<-provisioningDone

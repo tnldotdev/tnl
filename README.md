@@ -37,8 +37,9 @@ tnl login https://control.tnl.example.com
 tnl publish 3000
 ```
 
-The default hostname is the current membership's namespace under the selected
-team's default domain. Select one child label or an exact authorized hostname:
+The default hostname combines the local service and worktree beneath the current
+membership's namespace on the selected team's default domain. Select one child
+label or an exact authorized hostname:
 
 ```console
 tnl publish 3000 --subdomain api
@@ -170,6 +171,11 @@ export default defineConfig(({ worktree }) => ({
 The TypeScript factory receives a frozen working directory, sanitized
 environment without `TNL_*` or `TNLD_*` values, and Git worktree metadata.
 Node.js 22.18 or newer is required to evaluate `tnl.config.ts`.
+
+The worktree label combines its directory name with an eight-character hash.
+The hash is stable for one client state directory, different for each worktree,
+and different on another installation. Its private random input is not exposed
+to project configuration or public metadata.
 
 Command-line values take precedence over supported `TNL_*` environment values,
 which take precedence over project configuration. Run `tnl config path` to see

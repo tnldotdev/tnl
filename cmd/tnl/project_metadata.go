@@ -19,22 +19,14 @@ import (
 
 func runConfigGenerate(
 	ctx context.Context,
-	flags cli,
-	command configGenerateCommand,
+	stateRoot string,
+	project projectConfiguration,
 	stdout, stderr io.Writer,
 ) error {
-	project, err := loadProjectConfiguration(ctx, flags)
-	if err != nil {
-		return err
-	}
 	if !project.found {
 		return errors.New("no project configuration file found")
 	}
-	root, err := clientStateRoot(command.StateDir)
-	if err != nil {
-		return err
-	}
-	state, err := clientstate.Open(ctx, root)
+	state, err := clientstate.Open(ctx, stateRoot)
 	if err != nil {
 		return err
 	}
@@ -47,16 +39,13 @@ func runConfigGenerate(
 	if err := projectmeta.Write(project.root, metadata); err != nil {
 		return err
 	}
-	actions, updatedPaths, err := ensureProjectTypeIncludes(project)
+	actions, err := projectTypeIncludeActions(project)
 	if err != nil {
 		return err
 	}
 	fields := []clioutput.Field{
 		clioutput.Field{Label: "metadata", Value: filepath.Join(project.root, projectmeta.DirectoryName, projectmeta.JSONName)},
 		clioutput.Field{Label: "declarations", Value: filepath.Join(project.root, projectmeta.DirectoryName, projectmeta.DeclarationsName)},
-	}
-	for _, path := range updatedPaths {
-		fields = append(fields, clioutput.Field{Label: "updated", Value: path})
 	}
 	blocks := []clioutput.Block{clioutput.Fields(fields...)}
 	for _, action := range actions {

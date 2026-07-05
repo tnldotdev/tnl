@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/config"
 )
 
 func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
@@ -21,11 +23,13 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("TNL_SERVER", "secret")
-	value, err := Load(t.Context(), path, directory)
+	worktree := config.Worktree{Root: directory, Name: filepath.Base(directory), Label: "project-12345678"}
+	value, err := Load(t.Context(), path, directory, worktree)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if value.Server == nil || *value.Server != "https://control.example.com" || value.Tunnel == nil || value.Tunnel.Subdomain == nil ||
+		*value.Tunnel.Subdomain != worktree.Label ||
 		value.Publish == nil || value.Publish.Target == nil || string(*value.Publish.Target) != "3000" ||
 		value.Dev == nil || value.Dev.StartupTimeout == nil || value.Dev.StartupTimeout.Value() != 30*time.Second ||
 		value.Services["api"].Directory == nil || *value.Services["api"].Directory != "apps/api" ||
@@ -45,7 +49,7 @@ func TestLoadRejectsVersionedOrDaemonResult(t *testing.T) {
 		if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := Load(t.Context(), path, filepath.Dir(path)); err == nil {
+		if _, err := Load(t.Context(), path, filepath.Dir(path), config.Worktree{}); err == nil {
 			t.Fatalf("%s result was accepted", name)
 		}
 	}
@@ -63,7 +67,7 @@ func TestLoadAppliesStaticValidationToNestedServices(t *testing.T) {
 			if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := Load(t.Context(), path, filepath.Dir(path)); err == nil {
+			if _, err := Load(t.Context(), path, filepath.Dir(path), config.Worktree{}); err == nil {
 				t.Fatal("invalid TypeScript service configuration was accepted")
 			}
 		})

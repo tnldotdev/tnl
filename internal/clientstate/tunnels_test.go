@@ -86,7 +86,10 @@ func TestTunnelProjectStateIsPartOfInitialV1Migration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"project_root TEXT NOT NULL", "service TEXT NOT NULL", "local_tunnels_project_open_idx"} {
+	for _, required := range []string{
+		"worktree_hash_salt BLOB NOT NULL", "length(worktree_hash_salt) IN (0, 32)",
+		"project_root TEXT NOT NULL", "service TEXT NOT NULL", "local_tunnels_project_open_idx",
+	} {
 		if !strings.Contains(string(data), required) {
 			t.Fatalf("initial migration does not contain %q", required)
 		}
