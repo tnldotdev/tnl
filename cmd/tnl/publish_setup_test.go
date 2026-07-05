@@ -32,6 +32,18 @@ func TestResolveIPPolicyDefaultsToCurrentIPAndAddsExplicitPrefixes(t *testing.T)
 	}
 }
 
+func TestResolveIPPolicyDoesNotDuplicateExplicitCurrentIP(t *testing.T) {
+	lookup := &testClientIPLookup{response: controlv1.ClientIPResponse{Ip: "192.0.2.4"}}
+	policy, current, err := resolveIPPolicy(t.Context(), lookup, []string{"192.0.2.4/32"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"192.0.2.4/32"}
+	if current != "192.0.2.4" || !reflect.DeepEqual(policy, want) || lookup.calls != 1 {
+		t.Fatalf("policy = %#v, current = %q, calls = %d", policy, current, lookup.calls)
+	}
+}
+
 func TestResolveIPPolicyPublicDoesNotLookUpCurrentIP(t *testing.T) {
 	lookup := &testClientIPLookup{err: errors.New("must not be called")}
 	policy, current, err := resolveIPPolicy(t.Context(), lookup, nil, true)

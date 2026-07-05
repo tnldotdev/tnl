@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/netip"
+	"slices"
 	"strings"
 
 	"github.com/tnldotdev/tnl/internal/authorization"
@@ -82,12 +83,14 @@ func resolveIPPolicy(
 	if err != nil || address.Zone() != "" {
 		return nil, "", errors.New("control returned an invalid current IP")
 	}
-	currentIP := address.Unmap().String()
-	allowedIPPrefixes, err = authorization.CanonicalizeIPPrefixes(append(canonical, currentIP))
-	if err != nil {
-		return nil, "", fmt.Errorf("combine allowed IP prefixes: %w", err)
+	address = address.Unmap()
+	currentIP := address.String()
+	currentPrefix := netip.PrefixFrom(address, address.BitLen()).String()
+	if !slices.Contains(canonical, currentPrefix) {
+		canonical = append(canonical, currentPrefix)
+		slices.Sort(canonical)
 	}
-	return allowedIPPrefixes, currentIP, nil
+	return canonical, currentIP, nil
 }
 
 func preparePublisherServices(
