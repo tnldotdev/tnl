@@ -1,2 +1,2 @@
-// Command tnld runs the TNL core daemon.
+// Command tnld runs the tnl core daemon.
 package main

@@ -6,7 +6,7 @@ the listener.
 
 The registry includes the standard Go and process collectors. In particular,
 monitor file-descriptor pressure with `process_open_fds` and
-`process_max_fds`; TNL does not duplicate those metrics under its own prefix.
+`process_max_fds`; tnl does not duplicate those metrics under its own prefix.
 
 ## Service Health
 

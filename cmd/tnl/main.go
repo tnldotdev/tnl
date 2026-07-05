@@ -37,7 +37,7 @@ type cli struct {
 
 type publicCommand struct {
 	Target       string `arg:"" name:"target" required:"" help:"Local port or literal-loopback HTTP origin."`
-	CoreURL      string `name:"core-url" env:"TNL_CORE_URL" required:"" help:"TNL core HTTPS origin."`
+	CoreURL      string `name:"core-url" env:"TNL_CORE_URL" required:"" help:"tnl core HTTPS origin."`
 	AccessToken  string `name:"access-token" env:"TNL_ACCESS_TOKEN" required:"" help:"Core API access token."`
 	Host         string `name:"host" env:"TNL_HOST" help:"Requested single-label public name; omit for a random name."`
 	Output       string `name:"output" enum:"human,ndjson" default:"human" help:"Output format: ${enum}."`
@@ -53,13 +53,13 @@ type hostCommand struct {
 }
 
 type hostListCommand struct {
-	CoreURL     string `name:"core-url" env:"TNL_CORE_URL" required:"" help:"TNL core HTTPS origin."`
+	CoreURL     string `name:"core-url" env:"TNL_CORE_URL" required:"" help:"tnl core HTTPS origin."`
 	AccessToken string `name:"access-token" env:"TNL_ACCESS_TOKEN" required:"" help:"Core API access token."`
 }
 
 type hostReleaseCommand struct {
 	Hostname    string `arg:"" name:"hostname" required:"" help:"Exact hostname to release."`
-	CoreURL     string `name:"core-url" env:"TNL_CORE_URL" required:"" help:"TNL core HTTPS origin."`
+	CoreURL     string `name:"core-url" env:"TNL_CORE_URL" required:"" help:"tnl core HTTPS origin."`
 	AccessToken string `name:"access-token" env:"TNL_ACCESS_TOKEN" required:"" help:"Core API access token."`
 	StateDir    string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent route state."`
 }
@@ -74,7 +74,7 @@ type authCommand struct {
 }
 
 type exchangeCommand struct {
-	CoreURL        string `name:"core-url" env:"TNL_CORE_URL" required:"" help:"TNL core HTTPS origin."`
+	CoreURL        string `name:"core-url" env:"TNL_CORE_URL" required:"" help:"tnl core HTTPS origin."`
 	BootstrapToken string `name:"bootstrap-token" env:"TNL_BOOTSTRAP_TOKEN" required:"" help:"Deployment bootstrap token."`
 }
 

@@ -387,7 +387,7 @@ fi
 
 openssl req -x509 -newkey rsa:2048 -sha256 -nodes \
   -keyout "${temp_dir}/control-ca.key" -out "${temp_dir}/control-ca.crt" \
-  -days 1 -subj '/CN=TNL benchmark control CA' >/dev/null 2>&1
+  -days 1 -subj '/CN=tnl benchmark control CA' >/dev/null 2>&1
 openssl req -newkey rsa:2048 -sha256 -nodes \
   -keyout "${temp_dir}/control.key" -out "${temp_dir}/control.csr" \
   -subj "/CN=${app}.fly.dev" >/dev/null 2>&1

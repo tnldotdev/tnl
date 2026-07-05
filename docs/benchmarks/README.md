@@ -1,6 +1,6 @@
 # Route-Path Benchmark
 
-The Fly benchmark measures the complete TNL path rather than Tailcat in
+The Fly benchmark measures the complete tnl path rather than Tailcat in
 isolation:
 
 ```text
