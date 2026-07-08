@@ -7,3 +7,5 @@ While consolidating documentation, a patch failed because its paragraph context 
 `sqlc` reports `column "lease_expires_at" does not exist` when a relay renewal assigns that column from an expression involving the current row, although a plain argument assignment works. Returning an already-draining row from a second CTE avoids the generator limitation.
 
 The default integration tier launched the isolated authoritative-DNS subprocess on macOS, where binding loopback TCP/UDP port 53 fails with `permission denied`. The test now skips on macOS; an unprivileged test-port design would allow local coverage.
+
+The configured `origin` still points at `0xcadams/tnl`, so GitHub emits a repository-moved warning on push and redirects to `tnldotdev/tnl`; local remotes should use the canonical repository URL.
