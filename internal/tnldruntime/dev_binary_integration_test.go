@@ -447,8 +447,10 @@ func newIntegrationBinaryNextDevProject(t *testing.T, repositoryRoot string) int
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(runtimeDirectory) })
 	project := integrationBinaryDevProject{
-		root: t.TempDir(), runtimeDirectory: runtimeDirectory, subdomain: "next-hmr",
+		root: filepath.Join(t.TempDir(), "project"), runtimeDirectory: runtimeDirectory, subdomain: "next-hmr",
 	}
+	runIntegrationBinaryCommand(t, repositoryRoot, integrationBinaryEnvironment(nil), "pnpm",
+		"--filter", "@tnldotdev/tnl", "deploy", "--legacy", project.root)
 	fixtureDirectory := filepath.Join(packageDirectory, "fixtures", "next", "app")
 	for _, name := range []string{"next.config.ts", "app/layout.tsx", "app/page.tsx"} {
 		source := filepath.Join(fixtureDirectory, filepath.FromSlash(name))
@@ -468,13 +470,7 @@ func newIntegrationBinaryNextDevProject(t *testing.T, repositoryRoot string) int
 	if err := os.MkdirAll(filepath.Join(nodeModules, "@tnldotdev"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := errors.Join(
-		os.Symlink(packageDirectory, filepath.Join(nodeModules, "@tnldotdev", "tnl")),
-		os.Symlink(filepath.Join(packageDirectory, "node_modules", "next"), filepath.Join(nodeModules, "next")),
-		os.Symlink(filepath.Join(packageDirectory, "node_modules", "react"), filepath.Join(nodeModules, "react")),
-		os.Symlink(filepath.Join(packageDirectory, "node_modules", "react-dom"), filepath.Join(nodeModules, "react-dom")),
-		os.WriteFile(filepath.Join(project.root, "package.json"), []byte(`{"private":true,"type":"module"}`), 0o600),
-	); err != nil {
+	if err := os.Symlink(project.root, filepath.Join(nodeModules, "@tnldotdev", "tnl")); err != nil {
 		t.Fatal(err)
 	}
 	document := map[string]any{
@@ -484,7 +480,7 @@ func newIntegrationBinaryNextDevProject(t *testing.T, repositoryRoot string) int
 			"services": map[string]any{"api": map[string]any{
 				"tunnel": map[string]any{"subdomain": project.subdomain},
 				"dev": map[string]any{
-					"command": []string{"node", filepath.Join(packageDirectory, "node_modules", "next", "dist", "bin", "next"), "dev", "--hostname", "127.0.0.1"},
+					"command": []string{"node", filepath.Join(nodeModules, "next", "dist", "bin", "next"), "dev", "--hostname", "127.0.0.1"},
 				},
 			}},
 		},
