@@ -15,6 +15,7 @@ benchmark_timeout="${TIMEOUT:-5m}"
 attempts="${ATTEMPTS:-3}"
 driver_wait_seconds="${DRIVER_WAIT_SECONDS:-480}"
 worker_capacity="${WORKER_CAPACITY:-500}"
+nofile_limit="${NOFILE_LIMIT:-65536}"
 single_size="${SINGLE_SIZE:-performance-6x}"
 edge_size="${EDGE_SIZE:-performance-2x}"
 worker_size="${WORKER_SIZE:-performance-6x}"
@@ -176,9 +177,9 @@ launch_single_node() {
   local total_routes="$1"
   local active_claim_limit=$((total_routes > 128 ? total_routes : 128))
   local claim_request_limit=$((total_routes > 1024 ? total_routes : 1024))
-  run_machine "${image}" \
+  run_machine "${image}" /tnld \
     --app "${app}" --name single-node --region "${region}" --vm-size "${single_size}" \
-    --entrypoint /tnld --detach --restart no \
+    --detach --restart no \
     --port 443:4443/tcp \
     --file-local "/etc/tnl/control.crt=${temp_dir}/control.crt" \
     --file-local "/etc/tnl/control.key=${temp_dir}/control.key" \
@@ -197,6 +198,7 @@ launch_single_node() {
     --env TNLD_RELAY_MAP_FILE=/etc/tnl/relay.json \
     --env "TNLD_RELAY_PROFILE=${relay_profile}" \
     --env "TNLD_WORKER_CAPACITY=${worker_capacity}" \
+    --env "TNL_NOFILE_LIMIT=${nofile_limit}" \
     --env TS_DEBUG_NEVER_DIRECT_UDP=1
 }
 
@@ -204,9 +206,9 @@ launch_edge() {
   local total_routes="$1"
   local active_claim_limit=$((total_routes > 128 ? total_routes : 128))
   local claim_request_limit=$((total_routes > 1024 ? total_routes : 1024))
-  run_machine "${image}" \
+  run_machine "${image}" /tnld \
     --app "${app}" --name edge --region "${region}" --vm-size "${edge_size}" \
-    --entrypoint /tnld --detach --restart no \
+    --detach --restart no \
     --port 443:4443/tcp \
     --file-local "/etc/tnl/control.crt=${temp_dir}/control.crt" \
     --file-local "/etc/tnl/control.key=${temp_dir}/control.key" \
@@ -222,16 +224,17 @@ launch_edge() {
     --env TNLD_CONTROL_KEY_FILE=/etc/tnl/control.key \
     --env "TNLD_BOOTSTRAP_TOKEN=${bootstrap_token}" \
     --env "TNLD_RELAY_PROFILE=${relay_profile}" \
-    --env "TNLD_WORKER_TOKEN=${worker_token}"
+    --env "TNLD_WORKER_TOKEN=${worker_token}" \
+    --env "TNL_NOFILE_LIMIT=${nofile_limit}"
 }
 
 launch_workers() {
   worker_metrics=()
   for ((index = 0; index < workers; index++)); do
     local name="worker-${index}"
-    run_machine "${image}" \
+    run_machine "${image}" /tnld \
       --app "${app}" --name "${name}" --region "${region}" --vm-size "${worker_size}" \
-      --entrypoint /tnld --detach --restart no \
+      --detach --restart no \
       --file-local "/etc/tnl/control-ca.crt=${temp_dir}/control-ca.crt" \
       --file-local "/etc/tnl/relay.json=${temp_dir}/relay.json" \
       --env TNLD_MODE=worker \
@@ -241,6 +244,7 @@ launch_workers() {
       --env TNLD_RELAY_MAP_FILE=/etc/tnl/relay.json \
       --env "TNLD_WORKER_CAPACITY=${worker_capacity}" \
       --env SSL_CERT_FILE=/etc/tnl/control-ca.crt \
+      --env "TNL_NOFILE_LIMIT=${nofile_limit}" \
       --env TS_DEBUG_NEVER_DIRECT_UDP=1
     local ip
     ip="$(machine_value "${name}" private_ip)"
@@ -288,9 +292,9 @@ run_tier() {
       fi
       barrier_args+=(--env "TNL_BENCH_BARRIER_TOKEN=${barrier_token}")
     fi
-    if ! run_machine "${image}" \
+    if ! run_machine "${image}" /tnlbench \
       --app "${app}" --name "${driver_name}" --region "${region}" --vm-size "${driver_size}" \
-      --entrypoint /tnlbench --detach --restart no \
+      --detach --restart no \
       --file-local "/etc/tnl/control-ca.crt=${temp_dir}/control-ca.crt" \
       --file-local "/etc/tnl/relay.json=${temp_dir}/relay.json" \
       --env "TNL_BENCH_TOPOLOGY=${topology}" \
@@ -308,6 +312,7 @@ run_tier() {
       --env "TNL_BENCH_PARALLEL=${parallel}" \
       --env "TNL_BENCH_PAYLOAD_BYTES=${payload_bytes}" \
       --env "TNL_BENCH_TIMEOUT=${benchmark_timeout}" \
+      --env "TNL_NOFILE_LIMIT=${nofile_limit}" \
       --env TS_DEBUG_NEVER_DIRECT_UDP=1; then
       return 1
     fi
