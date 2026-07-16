@@ -93,12 +93,13 @@ type integrationDNSChange struct {
 // This is only the Route 53 HTTP wire boundary, not a replacement provider or
 // verifier. Records written by the real SDK are served to tnld and Pebble.
 type integrationRoute53 struct {
-	address string
-	server  *httptest.Server
-	mu      sync.Mutex
-	zoneID  string
-	zone    *integrationDNSZone
-	changes []integrationDNSChange
+	address      string
+	server       *httptest.Server
+	mu           sync.Mutex
+	zoneID       string
+	zone         *integrationDNSZone
+	changes      []integrationDNSChange
+	beforeChange func(integrationDNSChange)
 }
 
 func newIntegrationRoute53(t *testing.T, zoneID, domain string) *integrationRoute53 {
@@ -141,6 +142,12 @@ func newIntegrationRoute53(t *testing.T, zoneID, domain string) *integrationRout
 	t.Cleanup(f.server.Close)
 	t.Setenv("AWS_ENDPOINT_URL_ROUTE_53", f.server.URL)
 	return f
+}
+
+func (f *integrationRoute53) setBeforeChange(hook func(integrationDNSChange)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.beforeChange = hook
 }
 
 func (f *integrationRoute53) serveRoute53(t *testing.T, w http.ResponseWriter, r *http.Request) {
@@ -196,6 +203,9 @@ func (f *integrationRoute53) serveRoute53(t *testing.T, w http.ResponseWriter, r
 		for _, change := range input.Changes {
 			change.Record.Name = dns.Fqdn(change.Record.Name)
 			change.zoneID = parts[1]
+			if f.beforeChange != nil {
+				f.beforeChange(change)
+			}
 			key := change.Record.Name + "/" + change.Record.Type
 			existing, exists := zone.records[key]
 			if change.Action != "CREATE" && change.Action != "UPSERT" && change.Action != "DELETE" ||

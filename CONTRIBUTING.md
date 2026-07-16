@@ -37,6 +37,7 @@ Prepare the integration prerequisites below before running that tier.
 | Race               | `task go:test-race`                                          | Go race detector; integration tests remain opt-in                                           |
 | Integration        | `task go:test-integration`                                   | Disposable PostgreSQL, Pebble from `mise install`, installed dependencies, and `pnpm build` |
 | Binary integration | `env TNL_TEST_BINARY_INTEGRATION=1 task go:test-integration` | Integration prerequisites plus disposable Linux with local DNS/HTTPS ports available        |
+| DNS integration    | `task go:test-integration-dns-linux`                         | Docker; runs the authoritative DNS test with isolated Linux port 53 and PostgreSQL          |
 | Package checks     | `pnpm run pack`                                              | Checks JavaScript exports and tarball contents                                              |
 | Release snapshot   | `task package`                                               | Builds native archives and npm packages, then verifies installations; does not publish      |
 
@@ -45,7 +46,10 @@ PostgreSQL server with permission to create databases. Fixtures create and
 forcibly drop test databases; never use a production server. Binary tests also
 change subprocess trust/configuration and bind low ports. Use the
 [integration workflow](.github/workflows/integration.yml) as the Linux setup
-reference; the binary tier cannot run on macOS.
+reference; the binary tier cannot run on macOS. The focused DNS integration
+task instead creates disposable Linux and PostgreSQL containers without
+publishing their ports to the host, so its authoritative DNS server can bind
+the test container's isolated port 53 on any Docker host.
 
 Task supplies `GOFLAGS=-tags=ts_omit_ssh`. Preserve it for direct Go commands:
 

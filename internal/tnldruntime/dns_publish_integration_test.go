@@ -1,6 +1,7 @@
 package tnldruntime
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -11,9 +12,12 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/miekg/dns"
+	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -28,25 +32,73 @@ func TestIntegrationSplitAutomaticRelayDNSCertificates(t *testing.T) {
 	const serverDomain = "split.integration.test"
 	dnsFixture := newIntegrationRoute53(t, "server", serverDomain)
 	fixture := newSplitPublishFixtureWithOptions(t, "automatic", splitPublishOptions{dns: dnsFixture})
-	fixture.identity.hostname = "automatic." + serverDomain
-	fixture.identity.membershipID = ""
-	fixture.identity.routeScope = controlv1.Shared
-	fixture.identity.certificatePlan = controlv1.CertificatePlan{
-		CacheKey: fixture.identity.hostname, Scope: fixture.identity.hostname,
-		Identifiers: []string{fixture.identity.hostname}, ChallengeMethod: controlv1.Dns01,
+	namespace, found := strings.CutPrefix(fixture.identity.hostname, "automatic.")
+	if !found {
+		t.Fatalf("route hostname %q is outside the expected member namespace", fixture.identity.hostname)
 	}
+	fixture.identity.certificatePlan = controlv1.CertificatePlan{
+		CacheKey: namespace, Scope: namespace,
+		Identifiers: []string{"*." + namespace, namespace}, ChallengeMethod: controlv1.Dns01,
+	}
+	cleanupStarted, releaseCleanup := make(chan struct{}), make(chan struct{})
+	var blockCleanup, releaseCleanupOnce sync.Once
+	release := func() { releaseCleanupOnce.Do(func() { close(releaseCleanup) }) }
+	defer release()
+	dnsFixture.setBeforeChange(func(change integrationDNSChange) {
+		if change.Action != "DELETE" || change.Record.Name != dns.Fqdn("_acme-challenge."+namespace) {
+			return
+		}
+		blockCleanup.Do(func() {
+			close(cleanupStarted)
+			select {
+			case <-releaseCleanup:
+			case <-t.Context().Done():
+			}
+		})
+	})
 	target := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(response, "real DNS publish")
 	}))
 	t.Cleanup(target.Close)
 
 	quic, tcp := fixture.connectors()
-	handle := fixture.startPublisher(t, target.URL, quic, tcp)
+	finalizing := make(chan controlv1.CertificateIssuance, 1)
+	config := fixture.identity.publisherConfig(target.URL, quic, tcp)
+	config.Control = &certificateObservingControlClient{
+		RouteControlClient: config.Control,
+		observe: func(issuance controlv1.CertificateIssuance) {
+			if issuance.State == controlv1.CertificateIssuanceStateFinalizing {
+				select {
+				case finalizing <- issuance:
+				default:
+				}
+			}
+		},
+	}
+	handle := startIntegrationPublisher(t, config, func() string {
+		return integrationPublisherDiagnostics(fixture.inspect, fixture.pebble.logPath)
+	})
+	select {
+	case <-cleanupStarted:
+	case <-time.After(30 * time.Second):
+		t.Fatal("route DNS challenge cleanup did not start")
+	}
+	select {
+	case issuance := <-finalizing:
+		if issuance.CertificatePem != nil || issuance.NotBefore != nil || issuance.NotAfter != nil {
+			t.Fatalf("finalizing issuance exposed certificate material: %#v", issuance)
+		}
+	case <-handle.done:
+		t.Fatalf("publisher stopped during route DNS challenge cleanup: %v", handle.result())
+	case <-time.After(10 * time.Second):
+		t.Fatal("publisher did not observe the finalizing certificate issuance")
+	}
+	release()
 	ready := fixture.waitReady(t, handle)
 	assertIntegrationPublishedRoute(t, fixture.inspect, fixture.visitor, fixture.identity, ready)
 	assertSplitRoutePlacement(t, fixture.inspect, ready.RouteID, ready.RouteVersion)
 	assertIntegrationDNSChanges(t, dnsFixture, fixture.identity.hostname, false)
-	assertIntegrationDNSChanges(t, dnsFixture, fixture.identity.hostname, true)
+	assertIntegrationDNSChanges(t, dnsFixture, namespace, true)
 
 	for _, relay := range []splitRelayFixture{fixture.relayA, fixture.relayB} {
 		if relay.config.RelayTLSCertificateFile != "" || relay.config.RelayTLSPrivateKeyFile != "" {
@@ -75,6 +127,52 @@ func TestIntegrationSplitAutomaticRelayDNSCertificates(t *testing.T) {
 		if orders != 1 || !installed {
 			t.Errorf("relay service %s certificate orders = %d, installed = %t; want one installed order", relay.config.RelayServiceID, orders, installed)
 		}
+	}
+}
+
+type certificateObservingControlClient struct {
+	publisher.RouteControlClient
+	observe func(controlv1.CertificateIssuance)
+}
+
+func (c *certificateObservingControlClient) CreateCertificateIssuance(
+	ctx context.Context,
+	routeSessionID string,
+	routeVersion uint64,
+	token credentials.RouteSessionToken,
+	csr []byte,
+	idempotencyKey string,
+) (controlv1.CertificateIssuance, error) {
+	issuance, err := c.RouteControlClient.CreateCertificateIssuance(
+		ctx, routeSessionID, routeVersion, token, csr, idempotencyKey,
+	)
+	c.observeResponse(issuance, err)
+	return issuance, err
+}
+
+func (c *certificateObservingControlClient) GetCertificateIssuance(
+	ctx context.Context,
+	issuanceID string,
+	token credentials.RouteSessionToken,
+) (controlv1.CertificateIssuance, error) {
+	issuance, err := c.RouteControlClient.GetCertificateIssuance(ctx, issuanceID, token)
+	c.observeResponse(issuance, err)
+	return issuance, err
+}
+
+func (c *certificateObservingControlClient) MarkCertificateChallengeReady(
+	ctx context.Context,
+	issuanceID string,
+	token credentials.RouteSessionToken,
+) (controlv1.CertificateIssuance, error) {
+	issuance, err := c.RouteControlClient.MarkCertificateChallengeReady(ctx, issuanceID, token)
+	c.observeResponse(issuance, err)
+	return issuance, err
+}
+
+func (c *certificateObservingControlClient) observeResponse(issuance controlv1.CertificateIssuance, err error) {
+	if err == nil {
+		c.observe(issuance)
 	}
 }
 
