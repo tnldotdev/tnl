@@ -6,9 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"time"
 
 	quic "github.com/quic-go/quic-go"
 )
+
+const defaultQUICKeepAlivePeriod = 30 * time.Second
 
 // QUICConfig configures the QUIC transport.
 type QUICConfig struct {
@@ -29,7 +32,11 @@ func (c QUICConnector) Connect(ctx context.Context, endpoint Endpoint) (Session,
 	if err != nil {
 		return nil, err
 	}
-	connection, err := quic.DialAddr(ctx, endpoint.Address, tlsConfig, quicConfig(c.Config.Config))
+	config := quicConfig(c.Config.Config)
+	if config.KeepAlivePeriod == 0 {
+		config.KeepAlivePeriod = defaultQUICKeepAlivePeriod
+	}
+	connection, err := quic.DialAddr(ctx, endpoint.Address, tlsConfig, config)
 	if err != nil {
 		return nil, fmt.Errorf("muxsession: dial QUIC: %w", err)
 	}

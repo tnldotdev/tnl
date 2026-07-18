@@ -16,6 +16,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	quic "github.com/quic-go/quic-go"
 )
 
 type pairFactory func(*testing.T) (Session, Session)
@@ -82,6 +84,18 @@ func TestSessionContract(t *testing.T) {
 				assertRoundTrip(t, client, server, "still alive")
 			})
 		})
+	}
+}
+
+func TestQUICConnectorKeepsIdleSessionAlive(t *testing.T) {
+	const idleTimeout = time.Second
+	clientConfig := &quic.Config{MaxIdleTimeout: idleTimeout}
+	client, server := newQUICPairWithConfig(t, &quic.Config{MaxIdleTimeout: idleTimeout}, clientConfig)
+
+	time.Sleep(2 * idleTimeout)
+	assertRoundTrip(t, client, server, "after idle")
+	if clientConfig.KeepAlivePeriod != 0 {
+		t.Fatalf("caller QUIC keepalive period = %s; want unchanged zero value", clientConfig.KeepAlivePeriod)
 	}
 }
 
@@ -197,8 +211,13 @@ func assertConcurrentStreams(t *testing.T, client, server Session) {
 
 func newQUICPair(t *testing.T) (Session, Session) {
 	t.Helper()
+	return newQUICPairWithConfig(t, nil, nil)
+}
+
+func newQUICPairWithConfig(t *testing.T, serverConfig, clientConfig *quic.Config) (Session, Session) {
+	t.Helper()
 	serverTLS, clientTLS := testTLSConfigs(t)
-	listener, err := ListenQUIC("127.0.0.1:0", serverTLS, QUICConfig{})
+	listener, err := ListenQUIC("127.0.0.1:0", serverTLS, QUICConfig{Config: serverConfig})
 	if err != nil {
 		t.Fatalf("ListenQUIC: %v", err)
 	}
@@ -213,7 +232,7 @@ func newQUICPair(t *testing.T) (Session, Session) {
 		session, err := listener.Accept(context.Background())
 		accepted <- result{session: session, err: err}
 	}()
-	client, err := (QUICConnector{TLSConfig: clientTLS}).Connect(t.Context(), Endpoint{
+	client, err := (QUICConnector{TLSConfig: clientTLS, Config: QUICConfig{Config: clientConfig}}).Connect(t.Context(), Endpoint{
 		Address: listener.Addr().String(), ServerName: "relay.test",
 	})
 	if err != nil {
