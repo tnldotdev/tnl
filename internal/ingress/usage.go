@@ -185,6 +185,14 @@ func (r *UsageReporter) flush(ctx context.Context, now time.Time, final bool) er
 			r.mu.Unlock()
 		}
 		if err := r.control.ReportUsage(ctx, batch); err != nil {
+			// Idle watermarks contain no accounting state. Regenerate a rejected
+			// watermark so startup does not remain pinned before lease registration.
+			if len(batch.reports) == 0 && !batch.complete {
+				r.mu.Lock()
+				r.pendingBatch = nil
+				r.pendingMore = false
+				r.mu.Unlock()
+			}
 			return err
 		}
 		r.acknowledge(batch.reports)
