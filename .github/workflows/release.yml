@@ -73,6 +73,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Attest release artifacts
+        if: github.event.repository.visibility == 'public'
         uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
         with:
           subject-checksums: dist/checksums.txt
@@ -121,6 +122,7 @@ jobs:
         run: cosign sign --yes "$IMAGE@$DIGEST"
 
       - name: Attest image provenance
+        if: github.event.repository.visibility == 'public'
         uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
         with:
           subject-name: ghcr.io/0xcadams/tnl
