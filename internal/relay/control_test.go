@@ -118,12 +118,12 @@ func TestControllerInstallsCertificateBeforeReady(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("relay certificate was not installed")
 	}
-	if !controller.Ready(now) {
-		t.Fatal("controller is not ready after installing its certificate")
-	}
 	cancel()
 	if err := <-done; err != nil {
 		t.Fatal(err)
+	}
+	if !controller.Ready(now) {
+		t.Fatal("controller is not ready after installing its certificate")
 	}
 }
 
