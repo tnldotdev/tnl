@@ -31,6 +31,7 @@ type publishEvent struct {
 	Retryable     *bool      `json:"retryable,omitempty"`
 	RetryAt       *time.Time `json:"retry_at,omitempty"`
 	Reason        string     `json:"reason,omitempty"`
+	Transport     string     `json:"transport,omitempty"`
 }
 
 type publishOutput struct {
@@ -45,6 +46,7 @@ type publishOutput struct {
 	provision         uint64
 	stalled           uint64
 	readyRouteVersion uint64
+	fallbackRoute     uint64
 	blockRoute        uint64
 	blocked           uint64
 	command           string
@@ -86,6 +88,28 @@ func (o *publishOutput) provisioningStalled(routeVersion uint64) error {
 		Type: "warning", Message: diagnostic.Summary(diagnostic.ProvisioningStalled),
 		Code: string(diagnostic.ProvisioningStalled), HelpURL: diagnostic.HelpURL(diagnostic.ProvisioningStalled),
 		Retryable: &retryable, RouteVersion: routeVersion,
+	})
+}
+
+func (o *publishOutput) transportFallback(routeVersion uint64, transport string) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if routeVersion <= o.fallbackRoute {
+		return nil
+	}
+	o.fallbackRoute = routeVersion
+	if o.mode == "human" {
+		return writeHumanFrame(o.stderr, o.command, "transport fallback", "tunnel continues over TLS/TCP",
+			clioutput.Fields(
+				clioutput.Field{Label: "route version", Value: fmt.Sprint(routeVersion)},
+				clioutput.Field{Label: "transport", Value: "TLS/TCP"},
+			),
+		)
+	}
+	retryable := false
+	return o.emitLocked(publishEvent{
+		Type: "warning", Message: "QUIC did not establish before TLS/TCP; continuing over TLS/TCP.",
+		Retryable: &retryable, RouteVersion: routeVersion, Transport: transport,
 	})
 }
 
@@ -152,6 +176,9 @@ func (o *publishOutput) ready(url string, routeVersion uint64) error {
 			}
 			if o.current != "" {
 				fields = append(fields, clioutput.Field{Label: "IP policy", Value: o.current})
+			}
+			if o.fallbackRoute == routeVersion {
+				fields = append(fields, clioutput.Field{Label: "transport", Value: "TLS/TCP fallback"})
 			}
 			if err := writeHumanFrame(o.stderr, o.command, "ready", footer,
 				clioutput.Flow(
@@ -279,6 +306,8 @@ func handlePublisherEvent(ctx context.Context, tunnel *clientstate.Tunnel, outpu
 		return output.ready(event.PublicURL, event.RouteVersion)
 	case publisher.EventDraining:
 		return tunnel.SetDraining(context.WithoutCancel(ctx))
+	case publisher.EventTransportFallback:
+		return output.transportFallback(event.RouteVersion, string(event.Transport))
 	case publisher.EventIPPolicyDenials:
 		return output.blockedVisitors(event.RouteVersion, event.PolicyDenials)
 	}

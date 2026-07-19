@@ -128,6 +128,22 @@ func TestRunSessionRetriesReadinessConflict(t *testing.T) {
 	}
 }
 
+func TestRunTransportFallbackObserverErrorCancelsSession(t *testing.T) {
+	control := newCertificateTestControl(t, "member.example", namespaceCertificateTestPlan())
+	control.store = certificateTestStore(t, filepath.Join(t.TempDir(), "state"))
+	config := certificateSessionTestConfig(t, control)
+	observerError := errors.New("fallback observer failed")
+	config.Observe = func(event Event) error {
+		if event.Type == EventTransportFallback {
+			return observerError
+		}
+		return nil
+	}
+	if err := runCertificateSessionTest(t, config); !errors.Is(err, observerError) {
+		t.Fatalf("Run error = %v, want fallback observer error", err)
+	}
+}
+
 func TestRunDoesNotReuseCertificateFromIncompatibleSessionPlan(t *testing.T) {
 	for _, test := range []struct {
 		name   string

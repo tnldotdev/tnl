@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -795,6 +796,7 @@ type integrationPublisher struct {
 
 	mu          sync.Mutex
 	err         error
+	observed    []publisher.Event
 	diagnostics func() string
 }
 
@@ -810,6 +812,9 @@ func startIntegrationPublisher(
 	}
 	config.Logf = t.Logf
 	config.Observe = func(event publisher.Event) error {
+		handle.mu.Lock()
+		handle.observed = append(handle.observed, event)
+		handle.mu.Unlock()
 		select {
 		case handle.events <- event:
 			return nil
@@ -836,6 +841,12 @@ func startIntegrationPublisher(
 		}
 	})
 	return handle
+}
+
+func (p *integrationPublisher) observedEvents() []publisher.Event {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return slices.Clone(p.observed)
 }
 
 func (p *integrationPublisher) result() error {

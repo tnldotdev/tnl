@@ -173,12 +173,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	if err != nil {
 		return err
 	}
+	parsedCommand := canonicalParsedCommand(parsed.Command())
 	flags.Dev.Command = devCommand
-	applyTunnelCLIUnits(parseArgs, parsed.Command(), &flags)
-	command = clioutput.CommandTitle("tnl", parsed.Command())
+	applyTunnelCLIUnits(parseArgs, parsedCommand, &flags)
+	command = clioutput.CommandTitle("tnl", parsedCommand)
 	var project projectConfiguration
 	projectStateRoot := ""
-	switch parsed.Command() {
+	switch parsedCommand {
 	case "publish <service-or-target>", "dev <service>", "config check", "config generate":
 		projectStateRoot, err = commandStateRoot(parsed)
 		if err != nil {
@@ -188,16 +189,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		if err != nil {
 			return err
 		}
-		if parsed.Command() == "publish <service-or-target>" {
+		if parsedCommand == "publish <service-or-target>" {
 			err = project.applyPublish(&flags.Publish)
-		} else if parsed.Command() == "dev <service>" {
+		} else if parsedCommand == "dev <service>" {
 			err = project.applyDev(&flags.Dev)
 		}
 		if err != nil {
 			return err
 		}
 	default:
-		if projectSensitiveCommand(parsed.Command()) {
+		if projectSensitiveCommand(parsedCommand) {
 			projectStateRoot, err = commandStateRoot(parsed)
 			if err != nil {
 				return err
@@ -206,7 +207,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 			if err != nil {
 				return err
 			}
-			if err := applyProjectCommandContext(parsed.Command(), project, &flags); err != nil {
+			if err := applyProjectCommandContext(parsedCommand, project, &flags); err != nil {
 				return err
 			}
 		}
@@ -222,7 +223,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 			}
 		}
 	}
-	switch parsed.Command() {
+	switch parsedCommand {
 	case "init":
 		return runInit(ctx, flags.Init, stdout, stderr)
 	case "config path":
@@ -298,6 +299,17 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runAdminMaintenanceSet(ctx, flags.Admin.Maintenance.Disable, false, stdout, stderr)
 	default:
 		return errors.New("command is required")
+	}
+}
+
+func canonicalParsedCommand(command string) string {
+	switch command {
+	case "dev":
+		return "dev <service>"
+	case "publish":
+		return "publish <service-or-target>"
+	default:
+		return command
 	}
 }
 

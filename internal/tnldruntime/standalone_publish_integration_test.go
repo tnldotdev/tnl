@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
+	"github.com/tnldotdev/tnl/internal/tunnel"
 )
 
 func TestIntegrationStandalonePublishAndVisit(t *testing.T) {
@@ -148,6 +149,21 @@ func TestIntegrationPublisherTransportMatrix(t *testing.T) {
 			}
 			if t.Failed() {
 				t.FailNow()
+			}
+			fallbacks := 0
+			for _, event := range handle.observedEvents() {
+				if event.Type == publisher.EventTransportFallback {
+					fallbacks++
+					if event.Transport != tunnel.TransportTLSTCP || event.RouteVersion != ready.RouteVersion {
+						t.Fatalf("transport fallback event = %#v", event)
+					}
+				}
+			}
+			if transport == "quic" && fallbacks != 0 {
+				t.Fatalf("QUIC publisher emitted %d transport fallback events", fallbacks)
+			}
+			if transport == "tls-tcp" && fallbacks != 1 {
+				t.Fatalf("TLS/TCP publisher emitted %d transport fallback events; want 1", fallbacks)
 			}
 
 			largeBody := bytes.Repeat([]byte("tnl-transport-payload-"), (1<<20)/len("tnl-transport-payload-")+1)

@@ -292,11 +292,20 @@ func TestRaceUsesFallbackAfterPrimaryFailure(t *testing.T) {
 	primary := muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
 		return nil, primaryError
 	})
-	session, err := Race(t.Context(), Candidate{Connector: primary}, Candidate{Connector: fallback}, time.Hour, publisherHello())
+	session, transport, err := Race(
+		t.Context(),
+		Candidate{Connector: primary, Transport: TransportQUIC},
+		Candidate{Connector: fallback, Transport: TransportTLSTCP},
+		time.Hour,
+		publisherHello(),
+	)
 	if err != nil {
 		t.Fatalf("Race: %v", err)
 	}
 	t.Cleanup(func() { _ = session.Close() })
+	if transport != TransportTLSTCP {
+		t.Fatalf("transport = %q; want %q", transport, TransportTLSTCP)
+	}
 	if fallbackCalls.Load() != 1 {
 		t.Fatalf("fallback calls = %d; want 1", fallbackCalls.Load())
 	}
@@ -306,7 +315,13 @@ func TestRaceStopsOnTerminalProtocolError(t *testing.T) {
 	var fallbackCalls atomic.Int32
 	fallback := authenticatedConnector(t, &fallbackCalls)
 	primary := rejectingConnector(t, tunnelv1.Unauthenticated)
-	_, err := Race(t.Context(), Candidate{Connector: primary}, Candidate{Connector: fallback}, time.Hour, publisherHello())
+	_, _, err := Race(
+		t.Context(),
+		Candidate{Connector: primary, Transport: TransportQUIC},
+		Candidate{Connector: fallback, Transport: TransportTLSTCP},
+		time.Hour,
+		publisherHello(),
+	)
 	var protocolError *ProtocolError
 	if !errors.As(err, &protocolError) || protocolError.Code != tunnelv1.Unauthenticated {
 		t.Fatalf("Race error = %v; want unauthenticated", err)

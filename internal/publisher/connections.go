@@ -42,12 +42,14 @@ type publisherConnectionManager struct {
 	routeID        string
 	routeVersion   uint64
 
-	mu          sync.Mutex
-	connections [publisherConnectionCount]*managedPublisherConnection
-	changed     chan struct{}
-	draining    bool
-	closed      bool
-	wg          sync.WaitGroup
+	mu           sync.Mutex
+	connections  [publisherConnectionCount]*managedPublisherConnection
+	changed      chan struct{}
+	fallback     chan struct{}
+	fallbackOnce sync.Once
+	draining     bool
+	closed       bool
+	wg           sync.WaitGroup
 }
 
 func newPublisherConnectionManager(
@@ -69,9 +71,11 @@ func newPublisherConnectionManager(
 	}
 	return &publisherConnectionManager{
 		ctx: ctx, config: config, route: route, routeSessionID: routeSessionID,
-		routeID: routeID, routeVersion: routeVersion, changed: make(chan struct{}),
+		routeID: routeID, routeVersion: routeVersion, changed: make(chan struct{}), fallback: make(chan struct{}),
 	}, nil
 }
+
+func (m *publisherConnectionManager) Fallback() <-chan struct{} { return m.fallback }
 
 func (m *publisherConnectionManager) Update(assignments []controlv1.ConnectionAssignment) error {
 	bySlot, err := validateConnectionAssignments(assignments)
@@ -220,19 +224,19 @@ func (m *publisherConnectionManager) run(
 		PublisherConnection: &ref,
 	}
 	for time.Now().Before(assignment.PublisherConnectionCredentialExpiresAt) {
-		session, err := tunnel.Race(
+		session, transport, err := tunnel.Race(
 			ctx,
 			tunnel.Candidate{Connector: m.config.QUICConnector, Endpoint: muxsession.Endpoint{
 				Address: assignment.RelayAddress, ServerName: assignment.TlsServerName,
-			}},
+			}, Transport: tunnel.TransportQUIC},
 			tunnel.Candidate{Connector: m.config.TCPConnector, Endpoint: muxsession.Endpoint{
 				Address: assignment.RelayAddress, ServerName: assignment.TlsServerName,
-			}},
+			}, Transport: tunnel.TransportTLSTCP},
 			m.config.FallbackDelay,
 			hello,
 		)
 		if err == nil {
-			if !m.setSession(slot, managed, session) {
+			if !m.setSession(slot, managed, session, transport) {
 				_ = session.Close()
 				return
 			}
@@ -266,6 +270,7 @@ func (m *publisherConnectionManager) setSession(
 	slot int,
 	managed *managedPublisherConnection,
 	session *tunnel.Session,
+	transport tunnel.Transport,
 ) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -273,6 +278,9 @@ func (m *publisherConnectionManager) setSession(
 		return false
 	}
 	managed.session = session
+	if transport == tunnel.TransportTLSTCP {
+		m.fallbackOnce.Do(func() { close(m.fallback) })
+	}
 	managed.ready = true
 	m.signalLocked()
 	return true
