@@ -35,6 +35,7 @@ type relayRuntime struct {
 
 type relayProcessSettings struct {
 	controlEndpoint        string
+	controlAddress         string
 	clusterSecret          string
 	relayServiceID         string
 	relayID                string
@@ -53,7 +54,8 @@ type relayProcessSettings struct {
 func relayProcessSettingsFrom(cfg tnldconfig.Config) relayProcessSettings {
 	tlsServerName, _, _ := net.SplitHostPort(cfg.RelayAddress)
 	return relayProcessSettings{
-		controlEndpoint: cfg.PrivateControlEndpoint(), clusterSecret: cfg.ClusterSecret,
+		controlEndpoint: cfg.PrivateControlEndpoint(), controlAddress: cfg.PrivateControlAddress,
+		clusterSecret:  cfg.ClusterSecret,
 		relayServiceID: cfg.RelayServiceID, relayID: cfg.RelayID,
 		relayAddress: cfg.RelayAddress, tlsServerName: tlsServerName,
 		internalListen:         cfg.InternalRelayListen,
@@ -67,7 +69,9 @@ func relayProcessSettingsFrom(cfg tnldconfig.Config) relayProcessSettings {
 }
 
 func (d *daemon) startRelay(ctx context.Context, settings relayProcessSettings, metrics *observability.Metrics) error {
-	privateClient, err := newRelayControlClient(settings.controlEndpoint, settings.clusterSecret, d.serviceHTTP, "")
+	privateClient, err := newRelayControlClient(
+		settings.controlEndpoint, settings.clusterSecret, d.serviceHTTP, settings.controlAddress,
+	)
 	if err != nil {
 		return err
 	}

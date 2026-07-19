@@ -75,12 +75,13 @@ func TestParseSplitRoles(t *testing.T) {
 
 	ingress, err := Parse([]string{
 		"--mode", "ingress", "--control-hostname", "control.tnl.example.com",
+		"--private-control-address", "control.internal:9443",
 		"--cluster-secret", testClusterSecret, "--ingress-id", "ingress-1",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ingress.IngressListen != ":443" || ingress.DatabaseURL != "" {
+	if ingress.IngressListen != ":443" || ingress.DatabaseURL != "" || ingress.PrivateControlAddress != "control.internal:9443" {
 		t.Fatalf("ingress configuration = %#v", ingress)
 	}
 
@@ -95,6 +96,27 @@ func TestParseSplitRoles(t *testing.T) {
 	}
 	if relay.RelayTCPListen != ":443" || relay.RelayUDPListen != ":443" || relay.InternalRelayListen != ":9445" {
 		t.Fatalf("relay configuration = %#v", relay)
+	}
+}
+
+func TestConfigPrivateControlAddressRequiresSplitDialAddress(t *testing.T) {
+	for _, value := range []string{"control.internal", ":9443", "control.internal:0", "Control.internal:9443"} {
+		if _, err := Parse([]string{
+			"--mode", "ingress", "--control-hostname", "control.tnl.example.com",
+			"--private-control-address", value,
+			"--cluster-secret", testClusterSecret, "--ingress-id", "ingress-1",
+		}); err == nil {
+			t.Fatalf("private control address %q was accepted", value)
+		}
+	}
+	if _, err := Parse([]string{
+		"--mode", "control", "--database-url", "postgres://tnl:secret@database.example/tnl",
+		"--server-domain", "tnl.example.com", "--managed-deployment-domain", "tunnels.example.com",
+		"--acme-email", "operator@example.com", "--acme-accept-terms", "--login-token", testLoginToken,
+		"--cluster-secret", testClusterSecret, "--storage-key", testStorageKey,
+		"--private-control-address", "control.internal:9443",
+	}); err == nil {
+		t.Fatal("private control address was accepted by control")
 	}
 }
 

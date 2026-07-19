@@ -22,6 +22,11 @@ standalone; serving processes never migrate the database.
 port. HTTPS on port 443 is always implied. Process run IDs are generated locally
 on each ingress or relay start.
 
+Ingress and relay processes normally dial the private control API at
+`TNLD_CONTROL_HOSTNAME` on TCP 9443. Set `TNLD_PRIVATE_CONTROL_ADDRESS` to a
+private `host:port` when internal DNS uses a different address. TLS continues to
+verify `TNLD_CONTROL_HOSTNAME`; the private address changes dialing only.
+
 Listen addresses, limits, timing, metrics, a non-default ACME directory, and
 static public certificate overrides are optional advanced settings. Private
 internal PKI and custom trust-root settings are not part of the configuration.
