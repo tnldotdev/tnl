@@ -18,46 +18,69 @@ type reportCommand struct {
 }
 
 type benchmarkReport struct {
-	SchemaVersion int          `json:"schema_version"`
-	GeneratedAt   time.Time    `json:"generated_at"`
-	Status        string       `json:"status"`
-	ResultRows    int          `json:"result_rows"`
-	PassedRows    int          `json:"passed_rows"`
-	FailedRows    int          `json:"failed_rows"`
-	Cells         []cellReport `json:"cells"`
+	SchemaVersion            int            `json:"schema_version"`
+	GeneratedAt              time.Time      `json:"generated_at"`
+	Status                   string         `json:"status"`
+	ResultRows               int            `json:"result_rows"`
+	PassedRows               int            `json:"passed_rows"`
+	FailedRows               int            `json:"failed_rows"`
+	Cells                    []cellReport   `json:"cells"`
+	HighestPassing           *capacityPoint `json:"highest_passing,omitempty"`
+	HighestRepeatablyPassing *capacityPoint `json:"highest_repeatably_passing,omitempty"`
+	FirstSaturation          *capacityPoint `json:"first_saturation,omitempty"`
 }
 
 type cellReport struct {
-	CellID     string                 `json:"cell_id"`
-	Suite      string                 `json:"suite"`
-	Workload   string                 `json:"workload"`
-	Status     string                 `json:"status"`
-	Rows       int                    `json:"rows"`
-	PassedRows int                    `json:"passed_rows"`
-	FailedRows int                    `json:"failed_rows"`
-	Attempts   int                    `json:"attempts"`
-	Successes  int                    `json:"successes"`
-	Errors     int                    `json:"errors"`
-	Bytes      int64                  `json:"bytes"`
-	Phases     map[string]phaseReport `json:"phases"`
-	Failures   []string               `json:"failures"`
+	CellID           string                 `json:"cell_id"`
+	Target           string                 `json:"target"`
+	Suite            string                 `json:"suite"`
+	Sequence         int                    `json:"sequence"`
+	Repetition       int                    `json:"repetition"`
+	Status           string                 `json:"status"`
+	ResultRows       int                    `json:"result_rows"`
+	PublisherWorkers int                    `json:"publisher_workers"`
+	LoadWorkers      int                    `json:"load_workers"`
+	Routes           int                    `json:"routes"`
+	FreshRate        int                    `json:"fresh_connections_per_second"`
+	HeldStreams      int                    `json:"held_streams"`
+	Phases           map[string]phaseReport `json:"phases"`
+	ResourceMaximums map[string]float64     `json:"resource_maximums,omitempty"`
+	Failures         []string               `json:"failures"`
 }
 
 type phaseReport struct {
-	Attempts             int     `json:"attempts"`
-	Successes            int     `json:"successes"`
-	Errors               int     `json:"errors"`
-	Bytes                int64   `json:"bytes"`
-	LatencyP50Millis     float64 `json:"latency_p50_milliseconds"`
-	LatencyP95Millis     float64 `json:"latency_p95_milliseconds"`
-	LatencyMaximumMillis float64 `json:"latency_maximum_milliseconds"`
-	FirstByteP95Millis   float64 `json:"first_byte_p95_milliseconds,omitempty"`
+	Attempts     int     `json:"attempts"`
+	Successes    int     `json:"successes"`
+	Errors       int     `json:"errors"`
+	Bytes        int64   `json:"bytes"`
+	AchievedRate float64 `json:"achieved_rate,omitempty"`
+	Concurrency  int     `json:"concurrency,omitempty"`
+	DNSP95       float64 `json:"dns_p95_milliseconds,omitempty"`
+	ConnectP95   float64 `json:"connect_p95_milliseconds,omitempty"`
+	TLSP95       float64 `json:"tls_p95_milliseconds,omitempty"`
+	FirstByteP50 float64 `json:"first_byte_p50_milliseconds,omitempty"`
+	FirstByteP95 float64 `json:"first_byte_p95_milliseconds,omitempty"`
+	TotalP50     float64 `json:"total_p50_milliseconds,omitempty"`
+	TotalP95     float64 `json:"total_p95_milliseconds,omitempty"`
+	TotalMaximum float64 `json:"total_maximum_milliseconds,omitempty"`
+}
+
+type capacityPoint struct {
+	Target      string `json:"target"`
+	Sequence    int    `json:"sequence"`
+	Routes      int    `json:"routes"`
+	FreshRate   int    `json:"fresh_connections_per_second"`
+	HeldStreams int    `json:"held_streams"`
+	Repetitions int    `json:"repetitions"`
+	Passed      int    `json:"passed"`
 }
 
 type phaseAccumulator struct {
-	phaseResult
-	latency   *durationHistogram
-	firstByte *durationHistogram
+	attempts, successes, errors, concurrency int
+	bytes                                    int64
+	achievedRate                             float64
+	dns, connect, handshake                  *durationHistogram
+	firstByte, total                         *durationHistogram
 }
 
 func (c reportCommand) run(stdout io.Writer) error {
@@ -89,7 +112,7 @@ func readBenchmarkResults(path string) ([]benchmarkResult, error) {
 	defer file.Close()
 	var results []benchmarkResult
 	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 64<<10), 2<<20)
+	scanner.Buffer(make([]byte, 64<<10), 4<<20)
 	for line := 1; scanner.Scan(); line++ {
 		if strings.TrimSpace(scanner.Text()) == "" {
 			continue
@@ -98,9 +121,8 @@ func readBenchmarkResults(path string) ([]benchmarkResult, error) {
 		if err := json.Unmarshal(scanner.Bytes(), &result); err != nil {
 			return nil, fmt.Errorf("decode result line %d: %w", line, err)
 		}
-		if result.SchemaVersion != 4 || result.CellID == "" || result.Shard.Count <= 0 ||
-			result.Shard.Index < 0 || result.Shard.Index >= result.Shard.Count {
-			return nil, fmt.Errorf("result line %d has invalid schema or identity", line)
+		if err := validateResultIdentity(result); err != nil {
+			return nil, fmt.Errorf("result line %d: %w", line, err)
 		}
 		results = append(results, result)
 	}
@@ -113,11 +135,25 @@ func readBenchmarkResults(path string) ([]benchmarkResult, error) {
 	return results, nil
 }
 
+func validateResultIdentity(result benchmarkResult) error {
+	if result.SchemaVersion != benchmarkResultSchemaVersion || result.CellID == "" || result.Suite == "" || result.Repetition <= 0 ||
+		(result.Status != "passed" && result.Status != "failed") ||
+		(result.Worker.Kind != "publisher" && result.Worker.Kind != "load") || result.Worker.Count <= 0 ||
+		result.Worker.Index < 0 || result.Worker.Index >= result.Worker.Count || result.Configuration.Sequence < 0 ||
+		result.Configuration.Routes <= 0 {
+		return errors.New("invalid result schema or identity")
+	}
+	return nil
+}
+
 func buildReport(results []benchmarkResult) (benchmarkReport, error) {
-	report := benchmarkReport{SchemaVersion: 1, GeneratedAt: time.Now().UTC(), Status: "passed", ResultRows: len(results)}
-	cellResults := make(map[string][]benchmarkResult)
+	report := benchmarkReport{SchemaVersion: 2, GeneratedAt: time.Now().UTC(), Status: "passed", ResultRows: len(results)}
+	grouped := make(map[string][]benchmarkResult)
 	for _, result := range results {
-		cellResults[result.CellID] = append(cellResults[result.CellID], result)
+		if err := validateResultIdentity(result); err != nil {
+			return benchmarkReport{}, err
+		}
+		grouped[result.CellID] = append(grouped[result.CellID], result)
 		if result.Status == "passed" {
 			report.PassedRows++
 		} else {
@@ -125,75 +161,156 @@ func buildReport(results []benchmarkResult) (benchmarkReport, error) {
 			report.Status = "failed"
 		}
 	}
-	cellIDs := make([]string, 0, len(cellResults))
-	for cellID := range cellResults {
-		cellIDs = append(cellIDs, cellID)
-	}
-	sort.Strings(cellIDs)
-	for _, cellID := range cellIDs {
-		rows := cellResults[cellID]
-		cell := cellReport{
-			CellID: cellID, Suite: rows[0].Suite, Workload: rows[0].Workload, Status: "passed",
-			Rows: len(rows), Phases: make(map[string]phaseReport), Failures: []string{},
+	for cellID, rows := range grouped {
+		cell, err := buildCellReport(cellID, rows)
+		if err != nil {
+			return benchmarkReport{}, err
 		}
-		phases := make(map[string]*phaseAccumulator)
-		seenShards := make(map[int]struct{}, len(rows))
-		for _, row := range rows {
-			if row.Suite != cell.Suite || row.Workload != cell.Workload || row.Shard.Count != rows[0].Shard.Count {
-				return benchmarkReport{}, fmt.Errorf("cell %q has inconsistent result identities", cellID)
-			}
-			if _, found := seenShards[row.Shard.Index]; found {
-				return benchmarkReport{}, fmt.Errorf("cell %q repeats shard %d", cellID, row.Shard.Index)
-			}
-			seenShards[row.Shard.Index] = struct{}{}
-			if row.Status == "passed" {
-				cell.PassedRows++
-			} else {
-				cell.FailedRows++
-				cell.Status = "failed"
-				if row.Failure != nil {
-					cell.Failures = append(cell.Failures, row.Failure.Message)
-				}
-			}
-			for _, phase := range row.Phases {
-				accumulator := phases[phase.Name]
-				if accumulator == nil {
-					accumulator = &phaseAccumulator{}
-					phases[phase.Name] = accumulator
-				}
-				accumulator.Attempts += phase.Attempts
-				accumulator.Successes += phase.Successes
-				accumulator.Errors += phase.Errors
-				accumulator.Bytes += phase.Bytes
-				if err := mergeDurationHistogram(&accumulator.latency, phase.Latency); err != nil {
-					return benchmarkReport{}, fmt.Errorf("cell %q phase %q latency: %w", cellID, phase.Name, err)
-				}
-				if err := mergeDurationHistogram(&accumulator.firstByte, phase.FirstByteLatency); err != nil {
-					return benchmarkReport{}, fmt.Errorf("cell %q phase %q first byte: %w", cellID, phase.Name, err)
-				}
-			}
-		}
-		if len(seenShards) != rows[0].Shard.Count {
-			cell.Status = "failed"
-			cell.Failures = append(cell.Failures, fmt.Sprintf("expected %d shards, found %d", rows[0].Shard.Count, len(seenShards)))
+		if cell.Status != "passed" {
 			report.Status = "failed"
-		}
-		for name, phase := range phases {
-			cell.Attempts += phase.Attempts
-			cell.Successes += phase.Successes
-			cell.Errors += phase.Errors
-			cell.Bytes += phase.Bytes
-			cell.Phases[name] = phaseReport{
-				Attempts: phase.Attempts, Successes: phase.Successes, Errors: phase.Errors, Bytes: phase.Bytes,
-				LatencyP50Millis:     histogramPercentile(phase.latency, 50),
-				LatencyP95Millis:     histogramPercentile(phase.latency, 95),
-				LatencyMaximumMillis: histogramMaximum(phase.latency),
-				FirstByteP95Millis:   histogramPercentile(phase.firstByte, 95),
-			}
 		}
 		report.Cells = append(report.Cells, cell)
 	}
+	sort.Slice(report.Cells, func(i, j int) bool {
+		if report.Cells[i].Sequence != report.Cells[j].Sequence {
+			return report.Cells[i].Sequence < report.Cells[j].Sequence
+		}
+		return report.Cells[i].Repetition < report.Cells[j].Repetition
+	})
+	report.HighestPassing, report.HighestRepeatablyPassing, report.FirstSaturation = capacitySummary(report.Cells)
 	return report, nil
+}
+
+func buildCellReport(cellID string, rows []benchmarkResult) (cellReport, error) {
+	first := rows[0]
+	cell := cellReport{
+		CellID: cellID, Target: strings.TrimSuffix(cellID, fmt.Sprintf("-rep%d", first.Repetition)), Suite: first.Suite,
+		Sequence: first.Configuration.Sequence, Repetition: first.Repetition, Status: "passed", ResultRows: len(rows),
+		Routes: first.Configuration.Routes, Phases: make(map[string]phaseReport),
+		FreshRate: first.Configuration.FreshConnectionsPerSecond, HeldStreams: first.Configuration.HeldStreams,
+		ResourceMaximums: make(map[string]float64), Failures: []string{},
+	}
+	seen := make(map[string]struct{})
+	want := make(map[string]int)
+	phases := make(map[string]*phaseAccumulator)
+	for _, row := range rows {
+		if row.Suite != cell.Suite || row.Repetition != cell.Repetition || row.Configuration.Sequence != cell.Sequence ||
+			row.Configuration.Routes != cell.Routes || row.Configuration.FreshConnectionsPerSecond != cell.FreshRate ||
+			row.Configuration.HeldStreams != cell.HeldStreams {
+			return cellReport{}, fmt.Errorf("cell %q has inconsistent result identities", cellID)
+		}
+		key := fmt.Sprintf("%s:%d", row.Worker.Kind, row.Worker.Index)
+		if _, exists := seen[key]; exists {
+			return cellReport{}, fmt.Errorf("cell %q repeats worker %s", cellID, key)
+		}
+		seen[key] = struct{}{}
+		if previous := want[row.Worker.Kind]; previous != 0 && previous != row.Worker.Count {
+			return cellReport{}, fmt.Errorf("cell %q has inconsistent %s worker counts", cellID, row.Worker.Kind)
+		}
+		want[row.Worker.Kind] = row.Worker.Count
+		if row.Status != "passed" {
+			cell.Status = "failed"
+			if row.Failure != nil {
+				cell.Failures = append(cell.Failures, row.Failure.Message)
+			}
+		}
+		for _, phase := range row.Phases {
+			accumulator := phases[phase.Name]
+			if accumulator == nil {
+				accumulator = &phaseAccumulator{}
+				phases[phase.Name] = accumulator
+			}
+			accumulator.attempts += phase.Attempts
+			accumulator.successes += phase.Successes
+			accumulator.errors += phase.Errors
+			accumulator.bytes += phase.Bytes
+			accumulator.achievedRate += phase.AchievedRate
+			accumulator.concurrency += phase.Concurrency
+			for label, pair := range map[string]struct {
+				destination **durationHistogram
+				source      *durationHistogram
+			}{
+				"dns": {&accumulator.dns, phase.DNS}, "connect": {&accumulator.connect, phase.Connect},
+				"tls": {&accumulator.handshake, phase.TLS}, "first byte": {&accumulator.firstByte, phase.FirstByte},
+				"total": {&accumulator.total, phase.Total},
+			} {
+				if err := mergeDurationHistogram(pair.destination, pair.source); err != nil {
+					return cellReport{}, fmt.Errorf("cell %q phase %q %s: %w", cellID, phase.Name, label, err)
+				}
+			}
+		}
+		for _, sample := range row.Resources {
+			for name, value := range sample.Metrics {
+				key := sample.Role + "/" + name
+				cell.ResourceMaximums[key] = max(cell.ResourceMaximums[key], value)
+			}
+		}
+	}
+	cell.PublisherWorkers, cell.LoadWorkers = want["publisher"], want["load"]
+	for _, kind := range []string{"publisher", "load"} {
+		found := workerKindCount(seen, kind)
+		if want[kind] == 0 || found != want[kind] {
+			cell.Status = "failed"
+			cell.Failures = append(cell.Failures, fmt.Sprintf("expected %d %s workers, found %d", want[kind], kind, found))
+		}
+	}
+	for name, phase := range phases {
+		cell.Phases[name] = phaseReport{
+			Attempts: phase.attempts, Successes: phase.successes, Errors: phase.errors, Bytes: phase.bytes,
+			AchievedRate: phase.achievedRate, Concurrency: phase.concurrency,
+			DNSP95: histogramPercentile(phase.dns, 95), ConnectP95: histogramPercentile(phase.connect, 95),
+			TLSP95: histogramPercentile(phase.handshake, 95), FirstByteP50: histogramPercentile(phase.firstByte, 50),
+			FirstByteP95: histogramPercentile(phase.firstByte, 95), TotalP50: histogramPercentile(phase.total, 50),
+			TotalP95: histogramPercentile(phase.total, 95), TotalMaximum: histogramMaximum(phase.total),
+		}
+	}
+	return cell, nil
+}
+
+func workerKindCount(seen map[string]struct{}, kind string) int {
+	count := 0
+	for key := range seen {
+		if strings.HasPrefix(key, kind+":") {
+			count++
+		}
+	}
+	return count
+}
+
+func capacitySummary(cells []cellReport) (highest, repeatable, saturation *capacityPoint) {
+	targets := make(map[string]*capacityPoint)
+	failed := make(map[string]bool)
+	for _, cell := range cells {
+		point := targets[cell.Target]
+		if point == nil {
+			point = &capacityPoint{
+				Target: cell.Target, Sequence: cell.Sequence, Routes: cell.Routes,
+				FreshRate: cell.FreshRate, HeldStreams: cell.HeldStreams,
+			}
+			targets[cell.Target] = point
+		}
+		point.Repetitions++
+		if cell.Status == "passed" {
+			point.Passed++
+		} else {
+			failed[cell.Target] = true
+		}
+	}
+	for target, point := range targets {
+		if point.Passed == point.Repetitions && (highest == nil || point.Sequence > highest.Sequence) {
+			copy := *point
+			highest = &copy
+		}
+		if point.Repetitions >= 2 && point.Passed == point.Repetitions && (repeatable == nil || point.Sequence > repeatable.Sequence) {
+			copy := *point
+			repeatable = &copy
+		}
+		if failed[target] && (saturation == nil || point.Sequence < saturation.Sequence) {
+			copy := *point
+			saturation = &copy
+		}
+	}
+	return highest, repeatable, saturation
 }
 
 func histogramMaximum(histogram *durationHistogram) float64 {
@@ -219,31 +336,43 @@ func formatReportMarkdown(report benchmarkReport) string {
 	var output strings.Builder
 	fmt.Fprintf(&output, "# Fly Benchmark Report\n\nStatus: **%s**\n\n", report.Status)
 	fmt.Fprintf(&output, "Result rows: %d passed, %d failed, %d total.\n\n", report.PassedRows, report.FailedRows, report.ResultRows)
-	output.WriteString("Workload inputs are assumptions unless the named workload explicitly says otherwise. Existing streams are not transferred during relay loss, and no stream bytes are replayed.\n\n")
-	output.WriteString("| Cell | Status | Rows | Attempts | Successes | Errors | Bytes |\n")
+	writeCapacityPoint(&output, "Highest passing cell", report.HighestPassing)
+	writeCapacityPoint(&output, "Highest repeatably passing cell", report.HighestRepeatablyPassing)
+	writeCapacityPoint(&output, "First saturation point", report.FirstSaturation)
+	output.WriteString("\nThese are observed benchmark boundaries, not product SLOs.\n\n")
+	output.WriteString("| Cell | Status | Routes | Fresh/s | Held | Publishers | Load workers |\n")
 	output.WriteString("| --- | --- | ---: | ---: | ---: | ---: | ---: |\n")
 	for _, cell := range report.Cells {
 		fmt.Fprintf(&output, "| %s | %s | %d | %d | %d | %d | %d |\n",
-			cell.CellID, cell.Status, cell.Rows, cell.Attempts, cell.Successes, cell.Errors, cell.Bytes)
+			cell.CellID, cell.Status, cell.Routes, cell.FreshRate, cell.HeldStreams, cell.PublisherWorkers, cell.LoadWorkers)
 	}
 	for _, cell := range report.Cells {
-		fmt.Fprintf(&output, "\n## %s\n\nSuite: `%s`; workload: `%s`.\n\n", cell.CellID, cell.Suite, cell.Workload)
-		output.WriteString("| Phase | Attempts | Successes | Errors | p50 ms | p95 ms | Max ms | First byte p95 ms |\n")
-		output.WriteString("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n")
-		phaseNames := make([]string, 0, len(cell.Phases))
+		fmt.Fprintf(&output, "\n## %s\n\n", cell.CellID)
+		output.WriteString("| Phase | Attempts | Successes | Errors | Rate | Concurrency | DNS p95 ms | Connect p95 ms | TLS p95 ms | TTFB p95 ms | Total p95 ms |\n")
+		output.WriteString("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n")
+		names := make([]string, 0, len(cell.Phases))
 		for name := range cell.Phases {
-			phaseNames = append(phaseNames, name)
+			names = append(names, name)
 		}
-		sort.Strings(phaseNames)
-		for _, name := range phaseNames {
+		sort.Strings(names)
+		for _, name := range names {
 			phase := cell.Phases[name]
-			fmt.Fprintf(&output, "| %s | %d | %d | %d | %.2f | %.2f | %.2f | %.2f |\n",
-				name, phase.Attempts, phase.Successes, phase.Errors, phase.LatencyP50Millis,
-				phase.LatencyP95Millis, phase.LatencyMaximumMillis, phase.FirstByteP95Millis)
+			fmt.Fprintf(&output, "| %s | %d | %d | %d | %.2f | %d | %.2f | %.2f | %.2f | %.2f | %.2f |\n",
+				name, phase.Attempts, phase.Successes, phase.Errors, phase.AchievedRate, phase.Concurrency,
+				phase.DNSP95, phase.ConnectP95, phase.TLSP95, phase.FirstByteP95, phase.TotalP95)
 		}
 		for _, failure := range cell.Failures {
 			fmt.Fprintf(&output, "\nFailure: %s\n", failure)
 		}
 	}
 	return output.String()
+}
+
+func writeCapacityPoint(output *strings.Builder, label string, point *capacityPoint) {
+	if point == nil {
+		fmt.Fprintf(output, "%s: not established.\n\n", label)
+		return
+	}
+	fmt.Fprintf(output, "%s: **%d routes, %d fresh connections/s, %d held streams** (%d/%d repetitions passed).\n\n",
+		label, point.Routes, point.FreshRate, point.HeldStreams, point.Passed, point.Repetitions)
 }
