@@ -39,7 +39,7 @@ func (c loadCommand) Validate() error {
 	if err := c.workerCommand.validate(); err != nil {
 		return err
 	}
-	if c.Routes <= 0 || c.TotalFreshRate <= 0 || c.TotalHeldStreams < 0 || c.FreshRate <= 0 || c.FreshRate >= 40 ||
+	if c.Routes <= 0 || c.TotalFreshRate <= 0 || c.TotalHeldStreams < 0 || c.FreshRate < 0 || c.FreshRate >= 40 ||
 		c.FreshRate > c.TotalFreshRate || c.HeldStreams < 0 || c.HeldStreams > c.TotalHeldStreams || c.Warmup < 0 || c.Duration <= 0 {
 		return errors.New("load shape is invalid or could exercise the ingress source limiter")
 	}
@@ -269,10 +269,10 @@ func closeHeldStreams(held []*heldResponse) {
 }
 
 func (c loadCommand) runFreshConnections(ctx context.Context, hostnames []string) []visitorResult {
-	attempts := c.FreshRate * int(c.Duration/time.Second)
-	if attempts == 0 {
-		attempts = 1
+	if c.FreshRate == 0 {
+		return nil
 	}
+	attempts := c.FreshRate * int(c.Duration/time.Second)
 	results := make(chan visitorResult, attempts)
 	semaphore := make(chan struct{}, 256)
 	interval := time.Second / time.Duration(c.FreshRate)

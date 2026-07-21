@@ -6,10 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"os"
 	"sort"
-	"strings"
 	"text/tabwriter"
 	"time"
 )
@@ -62,12 +60,13 @@ type benchmarkWorkerLimits struct {
 }
 
 type benchmarkPricing struct {
-	SnapshotDate        string             `json:"snapshot_date"`
-	SourceURL           string             `json:"source_url"`
-	MachinePerSecondUSD map[string]float64 `json:"machine_per_second_usd"`
-	PublicIPv4PerHour   float64            `json:"public_ipv4_per_hour_usd"`
-	VolumeGBPerMonth    float64            `json:"volume_gb_per_month_usd"`
-	HostedZonePerMonth  float64            `json:"hosted_zone_per_month_usd"`
+	SnapshotDate         string             `json:"snapshot_date"`
+	SourceURL            string             `json:"source_url"`
+	Route53SourceURL     string             `json:"route53_source_url"`
+	MachinePerSecondUSD  map[string]float64 `json:"machine_per_second_usd"`
+	PublicIPv4PerHour    float64            `json:"public_ipv4_per_hour_usd"`
+	VolumeGBPerMonth     float64            `json:"volume_gb_per_month_usd"`
+	HostedZonePerMonth   float64            `json:"hosted_zone_per_month_usd"`
 }
 
 type suiteDefinition struct {
@@ -100,6 +99,7 @@ type benchmarkPlan struct {
 	MaximumSpendUSD         float64           `json:"maximum_spend_usd"`
 	PricingSnapshotDate     string            `json:"pricing_snapshot_date"`
 	PricingSourceURL        string            `json:"pricing_source_url"`
+	Route53PricingSourceURL string            `json:"route53_pricing_source_url"`
 	RequiredInputs          []string          `json:"required_inputs"`
 	Overrides               map[string]string `json:"overrides"`
 	Warnings                []string          `json:"warnings"`
@@ -174,6 +174,7 @@ func (c planCommand) build(now time.Time) (benchmarkPlan, error) {
 		SchemaVersion: 1, ReadOnly: true, ProfileID: profile.ID, Suite: c.Suite, Region: profile.Region,
 		Topology: profile.Topology, Machines: profile.Machines,
 		PricingSnapshotDate: profile.Pricing.SnapshotDate, PricingSourceURL: profile.Pricing.SourceURL,
+		Route53PricingSourceURL: profile.Pricing.Route53SourceURL,
 		RequiredInputs: []string{
 			"Fly organization access through fly", "AWS credentials with Route 53 access",
 			"an existing public Route 53 parent zone", "an ACME account email",
@@ -181,7 +182,8 @@ func (c planCommand) build(now time.Time) (benchmarkPlan, error) {
 		Overrides: configuredOverrides(),
 		Warnings: []string{
 			"Planning is read-only; execution creates paid Fly, IPv4, volume, and Route 53 resources.",
-			"Spend is an estimate and excludes image builds, public egress, ACME, failed retries, and retained resources.",
+			"Spend is an estimate and excludes image builds, public egress, DNS queries, ACME, failed retries, and retained Fly resources.",
+			"Maximum spend includes two full Route 53 hosted-zone charges if cleanup misses the 12-hour waiver.",
 		},
 	}
 	updated, _ := time.Parse(time.DateOnly, profile.UpdatedDate)
@@ -221,9 +223,9 @@ func (c planCommand) build(now time.Time) (benchmarkPlan, error) {
 			plan.MaximumSpendUSD += estimatedCellSpend(profile, cell, cell.TimeoutSeconds)
 		}
 	}
-	// One PostgreSQL volume, four public service IPv4s, and two transient hosted zones.
-	plan.ExpectedSpendUSD += fixedResourceSpend(profile, plan.ExpectedDurationSeconds)
-	plan.MaximumSpendUSD += fixedResourceSpend(profile, plan.MaximumDurationSeconds)
+	// One PostgreSQL volume, five public app IPv4s, and two transient hosted zones.
+	plan.ExpectedSpendUSD += fixedResourceSpend(profile, plan.ExpectedDurationSeconds, false)
+	plan.MaximumSpendUSD += fixedResourceSpend(profile, plan.MaximumDurationSeconds, true)
 	return plan, nil
 }
 
@@ -272,7 +274,7 @@ func validateBenchmarkProfile(profile benchmarkProfile) error {
 			return fmt.Errorf("pricing is missing machine size %q", size)
 		}
 	}
-	if profile.Pricing.SourceURL == "" || profile.Pricing.PublicIPv4PerHour < 0 ||
+	if profile.Pricing.SourceURL == "" || profile.Pricing.Route53SourceURL == "" || profile.Pricing.PublicIPv4PerHour < 0 ||
 		profile.Pricing.VolumeGBPerMonth < 0 || profile.Pricing.HostedZonePerMonth < 0 {
 		return errors.New("benchmark pricing is invalid")
 	}
@@ -316,11 +318,14 @@ func estimatedCellSpend(profile benchmarkProfile, cell planCell, seconds int) fl
 	return (fixedRate + workerRate) * float64(seconds)
 }
 
-func fixedResourceSpend(profile benchmarkProfile, seconds int64) float64 {
+func fixedResourceSpend(profile benchmarkProfile, seconds int64, includeHostedZones bool) float64 {
 	hours := float64(seconds) / 3600
 	monthShare := float64(seconds) / (30 * 24 * 3600)
-	return 4*profile.Pricing.PublicIPv4PerHour*hours + profile.Pricing.VolumeGBPerMonth*monthShare +
-		2*profile.Pricing.HostedZonePerMonth*monthShare
+	spend := 5*profile.Pricing.PublicIPv4PerHour*hours + profile.Pricing.VolumeGBPerMonth*monthShare
+	if includeHostedZones {
+		spend += 2 * profile.Pricing.HostedZonePerMonth
+	}
+	return spend
 }
 
 func configuredOverrides() map[string]string {
@@ -358,7 +363,7 @@ func writeHumanPlan(destination io.Writer, plan benchmarkPlan) error {
 		len(plan.Cells), plan.ExpectedResultRows, time.Duration(plan.ExpectedDurationSeconds)*time.Second,
 		time.Duration(plan.MaximumDurationSeconds)*time.Second)
 	fmt.Fprintf(output, "Estimated spend: $%.4f expected, $%.4f maximum (USD)\n", plan.ExpectedSpendUSD, plan.MaximumSpendUSD)
-	fmt.Fprintf(output, "Pricing: snapshot %s (%s)\n", plan.PricingSnapshotDate, plan.PricingSourceURL)
+	fmt.Fprintf(output, "Pricing: snapshot %s (%s; %s)\n", plan.PricingSnapshotDate, plan.PricingSourceURL, plan.Route53PricingSourceURL)
 	fmt.Fprintln(output, "\nRequired inputs")
 	for _, input := range plan.RequiredInputs {
 		fmt.Fprintf(output, "- %s\n", input)
@@ -381,9 +386,3 @@ func writeHumanPlan(destination io.Writer, plan benchmarkPlan) error {
 	_, err := io.Copy(destination, output)
 	return err
 }
-
-func planTargetLabel(cell planCell) string {
-	return strings.TrimSuffix(cell.ID, fmt.Sprintf("-rep%d", cell.Repetition))
-}
-
-func finite(value float64) bool { return !math.IsNaN(value) && !math.IsInf(value, 0) }

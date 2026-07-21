@@ -232,7 +232,7 @@ func (s *coordinatorState) statusLocked() coordinatorStatus {
 	status := "running"
 	complete := publishers == s.publisherWorkers && loads == s.loadWorkers
 	if s.failure != "" {
-		status, complete = "failed", true
+		status = "failed"
 	} else if complete {
 		status = "passed"
 	}
