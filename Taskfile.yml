@@ -192,6 +192,16 @@ tasks:
     cmds:
       - go run ./cmd/tnlbench plan
 
+  go:bench-fly:run:
+    desc: Run an explicitly approved Fly benchmark and clean up its resources
+    cmds:
+      - go run ./cmd/tnlbench run
+
+  go:bench-fly:cleanup:
+    desc: Clean up resources recorded by an interrupted Fly benchmark
+    cmds:
+      - go run ./cmd/tnlbench cleanup
+
   go:bench-fly:report:
     desc: Merge Fly benchmark result rows and write reports
     cmds:
