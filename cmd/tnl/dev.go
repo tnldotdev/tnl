@@ -39,13 +39,14 @@ const (
 )
 
 type devCommand struct {
-	openOptions    `embed:""`
-	remoteFlags    `embed:""`
-	tunnelFlags    `embed:""`
-	Service        string        `arg:"" name:"service" optional:"" help:"Configured service name."`
-	Command        []string      `kong:"-"`
-	Port           int           `name:"port" help:"Literal loopback target port; normally registered by a framework integration."`
-	StartupTimeout time.Duration `name:"startup-timeout" help:"Maximum time for target registration and startup."`
+	openOptions          `embed:""`
+	remoteFlags          `embed:""`
+	tunnelFlags          `embed:""`
+	startupTimingOptions `embed:""`
+	Service              string        `arg:"" name:"service" optional:"" help:"Configured service name."`
+	Command              []string      `kong:"-"`
+	Port                 int           `name:"port" help:"Literal loopback target port; normally registered by a framework integration."`
+	StartupTimeout       time.Duration `name:"startup-timeout" help:"Maximum time for target registration and startup."`
 
 	commandDir          string
 	serverFromConfig    bool
@@ -120,10 +121,12 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		}
 		metadataResolver.project = flags.project
 	}
+	flags.startup.mark("development setup")
 	authenticated, err := authenticatePublisher(ctx, state, serverURL, flags.AccessToken, "tnl dev", stdin, stderr)
 	if err != nil {
 		return err
 	}
+	flags.startup.mark("authentication")
 	metadataResolver.Seed(serverURL, authenticated)
 	metadata, err := metadataResolver.Generate(ctx)
 	if err != nil {
@@ -139,16 +142,19 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 			flags.Host = service.Hostname
 		}
 	}
+	flags.startup.mark("project metadata")
 	allowedIPPrefixes, currentIP, err := resolveIPPolicy(ctx, authenticated.Control, flags.AllowIP, flags.Public)
 	if err != nil {
 		return err
 	}
+	flags.startup.mark("IP policy")
 	services, err := preparePublisherServices(
 		ctx, state, serverURL, flags.Host, flags.Subdomain, flags.selectedTeam, flags.Ephemeral, authenticated,
 	)
 	if err != nil {
 		return err
 	}
+	flags.startup.mark("team and domain")
 	tunnel, err := state.BeginTunnel(ctx, clientstate.BeginTunnelOptions{
 		Command: clientstate.TunnelCommandDev, Server: serverURL, Target: forcedTarget,
 		Project: flags.projectRoot, Service: flags.Service,
@@ -177,6 +183,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		return err
 	}
 	defer func() { result = errors.Join(result, child.Stop(devShutdownWait)) }()
+	flags.startup.mark("child started")
 
 	assignment := devConfigurationResponse{
 		Protocol: 1, TunnelID: tunnel.ID(), Service: nullableService(flags.Service),
@@ -334,6 +341,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 			return context.Cause(ctx)
 		}
 	}
+	flags.startup.mark("local service")
 	output, err := newPublishOutput("human", "tnl dev", stdout, stderr, browserOpener(flags.Open))
 	if err != nil {
 		return err
@@ -353,9 +361,10 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	go func() {
 		publisherConfig := services.config(target, allowedIPPrefixes)
 		publisherConfig.Logf = output.logf
-		publisherConfig.Observe = withTelemetryObserver(telemetry, "dev", serverURL, telemetryFramework(framework), func(event publisher.Event) error {
+		observe := withTelemetryObserver(telemetry, "dev", serverURL, telemetryFramework(framework), func(event publisher.Event) error {
 			return handlePublisherEvent(publishCtx, tunnel, output, event)
 		})
+		flags.startup.configurePublisher(&publisherConfig, output, observe)
 		publishDone <- publisher.Run(publishCtx, publisherConfig)
 	}()
 
