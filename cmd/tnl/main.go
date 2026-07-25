@@ -14,17 +14,20 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/0xcadams/tnl/internal/buildinfo"
 	"github.com/0xcadams/tnl/internal/clientstate"
 	"github.com/0xcadams/tnl/internal/config"
 	"github.com/0xcadams/tnl/internal/coreclient"
 	"github.com/0xcadams/tnl/internal/credentials"
+	"github.com/0xcadams/tnl/internal/deviceauth"
 	"github.com/0xcadams/tnl/internal/localproxy"
 	"github.com/0xcadams/tnl/internal/naming"
 	"github.com/0xcadams/tnl/internal/publication"
 	"github.com/0xcadams/tnl/pkg/protocol/corev1"
 	"github.com/alecthomas/kong"
+	"tailscale.com/tailcfg"
 )
 
 type cli struct {
@@ -36,15 +39,14 @@ type cli struct {
 }
 
 type publicCommand struct {
-	Target       string `arg:"" name:"target" required:"" help:"Local port or literal-loopback HTTP origin."`
-	CoreURL      string `name:"core-url" env:"TNL_CORE_URL" required:"" help:"tnl core HTTPS origin."`
-	AccessToken  string `name:"access-token" env:"TNL_ACCESS_TOKEN" required:"" help:"Core API access token."`
-	Host         string `name:"host" env:"TNL_HOST" help:"Requested single-label public name; omit for a random name."`
-	Output       string `name:"output" enum:"human,ndjson" default:"human" help:"Output format: ${enum}."`
-	CertFile     string `name:"cert-file" env:"TNL_CERT_FILE" type:"path" help:"Application TLS certificate file; overrides automatic certificates."`
-	KeyFile      string `name:"key-file" env:"TNL_KEY_FILE" type:"path" help:"Application TLS private key file; overrides automatic certificates."`
-	StateDir     string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent route state."`
-	RelayMapFile string `name:"relay-map-file" env:"TNL_RELAY_MAP_FILE" type:"path" required:"" help:"Approved DERP map JSON file."`
+	Target      string `arg:"" name:"target" required:"" help:"Local port or literal-loopback HTTP origin."`
+	CoreURL     string `name:"core-url" env:"TNL_CORE_URL" required:"" help:"tnl core HTTPS origin."`
+	AccessToken string `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Core API access token; defaults to the saved login."`
+	Host        string `name:"host" env:"TNL_HOST" help:"Requested single-label public name; omit for a random name."`
+	Output      string `name:"output" enum:"human,ndjson" default:"human" help:"Output format: ${enum}."`
+	CertFile    string `name:"cert-file" env:"TNL_CERT_FILE" type:"path" help:"Application TLS certificate file; overrides automatic certificates."`
+	KeyFile     string `name:"key-file" env:"TNL_KEY_FILE" type:"path" help:"Application TLS private key file; overrides automatic certificates."`
+	StateDir    string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent route state."`
 }
 
 type hostCommand struct {
@@ -54,28 +56,42 @@ type hostCommand struct {
 
 type hostListCommand struct {
 	CoreURL     string `name:"core-url" env:"TNL_CORE_URL" required:"" help:"tnl core HTTPS origin."`
-	AccessToken string `name:"access-token" env:"TNL_ACCESS_TOKEN" required:"" help:"Core API access token."`
+	AccessToken string `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Core API access token; defaults to the saved login."`
+	StateDir    string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent client state."`
 }
 
 type hostReleaseCommand struct {
 	Hostname    string `arg:"" name:"hostname" required:"" help:"Exact hostname to release."`
 	CoreURL     string `name:"core-url" env:"TNL_CORE_URL" required:"" help:"tnl core HTTPS origin."`
-	AccessToken string `name:"access-token" env:"TNL_ACCESS_TOKEN" required:"" help:"Core API access token."`
+	AccessToken string `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Core API access token; defaults to the saved login."`
 	StateDir    string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent route state."`
 }
 
 type tokenCommand struct {
 	Bootstrap struct{} `cmd:"" help:"Generate a bootstrap token."`
 	Worker    struct{} `cmd:"" help:"Generate an edge-to-worker token."`
+	Workload  struct{} `cmd:"" help:"Generate a service-to-service token."`
 }
 
 type authCommand struct {
 	Exchange exchangeCommand `cmd:"" help:"Exchange a bootstrap token for an access token."`
+	Login    loginCommand    `cmd:"" help:"Authenticate through the core's device login."`
+	Logout   logoutCommand   `cmd:"" help:"Revoke and remove the saved access token."`
 }
 
 type exchangeCommand struct {
 	CoreURL        string `name:"core-url" env:"TNL_CORE_URL" required:"" help:"tnl core HTTPS origin."`
 	BootstrapToken string `name:"bootstrap-token" env:"TNL_BOOTSTRAP_TOKEN" required:"" help:"Deployment bootstrap token."`
+}
+
+type loginCommand struct {
+	CoreURL  string `name:"core-url" env:"TNL_CORE_URL" required:"" help:"tnl core HTTPS origin."`
+	StateDir string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent client state."`
+}
+
+type logoutCommand struct {
+	CoreURL  string `name:"core-url" env:"TNL_CORE_URL" required:"" help:"tnl core HTTPS origin."`
+	StateDir string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent client state."`
 }
 
 func main() {
@@ -114,8 +130,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			_, err = fmt.Fprintln(stdout, token.String())
 		}
 		return err
+	case "token workload":
+		token, _, err := credentials.NewWorkloadToken()
+		if err == nil {
+			_, err = fmt.Fprintln(stdout, token.String())
+		}
+		return err
 	case "auth exchange":
 		return runExchange(ctx, flags.Auth.Exchange, stdout)
+	case "auth login":
+		return runLogin(ctx, flags.Auth.Login, stdout)
+	case "auth logout":
+		return runLogout(ctx, flags.Auth.Logout, stdout)
 	case "version":
 		_, err := fmt.Fprintln(stdout, buildinfo.Line("tnl"))
 		return err
@@ -151,6 +177,112 @@ func runExchange(ctx context.Context, flags exchangeCommand, output io.Writer) e
 	return err
 }
 
+func runLogin(ctx context.Context, flags loginCommand, output io.Writer) error {
+	core, err := coreclient.New(flags.CoreURL, nil, "")
+	if err != nil {
+		return err
+	}
+	capabilities, err := core.Capabilities(ctx)
+	if err != nil {
+		return fmt.Errorf("read core capabilities: %w", err)
+	}
+	device := capabilities.DeviceAuthorization
+	if device == nil {
+		return errors.New("core does not support device login")
+	}
+	externalToken, err := deviceauth.Login(ctx, deviceauth.Config{
+		Issuer:                      device.Issuer,
+		DeviceAuthorizationEndpoint: device.DeviceAuthorizationEndpoint,
+		TokenEndpoint:               device.TokenEndpoint, ClientID: device.ClientId, Scope: device.Scope,
+	}, output)
+	if err != nil {
+		return err
+	}
+	state, err := openClientState(flags.StateDir, flags.CoreURL)
+	if err != nil {
+		return err
+	}
+	credentialLock, err := state.LockCredentials()
+	if err != nil {
+		return err
+	}
+	defer credentialLock.Close()
+	previous, hadPrevious, err := state.AccessCredential()
+	if err != nil {
+		return err
+	}
+	issued, err := core.ExchangeExternal(ctx, externalToken)
+	if err != nil {
+		return fmt.Errorf("exchange external login: %w", err)
+	}
+	access := credentials.AccessToken(issued.AccessToken)
+	credentialID, _, err := credentials.ParseAccessToken(access)
+	if err != nil {
+		return errors.New("core returned invalid access credential")
+	}
+	cleanup := func() {
+		if client, cleanupErr := coreclient.New(flags.CoreURL, nil, access); cleanupErr == nil {
+			_ = client.RevokeAccessCredential(ctx, credentialID.String())
+		}
+	}
+	if credentialID.String() != issued.CredentialId || !issued.ExpiresAt.After(time.Now()) {
+		cleanup()
+		return errors.New("core returned invalid access credential")
+	}
+	if hadPrevious && previous.CredentialID != credentialID {
+		previousClient, previousErr := coreclient.New(flags.CoreURL, nil, previous.Token)
+		if previousErr == nil {
+			previousErr = previousClient.RevokeAccessCredential(ctx, previous.CredentialID.String())
+		}
+		if previousErr != nil && !errors.Is(previousErr, coreclient.ErrUnauthenticated) &&
+			!errors.Is(previousErr, coreclient.ErrNotFound) {
+			cleanup()
+			return fmt.Errorf("revoke previous access credential: %w", previousErr)
+		}
+	}
+	if err := state.SaveAccessCredential(clientstate.AccessCredential{
+		Token: access, CredentialID: credentialID, ExpiresAt: issued.ExpiresAt,
+	}); err != nil {
+		cleanup()
+		return errors.Join(err, state.RemoveAccessCredential())
+	}
+	_, err = fmt.Fprintf(output, "Authenticated until %s\n", issued.ExpiresAt.UTC().Format(time.RFC3339))
+	return err
+}
+
+func runLogout(ctx context.Context, flags logoutCommand, output io.Writer) error {
+	state, err := openClientState(flags.StateDir, flags.CoreURL)
+	if err != nil {
+		return err
+	}
+	credentialLock, err := state.LockCredentials()
+	if err != nil {
+		return err
+	}
+	defer credentialLock.Close()
+	stored, found, err := state.AccessCredential()
+	if err != nil {
+		return err
+	}
+	if !found {
+		return errors.New("no saved login")
+	}
+	core, err := coreclient.New(flags.CoreURL, nil, stored.Token)
+	if err != nil {
+		return err
+	}
+	revokeErr := core.RevokeAccessCredential(ctx, stored.CredentialID.String())
+	if revokeErr != nil && !errors.Is(revokeErr, coreclient.ErrUnauthenticated) &&
+		!errors.Is(revokeErr, coreclient.ErrNotFound) {
+		return revokeErr
+	}
+	if err := state.RemoveAccessCredential(); err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(output, "Logged out")
+	return err
+}
+
 func runPublic(ctx context.Context, flags publicCommand, stdout, stderr io.Writer) error {
 	output, err := newPublicOutput(flags.Output, stdout, stderr)
 	if err != nil {
@@ -173,7 +305,11 @@ func runPublic(ctx context.Context, flags publicCommand, stdout, stderr io.Write
 	if err := localproxy.Preflight(ctx, target); err != nil {
 		return fail(err)
 	}
-	client, err := authenticatedClient(flags.CoreURL, flags.AccessToken)
+	state, err := openClientState(flags.StateDir, flags.CoreURL)
+	if err != nil {
+		return fail(err)
+	}
+	client, err := authenticatedClient(flags.CoreURL, flags.AccessToken, state)
 	if err != nil {
 		return fail(err)
 	}
@@ -187,18 +323,7 @@ func runPublic(ctx context.Context, flags publicCommand, stdout, stderr io.Write
 	if capabilities.LocalClaim == nil || capabilities.LocalClaim.Suffix == "" {
 		return fail(errors.New("core does not support self-hosted hostname claims"))
 	}
-	profiles, err := config.LoadRelayProfiles(flags.RelayMapFile)
-	if err != nil {
-		return fail(err)
-	}
 	profile := capabilities.Transport.RelayProfile
-	if profiles[profile] == nil {
-		return fail(fmt.Errorf("core requires relay profile %q, which is absent from the relay map", profile))
-	}
-	state, err := openClientState(flags.StateDir, flags.CoreURL)
-	if err != nil {
-		return fail(err)
-	}
 	var certificate tls.Certificate
 	var publicationState *clientstate.Store
 	acmeProfile := ""
@@ -225,7 +350,14 @@ func runPublic(ctx context.Context, flags publicCommand, stdout, stderr io.Write
 	err = publication.RunPublic(ctx, publication.PublicConfig{
 		Core: client, Hostname: hostname, Target: target, Certificate: certificate,
 		State: publicationState, ACMEProfile: acmeProfile,
-		RelayProfile: profile, Profiles: profiles, Logf: logger.Printf,
+		RelayProfile: profile, Logf: logger.Printf,
+		LoadProfiles: func(ctx context.Context) (map[string]*tailcfg.DERPRegion, error) {
+			relayMap, err := client.RelayMap(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("read core relay map: %w", err)
+			}
+			return config.DecodeRelayProfiles(relayMap)
+		},
 		OnLeaseReady: output.ready,
 	})
 	if err != nil && !(ctx.Err() != nil && errors.Is(err, context.Canceled)) {
@@ -235,7 +367,15 @@ func runPublic(ctx context.Context, flags publicCommand, stdout, stderr io.Write
 }
 
 func runHostList(ctx context.Context, flags hostListCommand, output io.Writer) error {
-	client, err := authenticatedClient(flags.CoreURL, flags.AccessToken)
+	var state *clientstate.Store
+	if flags.AccessToken == "" {
+		var err error
+		state, err = openClientState(flags.StateDir, flags.CoreURL)
+		if err != nil {
+			return err
+		}
+	}
+	client, err := authenticatedClient(flags.CoreURL, flags.AccessToken, state)
 	if err != nil {
 		return err
 	}
@@ -271,7 +411,7 @@ func runHostRelease(ctx context.Context, flags hostReleaseCommand, output io.Wri
 		return err
 	}
 	defer lock.Close()
-	client, err := authenticatedClient(flags.CoreURL, flags.AccessToken)
+	client, err := authenticatedClient(flags.CoreURL, flags.AccessToken, state)
 	if err != nil {
 		return err
 	}
@@ -386,7 +526,23 @@ func validateClaimHostname(claim corev1.HostnameClaim, suffix string) (string, e
 	return hostname, nil
 }
 
-func authenticatedClient(coreURL, tokenValue string) (*coreclient.Client, error) {
+func authenticatedClient(
+	coreURL, tokenValue string,
+	state *clientstate.Store,
+) (*coreclient.Client, error) {
+	if tokenValue == "" {
+		if state == nil {
+			return nil, errors.New("not authenticated; run tnl auth login")
+		}
+		stored, found, err := state.AccessCredential()
+		if err != nil {
+			return nil, err
+		}
+		if !found || !stored.ExpiresAt.After(time.Now()) {
+			return nil, errors.New("not authenticated; run tnl auth login")
+		}
+		tokenValue = stored.Token.String()
+	}
 	token := credentials.AccessToken(tokenValue)
 	if _, _, err := credentials.ParseAccessToken(token); err != nil {
 		return nil, errors.New("invalid access token")

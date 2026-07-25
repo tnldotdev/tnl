@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -32,6 +33,10 @@ func TestTokenCommands(t *testing.T) {
 		}},
 		{name: "worker", args: []string{"token", "worker"}, parse: func(value string) error {
 			_, err := credentials.ParseWorkerToken(credentials.WorkerToken(value))
+			return err
+		}},
+		{name: "workload", args: []string{"token", "workload"}, parse: func(value string) error {
+			_, err := credentials.ParseWorkloadToken(credentials.WorkloadToken(value))
 			return err
 		}},
 	} {
@@ -125,7 +130,7 @@ func TestRunPublicPreflightsBeforeCoreRequests(t *testing.T) {
 	defer server.Close()
 	var stdout, stderr bytes.Buffer
 	err = runPublic(context.Background(), publicCommand{
-		Target: target, CoreURL: server.URL, AccessToken: "invalid", Output: "ndjson", RelayMapFile: "missing",
+		Target: target, CoreURL: server.URL, AccessToken: "invalid", Output: "ndjson",
 	}, &stdout, &stderr)
 	if err == nil {
 		t.Fatal("runPublic accepted an offline target")
@@ -265,6 +270,34 @@ func TestHostReleaseRecoversAfterAmbiguousDelete(t *testing.T) {
 	}
 	if claimID, found, err := state.PendingHostnameRelease("random.example"); err != nil || found {
 		t.Fatalf("pending release = %q, found = %v, err = %v", claimID, found, err)
+	}
+}
+
+func TestHostListWithExplicitTokenDoesNotOpenClientState(t *testing.T) {
+	access, _, _, err := credentials.NewAccessToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer "+access.String() {
+			t.Errorf("authorization = %q", request.Header.Get("Authorization"))
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(corev1.HostnameClaimPage{})
+	}))
+	defer server.Close()
+	previousTransport := http.DefaultTransport
+	http.DefaultTransport = server.Client().Transport
+	t.Cleanup(func() { http.DefaultTransport = previousTransport })
+
+	statePath := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(statePath, []byte("occupied"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := runHostList(context.Background(), hostListCommand{
+		CoreURL: server.URL, AccessToken: access.String(), StateDir: statePath,
+	}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
 	}
 }
 

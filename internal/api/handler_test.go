@@ -22,6 +22,7 @@ import (
 	"github.com/0xcadams/tnl/internal/routes"
 	"github.com/0xcadams/tnl/internal/state"
 	"github.com/0xcadams/tnl/pkg/protocol/corev1"
+	"golang.org/x/time/rate"
 )
 
 func TestCapabilities(t *testing.T) {
@@ -44,6 +45,52 @@ func TestCapabilities(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("capabilities = %#v, want %#v", got, want)
+	}
+}
+
+func TestRelayMapReturnsConfiguredSelectedRegion(t *testing.T) {
+	relayMap := []byte(`{"Regions":{"1":{"RegionID":1}}}`)
+	handler := NewHandlerWithServicesAndConfig(
+		fixtureCapabilities(t), nil, nil, nil, HandlerConfig{RelayMap: relayMap},
+	)
+	request := httptest.NewRequest(http.MethodGet, relayMapPath, nil)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK || response.Body.String() != string(relayMap) {
+		t.Fatalf("status = %d, body = %q", response.Code, response.Body.String())
+	}
+	if response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("Cache-Control = %q", response.Header().Get("Cache-Control"))
+	}
+}
+
+func TestExternalTokenExchangeIsBoundedAndRateLimited(t *testing.T) {
+	token, credentialID, _, err := credentials.NewAccessToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &externalAuthServiceStub{issued: auth.IssuedAccessToken{
+		Token: token, CredentialID: credentialID, ExpiresAt: time.Now().Add(time.Hour).UTC(),
+	}}
+	handler := NewHandler(fixtureCapabilities(t), service).(*handler)
+	handler.externalLimit = rate.NewLimiter(0, 1)
+
+	request := httptest.NewRequest(http.MethodPost, externalExchangePath, strings.NewReader(`{"access_token":"external-session"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || service.token != "external-session" {
+		t.Fatalf("status = %d, token = %q, body = %s", response.Code, service.token, response.Body.String())
+	}
+
+	request = httptest.NewRequest(http.MethodPost, externalExchangePath, strings.NewReader(`{"access_token":"external-session"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusTooManyRequests || service.calls != 1 {
+		t.Fatalf("status = %d, calls = %d, body = %s", response.Code, service.calls, response.Body.String())
 	}
 }
 
@@ -532,6 +579,40 @@ func (f tokenExchangerFunc) Exchange(
 	token credentials.BootstrapToken,
 ) (auth.IssuedAccessToken, error) {
 	return f(ctx, token)
+}
+
+type externalAuthServiceStub struct {
+	issued auth.IssuedAccessToken
+	token  string
+	calls  int
+}
+
+func (*externalAuthServiceStub) Exchange(
+	context.Context,
+	credentials.BootstrapToken,
+) (auth.IssuedAccessToken, error) {
+	panic("unexpected Exchange call")
+}
+
+func (s *externalAuthServiceStub) ExchangeExternal(_ context.Context, token string) (auth.IssuedAccessToken, error) {
+	s.calls++
+	s.token = token
+	return s.issued, nil
+}
+
+func (*externalAuthServiceStub) Authenticate(
+	context.Context,
+	credentials.AccessToken,
+) (state.Principal, error) {
+	panic("unexpected Authenticate call")
+}
+
+func (*externalAuthServiceStub) Revoke(
+	context.Context,
+	state.Principal,
+	credentials.CredentialID,
+) error {
+	panic("unexpected Revoke call")
 }
 
 func (tokenExchangerFunc) Authenticate(

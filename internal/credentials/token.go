@@ -16,6 +16,7 @@ const (
 	routePrefix     = "tnl_route_"
 	leasePrefix     = "tnl_lease_"
 	workerPrefix    = "tnl_worker_"
+	workloadPrefix  = "tnl_workload_"
 	lookupBytes     = 16
 	secretBytes     = 32
 )
@@ -31,6 +32,8 @@ var (
 	ErrInvalidLeaseToken = errors.New("invalid lease token")
 	// ErrInvalidWorkerToken is returned for malformed or rejected worker tokens.
 	ErrInvalidWorkerToken = errors.New("invalid worker token")
+	// ErrInvalidWorkloadToken is returned for malformed workload tokens.
+	ErrInvalidWorkloadToken = errors.New("invalid workload token")
 )
 
 // AccessToken authenticates a local principal to the standalone core API.
@@ -48,6 +51,9 @@ type LeaseToken string
 // WorkerToken authenticates one worker session to an edge.
 type WorkerToken string
 
+// WorkloadToken authenticates one service-to-service request.
+type WorkloadToken string
+
 // CredentialID is the nonsecret lookup portion of a credential.
 type CredentialID string
 
@@ -62,6 +68,12 @@ type BootstrapVerifier struct {
 
 // WorkerVerifier is the nonsecret verification material for one worker token.
 type WorkerVerifier struct {
+	id   CredentialID
+	hash SecretHash
+}
+
+// WorkloadVerifier is the nonsecret verification material for one workload token.
+type WorkloadVerifier struct {
 	id   CredentialID
 	hash SecretHash
 }
@@ -123,6 +135,18 @@ func ParseWorkerToken(token WorkerToken) (WorkerVerifier, error) {
 	return WorkerVerifier{id: lookupID, hash: hash}, err
 }
 
+// NewWorkloadToken creates a service-to-service credential.
+func NewWorkloadToken() (WorkloadToken, WorkloadVerifier, error) {
+	token, lookupID, hash, err := newToken(workloadPrefix)
+	return WorkloadToken(token), WorkloadVerifier{id: lookupID, hash: hash}, err
+}
+
+// ParseWorkloadToken validates a workload token and returns its verifier.
+func ParseWorkloadToken(token WorkloadToken) (WorkloadVerifier, error) {
+	lookupID, hash, err := parseToken(string(token), workloadPrefix, ErrInvalidWorkloadToken)
+	return WorkloadVerifier{id: lookupID, hash: hash}, err
+}
+
 // Matches reports whether token matches this verifier.
 func (v BootstrapVerifier) Matches(token BootstrapToken) bool {
 	candidate, err := ParseBootstrapToken(token)
@@ -136,6 +160,16 @@ func (v BootstrapVerifier) Matches(token BootstrapToken) bool {
 // Matches reports whether token matches this verifier.
 func (v WorkerVerifier) Matches(token WorkerToken) bool {
 	candidate, err := ParseWorkerToken(token)
+	if err != nil {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(v.id), []byte(candidate.id)) == 1 &&
+		SecretHashMatches(v.hash[:], candidate.hash)
+}
+
+// Matches reports whether token matches this verifier.
+func (v WorkloadVerifier) Matches(token WorkloadToken) bool {
+	candidate, err := ParseWorkloadToken(token)
 	if err != nil {
 		return false
 	}
@@ -157,6 +191,9 @@ func (t LeaseToken) String() string { return string(t) }
 
 // String returns the serialized worker token.
 func (t WorkerToken) String() string { return string(t) }
+
+// String returns the serialized workload token.
+func (t WorkloadToken) String() string { return string(t) }
 
 // String returns the nonsecret credential ID.
 func (id CredentialID) String() string { return string(id) }

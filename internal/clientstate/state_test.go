@@ -14,6 +14,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/0xcadams/tnl/internal/credentials"
 )
 
 const testRouteID = "route_0123456789abcdef0123456789abcdef"
@@ -199,6 +201,63 @@ func TestStateAllowsStickyWritableAncestor(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := New(filepath.Join(parent, "state"), "https://core.example"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAccessCredentialPersistsPrivatelyAndCanBeRemoved(t *testing.T) {
+	store, err := New(filepath.Join(t.TempDir(), "state"), "https://core.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, credentialID, _, err := credentials.NewAccessToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := AccessCredential{Token: token, CredentialID: credentialID, ExpiresAt: time.Now().Add(time.Hour).UTC()}
+	if err := store.SaveAccessCredential(want); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(store.credentialsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("credential mode = %o", info.Mode().Perm())
+	}
+	got, found, err := store.AccessCredential()
+	if err != nil || !found || got.Token != want.Token || got.CredentialID != want.CredentialID ||
+		!got.ExpiresAt.Equal(want.ExpiresAt) {
+		t.Fatalf("credential = %#v, found = %v, error = %v", got, found, err)
+	}
+	if err := store.RemoveAccessCredential(); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := store.AccessCredential(); err != nil || found {
+		t.Fatalf("credential found after removal = %v, error = %v", found, err)
+	}
+}
+
+func TestAccessCredentialLockSerializesUpdates(t *testing.T) {
+	store, err := New(filepath.Join(t.TempDir(), "state"), "https://core.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock, err := store.LockCredentials()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.LockCredentials(); !errors.Is(err, ErrLocked) {
+		t.Fatalf("second credential lock error = %v", err)
+	}
+	if err := lock.Close(); err != nil {
+		t.Fatal(err)
+	}
+	lock, err = store.LockCredentials()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lock.Close(); err != nil {
 		t.Fatal(err)
 	}
 }

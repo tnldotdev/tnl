@@ -21,12 +21,15 @@ import (
 	"github.com/0xcadams/tnl/internal/routes"
 	"github.com/0xcadams/tnl/internal/state"
 	"github.com/0xcadams/tnl/pkg/protocol/corev1"
+	"golang.org/x/time/rate"
 	"tailscale.com/types/key"
 )
 
 const (
 	capabilitiesPath       = "/v1/capabilities"
+	relayMapPath           = "/v1/transport/relay-map"
 	tokenExchangePath      = "/v1/auth/token"
+	externalExchangePath   = "/v1/auth/external"
 	credentialsPath        = "/v1/auth/credentials/"
 	certificateOrdersPath  = "/v1/certs/orders"
 	certificateOrderPrefix = "/v1/certs/orders/"
@@ -58,7 +61,9 @@ type Operation string
 const (
 	OperationUnknown                     Operation = "unknown"
 	OperationCapabilitiesGet             Operation = "capabilities.get"
+	OperationRelayMapGet                 Operation = "transport.relay_map.get"
 	OperationTokenExchange               Operation = "auth.token.exchange"
+	OperationExternalTokenExchange       Operation = "auth.external.exchange"
 	OperationCredentialRevoke            Operation = "auth.credential.revoke"
 	OperationHostnameClaimsList          Operation = "hostname_claims.list"
 	OperationHostnameClaimCreate         Operation = "hostname_claims.create"
@@ -102,6 +107,7 @@ type ErrorReporter interface {
 type HandlerConfig struct {
 	Observer      Observer
 	ErrorReporter ErrorReporter
+	RelayMap      []byte
 }
 
 // AuthService implements authentication flows without exposing storage to HTTP.
@@ -109,6 +115,10 @@ type AuthService interface {
 	Exchange(context.Context, credentials.BootstrapToken) (auth.IssuedAccessToken, error)
 	Authenticate(context.Context, credentials.AccessToken) (state.Principal, error)
 	Revoke(context.Context, state.Principal, credentials.CredentialID) error
+}
+
+type ExternalAuthService interface {
+	ExchangeExternal(context.Context, string) (auth.IssuedAccessToken, error)
 }
 
 // RouteService implements hostname claims and fenced route transitions.
@@ -142,6 +152,8 @@ type handler struct {
 	certificates  CertificateService
 	observer      Observer
 	errorReporter ErrorReporter
+	relayMap      []byte
+	externalLimit *rate.Limiter
 }
 
 // NewHandler creates the core API handler without binding a listener.
@@ -172,6 +184,10 @@ func NewHandlerWithServicesAndConfig(
 	certificateService CertificateService,
 	config HandlerConfig,
 ) http.Handler {
+	var externalLimit *rate.Limiter
+	if _, ok := auth.(ExternalAuthService); ok {
+		externalLimit = rate.NewLimiter(rate.Limit(5), 20)
+	}
 	return &handler{
 		capabilities:  capabilities,
 		auth:          auth,
@@ -179,6 +195,8 @@ func NewHandlerWithServicesAndConfig(
 		certificates:  certificateService,
 		observer:      config.Observer,
 		errorReporter: config.ErrorReporter,
+		relayMap:      append([]byte(nil), config.RelayMap...),
+		externalLimit: externalLimit,
 	}
 }
 
@@ -209,8 +227,12 @@ func (h *handler) serveHTTP(w http.ResponseWriter, r *http.Request, requestID st
 	switch r.URL.Path {
 	case capabilitiesPath:
 		h.serveCapabilities(w, r, requestID)
+	case relayMapPath:
+		h.serveRelayMap(w, r, requestID)
 	case tokenExchangePath:
 		h.serveTokenExchange(w, r, requestID)
+	case externalExchangePath:
+		h.serveExternalExchange(w, r, requestID)
 	case hostnameClaimsPath:
 		h.serveHostnameClaims(w, r, requestID)
 	case routesPath:
@@ -282,9 +304,17 @@ func operationForRequest(method, path string) Operation {
 		if method == http.MethodGet {
 			return OperationCapabilitiesGet
 		}
+	case relayMapPath:
+		if method == http.MethodGet {
+			return OperationRelayMapGet
+		}
 	case tokenExchangePath:
 		if method == http.MethodPost {
 			return OperationTokenExchange
+		}
+	case externalExchangePath:
+		if method == http.MethodPost {
+			return OperationExternalTokenExchange
 		}
 	case hostnameClaimsPath:
 		switch method {
@@ -448,6 +478,19 @@ func (h *handler) serveCapabilities(w http.ResponseWriter, r *http.Request, requ
 	writeJSON(w, http.StatusOK, "application/json", body)
 }
 
+func (h *handler) serveRelayMap(w http.ResponseWriter, r *http.Request, requestID string) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w, requestID, http.MethodGet)
+		return
+	}
+	if len(h.relayMap) == 0 {
+		writeInternalError(w, requestID, errors.New("api: relay map is not configured"))
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, "application/json", h.relayMap)
+}
+
 func (h *handler) serveTokenExchange(w http.ResponseWriter, r *http.Request, requestID string) {
 	if r.Method != http.MethodPost {
 		writeMethodNotAllowed(w, requestID, http.MethodPost)
@@ -480,6 +523,57 @@ func (h *handler) serveTokenExchange(w http.ResponseWriter, r *http.Request, req
 		writeInternalError(w, requestID, err)
 		return
 	}
+	h.writeIssuedAccessToken(w, requestID, issued)
+}
+
+func (h *handler) serveExternalExchange(w http.ResponseWriter, r *http.Request, requestID string) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w, requestID, http.MethodPost)
+		return
+	}
+	if h.externalLimit != nil && !h.externalLimit.Allow() {
+		writeProblem(
+			w, requestID, http.StatusTooManyRequests, corev1.RateLimited,
+			"Rate limited", "rate-limited",
+		)
+		return
+	}
+	var request corev1.ExternalTokenExchangeRequest
+	if !decodeRequest(w, r, requestID, &request) {
+		return
+	}
+	if request.AccessToken == "" || len(request.AccessToken) > 4096 {
+		writeProblem(
+			w, requestID, http.StatusBadRequest, corev1.InvalidArgument,
+			"Invalid request", "invalid-request",
+		)
+		return
+	}
+	external, ok := h.auth.(ExternalAuthService)
+	if !ok {
+		writeInternalError(w, requestID, errAuthServiceMissing)
+		return
+	}
+	issued, err := external.ExchangeExternal(r.Context(), request.AccessToken)
+	if errors.Is(err, auth.ErrUnauthenticated) {
+		writeProblem(
+			w, requestID, http.StatusUnauthorized, corev1.Unauthenticated,
+			"Unauthenticated", "unauthenticated",
+		)
+		return
+	}
+	if err != nil {
+		writeInternalError(w, requestID, err)
+		return
+	}
+	h.writeIssuedAccessToken(w, requestID, issued)
+}
+
+func (h *handler) writeIssuedAccessToken(
+	w http.ResponseWriter,
+	requestID string,
+	issued auth.IssuedAccessToken,
+) {
 	body, err := marshalJSON(corev1.TokenExchangeResponse{
 		AccessToken:  issued.Token.String(),
 		CredentialId: issued.CredentialID.String(),
