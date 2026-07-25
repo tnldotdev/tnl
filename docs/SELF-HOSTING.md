@@ -26,6 +26,11 @@ Listen addresses, limits, timing, metrics, a non-default ACME directory, and
 static public certificate overrides are optional advanced settings. Private
 internal PKI and custom trust-root settings are not part of the configuration.
 
+Relay QUIC listeners use optimized UDP packet I/O by default. Set
+`TNLD_RELAY_QUIC_PACKET_IO_MODE=basic` only when the network path is incompatible
+with UDP out-of-band operations. Basic mode uses `ReadFrom` and `WriteTo`, fixes
+the QUIC packet size at 1200 bytes, and disables path MTU discovery.
+
 Control and standalone require exactly one authority mode. The built-in mode
 leaves `TNLD_AUTHORITY_ENDPOINT` unset and requires `TNLD_LOGIN_TOKEN`. The
 external mode sets `TNLD_AUTHORITY_ENDPOINT`, `TNLD_HOSTED_SECRET`, and the

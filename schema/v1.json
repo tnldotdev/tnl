@@ -236,6 +236,12 @@
           "type": "string",
           "description": "Public QUIC publisher-connection listen address."
         },
+        "relay_quic_packet_io_mode": {
+          "type": "string",
+          "enum": ["optimized", "basic"],
+          "description": "Relay QUIC UDP packet I/O mode: ${enum}.",
+          "default": "optimized"
+        },
         "internal_relay_listen": {
           "type": "string",
           "description": "Internal forwarding listen address."

@@ -68,8 +68,8 @@ tnl:
 
 func TestTNLDSectionUsesTNLDFieldMetadata(t *testing.T) {
 	for extension, contents := range map[string]string{
-		"json": `{"version":1,"tnld":{"mode":"relay","metrics_listen":"","relay_stream_capacity":12,"quic_idle_timeout":"30s"}}`,
-		"yml":  "version: 1\ntnld:\n  mode: relay\n  metrics_listen: \"\"\n  relay_stream_capacity: 12\n  quic_idle_timeout: 30s\n",
+		"json": `{"version":1,"tnld":{"mode":"relay","metrics_listen":"","relay_quic_packet_io_mode":"basic","relay_stream_capacity":12,"quic_idle_timeout":"30s"}}`,
+		"yml":  "version: 1\ntnld:\n  mode: relay\n  metrics_listen: \"\"\n  relay_quic_packet_io_mode: basic\n  relay_stream_capacity: 12\n  quic_idle_timeout: 30s\n",
 	} {
 		t.Run(extension, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "tnl."+extension)
@@ -82,7 +82,9 @@ func TestTNLDSectionUsesTNLDFieldMetadata(t *testing.T) {
 			}
 			value := tnldconfig.Config{MetricsListen: "default", RelayStreamCapacity: 99}
 			document.TNLD.Apply(&value)
-			if value.Mode != tnldconfig.RoleRelay || value.MetricsListen != "" || value.RelayStreamCapacity != 12 || value.QUICIdleTimeout != 30*time.Second {
+			if value.Mode != tnldconfig.RoleRelay || value.MetricsListen != "" ||
+				value.RelayQUICPacketIOMode != tnldconfig.RelayQUICPacketIOModeBasic ||
+				value.RelayStreamCapacity != 12 || value.QUICIdleTimeout != 30*time.Second {
 				t.Fatalf("tnld = %#v", value)
 			}
 		})
