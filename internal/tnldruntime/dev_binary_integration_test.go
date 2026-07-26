@@ -100,7 +100,18 @@ func testIntegrationBinaryNextDev(t *testing.T, fixture *integrationBinaryStanda
 		assertIntegrationRouteCertificate(t, response, tunnel.Hostname)
 		return true, nil
 	})
-	assertIntegrationNextHMR(t, fixture.pebble.roots, tunnel.Hostname)
+	assertIntegrationNextHMR(t, fixture.pebble.roots, tunnel.Hostname,
+		filepath.Join(project.root, "app", "page.tsx"))
+	waitForIntegrationCondition(t, 30*time.Second, func() (bool, error) {
+		response, body, err := visitor.requestURL(http.MethodGet, tunnel.PublicURL, nil)
+		if err != nil {
+			return false, err
+		}
+		if response.StatusCode != http.StatusOK {
+			return false, fmt.Errorf("Next.js post-edit visitor response = %s, %q", response.Status, body)
+		}
+		return bytes.Contains(body, []byte("Next.js fixture refreshed")), nil
+	})
 	stopIntegrationBinaryProcess(t, dev)
 }
 
@@ -318,7 +329,14 @@ func testIntegrationBinaryDev(t *testing.T, fixture *integrationBinaryStandalone
 			if err != nil || response.StatusCode != http.StatusOK {
 				t.Fatalf("Vite browser client: %v", err)
 			}
-			assertIntegrationViteHMR(t, fixture.pebble.roots, hostname, body)
+			assertIntegrationViteHMR(t, fixture.pebble.roots, hostname, body,
+				filepath.Join(project.root, "src", "main.ts"))
+			response, updatedBody, err := visitor.requestURL(http.MethodGet,
+				publicURL+"/src/main.ts?t="+fmt.Sprint(time.Now().UnixNano()), nil)
+			if err != nil || response.StatusCode != http.StatusOK ||
+				!bytes.Contains(updatedBody, []byte("Vite fixture HMR")) {
+				t.Fatalf("updated Vite app module: %v, body %q", err, updatedBody)
+			}
 			environmentImport := regexp.MustCompile(`(?m)^import "(/@fs/[^"]+/env\.mjs)";`).FindSubmatch(body)
 			if environmentImport == nil {
 				t.Fatal("Vite client did not import its environment module")
@@ -368,7 +386,13 @@ func testIntegrationBinaryDev(t *testing.T, fixture *integrationBinaryStandalone
 	}
 }
 
-func assertIntegrationViteHMR(t *testing.T, roots *x509.CertPool, hostname string, client []byte) {
+func assertIntegrationViteHMR(
+	t *testing.T,
+	roots *x509.CertPool,
+	hostname string,
+	client []byte,
+	sourcePath string,
+) {
 	t.Helper()
 	token := regexp.MustCompile(`const wsToken = "([^"]+)"`).FindSubmatch(client)
 	if token == nil {
@@ -393,14 +417,44 @@ func assertIntegrationViteHMR(t *testing.T, roots *x509.CertPool, hostname strin
 		t.Fatalf("receive Vite HMR message through public route: %v", err)
 	}
 	var message struct {
-		Type string `json:"type"`
+		Type    string `json:"type"`
+		Updates []struct {
+			Path         string `json:"path"`
+			AcceptedPath string `json:"acceptedPath"`
+		} `json:"updates"`
 	}
 	if err := json.Unmarshal([]byte(payload), &message); err != nil || message.Type != "connected" {
 		t.Fatalf("Vite HMR message = %q, error %v", payload, err)
 	}
+	replaceIntegrationFixtureText(t, sourcePath, "Vite fixture", "Vite fixture HMR")
+	for {
+		payload = ""
+		if err := websocket.Message.Receive(connection, &payload); err != nil {
+			t.Fatalf("receive Vite HMR update through public route: %v", err)
+		}
+		message = struct {
+			Type    string `json:"type"`
+			Updates []struct {
+				Path         string `json:"path"`
+				AcceptedPath string `json:"acceptedPath"`
+			} `json:"updates"`
+		}{}
+		if err := json.Unmarshal([]byte(payload), &message); err != nil {
+			t.Fatalf("decode Vite HMR update %q: %v", payload, err)
+		}
+		if message.Type != "update" {
+			continue
+		}
+		for _, update := range message.Updates {
+			if update.Path == "/src/main.ts" && update.AcceptedPath == "/src/main.ts" {
+				return
+			}
+		}
+		t.Fatalf("Vite HMR update did not include /src/main.ts: %s", payload)
+	}
 }
 
-func assertIntegrationNextHMR(t *testing.T, roots *x509.CertPool, hostname string) {
+func assertIntegrationNextHMR(t *testing.T, roots *x509.CertPool, hostname, sourcePath string) {
 	t.Helper()
 	config, err := websocket.NewConfig("wss://"+hostname+"/_next/hmr?id=tnl-integration", "https://"+hostname)
 	if err != nil {
@@ -415,16 +469,57 @@ func assertIntegrationNextHMR(t *testing.T, roots *x509.CertPool, hostname strin
 	if err := connection.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	var payload string
-	if err := websocket.Message.Receive(connection, &payload); err != nil {
-		t.Fatalf("receive Next.js HMR message through public route: %v", err)
+	connected := false
+	for !connected {
+		var payload string
+		if err := websocket.Message.Receive(connection, &payload); err != nil {
+			t.Fatalf("receive Next.js HMR connection message through public route: %v", err)
+		}
+		var message struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal([]byte(payload), &message); err != nil {
+			t.Fatalf("decode Next.js HMR connection message %q: %v", payload, err)
+		}
+		switch message.Type {
+		case "isrManifest":
+		case "turbopack-connected":
+			connected = true
+		default:
+			t.Fatalf("unexpected initial Next.js HMR message: %s", payload)
+		}
 	}
-	var message struct {
-		Type string `json:"type"`
+	replaceIntegrationFixtureText(t, sourcePath, "Next.js fixture", "Next.js fixture refreshed")
+	for {
+		var payload string
+		if err := websocket.Message.Receive(connection, &payload); err != nil {
+			t.Fatalf("receive Next.js HMR update through public route: %v", err)
+		}
+		var message struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal([]byte(payload), &message); err != nil {
+			continue // Next.js may interleave binary Turbopack protocol messages.
+		}
+		switch message.Type {
+		case "building", "built", "turbopack-message", "serverComponentChanges", "clientChanges":
+			return
+		}
 	}
-	if err := json.Unmarshal([]byte(payload), &message); err != nil ||
-		(message.Type != "isrManifest" && message.Type != "turbopack-connected") {
-		t.Fatalf("Next.js HMR message = %q, error %v", payload, err)
+}
+
+func replaceIntegrationFixtureText(t *testing.T, path, old, replacement string) {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := bytes.Replace(content, []byte(old), []byte(replacement), 1)
+	if bytes.Equal(updated, content) {
+		t.Fatalf("fixture %s does not contain %q", path, old)
+	}
+	if err := os.WriteFile(path, updated, 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 

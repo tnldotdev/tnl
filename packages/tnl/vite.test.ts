@@ -1,3 +1,4 @@
+import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
 import type { ConfigEnv, Plugin, UserConfig } from "vite";
@@ -14,6 +15,7 @@ import {
   temporaryDirectory,
   testPublicProject,
   waitForBootstrapRequest,
+  waitForWebSocketMessage,
   withCurrentDirectory,
   withProcessEnvironment,
 } from "./test-helper.js";
@@ -126,6 +128,9 @@ test(
     const bootstrap = await startTestBootstrap();
     onTestFinished(() => bootstrap.close());
     const port = await reserveLoopbackPort();
+    const source = fileURLToPath(new URL("fixtures/vite/app/src/main.ts", import.meta.url));
+    const originalSource = await readFile(source, "utf8");
+    onTestFinished(() => writeFile(source, originalSource));
     const process_ = startViteFixture(port, bootstrap.environment);
     onTestFinished(() => process_.close());
 
@@ -180,6 +185,21 @@ test(
       onTestFinished(() => socket.close());
       const message = JSON.parse(socketMessage) as { type?: string };
       expect(message.type).toBe("connected");
+      const updateMessage = waitForWebSocketMessage(socket, 30_000);
+      await writeFile(source, originalSource.replace("Vite fixture", "Vite fixture HMR"));
+      const update = JSON.parse(await updateMessage) as {
+        type?: string;
+        updates?: { acceptedPath?: string; path?: string }[];
+      };
+      expect(update).toMatchObject({
+        type: "update",
+        updates: [expect.objectContaining({ acceptedPath: "/src/main.ts", path: "/src/main.ts" })],
+      });
+      const updatedModule = await requestTestServer(port, {
+        path: `/src/main.ts?t=${Date.now()}`,
+      });
+      expect(updatedModule.status).toBe(200);
+      expect(updatedModule.body).toContain("Vite fixture HMR");
     } catch (error) {
       throw new Error(`${errorMessage(error)}\n${process_.output()}`, { cause: error });
     }
