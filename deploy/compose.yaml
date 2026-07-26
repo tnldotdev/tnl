@@ -17,7 +17,6 @@ services:
       TNLD_STATE_DIR: /var/lib/tnl
       TNLD_PUBLIC_LISTEN: :8443
       TNLD_METRICS_LISTEN: 0.0.0.0:9090
-      TNLD_RELAY_MAP_FILE: /etc/tnl/derp-map.json
     ports:
       - "${TNL_PUBLIC_BIND:-0.0.0.0}:443:8443/tcp"
     expose:
@@ -26,7 +25,6 @@ services:
       - /tmp:size=16m,mode=1777
     volumes:
       - tnld-state:/var/lib/tnl
-      - ./derp-map.json:/etc/tnl/derp-map.json:ro
 
 volumes:
   tnld-state:

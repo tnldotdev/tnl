@@ -27,7 +27,7 @@ ARG VERSION
 ARG COMMIT
 
 LABEL org.opencontainers.image.source="https://github.com/0xcadams/tnl" \
-      org.opencontainers.image.description="tnl standalone core daemon" \
+      org.opencontainers.image.description="tnl self-hosted core daemon" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.version=$VERSION \
       org.opencontainers.image.revision=$COMMIT

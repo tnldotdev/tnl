@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -21,37 +22,6 @@ import (
 	"github.com/0xcadams/tnl/pkg/protocol/corev1"
 )
 
-func TestTokenCommands(t *testing.T) {
-	for _, test := range []struct {
-		name  string
-		args  []string
-		parse func(string) error
-	}{
-		{name: "bootstrap", args: []string{"token", "bootstrap"}, parse: func(value string) error {
-			_, err := credentials.ParseBootstrapToken(credentials.BootstrapToken(value))
-			return err
-		}},
-		{name: "worker", args: []string{"token", "worker"}, parse: func(value string) error {
-			_, err := credentials.ParseWorkerToken(credentials.WorkerToken(value))
-			return err
-		}},
-		{name: "workload", args: []string{"token", "workload"}, parse: func(value string) error {
-			_, err := credentials.ParseWorkloadToken(credentials.WorkloadToken(value))
-			return err
-		}},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			var output, errors bytes.Buffer
-			if err := run(context.Background(), test.args, &output, &errors); err != nil {
-				t.Fatal(err)
-			}
-			if err := test.parse(strings.TrimSpace(output.String())); err != nil {
-				t.Fatal(err)
-			}
-		})
-	}
-}
-
 func TestVersionCommand(t *testing.T) {
 	var output, errors bytes.Buffer
 	if err := run(context.Background(), []string{"version"}, &output, &errors); err != nil {
@@ -59,6 +29,23 @@ func TestVersionCommand(t *testing.T) {
 	}
 	if output.String() != "tnl devel\n" || errors.Len() != 0 {
 		t.Fatalf("stdout = %q, stderr = %q", output.String(), errors.String())
+	}
+}
+
+func TestReadBootstrapToken(t *testing.T) {
+	token, err := credentials.NewBootstrapToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := readBootstrapToken(strings.NewReader(token.String()+"\n"), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed != token {
+		t.Fatalf("token = %q", parsed)
+	}
+	if _, err := readBootstrapToken(strings.NewReader("invalid"), io.Discard); err == nil {
+		t.Fatal("invalid token accepted")
 	}
 }
 

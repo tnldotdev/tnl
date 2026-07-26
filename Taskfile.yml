@@ -84,7 +84,7 @@ tasks:
     env:
       TNL_TEST_INTEGRATION: "1"
     cmds:
-      - go test -race -v ./internal/controltls ./internal/tailtransport ./internal/publication -run='^TestIntegration' -count=1 -timeout=5m
+      - go test -race -v ./cmd/tnld ./internal/controltls ./internal/tailtransport ./internal/publication -run='^TestIntegration' -count=1 -timeout=5m
 
   go:bench-fly:
     desc: Benchmark complete single-node and HA route paths on Fly

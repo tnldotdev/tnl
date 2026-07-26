@@ -1,51 +1,41 @@
-# Self-hosting tnl
+# Self-Hosting tnl
 
-This guide covers the supported standalone-preview deployment. Standalone mode
-runs the control API, public ingress, route worker, certificate coordinator,
-and SQLite database in one `tnld` process. Edge and worker modes are
-experimental and are not covered by this runbook.
+The default deployment runs the control API, public ingress, route worker,
+certificate coordinator, and SQLite database in one `tnld` process. A separate
+reference supports one stateful edge and a fixed pool of stateless workers.
 
 ## Topology
 
-Use separate control and public DNS names:
+Choose one canonical base domain. `TNLD_DOMAIN=example.com` derives both public
+names:
 
-| Purpose | Example | Listener |
+| Purpose | Name | Listener |
 | --- | --- | --- |
 | Control API | `core.example.com` | TCP 443 |
 | Public routes | `*.apps.example.com` | TCP 443 |
 
 Create A and, when applicable, AAAA records for both names. The wildcard must
 resolve directly to public ingress. If CAA records are present, authorize the
-CA configured for automatic certificates.
+configured ACME CA.
 
-The reference Compose file publishes on IPv4 because its bind defaults are
+The reference Compose files publish IPv4 because `TNL_PUBLIC_BIND` defaults to
 `0.0.0.0`. Publish AAAA records only after adding equivalent `[::]` mappings in
-a Compose override and confirming the Docker host accepts the listener over
-IPv6.
+a Compose override and confirming that the Docker host accepts IPv6 traffic.
 
-Open inbound TCP 443. The daemon host needs outbound HTTPS access to the ACME
-directory and configured DERP nodes. Each `tnl` client needs outbound HTTPS to
-the control hostname and the configured DERP nodes; permit each endpoint port
-listed in the approved DERP map, plus its STUN UDP port when direct-path
-discovery is used. Public ingress is opaque TLS and cannot share its TCP 443
-listener with an HTTPS reverse proxy. `tnld` selects the local control API or
-an opaque route by SNI.
+Open inbound TCP 443. The daemon needs outbound HTTPS access to its ACME
+directory and configured relay nodes. Public ingress is opaque TLS and cannot
+sit behind an HTTPS-terminating reverse proxy: `tnld` selects its control API or
+an application route from the original SNI without decrypting route traffic.
 
-## Prerequisites
+## Start Standalone
+
+Prerequisites:
 
 - A Linux host with Docker Engine and Docker Compose v2.
-- A canonical route suffix such as `apps.example.com`.
-- An approved Tailscale DERP map JSON file smaller than 1 MiB. Its selected
-  region must be smaller than 64 KiB and have a unique `RegionCode` matching
-  `TNLD_RELAY_PROFILE`.
-- The matching `tnl` release on each client.
-
-Install the reviewed relay map only on the daemon. Clients fetch the selected
-region from the control API. The endpoint is unauthenticated so workers can
-bootstrap; do not include credentials or unnecessary private metadata in the
-map.
-
-## Configure Compose
+- A verified, digest-pinned tnl image.
+- DNS for `core.<domain>` and `*.apps.<domain>`.
+- An ACME service that supports TLS-ALPN-01 and the configured application
+  certificate profile.
 
 Work from the repository's `deploy` directory:
 
@@ -54,139 +44,187 @@ cd deploy
 install -m 0600 .env.example .env
 ```
 
-Install the approved map at `deploy/derp-map.json`. Generate the bootstrap
-credential with the same release of `tnl`:
+Set these values in `.env`:
 
-```console
-tnl token bootstrap
-```
-
-Edit `.env` and set:
-
-- `TNL_IMAGE` to the verified release image digest, for example
+- `TNL_IMAGE`: the verified image digest, such as
   `ghcr.io/0xcadams/tnl@sha256:...`.
-- `TNL_STATE_VOLUME` to the named volume holding daemon state. Keep the default
-  for a first deployment and change it only during a tested restore or rollback.
-- `TNLD_CONTROL_HOSTNAME` to the exact control API hostname.
-- `TNLD_ROUTE_SUFFIX` to the public wildcard suffix.
-- `TNLD_BOOTSTRAP_TOKEN` to the generated credential.
-- `TNLD_RELAY_PROFILE` to a region code in `derp-map.json`.
-- `TNLD_ACME_DIRECTORY_URL`, `TNLD_ACME_EMAIL`,
-  `TNLD_ACME_ACCEPT_TERMS=true`, and `TNLD_ACME_PROFILE=tlsserver` to enable
-  automatic control and application certificates. The CA must implement ACME
-  Profiles, advertise the `tlsserver` profile, and support TLS-ALPN-01.
+- `TNLD_DOMAIN`: the base domain from which control and route names are derived.
+- `TNLD_ACME_DIRECTORY_URL`, `TNLD_ACME_EMAIL`, and
+  `TNLD_ACME_ACCEPT_TERMS=true`: the ACME account configuration.
+- `TNLD_ACME_PROFILE`: the profile used for application certificates.
+- `TNLD_RELAY_PROVIDER=tailcat`: explicit consent to use Tailcat's hosted public
+  relays.
 
-The example `.env` uses Let's Encrypt production. Check DNS, CAA, and TCP 443
-before starting to avoid rate-limit failures. A CA staging directory is safer
-for repeated issuance tests, but staging certificates are not publicly
-trusted: install that CA's staging root only on isolated test clients before
-using the `curl` and `tnl` commands below, and remove it after testing. Never
-add a staging root to production trust stores.
+Tailcat provider mode fetches the provider map once, measures the available
+regions, and stores only the selected region in daemon state. Restarts use that
+pinned region without fetching a mutable provider map. Tailcat is an external
+network dependency: review its service and privacy terms before opting in.
 
-The bootstrap token is a deployment root secret and remains necessary across
-daemon restarts. Do not place `.env`, private keys, access tokens, or state
-backups in source control. Docker exposes container environment variables to
-users who can inspect the daemon, so restrict Docker access as carefully as
-root access to the host.
-
-## Start And Inspect
-
-Start the pinned image:
+Start the daemon and inspect the control endpoint:
 
 ```console
 docker compose pull
 docker compose up -d
 docker compose logs --no-log-prefix tnld
+curl --fail --silent --show-error https://core.example.com/v1/capabilities
 ```
 
-The unauthenticated capabilities endpoint confirms control-plane readiness:
-
-```console
-curl --fail --silent --show-error \
-  https://core.example.com/v1/capabilities
-```
-
-It does not prove that asynchronous application-certificate initialization or
-TLS-ALPN-01 forwarding works. Before accepting traffic, inspect the daemon log
-for certificate errors and publish one complete test route.
+The capabilities response proves that the control endpoint is serving. Before
+accepting traffic, inspect logs for certificate errors and publish one complete
+test route.
 
 Prometheus metrics listen on container port 9090 and are intentionally not
 published to the host. Attach a private scraper to the Compose network or add a
-loopback-only port mapping. Never expose this listener directly to the public
-Internet.
+loopback-only port mapping. Never expose metrics directly to the Internet.
 
 ## Enroll A Client
 
+On first startup, `tnld` creates a bootstrap token in its state volume. Retrieve
+it without printing it in daemon logs or storing it in `.env`:
+
+```console
+docker compose exec tnld tnld bootstrap-token --state-dir /var/lib/tnl
+```
+
 Install and verify a release archive as described in [Releases](releases.md),
-then exchange the bootstrap token. The approved relay map remains on the daemon,
-and clients fetch its selected region from the core API:
+then log in. Browser authorization is preferred when the core advertises it;
+otherwise `tnl login` prompts for the bootstrap token:
 
 ```console
 export TNL_CORE_URL=https://core.example.com
-read -rsp 'Bootstrap token: ' TNL_BOOTSTRAP_TOKEN && printf '\n'
-export TNL_BOOTSTRAP_TOKEN
-export TNL_ACCESS_TOKEN="$(tnl auth exchange)"
-unset TNL_BOOTSTRAP_TOKEN
-```
-
-Publish one literal-loopback HTTP target:
-
-```console
+tnl login
 tnl public http://127.0.0.1:3000 --host=demo
 ```
 
-The command remains in the foreground and prints readiness and shutdown events
-to stderr. Use `--output=ndjson` for machine-readable lifecycle events on
-stdout. A second interrupt exits immediately.
+The publication command stays in the foreground and obtains the application
+certificate automatically. It prints lifecycle messages to stderr; use
+`--output=ndjson` for bounded machine-readable events on stdout. A second
+interrupt exits immediately.
 
-Automatic certificate issuance requires the client to remain connected while
-the CA reaches `demo.apps.example.com` on TCP 443. If automatic certificates
-are disabled, provide a certificate and key to `tnl public`; the leaf must use
-an ECDSA P-256 key and exactly one DNS SAN equal to the route hostname.
-
-Hostname commands use the same `TNL_CORE_URL` and `TNL_ACCESS_TOKEN`:
+The route becomes `https://demo.apps.example.com`. Omit `--host` for a stable
+random label. Manage durable claims with:
 
 ```console
 tnl host list
 tnl host release demo.apps.example.com
+tnl logout
 ```
 
-Release is permanent. The hostname is tombstoned and cannot be reclaimed.
-Access tokens expire after 30 days. Existing lease-token heartbeats can
-continue, but a later client restart or hostname command requires a fresh
-bootstrap exchange when the access token has expired.
+Release is permanent: the hostname is tombstoned and cannot be reclaimed.
+Access credentials expire after 30 days at most. Existing lease-token
+heartbeats can continue, but a later client restart or hostname command may
+require `tnl login` again.
+
+## External Browser Authentication
+
+To prefer browser/device login over bootstrap enrollment, configure all of the
+following daemon values:
+
+- `TNLD_EXTERNAL_AUTH_ISSUER`
+- `TNLD_EXTERNAL_AUTH_DEVICE_URL`
+- `TNLD_EXTERNAL_AUTH_TOKEN_URL`
+- `TNLD_EXTERNAL_AUTH_CLIENT_ID`
+- `TNLD_EXTERNAL_AUTH_SCOPE`
+- `TNLD_EXTERNAL_AUTH_INTROSPECTION_URL`
+- `TNLD_EXTERNAL_AUTH_INTROSPECTION_TOKEN`
+
+The device, token, and introspection endpoints must share the exact HTTPS origin
+declared by the issuer. Generate the introspection workload credential on the
+trusted service that validates external tokens:
+
+```console
+tnld token workload
+```
+
+Store that credential as a secret on both services. When external
+authentication is advertised, `tnl login` opens the device flow by default;
+use `tnl login --bootstrap` only for operator recovery.
+
+## Split Edge And Workers
+
+`compose.split.yaml` runs one edge with durable SQLite state and one or more
+stateless workers. Generate one worker credential with the verified `tnld`
+binary and add it to `.env` as `TNLD_WORKER_TOKEN`:
+
+```console
+tnld token worker
+docker compose --file compose.split.yaml pull
+docker compose --file compose.split.yaml up -d --scale worker=2
+docker compose --file compose.split.yaml exec edge \
+  tnld bootstrap-token --state-dir /var/lib/tnl
+```
+
+The worker connects outbound to `wss://core.<domain>/internal/v1/worker`, so no
+worker ingress port is required. Keep at least one worker running and size
+`TNLD_WORKER_CAPACITY` for the intended fixed pool.
+
+This topology scales route work and tolerates an individual worker restart. It
+does not make the edge highly available: the edge and its SQLite volume remain
+a single state authority, and assignments are process-local. Do not share its
+volume or run multiple edges against it. Automated scale-in should wait for a
+documented drain policy and workload-specific qualification.
+
+## Custom Relays
+
+Custom DERP remains available as an advanced override. Remove
+`TNLD_RELAY_PROVIDER`, mount an approved Tailscale DERP map smaller than 1 MiB,
+and set `TNLD_RELAY_MAP_FILE`. If the map contains multiple regions, also set
+`TNLD_RELAY_PROFILE` to the selected `RegionCode`; a single valid region is
+selected automatically.
+
+Only install a reviewed map on the daemon. Clients and workers fetch the
+selected region from the control API. The endpoint is unauthenticated so
+workers can bootstrap; never include credentials or unnecessary private
+metadata in the map.
+
+To deliberately re-measure and replace a Tailcat provider pin, stop the daemon
+and run the offline refresh command against its state volume:
+
+```console
+docker compose stop tnld
+docker compose run --rm tnld relay refresh --state-dir /var/lib/tnl
+docker compose start tnld
+```
 
 ## State And Recovery
 
-`tnld` stores `tnld.db` and its SQLite WAL files under `/var/lib/tnl`. The
-Compose project keeps that directory in the `tnl_tnld-state` named volume.
-State includes credentials, hostname claims, route ownership, lease history,
-and control and application ACME data.
+`tnld` stores SQLite files, ACME account and certificate data, the bootstrap
+token, and the pinned relay region under `/var/lib/tnl`. The default Compose
+project keeps that directory in the `tnl_tnld-state` named volume.
 
 Only take cold backups: stop `tnld`, archive the complete volume, and then
-restart it. Copying only `tnld.db` omits the control certificate cache, and
-copying it while the daemon is running can lose WAL transactions or produce an
-inconsistent backup. See [Releases](releases.md)
-for backup, restore, upgrade, and rollback commands.
+restart it. Copying only `tnld.db` omits required files; copying a live database
+can lose WAL transactions or produce an inconsistent backup. See
+[Releases](releases.md) for backup, restore, upgrade, and rollback commands.
 
-Test restoration regularly on an isolated host. Treat backups as secrets and
-encrypt them at rest.
+Treat backups and bootstrap tokens as secrets. Test restoration regularly on an
+isolated host and encrypt backups at rest. `tnld` takes an exclusive state lock
+and refuses to start a second state-owning process on the same directory.
 
-Each client also keeps private keys, certificate state, and stable random-name
-selection under `TNL_STATE_DIR`. Its default is the operating system user
+To rotate the bootstrap token, stop the state owner and run:
+
+```console
+docker compose stop tnld
+docker compose run --rm tnld bootstrap-token --state-dir /var/lib/tnl --rotate
+docker compose start tnld
+```
+
+Rotation invalidates the old bootstrap credential but does not revoke access
+tokens already issued from it. Use `tnl logout` from enrolled clients to revoke
+their current access tokens.
+
+Each client stores its access credential, private keys, certificate state, and
+stable random-name selection under `TNL_STATE_DIR`. Its default is the user
 configuration directory followed by `tnl` (`~/.config/tnl` on typical Linux
 systems and `~/Library/Application Support/tnl` on macOS). Stop every `tnl`
-process before backing up that complete directory, encrypt the backup, and
-restore it only for the same user and control origin.
+process before backing up that complete directory.
 
 ## Operational Boundaries
 
-- Run one standalone `tnld` against a state volume. SQLite is not shared
-  storage and this deployment is not active-active.
-- Keep `tnl` and `tnld` on the same release during the preview period.
-- Preserve the control hostname, route suffix, and state volume across
-  restarts.
+- Run one state-owning `tnld` against each SQLite volume.
+- Keep `tnl` and `tnld` on the same release before 1.0.
+- Preserve `TNLD_DOMAIN` and the state volume across restarts.
 - Do not restore an old database over a running daemon.
 - Do not run an older daemon against state migrated by a newer release.
-- Bootstrap-token rotation is the recovery mechanism; there is no remote
-  administration API in the preview release.
+- Keep outer PROXY v2 disabled unless the only path to ingress is a trusted
+  proxy configured to emit exactly one header.

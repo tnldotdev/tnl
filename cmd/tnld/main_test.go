@@ -3,15 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/tls"
-	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/json"
-	"encoding/pem"
-	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -27,6 +20,7 @@ import (
 	"github.com/0xcadams/tnl/internal/credentials"
 	"github.com/0xcadams/tnl/internal/observability"
 	"github.com/0xcadams/tnl/internal/state"
+	"github.com/0xcadams/tnl/internal/testutil/integrationtest"
 	"github.com/0xcadams/tnl/internal/worker"
 	"github.com/0xcadams/tnl/internal/workersession"
 	"github.com/0xcadams/tnl/pkg/protocol/corev1"
@@ -44,9 +38,45 @@ func TestVersionCommand(t *testing.T) {
 	}
 }
 
-func TestStandaloneControlLifecycle(t *testing.T) {
+func TestTokenCommands(t *testing.T) {
+	for _, tokenType := range []string{"worker", "workload"} {
+		t.Run(tokenType, func(t *testing.T) {
+			var output bytes.Buffer
+			if err := run(context.Background(), []string{"token", tokenType}, &output); err != nil {
+				t.Fatal(err)
+			}
+			value := strings.TrimSpace(output.String())
+			var err error
+			if tokenType == "worker" {
+				_, err = credentials.ParseWorkerToken(credentials.WorkerToken(value))
+			} else {
+				_, err = credentials.ParseWorkloadToken(credentials.WorkloadToken(value))
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestBootstrapTokenCommand(t *testing.T) {
 	directory := t.TempDir()
-	certificateFile, keyFile, roots := writeControlCertificate(t, directory, "control.example")
+	token, _, err := state.EnsureBootstrapToken(directory, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := run(context.Background(), []string{"bootstrap-token", "--state-dir", directory}, &output); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(output.String()); got != token.String() {
+		t.Fatalf("bootstrap token = %q", got)
+	}
+}
+
+func TestIntegrationStandaloneControlLifecycle(t *testing.T) {
+	pebblePath := integrationtest.RequirePebble(t)
+	directory := t.TempDir()
 	relayFile := filepath.Join(directory, "relay.json")
 	relayData, err := json.Marshal(tailcfg.DERPMap{Regions: map[int]*tailcfg.DERPRegion{1: {
 		RegionID: 1, RegionCode: "test", Nodes: []*tailcfg.DERPNode{{
@@ -63,11 +93,25 @@ func TestStandaloneControlLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	publicListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicAddress := publicListener.Addr().String()
+	publicPort := publicListener.Addr().(*net.TCPAddr).Port
+	if err := publicListener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	dnsAddress := integrationtest.StartChallengeDNS(t)
+	pebble := integrationtest.StartPebble(t, pebblePath, publicPort, dnsAddress)
+	previousTransport := http.DefaultTransport
+	http.DefaultTransport = pebble.HTTPClient().Transport
+	t.Cleanup(func() { http.DefaultTransport = previousTransport })
 	cfg := config.TNLD{
 		Mode: config.TNLDModeStandalone, StateDir: filepath.Join(directory, "state"),
-		PublicListen: "127.0.0.1:0", ControlHostname: "control.example",
-		ControlCertFile: certificateFile, ControlKeyFile: keyFile, RouteSuffix: "example",
-		BootstrapToken: bootstrap.String(), RelayMapFile: relayFile, RelayProfile: "test",
+		PublicListen: publicAddress, Domain: "example",
+		ACMEDirectoryURL: pebble.DirectoryURL(), ACMEEmail: "operator@example.com", ACMEAcceptTerms: true,
+		ACMEProfile: "tlsserver", RelayMapFile: relayFile, RelayProfile: "test",
 		WorkerCapacity: 10, WorkerStreamLimit: 10, PublicConnLimit: 10, RouteConnLimit: 5, DrainTimeout: time.Second,
 		MaxActiveHostnameClaims: 128, MaxHostnameClaimRequests: 1024,
 	}
@@ -78,19 +122,19 @@ func TestStandaloneControlLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	running := &daemon{db: db}
+	running := &daemon{db: db, bootstrap: bootstrap}
 	t.Cleanup(func() { _ = running.shutdown(time.Second) })
 	controlDone, ingressDone, err := running.startCore(context.Background(), cfg, observability.New("standalone"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	httpClient := &http.Client{Transport: &http.Transport{
-		TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS13},
+		TLSClientConfig: &tls.Config{RootCAs: pebble.IssuerRoots(t), MinVersion: tls.VersionTLS13},
 		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
 			return new(net.Dialer).DialContext(ctx, network, running.controlListener.Addr().String())
 		},
 	}, Timeout: 5 * time.Second}
-	baseURL := "https://control.example"
+	baseURL := "https://core.example"
 	anonymous, err := coreclient.New(baseURL, httpClient, "")
 	if err != nil {
 		t.Fatal(err)
@@ -122,7 +166,7 @@ func TestStandaloneControlLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	setup, err := client.CreateRoute(context.Background(), corev1.CreateRouteRequest{
-		Hostname: "route.example", DisplayTarget: "http://127.0.0.1:3000", RouteToken: routeToken.String(),
+		Hostname: "route.apps.example", DisplayTarget: "http://127.0.0.1:3000", RouteToken: routeToken.String(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -242,40 +286,3 @@ func (r *reconnectRegistry) AddOwner(_ string, owner worker.RouteOwner) error {
 func (*reconnectRegistry) DrainOwner(context.Context, string) error { return nil }
 
 func (*reconnectRegistry) RemoveOwner(string) {}
-
-func writeControlCertificate(t *testing.T, directory, hostname string) (string, string, *x509.CertPool) {
-	t.Helper()
-	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	template := &x509.Certificate{
-		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: hostname},
-		DNSNames:  []string{hostname},
-		NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(time.Hour),
-		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-	}
-	certificate, err := x509.CreateCertificate(rand.Reader, template, template, privateKey.Public(), privateKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	encodedKey, err := x509.MarshalPKCS8PrivateKey(privateKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	certificateFile := filepath.Join(directory, "control.crt")
-	keyFile := filepath.Join(directory, "control.key")
-	if err := os.WriteFile(certificateFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate}), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: encodedKey}), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	leaf, err := x509.ParseCertificate(certificate)
-	if err != nil {
-		t.Fatal(err)
-	}
-	roots := x509.NewCertPool()
-	roots.AddCert(leaf)
-	return certificateFile, keyFile, roots
-}

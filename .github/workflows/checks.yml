@@ -167,7 +167,10 @@ jobs:
       - name: Validate Compose deployment
         env:
           TNL_ENV_FILE: .env.example
-        run: docker compose --env-file deploy/.env.example --file deploy/compose.yaml config --quiet
+          TNLD_WORKER_TOKEN: tnl_worker_AAAAAAAAAAAAAAAAAAAAAA.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        run: |
+          docker compose --env-file deploy/.env.example --file deploy/compose.yaml config --quiet
+          docker compose --env-file deploy/.env.example --file deploy/compose.split.yaml config --quiet
 
   github-actions:
     name: GitHub Actions

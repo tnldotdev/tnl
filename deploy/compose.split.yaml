@@ -1,0 +1,49 @@
+name: tnl-split
+
+x-tnld: &tnld
+  image: ${TNL_IMAGE:?set TNL_IMAGE to a verified digest-pinned image}
+  restart: unless-stopped
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  stop_grace_period: 45s
+  env_file:
+    - ${TNL_ENV_FILE:-.env}
+  tmpfs:
+    - /tmp:size=16m,mode=1777
+
+services:
+  edge:
+    <<: *tnld
+    environment:
+      TNLD_MODE: edge
+      TNLD_STATE_DIR: /var/lib/tnl
+      TNLD_PUBLIC_LISTEN: :8443
+      TNLD_METRICS_LISTEN: 0.0.0.0:9090
+      TNLD_WORKER_TOKEN: ${TNLD_WORKER_TOKEN:?set TNLD_WORKER_TOKEN to the output of tnld token worker}
+    ports:
+      - "${TNL_PUBLIC_BIND:-0.0.0.0}:443:8443/tcp"
+    expose:
+      - "9090"
+    volumes:
+      - tnld-edge-state:/var/lib/tnl
+
+  worker:
+    <<: *tnld
+    env_file: []
+    environment:
+      TNLD_MODE: worker
+      TNLD_METRICS_LISTEN: 0.0.0.0:9090
+      TNLD_WORKER_URL: wss://core.${TNLD_DOMAIN:?set TNLD_DOMAIN}/internal/v1/worker
+      TNLD_WORKER_TOKEN: ${TNLD_WORKER_TOKEN:?set TNLD_WORKER_TOKEN to the output of tnld token worker}
+      TNLD_WORKER_CAPACITY: ${TNLD_WORKER_CAPACITY:-500}
+      TNLD_WORKER_STREAM_LIMIT: ${TNLD_WORKER_STREAM_LIMIT:-4096}
+      TNLD_DRAIN_TIMEOUT: ${TNLD_DRAIN_TIMEOUT:-30s}
+    expose:
+      - "9090"
+
+volumes:
+  tnld-edge-state:
+    name: ${TNL_STATE_VOLUME:-tnl_tnld-edge-state}
