@@ -145,7 +145,9 @@ type RouteUsageBucketReport struct {
 
 	// CapacityDenials Matched attempts rejected by the route connection limit.
 	CapacityDenials UnsignedInteger `json:"capacity_denials"`
-	Complete        bool            `json:"complete"`
+
+	// Complete Whether accounting is complete through the bucket end without a missing ingress reporting interval.
+	Complete bool `json:"complete"`
 
 	// ConnectionAttempts Connections counted immediately after an ordinary route match, before policy and capacity checks.
 	ConnectionAttempts UnsignedInteger `json:"connection_attempts"`
@@ -157,9 +159,11 @@ type RouteUsageBucketReport struct {
 	EgressBytes UnsignedInteger `json:"egress_bytes"`
 
 	// IngressBytes Bytes successfully forwarded from visitors to publishers.
-	IngressBytes    UnsignedInteger `json:"ingress_bytes"`
-	ItemId          string          `json:"item_id"`
-	ObservedThrough time.Time       `json:"observed_through"`
+	IngressBytes UnsignedInteger `json:"ingress_bytes"`
+	ItemId       string          `json:"item_id"`
+
+	// ObservedThrough End of known accounting coverage for this bucket. Equals the bucket end when complete is true.
+	ObservedThrough time.Time `json:"observed_through"`
 
 	// PolicyDenials Matched attempts rejected by route access policy.
 	PolicyDenials UnsignedInteger `json:"policy_denials"`

@@ -143,6 +143,9 @@ components:
         observed_through:
           type: string
           format: date-time
+          description: >-
+            End of known accounting coverage for this bucket. Equals the bucket
+            end when complete is true.
         connection_attempts:
           $ref: "#/components/schemas/UnsignedInteger"
           description: Connections counted immediately after an ordinary route match, before policy and capacity checks.
@@ -211,6 +214,9 @@ components:
             than summing estimates when aggregating reports.
         complete:
           type: boolean
+          description: >-
+            Whether accounting is complete through the bucket end without a
+            missing ingress reporting interval.
     BatchProblemCode:
       type: string
       enum: [invalid_argument, not_found, status_conflict, idempotency_conflict, internal]
