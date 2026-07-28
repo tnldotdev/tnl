@@ -1,6 +1,7 @@
 package tnldruntime
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/tls"
 	"database/sql"
@@ -17,6 +18,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
 	"github.com/tnldotdev/tnl/internal/tunnel"
+	"golang.org/x/net/websocket"
 )
 
 func TestIntegrationStandalonePublishAndVisit(t *testing.T) {
@@ -201,6 +203,198 @@ func TestIntegrationPublisherTransportMatrix(t *testing.T) {
 				)
 			}
 		})
+	}
+}
+
+func TestIntegrationLongLivedHTTPStreams(t *testing.T) {
+	fixture := newStandalonePublishFixture(t, "long-lived-http")
+	websocketGates := make(chan chan struct{}, 1)
+	sseGates := make(chan chan struct{}, 1)
+	streamGates := make(chan chan struct{}, 1)
+	mux := http.NewServeMux()
+	mux.Handle("/websocket", websocket.Handler(func(connection *websocket.Conn) {
+		defer connection.Close()
+		if err := websocket.Message.Send(connection, "connected"); err != nil {
+			return
+		}
+		gate := make(chan struct{})
+		websocketGates <- gate
+		select {
+		case <-gate:
+		case <-connection.Request().Context().Done():
+			return
+		}
+		_ = websocket.Message.Send(connection, "update")
+	}))
+	mux.HandleFunc("/events", func(response http.ResponseWriter, request *http.Request) {
+		flusher, ok := response.(http.Flusher)
+		if !ok {
+			http.Error(response, "streaming unsupported", http.StatusInternalServerError)
+			return
+		}
+		response.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(response, "data: connected\n\n")
+		flusher.Flush()
+		gate := make(chan struct{})
+		sseGates <- gate
+		select {
+		case <-gate:
+		case <-request.Context().Done():
+			return
+		}
+		_, _ = io.WriteString(response, "data: update\n\n")
+		flusher.Flush()
+	})
+	mux.HandleFunc("/stream", func(response http.ResponseWriter, request *http.Request) {
+		flusher, ok := response.(http.Flusher)
+		if !ok {
+			http.Error(response, "streaming unsupported", http.StatusInternalServerError)
+			return
+		}
+		response.Header().Set("Content-Type", "text/plain")
+		_, _ = io.WriteString(response, "first\n")
+		flusher.Flush()
+		gate := make(chan struct{})
+		streamGates <- gate
+		select {
+		case <-gate:
+		case <-request.Context().Done():
+			return
+		}
+		_, _ = io.WriteString(response, "second\n")
+		flusher.Flush()
+	})
+	target := httptest.NewServer(mux)
+	t.Cleanup(target.Close)
+
+	for _, transport := range []string{"quic", "tls-tcp"} {
+		t.Run(transport, func(t *testing.T) {
+			quicBase, tcpBase := fixture.connectors()
+			var quicConnector, tcpConnector muxsession.Connector
+			if transport == "quic" {
+				quicConnector = quicBase
+				tcpConnector, _ = disabledIntegrationConnector("TLS/TCP disabled by integration test")
+			} else {
+				quicConnector, _ = disabledIntegrationConnector("QUIC disabled by integration test")
+				tcpConnector = tcpBase
+			}
+			handle := fixture.startPublisher(t, target.URL, quicConnector, tcpConnector)
+			ready := fixture.waitReady(t, handle)
+
+			assertIntegrationWebSocketPushes(t, fixture, websocketGates)
+			assertIntegrationSSEPushes(t, fixture, ready.PublicURL, sseGates)
+			assertIntegrationStreamingResponse(t, fixture, ready.PublicURL, streamGates)
+			stopIntegrationPublisher(t, handle)
+		})
+	}
+}
+
+func assertIntegrationStreamingResponse(
+	t *testing.T,
+	fixture *standalonePublishFixture,
+	publicURL string,
+	gates <-chan chan struct{},
+) {
+	t.Helper()
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, publicURL+"/stream", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := fixture.visitor.client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK || response.Header.Get("Content-Type") != "text/plain" {
+		t.Fatalf("streaming response = %s, headers %#v", response.Status, response.Header)
+	}
+	reader := bufio.NewReader(response.Body)
+	if chunk, readErr := reader.ReadString('\n'); readErr != nil || chunk != "first\n" {
+		t.Fatalf("first streaming chunk = %q, %v", chunk, readErr)
+	}
+	gate := <-gates
+	time.Sleep(250 * time.Millisecond)
+	close(gate)
+	if chunk, readErr := reader.ReadString('\n'); readErr != nil || chunk != "second\n" {
+		t.Fatalf("second streaming chunk = %q, %v", chunk, readErr)
+	}
+}
+
+func assertIntegrationWebSocketPushes(
+	t *testing.T,
+	fixture *standalonePublishFixture,
+	gates <-chan chan struct{},
+) {
+	t.Helper()
+	config, err := websocket.NewConfig("wss://"+fixture.identity.hostname+"/websocket", "https://"+fixture.identity.hostname)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secured, err := tls.Dial("tcp", fixture.publicAddress, &tls.Config{
+		RootCAs: fixture.pebble.roots, ServerName: fixture.identity.hostname, MinVersion: tls.VersionTLS13,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection, err := websocket.NewClient(config, secured)
+	if err != nil {
+		_ = secured.Close()
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	if err := connection.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	var message string
+	if err := websocket.Message.Receive(connection, &message); err != nil || message != "connected" {
+		t.Fatalf("first WebSocket message = %q, %v", message, err)
+	}
+	gate := <-gates
+	time.Sleep(250 * time.Millisecond)
+	close(gate)
+	if err := websocket.Message.Receive(connection, &message); err != nil || message != "update" {
+		t.Fatalf("second WebSocket message = %q, %v", message, err)
+	}
+}
+
+func assertIntegrationSSEPushes(
+	t *testing.T,
+	fixture *standalonePublishFixture,
+	publicURL string,
+	gates <-chan chan struct{},
+) {
+	t.Helper()
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, publicURL+"/events", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := fixture.visitor.client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK || response.Header.Get("Content-Type") != "text/event-stream" {
+		t.Fatalf("SSE response = %s, headers %#v", response.Status, response.Header)
+	}
+	reader := bufio.NewReader(response.Body)
+	readEvent := func() string {
+		data, readErr := reader.ReadString('\n')
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if separator, readErr := reader.ReadString('\n'); readErr != nil || separator != "\n" {
+			t.Fatalf("SSE separator = %q, %v", separator, readErr)
+		}
+		return data
+	}
+	if event := readEvent(); event != "data: connected\n" {
+		t.Fatalf("first SSE event = %q", event)
+	}
+	gate := <-gates
+	time.Sleep(250 * time.Millisecond)
+	close(gate)
+	if event := readEvent(); event != "data: update\n" {
+		t.Fatalf("second SSE event = %q", event)
 	}
 }
 

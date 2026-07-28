@@ -15,9 +15,18 @@ const defaultQUICKeepAlivePeriod = 30 * time.Second
 
 const compatibleQUICPacketSize = 1200
 
+// QUICPacketIOMode selects the UDP socket path used by a QUIC listener.
+type QUICPacketIOMode string
+
+const (
+	QUICPacketIOModeOptimized QUICPacketIOMode = "optimized"
+	QUICPacketIOModeBasic     QUICPacketIOMode = "basic"
+)
+
 // QUICConfig configures the QUIC transport.
 type QUICConfig struct {
-	Config *quic.Config
+	Config       *quic.Config
+	PacketIOMode QUICPacketIOMode
 }
 
 // QUICConnector establishes QUIC multiplexed sessions.
@@ -61,24 +70,31 @@ func ListenQUIC(address string, tlsConfig *tls.Config, config QUICConfig) (*QUIC
 	if err != nil {
 		return nil, err
 	}
-	listener, packetConn, err := listenQUIC(address, serverConfig, quicConfig(config.Config))
+	listener, packetConn, err := listenQUIC(address, serverConfig, quicConfig(config.Config), config.PacketIOMode)
 	if err != nil {
 		return nil, fmt.Errorf("muxsession: listen QUIC: %w", err)
 	}
 	return &QUICListener{listener: listener, packetConn: packetConn}, nil
 }
 
-func listenQUIC(address string, tlsConfig *tls.Config, config *quic.Config) (*quic.Listener, net.PacketConn, error) {
-	if !requiresBasicQUICPacketConn(address) {
+func listenQUIC(
+	address string,
+	tlsConfig *tls.Config,
+	config *quic.Config,
+	packetIOMode QUICPacketIOMode,
+) (*quic.Listener, net.PacketConn, error) {
+	switch packetIOMode {
+	case "", QUICPacketIOModeOptimized:
 		listener, err := quic.ListenAddr(address, tlsConfig, config)
 		return listener, nil, err
+	case QUICPacketIOModeBasic:
+		return listenBasicQUIC(address, tlsConfig, basicQUICConfig(config))
+	default:
+		return nil, nil, fmt.Errorf("invalid packet I/O mode %q", packetIOMode)
 	}
-	// Fly UDP replies must follow the socket route; quic-go's IP_PKTINFO
-	// interface pinning and larger datagrams fail on its forwarding path.
-	return listenBasicQUIC(address, tlsConfig, flyQUICConfig(config))
 }
 
-func flyQUICConfig(config *quic.Config) *quic.Config {
+func basicQUICConfig(config *quic.Config) *quic.Config {
 	config = config.Clone()
 	config.InitialPacketSize = compatibleQUICPacketSize
 	config.DisablePathMTUDiscovery = true
@@ -94,25 +110,17 @@ func quicConnectorConfig(config *quic.Config) *quic.Config {
 }
 
 func listenBasicQUIC(address string, tlsConfig *tls.Config, config *quic.Config) (*quic.Listener, net.PacketConn, error) {
-	udpAddress, err := net.ResolveUDPAddr("udp4", address)
+	packetConn, err := net.ListenPacket("udp", address)
 	if err != nil {
 		return nil, nil, err
 	}
-	packetConn, err := net.ListenUDP("udp4", udpAddress)
-	if err != nil {
-		return nil, nil, err
-	}
+	// Hide quic.OOBCapablePacketConn so quic-go uses ReadFrom and WriteTo.
 	listener, err := quic.Listen(struct{ net.PacketConn }{packetConn}, tlsConfig, config)
 	if err != nil {
 		_ = packetConn.Close()
 		return nil, nil, err
 	}
 	return listener, packetConn, nil
-}
-
-func requiresBasicQUICPacketConn(address string) bool {
-	host, _, err := net.SplitHostPort(address)
-	return err == nil && host == "fly-global-services"
 }
 
 func (l *QUICListener) Accept(ctx context.Context) (Session, error) {

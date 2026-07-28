@@ -210,13 +210,27 @@ func TestCanonicalCommandTitle(t *testing.T) {
 
 func TestCanonicalParsedCommandIncludesOptionalArguments(t *testing.T) {
 	for command, want := range map[string]string{
-		"dev":     "dev <service>",
-		"publish": "publish <service-or-target>",
-		"status":  "status",
+		"dev":            "dev <service>",
+		"publish":        "publish <service-or-target>",
+		"login <server>": "login",
+		"status":         "status",
 	} {
 		if got := canonicalParsedCommand(command); got != want {
 			t.Fatalf("canonicalParsedCommand(%q) = %q, want %q", command, got, want)
 		}
+	}
+}
+
+func TestLoginPositionalServerReachesDispatch(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := run(t.Context(), []string{
+		"login", "http://control.example", "--state-dir", filepath.Join(t.TempDir(), "state"),
+	}, &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "server must be an HTTPS origin") {
+		t.Fatalf("run error = %v, want invalid server error", err)
+	}
+	if got, ok := clioutput.CommandOf(err); !ok || got != "tnl login" {
+		t.Fatalf("command = %q, %t, want %q", got, ok, "tnl login")
 	}
 }
 
