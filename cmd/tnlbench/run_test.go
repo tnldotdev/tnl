@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -38,10 +40,10 @@ func TestManifestContainsNoGeneratedSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 	manifest := runManifest{
-		SchemaVersion: runManifestSchemaVersion, RunID: "bench-20260916-120000-abcdef",
+		SchemaVersion: runManifestSchemaVersion, RunID: "bench-20260916-120000-abcdefgh",
 		ParentDomain: "bench.example.com", ParentZoneID: "Z123",
-		ServerDomain:  "bench-20260916-120000-abcdef.bench.example.com",
-		ManagedDomain: "routes.bench-20260916-120000-abcdef.bench.example.com",
+		ServerDomain:  "bench-20260916-120000-abcdefgh.bench.example.com",
+		ManagedDomain: "routes.bench-20260916-120000-abcdefgh.bench.example.com",
 	}
 	data, err := json.Marshal(manifest)
 	if err != nil {
@@ -58,12 +60,16 @@ func TestManifestContainsNoGeneratedSecrets(t *testing.T) {
 
 func TestManifestCleanupOwnershipChecks(t *testing.T) {
 	manifest := runManifest{
-		SchemaVersion: runManifestSchemaVersion, RunID: "bench-20260916-120000-abcdef",
+		SchemaVersion: runManifestSchemaVersion, RunID: "bench-20260916-120000-abcdefgh",
 		ParentDomain: "bench.example.com", ParentZoneID: "Z123",
-		ServerDomain:  "bench-20260916-120000-abcdef.bench.example.com",
-		ManagedDomain: "routes.bench-20260916-120000-abcdef.bench.example.com",
-		Apps:          []manifestApp{{Role: "control", Name: "tnl-bench-bench-20260916-120000-abcdef-ctl"}},
-		Zones:         []manifestZone{{Kind: "server", Name: "bench-20260916-120000-abcdef.bench.example.com", ParentName: "bench.example.com", ParentZoneID: "Z123", ID: "ZSERVER"}},
+		ServerDomain:  "bench-20260916-120000-abcdefgh.bench.example.com",
+		ManagedDomain: "routes.bench-20260916-120000-abcdefgh.bench.example.com",
+		Apps:          []manifestApp{{Role: "control", Name: "tnl-bench-bench-20260916-120000-abcdefgh-ctl"}},
+		Zones: []manifestZone{{
+			Kind: "server", Name: "bench-20260916-120000-abcdefgh.bench.example.com", ID: "ZSERVER",
+			ParentName: "bench.example.com", ParentZoneID: "Z123",
+			NameServers: []string{"ns-1.example.net", "ns-2.example.net"},
+		}},
 	}
 	if err := validateManifestResources(manifest); err != nil {
 		t.Fatal(err)
@@ -96,9 +102,55 @@ func TestRunIDIsDNSAndAppSafe(t *testing.T) {
 	if !strings.HasPrefix(runID, "bench-20260916-123456-") || strings.ContainsAny(runID, "_ABCDEFGHIJKLMNOPQRSTUVWXYZ") {
 		t.Fatalf("run ID = %q", runID)
 	}
+	if !validRunID(runID) {
+		t.Fatalf("generated run ID %q is not valid", runID)
+	}
 	for role, app := range benchmarkAppNames(runID) {
 		if len(app) > 63 || !strings.HasPrefix(app, "tnl-bench-"+runID+"-") {
 			t.Fatalf("%s app = %q", role, app)
 		}
+	}
+}
+
+func TestValidRunIDRejectsNonGeneratedValues(t *testing.T) {
+	for _, value := range []string{
+		"production", "bench-20260916-123456-short", "bench-20261316-123456-abcdefgh",
+		"bench-20260916-123456-ABCDefgh", "bench-20260916-123456-abcd_efg",
+	} {
+		if validRunID(value) {
+			t.Fatalf("run ID %q was accepted", value)
+		}
+	}
+}
+
+func TestCleanupRunSkipsRemovedAppsAndPersistsProgress(t *testing.T) {
+	runID := "bench-20260916-120000-abcdefgh"
+	apps := benchmarkAppNames(runID)
+	manifest := runManifest{
+		SchemaVersion: runManifestSchemaVersion, RunID: runID, Status: "cleanup_failed",
+		ParentDomain: "bench.example.com", ParentZoneID: "Z123",
+		ServerDomain: runID + ".bench.example.com", ManagedDomain: "routes." + runID + ".bench.example.com",
+		Apps: []manifestApp{
+			{Role: "postgres", Name: apps["postgres"], Removed: true},
+			{Role: "control", Name: apps["control"]},
+		},
+	}
+	executor := new(executorStub)
+	manifestPath := filepath.Join(t.TempDir(), "manifest.json")
+	if err := cleanupRun(t.Context(), flyPlatform{binary: "fly", executor: executor}, benchmarkDNS{}, manifestPath, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Status != "cleaned" || !manifest.Apps[1].Removed || len(executor.calls) != 1 {
+		t.Fatalf("manifest = %#v, calls = %#v", manifest, executor.calls)
+	}
+	if got := executor.calls[0].args; !slices.Equal(got, []string{"apps", "destroy", apps["control"], "--yes"}) {
+		t.Fatalf("destroy arguments = %v", got)
+	}
+	loaded, err := loadManifest(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Status != "cleaned" || !loaded.Apps[1].Removed {
+		t.Fatalf("persisted manifest = %#v", loaded)
 	}
 }
