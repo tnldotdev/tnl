@@ -9,6 +9,7 @@ The fixed server topology is:
 
 - Two control processes sharing one PostgreSQL database.
 - Two ingress processes behind one public ingress address.
+- Fly PROXY v2 metadata preserving each visitor source address at ingress.
 - Two relay services, each with two relay processes behind one relay address.
 - Automatic control, relay transport, and route certificate issuance.
 - A transient server-domain Route 53 zone and a nested managed deployment

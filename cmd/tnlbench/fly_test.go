@@ -59,3 +59,20 @@ func TestFlyMachineRunUsesOneControlledCommand(t *testing.T) {
 		t.Fatalf("machine = %#v, calls = %#v", machine, executor.calls)
 	}
 }
+
+func TestFlyMachineRunAcceptsExplicitServiceConfig(t *testing.T) {
+	executor := &executorStub{responses: [][]byte{nil, []byte(`[{"id":"machine-1","name":"ingress-1","state":"started"}]`)}}
+	platform := flyPlatform{binary: "fly", region: "sjc", executor: executor}
+	config := `{"services":[{"protocol":"tcp","internal_port":8443}]}`
+	if _, err := platform.runMachine(t.Context(), machineSpec{
+		App: "ingress-app", Name: "ingress-1", Image: "registry/image:tag", Command: "/tnld serve",
+		Size: "performance-1x", Restart: "always", MachineConfig: config,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	arguments := executor.calls[0].args
+	index := slices.Index(arguments, "--machine-config")
+	if index < 0 || index+1 == len(arguments) || arguments[index+1] != config || slices.Contains(arguments, "--port") {
+		t.Fatalf("machine arguments = %v", arguments)
+	}
+}
