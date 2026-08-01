@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -83,6 +84,22 @@ func TestBuildReportMarksMissingWorkerAsFailure(t *testing.T) {
 	}
 }
 
+func TestBuildReportMarksSourceLimiterRejectionsAsFailure(t *testing.T) {
+	results := []benchmarkResult{
+		reportTestResult("smoke-r2-c2-s2-rep1", 0, 1, "publisher", 0, 1, "passed", time.Millisecond),
+		reportTestResult("smoke-r2-c2-s2-rep1", 0, 1, "load", 0, 1, "passed", time.Millisecond),
+	}
+	results[0].Resources[1].Metrics["tnl_source_limiter_rejections_total"] = 3
+	report, err := buildReport(results)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Status != "failed" || report.Cells[0].Status != "failed" ||
+		!slices.Contains(report.Cells[0].Failures, "ingress source limiter rejected 3 visitor connections") {
+		t.Fatalf("report = %#v", report)
+	}
+}
+
 func reportTestResult(cellID string, sequence, repetition int, kind string, index, count int, status string, sample time.Duration) benchmarkResult {
 	result := benchmarkResult{
 		SchemaVersion: benchmarkResultSchemaVersion, CellID: cellID, Status: status, Suite: "confirm", Repetition: repetition,
@@ -99,6 +116,12 @@ func reportTestResult(cellID string, sequence, repetition int, kind string, inde
 		result.Failure = &resultFailure{Message: "saturated"}
 		result.Phases[0].Successes = 0
 		result.Phases[0].Errors = 1
+	}
+	if kind == "publisher" && index == 0 {
+		result.Resources = []resourceSample{
+			{Role: "ingress", Identity: "ingress-1", Moment: "ready", Metrics: map[string]float64{"tnl_source_limiter_rejections_total": 0}},
+			{Role: "ingress", Identity: "ingress-1", Moment: "loaded", Metrics: map[string]float64{"tnl_source_limiter_rejections_total": 0}},
+		}
 	}
 	return result
 }
