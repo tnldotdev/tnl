@@ -1,2 +1,2 @@
-// Package certificates manages ACME issuance for route and relay service certificates.
+// Package certificates uses ACME to issue route and relay transport certificates.
 package certificates

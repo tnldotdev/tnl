@@ -26,7 +26,7 @@ type Session interface {
 	Err() error
 }
 
-// Endpoint identifies a transport endpoint without carrying tunnel semantics.
+// Endpoint identifies where a transport connects without tunnel-specific behavior.
 type Endpoint struct {
 	Address    string
 	ServerName string

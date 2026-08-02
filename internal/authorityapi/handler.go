@@ -21,7 +21,7 @@ type Config struct {
 	OIDCVerifier            oidcauth.Verifier
 }
 
-// Store is the durable authority state consumed by the built-in authority API.
+// Store is the stored state used by the built-in authority API.
 type Store interface {
 	CreateBuiltinControlSession(context.Context, string, int64, time.Duration, time.Duration, time.Time) (controlstate.ControlSession, error)
 	CreateOIDCControlSession(context.Context, string, controlstate.OIDCIdentity, time.Duration, time.Duration, time.Time) (controlstate.ControlSession, error)
@@ -77,7 +77,7 @@ func NewHandler(cfg Config, store Store) *http.ServeMux {
 	return mux
 }
 
-// AuthorizeServiceOperation belongs to the external hosted authority and is
+// AuthorizeServiceOperation belongs to the external authority and is
 // deliberately absent from the built-in authority implementation.
 func (h *handler) AuthorizeServiceOperation(response http.ResponseWriter, _ *http.Request) {
 	notFound(response, nil)

@@ -1,4 +1,4 @@
-// Package clioutput renders deterministic human-readable CLI diagrams.
+// Package clioutput renders stable human-readable CLI diagrams.
 package clioutput
 
 import (
@@ -23,7 +23,7 @@ type Frame struct {
 	Footer  string
 }
 
-// Block is semantic content rendered inside a Frame.
+// Block is content rendered inside a Frame.
 type Block interface {
 	render(int) []row
 }
@@ -118,7 +118,7 @@ func Transition(from, detail, to string) Block {
 // Tree renders a hierarchy with ASCII branches.
 func Tree(root TreeNode) Block { return treeBlock(root) }
 
-// Section renders a titled divider followed by semantic content.
+// Section renders a titled divider followed by content.
 func Section(title string, blocks ...Block) Block {
 	return sectionBlock{title: title, blocks: blocks}
 }

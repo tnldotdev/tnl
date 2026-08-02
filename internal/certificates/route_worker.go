@@ -35,7 +35,7 @@ type RouteDNSChallenges interface {
 	Cleanup(context.Context, string, string) error
 }
 
-// RouteStore is the durable certificate work state consumed by a RouteWorker.
+// RouteStore is the stored certificate work used by a RouteWorker.
 type RouteStore interface {
 	ClaimACMEOrderWork(context.Context, string, time.Time, time.Duration) (controlstate.ACMEOrderWork, bool, error)
 	SaveACMEOrderWork(context.Context, controlstate.ACMEOrderWork, time.Time) (controlstate.ACMEOrderWork, error)

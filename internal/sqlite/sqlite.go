@@ -1,4 +1,4 @@
-// Package sqlite owns client SQLite connection and migration mechanics.
+// Package sqlite manages client SQLite connections and migrations.
 package sqlite
 
 import (

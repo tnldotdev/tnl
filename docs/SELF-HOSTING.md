@@ -6,8 +6,8 @@ role and API ownership. This guide owns deployment and recovery procedures.
 
 Only standalone and control processes use PostgreSQL. Ingress and relay are
 stateless, receive no database credentials, and register through the private
-cluster-authenticated control API. Run `tnld migrate` before starting control or
-standalone; serving processes never migrate the database.
+control API with cluster authentication. Run `tnld migrate` before starting
+control or standalone. Serving processes never migrate the database.
 
 ## Required Configuration
 
@@ -27,45 +27,40 @@ Ingress and relay processes normally dial the private control API at
 private `host:port` when internal DNS uses a different address. TLS continues to
 verify `TNLD_CONTROL_HOSTNAME`; the private address changes dialing only.
 
-Listen addresses, limits, timing, metrics, a non-default ACME directory, and
-static public certificate overrides are optional advanced settings. Private
-internal PKI and custom trust-root settings are not part of the configuration.
+Listen addresses, limits, timing, metrics, a different ACME directory, and
+static public certificates are optional advanced settings. Private PKI and
+custom trust roots are not supported.
 
-Relay QUIC listeners use optimized UDP packet I/O by default. Set
-`TNLD_RELAY_QUIC_PACKET_IO_MODE=basic` only when the network path is incompatible
-with UDP out-of-band operations. Basic mode uses `ReadFrom` and `WriteTo`, fixes
-the QUIC packet size at 1200 bytes, and disables path MTU discovery.
+Control and standalone require exactly one authority mode. For the built-in
+authority, leave `TNLD_AUTHORITY_ENDPOINT` unset and set `TNLD_LOGIN_TOKEN`. For
+an external authority, set `TNLD_AUTHORITY_ENDPOINT`, `TNLD_HOSTED_SECRET`, and
+the `TNLD_OIDC_*` discovery settings. Do not set `TNLD_LOGIN_TOKEN`. Only control
+and the external authority share the hosted secret.
 
-Control and standalone require exactly one authority mode. The built-in mode
-leaves `TNLD_AUTHORITY_ENDPOINT` unset and requires `TNLD_LOGIN_TOKEN`. The
-external mode sets `TNLD_AUTHORITY_ENDPOINT`, `TNLD_HOSTED_SECRET`, and the
-`TNLD_OIDC_*` discovery settings, and rejects `TNLD_LOGIN_TOKEN`. The hosted
-secret is shared only by control and the external authority.
+Set `TNLD_DATABASE_URL` to the runtime database URL. Set
+`TNLD_DATABASE_DIRECT_URL` to the direct migration URL; only `tnld migrate` reads
+it. Replicated control deployments should use a pooled runtime URL.
 
-The runtime URL belongs in `TNLD_DATABASE_URL`. The direct migration URL belongs
-in `TNLD_DATABASE_DIRECT_URL` and is read only by `tnld migrate`. Use a pooled
-runtime endpoint in replicated control deployments.
-
-`tnld serve --config /path/to/tnl.yml` loads the static file's `tnld` section;
-`TNLD_CONFIG` selects the same file through the environment. `tnld` accepts only
-versioned YAML or JSON, performs no discovery, and resolves relative control TLS
-certificate and private-key paths from the configuration directory. Use
-`tnld config check --config /path/to/tnl.yml` to validate without serving.
+`tnld serve --config /path/to/tnl.yml` loads the `tnld` section from that file.
+`TNLD_CONFIG` can select the same file. `tnld` accepts only versioned YAML or
+JSON and does not search for configuration files. Relative control certificate
+and private-key paths start from the configuration directory. Use `tnld config
+check --config /path/to/tnl.yml` to validate the file without starting the
+server.
 
 ## Storage Encryption And Recovery
 
-Control and standalone require `TNLD_STORAGE_KEY`, a canonical unpadded
-base64url encoding of exactly 32 random bytes. Keep an independent backup in the
-deployment secret store. Losing the current and previous keys makes ACME account
-keys, cached control certificate state, relay certificate keys, and retry
-secrets unrecoverable. Ingress and relay processes must never receive either
-storage key.
+Control and standalone require `TNLD_STORAGE_KEY`: exactly 32 random bytes
+encoded as unpadded base64url. Keep a separate backup in the deployment secret
+store. Without the current or previous key, you cannot recover ACME account keys,
+cached control certificates, relay certificate keys, or retry secrets. Never
+give a storage key to ingress or relay processes.
 
 To rotate the key, deploy every control process with the new value in
-`TNLD_STORAGE_KEY` and the old value in `TNLD_STORAGE_KEY_PREVIOUS`. Each process
-claims old-key rows in bounded transactions and re-encrypts them while holding
-row locks. Wait for every control replica to report that stored secrets were
-re-encrypted, then remove `TNLD_STORAGE_KEY_PREVIOUS` in a second rolling deploy.
+`TNLD_STORAGE_KEY` and the old value in `TNLD_STORAGE_KEY_PREVIOUS`. The control
+service re-encrypts stored secrets in small transactions. Wait for every control
+replica to report completion. Then remove `TNLD_STORAGE_KEY_PREVIOUS` in a second
+rolling deployment.
 
 ## Addresses And DNS
 
@@ -91,35 +86,34 @@ Public route hostnames beneath `tunnels.example.com` point to the ingress
 address. Relay placement never changes public route DNS. Split relay service
 labels come from `TNLD_RELAY_SERVICE_ID`.
 
-Control obtains and renews exact public certificates through ACME.
+Control obtains and renews certificates for exact hostnames through ACME.
 `TNLD_ACME_EMAIL` and `TNLD_ACME_ACCEPT_TERMS=true` are required; the ACME
 directory has a production default and may be overridden for private or test
-directories. Standalone obtains its control and physical relay certificates
-through TLS-ALPN-01. Static public certificates are optional advanced overrides.
+directories. Standalone obtains its control and relay transport certificates
+through TLS-ALPN-01. Static certificates are optional advanced overrides.
 
 Relay transport TLS uses an exact-hostname WebPKI certificate managed by
-control. A relay retrieves its relay service certificate and decrypted private
-key only while its exact process run ID and relay lease revision remain current,
-then holds the material only in memory. Publishers use system trust roots and
-exact hostname verification. Browser-facing route TLS remains publicly trusted
-and terminates at the publisher.
+control. A relay can retrieve its relay transport certificate and decrypted
+private key only while its process run ID and relay lease revision remain
+current. It keeps the certificate and key only in memory. Publishers verify the
+exact hostname with system trust roots. Route TLS remains publicly trusted and
+terminates at the publisher.
 
 For split deployments, configure `TNLD_ROUTE53_SERVER_ZONE_ID` on control with
 the hosted zone containing `TNLD_SERVER_DOMAIN`. Control uses DNS-01 to issue and
-renew each relay service certificate. The Route 53 credentials belong only on
-control. A static relay certificate/key pair on each relay is the advanced
-alternative.
+renew each relay transport certificate. Give the Route 53 credentials only to
+control. As an advanced alternative, configure a static relay certificate and
+key on each relay.
 
 To let control manage route A and AAAA records beneath the managed deployment
 domain, configure `TNLD_ROUTE53_MANAGED_ZONE_ID` and at least one stable ingress
 address through `TNLD_INGRESS_IPV4_ADDRESSES` or
-`TNLD_INGRESS_IPV6_ADDRESSES`. Leaving these unset keeps route DNS
-provider-free; operators must then publish the required records themselves.
+`TNLD_INGRESS_IPV6_ADDRESSES`. If you leave these settings empty, control does
+not manage public route DNS. You must publish the records yourself.
 
-## Bootstrap Management
+## Login Token
 
-Generate one bootstrap management token and store it in the deployment secret
-store:
+Generate one login token and store it in the deployment secret store:
 
 ```console
 tnld login-token
@@ -128,8 +122,7 @@ tnld login-token
 Provide it to every control replica as `TNLD_LOGIN_TOKEN`. Control and
 standalone using the built-in authority refuse to start without it. The token
 authenticates the built-in administrator identity and that identity's permanent
-personal team; it is not a multi-user credential. Retain it for operator
-recovery.
+personal team. It is not a multi-user credential. Keep it for operator recovery.
 
 `tnl login` saves a revocable control session. Rotating `TNLD_LOGIN_TOKEN`
 invalidates sessions issued from the previous token. `TNLD_ACCESS_TOKEN_LIFETIME`
@@ -162,11 +155,11 @@ have the configured issuer. Multiple audiences require `azp` equal to the
 client ID. Device-code tokens may omit `nonce`; authorization-code PKCE tokens
 must return the exact login nonce. Each raw ID token can be exchanged only once.
 
-The first exchange for an exact issuer and subject atomically creates a local,
-non-administrator identity with a permanent personal team. Later exchanges
-update its bounded display name and verified email. Local access and refresh
-tokens remain valid independently of `TNLD_LOGIN_TOKEN` rotation. Use the
-bootstrap administrator for administrative operations.
+The first exchange for an issuer and subject creates a local,
+non-administrator identity and permanent personal team in one operation. Later
+exchanges update its display name and verified email within their size limits.
+Local access and refresh tokens remain valid after `TNLD_LOGIN_TOKEN` rotates.
+Use the login-token administrator for administrative operations.
 
 External authority mode advertises the same OIDC settings to clients but does
 not register the built-in authority routes. The external authority owns token
@@ -185,9 +178,9 @@ value in `TNLD_CLUSTER_SECRET_PREVIOUS`, update every split process, then remove
 the previous value. Standalone does not accept either setting because its
 components communicate in process.
 
-Each ingress and relay generates a process run ID at startup and registers its
-configured process identity through the private API. Lease renewal remains
-authorized only while the exact process run ID and lease revision are current.
+Each ingress and relay generates a process run ID when it starts and registers
+its configured identity through the private API. It can renew its lease only
+while that process run ID and lease revision remain current.
 
 ## Standalone Compose
 
@@ -199,7 +192,7 @@ cd deploy
 install -m 0600 .env.example .env
 ```
 
-Replace every placeholder, including `TNLD_STORAGE_KEY`. Generate the bootstrap
+Replace every placeholder, including `TNLD_STORAGE_KEY`. Generate the login
 token with `tnld login-token` and keep `TNL_IMAGE` pinned to a
 [verified image digest](RELEASES.md#verify-the-container). Configure public DNS
 and TCP/UDP 443, then start:
@@ -210,9 +203,9 @@ docker compose up -d
 curl --fail https://control.tnl.example.com/v1/ready
 ```
 
-The image runs as a non-root user with a read-only root filesystem. No daemon
-state volume or certificate mount is required; PostgreSQL owns durable ACME,
-route, placement, and product state.
+The image runs as a non-root user with a read-only root filesystem. It does not
+need a state volume or certificate mount. PostgreSQL stores ACME, route,
+placement, and other persistent state.
 
 Authenticate and publish from a local service:
 
@@ -221,11 +214,11 @@ tnl login https://control.tnl.example.com --token
 tnl publish 3000
 ```
 
-The first successful login atomically creates the built-in identity, personal
-team, owner membership, generated member label, and managed deployment-domain
-default. The default publish hostname combines the local worktree beneath that
-member namespace. The built-in personal team may also publish an exact route
-directly beneath the managed deployment domain.
+The first successful login creates the built-in identity, personal team, owner
+membership, member slug, and default managed deployment domain in one operation.
+The default route hostname includes the worktree label beneath that member
+namespace. The personal team can also publish a route directly beneath the
+managed deployment domain.
 
 ## Split Compose
 
@@ -260,12 +253,11 @@ tnl admin relays drain relay-a \
   --deadline 30s
 ```
 
-Control immediately removes that exact lease from placement. After the relay's
-next lease renewal, the process rejects new publisher connections and visitor
-streams. Admitted visitor streams may finish until the deadline; any remaining
-streams are closed at the deadline. The acknowledged process run remains
-draining and does not register again. Restart the relay to create a new process
-run ID after the drain completes.
+Control immediately removes that lease from placement. After its next renewal,
+the relay rejects new publisher connections and visitor streams. Existing
+visitor streams can finish until the deadline; the relay closes any that remain.
+The process stays in the draining state and does not register again. Restart it
+after the drain completes to create a new process run ID.
 
 Maintenance controls gate only new work and do not stop existing routes or
 sessions:
@@ -277,20 +269,20 @@ tnl admin maintenance disable certificate_issuance
 tnl admin maintenance enable route_creation
 ```
 
-Relay-drain and maintenance-control mutations are committed with durable audit
-events in PostgreSQL. Their exact process revisions and generated request IDs
-make stale or repeated mutations fail closed.
+Relay drain and maintenance changes create audit events in PostgreSQL. Process
+revisions and request IDs cause stale or repeated changes to fail safely.
 
 ## Teams And Domains
 
 The authority API is the sole owner of identities, authentication, teams,
 memberships, invitations, domains, and current authorization decisions.
 Self-hosted control serves the authority and control APIs at the same origin.
-Hosted deployments advertise their external authority origin through control
+Deployments with an external authority advertise its origin through control
 discovery.
 
-The bootstrap personal team starts with the managed deployment domain as its
-default. Organization teams and claimed domains use the regular CLI:
+The login-token identity's personal team starts with the managed deployment
+domain as its default. Use the regular CLI to create organization teams and
+claim domains:
 
 ```console
 tnl team create resend --member-slug chase
@@ -301,11 +293,10 @@ tnl team invite create --member-slug alex --role member
 
 ## Current Capabilities
 
-The built-in authority implements bootstrap and OIDC login, local sessions,
-teams, memberships, invitations, and domains. Hosted service authorization
-belongs only to an external authority; the built-in
-`/v1/service/authorize` path returns HTTP 404. Unknown public API paths also
-return structured HTTP 404 problems.
+The built-in authority supports login tokens, OIDC login, control sessions,
+teams, memberships, invitations, and domains. Only an external authority
+supports service authorization. The built-in `/v1/service/authorize` path and
+unknown public API paths return structured HTTP 404 problems.
 
 Public server status, maintenance controls, relay listing, and exact relay drain
 are available through `tnl admin`. Drain rejects new work and allows admitted
@@ -314,22 +305,21 @@ migrated.
 
 ## Route Usage
 
-Only ingress records route usage. Ingress processes report revisioned time
-buckets to control; controls aggregate and persist them by route and route
-version. Configure `TNLD_ROUTE_USAGE_URL` and `TNLD_ROUTE_USAGE_TOKEN` together
-to deliver durable reports to an external receiver. Leaving both empty disables
-external delivery.
+Only ingress records route usage. Ingress processes send revisioned time buckets
+to control, which combines and stores them by route and route version. Set
+`TNLD_ROUTE_USAGE_URL` and `TNLD_ROUTE_USAGE_TOKEN` together to send persistent
+reports to a route usage receiver. Leave both empty to disable delivery.
 
 Source addresses and raw network identifiers must never be persisted or sent.
 Visitor-network estimates use route-specific daily keyed sketches and are not a
 count of people or devices.
 
 The [receiver contract](../api/route-usage/v1/openapi.yaml) requires one result
-per submitted item ID, without duplicate or unknown IDs. Accepted results omit
-`code`; rejected results supply a valid rejection code. Control retries rejected
-items and retries the batch after an invalid response or ambiguous delivery, so
-receivers must handle redelivery idempotently. This is separate from
-[CLI telemetry](../README.md#telemetry).
+for every submitted item ID and forbids duplicate or unknown IDs. Accepted
+results omit `code`; rejected results include a valid rejection code. Control
+retries rejected items. It also retries a whole batch after an invalid response
+or uncertain delivery, so receivers must safely accept the same item more than
+once. Route usage is separate from [CLI telemetry](../README.md#telemetry).
 
 ## Backups And Upgrades
 
@@ -346,10 +336,10 @@ pg_dump --format=custom \
   "$TNLD_DATABASE_DIRECT_URL"
 ```
 
-Record the matching binary and schema versions. Encrypt and restrict backups:
-they contain identities, sessions, routes, authority state, and encrypted
-certificate/ACME keys. Back up deployment secrets separately, especially
-`TNLD_STORAGE_KEY` and any previous storage key still in use.
+Record the matching binary and schema versions. Encrypt backups and restrict
+access to them. They contain identities, sessions, routes, authority state, and
+encrypted certificate and ACME keys. Back up deployment secrets separately,
+especially `TNLD_STORAGE_KEY` and any previous storage key still in use.
 
 Test restoration into a new disposable database, never over the live database:
 
@@ -365,10 +355,10 @@ login, team/domain reads, route creation, and route-session establishment.
 
 ### Upgrade
 
-Serving processes require the exact supported schema and fail closed on older
-or newer schemas. A same-schema binary update does not require a migration;
-check release notes for protocol compatibility before mixing versions. No
-general mixed-version or zero-downtime upgrade guarantee is provided.
+Serving processes require the exact supported schema and refuse to run with an
+older or newer schema. A binary update does not require a migration when the
+schema is unchanged. Check the release notes before mixing binary versions.
+Mixed-version and zero-downtime upgrades are not generally supported.
 
 For a schema-changing upgrade, plan an interruption:
 
@@ -401,7 +391,7 @@ stop rather than attempting an in-place schema downgrade.
 - Alert on certificate renewal failure, expired ingress or relay leases,
   insufficient ready publisher connections, capacity rejection, and control API
   failure.
-- Keep the management token, database credentials, storage key, cluster secret,
+- Keep the login token, database credentials, storage key, cluster secret,
   and optional DNS credentials in appropriately protected stores.
 - Preserve public TCP and UDP 443 through firewalls and load balancers.
 - Never give ingress or relay processes PostgreSQL credentials.

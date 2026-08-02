@@ -1,4 +1,4 @@
-// Package routeusageworker finalizes and delivers durable route usage.
+// Package routeusageworker finishes and sends stored route usage reports.
 package routeusageworker
 
 import (
@@ -29,7 +29,7 @@ const (
 	defaultRetryInterval    = time.Second
 )
 
-// Store is the durable route usage state consumed by a Worker.
+// Store is the stored route usage state used by a Worker.
 type Store interface {
 	MarkExpiredIngressUsageRunsIncomplete(context.Context, time.Time) (int, error)
 	FinalizeRouteUsageBuckets(context.Context, time.Time, time.Time) (int, error)

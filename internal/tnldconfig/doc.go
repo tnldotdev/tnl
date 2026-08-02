@@ -1,2 +1,2 @@
-// Package tnldconfig owns tnld process configuration and validation.
+// Package tnldconfig loads and validates tnld process configuration.
 package tnldconfig

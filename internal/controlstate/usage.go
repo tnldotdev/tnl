@@ -456,7 +456,7 @@ func (d *Database) MarkExpiredIngressUsageRunsIncomplete(ctx context.Context, no
 }
 
 // FinalizeRouteUsageBuckets closes aggregate buckets through a cutoff and
-// creates one durable delivery record for each finalized revision.
+// creates one stored delivery record for each finalized revision.
 func (d *Database) FinalizeRouteUsageBuckets(
 	ctx context.Context,
 	through time.Time,

@@ -13,13 +13,14 @@ import (
 )
 
 var (
-	ErrRelayServiceCertificateInvalid    = errors.New("controlstate: relay service certificate is invalid")
-	ErrRelayServiceCertificateNotFound   = errors.New("controlstate: relay service certificate is not available")
-	ErrRelayServiceCertificateLeaseStale = errors.New("controlstate: relay service certificate lease is stale")
+	ErrRelayServiceCertificateInvalid    = errors.New("controlstate: relay transport certificate is invalid")
+	ErrRelayServiceCertificateNotFound   = errors.New("controlstate: relay transport certificate is not available")
+	ErrRelayServiceCertificateLeaseStale = errors.New("controlstate: relay transport certificate lease is stale")
 )
 
-// RelayServiceCertificate is the WebPKI certificate material returned only to
-// a relay process holding a current lease for the matching relay service.
+// RelayServiceCertificate contains a relay transport certificate and private
+// key. It is returned only to a relay process with a current lease for the
+// matching relay service.
 type RelayServiceCertificate struct {
 	RelayServiceID string
 	TLSServerName  string
@@ -29,8 +30,8 @@ type RelayServiceCertificate struct {
 	NotAfter       time.Time
 }
 
-// StoreRelayServiceCertificate validates and encrypts newly issued relay
-// service certificate material before writing it to PostgreSQL.
+// StoreRelayServiceCertificate validates and encrypts a new relay transport
+// certificate and private key before storing them in PostgreSQL.
 func (d *Database) StoreRelayServiceCertificate(
 	ctx context.Context,
 	relayServiceID, tlsServerName string,
@@ -53,7 +54,7 @@ func (d *Database) StoreRelayServiceCertificate(
 	}
 	privateKeyCiphertext, err := d.sealSecret(relayTransportPrivateKeyContext(relayServiceID), privateKeyPEM)
 	if err != nil {
-		return RelayServiceCertificate{}, fmt.Errorf("controlstate: encrypt relay service private key: %w", err)
+		return RelayServiceCertificate{}, fmt.Errorf("controlstate: encrypt relay transport private key: %w", err)
 	}
 	row, err := controlstatedb.New(d.pool).StoreRelayServiceCertificate(ctx, controlstatedb.StoreRelayServiceCertificateParams{
 		TransportCertificatePem: text(string(certificatePEM)), TransportPrivateKeyCiphertext: privateKeyCiphertext,
@@ -65,7 +66,7 @@ func (d *Database) StoreRelayServiceCertificate(
 		return RelayServiceCertificate{}, ErrRelayServiceCertificateNotFound
 	}
 	if err != nil {
-		return RelayServiceCertificate{}, fmt.Errorf("controlstate: store relay service certificate: %w", err)
+		return RelayServiceCertificate{}, fmt.Errorf("controlstate: store relay transport certificate: %w", err)
 	}
 	return relayServiceCertificate(ctx, d, controlstatedb.New(d.pool), row)
 }
@@ -93,7 +94,7 @@ func (d *Database) GetRelayServiceCertificate(
 		return RelayServiceCertificate{}, ErrRelayServiceCertificateLeaseStale
 	}
 	if err != nil {
-		return RelayServiceCertificate{}, fmt.Errorf("controlstate: get relay service certificate: %w", err)
+		return RelayServiceCertificate{}, fmt.Errorf("controlstate: get relay transport certificate: %w", err)
 	}
 	if !row.TransportCertificateExpiresAt.Valid || !row.TransportCertificateExpiresAt.Time.After(now) {
 		return RelayServiceCertificate{}, ErrRelayServiceCertificateNotFound

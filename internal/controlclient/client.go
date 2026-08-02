@@ -1,9 +1,10 @@
-// Package controlclient is the bounded client for the tnl control API.
-// Responses are limited to 64 KiB and successful nonempty bodies must be one
-// schema-matching JSON value. Requests default to 20 seconds, with 150 seconds
-// for certificate calls. Empty successes are accepted. Transport/read failures
-// wrap ErrUnavailable, but decoding/size errors do not. Problem codes, rather
-// than HTTP status alone, classify server failures.
+// Package controlclient calls the tnl control API.
+//
+// Responses cannot exceed 64 KiB. A nonempty successful response must contain
+// one JSON value that matches the generated schema. Most requests time out after
+// 20 seconds; certificate requests time out after 150 seconds. Network and read
+// failures wrap ErrUnavailable, but invalid or oversized responses do not. The
+// server problem code, not only the HTTP status, determines the returned error.
 package controlclient
 
 import (
@@ -47,7 +48,7 @@ type Client struct {
 	timeout                time.Duration
 }
 
-// NewExternallyAuthenticated creates a client whose HTTP transport supplies authorization.
+// NewExternallyAuthenticated creates a client whose HTTP transport adds authorization.
 func NewExternallyAuthenticated(server string, httpClient *http.Client) (*Client, error) {
 	client, err := New(server, httpClient, "")
 	if err != nil {

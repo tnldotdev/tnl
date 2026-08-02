@@ -41,15 +41,16 @@ Prepare the integration prerequisites below before running that tier.
 | Package checks     | `pnpm run pack`                                              | Checks JavaScript exports and tarball contents                                              |
 | Release snapshot   | `task package`                                               | Builds native archives and npm packages, then verifies installations; does not publish      |
 
-Integration tests require `TNL_TEST_POSTGRES_URL` pointing to a disposable
-PostgreSQL server with permission to create databases. Fixtures create and
-forcibly drop test databases; never use a production server. Binary tests also
-change subprocess trust/configuration and bind low ports. Use the
-[integration workflow](.github/workflows/integration.yml) as the Linux setup
-reference; the binary tier cannot run on macOS. The focused DNS integration
-task instead creates disposable Linux and PostgreSQL containers without
-publishing their ports to the host, so its authoritative DNS server can bind
-the test container's isolated port 53 on any Docker host.
+Integration tests require `TNL_TEST_POSTGRES_URL`. It must point to a disposable
+PostgreSQL server whose user can create databases. The fixtures create and
+forcibly drop databases, so never use a production server.
+
+Binary tests change subprocess trust and configuration and bind privileged
+ports. They run only on Linux; use the
+[integration workflow](.github/workflows/integration.yml) as the setup
+reference. The DNS integration task creates separate Linux and PostgreSQL
+containers without exposing their ports on the host. This lets the test DNS
+server use port 53 inside its container on any Docker host.
 
 Task supplies `GOFLAGS=-tags=ts_omit_ssh`. Preserve it for direct Go commands:
 
@@ -67,15 +68,16 @@ mise exec -- pnpm --filter @tnldotdev/tnl build
 mise exec -- pnpm exec vitest run packages/tnl/vite.test.ts
 ```
 
-Keep the root runtime browser-safe and Node-only discovery and framework code
-internal. Public exports are defined by `packages/tnl/package.json`; the private
-development socket is not an extension API. Framework versions are exercised by
-the [compatibility matrix](.github/workflows/checks.yml).
+Keep the root package safe to run in a browser. Keep Node-only discovery and
+framework code internal. `packages/tnl/package.json` defines the public exports;
+the private development socket is not an extension API. The
+[compatibility matrix](.github/workflows/checks.yml) tests supported framework
+versions.
 
-Native npm targets are owned by `packages/tnl/lib/native-targets.mjs`. Adding a
-target also requires its native template, GoReleaser artifact support, independent
-launcher test expectations, and package verification. Keep archive equality,
-license contents, public exports, and native-first publishing checks intact.
+`packages/tnl/lib/native-targets.mjs` lists the native npm targets. When adding a
+target, also add its native package template, GoReleaser artifact, launcher test
+expectations, and package checks. Preserve checks for archive equality, license
+files, public exports, and publishing native packages before the launcher.
 
 ### Generated Sources
 
@@ -119,8 +121,9 @@ approval and the [benchmark gates](docs/benchmarks/README.md).
 - Follow [Architecture](docs/ARCHITECTURE.md) for package and API ownership and
   [AGENTS.md](AGENTS.md) for canonical terminology and CLI presentation rules.
 - Prefer the smallest design that completes the current phase.
-- Reuse authoritative domain services, generated contracts, schema-derived
-  types, and shared fixtures instead of creating parallel implementations.
+- Reuse the service that already owns a behavior, along with generated
+  contracts, schema-derived types, and shared fixtures. Do not create a second
+  implementation of the same rule.
 - Use a maintained library instead of hand-rolling a capability. Ask before
   introducing a custom implementation when the tradeoff is unclear.
 - Keep portable server packages independent of hosted protocol and domain types.

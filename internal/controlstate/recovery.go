@@ -13,7 +13,7 @@ import (
 
 var ErrRouteRecoveryEpisodeStale = errors.New("controlstate: route recovery episode is stale")
 
-// RouteRecoveryObservation is one durable public-recovery SLI sample.
+// RouteRecoveryObservation is one stored route recovery measurement.
 type RouteRecoveryObservation struct {
 	EpisodeID       uint64
 	RouteID         string
@@ -23,8 +23,8 @@ type RouteRecoveryObservation struct {
 	ObservedSeconds float64
 }
 
-// ObserveRouteRecovery atomically closes one open episode and updates the
-// durable cumulative histogram. Retrying an already observed episode is safe.
+// ObserveRouteRecovery closes one open episode and updates its cumulative
+// histogram in a transaction. Repeating an observed episode is safe.
 func (d *Database) ObserveRouteRecovery(
 	ctx context.Context,
 	ingressIdentity IngressLeaseIdentity,

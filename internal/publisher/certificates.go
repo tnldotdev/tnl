@@ -81,8 +81,8 @@ func issueInitialCertificate(
 
 // attemptCertificateTransaction advances every issuance phase at most once.
 // Retrying this entire function is safe because the pending slot preserves
-// the CSR until the server installation acknowledgement is durable locally.
-// The caller holds the cache lock across the complete issuance/retry lifecycle.
+// the CSR until it has saved the server's installation acknowledgement.
+// The caller holds the cache lock while issuing or retrying the certificate.
 func attemptCertificateTransaction(
 	ctx context.Context,
 	server RouteControlClient,

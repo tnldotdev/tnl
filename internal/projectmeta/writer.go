@@ -20,9 +20,10 @@ const (
 	MaxFileBytes     = 64 << 10
 )
 
-// Write validates and replaces each generated file atomically while holding the
-// metadata writer lock. The pair is not atomically visible; failure replacing the
-// second file attempts to restore the first.
+// Write validates project metadata and replaces both generated files while
+// holding the writer lock. Each file replacement is atomic, but both files do
+// not become visible at the same instant. If the second replacement fails,
+// Write tries to restore the first file.
 func Write(projectRoot string, metadata Metadata) error {
 	if !filepath.IsAbs(projectRoot) {
 		return errors.New("project metadata root must be absolute")

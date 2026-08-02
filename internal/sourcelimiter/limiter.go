@@ -1,4 +1,4 @@
-// Package sourcelimiter bounds public connection starts by normalized source.
+// Package sourcelimiter limits new public connections by source IP address.
 package sourcelimiter
 
 import (

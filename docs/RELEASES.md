@@ -1,10 +1,14 @@
 # tnl Releases
 
-tnl releases provide combined `tnl` and `tnld` archives for macOS and Linux on
-amd64 and arm64, a multi-platform `tnld` image in GHCR, and the project-local
-`@tnldotdev/tnl` client package with its Next.js and Vite integrations. Releases
-before 1.0 are previews and may require a PostgreSQL schema migration before
-serving processes can start.
+Each tnl release includes:
+
+- Archives containing `tnl` and `tnld` for macOS and Linux on amd64 and arm64.
+- A multi-platform `tnld` container image in GHCR.
+- The `@tnldotdev/tnl` package with project configuration and Next.js and Vite
+  integrations.
+
+Releases before 1.0 are previews. A release may require a PostgreSQL migration
+before the tnl server can start.
 
 ## Install With Homebrew
 
@@ -33,11 +37,11 @@ suffix. The package exposes `tnl`, project configuration types, and Next.js and
 Vite integration subpaths; use the release container, Homebrew, or an archive
 for `tnld`.
 
-The launcher has exact-version optional dependencies for macOS and Linux on
-arm64 and x64. npm and pnpm install only the package matching the current
-platform, and no install script downloads executable code. Do not disable
-optional dependencies. The reported client version must match the selected
-root release tag without its leading `v`. Node.js 22.18 or newer is required.
+The launcher uses exact-version optional dependencies for macOS and Linux on
+arm64 and x64. npm and pnpm install only the native package for the current
+platform. No install script downloads an executable. Do not disable optional
+dependencies. The client version must match the root release tag without its
+leading `v`. Node.js 22.18 or newer is required.
 
 ## Verify A Release
 
@@ -91,10 +95,10 @@ tnl version
 tnld version
 ```
 
-The two commands must report the selected version and the same commit. macOS
-artifacts are not Apple-signed or notarized. Gatekeeper may quarantine them;
-after verifying the Sigstore identity and checksums, remove quarantine only
-from the extracted binaries you inspected:
+Both commands must report the selected version and commit. The macOS files are
+not Apple-signed or notarized, so Gatekeeper may quarantine them. After checking
+the Sigstore identity and checksums, remove quarantine only from the binaries
+you inspected:
 
 ```console
 xattr -d com.apple.quarantine tnl tnld
@@ -124,9 +128,9 @@ docker buildx imagetools inspect "$TNL_IMAGE" --format '{{ json .SBOM }}'
 ```
 
 The image runs as non-root UID/GID 65532, uses unprivileged internal ports, and
-contains no shell. Its OCI index carries BuildKit provenance and an SBOM; GitHub
-also publishes an image provenance attestation. Project and third-party license
-files are available under `/licenses/tnl` in the image filesystem.
+contains no shell. Its OCI index includes BuildKit provenance and an SBOM.
+GitHub also publishes an image provenance attestation. Project and dependency
+licenses are stored under `/licenses/tnl` in the image.
 
 ## Server Configuration
 
@@ -153,43 +157,15 @@ binary against a newer schema or attempt an in-place schema downgrade.
 
 ## Maintainer Runbook
 
-The `release` GitHub environment should require approval. The `homebrew`
-environment must provide a `HOMEBREW_TAP_TOKEN` secret containing a fine-grained
-GitHub token with Contents read/write access to `tnldotdev/homebrew-tap`. Enable
-immutable releases, tag protection, GitHub Packages, and artifact attestations
-before the first release.
+Require approval for the `release` GitHub environment. Add a
+`HOMEBREW_TAP_TOKEN` secret to the `homebrew` environment. It must be a
+fine-grained GitHub token with Contents read/write access to
+`tnldotdev/homebrew-tap`. Before the first release, enable immutable releases,
+tag protection, GitHub Packages, and artifact attestations.
 
-Use the [`tnl-release`](../.agents/skills/tnl-release/SKILL.md) agent skill to
-assess changes, propose one version, run the required checks, and prepare the
-release. `tnl`, `tnld`, `@tnldotdev/tnl`, and the four native packages share a
-root `v<version>` tag.
-
-### Stable promotion
-
-A release-candidate tag may be published before live staging qualification; its
-artifacts are the inputs to that testing. Do not describe it as qualified until
-the [`tnl-release-smoke`](../.agents/skills/tnl-release-smoke/SKILL.md) skill has
-produced a passing report.
-
-Before creating a stable tag without a prerelease suffix:
-
-1. Publish an RC with the same base version from the exact commit intended for
-   the stable tag.
-2. Deploy that RC's verified image digest to staging and install its published
-   client package.
-3. Run the common live smoke suite. Run the conditional split and replica suites
-   only when those roles are actually deployed separately on staging; an
-   incomplete intended split deployment is blocked rather than treated as
-   standalone.
-4. Restore staging and require a `qualified` report with no mandatory failed,
-   blocked, or unrun checks.
-5. Verify `main`, the qualified RC, and the proposed stable tag all resolve to
-   the same commit. Any later commit or file change requires another RC and
-   another qualification.
-
-The smoke report records the client version, source commit, signed image digest,
-deployed release, topology, test evidence, cleanup, and residual topology
-limitations. Stable qualification does not authorize production deployment.
+Use the `tnl-release` agent skill to assess changes, propose one version, run the
+required checks, and prepare the release. `tnl`, `tnld`, `@tnldotdev/tnl`, and
+the four native packages share a root `v<version>` tag.
 
 From a clean, fully verified `main` commit:
 
@@ -198,14 +174,12 @@ git tag -s v0.1.0 -m 'tnl v0.1.0'
 git push origin v0.1.0
 ```
 
-The tag must be an annotated signature that GitHub verifies and must point
-directly to a commit reachable from `main`; the workflow enforces both
-conditions. After environment approval it builds signed archives and SBOMs,
-pushes and signs the versioned image, publishes the npm client packages, and
-attaches the image digest. Stable tags then update `Formula/tnl.rb` in the
-Homebrew tap. Review the completed release and never move or reuse a release
-tag. After stable publication, verify npm `latest`, Homebrew installation, and
-that the stable archives, binaries, and container report the qualified commit.
+The tag must be signed and annotated, verified by GitHub, and point directly to
+a commit on `main`. The workflow enforces these rules. After approval, it builds
+signed archives and SBOMs, pushes and signs the container image, publishes the
+npm packages, and attaches the image digest. Stable releases also update
+`Formula/tnl.rb` in the Homebrew tap. Review the completed release. Never move or
+reuse a release tag.
 
 ### npm client
 
@@ -214,12 +188,16 @@ the Next.js and Vite integrations. Its four implementation packages contain the
 native clients for Darwin and Linux on arm64 and x64. The workflow uses npm OIDC
 and does not use an npm token.
 
-npm requires a package to exist before its trusted publisher can be configured.
-Before the first root release, an npm organization owner must publish reviewed,
-inert placeholders for all five names under a non-release dist-tag, configure
-`release.yml` as their trusted publisher, and revoke the bootstrap credential.
-This one-time setup is the only manual-publish exception. Normal releases must
-use the workflow.
+npm requires a package to exist before you can configure its trusted publisher.
+Before the first root release, an npm organization owner must:
+
+1. Publish reviewed placeholder packages that run no code for all five names
+   under a non-release dist-tag.
+2. Configure `release.yml` as their trusted publisher.
+3. Revoke the one-time publishing credential.
+
+This setup is the only exception to automated publishing. All normal releases
+must use the workflow.
 
 The release workflow derives every npm package version from the root tag and
 packages the exact GoReleaser binaries already placed in the release archives.

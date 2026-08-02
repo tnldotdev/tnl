@@ -8,7 +8,7 @@ const (
 	RouteScopeShared RouteScope = "shared"
 )
 
-// RouteLifecycleState is the durable lifecycle of a route.
+// RouteLifecycleState is the stored state of a route.
 type RouteLifecycleState string
 
 const (
@@ -17,7 +17,7 @@ const (
 	RouteLifecycleDeleted   RouteLifecycleState = "deleted"
 )
 
-// RouteDNSState is the durable public route DNS lifecycle.
+// RouteDNSState is the stored state of public route DNS.
 type RouteDNSState string
 
 const (
@@ -29,7 +29,7 @@ const (
 	RouteDNSFailed    RouteDNSState = "failed"
 )
 
-// RouteSessionState is the durable lifecycle of one route session.
+// RouteSessionState is the stored state of one route session.
 type RouteSessionState string
 
 const (
@@ -40,7 +40,7 @@ const (
 	RouteSessionCanceled RouteSessionState = "canceled"
 )
 
-// PublisherConnectionState is the durable lifecycle of one connection slot.
+// PublisherConnectionState is the stored state of one connection slot.
 type PublisherConnectionState string
 
 const (

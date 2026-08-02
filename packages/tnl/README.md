@@ -41,11 +41,14 @@ export default defineConfig({
 });
 ```
 
-Each service overrides root defaults. Commands run in the service directory,
-which must exist within the project root. Choose explicitly when several
-services exist: `tnl dev web` or `tnl publish api`. A single service is selected
-automatically. Service names are 1-32 lowercase ASCII letters/digits/hyphens,
-begin with a letter, and cannot end with a hyphen; at most 32 services are allowed.
+Each project service inherits the root settings and can override them. Commands
+run in the service directory, which must be inside the project root. If the
+project has several services, choose one with a command such as `tnl dev web` or
+`tnl publish api`. A project with one service selects it automatically.
+
+Service names must start with a lowercase ASCII letter. They may contain
+lowercase letters, digits, and hyphens, cannot end with a hyphen, and may be up
+to 32 characters long. A project may define up to 32 services.
 
 `defineConfig` also accepts a synchronous or asynchronous factory:
 
@@ -56,25 +59,27 @@ export default defineConfig(({ worktree }) => ({
 }));
 ```
 
-`worktree.label` combines a readable name with an eight-character hash, stable
-for one client state directory but distinct across worktrees and installations.
-Its private random input is not exposed. Factories receive deeply frozen
-`cwd`, `env`, and `worktree` context. `cwd` is the invocation directory; Node
-executes from the configuration directory. Both the loader environment and
-`context.env` omit `TNL_*` and `TNLD_*`, not arbitrary application secrets.
+`worktree.label` combines a readable name with an eight-character hash. It stays
+the same for a worktree and client state directory, but differs across worktrees
+and installations. The private value used to create the hash is not exposed.
 
-Configuration executes trusted project code, not a sandbox. `defineConfig` is
-type assistance, not runtime validation; the native client validates the result.
-TypeScript uses camel-case fields and implicitly version 1. Static YAML/JSON
-requires `version: 1` and snake-case fields; see
+Factories receive read-only `cwd`, `env`, and `worktree` values. `cwd` is the
+directory where the command started. Node runs the configuration file from its
+own directory. The loader and `context.env` omit `TNL_*` and `TNLD_*` variables,
+but they do not remove other application secrets.
+
+TypeScript configuration runs as trusted project code. It is not sandboxed.
+`defineConfig` provides type checking; the native client still validates the
+result at runtime. TypeScript uses camel-case fields and is always version 1.
+Static YAML and JSON require `version: 1` and snake-case fields; see
 [discovery and precedence](../../README.md#project-configuration) and the
 [JSON Schema](https://tnl.dev/schema/v1.json).
 
-`tunnel.host` and `tunnel.subdomain` are alternatives, as are `public: true` and
-`allowIP`. Service overrides replace the corresponding inherited alternative.
-`dev.port` forces the exact listener port. `dev.startupTimeout` defaults to two
-minutes and must be positive and at most ten minutes. `dev.command` is an
-argument array, not a shell command string.
+Choose either `tunnel.host` or `tunnel.subdomain`. Choose either `public: true`
+or `allowIP`. A project-service override replaces the other inherited choice.
+`dev.port` requires the local service to use that port. `dev.startupTimeout`
+defaults to two minutes and must be greater than zero and no more than ten
+minutes. `dev.command` is an argument array, not a shell command string.
 
 ## Project Runtime
 
@@ -86,11 +91,13 @@ tnl login https://control.tnl.example.com --token
 tnl config generate
 ```
 
-Generation resolves the authenticated membership and ready domain for the root
-and every service, including services with server/team overrides. It writes
-`.tnl/project.json` and `.tnl/project.d.ts`. Regenerate after changing service,
-server, team, or domain configuration; `tnl dev` also generates metadata when
-project configuration is present. Keep `.tnl` ignored by Git.
+Generation selects the current membership and a ready domain for the project and
+each service. It also respects service-specific server and team settings. The
+command writes `.tnl/project.json` and `.tnl/project.d.ts`.
+
+Regenerate after changing project services, servers, teams, or domains. The
+`tnl dev` command also generates metadata when the project has a configuration
+file. Keep `.tnl` ignored by Git.
 
 Add the declaration to the application's existing TypeScript `include` list.
 For an app at the project root, include `.tnl/project.d.ts`; for the example's
@@ -102,9 +109,10 @@ For an app at the project root, include `.tnl/project.d.ts`; for the example's
 }
 ```
 
-Preserve other framework-required includes. The augmentation gives exact
-service keys and literal hostname/URL types. Without it, types remain broad;
-check that a service exists before accessing it.
+Keep any other entries required by the framework. The generated declaration
+adds the configured service names and their exact hostname and URL types. Without
+it, service names use a general string type, so check that a service exists
+before reading it.
 
 The integrations expose this browser-safe runtime during development:
 
@@ -122,18 +130,20 @@ if (tnl) {
 The `tnl` value is undefined during builds, previews, and production. During
 development, behavior depends on discovery:
 
-| Development context                                        | Runtime and network behavior                                                              |
-| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| No generated metadata or explicit bootstrap                | `tnl` is undefined; no tunnel configuration                                               |
-| Metadata without a matching development socket             | Frozen metadata, `runningUnderTnlDev: false`; no tunnel configuration                     |
-| Explicit bootstrap or discovered matching `tnl dev` socket | Assigned metadata, `runningUnderTnlDev: true`; configure and register the actual listener |
+| Development context                                 | Runtime and network behavior                                                              |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| No generated metadata or `tnl dev` environment      | `tnl` is undefined; no tunnel configuration                                               |
+| Metadata without a matching development socket      | Frozen metadata, `runningUnderTnlDev: false`; no tunnel configuration                     |
+| `tnl dev` environment or discovered matching socket | Assigned metadata, `runningUnderTnlDev: true`; configure and register the actual listener |
 
-Socket discovery supports starting `tnl dev web` first and the framework from
-its service directory in another terminal. Discovery happens when framework
-configuration loads, not continuously. Metadata is a snapshot, not route
-readiness or service health. Values are deeply frozen; malformed metadata throws
-rather than silently becoming undefined. `tnl publish` cannot inject metadata
-into an already-running application.
+You can start `tnl dev web` in one terminal and start the framework from the
+service directory in another. The integration looks for the development socket
+when the framework configuration loads; it does not keep searching afterward.
+
+Project metadata is a snapshot. It does not show whether the route or local
+service is healthy. The values are read-only, and malformed metadata causes an
+error. `tnl publish` cannot add metadata to an application that is already
+running.
 
 ## Next.js
 
@@ -146,16 +156,18 @@ export default withTnl({
 });
 ```
 
-`withTnl` preserves object, promised, synchronous-function, and
-asynchronous-function configuration. During `tnl dev`, it adds the assigned
-hostname to `allowedDevOrigins`, injects the project runtime, and registers the
-actual listener target reported by Next.js after it binds. Existing host and
-port choices, including Next.js defaults and custom values, are preserved. An
-unforced port may use Next.js's normal occupied-port retry behavior without
-tunneling a different process on the preferred port. A port forced by
-`tnl dev --port` remains exact. Host settings remain independent, so a project
-can intentionally expose its development server on the LAN as well as through
-tnl.
+`withTnl` accepts every Next.js configuration form: an object, a promise, or a
+synchronous or asynchronous function. During `tnl dev`, it:
+
+- Adds the assigned hostname to `allowedDevOrigins`.
+- Injects the project runtime.
+- Registers the listener after Next.js reports the port it actually used.
+
+The integration preserves existing host and port settings. If no port was
+forced, Next.js can retry when its preferred port is occupied. `tnl` waits for
+the port Next.js chooses instead of forwarding to another process. A port set by
+`tnl dev --port` must match exactly. Host settings remain independent, so the
+development server can still be exposed on the LAN.
 
 Next.js 16.3.4 or newer is supported.
 
@@ -172,12 +184,14 @@ export default defineConfig({
 ```
 
 During `tnl dev`, the plugin allows the assigned hostname, injects the project
-runtime, and registers Vite's actual post-bind target. It preserves Vite's
-default or configured host and port behavior, including occupied-port retries;
-a port forced by `tnl dev --port` remains exact. User host settings can
-independently expose Vite on the LAN. Without a development socket the plugin
-only injects generated metadata. Builds and previews remain inert. Vite 6.0.9
-or newer is supported.
+runtime, and registers the listener after Vite chooses its port. Vite keeps its
+normal host and port behavior, including retries when a port is occupied. A port
+set by `tnl dev --port` must match exactly. Host settings can still expose Vite
+on the LAN.
+
+Without a development socket, the plugin only injects generated project
+metadata. It does nothing during builds and previews. Vite 6.0.9 or newer is
+supported.
 
 Next.js and Vite are optional peers, so only the framework already used by the
 project is required. Keep hostname, policy, server, service, and command
@@ -185,12 +199,14 @@ settings in project configuration rather than passing integration options.
 
 ### Listener Requirements
 
-The target must be loopback HTTP. Wildcard bindings (`0.0.0.0` or `::`) allow
-LAN exposure while tnl connects through loopback; binding only a specific LAN
-address is rejected. Vite middleware mode has no supported listening target.
-Next.js must report an HTTP listener origin. Forced ports are checked against
-the actual listener, not assumed from configuration. Vite's `allowedHosts: true`
-is preserved; the integration does not re-enable host filtering you disabled.
+The target must use HTTP over loopback. A wildcard binding (`0.0.0.0` or `::`)
+is allowed because tnl can still connect through loopback. Binding only to a
+specific LAN address is not supported. Vite middleware mode does not provide a
+supported listener. Next.js must report an HTTP listener URL.
+
+When a port is forced, the integration checks the actual listener instead of
+trusting configuration alone. The integration preserves Vite's
+`allowedHosts: true` and will not re-enable host filtering.
 
 Deploy `tnld` with the release container or install it from Homebrew or a
 release archive.

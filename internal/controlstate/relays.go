@@ -88,8 +88,8 @@ type ConnectionAssignmentIdentity struct {
 	RelayServiceID               string
 }
 
-// PublisherConnectionClaimRequest carries the assignment, relay lease, and
-// credential digest needed to claim one publisher connection atomically.
+// PublisherConnectionClaimRequest contains the assignment, relay lease, and
+// credential hash needed to claim one publisher connection in a transaction.
 type PublisherConnectionClaimRequest struct {
 	ConnectionAssignmentIdentity
 	RelayLeaseIdentity
@@ -97,7 +97,7 @@ type PublisherConnectionClaimRequest struct {
 	CredentialDigest [32]byte
 }
 
-// ClaimedPublisherConnection is the durable state of one claimed assignment.
+// ClaimedPublisherConnection is the stored state of one claimed assignment.
 type ClaimedPublisherConnection struct {
 	ConnectionAssignmentIdentity
 	RelayLeaseIdentity
@@ -220,8 +220,9 @@ func (d *Database) BeginRelayDrain(
 	return relayLeaseFromDrain(row)
 }
 
-// ClaimPublisherConnection atomically authenticates and claims one assignment.
-// Repeating the winning claim is idempotent; every other candidate is rejected.
+// ClaimPublisherConnection authenticates and claims one assignment in a
+// transaction. The winning relay can repeat its claim; all other relays are
+// rejected.
 func (d *Database) ClaimPublisherConnection(
 	ctx context.Context,
 	request PublisherConnectionClaimRequest,

@@ -1,4 +1,4 @@
-// Package projectmeta owns generated, non-secret project metadata.
+// Package projectmeta validates and writes browser-safe project metadata.
 package projectmeta
 
 import (

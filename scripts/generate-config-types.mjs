@@ -23,16 +23,16 @@ const generated = await compile(client, "TNL", {
 });
 const declarations = `${generated.trim()}
 
-/** Details about the Git worktree or project directory containing tnl.config.ts. */
+/** The Git worktree or project directory that contains tnl.config.ts. */
 export interface TnlWorktree {
   readonly isGit: boolean;
-  /** DNS-safe name keyed to this worktree and client state directory. */
+  /** DNS-safe worktree label derived from this worktree and client state. */
   readonly label: string;
   readonly name: string;
   readonly root: string;
 }
 
-/** Values available to a tnl.config.ts configuration factory. */
+/** Values passed to a tnl.config.ts configuration factory. */
 export interface TnlConfigContext {
   readonly cwd: string;
   readonly env: Readonly<Record<string, string>>;
@@ -45,7 +45,7 @@ export type TnlConfigFactory = (
 
 export type TnlConfigInput = TNL | TnlConfigFactory;
 
-/** Provides type checking for an implicit-version-1 tnl.config.ts configuration. */
+/** Adds type checking to a version-1 tnl.config.ts configuration. */
 export declare function defineConfig<const Config extends TnlConfigInput>(config: Config): Config;
 `;
 await writeFile(path.join(root, "packages", "tnl", "lib", "config.d.ts"), declarations);

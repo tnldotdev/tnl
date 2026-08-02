@@ -17,7 +17,7 @@ export interface ProjectRuntime extends ProjectMetadata {
   readonly runningUnderTnlDev: boolean;
 }
 
-/** Validates and deep-freezes public metadata, excluding runtime flags and Node-only discovery fields. */
+/** Checks browser-safe project metadata and makes it read-only. */
 export function parseProjectMetadata(value: unknown, description: string): ProjectMetadata {
   const object = record(value, description);
   exactKeys(object, ["memberNamespace", "services"], description);
@@ -71,7 +71,7 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
   });
 }
 
-/** Matches the native client's 1-32 byte ASCII service-name grammar without normalization. */
+/** Reports whether a value is a valid 1-32 character ASCII service name. */
 export function validServiceName(value: unknown): value is string {
   return typeof value === "string" && serviceNamePattern.test(value);
 }

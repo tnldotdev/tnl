@@ -497,7 +497,7 @@ function absoluteNormalizedPath(value: unknown, description: string): string {
   return value;
 }
 
-/** Parses digit-only listener ports in [1, 65535], preserving source-specific diagnostics. */
+/** Parses a decimal listener port from 1 through 65535. */
 export function parseListenerPort(value: string, source: string): number {
   if (!/^[0-9]+$/.test(value)) {
     throw new Error(`${source} must be a port between 1 and 65535`);

@@ -1,2 +1,2 @@
-// Package muxsession provides transport-neutral multiplexed byte-stream sessions.
+// Package muxsession carries multiplexed byte streams over supported transports.
 package muxsession

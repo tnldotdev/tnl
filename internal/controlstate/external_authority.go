@@ -14,7 +14,7 @@ import (
 var ErrExternalAuthorityPrincipal = errors.New("controlstate: external authority principal is invalid")
 
 // EnsureExternalAuthorityPrincipal records only the server-local principal ID
-// needed by durable route and audit state and returns the shared retry secret.
+// needed by stored route and audit state and returns the shared retry secret.
 func (d *Database) EnsureExternalAuthorityPrincipal(
 	ctx context.Context,
 	identityID string,
@@ -77,14 +77,14 @@ func (d *Database) EnsureExternalAuthorityPrincipal(
 	return result, nil
 }
 
-// GetRouteForAuthorization returns durable route facts used to construct an
-// online authority request. Callers must not expose the result before authorization.
+// GetRouteForAuthorization returns stored route data for an authority request.
+// Callers must not expose the result before the authority approves it.
 func (d *Database) GetRouteForAuthorization(ctx context.Context, routeID string) (Route, error) {
 	return d.getRouteForAuthorization(ctx, routeID, "")
 }
 
-// GetRouteForSessionAuthorization returns the route version bound to an
-// idempotent route-session retry, or the next route version for a new request.
+// GetRouteForSessionAuthorization returns the route version from an earlier
+// matching route-session request, or the next version for a new request.
 func (d *Database) GetRouteForSessionAuthorization(
 	ctx context.Context,
 	routeID, idempotencyKey string,

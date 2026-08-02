@@ -1,4 +1,4 @@
-// Package dnscontroller reconciles durable DNS execution state owned by control.
+// Package dnscontroller applies persistent DNS changes requested by control.
 package dnscontroller
 
 import (
@@ -217,7 +217,7 @@ func (w *Worker) advanceRoute(ctx context.Context, work *controlstate.DNSRouteWo
 		}
 		return nil
 	default:
-		return terminalf("cannot process route DNS in state %q", work.State)
+		return terminalf("cannot process public route DNS in state %q", work.State)
 	}
 }
 

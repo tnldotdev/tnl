@@ -44,7 +44,7 @@ func (s *relayCertificateSource) TLSConfig() *tls.Config {
 		s.mu.RLock()
 		defer s.mu.RUnlock()
 		if s.certificate == nil {
-			return nil, errors.New("relay service certificate is not ready")
+			return nil, errors.New("relay transport certificate is not ready")
 		}
 		return s.certificate, nil
 	}}
@@ -52,16 +52,16 @@ func (s *relayCertificateSource) TLSConfig() *tls.Config {
 
 func (s *relayCertificateSource) Install(certificate relayv1.RelayServiceCertificate) error {
 	if _, ok := s.relayServiceIDs[certificate.RelayServiceId]; !ok || certificate.TlsServerName != s.tlsServerName {
-		return errors.New("relay service certificate identity does not match")
+		return errors.New("relay transport certificate identity does not match")
 	}
 	keyPair, err := tls.X509KeyPair([]byte(certificate.CertificatePem), []byte(certificate.PrivateKeyPem))
 	if err != nil || len(keyPair.Certificate) == 0 {
-		return errors.New("relay service certificate key pair is invalid")
+		return errors.New("relay transport certificate key pair is invalid")
 	}
 	leaf, err := x509.ParseCertificate(keyPair.Certificate[0])
 	if err != nil || leaf.VerifyHostname(s.tlsServerName) != nil || !leaf.NotAfter.Equal(certificate.NotAfter) ||
 		!leaf.NotAfter.After(time.Now()) {
-		return errors.New("relay service certificate is invalid")
+		return errors.New("relay transport certificate is invalid")
 	}
 	keyPair.Leaf = leaf
 	s.mu.Lock()

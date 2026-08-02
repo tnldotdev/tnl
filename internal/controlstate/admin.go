@@ -27,7 +27,7 @@ var (
 	ErrMaintenanceControlNotFound = errors.New("controlstate: maintenance control not found")
 )
 
-// AdminRuntimeCounts contains current durable state counts for server status.
+// AdminRuntimeCounts contains current stored state counts for server status.
 type AdminRuntimeCounts struct {
 	EnabledRoutes         int64
 	SuspendedRoutes       int64
@@ -43,7 +43,7 @@ type AdminRelayPage struct {
 	NextCursor string
 }
 
-// MaintenanceControl is one durable gate for starting new work.
+// MaintenanceControl is one stored gate for starting new work.
 type MaintenanceControl struct {
 	Name      MaintenanceControlName
 	Enabled   bool
@@ -113,7 +113,8 @@ func (d *Database) ListAdminRelayLeases(ctx context.Context, cursor string, now 
 	return page, nil
 }
 
-// BeginAdminRelayDrain drains one exact lease and records the administrator action atomically.
+// BeginAdminRelayDrain drains one matching lease and records the administrator
+// action in the same transaction.
 func (d *Database) BeginAdminRelayDrain(
 	ctx context.Context,
 	identity RelayLeaseIdentity,
@@ -193,7 +194,8 @@ func (d *Database) ListMaintenanceControls(ctx context.Context) ([]MaintenanceCo
 	return result, nil
 }
 
-// SetMaintenanceControl updates one gate and records the administrator action atomically.
+// SetMaintenanceControl updates one gate and records the administrator action
+// in the same transaction.
 func (d *Database) SetMaintenanceControl(
 	ctx context.Context,
 	name MaintenanceControlName,

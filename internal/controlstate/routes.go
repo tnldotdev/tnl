@@ -326,8 +326,9 @@ func (d *Database) UpdateAuthorizedRoute(
 	return routeFromModel(updated, ""), nil
 }
 
-// DeleteExpiredEphemeralRoutes removes an expiry-bounded batch through the
-// same route-session, routing-table, and DNS cleanup used by explicit deletion.
+// DeleteExpiredEphemeralRoutes removes a limited batch of expired routes. It
+// uses the same route-session, routing-table, and DNS cleanup as explicit
+// deletion.
 func (d *Database) DeleteExpiredEphemeralRoutes(ctx context.Context, now time.Time) (count int, retErr error) {
 	if err := d.requireOpen(); err != nil {
 		return 0, err

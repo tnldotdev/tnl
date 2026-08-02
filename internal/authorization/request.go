@@ -1,4 +1,4 @@
-// Package authorization defines direct operation authorization and canonical request helpers.
+// Package authorization authorizes control operations and builds stable request hashes.
 package authorization
 
 import (
@@ -82,7 +82,7 @@ type Authorizer interface {
 	Authorize(context.Context, Request) (Decision, error)
 }
 
-// OperationRequest contains every value covered by a canonical mutation digest.
+// OperationRequest contains every value included in a mutation hash.
 type OperationRequest struct {
 	Operation             Operation
 	TeamID                string
@@ -102,7 +102,7 @@ type OperationRequest struct {
 
 func invalid(message string) error { return errors.New("authorization: " + message) }
 
-// CanonicalRequestHash hashes the fixed JSON shape for one authorized control mutation.
+// CanonicalRequestHash returns a stable hash for one authorized control change.
 func CanonicalRequestHash(request OperationRequest) (Digest, error) {
 	var value any
 	switch request.Operation {
@@ -181,8 +181,8 @@ func CanonicalRequestHash(request OperationRequest) (Digest, error) {
 	return Digest(sha256.Sum256(canonical)), nil
 }
 
-// CanonicalizeIPPrefixes parses, masks, deduplicates, and sorts an IP policy.
-// A nil slice remains nil so omission differs from an explicitly empty policy.
+// CanonicalizeIPPrefixes parses, masks, rejects duplicates, and sorts an IP
+// policy. It preserves nil so an omitted policy differs from an empty policy.
 func CanonicalizeIPPrefixes(values []string) ([]string, error) {
 	if values == nil {
 		return nil, nil
@@ -232,8 +232,7 @@ func canonicalIPPrefix(value string) (netip.Prefix, error) {
 	return netip.PrefixFrom(address, bits).Masked(), nil
 }
 
-// ValidateRouteTarget requires the exact loopback HTTP target shape accepted
-// by route mutations.
+// ValidateRouteTarget accepts the loopback HTTP target format used by routes.
 func ValidateRouteTarget(target string) error {
 	canonical, err := localproxy.NormalizeTarget(target)
 	if err != nil || canonical != target {
@@ -242,7 +241,7 @@ func ValidateRouteTarget(target string) error {
 	return nil
 }
 
-// IPPolicyHash hashes the canonical prefix array. A nil policy has no digest.
+// IPPolicyHash hashes the normalized prefix list. A nil policy has no hash.
 func IPPolicyHash(prefixes []string) (*Digest, error) {
 	if prefixes == nil {
 		return nil, nil

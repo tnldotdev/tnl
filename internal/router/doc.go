@@ -1,3 +1,3 @@
-// Package router performs bounded TLS ClientHello inspection and makes every
-// consumed byte available for replay.
+// Package router reads a size-limited TLS ClientHello and preserves every byte
+// so the connection can replay it.
 package router

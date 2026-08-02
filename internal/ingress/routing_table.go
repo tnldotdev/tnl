@@ -25,8 +25,8 @@ type routingTableEntry struct {
 	entry         ingressv1.IngressRoutingTableEntry
 }
 
-// RoutingTable is an atomically updated, fail-closed ingress routing table.
-// Its zero value is uninitialized.
+// RoutingTable replaces its data as one operation and rejects lookups until it
+// has been initialized.
 type RoutingTable struct {
 	mu          sync.RWMutex
 	initialized bool

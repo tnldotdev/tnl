@@ -38,10 +38,10 @@ var (
 	ErrInvalidPublisherConnectionCredential = errors.New("invalid publisher connection credential")
 )
 
-// AccessToken authenticates a identity to the tnl server API.
+// AccessToken authenticates an identity to the tnl server API.
 type AccessToken string
 
-// LoginToken authenticates only to the standalone token exchange.
+// LoginToken authenticates only to the built-in authority's token exchange.
 type LoginToken string
 
 // RefreshToken rotates one control session's access and refresh credentials.
@@ -112,8 +112,8 @@ func NewInvitationToken() (InvitationToken, SecretHash, error) {
 	return InvitationToken(token), hash, err
 }
 
-// DeriveInvitationToken deterministically derives an invitation credential so
-// retrying the same idempotent mutation returns the same one-time secret.
+// DeriveInvitationToken returns the same one-time invitation secret when a
+// request is retried with the same secret and context.
 func DeriveInvitationToken(retrySecret []byte, retryContext string) (InvitationToken, SecretHash, error) {
 	if len(retrySecret) < secretBytes || retryContext == "" {
 		return "", SecretHash{}, ErrInvalidInvitationToken
@@ -141,8 +141,8 @@ func NewRouteSessionToken() (RouteSessionToken, CredentialID, SecretHash, error)
 	return RouteSessionToken(token), lookupID, hash, err
 }
 
-// DeriveRouteSessionToken deterministically derives a route session credential from the
-// authenticated request so retrying the same idempotent mutation is stable.
+// DeriveRouteSessionToken returns the same route session token when a request is
+// retried with the same secret and context.
 func DeriveRouteSessionToken(retrySecret []byte, retryContext string) (RouteSessionToken, CredentialID, SecretHash, error) {
 	if len(retrySecret) < secretBytes || retryContext == "" {
 		return "", "", SecretHash{}, ErrInvalidRouteSessionToken
@@ -170,20 +170,21 @@ func ParseRouteSessionToken(token RouteSessionToken) (CredentialID, SecretHash, 
 	return parseToken(string(token), sessionPrefix, ErrInvalidRouteSessionToken)
 }
 
-// NewPublisherConnectionCredential creates an opaque credential for one publisher connection assignment.
+// NewPublisherConnectionCredential creates a credential for one connection assignment.
 func NewPublisherConnectionCredential() (PublisherConnectionCredential, SecretHash, error) {
 	token, _, hash, err := newToken(connectionPrefix)
 	return PublisherConnectionCredential(token), hash, err
 }
 
-// ParsePublisherConnectionCredential validates a publisher connection credential and returns its storage digest.
+// ParsePublisherConnectionCredential validates a publisher connection
+// credential and returns its stored hash.
 func ParsePublisherConnectionCredential(credential PublisherConnectionCredential) (SecretHash, error) {
 	_, hash, err := parseToken(string(credential), connectionPrefix, ErrInvalidPublisherConnectionCredential)
 	return hash, err
 }
 
-// DerivePublisherConnectionCredential deterministically derives one assignment credential
-// from its route-session token so retrying session setup returns the same secret.
+// DerivePublisherConnectionCredential returns the same assignment credential
+// for the same route session token and assignment context.
 func DerivePublisherConnectionCredential(routeSessionToken RouteSessionToken, assignmentContext string) (PublisherConnectionCredential, SecretHash, error) {
 	if _, _, err := ParseRouteSessionToken(routeSessionToken); err != nil || assignmentContext == "" {
 		return "", SecretHash{}, ErrInvalidRouteSessionToken

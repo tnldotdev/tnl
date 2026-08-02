@@ -1,2 +1,2 @@
-// Package clientstate owns shared local client state and tunnel lifecycle snapshots.
+// Package clientstate stores local client data and tunnel snapshots.
 package clientstate
