@@ -32,7 +32,7 @@ type runCommand struct {
 	Repetitions  int    `name:"repetitions" env:"BENCH_REPETITIONS" help:"Repetition override."`
 	Approved     string `name:"approved" env:"BENCH_APPROVED" required:"" help:"Paid-resource approval; must be exactly 1."`
 	FlyOrg       string `name:"fly-org" env:"BENCH_FLY_ORG" required:"" help:"Fly organization slug."`
-	FlyBinary    string `name:"fly-binary" env:"BENCH_FLY_BINARY" default:"fly" help:"Fly CLI executable."`
+	FlyBinary    string `name:"fly-binary" env:"BENCH_FLY_BINARY" default:"flyctl" help:"Fly CLI executable."`
 	ParentDomain string `name:"parent-domain" env:"BENCH_PARENT_DOMAIN" required:"" help:"Existing public Route 53 parent domain."`
 	ParentZoneID string `name:"parent-zone-id" env:"BENCH_PARENT_ZONE_ID" required:"" help:"Bare Route 53 hosted-zone ID for the parent domain."`
 	ACMEEmail    string `name:"acme-email" env:"BENCH_ACME_EMAIL" required:"" help:"ACME account contact email."`
@@ -41,7 +41,7 @@ type runCommand struct {
 
 type cleanupCommand struct {
 	RunDirectory string `name:"run" env:"BENCH_RUN" type:"path" required:"" help:"Interrupted benchmark run directory."`
-	FlyBinary    string `name:"fly-binary" env:"BENCH_FLY_BINARY" default:"fly" help:"Fly CLI executable."`
+	FlyBinary    string `name:"fly-binary" env:"BENCH_FLY_BINARY" default:"flyctl" help:"Fly CLI executable."`
 }
 
 type runManifest struct {
