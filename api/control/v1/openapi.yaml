@@ -26,7 +26,7 @@ paths:
   /v1/ready:
     get:
       operationId: getReadiness
-      summary: Confirm that control and durable state are ready
+      summary: Confirm that control and its database are ready
       security: []
       responses:
         "200":
@@ -60,7 +60,7 @@ paths:
   /v1/discovery:
     get:
       operationId: getControlDiscovery
-      summary: Describe control, authority, and authentication facts
+      summary: Describe control and its authentication methods
       security: []
       responses:
         "200":
@@ -74,7 +74,7 @@ paths:
   /v1/routes:
     get:
       operationId: listRoutes
-      summary: List durable routes for one team
+      summary: List routes for one team
       security:
         - bearerAuth: []
       parameters:
@@ -91,7 +91,7 @@ paths:
           $ref: "#/components/responses/Problem"
     post:
       operationId: createRoute
-      summary: Create one durable team route
+      summary: Create one team route
       security:
         - bearerAuth: []
       parameters:
@@ -114,7 +114,7 @@ paths:
   /v1/routes/{route_id}:
     get:
       operationId: getRoute
-      summary: Read one durable route
+      summary: Read one route
       security:
         - bearerAuth: []
       parameters:
@@ -130,7 +130,7 @@ paths:
           $ref: "#/components/responses/Problem"
     patch:
       operationId: updateRoute
-      summary: Reconcile one route's mutable publisher state
+      summary: Update a route's target and IP policy
       security:
         - bearerAuth: []
       parameters:
@@ -152,7 +152,7 @@ paths:
           $ref: "#/components/responses/Problem"
     delete:
       operationId: deleteRoute
-      summary: Delete one durable route and close its route session
+      summary: Delete one route and close its route session
       security:
         - bearerAuth: []
       parameters:
@@ -165,7 +165,7 @@ paths:
   /v1/routes/{route_id}/sessions:
     post:
       operationId: createRouteSession
-      summary: Create one publisher attachment and allocate its route version
+      summary: Create a route session and allocate its route version
       security:
         - bearerAuth: []
       parameters:
@@ -183,7 +183,7 @@ paths:
   /v1/route-sessions/{route_session_id}/heartbeat:
     post:
       operationId: heartbeatRouteSession
-      summary: Renew one publisher lease and replenish publisher connections
+      summary: Renew a route session and replace missing publisher connections
       security:
         - routeSessionAuth: []
       parameters:
@@ -206,7 +206,7 @@ paths:
   /v1/route-sessions/{route_session_id}/ready:
     post:
       operationId: markRouteSessionReady
-      summary: Complete publisher readiness after certificate installation and two ready publisher connections
+      summary: Mark a route session ready after its certificate and two publisher connections are ready
       security:
         - routeSessionAuth: []
       parameters:
@@ -252,7 +252,7 @@ paths:
   /v1/route-sessions/{route_session_id}:
     delete:
       operationId: closeRouteSession
-      summary: Close and drain one publisher attachment without deleting its route
+      summary: Close and drain a route session without deleting its route
       security:
         - routeSessionAuth: []
       parameters:
@@ -372,7 +372,7 @@ paths:
   /v1/admin/relays/{relay_id}/drain:
     post:
       operationId: drainAdminRelay
-      summary: Remove one exact relay lease from placement and begin draining
+      summary: Remove a matching relay lease from placement and begin draining
       security:
         - bearerAuth: []
       parameters:
@@ -435,7 +435,7 @@ paths:
   /v1/service/revoke:
     post:
       operationId: revokeHostedPolicy
-      summary: Apply a hosted team policy revision and close affected route sessions
+      summary: Apply a policy revision from the external authority and close affected route sessions
       security:
         - hostedServiceAuth: []
       requestBody:
@@ -452,7 +452,7 @@ paths:
   /v1/service/dns-authorities:
     post:
       operationId: createDNSAuthority
-      summary: Create DNS execution state for one claimed domain
+      summary: Create a DNS authority for one claimed domain
       security:
         - hostedServiceAuth: []
       parameters:
@@ -475,7 +475,7 @@ paths:
   /v1/service/dns-authorities/{dns_authority_reference}:
     get:
       operationId: getDNSAuthority
-      summary: Read DNS execution state for one claimed domain
+      summary: Read a claimed domain's DNS authority
       security:
         - hostedServiceAuth: []
       parameters:
@@ -491,7 +491,7 @@ paths:
           $ref: "#/components/responses/Problem"
     delete:
       operationId: releaseDNSAuthority
-      summary: Begin releasing one claimed domain's DNS execution state
+      summary: Begin releasing a claimed domain's DNS authority
       security:
         - hostedServiceAuth: []
       parameters:
@@ -1092,7 +1092,7 @@ components:
           items:
             $ref: "#/components/schemas/ConnectionAssignment"
         policy_denials:
-          description: Cumulative, eventually consistent IP policy denials for this route version.
+          description: Total IP policy denials reported so far for this route version. The total may lag.
           type: integer
           format: int64
           minimum: 0

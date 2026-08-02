@@ -35,7 +35,7 @@ func integrationDNSSubprocess(t *testing.T) bool {
 		t.Errorf("rejected nonlocal integration request: %s %s", r.Method, r.Host)
 		http.Error(w, "integration tests forbid nonlocal API requests", http.StatusForbidden)
 	}))
-	t.Cleanup(proxy.Close)
+	cleanupIntegrationHTTPServer(t, proxy, nil)
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -46,8 +46,8 @@ func integrationDNSSubprocess(t *testing.T) bool {
 	if _, subtests, ok := strings.Cut(flag.Lookup("test.run").Value.String(), "/"); ok {
 		testRun += "/" + subtests
 	}
-	command := exec.CommandContext(ctx, executable, "-test.run="+testRun, "-test.v", "-test.timeout=170s")
-	defer isolateIntegrationDNSProcess(t, command)()
+	command := exec.Command(executable, "-test.run="+testRun, "-test.v", "-test.timeout=170s")
+	cleanupGroup := isolateIntegrationDNSProcess(t, command)
 	temporaryDirectory := t.TempDir()
 	command.Env = append(os.Environ(),
 		"TNL_TEST_DNS_CHILD="+t.Name(),
@@ -61,11 +61,25 @@ func integrationDNSSubprocess(t *testing.T) bool {
 		"http_proxy="+proxy.URL, "https_proxy="+proxy.URL,
 		"NO_PROXY=127.0.0.1,localhost,::1", "no_proxy=127.0.0.1,localhost,::1",
 	)
-	output, err := command.CombinedOutput()
+	var output synchronizedBuffer
+	command.Stdout, command.Stderr = &output, &output
+	owner, err := startOwnedCommand(command, nil)
 	if err != nil {
-		t.Fatalf("isolated runtime DNS test: %v\n%s", err, output)
+		t.Fatal(err)
 	}
-	t.Logf("%s", output)
+	defer func() {
+		if err := owner.shutdown(time.Second, 5*time.Second); err != nil {
+			t.Errorf("isolated DNS shutdown: %v", err)
+		}
+		cleanupGroup()
+	}()
+	if err := waitForDone(ctx, owner.done); err != nil {
+		t.Fatalf("isolated runtime DNS test deadline: %v\n%s", err, output.String())
+	}
+	if err := owner.result(); err != nil {
+		t.Fatalf("isolated runtime DNS test: %v\n%s", err, output.String())
+	}
+	t.Logf("%s", output.String())
 	return true
 }
 
@@ -99,7 +113,7 @@ type integrationRoute53 struct {
 	zoneID       string
 	zone         *integrationDNSZone
 	changes      []integrationDNSChange
-	beforeChange func(integrationDNSChange)
+	beforeChange func(context.Context, integrationDNSChange) error
 }
 
 func newIntegrationRoute53(t *testing.T, zoneID, domain string) *integrationRoute53 {
@@ -118,41 +132,33 @@ func newIntegrationRoute53(t *testing.T, zoneID, domain string) *integrationRout
 	if err != nil {
 		t.Fatalf("authoritative DNS integration requires free loopback TCP/UDP port 53 (CI permits unprivileged port 53): %v", err)
 	}
+	t.Cleanup(func() { _ = listener.Close() })
 	packet, err := net.ListenPacket("udp", f.address)
 	if err != nil {
-		_ = listener.Close()
 		t.Fatalf("authoritative DNS integration requires free loopback UDP port 53: %v", err)
 	}
+	t.Cleanup(func() { _ = packet.Close() })
 	for _, server := range []*dns.Server{
 		{Listener: listener, Handler: dns.HandlerFunc(f.serveDNS)},
 		{PacketConn: packet, Handler: dns.HandlerFunc(f.serveDNS)},
 	} {
-		done := make(chan error, 1)
-		go func() { done <- server.ActivateAndServe() }()
-		t.Cleanup(func() {
-			_ = server.Shutdown()
-			if err := <-done; err != nil {
-				t.Errorf("authoritative DNS server: %v", err)
-			}
-		})
+		startOwnedDNSServer(t, server)
 	}
 	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.serveRoute53(t, w, r)
 	}))
-	t.Cleanup(f.server.Close)
+	cleanupIntegrationHTTPServer(t, f.server, nil)
 	t.Setenv("AWS_ENDPOINT_URL_ROUTE_53", f.server.URL)
 	return f
 }
 
-func (f *integrationRoute53) setBeforeChange(hook func(integrationDNSChange)) {
+func (f *integrationRoute53) setBeforeChange(hook func(context.Context, integrationDNSChange) error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.beforeChange = hook
 }
 
 func (f *integrationRoute53) serveRoute53(t *testing.T, w http.ResponseWriter, r *http.Request) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	if r.Host != strings.TrimPrefix(f.server.URL, "http://") ||
 		!strings.Contains(r.Header.Get("Authorization"), "Credential=tnl-integration-only/") {
 		t.Error("Route 53 request did not use the local endpoint and explicit dummy credentials")
@@ -169,6 +175,27 @@ func (f *integrationRoute53) serveRoute53(t *testing.T, w http.ResponseWriter, r
 	}
 	path := strings.TrimPrefix(r.URL.Path, "/2013-04-01/")
 	parts := strings.Split(path, "/")
+	if len(parts) == 3 && parts[0] == "hostedzone" && parts[1] == f.zoneID && parts[2] == "rrset" && r.Method == http.MethodPost {
+		var input struct {
+			Changes []integrationDNSChange `xml:"ChangeBatch>Changes>Change"`
+		}
+		if err := xml.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&input); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		if err := f.applyChanges(ctx, input.Changes); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		write("ChangeResourceRecordSetsResponse", struct {
+			Status string `xml:"ChangeInfo>Status"`
+		}{"INSYNC"})
+		return
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	var zone *integrationDNSZone
 	if len(parts) >= 2 && parts[1] == f.zoneID {
 		zone = f.zone
@@ -191,44 +218,54 @@ func (f *integrationRoute53) serveRoute53(t *testing.T, w http.ResponseWriter, r
 			Records     []integrationDNSRecord `xml:"ResourceRecordSets>ResourceRecordSet"`
 			IsTruncated bool
 		}{Records: records})
-	case len(parts) == 3 && parts[2] == "rrset" && zone != nil && r.Method == http.MethodPost:
-		var input struct {
-			Changes []integrationDNSChange `xml:"ChangeBatch>Changes>Change"`
-		}
-		if err := xml.NewDecoder(r.Body).Decode(&input); err != nil {
-			t.Error(err)
-			w.WriteHeader(400)
-			return
-		}
-		for _, change := range input.Changes {
-			change.Record.Name = dns.Fqdn(change.Record.Name)
-			change.zoneID = parts[1]
-			if f.beforeChange != nil {
-				f.beforeChange(change)
-			}
-			key := change.Record.Name + "/" + change.Record.Type
-			existing, exists := zone.records[key]
-			if change.Action != "CREATE" && change.Action != "UPSERT" && change.Action != "DELETE" ||
-				change.Action == "CREATE" && exists || change.Action == "DELETE" &&
-				(!exists || !slices.Equal(existing.Values, change.Record.Values) || existing.TTL != change.Record.TTL) {
-				t.Errorf("invalid Route 53 %s for %s", change.Action, key)
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
-			if change.Action == "DELETE" {
-				delete(zone.records, key)
-			} else {
-				zone.records[key] = change.Record
-			}
-			f.changes = append(f.changes, change)
-		}
-		write("ChangeResourceRecordSetsResponse", struct {
-			Status string `xml:"ChangeInfo>Status"`
-		}{"INSYNC"})
 	default:
 		t.Errorf("unimplemented Route 53 request: %s %s", r.Method, r.URL.RequestURI())
 		http.NotFound(w, r)
 	}
+}
+
+func (f *integrationRoute53) applyChanges(ctx context.Context, changes []integrationDNSChange) error {
+	f.mu.Lock()
+	hook := f.beforeChange
+	f.mu.Unlock()
+	changes = slices.Clone(changes)
+	for i := range changes {
+		changes[i].Record.Name = dns.Fqdn(changes[i].Record.Name)
+		changes[i].zoneID = f.zoneID
+		if hook != nil {
+			if err := hook(ctx, changes[i]); err != nil {
+				return err
+			}
+		}
+	}
+	// Validate against the current state after the gate, then commit the entire
+	// batch under one lock. Failed/canceled batches cannot partially mutate DNS.
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	records := make(map[string]integrationDNSRecord, len(f.zone.records))
+	for key, record := range f.zone.records {
+		records[key] = record
+	}
+	for _, change := range changes {
+		key := change.Record.Name + "/" + change.Record.Type
+		existing, exists := records[key]
+		if change.Action != "CREATE" && change.Action != "UPSERT" && change.Action != "DELETE" ||
+			change.Action == "CREATE" && exists || change.Action == "DELETE" &&
+			(!exists || !slices.Equal(existing.Values, change.Record.Values) || existing.TTL != change.Record.TTL) {
+			return fmt.Errorf("invalid Route 53 %s for %s", change.Action, key)
+		}
+		if change.Action == "DELETE" {
+			delete(records, key)
+		} else {
+			records[key] = change.Record
+		}
+	}
+	f.zone.records = records
+	f.changes = append(f.changes, changes...)
+	return nil
 }
 
 func (f *integrationRoute53) serveDNS(w dns.ResponseWriter, request *dns.Msg) {

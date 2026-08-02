@@ -27,7 +27,12 @@ func TestForwardingAcceptorCancellationClosesActiveStreams(t *testing.T) {
 	}
 
 	controlServer, controlClient := net.Pipe()
+	t.Cleanup(func() { _ = controlServer.Close(); _ = controlClient.Close() })
 	forwardServer, forwardClient := net.Pipe()
+	t.Cleanup(func() { _ = forwardServer.Close(); _ = forwardClient.Close() })
+	for _, c := range []net.Conn{controlServer, controlClient, forwardServer, forwardClient} {
+		_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+	}
 	t.Cleanup(func() {
 		_ = controlClient.Close()
 		_ = forwardClient.Close()
@@ -37,39 +42,37 @@ func TestForwardingAcceptorCancellationClosesActiveStreams(t *testing.T) {
 		&forwardingTestStream{Conn: controlServer},
 		&forwardingTestStream{Conn: forwardServer, writeStarted: writeStarted},
 	)
+	t.Cleanup(func() { _ = transport.Close() })
 
 	ctx, cancel := context.WithCancel(t.Context())
-	result := make(chan error, 1)
-	go func() { result <- acceptor.Accept(ctx, transport) }()
+	t.Cleanup(cancel)
+	result := relayWorker(t, func() { cancel(); _ = transport.Close() }, func() error { return acceptor.Accept(ctx, transport) })
 
-	controlResult := make(chan error, 1)
-	go func() {
+	controlResult := relayWorker(t, func() { _ = controlClient.Close() }, func() error {
 		if err := tunnelv1.WriteControl(controlClient, tunnelv1.Message{
 			Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version,
 			Role: tunnelv1.Ingress, Credential: strings.Repeat("s", 32),
 		}); err != nil {
-			controlResult <- err
-			return
+			return err
 		}
 		_, err := tunnelv1.ReadControl(controlClient)
-		controlResult <- err
-	}()
-	if err := <-controlResult; err != nil {
+		return err
+	})
+	if err := relayAwait(t, controlResult); err != nil {
 		t.Fatal(err)
 	}
 
-	headerResult := make(chan error, 1)
-	go func() {
+	headerResult := relayWorker(t, func() { _ = forwardClient.Close() }, func() error {
 		now := time.Now()
-		headerResult <- tunnelv1.WriteInternalForwardingHeader(forwardClient, tunnelv1.InternalForwardingHeader{
+		return tunnelv1.WriteInternalForwardingHeader(forwardClient, tunnelv1.InternalForwardingHeader{
 			ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.InternalForwardingStream,
 			VisitorConnectionID: "visitor", RouteID: "route", RouteSessionID: "session", RouteVersion: 1,
 			PublisherConnectionID: "connection", ConnectionSlot: 0, ConnectionAssignmentRevision: 1,
 			RelayServiceID: "relay-service", RelayID: "relay", RelayRunID: "relay-run", RelayLeaseRevision: 1,
 			RouteExpiresAt: now.Add(time.Minute), LeaseExpiresAt: now.Add(time.Minute),
 		})
-	}()
-	if err := <-headerResult; err != nil {
+	})
+	if err := relayAwait(t, headerResult); err != nil {
 		t.Fatal(err)
 	}
 	select {

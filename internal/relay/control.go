@@ -8,24 +8,24 @@ import (
 	"math"
 	"net/http"
 	"net/netip"
-	"reflect"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/pkg/api/relayv1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 type ControlClient interface {
-	RegisterRelayWithResponse(context.Context, relayv1.RegisterRelayJSONRequestBody, ...relayv1.RequestEditorFn) (*relayv1.RegisterRelayResponse, error)
-	RenewRelayWithResponse(context.Context, relayv1.RelayID, relayv1.RenewRelayJSONRequestBody, ...relayv1.RequestEditorFn) (*relayv1.RenewRelayResponse, error)
-	DrainRelayWithResponse(context.Context, relayv1.RelayID, relayv1.DrainRelayJSONRequestBody, ...relayv1.RequestEditorFn) (*relayv1.DrainRelayResponse, error)
-	GetRelayServiceCertificateWithResponse(context.Context, relayv1.RelayServiceID, *relayv1.GetRelayServiceCertificateParams, ...relayv1.RequestEditorFn) (*relayv1.GetRelayServiceCertificateResponse, error)
-	ClaimPublisherConnectionWithResponse(context.Context, relayv1.PublisherConnectionID, relayv1.ClaimPublisherConnectionJSONRequestBody, ...relayv1.RequestEditorFn) (*relayv1.ClaimPublisherConnectionResponse, error)
-	MarkPublisherConnectionReadyWithResponse(context.Context, relayv1.PublisherConnectionID, relayv1.MarkPublisherConnectionReadyJSONRequestBody, ...relayv1.RequestEditorFn) (*relayv1.MarkPublisherConnectionReadyResponse, error)
-	DisconnectPublisherConnectionWithResponse(context.Context, relayv1.PublisherConnectionID, relayv1.DisconnectPublisherConnectionJSONRequestBody, ...relayv1.RequestEditorFn) (*relayv1.DisconnectPublisherConnectionResponse, error)
+	RegisterRelay(context.Context, relayv1.RelayRegistration) (relayv1.RelayLease, error)
+	RenewRelay(context.Context, relayv1.RelayID, relayv1.RelayRenewal) (relayv1.RelayLease, error)
+	DrainRelay(context.Context, relayv1.RelayID, relayv1.RelayDrainRequest) (relayv1.RelayLease, error)
+	GetRelayServiceCertificate(context.Context, relayv1.RelayServiceID, relayv1.GetRelayServiceCertificateParams) (relayv1.RelayServiceCertificate, error)
+	ClaimPublisherConnection(context.Context, relayv1.PublisherConnectionID, relayv1.PublisherConnectionClaim) (relayv1.ClaimedPublisherConnection, error)
+	MarkPublisherConnectionReady(context.Context, relayv1.PublisherConnectionID, relayv1.PublisherConnectionTransition) (relayv1.ClaimedPublisherConnection, error)
+	DisconnectPublisherConnection(context.Context, relayv1.PublisherConnectionID, relayv1.PublisherConnectionDisconnect) (relayv1.ClaimedPublisherConnection, error)
 }
 
 type LoadFunc func() (reportedConnections, reportedStreams int64)
@@ -131,18 +131,15 @@ func (c *Controller) runOnce(ctx context.Context) error {
 		<-ctx.Done()
 		return nil
 	}
-	response, err := c.client.RegisterRelayWithResponse(ctx, c.registration)
+	lease, err := c.client.RegisterRelay(ctx, c.registration)
 	if err != nil {
-		return retryableControlError("register relay", err)
+		return relayControlError("register relay", err)
 	}
-	if response == nil || response.JSON200 == nil {
-		return relayResponseError("register relay", response)
-	}
-	if err := c.setLease(*response.JSON200); err != nil {
+	if err := c.setLease(lease); err != nil {
 		return err
 	}
 	if c.certificateChanged != nil {
-		if err := c.refreshCertificate(ctx, *response.JSON200); err != nil {
+		if err := c.refreshCertificate(ctx, lease); err != nil {
 			return err
 		}
 	}
@@ -159,7 +156,7 @@ func (c *Controller) runOnce(ctx context.Context) error {
 		if connections < 0 || streams < 0 {
 			return errors.New("relay: reported load cannot be negative")
 		}
-		response, err := c.client.RenewRelayWithResponse(ctx, c.registration.RelayId, relayv1.RelayRenewal{
+		lease, err := c.client.RenewRelay(ctx, c.registration.RelayId, relayv1.RelayRenewal{
 			RelayServiceId: c.registration.RelayServiceId, RelayId: c.registration.RelayId,
 			RelayRunId: c.registration.RelayRunId, RelayLeaseRevision: lease.RelayLeaseRevision,
 			ReportedConnections: connections, ReportedStreams: streams,
@@ -168,16 +165,13 @@ func (c *Controller) runOnce(ctx context.Context) error {
 			if ctx.Err() != nil {
 				return nil
 			}
-			return retryableControlError("renew relay", err)
+			return c.responseError("renew relay", err)
 		}
-		if response == nil || response.JSON200 == nil {
-			return c.responseError("renew relay", response)
-		}
-		if err := c.setLease(*response.JSON200); err != nil {
+		if err := c.setLease(lease); err != nil {
 			return err
 		}
 		if c.certificateChanged != nil && !c.certificateCurrent(c.now().Add(24*time.Hour)) {
-			if err := c.refreshCertificate(ctx, *response.JSON200); err != nil {
+			if err := c.refreshCertificate(ctx, lease); err != nil {
 				return err
 			}
 		}
@@ -191,22 +185,18 @@ func (c *Controller) Ready(now time.Time) bool {
 }
 
 func (c *Controller) refreshCertificate(ctx context.Context, lease relayv1.RelayLease) error {
-	response, err := c.client.GetRelayServiceCertificateWithResponse(ctx, lease.RelayServiceId, &relayv1.GetRelayServiceCertificateParams{
+	certificate, err := c.client.GetRelayServiceCertificate(ctx, lease.RelayServiceId, relayv1.GetRelayServiceCertificateParams{
 		RelayId: lease.RelayId, RelayRunId: lease.RelayRunId, RelayLeaseRevision: lease.RelayLeaseRevision,
 	})
 	if err != nil {
-		return retryableControlError("get relay service certificate", err)
+		return c.responseError("get relay transport certificate", err)
 	}
-	if response == nil || response.JSON200 == nil {
-		return c.responseError("get relay service certificate", response)
-	}
-	certificate := *response.JSON200
 	if certificate.RelayServiceId != lease.RelayServiceId || certificate.TlsServerName != lease.TlsServerName ||
 		!certificate.NotAfter.After(c.now()) {
-		return errors.New("relay: control returned invalid relay service certificate metadata")
+		return errors.New("relay: control returned invalid relay transport certificate metadata")
 	}
 	if err := c.certificateChanged(certificate); err != nil {
-		return fmt.Errorf("relay: install relay service certificate: %w", err)
+		return fmt.Errorf("relay: install relay transport certificate: %w", err)
 	}
 	c.mu.Lock()
 	c.certificateNotAfter = certificate.NotAfter
@@ -231,18 +221,15 @@ func (c *Controller) Drain(ctx context.Context, deadline time.Time) error {
 	if lease.RelayLeaseRevision <= 0 || !deadline.After(c.now()) {
 		return errors.New("relay: active lease and future drain deadline are required")
 	}
-	response, err := c.client.DrainRelayWithResponse(ctx, c.registration.RelayId, relayv1.RelayDrainRequest{
+	updated, err := c.client.DrainRelay(ctx, c.registration.RelayId, relayv1.RelayDrainRequest{
 		RelayServiceId: c.registration.RelayServiceId, RelayId: c.registration.RelayId,
 		RelayRunId: c.registration.RelayRunId, RelayLeaseRevision: lease.RelayLeaseRevision,
 		Deadline: deadline,
 	})
 	if err != nil {
-		return retryableControlError("drain relay", err)
+		return c.responseError("drain relay", err)
 	}
-	if response == nil || response.JSON200 == nil {
-		return c.responseError("drain relay", response)
-	}
-	return c.setLease(*response.JSON200)
+	return c.setLease(updated)
 }
 
 func (c *Controller) ClaimPublisherConnection(
@@ -270,20 +257,17 @@ func (c *Controller) ClaimPublisherConnection(
 		RelayRunId: transition.RelayRunId, RelayLeaseRevision: transition.RelayLeaseRevision,
 		ClaimId: transition.ClaimId, PublisherConnectionCredential: credential,
 	}
-	response, err := c.client.ClaimPublisherConnectionWithResponse(ctx, ref.PublisherConnectionID, request)
+	claimed, err := c.client.ClaimPublisherConnection(ctx, ref.PublisherConnectionID, request)
 	if err != nil {
-		return relayv1.ClaimedPublisherConnection{}, retryableControlError("claim publisher connection", err)
+		return relayv1.ClaimedPublisherConnection{}, c.responseError("claim publisher connection", err)
 	}
-	if response == nil || response.JSON200 == nil {
-		return relayv1.ClaimedPublisherConnection{}, c.responseError("claim publisher connection", response)
-	}
-	if err := validateClaimedConnection(transition, *response.JSON200, false); err != nil {
+	if err := validateClaimedConnection(transition, claimed, false); err != nil {
 		return relayv1.ClaimedPublisherConnection{}, err
 	}
-	if response.JSON200.State != relayv1.Connected && response.JSON200.State != relayv1.Ready {
+	if claimed.State != relayv1.Connected && claimed.State != relayv1.Ready {
 		return relayv1.ClaimedPublisherConnection{}, errors.New("relay: control did not claim the publisher connection")
 	}
-	return *response.JSON200, nil
+	return claimed, nil
 }
 
 func (c *Controller) MarkPublisherConnectionReady(
@@ -294,17 +278,14 @@ func (c *Controller) MarkPublisherConnectionReady(
 	if err != nil {
 		return relayv1.ClaimedPublisherConnection{}, err
 	}
-	response, err := c.client.MarkPublisherConnectionReadyWithResponse(ctx, claimed.PublisherConnectionId, request)
+	updated, err := c.client.MarkPublisherConnectionReady(ctx, claimed.PublisherConnectionId, request)
 	if err != nil {
-		return relayv1.ClaimedPublisherConnection{}, retryableControlError("mark publisher connection ready", err)
+		return relayv1.ClaimedPublisherConnection{}, c.responseError("mark publisher connection ready", err)
 	}
-	if response == nil || response.JSON200 == nil {
-		return relayv1.ClaimedPublisherConnection{}, c.responseError("mark publisher connection ready", response)
-	}
-	if err := validateClaimedConnection(request, *response.JSON200, true); err != nil {
+	if err := validateClaimedConnection(request, updated, true); err != nil {
 		return relayv1.ClaimedPublisherConnection{}, err
 	}
-	return *response.JSON200, nil
+	return updated, nil
 }
 
 func (c *Controller) DisconnectPublisherConnection(
@@ -325,20 +306,17 @@ func (c *Controller) DisconnectPublisherConnection(
 		RelayRunId: transition.RelayRunId, RelayLeaseRevision: transition.RelayLeaseRevision,
 		ClaimId: transition.ClaimId, Unexpected: unexpected,
 	}
-	response, err := c.client.DisconnectPublisherConnectionWithResponse(ctx, claimed.PublisherConnectionId, request)
+	updated, err := c.client.DisconnectPublisherConnection(ctx, claimed.PublisherConnectionId, request)
 	if err != nil {
-		return relayv1.ClaimedPublisherConnection{}, retryableControlError("disconnect publisher connection", err)
+		return relayv1.ClaimedPublisherConnection{}, c.responseError("disconnect publisher connection", err)
 	}
-	if response == nil || response.JSON200 == nil {
-		return relayv1.ClaimedPublisherConnection{}, c.responseError("disconnect publisher connection", response)
-	}
-	if err := validateClaimedConnection(transition, *response.JSON200, false); err != nil {
+	if err := validateClaimedConnection(transition, updated, false); err != nil {
 		return relayv1.ClaimedPublisherConnection{}, err
 	}
-	if response.JSON200.State != relayv1.Closed {
+	if updated.State != relayv1.Closed {
 		return relayv1.ClaimedPublisherConnection{}, errors.New("relay: control did not close the publisher connection")
 	}
-	return *response.JSON200, nil
+	return updated, nil
 }
 
 func (c *Controller) activeLease() (relayv1.RelayLease, error) {
@@ -481,22 +459,22 @@ func retryableControlError(operation string, err error) error {
 	return &temporaryControlError{operation: operation, err: err}
 }
 
-type controlResponse interface {
-	StatusCode() int
-	GetApplicationproblemJSONDefault() *relayv1.Problem
+func relayControlError(operation string, err error) error {
+	var problem *serviceapi.ProblemError
+	if !errors.As(err, &problem) {
+		return retryableControlError(operation, err)
+	}
+	var body *relayv1.Problem
+	if problem.Type != "" {
+		body = &relayv1.Problem{
+			Status: problem.Status, Type: problem.Type, Title: problem.Title, Detail: problem.Detail,
+		}
+	}
+	return &ControlProblemError{Operation: operation, Status: problem.Status, Problem: body}
 }
 
-func relayResponseError(operation string, response controlResponse) error {
-	if response == nil || reflect.ValueOf(response).Kind() == reflect.Pointer && reflect.ValueOf(response).IsNil() {
-		return &ControlProblemError{Operation: operation}
-	}
-	return &ControlProblemError{
-		Operation: operation, Status: response.StatusCode(), Problem: response.GetApplicationproblemJSONDefault(),
-	}
-}
-
-func (c *Controller) responseError(operation string, response controlResponse) error {
-	err := relayResponseError(operation, response)
+func (c *Controller) responseError(operation string, err error) error {
+	err = relayControlError(operation, err)
 	var problem *ControlProblemError
 	if errors.As(err, &problem) && problem.Problem != nil &&
 		problem.Problem.Type == "https://tnl.dev/problems/relay_lease_stale" {

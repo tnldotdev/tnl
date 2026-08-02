@@ -19,10 +19,10 @@ import (
 )
 
 func TestIntegrationCertificateLifecycle(t *testing.T) {
-	keyring.MockInit()
 	for _, scenario := range []string{"same_session_renewal", "closed_before_ack"} {
 		t.Run(scenario, func(t *testing.T) {
 			database, now := newCertificatePlanDatabase(t)
+			keyring.MockInit()
 			plan := CertificatePlan{CacheKey: "member.routes.example.test", Scope: "member.routes.example.test",
 				Identifiers: []string{"*.member.routes.example.test", "member.routes.example.test"}, ChallengeMethod: "dns-01"}
 			hostname := "first.member.routes.example.test"

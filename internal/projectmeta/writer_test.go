@@ -2,6 +2,7 @@ package projectmeta
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,7 +29,8 @@ func TestRenderProducesSortedLiteralPublicShape(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(declarations)
-	if strings.Index(text, `readonly "api"`) > strings.Index(text, `readonly "web"`) ||
+	api, web := strings.Index(text, "readonly api:"), strings.Index(text, "readonly web:")
+	if api < 0 || web < 0 || api >= web ||
 		!strings.Contains(text, "interface TnlProjectMetadata") ||
 		!strings.Contains(text, `readonly memberNamespace: "busy-toast.tnl.dev"`) ||
 		!strings.Contains(text, `readonly hostname: "api-tnl-bb4eff.busy-toast.tnl.dev"`) ||
@@ -67,7 +69,7 @@ func TestTypeScriptPropertyNameQuotesHyphenatedServices(t *testing.T) {
 	}
 }
 
-func TestWriteAtomicallyReplacesGeneratedFiles(t *testing.T) {
+func TestWriteRejectsInvalidMetadataWithoutChangingFiles(t *testing.T) {
 	root := t.TempDir()
 	metadata := Metadata{
 		Version: Version, MemberNamespace: "busy-toast.tnl.dev",
@@ -87,6 +89,11 @@ func TestWriteAtomicallyReplacesGeneratedFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	declarationsPath := filepath.Join(root, DirectoryName, DeclarationsName)
+	declarationsBefore, err := os.ReadFile(declarationsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	invalid := metadata
 	invalid.MemberNamespace = "INVALID"
 	if err := Write(root, invalid); err == nil {
@@ -98,6 +105,68 @@ func TestWriteAtomicallyReplacesGeneratedFiles(t *testing.T) {
 	}
 	if !bytes.Equal(before, after) {
 		t.Fatal("failed write changed existing metadata")
+	}
+	declarationsAfter, err := os.ReadFile(declarationsPath)
+	if err != nil || !bytes.Equal(declarationsBefore, declarationsAfter) {
+		t.Fatalf("invalid input changed declarations: %v", err)
+	}
+}
+
+func TestStagedWriteRollbackReportsRestoreFailure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "project.d.ts")
+	if err := os.WriteFile(path, []byte("previous\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	write, err := stageWrite(path, []byte("replacement\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer write.cleanup()
+	if err := write.commit(); err != nil {
+		t.Fatal(err)
+	}
+	// Force an actual filesystem failure after commit, rather than invalid input
+	// rejected before any write. Restoring cannot overwrite a directory.
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	err = write.restore()
+	var pathErr *os.PathError
+	if !errors.As(err, &pathErr) || !strings.Contains(err.Error(), "restore generated project metadata") {
+		t.Fatalf("rollback failure = %v", err)
+	}
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "project.d.ts" {
+		t.Fatalf("rollback leaked staged files: %v", entries)
+	}
+}
+
+func TestWriteReplacesBothGeneratedFiles(t *testing.T) {
+	root := t.TempDir()
+	metadata := Metadata{Version: Version, MemberNamespace: "member.example", Services: map[string]Service{}, ServiceDirectories: map[string]string{}}
+	if err := Write(root, metadata); err != nil {
+		t.Fatal(err)
+	}
+	metadata.Services["api"] = Service{MemberNamespace: "member.example", Hostname: "api.member.example", URL: "https://api.member.example"}
+	metadata.ServiceDirectories["api"] = "."
+	if err := Write(root, metadata); err != nil {
+		t.Fatal(err)
+	}
+	jsonData, declarations, err := Render(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string][]byte{JSONName: jsonData, DeclarationsName: declarations} {
+		got, err := os.ReadFile(filepath.Join(root, DirectoryName, name))
+		if err != nil || !bytes.Equal(got, want) {
+			t.Fatalf("%s = %s, %v", name, got, err)
+		}
 	}
 }
 

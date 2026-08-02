@@ -73,7 +73,7 @@ func TestRegisterRelayAuthorizesAndConvertsRequest(t *testing.T) {
 		InternalRelayAddress: "10.0.0.10:8443", InternalNetworks: []string{"10.0.0.0/24", "2001:db8::/64"},
 		ConnectionCapacity: 100, StreamCapacity: 1000,
 	}
-	response := serveRelayJSON(t, testRelayHandler(t, store, now, nil), http.MethodPost, "/internal/v1/relays/register", body, "relay-1")
+	response := serveRelayJSON(t, testRelayHandler(t, store, now, nil), http.MethodPost, "/internal/v1/relays/register", body)
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
 	}
@@ -119,7 +119,7 @@ func TestGetRelayServiceCertificateRequiresExactLease(t *testing.T) {
 		}, nil
 	}}
 	target := "/internal/v1/relay-services/relay-service-1/certificate?relay_id=relay-1&relay_run_id=run-1&relay_lease_revision=7"
-	response := serveRelayJSON(t, testRelayHandler(t, store, now, nil), http.MethodGet, target, nil, "relay-1")
+	response := serveRelayJSON(t, testRelayHandler(t, store, now, nil), http.MethodGet, target, nil)
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
 	}
@@ -134,7 +134,8 @@ func TestGetRelayServiceCertificateRequiresExactLease(t *testing.T) {
 	var certificate relayv1.RelayServiceCertificate
 	decodeRelayResponse(t, response, &certificate)
 	if certificate.PrivateKeyPem != "private-key" || certificate.CertificatePem != "certificate" ||
-		certificate.RelayServiceId != "relay-service-1" {
+		certificate.RelayServiceId != "relay-service-1" || certificate.TlsServerName != "relay.example.test" ||
+		!certificate.NotAfter.Equal(now.Add(24*time.Hour)) {
 		t.Fatalf("certificate = %#v", certificate)
 	}
 }
@@ -145,12 +146,14 @@ func TestClaimPublisherConnectionParsesCredentialAndExactIdentity(t *testing.T) 
 		t.Fatal(err)
 	}
 	var got controlstate.PublisherConnectionClaimRequest
+	claimCalls := 0
 	store := &relayStoreStub{claimPublisherConnection: func(
 		_ context.Context,
 		request controlstate.PublisherConnectionClaimRequest,
 		_ time.Time,
 	) (controlstate.ClaimedPublisherConnection, error) {
 		got = request
+		claimCalls++
 		return controlstate.ClaimedPublisherConnection{
 			ConnectionAssignmentIdentity: request.ConnectionAssignmentIdentity,
 			RelayLeaseIdentity:           request.RelayLeaseIdentity, ClaimID: request.ClaimID,
@@ -165,7 +168,7 @@ func TestClaimPublisherConnectionParsesCredentialAndExactIdentity(t *testing.T) 
 		RelayLeaseRevision: 4, ClaimId: "claim-1", PublisherConnectionCredential: credential.String(),
 	}
 	target := "/internal/v1/publisher-connections/connection-1/claim"
-	response := serveRelayJSON(t, testRelayHandler(t, store, time.Now(), nil), http.MethodPost, target, body, "relay-1")
+	response := serveRelayJSON(t, testRelayHandler(t, store, time.Now(), nil), http.MethodPost, target, body)
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
 	}
@@ -177,8 +180,8 @@ func TestClaimPublisherConnectionParsesCredentialAndExactIdentity(t *testing.T) 
 		t.Fatalf("claim request = %#v", got)
 	}
 	body.PublisherConnectionId = "connection-2"
-	response = serveRelayJSON(t, testRelayHandler(t, store, time.Now(), nil), http.MethodPost, target, body, "relay-1")
-	if response.Code != http.StatusBadRequest {
+	response = serveRelayJSON(t, testRelayHandler(t, store, time.Now(), nil), http.MethodPost, target, body)
+	if response.Code != http.StatusBadRequest || claimCalls != 1 {
 		t.Fatalf("mismatched path status = %d, want %d: %s", response.Code, http.StatusBadRequest, response.Body.String())
 	}
 }
@@ -218,7 +221,7 @@ func TestRelayStoreErrorsHaveStableProblems(t *testing.T) {
 			}
 			response := serveRelayJSON(
 				t, testRelayHandler(t, store, time.Now(), nil), http.MethodPost,
-				"/internal/v1/publisher-connections/connection-1/claim", body, "relay-1",
+				"/internal/v1/publisher-connections/connection-1/claim", body,
 			)
 			if response.Code != test.status {
 				t.Fatalf("status = %d, want %d: %s", response.Code, test.status, response.Body.String())
@@ -227,12 +230,15 @@ func TestRelayStoreErrorsHaveStableProblems(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			client, err := NewDirectClient(store, 30*time.Second)
+			client, err := NewDirectClient(DirectConfig{Store: store, LeaseDuration: 30 * time.Second})
 			if err != nil {
 				t.Fatal(err)
 			}
-			direct, err := client.ClaimPublisherConnectionWithResponse(t.Context(), body.PublisherConnectionId, body)
-			if err != nil || direct.StatusCode() != wire.StatusCode() || direct.ApplicationproblemJSONDefault == nil || wire.ApplicationproblemJSONDefault == nil || *direct.ApplicationproblemJSONDefault != *wire.ApplicationproblemJSONDefault {
+			_, err = client.ClaimPublisherConnection(t.Context(), body.PublisherConnectionId, body)
+			var direct *serviceapi.ProblemError
+			if !errors.As(err, &direct) || direct.Status != wire.StatusCode() || wire.ApplicationproblemJSONDefault == nil ||
+				direct.Type != wire.ApplicationproblemJSONDefault.Type || direct.Title != wire.ApplicationproblemJSONDefault.Title ||
+				direct.Detail != wire.ApplicationproblemJSONDefault.Detail {
 				t.Fatalf("direct problem differs from HTTP: %#v, %v; HTTP %#v", direct, err, wire)
 			}
 			assertRelayProblemType(t, response, "https://tnl.dev/problems/"+test.problemType)
@@ -266,7 +272,6 @@ func serveRelayJSON(
 	h http.Handler,
 	method, target string,
 	body any,
-	relayID string,
 ) *httptest.ResponseRecorder {
 	t.Helper()
 	encoded, err := json.Marshal(body)

@@ -10,7 +10,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"math/big"
-	"sync"
 	"testing"
 	"time"
 
@@ -86,7 +85,7 @@ func TestIntegrationRelayLifecycleCapacityOneReplenishment(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer tx.Rollback(context.Background())
+			defer rollbackTestTransaction(t, tx)
 			if _, err := selectRelayServicePlacements(t.Context(), controlstatedb.New(tx), at); !errors.Is(err, ErrInsufficientRelayServices) {
 				t.Fatalf("replacement reservations did not consume capacity: %v", err)
 			}
@@ -105,7 +104,7 @@ func TestIntegrationRelayLifecycleServiceBeforeLeaseLocks(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer gate.Rollback(context.Background())
+			defer rollbackTestTransaction(t, gate)
 			slot := 0
 			if operation == "placement" {
 				slot = 1
@@ -113,8 +112,8 @@ func TestIntegrationRelayLifecycleServiceBeforeLeaseLocks(t *testing.T) {
 			if _, err := gate.Exec(ctx, `SELECT relay_id FROM control.relay_leases WHERE relay_id = $1 FOR UPDATE`, registrations[slot].RelayID); err != nil {
 				t.Fatal(err)
 			}
-			var workers sync.WaitGroup
-			defer func() { cancel(); workers.Wait() }()
+			workers := newIntegrationWorkers(t, cancel)
+			defer workers.stop()
 			registered := make(chan error, 1)
 			workers.Go(func() {
 				_, err := database.RegisterRelay(ctx, registrations[slot], now, time.Hour)
@@ -157,7 +156,7 @@ func TestIntegrationRelayLifecycleServiceBeforeLeaseLocks(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, done := range []<-chan error{registered, completed} {
-				if err := <-done; err != nil {
+				if err := awaitIntegrationResult(t, ctx, done); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -195,12 +194,12 @@ func TestIntegrationRelayLifecycleCertificateServiceBeforeOrderLocks(t *testing.
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer gate.Rollback(context.Background())
+			defer rollbackTestTransaction(t, gate)
 			if _, err := gate.Exec(ctx, `SELECT 1 FROM control.`+gateTable+` FOR UPDATE`); err != nil {
 				t.Fatal(err)
 			}
-			var workers sync.WaitGroup
-			defer func() { cancel(); workers.Wait() }()
+			workers := newIntegrationWorkers(t, cancel)
+			defer workers.stop()
 			completed := make(chan error, 1)
 			workers.Go(func() {
 				_, err := database.SaveRelayCertificateOrderWork(ctx, work, now)
@@ -216,7 +215,7 @@ func TestIntegrationRelayLifecycleCertificateServiceBeforeOrderLocks(t *testing.
 				if err != nil {
 					t.Fatal(err)
 				}
-				defer probe.Rollback(context.Background())
+				defer rollbackTestTransaction(t, probe)
 				_, err = probe.Exec(ctx, `SELECT relay_service_id FROM control.relay_services FOR UPDATE NOWAIT`)
 				var postgresError *pgconn.PgError
 				if !errors.As(err, &postgresError) || postgresError.Code != "55P03" {
@@ -229,7 +228,7 @@ func TestIntegrationRelayLifecycleCertificateServiceBeforeOrderLocks(t *testing.
 			if err := gate.Commit(ctx); err != nil {
 				t.Fatal(err)
 			}
-			if err := <-completed; err != nil {
+			if err := awaitIntegrationResult(t, ctx, completed); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -287,12 +286,18 @@ func newRelayLifecycleCertificateWork(t *testing.T, database *Database, now time
 	if err != nil || !found {
 		t.Fatalf("claim order: found %v, error %v", found, err)
 	}
-	block, _ := pem.Decode(work.PrivateKeyPEM)
+	block, rest := decodeTestPEM(t, work.PrivateKeyPEM, "PRIVATE KEY")
+	if len(rest) != 0 {
+		t.Fatal("unexpected data after relay private key")
+	}
 	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 	if err != nil {
 		t.Fatal(err)
 	}
-	privateKey := key.(*ecdsa.PrivateKey)
+	privateKey, ok := key.(*ecdsa.PrivateKey)
+	if !ok {
+		t.Fatalf("relay private key type = %T, want ECDSA", key)
+	}
 	notBefore, notAfter := now.Add(-time.Minute), now.Add(time.Hour)
 	template := &x509.Certificate{
 		SerialNumber: big.NewInt(1), DNSNames: []string{work.TLSServerName}, NotBefore: notBefore, NotAfter: notAfter,

@@ -44,22 +44,23 @@ func TestIntegrationSplitAutomaticRelayDNSCertificates(t *testing.T) {
 	var blockCleanup, releaseCleanupOnce sync.Once
 	release := func() { releaseCleanupOnce.Do(func() { close(releaseCleanup) }) }
 	defer release()
-	dnsFixture.setBeforeChange(func(change integrationDNSChange) {
+	dnsFixture.setBeforeChange(func(ctx context.Context, change integrationDNSChange) error {
 		if change.Action != "DELETE" || change.Record.Name != dns.Fqdn("_acme-challenge."+namespace) {
-			return
+			return nil
 		}
 		blockCleanup.Do(func() {
 			close(cleanupStarted)
 			select {
 			case <-releaseCleanup:
-			case <-t.Context().Done():
+			case <-ctx.Done():
 			}
 		})
+		return ctx.Err()
 	})
 	target := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(response, "real DNS publish")
 	}))
-	t.Cleanup(target.Close)
+	cleanupIntegrationHTTPServer(t, target, fixture.owner)
 
 	quic, tcp := fixture.connectors()
 	finalizing := make(chan controlv1.CertificateIssuance, 1)
@@ -75,13 +76,13 @@ func TestIntegrationSplitAutomaticRelayDNSCertificates(t *testing.T) {
 			}
 		},
 	}
-	handle := startIntegrationPublisher(t, config, func() string {
+	handle := startOwnedIntegrationPublisher(t, fixture.owner, config, func() string {
 		return integrationPublisherDiagnostics(fixture.inspect, fixture.pebble.logPath)
 	})
 	select {
 	case <-cleanupStarted:
 	case <-time.After(30 * time.Second):
-		t.Fatal("route DNS challenge cleanup did not start")
+		t.Fatal("public route DNS challenge cleanup did not start")
 	}
 	select {
 	case issuance := <-finalizing:
@@ -89,7 +90,7 @@ func TestIntegrationSplitAutomaticRelayDNSCertificates(t *testing.T) {
 			t.Fatalf("finalizing issuance exposed certificate material: %#v", issuance)
 		}
 	case <-handle.done:
-		t.Fatalf("publisher stopped during route DNS challenge cleanup: %v", handle.result())
+		t.Fatalf("publisher stopped during public route DNS challenge cleanup: %v", handle.result())
 	case <-time.After(10 * time.Second):
 		t.Fatal("publisher did not observe the finalizing certificate issuance")
 	}
@@ -108,7 +109,7 @@ func TestIntegrationSplitAutomaticRelayDNSCertificates(t *testing.T) {
 		assertIntegrationDNSChanges(t, dnsFixture, hostname, true)
 		var orders int
 		var installed bool
-		if err := fixture.inspect.QueryRowContext(t.Context(), `
+		if err := fixture.inspect.QueryRowContext(integrationOperationContext(t), `
 			SELECT count(orders.id), coalesce(bool_and(
 				orders.state = 'complete'
 				AND orders.tls_server_name = $2
@@ -185,7 +186,7 @@ func assertIntegrationPublishedRoute(t *testing.T, database *sql.DB, visitor *in
 	}
 	var teamID, domainID, membershipID, scope string
 	var planJSON []byte
-	if err := database.QueryRowContext(t.Context(), `
+	if err := database.QueryRowContext(integrationOperationContext(t), `
 		SELECT r.team_id, r.domain_id, coalesce(r.membership_id, ''), r.route_scope,
 			json_build_object('cache_key', s.certificate_cache_key, 'scope', s.certificate_scope,
 				'identifiers', s.certificate_identifiers, 'challenge_method', s.certificate_challenge)
@@ -228,7 +229,7 @@ func assertIntegrationDNSChanges(t *testing.T, fixture *integrationRoute53, host
 	if challenge {
 		name, recordType = "_acme-challenge."+name, "TXT"
 	}
-	waitForIntegrationCondition(t, 10*time.Second, func() (bool, error) {
+	waitForIntegrationCondition(t, 10*time.Second, func(context.Context) (bool, error) {
 		fixture.mu.Lock()
 		defer fixture.mu.Unlock()
 		published, removed := false, false

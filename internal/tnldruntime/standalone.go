@@ -34,7 +34,6 @@ var standaloneRelays = [...]struct {
 type standaloneSettings struct {
 	publicListen           string
 	relayUDPListen         string
-	quicPacketIOMode       tnldconfig.RelayQUICPacketIOMode
 	quicIdleTimeout        time.Duration
 	quicMaxIncomingStreams int64
 	serverHostname         string
@@ -50,7 +49,6 @@ func standaloneSettingsFrom(cfg tnldconfig.Config) standaloneSettings {
 	return standaloneSettings{
 		publicListen:           cfg.IngressListen,
 		relayUDPListen:         cfg.RelayUDPListen,
-		quicPacketIOMode:       cfg.RelayQUICPacketIOMode,
 		quicIdleTimeout:        cfg.QUICIdleTimeout,
 		quicMaxIncomingStreams: cfg.QUICMaxIncomingStreams,
 		serverHostname:         cfg.ServerHostname(),
@@ -100,7 +98,9 @@ func (d *daemon) startStandalone(
 		certificateChanged = certificateSource.Install
 	}
 	targets := make(map[string]*relayRuntime, len(standaloneRelays))
-	relayClient, err := relayapi.NewDirectClient(d.database, settings.relayLeaseDuration)
+	relayClient, err := relayapi.NewDirectClient(relayapi.DirectConfig{
+		Store: d.database, LeaseDuration: settings.relayLeaseDuration,
+	})
 	if err != nil {
 		return err
 	}
@@ -139,12 +139,9 @@ func (d *daemon) startStandalone(
 	if err != nil {
 		return err
 	}
-	udpListener, err := muxsession.ListenQUIC(settings.relayUDPListen, transportTLS, muxsession.QUICConfig{
-		Config: &quic.Config{
-			MaxIdleTimeout: settings.quicIdleTimeout, MaxIncomingStreams: settings.quicMaxIncomingStreams,
-		},
-		PacketIOMode: muxsession.QUICPacketIOMode(settings.quicPacketIOMode),
-	})
+	udpListener, err := muxsession.ListenQUIC(settings.relayUDPListen, transportTLS, muxsession.QUICConfig{Config: &quic.Config{
+		MaxIdleTimeout: settings.quicIdleTimeout, MaxIncomingStreams: settings.quicMaxIncomingStreams,
+	}})
 	if err != nil {
 		return fmt.Errorf("listen for standalone QUIC publisher connections: %w", err)
 	}

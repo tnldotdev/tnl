@@ -229,6 +229,12 @@ func TestIntegrationCertificatePlanInstallGuards(t *testing.T) {
 func newCertificatePlanDatabase(t *testing.T) (*Database, time.Time) {
 	t.Helper()
 	database, now := newControlStateIntegrationDatabase(t, "certificate_plan")
+	registerCertificatePlanRelays(t, database, now)
+	return database, now
+}
+
+func registerCertificatePlanRelays(t *testing.T, database *Database, now time.Time) {
+	t.Helper()
 	for index := range 2 {
 		name := fmt.Sprintf("plan-relay-%d", index)
 		if _, err := database.RegisterRelay(t.Context(), RelayRegistration{
@@ -239,7 +245,6 @@ func newCertificatePlanDatabase(t *testing.T) (*Database, time.Time) {
 			t.Fatal(err)
 		}
 	}
-	return database, now
 }
 
 func newExternalPlanSession(t *testing.T, database *Database, now time.Time, team, hostname, reference string, plan CertificatePlan) (Route, RouteSessionAuthentication) {
@@ -262,6 +267,7 @@ func newExternalPlanSession(t *testing.T, database *Database, now time.Time, tea
 
 func startExternalPlanSession(t *testing.T, database *Database, now time.Time, route Route, plan CertificatePlan, key string) RouteSessionAuthentication {
 	t.Helper()
+	plan.Identifiers = slices.Clone(plan.Identifiers)
 	slices.Sort(plan.Identifiers)
 	current, err := database.GetRouteForAuthorization(t.Context(), route.ID)
 	if err != nil {
@@ -285,6 +291,7 @@ func startExternalPlanSession(t *testing.T, database *Database, now time.Time, r
 
 func createPlanIssuanceWork(t *testing.T, database *Database, now time.Time, authentication RouteSessionAuthentication, plan CertificatePlan, complete bool, edit func(*ACMEOrderWork)) ACMEOrderWork {
 	t.Helper()
+	plan.Identifiers = slices.Clone(plan.Identifiers)
 	slices.Sort(plan.Identifiers)
 	account, err := database.EnsureACMEAccount(t.Context(), "https://acme.example.test/directory", "operator@example.test", now)
 	if err != nil {
@@ -393,7 +400,7 @@ func TestIntegrationCertificateInstallMaterial(t *testing.T) {
 			work := createPlanIssuanceWork(t, database, now, authentication, plan, true, func(work *ACMEOrderWork) {
 				switch name {
 				case "valid_blank_lines":
-					leaf, rest := pem.Decode(work.CertificatePEM)
+					leaf, rest := decodeTestPEM(t, work.CertificatePEM, "CERTIFICATE")
 					work.CertificatePEM = append([]byte(" \r\n\t"), pem.EncodeToMemory(leaf)...)
 					work.CertificatePEM = append(work.CertificatePEM, '\n')
 					work.CertificatePEM = append(work.CertificatePEM, rest...)
@@ -410,8 +417,8 @@ func TestIntegrationCertificateInstallMaterial(t *testing.T) {
 				case "failed", "canceled":
 					work.State = name
 				case "wrong_key", "extra_identity", "wrong_eku":
-					leafBlock, rest := pem.Decode(work.CertificatePEM)
-					caBlock, _ := pem.Decode(rest)
+					leafBlock, rest := decodeTestPEM(t, work.CertificatePEM, "CERTIFICATE")
+					caBlock, _ := decodeTestPEM(t, rest, "CERTIFICATE")
 					leaf, err := x509.ParseCertificate(leafBlock.Bytes)
 					if err != nil {
 						t.Fatal(err)

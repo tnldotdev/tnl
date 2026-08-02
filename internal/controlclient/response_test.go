@@ -20,9 +20,13 @@ func TestResponseBoundariesAndBodyOwnership(t *testing.T) {
 		wantError     bool
 	}{
 		{"empty", "", 204, false},
-		{"numbers", `{"value":42}`, 200, false},
+		{"numbers", `{"value":9007199254740993}`, 200, false},
 		{"unknown", `{"other":1}`, 200, true},
+		{"partial unknown", `{"value":1,"other":2}`, 200, true},
+		{"malformed", `{"value":`, 200, true},
 		{"trailing", `{} {}`, 200, true},
+		{"trailing garbage", `{} broken`, 200, true},
+		{"exact limit", `{}` + strings.Repeat(" ", maxResponseBytes-2), 200, false},
 		{"oversized", strings.Repeat(" ", maxResponseBytes+1), 200, true},
 		{"malformed rate limit", `not JSON`, 429, true},
 		{"malformed unavailable", `not JSON`, 503, true},
@@ -37,8 +41,11 @@ func TestResponseBoundariesAndBodyOwnership(t *testing.T) {
 			if !body.closed || (err != nil) != test.wantError || errors.Is(err, ErrUnavailable) || errors.Is(err, ErrRateLimited) {
 				t.Fatalf("closed=%v, error=%v", body.closed, err)
 			}
-			if test.name == "numbers" && result.Value != float64(42) {
+			if test.name == "numbers" && result.Value != float64(9007199254740992) {
 				t.Fatalf("number = %#v", result.Value)
+			}
+			if err != nil && result.Value != nil {
+				t.Fatal("failure exposed a partially decoded result")
 			}
 		})
 	}
@@ -49,6 +56,33 @@ func TestResponseBoundariesAndBodyOwnership(t *testing.T) {
 	})
 	if !body.closed || !errors.Is(err, ErrUnavailable) || !errors.Is(err, failure) {
 		t.Fatalf("read failure = %v, closed=%v", err, body.closed)
+	}
+}
+
+func TestResponseProblemPrecedenceAndRetryAfter(t *testing.T) {
+	for _, test := range []struct {
+		header string
+		want   time.Duration
+	}{
+		{"", time.Second}, {"bad", time.Second}, {"-2", time.Second}, {"0", time.Second},
+		{"7", 7 * time.Second}, {"999999", 24 * time.Hour}, {"9999999999999999999999", time.Second},
+	} {
+		t.Run(test.header, func(t *testing.T) {
+			// Unlike authorityclient, control classifies by problem code, not status.
+			err := responseError(400, http.Header{"Retry-After": {test.header}}, []byte(`{"code":"rate_limited"}`))
+			var rate *RateLimitError
+			if !errors.As(err, &rate) || !errors.Is(err, ErrRateLimited) || rate.RetryAfter != test.want {
+				t.Fatalf("rate limit error=%v", err)
+			}
+		})
+	}
+	for _, status := range []int{429, 503} {
+		if err := responseError(status, nil, []byte(`{"code":"unauthenticated"}`)); !errors.Is(err, ErrUnauthenticated) || errors.Is(err, ErrUnavailable) || errors.Is(err, ErrRateLimited) {
+			t.Fatalf("HTTP %d precedence=%v", status, err)
+		}
+	}
+	if err := responseError(400, nil, []byte(`{"code":"unavailable"}`)); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("problem mapping=%v", err)
 	}
 }
 

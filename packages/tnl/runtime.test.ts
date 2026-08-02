@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { parseRuntimePayload } from "./dist/internal/runtime.js";
+import { startTestProcess } from "./test-helper/process.js";
 
 const project = {
   memberNamespace: "member.example",
@@ -13,13 +14,12 @@ const project = {
 };
 
 afterEach(() => {
-  delete process.env.TNL_PROJECT_RUNTIME;
   vi.resetModules();
 });
 
 describe("root runtime", () => {
   test("is undefined without injected metadata", async () => {
-    delete process.env.TNL_PROJECT_RUNTIME;
+    vi.stubEnv("TNL_PROJECT_RUNTIME", undefined);
     vi.resetModules();
     const runtime = await import("@tnldotdev/tnl");
     expect(runtime.tnl).toBeUndefined();
@@ -28,12 +28,29 @@ describe("root runtime", () => {
   test.each([false, true])(
     "exposes validated metadata with runningUnderTnlDev=%s",
     async (running) => {
-      process.env.TNL_PROJECT_RUNTIME = JSON.stringify({ ...project, runningUnderTnlDev: running });
+      vi.stubEnv(
+        "TNL_PROJECT_RUNTIME",
+        JSON.stringify({ ...project, runningUnderTnlDev: running }),
+      );
       vi.resetModules();
       const runtime = await import("@tnldotdev/tnl");
       expect(runtime.tnl).toEqual({ ...project, runningUnderTnlDev: running });
     },
   );
+
+  test("imports the built root runtime with no process global", async () => {
+    const child = startTestProcess(process.execPath, [
+      "--input-type=module",
+      "-e",
+      `const host = process;
+       delete globalThis.process;
+       const { tnl } = await import(${JSON.stringify(new URL("./dist/index.js", import.meta.url).href)});
+       host.stdout.write(JSON.stringify({ processAbsent: typeof process === "undefined", metadataAbsent: tnl === undefined }));`,
+    ]);
+    await child.ready();
+    await expect.poll(() => child.child.exitCode).toBe(0);
+    expect(JSON.parse(child.output())).toEqual({ processAbsent: true, metadataAbsent: true });
+  });
 
   test("deep-freezes the complete runtime value", () => {
     const runtime = parseRuntimePayload(JSON.stringify({ ...project, runningUnderTnlDev: true }));

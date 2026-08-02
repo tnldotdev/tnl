@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"sync"
 	"testing"
 	"time"
 
@@ -35,12 +34,12 @@ func TestIntegrationTransactionRoutingClockSerializesAllocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer first.Rollback(context.Background())
+	defer rollbackTestTransaction(t, first)
 	second, err := database.pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer second.Rollback(context.Background())
+	defer rollbackTestTransaction(t, second)
 	emit := func(tx pgx.Tx, index int) (int64, error) {
 		queries := controlstatedb.New(tx)
 		route, err := queries.LockRouteForSession(ctx, routes[index].ID)
@@ -58,8 +57,8 @@ func TestIntegrationTransactionRoutingClockSerializesAllocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var workers sync.WaitGroup
-	defer func() { cancel(); workers.Wait() }()
+	workers := newIntegrationWorkers(t, cancel)
+	defer workers.stop()
 	secondDone := make(chan error, 1)
 	var secondRevision int64
 	workers.Go(func() {
@@ -85,7 +84,7 @@ func TestIntegrationTransactionRoutingClockSerializesAllocation(t *testing.T) {
 	if err := first.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := <-secondDone; err != nil {
+	if err := awaitIntegrationResult(t, ctx, secondDone); err != nil {
 		t.Fatal(err)
 	}
 	page, err = database.ReadIngressRoutingTableEvents(ctx, lease.IngressLeaseIdentity, 0, 10, now)
@@ -108,18 +107,21 @@ func TestIntegrationTransactionLocalAuthorityLockOrder(t *testing.T) {
 			t.Run(mutation+"/"+operation, func(t *testing.T) {
 				fixture := newTransactionAuthorityFixture(t)
 				database, now := fixture.database, fixture.now
+				if operation == "session" {
+					registerCertificatePlanRelays(t, database, now)
+				}
 				ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 				defer cancel()
 				gate, err := database.pool.Begin(ctx)
 				if err != nil {
 					t.Fatal(err)
 				}
-				defer gate.Rollback(context.Background())
+				defer rollbackTestTransaction(t, gate)
 				if _, err := controlstatedb.New(gate).LockRouteForSession(ctx, fixture.route.ID); err != nil {
 					t.Fatal(err)
 				}
-				var workers sync.WaitGroup
-				defer func() { cancel(); workers.Wait() }()
+				workers := newIntegrationWorkers(t, cancel)
+				defer workers.stop()
 				mutationDone := make(chan error, 1)
 				workers.Go(func() {
 					var err error
@@ -161,10 +163,10 @@ func TestIntegrationTransactionLocalAuthorityLockOrder(t *testing.T) {
 				if err := gate.Commit(ctx); err != nil {
 					t.Fatal(err)
 				}
-				if err := <-mutationDone; err != nil {
+				if err := awaitIntegrationResult(t, ctx, mutationDone); err != nil {
 					t.Fatal(err)
 				}
-				err = <-operationDone
+				err = awaitIntegrationResult(t, ctx, operationDone)
 				var want error
 				switch operation {
 				case "create":
@@ -196,6 +198,7 @@ func TestIntegrationTransactionDomainReleaseCertificateExpiry(t *testing.T) {
 		t.Run(certificateState, func(t *testing.T) {
 			fixture := newTransactionAuthorityFixture(t)
 			database, now := fixture.database, fixture.now
+			registerCertificatePlanRelays(t, database, now)
 			setup, err := database.CreateRouteSession(t.Context(), fixture.sessionRequest, now, time.Hour, time.Hour)
 			if err != nil {
 				t.Fatal(err)
@@ -239,7 +242,7 @@ func TestIntegrationTransactionDomainReleaseCertificateExpiry(t *testing.T) {
 			}
 			ready, err := database.DNSAuthorityReleaseReady(t.Context(), fixture.domain.ID, notAfter)
 			if err != nil || ready {
-				t.Fatalf("pending owned route DNS must block release even after certificate expiry: %t, %v", ready, err)
+				t.Fatalf("pending public route DNS must block release even after certificate expiry: %t, %v", ready, err)
 			}
 			dnsWork, found, err := database.ClaimDNSRouteWork(t.Context(), "cleanup", now, time.Minute)
 			if err != nil || !found || dnsWork.RouteID != fixture.route.ID || dnsWork.State != RouteDNSRemoving {
@@ -316,7 +319,7 @@ func TestIntegrationTransactionDNSAuthorityLockOrder(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer gate.Rollback(context.Background())
+			defer rollbackTestTransaction(t, gate)
 			if saveFirst {
 				_, err = controlstatedb.New(gate).LockDNSAuthority(ctx, work.Reference)
 			} else {
@@ -327,8 +330,8 @@ func TestIntegrationTransactionDNSAuthorityLockOrder(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			var workers sync.WaitGroup
-			defer func() { cancel(); workers.Wait() }()
+			workers := newIntegrationWorkers(t, cancel)
+			defer workers.stop()
 			saveDone, releaseDone := make(chan error, 1), make(chan error, 1)
 			save := func() {
 				_, err := database.SaveDNSAuthorityWork(ctx, work, now)
@@ -349,14 +352,14 @@ func TestIntegrationTransactionDNSAuthorityLockOrder(t *testing.T) {
 			if err := gate.Commit(ctx); err != nil {
 				t.Fatal(err)
 			}
-			if err := <-firstDone; err != nil {
+			if err := awaitIntegrationResult(t, ctx, firstDone); err != nil {
 				t.Fatal(err)
 			}
 			wantErr, wantState := ErrDNSAuthorityWorkStale, "releasing"
 			if saveFirst {
 				wantErr, wantState = ErrAuthorityConflict, "ready"
 			}
-			if err := <-secondDone; !errors.Is(err, wantErr) {
+			if err := awaitIntegrationResult(t, ctx, secondDone); !errors.Is(err, wantErr) {
 				t.Fatalf("second authority operation = %v; want %v", err, wantErr)
 			}
 			var domainState, authorityState string
@@ -376,7 +379,7 @@ func TestIntegrationTransactionDNSAuthorityLockOrder(t *testing.T) {
 }
 
 func TestIntegrationTransactionHostedRevocationIncludesConcurrentCreation(t *testing.T) {
-	database, now := newCertificatePlanDatabase(t)
+	database, now := newControlStateIntegrationDatabase(t, "revocation_creation")
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	const identity = "identity_transaction_hosted"
@@ -393,12 +396,12 @@ func TestIntegrationTransactionHostedRevocationIncludesConcurrentCreation(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer gate.Rollback(context.Background())
+	defer rollbackTestTransaction(t, gate)
 	if _, err := controlstatedb.New(gate).LockRouteCreationControl(ctx); err != nil {
 		t.Fatal(err)
 	}
-	var workers sync.WaitGroup
-	defer func() { cancel(); workers.Wait() }()
+	workers := newIntegrationWorkers(t, cancel)
+	defer workers.stop()
 	created := make(chan error, 1)
 	var route Route
 	workers.Go(func() {
@@ -420,7 +423,7 @@ func TestIntegrationTransactionHostedRevocationIncludesConcurrentCreation(t *tes
 		t.Fatal(err)
 	}
 	for _, done := range []<-chan error{created, revoked} {
-		if err := <-done; err != nil {
+		if err := awaitIntegrationResult(t, ctx, done); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -488,7 +491,7 @@ type transactionAuthorityFixture struct {
 
 func newTransactionAuthorityFixture(t *testing.T) transactionAuthorityFixture {
 	t.Helper()
-	database, now := newCertificatePlanDatabase(t)
+	database, now := newControlStateIntegrationDatabase(t, "transaction_authority")
 	local, err := database.CreateBuiltinControlSession(t.Context(), "managed.example.test", 1, time.Hour, 24*time.Hour, now)
 	if err != nil {
 		t.Fatal(err)

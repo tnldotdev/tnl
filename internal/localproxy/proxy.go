@@ -1,4 +1,4 @@
-// Package localproxy securely proxies one exact public hostname to one loopback HTTP target.
+// Package localproxy forwards one public hostname to one loopback HTTP target.
 package localproxy
 
 import (
@@ -40,13 +40,17 @@ func Preflight(ctx context.Context, target string) error {
 
 // WaitForTarget waits until a valid target accepts a loopback TCP connection.
 func WaitForTarget(ctx context.Context, target string) error {
+	return waitForTarget(ctx, target, Preflight)
+}
+
+func waitForTarget(ctx context.Context, target string, preflight func(context.Context, string) error) error {
 	canonicalTarget, err := NormalizeTarget(target)
 	if err != nil {
 		return err
 	}
 	var lastErr error
 	for {
-		lastErr = Preflight(ctx, canonicalTarget)
+		lastErr = preflight(ctx, canonicalTarget)
 		if lastErr == nil {
 			return nil
 		}

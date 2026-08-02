@@ -2,14 +2,8 @@ package certificates
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
 	"errors"
-	"math/big"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -98,6 +92,11 @@ func TestRouteWorkerAdvancesTLSALPNOrder(t *testing.T) {
 	if work.State != "waiting_for_install" || len(work.CertificatePEM) == 0 || work.NotBefore == nil || work.NotAfter == nil || work.RenewAt == nil {
 		t.Fatalf("completed order work = %#v", work)
 	}
+	if !reflect.DeepEqual(api.newOrders, []newOrderCall{{[]string{hostname}, "tlsserver"}}) ||
+		!reflect.DeepEqual(api.finalizations, []finalizeCall{{"https://acme.example.test/order/1", "https://acme.example.test/finalize/1", csrDER}}) ||
+		!reflect.DeepEqual(api.certificateURLs, []string{"https://acme.example.test/certificate/1"}) {
+		t.Fatalf("ACME requests = %#v", api)
+	}
 }
 
 func TestRouteWorkerAdvancesDNSOrderAndCleansPresentation(t *testing.T) {
@@ -184,6 +183,11 @@ func TestRouteWorkerAdvancesDNSOrderAndCleansPresentation(t *testing.T) {
 	if work.State != "waiting_for_install" {
 		t.Fatalf("completed DNS order = %#v", work)
 	}
+	wantCall := [2]string{"route_dns", "acme_authorization_dns"}
+	if !reflect.DeepEqual(dnsChallenges.presentCalls, [][2]string{wantCall}) ||
+		!reflect.DeepEqual(dnsChallenges.verifyCalls, [][2]string{wantCall}) || !reflect.DeepEqual(dnsChallenges.cleanupCalls, [][2]string{wantCall}) {
+		t.Fatalf("DNS challenge calls = %#v", dnsChallenges)
+	}
 }
 
 func TestRouteWorkerDistinguishesApexAndWildcardAuthorizations(t *testing.T) {
@@ -226,7 +230,7 @@ func TestRouteWorkerDistinguishesApexAndWildcardAuthorizations(t *testing.T) {
 	}
 }
 
-func TestRouteWorkerPersistsTerminalAndRateLimitedFailures(t *testing.T) {
+func TestRouteWorkerTerminalFailureFailsAuthorizations(t *testing.T) {
 	now := time.Now().UTC()
 	worker := &RouteWorker{}
 	terminalWork := controlstate.ACMEOrderWork{
@@ -238,6 +242,11 @@ func TestRouteWorkerPersistsTerminalAndRateLimitedFailures(t *testing.T) {
 		terminalWork.Authorizations[0].LastError == "" || !terminalWork.AvailableAt.Equal(now) {
 		t.Fatalf("terminal work = %#v", terminalWork)
 	}
+}
+
+func TestRouteWorkerRateLimitHonorsRetryAfter(t *testing.T) {
+	now := time.Now().UTC()
+	worker := &RouteWorker{}
 	retryAt := now.Add(17 * time.Second)
 	rateLimitedWork := controlstate.ACMEOrderWork{State: "pending"}
 	worker.applyFailure(&rateLimitedWork, &acmeclient.Error{
@@ -257,9 +266,10 @@ func TestRouteWorkerRejectsMismatchedAndDuplicateAuthorizations(t *testing.T) {
 		name              string
 		authorizationURLs []string
 		identifier        string
+		message           string
 	}{
-		{name: "mismatch", authorizationURLs: []string{"https://acme.example.test/authorization/1"}, identifier: "other.example.test"},
-		{name: "duplicate", authorizationURLs: []string{"https://acme.example.test/authorization/1", "https://acme.example.test/authorization/2"}, identifier: hostname},
+		{name: "mismatch", authorizationURLs: []string{"https://acme.example.test/authorization/1"}, identifier: "other.example.test", message: "not in the certificate plan"},
+		{name: "duplicate", authorizationURLs: []string{"https://acme.example.test/authorization/1", "https://acme.example.test/authorization/2"}, identifier: hostname, message: "repeats authorization identifier"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -269,10 +279,12 @@ func TestRouteWorkerRejectsMismatchedAndDuplicateAuthorizations(t *testing.T) {
 					Finalize:    "https://acme.example.test/finalize/1",
 					Identifiers: []acmeclient.Identifier{{Type: "dns", Value: hostname}}, Authorizations: test.authorizationURLs,
 				},
-				authorization: acmeclient.Authorization{
-					URL: "https://acme.example.test/authorization/1", Status: "pending",
-					Identifier: acmeclient.Identifier{Type: "dns", Value: test.identifier},
-					Challenges: []acmeclient.Challenge{{Type: "tls-alpn-01", URL: "https://acme.example.test/challenge/1", Token: "token-1"}},
+				getAuthorization: func(url string) (acmeclient.Authorization, error) {
+					return acmeclient.Authorization{
+						URL: url, Status: "pending",
+						Identifier: acmeclient.Identifier{Type: "dns", Value: test.identifier},
+						Challenges: []acmeclient.Challenge{{Type: "tls-alpn-01", URL: "https://acme.example.test/challenge/1", Token: "token-1"}},
+					}, nil
 				},
 			}
 			worker := &RouteWorker{config: RouteConfig{Profile: "tlsserver", PollInterval: time.Second}}
@@ -280,8 +292,10 @@ func TestRouteWorkerRejectsMismatchedAndDuplicateAuthorizations(t *testing.T) {
 				CertificateIdentifiers: []string{hostname}, ChallengeMethod: "tls-alpn-01",
 				OrderURL: api.order.URL, State: "authorizing",
 			}
-			if err := worker.advance(t.Context(), api, &work, now); err == nil {
-				t.Fatal("advance accepted invalid authorizations")
+			err := worker.advance(t.Context(), api, &work, now)
+			var terminal *terminalError
+			if !errors.As(err, &terminal) || !strings.Contains(err.Error(), test.message) || len(work.Authorizations) != 0 {
+				t.Fatalf("invalid authorization discovery = %v, work %#v", err, work.Authorizations)
 			}
 		})
 	}
@@ -418,111 +432,33 @@ func TestTruncateErrorPreservesUTF8(t *testing.T) {
 	}
 }
 
-type acmeStub struct {
-	order             acmeclient.Order
-	authorization     acmeclient.Authorization
-	authorizations    map[string]acmeclient.Authorization
-	getOrder          func(string) (acmeclient.Order, error)
-	getAuthorization  func(string) (acmeclient.Authorization, error)
-	finalizedOrder    acmeclient.Order
-	certificatePEM    []byte
-	acceptedChallenge string
-	acceptCalls       int
-	challengeRetryAt  time.Time
-	finalizedCSR      []byte
-	newOrderCalls     int
-}
-
-func (s *acmeStub) NewOrder(context.Context, []string, string) (acmeclient.Order, error) {
-	s.newOrderCalls++
-	return s.order, nil
-}
-
-func (s *acmeStub) GetOrder(_ context.Context, orderURL string) (acmeclient.Order, error) {
-	if s.getOrder != nil {
-		return s.getOrder(orderURL)
-	}
-	return s.order, nil
-}
-
-func (s *acmeStub) GetAuthorization(_ context.Context, authorizationURL string) (acmeclient.Authorization, error) {
-	if s.getAuthorization != nil {
-		return s.getAuthorization(authorizationURL)
-	}
-	if s.authorizations != nil {
-		return s.authorizations[authorizationURL], nil
-	}
-	return s.authorization, nil
-}
-
-func (s *acmeStub) AcceptChallenge(_ context.Context, challengeURL string) (time.Time, error) {
-	s.acceptedChallenge = challengeURL
-	s.acceptCalls++
-	return s.challengeRetryAt, nil
-}
-
-func (s *acmeStub) FinalizeOrder(_ context.Context, _, _ string, csrDER []byte) (acmeclient.Order, error) {
-	s.finalizedCSR = append([]byte(nil), csrDER...)
-	return s.finalizedOrder, nil
-}
-
-func (s *acmeStub) DownloadCertificate(context.Context, string) ([]byte, error) {
-	return append([]byte(nil), s.certificatePEM...), nil
-}
-
-func (s *acmeStub) KeyAuthorization(token string) (string, error) {
-	return token + ".thumbprint", nil
-}
-
 type dnsChallengesStub struct {
-	presented             string
-	verifiedAuthorization string
-	cleaned               string
-	verified              bool
-	err                   error
-	cleanup               func(context.Context) error
+	presented                               string
+	verifiedAuthorization                   string
+	cleaned                                 string
+	verified                                bool
+	err                                     error
+	cleanup                                 func(context.Context) error
+	presentCalls, verifyCalls, cleanupCalls [][2]string
 }
 
-func (s *dnsChallengesStub) Present(_ context.Context, _, authorizationID string) error {
+func (s *dnsChallengesStub) Present(_ context.Context, routeID, authorizationID string) error {
 	s.presented = authorizationID
+	s.presentCalls = append(s.presentCalls, [2]string{routeID, authorizationID})
 	return s.err
 }
 
-func (s *dnsChallengesStub) Verify(_ context.Context, _, authorizationID string) (bool, error) {
+func (s *dnsChallengesStub) Verify(_ context.Context, routeID, authorizationID string) (bool, error) {
 	s.verifiedAuthorization = authorizationID
+	s.verifyCalls = append(s.verifyCalls, [2]string{routeID, authorizationID})
 	return s.verified, s.err
 }
 
-func (s *dnsChallengesStub) Cleanup(ctx context.Context, _, authorizationID string) error {
+func (s *dnsChallengesStub) Cleanup(ctx context.Context, routeID, authorizationID string) error {
 	s.cleaned = authorizationID
+	s.cleanupCalls = append(s.cleanupCalls, [2]string{routeID, authorizationID})
 	if s.cleanup != nil {
 		return s.cleanup(ctx)
 	}
 	return s.err
-}
-
-func testCertificate(t *testing.T, hostname string, now time.Time) ([]byte, []byte) {
-	return testCertificateValidity(t, hostname, now.Add(-time.Minute), now.Add(time.Hour))
-}
-
-func testCertificateValidity(t *testing.T, hostname string, notBefore, notAfter time.Time) ([]byte, []byte) {
-	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	csrDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{DNSNames: []string{hostname}}, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	template := &x509.Certificate{
-		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: hostname}, DNSNames: []string{hostname},
-		NotBefore: notBefore, NotAfter: notAfter, KeyUsage: x509.KeyUsageDigitalSignature,
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, BasicConstraintsValid: true,
-	}
-	certificateDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return csrDER, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificateDER})
 }

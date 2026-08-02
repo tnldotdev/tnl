@@ -3,51 +3,29 @@ package oidcauth
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
-
-	"github.com/tnldotdev/tnl/internal/testutil/oidctest"
 )
 
 func TestVerifierAuthenticatesBoundedAuth0Identity(t *testing.T) {
-	signer := oidctest.NewSigner(t)
-	var provider *httptest.Server
-	provider = httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		switch request.URL.Path {
-		case "/.well-known/openid-configuration":
-			_ = json.NewEncoder(response).Encode(map[string]any{
-				"issuer": provider.URL, "jwks_uri": provider.URL + "/jwks",
-				"authorization_endpoint": provider.URL + "/authorize", "token_endpoint": provider.URL + "/token",
-			})
-		case "/jwks":
-			_ = json.NewEncoder(response).Encode(map[string]any{"keys": []any{signer.JWK("key-1")}})
-		default:
-			http.NotFound(response, request)
-		}
-	}))
-	t.Cleanup(func() {
-		provider.CloseClientConnections()
-		provider.Close()
-	})
-	verifier, err := NewVerifier(VerifierConfig{Issuer: provider.URL, ClientID: "tnl-cli", HTTPClient: provider.Client()})
+	p := newTestProvider(t, "")
+	verifier, err := NewVerifier(VerifierConfig{Issuer: p.issuer, ClientID: "tnl-cli", HTTPClient: p.client})
 	if err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now()
-	raw := signer.Token(t, "key-1", map[string]any{
-		"iss": provider.URL, "sub": "auth0|subject", "aud": []string{"tnl-cli", "auth0-api"},
+	raw := p.signer.Token(t, "key-1", map[string]any{
+		"iss": p.issuer, "sub": "auth0|subject", "aud": []string{"tnl-cli", "auth0-api"},
 		"azp": "tnl-cli", "iat": now.Unix(), "exp": now.Add(time.Hour).Unix(), "nonce": "nonce",
 		"name": "Example User", "email": " USER@example.com ", "email_verified": true,
 	})
-	identity, err := verifier.Verify(t.Context(), raw)
+	identity, err := verifier.Verify(loginTestContext(t), raw)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if identity.Issuer != provider.URL || identity.Subject != "auth0|subject" || identity.DisplayName != "Example User" ||
+	if identity.Issuer != p.issuer || identity.Subject != "auth0|subject" || identity.DisplayName != "Example User" ||
 		identity.NormalizedEmail != "user@example.com" || !identity.EmailVerified || identity.Nonce != "nonce" ||
 		identity.AssertionDigest != sha256.Sum256([]byte(raw)) || identity.ExpiresAt.IsZero() {
 		t.Fatalf("identity = %#v", identity)
@@ -55,36 +33,17 @@ func TestVerifierAuthenticatesBoundedAuth0Identity(t *testing.T) {
 }
 
 func TestVerifierDiscoversPathBasedIssuer(t *testing.T) {
-	signer := oidctest.NewSigner(t)
-	var provider *httptest.Server
-	provider = httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		issuer := provider.URL + "/realms/company"
-		switch request.URL.Path {
-		case "/realms/company/.well-known/openid-configuration":
-			_ = json.NewEncoder(response).Encode(map[string]any{
-				"issuer": issuer, "jwks_uri": provider.URL + "/jwks",
-				"authorization_endpoint": issuer + "/authorize", "token_endpoint": issuer + "/token",
-			})
-		case "/jwks":
-			_ = json.NewEncoder(response).Encode(map[string]any{"keys": []any{signer.JWK("key-1")}})
-		default:
-			http.NotFound(response, request)
-		}
-	}))
-	t.Cleanup(func() {
-		provider.CloseClientConnections()
-		provider.Close()
-	})
-	issuer := provider.URL + "/realms/company"
-	verifier, err := NewVerifier(VerifierConfig{Issuer: issuer, ClientID: "tnl-cli", HTTPClient: provider.Client()})
+	p := newTestProvider(t, "/realms/company")
+	issuer := p.issuer
+	verifier, err := NewVerifier(VerifierConfig{Issuer: issuer, ClientID: "tnl-cli", HTTPClient: p.client})
 	if err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now()
-	raw := signer.Token(t, "key-1", map[string]any{
+	raw := p.signer.Token(t, "key-1", map[string]any{
 		"iss": issuer, "sub": "subject", "aud": "tnl-cli", "iat": now.Unix(), "exp": now.Add(time.Hour).Unix(),
 	})
-	identity, err := verifier.Verify(t.Context(), raw)
+	identity, err := verifier.Verify(loginTestContext(t), raw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,26 +53,8 @@ func TestVerifierDiscoversPathBasedIssuer(t *testing.T) {
 }
 
 func TestVerifierRejectsInvalidIdentityClaims(t *testing.T) {
-	signer := oidctest.NewSigner(t)
-	var provider *httptest.Server
-	provider = httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		switch request.URL.Path {
-		case "/.well-known/openid-configuration":
-			_ = json.NewEncoder(response).Encode(map[string]any{
-				"issuer": provider.URL, "jwks_uri": provider.URL + "/jwks",
-				"authorization_endpoint": provider.URL + "/authorize", "token_endpoint": provider.URL + "/token",
-			})
-		case "/jwks":
-			_ = json.NewEncoder(response).Encode(map[string]any{"keys": []any{signer.JWK("key-1")}})
-		default:
-			http.NotFound(response, request)
-		}
-	}))
-	t.Cleanup(func() {
-		provider.CloseClientConnections()
-		provider.Close()
-	})
-	verifier, err := NewVerifier(VerifierConfig{Issuer: provider.URL, ClientID: "tnl-cli", HTTPClient: provider.Client()})
+	p := newTestProvider(t, "")
+	verifier, err := NewVerifier(VerifierConfig{Issuer: p.issuer, ClientID: "tnl-cli", HTTPClient: p.client})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,12 +70,12 @@ func TestVerifierRejectsInvalidIdentityClaims(t *testing.T) {
 		{name: "expired", claims: map[string]any{"sub": "subject", "aud": "tnl-cli", "exp": now.Add(-time.Minute).Unix()}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			claims := map[string]any{"iss": provider.URL, "iat": now.Unix(), "exp": now.Add(time.Hour).Unix()}
+			claims := map[string]any{"iss": p.issuer, "iat": now.Unix(), "exp": now.Add(time.Hour).Unix()}
 			for key, value := range test.claims {
 				claims[key] = value
 			}
-			raw := signer.Token(t, "key-1", claims)
-			if _, err := verifier.Verify(t.Context(), raw); !errors.Is(err, ErrUnauthenticated) {
+			raw := p.signer.Token(t, "key-1", claims)
+			if _, err := verifier.Verify(loginTestContext(t), raw); !errors.Is(err, ErrUnauthenticated) {
 				t.Fatalf("error = %v", err)
 			}
 		})

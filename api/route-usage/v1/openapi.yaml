@@ -77,10 +77,10 @@ components:
       type: object
       additionalProperties: false
       description: >-
-        A cumulative duration histogram. cumulative_counts uses fixed inclusive
-        upper bounds of 1ms, 5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s,
-        2.5s, 5s, 10s, 30s, 1m, 5m, 15m, 1h, 6h, 24h, 3d, 7d, and
-        +Inf, in that order.
+        A cumulative duration histogram. cumulative_counts contains these fixed
+        inclusive upper bounds, in order: 1ms, 5ms, 10ms, 25ms, 50ms, 100ms,
+        250ms, 500ms, 1s, 2.5s, 5s, 10s, 30s, 1m, 5m, 15m, 1h, 6h, 24h, 3d,
+        7d, and +Inf.
       required: [count, sum_nanoseconds, cumulative_counts]
       properties:
         count:
@@ -128,10 +128,10 @@ components:
           description: Route version measured by this report.
         team_id:
           $ref: "#/components/schemas/TeamID"
-          description: Immutable team attribution captured for this route version.
+          description: Team recorded when this route version was created.
         acting_identity_id:
           $ref: "#/components/schemas/IdentityID"
-          description: Immutable acting identity attribution captured for this route version.
+          description: Acting identity recorded when this route version was created.
         resolution:
           type: string
           enum: [minute, hour]
@@ -143,12 +143,10 @@ components:
         observed_through:
           type: string
           format: date-time
-          description: >-
-            End of known accounting coverage for this bucket. Equals the bucket
-            end when complete is true.
+          description: Latest time covered by this bucket. Equals the bucket end when complete is true.
         connection_attempts:
           $ref: "#/components/schemas/UnsignedInteger"
-          description: Connections counted immediately after an ordinary route match, before policy and capacity checks.
+          description: Connections counted after a route match and before policy and capacity checks.
         policy_denials:
           $ref: "#/components/schemas/UnsignedInteger"
           description: Matched attempts rejected by route access policy.
@@ -163,7 +161,7 @@ components:
           description: Publisher streams that entered bidirectional forwarding.
         connection_nanoseconds:
           $ref: "#/components/schemas/UnsignedInteger"
-          description: Wall-clock duration of successful streams, split across the buckets in which time elapsed.
+          description: Elapsed time for successful streams, divided among the buckets in which the time passed.
         ingress_bytes:
           $ref: "#/components/schemas/UnsignedInteger"
           description: Bytes successfully forwarded from visitors to publishers.
@@ -174,49 +172,45 @@ components:
           allOf:
             - $ref: "#/components/schemas/DurationHistogram"
           description: >-
-            Latency of publisher open calls, including failed calls, attributed
-            when the call returns. Absent when the bucket has no observations;
-            absence is undefined and is not a zero-valued observation.
+            Time taken to open a publisher stream, including failed attempts.
+            The value is recorded when the attempt ends. The field is absent,
+            rather than zero, when the bucket has no observations.
         time_to_first_publisher_byte:
           allOf:
             - $ref: "#/components/schemas/DurationHistogram"
           description: >-
-            Time from route match until the first publisher byte is forwarded
-            to the visitor, attributed when that byte is written. Absent when
-            the bucket has no observations; absence is undefined and is not a
-            zero-valued observation.
+            Time from a route match until the first publisher byte reaches the
+            visitor. The value is recorded when that byte is written. The field
+            is absent, rather than zero, when the bucket has no observations.
         successful_connection_duration:
           allOf:
             - $ref: "#/components/schemas/DurationHistogram"
           description: >-
-            End-to-end duration of successful forwarding streams, attributed
-            when a stream closes. Absent when the bucket has no observations;
-            absence is undefined and is not a zero-valued observation.
+            Total time for a successful visitor stream. The value is recorded
+            when the stream closes. The field is absent, rather than zero, when
+            the bucket has no observations.
         visitor_network_estimate:
           $ref: "#/components/schemas/UnsignedInteger"
           description: >-
             Precision-12 HyperLogLog estimate of distinct visitor networks for
-            this route and bucket. The sketch is shared by route versions, so
-            reports for the same route and bucket carry the same
-            estimate and must not be summed.
+            this route and bucket. All route versions share the same sketch, so
+            do not add estimates from reports for the same route and bucket.
         visitor_network_hll:
           type: string
           format: byte
           description: >-
-            Versioned precision-12 HyperLogLog checkpoint. Decoded bytes start
-            with version 1, precision 12, and an encoding byte. Sparse encoding
-            0 continues with a big-endian uint16 entry count followed by sorted
-            (big-endian uint16 register index, uint8 register value) entries;
-            dense encoding 1 continues with 4096 uint8 registers. Inputs are
-            IPv4 /32 or IPv6 /64 networks HMACed with a route-scoped secret
-            derived daily from the daemon's stable master secret; no source
-            identifier is included. Merge registers by their maximum rather
-            than summing estimates when aggregating reports.
+            Versioned precision-12 HyperLogLog data. After base64 decoding, the
+            bytes start with version 1, precision 12, and an encoding byte.
+            Sparse encoding 0 then contains a big-endian uint16 entry count and
+            sorted entries of a big-endian uint16 register index followed by a
+            uint8 value. Dense encoding 1 contains 4096 uint8 registers. Inputs
+            are visitor IPv4 /32 or IPv6 /64 networks HMACed with a route-scoped
+            secret that changes daily. No source address is included. When
+            combining reports, merge each register by its maximum value instead
+            of adding estimates.
         complete:
           type: boolean
-          description: >-
-            Whether accounting is complete through the bucket end without a
-            missing ingress reporting interval.
+          description: Whether accounting covers the entire bucket without a missing ingress report.
     BatchProblemCode:
       type: string
       enum: [invalid_argument, not_found, status_conflict, idempotency_conflict, internal]

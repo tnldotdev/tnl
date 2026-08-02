@@ -41,14 +41,6 @@ const (
 	OIDCLoginFlowAuthorizationCodePKCE OIDCLoginFlow = "authorization_code_pkce"
 )
 
-// RelayQUICPacketIOMode selects the UDP socket path used by relay QUIC listeners.
-type RelayQUICPacketIOMode string
-
-const (
-	RelayQUICPacketIOModeOptimized RelayQUICPacketIOMode = "optimized"
-	RelayQUICPacketIOModeBasic     RelayQUICPacketIOMode = "basic"
-)
-
 func (r Role) RunsControl() bool { return r == RoleStandalone || r == RoleControl }
 func (r Role) RunsIngress() bool { return r == RoleStandalone || r == RoleIngress }
 func (r Role) RunsRelay() bool   { return r == RoleStandalone || r == RoleRelay }
@@ -61,25 +53,24 @@ type Config struct {
 	DatabaseURL   string `name:"database-url" env:"TNLD_DATABASE_URL" help:"Pooled PostgreSQL URL used by control and standalone."`
 	MetricsListen string `name:"metrics-listen" env:"TNLD_METRICS_LISTEN" default:"127.0.0.1:9090" help:"Private Prometheus listen address; empty disables metrics."`
 
-	ControlListen         string                `name:"control-listen" env:"TNLD_CONTROL_LISTEN" help:"Public control HTTPS listen address."`
-	PrivateControlListen  string                `name:"private-control-listen" env:"TNLD_PRIVATE_CONTROL_LISTEN" help:"Private cluster-authenticated ingress and relay API listen address."`
-	IngressListen         string                `name:"ingress-listen" env:"TNLD_INGRESS_LISTEN" help:"Public visitor TCP listen address."`
-	RelayTCPListen        string                `name:"relay-tcp-listen" env:"TNLD_RELAY_TCP_LISTEN" help:"Public TLS/TCP publisher-connection listen address."`
-	RelayUDPListen        string                `name:"relay-udp-listen" env:"TNLD_RELAY_UDP_LISTEN" help:"Public QUIC publisher-connection listen address."`
-	RelayQUICPacketIOMode RelayQUICPacketIOMode `name:"relay-quic-packet-io-mode" env:"TNLD_RELAY_QUIC_PACKET_IO_MODE" default:"optimized" enum:"optimized,basic" help:"Relay QUIC UDP packet I/O mode: ${enum}."`
-	InternalRelayListen   string                `name:"internal-relay-listen" env:"TNLD_INTERNAL_RELAY_LISTEN" help:"Internal forwarding listen address."`
-	DNSServer             string                `name:"dns-server" env:"TNLD_DNS_SERVER" help:"DNS resolver used for authoritative verification; defaults to the system resolver."`
+	ControlListen        string `name:"control-listen" env:"TNLD_CONTROL_LISTEN" help:"Public control HTTPS listen address."`
+	PrivateControlListen string `name:"private-control-listen" env:"TNLD_PRIVATE_CONTROL_LISTEN" help:"Private control API listen address for ingress and relays."`
+	IngressListen        string `name:"ingress-listen" env:"TNLD_INGRESS_LISTEN" help:"Public visitor TCP listen address."`
+	RelayTCPListen       string `name:"relay-tcp-listen" env:"TNLD_RELAY_TCP_LISTEN" help:"Public TLS/TCP publisher-connection listen address."`
+	RelayUDPListen       string `name:"relay-udp-listen" env:"TNLD_RELAY_UDP_LISTEN" help:"Public QUIC publisher-connection listen address."`
+	InternalRelayListen  string `name:"internal-relay-listen" env:"TNLD_INTERNAL_RELAY_LISTEN" help:"Internal forwarding listen address."`
+	DNSServer            string `name:"dns-server" env:"TNLD_DNS_SERVER" help:"DNS resolver used to verify claimed domains. Defaults to the system resolver."`
 
 	ServerDomain            string   `name:"server-domain" env:"TNLD_SERVER_DOMAIN" help:"Infrastructure DNS suffix used to derive control, ingress, and relay hostnames."`
 	ControlHostname         string   `name:"control-hostname" env:"TNLD_CONTROL_HOSTNAME" help:"Control API hostname used by ingress and relay processes."`
 	PrivateControlAddress   string   `name:"private-control-address" env:"TNLD_PRIVATE_CONTROL_ADDRESS" help:"Optional private control host and port dialed by ingress and relay processes."`
-	ManagedDeploymentDomain string   `name:"managed-deployment-domain" env:"TNLD_MANAGED_DEPLOYMENT_DOMAIN" help:"Managed public route DNS domain."`
-	ReservedRouteNames      []string `name:"reserved-route-name" env:"TNLD_RESERVED_ROUTE_NAMES" help:"DNS labels unavailable for routes; repeat for each label."`
+	ManagedDeploymentDomain string   `name:"managed-deployment-domain" env:"TNLD_MANAGED_DEPLOYMENT_DOMAIN" help:"Server-controlled domain used for member namespaces."`
+	ReservedRouteNames      []string `name:"reserved-route-name" env:"TNLD_RESERVED_ROUTE_NAMES" help:"DNS labels that routes cannot use. Repeat for each label."`
 
-	ControlTLSCertificateFile string `name:"control-tls-certificate-file" env:"TNLD_CONTROL_TLS_CERTIFICATE_FILE" type:"path" help:"Optional static public control certificate chain override."`
-	ControlTLSPrivateKeyFile  string `name:"control-tls-private-key-file" env:"TNLD_CONTROL_TLS_PRIVATE_KEY_FILE" type:"path" help:"Optional static public control private key override."`
-	RelayTLSCertificateFile   string `name:"relay-tls-certificate-file" env:"TNLD_RELAY_TLS_CERTIFICATE_FILE" type:"path" help:"Optional static public relay certificate chain override."`
-	RelayTLSPrivateKeyFile    string `name:"relay-tls-private-key-file" env:"TNLD_RELAY_TLS_PRIVATE_KEY_FILE" type:"path" help:"Optional static public relay private key override."`
+	ControlTLSCertificateFile string `name:"control-tls-certificate-file" env:"TNLD_CONTROL_TLS_CERTIFICATE_FILE" type:"path" help:"Optional static control certificate chain."`
+	ControlTLSPrivateKeyFile  string `name:"control-tls-private-key-file" env:"TNLD_CONTROL_TLS_PRIVATE_KEY_FILE" type:"path" help:"Optional static control private key."`
+	RelayTLSCertificateFile   string `name:"relay-tls-certificate-file" env:"TNLD_RELAY_TLS_CERTIFICATE_FILE" type:"path" help:"Optional static relay transport certificate chain."`
+	RelayTLSPrivateKeyFile    string `name:"relay-tls-private-key-file" env:"TNLD_RELAY_TLS_PRIVATE_KEY_FILE" type:"path" help:"Optional static relay transport private key."`
 	ACMEDirectoryURL          string `name:"acme-directory-url" env:"TNLD_ACME_DIRECTORY_URL" help:"ACME directory URL for automatic public certificates."`
 	ACMEEmail                 string `name:"acme-email" env:"TNLD_ACME_EMAIL" help:"ACME account contact email."`
 	ACMEAcceptTerms           bool   `name:"acme-accept-terms" env:"TNLD_ACME_ACCEPT_TERMS" help:"Explicitly accept the ACME directory terms."`
@@ -89,8 +80,8 @@ type Config struct {
 	OIDCClientID         string        `name:"oidc-client-id" env:"TNLD_OIDC_CLIENT_ID" help:"OIDC client ID used by the authority."`
 	OIDCLoginFlow        OIDCLoginFlow `name:"oidc-login-flow" env:"TNLD_OIDC_LOGIN_FLOW" help:"OIDC login flow: device_code or authorization_code_pkce."`
 	OIDCScopes           []string      `name:"oidc-scope" env:"TNLD_OIDC_SCOPES" help:"OIDC scope requested by clients; repeat for each scope."`
-	LoginToken           string        `name:"login-token" env:"TNLD_LOGIN_TOKEN" help:"Bootstrap login token for the built-in administrator identity."`
-	AuthorityEndpoint    string        `name:"authority-endpoint" env:"TNLD_AUTHORITY_ENDPOINT" help:"Exact external authority HTTPS origin; defaults to the control origin."`
+	LoginToken           string        `name:"login-token" env:"TNLD_LOGIN_TOKEN" help:"Login token for the built-in administrator identity."`
+	AuthorityEndpoint    string        `name:"authority-endpoint" env:"TNLD_AUTHORITY_ENDPOINT" help:"External authority URL. Defaults to the control URL."`
 	AccessTokenLifetime  time.Duration `name:"access-token-lifetime" env:"TNLD_ACCESS_TOKEN_LIFETIME" default:"1h" help:"Lifetime of newly issued access tokens."`
 	RefreshTokenLifetime time.Duration `name:"refresh-token-lifetime" env:"TNLD_REFRESH_TOKEN_LIFETIME" default:"720h" help:"Absolute lifetime of newly issued control sessions."`
 
@@ -105,15 +96,15 @@ type Config struct {
 
 	ClusterSecret         string `name:"cluster-secret" env:"TNLD_CLUSTER_SECRET" help:"Current shared secret for private communication among control, ingress, and relays."`
 	ClusterSecretPrevious string `name:"cluster-secret-previous" env:"TNLD_CLUSTER_SECRET_PREVIOUS" help:"Previous cluster secret accepted only during rotation."`
-	HostedSecret          string `name:"hosted-secret" env:"TNLD_HOSTED_SECRET" help:"Current secret shared by control and the hosted authority."`
+	HostedSecret          string `name:"hosted-secret" env:"TNLD_HOSTED_SECRET" help:"Current secret shared by control and the external authority."`
 	HostedSecretPrevious  string `name:"hosted-secret-previous" env:"TNLD_HOSTED_SECRET_PREVIOUS" help:"Previous hosted secret accepted only during rotation."`
-	StorageKey            string `name:"storage-key" env:"TNLD_STORAGE_KEY" help:"Canonical base64url AES-256 key used to encrypt recoverable PostgreSQL secrets."`
+	StorageKey            string `name:"storage-key" env:"TNLD_STORAGE_KEY" help:"Unpadded base64url AES-256 key used to encrypt recoverable PostgreSQL secrets."`
 	StorageKeyPrevious    string `name:"storage-key-previous" env:"TNLD_STORAGE_KEY_PREVIOUS" help:"Previous storage key retained only during re-encryption."`
 
 	IngressID            string `name:"ingress-id" env:"TNLD_INGRESS_ID" help:"Stable ingress process identity."`
 	RelayServiceID       string `name:"relay-service-id" env:"TNLD_RELAY_SERVICE_ID" help:"Stable relay service identity for this relay process."`
 	RelayID              string `name:"relay-id" env:"TNLD_RELAY_ID" help:"Stable relay process identity."`
-	RelayAddress         string `name:"relay-address" env:"TNLD_RELAY_ADDRESS" help:"Stable public relay hostname and port advertised by this relay service."`
+	RelayAddress         string `name:"relay-address" env:"TNLD_RELAY_ADDRESS" help:"Relay address advertised by this relay service."`
 	InternalRelayAddress string `name:"internal-relay-address" env:"TNLD_INTERNAL_RELAY_ADDRESS" help:"Internal hostname and port advertised by this relay process."`
 
 	PublicConnectionLimit    int64         `name:"public-connection-limit" env:"TNLD_PUBLIC_CONNECTION_LIMIT" default:"20000" help:"Maximum concurrent public visitor connections."`
@@ -123,22 +114,18 @@ type Config struct {
 	RequireProxyHeader       bool          `name:"require-proxy-header" env:"TNLD_REQUIRE_PROXY_HEADER" help:"Require one trusted outer PROXY v2 header on public ingress."`
 	QUICMaxIncomingStreams   int64         `name:"quic-max-incoming-streams" env:"TNLD_QUIC_MAX_INCOMING_STREAMS" default:"4096" help:"Maximum incoming QUIC streams per publisher connection."`
 	QUICIdleTimeout          time.Duration `name:"quic-idle-timeout" env:"TNLD_QUIC_IDLE_TIMEOUT" default:"45s" help:"Publisher connection QUIC idle timeout."`
-	TunnelFallbackDelay      time.Duration `name:"tunnel-fallback-delay" env:"TNLD_TUNNEL_FALLBACK_DELAY" default:"250ms" help:"Delay before racing TLS/TCP against QUIC."`
+	TunnelFallbackDelay      time.Duration `name:"tunnel-fallback-delay" env:"TNLD_TUNNEL_FALLBACK_DELAY" default:"250ms" help:"Delay before trying TLS/TCP while QUIC connects."`
 	IngressLeaseDuration     time.Duration `name:"ingress-lease-duration" env:"TNLD_INGRESS_LEASE_DURATION" default:"30s" help:"Control-owned ingress lease duration."`
 	RelayLeaseDuration       time.Duration `name:"relay-lease-duration" env:"TNLD_RELAY_LEASE_DURATION" default:"30s" help:"Control-owned relay lease duration."`
 	LeaseRenewalInterval     time.Duration `name:"lease-renewal-interval" env:"TNLD_LEASE_RENEWAL_INTERVAL" default:"10s" help:"Ingress and relay lease renewal interval."`
 	ControlRetryInterval     time.Duration `name:"control-retry-interval" env:"TNLD_CONTROL_RETRY_INTERVAL" default:"1s" help:"Delay before retrying a transient control failure."`
-	RoutingTableWait         time.Duration `name:"routing-table-wait" env:"TNLD_ROUTING_TABLE_WAIT" default:"25s" help:"Ingress routing-table long-poll duration."`
+	RoutingTableWait         time.Duration `name:"routing-table-wait" env:"TNLD_ROUTING_TABLE_WAIT" default:"25s" help:"Maximum wait for ingress routing-table updates."`
 	DrainTimeout             time.Duration `name:"drain-timeout" env:"TNLD_DRAIN_TIMEOUT" default:"30s" help:"Graceful connection drain deadline."`
 }
 
 func (c Config) Validate() error {
 	if !c.Mode.RunsControl() && !c.Mode.RunsIngress() && !c.Mode.RunsRelay() {
 		return errors.New("mode must be standalone, control, ingress, or relay")
-	}
-	if c.RelayQUICPacketIOMode != "" && c.RelayQUICPacketIOMode != RelayQUICPacketIOModeOptimized &&
-		c.RelayQUICPacketIOMode != RelayQUICPacketIOModeBasic {
-		return errors.New("relay QUIC packet I/O mode must be optimized or basic")
 	}
 	if c.Mode.RunsControl() {
 		if err := c.validateControl(); err != nil {
@@ -489,7 +476,7 @@ func (c Config) RelayServiceHostname(relayServiceID string) string {
 	return relayServiceID + "." + c.ServerDomain
 }
 
-// PrivateControlEndpoint is the fixed private endpoint used by ingress and relay processes.
+// PrivateControlEndpoint is the fixed HTTPS endpoint used by ingress and relay processes.
 func (c Config) PrivateControlEndpoint() string {
 	hostname := c.ServerHostname()
 	if hostname == "" {

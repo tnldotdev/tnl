@@ -89,7 +89,7 @@ type IngressLease struct {
 	ReportedConnections  int64      `json:"reported_connections"`
 	RoutingTableRevision int64      `json:"routing_table_revision"`
 
-	// VisitorNetworkHashKeys Current and next UTC-date keys used only to derive route-scoped visitor-network hashes.
+	// VisitorNetworkHashKeys Keys for the current and next UTC dates. Ingress uses them only to hash visitor networks for one route.
 	VisitorNetworkHashKeys []VisitorNetworkHashKey `json:"visitor_network_hash_keys"`
 }
 
@@ -373,66 +373,66 @@ type ClientInterface interface {
 	// Corresponds with POST /internal/v1/ingresses/register (the `RegisterIngress` operationId).
 	RegisterIngress(ctx context.Context, body RegisterIngressJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DrainIngressWithBody Remove one exact ingress process from new visitor traffic
+	// DrainIngressWithBody Stop a matching ingress process from accepting new visitors
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/drain (the `DrainIngress` operationId).
 	DrainIngressWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DrainIngress Remove one exact ingress process from new visitor traffic
+	// DrainIngress Stop a matching ingress process from accepting new visitors
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/drain (the `DrainIngress` operationId).
 	DrainIngress(ctx context.Context, ingressId IngressID, body DrainIngressJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RenewIngressWithBody Renew one exact ingress lease
+	// RenewIngressWithBody Renew a matching ingress lease
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/renew (the `RenewIngress` operationId).
 	RenewIngressWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RenewIngress Renew one exact ingress lease
+	// RenewIngress Renew a matching ingress lease
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/renew (the `RenewIngress` operationId).
 	RenewIngress(ctx context.Context, ingressId IngressID, body RenewIngressJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ObserveRouteRecoveryWithBody Observe the first successful publisher byte after public recovery
+	// ObserveRouteRecoveryWithBody Record the first publisher byte after route recovery
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/route-recovery/{episode_id}/observed (the `ObserveRouteRecovery` operationId).
 	ObserveRouteRecoveryWithBody(ctx context.Context, ingressId IngressID, episodeId int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ObserveRouteRecovery Observe the first successful publisher byte after public recovery
+	// ObserveRouteRecovery Record the first publisher byte after route recovery
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/route-recovery/{episode_id}/observed (the `ObserveRouteRecovery` operationId).
 	ObserveRouteRecovery(ctx context.Context, ingressId IngressID, episodeId int64, body ObserveRouteRecoveryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetIngressRoutingTableEvents Long-poll ordered ingress routing-table events
+	// GetIngressRoutingTableEvents Wait for ordered ingress routing-table events
 	//
 	// Corresponds with GET /internal/v1/ingresses/{ingress_id}/routing-table/events (the `GetIngressRoutingTableEvents` operationId).
 	GetIngressRoutingTableEvents(ctx context.Context, ingressId IngressID, params *GetIngressRoutingTableEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetIngressRoutingTableSnapshot Load a repeatable-read ingress routing-table snapshot
+	// GetIngressRoutingTableSnapshot Load a consistent ingress routing-table snapshot
 	//
 	// Corresponds with GET /internal/v1/ingresses/{ingress_id}/routing-table/snapshot (the `GetIngressRoutingTableSnapshot` operationId).
 	GetIngressRoutingTableSnapshot(ctx context.Context, ingressId IngressID, params *GetIngressRoutingTableSnapshotParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ReportIngressUsageWithBody Ingest cumulative route usage from one ingress process run
+	// ReportIngressUsageWithBody Store cumulative route usage from one ingress process run
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/usage-reports (the `ReportIngressUsage` operationId).
 	ReportIngressUsageWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ReportIngressUsage Ingest cumulative route usage from one ingress process run
+	// ReportIngressUsage Store cumulative route usage from one ingress process run
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -474,7 +474,7 @@ func (c *Client) RegisterIngress(ctx context.Context, body RegisterIngressJSONRe
 	return c.Client.Do(req)
 }
 
-// DrainIngressWithBody Remove one exact ingress process from new visitor traffic
+// DrainIngressWithBody Stop a matching ingress process from accepting new visitors
 //
 // Takes any type of body and a specified content type.
 //
@@ -491,7 +491,7 @@ func (c *Client) DrainIngressWithBody(ctx context.Context, ingressId IngressID, 
 	return c.Client.Do(req)
 }
 
-// DrainIngress Remove one exact ingress process from new visitor traffic
+// DrainIngress Stop a matching ingress process from accepting new visitors
 //
 // Takes a body of the `application/json` content type.
 //
@@ -508,7 +508,7 @@ func (c *Client) DrainIngress(ctx context.Context, ingressId IngressID, body Dra
 	return c.Client.Do(req)
 }
 
-// RenewIngressWithBody Renew one exact ingress lease
+// RenewIngressWithBody Renew a matching ingress lease
 //
 // Takes any type of body and a specified content type.
 //
@@ -525,7 +525,7 @@ func (c *Client) RenewIngressWithBody(ctx context.Context, ingressId IngressID, 
 	return c.Client.Do(req)
 }
 
-// RenewIngress Renew one exact ingress lease
+// RenewIngress Renew a matching ingress lease
 //
 // Takes a body of the `application/json` content type.
 //
@@ -542,7 +542,7 @@ func (c *Client) RenewIngress(ctx context.Context, ingressId IngressID, body Ren
 	return c.Client.Do(req)
 }
 
-// ObserveRouteRecoveryWithBody Observe the first successful publisher byte after public recovery
+// ObserveRouteRecoveryWithBody Record the first publisher byte after route recovery
 //
 // Takes any type of body and a specified content type.
 //
@@ -559,7 +559,7 @@ func (c *Client) ObserveRouteRecoveryWithBody(ctx context.Context, ingressId Ing
 	return c.Client.Do(req)
 }
 
-// ObserveRouteRecovery Observe the first successful publisher byte after public recovery
+// ObserveRouteRecovery Record the first publisher byte after route recovery
 //
 // Takes a body of the `application/json` content type.
 //
@@ -576,7 +576,7 @@ func (c *Client) ObserveRouteRecovery(ctx context.Context, ingressId IngressID, 
 	return c.Client.Do(req)
 }
 
-// GetIngressRoutingTableEvents Long-poll ordered ingress routing-table events
+// GetIngressRoutingTableEvents Wait for ordered ingress routing-table events
 //
 // Corresponds with GET /internal/v1/ingresses/{ingress_id}/routing-table/events (the `GetIngressRoutingTableEvents` operationId).
 func (c *Client) GetIngressRoutingTableEvents(ctx context.Context, ingressId IngressID, params *GetIngressRoutingTableEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -591,7 +591,7 @@ func (c *Client) GetIngressRoutingTableEvents(ctx context.Context, ingressId Ing
 	return c.Client.Do(req)
 }
 
-// GetIngressRoutingTableSnapshot Load a repeatable-read ingress routing-table snapshot
+// GetIngressRoutingTableSnapshot Load a consistent ingress routing-table snapshot
 //
 // Corresponds with GET /internal/v1/ingresses/{ingress_id}/routing-table/snapshot (the `GetIngressRoutingTableSnapshot` operationId).
 func (c *Client) GetIngressRoutingTableSnapshot(ctx context.Context, ingressId IngressID, params *GetIngressRoutingTableSnapshotParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -606,7 +606,7 @@ func (c *Client) GetIngressRoutingTableSnapshot(ctx context.Context, ingressId I
 	return c.Client.Do(req)
 }
 
-// ReportIngressUsageWithBody Ingest cumulative route usage from one ingress process run
+// ReportIngressUsageWithBody Store cumulative route usage from one ingress process run
 //
 // Takes any type of body and a specified content type.
 //
@@ -623,7 +623,7 @@ func (c *Client) ReportIngressUsageWithBody(ctx context.Context, ingressId Ingre
 	return c.Client.Do(req)
 }
 
-// ReportIngressUsage Ingest cumulative route usage from one ingress process run
+// ReportIngressUsage Store cumulative route usage from one ingress process run
 //
 // Takes a body of the `application/json` content type.
 //
@@ -1095,70 +1095,70 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /internal/v1/ingresses/register (the `RegisterIngress` operationId).
 	RegisterIngressWithResponse(ctx context.Context, body RegisterIngressJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterIngressResponse, error)
 
-	// DrainIngressWithBodyWithResponse Remove one exact ingress process from new visitor traffic
+	// DrainIngressWithBodyWithResponse Stop a matching ingress process from accepting new visitors
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/drain (the `DrainIngress` operationId).
 	DrainIngressWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DrainIngressResponse, error)
 
-	// DrainIngressWithResponse Remove one exact ingress process from new visitor traffic
+	// DrainIngressWithResponse Stop a matching ingress process from accepting new visitors
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/drain (the `DrainIngress` operationId).
 	DrainIngressWithResponse(ctx context.Context, ingressId IngressID, body DrainIngressJSONRequestBody, reqEditors ...RequestEditorFn) (*DrainIngressResponse, error)
 
-	// RenewIngressWithBodyWithResponse Renew one exact ingress lease
+	// RenewIngressWithBodyWithResponse Renew a matching ingress lease
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/renew (the `RenewIngress` operationId).
 	RenewIngressWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenewIngressResponse, error)
 
-	// RenewIngressWithResponse Renew one exact ingress lease
+	// RenewIngressWithResponse Renew a matching ingress lease
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/renew (the `RenewIngress` operationId).
 	RenewIngressWithResponse(ctx context.Context, ingressId IngressID, body RenewIngressJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewIngressResponse, error)
 
-	// ObserveRouteRecoveryWithBodyWithResponse Observe the first successful publisher byte after public recovery
+	// ObserveRouteRecoveryWithBodyWithResponse Record the first publisher byte after route recovery
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/route-recovery/{episode_id}/observed (the `ObserveRouteRecovery` operationId).
 	ObserveRouteRecoveryWithBodyWithResponse(ctx context.Context, ingressId IngressID, episodeId int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ObserveRouteRecoveryResponse, error)
 
-	// ObserveRouteRecoveryWithResponse Observe the first successful publisher byte after public recovery
+	// ObserveRouteRecoveryWithResponse Record the first publisher byte after route recovery
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/route-recovery/{episode_id}/observed (the `ObserveRouteRecovery` operationId).
 	ObserveRouteRecoveryWithResponse(ctx context.Context, ingressId IngressID, episodeId int64, body ObserveRouteRecoveryJSONRequestBody, reqEditors ...RequestEditorFn) (*ObserveRouteRecoveryResponse, error)
 
-	// GetIngressRoutingTableEventsWithResponse Long-poll ordered ingress routing-table events
+	// GetIngressRoutingTableEventsWithResponse Wait for ordered ingress routing-table events
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /internal/v1/ingresses/{ingress_id}/routing-table/events (the `GetIngressRoutingTableEvents` operationId).
 	GetIngressRoutingTableEventsWithResponse(ctx context.Context, ingressId IngressID, params *GetIngressRoutingTableEventsParams, reqEditors ...RequestEditorFn) (*GetIngressRoutingTableEventsResponse, error)
 
-	// GetIngressRoutingTableSnapshotWithResponse Load a repeatable-read ingress routing-table snapshot
+	// GetIngressRoutingTableSnapshotWithResponse Load a consistent ingress routing-table snapshot
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /internal/v1/ingresses/{ingress_id}/routing-table/snapshot (the `GetIngressRoutingTableSnapshot` operationId).
 	GetIngressRoutingTableSnapshotWithResponse(ctx context.Context, ingressId IngressID, params *GetIngressRoutingTableSnapshotParams, reqEditors ...RequestEditorFn) (*GetIngressRoutingTableSnapshotResponse, error)
 
-	// ReportIngressUsageWithBodyWithResponse Ingest cumulative route usage from one ingress process run
+	// ReportIngressUsageWithBodyWithResponse Store cumulative route usage from one ingress process run
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/usage-reports (the `ReportIngressUsage` operationId).
 	ReportIngressUsageWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReportIngressUsageResponse, error)
 
-	// ReportIngressUsageWithResponse Ingest cumulative route usage from one ingress process run
+	// ReportIngressUsageWithResponse Store cumulative route usage from one ingress process run
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -1528,7 +1528,7 @@ func (c *ClientWithResponses) RegisterIngressWithResponse(ctx context.Context, b
 	return ParseRegisterIngressResponse(rsp)
 }
 
-// DrainIngressWithBodyWithResponse Remove one exact ingress process from new visitor traffic
+// DrainIngressWithBodyWithResponse Stop a matching ingress process from accepting new visitors
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -1541,7 +1541,7 @@ func (c *ClientWithResponses) DrainIngressWithBodyWithResponse(ctx context.Conte
 	return ParseDrainIngressResponse(rsp)
 }
 
-// DrainIngressWithResponse Remove one exact ingress process from new visitor traffic
+// DrainIngressWithResponse Stop a matching ingress process from accepting new visitors
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -1554,7 +1554,7 @@ func (c *ClientWithResponses) DrainIngressWithResponse(ctx context.Context, ingr
 	return ParseDrainIngressResponse(rsp)
 }
 
-// RenewIngressWithBodyWithResponse Renew one exact ingress lease
+// RenewIngressWithBodyWithResponse Renew a matching ingress lease
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -1567,7 +1567,7 @@ func (c *ClientWithResponses) RenewIngressWithBodyWithResponse(ctx context.Conte
 	return ParseRenewIngressResponse(rsp)
 }
 
-// RenewIngressWithResponse Renew one exact ingress lease
+// RenewIngressWithResponse Renew a matching ingress lease
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -1580,7 +1580,7 @@ func (c *ClientWithResponses) RenewIngressWithResponse(ctx context.Context, ingr
 	return ParseRenewIngressResponse(rsp)
 }
 
-// ObserveRouteRecoveryWithBodyWithResponse Observe the first successful publisher byte after public recovery
+// ObserveRouteRecoveryWithBodyWithResponse Record the first publisher byte after route recovery
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -1593,7 +1593,7 @@ func (c *ClientWithResponses) ObserveRouteRecoveryWithBodyWithResponse(ctx conte
 	return ParseObserveRouteRecoveryResponse(rsp)
 }
 
-// ObserveRouteRecoveryWithResponse Observe the first successful publisher byte after public recovery
+// ObserveRouteRecoveryWithResponse Record the first publisher byte after route recovery
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -1606,7 +1606,7 @@ func (c *ClientWithResponses) ObserveRouteRecoveryWithResponse(ctx context.Conte
 	return ParseObserveRouteRecoveryResponse(rsp)
 }
 
-// GetIngressRoutingTableEventsWithResponse Long-poll ordered ingress routing-table events
+// GetIngressRoutingTableEventsWithResponse Wait for ordered ingress routing-table events
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -1619,7 +1619,7 @@ func (c *ClientWithResponses) GetIngressRoutingTableEventsWithResponse(ctx conte
 	return ParseGetIngressRoutingTableEventsResponse(rsp)
 }
 
-// GetIngressRoutingTableSnapshotWithResponse Load a repeatable-read ingress routing-table snapshot
+// GetIngressRoutingTableSnapshotWithResponse Load a consistent ingress routing-table snapshot
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -1632,7 +1632,7 @@ func (c *ClientWithResponses) GetIngressRoutingTableSnapshotWithResponse(ctx con
 	return ParseGetIngressRoutingTableSnapshotResponse(rsp)
 }
 
-// ReportIngressUsageWithBodyWithResponse Ingest cumulative route usage from one ingress process run
+// ReportIngressUsageWithBodyWithResponse Store cumulative route usage from one ingress process run
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -1645,7 +1645,7 @@ func (c *ClientWithResponses) ReportIngressUsageWithBodyWithResponse(ctx context
 	return ParseReportIngressUsageResponse(rsp)
 }
 
-// ReportIngressUsageWithResponse Ingest cumulative route usage from one ingress process run
+// ReportIngressUsageWithResponse Store cumulative route usage from one ingress process run
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -1897,22 +1897,22 @@ type ServerInterface interface {
 	// RegisterIngress Register one ingress process run
 	// (POST /internal/v1/ingresses/register)
 	RegisterIngress(w http.ResponseWriter, r *http.Request)
-	// DrainIngress Remove one exact ingress process from new visitor traffic
+	// DrainIngress Stop a matching ingress process from accepting new visitors
 	// (POST /internal/v1/ingresses/{ingress_id}/drain)
 	DrainIngress(w http.ResponseWriter, r *http.Request, ingressId IngressID)
-	// RenewIngress Renew one exact ingress lease
+	// RenewIngress Renew a matching ingress lease
 	// (POST /internal/v1/ingresses/{ingress_id}/renew)
 	RenewIngress(w http.ResponseWriter, r *http.Request, ingressId IngressID)
-	// ObserveRouteRecovery Observe the first successful publisher byte after public recovery
+	// ObserveRouteRecovery Record the first publisher byte after route recovery
 	// (POST /internal/v1/ingresses/{ingress_id}/route-recovery/{episode_id}/observed)
 	ObserveRouteRecovery(w http.ResponseWriter, r *http.Request, ingressId IngressID, episodeId int64)
-	// GetIngressRoutingTableEvents Long-poll ordered ingress routing-table events
+	// GetIngressRoutingTableEvents Wait for ordered ingress routing-table events
 	// (GET /internal/v1/ingresses/{ingress_id}/routing-table/events)
 	GetIngressRoutingTableEvents(w http.ResponseWriter, r *http.Request, ingressId IngressID, params GetIngressRoutingTableEventsParams)
-	// GetIngressRoutingTableSnapshot Load a repeatable-read ingress routing-table snapshot
+	// GetIngressRoutingTableSnapshot Load a consistent ingress routing-table snapshot
 	// (GET /internal/v1/ingresses/{ingress_id}/routing-table/snapshot)
 	GetIngressRoutingTableSnapshot(w http.ResponseWriter, r *http.Request, ingressId IngressID, params GetIngressRoutingTableSnapshotParams)
-	// ReportIngressUsage Ingest cumulative route usage from one ingress process run
+	// ReportIngressUsage Store cumulative route usage from one ingress process run
 	// (POST /internal/v1/ingresses/{ingress_id}/usage-reports)
 	ReportIngressUsage(w http.ResponseWriter, r *http.Request, ingressId IngressID)
 }
@@ -2331,576 +2331,4 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/route-recovery/{episode_id}/observed", wrapper.ObserveRouteRecovery)
 
 	return m
-}
-
-type ProblemApplicationProblemPlusJSONResponse Problem
-
-type RegisterIngressRequestObject struct {
-	Body *RegisterIngressJSONRequestBody
-}
-
-type RegisterIngressResponseObject interface {
-	VisitRegisterIngressResponse(w http.ResponseWriter) error
-}
-
-type RegisterIngress200JSONResponse IngressLease
-
-func (response RegisterIngress200JSONResponse) VisitRegisterIngressResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type RegisterIngressdefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response RegisterIngressdefaultApplicationProblemPlusJSONResponse) VisitRegisterIngressResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type DrainIngressRequestObject struct {
-	IngressId IngressID `json:"ingress_id"`
-	Body      *DrainIngressJSONRequestBody
-}
-
-type DrainIngressResponseObject interface {
-	VisitDrainIngressResponse(w http.ResponseWriter) error
-}
-
-type DrainIngress200JSONResponse IngressLease
-
-func (response DrainIngress200JSONResponse) VisitDrainIngressResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type DrainIngressdefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response DrainIngressdefaultApplicationProblemPlusJSONResponse) VisitDrainIngressResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type RenewIngressRequestObject struct {
-	IngressId IngressID `json:"ingress_id"`
-	Body      *RenewIngressJSONRequestBody
-}
-
-type RenewIngressResponseObject interface {
-	VisitRenewIngressResponse(w http.ResponseWriter) error
-}
-
-type RenewIngress200JSONResponse IngressLease
-
-func (response RenewIngress200JSONResponse) VisitRenewIngressResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type RenewIngressdefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response RenewIngressdefaultApplicationProblemPlusJSONResponse) VisitRenewIngressResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type ObserveRouteRecoveryRequestObject struct {
-	IngressId IngressID `json:"ingress_id"`
-	EpisodeId int64     `json:"episode_id"`
-	Body      *ObserveRouteRecoveryJSONRequestBody
-}
-
-type ObserveRouteRecoveryResponseObject interface {
-	VisitObserveRouteRecoveryResponse(w http.ResponseWriter) error
-}
-
-type ObserveRouteRecovery200JSONResponse RouteRecoveryObservation
-
-func (response ObserveRouteRecovery200JSONResponse) VisitObserveRouteRecoveryResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type ObserveRouteRecoverydefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response ObserveRouteRecoverydefaultApplicationProblemPlusJSONResponse) VisitObserveRouteRecoveryResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetIngressRoutingTableEventsRequestObject struct {
-	IngressId IngressID `json:"ingress_id"`
-	Params    GetIngressRoutingTableEventsParams
-}
-
-type GetIngressRoutingTableEventsResponseObject interface {
-	VisitGetIngressRoutingTableEventsResponse(w http.ResponseWriter) error
-}
-
-type GetIngressRoutingTableEvents200JSONResponse IngressRoutingTablePage
-
-func (response GetIngressRoutingTableEvents200JSONResponse) VisitGetIngressRoutingTableEventsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetIngressRoutingTableEvents409ApplicationProblemPlusJSONResponse Problem
-
-func (response GetIngressRoutingTableEvents409ApplicationProblemPlusJSONResponse) VisitGetIngressRoutingTableEventsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(409)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetIngressRoutingTableEventsdefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response GetIngressRoutingTableEventsdefaultApplicationProblemPlusJSONResponse) VisitGetIngressRoutingTableEventsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetIngressRoutingTableSnapshotRequestObject struct {
-	IngressId IngressID `json:"ingress_id"`
-	Params    GetIngressRoutingTableSnapshotParams
-}
-
-type GetIngressRoutingTableSnapshotResponseObject interface {
-	VisitGetIngressRoutingTableSnapshotResponse(w http.ResponseWriter) error
-}
-
-type GetIngressRoutingTableSnapshot200JSONResponse IngressRoutingTableSnapshot
-
-func (response GetIngressRoutingTableSnapshot200JSONResponse) VisitGetIngressRoutingTableSnapshotResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetIngressRoutingTableSnapshotdefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response GetIngressRoutingTableSnapshotdefaultApplicationProblemPlusJSONResponse) VisitGetIngressRoutingTableSnapshotResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type ReportIngressUsageRequestObject struct {
-	IngressId IngressID `json:"ingress_id"`
-	Body      *ReportIngressUsageJSONRequestBody
-}
-
-type ReportIngressUsageResponseObject interface {
-	VisitReportIngressUsageResponse(w http.ResponseWriter) error
-}
-
-type ReportIngressUsage204Response struct {
-}
-
-func (response ReportIngressUsage204Response) VisitReportIngressUsageResponse(w http.ResponseWriter) error {
-	w.WriteHeader(204)
-	return nil
-}
-
-type ReportIngressUsagedefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response ReportIngressUsagedefaultApplicationProblemPlusJSONResponse) VisitReportIngressUsageResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-// StrictServerInterface represents all server handlers.
-type StrictServerInterface interface {
-	// RegisterIngress Register one ingress process run
-	// (POST /internal/v1/ingresses/register)
-	RegisterIngress(ctx context.Context, request RegisterIngressRequestObject) (RegisterIngressResponseObject, error)
-	// DrainIngress Remove one exact ingress process from new visitor traffic
-	// (POST /internal/v1/ingresses/{ingress_id}/drain)
-	DrainIngress(ctx context.Context, request DrainIngressRequestObject) (DrainIngressResponseObject, error)
-	// RenewIngress Renew one exact ingress lease
-	// (POST /internal/v1/ingresses/{ingress_id}/renew)
-	RenewIngress(ctx context.Context, request RenewIngressRequestObject) (RenewIngressResponseObject, error)
-	// ObserveRouteRecovery Observe the first successful publisher byte after public recovery
-	// (POST /internal/v1/ingresses/{ingress_id}/route-recovery/{episode_id}/observed)
-	ObserveRouteRecovery(ctx context.Context, request ObserveRouteRecoveryRequestObject) (ObserveRouteRecoveryResponseObject, error)
-	// GetIngressRoutingTableEvents Long-poll ordered ingress routing-table events
-	// (GET /internal/v1/ingresses/{ingress_id}/routing-table/events)
-	GetIngressRoutingTableEvents(ctx context.Context, request GetIngressRoutingTableEventsRequestObject) (GetIngressRoutingTableEventsResponseObject, error)
-	// GetIngressRoutingTableSnapshot Load a repeatable-read ingress routing-table snapshot
-	// (GET /internal/v1/ingresses/{ingress_id}/routing-table/snapshot)
-	GetIngressRoutingTableSnapshot(ctx context.Context, request GetIngressRoutingTableSnapshotRequestObject) (GetIngressRoutingTableSnapshotResponseObject, error)
-	// ReportIngressUsage Ingest cumulative route usage from one ingress process run
-	// (POST /internal/v1/ingresses/{ingress_id}/usage-reports)
-	ReportIngressUsage(ctx context.Context, request ReportIngressUsageRequestObject) (ReportIngressUsageResponseObject, error)
-}
-
-type StrictHandlerFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error)
-type StrictMiddlewareFunc func(f StrictHandlerFunc, operationID string) StrictHandlerFunc
-
-type StrictHTTPServerOptions struct {
-	RequestErrorHandlerFunc  func(w http.ResponseWriter, r *http.Request, err error)
-	ResponseErrorHandlerFunc func(w http.ResponseWriter, r *http.Request, err error)
-}
-
-func NewStrictHandler(ssi StrictServerInterface, middlewares []StrictMiddlewareFunc) ServerInterface {
-	return &strictHandler{ssi: ssi, middlewares: middlewares, options: StrictHTTPServerOptions{
-		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-		},
-		ResponseErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		},
-	}}
-}
-
-func NewStrictHandlerWithOptions(ssi StrictServerInterface, middlewares []StrictMiddlewareFunc, options StrictHTTPServerOptions) ServerInterface {
-	if options.RequestErrorHandlerFunc == nil {
-		options.RequestErrorHandlerFunc = func(w http.ResponseWriter, r *http.Request, err error) {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-		}
-	}
-	if options.ResponseErrorHandlerFunc == nil {
-		options.ResponseErrorHandlerFunc = func(w http.ResponseWriter, r *http.Request, err error) {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-	}
-	return &strictHandler{ssi: ssi, middlewares: middlewares, options: options}
-}
-
-type strictHandler struct {
-	ssi         StrictServerInterface
-	middlewares []StrictMiddlewareFunc
-	options     StrictHTTPServerOptions
-}
-
-// RegisterIngress operation middleware
-func (sh *strictHandler) RegisterIngress(w http.ResponseWriter, r *http.Request) {
-	var request RegisterIngressRequestObject
-
-	var body RegisterIngressJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.RegisterIngress(ctx, request.(RegisterIngressRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "RegisterIngress")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(RegisterIngressResponseObject); ok {
-		if err := validResponse.VisitRegisterIngressResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// DrainIngress operation middleware
-func (sh *strictHandler) DrainIngress(w http.ResponseWriter, r *http.Request, ingressId IngressID) {
-	var request DrainIngressRequestObject
-
-	request.IngressId = ingressId
-
-	var body DrainIngressJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.DrainIngress(ctx, request.(DrainIngressRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "DrainIngress")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(DrainIngressResponseObject); ok {
-		if err := validResponse.VisitDrainIngressResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// RenewIngress operation middleware
-func (sh *strictHandler) RenewIngress(w http.ResponseWriter, r *http.Request, ingressId IngressID) {
-	var request RenewIngressRequestObject
-
-	request.IngressId = ingressId
-
-	var body RenewIngressJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.RenewIngress(ctx, request.(RenewIngressRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "RenewIngress")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(RenewIngressResponseObject); ok {
-		if err := validResponse.VisitRenewIngressResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// ObserveRouteRecovery operation middleware
-func (sh *strictHandler) ObserveRouteRecovery(w http.ResponseWriter, r *http.Request, ingressId IngressID, episodeId int64) {
-	var request ObserveRouteRecoveryRequestObject
-
-	request.IngressId = ingressId
-	request.EpisodeId = episodeId
-
-	var body ObserveRouteRecoveryJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.ObserveRouteRecovery(ctx, request.(ObserveRouteRecoveryRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "ObserveRouteRecovery")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(ObserveRouteRecoveryResponseObject); ok {
-		if err := validResponse.VisitObserveRouteRecoveryResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// GetIngressRoutingTableEvents operation middleware
-func (sh *strictHandler) GetIngressRoutingTableEvents(w http.ResponseWriter, r *http.Request, ingressId IngressID, params GetIngressRoutingTableEventsParams) {
-	var request GetIngressRoutingTableEventsRequestObject
-
-	request.IngressId = ingressId
-	request.Params = params
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.GetIngressRoutingTableEvents(ctx, request.(GetIngressRoutingTableEventsRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "GetIngressRoutingTableEvents")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(GetIngressRoutingTableEventsResponseObject); ok {
-		if err := validResponse.VisitGetIngressRoutingTableEventsResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// GetIngressRoutingTableSnapshot operation middleware
-func (sh *strictHandler) GetIngressRoutingTableSnapshot(w http.ResponseWriter, r *http.Request, ingressId IngressID, params GetIngressRoutingTableSnapshotParams) {
-	var request GetIngressRoutingTableSnapshotRequestObject
-
-	request.IngressId = ingressId
-	request.Params = params
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.GetIngressRoutingTableSnapshot(ctx, request.(GetIngressRoutingTableSnapshotRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "GetIngressRoutingTableSnapshot")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(GetIngressRoutingTableSnapshotResponseObject); ok {
-		if err := validResponse.VisitGetIngressRoutingTableSnapshotResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// ReportIngressUsage operation middleware
-func (sh *strictHandler) ReportIngressUsage(w http.ResponseWriter, r *http.Request, ingressId IngressID) {
-	var request ReportIngressUsageRequestObject
-
-	request.IngressId = ingressId
-
-	var body ReportIngressUsageJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.ReportIngressUsage(ctx, request.(ReportIngressUsageRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "ReportIngressUsage")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(ReportIngressUsageResponseObject); ok {
-		if err := validResponse.VisitReportIngressUsageResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
 }

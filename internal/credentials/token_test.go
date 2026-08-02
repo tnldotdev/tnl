@@ -130,18 +130,6 @@ func TestInvitationTokenRoundTrip(t *testing.T) {
 	if _, err := ParseInvitationToken(InvitationToken("not-an-invitation")); !errors.Is(err, ErrInvalidInvitationToken) {
 		t.Fatalf("invalid invitation token error = %v", err)
 	}
-	derived, derivedHash, err := DeriveInvitationToken(make([]byte, 32), "team_1/invitation_1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	repeated, repeatedHash, err := DeriveInvitationToken(make([]byte, 32), "team_1/invitation_1")
-	if err != nil || repeated != derived || repeatedHash != derivedHash {
-		t.Fatalf("repeated derived invitation token = %q, %x, %v", repeated, repeatedHash, err)
-	}
-	other, _, err := DeriveInvitationToken(make([]byte, 32), "team_1/invitation_2")
-	if err != nil || other == derived {
-		t.Fatalf("other derived invitation token = %q, %v", other, err)
-	}
 }
 
 func TestDataPlaneTokenClasses(t *testing.T) {
@@ -161,21 +149,6 @@ func TestDataPlaneTokenClasses(t *testing.T) {
 	}
 	if _, err := ParsePublisherConnectionCredential(PublisherConnectionCredential(session)); !errors.Is(err, ErrInvalidPublisherConnectionCredential) {
 		t.Fatalf("session as publisher connection error = %v", err)
-	}
-	derivedConnection, derivedHash, err := DerivePublisherConnectionCredential(session, "connection_1/1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	repeatedConnection, repeatedHash, err := DerivePublisherConnectionCredential(session, "connection_1/1")
-	if err != nil || repeatedConnection != derivedConnection || repeatedHash != derivedHash {
-		t.Fatalf("repeated derived publisher connection = %q, %x, %v", repeatedConnection, repeatedHash, err)
-	}
-	otherConnection, _, err := DerivePublisherConnectionCredential(session, "connection_2/1")
-	if err != nil || otherConnection == derivedConnection {
-		t.Fatalf("other derived publisher connection = %q, %v", otherConnection, err)
-	}
-	if parsedHash, err := ParsePublisherConnectionCredential(derivedConnection); err != nil || parsedHash != derivedHash {
-		t.Fatalf("derived publisher connection parse = %x, %v", parsedHash, err)
 	}
 }
 

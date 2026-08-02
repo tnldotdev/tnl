@@ -46,7 +46,6 @@ type relayProcessSettings struct {
 	internalAddress        string
 	tcpListen              string
 	udpListen              string
-	quicPacketIOMode       tnldconfig.RelayQUICPacketIOMode
 	quicIdleTimeout        time.Duration
 	quicMaxIncomingStreams int64
 	runtime                relaySettings
@@ -63,7 +62,6 @@ func relayProcessSettingsFrom(cfg tnldconfig.Config) relayProcessSettings {
 		internalAddress:        cfg.InternalRelayAddress,
 		tcpListen:              cfg.RelayTCPListen,
 		udpListen:              cfg.RelayUDPListen,
-		quicPacketIOMode:       cfg.RelayQUICPacketIOMode,
 		quicIdleTimeout:        cfg.QUICIdleTimeout,
 		quicMaxIncomingStreams: cfg.QUICMaxIncomingStreams,
 		runtime:                relaySettingsFrom(cfg),
@@ -107,12 +105,9 @@ func (d *daemon) startRelay(ctx context.Context, settings relayProcessSettings, 
 		return fmt.Errorf("listen for TLS/TCP publisher connections: %w", err)
 	}
 	runtime.tcpListener = tcpListener
-	udpListener, err := muxsession.ListenQUIC(settings.udpListen, runtime.transportTLS, muxsession.QUICConfig{
-		Config: &quic.Config{
-			MaxIdleTimeout: settings.quicIdleTimeout, MaxIncomingStreams: settings.quicMaxIncomingStreams,
-		},
-		PacketIOMode: muxsession.QUICPacketIOMode(settings.quicPacketIOMode),
-	})
+	udpListener, err := muxsession.ListenQUIC(settings.udpListen, runtime.transportTLS, muxsession.QUICConfig{Config: &quic.Config{
+		MaxIdleTimeout: settings.quicIdleTimeout, MaxIncomingStreams: settings.quicMaxIncomingStreams,
+	}})
 	if err != nil {
 		return fmt.Errorf("listen for QUIC publisher connections: %w", err)
 	}
@@ -266,12 +261,16 @@ func relayLeaseMetricState(lease relayv1.RelayLease) string {
 	return "active"
 }
 
-func newRelayControlClient(endpoint, clusterSecret string, base *http.Client, dialAddress string) (*relayv1.ClientWithResponses, error) {
+func newRelayControlClient(endpoint, clusterSecret string, base *http.Client, dialAddress string) (relay.ControlClient, error) {
 	client, err := newPrivateServiceHTTPClient(base, clusterSecret, dialAddress)
 	if err != nil {
 		return nil, err
 	}
-	return relayv1.NewClientWithResponses(endpoint, relayv1.WithHTTPClient(client))
+	generated, err := relayv1.NewClientWithResponses(endpoint, relayv1.WithHTTPClient(client))
+	if err != nil {
+		return nil, err
+	}
+	return relay.NewHTTPControlClient(generated)
 }
 
 type sessionAcceptFunc func(context.Context, muxsession.Session) error

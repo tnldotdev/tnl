@@ -8,6 +8,13 @@ export default defineConfig({
     process.env.TNL_TEST_COVERAGE === "1"
       ? {
           alias: [
+            // Internal tests normally exercise dist too; coverage deliberately uses the
+            // same source graph as the public aliases below. Framework subprocesses
+            // still resolve the built package, outside Vitest's coverage instrumentation.
+            {
+              find: /^\.\/dist\/internal\/(dev|runtime)\.js$/,
+              replacement: `${sourceDirectory}internal/$1.ts`,
+            },
             {
               find: /^@tnldotdev\/tnl\/next$/,
               replacement: `${sourceDirectory}next.ts`,
@@ -35,6 +42,7 @@ export default defineConfig({
     globals: false,
     hookTimeout: 10_000,
     include: [
+      "packages/tnl/test-helper.test.ts",
       "packages/tnl/internal-dev.test.ts",
       "packages/tnl/next.test.ts",
       "packages/tnl/runtime.test.ts",
@@ -44,6 +52,7 @@ export default defineConfig({
     mockReset: true,
     pool: "forks",
     restoreMocks: true,
+    setupFiles: ["packages/tnl/test-helper/environment-setup.ts"],
     testTimeout: 10_000,
     unstubEnvs: true,
     unstubGlobals: true,

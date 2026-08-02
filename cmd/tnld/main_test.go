@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/buildinfo"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
 )
@@ -17,7 +18,7 @@ func TestRunVersion(t *testing.T) {
 	if err := run(t.Context(), []string{"version"}, &output); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(output.String(), "tnld ") {
+	if output.String() != buildinfo.Line("tnld")+"\n" {
 		t.Fatalf("version output = %q", output.String())
 	}
 }
@@ -35,7 +36,11 @@ func TestRunLoginToken(t *testing.T) {
 	if err := run(t.Context(), []string{"login-token"}, &output); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := credentials.ParseLoginToken(credentials.LoginToken(strings.TrimSpace(output.String()))); err != nil {
+	raw := output.String()
+	if !strings.HasSuffix(raw, "\n") || strings.Count(raw, "\n") != 1 || strings.TrimSpace(raw) != strings.TrimSuffix(raw, "\n") {
+		t.Fatalf("credential output is not one raw value: %q", raw)
+	}
+	if _, err := credentials.ParseLoginToken(credentials.LoginToken(strings.TrimSuffix(raw, "\n"))); err != nil {
 		t.Fatalf("generated login token: %v", err)
 	}
 }

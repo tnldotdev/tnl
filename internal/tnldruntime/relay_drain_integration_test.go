@@ -2,10 +2,14 @@ package tnldruntime
 
 import (
 	"bufio"
+	"context"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -28,10 +32,14 @@ func TestIntegrationRelayDrainPreservesActiveVisitorStream(t *testing.T) {
 		_, _ = io.WriteString(response, "first\n")
 		response.(http.Flusher).Flush()
 		close(streamStarted)
-		<-releaseStream
+		select {
+		case <-releaseStream:
+		case <-request.Context().Done():
+			return
+		}
 		_, _ = io.WriteString(response, "second\n")
 	}))
-	t.Cleanup(target.Close)
+	cleanupIntegrationHTTPServer(t, target, fixture.owner)
 	t.Cleanup(release)
 	quic, tcp := fixture.connectors()
 	publisher := fixture.startPublisher(t, target.URL, quic, tcp)
@@ -53,11 +61,11 @@ func TestIntegrationRelayDrainPreservesActiveVisitorStream(t *testing.T) {
 	}
 	select {
 	case <-streamStarted:
-	default:
+	case <-time.After(time.Second):
 		t.Fatal("local service did not start the visitor stream")
 	}
 
-	stored, found, err := fixture.identity.state.ControlSession(t.Context())
+	stored, found, err := fixture.identity.state.ControlSession(integrationOperationContext(t))
 	if err != nil || !found {
 		t.Fatalf("read control session: found %t, error %v", found, err)
 	}
@@ -68,8 +76,8 @@ func TestIntegrationRelayDrainPreservesActiveVisitorStream(t *testing.T) {
 		t.Fatal(err)
 	}
 	var active controlv1.AdminRelayLease
-	waitForIntegrationCondition(t, 10*time.Second, func() (bool, error) {
-		page, err := admin.AdminListRelays(t.Context())
+	waitForIntegrationCondition(t, 10*time.Second, func(ctx context.Context) (bool, error) {
+		page, err := admin.AdminListRelays(ctx)
 		if err != nil {
 			return false, err
 		}
@@ -82,7 +90,7 @@ func TestIntegrationRelayDrainPreservesActiveVisitorStream(t *testing.T) {
 		return false, nil
 	})
 	deadline := time.Now().Add(5 * time.Second).UTC()
-	draining, err := admin.AdminDrainRelay(t.Context(), string(active.RelayId), controlv1.AdminDrainRelayRequest{
+	draining, err := admin.AdminDrainRelay(integrationOperationContext(t), string(active.RelayId), controlv1.AdminDrainRelayRequest{
 		RelayRunId: active.RelayRunId, RelayLeaseRevision: active.RelayLeaseRevision, Deadline: deadline,
 	})
 	if err != nil {
@@ -100,11 +108,22 @@ func TestIntegrationRelayDrainPreservesActiveVisitorStream(t *testing.T) {
 		t.Fatalf("visitor after relay drain = %s, %q", probe.Status, body)
 	}
 
-	drainedProcess := fixture.relayA.process
+	drainedRelay := fixture.relayA
 	if string(active.RelayId) == fixture.relayB.config.RelayID {
-		drainedProcess = fixture.relayB.process
+		drainedRelay = fixture.relayB
 	}
+	drainedProcess := drainedRelay.process
 	drainedProcess.cancel()
+	// Listener closure acknowledges that local shutdown reached the drain phase;
+	// a scheduler delay after cancel is not evidence that an active stream lives.
+	waitForIntegrationCondition(t, time.Second, func(ctx context.Context) (bool, error) {
+		connection, err := new(net.Dialer).DialContext(ctx, "tcp", drainedRelay.config.RelayTCPListen)
+		if err == nil {
+			_ = connection.Close()
+			return false, nil
+		}
+		return errors.Is(err, syscall.ECONNREFUSED), err
+	})
 	select {
 	case <-drainedProcess.done:
 		t.Fatal("relay process stopped before its active visitor stream completed")

@@ -9,7 +9,6 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/alecthomas/kong"
 	"github.com/tnldotdev/tnl/internal/buildinfo"
@@ -20,17 +19,17 @@ import (
 
 type cli struct {
 	ConfigPath  string         `name:"config" help:"Use an explicit project configuration file." type:"path"`
-	NoConfig    bool           `name:"no-config" help:"Disable project configuration discovery."`
+	NoConfig    bool           `name:"no-config" help:"Do not search for project configuration."`
 	NoTelemetry bool           `name:"no-telemetry" env:"TNL_NO_TELEMETRY" help:"Disable pseudonymous usage telemetry."`
 	Init        initCommand    `cmd:"" help:"Set up tnl for the current project." group:"start"`
-	Dev         devCommand     `cmd:"" help:"Run and publish one development service; pass a command after --." group:"start"`
+	Dev         devCommand     `cmd:"" help:"Run and publish one development service. Pass its command after --." group:"start"`
 	Publish     publishCommand `cmd:"" help:"Publish one local HTTP service." group:"start"`
-	Status      statusCommand  `cmd:"" help:"Show this project's local tunnels." group:"start"`
+	Status      statusCommand  `cmd:"" help:"Show local tunnels for this project." group:"start"`
 	Login       loginCommand   `cmd:"" help:"Authenticate to a tnl server." group:"start"`
 	Config      configCommand  `cmd:"" help:"Inspect project configuration." group:"manage"`
 	Team        teamCommand    `cmd:"" help:"Manage teams and memberships." group:"manage"`
 	Domain      domainCommand  `cmd:"" help:"Manage team domains." group:"manage"`
-	Route       routeCommand   `cmd:"" help:"Manage durable routes." group:"manage"`
+	Route       routeCommand   `cmd:"" help:"Manage routes." group:"manage"`
 	Logout      logoutCommand  `cmd:"" help:"Revoke and remove the saved control session." group:"manage"`
 	Admin       adminCommand   `cmd:"" help:"Administer a self-hosted tnl server." group:"operate"`
 	Version     struct{}       `cmd:"" help:"Print release version information." group:"operate"`
@@ -42,9 +41,9 @@ type openOptions struct {
 
 type tunnelFlags struct {
 	Team      string   `name:"team" env:"TNL_TEAM" help:"Team ID or unambiguous display name."`
-	Host      string   `name:"host" env:"TNL_HOST" help:"Exact hostname to publish; defaults to a worktree-derived hostname in the current member namespace."`
+	Host      string   `name:"host" env:"TNL_HOST" help:"Exact hostname to publish. Defaults to one based on the worktree label in the current member namespace."`
 	Subdomain string   `name:"subdomain" env:"TNL_SUBDOMAIN" help:"One label beneath the current member namespace."`
-	AllowIP   []string `name:"allow-ip" help:"Allow a visitor IP address or prefix; repeat for each value."`
+	AllowIP   []string `name:"allow-ip" help:"Allow a visitor IP address or prefix. Repeat for each value."`
 	Public    bool     `name:"public" env:"TNL_PUBLIC" help:"Allow visitors from every IP address."`
 	Ephemeral bool     `name:"ephemeral" env:"TNL_EPHEMERAL" help:"Remove the route when this tunnel stops."`
 
@@ -53,8 +52,8 @@ type tunnelFlags struct {
 }
 
 type remoteFlags struct {
-	ServerURL   string `name:"server" env:"TNL_SERVER" help:"tnl server HTTPS origin; defaults to the selected server or https://control.tnl.dev."`
-	AccessToken string `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Server access token; defaults to the saved login."`
+	ServerURL   string `name:"server" env:"TNL_SERVER" help:"Control URL. Defaults to the selected server or https://control.tnl.dev."`
+	AccessToken string `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Access token. Defaults to the saved control session."`
 	StateDir    string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent client state."`
 	ProjectTeam string `kong:"-"`
 }
@@ -62,7 +61,7 @@ type remoteFlags struct {
 type configCommand struct {
 	Path     struct{}              `cmd:"" help:"Show the selected project configuration path."`
 	Check    configCheckCommand    `cmd:"" help:"Validate the selected project configuration."`
-	Generate configGenerateCommand `cmd:"" help:"Generate project metadata and literal TypeScript declarations."`
+	Generate configGenerateCommand `cmd:"" help:"Generate project metadata and TypeScript declarations."`
 }
 
 type configCheckCommand struct {
@@ -74,15 +73,15 @@ type configGenerateCommand struct {
 }
 
 type loginCommand struct {
-	Server     string `arg:"" name:"server" optional:"" help:"tnl server HTTPS origin; defaults to the selected server or https://control.tnl.dev."`
-	ServerURL  string `name:"server" env:"TNL_SERVER" help:"tnl server HTTPS origin; defaults to the selected server or https://control.tnl.dev."`
+	Server     string `arg:"" name:"server" optional:"" help:"Control URL. Defaults to the selected server or https://control.tnl.dev."`
+	ServerURL  string `name:"server" env:"TNL_SERVER" help:"Control URL. Defaults to the selected server or https://control.tnl.dev."`
 	StateDir   string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent client state."`
-	Token      bool   `name:"token" help:"Use login-token authentication even when OIDC is available."`
+	Token      bool   `name:"token" help:"Use a login token even when OIDC is available."`
 	LoginToken string `name:"login-token" env:"TNL_LOGIN_TOKEN" hidden:""`
 }
 
 type logoutCommand struct {
-	ServerURL string `name:"server" env:"TNL_SERVER" help:"tnl server HTTPS origin; defaults to the selected server or https://control.tnl.dev."`
+	ServerURL string `name:"server" env:"TNL_SERVER" help:"Control URL. Defaults to the selected server or https://control.tnl.dev."`
 	StateDir  string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent client state."`
 }
 
@@ -144,7 +143,6 @@ func classifyCommandError(err error) error {
 }
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterFactories ...telemetryReporterFactory) (result error) {
-	started := time.Now()
 	command := ""
 	defer func() {
 		result = classifyCommandError(result)
@@ -179,15 +177,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	flags.Dev.Command = devCommand
 	applyTunnelCLIUnits(parseArgs, parsedCommand, &flags)
 	command = clioutput.CommandTitle("tnl", parsedCommand)
-	var startup *startupTimings
-	switch parsedCommand {
-	case "publish <service-or-target>":
-		startup = newStartupTimings(flags.Publish.StartupTimings, started)
-		flags.Publish.startup = startup
-	case "dev <service>":
-		startup = newStartupTimings(flags.Dev.StartupTimings, started)
-		flags.Dev.startup = startup
-	}
 	var project projectConfiguration
 	projectStateRoot := ""
 	switch parsedCommand {
@@ -223,7 +212,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 			}
 		}
 	}
-	startup.mark("configuration")
 	var telemetry telemetryReporter
 	if !flags.NoTelemetry && len(reporterFactories) != 0 && reporterFactories[0] != nil {
 		root, stateErr := commandStateRoot(parsed)
@@ -320,8 +308,6 @@ func canonicalParsedCommand(command string) string {
 		return "dev <service>"
 	case "publish":
 		return "publish <service-or-target>"
-	case "login <server>":
-		return "login"
 	default:
 		return command
 	}

@@ -3,22 +3,24 @@ package relay
 import (
 	"context"
 	"errors"
-	"net/http"
+	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/relayapi"
+	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/pkg/api/relayv1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-func TestRelayResponseErrorHandlesTypedNil(t *testing.T) {
+func TestRelayControlErrorHandlesEmptyProblem(t *testing.T) {
 	t.Parallel()
-	var response *relayv1.RegisterRelayResponse
-	err := relayResponseError("register relay", response)
+	err := relayControlError("register relay", &serviceapi.ProblemError{})
 	var problem *ControlProblemError
 	if !errors.As(err, &problem) || problem.Operation != "register relay" || problem.Status != 0 || problem.Problem != nil {
 		t.Fatalf("error = %#v", err)
@@ -41,24 +43,26 @@ func TestDirectClaimProblemsPreserveProtocolCodesAndClearStaleLease(t *testing.T
 		{controlstate.ErrRelayDraining, tunnelv1.DrainingPublisherConnection},
 		{controlstate.ErrRelayConnectionCapacity, tunnelv1.CapacityExceeded},
 	} {
-		client, err := relayapi.NewDirectClient(directClaimStore{failure: test.failure}, time.Minute)
+		client, err := relayapi.NewDirectClient(relayapi.DirectConfig{
+			Store: directClaimStore{failure: test.failure}, LeaseDuration: time.Minute,
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		response, err := client.ClaimPublisherConnectionWithResponse(t.Context(), "connection-1", relayv1.PublisherConnectionClaim{
+		_, err = client.ClaimPublisherConnection(t.Context(), "connection-1", relayv1.PublisherConnectionClaim{
 			RouteSessionId: "session-1", RouteId: "route-1", PublisherConnectionId: "connection-1",
 			RelayServiceId: "service-1", RelayId: "relay-1", RelayRunId: "run-1", ClaimId: "claim-1",
 			RouteVersion: 1, ConnectionSlot: 0, ConnectionAssignmentRevision: 1, RelayLeaseRevision: 1,
 			PublisherConnectionCredential: credential.String(),
 		})
-		if err != nil {
-			t.Fatalf("store error escaped direct adapter: %v", err)
+		if err == nil {
+			t.Fatalf("direct adapter accepted store error %v", test.failure)
 		}
 		cleared := false
 		controller := &Controller{lease: relayv1.RelayLease{RelayLeaseRevision: 1}, leaseChanged: func(previous, current relayv1.RelayLease) {
 			cleared = previous.RelayLeaseRevision == 1 && current.RelayLeaseRevision == 0
 		}}
-		if code := ControlErrorCode(controller.responseError("claim", response)); code != test.code {
+		if code := ControlErrorCode(controller.responseError("claim", err)); code != test.code {
 			t.Fatalf("%v: code = %s, want %s", test.failure, code, test.code)
 		}
 		if want := errors.Is(test.failure, controlstate.ErrRelayLeaseStale); cleared != want || (controller.lease.RelayLeaseRevision == 0) != want {
@@ -77,6 +81,14 @@ func (s directClaimStore) ClaimPublisherConnection(context.Context, controlstate
 }
 
 func TestControllerInstallsCertificateBeforeReady(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		t.Run(fmt.Sprintf("installer_failure=%t", fail), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) { testControllerInstallsCertificateBeforeReady(t, fail) })
+		})
+	}
+}
+
+func testControllerInstallsCertificateBeforeReady(t *testing.T, fail bool) {
 	now := time.Date(2026, time.September, 4, 12, 0, 0, 0, time.UTC)
 	lease := relayv1.RelayLease{
 		RelayServiceId: "relay-a", RelayId: "relay-a-1", RelayRunId: "relay-run-1", RelayLeaseRevision: 3,
@@ -90,6 +102,9 @@ func TestControllerInstallsCertificateBeforeReady(t *testing.T) {
 		CertificatePem: "certificate", PrivateKeyPem: "private-key", NotAfter: now.Add(48 * time.Hour),
 	}}
 	installed := make(chan relayv1.RelayServiceCertificate, 1)
+	release := make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(release) })
+	installErr := errors.New("installer failed")
 	controller, err := NewController(ControllerConfig{
 		Client: client,
 		Registration: relayv1.RelayRegistration{
@@ -101,6 +116,10 @@ func TestControllerInstallsCertificateBeforeReady(t *testing.T) {
 		RenewalInterval: time.Hour, RetryInterval: time.Second, Now: func() time.Time { return now },
 		CertificateChanged: func(certificate relayv1.RelayServiceCertificate) error {
 			installed <- certificate
+			<-release
+			if fail {
+				return installErr
+			}
 			return nil
 		},
 	})
@@ -109,7 +128,17 @@ func TestControllerInstallsCertificateBeforeReady(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
-	go func() { done <- controller.Run(ctx) }()
+	joined := make(chan struct{})
+	t.Cleanup(func() {
+		unblock()
+		cancel()
+		select {
+		case <-joined:
+		case <-time.After(time.Second):
+			t.Error("controller did not stop")
+		}
+	})
+	go func() { defer close(joined); done <- controller.Run(ctx) }()
 	select {
 	case certificate := <-installed:
 		if certificate.RelayServiceId != lease.RelayServiceId {
@@ -118,16 +147,26 @@ func TestControllerInstallsCertificateBeforeReady(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("relay certificate was not installed")
 	}
-	cancel()
-	if err := <-done; err != nil {
-		t.Fatal(err)
+	synctest.Wait()
+	if controller.Ready(now) {
+		t.Fatal("controller ready while installer is blocked")
 	}
-	if !controller.Ready(now) {
-		t.Fatal("controller is not ready after installing its certificate")
+	unblock()
+	synctest.Wait()
+	if controller.Ready(now) == fail {
+		t.Fatalf("ready after installation = %t, failure=%t", controller.Ready(now), fail)
+	}
+	cancel()
+	if err := relayAwait(t, done); fail && !errors.Is(err, installErr) || !fail && err != nil {
+		t.Fatalf("Run: %v", err)
 	}
 }
 
 func TestControllerDoesNotRegisterAgainAfterAcknowledgingDrain(t *testing.T) {
+	synctest.Test(t, testControllerDoesNotRegisterAgainAfterAcknowledgingDrain)
+}
+
+func testControllerDoesNotRegisterAgainAfterAcknowledgingDrain(t *testing.T) {
 	now := time.Now().UTC()
 	deadline := now.Add(time.Minute)
 	lease := relayv1.RelayLease{
@@ -164,14 +203,16 @@ func TestControllerDoesNotRegisterAgainAfterAcknowledgingDrain(t *testing.T) {
 	client.draining.LeaseExpiresAt = deadline
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	done := make(chan error, 1)
-	go func() { done <- controller.Run(ctx) }()
+	done := relayWorker(t, cancel, func() error { return controller.Run(ctx) })
 	select {
 	case <-client.secondRenewal:
 	case <-time.After(time.Second):
 		t.Fatal("controller did not observe the draining lease")
 	}
+	synctest.Wait()
+	// Advance several renewal/retry intervals with every worker quiescent.
 	time.Sleep(25 * time.Millisecond)
+	synctest.Wait()
 	if calls := client.registrations.Load(); calls != 1 {
 		t.Fatalf("relay registrations = %d, want 1", calls)
 	}
@@ -184,7 +225,7 @@ func TestControllerDoesNotRegisterAgainAfterAcknowledgingDrain(t *testing.T) {
 	default:
 	}
 	cancel()
-	if err := <-done; err != nil {
+	if err := relayAwait(t, done); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -204,53 +245,43 @@ type relayDrainControlStub struct {
 	secondRenewal chan struct{}
 }
 
-func (s *relayDrainControlStub) RegisterRelayWithResponse(
-	context.Context,
-	relayv1.RegisterRelayJSONRequestBody,
-	...relayv1.RequestEditorFn,
-) (*relayv1.RegisterRelayResponse, error) {
+func (s *relayDrainControlStub) RegisterRelay(context.Context, relayv1.RelayRegistration) (relayv1.RelayLease, error) {
 	s.registrations.Add(1)
-	return &relayv1.RegisterRelayResponse{JSON200: &s.lease}, nil
+	return s.lease, nil
 }
 
-func (s *relayDrainControlStub) RenewRelayWithResponse(
+func (s *relayDrainControlStub) RenewRelay(
 	context.Context,
 	relayv1.RelayID,
-	relayv1.RenewRelayJSONRequestBody,
-	...relayv1.RequestEditorFn,
-) (*relayv1.RenewRelayResponse, error) {
+	relayv1.RelayRenewal,
+) (relayv1.RelayLease, error) {
 	calls := s.renewals.Add(1)
 	if calls == 1 {
-		return &relayv1.RenewRelayResponse{JSON200: &s.draining}, nil
+		return s.draining, nil
 	}
 	if calls == 2 {
 		close(s.secondRenewal)
 	}
-	return &relayv1.RenewRelayResponse{
-		HTTPResponse: &http.Response{StatusCode: http.StatusConflict},
-		ApplicationproblemJSONDefault: &relayv1.Problem{
-			Type: "https://tnl.dev/problems/relay_lease_stale",
-		},
-	}, nil
+	return relayv1.RelayLease{}, &serviceapi.ProblemError{
+		Status: 409, Type: "https://tnl.dev/problems/relay_lease_stale",
+	}
 }
 
-func (s *relayCertificateControlStub) RegisterRelayWithResponse(
+func (s *relayCertificateControlStub) RegisterRelay(
 	context.Context,
-	relayv1.RegisterRelayJSONRequestBody,
-	...relayv1.RequestEditorFn,
-) (*relayv1.RegisterRelayResponse, error) {
-	return &relayv1.RegisterRelayResponse{JSON200: &s.lease}, nil
+	relayv1.RelayRegistration,
+) (relayv1.RelayLease, error) {
+	return s.lease, nil
 }
 
-func (s *relayCertificateControlStub) GetRelayServiceCertificateWithResponse(
+func (s *relayCertificateControlStub) GetRelayServiceCertificate(
 	_ context.Context,
 	relayServiceID relayv1.RelayServiceID,
-	params *relayv1.GetRelayServiceCertificateParams,
-	_ ...relayv1.RequestEditorFn,
-) (*relayv1.GetRelayServiceCertificateResponse, error) {
-	if relayServiceID != s.lease.RelayServiceId || params == nil || params.RelayId != s.lease.RelayId ||
+	params relayv1.GetRelayServiceCertificateParams,
+) (relayv1.RelayServiceCertificate, error) {
+	if relayServiceID != s.lease.RelayServiceId || params.RelayId != s.lease.RelayId ||
 		params.RelayRunId != s.lease.RelayRunId || params.RelayLeaseRevision != s.lease.RelayLeaseRevision {
-		return nil, errors.New("unexpected certificate lease identity")
+		return relayv1.RelayServiceCertificate{}, errors.New("unexpected certificate lease identity")
 	}
-	return &relayv1.GetRelayServiceCertificateResponse{JSON200: &s.certificate}, nil
+	return s.certificate, nil
 }

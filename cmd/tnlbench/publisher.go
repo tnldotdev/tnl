@@ -19,14 +19,13 @@ import (
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/publisher"
-	"github.com/tnldotdev/tnl/internal/routeclient"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 type publisherCommand struct {
 	workerCommand
-	ServerURL      string        `name:"server" env:"TNL_BENCH_SERVER" required:"" help:"Control API HTTPS origin."`
+	ServerURL      string        `name:"server" env:"TNL_BENCH_SERVER" required:"" help:"Control URL."`
 	LoginToken     string        `name:"login-token" env:"TNL_BENCH_LOGIN_TOKEN" required:"" help:"Built-in authority login token."`
 	ControlCAFile  string        `name:"control-ca-file" env:"TNL_BENCH_CONTROL_CA_FILE" type:"path" help:"Optional PEM CA for the control API."`
 	HostnameSuffix string        `name:"hostname-suffix" env:"TNL_BENCH_HOSTNAME_SUFFIX" required:"" help:"Managed deployment domain used by benchmark routes."`
@@ -70,7 +69,7 @@ type routeProcess struct {
 }
 
 type routeCleaner interface {
-	DeleteRoute(context.Context, controlv1.Route) error
+	DeleteRoute(context.Context, string) error
 	ListRoutes(context.Context, string) ([]controlv1.Route, error)
 }
 
@@ -159,10 +158,6 @@ func (c publisherCommand) execute(ctx context.Context, worker resultWorker, conf
 	if err != nil {
 		return benchmarkResult{}, err
 	}
-	routes, err := routeclient.New(control)
-	if err != nil {
-		return benchmarkResult{}, err
-	}
 	stateRoot, err := os.MkdirTemp("", "tnlbench-state-")
 	if err != nil {
 		return benchmarkResult{}, err
@@ -198,13 +193,13 @@ func (c publisherCommand) execute(ctx context.Context, worker resultWorker, conf
 
 	activationStarted := time.Now().UTC()
 	processes, activation, err := activateRoutes(
-		ctx, c, routes, routeContext, &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: controlRoots},
+		ctx, c, control, routeContext, &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: controlRoots},
 		state, origin.URL, hostnames,
 	)
 	if err != nil {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cleanupCancel()
-		_, _ = cleanupRoutes(cleanupCtx, c.Parallel, routes, processes)
+		_, _ = cleanupRoutes(cleanupCtx, c.Parallel, control, processes)
 		return benchmarkResult{}, err
 	}
 	activationElapsed := time.Since(activationStarted)
@@ -213,7 +208,7 @@ func (c publisherCommand) execute(ctx context.Context, worker resultWorker, conf
 		if !cleaned {
 			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cleanupCancel()
-			_, _ = cleanupRoutes(cleanupCtx, c.Parallel, routes, processes)
+			_, _ = cleanupRoutes(cleanupCtx, c.Parallel, control, processes)
 		}
 	}()
 	resources := sampleResources(ctx, c.MetricsURLs, "ready")
@@ -225,7 +220,7 @@ func (c publisherCommand) execute(ctx context.Context, worker resultWorker, conf
 	}
 	resources = append(resources, sampleResources(ctx, c.MetricsURLs, "loaded")...)
 	cleanupStarted := time.Now().UTC()
-	teardown, cleanupErr := cleanupRoutes(ctx, c.Parallel, routes, processes)
+	teardown, cleanupErr := cleanupRoutes(ctx, c.Parallel, control, processes)
 	cleanupElapsed := time.Since(cleanupStarted)
 	cleaned = true
 	if cleanupErr != nil {
@@ -306,7 +301,7 @@ func resolveBenchmarkRouteContext(ctx context.Context, authority *authorityclien
 func activateRoutes(
 	ctx context.Context,
 	flags publisherCommand,
-	routes *routeclient.Client,
+	routes *controlclient.Client,
 	routeContext benchmarkRouteContext,
 	transportTLS *tls.Config,
 	state *clientstate.Store,
@@ -432,7 +427,7 @@ func cleanupRoutes(ctx context.Context, parallel int, server routeCleaner, proce
 			semaphore <- struct{}{}
 			go func(route controlv1.Route) {
 				defer func() { <-semaphore }()
-				err := server.DeleteRoute(cleanupCtx, route)
+				err := server.DeleteRoute(cleanupCtx, route.Id)
 				if errors.Is(err, controlclient.ErrNotFound) {
 					err = nil
 				}

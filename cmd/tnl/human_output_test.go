@@ -17,8 +17,8 @@ func TestAuthenticationPromptUsesCommandFrame(t *testing.T) {
 	got := output.String()
 	for _, fragment := range []string{
 		"+--[ tnl login ]-- authentication required ",
-		"open  https://account.example/device",
-		"code  ABCD-EFGH",
+		"https://account.example/device",
+		"ABCD-EFGH",
 		"+-- waiting for authentication ",
 	} {
 		if !strings.Contains(got, fragment) {
@@ -36,8 +36,6 @@ func TestHumanTransitionUsesSharedShape(t *testing.T) {
 	for _, fragment := range []string{
 		"+--[ tnl route delete ]-- deleted ",
 		"route.example",
-		"   |",
-		"   v",
 		"route deleted",
 	} {
 		if !strings.Contains(got, fragment) {

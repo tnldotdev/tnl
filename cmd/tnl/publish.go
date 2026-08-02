@@ -13,12 +13,11 @@ import (
 )
 
 type publishCommand struct {
-	openOptions          `embed:""`
-	remoteFlags          `embed:""`
-	tunnelFlags          `embed:""`
-	startupTimingOptions `embed:""`
-	Target               string `arg:"" name:"service-or-target" optional:"" help:"Configured service name, local port, or loopback-only HTTP URL."`
-	Output               string `name:"output" enum:"human,ndjson" default:"human" help:"Output format: ${enum}."`
+	openOptions `embed:""`
+	remoteFlags `embed:""`
+	tunnelFlags `embed:""`
+	Target      string `arg:"" name:"service-or-target" optional:"" help:"Configured service name, local port, or loopback-only HTTP URL."`
+	Output      string `name:"output" enum:"human,ndjson" default:"human" help:"Output format: ${enum}."`
 
 	serverFromConfig bool
 	selectedTeam     string
@@ -70,21 +69,17 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if err := output.starting(tunnel.ID(), target); err != nil {
 		return err
 	}
-	flags.startup.mark("local state")
 	if err := localproxy.Preflight(ctx, target); err != nil {
 		return fail(err)
 	}
-	flags.startup.mark("target available")
 	authenticated, err := authenticatePublisher(ctx, state, serverURL, flags.AccessToken, "tnl publish", os.Stdin, stderr)
 	if err != nil {
 		return fail(err)
 	}
-	flags.startup.mark("authentication")
 	allowedIPPrefixes, currentIP, err := resolveIPPolicy(ctx, authenticated.Control, flags.AllowIP, flags.Public)
 	if err != nil {
 		return fail(err)
 	}
-	flags.startup.mark("IP policy")
 	if currentIP != "" {
 		if err := output.currentIP(currentIP); err != nil {
 			return err
@@ -96,13 +91,11 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if err != nil {
 		return fail(err)
 	}
-	flags.startup.mark("team and domain")
 	publisherConfig := services.config(target, allowedIPPrefixes)
 	publisherConfig.Logf = output.logf
-	observe := withTelemetryObserver(telemetry, "publish", serverURL, "", func(event publisher.Event) error {
+	publisherConfig.Observe = withTelemetryObserver(telemetry, "publish", serverURL, "", func(event publisher.Event) error {
 		return handlePublisherEvent(ctx, tunnel, output, event)
 	})
-	flags.startup.configurePublisher(&publisherConfig, output, observe)
 	err = publisher.Run(ctx, publisherConfig)
 	if cause := context.Cause(ctx); cause != nil {
 		return fail(cause)

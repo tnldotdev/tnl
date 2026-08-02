@@ -2,84 +2,148 @@ package routeusage
 
 import (
 	"bytes"
-	"encoding/binary"
-	"net/netip"
+	"encoding/hex"
+	"strings"
 	"testing"
 	"time"
 )
 
-func TestCheckpointRoundTripAndMerge(t *testing.T) {
-	var first Checkpoint
-	if err := first.PublisherOpenLatency.Observe(25 * time.Millisecond); err != nil {
-		t.Fatal(err)
-	}
-	if err := first.TimeToFirstPublisherByte.Observe(time.Second); err != nil {
-		t.Fatal(err)
-	}
-	key := [32]byte{1}
-	if !first.VisitorNetworks.Observe(key, "route-a", netip.MustParseAddr("192.0.2.1")) {
-		t.Fatal("first visitor was not observed")
-	}
-	encoded := first.MarshalBinary()
-	if !bytes.Equal(encoded[:5], []byte{'T', 'N', 'L', 'U', 1}) {
-		t.Fatalf("checkpoint header = %x", encoded[:5])
-	}
-	decoded, err := ParseCheckpoint(encoded)
+// Wire v1: TNLU/version, four uint16-sized sections. Each histogram has a
+// uint64 nanosecond sum followed by 22 cumulative uint64 counts, big endian.
+// The three observations are 1ns, 2ns, 3ns; sparse sketch register 0 is 1.
+const populatedCheckpointHex = `
+544e4c5501
+00b8
+0000000000000001
+0000000000000001 0000000000000001 0000000000000001 0000000000000001
+0000000000000001 0000000000000001 0000000000000001 0000000000000001
+0000000000000001 0000000000000001 0000000000000001 0000000000000001
+0000000000000001 0000000000000001 0000000000000001 0000000000000001
+0000000000000001 0000000000000001 0000000000000001 0000000000000001
+0000000000000001 0000000000000001
+00b8
+0000000000000002
+0000000000000001 0000000000000001 0000000000000001 0000000000000001
+0000000000000001 0000000000000001 0000000000000001 0000000000000001
+0000000000000001 0000000000000001 0000000000000001 0000000000000001
+0000000000000001 0000000000000001 0000000000000001 0000000000000001
+0000000000000001 0000000000000001 0000000000000001 0000000000000001
+0000000000000001 0000000000000001
+00b8
+0000000000000003
+0000000000000001 0000000000000001 0000000000000001 0000000000000001
+0000000000000001 0000000000000001 0000000000000001 0000000000000001
+0000000000000001 0000000000000001 0000000000000001 0000000000000001
+0000000000000001 0000000000000001 0000000000000001 0000000000000001
+0000000000000001 0000000000000001 0000000000000001 0000000000000001
+0000000000000001 0000000000000001
+0008 010c000001000001
+`
+
+func checkpointGolden(t *testing.T) []byte {
+	t.Helper()
+	data, err := hex.DecodeString(strings.Join(strings.Fields(populatedCheckpointHex), ""))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decoded.PublisherOpenLatency.Count() != 1 ||
-		decoded.PublisherOpenLatency.SumNanoseconds() != uint64(25*time.Millisecond) ||
-		decoded.TimeToFirstPublisherByte.Count() != 1 || decoded.VisitorNetworks.Estimate() != 1 {
-		t.Fatalf("decoded checkpoint = %#v", decoded)
-	}
+	return data
+}
 
-	var second Checkpoint
-	if err := second.PublisherOpenLatency.Observe(50 * time.Millisecond); err != nil {
-		t.Fatal(err)
+func TestCheckpointBinaryGolden(t *testing.T) {
+	var want Checkpoint
+	want.VisitorNetworks.registers[0] = 1
+	for index, histogram := range []*DurationHistogram{&want.PublisherOpenLatency, &want.TimeToFirstPublisherByte, &want.SuccessfulConnectionDuration} {
+		if err := histogram.Observe(time.Duration(index + 1)); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if !second.VisitorNetworks.Observe(key, "route-a", netip.MustParseAddr("192.0.2.2")) {
-		t.Fatal("second visitor was not observed")
+	golden := checkpointGolden(t)
+	if encoded := want.MarshalBinary(); !bytes.Equal(encoded, golden) {
+		t.Fatalf("encoding = %x, want %x", encoded, golden)
 	}
-	if err := decoded.Merge(second); err != nil {
-		t.Fatal(err)
+	got, err := ParseCheckpoint(golden)
+	if err != nil || got != want {
+		t.Fatalf("parse = %#v, %v; want %#v", got, err, want)
 	}
-	if decoded.PublisherOpenLatency.Count() != 2 || decoded.VisitorNetworks.Estimate() != 2 {
-		t.Fatalf("merged checkpoint = %#v", decoded)
+	// Empty sections are absent histograms, but the sketch still has a header.
+	empty := []byte{'T', 'N', 'L', 'U', 1, 0, 0, 0, 0, 0, 0, 0, 5, 1, 12, 0, 0, 0}
+	if !bytes.Equal((Checkpoint{}).MarshalBinary(), empty) {
+		t.Fatal("empty checkpoint encoding changed")
+	}
+	if got, err := ParseCheckpoint(empty); err != nil || got != (Checkpoint{}) {
+		t.Fatalf("empty parse = %#v, %v", got, err)
 	}
 }
 
-func TestVisitorSketchScopesNetworksByRouteAndKey(t *testing.T) {
-	source := netip.MustParseAddr("2001:db8:1::1")
-	sameNetwork := netip.MustParseAddr("2001:db8:1::ffff")
-	key := [32]byte{1}
-	var sketch VisitorSketch
-	if !sketch.Observe(key, "route-a", source) || sketch.Observe(key, "route-a", sameNetwork) || sketch.Estimate() != 1 {
-		t.Fatalf("IPv6 /64 estimate = %d", sketch.Estimate())
+func TestCheckpointMerge(t *testing.T) {
+	first, err := ParseCheckpoint(checkpointGolden(t))
+	if err != nil {
+		t.Fatal(err)
 	}
-	first, _ := visitorNetworkHash(key, "route-a", source)
-	otherRoute, _ := visitorNetworkHash(key, "route-b", source)
-	otherKey, _ := visitorNetworkHash([32]byte{2}, "route-a", source)
-	if first == otherRoute || first == otherKey {
-		t.Fatal("visitor hash was not scoped by route and date key")
+	second := first
+	first.VisitorNetworks.registers[0] = 1
+	second.VisitorNetworks.registers[0], second.VisitorNetworks.registers[4095] = 2, 3
+	if err := first.Merge(second); err != nil {
+		t.Fatal(err)
+	}
+	for index, histogram := range []DurationHistogram{first.PublisherOpenLatency, first.TimeToFirstPublisherByte, first.SuccessfulConnectionDuration} {
+		if histogram.Count() != 2 || histogram.SumNanoseconds() != uint64(2*(index+1)) {
+			t.Fatalf("histogram %d = %#v", index, histogram)
+		}
+		for bucket, count := range histogram.CumulativeCounts() {
+			if count != 2 {
+				t.Errorf("histogram %d bucket %d = %d, want 2", index, bucket, count)
+			}
+		}
+	}
+	var want VisitorSketch
+	want.registers[0], want.registers[4095] = 2, 3
+	if first.VisitorNetworks != want {
+		t.Fatal("checkpoint did not merge visitor registers by maximum")
+	}
+	for _, field := range []string{"publisher open", "first byte", "successful duration"} {
+		t.Run(field+" overflow", func(t *testing.T) {
+			var destination, source Checkpoint
+			left, right := &destination.PublisherOpenLatency, &source.PublisherOpenLatency
+			switch field {
+			case "first byte":
+				left, right = &destination.TimeToFirstPublisherByte, &source.TimeToFirstPublisherByte
+			case "successful duration":
+				left, right = &destination.SuccessfulConnectionDuration, &source.SuccessfulConnectionDuration
+			}
+			left.sumNanoseconds, right.sumNanoseconds = 1<<63-1, 1
+			if err := destination.Merge(source); err == nil {
+				t.Fatal("histogram overflow accepted")
+			}
+		})
 	}
 }
 
 func TestParseCheckpointRejectsMalformedData(t *testing.T) {
-	valid := (Checkpoint{}).MarshalBinary()
-	invalidHistogram := append([]byte(nil), valid...)
-	binary.BigEndian.PutUint16(invalidHistogram[5:], 1)
-	invalidHistogram = append(invalidHistogram[:7], append([]byte{1}, invalidHistogram[7:]...)...)
-	tests := [][]byte{
-		nil,
-		[]byte("TNLU\x02"),
-		valid[:len(valid)-1],
-		append(append([]byte(nil), valid...), 0),
-		invalidHistogram,
-	}
-	for _, data := range tests {
-		if _, err := ParseCheckpoint(data); err == nil {
-			t.Fatalf("accepted malformed checkpoint %x", data)
+	valid := checkpointGolden(t)
+	for length := range len(valid) {
+		if _, err := ParseCheckpoint(valid[:length]); err == nil {
+			t.Fatalf("accepted truncation at byte %d", length)
 		}
+	}
+	for _, test := range []struct {
+		name   string
+		offset int
+		value  byte
+	}{
+		{"magic", 0, 'X'}, {"version", 4, 2},
+		{"first histogram size", 6, 183}, {"second histogram size", 192, 183}, {"third histogram size", 378, 183},
+		{"sketch version", 565, 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			data := bytes.Clone(valid)
+			data[test.offset] = test.value
+			if _, err := ParseCheckpoint(data); err == nil {
+				t.Fatal("accepted malformed checkpoint")
+			}
+		})
+	}
+	if _, err := ParseCheckpoint(append(valid, 0)); err == nil {
+		t.Fatal("accepted trailing data")
 	}
 }

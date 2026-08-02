@@ -23,7 +23,7 @@ paths:
               $ref: "#/components/schemas/RelayRegistration"
       responses:
         "200":
-          description: Relay lease created or idempotently renewed
+          description: Relay lease created or renewed when the same registration is repeated
           content:
             application/json:
               schema:
@@ -33,7 +33,7 @@ paths:
   /internal/v1/relays/{relay_id}/renew:
     post:
       operationId: renewRelay
-      summary: Renew one exact relay lease
+      summary: Renew a matching relay lease
       parameters:
         - $ref: "#/components/parameters/RelayID"
       requestBody:
@@ -54,7 +54,7 @@ paths:
   /internal/v1/relays/{relay_id}/drain:
     post:
       operationId: drainRelay
-      summary: Remove one exact relay process from new work
+      summary: Stop a matching relay process from accepting new work
       parameters:
         - $ref: "#/components/parameters/RelayID"
       requestBody:
@@ -75,7 +75,7 @@ paths:
   /internal/v1/relay-services/{relay_service_id}/certificate:
     get:
       operationId: getRelayServiceCertificate
-      summary: Retrieve the current public relay certificate and private key
+      summary: Retrieve the current relay transport certificate and private key
       parameters:
         - $ref: "#/components/parameters/RelayServiceID"
         - name: relay_id
@@ -97,7 +97,7 @@ paths:
             minimum: 1
       responses:
         "200":
-          description: Current relay service certificate material
+          description: Current relay transport certificate and private key
           headers:
             Cache-Control:
               required: true
@@ -113,7 +113,7 @@ paths:
   /internal/v1/publisher-connections/{publisher_connection_id}/claim:
     post:
       operationId: claimPublisherConnection
-      summary: Atomically redeem one publisher connection credential
+      summary: Claim a publisher connection with its credential
       parameters:
         - $ref: "#/components/parameters/PublisherConnectionID"
       requestBody:
@@ -155,7 +155,7 @@ paths:
   /internal/v1/publisher-connections/{publisher_connection_id}/disconnect:
     post:
       operationId: disconnectPublisherConnection
-      summary: Close one exact publisher connection lifecycle
+      summary: Close a matching publisher connection
       parameters:
         - $ref: "#/components/parameters/PublisherConnectionID"
       requestBody:

@@ -75,7 +75,7 @@ func TestDomainDNSRecordBlocksRenderRequiredRecords(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"claimed.example", "state  pending", "value  ns-1.example", "value  ns-2.example"} {
+	for _, want := range []string{"claimed.example", "pending", "ns-1.example", "ns-2.example"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("output does not contain %q:\n%s", want, output)
 		}

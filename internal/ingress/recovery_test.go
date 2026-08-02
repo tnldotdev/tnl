@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
@@ -18,23 +19,40 @@ func TestNewRecoveryReporterRejectsNegativeRetryInterval(t *testing.T) {
 }
 
 func TestRecoveryReporterRetriesAndDeduplicates(t *testing.T) {
+	synctest.Test(t, testRecoveryReporterRetriesAndDeduplicates)
+}
+
+func testRecoveryReporterRetriesAndDeduplicates(t *testing.T) {
 	control := &testRecoveryControl{attempted: make(chan struct{}, 2)}
-	reporter, err := NewRecoveryReporter(t.Context(), control, time.Millisecond, nil)
+	ctx, cancel := context.WithCancel(t.Context())
+	reporter, err := NewRecoveryReporter(ctx, control, time.Second, nil)
 	if err != nil {
+		cancel()
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		cancel()
+		ctx, stop := context.WithTimeout(context.Background(), time.Second)
+		defer stop()
+		if err := reporter.Close(ctx); err != nil {
+			t.Error(err)
+		}
+	})
 	observedAt := time.Now().UTC()
 	reporter.Observe("route_test", 3, 7, observedAt)
+	synctest.Wait()
 	reporter.Observe("route_test", 3, 7, observedAt.Add(time.Second))
 
 	for range 2 {
 		select {
 		case <-control.attempted:
-		case <-time.After(time.Second):
+		case <-time.After(2 * time.Second):
 			t.Fatal("recovery observation was not retried")
 		}
 	}
-	if err := reporter.Close(t.Context()); err != nil {
+	closeCtx, stop := context.WithTimeout(t.Context(), 2*time.Second)
+	defer stop()
+	if err := reporter.Close(closeCtx); err != nil {
 		t.Fatal(err)
 	}
 	control.mu.Lock()

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -23,9 +24,8 @@ func TestListRoutesUsesCurrentRouteReadAuthorization(t *testing.T) {
 		CanonicalHostname: "demo.example", Target: "http://127.0.0.1:3000",
 		RouteScope: controlstate.RouteScopeMember, LifecycleState: controlstate.RouteLifecycleEnabled,
 	}}}}
-	h := &handler{store: store, authorizer: authorizerFunc(func(context.Context, authorization.Request) (authorization.Decision, error) {
-		return authorization.Decision{}, nil
-	})}
+	authorizer := &recordingAuthorizer{principal: testRouteReadPrincipal()}
+	h := &handler{store: store, authorizer: authorizer}
 	request := httptest.NewRequest(http.MethodGet, "/v1/routes?team_id=team_1&cursor=route_0", nil)
 	request.Header.Set("Authorization", "Bearer access-token")
 	response := httptest.NewRecorder()
@@ -36,13 +36,14 @@ func TestListRoutesUsesCurrentRouteReadAuthorization(t *testing.T) {
 	if store.listTeamID != "team_1" || store.listCursor != "route_0" {
 		t.Fatalf("list team = %q, cursor = %q", store.listTeamID, store.listCursor)
 	}
+	if !slices.Equal(authorizer.readTokens, []string{"access-token"}) || len(authorizer.requests) != 0 {
+		t.Fatalf("authorization = %#v", authorizer)
+	}
 }
 
 func TestGetRouteDoesNotRevealRoutesOutsideCurrentTeams(t *testing.T) {
 	store := &routeMutationStoreStub{route: controlstate.Route{ID: "route_1", TeamID: "team_other"}}
-	h := &handler{store: store, authorizer: authorizerFunc(func(context.Context, authorization.Request) (authorization.Decision, error) {
-		return authorization.Decision{}, nil
-	})}
+	h := &handler{store: store, authorizer: &recordingAuthorizer{principal: testRouteReadPrincipal()}}
 	request := httptest.NewRequest(http.MethodGet, "/v1/routes/route_1", nil)
 	request.Header.Set("Authorization", "Bearer access-token")
 	response := httptest.NewRecorder()
@@ -60,15 +61,12 @@ func TestUpdateRouteAuthorizesExactRouteAndCanonicalMutation(t *testing.T) {
 		AllowedIPPrefixes: []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}, MutationRevision: 4,
 		Ephemeral: true,
 	}}
-	var authorized authorization.Request
-	h := &handler{store: store, authorizer: authorizerFunc(func(_ context.Context, request authorization.Request) (authorization.Decision, error) {
-		authorized = request
-		return authorization.Decision{
-			IdentityID: "identity_1", TeamID: request.TeamID, ActingMembershipID: "membership_1",
-			ActingRole: "owner", RouteMembershipID: request.RouteMembershipID, TeamPolicyRevision: 7,
-			DomainID: request.DomainID, CanonicalHostname: request.CanonicalHostname, RouteScope: request.RouteScope,
-		}, nil
-	})}
+	authorizer := &recordingAuthorizer{principal: testRouteReadPrincipal(), decision: authorization.Decision{
+		IdentityID: "identity_1", TeamID: "team_1", ActingMembershipID: "membership_1",
+		ActingRole: "owner", RouteMembershipID: "membership_1", TeamPolicyRevision: 7,
+		DomainID: "domain_1", CanonicalHostname: "demo.example", RouteScope: "member",
+	}}
+	h := &handler{store: store, authorizer: authorizer}
 	request := httptest.NewRequest(http.MethodPatch, "/v1/routes/route_1", strings.NewReader(`{
 		"target":"http://127.0.0.1:4000",
 		"allowed_ip_prefixes":["2001:db8::1/64","192.0.2.9/24"]
@@ -80,7 +78,11 @@ func TestUpdateRouteAuthorizesExactRouteAndCanonicalMutation(t *testing.T) {
 		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
 	}
 	wantPrefixes := []string{"192.0.2.0/24", "2001:db8::/64"}
-	if authorized.Operation != authorization.OperationRouteUpdate || authorized.RouteID != store.route.ID ||
+	if len(authorizer.requests) != 1 || !slices.Equal(authorizer.readTokens, []string{"access-token"}) || !slices.Equal(store.authorizationRouteIDs, []string{"route_1"}) {
+		t.Fatalf("authorization calls = %#v; route lookups = %v", authorizer, store.authorizationRouteIDs)
+	}
+	authorized := authorizer.requests[0]
+	if authorized.AccessToken != "access-token" || authorized.Operation != authorization.OperationRouteUpdate || authorized.RouteID != store.route.ID ||
 		authorized.TeamID != store.route.TeamID || authorized.DomainID != store.route.DomainID ||
 		authorized.RouteMembershipID != store.route.MembershipID || authorized.CanonicalHostname != store.route.CanonicalHostname ||
 		authorized.RouteScope != string(store.route.RouteScope) || !authorized.Ephemeral ||
@@ -97,72 +99,59 @@ func TestUpdateRouteAuthorizesExactRouteAndCanonicalMutation(t *testing.T) {
 }
 
 func TestUpdateRouteRequiresCompleteDesiredState(t *testing.T) {
-	for _, body := range []string{
-		`{"target":"http://127.0.0.1:4000"}`,
-		`{"allowed_ip_prefixes":[]}`,
-		`{"target":"http://127.0.0.1:4000","allowed_ip_prefixes":null}`,
-		`{"target":"https://127.0.0.1:4000","allowed_ip_prefixes":[]}`,
-		`{"target":"http://127.0.0.1:4000","allowed_ip_prefixes":["192.0.2.1/24","192.0.2.0/24"]}`,
+	for _, test := range []struct{ name, body string }{
+		{"missing IP policy", `{"target":"http://127.0.0.1:4000"}`},
+		{"missing target", `{"allowed_ip_prefixes":[]}`},
+		{"null IP policy", `{"target":"http://127.0.0.1:4000","allowed_ip_prefixes":null}`},
+		{"invalid target", `{"target":"https://127.0.0.1:4000","allowed_ip_prefixes":[]}`},
+		{"duplicate canonical prefix", `{"target":"http://127.0.0.1:4000","allowed_ip_prefixes":["192.0.2.1/24","192.0.2.0/24"]}`},
 	} {
-		store := &routeMutationStoreStub{}
-		h := &handler{store: store}
-		request := httptest.NewRequest(http.MethodPatch, "/v1/routes/route_1", strings.NewReader(body))
-		request.Header.Set("Authorization", "Bearer access-token")
-		response := httptest.NewRecorder()
-		h.UpdateRoute(response, request, "route_1")
-		if response.Code != http.StatusBadRequest || store.authorizationReads != 0 {
-			t.Fatalf("body %s: response = %d, authorization reads = %d", body, response.Code, store.authorizationReads)
-		}
+		t.Run(test.name, func(t *testing.T) {
+			store := &routeMutationStoreStub{}
+			h := &handler{store: store}
+			request := httptest.NewRequest(http.MethodPatch, "/v1/routes/route_1", strings.NewReader(test.body))
+			request.Header.Set("Authorization", "Bearer access-token")
+			response := httptest.NewRecorder()
+			h.UpdateRoute(response, request, "route_1")
+			if response.Code != http.StatusBadRequest || store.authorizationReads != 0 {
+				t.Fatalf("response = %d, authorization reads = %d", response.Code, store.authorizationReads)
+			}
+		})
 	}
 }
 
 func TestRouteMutationsRequireBearerSyntaxBeforeLookup(t *testing.T) {
-	for _, call := range []func(*handler, http.ResponseWriter, *http.Request){
-		func(h *handler, response http.ResponseWriter, request *http.Request) {
-			h.UpdateRoute(response, request, "route_1")
-		},
-		func(h *handler, response http.ResponseWriter, request *http.Request) {
-			h.DeleteRoute(response, request, "route_1")
-		},
-		func(h *handler, response http.ResponseWriter, request *http.Request) {
-			h.CreateRouteSession(response, request, "route_1", controlv1.CreateRouteSessionParams{})
-		},
-	} {
-		store := &routeMutationStoreStub{}
-		h := &handler{store: store}
-		request := httptest.NewRequest(http.MethodPost, "/v1/routes/route_1", strings.NewReader(`{}`))
-		response := httptest.NewRecorder()
-		call(h, response, request)
-		if response.Code != http.StatusUnauthorized || store.authorizationReads != 0 {
-			t.Fatalf("response = %d, authorization reads = %d", response.Code, store.authorizationReads)
-		}
+	for _, test := range routeMutationCalls() {
+		t.Run(test.name, func(t *testing.T) {
+			store := &routeMutationStoreStub{}
+			h := &handler{store: store}
+			request := httptest.NewRequest(http.MethodPost, "/v1/routes/route_1", strings.NewReader(`{}`))
+			response := httptest.NewRecorder()
+			test.call(h, response, request)
+			if response.Code != http.StatusUnauthorized || store.authorizationReads != 0 {
+				t.Fatalf("response = %d, authorization reads = %d", response.Code, store.authorizationReads)
+			}
+		})
 	}
 }
 
 func TestRouteMutationsAuthenticateBeforeLookup(t *testing.T) {
-	for _, call := range []func(*handler, http.ResponseWriter, *http.Request){
-		func(h *handler, response http.ResponseWriter, request *http.Request) {
-			h.UpdateRoute(response, request, "route_1")
-		},
-		func(h *handler, response http.ResponseWriter, request *http.Request) {
-			h.DeleteRoute(response, request, "route_1")
-		},
-		func(h *handler, response http.ResponseWriter, request *http.Request) {
-			h.CreateRouteSession(response, request, "route_1", controlv1.CreateRouteSessionParams{})
-		},
-	} {
-		store := &routeMutationStoreStub{}
-		h := &handler{store: store, authorizer: routeReadErrorAuthorizer{err: authorization.ErrUnauthenticated}}
-		request := httptest.NewRequest(http.MethodPatch, "/v1/routes/route_1", strings.NewReader(`{
+	for _, test := range routeMutationCalls() {
+		t.Run(test.name, func(t *testing.T) {
+			store := &routeMutationStoreStub{}
+			authorizer := &recordingAuthorizer{readErr: authorization.ErrUnauthenticated}
+			h := &handler{store: store, authorizer: authorizer}
+			request := httptest.NewRequest(http.MethodPatch, "/v1/routes/route_1", strings.NewReader(`{
 			"target":"http://127.0.0.1:4000",
 			"allowed_ip_prefixes":[]
 		}`))
-		request.Header.Set("Authorization", "Bearer invalid-access-token")
-		response := httptest.NewRecorder()
-		call(h, response, request)
-		if response.Code != http.StatusUnauthorized || store.authorizationReads != 0 {
-			t.Fatalf("response = %d, authorization reads = %d", response.Code, store.authorizationReads)
-		}
+			request.Header.Set("Authorization", "Bearer invalid-access-token")
+			response := httptest.NewRecorder()
+			test.call(h, response, request)
+			if response.Code != http.StatusUnauthorized || store.authorizationReads != 0 || len(authorizer.requests) != 0 || !slices.Equal(authorizer.readTokens, []string{"invalid-access-token"}) {
+				t.Fatalf("response = %d, authorization reads = %d", response.Code, store.authorizationReads)
+			}
+		})
 	}
 }
 
@@ -172,11 +161,8 @@ func TestRouteMutationsDoNotRevealRoutesOutsideCurrentTeams(t *testing.T) {
 		CanonicalHostname: "demo.example", Target: "http://127.0.0.1:3000",
 		RouteScope: controlstate.RouteScopeMember, MutationRevision: 1,
 	}}
-	mutationCalls := 0
-	h := &handler{store: store, authorizer: authorizerFunc(func(context.Context, authorization.Request) (authorization.Decision, error) {
-		mutationCalls++
-		return authorization.Decision{}, nil
-	})}
+	authorizer := &recordingAuthorizer{principal: testRouteReadPrincipal()}
+	h := &handler{store: store, authorizer: authorizer}
 	calls := []struct {
 		method string
 		body   string
@@ -201,8 +187,8 @@ func TestRouteMutationsDoNotRevealRoutesOutsideCurrentTeams(t *testing.T) {
 			t.Fatalf("%s response = %d: %s", test.method, response.Code, response.Body.String())
 		}
 	}
-	if mutationCalls != 0 {
-		t.Fatalf("mutation authorizations = %d", mutationCalls)
+	if len(authorizer.requests) != 0 {
+		t.Fatalf("mutation authorizations = %v", authorizer.requests)
 	}
 }
 
@@ -237,17 +223,16 @@ func TestCreateRouteSessionReturnsAuthoritativeRouteState(t *testing.T) {
 			State: controlstate.RouteSessionStarting,
 		},
 	}
-	h := &handler{config: Config{DNSAutomation: true}, store: store, authorizer: authorizerFunc(func(_ context.Context, request authorization.Request) (authorization.Decision, error) {
-		return authorization.Decision{
-			IdentityID: "identity_1", TeamID: request.TeamID, ActingMembershipID: "membership_1",
-			ActingRole: "member", RouteMembershipID: "membership_1", TeamPolicyRevision: 9,
-			DomainID: request.DomainID, CanonicalHostname: request.CanonicalHostname, RouteScope: request.RouteScope,
-			CertificatePlan: &authorization.CertificatePlan{
-				CacheKey: "member.example", Scope: "member.example", Identifiers: []string{"member.example", "*.member.example"},
-				ChallengeMethod: string(controlv1.Dns01),
-			},
-		}, nil
-	})}
+	authorizer := &recordingAuthorizer{principal: testRouteReadPrincipal(), decision: authorization.Decision{
+		IdentityID: "identity_1", TeamID: "team_1", ActingMembershipID: "membership_1",
+		ActingRole: "member", RouteMembershipID: "membership_1", TeamPolicyRevision: 9,
+		DomainID: "domain_1", CanonicalHostname: "demo.example", RouteScope: "member", RetrySecret: [32]byte{1, 2, 3},
+		CertificatePlan: &authorization.CertificatePlan{
+			CacheKey: "member.example", Scope: "member.example", Identifiers: []string{"member.example", "*.member.example"},
+			ChallengeMethod: string(controlv1.Dns01),
+		},
+	}}
+	h := &handler{config: Config{DNSAutomation: true}, store: store, authorizer: authorizer}
 	request := httptest.NewRequest(http.MethodPost, "/v1/routes/route_1/sessions", nil)
 	request.Header.Set("Authorization", "Bearer access-token")
 	request.Header.Set("Idempotency-Key", "session-idempotency")
@@ -265,13 +250,20 @@ func TestCreateRouteSessionReturnsAuthoritativeRouteState(t *testing.T) {
 		setup.Route.NextRouteVersion != 8 || store.authorizationReads != 2 {
 		t.Fatalf("route = %#v, authorization reads = %d", setup.Route, store.authorizationReads)
 	}
+	if len(authorizer.requests) != 1 || authorizer.requests[0].AccessToken != "access-token" ||
+		authorizer.requests[0].Operation != authorization.OperationRouteSessionCreate || authorizer.requests[0].RouteID != "route_1" ||
+		authorizer.requests[0].RouteVersion != 7 || authorizer.requests[0].RouteMutationRevision != 4 ||
+		store.sessionLookup != [2]string{"route_1", "session-idempotency"} || store.sessionRequest.IdempotencyKey != "session-idempotency" ||
+		store.sessionRequest.ExpectedMutationRevision != 4 || store.sessionRequest.ActingIdentityID != "identity_1" ||
+		store.sessionRequest.PolicyRevision != 9 || !reflect.DeepEqual(store.sessionRequest.RetrySecret, authorizer.decision.RetrySecret[:]) ||
+		store.sessionRequest.RequestDigest == ([32]byte{}) {
+		t.Fatalf("session authorization = %#v, store = %#v", authorizer, store)
+	}
 }
 
 func TestCreateRouteSessionRejectsUnconfiguredDNSPlan(t *testing.T) {
 	store := &routeMutationStoreStub{route: controlstate.Route{ID: "route_1", TeamID: "team_1"}}
-	h := &handler{store: store, authorizer: authorizerFunc(func(context.Context, authorization.Request) (authorization.Decision, error) {
-		return authorization.Decision{CertificatePlan: &authorization.CertificatePlan{ChallengeMethod: "dns-01"}}, nil
-	})}
+	h := &handler{store: store, authorizer: &recordingAuthorizer{principal: testRouteReadPrincipal(), decision: authorization.Decision{CertificatePlan: &authorization.CertificatePlan{ChallengeMethod: "dns-01"}}}}
 	request := httptest.NewRequest(http.MethodPost, "/v1/routes/route_1/sessions", nil)
 	request.Header.Set("Authorization", "Bearer access-token")
 	response := httptest.NewRecorder()
@@ -281,36 +273,24 @@ func TestCreateRouteSessionRejectsUnconfiguredDNSPlan(t *testing.T) {
 	}
 }
 
-type authorizerFunc func(context.Context, authorization.Request) (authorization.Decision, error)
-
-func (f authorizerFunc) Authorize(ctx context.Context, request authorization.Request) (authorization.Decision, error) {
-	return f(ctx, request)
-}
-
-func (f authorizerFunc) AuthorizeRouteReads(context.Context, string) (routeReadPrincipal, error) {
-	return routeReadPrincipal{identityID: "identity_1", teamIDs: map[string]struct{}{"team_1": {}}}, nil
-}
-
-type routeReadErrorAuthorizer struct{ err error }
-
-func (a routeReadErrorAuthorizer) Authorize(context.Context, authorization.Request) (authorization.Decision, error) {
-	return authorization.Decision{}, a.err
-}
-
-func (a routeReadErrorAuthorizer) AuthorizeRouteReads(context.Context, string) (routeReadPrincipal, error) {
-	return routeReadPrincipal{}, a.err
+func testRouteReadPrincipal() routeReadPrincipal {
+	return routeReadPrincipal{identityID: "identity_1", teamIDs: map[string]struct{}{"team_1": {}}}
 }
 
 type routeMutationStoreStub struct {
 	Store
-	route              controlstate.Route
-	postSessionRoute   *controlstate.Route
-	sessionSetup       controlstate.RouteSessionSetup
-	update             controlstate.AuthorizedRouteUpdateRequest
-	authorizationReads int
-	page               controlstate.RoutePage
-	listTeamID         string
-	listCursor         string
+	route                      controlstate.Route
+	postSessionRoute           *controlstate.Route
+	sessionSetup               controlstate.RouteSessionSetup
+	update                     controlstate.AuthorizedRouteUpdateRequest
+	authorizationReads         int
+	page                       controlstate.RoutePage
+	listTeamID                 string
+	listCursor                 string
+	authorizationRouteIDs      []string
+	sessionLookup              [2]string
+	sessionRequest             controlstate.RouteSessionRequest
+	updates, sessions, deletes int
 }
 
 func (s *routeMutationStoreStub) ListAuthorizedRoutes(
@@ -321,26 +301,30 @@ func (s *routeMutationStoreStub) ListAuthorizedRoutes(
 	return s.page, nil
 }
 
-func (s *routeMutationStoreStub) GetRouteForAuthorization(context.Context, string) (controlstate.Route, error) {
+func (s *routeMutationStoreStub) GetRouteForAuthorization(_ context.Context, routeID string) (controlstate.Route, error) {
 	s.authorizationReads++
+	s.authorizationRouteIDs = append(s.authorizationRouteIDs, routeID)
 	if s.postSessionRoute != nil {
 		return *s.postSessionRoute, nil
 	}
 	return s.route, nil
 }
 
-func (s *routeMutationStoreStub) GetRouteForSessionAuthorization(context.Context, string, string) (controlstate.Route, error) {
+func (s *routeMutationStoreStub) GetRouteForSessionAuthorization(_ context.Context, routeID, key string) (controlstate.Route, error) {
 	s.authorizationReads++
+	s.sessionLookup = [2]string{routeID, key}
 	return s.route, nil
 }
 
 func (s *routeMutationStoreStub) CreateRouteSession(
-	context.Context,
-	controlstate.RouteSessionRequest,
-	time.Time,
-	time.Duration,
-	time.Duration,
+	_ context.Context,
+	request controlstate.RouteSessionRequest,
+	_ time.Time,
+	_ time.Duration,
+	_ time.Duration,
 ) (controlstate.RouteSessionSetup, error) {
+	s.sessions++
+	s.sessionRequest = request
 	return s.sessionSetup, nil
 }
 
@@ -350,6 +334,7 @@ func (s *routeMutationStoreStub) UpdateAuthorizedRoute(
 	now time.Time,
 ) (controlstate.Route, error) {
 	s.update = request
+	s.updates++
 	s.route.Target = request.Target
 	s.route.PolicyRevision = int64(request.PolicyRevision)
 	s.route.AllowedIPPrefixes = make([]netip.Prefix, len(request.AllowedIPPrefixes))
@@ -358,4 +343,116 @@ func (s *routeMutationStoreStub) UpdateAuthorizedRoute(
 	}
 	s.route.UpdatedAt = now
 	return s.route, nil
+}
+
+func (s *routeMutationStoreStub) DeleteAuthorizedRoute(context.Context, controlstate.AuthorizedRouteDeleteRequest, time.Time) error {
+	s.deletes++
+	return nil
+}
+
+type recordingAuthorizer struct {
+	principal            routeReadPrincipal
+	decision             authorization.Decision
+	readErr, mutationErr error
+	readTokens           []string
+	requests             []authorization.Request
+}
+
+func (a *recordingAuthorizer) Authorize(_ context.Context, request authorization.Request) (authorization.Decision, error) {
+	a.requests = append(a.requests, request)
+	return a.decision, a.mutationErr
+}
+
+func (a *recordingAuthorizer) AuthorizeRouteReads(_ context.Context, token string) (routeReadPrincipal, error) {
+	a.readTokens = append(a.readTokens, token)
+	return a.principal, a.readErr
+}
+
+type routeMutationCall struct {
+	name string
+	call func(*handler, http.ResponseWriter, *http.Request)
+}
+
+func routeMutationCalls() []routeMutationCall {
+	return []routeMutationCall{
+		{"update", func(h *handler, w http.ResponseWriter, r *http.Request) { h.UpdateRoute(w, r, "route_1") }},
+		{"delete", func(h *handler, w http.ResponseWriter, r *http.Request) { h.DeleteRoute(w, r, "route_1") }},
+		{"session", func(h *handler, w http.ResponseWriter, r *http.Request) {
+			h.CreateRouteSession(w, r, "route_1", controlv1.CreateRouteSessionParams{})
+		}},
+	}
+}
+
+func TestRouteMutationRejectionDoesNotReachStore(t *testing.T) {
+	for _, test := range routeMutationCalls() {
+		t.Run(test.name, func(t *testing.T) {
+			store := &routeMutationStoreStub{route: controlstate.Route{ID: "route_1", TeamID: "team_1", MutationRevision: 7}}
+			authorizer := &recordingAuthorizer{principal: testRouteReadPrincipal(), mutationErr: authorization.ErrForbidden}
+			h := &handler{store: store, authorizer: authorizer}
+			request := httptest.NewRequest(http.MethodPost, "/v1/routes/route_1", strings.NewReader(`{"target":"http://127.0.0.1:4000","allowed_ip_prefixes":[]}`))
+			request.Header.Set("Authorization", "Bearer exact-access-token")
+			response := httptest.NewRecorder()
+			test.call(h, response, request)
+			if response.Code != http.StatusForbidden || len(authorizer.requests) != 1 || authorizer.requests[0].AccessToken != "exact-access-token" ||
+				store.authorizationReads != 1 || store.updates != 0 || store.deletes != 0 || store.sessions != 0 {
+				t.Fatalf("response = %d: %s, authorizer = %#v, store = %#v", response.Code, response.Body.String(), authorizer, store)
+			}
+		})
+	}
+}
+
+func TestCreateRouteCanonicalEquivalenceAndIdempotency(t *testing.T) {
+	store := &routeCreationStore{result: controlstate.Route{ID: "route_created", CanonicalHostname: "demo.example"}}
+	authorizer := &recordingAuthorizer{decision: authorization.Decision{
+		IdentityID: "identity_1", TeamID: "team_1", RouteMembershipID: "membership_1", DomainID: "domain_1",
+		CanonicalHostname: "demo.example", RouteScope: "member", TeamPolicyRevision: 9, DNSAuthorityReference: "dns_authority_1",
+	}}
+	h := &handler{store: store, authorizer: authorizer, config: Config{DNSAutomation: true}}
+	for _, test := range []struct{ name, prefixes, target string }{
+		{"unmasked unordered prefixes", `["2001:db8::1/64","192.0.2.9/24"]`, "http://127.0.0.1:3000"},
+		{"canonical prefixes", `["192.0.2.0/24","2001:db8::/64"]`, "http://127.0.0.1:3000"},
+		{"changed target", `["192.0.2.0/24","2001:db8::/64"]`, "http://127.0.0.1:4000"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/v1/routes", strings.NewReader(`{"team_id":"team_1","membership_id":"membership_1","domain_id":"domain_1","canonical_hostname":"demo.example","route_scope":"member","target":"`+test.target+`","allowed_ip_prefixes":`+test.prefixes+`,"ephemeral":true}`))
+			request.Header.Set("Authorization", "Bearer exact-access-token")
+			request.Header.Set("Idempotency-Key", "create-key")
+			response := httptest.NewRecorder()
+			h.CreateRoute(response, request, controlv1.CreateRouteParams{})
+			if response.Code != http.StatusCreated {
+				t.Fatalf("response = %d: %s", response.Code, response.Body.String())
+			}
+		})
+	}
+	if len(store.requests) != 3 || len(authorizer.requests) != 3 || len(authorizer.readTokens) != 0 {
+		t.Fatalf("calls = %#v, %#v", store, authorizer)
+	}
+	want := controlstate.CreateRouteRequest{
+		TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1", ActingIdentityID: "identity_1", IdempotencyKey: "create-key",
+		CanonicalHostname: "demo.example", Target: "http://127.0.0.1:3000", RouteScope: controlstate.RouteScopeMember,
+		AllowedIPPrefixes: []string{"192.0.2.0/24", "2001:db8::/64"}, DNSState: controlstate.RouteDNSPending,
+		DNSAuthorityReference: "dns_authority_1", PolicyRevision: 9, Ephemeral: true,
+	}
+	got := store.requests[0]
+	got.RequestDigest = [32]byte{}
+	if !reflect.DeepEqual(got, want) || !reflect.DeepEqual(store.requests[0], store.requests[1]) ||
+		store.requests[0].RequestDigest == ([32]byte{}) || store.requests[0].RequestDigest == store.requests[2].RequestDigest {
+		t.Fatalf("canonical requests = %#v", store.requests)
+	}
+	for _, request := range authorizer.requests {
+		if request.AccessToken != "exact-access-token" || request.Operation != authorization.OperationRouteCreate || !slices.Equal(request.AllowedIPPrefixes, want.AllowedIPPrefixes) {
+			t.Fatalf("authorization = %#v", request)
+		}
+	}
+}
+
+type routeCreationStore struct {
+	Store
+	result   controlstate.Route
+	requests []controlstate.CreateRouteRequest
+}
+
+func (s *routeCreationStore) CreateRoute(_ context.Context, request controlstate.CreateRouteRequest, _ time.Time) (controlstate.Route, error) {
+	s.requests = append(s.requests, request)
+	return s.result, nil
 }

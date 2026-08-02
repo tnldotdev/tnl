@@ -13,10 +13,10 @@ import (
 	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/clientauth"
 	"github.com/tnldotdev/tnl/internal/clientstate"
+	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/publisher"
-	"github.com/tnldotdev/tnl/internal/routeclient"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -32,7 +32,7 @@ type publisherServices struct {
 	routeScope      controlv1.RouteScope
 	policyRevision  uint64
 	ephemeral       bool
-	routes          *routeclient.Client
+	routes          *controlclient.Client
 }
 
 type clientIPLookup interface {
@@ -127,10 +127,6 @@ func preparePublisherServices(
 	if err != nil {
 		return publisherServices{}, err
 	}
-	routes, err := routeAPI(authenticated)
-	if err != nil {
-		return publisherServices{}, err
-	}
 	return publisherServices{
 		authenticated:   authenticated,
 		state:           publisherState,
@@ -142,7 +138,7 @@ func preparePublisherServices(
 		routeScope:      routeScope,
 		policyRevision:  uint64(current.team.PolicyRevision),
 		ephemeral:       ephemeral,
-		routes:          routes,
+		routes:          authenticated.Control,
 	}, nil
 }
 

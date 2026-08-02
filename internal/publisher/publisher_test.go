@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlclient"
@@ -19,7 +21,7 @@ func TestCreateOrLoadRouteReusesDurableRoute(t *testing.T) {
 		CanonicalHostname: "demo.example", RouteScope: controlv1.Member, Target: "http://127.0.0.1:3000",
 		LifecycleState: controlv1.Enabled,
 	}
-	control := &publisherControlStub{routes: []controlv1.Route{want}}
+	control := &publisherControlStub{allowed: []string{"list"}, routes: []controlv1.Route{want}}
 	got, created, err := createOrLoadRoute(t.Context(), Config{
 		Control: control, TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
 		Hostname: "demo.example", RouteScope: controlv1.Member, Target: "http://127.0.0.1:3000",
@@ -34,7 +36,7 @@ func TestCreateOrLoadRouteReusesDurableRoute(t *testing.T) {
 
 func TestCreateOrLoadRouteReconcilesTargetAndIPPolicy(t *testing.T) {
 	existingPolicy := []string{"192.0.2.0/24"}
-	control := &publisherControlStub{routes: []controlv1.Route{{
+	control := &publisherControlStub{allowed: []string{"list", "update"}, routes: []controlv1.Route{{
 		Id: "route_existing", TeamId: "team_1", DomainId: "domain_1", MembershipId: pointer("membership_1"),
 		CanonicalHostname: "demo.example", RouteScope: controlv1.Member, Target: "http://127.0.0.1:3000",
 		AllowedIpPrefixes: &existingPolicy, LifecycleState: controlv1.Enabled,
@@ -56,7 +58,7 @@ func TestCreateOrLoadRouteReconcilesTargetAndIPPolicy(t *testing.T) {
 }
 
 func TestCreateOrLoadRouteRejectsDifferentIdentityOrLifecycle(t *testing.T) {
-	control := &publisherControlStub{routes: []controlv1.Route{{
+	control := &publisherControlStub{allowed: []string{"list"}, routes: []controlv1.Route{{
 		Id: "route_existing", TeamId: "team_1", DomainId: "domain_other",
 		CanonicalHostname: "demo.example", RouteScope: controlv1.Shared, Target: "http://127.0.0.1:3000",
 	}}}
@@ -73,7 +75,7 @@ func TestCreateOrLoadRouteRejectsDifferentIdentityOrLifecycle(t *testing.T) {
 }
 
 func TestCreateOrLoadRouteNeverReusesEphemeralRoute(t *testing.T) {
-	control := &publisherControlStub{routes: []controlv1.Route{{
+	control := &publisherControlStub{allowed: []string{"create"}, routes: []controlv1.Route{{
 		Id: "route_existing", CanonicalHostname: "demo.example", Ephemeral: true,
 	}}}
 	route, created, err := createOrLoadRoute(t.Context(), Config{
@@ -101,7 +103,7 @@ func TestReconcileRouteRejectsSuspendedRoute(t *testing.T) {
 }
 
 func TestCreateOrLoadRouteClassifiesHostnameConflict(t *testing.T) {
-	control := &publisherControlStub{createErr: controlclient.ErrNameUnavailable}
+	control := &publisherControlStub{allowed: []string{"create"}, createErr: controlclient.ErrNameUnavailable}
 	_, _, err := createOrLoadRoute(t.Context(), Config{
 		Control: control, TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
 		Hostname: "demo.example", RouteScope: controlv1.Member, Target: "http://127.0.0.1:3000", Ephemeral: true,
@@ -113,7 +115,7 @@ func TestCreateOrLoadRouteClassifiesHostnameConflict(t *testing.T) {
 }
 
 func TestReconcileRouteClassifiesUpdateConflict(t *testing.T) {
-	control := &publisherControlStub{updateErr: controlclient.ErrStatusConflict}
+	control := &publisherControlStub{allowed: []string{"update"}, updateErr: controlclient.ErrStatusConflict}
 	_, err := reconcileRoute(t.Context(), Config{
 		Control: control, Target: "http://127.0.0.1:4000",
 	}, controlv1.Route{
@@ -126,7 +128,7 @@ func TestReconcileRouteClassifiesUpdateConflict(t *testing.T) {
 }
 
 func TestCreateRouteSessionClassifiesLifecycleConflict(t *testing.T) {
-	control := &publisherControlStub{routeSessionErr: controlclient.ErrStatusConflict}
+	control := &publisherControlStub{allowed: []string{"create_session"}, routeSessionErr: controlclient.ErrStatusConflict}
 	_, err := createRouteSession(t.Context(), Config{Control: control}, controlv1.Route{Id: "route_1"})
 	if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.RouteConflict ||
 		!errors.Is(err, controlclient.ErrStatusConflict) {
@@ -135,8 +137,9 @@ func TestCreateRouteSessionClassifiesLifecycleConflict(t *testing.T) {
 }
 
 func TestCreateOrLoadRouteCreatesTeamScopedRoute(t *testing.T) {
-	control := &publisherControlStub{}
-	allowed := []string{"192.0.2.0/24"}
+	control := &publisherControlStub{allowed: []string{"list", "create"}}
+	allowed := []string{"2001:db8::1/64", "192.0.2.9/24"}
+	wantAllowed := []string{"192.0.2.0/24", "2001:db8::/64"}
 	got, created, err := createOrLoadRoute(t.Context(), Config{
 		Control: control, TeamID: "team_1", MembershipID: "membership_1", DomainID: "domain_1",
 		Hostname: "demo.example", RouteScope: controlv1.Member, Target: "http://127.0.0.1:3000",
@@ -147,7 +150,9 @@ func TestCreateOrLoadRouteCreatesTeamScopedRoute(t *testing.T) {
 	}
 	if !created || got.Id == "" || control.created == nil || control.created.TeamId != "team_1" ||
 		control.created.MembershipId == nil || *control.created.MembershipId != "membership_1" ||
-		control.created.DomainId != "domain_1" || control.created.CanonicalHostname != "demo.example" {
+		control.created.DomainId != "domain_1" || control.created.CanonicalHostname != "demo.example" ||
+		control.created.AllowedIpPrefixes == nil || !slices.Equal(*control.created.AllowedIpPrefixes, wantAllowed) ||
+		!slices.Equal(allowed, []string{"2001:db8::1/64", "192.0.2.9/24"}) {
 		t.Fatalf("route = %#v, create request = %#v", got, control.created)
 	}
 }
@@ -180,45 +185,49 @@ func TestExpiredHeartbeatLeavesStaleSessionConflictUnclassified(t *testing.T) {
 }
 
 func TestHeartbeatIgnoresUpdateFailureAfterCancellation(t *testing.T) {
-	previous := heartbeatInterval
-	heartbeatInterval = time.Millisecond
-	defer func() { heartbeatInterval = previous }()
-
-	control := &publisherControlStub{heartbeat: func(context.Context, string, uint64, credentials.RouteSessionToken) (controlv1.RouteSessionHeartbeat, error) {
-		return controlv1.RouteSessionHeartbeat{
-			RouteSession:         controlv1.RouteSession{ExpiresAt: time.Now().Add(time.Minute)},
-			PublisherConnections: []controlv1.ConnectionAssignment{{PublisherConnectionId: "publisher_connection_1"}},
-		}, nil
-	}}
-	ctx, cancel := context.WithCancel(t.Context())
-	updateStarted := make(chan struct{})
-	releaseUpdate := make(chan struct{})
-	done := make(chan error, 1)
-	go func() {
-		done <- heartbeatSessionAfterUpdate(
-			ctx, control, "route_session_1", 1, "route-session-token", time.Now().Add(time.Minute),
-			func([]controlv1.ConnectionAssignment) error {
-				close(updateStarted)
-				<-releaseUpdate
-				return errors.New("connection manager is draining")
-			}, nil,
-		)
-	}()
-	select {
-	case <-updateStarted:
-	case <-time.After(time.Second):
-		t.Fatal("heartbeat did not begin the connection update")
-	}
-	cancel()
-	close(releaseUpdate)
-	if err := <-done; err != nil {
-		t.Fatalf("heartbeat returned a shutdown race: %v", err)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		control := &publisherControlStub{heartbeat: func(context.Context, string, uint64, credentials.RouteSessionToken) (controlv1.RouteSessionHeartbeat, error) {
+			return controlv1.RouteSessionHeartbeat{
+				RouteSession:         controlv1.RouteSession{ExpiresAt: time.Now().Add(time.Minute)},
+				PublisherConnections: []controlv1.ConnectionAssignment{{PublisherConnectionId: "publisher_connection_1"}},
+			}, nil
+		}}
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		updateStarted := make(chan struct{})
+		releaseUpdate := make(chan struct{})
+		done := make(chan error, 1)
+		joined := make(chan struct{})
+		var once sync.Once
+		release := func() { once.Do(func() { close(releaseUpdate) }) }
+		go func() {
+			defer close(joined)
+			done <- heartbeatSessionAfterUpdate(
+				ctx, control, "route_session_1", 1, "route-session-token", time.Now().Add(time.Minute),
+				func([]controlv1.ConnectionAssignment) error {
+					close(updateStarted)
+					<-releaseUpdate
+					return errors.New("connection manager is draining")
+				}, nil, 0,
+			)
+		}()
+		t.Cleanup(func() { cancel(); release(); awaitPublisherTest(t, joined) })
+		select {
+		case <-updateStarted:
+		case <-time.After(heartbeatInterval + time.Second):
+			t.Fatal("heartbeat did not begin the connection update")
+		}
+		cancel()
+		release()
+		if err := <-done; err != nil {
+			t.Fatalf("heartbeat returned a shutdown race: %v", err)
+		}
+	})
 }
 
 func TestRunRequiresAuthoritativeSessionCertificatePlan(t *testing.T) {
 	control, _, _ := newCertificateTransactionTest(t)
-	config := certificateSessionTestConfig(t, control)
+	config := startCertificateTLSYamuxHarness(t, control)
 	control.setup.CertificatePlan = controlv1.CertificatePlan{}
 	err := Run(t.Context(), config)
 	if err == nil || err.Error() != "publisher: server returned an invalid certificate plan" {
@@ -302,10 +311,12 @@ func TestObserveHeartbeatPolicyDenialsReportsCumulativeIncreases(t *testing.T) {
 }
 
 type publisherControlStub struct {
+	allowed         []string
+	calls           []string
 	routes          []controlv1.Route
 	created         *controlv1.CreateRouteRequest
 	updated         *controlv1.UpdateRouteRequest
-	deleted         *controlv1.Route
+	deleted         *string
 	listCalls       int
 	heartbeat       func(context.Context, string, uint64, credentials.RouteSessionToken) (controlv1.RouteSessionHeartbeat, error)
 	createErr       error
@@ -313,40 +324,59 @@ type publisherControlStub struct {
 	routeSessionErr error
 }
 
+func (s *publisherControlStub) record(operation string) {
+	if !slices.Contains(s.allowed, operation) {
+		panic("unexpected publisher control operation: " + operation)
+	}
+	s.calls = append(s.calls, operation)
+}
+
 func (s *publisherControlStub) CreateRoute(_ context.Context, body controlv1.CreateRouteRequest, _ string) (controlv1.Route, error) {
+	s.record("create")
 	s.created = &body
 	if s.createErr != nil {
 		return controlv1.Route{}, s.createErr
 	}
-	return controlv1.Route{
+	route := controlv1.Route{
 		Id: "route_created", TeamId: body.TeamId, DomainId: body.DomainId, MembershipId: body.MembershipId,
 		CanonicalHostname: body.CanonicalHostname, RouteScope: body.RouteScope, Target: body.Target, NextRouteVersion: 1,
 		Ephemeral: body.Ephemeral != nil && *body.Ephemeral,
-	}, nil
+	}
+	s.routes = append(s.routes, route)
+	return route, nil
 }
 
 func (s *publisherControlStub) ListRoutes(context.Context, string) ([]controlv1.Route, error) {
+	s.record("list")
 	s.listCalls++
-	return s.routes, nil
+	return slices.Clone(s.routes), nil
 }
 
-func (s *publisherControlStub) UpdateRoute(_ context.Context, _ string, body controlv1.UpdateRouteRequest) (controlv1.Route, error) {
+func (s *publisherControlStub) UpdateRoute(_ context.Context, id string, body controlv1.UpdateRouteRequest) (controlv1.Route, error) {
+	s.record("update")
 	s.updated = &body
 	if s.updateErr != nil {
 		return controlv1.Route{}, s.updateErr
 	}
-	route := s.routes[0]
-	route.Target = body.Target
-	route.AllowedIpPrefixes = &body.AllowedIpPrefixes
-	return route, nil
+	for index := range s.routes {
+		if s.routes[index].Id == id {
+			s.routes[index].Target = body.Target
+			s.routes[index].AllowedIpPrefixes = &body.AllowedIpPrefixes
+			return s.routes[index], nil
+		}
+	}
+	return controlv1.Route{}, errors.New("update of unknown fixture route")
 }
 
-func (s *publisherControlStub) DeleteRoute(_ context.Context, route controlv1.Route) error {
-	s.deleted = &route
+func (s *publisherControlStub) DeleteRoute(_ context.Context, routeID string) error {
+	s.record("delete")
+	s.deleted = &routeID
+	s.routes = slices.DeleteFunc(s.routes, func(existing controlv1.Route) bool { return existing.Id == routeID })
 	return nil
 }
 
 func (s *publisherControlStub) CreateRouteSession(context.Context, string, string) (controlv1.RouteSessionSetup, error) {
+	s.record("create_session")
 	if s.routeSessionErr != nil {
 		return controlv1.RouteSessionSetup{}, s.routeSessionErr
 	}
@@ -354,11 +384,11 @@ func (s *publisherControlStub) CreateRouteSession(context.Context, string, strin
 }
 
 func (*publisherControlStub) CloseRouteSession(context.Context, string, credentials.RouteSessionToken) error {
-	return nil
+	panic("unexpected CloseRouteSession")
 }
 
 func (*publisherControlStub) MarkRouteSessionReady(context.Context, string, uint64, credentials.RouteSessionToken) error {
-	return nil
+	panic("unexpected MarkRouteSessionReady")
 }
 
 func (s *publisherControlStub) HeartbeatRouteSession(ctx context.Context, routeID string, version uint64, token credentials.RouteSessionToken) (controlv1.RouteSessionHeartbeat, error) {
@@ -381,11 +411,11 @@ func (*publisherControlStub) MarkCertificateChallengeReady(context.Context, stri
 }
 
 func (*publisherControlStub) MarkCertificateChallengeRemoved(context.Context, string, credentials.RouteSessionToken) error {
-	return nil
+	panic("unexpected MarkCertificateChallengeRemoved")
 }
 
 func (*publisherControlStub) MarkRouteSessionCertificateInstalled(context.Context, string, uint64, string, time.Time, credentials.RouteSessionToken) error {
-	return nil
+	panic("unexpected MarkRouteSessionCertificateInstalled")
 }
 
 func pointer[T any](value T) *T { return &value }

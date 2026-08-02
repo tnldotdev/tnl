@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
-	"sync"
 	"testing"
 	"time"
 
@@ -35,12 +34,12 @@ func TestIntegrationHostedRouteCreationDoesNotDeadlockSessionCreation(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer gate.Rollback(context.Background())
+	defer rollbackTestTransaction(t, gate)
 	if _, err := gate.Exec(ctx, `SELECT control_name FROM control.maintenance_controls WHERE control_name = 'route_session_creation' FOR UPDATE`); err != nil {
 		t.Fatal(err)
 	}
-	var workers sync.WaitGroup
-	defer func() { cancel(); workers.Wait() }()
+	workers := newIntegrationWorkers(t, cancel)
+	defer workers.stop()
 	var session RouteSessionSetup
 	sessionDone := make(chan error, 1)
 	workers.Go(func() {
@@ -104,7 +103,7 @@ func TestIntegrationHostedRouteCreationDoesNotDeadlockSessionCreation(t *testing
 }
 
 func TestIntegrationRouteCreatorLockPreservesIdentityProtection(t *testing.T) {
-	database, now := newCertificatePlanDatabase(t)
+	database, now := newControlStateIntegrationDatabase(t, "creator_lock")
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	const identity = "identity_creator_lock"
@@ -115,7 +114,7 @@ func TestIntegrationRouteCreatorLockPreservesIdentityProtection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer owner.Rollback(context.Background())
+	defer rollbackTestTransaction(t, owner)
 	if _, err := controlstatedb.New(owner).LockRouteCreator(ctx, identity); err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +132,7 @@ func TestIntegrationRouteCreatorLockPreservesIdentityProtection(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer other.Rollback(context.Background())
+			defer rollbackTestTransaction(t, other)
 			if _, err := other.Exec(ctx, `SET LOCAL lock_timeout = '100ms'`); err != nil {
 				t.Fatal(err)
 			}

@@ -12,7 +12,7 @@ paths:
   /v1/auth/token:
     post:
       operationId: exchangeLoginToken
-      summary: Exchange the bootstrap login token for a control session
+      summary: Exchange a login token for a control session
       security: []
       requestBody:
         required: true
@@ -98,7 +98,7 @@ paths:
   /v1/teams:
     get:
       operationId: listTeams
-      summary: List teams visible through current memberships
+      summary: List teams for the authenticated identity
       security:
         - bearerAuth: []
       responses:
@@ -260,7 +260,7 @@ paths:
   /v1/invitations/accept:
     post:
       operationId: acceptInvitation
-      summary: Consume an invitation secret
+      summary: Accept an invitation with its secret
       security:
         - bearerAuth: []
       requestBody:
@@ -281,7 +281,7 @@ paths:
   /v1/teams/{team_id}/domains:
     get:
       operationId: listTeamDomains
-      summary: List managed and claimed domains available to the team
+      summary: List domains available to the team
       security:
         - bearerAuth: []
       parameters:
@@ -353,7 +353,7 @@ paths:
   /v1/service/authorize:
     post:
       operationId: authorizeServiceOperation
-      summary: Authorize one control operation against current authority state
+      summary: Authorize a control operation using current authority state
       security:
         - hostedServiceAuth: []
       requestBody:

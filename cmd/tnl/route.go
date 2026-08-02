@@ -5,16 +5,14 @@ import (
 	"io"
 	"strconv"
 
-	"github.com/tnldotdev/tnl/internal/clientauth"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/controlclient"
-	"github.com/tnldotdev/tnl/internal/routeclient"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 type routeCommand struct {
-	List   routeListCommand   `cmd:"" help:"List durable routes for the selected team."`
-	Delete routeDeleteCommand `cmd:"" help:"Delete a durable route."`
+	List   routeListCommand   `cmd:"" help:"List routes for the selected team."`
+	Delete routeDeleteCommand `cmd:"" help:"Delete a route."`
 }
 
 type routeListCommand struct {
@@ -76,17 +74,9 @@ func runRouteDelete(ctx context.Context, command routeDeleteCommand, output, dia
 	if selected == nil {
 		return controlclient.ErrNotFound
 	}
-	client, err := routeAPI(session.authenticated)
-	if err != nil {
-		return err
-	}
-	if err := client.DeleteRoute(ctx, *selected); err != nil {
+	if err := session.authenticated.Control.DeleteRoute(ctx, selected.Id); err != nil {
 		return err
 	}
 	return writeHumanTransition(output, "tnl route delete", "deleted", selected.CanonicalHostname, "", "route deleted", "",
 		clioutput.Field{Label: "id", Value: selected.Id})
-}
-
-func routeAPI(authenticated *clientauth.Client) (*routeclient.Client, error) {
-	return routeclient.New(authenticated.Control)
 }

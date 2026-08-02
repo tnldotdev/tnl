@@ -23,7 +23,7 @@ paths:
               $ref: "#/components/schemas/IngressRegistration"
       responses:
         "200":
-          description: Ingress lease created or idempotently renewed
+          description: Ingress lease created or renewed when the same registration is repeated
           content:
             application/json:
               schema:
@@ -33,7 +33,7 @@ paths:
   /internal/v1/ingresses/{ingress_id}/renew:
     post:
       operationId: renewIngress
-      summary: Renew one exact ingress lease
+      summary: Renew a matching ingress lease
       parameters:
         - $ref: "#/components/parameters/IngressID"
       requestBody:
@@ -54,7 +54,7 @@ paths:
   /internal/v1/ingresses/{ingress_id}/drain:
     post:
       operationId: drainIngress
-      summary: Remove one exact ingress process from new visitor traffic
+      summary: Stop a matching ingress process from accepting new visitors
       parameters:
         - $ref: "#/components/parameters/IngressID"
       requestBody:
@@ -75,7 +75,7 @@ paths:
   /internal/v1/ingresses/{ingress_id}/routing-table/snapshot:
     get:
       operationId: getIngressRoutingTableSnapshot
-      summary: Load a repeatable-read ingress routing-table snapshot
+      summary: Load a consistent ingress routing-table snapshot
       parameters:
         - $ref: "#/components/parameters/IngressID"
         - $ref: "#/components/parameters/IngressRunID"
@@ -92,7 +92,7 @@ paths:
   /internal/v1/ingresses/{ingress_id}/routing-table/events:
     get:
       operationId: getIngressRoutingTableEvents
-      summary: Long-poll ordered ingress routing-table events
+      summary: Wait for ordered ingress routing-table events
       parameters:
         - $ref: "#/components/parameters/IngressID"
         - $ref: "#/components/parameters/IngressRunID"
@@ -136,7 +136,7 @@ paths:
   /internal/v1/ingresses/{ingress_id}/usage-reports:
     post:
       operationId: reportIngressUsage
-      summary: Ingest cumulative route usage from one ingress process run
+      summary: Store cumulative route usage from one ingress process run
       parameters:
         - $ref: "#/components/parameters/IngressID"
       requestBody:
@@ -153,7 +153,7 @@ paths:
   /internal/v1/ingresses/{ingress_id}/route-recovery/{episode_id}/observed:
     post:
       operationId: observeRouteRecovery
-      summary: Observe the first successful publisher byte after public recovery
+      summary: Record the first publisher byte after route recovery
       parameters:
         - $ref: "#/components/parameters/IngressID"
         - name: episode_id
@@ -318,7 +318,7 @@ components:
           type: array
           minItems: 2
           maxItems: 2
-          description: Current and next UTC-date keys used only to derive route-scoped visitor-network hashes.
+          description: Keys for the current and next UTC dates. Ingress uses them only to hash visitor networks for one route.
           items:
             $ref: "#/components/schemas/VisitorNetworkHashKey"
         draining:

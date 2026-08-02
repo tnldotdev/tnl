@@ -22,8 +22,14 @@ func TestCertificateIssuanceResponseWithholdsCertificateUntilInstallable(t *test
 			response := certificateIssuanceResponse(controlstate.CertificateIssuance{
 				State: test.state, CertificatePEM: "certificate", NotBefore: &notBefore, NotAfter: &notAfter,
 			})
-			if exposed := response.CertificatePem != nil || response.NotBefore != nil || response.NotAfter != nil; exposed != test.wantExposed {
-				t.Fatalf("certificate material exposed = %v, want %v", exposed, test.wantExposed)
+			if test.wantExposed {
+				if response.CertificatePem == nil || *response.CertificatePem != "certificate" ||
+					response.NotBefore == nil || !response.NotBefore.Equal(notBefore) ||
+					response.NotAfter == nil || !response.NotAfter.Equal(notAfter) {
+					t.Fatalf("installable certificate = %#v", response)
+				}
+			} else if response.CertificatePem != nil || response.NotBefore != nil || response.NotAfter != nil {
+				t.Fatalf("certificate material exposed before installable: %#v", response)
 			}
 		})
 	}

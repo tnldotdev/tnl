@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -69,7 +70,7 @@ func TestRegisterIngressAuthorizesAndConvertsRequest(t *testing.T) {
 	}
 	response := serveIngressJSON(
 		t, testIngressHandler(t, store, now, nil), http.MethodPost,
-		"/internal/v1/ingresses/register", body, "ingress-1",
+		"/internal/v1/ingresses/register", body,
 	)
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
@@ -138,7 +139,7 @@ func TestIngressRoutingTableEventsUseExactLeaseAndLongPoll(t *testing.T) {
 		t.Fatal(err)
 	}
 	target := "/internal/v1/ingresses/ingress-1/routing-table/events?ingress_run_id=run-1&ingress_lease_revision=7&after=11&limit=8&wait=1s"
-	request := authenticatedIngressRequest(http.MethodGet, target, nil, "ingress-1")
+	request := authenticatedIngressRequest(http.MethodGet, target, nil)
 	response := httptest.NewRecorder()
 	h.ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
@@ -156,20 +157,23 @@ func TestIngressRoutingTableEventsUseExactLeaseAndLongPoll(t *testing.T) {
 		t.Fatalf("routing entry = %#v", page.Events[0].Entry)
 	}
 
-	store.readRoutingEvents = func(
+}
+
+func TestIngressRoutingEventsRequireResnapshotAfterCompaction(t *testing.T) {
+	store := &ingressStoreStub{readRoutingEvents: func(
 		context.Context, controlstate.IngressLeaseIdentity, uint64, int, time.Time,
 	) (controlstate.IngressRoutingTablePage, error) {
 		return controlstate.IngressRoutingTablePage{
 			ThroughRevision: 20, RetainedAfterRevision: 15, ResnapshotRequired: true,
 		}, nil
-	}
-	request = authenticatedIngressRequest(
+	}}
+	h := testIngressHandler(t, store, time.Now(), nil)
+	request := authenticatedIngressRequest(
 		http.MethodGet,
 		"/internal/v1/ingresses/ingress-1/routing-table/events?ingress_run_id=run-1&ingress_lease_revision=7&after=11&wait=0s",
 		nil,
-		"ingress-1",
 	)
-	response = httptest.NewRecorder()
+	response := httptest.NewRecorder()
 	h.ServeHTTP(response, request)
 	if response.Code != http.StatusConflict {
 		t.Fatalf("resnapshot status = %d, want %d: %s", response.Code, http.StatusConflict, response.Body.String())
@@ -205,7 +209,7 @@ func TestReportIngressUsageConvertsCumulativeReports(t *testing.T) {
 	}
 	response := serveIngressJSON(
 		t, testIngressHandler(t, store, now, nil), http.MethodPost,
-		"/internal/v1/ingresses/ingress-1/usage-reports", body, "ingress-1",
+		"/internal/v1/ingresses/ingress-1/usage-reports", body,
 	)
 	if response.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusNoContent, response.Body.String())
@@ -250,7 +254,7 @@ func TestObserveRouteRecoveryUsesExactIngressLease(t *testing.T) {
 	}
 	response := serveIngressJSON(
 		t, testIngressHandler(t, store, now, nil), http.MethodPost,
-		"/internal/v1/ingresses/ingress-1/route-recovery/9/observed", body, "ingress-1",
+		"/internal/v1/ingresses/ingress-1/route-recovery/9/observed", body,
 	)
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
@@ -291,7 +295,7 @@ func TestIngressStoreErrorsHaveStableProblems(t *testing.T) {
 			}
 			response := serveIngressJSON(
 				t, testIngressHandler(t, store, now, nil), http.MethodPost,
-				"/internal/v1/ingresses/ingress-1/usage-reports", body, "ingress-1",
+				"/internal/v1/ingresses/ingress-1/usage-reports", body,
 			)
 			if response.Code != test.status {
 				t.Fatalf("status = %d, want %d: %s", response.Code, test.status, response.Body.String())
@@ -304,8 +308,11 @@ func TestIngressStoreErrorsHaveStableProblems(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			direct, err := client.ReportIngressUsageWithResponse(t.Context(), body.IngressId, body)
-			if err != nil || direct.StatusCode() != wire.StatusCode() || direct.ApplicationproblemJSONDefault == nil || wire.ApplicationproblemJSONDefault == nil || *direct.ApplicationproblemJSONDefault != *wire.ApplicationproblemJSONDefault {
+			err = client.ReportIngressUsage(t.Context(), body.IngressId, body)
+			var direct *serviceapi.ProblemError
+			if !errors.As(err, &direct) || direct.Status != wire.StatusCode() || wire.ApplicationproblemJSONDefault == nil ||
+				direct.Type != wire.ApplicationproblemJSONDefault.Type || direct.Title != wire.ApplicationproblemJSONDefault.Title ||
+				direct.Detail != wire.ApplicationproblemJSONDefault.Detail {
 				t.Fatalf("direct problem differs from HTTP: %#v, %v; HTTP %#v", direct, err, wire)
 			}
 			assertIngressProblemType(t, response, "https://tnl.dev/problems/"+test.problemType)
@@ -339,21 +346,20 @@ func serveIngressJSON(
 	h http.Handler,
 	method, target string,
 	body any,
-	ingressID string,
 ) *httptest.ResponseRecorder {
 	t.Helper()
 	encoded, err := json.Marshal(body)
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := authenticatedIngressRequest(method, target, bytes.NewReader(encoded), ingressID)
+	request := authenticatedIngressRequest(method, target, bytes.NewReader(encoded))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	h.ServeHTTP(response, request)
 	return response
 }
 
-func authenticatedIngressRequest(method, target string, body io.Reader, ingressID string) *http.Request {
+func authenticatedIngressRequest(method, target string, body io.Reader) *http.Request {
 	request := httptest.NewRequest(method, target, body)
 	request.Header.Set("Authorization", "Bearer "+testIngressClusterSecret)
 	return request

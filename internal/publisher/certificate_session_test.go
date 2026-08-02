@@ -3,15 +3,9 @@ package publisher
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"crypto/tls"
 	"crypto/x509"
-	"encoding/pem"
 	"errors"
 	"fmt"
-	"net"
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"slices"
 	"sync"
@@ -23,9 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/muxsession"
-	"github.com/tnldotdev/tnl/internal/tunnel"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
-	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func TestRunSubmitsAuthoritativeNamespaceCSR(t *testing.T) {
@@ -33,7 +25,7 @@ func TestRunSubmitsAuthoritativeNamespaceCSR(t *testing.T) {
 		t.Run(hostname, func(t *testing.T) {
 			control := newCertificateTestControl(t, hostname, namespaceCertificateTestPlan())
 			control.store = certificateTestStore(t, filepath.Join(t.TempDir(), "state"))
-			config := certificateSessionTestConfig(t, control)
+			config := startCertificateTLSYamuxHarness(t, control)
 			var submitted *x509.CertificateRequest
 			control.create = func(csr []byte, _ string) (controlv1.CertificateIssuance, error) {
 				var err error
@@ -55,7 +47,7 @@ func TestRunSubmitsAuthoritativeNamespaceCSR(t *testing.T) {
 			if !slices.Equal(want, got) {
 				t.Fatalf("submitted CSR SANs = %q, want authoritative session SANs %q; Run = %v", submitted.DNSNames, control.setup.CertificatePlan.Identifiers, err)
 			}
-			if !errors.Is(err, reachedReady) {
+			if !errors.Is(err, reachedReady) || len(control.installations) != 1 || !slices.Equal(control.closedSessions, []string{control.setup.RouteSession.Id}) {
 				t.Fatalf("authorized namespace issuance did not reach ready: %v", err)
 			}
 		})
@@ -68,7 +60,7 @@ func TestRunReacknowledgesCachedCertificateForEachSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	config := certificateSessionTestConfig(t, control)
+	config := startCertificateTLSYamuxHarness(t, control)
 	control.create = func([]byte, string) (controlv1.CertificateIssuance, error) {
 		t.Error("cached, unexpired certificate triggered a new issuance")
 		return controlv1.CertificateIssuance{}, errors.New("unexpected issuance")
@@ -98,40 +90,12 @@ func TestRunReacknowledgesCachedCertificateForEachSession(t *testing.T) {
 	}
 }
 
-func TestRunReportsStartupPhasesInOrder(t *testing.T) {
-	control, route, state := newCertificateTransactionTest(t)
-	if _, err := attemptCertificateTransaction(t.Context(), control, route, state, control.setup, false); err != nil {
-		t.Fatal(err)
-	}
-	config := certificateSessionTestConfig(t, control)
-	var phases []StartupPhase
-	config.ObserveStartup = func(phase StartupPhase) { phases = append(phases, phase) }
-	reachedReady := errors.New("test reached ready")
-	control.ready = func() error { return reachedReady }
-	if err := runCertificateSessionTest(t, config); !errors.Is(err, reachedReady) {
-		t.Fatalf("Run = %v", err)
-	}
-	want := []StartupPhase{
-		StartupInitialHeartbeat,
-		StartupFirstConnection,
-		StartupCertificate,
-		StartupAllConnections,
-	}
-	if !slices.Equal(phases, want) {
-		t.Fatalf("startup phases = %q, want %q", phases, want)
-	}
-}
-
 func TestRunSessionRetriesReadinessConflict(t *testing.T) {
-	previous := activationRetry
-	activationRetry = time.Millisecond
-	defer func() { activationRetry = previous }()
-
 	control, route, state := newCertificateTransactionTest(t)
 	if _, err := attemptCertificateTransaction(t.Context(), control, route, state, control.setup, false); err != nil {
 		t.Fatal(err)
 	}
-	config := certificateSessionTestConfig(t, control)
+	config := startCertificateTLSYamuxHarness(t, control)
 	control.create = func([]byte, string) (controlv1.CertificateIssuance, error) {
 		return controlv1.CertificateIssuance{}, errors.New("cached certificate triggered a new issuance")
 	}
@@ -155,7 +119,7 @@ func TestRunSessionRetriesReadinessConflict(t *testing.T) {
 func TestRunTransportFallbackObserverErrorCancelsSession(t *testing.T) {
 	control := newCertificateTestControl(t, "member.example", namespaceCertificateTestPlan())
 	control.store = certificateTestStore(t, filepath.Join(t.TempDir(), "state"))
-	config := certificateSessionTestConfig(t, control)
+	config := startCertificateTLSYamuxHarness(t, control)
 	observerError := errors.New("fallback observer failed")
 	config.Observe = func(event Event) error {
 		if event.Type == EventTransportFallback {
@@ -189,7 +153,7 @@ func TestRunDoesNotReuseCertificateFromIncompatibleSessionPlan(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			config := certificateSessionTestConfig(t, control)
+			config := startCertificateTLSYamuxHarness(t, control)
 			test.change(&control.setup.CertificatePlan)
 			control.setup.RouteSession.RouteVersion++
 			control.setup.RouteSession.Id = "route_session_22222222222222222222222222222222"
@@ -217,7 +181,7 @@ func TestRunDoesNotReuseCertificateFromIncompatibleSessionPlan(t *testing.T) {
 func TestRunSharesNamespaceMaterialWithoutHoldingTransactionLock(t *testing.T) {
 	first := newCertificateTestControl(t, "first.member.example", namespaceCertificateTestPlan())
 	first.store = certificateTestStore(t, filepath.Join(t.TempDir(), "state"))
-	firstConfig := certificateSessionTestConfig(t, first)
+	firstConfig := startCertificateTLSYamuxHarness(t, first)
 	ready := make(chan struct{})
 	first.ready = func() error { close(ready); return nil }
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -226,7 +190,7 @@ func TestRunSharesNamespaceMaterialWithoutHoldingTransactionLock(t *testing.T) {
 	go func() { done <- Run(ctx, firstConfig) }()
 	defer func() {
 		cancel()
-		if err := <-done; err != nil {
+		if err := awaitPublisherTest(t, done); err != nil {
 			t.Errorf("first publisher: %v", err)
 		}
 	}()
@@ -240,7 +204,7 @@ func TestRunSharesNamespaceMaterialWithoutHoldingTransactionLock(t *testing.T) {
 	second.setup.Route.Id = "route_22222222222222222222222222222222"
 	second.setup.RouteSession.RouteId = second.setup.Route.Id
 	second.setup.RouteSession.Id = "route_session_22222222222222222222222222222222"
-	secondConfig := certificateSessionTestConfig(t, second)
+	secondConfig := startCertificateTLSYamuxHarness(t, second)
 	second.create = func([]byte, string) (controlv1.CertificateIssuance, error) {
 		return controlv1.CertificateIssuance{}, errors.New("second route requested another namespace certificate")
 	}
@@ -452,69 +416,6 @@ func TestConcurrentNamespaceCertificateLifecycle(t *testing.T) {
 	}
 }
 
-// In-memory transport lets synctest exercise runSession's handshake, certificate
-// lifecycle, acknowledgements, and heartbeats without external network I/O.
-type certificateTestTransport struct {
-	done chan struct{}
-	once sync.Once
-}
-
-func (s *certificateTestTransport) OpenStream(context.Context) (muxsession.Stream, error) {
-	local, remote := net.Pipe()
-	go func() {
-		defer remote.Close()
-		if _, err := tunnelv1.ReadControl(remote); err != nil {
-			return
-		}
-		if err := tunnelv1.WriteControl(remote, tunnelv1.Message{Type: tunnelv1.HelloAccepted, ProtocolVersion: tunnelv1.Version}); err != nil {
-			return
-		}
-		request, err := tunnelv1.ReadControl(remote)
-		if err != nil {
-			return
-		}
-		if request.Type != tunnelv1.Drain || request.RequestID == "" {
-			return
-		}
-		if err := tunnelv1.WriteControl(remote, tunnelv1.Message{
-			Type: tunnelv1.Draining, ProtocolVersion: tunnelv1.Version, RequestID: request.RequestID,
-		}); err != nil {
-			return
-		}
-		if err := tunnelv1.WriteControl(remote, tunnelv1.Message{
-			Type: tunnelv1.Drained, ProtocolVersion: tunnelv1.Version, RequestID: request.RequestID,
-		}); err != nil {
-			return
-		}
-		<-s.done
-	}()
-	return certificateTestStream{local}, nil
-}
-
-func (s *certificateTestTransport) AcceptStream(ctx context.Context) (muxsession.Stream, error) {
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-s.done:
-		return nil, muxsession.ErrClosed
-	}
-}
-func (s *certificateTestTransport) Close() error          { s.once.Do(func() { close(s.done) }); return nil }
-func (s *certificateTestTransport) Done() <-chan struct{} { return s.done }
-func (s *certificateTestTransport) Err() error {
-	select {
-	case <-s.done:
-		return muxsession.ErrClosed
-	default:
-		return nil
-	}
-}
-
-type certificateTestStream struct{ net.Conn }
-
-func (s certificateTestStream) CloseWrite() error  { return s.Close() }
-func (s certificateTestStream) Reset(uint32) error { return s.Close() }
-
 func TestRunReusesCompatibleCertificateAfterRouteRecreation(t *testing.T) {
 	control, route, state := newCertificateTransactionTest(t)
 	material, err := attemptCertificateTransaction(t.Context(), control, route, state, control.setup, false)
@@ -525,7 +426,7 @@ func TestRunReusesCompatibleCertificateAfterRouteRecreation(t *testing.T) {
 	control.setup.Route.Id = "route_22222222222222222222222222222222"
 	control.setup.RouteSession.RouteId = control.setup.Route.Id
 	control.setup.RouteSession.Id = "route_session_22222222222222222222222222222222"
-	config := certificateSessionTestConfig(t, control)
+	config := startCertificateTLSYamuxHarness(t, control)
 	control.create = func([]byte, string) (controlv1.CertificateIssuance, error) {
 		return controlv1.CertificateIssuance{}, errors.New("recreated route requested issuance instead of reusing compatible cached material")
 	}
@@ -545,140 +446,9 @@ func TestRunReusesCompatibleCertificateAfterRouteRecreation(t *testing.T) {
 	}
 }
 
-func certificateSessionTestConfig(t *testing.T, control *certificateTestControl) Config {
-	t.Helper()
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
-	t.Cleanup(upstream.Close)
-	control.setup.Route.Target = upstream.URL
-	control.routes = []controlv1.Route{control.setup.Route}
-	certificate := routeTestCertificate(t, "relay.example")
-	ctx, cancel := context.WithCancel(t.Context())
-	var workers sync.WaitGroup
-	t.Cleanup(func() { cancel(); workers.Wait() })
-	for slot := range 2 {
-		listener, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { _ = listener.Close() })
-		control.setup.PublisherConnections = append(control.setup.PublisherConnections, controlv1.ConnectionAssignment{
-			ConnectionSlot: slot, ConnectionAssignmentRevision: 1, PublisherConnectionId: fmt.Sprintf("connection_%d", slot),
-			PublisherConnectionCredential: "test-credential", PublisherConnectionCredentialExpiresAt: time.Now().Add(time.Hour),
-			RelayServiceId: fmt.Sprintf("relay_service_%d", slot), RelayAddress: listener.Addr().String(), TlsServerName: "relay.example", State: controlv1.PublisherConnectionStateAssigned,
-		})
-		workers.Go(func() {
-			for {
-				connection, err := listener.Accept()
-				if err != nil {
-					return
-				}
-				workers.Go(func() {
-					defer connection.Close()
-					stop := context.AfterFunc(ctx, func() { _ = connection.Close() })
-					defer stop()
-					transport, err := muxsession.AcceptTLSYamux(ctx, connection, &tls.Config{Certificates: []tls.Certificate{certificate}}, muxsession.TLSYamuxConfig{})
-					if err != nil {
-						return
-					}
-					defer transport.Close()
-					session, _, err := tunnel.Accept(ctx, transport, func(_ context.Context, hello tunnelv1.Message) error {
-						if hello.Role != tunnelv1.Publisher || hello.Credential != "test-credential" || hello.PublisherConnection == nil || hello.PublisherConnection.ConnectionSlot != uint8(slot) {
-							return errors.New("unexpected publisher hello")
-						}
-						return nil
-					})
-					if err != nil {
-						return
-					}
-					defer session.Close()
-					if err := session.HandlePublisherDrain(ctx, func(context.Context) error { return nil }); err == nil {
-						select {
-						case <-ctx.Done():
-						case <-transport.Done():
-						}
-					}
-				})
-			}
-		})
-	}
-	return Config{
-		Control: control, State: control.store, TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1", RouteScope: controlv1.Member,
-		Hostname: control.setup.Route.CanonicalHostname, Target: upstream.URL,
-		FallbackDelay: time.Millisecond, DrainTime: time.Second,
-		QUICConnector: muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
-			return nil, errors.New("test uses TLS/yamux")
-		}),
-		TCPConnector: muxsession.TLSYamuxConnector{TLSConfig: &tls.Config{RootCAs: rootsForCertificate(t, certificate)}},
-	}
-}
-
 func runCertificateSessionTest(t *testing.T, config Config) error {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	return Run(ctx, config)
-}
-
-func (c *certificateTestControl) CreateRouteSession(_ context.Context, routeID, key string) (controlv1.RouteSessionSetup, error) {
-	if routeID != c.setup.Route.Id || key == "" {
-		return controlv1.RouteSessionSetup{}, errors.New("unexpected route session request")
-	}
-	return c.setup, nil
-}
-
-func (c *certificateTestControl) HeartbeatRouteSession(ctx context.Context, session string, version uint64, token credentials.RouteSessionToken) (controlv1.RouteSessionHeartbeat, error) {
-	if c.heartbeat != nil {
-		return c.heartbeat(ctx, session, version, token)
-	}
-	return controlv1.RouteSessionHeartbeat{RouteSession: c.setup.RouteSession, PublisherConnections: c.setup.PublisherConnections}, nil
-}
-
-func (c *certificateTestControl) MarkRouteSessionReady(context.Context, string, uint64, credentials.RouteSessionToken) error {
-	if c.ready != nil {
-		return c.ready()
-	}
-	return nil
-}
-
-func TestAutomaticRouteAcceptsNamespaceCertificate(t *testing.T) {
-	control := newCertificateTestControl(t, "member.example", namespaceCertificateTestPlan())
-	key := control.signer.PrivateKey
-	csr, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{DNSNames: control.setup.CertificatePlan.Identifiers}, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	issuance, err := control.issue(csr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	certificate, err := tls.X509KeyPair([]byte(*issuance.CertificatePem), pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, hostname := range []string{"member.example", "app.member.example"} {
-		t.Run(hostname, func(t *testing.T) {
-			route := certificateTestRoute(t, hostname, control.setup.CertificatePlan)
-			if err := route.InstallCertificate(certificate); err != nil {
-				t.Fatalf("authorized namespace certificate rejected: %v", err)
-			}
-			selected, err := route.getCertificate(&tls.ClientHelloInfo{ServerName: hostname})
-			if err != nil || !bytes.Equal(selected.Certificate[0], certificate.Certificate[0]) {
-				t.Fatalf("namespace certificate selection = %v", err)
-			}
-			if _, err := route.getCertificate(&tls.ClientHelloInfo{ServerName: "other.member.example"}); err == nil {
-				t.Fatal("wildcard certificate allowed SNI for a different route")
-			}
-		})
-	}
-	t.Run("uncovered_depth", func(t *testing.T) {
-		route, err := NewRouteServer(RouteServerConfig{Hostname: "deep.app.member.example", Target: "http://127.0.0.1:3000", Certificate: certificate, CertificatePlan: control.setup.CertificatePlan})
-		if err == nil {
-			_ = route.Close()
-			t.Fatal("namespace wildcard certificate covered a deeper hostname")
-		}
-	})
 }

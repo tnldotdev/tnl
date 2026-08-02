@@ -89,6 +89,8 @@ func TestPublisherConnectionUpdateValidatesBeforeMutation(t *testing.T) {
 }
 
 func TestStaleTLSFallbackDoesNotPublishFallback(t *testing.T) {
+	ctx, cancelTest := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancelTest()
 	assignment := controlv1.ConnectionAssignment{
 		ConnectionAssignmentRevision:           1,
 		ConnectionSlot:                         0,
@@ -116,13 +118,14 @@ func TestStaleTLSFallbackDoesNotPublishFallback(t *testing.T) {
 		}
 	})
 	manager := &publisherConnectionManager{
-		ctx: t.Context(), config: publisherConnectionManagerConfig{
+		ctx: ctx, config: publisherConnectionManagerConfig{
 			QUICConnector: quic, TCPConnector: tcp, ReconnectDelay: time.Second,
 		},
 		routeSessionID: "route_session_1", routeID: "route_1", routeVersion: 1,
 		changed: make(chan struct{}), fallback: make(chan struct{}),
 	}
-	connectionCtx, cancel := context.WithCancel(t.Context())
+	connectionCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	managed := &managedPublisherConnection{assignment: assignment, cancel: cancel}
 	manager.connections[0] = managed
 	manager.wg.Add(1)
@@ -131,10 +134,20 @@ func TestStaleTLSFallbackDoesNotPublishFallback(t *testing.T) {
 		manager.run(connectionCtx, 0, managed)
 		close(done)
 	}()
+	t.Cleanup(func() {
+		cancel()
+		_ = transport.Close()
+		select {
+		case <-done:
+			manager.Close()
+		case <-time.After(5 * time.Second):
+			t.Error("publisher connection did not join during cleanup")
+		}
+	})
 
 	select {
 	case <-fallbackStarted:
-	case <-t.Context().Done():
+	case <-ctx.Done():
 		t.Fatal("TLS/TCP fallback did not start")
 	}
 	replacement := &managedPublisherConnection{assignment: assignment, cancel: func() {}}
@@ -144,7 +157,7 @@ func TestStaleTLSFallbackDoesNotPublishFallback(t *testing.T) {
 	close(releaseFallback)
 	select {
 	case <-done:
-	case <-t.Context().Done():
+	case <-ctx.Done():
 		t.Fatal("stale publisher connection did not stop")
 	}
 
@@ -161,7 +174,6 @@ func TestStaleTLSFallbackDoesNotPublishFallback(t *testing.T) {
 	if replacement.ready || replacement.session != nil {
 		t.Fatal("stale TLS/TCP session mutated the replacement connection")
 	}
-	manager.Close()
 }
 
 func TestTLSFallbackIsPublishedBeforeConnectionReadiness(t *testing.T) {
@@ -171,7 +183,9 @@ func TestTLSFallbackIsPublishedBeforeConnectionReadiness(t *testing.T) {
 	if !manager.setSession(0, managed, new(tunnel.Session), tunnel.TransportTLSTCP) {
 		t.Fatal("current TLS/TCP connection was rejected")
 	}
-	if err := manager.WaitReady(t.Context(), 1); err != nil {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if err := manager.WaitReady(ctx, 1); err != nil {
 		t.Fatal(err)
 	}
 	select {

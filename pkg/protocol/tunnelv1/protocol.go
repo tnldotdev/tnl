@@ -1,4 +1,4 @@
-// Package tunnelv1 defines the transport-neutral publisher and visitor stream protocol.
+// Package tunnelv1 defines messages for publisher connections and visitor streams.
 package tunnelv1
 
 import (

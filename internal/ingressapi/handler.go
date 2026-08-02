@@ -1,12 +1,10 @@
-// Package ingressapi serves the cluster-authenticated private control API for ingress.
+// Package ingressapi serves control's private API for ingress processes.
 package ingressapi
 
 import (
 	"context"
 	"errors"
-	"log"
 	"net/http"
-	"strconv"
 	"time"
 
 	openapi_types "github.com/oapi-codegen/runtime/types"
@@ -38,13 +36,9 @@ type Config struct {
 }
 
 type handler struct {
-	store               Store
-	clusterSecrets      serviceapi.BearerSecrets
-	leaseDuration       time.Duration
-	routingPollInterval time.Duration
-	now                 func() time.Time
-	report              func(error)
-	mux                 *http.ServeMux
+	service        *service
+	clusterSecrets serviceapi.BearerSecrets
+	mux            *http.ServeMux
 }
 
 // NewHandler constructs the private ingress service.
@@ -55,19 +49,15 @@ func NewHandler(config Config) (http.Handler, error) {
 	if config.LeaseDuration <= 0 {
 		return nil, errors.New("ingressapi: ingress lease duration must be positive")
 	}
-	if config.RoutingPollInterval <= 0 {
-		config.RoutingPollInterval = 250 * time.Millisecond
-	}
-	if config.Now == nil {
-		config.Now = time.Now
-	}
-	if config.Report == nil {
-		config.Report = func(err error) { log.Printf("ingress service: %v", err) }
+	service, err := newService(DirectConfig{
+		Store: config.Store, LeaseDuration: config.LeaseDuration,
+		RoutingPollInterval: config.RoutingPollInterval, Now: config.Now, Report: config.Report,
+	})
+	if err != nil {
+		return nil, err
 	}
 	h := &handler{
-		store: config.Store, clusterSecrets: config.ClusterSecrets, leaseDuration: config.LeaseDuration,
-		routingPollInterval: config.RoutingPollInterval, now: config.Now, report: config.Report,
-		mux: http.NewServeMux(),
+		service: service, clusterSecrets: config.ClusterSecrets, mux: http.NewServeMux(),
 	}
 	ingressv1.HandlerWithOptions(generatedServer{handler: h}, ingressv1.StdHTTPServerOptions{
 		BaseRouter: h.mux,
@@ -96,207 +86,106 @@ func (h *handler) registerIngress(response http.ResponseWriter, request *http.Re
 	if !serviceapi.DecodeJSON(response, request, &body) {
 		return
 	}
-	if !serviceapi.ValidIdentifiers(body.IngressId, body.IngressRunId) {
-		serviceapi.WriteProblem(response, http.StatusBadRequest, "invalid_request", "Ingress registration identifiers are invalid")
+	lease, err := h.service.RegisterIngress(request.Context(), body)
+	if h.writeServiceError(response, request, err) {
 		return
 	}
-	protocolVersion, protocolOK := serviceapi.Positive(body.ProtocolVersion)
-	connectionCapacity, capacityOK := serviceapi.Positive(body.ConnectionCapacity)
-	if !protocolOK || !capacityOK {
-		serviceapi.WriteProblem(response, http.StatusBadRequest, "invalid_request", "Ingress protocol and connection capacity must be positive")
-		return
-	}
-	lease, err := h.store.RegisterIngress(request.Context(), controlstate.IngressRegistration{
-		IngressID: body.IngressId, IngressRunID: body.IngressRunId,
-		ProtocolVersion: protocolVersion, ConnectionCapacity: connectionCapacity,
-	}, h.now(), h.leaseDuration)
-	if err != nil {
-		h.writeStoreError(response, err)
-		return
-	}
-	serviceapi.WriteJSON(response, http.StatusOK, ingressLease(lease))
+	serviceapi.WriteJSON(response, http.StatusOK, lease)
 }
 
-func (h *handler) renewIngress(response http.ResponseWriter, request *http.Request) {
+func (h *handler) renewIngress(response http.ResponseWriter, request *http.Request, ingressID ingressv1.IngressID) {
 	var body ingressv1.IngressRenewal
-	if !serviceapi.DecodeJSON(response, request, &body) ||
-		!serviceapi.MatchingPathValue(response, request, "ingress_id", body.IngressId) {
+	if !serviceapi.DecodeJSON(response, request, &body) {
 		return
 	}
-	identity, ok := ingressLeaseIdentity(body.IngressId, body.IngressRunId, body.IngressLeaseRevision)
-	reportedConnections, connectionsOK := serviceapi.Nonnegative(body.ReportedConnections)
-	routingRevision, revisionOK := serviceapi.Nonnegative(body.RoutingTableRevision)
-	if !ok || !connectionsOK || !revisionOK {
-		serviceapi.WriteProblem(response, http.StatusBadRequest, "invalid_request", "Ingress renewal identity or counters are invalid")
+	lease, err := h.service.RenewIngress(request.Context(), ingressID, body)
+	if h.writeServiceError(response, request, err) {
 		return
 	}
-	lease, err := h.store.RenewIngress(request.Context(), controlstate.IngressRenewal{
-		IngressLeaseIdentity: identity, ReportedConnections: reportedConnections,
-		RoutingTableRevision: routingRevision,
-	}, h.now(), h.leaseDuration)
-	if err != nil {
-		h.writeStoreError(response, err)
-		return
-	}
-	serviceapi.WriteJSON(response, http.StatusOK, ingressLease(lease))
+	serviceapi.WriteJSON(response, http.StatusOK, lease)
 }
 
-func (h *handler) drainIngress(response http.ResponseWriter, request *http.Request) {
+func (h *handler) drainIngress(response http.ResponseWriter, request *http.Request, ingressID ingressv1.IngressID) {
 	var body ingressv1.IngressDrainRequest
-	if !serviceapi.DecodeJSON(response, request, &body) ||
-		!serviceapi.MatchingPathValue(response, request, "ingress_id", body.IngressId) {
+	if !serviceapi.DecodeJSON(response, request, &body) {
 		return
 	}
-	identity, ok := ingressLeaseIdentity(body.IngressId, body.IngressRunId, body.IngressLeaseRevision)
-	if !ok || !body.Deadline.After(h.now()) {
-		serviceapi.WriteProblem(response, http.StatusBadRequest, "invalid_request", "Ingress drain identity or deadline is invalid")
+	lease, err := h.service.DrainIngress(request.Context(), ingressID, body)
+	if h.writeServiceError(response, request, err) {
 		return
 	}
-	lease, err := h.store.BeginIngressDrain(request.Context(), identity, h.now(), body.Deadline)
-	if err != nil {
-		h.writeStoreError(response, err)
-		return
-	}
-	serviceapi.WriteJSON(response, http.StatusOK, ingressLease(lease))
+	serviceapi.WriteJSON(response, http.StatusOK, lease)
 }
 
-func (h *handler) routingTableSnapshot(response http.ResponseWriter, request *http.Request) {
-	identity, ok := h.ingressIdentityFromQuery(response, request)
-	if !ok {
+func (h *handler) routingTableSnapshot(
+	response http.ResponseWriter,
+	request *http.Request,
+	ingressID ingressv1.IngressID,
+	params ingressv1.GetIngressRoutingTableSnapshotParams,
+) {
+	snapshot, err := h.service.GetIngressRoutingTableSnapshot(request.Context(), ingressID, params)
+	if h.writeServiceError(response, request, err) {
 		return
 	}
-	snapshot, err := h.store.ReadIngressRoutingTableSnapshot(request.Context(), identity, h.now())
-	if err != nil {
-		h.writeStoreError(response, err)
-		return
-	}
-	serviceapi.WriteJSON(response, http.StatusOK, routingTableSnapshot(snapshot))
+	serviceapi.WriteJSON(response, http.StatusOK, snapshot)
 }
 
-func (h *handler) routingTableEvents(response http.ResponseWriter, request *http.Request) {
-	identity, ok := h.ingressIdentityFromQuery(response, request)
-	if !ok {
+func (h *handler) routingTableEvents(
+	response http.ResponseWriter,
+	request *http.Request,
+	ingressID ingressv1.IngressID,
+	params ingressv1.GetIngressRoutingTableEventsParams,
+) {
+	page, err := h.service.GetIngressRoutingTableEvents(request.Context(), ingressID, params)
+	if h.writeServiceError(response, request, err) {
 		return
 	}
-	after, err := strconv.ParseUint(request.URL.Query().Get("after"), 10, 64)
-	if err != nil {
-		serviceapi.WriteProblem(response, http.StatusBadRequest, "invalid_request", "after must be a non-negative routing-table revision")
-		return
-	}
-	limit, ok := queryInteger(request, "limit", defaultRoutingTablePageSize, 1, controlstate.MaximumIngressRoutingTablePageSize)
-	if !ok {
-		serviceapi.WriteProblem(response, http.StatusBadRequest, "invalid_request", "limit must be between 1 and 1000")
-		return
-	}
-	wait, ok := queryWholeSecondDuration(request, "wait", defaultRoutingTableWait, defaultRoutingTableWait)
-	if !ok {
-		serviceapi.WriteProblem(response, http.StatusBadRequest, "invalid_request", "wait must be a whole-second duration between 0s and 25s")
-		return
-	}
-	deadline := time.Now().Add(wait)
-	for {
-		page, err := h.store.ReadIngressRoutingTableEvents(request.Context(), identity, after, limit, h.now())
-		if err != nil {
-			h.writeStoreError(response, err)
-			return
-		}
-		if page.ResnapshotRequired {
-			serviceapi.WriteProblem(response, http.StatusConflict, "routing_table_resnapshot_required", "The routing-table revision was compacted; load a new snapshot")
-			return
-		}
-		if len(page.Events) != 0 || page.More || wait == 0 || !time.Now().Before(deadline) {
-			serviceapi.WriteJSON(response, http.StatusOK, routingTablePage(page))
-			return
-		}
-		poll := h.routingPollInterval
-		if remaining := time.Until(deadline); poll > remaining {
-			poll = remaining
-		}
-		timer := time.NewTimer(poll)
-		select {
-		case <-request.Context().Done():
-			timer.Stop()
-			return
-		case <-timer.C:
-		}
-	}
+	serviceapi.WriteJSON(response, http.StatusOK, page)
 }
 
-func (h *handler) reportUsage(response http.ResponseWriter, request *http.Request) {
+func (h *handler) reportUsage(response http.ResponseWriter, request *http.Request, ingressID ingressv1.IngressID) {
 	var body ingressv1.IngressUsageReportBatch
-	if !serviceapi.DecodeJSON(response, request, &body) ||
-		!serviceapi.MatchingPathValue(response, request, "ingress_id", body.IngressId) {
+	if !serviceapi.DecodeJSON(response, request, &body) {
 		return
 	}
-	identity, ok := ingressLeaseIdentity(body.IngressId, body.IngressRunId, body.IngressLeaseRevision)
-	if !ok {
-		serviceapi.WriteProblem(response, http.StatusBadRequest, "invalid_request", "Ingress usage lease identity is invalid")
-		return
-	}
-	batch, ok := ingressUsageBatch(body)
-	if !ok {
-		serviceapi.WriteProblem(response, http.StatusBadRequest, "invalid_request", "Ingress usage reports are invalid")
-		return
-	}
-	if err := h.store.ReportIngressUsage(request.Context(), identity, batch, h.now()); err != nil {
-		h.writeStoreError(response, err)
+	if h.writeServiceError(response, request, h.service.ReportIngressUsage(request.Context(), ingressID, body)) {
 		return
 	}
 	response.WriteHeader(http.StatusNoContent)
 }
 
-func (h *handler) observeRecovery(response http.ResponseWriter, request *http.Request) {
-	episodeID, err := strconv.ParseUint(request.PathValue("episode_id"), 10, 64)
-	if err != nil || episodeID == 0 {
-		serviceapi.WriteProblem(response, http.StatusBadRequest, "invalid_request", "Recovery episode ID is invalid")
-		return
-	}
-	var body ingressv1.RouteRecoveryObservationRequest
-	if !serviceapi.DecodeJSON(response, request, &body) ||
-		!serviceapi.MatchingPathValue(response, request, "ingress_id", body.IngressId) {
-		return
-	}
-	identity, ok := ingressLeaseIdentity(body.IngressId, body.IngressRunId, body.IngressLeaseRevision)
-	routeVersion, routeOK := serviceapi.Positive(body.RouteVersion)
-	if !ok || !routeOK || !serviceapi.ValidIdentifiers(body.RouteId) || body.ObservedAt.IsZero() {
-		serviceapi.WriteProblem(response, http.StatusBadRequest, "invalid_request", "Recovery observation identity is invalid")
-		return
-	}
-	observation, err := h.store.ObserveRouteRecovery(
-		request.Context(), identity, body.RouteId, routeVersion, episodeID, body.ObservedAt,
-	)
-	if err != nil {
-		h.writeStoreError(response, err)
-		return
-	}
-	serviceapi.WriteJSON(response, http.StatusOK, ingressv1.RouteRecoveryObservation{
-		EpisodeId: int64(observation.EpisodeID), RouteId: observation.RouteID,
-		RouteVersion: int64(observation.RouteVersion), OpenedAt: observation.OpenedAt,
-		ObservedAt: observation.ObservedAt, ObservedSeconds: observation.ObservedSeconds,
-	})
-}
-
-func (h *handler) ingressIdentityFromQuery(
+func (h *handler) observeRecovery(
 	response http.ResponseWriter,
 	request *http.Request,
-) (controlstate.IngressLeaseIdentity, bool) {
-	ingressID := request.PathValue("ingress_id")
-	revision, err := strconv.ParseInt(request.URL.Query().Get("ingress_lease_revision"), 10, 64)
-	if err != nil {
-		serviceapi.WriteProblem(response, http.StatusBadRequest, "invalid_request", "ingress_lease_revision must be positive")
-		return controlstate.IngressLeaseIdentity{}, false
+	ingressID ingressv1.IngressID,
+	episodeID int64,
+) {
+	var body ingressv1.RouteRecoveryObservationRequest
+	if !serviceapi.DecodeJSON(response, request, &body) {
+		return
 	}
-	identity, ok := ingressLeaseIdentity(ingressID, request.URL.Query().Get("ingress_run_id"), revision)
-	if !ok {
-		serviceapi.WriteProblem(response, http.StatusBadRequest, "invalid_request", "Ingress lease identity is invalid")
-		return controlstate.IngressLeaseIdentity{}, false
+	observation, err := h.service.ObserveRouteRecovery(request.Context(), ingressID, episodeID, body)
+	if h.writeServiceError(response, request, err) {
+		return
 	}
-	return identity, true
+	serviceapi.WriteJSON(response, http.StatusOK, observation)
 }
 
-func (h *handler) writeStoreError(response http.ResponseWriter, err error) {
-	status, kind, detail := storeProblem(err, h.report)
-	serviceapi.WriteProblem(response, status, kind, detail)
+func (h *handler) writeServiceError(response http.ResponseWriter, request *http.Request, err error) bool {
+	if err == nil {
+		return false
+	}
+	if request.Context().Err() != nil {
+		return true
+	}
+	var problem *serviceapi.ProblemError
+	if errors.As(err, &problem) {
+		serviceapi.WriteProblemError(response, problem)
+		return true
+	}
+	h.service.report(err)
+	serviceapi.WriteProblem(response, http.StatusInternalServerError, "internal", "The ingress service request failed")
+	return true
 }
 
 // storeProblem is shared by HTTP and standalone adapters. Role controllers see
@@ -456,26 +345,4 @@ func routingTableEntry(projection controlstate.IngressRoutingTableProjection) in
 		AllowedIpPrefixes: prefixes, RouteExpiresAt: projection.RouteExpiresAt,
 		RecoveryEpisodeId: recoveryEpisodeID, PublisherConnections: connections,
 	}
-}
-
-func queryInteger(request *http.Request, name string, defaultValue, minimum, maximum int) (int, bool) {
-	value := request.URL.Query().Get(name)
-	if value == "" {
-		return defaultValue, true
-	}
-	parsed, err := strconv.Atoi(value)
-	return parsed, err == nil && parsed >= minimum && parsed <= maximum
-}
-
-func queryWholeSecondDuration(
-	request *http.Request,
-	name string,
-	defaultValue, maximum time.Duration,
-) (time.Duration, bool) {
-	value := request.URL.Query().Get(name)
-	if value == "" {
-		return defaultValue, true
-	}
-	parsed, err := time.ParseDuration(value)
-	return parsed, err == nil && parsed >= 0 && parsed <= maximum && parsed%time.Second == 0
 }

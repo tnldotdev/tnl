@@ -45,11 +45,14 @@ func TestRouteServerTerminatesTLSAndProxiesLoopbackHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = ingress.Close(); awaitPublisherTest(t, handled) })
 	client := tls.Client(ingress, &tls.Config{
 		ServerName: "ROUTE.EXAMPLE", MinVersion: tls.VersionTLS12, MaxVersion: tls.VersionTLS12,
 		InsecureSkipVerify: true, // The test route certificate is self-signed.
 	})
-	if err := client.HandshakeContext(context.Background()); err != nil {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	if err := client.HandshakeContext(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if client.ConnectionState().Version != tls.VersionTLS12 {
@@ -70,7 +73,7 @@ func TestRouteServerTerminatesTLSAndProxiesLoopbackHTTP(t *testing.T) {
 	if response.StatusCode != http.StatusOK || string(body) != "local response" {
 		t.Fatalf("response = %d %q", response.StatusCode, body)
 	}
-	if got := <-forwarded; got != "192.0.2.10" {
+	if got := awaitPublisherTest(t, forwarded); got != "192.0.2.10" {
 		t.Fatalf("X-Forwarded-For = %q", got)
 	}
 	_ = client.Close()
@@ -83,12 +86,13 @@ func TestRouteServerTerminatesTLSAndProxiesLoopbackHTTP(t *testing.T) {
 
 func TestRouteServerClosesStreamAfterMalformedProxyHeader(t *testing.T) {
 	publisher, relay := net.Pipe()
-	defer relay.Close()
+	_ = relay.SetDeadline(time.Now().Add(5 * time.Second))
 	handled := make(chan struct{})
 	go func() {
 		new(RouteServer).handle(publisher)
 		close(handled)
 	}()
+	t.Cleanup(func() { _ = relay.Close(); _ = publisher.Close(); awaitPublisherTest(t, handled) })
 	if _, err := relay.Write([]byte("not-a-proxy-head")); err != nil {
 		t.Fatal(err)
 	}
@@ -109,6 +113,8 @@ func TestRouteServerClosesStreamAfterMalformedProxyHeader(t *testing.T) {
 }
 
 func TestRouteServerServesTransportNeutralPublisherConnection(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
 	forwarded := make(chan string, 1)
 	upstream := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		forwarded <- request.Header.Get("X-Forwarded-For")
@@ -141,24 +147,42 @@ func TestRouteServerServesTransportNeutralPublisherConnection(t *testing.T) {
 		err     error
 	}
 	relayResult := make(chan accepted, 1)
+	relayDone := make(chan struct{})
 	go func() {
+		defer close(relayDone)
 		connection, err := listener.Accept()
 		if err != nil {
 			relayResult <- accepted{err: err}
 			return
 		}
-		transport, err := muxsession.AcceptTLSYamux(context.Background(), connection, &tls.Config{
+		defer connection.Close()
+		stop := context.AfterFunc(ctx, func() { _ = connection.Close() })
+		defer stop()
+		transport, err := muxsession.AcceptTLSYamux(ctx, connection, &tls.Config{
 			Certificates: []tls.Certificate{transportCertificate},
 		}, muxsession.TLSYamuxConfig{})
 		if err != nil {
 			relayResult <- accepted{err: err}
 			return
 		}
-		session, _, err := tunnel.Accept(context.Background(), transport, func(context.Context, tunnelv1.Message) error {
+		defer transport.Close()
+		session, _, err := tunnel.Accept(ctx, transport, func(context.Context, tunnelv1.Message) error {
 			return nil
 		})
 		relayResult <- accepted{session: session, err: err}
+		if err == nil {
+			defer session.Close()
+			select {
+			case <-ctx.Done():
+			case <-session.Done():
+			}
+		}
 	}()
+	t.Cleanup(func() {
+		cancel()
+		_ = listener.Close()
+		awaitPublisherTest(t, relayDone)
+	})
 
 	ref := tunnelv1.PublisherConnectionRef{
 		RouteSessionID: "route_session_1", RouteID: "route_1", RouteVersion: 1,
@@ -166,13 +190,14 @@ func TestRouteServerServesTransportNeutralPublisherConnection(t *testing.T) {
 		ConnectionAssignmentRevision: 1, RelayServiceID: "relay_service_1",
 	}
 	publisherTransport, err := (muxsession.TLSYamuxConnector{TLSConfig: &tls.Config{RootCAs: roots}}).Connect(
-		t.Context(),
+		ctx,
 		muxsession.Endpoint{Address: listener.Addr().String(), ServerName: "relay.example"},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	publisherSession, err := tunnel.Dial(t.Context(), publisherTransport, tunnelv1.Message{
+	t.Cleanup(func() { _ = publisherTransport.Close() })
+	publisherSession, err := tunnel.Dial(ctx, publisherTransport, tunnelv1.Message{
 		Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version, Role: tunnelv1.Publisher,
 		Credential: "credential", PublisherConnection: &ref,
 	})
@@ -180,21 +205,21 @@ func TestRouteServerServesTransportNeutralPublisherConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = publisherSession.Close() })
-	acceptedRelay := <-relayResult
+	acceptedRelay := awaitPublisherTest(t, relayResult)
 	if acceptedRelay.err != nil {
 		t.Fatal(acceptedRelay.err)
 	}
 	t.Cleanup(func() { _ = acceptedRelay.session.Close() })
-	serveContext, stopServing := context.WithCancel(context.Background())
+	serveContext, stopServing := context.WithCancel(ctx)
 	serveDone := make(chan error, 1)
 	go func() { serveDone <- route.ServePublisherConnection(serveContext, publisherSession, ref) }()
 	t.Cleanup(func() {
 		stopServing()
 		_ = publisherSession.Close()
-		<-serveDone
+		awaitPublisherTest(t, serveDone)
 	})
 
-	stream, err := acceptedRelay.session.OpenPublisherStream(t.Context(), tunnelv1.PublisherStreamHeader{
+	stream, err := acceptedRelay.session.OpenPublisherStream(ctx, tunnelv1.PublisherStreamHeader{
 		ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.VisitorStream,
 		VisitorConnectionID: "visitor_connection_1", RouteID: ref.RouteID,
 		RouteSessionID: ref.RouteSessionID, RouteVersion: ref.RouteVersion,
@@ -202,6 +227,10 @@ func TestRouteServerServesTransportNeutralPublisherConnection(t *testing.T) {
 		ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision,
 	})
 	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = stream.Close() })
+	if err := stream.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	header, err := proxyproto.Encode(proxyproto.Header{
@@ -234,7 +263,7 @@ func TestRouteServerServesTransportNeutralPublisherConnection(t *testing.T) {
 	if response.StatusCode != http.StatusOK || string(body) != "local response" {
 		t.Fatalf("response = %d %q", response.StatusCode, body)
 	}
-	if got := <-forwarded; got != "192.0.2.10" {
+	if got := awaitPublisherTest(t, forwarded); got != "192.0.2.10" {
 		t.Fatalf("X-Forwarded-For = %q", got)
 	}
 }
@@ -258,7 +287,8 @@ func TestRouteServerNegotiatesHTTP2AndProxiesLoopbackHTTP(t *testing.T) {
 			return openHTTPTestRouteServer(route, handled)
 		},
 	}
-	client := &http.Client{Transport: transport}
+	t.Cleanup(transport.CloseIdleConnections)
+	client := &http.Client{Transport: transport, Timeout: 5 * time.Second}
 	response, err := client.Get("https://route.example/")
 	if err != nil {
 		t.Fatal(err)
@@ -277,7 +307,7 @@ func TestRouteServerNegotiatesHTTP2AndProxiesLoopbackHTTP(t *testing.T) {
 	if string(body) != "local response" {
 		t.Fatalf("response body = %q", body)
 	}
-	if protocol := <-upstreamProtocol; protocol != 1 {
+	if protocol := awaitPublisherTest(t, upstreamProtocol); protocol != 1 {
 		t.Fatalf("local service HTTP version = %d, want 1", protocol)
 	}
 	transport.CloseIdleConnections()
@@ -305,6 +335,7 @@ func startHTTPTestRouteServer(t *testing.T, target string) *RouteServer {
 
 func openHTTPTestRouteServer(route *RouteServer, handled chan struct{}) (net.Conn, error) {
 	ingress, publisher := net.Pipe()
+	_ = ingress.SetDeadline(time.Now().Add(5 * time.Second))
 	go func() {
 		route.handle(publisher)
 		close(handled)
@@ -321,6 +352,19 @@ func openHTTPTestRouteServer(route *RouteServer, handled chan struct{}) (net.Con
 		return nil, err
 	}
 	return ingress, nil
+}
+
+// Every real-I/O test wait has a local bound, including cleanup after Fatal.
+func awaitPublisherTest[T any](t *testing.T, result <-chan T) T {
+	t.Helper()
+	select {
+	case value := <-result:
+		return value
+	case <-time.After(5 * time.Second):
+		t.Fatal("publisher test operation did not finish")
+		var zero T
+		return zero
+	}
 }
 
 func TestRouteServerSelectsChallengeAndInstalledCertificate(t *testing.T) {

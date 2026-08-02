@@ -1,6 +1,7 @@
 package tnldconfig
 
 import (
+	"slices"
 	"testing"
 	"time"
 )
@@ -28,8 +29,7 @@ func TestParseStandaloneDerivesAddresses(t *testing.T) {
 		t.Fatalf("derived hostnames = %q, %q, %q, %q", config.ServerHostname(), config.IngressHostname(), config.StandaloneRelayHostname(), config.ManagedDomain())
 	}
 	if config.ControlListen != ":443" || config.PrivateControlListen != ":9443" ||
-		config.IngressListen != ":443" || config.RelayTCPListen != ":443" || config.RelayUDPListen != ":443" ||
-		config.RelayQUICPacketIOMode != RelayQUICPacketIOModeOptimized {
+		config.IngressListen != ":443" || config.RelayTCPListen != ":443" || config.RelayUDPListen != ":443" {
 		t.Fatalf("standalone listeners = %#v", config)
 	}
 }
@@ -95,8 +95,7 @@ func TestParseSplitRoles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if relay.RelayTCPListen != ":443" || relay.RelayUDPListen != ":443" || relay.InternalRelayListen != ":9445" ||
-		relay.RelayQUICPacketIOMode != RelayQUICPacketIOModeOptimized {
+	if relay.RelayTCPListen != ":443" || relay.RelayUDPListen != ":443" || relay.InternalRelayListen != ":9445" {
 		t.Fatalf("relay configuration = %#v", relay)
 	}
 }
@@ -119,24 +118,6 @@ func TestConfigPrivateControlAddressRequiresSplitDialAddress(t *testing.T) {
 		"--private-control-address", "control.internal:9443",
 	}); err == nil {
 		t.Fatal("private control address was accepted by control")
-	}
-}
-
-func TestParseRelayQUICPacketIOMode(t *testing.T) {
-	base := []string{
-		"--mode", "relay", "--control-hostname", "control.tnl.example.com",
-		"--cluster-secret", testClusterSecret, "--relay-service-id", "relay-a", "--relay-id", "relay-1",
-		"--relay-address", "relay-a.tnl.example.com:443", "--internal-relay-address", "relay-1.internal:9445",
-	}
-	config, err := Parse(append(base, "--relay-quic-packet-io-mode", "basic"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if config.RelayQUICPacketIOMode != RelayQUICPacketIOModeBasic {
-		t.Fatalf("relay QUIC packet I/O mode = %q", config.RelayQUICPacketIOMode)
-	}
-	if _, err := Parse(append(base, "--relay-quic-packet-io-mode", "invalid")); err == nil {
-		t.Fatal("invalid relay QUIC packet I/O mode was accepted")
 	}
 }
 
@@ -211,19 +192,10 @@ func TestEffectiveReservedRouteNames(t *testing.T) {
 	}
 	got := config.EffectiveReservedRouteNames()
 	for _, want := range []string{"custom", "domains", "control", "ingress", "relay"} {
-		if !contains(got, want) {
+		if !slices.Contains(got, want) {
 			t.Fatalf("reserved route names %v do not contain %q", got, want)
 		}
 	}
-}
-
-func contains(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
 }
 
 func TestConfigRouteAndRelayDNSMatrix(t *testing.T) {

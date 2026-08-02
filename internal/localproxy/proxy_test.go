@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,6 +25,7 @@ func TestProxyForwardsOnlyExactTrustedRequests(t *testing.T) {
 	type received struct {
 		Host           string
 		Forwarded      string
+		ForwardedFor   string
 		ForwardedHost  string
 		ForwardedProto string
 		RealIP         string
@@ -30,7 +33,7 @@ func TestProxyForwardsOnlyExactTrustedRequests(t *testing.T) {
 	requests := make(chan received, 1)
 	upstream := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		requests <- received{
-			Host: request.Host, Forwarded: request.Header.Get("X-Forwarded-For"),
+			Host: request.Host, Forwarded: request.Header.Get("Forwarded"), ForwardedFor: request.Header.Get("X-Forwarded-For"),
 			ForwardedHost:  request.Header.Get("X-Forwarded-Host"),
 			ForwardedProto: request.Header.Get("X-Forwarded-Proto"), RealIP: request.Header.Get("X-Real-IP"),
 		}
@@ -41,7 +44,7 @@ func TestProxyForwardsOnlyExactTrustedRequests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest(http.MethodGet, "/test", nil)
+	request := httptest.NewRequestWithContext(proxyContext(t), http.MethodGet, "/test", nil)
 	request.Host = "route.example"
 	request.RemoteAddr = "192.0.2.10:1234"
 	request.TLS = &tls.ConnectionState{ServerName: "ROUTE.EXAMPLE"}
@@ -54,7 +57,7 @@ func TestProxyForwardsOnlyExactTrustedRequests(t *testing.T) {
 		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
 	}
 	got := <-requests
-	if got.Host != "route.example" || got.Forwarded != "192.0.2.10" || got.ForwardedHost != "route.example" || got.ForwardedProto != "https" || got.RealIP != "" {
+	if got.Host != "route.example" || got.Forwarded != "" || got.ForwardedFor != "192.0.2.10" || got.ForwardedHost != "route.example" || got.ForwardedProto != "https" || got.RealIP != "" {
 		t.Fatalf("upstream request = %#v", got)
 	}
 
@@ -67,7 +70,7 @@ func TestProxyForwardsOnlyExactTrustedRequests(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodGet, "/test", nil)
+			request := httptest.NewRequestWithContext(proxyContext(t), http.MethodGet, "/test", nil)
 			request.Host = "route.example"
 			request.TLS = &tls.ConnectionState{ServerName: "route.example"}
 			mutate(request)
@@ -97,6 +100,7 @@ func TestProxyDiagnosesUnavailableTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	target := "http://" + listener.Addr().String()
+	t.Cleanup(func() { _ = listener.Close() })
 	if err := listener.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +108,7 @@ func TestProxyDiagnosesUnavailableTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request := httptest.NewRequestWithContext(proxyContext(t), http.MethodGet, "/", nil)
 	request.Host = "route.example"
 	request.TLS = &tls.ConnectionState{ServerName: "route.example"}
 	response := httptest.NewRecorder()
@@ -129,7 +133,7 @@ func TestProxyPreservesLocalServiceErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request := httptest.NewRequestWithContext(proxyContext(t), http.MethodGet, "/", nil)
 	request.Host = "route.example"
 	request.TLS = &tls.ConnectionState{ServerName: "route.example"}
 	response := httptest.NewRecorder()
@@ -141,35 +145,73 @@ func TestProxyPreservesLocalServiceErrors(t *testing.T) {
 }
 
 func TestProxyForwardsWebSocketUpgrade(t *testing.T) {
+	started, done := make(chan struct{}), make(chan struct{})
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	t.Cleanup(cancel)
+	result := make(chan error, 1)
 	upstream := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		close(started)
+		defer close(done)
 		if request.Header.Get("Connection") != "Upgrade" || request.Header.Get("Upgrade") != "websocket" {
 			http.Error(response, "missing upgrade", http.StatusBadRequest)
 			return
 		}
 		connection, buffer, err := response.(http.Hijacker).Hijack()
 		if err != nil {
+			result <- err
 			return
 		}
 		defer connection.Close()
-		_, _ = buffer.WriteString("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\nhot")
-		_ = buffer.Flush()
+		stop := context.AfterFunc(ctx, func() { _ = connection.Close() })
+		defer stop()
+		_ = connection.SetDeadline(time.Now().Add(5 * time.Second))
+		_, err = buffer.WriteString("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\nhot")
+		if err == nil {
+			err = buffer.Flush()
+		}
+		payload := make([]byte, len("client upgrade bytes"))
+		if err == nil {
+			_, err = io.ReadFull(buffer, payload)
+		}
+		if err == nil && string(payload) != "client upgrade bytes" {
+			err = fmt.Errorf("upgraded request = %q", payload)
+		}
+		if err == nil {
+			_, err = connection.Write([]byte("ack"))
+		}
+		result <- err
 	}))
-	defer upstream.Close()
+	t.Cleanup(upstream.Close)
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-started:
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Error("upgrade worker did not stop")
+			}
+		default:
+		}
+	})
 	handler, err := New(upstream.URL, "route.example")
 	if err != nil {
 		t.Fatal(err)
 	}
 	frontend := httptest.NewUnstartedServer(handler)
+	t.Cleanup(frontend.Close)
 	frontend.StartTLS()
-	defer frontend.Close()
 
-	connection, err := tls.Dial("tcp", frontend.Listener.Addr().String(), &tls.Config{
+	connection, err := tls.DialWithDialer(&net.Dialer{Timeout: 5 * time.Second}, "tcp", frontend.Listener.Addr().String(), &tls.Config{
 		ServerName: "route.example", InsecureSkipVerify: true, // Test certificate is self-signed.
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer connection.Close()
+	t.Cleanup(func() { _ = connection.Close() })
+	if err := connection.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
 	_, err = io.WriteString(connection, "GET /hmr HTTP/1.1\r\nHost: route.example\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n")
 	if err != nil {
 		t.Fatal(err)
@@ -194,10 +236,26 @@ func TestProxyForwardsWebSocketUpgrade(t *testing.T) {
 	if string(payload) != "hot" {
 		t.Fatalf("payload = %q", payload)
 	}
+	if _, err := io.WriteString(connection, "client upgrade bytes"); err != nil {
+		t.Fatal(err)
+	}
+	ack := make([]byte, 3)
+	if _, err := io.ReadFull(reader, ack); err != nil || string(ack) != "ack" {
+		t.Fatalf("upgrade acknowledgement = %q, %v", ack, err)
+	}
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
 }
 
 func TestProxyFlushesStreamingResponses(t *testing.T) {
-	release := make(chan struct{}, 1)
+	release := make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(release) })
 	upstream := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 		response.Header().Set("Content-Type", "text/event-stream")
 		_, _ = io.WriteString(response, "first\n")
@@ -205,19 +263,16 @@ func TestProxyFlushesStreamingResponses(t *testing.T) {
 		<-release
 		_, _ = io.WriteString(response, "second\n")
 	}))
-	defer upstream.Close()
-	defer func() {
-		select {
-		case release <- struct{}{}:
-		default:
-		}
-	}()
+	t.Cleanup(upstream.Close)
+	t.Cleanup(unblock)
 	handler, err := New(upstream.URL, "route.example")
 	if err != nil {
 		t.Fatal(err)
 	}
 	frontend := httptest.NewTLSServer(handler)
-	defer frontend.Close()
+	t.Cleanup(frontend.Close)
+	// Release the handler before either HTTP server's Close waits for it.
+	t.Cleanup(unblock)
 	client := frontend.Client()
 	client.Timeout = 2 * time.Second
 	client.Transport.(*http.Transport).TLSClientConfig.ServerName = "route.example"
@@ -239,7 +294,7 @@ func TestProxyFlushesStreamingResponses(t *testing.T) {
 	if string(first) != "first\n" {
 		t.Fatalf("first chunk = %q", first)
 	}
-	release <- struct{}{}
+	unblock()
 	second := make([]byte, len("second\n"))
 	if _, err := io.ReadFull(response.Body, second); err != nil {
 		t.Fatal(err)
@@ -299,11 +354,12 @@ func TestNormalizeTarget(t *testing.T) {
 
 func TestPreflightRequiresAvailableTarget(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	if err := Preflight(context.Background(), upstream.URL); err != nil {
+	t.Cleanup(upstream.Close)
+	if err := Preflight(proxyContext(t), upstream.URL); err != nil {
 		t.Fatal(err)
 	}
 	upstream.Close()
-	if err := Preflight(context.Background(), upstream.URL); err == nil {
+	if err := Preflight(proxyContext(t), upstream.URL); err == nil {
 		t.Fatal("Preflight accepted unavailable target")
 	} else if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.TargetUnavailable {
 		t.Fatalf("Preflight diagnostic = %q, %t", code, ok)
@@ -315,26 +371,87 @@ func TestWaitForTargetAllowsDevelopmentServerStartup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = listener.Close() })
 	address := listener.Addr().String()
 	if err := listener.Close(); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
+	failed, release := make(chan struct{}), make(chan struct{})
+	result, done := make(chan error, 1), make(chan struct{})
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Error("target waiter did not stop")
+		}
+	})
 	go func() {
-		time.Sleep(100 * time.Millisecond)
-		listener, listenErr := net.Listen("tcp", address)
-		if listenErr != nil {
-			return
-		}
-		defer listener.Close()
-		connection, acceptErr := listener.Accept()
-		if acceptErr == nil {
-			_ = connection.Close()
-		}
+		defer close(done)
+		first := true
+		result <- waitForTarget(ctx, "http://"+address, func(ctx context.Context, target string) error {
+			err := Preflight(ctx, target)
+			if first {
+				first = false
+				if err == nil {
+					return errors.New("target unexpectedly available before startup")
+				}
+				close(failed)
+				select {
+				case <-release:
+				case <-ctx.Done():
+				}
+			}
+			return err
+		})
 	}()
-	if err := WaitForTarget(ctx, "http://"+address); err != nil {
+	select {
+	case <-failed:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	started, err := net.Listen("tcp", address)
+	if err != nil {
 		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = started.Close() })
+	_ = started.(*net.TCPListener).SetDeadline(time.Now().Add(time.Second))
+	accepted := make(chan error, 1)
+	joined := make(chan struct{})
+	t.Cleanup(func() {
+		_ = started.Close()
+		select {
+		case <-joined:
+		case <-time.After(time.Second):
+			t.Error("target listener worker did not stop")
+		}
+	})
+	go func() {
+		defer close(joined)
+		connection, err := started.Accept()
+		if err == nil {
+			err = connection.Close()
+		}
+		accepted <- err
+	}()
+	close(release)
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	select {
+	case err := <-accepted:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
 	}
 }
 
@@ -343,6 +460,7 @@ func TestWaitForTargetPreservesUnavailableDiagnosticOnTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = listener.Close() })
 	target := "http://" + listener.Addr().String()
 	if err := listener.Close(); err != nil {
 		t.Fatal(err)
@@ -356,6 +474,13 @@ func TestWaitForTargetPreservesUnavailableDiagnosticOnTimeout(t *testing.T) {
 	if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.TargetUnavailable {
 		t.Fatalf("WaitForTarget diagnostic = %q, %t", code, ok)
 	}
+}
+
+func proxyContext(t *testing.T) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	t.Cleanup(cancel)
+	return ctx
 }
 
 func FuzzNormalizeTarget(f *testing.F) {

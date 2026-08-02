@@ -12,7 +12,7 @@ import (
 
 const heartbeatCallTimeout = 10 * time.Second
 
-var heartbeatInterval = 15 * time.Second
+const heartbeatInterval = 15 * time.Second
 
 func heartbeatSessionAfterUpdate(
 	ctx context.Context,
@@ -23,8 +23,12 @@ func heartbeatSessionAfterUpdate(
 	expiresAt time.Time,
 	update func([]controlv1.ConnectionAssignment) error,
 	observePolicyDenials func(int64) error,
+	interval time.Duration,
 ) error {
-	ticker := time.NewTicker(heartbeatInterval)
+	if interval == 0 {
+		interval = heartbeatInterval
+	}
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		select {

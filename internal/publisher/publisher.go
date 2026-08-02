@@ -26,7 +26,7 @@ type RouteControlClient interface {
 	CreateRoute(context.Context, controlv1.CreateRouteRequest, string) (controlv1.Route, error)
 	ListRoutes(context.Context, string) ([]controlv1.Route, error)
 	UpdateRoute(context.Context, string, controlv1.UpdateRouteRequest) (controlv1.Route, error)
-	DeleteRoute(context.Context, controlv1.Route) error
+	DeleteRoute(context.Context, string) error
 	CreateRouteSession(context.Context, string, string) (controlv1.RouteSessionSetup, error)
 	CloseRouteSession(context.Context, string, credentials.RouteSessionToken) error
 	MarkRouteSessionReady(context.Context, string, uint64, credentials.RouteSessionToken) error
@@ -57,17 +57,8 @@ type Config struct {
 	ProvisioningStalledDelay time.Duration
 	Logf                     func(string, ...any)
 	Observe                  func(Event) error
-	ObserveStartup           func(StartupPhase)
+	heartbeatInterval        time.Duration
 }
-
-type StartupPhase string
-
-const (
-	StartupInitialHeartbeat StartupPhase = "initial heartbeat"
-	StartupFirstConnection  StartupPhase = "first connection"
-	StartupCertificate      StartupPhase = "certificate installed"
-	StartupAllConnections   StartupPhase = "both connections"
-)
 
 type EventType string
 
@@ -127,11 +118,6 @@ func Run(ctx context.Context, config Config) (result error) {
 	if err := localproxy.Preflight(ctx, config.Target); err != nil {
 		return err
 	}
-	allowedIPPrefixes, err := authorization.CanonicalizeIPPrefixes(config.AllowedIPPrefixes)
-	if err != nil {
-		return fmt.Errorf("publisher: invalid allowed IP prefixes: %w", err)
-	}
-	config.AllowedIPPrefixes = allowedIPPrefixes
 	hostLock, err := clientstate.LockHostnameContext(ctx, config.State, hostname)
 	if err != nil {
 		return err
@@ -145,7 +131,7 @@ func Run(ctx context.Context, config Config) (result error) {
 	if config.Ephemeral && createdRoute {
 		defer func() {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			deleteErr := config.Control.DeleteRoute(cleanupCtx, route)
+			deleteErr := config.Control.DeleteRoute(cleanupCtx, route.Id)
 			cancel()
 			if deleteErr != nil && !errors.Is(deleteErr, controlclient.ErrNotFound) {
 				result = errors.Join(result, fmt.Errorf("publisher: delete ephemeral route: %w", deleteErr))
@@ -189,6 +175,11 @@ func Run(ctx context.Context, config Config) (result error) {
 }
 
 func createOrLoadRoute(ctx context.Context, config Config) (controlv1.Route, bool, error) {
+	allowedIPPrefixes, err := authorization.CanonicalizeIPPrefixes(config.AllowedIPPrefixes)
+	if err != nil {
+		return controlv1.Route{}, false, fmt.Errorf("publisher: invalid allowed IP prefixes: %w", err)
+	}
+	config.AllowedIPPrefixes = allowedIPPrefixes
 	if !config.Ephemeral {
 		routes, err := config.Control.ListRoutes(ctx, config.TeamID)
 		if err != nil {
@@ -283,12 +274,6 @@ func observe(config Config, event Event) error {
 		return nil
 	}
 	return config.Observe(event)
-}
-
-func observeStartup(config Config, phase StartupPhase) {
-	if config.ObserveStartup != nil {
-		config.ObserveStartup(phase)
-	}
 }
 
 func opaqueID(prefix string) (string, error) {
