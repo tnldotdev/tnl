@@ -9,16 +9,17 @@ import (
 	"time"
 
 	"github.com/0xcadams/tnl/internal/credentials"
+	"github.com/0xcadams/tnl/internal/state/statedb"
 )
 
 var (
 	// ErrAccessCredentialNotFound indicates that no credential matched the requested owner and ID.
 	ErrAccessCredentialNotFound = errors.New("state: access credential not found")
-	// ErrExternalTokenAlreadyExchanged indicates that an upstream bearer was already consumed.
-	ErrExternalTokenAlreadyExchanged = errors.New("state: external token already exchanged")
+	// ErrOIDCAssertionAlreadyExchanged indicates that an ID token was already consumed.
+	ErrOIDCAssertionAlreadyExchanged = errors.New("state: OIDC assertion already exchanged")
 )
 
-// Principal is a standalone core identity.
+// Principal is a tnl server identity.
 type Principal struct {
 	ID          string
 	DisplayName string
@@ -34,24 +35,25 @@ func CreateAccessCredential(
 	secretHash credentials.SecretHash,
 	issuedAt, expiresAt time.Time,
 ) error {
-	return createAccessCredential(ctx, db, principal, credentialID, secretHash, issuedAt, expiresAt, nil)
+	return createAccessCredential(ctx, db, principal, credentialID, secretHash, issuedAt, expiresAt, nil, time.Time{})
 }
 
-// CreateExternalAccessCredential consumes one upstream bearer and stores its access credential atomically.
-func CreateExternalAccessCredential(
+// CreateOIDCAccessCredential consumes one ID token and stores its access credential atomically.
+func CreateOIDCAccessCredential(
 	ctx context.Context,
 	db *sql.DB,
 	principal Principal,
 	credentialID credentials.CredentialID,
 	secretHash credentials.SecretHash,
 	issuedAt, expiresAt time.Time,
-	externalTokenHash []byte,
+	assertionHash []byte,
+	assertionExpiresAt time.Time,
 ) error {
-	if len(externalTokenHash) != 32 {
-		return errors.New("state: external token hash is invalid")
+	if len(assertionHash) != 32 || !assertionExpiresAt.After(issuedAt) {
+		return errors.New("state: OIDC assertion metadata is invalid")
 	}
 	return createAccessCredential(
-		ctx, db, principal, credentialID, secretHash, issuedAt, expiresAt, externalTokenHash,
+		ctx, db, principal, credentialID, secretHash, issuedAt, expiresAt, assertionHash, assertionExpiresAt,
 	)
 }
 
@@ -62,7 +64,8 @@ func createAccessCredential(
 	credentialID credentials.CredentialID,
 	secretHash credentials.SecretHash,
 	issuedAt, expiresAt time.Time,
-	externalTokenHash []byte,
+	assertionHash []byte,
+	assertionExpiresAt time.Time,
 ) error {
 	if strings.TrimSpace(principal.ID) == "" || strings.TrimSpace(credentialID.String()) == "" {
 		return errors.New("state: principal and credential IDs are required")
@@ -76,37 +79,39 @@ func createAccessCredential(
 		return fmt.Errorf("state: begin credential transaction: %w", err)
 	}
 	defer tx.Rollback()
+	queries := statedb.New(tx)
 
-	if _, err := tx.ExecContext(ctx, `INSERT INTO principals
-		(id, display_name, email, created_at) VALUES (?, ?, ?, ?)
-		ON CONFLICT (id) DO UPDATE SET display_name = excluded.display_name, email = excluded.email`,
-		principal.ID, principal.DisplayName, principal.Email, issuedAt.Unix()); err != nil {
+	if err := queries.UpsertPrincipal(ctx, statedb.UpsertPrincipalParams{
+		PrincipalID: principal.ID,
+		DisplayName: principal.DisplayName,
+		Email:       principal.Email,
+		CreatedAt:   issuedAt.Unix(),
+	}); err != nil {
 		return fmt.Errorf("state: ensure principal: %w", err)
 	}
-	if externalTokenHash != nil {
-		if _, err := tx.ExecContext(ctx,
-			"DELETE FROM external_token_exchanges WHERE expires_at <= ?", issuedAt.Unix(),
-		); err != nil {
-			return fmt.Errorf("state: expire external token exchanges: %w", err)
+	if assertionHash != nil {
+		if err := queries.DeleteExpiredOIDCAssertions(ctx, issuedAt.Unix()); err != nil {
+			return fmt.Errorf("state: expire OIDC assertion exchanges: %w", err)
 		}
-		result, err := tx.ExecContext(ctx, `INSERT INTO external_token_exchanges
-			(token_hash, consumed_at, expires_at) VALUES (?, ?, ?)
-			ON CONFLICT (token_hash) DO NOTHING`, externalTokenHash, issuedAt.Unix(), expiresAt.Unix())
+		inserted, err := queries.ConsumeOIDCAssertion(ctx, statedb.ConsumeOIDCAssertionParams{
+			AssertionHash: assertionHash,
+			ConsumedAt:    issuedAt.Unix(),
+			ExpiresAt:     assertionExpiresAt.Unix(),
+		})
 		if err != nil {
-			return fmt.Errorf("state: consume external token: %w", err)
-		}
-		inserted, err := result.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("state: count consumed external tokens: %w", err)
+			return fmt.Errorf("state: consume OIDC assertion: %w", err)
 		}
 		if inserted == 0 {
-			return ErrExternalTokenAlreadyExchanged
+			return ErrOIDCAssertionAlreadyExchanged
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO access_credentials
-		(id, principal_id, secret_hash, created_at, expires_at)
-		VALUES (?, ?, ?, ?, ?)`,
-		credentialID.String(), principal.ID, secretHash[:], issuedAt.Unix(), expiresAt.Unix()); err != nil {
+	if err := queries.InsertAccessCredential(ctx, statedb.InsertAccessCredentialParams{
+		CredentialID: credentialID.String(),
+		PrincipalID:  principal.ID,
+		SecretHash:   secretHash[:],
+		CreatedAt:    issuedAt.Unix(),
+		ExpiresAt:    expiresAt.Unix(),
+	}); err != nil {
 		return fmt.Errorf("state: create access credential: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -123,32 +128,21 @@ func AuthenticateAccessCredential(
 	candidate credentials.SecretHash,
 	now time.Time,
 ) (Principal, error) {
-	var principal Principal
-	var storedHash []byte
-	var expiresAt int64
-	var revokedAt sql.NullInt64
-	err := db.QueryRowContext(ctx, `SELECT
-		p.id, p.display_name, p.email, c.secret_hash, c.expires_at, c.revoked_at
-		FROM access_credentials c
-		JOIN principals p ON p.id = c.principal_id
-		WHERE c.id = ?`, credentialID.String()).Scan(
-		&principal.ID,
-		&principal.DisplayName,
-		&principal.Email,
-		&storedHash,
-		&expiresAt,
-		&revokedAt,
-	)
+	credential, err := statedb.New(db).GetAccessCredential(ctx, credentialID.String())
 	if errors.Is(err, sql.ErrNoRows) {
 		return Principal{}, credentials.ErrInvalidAccessToken
 	}
 	if err != nil {
 		return Principal{}, fmt.Errorf("state: read access credential: %w", err)
 	}
-	if !credentials.SecretHashMatches(storedHash, candidate) || revokedAt.Valid || now.Unix() >= expiresAt {
+	if !credentials.SecretHashMatches(credential.SecretHash, candidate) || credential.RevokedAt.Valid || now.Unix() >= credential.ExpiresAt {
 		return Principal{}, credentials.ErrInvalidAccessToken
 	}
-	return principal, nil
+	return Principal{
+		ID:          credential.PrincipalID,
+		DisplayName: credential.DisplayName,
+		Email:       credential.Email,
+	}, nil
 }
 
 // RevokeAccessCredential revokes a credential owned by principalID.
@@ -159,15 +153,13 @@ func RevokeAccessCredential(
 	credentialID credentials.CredentialID,
 	revokedAt time.Time,
 ) error {
-	result, err := db.ExecContext(ctx, `UPDATE access_credentials
-		SET revoked_at = COALESCE(revoked_at, ?)
-		WHERE id = ? AND principal_id = ?`, revokedAt.Unix(), credentialID.String(), principalID)
+	updated, err := statedb.New(db).RevokeAccessCredential(ctx, statedb.RevokeAccessCredentialParams{
+		RevokedAt:    revokedAt.Unix(),
+		CredentialID: credentialID.String(),
+		PrincipalID:  principalID,
+	})
 	if err != nil {
 		return fmt.Errorf("state: revoke access credential: %w", err)
-	}
-	updated, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("state: count revoked credentials: %w", err)
 	}
 	if updated == 0 {
 		return ErrAccessCredentialNotFound

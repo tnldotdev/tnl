@@ -7,11 +7,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
 	"github.com/0xcadams/tnl/internal/credentials"
 	"github.com/0xcadams/tnl/internal/naming"
+	"github.com/0xcadams/tnl/internal/state/statedb"
 )
 
 const (
@@ -68,6 +70,7 @@ type StoreConfig struct {
 
 type Store struct {
 	db                       *sql.DB
+	queries                  *statedb.Queries
 	routeSuffix              string
 	now                      func() time.Time
 	leaseLifetime            time.Duration
@@ -112,6 +115,7 @@ func NewStore(db *sql.DB, routeSuffix string, configs ...StoreConfig) (*Store, e
 	}
 	return &Store{
 		db:                       db,
+		queries:                  statedb.New(db),
 		routeSuffix:              routeSuffix,
 		now:                      time.Now,
 		leaseLifetime:            LeaseLifetime,
@@ -160,59 +164,64 @@ func (s *Store) Create(
 		return Provisioning{}, fmt.Errorf("routes: begin create: %w", err)
 	}
 	defer tx.Rollback()
+	queries := s.queries.WithTx(tx)
 	// Claim ownership and irreversibility commit with route creation or rotation.
-	var claimID string
-	var claimPrincipal string
-	var tombstonedAt sql.NullInt64
-	if err := tx.QueryRowContext(ctx,
-		`SELECT id, principal_id, tombstoned_at FROM hostname_claims WHERE hostname = ?`, hostname,
-	).Scan(&claimID, &claimPrincipal, &tombstonedAt); errors.Is(err, sql.ErrNoRows) {
+	claim, err := queries.GetRouteClaimByHostname(ctx, hostname)
+	if errors.Is(err, sql.ErrNoRows) {
 		return Provisioning{}, ErrNameUnavailable
 	} else if err != nil {
 		return Provisioning{}, fmt.Errorf("routes: read hostname claim: %w", err)
 	}
-	if claimPrincipal != principalID || tombstonedAt.Valid {
+	if claim.PrincipalID != principalID || claim.TombstonedAt.Valid {
 		return Provisioning{}, ErrNameUnavailable
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE hostname_claims SET irreversible = 1 WHERE id = ?`, claimID); err != nil {
+	if err := queries.MarkRouteClaimIrreversible(ctx, claim.ID); err != nil {
 		return Provisioning{}, fmt.Errorf("routes: mark hostname irreversible: %w", err)
 	}
-	var existing Route
-	var existingCreatedAt int64
-	err = tx.QueryRowContext(ctx, `SELECT
-		id, principal_id, hostname, display_target, state, generation, created_at
-		FROM routes WHERE claim_id = ? AND state = 'active'`, claimID).Scan(
-		&existing.ID, &existing.PrincipalID, &existing.Hostname, &existing.DisplayTarget,
-		&existing.State, &existing.Generation, &existingCreatedAt,
-	)
+	existingRoute, err := queries.GetActiveRouteByClaim(ctx, claim.ID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return Provisioning{}, fmt.Errorf("routes: check existing route: %w", err)
 	}
 	if err == nil {
 		// Recreate in place, rotating credentials and fencing the old agent.
+		existing := routeFromDB(existingRoute)
 		generation := existing.Generation + 1
-		result, err := tx.ExecContext(ctx, `UPDATE route_credentials
-			SET id = ?, secret_hash = ?, created_at = ?, revoked_at = NULL WHERE route_id = ?`,
-			routeCredentialID.String(), routeHash[:], now.Unix(), existing.ID)
+		count, err := queries.RotateRouteCredential(ctx, statedb.RotateRouteCredentialParams{
+			CredentialID: routeCredentialID.String(),
+			SecretHash:   routeHash[:],
+			CreatedAt:    now.Unix(),
+			RouteID:      existing.ID,
+		})
 		if err != nil {
 			return Provisioning{}, fmt.Errorf("routes: rotate route credential: %w", err)
 		}
-		if err := requireUpdated(result, ErrInvalidState); err != nil {
+		if err := requireCount(count, ErrInvalidState); err != nil {
 			return Provisioning{}, err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE route_leases SET status = 'expired'
-			WHERE route_id = ? AND status != 'expired'`, existing.ID); err != nil {
+		if err := queries.ExpireRouteLeases(ctx, existing.ID); err != nil {
 			return Provisioning{}, fmt.Errorf("routes: expire replaced lease: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE routes SET display_target = ?, generation = ? WHERE id = ?`,
-			displayTarget, generation, existing.ID); err != nil {
+		dbGeneration, err := generationToInt64(generation)
+		if err != nil {
 			return Provisioning{}, fmt.Errorf("routes: advance replaced route: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO route_leases
-			(id, route_id, generation, status, credential_id, secret_hash, boot_epoch, created_at, last_heartbeat, expires_at)
-			VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)`,
-			leaseID, existing.ID, generation, leaseCredentialID.String(), leaseHash[:], bootEpoch,
-			now.Unix(), now.Unix(), expiresAt.Unix()); err != nil {
+		if err := queries.ReplaceRoute(ctx, statedb.ReplaceRouteParams{
+			DisplayTarget: displayTarget,
+			Generation:    dbGeneration,
+			RouteID:       existing.ID,
+		}); err != nil {
+			return Provisioning{}, fmt.Errorf("routes: advance replaced route: %w", err)
+		}
+		if err := queries.InsertRouteLease(ctx, statedb.InsertRouteLeaseParams{
+			LeaseID:      leaseID,
+			RouteID:      existing.ID,
+			Generation:   dbGeneration,
+			CredentialID: leaseCredentialID.String(),
+			SecretHash:   leaseHash[:],
+			BootEpoch:    bootEpoch,
+			CreatedAt:    now.Unix(),
+			ExpiresAt:    expiresAt.Unix(),
+		}); err != nil {
 			return Provisioning{}, fmt.Errorf("routes: create replacement lease: %w", err)
 		}
 		if err := tx.Commit(); err != nil {
@@ -220,7 +229,6 @@ func (s *Store) Create(
 		}
 		existing.DisplayTarget = displayTarget
 		existing.Generation = generation
-		existing.CreatedAt = time.Unix(existingCreatedAt, 0).UTC()
 		return Provisioning{
 			Route: existing,
 			Lease: Lease{
@@ -230,22 +238,33 @@ func (s *Store) Create(
 			LeaseToken: leaseToken,
 		}, nil
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO routes
-		(id, claim_id, principal_id, hostname, display_target, state, generation, created_at)
-		VALUES (?, ?, ?, ?, ?, 'active', 1, ?)`,
-		routeID, claimID, principalID, hostname, displayTarget, now.Unix()); err != nil {
+	if err := queries.InsertRoute(ctx, statedb.InsertRouteParams{
+		RouteID:       routeID,
+		ClaimID:       claim.ID,
+		PrincipalID:   principalID,
+		Hostname:      hostname,
+		DisplayTarget: displayTarget,
+		CreatedAt:     now.Unix(),
+	}); err != nil {
 		return Provisioning{}, fmt.Errorf("routes: create route: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO route_credentials
-		(id, route_id, secret_hash, created_at) VALUES (?, ?, ?, ?)`,
-		routeCredentialID.String(), routeID, routeHash[:], now.Unix()); err != nil {
+	if err := queries.InsertRouteCredential(ctx, statedb.InsertRouteCredentialParams{
+		CredentialID: routeCredentialID.String(),
+		RouteID:      routeID,
+		SecretHash:   routeHash[:],
+		CreatedAt:    now.Unix(),
+	}); err != nil {
 		return Provisioning{}, fmt.Errorf("routes: create route credential: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO route_leases
-		(id, route_id, generation, status, credential_id, secret_hash, boot_epoch, created_at, last_heartbeat, expires_at)
-		VALUES (?, ?, 1, 'pending', ?, ?, ?, ?, ?, ?)`,
-		leaseID, routeID, leaseCredentialID.String(), leaseHash[:], bootEpoch,
-		now.Unix(), now.Unix(), expiresAt.Unix()); err != nil {
+	if err := queries.InsertInitialRouteLease(ctx, statedb.InsertInitialRouteLeaseParams{
+		LeaseID:      leaseID,
+		RouteID:      routeID,
+		CredentialID: leaseCredentialID.String(),
+		SecretHash:   leaseHash[:],
+		BootEpoch:    bootEpoch,
+		CreatedAt:    now.Unix(),
+		ExpiresAt:    expiresAt.Unix(),
+	}); err != nil {
 		return Provisioning{}, fmt.Errorf("routes: create lease: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -285,7 +304,8 @@ func (s *Store) Acquire(
 		return Provisioning{}, fmt.Errorf("routes: begin acquire: %w", err)
 	}
 	defer tx.Rollback()
-	route, storedHash, revoked, err := readRouteCredential(ctx, tx, routeID, credentialID)
+	queries := s.queries.WithTx(tx)
+	route, storedHash, revoked, err := readRouteCredential(ctx, queries, routeID, credentialID)
 	if err != nil {
 		return Provisioning{}, err
 	}
@@ -296,18 +316,29 @@ func (s *Store) Acquire(
 		return Provisioning{}, ErrInvalidState
 	}
 	generation := route.Generation + 1
-	if _, err := tx.ExecContext(ctx, `UPDATE route_leases SET status = 'expired'
-		WHERE route_id = ? AND status != 'expired'`, routeID); err != nil {
+	if err := queries.ExpireRouteLeases(ctx, routeID); err != nil {
 		return Provisioning{}, fmt.Errorf("routes: expire previous lease: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE routes SET generation = ? WHERE id = ?`, generation, routeID); err != nil {
+	dbGeneration, err := generationToInt64(generation)
+	if err != nil {
 		return Provisioning{}, fmt.Errorf("routes: advance generation: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO route_leases
-		(id, route_id, generation, status, credential_id, secret_hash, boot_epoch, created_at, last_heartbeat, expires_at)
-		VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)`,
-		leaseID, routeID, generation, leaseCredentialID.String(), leaseHash[:], bootEpoch,
-		now.Unix(), now.Unix(), expiresAt.Unix()); err != nil {
+	if err := queries.AdvanceRouteGeneration(ctx, statedb.AdvanceRouteGenerationParams{
+		Generation: dbGeneration,
+		RouteID:    routeID,
+	}); err != nil {
+		return Provisioning{}, fmt.Errorf("routes: advance generation: %w", err)
+	}
+	if err := queries.InsertRouteLease(ctx, statedb.InsertRouteLeaseParams{
+		LeaseID:      leaseID,
+		RouteID:      routeID,
+		Generation:   dbGeneration,
+		CredentialID: leaseCredentialID.String(),
+		SecretHash:   leaseHash[:],
+		BootEpoch:    bootEpoch,
+		CreatedAt:    now.Unix(),
+		ExpiresAt:    expiresAt.Unix(),
+	}); err != nil {
 		return Provisioning{}, fmt.Errorf("routes: create replacement lease: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -330,7 +361,7 @@ func (s *Store) AuthorizeRoute(
 	if err != nil {
 		return Route{}, ErrUnauthenticated
 	}
-	route, storedHash, revoked, err := readRouteCredential(ctx, s.db, routeID, credentialID)
+	route, storedHash, revoked, err := readRouteCredential(ctx, s.queries, routeID, credentialID)
 	if err != nil {
 		return Route{}, err
 	}
@@ -344,9 +375,11 @@ func (s *Store) AuthorizeRoute(
 }
 
 func (s *Store) AuthorizePrincipal(ctx context.Context, principalID, routeID string) error {
-	var exists int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM routes
-		WHERE id = ? AND principal_id = ? AND state = 'active'`, routeID, principalID).Scan(&exists); err != nil {
+	exists, err := s.queries.CountActiveRoutesByPrincipal(ctx, statedb.CountActiveRoutesByPrincipalParams{
+		RouteID:     routeID,
+		PrincipalID: principalID,
+	})
+	if err != nil {
 		return fmt.Errorf("routes: authorize principal: %w", err)
 	}
 	if exists == 0 {
@@ -360,9 +393,10 @@ func (s *Store) ActiveRouteID(ctx context.Context, principalID, hostname string)
 	if err != nil {
 		return "", err
 	}
-	var routeID string
-	err = s.db.QueryRowContext(ctx, `SELECT id FROM routes
-		WHERE principal_id = ? AND hostname = ? AND state = 'active'`, principalID, hostname).Scan(&routeID)
+	routeID, err := s.queries.GetActiveRouteIDByHostname(ctx, statedb.GetActiveRouteIDByHostnameParams{
+		PrincipalID: principalID,
+		Hostname:    hostname,
+	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
@@ -385,28 +419,18 @@ func (s *Store) AuthenticateLease(
 	if err != nil {
 		return Lease{}, ErrUnauthenticated
 	}
-	var lease Lease
-	var storedHash []byte
-	var createdAt, lastHeartbeat, expiresAt int64
-	var serverPublicKey, relayProfile sql.NullString
-	err = s.db.QueryRowContext(ctx, `SELECT
-		l.id, l.route_id, l.generation, l.status, l.boot_epoch,
-		l.server_public_key, l.relay_profile, l.secret_hash,
-		l.created_at, l.last_heartbeat, l.expires_at
-		FROM route_leases l
-		JOIN routes r ON r.id = l.route_id
-		WHERE l.route_id = ? AND l.generation = ? AND l.credential_id = ?
-		AND r.state = 'active' AND r.generation = l.generation`,
-		routeID, generation, credentialID.String()).Scan(
-		&lease.ID, &lease.RouteID, &lease.Generation, &lease.Status, &lease.BootEpoch,
-		&serverPublicKey, &relayProfile, &storedHash, &createdAt, &lastHeartbeat, &expiresAt,
-	)
+	dbGeneration, err := generationToInt64(generation)
+	if err != nil {
+		return Lease{}, fmt.Errorf("routes: read lease: %w", err)
+	}
+	dbLease, err := s.queries.GetRouteLeaseForAuthentication(ctx, statedb.GetRouteLeaseForAuthenticationParams{
+		RouteID:      routeID,
+		Generation:   dbGeneration,
+		CredentialID: credentialID.String(),
+	})
 	if errors.Is(err, sql.ErrNoRows) {
 		// Known credentials are stale; unknown IDs remain unauthenticated.
-		var known int
-		knownErr := s.db.QueryRowContext(
-			ctx, `SELECT 1 FROM route_leases WHERE credential_id = ?`, credentialID.String(),
-		).Scan(&known)
+		_, knownErr := s.queries.GetKnownRouteLeaseCredentialMarker(ctx, credentialID.String())
 		if errors.Is(knownErr, sql.ErrNoRows) {
 			return Lease{}, ErrUnauthenticated
 		}
@@ -419,18 +443,13 @@ func (s *Store) AuthenticateLease(
 		return Lease{}, fmt.Errorf("routes: read lease: %w", err)
 	}
 	now := s.now()
-	if lease.BootEpoch != bootEpoch || lease.Status == "expired" || now.Unix() >= expiresAt {
+	if dbLease.BootEpoch != bootEpoch || dbLease.Status == "expired" || now.Unix() >= dbLease.ExpiresAt {
 		return Lease{}, ErrStaleLease
 	}
-	if !credentials.SecretHashMatches(storedHash, candidate) {
+	if !credentials.SecretHashMatches(dbLease.SecretHash, candidate) {
 		return Lease{}, ErrUnauthenticated
 	}
-	lease.ServerPublicKey = serverPublicKey.String
-	lease.RelayProfile = relayProfile.String
-	lease.CreatedAt = time.Unix(createdAt, 0).UTC()
-	lease.LastHeartbeat = time.Unix(lastHeartbeat, 0).UTC()
-	lease.ExpiresAt = time.Unix(expiresAt, 0).UTC()
-	return lease, nil
+	return leaseFromDB(dbLease), nil
 }
 
 func (s *Store) RegisterTransport(
@@ -443,26 +462,39 @@ func (s *Store) RegisterTransport(
 	if strings.TrimSpace(serverPublicKey) == "" || strings.TrimSpace(relayProfile) == "" {
 		return errors.New("routes: transport descriptor is incomplete")
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE route_leases
-		SET server_public_key = ?, relay_profile = ?, status = 'starting'
-		WHERE id = ? AND route_id = ? AND generation = ? AND status IN ('pending', 'starting')`,
-		serverPublicKey, relayProfile, lease.ID, lease.RouteID, lease.Generation)
+	dbGeneration, err := generationToInt64(lease.Generation)
 	if err != nil {
 		return fmt.Errorf("routes: register transport: %w", err)
 	}
-	return requireUpdated(result, ErrStaleLease)
+	count, err := s.queries.RegisterRouteLeaseTransport(ctx, statedb.RegisterRouteLeaseTransportParams{
+		ServerPublicKey: sql.NullString{String: serverPublicKey, Valid: true},
+		RelayProfile:    sql.NullString{String: relayProfile, Valid: true},
+		LeaseID:         lease.ID,
+		RouteID:         lease.RouteID,
+		Generation:      dbGeneration,
+	})
+	if err != nil {
+		return fmt.Errorf("routes: register transport: %w", err)
+	}
+	return requireCount(count, ErrStaleLease)
 }
 
 func (s *Store) Ready(ctx context.Context, lease Lease) (err error) {
 	started := time.Now()
 	defer func() { s.observe(StoreOperationRouteReady, started, err) }()
-	result, err := s.db.ExecContext(ctx, `UPDATE route_leases SET status = 'ready'
-		WHERE id = ? AND route_id = ? AND generation = ? AND status IN ('starting', 'ready')`,
-		lease.ID, lease.RouteID, lease.Generation)
+	dbGeneration, err := generationToInt64(lease.Generation)
 	if err != nil {
 		return fmt.Errorf("routes: mark ready: %w", err)
 	}
-	return requireUpdated(result, ErrInvalidState)
+	count, err := s.queries.ReadyRouteLease(ctx, statedb.ReadyRouteLeaseParams{
+		LeaseID:    lease.ID,
+		RouteID:    lease.RouteID,
+		Generation: dbGeneration,
+	})
+	if err != nil {
+		return fmt.Errorf("routes: mark ready: %w", err)
+	}
+	return requireCount(count, ErrInvalidState)
 }
 
 func (s *Store) Heartbeat(ctx context.Context, lease Lease) (expiresAt time.Time, err error) {
@@ -470,14 +502,21 @@ func (s *Store) Heartbeat(ctx context.Context, lease Lease) (expiresAt time.Time
 	defer func() { s.observe(StoreOperationLeaseHeartbeat, started, err) }()
 	now := time.Unix(s.now().Unix(), 0).UTC()
 	expiresAt = now.Add(s.leaseLifetime)
-	result, err := s.db.ExecContext(ctx, `UPDATE route_leases
-		SET last_heartbeat = ?, expires_at = ?
-		WHERE id = ? AND route_id = ? AND generation = ? AND status != 'expired'`,
-		now.Unix(), expiresAt.Unix(), lease.ID, lease.RouteID, lease.Generation)
+	dbGeneration, err := generationToInt64(lease.Generation)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("routes: heartbeat: %w", err)
 	}
-	if err := requireUpdated(result, ErrStaleLease); err != nil {
+	count, err := s.queries.HeartbeatRouteLease(ctx, statedb.HeartbeatRouteLeaseParams{
+		LastHeartbeat: now.Unix(),
+		ExpiresAt:     expiresAt.Unix(),
+		LeaseID:       lease.ID,
+		RouteID:       lease.RouteID,
+		Generation:    dbGeneration,
+	})
+	if err != nil {
+		return time.Time{}, fmt.Errorf("routes: heartbeat: %w", err)
+	}
+	if err := requireCount(count, ErrStaleLease); err != nil {
 		return time.Time{}, err
 	}
 	return expiresAt, nil
@@ -487,8 +526,7 @@ func (s *Store) InvalidateOtherBoots(ctx context.Context, bootEpoch string) erro
 	if strings.TrimSpace(bootEpoch) == "" {
 		return errors.New("routes: boot epoch is required")
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE route_leases SET status = 'expired'
-		WHERE boot_epoch != ? AND status != 'expired'`, bootEpoch); err != nil {
+	if err := s.queries.InvalidateOtherBootRouteLeases(ctx, bootEpoch); err != nil {
 		return fmt.Errorf("routes: invalidate old boot leases: %w", err)
 	}
 	return nil
@@ -497,34 +535,28 @@ func (s *Store) InvalidateOtherBoots(ctx context.Context, bootEpoch string) erro
 func (s *Store) Expire(ctx context.Context, routeID string, generation uint64) (err error) {
 	started := time.Now()
 	defer func() { s.observe(StoreOperationLeaseExpire, started, err) }()
-	result, err := s.db.ExecContext(ctx, `UPDATE route_leases SET status = 'expired'
-		WHERE route_id = ? AND generation = ? AND status != 'expired'`, routeID, generation)
+	dbGeneration, err := generationToInt64(generation)
 	if err != nil {
 		return fmt.Errorf("routes: expire lease: %w", err)
 	}
-	return requireUpdated(result, ErrStaleLease)
+	count, err := s.queries.ExpireRouteLease(ctx, statedb.ExpireRouteLeaseParams{
+		RouteID:    routeID,
+		Generation: dbGeneration,
+	})
+	if err != nil {
+		return fmt.Errorf("routes: expire lease: %w", err)
+	}
+	return requireCount(count, ErrStaleLease)
 }
 
 func (s *Store) List(ctx context.Context, principalID string) ([]Route, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT
-		id, principal_id, hostname, display_target, state, generation, created_at
-		FROM routes WHERE principal_id = ? AND state = 'active' ORDER BY created_at, id`, principalID)
+	routes, err := s.queries.ListActiveRoutes(ctx, principalID)
 	if err != nil {
 		return nil, fmt.Errorf("routes: list: %w", err)
 	}
-	defer rows.Close()
 	var result []Route
-	for rows.Next() {
-		var route Route
-		var createdAt int64
-		if err := rows.Scan(&route.ID, &route.PrincipalID, &route.Hostname, &route.DisplayTarget, &route.State, &route.Generation, &createdAt); err != nil {
-			return nil, fmt.Errorf("routes: scan list: %w", err)
-		}
-		route.CreatedAt = time.Unix(createdAt, 0).UTC()
-		result = append(result, route)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("routes: list rows: %w", err)
+	for _, route := range routes {
+		result = append(result, routeFromDB(route))
 	}
 	return result, nil
 }
@@ -536,20 +568,25 @@ func (s *Store) Delete(ctx context.Context, principalID, routeID string) error {
 		return fmt.Errorf("routes: begin delete: %w", err)
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `UPDATE routes SET state = 'deleted', deleted_at = ?
-		WHERE id = ? AND principal_id = ? AND state = 'active'`, now.Unix(), routeID, principalID)
+	queries := s.queries.WithTx(tx)
+	count, err := queries.DeleteActiveRoute(ctx, statedb.DeleteActiveRouteParams{
+		DeletedAt:   now.Unix(),
+		RouteID:     routeID,
+		PrincipalID: principalID,
+	})
 	if err != nil {
 		return fmt.Errorf("routes: delete: %w", err)
 	}
-	if err := requireUpdated(result, ErrNotFound); err != nil {
+	if err := requireCount(count, ErrNotFound); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE route_credentials SET revoked_at = COALESCE(revoked_at, ?)
-		WHERE route_id = ?`, now.Unix(), routeID); err != nil {
+	if err := queries.RevokeRouteCredential(ctx, statedb.RevokeRouteCredentialParams{
+		RevokedAt: now.Unix(),
+		RouteID:   routeID,
+	}); err != nil {
 		return fmt.Errorf("routes: revoke route credential: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE route_leases SET status = 'expired'
-		WHERE route_id = ? AND status != 'expired'`, routeID); err != nil {
+	if err := queries.ExpireRouteLeases(ctx, routeID); err != nil {
 		return fmt.Errorf("routes: expire deleted route: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -558,47 +595,64 @@ func (s *Store) Delete(ctx context.Context, principalID, routeID string) error {
 	return nil
 }
 
-type queryRower interface {
-	QueryRowContext(context.Context, string, ...any) *sql.Row
-}
-
 func readRouteCredential(
 	ctx context.Context,
-	query queryRower,
+	queries *statedb.Queries,
 	routeID string,
 	credentialID credentials.CredentialID,
 ) (Route, []byte, bool, error) {
-	var route Route
-	var storedHash []byte
-	var createdAt int64
-	var revokedAt sql.NullInt64
-	err := query.QueryRowContext(ctx, `SELECT
-		r.id, r.principal_id, r.hostname, r.display_target, r.state, r.generation, r.created_at,
-		c.secret_hash, c.revoked_at
-		FROM routes r JOIN route_credentials c ON c.route_id = r.id
-		WHERE r.id = ? AND c.id = ?`, routeID, credentialID.String()).Scan(
-		&route.ID, &route.PrincipalID, &route.Hostname, &route.DisplayTarget, &route.State,
-		&route.Generation, &createdAt, &storedHash, &revokedAt,
-	)
+	credential, err := queries.GetRouteCredential(ctx, statedb.GetRouteCredentialParams{
+		RouteID:      routeID,
+		CredentialID: credentialID.String(),
+	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return Route{}, nil, false, ErrUnauthenticated
 	}
 	if err != nil {
 		return Route{}, nil, false, fmt.Errorf("routes: read route credential: %w", err)
 	}
-	route.CreatedAt = time.Unix(createdAt, 0).UTC()
-	return route, storedHash, revokedAt.Valid, nil
+	return routeFromDB(credential.Route), credential.SecretHash, credential.RevokedAt.Valid, nil
 }
 
-func requireUpdated(result sql.Result, missing error) error {
-	count, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
+func requireCount(count int64, missing error) error {
 	if count == 0 {
 		return missing
 	}
 	return nil
+}
+
+func routeFromDB(route statedb.Route) Route {
+	return Route{
+		ID:            route.ID,
+		PrincipalID:   route.PrincipalID,
+		Hostname:      route.Hostname,
+		DisplayTarget: route.DisplayTarget,
+		State:         route.State,
+		Generation:    uint64(route.Generation),
+		CreatedAt:     time.Unix(route.CreatedAt, 0).UTC(),
+	}
+}
+
+func leaseFromDB(lease statedb.RouteLease) Lease {
+	return Lease{
+		ID:              lease.ID,
+		RouteID:         lease.RouteID,
+		Generation:      uint64(lease.Generation),
+		Status:          lease.Status,
+		BootEpoch:       lease.BootEpoch,
+		ServerPublicKey: lease.ServerPublicKey.String,
+		RelayProfile:    lease.RelayProfile.String,
+		CreatedAt:       time.Unix(lease.CreatedAt, 0).UTC(),
+		LastHeartbeat:   time.Unix(lease.LastHeartbeat, 0).UTC(),
+		ExpiresAt:       time.Unix(lease.ExpiresAt, 0).UTC(),
+	}
+}
+
+func generationToInt64(generation uint64) (int64, error) {
+	if generation > math.MaxInt64 {
+		return 0, errors.New("uint64 generation exceeds database integer range")
+	}
+	return int64(generation), nil
 }
 
 func newID(prefix string) (string, error) {

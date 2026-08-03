@@ -12,6 +12,7 @@ import (
 
 	"github.com/0xcadams/tnl/internal/credentials"
 	"github.com/0xcadams/tnl/internal/state"
+	"github.com/0xcadams/tnl/internal/state/statedb"
 	"github.com/0xcadams/tnl/internal/worker"
 	"tailscale.com/types/key"
 )
@@ -518,10 +519,8 @@ func newCoordinatorFixture(t *testing.T, configs ...CoordinatorConfig) (*Coordin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO principals (id, display_name, email, created_at)
-		VALUES ('owner', 'Owner', '', 1)`); err != nil {
-		t.Fatal(err)
-	}
+	queries := statedb.New(db)
+	upsertTestPrincipal(t, context.Background(), queries, "owner", "Owner", 1)
 	store, err := NewStore(db, "example")
 	if err != nil {
 		t.Fatal(err)

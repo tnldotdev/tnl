@@ -26,42 +26,37 @@ const (
 	maximumHostnameClaimQuota          = 100_000
 )
 
-// UsesState reports whether the mode owns durable core state.
+// UsesState reports whether the mode owns durable server state.
 func (m TNLDMode) UsesState() bool {
 	return m != TNLDModeWorker
 }
 
-// TNLD configures the core daemon.
+// TNLD configures the tnl server.
 type TNLD struct {
-	Mode                      TNLDMode      `name:"mode" env:"TNLD_MODE" default:"standalone" enum:"standalone,edge,worker" help:"Process role: ${enum}."`
-	StateDir                  string        `name:"state-dir" env:"TNLD_STATE_DIR" help:"Directory for persistent state (required by standalone and edge modes)."`
-	MetricsListen             string        `name:"metrics-listen" env:"TNLD_METRICS_LISTEN" default:"127.0.0.1:9090" help:"Private Prometheus listen address; empty disables metrics."`
-	PublicListen              string        `name:"public-listen" env:"TNLD_PUBLIC_LISTEN" help:"Public TLS listen address for the control API and routes; empty disables ingress."`
-	Domain                    string        `name:"domain" env:"TNLD_DOMAIN" help:"Canonical base domain; derives core.<domain> and apps.<domain>."`
-	MaxActiveHostnameClaims   int           `name:"max-active-hostname-claims" env:"TNLD_MAX_ACTIVE_HOSTNAME_CLAIMS" default:"128" help:"Maximum active hostname claims per principal."`
-	MaxHostnameClaimRequests  int           `name:"max-hostname-claim-requests" env:"TNLD_MAX_HOSTNAME_CLAIM_REQUESTS" default:"1024" help:"Maximum hostname claim request records per principal."`
-	ACMEDirectoryURL          string        `name:"acme-directory-url" env:"TNLD_ACME_DIRECTORY_URL" help:"ACME directory URL for automatic control and application certificates."`
-	ACMEEmail                 string        `name:"acme-email" env:"TNLD_ACME_EMAIL" help:"ACME account contact email."`
-	ACMEAcceptTerms           bool          `name:"acme-accept-terms" env:"TNLD_ACME_ACCEPT_TERMS" help:"Explicitly accept the ACME directory terms."`
-	ACMEProfile               string        `name:"acme-profile" env:"TNLD_ACME_PROFILE" default:"tlsserver" help:"ACME certificate profile advertised to agents."`
-	ExternalAuthIssuer        string        `name:"external-auth-issuer" env:"TNLD_EXTERNAL_AUTH_ISSUER" help:"Exact external identity issuer origin."`
-	ExternalAuthDeviceURL     string        `name:"external-auth-device-url" env:"TNLD_EXTERNAL_AUTH_DEVICE_URL" help:"External device authorization endpoint."`
-	ExternalAuthTokenURL      string        `name:"external-auth-token-url" env:"TNLD_EXTERNAL_AUTH_TOKEN_URL" help:"External device token endpoint."`
-	ExternalAuthClientID      string        `name:"external-auth-client-id" env:"TNLD_EXTERNAL_AUTH_CLIENT_ID" help:"Public device-flow client ID."`
-	ExternalAuthScope         string        `name:"external-auth-scope" env:"TNLD_EXTERNAL_AUTH_SCOPE" default:"tnl:core" help:"Required external authorization scope."`
-	ExternalAuthIntrospectURL string        `name:"external-auth-introspection-url" env:"TNLD_EXTERNAL_AUTH_INTROSPECTION_URL" help:"External RFC 7662 token introspection endpoint."`
-	ExternalAuthToken         string        `name:"external-auth-introspection-token" env:"TNLD_EXTERNAL_AUTH_INTROSPECTION_TOKEN" help:"Workload token for external introspection."`
-	RelayProvider             string        `name:"relay-provider" env:"TNLD_RELAY_PROVIDER" help:"Hosted relay provider; set to tailcat to explicitly use Tailcat's public relays."`
-	RelayMapFile              string        `name:"relay-map-file" env:"TNLD_RELAY_MAP_FILE" type:"path" help:"Approved DERP map JSON file."`
-	RelayProfile              string        `name:"relay-profile" env:"TNLD_RELAY_PROFILE" help:"DERP region code selected from a custom relay map."`
-	WorkerURL                 string        `name:"worker-url" env:"TNLD_WORKER_URL" help:"Worker-mode WSS edge URL."`
-	WorkerToken               string        `name:"worker-token" env:"TNLD_WORKER_TOKEN" help:"Edge-to-worker authentication token."`
-	WorkerCapacity            int           `name:"worker-capacity" env:"TNLD_WORKER_CAPACITY" default:"500" help:"Hard route capacity for this worker."`
-	WorkerStreamLimit         int           `name:"worker-stream-limit" env:"TNLD_WORKER_STREAM_LIMIT" default:"4096" help:"Maximum multiplexed streams per worker session."`
-	PublicConnLimit           int           `name:"public-connection-limit" env:"TNLD_PUBLIC_CONNECTION_LIMIT" default:"20000" help:"Maximum concurrent public connections."`
-	RouteConnLimit            int           `name:"route-connection-limit" env:"TNLD_ROUTE_CONNECTION_LIMIT" default:"500" help:"Maximum concurrent public connections per route."`
-	RequireProxyHeader        bool          `name:"require-proxy-header" env:"TNLD_REQUIRE_PROXY_HEADER" help:"Require one trusted outer PROXY v2 header on public ingress."`
-	DrainTimeout              time.Duration `name:"drain-timeout" env:"TNLD_DRAIN_TIMEOUT" default:"30s" help:"Graceful stream drain deadline."`
+	Mode                     TNLDMode      `name:"mode" env:"TNLD_MODE" default:"standalone" enum:"standalone,edge,worker" help:"Process role: ${enum}."`
+	StateDir                 string        `name:"state-dir" env:"TNLD_STATE_DIR" help:"Directory for persistent state (required by standalone and edge modes)."`
+	MetricsListen            string        `name:"metrics-listen" env:"TNLD_METRICS_LISTEN" default:"127.0.0.1:9090" help:"Private Prometheus listen address; empty disables metrics."`
+	PublicListen             string        `name:"public-listen" env:"TNLD_PUBLIC_LISTEN" help:"Public TLS listen address for the control API and routes; empty disables ingress."`
+	Domain                   string        `name:"domain" env:"TNLD_DOMAIN" help:"Canonical base domain; derives tnl.<domain> and apps.<domain>."`
+	MaxActiveHostnameClaims  int           `name:"max-active-hostname-claims" env:"TNLD_MAX_ACTIVE_HOSTNAME_CLAIMS" default:"128" help:"Maximum active hostname claims per principal."`
+	MaxHostnameClaimRequests int           `name:"max-hostname-claim-requests" env:"TNLD_MAX_HOSTNAME_CLAIM_REQUESTS" default:"1024" help:"Maximum hostname claim request records per principal."`
+	ACMEDirectoryURL         string        `name:"acme-directory-url" env:"TNLD_ACME_DIRECTORY_URL" help:"ACME directory URL for automatic control and application certificates."`
+	ACMEEmail                string        `name:"acme-email" env:"TNLD_ACME_EMAIL" help:"ACME account contact email."`
+	ACMEAcceptTerms          bool          `name:"acme-accept-terms" env:"TNLD_ACME_ACCEPT_TERMS" help:"Explicitly accept the ACME directory terms."`
+	ACMEProfile              string        `name:"acme-profile" env:"TNLD_ACME_PROFILE" default:"tlsserver" help:"ACME certificate profile advertised to agents."`
+	OIDCIssuer               string        `name:"oidc-issuer" env:"TNLD_OIDC_ISSUER" help:"OIDC issuer used for login."`
+	OIDCClientID             string        `name:"oidc-client-id" env:"TNLD_OIDC_CLIENT_ID" help:"OIDC client ID used for login."`
+	RelayProvider            string        `name:"relay-provider" env:"TNLD_RELAY_PROVIDER" help:"Hosted relay provider; set to tailcat to explicitly use Tailcat's public relays."`
+	RelayMapFile             string        `name:"relay-map-file" env:"TNLD_RELAY_MAP_FILE" type:"path" help:"Approved DERP map JSON file."`
+	RelayProfile             string        `name:"relay-profile" env:"TNLD_RELAY_PROFILE" help:"DERP region code selected from a custom relay map."`
+	WorkerURL                string        `name:"worker-url" env:"TNLD_WORKER_URL" help:"Worker-mode WSS edge URL."`
+	WorkerToken              string        `name:"worker-token" env:"TNLD_WORKER_TOKEN" help:"Edge-to-worker authentication token."`
+	WorkerCapacity           int           `name:"worker-capacity" env:"TNLD_WORKER_CAPACITY" default:"500" help:"Hard route capacity for this worker."`
+	WorkerStreamLimit        int           `name:"worker-stream-limit" env:"TNLD_WORKER_STREAM_LIMIT" default:"4096" help:"Maximum multiplexed streams per worker session."`
+	PublicConnLimit          int           `name:"public-connection-limit" env:"TNLD_PUBLIC_CONNECTION_LIMIT" default:"20000" help:"Maximum concurrent public connections."`
+	RouteConnLimit           int           `name:"route-connection-limit" env:"TNLD_ROUTE_CONNECTION_LIMIT" default:"500" help:"Maximum concurrent public connections per route."`
+	RequireProxyHeader       bool          `name:"require-proxy-header" env:"TNLD_REQUIRE_PROXY_HEADER" help:"Require one trusted outer PROXY v2 header on public ingress."`
+	DrainTimeout             time.Duration `name:"drain-timeout" env:"TNLD_DRAIN_TIMEOUT" default:"30s" help:"Graceful stream drain deadline."`
 }
 
 // Validate rejects values that are present but unusable.
@@ -100,7 +95,7 @@ func (c TNLD) Validate() error {
 	if c.RelayProvider != "" && (c.RelayMapFile != "" || c.RelayProfile != "") {
 		return errors.New("relay provider cannot be combined with a custom relay map or profile")
 	}
-	if err := c.validateExternalAuth(); err != nil {
+	if err := c.validateOIDC(); err != nil {
 		return err
 	}
 	if c.ACMEDirectoryURL != "" || c.ACMEEmail != "" {
@@ -172,45 +167,25 @@ func (c TNLD) Validate() error {
 	return nil
 }
 
-func (c TNLD) ExternalAuthEnabled() bool {
-	return c.ExternalAuthIssuer != ""
+func (c TNLD) OIDCEnabled() bool {
+	return c.OIDCIssuer != ""
 }
 
-func (c TNLD) validateExternalAuth() error {
-	configured := c.ExternalAuthIssuer != "" || c.ExternalAuthDeviceURL != "" ||
-		c.ExternalAuthTokenURL != "" || c.ExternalAuthClientID != "" ||
-		c.ExternalAuthIntrospectURL != "" || c.ExternalAuthToken != ""
+func (c TNLD) validateOIDC() error {
+	configured := c.OIDCIssuer != "" || c.OIDCClientID != ""
 	if !configured {
 		return nil
 	}
-	if c.ExternalAuthIssuer == "" || c.ExternalAuthDeviceURL == "" || c.ExternalAuthTokenURL == "" ||
-		c.ExternalAuthClientID == "" || c.ExternalAuthScope == "" ||
-		c.ExternalAuthIntrospectURL == "" || c.ExternalAuthToken == "" {
-		return errors.New("external authentication configuration is incomplete")
+	if c.OIDCIssuer == "" || c.OIDCClientID == "" {
+		return errors.New("OIDC configuration is incomplete")
 	}
-	issuer, err := url.Parse(c.ExternalAuthIssuer)
+	issuer, err := url.Parse(c.OIDCIssuer)
 	if err != nil || issuer.Scheme != "https" || issuer.Host == "" || issuer.User != nil ||
 		issuer.Path != "" && issuer.Path != "/" || issuer.RawQuery != "" || issuer.Fragment != "" {
-		return errors.New("external authentication issuer must be an HTTPS origin")
+		return errors.New("OIDC issuer must be an HTTPS origin")
 	}
-	for name, value := range map[string]string{
-		"device": c.ExternalAuthDeviceURL, "token": c.ExternalAuthTokenURL,
-		"introspection": c.ExternalAuthIntrospectURL,
-	} {
-		endpoint, endpointErr := url.Parse(value)
-		if endpointErr != nil || endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.User != nil ||
-			endpoint.RawQuery != "" || endpoint.Fragment != "" || endpoint.Scheme != issuer.Scheme ||
-			!strings.EqualFold(endpoint.Host, issuer.Host) {
-			return fmt.Errorf("external authentication %s endpoint must use the issuer HTTPS origin", name)
-		}
-	}
-	if strings.TrimSpace(c.ExternalAuthClientID) != c.ExternalAuthClientID || len(c.ExternalAuthClientID) > 128 ||
-		strings.TrimSpace(c.ExternalAuthScope) != c.ExternalAuthScope || len(c.ExternalAuthScope) > 256 ||
-		strings.ContainsAny(c.ExternalAuthScope, " \t\r\n") {
-		return errors.New("external authentication client ID and scope are invalid")
-	}
-	if _, err := credentials.ParseWorkloadToken(credentials.WorkloadToken(c.ExternalAuthToken)); err != nil {
-		return errors.New("external authentication introspection token is invalid")
+	if strings.TrimSpace(c.OIDCClientID) != c.OIDCClientID || c.OIDCClientID == "" || len(c.OIDCClientID) > 128 {
+		return errors.New("OIDC client ID is invalid")
 	}
 	return nil
 }
@@ -218,12 +193,12 @@ func (c TNLD) validateExternalAuth() error {
 // ACMEEnabled reports whether automatic certificates are configured.
 func (c TNLD) ACMEEnabled() bool { return c.ACMEDirectoryURL != "" && c.ACMEEmail != "" }
 
-// ControlHostname returns the control API hostname derived from Domain.
-func (c TNLD) ControlHostname() string {
+// ServerHostname returns the control API hostname derived from Domain.
+func (c TNLD) ServerHostname() string {
 	if c.Domain == "" {
 		return ""
 	}
-	return "core." + c.Domain
+	return "tnl." + c.Domain
 }
 
 // RouteSuffix returns the public application suffix derived from Domain.
@@ -270,7 +245,7 @@ func ParseTNLD(args []string) (TNLD, error) {
 	parser, err := kong.New(
 		&config,
 		kong.Name("tnld"),
-		kong.Description("tnl core daemon."),
+		kong.Description("tnl server."),
 	)
 	if err != nil {
 		return TNLD{}, err

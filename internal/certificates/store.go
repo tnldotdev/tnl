@@ -8,11 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/0xcadams/tnl/internal/state/statedb"
 )
 
 type store struct {
-	db  *sql.DB
-	now func() time.Time
+	queries *statedb.Queries
+	now     func() time.Time
 }
 
 func newStore(db *sql.DB, now func() time.Time) (*store, error) {
@@ -22,35 +24,29 @@ func newStore(db *sql.DB, now func() time.Time) (*store, error) {
 	if now == nil {
 		now = time.Now
 	}
-	return &store{db: db, now: now}, nil
+	return &store{queries: statedb.New(db), now: now}, nil
 }
 
 func (s *store) loadAccount(ctx context.Context, directoryURL string) (account, error) {
-	var result account
-	var kid, terms sql.NullString
-	var createdAt, updatedAt int64
-	err := s.db.QueryRowContext(ctx, `SELECT directory_url, email, key_der, kid,
-		accepted_terms_url, created_at, updated_at FROM acme_accounts WHERE directory_url = ?`, directoryURL).Scan(
-		&result.DirectoryURL, &result.Email, &result.KeyDER, &kid, &terms, &createdAt, &updatedAt,
-	)
+	result, err := s.queries.GetACMEAccount(ctx, directoryURL)
 	if errors.Is(err, sql.ErrNoRows) {
 		return account{}, ErrNotFound
 	}
 	if err != nil {
 		return account{}, fmt.Errorf("certificates: load ACME account: %w", err)
 	}
-	result.KID = kid.String
-	result.AcceptedTOS = terms.String
-	result.CreatedAt = time.Unix(createdAt, 0).UTC()
-	result.UpdatedAt = time.Unix(updatedAt, 0).UTC()
-	return result, nil
+	return accountFromState(result), nil
 }
 
 func (s *store) insertAccount(ctx context.Context, value account) error {
 	now := time.Unix(s.now().Unix(), 0).UTC()
-	_, err := s.db.ExecContext(ctx, `INSERT INTO acme_accounts
-		(directory_url, email, key_der, kid, accepted_terms_url, created_at, updated_at)
-		VALUES (?, ?, ?, NULL, NULL, ?, ?)`, value.DirectoryURL, value.Email, value.KeyDER, now.Unix(), now.Unix())
+	err := s.queries.InsertACMEAccount(ctx, statedb.InsertACMEAccountParams{
+		DirectoryUrl: value.DirectoryURL,
+		Email:        value.Email,
+		KeyDer:       value.KeyDER,
+		CreatedAt:    now.Unix(),
+		UpdatedAt:    now.Unix(),
+	})
 	if err != nil {
 		return fmt.Errorf("certificates: insert ACME account: %w", err)
 	}
@@ -59,13 +55,17 @@ func (s *store) insertAccount(ctx context.Context, value account) error {
 
 func (s *store) updateAccount(ctx context.Context, value account) error {
 	now := time.Unix(s.now().Unix(), 0).UTC()
-	result, err := s.db.ExecContext(ctx, `UPDATE acme_accounts
-		SET email = ?, kid = ?, accepted_terms_url = ?, updated_at = ? WHERE directory_url = ?`,
-		value.Email, nullableString(value.KID), nullableString(value.AcceptedTOS), now.Unix(), value.DirectoryURL)
+	count, err := s.queries.UpdateACMEAccount(ctx, statedb.UpdateACMEAccountParams{
+		Email:            value.Email,
+		Kid:              nullableString(value.KID),
+		AcceptedTermsUrl: nullableString(value.AcceptedTOS),
+		UpdatedAt:        now.Unix(),
+		DirectoryUrl:     value.DirectoryURL,
+	})
 	if err != nil {
 		return fmt.Errorf("certificates: update ACME account: %w", err)
 	}
-	return requireRow(result)
+	return requireRow(count)
 }
 
 func (s *store) createJob(
@@ -88,10 +88,19 @@ func (s *store) createJob(
 		return Job{}, false, err
 	}
 	now := time.Unix(s.now().Unix(), 0).UTC()
-	_, err = s.db.ExecContext(ctx, `INSERT INTO certificate_jobs
-		(id, route_id, generation, hostname, profile, state, csr_der, csr_hash, spki_hash, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (route_id, generation, csr_hash) DO NOTHING`,
-		id, routeID, generation, hostname, profile, StateCreatingOrder, csrDER, csrHash[:], spkiHash[:], now.Unix(), now.Unix())
+	err = s.queries.InsertCertificateJob(ctx, statedb.InsertCertificateJobParams{
+		ID:         id,
+		RouteID:    routeID,
+		Generation: int64(generation),
+		Hostname:   hostname,
+		Profile:    profile,
+		State:      StateCreatingOrder,
+		CsrDer:     csrDER,
+		CsrHash:    csrHash[:],
+		SpkiHash:   spkiHash[:],
+		CreatedAt:  now.Unix(),
+		UpdatedAt:  now.Unix(),
+	})
 	if err != nil {
 		return Job{}, false, fmt.Errorf("certificates: create job: %w", err)
 	}
@@ -103,9 +112,10 @@ func (s *store) createJob(
 }
 
 func (s *store) routeHostname(ctx context.Context, routeID string, generation uint64) (string, error) {
-	var hostname string
-	err := s.db.QueryRowContext(ctx, `SELECT hostname FROM routes
-		WHERE id = ? AND generation = ? AND state = 'active'`, routeID, generation).Scan(&hostname)
+	hostname, err := s.queries.GetActiveRouteHostname(ctx, statedb.GetActiveRouteHostnameParams{
+		ID:         routeID,
+		Generation: int64(generation),
+	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", ErrInvalidState
 	}
@@ -116,31 +126,36 @@ func (s *store) routeHostname(ctx context.Context, routeID string, generation ui
 }
 
 func (s *store) getJob(ctx context.Context, id string) (Job, error) {
-	return scanJob(s.db.QueryRowContext(ctx, jobSelect+` WHERE id = ?`, id))
+	return jobFromState(s.queries.GetCertificateJob(ctx, id))
 }
 
 func (s *store) findBoundJob(ctx context.Context, routeID string, generation uint64, csrHash [32]byte) (Job, error) {
-	return scanJob(s.db.QueryRowContext(ctx, jobSelect+`
-		WHERE route_id = ? AND generation = ? AND csr_hash = ?`, routeID, generation, csrHash[:]))
+	return jobFromState(s.queries.FindBoundCertificateJob(ctx, statedb.FindBoundCertificateJobParams{
+		RouteID:    routeID,
+		Generation: int64(generation),
+		CsrHash:    csrHash[:],
+	}))
 }
 
 func (s *store) findResumableJob(ctx context.Context, routeID string, csrHash [32]byte, now time.Time) (Job, error) {
-	return scanJob(s.db.QueryRowContext(ctx, jobSelect+`
-		WHERE route_id = ? AND csr_hash = ? AND certificate_pem IS NULL
-		AND state NOT IN ('succeeded', 'invalid', 'blocked', 'canceled')
-		AND (order_expires_at IS NULL OR order_expires_at > ?)
-		AND (challenge_expires_at IS NULL OR challenge_expires_at > ?)
-		ORDER BY created_at DESC LIMIT 1`, routeID, csrHash[:], now.Unix(), now.Unix()))
+	return jobFromState(s.queries.FindResumableCertificateJob(ctx, statedb.FindResumableCertificateJobParams{
+		RouteID: routeID,
+		CsrHash: csrHash[:],
+		Now:     now.Unix(),
+	}))
 }
 
 func (s *store) rebindJob(ctx context.Context, id string, generation uint64) (Job, error) {
 	now := time.Unix(s.now().Unix(), 0).UTC()
-	result, err := s.db.ExecContext(ctx, `UPDATE certificate_jobs SET generation = ?, updated_at = ? WHERE id = ?`,
-		generation, now.Unix(), id)
+	count, err := s.queries.RebindCertificateJob(ctx, statedb.RebindCertificateJobParams{
+		Generation: int64(generation),
+		UpdatedAt:  now.Unix(),
+		ID:         id,
+	})
 	if err != nil {
 		return Job{}, fmt.Errorf("certificates: rebind job: %w", err)
 	}
-	if err := requireRow(result); err != nil {
+	if err := requireRow(count); err != nil {
 		return Job{}, err
 	}
 	return s.getJob(ctx, id)
@@ -153,142 +168,149 @@ func (s *store) allowJobCreation(
 	csrHash [32]byte,
 	now time.Time,
 ) error {
-	var blocked int
-	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (
-		SELECT 1 FROM certificate_jobs WHERE route_id = ? AND generation = ? AND csr_hash != ?
-		AND (state NOT IN ('succeeded', 'invalid', 'blocked', 'canceled')
-			OR (state = 'succeeded' AND renew_at > ?))
-	)`, routeID, generation, csrHash[:], now.Unix()).Scan(&blocked)
+	blocked, err := s.queries.HasBlockingCertificateJob(ctx, statedb.HasBlockingCertificateJobParams{
+		RouteID:    routeID,
+		Generation: int64(generation),
+		CsrHash:    csrHash[:],
+		Now:        now.Unix(),
+	})
 	if err != nil {
 		return fmt.Errorf("certificates: check active jobs: %w", err)
 	}
 	if blocked != 0 {
 		return ErrInvalidState
 	}
-	var recent int
-	var earliest sql.NullInt64
-	err = s.db.QueryRowContext(ctx, `SELECT COUNT(*), MIN(created_at) FROM certificate_jobs
-		WHERE route_id = ? AND order_attempts > 0 AND created_at >= ?`,
-		routeID, now.Add(-time.Hour).Unix()).Scan(&recent, &earliest)
+	recent, err := s.queries.GetRecentCertificateAttempts(ctx, statedb.GetRecentCertificateAttemptsParams{
+		RouteID:   routeID,
+		CreatedAt: now.Add(-time.Hour).Unix(),
+	})
 	if err != nil {
 		return fmt.Errorf("certificates: count recent jobs: %w", err)
 	}
-	if recent >= 3 {
-		return &RateLimitError{RetryAt: time.Unix(earliest.Int64, 0).UTC().Add(time.Hour)}
+	if recent.Count >= 3 {
+		return &RateLimitError{RetryAt: time.Unix(recent.EarliestCreatedAt, 0).UTC().Add(time.Hour)}
 	}
 	return nil
 }
 
 func (s *store) findReusableJob(ctx context.Context, routeID string, csrHash [32]byte, validAfter time.Time) (Job, error) {
-	return scanJob(s.db.QueryRowContext(ctx, jobSelect+`
-		WHERE route_id = ? AND csr_hash = ? AND certificate_pem IS NOT NULL AND not_after > ?
-		AND state IN ('waiting_for_install', 'succeeded') ORDER BY not_after DESC LIMIT 1`,
-		routeID, csrHash[:], validAfter.Unix()))
+	return jobFromState(s.queries.FindReusableCertificateJob(ctx, statedb.FindReusableCertificateJobParams{
+		RouteID:    routeID,
+		CsrHash:    csrHash[:],
+		ValidAfter: validAfter.Unix(),
+	}))
 }
 
 func (s *store) saveJob(ctx context.Context, job Job) error {
 	now := time.Unix(s.now().Unix(), 0).UTC()
-	result, err := s.db.ExecContext(ctx, `UPDATE certificate_jobs SET
-		state = ?, order_url = ?, acme_status = ?, order_attempts = ?, order_expires_at = ?, retry_at = ?, authorization_url = ?, finalize_url = ?,
-		challenge_url = ?, challenge_token = ?, challenge_digest = ?, challenge_expires_at = ?,
-		certificate_url = ?, certificate_pem = ?, not_before = ?, not_after = ?, renew_at = ?,
-		installed_at = ?, challenge_removed_at = ?, last_error = ?, updated_at = ? WHERE id = ?`,
-		job.State, nullableString(job.OrderURL), nullableString(job.ACMEStatus), job.OrderAttempts, nullableTime(job.OrderExpires), nullableTime(job.RetryAt), nullableString(job.AuthorizationURL), nullableString(job.FinalizeURL),
-		nullableString(job.ChallengeURL), nullableString(job.ChallengeToken), nullableDigest(job.ChallengeURL, job.ChallengeDigest), nullableTime(job.ChallengeExpires),
-		nullableString(job.CertificateURL), nullableBytes(job.CertificatePEM), nullableTime(job.NotBefore), nullableTime(job.NotAfter), nullableTime(job.RenewAt),
-		nullableTime(job.InstalledAt), nullableTime(job.ChallengeRemoved), nullableString(job.LastError), now.Unix(), job.ID)
+	count, err := s.queries.UpdateCertificateJob(ctx, statedb.UpdateCertificateJobParams{
+		State:              job.State,
+		OrderUrl:           nullableString(job.OrderURL),
+		AcmeStatus:         nullableString(job.ACMEStatus),
+		OrderAttempts:      int64(job.OrderAttempts),
+		OrderExpiresAt:     nullableTime(job.OrderExpires),
+		RetryAt:            nullableTime(job.RetryAt),
+		AuthorizationUrl:   nullableString(job.AuthorizationURL),
+		FinalizeUrl:        nullableString(job.FinalizeURL),
+		ChallengeUrl:       nullableString(job.ChallengeURL),
+		ChallengeToken:     nullableString(job.ChallengeToken),
+		ChallengeDigest:    nullableDigest(job.ChallengeURL, job.ChallengeDigest),
+		ChallengeExpiresAt: nullableTime(job.ChallengeExpires),
+		CertificateUrl:     nullableString(job.CertificateURL),
+		CertificatePem:     nullableBytes(job.CertificatePEM),
+		NotBefore:          nullableTime(job.NotBefore),
+		NotAfter:           nullableTime(job.NotAfter),
+		RenewAt:            nullableTime(job.RenewAt),
+		InstalledAt:        nullableTime(job.InstalledAt),
+		ChallengeRemovedAt: nullableTime(job.ChallengeRemoved),
+		LastError:          nullableString(job.LastError),
+		UpdatedAt:          now.Unix(),
+		ID:                 job.ID,
+	})
 	if err != nil {
 		return fmt.Errorf("certificates: save job: %w", err)
 	}
-	return requireRow(result)
+	return requireRow(count)
 }
 
-const jobSelect = `SELECT
-	id, route_id, generation, hostname, profile, state, csr_der, csr_hash, spki_hash,
-	order_url, acme_status, order_attempts, order_expires_at, retry_at, authorization_url, finalize_url, challenge_url, challenge_token,
-	challenge_digest, challenge_expires_at, certificate_url, certificate_pem,
-	not_before, not_after, renew_at, installed_at, challenge_removed_at, last_error,
-	created_at, updated_at FROM certificate_jobs`
-
-type rowScanner interface {
-	Scan(...any) error
-}
-
-func scanJob(row rowScanner) (Job, error) {
-	var job Job
-	var orderURL, acmeStatus, authorizationURL, finalizeURL, challengeURL, challengeToken sql.NullString
-	var certificateURL, lastError sql.NullString
-	var orderExpires, retryAt, challengeExpires, notBefore, notAfter, renewAt, installedAt, challengeRemoved sql.NullInt64
-	var csrHash, spkiHash, challengeDigest, certificatePEM []byte
-	var createdAt, updatedAt int64
-	err := row.Scan(
-		&job.ID, &job.RouteID, &job.Generation, &job.Hostname, &job.Profile, &job.State,
-		&job.CSRDER, &csrHash, &spkiHash, &orderURL, &acmeStatus, &job.OrderAttempts, &orderExpires, &retryAt, &authorizationURL, &finalizeURL,
-		&challengeURL, &challengeToken, &challengeDigest, &challengeExpires, &certificateURL,
-		&certificatePEM, &notBefore, &notAfter, &renewAt, &installedAt, &challengeRemoved,
-		&lastError, &createdAt, &updatedAt,
-	)
+func jobFromState(value statedb.CertificateJob, err error) (Job, error) {
 	if errors.Is(err, sql.ErrNoRows) {
 		return Job{}, ErrNotFound
 	}
 	if err != nil {
 		return Job{}, fmt.Errorf("certificates: scan job: %w", err)
 	}
-	if len(csrHash) != len(job.CSRHash) || len(spkiHash) != len(job.SPKIHash) ||
-		(len(challengeDigest) != 0 && len(challengeDigest) != len(job.ChallengeDigest)) {
+	if len(value.CsrHash) != len(Job{}.CSRHash) || len(value.SpkiHash) != len(Job{}.SPKIHash) ||
+		(len(value.ChallengeDigest) != 0 && len(value.ChallengeDigest) != len(Job{}.ChallengeDigest)) {
 		return Job{}, errors.New("certificates: corrupt job digest")
 	}
-	copy(job.CSRHash[:], csrHash)
-	copy(job.SPKIHash[:], spkiHash)
-	copy(job.ChallengeDigest[:], challengeDigest)
-	job.OrderURL = orderURL.String
-	job.ACMEStatus = acmeStatus.String
-	job.OrderExpires = sqlTime(orderExpires)
-	job.RetryAt = sqlTime(retryAt)
-	job.AuthorizationURL = authorizationURL.String
-	job.FinalizeURL = finalizeURL.String
-	job.ChallengeURL = challengeURL.String
-	job.ChallengeToken = challengeToken.String
-	job.ChallengeExpires = sqlTime(challengeExpires)
-	job.CertificateURL = certificateURL.String
-	job.CertificatePEM = certificatePEM
-	job.NotBefore = sqlTime(notBefore)
-	job.NotAfter = sqlTime(notAfter)
-	job.RenewAt = sqlTime(renewAt)
-	job.InstalledAt = sqlTime(installedAt)
-	job.ChallengeRemoved = sqlTime(challengeRemoved)
-	job.LastError = lastError.String
-	job.CreatedAt = time.Unix(createdAt, 0).UTC()
-	job.UpdatedAt = time.Unix(updatedAt, 0).UTC()
+	job := Job{
+		ID:               value.ID,
+		RouteID:          value.RouteID,
+		Generation:       uint64(value.Generation),
+		Hostname:         value.Hostname,
+		Profile:          value.Profile,
+		State:            value.State,
+		CSRDER:           value.CsrDer,
+		OrderURL:         value.OrderUrl.String,
+		ACMEStatus:       value.AcmeStatus.String,
+		OrderAttempts:    int(value.OrderAttempts),
+		OrderExpires:     sqlTime(value.OrderExpiresAt),
+		RetryAt:          sqlTime(value.RetryAt),
+		AuthorizationURL: value.AuthorizationUrl.String,
+		FinalizeURL:      value.FinalizeUrl.String,
+		ChallengeURL:     value.ChallengeUrl.String,
+		ChallengeToken:   value.ChallengeToken.String,
+		ChallengeExpires: sqlTime(value.ChallengeExpiresAt),
+		CertificateURL:   value.CertificateUrl.String,
+		CertificatePEM:   value.CertificatePem,
+		NotBefore:        sqlTime(value.NotBefore),
+		NotAfter:         sqlTime(value.NotAfter),
+		RenewAt:          sqlTime(value.RenewAt),
+		InstalledAt:      sqlTime(value.InstalledAt),
+		ChallengeRemoved: sqlTime(value.ChallengeRemovedAt),
+		LastError:        value.LastError.String,
+		CreatedAt:        time.Unix(value.CreatedAt, 0).UTC(),
+		UpdatedAt:        time.Unix(value.UpdatedAt, 0).UTC(),
+	}
+	copy(job.CSRHash[:], value.CsrHash)
+	copy(job.SPKIHash[:], value.SpkiHash)
+	copy(job.ChallengeDigest[:], value.ChallengeDigest)
 	return job, nil
 }
 
-func nullableString(value string) any {
-	if value == "" {
-		return nil
+func accountFromState(value statedb.AcmeAccount) account {
+	return account{
+		DirectoryURL: value.DirectoryUrl,
+		Email:        value.Email,
+		KeyDER:       value.KeyDer,
+		KID:          value.Kid.String,
+		AcceptedTOS:  value.AcceptedTermsUrl.String,
+		CreatedAt:    time.Unix(value.CreatedAt, 0).UTC(),
+		UpdatedAt:    time.Unix(value.UpdatedAt, 0).UTC(),
 	}
-	return value
 }
 
-func nullableBytes(value []byte) any {
+func nullableString(value string) sql.NullString {
+	return sql.NullString{String: value, Valid: value != ""}
+}
+
+func nullableBytes(value []byte) []byte {
 	if len(value) == 0 {
 		return nil
 	}
 	return value
 }
 
-func nullableDigest(present string, value [32]byte) any {
+func nullableDigest(present string, value [32]byte) []byte {
 	if present == "" {
 		return nil
 	}
 	return value[:]
 }
 
-func nullableTime(value time.Time) any {
-	if value.IsZero() {
-		return nil
-	}
-	return value.Unix()
+func nullableTime(value time.Time) sql.NullInt64 {
+	return sql.NullInt64{Int64: value.Unix(), Valid: !value.IsZero()}
 }
 
 func sqlTime(value sql.NullInt64) time.Time {
@@ -298,11 +320,7 @@ func sqlTime(value sql.NullInt64) time.Time {
 	return time.Unix(value.Int64, 0).UTC()
 }
 
-func requireRow(result sql.Result) error {
-	count, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
+func requireRow(count int64) error {
 	if count == 0 {
 		return ErrNotFound
 	}

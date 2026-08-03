@@ -27,7 +27,7 @@ dns_hook="${DNS_HOOK:?set DNS_HOOK to an executable that updates benchmark DNS}"
 acme_directory_url="${ACME_DIRECTORY_URL:?set ACME_DIRECTORY_URL to the benchmark ACME directory}"
 acme_email="${ACME_EMAIL:?set ACME_EMAIL to the benchmark ACME account contact}"
 control_ca_file="${CONTROL_CA_FILE:?set CONTROL_CA_FILE to the ACME issuer root bundle}"
-core_hostname="core.${domain}"
+server_hostname="tnl.${domain}"
 route_suffix="apps.${domain}"
 run_id="$(date -u +%m%d%H%M)-$(openssl rand -hex 2)"
 barrier_token="$(openssl rand -hex 32)"
@@ -38,7 +38,7 @@ results_dir="${RESULTS_DIR:-bench-results}"
 results_file="${results_dir}/${run_id}.jsonl"
 proxy_pid=""
 edge_metrics_url=""
-bootstrap_token=""
+login_token=""
 
 if [[ ! -x "${dns_hook}" ]]; then
   printf 'DNS_HOOK must be executable: %s\n' "${dns_hook}" >&2
@@ -166,7 +166,7 @@ capture_failure_diagnostics() {
   printf 'failure diagnostics: %s\n' "${directory}" >&2
 }
 
-wait_for_core() {
+wait_for_server() {
   stop_proxy
   fly proxy "${local_control_port}:4443" --app "${app}" --quiet >"${temp_dir}/proxy.log" 2>&1 &
   proxy_pid=$!
@@ -174,19 +174,19 @@ wait_for_core() {
   while ((SECONDS < deadline)); do
     if curl --fail --silent --show-error \
       --cacert "${temp_dir}/control-ca.crt" \
-      --resolve "${core_hostname}:${local_control_port}:127.0.0.1" \
-      "https://${core_hostname}:${local_control_port}/v1/capabilities" >/dev/null; then
+      --resolve "${server_hostname}:${local_control_port}:127.0.0.1" \
+      "https://${server_hostname}:${local_control_port}/v1/capabilities" >/dev/null; then
       stop_proxy
       return 0
     fi
     sleep 2
   done
   stop_proxy
-  printf 'core did not become ready\n' >&2
+  printf 'server did not become ready\n' >&2
   return 1
 }
 
-read_bootstrap_token() {
+read_login_token() {
   local machine_name="$1"
   local machine_id
   machine_id="$(machine_value "${machine_name}" id)"
@@ -194,17 +194,17 @@ read_bootstrap_token() {
   while ((SECONDS < deadline)); do
     local output
     output="$(fly ssh console --app "${app}" --machine "${machine_id}" \
-      --command '/tnld bootstrap-token --state-dir /tmp/tnl-state' 2>/dev/null || true)"
+      --command '/tnld login-token --state-dir /tmp/tnl-state' 2>/dev/null || true)"
     while IFS= read -r line; do
       line="${line//$'\r'/}"
-      if [[ "${line}" =~ ^tnl_bootstrap_[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$ ]]; then
+      if [[ "${line}" =~ ^tnl_login_[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$ ]]; then
         printf '%s\n' "${line}"
         return 0
       fi
     done <<<"${output}"
     sleep 2
   done
-  printf 'could not retrieve bootstrap token from %s\n' "${machine_name}" >&2
+  printf 'could not retrieve login token from %s\n' "${machine_name}" >&2
   return 1
 }
 
@@ -273,7 +273,7 @@ launch_workers() {
       --file-local "/etc/tnl/control-ca.crt=${temp_dir}/control-ca.crt" \
       --env TNLD_MODE=worker \
       --env 'TNLD_METRICS_LISTEN=[::]:9090' \
-      --env "TNLD_WORKER_URL=wss://${core_hostname}/internal/v1/worker" \
+      --env "TNLD_WORKER_URL=wss://${server_hostname}/internal/v1/worker" \
       --env "TNLD_WORKER_TOKEN=${worker_token}" \
       --env "TNLD_WORKER_CAPACITY=${worker_capacity}" \
       --env SSL_CERT_FILE=/etc/tnl/control-ca.crt \
@@ -331,8 +331,8 @@ run_tier() {
       --file-local "/etc/tnl/control-ca.crt=${temp_dir}/control-ca.crt" \
       --file-local "/etc/tnl/relay.json=${temp_dir}/relay.json" \
       --env "TNL_BENCH_TOPOLOGY=${topology}" \
-      --env "TNL_BENCH_CORE_URL=https://${core_hostname}" \
-      --env "TNL_BENCH_BOOTSTRAP_TOKEN=${bootstrap_token}" \
+      --env "TNL_BENCH_SERVER=https://${server_hostname}" \
+      --env "TNL_BENCH_LOGIN_TOKEN=${login_token}" \
       --env TNL_BENCH_CONTROL_CA_FILE=/etc/tnl/control-ca.crt \
       --env "TNL_BENCH_PUBLIC_ADDRESS=${app}.fly.dev:443" \
       --env "TNL_BENCH_HOSTNAME_SUFFIX=${route_suffix}" \
@@ -440,8 +440,8 @@ for mode in "${mode_list[@]}"; do
         for ((attempt = 1; attempt <= attempts; attempt++)); do
           destroy_machines
           launch_single_node "${routes}"
-          wait_for_core
-          bootstrap_token="$(read_bootstrap_token single-node)"
+          wait_for_server
+          login_token="$(read_login_token single-node)"
           single_ip="$(machine_value single-node private_ip)"
           edge_metrics_url="http://[${single_ip}]:9090/metrics"
           if run_tier single-node "${routes}" "${single_size}" "http://[${single_ip}]:9090/metrics"; then
@@ -466,8 +466,8 @@ for mode in "${mode_list[@]}"; do
         for ((attempt = 1; attempt <= attempts; attempt++)); do
           destroy_machines
           launch_edge "${routes}"
-          wait_for_core
-          bootstrap_token="$(read_bootstrap_token edge)"
+          wait_for_server
+          login_token="$(read_login_token edge)"
           edge_ip="$(machine_value edge private_ip)"
           edge_metrics_url="http://[${edge_ip}]:9090/metrics"
           launch_workers

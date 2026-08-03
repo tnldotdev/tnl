@@ -58,30 +58,30 @@ func TestParseAccessTokenRejectsMalformedAndWrongClass(t *testing.T) {
 	}
 }
 
-func TestBootstrapTokenRoundTripAndClassIsolation(t *testing.T) {
-	token, err := NewBootstrapToken()
+func TestLoginTokenRoundTripAndClassIsolation(t *testing.T) {
+	token, err := NewLoginToken()
 	if err != nil {
 		t.Fatal(err)
 	}
-	verifier, err := ParseBootstrapToken(token)
+	verifier, err := ParseLoginToken(token)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(token.String(), bootstrapPrefix) || !verifier.Matches(token) {
-		t.Fatal("generated bootstrap token did not match")
+	if !strings.HasPrefix(token.String(), loginPrefix) || !verifier.Matches(token) {
+		t.Fatal("generated login token did not match")
 	}
 
-	other, err := NewBootstrapToken()
+	other, err := NewLoginToken()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if verifier.Matches(other) {
-		t.Fatal("different bootstrap token matched")
+		t.Fatal("different login token matched")
 	}
-	if verifier.Matches(BootstrapToken(strings.Replace(token.String(), bootstrapPrefix, accessPrefix, 1))) {
-		t.Fatal("access-class token matched bootstrap verifier")
+	if verifier.Matches(LoginToken(strings.Replace(token.String(), loginPrefix, accessPrefix, 1))) {
+		t.Fatal("access-class token matched login verifier")
 	}
-	if _, err := ParseBootstrapToken(BootstrapToken("tnl_route_invalid")); !errors.Is(err, ErrInvalidBootstrapToken) {
+	if _, err := ParseLoginToken(LoginToken("tnl_route_invalid")); !errors.Is(err, ErrInvalidLoginToken) {
 		t.Fatalf("wrong-class error = %v", err)
 	}
 }
@@ -117,33 +117,33 @@ func TestDataPlaneTokenClasses(t *testing.T) {
 		t.Fatal("worker verifier did not enforce its credential class")
 	}
 
-	workload, workloadVerifier, err := NewWorkloadToken()
+	service, serviceVerifier, err := NewServiceToken()
 	if err != nil {
 		t.Fatal(err)
 	}
-	parsedWorkload, err := ParseWorkloadToken(workload)
-	if err != nil || !workloadVerifier.Matches(workload) || !parsedWorkload.Matches(workload) {
-		t.Fatalf("workload round trip failed: %v", err)
+	parsedService, err := ParseServiceToken(service)
+	if err != nil || !serviceVerifier.Matches(service) || !parsedService.Matches(service) {
+		t.Fatalf("service round trip failed: %v", err)
 	}
-	if _, err := ParseWorkloadToken(WorkloadToken(worker)); !errors.Is(err, ErrInvalidWorkloadToken) {
-		t.Fatalf("worker as workload error = %v", err)
+	if _, err := ParseServiceToken(ServiceToken(worker)); !errors.Is(err, ErrInvalidServiceToken) {
+		t.Fatalf("worker as service error = %v", err)
 	}
 }
 
 func TestTokenExchangeFixturesUseCanonicalCredentials(t *testing.T) {
 	var request struct {
-		BootstrapToken BootstrapToken `json:"bootstrap_token"`
+		LoginToken LoginToken `json:"login_token"`
 	}
-	readJSONFixture(t, "../../api/fixtures/core/v1/token-exchange-request.json", &request)
-	if _, err := ParseBootstrapToken(request.BootstrapToken); err != nil {
-		t.Fatalf("bootstrap fixture: %v", err)
+	readJSONFixture(t, "../../api/fixtures/server/v1/token-exchange-request.json", &request)
+	if _, err := ParseLoginToken(request.LoginToken); err != nil {
+		t.Fatalf("login fixture: %v", err)
 	}
 
 	var response struct {
 		AccessToken  AccessToken  `json:"access_token"`
 		CredentialID CredentialID `json:"credential_id"`
 	}
-	readJSONFixture(t, "../../api/fixtures/core/v1/token-exchange-response.json", &response)
+	readJSONFixture(t, "../../api/fixtures/server/v1/token-exchange-response.json", &response)
 	credentialID, _, err := ParseAccessToken(response.AccessToken)
 	if err != nil {
 		t.Fatalf("access fixture: %v", err)

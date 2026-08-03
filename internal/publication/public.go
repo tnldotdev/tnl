@@ -14,11 +14,11 @@ import (
 
 	"github.com/0xcadams/tnl/internal/agent"
 	"github.com/0xcadams/tnl/internal/clientstate"
-	"github.com/0xcadams/tnl/internal/coreclient"
 	"github.com/0xcadams/tnl/internal/credentials"
 	"github.com/0xcadams/tnl/internal/localproxy"
 	"github.com/0xcadams/tnl/internal/naming"
-	"github.com/0xcadams/tnl/pkg/protocol/corev1"
+	"github.com/0xcadams/tnl/internal/serverclient"
+	"github.com/0xcadams/tnl/pkg/protocol/serverv1"
 	"github.com/0xcadams/tnl/pkg/protocol/transportv1"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
@@ -34,21 +34,21 @@ var (
 	relayCheckInterval = 15 * time.Second
 )
 
-type Core interface {
-	CreateRoute(context.Context, corev1.CreateRouteRequest) (corev1.LeaseSetup, error)
-	ListRoutes(context.Context) ([]corev1.Route, error)
-	AcquireLease(context.Context, string, credentials.RouteToken) (corev1.LeaseSetup, error)
+type Server interface {
+	CreateRoute(context.Context, serverv1.CreateRouteRequest) (serverv1.LeaseSetup, error)
+	ListRoutes(context.Context) ([]serverv1.Route, error)
+	AcquireLease(context.Context, string, credentials.RouteToken) (serverv1.LeaseSetup, error)
 	RegisterTransport(context.Context, string, uint64, credentials.LeaseToken, transportv1.TailcatDescriptor) error
 	Ready(context.Context, string, uint64, credentials.LeaseToken) error
-	Heartbeat(context.Context, string, uint64, credentials.LeaseToken) (corev1.HeartbeatResponse, error)
-	CreateCertificateOrder(context.Context, string, uint64, credentials.LeaseToken, string, []byte) (corev1.CertificateOrder, error)
-	CertificateChallengeReady(context.Context, string, credentials.LeaseToken) (corev1.CertificateOrder, error)
+	Heartbeat(context.Context, string, uint64, credentials.LeaseToken) (serverv1.HeartbeatResponse, error)
+	CreateCertificateOrder(context.Context, string, uint64, credentials.LeaseToken, string, []byte) (serverv1.CertificateOrder, error)
+	CertificateChallengeReady(context.Context, string, credentials.LeaseToken) (serverv1.CertificateOrder, error)
 	CertificateChallengeRemoved(context.Context, string, credentials.LeaseToken) error
 	CertificateInstalled(context.Context, string, uint64, string, credentials.LeaseToken) error
 }
 
 type PublicConfig struct {
-	Core         Core
+	Server       Server
 	Hostname     string
 	Target       string
 	Certificate  tls.Certificate
@@ -67,8 +67,8 @@ type PublicConfig struct {
 }
 
 func RunPublic(ctx context.Context, config PublicConfig) error {
-	if config.Core == nil {
-		return errors.New("agent: core client is required")
+	if config.Server == nil {
+		return errors.New("agent: server client is required")
 	}
 	if config.DrainTime <= 0 {
 		config.DrainTime = 30 * time.Second
@@ -106,7 +106,7 @@ func RunPublic(ctx context.Context, config PublicConfig) error {
 	if err != nil {
 		return err
 	}
-	setup, err := createOrRecover(ctx, config.Core, hostname, config.Target, routeToken)
+	setup, err := createOrRecover(ctx, config.Server, hostname, config.Target, routeToken)
 	if err != nil {
 		return err
 	}
@@ -125,7 +125,7 @@ func RunPublic(ctx context.Context, config PublicConfig) error {
 	var announced sync.Once
 	for {
 		if setup.Route.Id != routeID {
-			return errors.New("agent: core changed route ID during lease acquisition")
+			return errors.New("agent: server changed route ID during lease acquisition")
 		}
 		err := runLease(ctx, config, setup, routeState, func() error {
 			if config.OnLeaseReady != nil {
@@ -143,18 +143,18 @@ func RunPublic(ctx context.Context, config PublicConfig) error {
 		if ctx.Err() != nil {
 			return nil
 		}
-		if !errors.Is(err, coreclient.ErrStateConflict) {
+		if !errors.Is(err, serverclient.ErrStateConflict) {
 			return err
 		}
 		for {
-			setup, err = config.Core.AcquireLease(ctx, routeID, routeToken)
+			setup, err = config.Server.AcquireLease(ctx, routeID, routeToken)
 			if err == nil {
 				err = refreshRelayProfiles(ctx, &config)
 				if err == nil {
 					break
 				}
 			}
-			if !errors.Is(err, coreclient.ErrUnavailable) {
+			if !errors.Is(err, serverclient.ErrUnavailable) {
 				return err
 			}
 			select {
@@ -182,75 +182,75 @@ func refreshRelayProfiles(ctx context.Context, config *PublicConfig) error {
 
 func createOrRecover(
 	ctx context.Context,
-	core Core,
+	server Server,
 	hostname, target string,
 	routeToken credentials.RouteToken,
-) (corev1.LeaseSetup, error) {
+) (serverv1.LeaseSetup, error) {
 	for {
-		setup, err := core.CreateRoute(ctx, corev1.CreateRouteRequest{
+		setup, err := server.CreateRoute(ctx, serverv1.CreateRouteRequest{
 			Hostname: hostname, DisplayTarget: target, RouteToken: routeToken.String(),
 		})
 		if err == nil {
 			return setup, nil
 		}
-		if errors.Is(err, coreclient.ErrStateConflict) || errors.Is(err, coreclient.ErrUnavailable) {
+		if errors.Is(err, serverclient.ErrStateConflict) || errors.Is(err, serverclient.ErrUnavailable) {
 			// Creation may commit before its response is lost; recover with the same token.
-			routes, listErr := core.ListRoutes(ctx)
+			routes, listErr := server.ListRoutes(ctx)
 			if listErr == nil {
 				for _, route := range routes {
 					if route.Hostname == hostname && route.DisplayTarget == target {
-						setup, acquireErr := core.AcquireLease(ctx, route.Id, routeToken)
+						setup, acquireErr := server.AcquireLease(ctx, route.Id, routeToken)
 						if acquireErr == nil {
 							return setup, nil
 						}
-						if !errors.Is(acquireErr, coreclient.ErrUnavailable) &&
-							!errors.Is(acquireErr, coreclient.ErrUnauthenticated) {
-							return corev1.LeaseSetup{}, acquireErr
+						if !errors.Is(acquireErr, serverclient.ErrUnavailable) &&
+							!errors.Is(acquireErr, serverclient.ErrUnauthenticated) {
+							return serverv1.LeaseSetup{}, acquireErr
 						}
 					}
 				}
 			}
-			if !errors.Is(err, coreclient.ErrUnavailable) && listErr == nil {
-				return corev1.LeaseSetup{}, err
+			if !errors.Is(err, serverclient.ErrUnavailable) && listErr == nil {
+				return serverv1.LeaseSetup{}, err
 			}
-			if listErr != nil && !errors.Is(listErr, coreclient.ErrUnavailable) {
-				return corev1.LeaseSetup{}, listErr
+			if listErr != nil && !errors.Is(listErr, serverclient.ErrUnavailable) {
+				return serverv1.LeaseSetup{}, listErr
 			}
 			select {
 			case <-ctx.Done():
-				return corev1.LeaseSetup{}, ctx.Err()
+				return serverv1.LeaseSetup{}, ctx.Err()
 			case <-time.After(activationRetry):
 			}
 			continue
 		}
-		return corev1.LeaseSetup{}, err
+		return serverv1.LeaseSetup{}, err
 	}
 }
 
 func runLease(
 	ctx context.Context,
 	config PublicConfig,
-	setup corev1.LeaseSetup,
+	setup serverv1.LeaseSetup,
 	state *clientstate.Route,
 	ready func() error,
 ) error {
 	if setup.Route.Id == "" || setup.Lease.Generation <= 0 || setup.LeaseToken == "" || setup.IngressPublicKey == "" {
-		return errors.New("agent: core returned incomplete lease setup")
+		return errors.New("agent: server returned incomplete lease setup")
 	}
 	leaseToken := credentials.LeaseToken(setup.LeaseToken)
 	if _, _, err := credentials.ParseLeaseToken(leaseToken); err != nil {
-		return errors.New("agent: core returned invalid lease token")
+		return errors.New("agent: server returned invalid lease token")
 	}
 	var ingressKey key.NodePublic
 	if err := ingressKey.UnmarshalText([]byte(setup.IngressPublicKey)); err != nil || ingressKey.IsZero() {
-		return errors.New("agent: core returned invalid ingress key")
+		return errors.New("agent: server returned invalid ingress key")
 	}
 	generation := uint64(setup.Lease.Generation)
 	leaseCtx, cancelLease := context.WithCancel(ctx)
 	defer cancelLease()
 	// Refresh before setup consumes the lease, then continue heartbeats in the background.
 	expiresAt, err := heartbeatOnce(
-		leaseCtx, config.Core, setup.Route.Id, generation, leaseToken, setup.Lease.ExpiresAt,
+		leaseCtx, config.Server, setup.Route.Id, generation, leaseToken, setup.Lease.ExpiresAt,
 	)
 	if err != nil {
 		return fmt.Errorf("agent: heartbeat: %w", err)
@@ -261,7 +261,7 @@ func runLease(
 	heartbeatErrors := make(chan error, 1)
 	go func() {
 		if err := heartbeatLeaseAfter(
-			leaseCtx, config.Core, setup.Route.Id, generation, leaseToken, expiresAt,
+			leaseCtx, config.Server, setup.Route.Id, generation, leaseToken, expiresAt,
 		); err != nil {
 			heartbeatErrors <- err
 		}
@@ -295,11 +295,11 @@ func runLease(
 	}
 
 	for {
-		err = config.Core.RegisterTransport(ctx, setup.Route.Id, generation, leaseToken, endpoint)
+		err = config.Server.RegisterTransport(ctx, setup.Route.Id, generation, leaseToken, endpoint)
 		if err == nil {
 			break
 		}
-		if !errors.Is(err, coreclient.ErrUnavailable) {
+		if !errors.Is(err, serverclient.ErrUnavailable) {
 			return err
 		}
 		select {
@@ -314,7 +314,7 @@ func runLease(
 	if state != nil {
 		if !hasMaterial {
 			material, err = issueCertificate(
-				ctx, config.Core, route, state, setup.Route.Id, generation, leaseToken,
+				ctx, config.Server, route, state, setup.Route.Id, generation, leaseToken,
 				setup.Route.Hostname, config.ACMEProfile, heartbeatErrors,
 			)
 			if err != nil {
@@ -323,14 +323,14 @@ func runLease(
 			hasMaterial = true
 		} else if !material.Installed || !material.RenewAt.After(time.Now()) {
 			replacement, refreshErr := refreshCertificate(
-				ctx, config.Core, route, state, setup.Route.Id, generation, leaseToken,
+				ctx, config.Server, route, state, setup.Route.Id, generation, leaseToken,
 				setup.Route.Hostname, config.ACMEProfile, material, heartbeatErrors,
 			)
 			if !replacement.NotAfter.IsZero() {
 				material = replacement
 			}
 			if refreshErr != nil {
-				if errors.Is(refreshErr, coreclient.ErrStateConflict) {
+				if errors.Is(refreshErr, serverclient.ErrStateConflict) {
 					return refreshErr
 				}
 				if !material.NotAfter.After(time.Now()) {
@@ -347,11 +347,11 @@ func runLease(
 		}
 	}
 	for {
-		err = config.Core.Ready(ctx, setup.Route.Id, generation, leaseToken)
+		err = config.Server.Ready(ctx, setup.Route.Id, generation, leaseToken)
 		if err == nil {
 			break
 		}
-		if !errors.Is(err, coreclient.ErrUnavailable) {
+		if !errors.Is(err, serverclient.ErrUnavailable) {
 			return err
 		}
 		select {
@@ -395,16 +395,16 @@ func runLease(
 				continue
 			}
 			if !reflect.DeepEqual(config.Profiles[config.RelayProfile], profiles[config.RelayProfile]) {
-				return coreclient.ErrStateConflict
+				return serverclient.ErrStateConflict
 			}
 			relayTimer.Reset(relayCheckInterval)
 		case <-renewal:
 			replacement, renewalErr := refreshCertificate(
-				ctx, config.Core, route, state, setup.Route.Id, generation, leaseToken,
+				ctx, config.Server, route, state, setup.Route.Id, generation, leaseToken,
 				setup.Route.Hostname, config.ACMEProfile, material, heartbeatErrors,
 			)
 			if renewalErr != nil {
-				if errors.Is(renewalErr, coreclient.ErrStateConflict) {
+				if errors.Is(renewalErr, serverclient.ErrStateConflict) {
 					return renewalErr
 				}
 				if !replacement.NotAfter.IsZero() {
@@ -428,7 +428,7 @@ func runLease(
 
 func refreshCertificate(
 	ctx context.Context,
-	core Core,
+	server Server,
 	route *Route,
 	state *clientstate.Route,
 	routeID string,
@@ -441,7 +441,7 @@ func refreshCertificate(
 	if !material.Installed && material.RenewAt.After(time.Now()) && material.NotAfter.After(time.Now().Add(24*time.Hour)) {
 		// Reconcile a committed certificate before issuing another order.
 		reconciled, err := reconcileCertificateInstallation(
-			ctx, core, route, state, routeID, generation, leaseToken, hostname, profile, material, heartbeatErrors,
+			ctx, server, route, state, routeID, generation, leaseToken, hostname, profile, material, heartbeatErrors,
 		)
 		var terminal *terminalCertificateOrderError
 		if !errors.As(err, &terminal) {
@@ -449,7 +449,7 @@ func refreshCertificate(
 		}
 	}
 	return issueCertificate(
-		ctx, core, route, state, routeID, generation, leaseToken, hostname, profile, heartbeatErrors,
+		ctx, server, route, state, routeID, generation, leaseToken, hostname, profile, heartbeatErrors,
 	)
 }
 
@@ -461,7 +461,7 @@ func logRenewalFailure(logf logger.Logf, err error) {
 
 func issueCertificate(
 	ctx context.Context,
-	core Core,
+	server Server,
 	route *Route,
 	state *clientstate.Route,
 	routeID string,
@@ -475,23 +475,23 @@ func issueCertificate(
 		return clientstate.Material{}, err
 	}
 	rotatedTerminalOrder := false
-	createAndRecord := func() (corev1.CertificateOrder, error) {
+	createAndRecord := func() (serverv1.CertificateOrder, error) {
 		for {
 			order, createErr := createCertificateOrder(
-				ctx, core, routeID, generation, leaseToken, hostname, profile, pending.CSRDER, heartbeatErrors,
+				ctx, server, routeID, generation, leaseToken, hostname, profile, pending.CSRDER, heartbeatErrors,
 			)
 			var terminal *terminalCertificateOrderError
 			if errors.As(createErr, &terminal) && !rotatedTerminalOrder {
 				// Retry one terminal order with fresh key material.
 				pending, createErr = state.NewPending(hostname)
 				if createErr != nil {
-					return corev1.CertificateOrder{}, createErr
+					return serverv1.CertificateOrder{}, createErr
 				}
 				rotatedTerminalOrder = true
 				continue
 			}
 			if createErr != nil {
-				return corev1.CertificateOrder{}, createErr
+				return serverv1.CertificateOrder{}, createErr
 			}
 			pending, createErr = state.RecordOrder(hostname, pending, order.Id, generation)
 			return order, createErr
@@ -506,7 +506,7 @@ orderLoop:
 		if order.CertificatePem != nil {
 			if order.Challenge != nil {
 				route.RemoveChallenge(order.Challenge.Id)
-				if err := acknowledgeChallengeRemoval(ctx, core, order.Id, leaseToken, heartbeatErrors); err != nil {
+				if err := acknowledgeChallengeRemoval(ctx, server, order.Id, leaseToken, heartbeatErrors); err != nil {
 					return clientstate.Material{}, err
 				}
 			}
@@ -525,7 +525,7 @@ orderLoop:
 		digest, err := base64.RawURLEncoding.DecodeString(order.Challenge.Digest)
 		if err != nil || len(digest) != 32 || base64.RawURLEncoding.EncodeToString(digest) != order.Challenge.Digest ||
 			order.Challenge.Id == "" || order.Challenge.Hostname != hostname || !order.Challenge.ExpiresAt.After(time.Now()) {
-			return clientstate.Material{}, errors.New("agent: core returned an invalid TLS-ALPN challenge digest")
+			return clientstate.Material{}, errors.New("agent: server returned an invalid TLS-ALPN challenge digest")
 		}
 		challenge := agent.TLSALPNChallenge{
 			ID: order.Challenge.Id, Hostname: order.Challenge.Hostname, ExpiresAt: order.Challenge.ExpiresAt,
@@ -537,7 +537,7 @@ orderLoop:
 		defer route.RemoveChallenge(challenge.ID)
 		for {
 			expectedOrderID := order.Id
-			advanced, readyErr := core.CertificateChallengeReady(ctx, expectedOrderID, leaseToken)
+			advanced, readyErr := server.CertificateChallengeReady(ctx, expectedOrderID, leaseToken)
 			err = readyErr
 			if err == nil {
 				if err := validateCertificateOrder(advanced, routeID, generation, hostname, profile, expectedOrderID); err != nil {
@@ -566,7 +566,7 @@ orderLoop:
 				}
 				continue
 			}
-			if !errors.Is(err, coreclient.ErrUnavailable) {
+			if !errors.Is(err, serverclient.ErrUnavailable) {
 				return clientstate.Material{}, err
 			}
 			if err := waitCertificateRetry(ctx, heartbeatErrors, activationRetry); err != nil {
@@ -574,21 +574,21 @@ orderLoop:
 			}
 		}
 		route.RemoveChallenge(challenge.ID)
-		if err := acknowledgeChallengeRemoval(ctx, core, order.Id, leaseToken, heartbeatErrors); err != nil {
+		if err := acknowledgeChallengeRemoval(ctx, server, order.Id, leaseToken, heartbeatErrors); err != nil {
 			return clientstate.Material{}, err
 		}
 	}
 	if order.CertificatePem == nil || order.RenewAt == nil || order.Id == "" {
-		return clientstate.Material{}, errors.New("agent: core returned incomplete certificate material")
+		return clientstate.Material{}, errors.New("agent: server returned incomplete certificate material")
 	}
 	return installCertificateOrder(
-		ctx, core, route, state, routeID, generation, leaseToken, hostname, pending, order, heartbeatErrors,
+		ctx, server, route, state, routeID, generation, leaseToken, hostname, pending, order, heartbeatErrors,
 	)
 }
 
 func installCertificateOrder(
 	ctx context.Context,
-	core Core,
+	server Server,
 	route *Route,
 	state *clientstate.Route,
 	routeID string,
@@ -596,10 +596,10 @@ func installCertificateOrder(
 	leaseToken credentials.LeaseToken,
 	hostname string,
 	pending clientstate.Pending,
-	order corev1.CertificateOrder,
+	order serverv1.CertificateOrder,
 	heartbeatErrors <-chan error,
 ) (clientstate.Material, error) {
-	// Persist and verify before acknowledging core; MarkInstalled closes the recovery window.
+	// Persist and verify before acknowledging the server; MarkInstalled closes the recovery window.
 	material, err := state.Commit(
 		hostname, pending, []byte(*order.CertificatePem), *order.RenewAt, order.Id, generation,
 	)
@@ -613,7 +613,7 @@ func installCertificateOrder(
 		return material, err
 	}
 	if err := acknowledgeCertificate(
-		ctx, core, routeID, generation, order.Id, leaseToken, heartbeatErrors,
+		ctx, server, routeID, generation, order.Id, leaseToken, heartbeatErrors,
 	); err != nil {
 		return material, err
 	}
@@ -626,34 +626,34 @@ func installCertificateOrder(
 
 func createCertificateOrder(
 	ctx context.Context,
-	core Core,
+	server Server,
 	routeID string,
 	generation uint64,
 	leaseToken credentials.LeaseToken,
 	hostname, profile string,
 	csrDER []byte,
 	heartbeatErrors <-chan error,
-) (corev1.CertificateOrder, error) {
+) (serverv1.CertificateOrder, error) {
 	for {
-		order, err := core.CreateCertificateOrder(ctx, routeID, generation, leaseToken, profile, csrDER)
+		order, err := server.CreateCertificateOrder(ctx, routeID, generation, leaseToken, profile, csrDER)
 		if err == nil {
 			if err := validateCertificateOrder(order, routeID, generation, hostname, profile, ""); err != nil {
-				return corev1.CertificateOrder{}, err
+				return serverv1.CertificateOrder{}, err
 			}
 			return order, nil
 		}
-		if !errors.Is(err, coreclient.ErrUnavailable) && !errors.Is(err, coreclient.ErrRateLimited) {
-			return corev1.CertificateOrder{}, err
+		if !errors.Is(err, serverclient.ErrUnavailable) && !errors.Is(err, serverclient.ErrRateLimited) {
+			return serverv1.CertificateOrder{}, err
 		}
 		if err := waitCertificateRetry(ctx, heartbeatErrors, certificateRetryDelay(err)); err != nil {
-			return corev1.CertificateOrder{}, err
+			return serverv1.CertificateOrder{}, err
 		}
 	}
 }
 
 func reconcileCertificateInstallation(
 	ctx context.Context,
-	core Core,
+	server Server,
 	route *Route,
 	state *clientstate.Route,
 	routeID string,
@@ -664,7 +664,7 @@ func reconcileCertificateInstallation(
 	heartbeatErrors <-chan error,
 ) (clientstate.Material, error) {
 	order, err := createCertificateOrder(
-		ctx, core, routeID, generation, leaseToken, hostname, profile, material.CSRDER, heartbeatErrors,
+		ctx, server, routeID, generation, leaseToken, hostname, profile, material.CSRDER, heartbeatErrors,
 	)
 	if err != nil {
 		return material, err
@@ -674,7 +674,7 @@ func reconcileCertificateInstallation(
 			return material, err
 		}
 		order, err = createCertificateOrder(
-			ctx, core, routeID, generation, leaseToken, hostname, profile, material.CSRDER, heartbeatErrors,
+			ctx, server, routeID, generation, leaseToken, hostname, profile, material.CSRDER, heartbeatErrors,
 		)
 		if err != nil {
 			return material, err
@@ -682,7 +682,7 @@ func reconcileCertificateInstallation(
 	}
 	if order.CertificatePem == nil {
 		return completeReboundCertificateOrder(
-			ctx, core, route, state, routeID, generation, leaseToken, hostname, profile, material, order, heartbeatErrors,
+			ctx, server, route, state, routeID, generation, leaseToken, hostname, profile, material, order, heartbeatErrors,
 		)
 	}
 	chain, err := decodeCertificateChain([]byte(*order.CertificatePem))
@@ -698,7 +698,7 @@ func reconcileCertificateInstallation(
 		return material, err
 	}
 	if err := acknowledgeCertificate(
-		ctx, core, routeID, generation, order.Id, leaseToken, heartbeatErrors,
+		ctx, server, routeID, generation, order.Id, leaseToken, heartbeatErrors,
 	); err != nil {
 		return material, err
 	}
@@ -711,7 +711,7 @@ func reconcileCertificateInstallation(
 
 func completeReboundCertificateOrder(
 	ctx context.Context,
-	core Core,
+	server Server,
 	route *Route,
 	state *clientstate.Route,
 	routeID string,
@@ -719,7 +719,7 @@ func completeReboundCertificateOrder(
 	leaseToken credentials.LeaseToken,
 	hostname, profile string,
 	current clientstate.Material,
-	order corev1.CertificateOrder,
+	order serverv1.CertificateOrder,
 	heartbeatErrors <-chan error,
 ) (clientstate.Material, error) {
 	pending, err := state.CurrentKey(hostname)
@@ -729,7 +729,7 @@ func completeReboundCertificateOrder(
 	digest, err := base64.RawURLEncoding.DecodeString(order.Challenge.Digest)
 	if err != nil || len(digest) != 32 || base64.RawURLEncoding.EncodeToString(digest) != order.Challenge.Digest ||
 		order.Challenge.Id == "" || order.Challenge.Hostname != hostname || !order.Challenge.ExpiresAt.After(time.Now()) {
-		return current, errors.New("agent: core returned an invalid TLS-ALPN challenge digest")
+		return current, errors.New("agent: server returned an invalid TLS-ALPN challenge digest")
 	}
 	challenge := agent.TLSALPNChallenge{
 		ID: order.Challenge.Id, Hostname: order.Challenge.Hostname, ExpiresAt: order.Challenge.ExpiresAt,
@@ -741,9 +741,9 @@ func completeReboundCertificateOrder(
 	defer route.RemoveChallenge(challenge.ID)
 	for order.CertificatePem == nil {
 		expectedOrderID := order.Id
-		advanced, readyErr := core.CertificateChallengeReady(ctx, expectedOrderID, leaseToken)
+		advanced, readyErr := server.CertificateChallengeReady(ctx, expectedOrderID, leaseToken)
 		if readyErr != nil {
-			if !errors.Is(readyErr, coreclient.ErrUnavailable) {
+			if !errors.Is(readyErr, serverclient.ErrUnavailable) {
 				return current, readyErr
 			}
 			if err := waitCertificateRetry(ctx, heartbeatErrors, activationRetry); err != nil {
@@ -762,11 +762,11 @@ func completeReboundCertificateOrder(
 		}
 	}
 	route.RemoveChallenge(challenge.ID)
-	if err := acknowledgeChallengeRemoval(ctx, core, order.Id, leaseToken, heartbeatErrors); err != nil {
+	if err := acknowledgeChallengeRemoval(ctx, server, order.Id, leaseToken, heartbeatErrors); err != nil {
 		return current, err
 	}
 	replacement, err := installCertificateOrder(
-		ctx, core, route, state, routeID, generation, leaseToken, hostname, pending, order, heartbeatErrors,
+		ctx, server, route, state, routeID, generation, leaseToken, hostname, pending, order, heartbeatErrors,
 	)
 	if replacement.NotAfter.IsZero() {
 		return current, err
@@ -776,7 +776,7 @@ func completeReboundCertificateOrder(
 
 func acknowledgeCertificate(
 	ctx context.Context,
-	core Core,
+	server Server,
 	routeID string,
 	generation uint64,
 	orderID string,
@@ -784,11 +784,11 @@ func acknowledgeCertificate(
 	heartbeatErrors <-chan error,
 ) error {
 	for {
-		err := core.CertificateInstalled(ctx, routeID, generation, orderID, leaseToken)
+		err := server.CertificateInstalled(ctx, routeID, generation, orderID, leaseToken)
 		if err == nil {
 			return nil
 		}
-		if !errors.Is(err, coreclient.ErrUnavailable) {
+		if !errors.Is(err, serverclient.ErrUnavailable) {
 			return err
 		}
 		if err := waitCertificateRetry(ctx, heartbeatErrors, activationRetry); err != nil {
@@ -799,17 +799,17 @@ func acknowledgeCertificate(
 
 func acknowledgeChallengeRemoval(
 	ctx context.Context,
-	core Core,
+	server Server,
 	orderID string,
 	leaseToken credentials.LeaseToken,
 	heartbeatErrors <-chan error,
 ) error {
 	for {
-		err := core.CertificateChallengeRemoved(ctx, orderID, leaseToken)
+		err := server.CertificateChallengeRemoved(ctx, orderID, leaseToken)
 		if err == nil {
 			return nil
 		}
-		if !errors.Is(err, coreclient.ErrUnavailable) {
+		if !errors.Is(err, serverclient.ErrUnavailable) {
 			return err
 		}
 		if err := waitCertificateRetry(ctx, heartbeatErrors, activationRetry); err != nil {
@@ -819,7 +819,7 @@ func acknowledgeChallengeRemoval(
 }
 
 func validateCertificateOrder(
-	order corev1.CertificateOrder,
+	order serverv1.CertificateOrder,
 	routeID string,
 	generation uint64,
 	hostname, profile string,
@@ -827,44 +827,46 @@ func validateCertificateOrder(
 ) error {
 	if order.Id == "" || order.RouteId != routeID || order.Generation != int(generation) ||
 		order.Hostname != hostname || order.Profile != profile || expectedID != "" && order.Id != expectedID {
-		return errors.New("agent: core returned a certificate order for a different route lease")
+		return errors.New("agent: server returned a certificate order for a different route lease")
 	}
 	if !order.State.Valid() {
-		return errors.New("agent: core returned an unknown certificate order state")
+		return errors.New("agent: server returned an unknown certificate order state")
 	}
 	switch order.State {
-	case corev1.Invalid, corev1.Blocked, corev1.Canceled:
+	case serverv1.Invalid, serverv1.Blocked, serverv1.Canceled:
 		return &terminalCertificateOrderError{state: order.State}
 	}
 	if order.CertificatePem != nil {
-		if order.State != corev1.WaitingForInstall && order.State != corev1.Succeeded ||
+		if order.State != serverv1.WaitingForInstall && order.State != serverv1.Succeeded ||
 			order.NotBefore == nil || order.NotAfter == nil || order.RenewAt == nil {
-			return errors.New("agent: core returned certificate material in an inconsistent order state")
+			return errors.New("agent: server returned certificate material in an inconsistent order state")
 		}
-	} else if order.State == corev1.WaitingForInstall || order.State == corev1.Succeeded {
-		return errors.New("agent: core returned an installed order without certificate material")
+	} else if order.State == serverv1.WaitingForInstall || order.State == serverv1.Succeeded {
+		return errors.New("agent: server returned an installed order without certificate material")
 	}
 	if order.Challenge != nil && order.CertificatePem == nil {
 		switch order.State {
-		case corev1.WaitingForChallenge, corev1.Validating, corev1.ReadyToFinalize, corev1.Finalizing, corev1.Downloading:
+		case serverv1.WaitingForChallenge, serverv1.Validating, serverv1.ReadyToFinalize, serverv1.Finalizing, serverv1.Downloading:
 		default:
-			return errors.New("agent: core returned a challenge in an inconsistent order state")
+			return errors.New("agent: server returned a challenge in an inconsistent order state")
 		}
 	}
-	if order.Challenge == nil && order.State == corev1.WaitingForChallenge {
-		return errors.New("agent: core returned a challenge order without challenge material")
+	if order.Challenge == nil && order.State == serverv1.WaitingForChallenge {
+		return errors.New("agent: server returned a challenge order without challenge material")
 	}
 	if order.Challenge != nil {
 		digest, err := base64.RawURLEncoding.DecodeString(order.Challenge.Digest)
 		if err != nil || len(digest) != 32 || base64.RawURLEncoding.EncodeToString(digest) != order.Challenge.Digest ||
 			order.Challenge.Id == "" || order.Challenge.Hostname != hostname || order.Challenge.ExpiresAt.IsZero() {
-			return errors.New("agent: core returned invalid TLS-ALPN challenge material")
+			return errors.New("agent: server returned invalid TLS-ALPN challenge material")
 		}
 	}
 	return nil
 }
 
-type terminalCertificateOrderError struct{ state corev1.CertificateOrderState }
+type terminalCertificateOrderError struct {
+	state serverv1.CertificateOrderState
+}
 
 func (e *terminalCertificateOrderError) Error() string {
 	return fmt.Sprintf("agent: certificate order became %s", e.state)
@@ -899,7 +901,7 @@ func equalCertificateChain(left, right [][]byte) bool {
 	return true
 }
 
-func certificateOrderRetry(order corev1.CertificateOrder) time.Duration {
+func certificateOrderRetry(order serverv1.CertificateOrder) time.Duration {
 	if order.RetryAt != nil && order.RetryAt.After(time.Now()) {
 		return min(time.Until(*order.RetryAt), time.Minute)
 	}
@@ -926,7 +928,7 @@ func waitCertificateRetry(ctx context.Context, heartbeatErrors <-chan error, del
 }
 
 func certificateRetryDelay(err error) time.Duration {
-	var limited *coreclient.RateLimitError
+	var limited *serverclient.RateLimitError
 	if errors.As(err, &limited) && limited.RetryAfter > 0 {
 		return min(limited.RetryAfter, 24*time.Hour)
 	}
@@ -935,22 +937,22 @@ func certificateRetryDelay(err error) time.Duration {
 
 func heartbeatLease(
 	ctx context.Context,
-	core Core,
+	server Server,
 	routeID string,
 	generation uint64,
 	leaseToken credentials.LeaseToken,
 	expiresAt time.Time,
 ) error {
-	expiresAt, err := heartbeatOnce(ctx, core, routeID, generation, leaseToken, expiresAt)
+	expiresAt, err := heartbeatOnce(ctx, server, routeID, generation, leaseToken, expiresAt)
 	if err != nil || ctx.Err() != nil {
 		return err
 	}
-	return heartbeatLeaseAfter(ctx, core, routeID, generation, leaseToken, expiresAt)
+	return heartbeatLeaseAfter(ctx, server, routeID, generation, leaseToken, expiresAt)
 }
 
 func heartbeatLeaseAfter(
 	ctx context.Context,
-	core Core,
+	server Server,
 	routeID string,
 	generation uint64,
 	leaseToken credentials.LeaseToken,
@@ -965,7 +967,7 @@ func heartbeatLeaseAfter(
 		case <-ticker.C:
 		}
 		var err error
-		expiresAt, err = heartbeatOnce(ctx, core, routeID, generation, leaseToken, expiresAt)
+		expiresAt, err = heartbeatOnce(ctx, server, routeID, generation, leaseToken, expiresAt)
 		if err != nil || ctx.Err() != nil {
 			return err
 		}
@@ -974,14 +976,14 @@ func heartbeatLeaseAfter(
 
 func heartbeatOnce(
 	ctx context.Context,
-	core Core,
+	server Server,
 	routeID string,
 	generation uint64,
 	leaseToken credentials.LeaseToken,
 	expiresAt time.Time,
 ) (time.Time, error) {
 	callCtx, cancel := context.WithTimeout(ctx, heartbeatCallTimeout)
-	response, err := core.Heartbeat(callCtx, routeID, generation, leaseToken)
+	response, err := server.Heartbeat(callCtx, routeID, generation, leaseToken)
 	cancel()
 	if err == nil {
 		return response.ExpiresAt, nil
@@ -990,11 +992,11 @@ func heartbeatOnce(
 		return expiresAt, nil
 	}
 	// A missed heartbeat is safe only while the last confirmed lease remains valid.
-	if errors.Is(err, coreclient.ErrUnavailable) && time.Now().Before(expiresAt) {
+	if errors.Is(err, serverclient.ErrUnavailable) && time.Now().Before(expiresAt) {
 		return expiresAt, nil
 	}
-	if errors.Is(err, coreclient.ErrUnavailable) {
-		return expiresAt, coreclient.ErrStateConflict
+	if errors.Is(err, serverclient.ErrUnavailable) {
+		return expiresAt, serverclient.ErrStateConflict
 	}
 	return expiresAt, err
 }

@@ -11,36 +11,36 @@ import (
 )
 
 const (
-	accessPrefix    = "tnl_access_"
-	bootstrapPrefix = "tnl_bootstrap_"
-	routePrefix     = "tnl_route_"
-	leasePrefix     = "tnl_lease_"
-	workerPrefix    = "tnl_worker_"
-	workloadPrefix  = "tnl_workload_"
-	lookupBytes     = 16
-	secretBytes     = 32
+	accessPrefix  = "tnl_access_"
+	loginPrefix   = "tnl_login_"
+	routePrefix   = "tnl_route_"
+	leasePrefix   = "tnl_lease_"
+	workerPrefix  = "tnl_worker_"
+	servicePrefix = "tnl_service_"
+	lookupBytes   = 16
+	secretBytes   = 32
 )
 
 var (
 	// ErrInvalidAccessToken is returned for malformed or rejected access tokens.
 	ErrInvalidAccessToken = errors.New("invalid access token")
-	// ErrInvalidBootstrapToken is returned for malformed bootstrap tokens.
-	ErrInvalidBootstrapToken = errors.New("invalid bootstrap token")
+	// ErrInvalidLoginToken is returned for malformed login tokens.
+	ErrInvalidLoginToken = errors.New("invalid login token")
 	// ErrInvalidRouteToken is returned for malformed or rejected route tokens.
 	ErrInvalidRouteToken = errors.New("invalid route token")
 	// ErrInvalidLeaseToken is returned for malformed or rejected lease tokens.
 	ErrInvalidLeaseToken = errors.New("invalid lease token")
 	// ErrInvalidWorkerToken is returned for malformed or rejected worker tokens.
 	ErrInvalidWorkerToken = errors.New("invalid worker token")
-	// ErrInvalidWorkloadToken is returned for malformed workload tokens.
-	ErrInvalidWorkloadToken = errors.New("invalid workload token")
+	// ErrInvalidServiceToken is returned for malformed service tokens.
+	ErrInvalidServiceToken = errors.New("invalid service token")
 )
 
-// AccessToken authenticates a local principal to the standalone core API.
+// AccessToken authenticates a principal to the tnl server API.
 type AccessToken string
 
-// BootstrapToken authenticates only to the standalone token exchange.
-type BootstrapToken string
+// LoginToken authenticates only to the standalone token exchange.
+type LoginToken string
 
 // RouteToken authorizes lease acquisition for one route.
 type RouteToken string
@@ -51,8 +51,8 @@ type LeaseToken string
 // WorkerToken authenticates one worker session to an edge.
 type WorkerToken string
 
-// WorkloadToken authenticates one service-to-service request.
-type WorkloadToken string
+// ServiceToken authenticates one service-to-service request.
+type ServiceToken string
 
 // CredentialID is the nonsecret lookup portion of a credential.
 type CredentialID string
@@ -60,8 +60,8 @@ type CredentialID string
 // SecretHash is the stored digest of a random token secret.
 type SecretHash [sha256.Size]byte
 
-// BootstrapVerifier is the verification material for one bootstrap token.
-type BootstrapVerifier struct {
+// LoginVerifier is the verification material for one login token.
+type LoginVerifier struct {
 	id   CredentialID
 	hash SecretHash
 }
@@ -72,8 +72,8 @@ type WorkerVerifier struct {
 	hash SecretHash
 }
 
-// WorkloadVerifier is the nonsecret verification material for one workload token.
-type WorkloadVerifier struct {
+// ServiceVerifier is the nonsecret verification material for one service token.
+type ServiceVerifier struct {
 	id   CredentialID
 	hash SecretHash
 }
@@ -89,16 +89,16 @@ func ParseAccessToken(token AccessToken) (CredentialID, SecretHash, error) {
 	return parseToken(string(token), accessPrefix, ErrInvalidAccessToken)
 }
 
-// NewBootstrapToken creates a deployment bootstrap token.
-func NewBootstrapToken() (BootstrapToken, error) {
-	token, _, _, err := newToken(bootstrapPrefix)
-	return BootstrapToken(token), err
+// NewLoginToken creates a local login token.
+func NewLoginToken() (LoginToken, error) {
+	token, _, _, err := newToken(loginPrefix)
+	return LoginToken(token), err
 }
 
-// ParseBootstrapToken validates a bootstrap token and returns its verifier.
-func ParseBootstrapToken(token BootstrapToken) (BootstrapVerifier, error) {
-	lookupID, hash, err := parseToken(string(token), bootstrapPrefix, ErrInvalidBootstrapToken)
-	return BootstrapVerifier{id: lookupID, hash: hash}, err
+// ParseLoginToken validates a login token and returns its verifier.
+func ParseLoginToken(token LoginToken) (LoginVerifier, error) {
+	lookupID, hash, err := parseToken(string(token), loginPrefix, ErrInvalidLoginToken)
+	return LoginVerifier{id: lookupID, hash: hash}, err
 }
 
 // NewRouteToken creates a route token and its storage values.
@@ -135,21 +135,21 @@ func ParseWorkerToken(token WorkerToken) (WorkerVerifier, error) {
 	return WorkerVerifier{id: lookupID, hash: hash}, err
 }
 
-// NewWorkloadToken creates a service-to-service credential.
-func NewWorkloadToken() (WorkloadToken, WorkloadVerifier, error) {
-	token, lookupID, hash, err := newToken(workloadPrefix)
-	return WorkloadToken(token), WorkloadVerifier{id: lookupID, hash: hash}, err
+// NewServiceToken creates a service-to-service credential.
+func NewServiceToken() (ServiceToken, ServiceVerifier, error) {
+	token, lookupID, hash, err := newToken(servicePrefix)
+	return ServiceToken(token), ServiceVerifier{id: lookupID, hash: hash}, err
 }
 
-// ParseWorkloadToken validates a workload token and returns its verifier.
-func ParseWorkloadToken(token WorkloadToken) (WorkloadVerifier, error) {
-	lookupID, hash, err := parseToken(string(token), workloadPrefix, ErrInvalidWorkloadToken)
-	return WorkloadVerifier{id: lookupID, hash: hash}, err
+// ParseServiceToken validates a service token and returns its verifier.
+func ParseServiceToken(token ServiceToken) (ServiceVerifier, error) {
+	lookupID, hash, err := parseToken(string(token), servicePrefix, ErrInvalidServiceToken)
+	return ServiceVerifier{id: lookupID, hash: hash}, err
 }
 
 // Matches reports whether token matches this verifier.
-func (v BootstrapVerifier) Matches(token BootstrapToken) bool {
-	candidate, err := ParseBootstrapToken(token)
+func (v LoginVerifier) Matches(token LoginToken) bool {
+	candidate, err := ParseLoginToken(token)
 	if err != nil {
 		return false
 	}
@@ -168,8 +168,8 @@ func (v WorkerVerifier) Matches(token WorkerToken) bool {
 }
 
 // Matches reports whether token matches this verifier.
-func (v WorkloadVerifier) Matches(token WorkloadToken) bool {
-	candidate, err := ParseWorkloadToken(token)
+func (v ServiceVerifier) Matches(token ServiceToken) bool {
+	candidate, err := ParseServiceToken(token)
 	if err != nil {
 		return false
 	}
@@ -180,8 +180,8 @@ func (v WorkloadVerifier) Matches(token WorkloadToken) bool {
 // String returns the serialized access token.
 func (t AccessToken) String() string { return string(t) }
 
-// String returns the serialized bootstrap token.
-func (t BootstrapToken) String() string { return string(t) }
+// String returns the serialized login token.
+func (t LoginToken) String() string { return string(t) }
 
 // String returns the serialized route token.
 func (t RouteToken) String() string { return string(t) }
@@ -192,8 +192,8 @@ func (t LeaseToken) String() string { return string(t) }
 // String returns the serialized worker token.
 func (t WorkerToken) String() string { return string(t) }
 
-// String returns the serialized workload token.
-func (t WorkloadToken) String() string { return string(t) }
+// String returns the serialized service token.
+func (t ServiceToken) String() string { return string(t) }
 
 // String returns the nonsecret credential ID.
 func (id CredentialID) String() string { return string(id) }

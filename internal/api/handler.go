@@ -20,7 +20,7 @@ import (
 	"github.com/0xcadams/tnl/internal/naming"
 	"github.com/0xcadams/tnl/internal/routes"
 	"github.com/0xcadams/tnl/internal/state"
-	"github.com/0xcadams/tnl/pkg/protocol/corev1"
+	"github.com/0xcadams/tnl/pkg/protocol/serverv1"
 	"golang.org/x/time/rate"
 	"tailscale.com/types/key"
 )
@@ -29,7 +29,7 @@ const (
 	capabilitiesPath       = "/v1/capabilities"
 	relayMapPath           = "/v1/transport/relay-map"
 	tokenExchangePath      = "/v1/auth/token"
-	externalExchangePath   = "/v1/auth/external"
+	oidcExchangePath       = "/v1/auth/oidc"
 	credentialsPath        = "/v1/auth/credentials/"
 	certificateOrdersPath  = "/v1/certs/orders"
 	certificateOrderPrefix = "/v1/certs/orders/"
@@ -63,7 +63,7 @@ const (
 	OperationCapabilitiesGet             Operation = "capabilities.get"
 	OperationRelayMapGet                 Operation = "transport.relay_map.get"
 	OperationTokenExchange               Operation = "auth.token.exchange"
-	OperationExternalTokenExchange       Operation = "auth.external.exchange"
+	OperationOIDCTokenExchange           Operation = "auth.oidc.exchange"
 	OperationCredentialRevoke            Operation = "auth.credential.revoke"
 	OperationHostnameClaimsList          Operation = "hostname_claims.list"
 	OperationHostnameClaimCreate         Operation = "hostname_claims.create"
@@ -112,13 +112,13 @@ type HandlerConfig struct {
 
 // AuthService implements authentication flows without exposing storage to HTTP.
 type AuthService interface {
-	Exchange(context.Context, credentials.BootstrapToken) (auth.IssuedAccessToken, error)
+	Exchange(context.Context, credentials.LoginToken) (auth.IssuedAccessToken, error)
 	Authenticate(context.Context, credentials.AccessToken) (state.Principal, error)
 	Revoke(context.Context, state.Principal, credentials.CredentialID) error
 }
 
-type ExternalAuthService interface {
-	ExchangeExternal(context.Context, string) (auth.IssuedAccessToken, error)
+type OIDCAuthService interface {
+	ExchangeOIDC(context.Context, string) (auth.IssuedAccessToken, error)
 }
 
 // RouteService implements hostname claims and fenced route transitions.
@@ -146,29 +146,29 @@ type CertificateService interface {
 }
 
 type handler struct {
-	capabilities  corev1.Capabilities
+	capabilities  serverv1.Capabilities
 	auth          AuthService
 	routes        RouteService
 	certificates  CertificateService
 	observer      Observer
 	errorReporter ErrorReporter
 	relayMap      []byte
-	externalLimit *rate.Limiter
+	oidcLimit     *rate.Limiter
 }
 
-// NewHandler creates the core API handler without binding a listener.
-func NewHandler(capabilities corev1.Capabilities, auth AuthService) http.Handler {
+// NewHandler creates the server API handler without binding a listener.
+func NewHandler(capabilities serverv1.Capabilities, auth AuthService) http.Handler {
 	return NewHandlerWithRoutes(capabilities, auth, nil)
 }
 
 // NewHandlerWithRoutes enables hostname-claim and route endpoints.
-func NewHandlerWithRoutes(capabilities corev1.Capabilities, auth AuthService, routeService RouteService) http.Handler {
+func NewHandlerWithRoutes(capabilities serverv1.Capabilities, auth AuthService, routeService RouteService) http.Handler {
 	return NewHandlerWithServices(capabilities, auth, routeService, nil)
 }
 
 // NewHandlerWithServices enables hostname-claim, route, and certificate endpoints.
 func NewHandlerWithServices(
-	capabilities corev1.Capabilities,
+	capabilities serverv1.Capabilities,
 	auth AuthService,
 	routeService RouteService,
 	certificateService CertificateService,
@@ -178,15 +178,15 @@ func NewHandlerWithServices(
 
 // NewHandlerWithServicesAndConfig enables all API services and production observability hooks.
 func NewHandlerWithServicesAndConfig(
-	capabilities corev1.Capabilities,
+	capabilities serverv1.Capabilities,
 	auth AuthService,
 	routeService RouteService,
 	certificateService CertificateService,
 	config HandlerConfig,
 ) http.Handler {
-	var externalLimit *rate.Limiter
-	if _, ok := auth.(ExternalAuthService); ok {
-		externalLimit = rate.NewLimiter(rate.Limit(5), 20)
+	var oidcLimit *rate.Limiter
+	if _, ok := auth.(OIDCAuthService); ok {
+		oidcLimit = rate.NewLimiter(rate.Limit(5), 20)
 	}
 	return &handler{
 		capabilities:  capabilities,
@@ -196,7 +196,7 @@ func NewHandlerWithServicesAndConfig(
 		observer:      config.Observer,
 		errorReporter: config.ErrorReporter,
 		relayMap:      append([]byte(nil), config.RelayMap...),
-		externalLimit: externalLimit,
+		oidcLimit:     oidcLimit,
 	}
 }
 
@@ -231,8 +231,8 @@ func (h *handler) serveHTTP(w http.ResponseWriter, r *http.Request, requestID st
 		h.serveRelayMap(w, r, requestID)
 	case tokenExchangePath:
 		h.serveTokenExchange(w, r, requestID)
-	case externalExchangePath:
-		h.serveExternalExchange(w, r, requestID)
+	case oidcExchangePath:
+		h.serveOIDCExchange(w, r, requestID)
 	case hostnameClaimsPath:
 		h.serveHostnameClaims(w, r, requestID)
 	case routesPath:
@@ -312,9 +312,9 @@ func operationForRequest(method, path string) Operation {
 		if method == http.MethodPost {
 			return OperationTokenExchange
 		}
-	case externalExchangePath:
+	case oidcExchangePath:
 		if method == http.MethodPost {
-			return OperationExternalTokenExchange
+			return OperationOIDCTokenExchange
 		}
 	case hostnameClaimsPath:
 		switch method {
@@ -413,7 +413,7 @@ func (h *handler) serveHostnameClaims(w http.ResponseWriter, r *http.Request, re
 			writeRouteError(w, requestID, err)
 			return
 		}
-		response := corev1.HostnameClaimPage{Claims: make([]corev1.HostnameClaim, 0, len(claims))}
+		response := serverv1.HostnameClaimPage{Claims: make([]serverv1.HostnameClaim, 0, len(claims))}
 		for _, claim := range claims {
 			response.Claims = append(response.Claims, hostnameClaimResponse(claim))
 		}
@@ -428,7 +428,7 @@ func (h *handler) serveHostnameClaims(w http.ResponseWriter, r *http.Request, re
 		writeInvalidRequest(w, requestID)
 		return
 	}
-	var request corev1.CreateHostnameClaimRequest
+	var request serverv1.CreateHostnameClaimRequest
 	if !decodeRequest(w, r, requestID, &request) {
 		return
 	}
@@ -496,13 +496,13 @@ func (h *handler) serveTokenExchange(w http.ResponseWriter, r *http.Request, req
 		writeMethodNotAllowed(w, requestID, http.MethodPost)
 		return
 	}
-	var request corev1.TokenExchangeRequest
+	var request serverv1.TokenExchangeRequest
 	if !decodeRequest(w, r, requestID, &request) {
 		return
 	}
-	if request.BootstrapToken == "" || len(request.BootstrapToken) > maxCredentialBytes {
+	if request.LoginToken == "" || len(request.LoginToken) > maxCredentialBytes {
 		writeProblem(
-			w, requestID, http.StatusBadRequest, corev1.InvalidArgument,
+			w, requestID, http.StatusBadRequest, serverv1.InvalidArgument,
 			"Invalid request", "invalid-request",
 		)
 		return
@@ -511,10 +511,10 @@ func (h *handler) serveTokenExchange(w http.ResponseWriter, r *http.Request, req
 		writeInternalError(w, requestID, errAuthServiceMissing)
 		return
 	}
-	issued, err := h.auth.Exchange(r.Context(), credentials.BootstrapToken(request.BootstrapToken))
+	issued, err := h.auth.Exchange(r.Context(), credentials.LoginToken(request.LoginToken))
 	if errors.Is(err, auth.ErrUnauthenticated) {
 		writeProblem(
-			w, requestID, http.StatusUnauthorized, corev1.Unauthenticated,
+			w, requestID, http.StatusUnauthorized, serverv1.Unauthenticated,
 			"Unauthenticated", "unauthenticated",
 		)
 		return
@@ -526,39 +526,46 @@ func (h *handler) serveTokenExchange(w http.ResponseWriter, r *http.Request, req
 	h.writeIssuedAccessToken(w, requestID, issued)
 }
 
-func (h *handler) serveExternalExchange(w http.ResponseWriter, r *http.Request, requestID string) {
+func (h *handler) serveOIDCExchange(w http.ResponseWriter, r *http.Request, requestID string) {
 	if r.Method != http.MethodPost {
 		writeMethodNotAllowed(w, requestID, http.MethodPost)
 		return
 	}
-	if h.externalLimit != nil && !h.externalLimit.Allow() {
+	if h.oidcLimit != nil && !h.oidcLimit.Allow() {
 		writeProblem(
-			w, requestID, http.StatusTooManyRequests, corev1.RateLimited,
+			w, requestID, http.StatusTooManyRequests, serverv1.RateLimited,
 			"Rate limited", "rate-limited",
 		)
 		return
 	}
-	var request corev1.ExternalTokenExchangeRequest
+	var request serverv1.OIDCTokenExchangeRequest
 	if !decodeRequest(w, r, requestID, &request) {
 		return
 	}
-	if request.AccessToken == "" || len(request.AccessToken) > 4096 {
+	if request.IdToken == "" || len(request.IdToken) > 16384 {
 		writeProblem(
-			w, requestID, http.StatusBadRequest, corev1.InvalidArgument,
+			w, requestID, http.StatusBadRequest, serverv1.InvalidArgument,
 			"Invalid request", "invalid-request",
 		)
 		return
 	}
-	external, ok := h.auth.(ExternalAuthService)
+	oidcService, ok := h.auth.(OIDCAuthService)
 	if !ok {
 		writeInternalError(w, requestID, errAuthServiceMissing)
 		return
 	}
-	issued, err := external.ExchangeExternal(r.Context(), request.AccessToken)
+	issued, err := oidcService.ExchangeOIDC(r.Context(), request.IdToken)
 	if errors.Is(err, auth.ErrUnauthenticated) {
 		writeProblem(
-			w, requestID, http.StatusUnauthorized, corev1.Unauthenticated,
+			w, requestID, http.StatusUnauthorized, serverv1.Unauthenticated,
 			"Unauthenticated", "unauthenticated",
+		)
+		return
+	}
+	if errors.Is(err, auth.ErrOIDCUnavailable) {
+		writeProblem(
+			w, requestID, http.StatusServiceUnavailable, serverv1.TemporarilyUnavailable,
+			"Temporarily unavailable", "oidc-unavailable",
 		)
 		return
 	}
@@ -574,11 +581,11 @@ func (h *handler) writeIssuedAccessToken(
 	requestID string,
 	issued auth.IssuedAccessToken,
 ) {
-	body, err := marshalJSON(corev1.TokenExchangeResponse{
+	body, err := marshalJSON(serverv1.TokenExchangeResponse{
 		AccessToken:  issued.Token.String(),
 		CredentialId: issued.CredentialID.String(),
 		ExpiresAt:    issued.ExpiresAt,
-		TokenType:    corev1.Bearer,
+		TokenType:    serverv1.Bearer,
 	})
 	if err != nil {
 		writeInternalError(w, requestID, err)
@@ -604,7 +611,7 @@ func (h *handler) serveCredentialRevocation(
 	credentialID, err := credentials.ParseCredentialID(credentialIDValue)
 	if err != nil {
 		writeProblem(
-			w, requestID, http.StatusBadRequest, corev1.InvalidArgument,
+			w, requestID, http.StatusBadRequest, serverv1.InvalidArgument,
 			"Invalid request", "invalid-request",
 		)
 		return
@@ -638,14 +645,14 @@ func (h *handler) serveRoutes(w http.ResponseWriter, r *http.Request, requestID 
 			writeRouteError(w, requestID, err)
 			return
 		}
-		response := make([]corev1.Route, 0, len(stored))
+		response := make([]serverv1.Route, 0, len(stored))
 		for _, route := range stored {
 			response = append(response, routeResponse(route))
 		}
 		writeModel(w, requestID, http.StatusOK, response)
 		return
 	}
-	var request corev1.CreateRouteRequest
+	var request serverv1.CreateRouteRequest
 	if !decodeRequest(w, r, requestID, &request) {
 		return
 	}
@@ -724,7 +731,7 @@ func (h *handler) serveCertificateOrders(w http.ResponseWriter, r *http.Request,
 		writeUnauthenticated(w, requestID)
 		return
 	}
-	var request corev1.CreateCertificateOrderRequest
+	var request serverv1.CreateCertificateOrderRequest
 	if !decodeRequest(w, r, requestID, &request) {
 		return
 	}
@@ -821,7 +828,7 @@ func (h *handler) serveCertificateInstalled(w http.ResponseWriter, r *http.Reque
 		writeUnauthenticated(w, requestID)
 		return
 	}
-	var request corev1.CertificateInstalledRequest
+	var request serverv1.CertificateInstalledRequest
 	if !decodeRequest(w, r, requestID, &request) {
 		return
 	}
@@ -851,7 +858,7 @@ func (h *handler) serveLeaseAcquisition(w http.ResponseWriter, r *http.Request, 
 	if !ok {
 		return
 	}
-	var request corev1.AcquireLeaseRequest
+	var request serverv1.AcquireLeaseRequest
 	if !decodeRequest(w, r, requestID, &request) {
 		return
 	}
@@ -877,12 +884,12 @@ func (h *handler) serveTransport(w http.ResponseWriter, r *http.Request, request
 		writeUnauthenticated(w, requestID)
 		return
 	}
-	var request corev1.RegisterTransportRequest
+	var request serverv1.RegisterTransportRequest
 	if !decodeRequest(w, r, requestID, &request) {
 		return
 	}
 	var serverKey key.NodePublic
-	if request.Generation <= 0 || request.Endpoint.Version != corev1.TailcatDescriptorVersionN1 ||
+	if request.Generation <= 0 || request.Endpoint.Version != serverv1.TailcatDescriptorVersionN1 ||
 		serverKey.UnmarshalText([]byte(request.Endpoint.ServerPublicKey)) != nil || serverKey.IsZero() ||
 		request.Endpoint.RelayProfile != h.capabilities.Transport.RelayProfile {
 		writeInvalidRequest(w, requestID)
@@ -909,7 +916,7 @@ func (h *handler) serveHeartbeat(w http.ResponseWriter, r *http.Request, request
 		writeUnauthenticated(w, requestID)
 		return
 	}
-	var request corev1.LeaseGenerationRequest
+	var request serverv1.LeaseGenerationRequest
 	if !decodeRequest(w, r, requestID, &request) {
 		return
 	}
@@ -922,7 +929,7 @@ func (h *handler) serveHeartbeat(w http.ResponseWriter, r *http.Request, request
 		writeRouteError(w, requestID, err)
 		return
 	}
-	writeModel(w, requestID, http.StatusOK, corev1.HeartbeatResponse{ExpiresAt: expiresAt})
+	writeModel(w, requestID, http.StatusOK, serverv1.HeartbeatResponse{ExpiresAt: expiresAt})
 }
 
 func (h *handler) serveReady(w http.ResponseWriter, r *http.Request, requestID, routeID string) {
@@ -935,7 +942,7 @@ func (h *handler) serveReady(w http.ResponseWriter, r *http.Request, requestID, 
 		writeUnauthenticated(w, requestID)
 		return
 	}
-	var request corev1.LeaseGenerationRequest
+	var request serverv1.LeaseGenerationRequest
 	if !decodeRequest(w, r, requestID, &request) {
 		return
 	}
@@ -1043,43 +1050,43 @@ func decodeRequest(w http.ResponseWriter, r *http.Request, requestID string, val
 		case errors.Is(err, errUnsupportedMediaType):
 			status, title, problemType = http.StatusUnsupportedMediaType, "Unsupported media type", "unsupported-media-type"
 		}
-		writeProblem(w, requestID, status, corev1.InvalidArgument, title, problemType)
+		writeProblem(w, requestID, status, serverv1.InvalidArgument, title, problemType)
 		return false
 	}
 	return true
 }
 
-func routeResponse(route routes.Route) corev1.Route {
-	return corev1.Route{
+func routeResponse(route routes.Route) serverv1.Route {
+	return serverv1.Route{
 		Id: route.ID, Hostname: route.Hostname, DisplayTarget: route.DisplayTarget,
-		State: corev1.RouteState(route.State), Generation: int(route.Generation), CreatedAt: route.CreatedAt,
+		State: serverv1.RouteState(route.State), Generation: int(route.Generation), CreatedAt: route.CreatedAt,
 	}
 }
 
-func hostnameClaimResponse(claim routes.HostnameClaim) corev1.HostnameClaim {
-	return corev1.HostnameClaim{
+func hostnameClaimResponse(claim routes.HostnameClaim) serverv1.HostnameClaim {
+	return serverv1.HostnameClaim{
 		Id: claim.ID, Hostname: claim.Hostname, Irreversible: claim.Irreversible, CreatedAt: claim.CreatedAt,
 	}
 }
 
-func leaseSetupResponse(setup routes.LeaseSetup) corev1.LeaseSetup {
-	return corev1.LeaseSetup{
+func leaseSetupResponse(setup routes.LeaseSetup) serverv1.LeaseSetup {
+	return serverv1.LeaseSetup{
 		Route: routeResponse(setup.Route),
-		Lease: corev1.RouteLease{
+		Lease: serverv1.RouteLease{
 			Id: setup.Lease.ID, RouteId: setup.Lease.RouteID, Generation: int(setup.Lease.Generation),
-			Status: corev1.RouteLeaseStatus(setup.Lease.Status), CreatedAt: setup.Lease.CreatedAt, ExpiresAt: setup.Lease.ExpiresAt,
+			Status: serverv1.RouteLeaseStatus(setup.Lease.Status), CreatedAt: setup.Lease.CreatedAt, ExpiresAt: setup.Lease.ExpiresAt,
 		},
 		LeaseToken: setup.LeaseToken.String(), IngressPublicKey: setup.IngressPublicKey,
 	}
 }
 
-func certificateOrderResponse(job certificates.Job) corev1.CertificateOrder {
-	response := corev1.CertificateOrder{
+func certificateOrderResponse(job certificates.Job) serverv1.CertificateOrder {
+	response := serverv1.CertificateOrder{
 		Id: job.ID, RouteId: job.RouteID, Generation: int(job.Generation), Hostname: job.Hostname,
-		Profile: job.Profile, State: corev1.CertificateOrderState(job.State), CreatedAt: job.CreatedAt, UpdatedAt: job.UpdatedAt,
+		Profile: job.Profile, State: serverv1.CertificateOrderState(job.State), CreatedAt: job.CreatedAt, UpdatedAt: job.UpdatedAt,
 	}
 	if challenge := job.Challenge(); challenge != nil {
-		response.Challenge = &corev1.CertificateChallenge{
+		response.Challenge = &serverv1.CertificateChallenge{
 			Id: challenge.ID, Hostname: challenge.Hostname,
 			Digest: base64.RawURLEncoding.EncodeToString(challenge.Digest[:]), ExpiresAt: challenge.ExpiresAt,
 		}
@@ -1122,18 +1129,18 @@ func writeRouteError(w http.ResponseWriter, requestID string, err error) {
 	case errors.Is(err, routes.ErrNotFound):
 		writeNotFound(w, requestID)
 	case errors.Is(err, routes.ErrNameUnavailable):
-		writeProblem(w, requestID, http.StatusConflict, corev1.NameUnavailable, "Name unavailable", "name-unavailable")
+		writeProblem(w, requestID, http.StatusConflict, serverv1.NameUnavailable, "Name unavailable", "name-unavailable")
 	case errors.Is(err, routes.ErrRouteExists), errors.Is(err, routes.ErrStaleLease), errors.Is(err, routes.ErrInvalidState):
-		writeProblem(w, requestID, http.StatusConflict, corev1.StateConflict, "State conflict", "state-conflict")
+		writeProblem(w, requestID, http.StatusConflict, serverv1.StateConflict, "State conflict", "state-conflict")
 	case errors.Is(err, routes.ErrNoWorkerCapacity):
-		writeProblem(w, requestID, http.StatusServiceUnavailable, corev1.TemporarilyUnavailable, "Temporarily unavailable", "temporarily-unavailable")
+		writeProblem(w, requestID, http.StatusServiceUnavailable, serverv1.TemporarilyUnavailable, "Temporarily unavailable", "temporarily-unavailable")
 	default:
 		if errors.Is(err, routes.ErrInvalidArgument) {
 			writeInvalidRequest(w, requestID)
 			return
 		}
 		if _, ok := naming.ErrorCodeOf(err); ok {
-			writeProblem(w, requestID, http.StatusBadRequest, corev1.InvalidArgument, "Invalid request", "invalid-request")
+			writeProblem(w, requestID, http.StatusBadRequest, serverv1.InvalidArgument, "Invalid request", "invalid-request")
 			return
 		}
 		writeInternalError(w, requestID, err)
@@ -1147,7 +1154,7 @@ func writeCertificateError(w http.ResponseWriter, requestID string, err error) {
 	case errors.Is(err, certificates.ErrNotFound):
 		writeNotFound(w, requestID)
 	case errors.Is(err, certificates.ErrInvalidState):
-		writeProblem(w, requestID, http.StatusPreconditionFailed, corev1.PreconditionFailed, "Precondition failed", "precondition-failed")
+		writeProblem(w, requestID, http.StatusPreconditionFailed, serverv1.PreconditionFailed, "Precondition failed", "precondition-failed")
 	case errors.Is(err, certificates.ErrRateLimited):
 		var limit *certificates.RateLimitError
 		if errors.As(err, &limit) {
@@ -1155,16 +1162,16 @@ func writeCertificateError(w http.ResponseWriter, requestID string, err error) {
 			seconds := max(1, int((time.Until(limit.RetryAt)+time.Second-1)/time.Second))
 			w.Header().Set("Retry-After", strconv.Itoa(seconds))
 		}
-		writeProblem(w, requestID, http.StatusTooManyRequests, corev1.RateLimited, "Rate limited", "rate-limited")
+		writeProblem(w, requestID, http.StatusTooManyRequests, serverv1.RateLimited, "Rate limited", "rate-limited")
 	case errors.Is(err, certificates.ErrUnavailable):
-		writeProblem(w, requestID, http.StatusServiceUnavailable, corev1.TemporarilyUnavailable, "Temporarily unavailable", "temporarily-unavailable")
+		writeProblem(w, requestID, http.StatusServiceUnavailable, serverv1.TemporarilyUnavailable, "Temporarily unavailable", "temporarily-unavailable")
 	default:
 		writeInternalError(w, requestID, err)
 	}
 }
 
 func writeInvalidRequest(w http.ResponseWriter, requestID string) {
-	writeProblem(w, requestID, http.StatusBadRequest, corev1.InvalidArgument, "Invalid request", "invalid-request")
+	writeProblem(w, requestID, http.StatusBadRequest, serverv1.InvalidArgument, "Invalid request", "invalid-request")
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, value any) error {
@@ -1230,11 +1237,11 @@ func writeProblem(
 	w http.ResponseWriter,
 	requestID string,
 	status int,
-	code corev1.ProblemCode,
+	code serverv1.ProblemCode,
 	title string,
 	problemType string,
 ) {
-	body, err := marshalJSON(corev1.Problem{
+	body, err := marshalJSON(serverv1.Problem{
 		Type:      "https://tnl.dev/problems/" + problemType,
 		Title:     title,
 		Status:    status,
@@ -1251,7 +1258,7 @@ func writeProblem(
 
 func writeInternalProblem(w http.ResponseWriter, requestID string) {
 	writeProblem(
-		w, requestID, http.StatusInternalServerError, corev1.Internal,
+		w, requestID, http.StatusInternalServerError, serverv1.Internal,
 		"Internal server error", "internal",
 	)
 }
@@ -1262,7 +1269,7 @@ func writeInternalError(w http.ResponseWriter, requestID string, err error) {
 	}
 	if state.IsDatabaseContention(err) {
 		writeProblem(
-			w, requestID, http.StatusServiceUnavailable, corev1.TemporarilyUnavailable,
+			w, requestID, http.StatusServiceUnavailable, serverv1.TemporarilyUnavailable,
 			"Temporarily unavailable", "temporarily-unavailable",
 		)
 		return
@@ -1273,19 +1280,19 @@ func writeInternalError(w http.ResponseWriter, requestID string, err error) {
 func writeUnauthenticated(w http.ResponseWriter, requestID string) {
 	w.Header().Set("WWW-Authenticate", "Bearer")
 	writeProblem(
-		w, requestID, http.StatusUnauthorized, corev1.Unauthenticated,
+		w, requestID, http.StatusUnauthorized, serverv1.Unauthenticated,
 		"Unauthenticated", "unauthenticated",
 	)
 }
 
 func writeNotFound(w http.ResponseWriter, requestID string) {
-	writeProblem(w, requestID, http.StatusNotFound, corev1.NotFound, "Not found", "not-found")
+	writeProblem(w, requestID, http.StatusNotFound, serverv1.NotFound, "Not found", "not-found")
 }
 
 func writeMethodNotAllowed(w http.ResponseWriter, requestID, allow string) {
 	w.Header().Set("Allow", allow)
 	writeProblem(
-		w, requestID, http.StatusMethodNotAllowed, corev1.InvalidArgument,
+		w, requestID, http.StatusMethodNotAllowed, serverv1.InvalidArgument,
 		"Method not allowed", "method-not-allowed",
 	)
 }
