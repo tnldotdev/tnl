@@ -189,21 +189,25 @@ tasks:
 
   go:bench-fly:plan:
     desc: Expand and price a Fly benchmark without creating resources
+    dotenv: [.env.bench]
     cmds:
       - go run ./cmd/tnlbench plan
 
   go:bench-fly:run:
     desc: Run an explicitly approved Fly benchmark and clean up its resources
+    dotenv: [.env.bench]
     cmds:
       - go run ./cmd/tnlbench run
 
   go:bench-fly:cleanup:
     desc: Clean up resources recorded by an interrupted Fly benchmark
+    dotenv: [.env.bench]
     cmds:
       - go run ./cmd/tnlbench cleanup
 
   go:bench-fly:report:
     desc: Merge Fly benchmark result rows and write reports
+    dotenv: [.env.bench]
     cmds:
       - go run ./cmd/tnlbench report
 
