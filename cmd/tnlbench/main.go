@@ -12,6 +12,7 @@ import (
 
 type benchmarkCLI struct {
 	Plan        planCommand        `cmd:"" help:"Expand and price a benchmark suite without creating resources."`
+	Preflight   preflightCommand   `cmd:"" help:"Validate benchmark credentials and infrastructure without creating resources."`
 	Run         runCommand         `cmd:"" help:"Provision, execute, collect, and clean up an approved Fly benchmark."`
 	Cleanup     cleanupCommand     `cmd:"" help:"Remove resources recorded by an interrupted benchmark run."`
 	Coordinator coordinatorCommand `cmd:"" help:"Coordinate one benchmark cell."`
@@ -29,6 +30,8 @@ func main() {
 	switch parsed.Command() {
 	case "plan":
 		err = commands.Plan.run(os.Stdout)
+	case "preflight":
+		err = commands.Preflight.run(ctx, os.Stdout)
 	case "run":
 		err = commands.Run.run(ctx, os.Stdout)
 	case "cleanup":

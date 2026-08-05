@@ -44,6 +44,19 @@ func TestFlySecretsRedactCommandFailures(t *testing.T) {
 	}
 }
 
+func TestFlyValidatesOrganizationAccess(t *testing.T) {
+	organizations := []byte(`{"personal":"Chase Adams","tnl":"tnl"}`)
+	executor := &executorStub{responses: [][]byte{organizations, organizations}}
+	platform := flyPlatform{binary: "flyctl", org: "tnl", executor: executor}
+	if err := platform.validateOrg(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	platform.org = "missing"
+	if err := platform.validateOrg(t.Context()); err == nil {
+		t.Fatal("unavailable organization was accepted")
+	}
+}
+
 func TestFlyMachineRunUsesOneControlledCommand(t *testing.T) {
 	executor := &executorStub{responses: [][]byte{nil, []byte(`[{"id":"machine-1","name":"relay-a-1","state":"started"}]`)}}
 	platform := flyPlatform{binary: "fly", region: "sjc", executor: executor}

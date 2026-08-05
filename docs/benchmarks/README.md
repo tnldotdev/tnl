@@ -73,6 +73,14 @@ writes generated credentials or AWS credentials to the run manifest. Keep
 `.env.bench` at mode `0600`, use dedicated least-privilege credentials, and do
 not add `BENCH_APPROVED` to the file.
 
+After filling in the file, validate the Fly identity, organization, AWS
+credentials, parent hosted zone, domain, and ACME email without creating any
+resources:
+
+```console
+mise exec -- task go:bench-fly:preflight
+```
+
 ## Execute
 
 Execution creates paid Fly and AWS resources. A plan is not approval. Set both
