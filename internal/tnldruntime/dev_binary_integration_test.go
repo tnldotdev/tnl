@@ -83,7 +83,14 @@ func testIntegrationViteHappyPath(t *testing.T, server *integrationBinaryStandal
 	if err != nil || response.StatusCode != http.StatusOK {
 		t.Fatalf("Vite browser client: %v", err)
 	}
-	assertIntegrationViteHMR(t, server.pebble.roots, f.hostname, body)
+	assertIntegrationViteHMR(t, server.pebble.roots, f.hostname, body,
+		filepath.Join(f.project.root, "src", "main.ts"))
+	response, updatedBody, err := visitor.requestURL(http.MethodGet,
+		f.publicURL+"/src/main.ts?t="+fmt.Sprint(time.Now().UnixNano()), nil)
+	if err != nil || response.StatusCode != http.StatusOK ||
+		!bytes.Contains(updatedBody, []byte("Vite fixture HMR")) {
+		t.Fatalf("updated Vite app module: %v, body %q", err, updatedBody)
+	}
 	environmentImport := regexp.MustCompile(`(?m)^import "(/@fs/[^"]+/env\.mjs)";`).FindSubmatch(body)
 	if environmentImport == nil {
 		t.Fatal("Vite client did not import its environment module")
@@ -186,6 +193,17 @@ func testIntegrationBinaryNextDev(t *testing.T, fixture *integrationBinaryStanda
 		assertIntegrationRouteCertificate(t, response, tunnel.Hostname)
 		return true, nil
 	})
-	assertIntegrationNextHMR(t, fixture.pebble.roots, tunnel.Hostname)
+	assertIntegrationNextHMR(t, fixture.pebble.roots, tunnel.Hostname,
+		filepath.Join(project.root, "app", "page.tsx"))
+	waitForIntegrationCondition(t, 30*time.Second, func(ctx context.Context) (bool, error) {
+		response, body, err := visitor.requestURLContext(ctx, http.MethodGet, tunnel.PublicURL, nil)
+		if err != nil {
+			return false, err
+		}
+		if response.StatusCode != http.StatusOK {
+			return false, fmt.Errorf("Next.js post-edit visitor response = %s, %q", response.Status, body)
+		}
+		return bytes.Contains(body, []byte("Next.js fixture refreshed")), nil
+	})
 	stopIntegrationBinaryProcess(t, dev)
 }

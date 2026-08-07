@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -91,16 +92,23 @@ func TestBasicQUICPacketConn(t *testing.T) {
 	t.Cleanup(func() { _ = wrapped.Close() })
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	t.Cleanup(cancel)
-	accepted := make(chan error, 1)
+	type acceptResult struct {
+		session Session
+		err     error
+	}
+	accepted := make(chan acceptResult, 1)
 	joined := make(chan struct{})
 	t.Cleanup(func() { cancel(); _ = wrapped.Close(); muxAwait(t, joined) })
 	go func() {
 		defer close(joined)
 		connection, err := wrapped.Accept(ctx)
-		if err == nil {
-			err = connection.Close()
+		if connection != nil {
+			defer connection.Close()
 		}
-		accepted <- err
+		accepted <- acceptResult{session: connection, err: err}
+		if err == nil {
+			<-ctx.Done()
+		}
 	}()
 	client, err := (QUICConnector{TLSConfig: clientTLS}).Connect(ctx, Endpoint{
 		Address: address, ServerName: "relay.test",
@@ -109,12 +117,20 @@ func TestBasicQUICPacketConn(t *testing.T) {
 		t.Fatalf("connect basic QUIC: %v", err)
 	}
 	t.Cleanup(func() { _ = client.Close() })
+	// Dial can return before the server has accepted the connection. Keep both
+	// sessions alive until acceptance is observed before testing closure.
+	server := muxAwait(t, accepted)
+	if server.err != nil {
+		t.Fatalf("accept basic QUIC: %v", server.err)
+	}
 	if err := client.Close(); err != nil {
 		t.Fatalf("close client: %v", err)
 	}
-	if err := muxAwait(t, accepted); err != nil {
-		t.Fatalf("accept basic QUIC: %v", err)
+	if err := server.session.Close(); err != nil && !errors.Is(err, ErrClosed) {
+		t.Fatalf("close server: %v", err)
 	}
+	cancel()
+	muxAwait(t, joined)
 	if err := wrapped.Close(); err != nil {
 		t.Fatalf("close basic listener: %v", err)
 	}

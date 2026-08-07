@@ -1,3 +1,5 @@
+import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import {
   createProjectFixture,
@@ -11,6 +13,7 @@ import {
   openTestWebSocketWithMessage,
   requestTestServer,
   findAvailableLoopbackPort,
+  waitForWebSocketMessage,
 } from "./test-helper/http-websocket.js";
 import { startTestBootstrap } from "./test-helper/bootstrap.js";
 import { withProcessEnvironment } from "./test-helper/environment.js";
@@ -219,11 +222,13 @@ describe("withTnl", () => {
 });
 
 test(
-  "runs Next.js with protected development assets, runtime metadata, and an HMR WebSocket handshake",
+  "runs Next.js with protected development assets, runtime metadata, and HMR",
   { timeout: 60_000 },
   async () => {
     const port = await findAvailableLoopbackPort();
     const fixture = await startFrameworkFixture("next", ["dev", "--port", String(port)]);
+    const pageSource = join(fixture.directory, "app", "page.tsx");
+    const originalPageSource = await readFile(pageSource, "utf8");
 
     await fixture.diagnose(async () => {
       expect(await fixture.request()).toMatchObject({
@@ -258,13 +263,36 @@ test(
         }),
       ).resolves.toMatchObject({ status: 403 });
 
-      const { message: socketMessage } = await openTestWebSocketWithMessage(
+      const { message: socketMessage, socket } = await openTestWebSocketWithMessage(
         port,
         "/_next/hmr?id=tnl-test",
         { origin: "https://api.member.example" },
       );
       const message = JSON.parse(socketMessage) as { type?: string };
       expect(["isrManifest", "turbopack-connected"]).toContain(message.type);
+      // Startup frames can arrive together; either accepted frame confirms the connection.
+      let updateMessage = waitForWebSocketMessage(socket, 30_000);
+      await writeFile(
+        pageSource,
+        originalPageSource.replace("Next.js fixture", "Next.js fixture refreshed"),
+      );
+      let updateType = "";
+      while (updateType !== "built") {
+        const update = JSON.parse(await updateMessage) as { type?: string };
+        updateType = update.type ?? "";
+        if (updateType !== "built") {
+          updateMessage = waitForWebSocketMessage(socket, 30_000);
+        }
+      }
+      await expect
+        .poll(
+          async () => {
+            const updatedPage = await requestTestServer(port);
+            return updatedPage.status === 200 ? updatedPage.body : "";
+          },
+          { timeout: 30_000 },
+        )
+        .toContain("Next.js fixture refreshed");
       await expect(
         openTestWebSocket(port, "/_next/hmr?id=tnl-attacker", {
           origin: "https://attacker.example",

@@ -52,6 +52,22 @@ func TestIntegrationIngressUsageReplayAndCompletion(t *testing.T) {
 	}
 }
 
+func TestIntegrationCompleteRouteUsageAdvancesObservedThrough(t *testing.T) {
+	database, base, lease, report := newIngressUsageFixture(t)
+	seedCompletedUsageReport(t, database, base, lease, report)
+	if finalized, err := database.FinalizeRouteUsageBuckets(t.Context(), base.Add(time.Minute), base.Add(time.Minute)); err != nil || finalized != 1 {
+		t.Fatalf("finalize route usage = %d, %v", finalized, err)
+	}
+	work, err := database.ClaimRouteUsageDeliveries(t.Context(), "usage_worker_complete", 32, base.Add(61*time.Second), time.Minute)
+	if err != nil || len(work) != 1 {
+		t.Fatalf("claim route usage = %#v, %v", work, err)
+	}
+	if !work[0].Complete || !work[0].ObservedThrough.Equal(work[0].BucketEnd) {
+		t.Fatalf("route usage complete = %t, observed through = %s, bucket end = %s",
+			work[0].Complete, work[0].ObservedThrough, work[0].BucketEnd)
+	}
+}
+
 func TestIntegrationIngressUsageIncompleteCoverageBlocksFinalization(t *testing.T) {
 	database, base, lease, report := newIngressUsageFixture(t)
 	seedCompletedUsageReport(t, database, base, lease, report)
