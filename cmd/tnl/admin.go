@@ -40,7 +40,7 @@ type adminRelaysListCommand struct {
 
 type adminRelayDrainCommand struct {
 	remoteFlags        `embed:""`
-	RelayID            string        `arg:"" name:"relay-id" required:""`
+	RelayID            string        `arg:"" name:"relay-id" required:"" help:"Relay ID to drain."`
 	RelayRunID         string        `name:"relay-run-id" required:"" help:"Exact relay process run ID."`
 	RelayLeaseRevision int64         `name:"relay-lease-revision" required:"" help:"Exact relay lease revision."`
 	Deadline           time.Duration `name:"deadline" default:"30s" help:"Drain deadline from now."`
@@ -58,7 +58,7 @@ type adminMaintenanceListCommand struct {
 
 type adminMaintenanceSetCommand struct {
 	remoteFlags `embed:""`
-	Name        string `arg:"" name:"name" required:"" enum:"route_creation,route_session_creation,certificate_issuance"`
+	Name        string `arg:"" name:"name" required:"" enum:"route_creation,route_session_creation,certificate_issuance" help:"Maintenance control to change."`
 }
 
 func runAdminServerStatus(ctx context.Context, command adminServerStatusCommand, stdout, stderr io.Writer) error {

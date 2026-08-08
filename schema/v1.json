@@ -260,13 +260,6 @@
           "type": "string",
           "description": "Server-controlled domain used for member namespaces."
         },
-        "reserved_route_name": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array",
-          "description": "DNS labels that routes cannot use. Repeat for each label."
-        },
         "control_tls_certificate_file": {
           "type": "string",
           "description": "Optional static control certificate chain."
@@ -449,11 +442,6 @@
           "type": "string",
           "description": "Publisher connection QUIC idle timeout.",
           "default": "45s"
-        },
-        "tunnel_fallback_delay": {
-          "type": "string",
-          "description": "Delay before trying TLS/TCP while QUIC connects.",
-          "default": "250ms"
         },
         "ingress_lease_duration": {
           "type": "string",

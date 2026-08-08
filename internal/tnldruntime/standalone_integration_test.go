@@ -36,8 +36,8 @@ func TestIntegrationStandaloneLifecycle(t *testing.T) {
 		AccessTokenLifetime: 5 * time.Minute, RefreshTokenLifetime: time.Hour,
 		PublicConnectionLimit: 100, RouteConnectionLimit: 10, PublisherConnectionLimit: 10,
 		RelayStreamCapacity: 100, QUICMaxIncomingStreams: 100, QUICIdleTimeout: time.Minute,
-		TunnelFallbackDelay: 10 * time.Millisecond, IngressLeaseDuration: 3 * time.Second,
-		RelayLeaseDuration: 3 * time.Second, LeaseRenewalInterval: time.Second,
+		IngressLeaseDuration: 3 * time.Second,
+		RelayLeaseDuration:   3 * time.Second, LeaseRenewalInterval: time.Second,
 		ControlRetryInterval: 10 * time.Millisecond, RoutingTableWait: time.Second, DrainTimeout: 2 * time.Second,
 	}
 	if err := cfg.Validate(); err != nil {

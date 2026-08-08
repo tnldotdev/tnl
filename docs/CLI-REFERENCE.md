@@ -1961,7 +1961,6 @@ merged.
 | `--control-hostname` / `control_hostname`                   | `TNLD_CONTROL_HOSTNAME`          | empty                                                    | I/R                   | Required canonical control hostname without scheme, path, or port.                   |
 | `--private-control-address` / `private_control_address`     | `TNLD_PRIVATE_CONTROL_ADDRESS`   | empty                                                    | I/R                   | Optional private `host:port` dial override; TLS still verifies `control_hostname`.   |
 | `--managed-deployment-domain` / `managed_deployment_domain` | `TNLD_MANAGED_DEPLOYMENT_DOMAIN` | empty                                                    | S/C                   | Required server-controlled domain for member namespaces.                             |
-| `--reserved-route-name` / `reserved_route_name`             | `TNLD_RESERVED_ROUTE_NAMES`      | `[]`                                                     | S/C validation only   | Repeatable unique DNS labels. The current tnl server does not enforce them.          |
 
 Listen addresses are canonical `host:port` values with decimal ports from 1
 through 65535. An empty host such as `:443` is valid for a listener. IPv6
@@ -2063,22 +2062,21 @@ internal hostname and port; Config Check Limits describes its validation gap.
 
 #### Capacity, Policy, And Timing
 
-| Flag / file key                                               | Environment                       | Default | Applies         | Behavior                                                          |
-| ------------------------------------------------------------- | --------------------------------- | ------- | --------------- | ----------------------------------------------------------------- |
-| `--public-connection-limit` / `public_connection_limit`       | `TNLD_PUBLIC_CONNECTION_LIMIT`    | `20000` | S/I             | Maximum concurrent public visitor connections.                    |
-| `--route-connection-limit` / `route_connection_limit`         | `TNLD_ROUTE_CONNECTION_LIMIT`     | `500`   | S/I             | Maximum concurrent visitor connections per route.                 |
-| `--publisher-connection-limit` / `publisher_connection_limit` | `TNLD_PUBLISHER_CONNECTION_LIMIT` | `1000`  | S/R             | Maximum publisher connections held by one relay process.          |
-| `--relay-stream-capacity` / `relay_stream_capacity`           | `TNLD_RELAY_STREAM_CAPACITY`      | `4096`  | S/R             | Maximum concurrent visitor streams held by one relay process.     |
-| `--require-proxy-header` / `require_proxy_header`             | `TNLD_REQUIRE_PROXY_HEADER`       | false   | S/I             | Require one trusted outer PROXY v2 header on public ingress.      |
-| `--quic-max-incoming-streams` / `quic_max_incoming_streams`   | `TNLD_QUIC_MAX_INCOMING_STREAMS`  | `4096`  | S/R             | Maximum incoming QUIC streams per publisher connection.           |
-| `--quic-idle-timeout` / `quic_idle_timeout`                   | `TNLD_QUIC_IDLE_TIMEOUT`          | `45s`   | S/R             | Publisher connection QUIC idle timeout.                           |
-| `--tunnel-fallback-delay` / `tunnel_fallback_delay`           | `TNLD_TUNNEL_FALLBACK_DELAY`      | `250ms` | validation only | Must be positive, but the current `tnld` process does not use it. |
-| `--ingress-lease-duration` / `ingress_lease_duration`         | `TNLD_INGRESS_LEASE_DURATION`     | `30s`   | S/C             | Ingress lease duration granted by control.                        |
-| `--relay-lease-duration` / `relay_lease_duration`             | `TNLD_RELAY_LEASE_DURATION`       | `30s`   | S/C             | Relay lease duration granted by control.                          |
-| `--lease-renewal-interval` / `lease_renewal_interval`         | `TNLD_LEASE_RENEWAL_INTERVAL`     | `10s`   | S/I/R           | Ingress and relay lease renewal frequency.                        |
-| `--control-retry-interval` / `control_retry_interval`         | `TNLD_CONTROL_RETRY_INTERVAL`     | `1s`    | S/I/R           | Delay before retrying a transient control failure.                |
-| `--routing-table-wait` / `routing_table_wait`                 | `TNLD_ROUTING_TABLE_WAIT`         | `25s`   | S/I             | Maximum wait for ingress routing-table updates.                   |
-| `--drain-timeout` / `drain_timeout`                           | `TNLD_DRAIN_TIMEOUT`              | `30s`   | all             | Graceful connection drain deadline.                               |
+| Flag / file key                                               | Environment                       | Default | Applies | Behavior                                                      |
+| ------------------------------------------------------------- | --------------------------------- | ------- | ------- | ------------------------------------------------------------- |
+| `--public-connection-limit` / `public_connection_limit`       | `TNLD_PUBLIC_CONNECTION_LIMIT`    | `20000` | S/I     | Maximum concurrent public visitor connections.                |
+| `--route-connection-limit` / `route_connection_limit`         | `TNLD_ROUTE_CONNECTION_LIMIT`     | `500`   | S/I     | Maximum concurrent visitor connections per route.             |
+| `--publisher-connection-limit` / `publisher_connection_limit` | `TNLD_PUBLISHER_CONNECTION_LIMIT` | `1000`  | S/R     | Maximum publisher connections held by one relay process.      |
+| `--relay-stream-capacity` / `relay_stream_capacity`           | `TNLD_RELAY_STREAM_CAPACITY`      | `4096`  | S/R     | Maximum concurrent visitor streams held by one relay process. |
+| `--require-proxy-header` / `require_proxy_header`             | `TNLD_REQUIRE_PROXY_HEADER`       | false   | S/I     | Require one trusted outer PROXY v2 header on public ingress.  |
+| `--quic-max-incoming-streams` / `quic_max_incoming_streams`   | `TNLD_QUIC_MAX_INCOMING_STREAMS`  | `4096`  | S/R     | Maximum incoming QUIC streams per publisher connection.       |
+| `--quic-idle-timeout` / `quic_idle_timeout`                   | `TNLD_QUIC_IDLE_TIMEOUT`          | `45s`   | S/R     | Publisher connection QUIC idle timeout.                       |
+| `--ingress-lease-duration` / `ingress_lease_duration`         | `TNLD_INGRESS_LEASE_DURATION`     | `30s`   | S/C     | Ingress lease duration granted by control.                    |
+| `--relay-lease-duration` / `relay_lease_duration`             | `TNLD_RELAY_LEASE_DURATION`       | `30s`   | S/C     | Relay lease duration granted by control.                      |
+| `--lease-renewal-interval` / `lease_renewal_interval`         | `TNLD_LEASE_RENEWAL_INTERVAL`     | `10s`   | S/I/R   | Ingress and relay lease renewal frequency.                    |
+| `--control-retry-interval` / `control_retry_interval`         | `TNLD_CONTROL_RETRY_INTERVAL`     | `1s`    | S/I/R   | Delay before retrying a transient control failure.            |
+| `--routing-table-wait` / `routing_table_wait`                 | `TNLD_ROUTING_TABLE_WAIT`         | `25s`   | S/I     | Maximum wait for ingress routing-table updates.               |
+| `--drain-timeout` / `drain_timeout`                           | `TNLD_DRAIN_TIMEOUT`              | `30s`   | all     | Graceful connection drain deadline.                           |
 
 All connection and stream capacities must be positive, including fields not
 used by the selected role. All timing values must be positive.
@@ -2140,9 +2138,8 @@ The rules are:
 - The document must be valid UTF-8 and no larger than 1 MiB.
 - `tnld` duration values are strings. Booleans and integers use their native
   YAML or JSON types. Repeatable values use arrays.
-- Repeatable file keys remain singular: `reserved_route_name`, `oidc_scope`,
-  `ingress_ipv4_address`, and `ingress_ipv6_address`. Their environment names
-  are plural.
+- Repeatable file keys remain singular: `oidc_scope`, `ingress_ipv4_address`,
+  and `ingress_ipv6_address`. Their environment names are plural.
 
 ### Configuration Precedence
 
@@ -2259,10 +2256,6 @@ Known practical boundaries and documentation traps are:
 - A pooled database URL can pass the first configuration validator without a
   database path, then fail the stricter control-state URL validation at serve
   time. Always name the database.
-- `reserved_route_name` is parsed and validated, but the current tnl server does
-  not enforce it. Do not rely on it for route authorization.
-- `tunnel_fallback_delay` is parsed and must be positive, but the current
-  `tnld` process does not use it.
 - Standalone does not separately bind `control_listen`,
   `private_control_listen`, `relay_tcp_listen`, or `internal_relay_listen`.
   Its actual listener topology is described under `tnld serve`.

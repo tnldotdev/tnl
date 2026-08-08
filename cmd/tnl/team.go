@@ -37,7 +37,7 @@ type teamUseCommand struct {
 
 type teamCreateCommand struct {
 	remoteFlags `embed:""`
-	DisplayName string `arg:"" name:"display-name" required:""`
+	DisplayName string `arg:"" name:"display-name" required:"" help:"Organization team display name."`
 	MemberSlug  string `name:"member-slug" required:"" help:"Immutable member slug for the creator."`
 }
 
@@ -55,7 +55,7 @@ type teamInviteCommand struct {
 type teamInviteCreateCommand struct {
 	remoteFlags `embed:""`
 	MemberSlug  string        `name:"member-slug" required:"" help:"Reserved immutable member slug."`
-	Role        string        `name:"role" enum:"member,admin,owner" default:"member"`
+	Role        string        `name:"role" enum:"member,admin,owner" default:"member" help:"Initial team role."`
 	Email       string        `name:"email" help:"Optional verified-email restriction."`
 	ExpiresIn   time.Duration `name:"expires-in" default:"168h" help:"Invitation lifetime."`
 }
@@ -66,12 +66,12 @@ type teamInviteListCommand struct {
 
 type teamInviteRevokeCommand struct {
 	remoteFlags  `embed:""`
-	InvitationID string `arg:"" name:"invitation-id" required:""`
+	InvitationID string `arg:"" name:"invitation-id" required:"" help:"Invitation ID to revoke."`
 }
 
 type teamJoinCommand struct {
 	remoteFlags `embed:""`
-	Secret      string `arg:"" name:"secret" required:""`
+	Secret      string `arg:"" name:"secret" required:"" help:"Invitation secret."`
 }
 
 type teamMemberCommand struct {
@@ -81,13 +81,13 @@ type teamMemberCommand struct {
 
 type teamMemberSetRoleCommand struct {
 	remoteFlags  `embed:""`
-	MembershipID string `arg:"" name:"membership-id" required:""`
-	Role         string `name:"role" enum:"member,admin,owner" required:""`
+	MembershipID string `arg:"" name:"membership-id" required:"" help:"Membership ID to update."`
+	Role         string `name:"role" enum:"member,admin,owner" required:"" help:"New team role."`
 }
 
 type teamMemberRemoveCommand struct {
 	remoteFlags  `embed:""`
-	MembershipID string `arg:"" name:"membership-id" required:""`
+	MembershipID string `arg:"" name:"membership-id" required:"" help:"Membership ID to remove."`
 }
 
 func runTeamCurrent(ctx context.Context, command teamCurrentCommand, output, diagnostics io.Writer) error {

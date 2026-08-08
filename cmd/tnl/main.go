@@ -41,7 +41,7 @@ type openOptions struct {
 
 type tunnelFlags struct {
 	Team      string   `name:"team" env:"TNL_TEAM" help:"Team ID or unambiguous display name."`
-	Host      string   `name:"host" env:"TNL_HOST" help:"Exact hostname to publish. Defaults to one based on the worktree label in the current member namespace."`
+	Host      string   `name:"host" env:"TNL_HOST" help:"Hostname to publish. Defaults to the worktree label in the current member namespace."`
 	Subdomain string   `name:"subdomain" env:"TNL_SUBDOMAIN" help:"One label beneath the current member namespace."`
 	AllowIP   []string `name:"allow-ip" help:"Allow a visitor IP address or prefix. Repeat for each value."`
 	Public    bool     `name:"public" env:"TNL_PUBLIC" help:"Allow visitors from every IP address."`
@@ -53,8 +53,8 @@ type tunnelFlags struct {
 
 type remoteFlags struct {
 	ServerURL   string `name:"server" env:"TNL_SERVER" help:"Control URL. Defaults to the selected server or https://control.tnl.dev."`
-	AccessToken string `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Access token. Defaults to the saved control session."`
-	StateDir    string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent client state."`
+	AccessToken string `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Access token. Defaults to the saved session."`
+	StateDir    string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
 	ProjectTeam string `kong:"-"`
 }
 
@@ -65,24 +65,24 @@ type configCommand struct {
 }
 
 type configCheckCommand struct {
-	StateDir string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent client state."`
+	StateDir string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
 }
 
 type configGenerateCommand struct {
-	StateDir string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent client state."`
+	StateDir string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
 }
 
 type loginCommand struct {
 	Server     string `arg:"" name:"server" optional:"" help:"Control URL. Defaults to the selected server or https://control.tnl.dev."`
 	ServerURL  string `name:"server" env:"TNL_SERVER" help:"Control URL. Defaults to the selected server or https://control.tnl.dev."`
-	StateDir   string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent client state."`
+	StateDir   string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
 	Token      bool   `name:"token" help:"Use a login token even when OIDC is available."`
 	LoginToken string `name:"login-token" env:"TNL_LOGIN_TOKEN" hidden:""`
 }
 
 type logoutCommand struct {
 	ServerURL string `name:"server" env:"TNL_SERVER" help:"Control URL. Defaults to the selected server or https://control.tnl.dev."`
-	StateDir  string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent client state."`
+	StateDir  string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
 }
 
 func main() {

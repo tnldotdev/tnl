@@ -61,11 +61,10 @@ type Config struct {
 	InternalRelayListen  string `name:"internal-relay-listen" env:"TNLD_INTERNAL_RELAY_LISTEN" help:"Internal forwarding listen address."`
 	DNSServer            string `name:"dns-server" env:"TNLD_DNS_SERVER" help:"DNS resolver used to verify claimed domains. Defaults to the system resolver."`
 
-	ServerDomain            string   `name:"server-domain" env:"TNLD_SERVER_DOMAIN" help:"Infrastructure DNS suffix used to derive control, ingress, and relay hostnames."`
-	ControlHostname         string   `name:"control-hostname" env:"TNLD_CONTROL_HOSTNAME" help:"Control API hostname used by ingress and relay processes."`
-	PrivateControlAddress   string   `name:"private-control-address" env:"TNLD_PRIVATE_CONTROL_ADDRESS" help:"Optional private control host and port dialed by ingress and relay processes."`
-	ManagedDeploymentDomain string   `name:"managed-deployment-domain" env:"TNLD_MANAGED_DEPLOYMENT_DOMAIN" help:"Server-controlled domain used for member namespaces."`
-	ReservedRouteNames      []string `name:"reserved-route-name" env:"TNLD_RESERVED_ROUTE_NAMES" help:"DNS labels that routes cannot use. Repeat for each label."`
+	ServerDomain            string `name:"server-domain" env:"TNLD_SERVER_DOMAIN" help:"Infrastructure DNS suffix used to derive control, ingress, and relay hostnames."`
+	ControlHostname         string `name:"control-hostname" env:"TNLD_CONTROL_HOSTNAME" help:"Control API hostname used by ingress and relay processes."`
+	PrivateControlAddress   string `name:"private-control-address" env:"TNLD_PRIVATE_CONTROL_ADDRESS" help:"Optional private control host and port dialed by ingress and relay processes."`
+	ManagedDeploymentDomain string `name:"managed-deployment-domain" env:"TNLD_MANAGED_DEPLOYMENT_DOMAIN" help:"Server-controlled domain used for member namespaces."`
 
 	ControlTLSCertificateFile string `name:"control-tls-certificate-file" env:"TNLD_CONTROL_TLS_CERTIFICATE_FILE" type:"path" help:"Optional static control certificate chain."`
 	ControlTLSPrivateKeyFile  string `name:"control-tls-private-key-file" env:"TNLD_CONTROL_TLS_PRIVATE_KEY_FILE" type:"path" help:"Optional static control private key."`
@@ -114,7 +113,6 @@ type Config struct {
 	RequireProxyHeader       bool          `name:"require-proxy-header" env:"TNLD_REQUIRE_PROXY_HEADER" help:"Require one trusted outer PROXY v2 header on public ingress."`
 	QUICMaxIncomingStreams   int64         `name:"quic-max-incoming-streams" env:"TNLD_QUIC_MAX_INCOMING_STREAMS" default:"4096" help:"Maximum incoming QUIC streams per publisher connection."`
 	QUICIdleTimeout          time.Duration `name:"quic-idle-timeout" env:"TNLD_QUIC_IDLE_TIMEOUT" default:"45s" help:"Publisher connection QUIC idle timeout."`
-	TunnelFallbackDelay      time.Duration `name:"tunnel-fallback-delay" env:"TNLD_TUNNEL_FALLBACK_DELAY" default:"250ms" help:"Delay before trying TLS/TCP while QUIC connects."`
 	IngressLeaseDuration     time.Duration `name:"ingress-lease-duration" env:"TNLD_INGRESS_LEASE_DURATION" default:"30s" help:"Control-owned ingress lease duration."`
 	RelayLeaseDuration       time.Duration `name:"relay-lease-duration" env:"TNLD_RELAY_LEASE_DURATION" default:"30s" help:"Control-owned relay lease duration."`
 	LeaseRenewalInterval     time.Duration `name:"lease-renewal-interval" env:"TNLD_LEASE_RENEWAL_INTERVAL" default:"10s" help:"Ingress and relay lease renewal interval."`
@@ -192,7 +190,7 @@ func (c Config) Validate() error {
 	if c.IngressLeaseDuration <= 0 || c.RelayLeaseDuration <= 0 || c.LeaseRenewalInterval <= 0 ||
 		c.LeaseRenewalInterval >= c.IngressLeaseDuration || c.LeaseRenewalInterval >= c.RelayLeaseDuration ||
 		c.ControlRetryInterval <= 0 || c.RoutingTableWait <= 0 || c.RoutingTableWait > 25*time.Second ||
-		c.RoutingTableWait%time.Second != 0 || c.DrainTimeout <= 0 || c.TunnelFallbackDelay <= 0 ||
+		c.RoutingTableWait%time.Second != 0 || c.DrainTimeout <= 0 ||
 		c.QUICIdleTimeout <= 0 {
 		return errors.New("lease, routing-table, transport, or drain timing is invalid")
 	}
@@ -232,9 +230,6 @@ func (c Config) validateControl() error {
 	} else if c.LoginToken != "" {
 		return errors.New("login token cannot be configured with an external authority")
 	}
-	if err := c.validateReservedRouteNames(); err != nil {
-		return err
-	}
 	if err := c.validateOIDC(); err != nil {
 		return err
 	}
@@ -262,21 +257,6 @@ func (c Config) validateControl() error {
 	}
 	if c.RefreshTokenLifetime < c.AccessTokenLifetime || c.RefreshTokenLifetime > maximumRefreshTokenLifetime {
 		return fmt.Errorf("refresh token lifetime must be between the access token lifetime and %s", maximumRefreshTokenLifetime)
-	}
-	return nil
-}
-
-func (c Config) validateReservedRouteNames() error {
-	seen := make(map[string]struct{}, len(c.ReservedRouteNames))
-	for _, name := range c.ReservedRouteNames {
-		canonical, err := naming.CanonicalizeHostname(name)
-		if err != nil || canonical != name || strings.Contains(name, ".") {
-			return fmt.Errorf("reserved route name %q must be one canonical DNS label", name)
-		}
-		if _, exists := seen[name]; exists {
-			return fmt.Errorf("reserved route name %q is configured more than once", name)
-		}
-		seen[name] = struct{}{}
 	}
 	return nil
 }
@@ -498,31 +478,6 @@ func (c Config) AuthorityOrigin() string {
 		return "https://" + hostname
 	}
 	return ""
-}
-
-func (c Config) EffectiveReservedRouteNames() []string {
-	result := make([]string, 0, len(c.ReservedRouteNames)+4)
-	seen := make(map[string]struct{}, len(c.ReservedRouteNames)+4)
-	add := func(name string) {
-		if name == "" {
-			return
-		}
-		if _, exists := seen[name]; exists {
-			return
-		}
-		seen[name] = struct{}{}
-		result = append(result, name)
-	}
-	for _, name := range c.ReservedRouteNames {
-		add(name)
-	}
-	add("domains")
-	for _, hostname := range []string{c.ServerHostname(), c.IngressHostname(), c.StandaloneRelayHostname()} {
-		if label, found := strings.CutSuffix(hostname, "."+c.ManagedDomain()); found && !strings.Contains(label, ".") {
-			add(label)
-		}
-	}
-	return result
 }
 
 func Parse(args []string) (Config, error) {
