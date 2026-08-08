@@ -10,3 +10,4 @@
 - `task format-check` reports unchanged `cmd/tnlbench/plan.go` from `goimports -l`, so a clean wording-only change cannot pass the repository formatting check without touching unrelated benchmark code.
 - A fresh Git worktree has no ignored `node_modules`, so `task generate` fails loading `json-schema-to-typescript` until the lockfile dependencies are installed in that worktree.
 - Restoring the completed-usage-bucket regression test exposed a reverted SQL finalization fix in the combined refactor: complete deliveries retained their last report timestamp instead of advancing `observed_through` to the bucket end. Restore the query source and regenerate sqlc output together.
+- Integration CI exposed two test-only assumptions hidden by routine runs: PostgreSQL could not infer one timestamp parameter across direct values and interval arithmetic, while `reflect.DeepEqual` distinguished equal timestamps returned with different location metadata.

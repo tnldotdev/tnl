@@ -67,7 +67,7 @@ func TestIntegrationRouteSessionCreation(t *testing.T) {
 func TestIntegrationRouteSessionExpiryAndGatedReplay(t *testing.T) {
 	f := newRouteSessionFixture(t)
 	database, now, setup, request := f.database, f.now, f.setup, f.request
-	closedAt := now.Add(5 * time.Second)
+	closedAt := setup.CreatedAt.Add(5 * time.Second)
 	if _, err := database.pool.Exec(t.Context(), `UPDATE control.route_sessions SET publisher_expires_at = $2 WHERE id = $1`, setup.RouteSessionID, closedAt); err != nil {
 		t.Fatal(err)
 	}

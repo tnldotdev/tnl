@@ -45,7 +45,8 @@ func TestIntegrationControlStateMigrationUpgrade(t *testing.T) {
 			state, created_at, last_heartbeat_at, publisher_expires_at)
 		VALUES ('legacy-session', 'route_legacy', 'team_legacy', 'identity_legacy', 1, 'legacy',
 			decode(repeat('01',32),'hex'), 'legacy-token', decode(repeat('02',32),'hex'), 1,
-			'legacy-cache', 'route', ARRAY['route-legacy.example.test'], 'tls-alpn-01', 'starting', $1, $1, $1 + interval '1 hour')`,
+			'legacy-cache', 'route', ARRAY['route-legacy.example.test'], 'tls-alpn-01', 'starting',
+			$1::timestamptz, $1::timestamptz, $1::timestamptz + interval '1 hour')`,
 		`INSERT INTO control.acme_accounts (id, directory_url, contact_email, account_key_ciphertext, account_key_storage_key_id, created_at, updated_at)
 		VALUES ('legacy-account', 'https://acme.example.test/directory', 'operator@example.test', decode(repeat('03',32),'hex'), 'legacy-key', $1, $1)`,
 		`INSERT INTO control.acme_orders (id, account_id, route_session_id, route_id, route_version, idempotency_key, request_digest,
@@ -56,7 +57,8 @@ func TestIntegrationControlStateMigrationUpgrade(t *testing.T) {
 		`INSERT INTO control.acme_authorizations (id, order_id, identifier, authorization_url, challenge_type, challenge_url, challenge_token,
 			challenge_digest, state, available_at, expires_at, created_at, updated_at)
 		VALUES ('legacy-authorization', 'legacy-order-1', 'route-legacy.example.test', 'https://acme.example.test/authz/shared',
-			'tls-alpn-01', 'https://acme.example.test/challenge/legacy', 'legacy-token', decode(repeat('05',32),'hex'), 'presenting', $1, $1 + interval '1 hour', $1, $1)`,
+			'tls-alpn-01', 'https://acme.example.test/challenge/legacy', 'legacy-token', decode(repeat('05',32),'hex'), 'presenting',
+			$1::timestamptz, $1::timestamptz + interval '1 hour', $1::timestamptz, $1::timestamptz)`,
 	} {
 		if _, err := pool.Exec(t.Context(), query, now); err != nil {
 			t.Fatal(err)
@@ -106,7 +108,8 @@ func TestIntegrationControlStateMigrationUpgrade(t *testing.T) {
 		id, order_id, identifier, authorization_url, state, available_at, validated_at,
 		cleanup_completed_at, expires_at, created_at, updated_at)
 		VALUES ('reused', 'legacy-order-2', 'route-legacy.example.test', 'https://acme.example.test/authz/shared',
-		'complete', $1, $1, $1, $1 + interval '1 hour', $1, $1)`, now); err != nil {
+		'complete', $1::timestamptz, $1::timestamptz, $1::timestamptz,
+		$1::timestamptz + interval '1 hour', $1::timestamptz, $1::timestamptz)`, now); err != nil {
 		t.Fatalf("reused authorization rejected: %v", err)
 	}
 	for _, test := range []struct{ name, query, code string }{
