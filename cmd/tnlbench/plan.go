@@ -15,14 +15,21 @@ import (
 
 const profileStaleAfter = 90 * 24 * time.Hour
 
+const (
+	benchmarkCertificateAuthorityPebble      = "pebble"
+	benchmarkCertificateAuthorityLetsEncrypt = "letsencrypt"
+)
+
 type planCommand struct {
-	Suite       string `name:"suite" env:"BENCH_SUITE" default:"smoke" help:"Named suite to expand: smoke, scout, or confirm."`
-	ProfileFile string `name:"profile" env:"BENCH_PROFILE" default:"benchmarks/suites/fly-production.json" type:"path" help:"Production-candidate benchmark profile."`
-	Routes      int    `name:"routes" env:"BENCH_ROUTES" help:"Route count overriding the suite; required for confirm."`
-	FreshRate   int    `name:"fresh-connections-per-second" env:"BENCH_FRESH_CONNECTIONS_PER_SECOND" help:"Total fresh visitor connections per second overriding the suite; required for confirm."`
-	HeldStreams int    `name:"held-streams" env:"BENCH_HELD_STREAMS" help:"Held-open visitor streams overriding the suite; required for confirm."`
-	Repetitions int    `name:"repetitions" env:"BENCH_REPETITIONS" help:"Repetitions overriding the suite."`
-	Format      string `name:"format" env:"BENCH_PLAN_FORMAT" enum:"human,json" default:"human" help:"Plan output format."`
+	Suite        string `name:"suite" env:"BENCH_SUITE" default:"smoke" help:"Named suite to expand: smoke, scout, confirm, or compatibility."`
+	ProfileFile  string `name:"profile" env:"BENCH_PROFILE" default:"benchmarks/suites/fly-production.json" type:"path" help:"Production-candidate benchmark profile."`
+	Routes       int    `name:"routes" env:"BENCH_ROUTES" help:"Route count overriding the suite; required for confirm."`
+	FreshRate    int    `name:"fresh-connections-per-second" env:"BENCH_FRESH_CONNECTIONS_PER_SECOND" help:"Total fresh visitor connections per second overriding the suite; required for confirm."`
+	HeldStreams  int    `name:"held-streams" env:"BENCH_HELD_STREAMS" help:"Held-open visitor streams overriding the suite; required for confirm."`
+	ChurnRate    int    `name:"lifecycle-churn-per-second" env:"BENCH_LIFECYCLE_CHURN_PER_SECOND" help:"Route-session lifecycle operations per second overriding confirm."`
+	PayloadBytes int    `name:"payload-bytes" env:"BENCH_PAYLOAD_BYTES" help:"Fresh-response bytes overriding confirm; defaults to 16384."`
+	Repetitions  int    `name:"repetitions" env:"BENCH_REPETITIONS" help:"Repetitions overriding the suite."`
+	Format       string `name:"format" env:"BENCH_PLAN_FORMAT" enum:"human,json" default:"human" help:"Plan output format."`
 }
 
 type benchmarkProfile struct {
@@ -49,6 +56,7 @@ type benchmarkMachines struct {
 	Control     string `json:"control"`
 	Ingress     string `json:"ingress"`
 	Relay       string `json:"relay"`
+	Pebble      string `json:"pebble"`
 	Coordinator string `json:"coordinator"`
 	Publisher   string `json:"publisher"`
 	Load        string `json:"load"`
@@ -63,7 +71,10 @@ type benchmarkManagedPostgres struct {
 }
 
 type benchmarkWorkerLimits struct {
+	PublisherMachines             int `json:"publisher_machines"`
 	RoutesPerPublisher            int `json:"routes_per_publisher"`
+	RoutesPerChurnRoute           int `json:"routes_per_churn_route"`
+	PublisherVolumeGB             int `json:"publisher_volume_gb"`
 	FreshConnectionsPerLoadSecond int `json:"fresh_connections_per_load_second"`
 	HeldStreamsPerLoad            int `json:"held_streams_per_load"`
 }
@@ -75,23 +86,28 @@ type benchmarkPricing struct {
 	Route53SourceURL                    string             `json:"route53_source_url"`
 	MachinePerSecondUSD                 map[string]float64 `json:"machine_per_second_usd"`
 	PublicIPv4PerHour                   float64            `json:"public_ipv4_per_hour_usd"`
+	VolumeGBPerMonthUSD                 float64            `json:"volume_gb_per_month_usd"`
 	ManagedPostgresPlanPerMonthUSD      map[string]float64 `json:"managed_postgres_plan_per_month_usd"`
 	ManagedPostgresStorageGBPerMonthUSD float64            `json:"managed_postgres_storage_gb_per_month_usd"`
 	HostedZonePerMonth                  float64            `json:"hosted_zone_per_month_usd"`
 }
 
 type suiteDefinition struct {
-	Repetitions    int                 `json:"repetitions"`
-	RequiresTarget bool                `json:"requires_target,omitempty"`
-	Cells          []benchmarkCellSpec `json:"cells"`
+	Repetitions          int                 `json:"repetitions"`
+	RequiresTarget       bool                `json:"requires_target,omitempty"`
+	CertificateAuthority string              `json:"certificate_authority"`
+	Cells                []benchmarkCellSpec `json:"cells"`
 }
 
 type benchmarkCellSpec struct {
-	Routes                    int `json:"routes"`
-	FreshConnectionsPerSecond int `json:"fresh_connections_per_second"`
-	HeldStreams               int `json:"held_streams"`
-	WarmupSeconds             int `json:"warmup_seconds"`
-	DurationSeconds           int `json:"duration_seconds"`
+	Axis                      string `json:"axis"`
+	Routes                    int    `json:"routes"`
+	FreshConnectionsPerSecond int    `json:"fresh_connections_per_second"`
+	HeldStreams               int    `json:"held_streams"`
+	LifecycleChurnPerSecond   int    `json:"lifecycle_churn_per_second"`
+	PayloadBytes              int    `json:"payload_bytes"`
+	WarmupSeconds             int    `json:"warmup_seconds"`
+	DurationSeconds           int    `json:"duration_seconds"`
 }
 
 type benchmarkPlan struct {
@@ -103,6 +119,8 @@ type benchmarkPlan struct {
 	Topology                        benchmarkTopology        `json:"topology"`
 	Machines                        benchmarkMachines        `json:"machines"`
 	ManagedPostgres                 benchmarkManagedPostgres `json:"managed_postgres"`
+	WorkerLimits                    benchmarkWorkerLimits    `json:"worker_limits"`
+	CertificateAuthority            string                   `json:"certificate_authority"`
 	Cells                           []planCell               `json:"cells"`
 	ExpectedDurationSeconds         int64                    `json:"expected_duration_seconds"`
 	MaximumDurationSeconds          int64                    `json:"maximum_duration_seconds"`
@@ -120,11 +138,14 @@ type benchmarkPlan struct {
 
 type planCell struct {
 	ID                        string  `json:"id"`
+	Axis                      string  `json:"axis"`
 	Sequence                  int     `json:"sequence"`
 	Repetition                int     `json:"repetition"`
 	Routes                    int     `json:"routes"`
 	FreshConnectionsPerSecond int     `json:"fresh_connections_per_second"`
 	HeldStreams               int     `json:"held_streams"`
+	LifecycleChurnPerSecond   int     `json:"lifecycle_churn_per_second"`
+	PayloadBytes              int     `json:"payload_bytes"`
 	PublisherWorkers          int     `json:"publisher_workers"`
 	LoadWorkers               int     `json:"load_workers"`
 	FreshConnectionsPerWorker float64 `json:"fresh_connections_per_worker_second"`
@@ -132,6 +153,7 @@ type planCell struct {
 	WarmupSeconds             int     `json:"warmup_seconds"`
 	DurationSeconds           int     `json:"duration_seconds"`
 	TimeoutSeconds            int     `json:"timeout_seconds"`
+	EstimatedMonthlyCostUSD   float64 `json:"estimated_monthly_cost_usd"`
 }
 
 func (c planCommand) run(stdout io.Writer) error {
@@ -159,7 +181,7 @@ func (c planCommand) build(now time.Time) (benchmarkPlan, error) {
 	if !found {
 		return benchmarkPlan{}, fmt.Errorf("suite %q is not defined by profile %q", c.Suite, profile.ID)
 	}
-	overridingTarget := c.Routes != 0 || c.FreshRate != 0 || c.HeldStreams != 0
+	overridingTarget := c.Routes != 0 || c.FreshRate != 0 || c.HeldStreams != 0 || c.ChurnRate != 0 || c.PayloadBytes != 0
 	if definition.RequiresTarget && (c.Routes == 0 || c.FreshRate == 0 || c.HeldStreams == 0) {
 		return benchmarkPlan{}, errors.New("confirm requires BENCH_ROUTES, BENCH_FRESH_CONNECTIONS_PER_SECOND, and BENCH_HELD_STREAMS")
 	}
@@ -171,8 +193,14 @@ func (c planCommand) build(now time.Time) (benchmarkPlan, error) {
 		if len(definition.Cells) == 1 {
 			warmup, duration = definition.Cells[0].WarmupSeconds, definition.Cells[0].DurationSeconds
 		}
+		payloadBytes := c.PayloadBytes
+		if payloadBytes == 0 {
+			payloadBytes = 16 << 10
+		}
 		definition.Cells = []benchmarkCellSpec{{
+			Axis:   "confirm",
 			Routes: c.Routes, FreshConnectionsPerSecond: c.FreshRate, HeldStreams: c.HeldStreams,
+			LifecycleChurnPerSecond: c.ChurnRate, PayloadBytes: payloadBytes,
 			WarmupSeconds: warmup, DurationSeconds: duration,
 		}}
 	}
@@ -184,8 +212,10 @@ func (c planCommand) build(now time.Time) (benchmarkPlan, error) {
 	}
 
 	plan := benchmarkPlan{
-		SchemaVersion: 2, ReadOnly: true, ProfileID: profile.ID, Suite: c.Suite, Region: profile.Region,
+		SchemaVersion: 3, ReadOnly: true, ProfileID: profile.ID, Suite: c.Suite, Region: profile.Region,
 		Topology: profile.Topology, Machines: profile.Machines, ManagedPostgres: profile.ManagedPostgres,
+		WorkerLimits:            profile.WorkerLimits,
+		CertificateAuthority:    definition.CertificateAuthority,
 		ExpectedDurationSeconds: int64(profile.ManagedPostgres.ProvisionExpectedSeconds),
 		MaximumDurationSeconds:  int64(profile.ManagedPostgres.ProvisionTimeoutSeconds),
 		PricingSnapshotDate:     profile.Pricing.SnapshotDate, PricingSourceURL: profile.Pricing.SourceURL,
@@ -198,9 +228,12 @@ func (c planCommand) build(now time.Time) (benchmarkPlan, error) {
 		Overrides: configuredOverrides(),
 		Warnings: []string{
 			"Planning is read-only; execution creates paid Fly Machines, Managed Postgres, public IPv4, and Route 53 resources.",
-			"Spend excludes image builds, public egress, DNS queries, ACME, failed retries, and retained resources except the maximum's MPG allowance.",
-			"Maximum spend models one retained Managed Postgres month and two hosted-zone charges; longer retention can cost more.",
+			"Spend excludes image builds, public egress, DNS queries, ACME, failed retries, and retained resources except the maximum's explicit allowances.",
+			"Maximum spend models one retained Managed Postgres month, the configured publisher volumes for one month, and two hosted-zone charges; longer retention can cost more.",
 		},
+	}
+	if definition.CertificateAuthority == benchmarkCertificateAuthorityLetsEncrypt {
+		plan.Warnings = append(plan.Warnings, "The compatibility suite uses Let's Encrypt; keep it small and avoid repeated runs that consume public CA rate limits.")
 	}
 	updated, _ := time.Parse(time.DateOnly, profile.UpdatedDate)
 	pricingDate, _ := time.Parse(time.DateOnly, profile.Pricing.SnapshotDate)
@@ -215,6 +248,9 @@ func (c planCommand) build(now time.Time) (benchmarkPlan, error) {
 			return benchmarkPlan{}, fmt.Errorf("suite %q: %w", c.Suite, err)
 		}
 		for repetition := 1; repetition <= definition.Repetitions; repetition++ {
+			if spec.Routes > profile.WorkerLimits.PublisherMachines*profile.WorkerLimits.RoutesPerPublisher {
+				return benchmarkPlan{}, fmt.Errorf("suite %q: route target exceeds publisher generator capacity", c.Suite)
+			}
 			publishers := divideRoundUp(spec.Routes, profile.WorkerLimits.RoutesPerPublisher)
 			loadWorkers := max(
 				divideRoundUp(spec.FreshConnectionsPerSecond, profile.WorkerLimits.FreshConnectionsPerLoadSecond),
@@ -222,24 +258,27 @@ func (c planCommand) build(now time.Time) (benchmarkPlan, error) {
 				1,
 			)
 			cell := planCell{
-				ID:       fmt.Sprintf("%s-r%d-c%d-s%d-rep%d", c.Suite, spec.Routes, spec.FreshConnectionsPerSecond, spec.HeldStreams, repetition),
-				Sequence: sequence, Repetition: repetition, Routes: spec.Routes,
+				ID: fmt.Sprintf("%s-%s-r%d-c%d-s%d-l%d-b%d-rep%d", c.Suite, spec.Axis, spec.Routes,
+					spec.FreshConnectionsPerSecond, spec.HeldStreams, spec.LifecycleChurnPerSecond, spec.PayloadBytes, repetition),
+				Axis: spec.Axis, Sequence: sequence, Repetition: repetition, Routes: spec.Routes,
 				FreshConnectionsPerSecond: spec.FreshConnectionsPerSecond, HeldStreams: spec.HeldStreams,
+				LifecycleChurnPerSecond: spec.LifecycleChurnPerSecond, PayloadBytes: spec.PayloadBytes,
 				PublisherWorkers: publishers, LoadWorkers: loadWorkers,
 				FreshConnectionsPerWorker: float64(spec.FreshConnectionsPerSecond) / float64(loadWorkers),
 				HeldStreamsPerWorker:      divideRoundUp(spec.HeldStreams, loadWorkers),
 				WarmupSeconds:             spec.WarmupSeconds, DurationSeconds: spec.DurationSeconds,
 				TimeoutSeconds: spec.WarmupSeconds + spec.DurationSeconds + 15*60,
 			}
+			cell.EstimatedMonthlyCostUSD = estimatedMonthlyCost(profile, cell, definition.CertificateAuthority)
 			plan.Cells = append(plan.Cells, cell)
 			plan.ExpectedDurationSeconds += int64(spec.WarmupSeconds + spec.DurationSeconds + 4*60)
 			plan.MaximumDurationSeconds += int64(cell.TimeoutSeconds)
 			plan.ExpectedResultRows += publishers + loadWorkers
-			plan.ExpectedSpendUSD += estimatedCellSpend(profile, cell, spec.WarmupSeconds+spec.DurationSeconds+4*60)
-			plan.MaximumSpendUSD += estimatedCellSpend(profile, cell, cell.TimeoutSeconds)
+			plan.ExpectedSpendUSD += estimatedCellSpend(profile, cell, spec.WarmupSeconds+spec.DurationSeconds+4*60, definition.CertificateAuthority)
+			plan.MaximumSpendUSD += estimatedCellSpend(profile, cell, cell.TimeoutSeconds, definition.CertificateAuthority)
 		}
 	}
-	// One Managed Postgres cluster, five public app IPv4s, and two transient hosted zones.
+	// One Managed Postgres cluster, public app IPv4s, and two transient hosted zones.
 	plan.ExpectedSpendUSD += fixedResourceSpend(profile, plan.ExpectedDurationSeconds, false)
 	plan.MaximumSpendUSD += fixedResourceSpend(profile, plan.MaximumDurationSeconds, true)
 	return plan, nil
@@ -266,7 +305,7 @@ func decodeJSONFile(path string, destination any) error {
 }
 
 func validateBenchmarkProfile(profile benchmarkProfile) error {
-	if profile.SchemaVersion != 2 || profile.ID == "" || len(profile.Region) != 3 || !validFlySlug(profile.Region) {
+	if profile.SchemaVersion != 3 || profile.ID == "" || len(profile.Region) != 3 || !validFlySlug(profile.Region) {
 		return errors.New("benchmark profile has an invalid schema or identity")
 	}
 	for label, value := range map[string]string{"updated_date": profile.UpdatedDate, "pricing snapshot_date": profile.Pricing.SnapshotDate} {
@@ -274,10 +313,18 @@ func validateBenchmarkProfile(profile benchmarkProfile) error {
 			return fmt.Errorf("%s must use YYYY-MM-DD", label)
 		}
 	}
-	if profile.Topology != (benchmarkTopology{ControlProcesses: 2, IngressProcesses: 2, RelayServices: 2, RelayProcessesPerService: 2}) {
-		return errors.New("benchmark topology must be 2 control, 2 ingress, and 2 processes in each of 2 relay services")
+	if profile.Topology.ControlProcesses <= 0 || profile.Topology.ControlProcesses > 10 ||
+		profile.Topology.IngressProcesses <= 0 || profile.Topology.IngressProcesses > 10 ||
+		profile.Topology.RelayServices < 2 || profile.Topology.RelayServices > 26 ||
+		profile.Topology.RelayProcessesPerService <= 0 || profile.Topology.RelayProcessesPerService > 10 {
+		return errors.New("benchmark topology is invalid")
 	}
-	if profile.WorkerLimits.RoutesPerPublisher <= 0 || profile.WorkerLimits.FreshConnectionsPerLoadSecond <= 0 ||
+	if profile.WorkerLimits.PublisherMachines <= 0 || profile.WorkerLimits.PublisherMachines > 16 ||
+		profile.WorkerLimits.RoutesPerPublisher <= 0 || profile.WorkerLimits.RoutesPerChurnRoute <= 0 ||
+		profile.WorkerLimits.RoutesPerChurnRoute > profile.WorkerLimits.RoutesPerPublisher ||
+		profile.WorkerLimits.RoutesPerPublisher%profile.WorkerLimits.RoutesPerChurnRoute != 0 ||
+		profile.WorkerLimits.PublisherVolumeGB <= 0 || profile.WorkerLimits.PublisherVolumeGB > 10 ||
+		profile.WorkerLimits.FreshConnectionsPerLoadSecond <= 0 ||
 		profile.WorkerLimits.FreshConnectionsPerLoadSecond >= 40 || profile.WorkerLimits.HeldStreamsPerLoad <= 0 {
 		return errors.New("benchmark worker limits are invalid or could exercise the ingress source limiter")
 	}
@@ -285,13 +332,14 @@ func validateBenchmarkProfile(profile benchmarkProfile) error {
 	if database.Plan == "" || database.Plan != strings.ToLower(database.Plan) ||
 		profile.Pricing.ManagedPostgresPlanPerMonthUSD[database.Plan] <= 0 ||
 		(database.PostgresMajorVersion != 16 && database.PostgresMajorVersion != 17) ||
-		database.StorageGB < 10 || database.StorageGB > 500 || database.ProvisionExpectedSeconds <= 0 ||
+		database.StorageGB < 10 || database.StorageGB > 500 ||
+		database.ProvisionExpectedSeconds <= 0 ||
 		database.ProvisionTimeoutSeconds < database.ProvisionExpectedSeconds {
 		return errors.New("benchmark Managed Postgres configuration is invalid")
 	}
 	sizes := []string{
 		profile.Machines.Control, profile.Machines.Ingress, profile.Machines.Relay,
-		profile.Machines.Coordinator, profile.Machines.Publisher, profile.Machines.Load,
+		profile.Machines.Pebble, profile.Machines.Coordinator, profile.Machines.Publisher, profile.Machines.Load,
 	}
 	for _, size := range sizes {
 		if size == "" || profile.Pricing.MachinePerSecondUSD[size] <= 0 {
@@ -299,12 +347,15 @@ func validateBenchmarkProfile(profile benchmarkProfile) error {
 		}
 	}
 	if profile.Pricing.SourceURL == "" || profile.Pricing.ManagedPostgresSourceURL == "" || profile.Pricing.Route53SourceURL == "" ||
-		profile.Pricing.PublicIPv4PerHour < 0 || profile.Pricing.ManagedPostgresStorageGBPerMonthUSD < 0 ||
+		profile.Pricing.PublicIPv4PerHour < 0 || profile.Pricing.VolumeGBPerMonthUSD <= 0 ||
+		profile.Pricing.ManagedPostgresStorageGBPerMonthUSD < 0 ||
 		profile.Pricing.HostedZonePerMonth < 0 {
 		return errors.New("benchmark pricing is invalid")
 	}
 	for name, definition := range profile.Suites {
-		if definition.Repetitions < 1 || definition.Repetitions > 10 || len(definition.Cells) == 0 && !definition.RequiresTarget {
+		if definition.Repetitions < 1 || definition.Repetitions > 10 || len(definition.Cells) == 0 && !definition.RequiresTarget ||
+			definition.CertificateAuthority != benchmarkCertificateAuthorityPebble &&
+				definition.CertificateAuthority != benchmarkCertificateAuthorityLetsEncrypt {
 			return fmt.Errorf("suite %q is invalid", name)
 		}
 		for _, cell := range definition.Cells {
@@ -317,12 +368,22 @@ func validateBenchmarkProfile(profile benchmarkProfile) error {
 }
 
 func validateCellSpec(cell benchmarkCellSpec) error {
-	if cell.Routes <= 0 || cell.Routes > 10_000 || cell.FreshConnectionsPerSecond <= 0 ||
+	if !validBenchmarkAxis(cell.Axis) || cell.Routes <= 0 || cell.Routes > 10_000 || cell.FreshConnectionsPerSecond <= 0 ||
 		cell.FreshConnectionsPerSecond > 10_000 || cell.HeldStreams < 0 || cell.HeldStreams > 100_000 ||
-		cell.WarmupSeconds < 0 || cell.DurationSeconds <= 0 {
+		cell.LifecycleChurnPerSecond < 0 || cell.LifecycleChurnPerSecond > 1_000 ||
+		cell.PayloadBytes <= 0 || cell.PayloadBytes > 16<<20 || cell.WarmupSeconds < 0 || cell.DurationSeconds <= 0 {
 		return fmt.Errorf("invalid cell r%d-c%d-s%d", cell.Routes, cell.FreshConnectionsPerSecond, cell.HeldStreams)
 	}
 	return nil
+}
+
+func validBenchmarkAxis(axis string) bool {
+	switch axis {
+	case "smoke", "active_routes", "lifecycle_churn", "fresh_connections", "held_streams", "bandwidth", "confirm", "compatibility":
+		return true
+	default:
+		return false
+	}
 }
 
 func divideRoundUp(value, divisor int) int {
@@ -332,11 +393,14 @@ func divideRoundUp(value, divisor int) int {
 	return (value + divisor - 1) / divisor
 }
 
-func estimatedCellSpend(profile benchmarkProfile, cell planCell, seconds int) float64 {
+func estimatedCellSpend(profile benchmarkProfile, cell planCell, seconds int, certificateAuthority string) float64 {
 	fixedRate := float64(profile.Topology.ControlProcesses)*profile.Pricing.MachinePerSecondUSD[profile.Machines.Control] +
 		float64(profile.Topology.IngressProcesses)*profile.Pricing.MachinePerSecondUSD[profile.Machines.Ingress] +
 		float64(profile.Topology.RelayServices*profile.Topology.RelayProcessesPerService)*profile.Pricing.MachinePerSecondUSD[profile.Machines.Relay] +
 		profile.Pricing.MachinePerSecondUSD[profile.Machines.Coordinator]
+	if certificateAuthority == benchmarkCertificateAuthorityPebble {
+		fixedRate += profile.Pricing.MachinePerSecondUSD[profile.Machines.Pebble]
+	}
 	workerRate := float64(cell.PublisherWorkers)*profile.Pricing.MachinePerSecondUSD[profile.Machines.Publisher] +
 		float64(cell.LoadWorkers)*profile.Pricing.MachinePerSecondUSD[profile.Machines.Load]
 	return (fixedRate + workerRate) * float64(seconds)
@@ -347,18 +411,38 @@ func fixedResourceSpend(profile benchmarkProfile, seconds int64, includeRetained
 	monthShare := float64(seconds) / (30 * 24 * 3600)
 	databaseMonthly := profile.Pricing.ManagedPostgresPlanPerMonthUSD[profile.ManagedPostgres.Plan] +
 		float64(profile.ManagedPostgres.StorageGB)*profile.Pricing.ManagedPostgresStorageGBPerMonthUSD
-	spend := 5*profile.Pricing.PublicIPv4PerHour*hours + databaseMonthly*monthShare
+	volumeMonthly := float64(profile.WorkerLimits.PublisherMachines*profile.WorkerLimits.PublisherVolumeGB) * profile.Pricing.VolumeGBPerMonthUSD
+	publicIPv4s := float64(profile.Topology.RelayServices + 2) // control, ingress, and relay apps; coordinator uses shared IPv4
+	spend := publicIPv4s*profile.Pricing.PublicIPv4PerHour*hours + (databaseMonthly+volumeMonthly)*monthShare
 	if includeRetainedResources {
-		spend += databaseMonthly + 2*profile.Pricing.HostedZonePerMonth
+		spend += databaseMonthly + volumeMonthly + 2*profile.Pricing.HostedZonePerMonth
 	}
 	return spend
+}
+
+func estimatedMonthlyCost(profile benchmarkProfile, cell planCell, certificateAuthority string) float64 {
+	const monthSeconds = 30 * 24 * 3600
+	machineRate := float64(profile.Topology.ControlProcesses)*profile.Pricing.MachinePerSecondUSD[profile.Machines.Control] +
+		float64(profile.Topology.IngressProcesses)*profile.Pricing.MachinePerSecondUSD[profile.Machines.Ingress] +
+		float64(profile.Topology.RelayServices*profile.Topology.RelayProcessesPerService)*profile.Pricing.MachinePerSecondUSD[profile.Machines.Relay] +
+		profile.Pricing.MachinePerSecondUSD[profile.Machines.Coordinator] +
+		float64(cell.PublisherWorkers)*profile.Pricing.MachinePerSecondUSD[profile.Machines.Publisher] +
+		float64(cell.LoadWorkers)*profile.Pricing.MachinePerSecondUSD[profile.Machines.Load]
+	if certificateAuthority == benchmarkCertificateAuthorityPebble {
+		machineRate += profile.Pricing.MachinePerSecondUSD[profile.Machines.Pebble]
+	}
+	volumes := float64(profile.WorkerLimits.PublisherMachines*profile.WorkerLimits.PublisherVolumeGB) * profile.Pricing.VolumeGBPerMonthUSD
+	database := profile.Pricing.ManagedPostgresPlanPerMonthUSD[profile.ManagedPostgres.Plan] +
+		float64(profile.ManagedPostgres.StorageGB)*profile.Pricing.ManagedPostgresStorageGBPerMonthUSD
+	publicAddresses := float64(profile.Topology.RelayServices+2) * profile.Pricing.PublicIPv4PerHour * 30 * 24
+	return machineRate*monthSeconds + volumes + database + publicAddresses + 2*profile.Pricing.HostedZonePerMonth
 }
 
 func configuredOverrides() map[string]string {
 	result := make(map[string]string)
 	for _, name := range []string{
 		"BENCH_SUITE", "BENCH_PROFILE", "BENCH_ROUTES", "BENCH_FRESH_CONNECTIONS_PER_SECOND",
-		"BENCH_HELD_STREAMS", "BENCH_REPETITIONS",
+		"BENCH_HELD_STREAMS", "BENCH_LIFECYCLE_CHURN_PER_SECOND", "BENCH_PAYLOAD_BYTES", "BENCH_REPETITIONS",
 	} {
 		if value, found := os.LookupEnv(name); found {
 			result[name] = value
@@ -376,12 +460,21 @@ func writeHumanPlan(destination io.Writer, plan benchmarkPlan) error {
 		plan.Topology.RelayServices, plan.Topology.RelayProcessesPerService)
 	fmt.Fprintf(output, "Database: Fly Managed Postgres %s, PostgreSQL %d, %d GB\n\n",
 		plan.ManagedPostgres.Plan, plan.ManagedPostgres.PostgresMajorVersion, plan.ManagedPostgres.StorageGB)
+	fmt.Fprintf(output, "Publishers: up to %d generators, %d routes/generator, one churn route per %d routes, %d GB persistent state each\n\n",
+		plan.WorkerLimits.PublisherMachines, plan.WorkerLimits.RoutesPerPublisher,
+		plan.WorkerLimits.RoutesPerChurnRoute, plan.WorkerLimits.PublisherVolumeGB)
+	certificateAuthority := "private Pebble"
+	if plan.CertificateAuthority == benchmarkCertificateAuthorityLetsEncrypt {
+		certificateAuthority = "Let's Encrypt"
+	}
+	fmt.Fprintf(output, "Certificates: %s\n\n", certificateAuthority)
 	table := tabwriter.NewWriter(output, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(table, "CELL\tROUTES\tFRESH/S\tHELD\tPUBLISHERS\tLOAD\tFRESH/LOAD\tDURATION\tTIMEOUT")
+	fmt.Fprintln(table, "CELL\tAXIS\tROUTES\tCHURN/S\tFRESH/S\tHELD\tPAYLOAD\tPUBLISHERS\tLOAD\tMONTHLY\tDURATION\tTIMEOUT")
 	for _, cell := range plan.Cells {
-		fmt.Fprintf(table, "%s\t%d\t%d\t%d\t%d\t%d\t%.1f\t%s\t%s\n",
-			cell.ID, cell.Routes, cell.FreshConnectionsPerSecond, cell.HeldStreams,
-			cell.PublisherWorkers, cell.LoadWorkers, cell.FreshConnectionsPerWorker,
+		fmt.Fprintf(table, "%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t$%.2f\t%s\t%s\n",
+			cell.ID, cell.Axis, cell.Routes, cell.LifecycleChurnPerSecond,
+			cell.FreshConnectionsPerSecond, cell.HeldStreams, cell.PayloadBytes,
+			cell.PublisherWorkers, cell.LoadWorkers, cell.EstimatedMonthlyCostUSD,
 			time.Duration(cell.DurationSeconds)*time.Second, time.Duration(cell.TimeoutSeconds)*time.Second)
 	}
 	if err := table.Flush(); err != nil {

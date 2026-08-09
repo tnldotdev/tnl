@@ -1,3 +1,13 @@
+FROM ghcr.io/letsencrypt/pebble:2.10.1@sha256:ddf230642b1a584f519f32e347de1b05a6e4c1f6c35c1863b33effeab5f78199 AS pebble
+
+FROM alpine:3.22 AS benchmark-api-certificate
+
+RUN apk add --no-cache openssl
+COPY --from=pebble /test/certs/pebble.minica.pem /benchmark-api-ca.crt
+COPY --from=pebble /test/certs/pebble.minica.key.pem /benchmark-api-ca.key
+RUN openssl req -new -newkey rsa:2048 -nodes -keyout /benchmark-api.key -out /benchmark-api.csr -subj '/CN=*.internal' -addext 'subjectAltName=DNS:*.internal,DNS:localhost,IP:127.0.0.1' && \
+    openssl x509 -req -in /benchmark-api.csr -CA /benchmark-api-ca.crt -CAkey /benchmark-api-ca.key -CAcreateserial -out /benchmark-api.crt -days 3650 -sha256 -copy_extensions copy
+
 FROM golang:1.27-bookworm AS build
 
 WORKDIR /src
@@ -9,11 +19,16 @@ RUN CGO_ENABLED=0 GOFLAGS=-tags=ts_omit_ssh go build -trimpath -o /out/tnlbench 
 
 FROM alpine:3.22
 
-RUN apk add --no-cache ca-certificates su-exec
+RUN apk add --no-cache ca-certificates su-exec && mkdir -p /etc/tnlbench && chmod 0755 /etc/tnlbench
 
 COPY --from=build /out/tnld /tnld
 COPY --from=build /out/tnlbench /tnlbench
+COPY --from=pebble /app /pebble
+COPY --from=benchmark-api-certificate --chown=65532:65532 --chmod=0644 /benchmark-api.crt /etc/tnlbench/benchmark-api.crt
+COPY --from=benchmark-api-certificate --chown=65532:65532 --chmod=0600 /benchmark-api.key /etc/tnlbench/benchmark-api.key
+COPY --from=benchmark-api-certificate --chown=65532:65532 --chmod=0644 /benchmark-api-ca.crt /etc/tnlbench/benchmark-api-root.pem
+COPY --chown=65532:65532 --chmod=0644 benchmarks/pebble-config.json /etc/tnlbench/pebble-config.json
 
 USER 0:0
-ENTRYPOINT ["/bin/sh", "-c", "ulimit -n \"${TNL_NOFILE_LIMIT:-65536}\"; if [ \"${TNLD_MODE:-}\" = ingress ] && [ -z \"${TNLD_INGRESS_ID:-}\" ]; then export TNLD_INGRESS_ID=ingress-${FLY_MACHINE_ID:?}; fi; if [ \"${TNLD_MODE:-}\" = relay ]; then export TNLD_RELAY_ID=${TNLD_RELAY_ID:-relay-${FLY_MACHINE_ID:?}}; export TNLD_INTERNAL_RELAY_ADDRESS=${TNLD_INTERNAL_RELAY_ADDRESS:-${FLY_MACHINE_ID}.vm.${FLY_APP_NAME:?}.internal:9445}; fi; if [ \"$#\" -eq 1 ]; then exec /sbin/su-exec 65532:65532 /bin/sh -c \"$1\"; fi; exec /sbin/su-exec 65532:65532 \"$@\"", "--"]
+ENTRYPOINT ["/bin/sh", "-c", "ulimit -n \"${TNL_NOFILE_LIMIT:-65536}\"; if [ -n \"${TNL_BENCH_EXTRA_ROOTS_B64:-}\" ]; then cp /etc/ssl/certs/ca-certificates.crt /tmp/tnlbench-roots.pem; if ! printf '%s' \"$TNL_BENCH_EXTRA_ROOTS_B64\" | base64 -d >> /tmp/tnlbench-roots.pem; then exit 1; fi; export SSL_CERT_FILE=/tmp/tnlbench-roots.pem; fi; if [ -n \"${TNL_BENCH_STATE_ROOT:-}\" ]; then mkdir -p \"$TNL_BENCH_STATE_ROOT\" && chown 65532:65532 \"$TNL_BENCH_STATE_ROOT\" && chmod 0700 \"$TNL_BENCH_STATE_ROOT\"; fi; if [ \"${TNLD_MODE:-}\" = ingress ] && [ -z \"${TNLD_INGRESS_ID:-}\" ]; then export TNLD_INGRESS_ID=ingress-${FLY_MACHINE_ID:?}; fi; if [ \"${TNLD_MODE:-}\" = relay ]; then export TNLD_RELAY_ID=${TNLD_RELAY_ID:-relay-${FLY_MACHINE_ID:?}}; export TNLD_INTERNAL_RELAY_ADDRESS=${TNLD_INTERNAL_RELAY_ADDRESS:-${FLY_MACHINE_ID}.vm.${FLY_APP_NAME:?}.internal:9445}; fi; if [ \"$#\" -eq 1 ]; then exec /sbin/su-exec 65532:65532 /bin/sh -c \"$1\"; fi; exec /sbin/su-exec 65532:65532 \"$@\"", "--"]
 CMD ["/tnlbench"]

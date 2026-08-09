@@ -174,6 +174,16 @@ func (p *Route53Provider) ReconcileChallenge(ctx context.Context, record Challen
 	if existing == nil && len(nextValues) == 0 {
 		return zone, nil
 	}
+	if existing != nil && aws.ToInt64(existing.TTL) == 60 {
+		currentValues := make([]string, len(existing.ResourceRecords))
+		for index, value := range existing.ResourceRecords {
+			currentValues[index] = aws.ToString(value.Value)
+		}
+		slices.Sort(currentValues)
+		if slices.Equal(currentValues, nextValues) {
+			return zone, nil
+		}
+	}
 	change := types.Change{Action: types.ChangeActionUpsert}
 	if existing == nil {
 		change.Action = types.ChangeActionCreate

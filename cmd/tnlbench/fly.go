@@ -34,6 +34,7 @@ type flyPlatform struct {
 	org      string
 	region   string
 	executor commandExecutor
+	progress *benchmarkProgress
 }
 
 type flyAddresses struct {
@@ -47,6 +48,13 @@ type flyMachine struct {
 	State string `json:"state"`
 }
 
+type flyVolume struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Region string `json:"region"`
+	SizeGB int    `json:"size_gb"`
+}
+
 type machineSpec struct {
 	App           string
 	Name          string
@@ -56,6 +64,7 @@ type machineSpec struct {
 	Restart       string
 	Env           map[string]string
 	Ports         []string
+	Volumes       []string
 	MachineConfig string
 }
 
@@ -119,13 +128,16 @@ func (f flyPlatform) setSecrets(ctx context.Context, app string, values map[stri
 }
 
 func redactCommandError(err error, secrets map[string]string) error {
-	message := err.Error()
+	return errors.New(redactSensitiveText(err.Error(), secrets))
+}
+
+func redactSensitiveText(message string, secrets map[string]string) string {
 	for _, value := range secrets {
 		if value != "" {
 			message = strings.ReplaceAll(message, value, "[REDACTED]")
 		}
 	}
-	return errors.New(message)
+	return redactDatabaseText(message)
 }
 
 func (f flyPlatform) buildImage(ctx context.Context, app, label string) (string, error) {
@@ -178,6 +190,32 @@ func (f flyPlatform) allocateAddresses(ctx context.Context, app string, sharedIP
 	return result, nil
 }
 
+func (f flyPlatform) createVolume(ctx context.Context, app, name string, sizeGB int) (flyVolume, error) {
+	output, err := f.executor.Run(
+		ctx, f.binary, "volumes", "create", name, "--app", app, "--region", f.region,
+		"--size", fmt.Sprint(sizeGB), "--scheduled-snapshots=false", "--json", "--yes",
+	)
+	if err != nil {
+		return flyVolume{}, fmt.Errorf("create Fly volume %s: %w", name, err)
+	}
+	var volume flyVolume
+	if err := json.Unmarshal(output, &volume); err != nil {
+		return flyVolume{}, fmt.Errorf("decode Fly volume %s: %w", name, err)
+	}
+	if volume.ID == "" || volume.Name != name || volume.Region != f.region || volume.SizeGB != sizeGB {
+		return flyVolume{}, fmt.Errorf("fly volume %s did not match its requested identity", name)
+	}
+	return volume, nil
+}
+
+func (f flyPlatform) destroyVolume(ctx context.Context, app, id string) error {
+	_, err := f.executor.Run(ctx, f.binary, "volumes", "destroy", id, "--app", app, "--yes")
+	if err != nil && !strings.Contains(err.Error(), "not found") && !strings.Contains(err.Error(), "Could not find") {
+		return fmt.Errorf("destroy Fly volume %s: %w", id, err)
+	}
+	return nil
+}
+
 func (f flyPlatform) runMachine(ctx context.Context, spec machineSpec) (flyMachine, error) {
 	arguments := []string{"machine", "run", spec.Image}
 	if spec.Command != "" {
@@ -185,7 +223,7 @@ func (f flyPlatform) runMachine(ctx context.Context, spec machineSpec) (flyMachi
 	}
 	arguments = append(arguments,
 		"--app", spec.App, "--name", spec.Name, "--region", f.region, "--vm-size", spec.Size,
-		"--restart", spec.Restart, "--autostop", "off", "--detach",
+		"--restart", spec.Restart, "--autostop=off", "--detach",
 	)
 	names := make([]string, 0, len(spec.Env))
 	for name := range spec.Env {
@@ -198,29 +236,159 @@ func (f flyPlatform) runMachine(ctx context.Context, spec machineSpec) (flyMachi
 	for _, port := range spec.Ports {
 		arguments = append(arguments, "--port", port)
 	}
+	for _, volume := range spec.Volumes {
+		arguments = append(arguments, "--volume", volume)
+	}
 	if spec.MachineConfig != "" {
 		arguments = append(arguments, "--machine-config", spec.MachineConfig)
 	}
-	if _, err := f.executor.Run(ctx, f.binary, arguments...); err != nil {
-		return flyMachine{}, fmt.Errorf("run Fly machine %s: %w", spec.Name, err)
+	launchCtx, cancel := context.WithTimeout(ctx, time.Minute)
+	type launchResult struct {
+		err error
+	}
+	launched := make(chan launchResult, 1)
+	startedAt := time.Now()
+	go func() {
+		_, err := f.executor.Run(launchCtx, f.binary, arguments...)
+		launched <- launchResult{err: err}
+	}()
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	var launchErr error
+launchWait:
+	for {
+		select {
+		case result := <-launched:
+			launchErr = result.err
+			break launchWait
+		case <-ticker.C:
+			f.progress.printf("machine %s: waiting for Fly start (%s)", spec.Name, time.Since(startedAt).Truncate(time.Second))
+		case <-launchCtx.Done():
+			launchErr = launchCtx.Err()
+			break launchWait
+		}
+	}
+	cancel()
+	if launchErr != nil {
+		machine, listErr := f.machineByName(ctx, spec.App, spec.Name)
+		if listErr == nil && machine.State == "started" {
+			return machine, nil
+		}
+		if machine.ID != "" {
+			return machine, fmt.Errorf("run Fly machine %s: %w (machine %s is %s)", spec.Name, launchErr, machine.ID, machine.State)
+		}
+		if listErr != nil {
+			return flyMachine{}, fmt.Errorf("run Fly machine %s: %w (list after failure: %v)", spec.Name, launchErr, listErr)
+		}
+		return flyMachine{}, fmt.Errorf("run Fly machine %s: %w", spec.Name, launchErr)
 	}
 	deadline := time.Now().Add(2 * time.Minute)
+	lastState := ""
+	nextHeartbeat := time.Now().Add(10 * time.Second)
 	for {
-		machines, err := f.listMachines(ctx, spec.App)
-		if err == nil {
-			for _, machine := range machines {
-				if machine.Name == spec.Name {
-					return machine, nil
-				}
+		machine, err := f.machineByName(ctx, spec.App, spec.Name)
+		if err == nil && machine.State == "started" {
+			return machine, nil
+		}
+		if err == nil && machine.ID != "" && machine.State != lastState {
+			f.progress.printf("machine %s: state %s", spec.Name, machine.State)
+			lastState = machine.State
+			nextHeartbeat = time.Now().Add(10 * time.Second)
+		} else if !time.Now().Before(nextHeartbeat) {
+			state := machine.State
+			if state == "" {
+				state = "not listed"
 			}
+			f.progress.printf("machine %s: still waiting (state %s)", spec.Name, state)
+			nextHeartbeat = time.Now().Add(10 * time.Second)
+		}
+		if err == nil && machine.ID != "" && spec.Restart == "no" && machine.State == "stopped" {
+			return machine, fmt.Errorf("fly machine %s stopped before becoming ready", spec.Name)
 		}
 		if time.Now().After(deadline) {
-			return flyMachine{}, fmt.Errorf("fly machine %s did not appear (last list error: %v)", spec.Name, err)
+			return machine, fmt.Errorf("fly machine %s did not become started (last state %q, last list error: %v)", spec.Name, machine.State, err)
 		}
 		if err := sleepContext(ctx, time.Second); err != nil {
 			return flyMachine{}, err
 		}
 	}
+}
+
+func (f flyPlatform) machineByName(ctx context.Context, app, name string) (flyMachine, error) {
+	machines, err := f.listMachines(ctx, app)
+	if err != nil {
+		return flyMachine{}, err
+	}
+	for _, machine := range machines {
+		if machine.Name == name {
+			return machine, nil
+		}
+	}
+	return flyMachine{}, nil
+}
+
+func (f flyPlatform) waitMachineReady(ctx context.Context, app, machineID string, timeout time.Duration) error {
+	return f.waitMachineCommandReady(
+		ctx, app, machineID, "wget -q --spider http://127.0.0.1:9090/ready", timeout,
+	)
+}
+
+func (f flyPlatform) waitMachineCommandReady(
+	ctx context.Context,
+	app, machineID, command string,
+	timeout time.Duration,
+) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	var lastErr error
+	for {
+		_, lastErr = f.machineCommand(ctx, app, machineID, command)
+		if lastErr == nil {
+			return nil
+		}
+		if err := sleepContext(ctx, 2*time.Second); err != nil {
+			return fmt.Errorf("fly machine %s did not become ready: %w (last probe error: %v)", machineID, err, lastErr)
+		}
+	}
+}
+
+func (f flyPlatform) machineCommand(ctx context.Context, app, machineID, command string) ([]byte, error) {
+	output, err := f.executor.Run(
+		ctx, f.binary, "ssh", "console", "--app", app, "--machine", machineID,
+		"--command", benchmarkShellCommand(command), "--pty=false",
+	)
+	if err != nil {
+		return output, fmt.Errorf("run command on Fly machine %s: %w", machineID, err)
+	}
+	return output, nil
+}
+
+func benchmarkShellCommand(command string) string {
+	return "/bin/sh -c '" + strings.ReplaceAll(command, "'", `'"'"'`) + "'"
+}
+
+func (f flyPlatform) machineDiagnostics(ctx context.Context, app string, machines []flyMachine) string {
+	var sections []string
+	for _, machine := range machines {
+		for _, command := range []struct {
+			label     string
+			arguments []string
+		}{
+			{"status", []string{"machine", "status", machine.ID, "--app", app}},
+			{"logs", []string{"logs", "--no-tail", "--app", app, "--machine", machine.ID}},
+		} {
+			output, err := f.executor.Run(ctx, f.binary, command.arguments...)
+			text := strings.TrimSpace(string(output))
+			if err != nil {
+				if text != "" {
+					text += "\n"
+				}
+				text += "command error: " + err.Error()
+			}
+			sections = append(sections, fmt.Sprintf("[%s %s]\n%s", machine.Name, command.label, text))
+		}
+	}
+	return strings.Join(sections, "\n\n") + "\n"
 }
 
 func (f flyPlatform) runEphemeral(ctx context.Context, spec machineSpec) error {
@@ -230,7 +398,7 @@ func (f flyPlatform) runEphemeral(ctx context.Context, spec machineSpec) error {
 	}
 	arguments = append(arguments,
 		"--app", spec.App, "--name", spec.Name, "--region", f.region, "--vm-size", spec.Size,
-		"--restart", "no", "--autostop", "off", "--rm",
+		"--restart", "no", "--autostop=off", "--rm",
 	)
 	names := make([]string, 0, len(spec.Env))
 	for name := range spec.Env {

@@ -19,6 +19,7 @@ type benchmarkCLI struct {
 	Publisher   publisherCommand   `cmd:"" help:"Create and hold one shard of benchmark routes."`
 	Load        loadCommand        `cmd:"" help:"Generate visitor load for one benchmark cell."`
 	Report      reportCommand      `cmd:"" help:"Merge worker results and write report artifacts."`
+	Resolver    resolverCommand    `cmd:"" help:"Resolve private-CA challenges through authoritative DNS."`
 }
 
 func main() {
@@ -44,6 +45,8 @@ func main() {
 		err = commands.Load.run(ctx)
 	case "report":
 		err = commands.Report.run(os.Stdout)
+	case "resolver":
+		err = commands.Resolver.run(ctx)
 	default:
 		panic("unhandled tnlbench command")
 	}
@@ -56,6 +59,7 @@ func main() {
 type workerCommand struct {
 	CellID           string `name:"cell-id" env:"TNL_BENCH_CELL_ID" required:"" help:"Expanded benchmark cell ID."`
 	Suite            string `name:"suite" env:"TNL_BENCH_SUITE" required:"" help:"Benchmark suite name."`
+	Axis             string `name:"axis" env:"TNL_BENCH_AXIS" required:"" help:"Independent workload ramp axis."`
 	Repetition       int    `name:"repetition" env:"TNL_BENCH_REPETITION" required:"" help:"One-based repetition."`
 	CoordinatorURL   string `name:"coordinator-url" env:"TNL_BENCH_COORDINATOR_URL" required:"" help:"Coordinator HTTP origin."`
 	CoordinatorToken string `name:"coordinator-token" env:"TNL_BENCH_COORDINATOR_TOKEN" required:"" help:"Coordinator bearer token."`
@@ -73,6 +77,9 @@ func (c workerCommand) validate() error {
 	}
 	if c.Sequence < 0 {
 		return fmt.Errorf("cell sequence must not be negative")
+	}
+	if !validBenchmarkAxis(c.Axis) {
+		return fmt.Errorf("benchmark axis is invalid")
 	}
 	_, err := newCoordinatorClient(c.CoordinatorURL, c.CoordinatorToken)
 	return err

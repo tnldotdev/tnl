@@ -109,6 +109,24 @@ func TestRoute53ProviderPreservesForeignChallengeValuesDuringReplacementAndClean
 	}
 }
 
+func TestRoute53ProviderDoesNotRewriteUnchangedChallenge(t *testing.T) {
+	const recordName = "_acme-challenge.member.tunnels.example.test"
+	client, provider := route53TestProvider(t, "tunnels.example.test")
+	client.recordSets[dnsName(recordName)] = []types.ResourceRecordSet{
+		*simpleRecordSet(recordName, types.RRTypeTxt, []string{`"owned"`, `"foreign"`}),
+	}
+	record := ChallengeRecord{
+		ZoneID: "Z123", ZoneDomain: "tunnels.example.test", RecordName: recordName,
+		DesiredOwnedValues: []string{"owned"}, PreviouslyOwnedValues: []string{"owned"},
+	}
+	if _, err := provider.ReconcileChallenge(t.Context(), record); err != nil {
+		t.Fatal(err)
+	}
+	if len(client.changes) != 0 {
+		t.Fatalf("unchanged challenge changes = %#v", client.changes)
+	}
+}
+
 func ownedRoute53Tags(work controlstate.DNSAuthorityWork) []types.Tag {
 	return []types.Tag{
 		{Key: aws.String(managedByTagKey), Value: aws.String(managedByTagValue)},

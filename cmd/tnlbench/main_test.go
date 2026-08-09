@@ -2,22 +2,24 @@ package main
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"slices"
-	"sync"
 	"testing"
 	"testing/synctest"
+	"time"
 
+	"github.com/tnldotdev/tnl/internal/controlclient"
+	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 func TestLoadValidationProtectsSourceLimiter(t *testing.T) {
 	valid := loadCommand{
 		workerCommand: workerCommand{
-			CellID: "cell", Suite: "smoke", Repetition: 1, CoordinatorURL: "http://coordinator.internal:8080",
+			CellID: "cell", Suite: "smoke", Axis: "smoke", Repetition: 1, CoordinatorURL: "http://coordinator.internal:8080",
 			CoordinatorToken: "secret", WorkerCount: 1,
 		},
-		Routes: 1, HostnameSuffix: "routes.example.com", TotalFreshRate: 30, TotalHeldStreams: 1,
+		Routes: 1, TotalFreshRate: 30, TotalHeldStreams: 1,
 		FreshRate: 30, HeldStreams: 1, Warmup: 1, Duration: 1,
 		PayloadBytes: 1, Timeout: 1,
 	}
@@ -30,66 +32,93 @@ func TestLoadValidationProtectsSourceLimiter(t *testing.T) {
 	}
 }
 
-func TestCleanupDeletesDurableRoutesAfterPublisherStops(t *testing.T) {
+func TestPublisherRouteShardingUsesStableBands(t *testing.T) {
+	var all []int
+	for worker := range 5 {
+		indexes := benchmarkRouteIndexes(43, 10, 5, worker)
+		for _, index := range indexes {
+			if index/10 != worker {
+				t.Fatalf("route %d assigned to worker %d", index, worker)
+			}
+		}
+		all = append(all, indexes...)
+	}
+	slices.Sort(all)
+	want := make([]int, 43)
+	for index := range want {
+		want[index] = index
+	}
+	if !slices.Equal(all, want) {
+		t.Fatalf("routes = %v", all)
+	}
+	if got := benchmarkRouteIndexes(2, 10, 4, 3); len(got) != 0 {
+		t.Fatalf("invalid publisher layout routes = %v", got)
+	}
+}
+
+func TestPublisherValidationAcceptsOneStableBand(t *testing.T) {
+	loginToken, err := credentials.NewLoginToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := publisherCommand{
+		workerCommand: workerCommand{
+			CellID: "cell", Suite: "smoke", Axis: "smoke", Repetition: 1, CoordinatorURL: "http://coordinator.internal:8080",
+			CoordinatorToken: "secret", WorkerCount: 1,
+		},
+		ServerURL: "https://control.example.com", LoginToken: string(loginToken), HostnameSuffix: "routes.example.com",
+		Routes: 2, AssignedRoutes: 2, RoutesPerPublisher: 10, RoutesPerChurn: 10, StateRoot: "/state",
+		FreshRate: 2, Parallel: 1, PayloadBytes: 1, Timeout: 1,
+	}
+	if err := command.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPublisherDiscoveryRetriesUnavailableControl(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		stopped, canceled := make(chan struct{}), make(chan struct{})
-		cleaner := &cleanerStub{stopped: stopped, routes: []controlv1.Route{{Id: "route_1", TeamId: "team_1"}}}
+		attempts := 0
+		want := controlv1.ControlDiscovery{AuthorityEndpoint: "https://control.example.test"}
+		got, err := retryBenchmarkDiscovery(t.Context(), time.Minute, func(context.Context) (controlv1.ControlDiscovery, error) {
+			attempts++
+			if attempts == 1 {
+				return controlv1.ControlDiscovery{}, controlclient.ErrUnavailable
+			}
+			return want, nil
+		})
+		if err != nil || got.AuthorityEndpoint != want.AuthorityEndpoint || attempts != 2 {
+			t.Fatalf("discovery = %#v, attempts = %d, error = %v", got, attempts, err)
+		}
+
+		wantErr := errors.New("invalid discovery response")
+		_, err = retryBenchmarkDiscovery(t.Context(), time.Minute, func(context.Context) (controlv1.ControlDiscovery, error) {
+			return controlv1.ControlDiscovery{}, wantErr
+		})
+		if !errors.Is(err, wantErr) {
+			t.Fatalf("discovery error = %v, want %v", err, wantErr)
+		}
+	})
+}
+
+func TestStopRoutesWaitsForPublisherAndPreservesDurableRoute(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		canceled := make(chan struct{})
 		done := make(chan error, 1)
-		processes := []*routeProcess{{teamID: "team_1", routeID: "route_1", cancel: func() { close(canceled) }, done: done}}
+		processes := []*routeProcess{{index: 7, routeID: "route_1", cancel: func() { close(canceled) }, done: done}}
 		finished := make(chan error, 1)
-		go func() { _, err := cleanupRoutes(t.Context(), 1, cleaner, processes); finished <- err }()
+		go func() { _, err := stopRoutes(t.Context(), processes); finished <- err }()
 		synctest.Wait()
 		select {
 		case <-canceled:
 		default:
 			t.Error("publisher was not canceled")
 		}
-		cleaner.mu.Lock()
-		if len(cleaner.calls) != 0 {
-			t.Errorf("cleanup before publisher stopped: %v", cleaner.calls)
-		}
-		cleaner.mu.Unlock()
-		close(stopped)
 		done <- nil
 		if err := <-finished; err != nil {
 			t.Fatal(err)
 		}
-		if !slices.Equal(cleaner.deleted, []string{"route_1"}) || !slices.Equal(cleaner.calls, []string{"list:team_1", "delete:route_1", "list:team_1"}) {
-			t.Fatalf("deleted = %v, calls = %v", cleaner.deleted, cleaner.calls)
+		if processes[0].routeID != "route_1" {
+			t.Fatal("durable route identity changed while stopping its route session")
 		}
 	})
-}
-
-type cleanerStub struct {
-	mu      sync.Mutex
-	routes  []controlv1.Route
-	deleted []string
-	calls   []string
-	stopped <-chan struct{}
-}
-
-func (c *cleanerStub) ListRoutes(_ context.Context, team string) ([]controlv1.Route, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.calls = append(c.calls, "list:"+team)
-	select {
-	case <-c.stopped:
-	default:
-		return nil, fmt.Errorf("list before publisher stopped")
-	}
-	return append([]controlv1.Route(nil), c.routes...), nil
-}
-
-func (c *cleanerStub) DeleteRoute(_ context.Context, routeID string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.calls = append(c.calls, "delete:"+routeID)
-	select {
-	case <-c.stopped:
-	default:
-		return fmt.Errorf("delete before publisher stopped")
-	}
-	c.deleted = append(c.deleted, routeID)
-	c.routes = nil
-	return nil
 }

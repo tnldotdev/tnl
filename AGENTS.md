@@ -299,7 +299,7 @@ Frames follow this general form:
 # Operational Safety
 
 - The local stack order is `task local:up`, `task local:trust`, then `task local:login`. `local:trust` modifies the macOS login keychain; `local:down` preserves state, while `local:reset` removes trust, containers, volumes, and `.local`.
-- Never execute the Fly benchmark without explicit approval. Planning is read-only, but execution requires `BENCH_SUITE` and `BENCH_APPROVED=1` and uses paid persistent Fly and DNS resources.
+- Never execute the Fly benchmark without explicit approval. Planning is read-only, but execution requires `BENCH_SUITE` and `BENCH_APPROVED=1` and uses paid persistent Fly and DNS resources. Explicit continuing approval covers retries of the same expanded plan during one debugging session; do not ask again unless the suite, overrides, resources, or cost ceiling change.
 - For release/version/tag work, load and follow `.agents/skills/tnl-release/SKILL.md`; do not duplicate or improvise its approval gates.
 - Keep GitHub Actions SHA-pinned with explicit permissions, timeouts, and `persist-credentials: false`; retain `actionlint` and `zizmor` checks.
 - CI publishes release artifacts and images but does not deploy production. Production Compose images must remain digest-pinned.
