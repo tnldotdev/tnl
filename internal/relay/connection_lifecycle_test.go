@@ -97,7 +97,7 @@ func publisherFixture(t *testing.T, id string, revision uint64) (*PublisherConne
 		}
 		return nil
 	})
-	transport, err := (muxsession.TLSYamuxConnector{TLSConfig: &tls.Config{InsecureSkipVerify: true}}).Connect(ctx, muxsession.Endpoint{Address: listener.Addr().String(), ServerName: "relay.test"}) // Self-signed loopback fixture.
+	transport, err := (muxsession.TLSYamuxConnector{TLSConfig: &tls.Config{InsecureSkipVerify: true}}).Connect(ctx, muxsession.Endpoint{Address: listener.Addr().String(), ServerName: "relay.test"}) // Self-signed local fixture.
 	if err != nil {
 		t.Fatal(err)
 	}

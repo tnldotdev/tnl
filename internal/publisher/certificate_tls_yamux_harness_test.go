@@ -18,7 +18,7 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-// This harness starts real loopback HTTP, TLS and yamux servers. Synctest
+// This harness starts real local HTTP, TLS and yamux servers. Synctest
 // certificate tests use certificateTestTransport instead.
 func startCertificateTLSYamuxHarness(t *testing.T, control *certificateTestControl) Config {
 	t.Helper()

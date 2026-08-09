@@ -32,7 +32,7 @@ import (
 	"golang.org/x/crypto/acme"
 )
 
-func TestRouteServerTerminatesTLSAndProxiesLoopbackHTTP(t *testing.T) {
+func TestRouteServerTerminatesTLSAndProxiesLocalHTTP(t *testing.T) {
 	forwarded := make(chan string, 1)
 	upstream := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		forwarded <- request.Header.Get("X-Forwarded-For")
@@ -268,7 +268,7 @@ func TestRouteServerServesTransportNeutralPublisherConnection(t *testing.T) {
 	}
 }
 
-func TestRouteServerNegotiatesHTTP2AndProxiesLoopbackHTTP(t *testing.T) {
+func TestRouteServerNegotiatesHTTP2AndProxiesLocalHTTP(t *testing.T) {
 	upstreamProtocol := make(chan int, 1)
 	upstream := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		upstreamProtocol <- request.ProtoMajor

@@ -130,12 +130,12 @@ func newIntegrationRoute53(t *testing.T, zoneID, domain string) *integrationRout
 	}
 	listener, err := net.Listen("tcp", f.address)
 	if err != nil {
-		t.Fatalf("authoritative DNS integration requires free loopback TCP/UDP port 53 (CI permits unprivileged port 53): %v", err)
+		t.Fatalf("authoritative DNS integration requires free TCP/UDP port 53 on localhost (CI permits unprivileged port 53): %v", err)
 	}
 	t.Cleanup(func() { _ = listener.Close() })
 	packet, err := net.ListenPacket("udp", f.address)
 	if err != nil {
-		t.Fatalf("authoritative DNS integration requires free loopback UDP port 53: %v", err)
+		t.Fatalf("authoritative DNS integration requires free UDP port 53 on localhost: %v", err)
 	}
 	t.Cleanup(func() { _ = packet.Close() })
 	for _, server := range []*dns.Server{

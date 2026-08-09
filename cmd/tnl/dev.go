@@ -44,7 +44,7 @@ type devCommand struct {
 	tunnelFlags    `embed:""`
 	Service        string        `arg:"" name:"service" optional:"" help:"Configured service name."`
 	Command        []string      `kong:"-"`
-	Port           int           `name:"port" help:"Loopback target port. Usually detected automatically."`
+	Port           int           `name:"port" help:"Port for the local service. Usually detected automatically."`
 	StartupTimeout time.Duration `name:"startup-timeout" help:"Time to wait for the local service to start and report its target."`
 
 	commandDir          string

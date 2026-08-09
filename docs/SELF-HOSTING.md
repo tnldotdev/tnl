@@ -144,7 +144,7 @@ TNLD_OIDC_SCOPES=openid,profile,email
 
 `TNLD_OIDC_LOGIN_FLOW` accepts `device_code` or
 `authorization_code_pkce`. For Auth0, use a native application, enable the
-selected grant, and configure loopback callbacks when using authorization-code
+selected grant, and configure callbacks to localhost when using authorization-code
 PKCE. The client is public: do not configure or distribute an OIDC client
 secret. `openid` is required; `profile` and `email` provide useful local
 identity details but are not required. `TNLD_OIDC_ISSUER` is the provider's

@@ -7,7 +7,7 @@ long-running behavior.
 
 All identifiers, domains, addresses, paths, tokens, and timestamps in examples
 are illustrative. Domains use the reserved `.test` suffix, public IP addresses
-use documentation ranges, local targets use loopback addresses, private
+use documentation ranges, local targets use addresses on this computer, private
 listeners use private-use ranges, and credential-like values are not valid
 secrets.
 
@@ -18,23 +18,23 @@ teams, domains, and routes used by those tunnels.
 
 ### Placeholder Legend
 
-| Placeholder              | Meaning                                                                                  |
-| ------------------------ | ---------------------------------------------------------------------------------------- |
-| `<service>`              | A configured local service name such as `web`.                                           |
-| `<service-or-target>`    | A configured service name, a port, `localhost:<port>`, or an exact loopback HTTP origin. |
-| `<server>`               | A control URL.                                                                           |
-| `<team>`                 | A team ID or an unambiguous display name.                                                |
-| `<display-name>`         | A new organization team's display name.                                                  |
-| `<member-slug>`          | An immutable lowercase member slug.                                                      |
-| `<invitation-id>`        | A team invitation ID.                                                                    |
-| `<secret>`               | A one-time invitation credential. Treat it as a secret.                                  |
-| `<membership-id>`        | A membership ID returned by `tnl team members`.                                          |
-| `<domain>`               | A domain name, or where documented, a domain ID.                                         |
-| `<route-id>`             | A route ID returned by `tnl route list`.                                                 |
-| `<relay-id>`             | A relay process identity returned by `tnl admin relays list`.                            |
-| `<name>`                 | A maintenance control name.                                                              |
-| `[flags]`                | Global flags plus flags shared by or specific to the command.                            |
-| `-- <command> [args...]` | The `tnl dev` child command. Everything after `--` is passed to the child.               |
+| Placeholder              | Meaning                                                                                    |
+| ------------------------ | ------------------------------------------------------------------------------------------ |
+| `<service>`              | A configured local service name such as `web`.                                             |
+| `<service-or-target>`    | A configured service name, a port, `localhost:<port>`, or an HTTP origin on this computer. |
+| `<server>`               | A control URL.                                                                             |
+| `<team>`                 | A team ID or an unambiguous display name.                                                  |
+| `<display-name>`         | A new organization team's display name.                                                    |
+| `<member-slug>`          | An immutable lowercase member slug.                                                        |
+| `<invitation-id>`        | A team invitation ID.                                                                      |
+| `<secret>`               | A one-time invitation credential. Treat it as a secret.                                    |
+| `<membership-id>`        | A membership ID returned by `tnl team members`.                                            |
+| `<domain>`               | A domain name, or where documented, a domain ID.                                           |
+| `<route-id>`             | A route ID returned by `tnl route list`.                                                   |
+| `<relay-id>`             | A relay process identity returned by `tnl admin relays list`.                              |
+| `<name>`                 | A maintenance control name.                                                                |
+| `[flags]`                | Global flags plus flags shared by or specific to the command.                              |
+| `-- <command> [args...]` | The `tnl dev` child command. Everything after `--` is passed to the child.                 |
 
 Angle brackets indicate required arguments. Square brackets indicate optional
 arguments. Literal fake IDs in examples use all-zero bodies so they cannot be
@@ -355,7 +355,7 @@ tnl dev [<service>] [flags] [-- <command> [args...]]
 
 | Flag                         | Default                  | Behavior                                                                                                                         |
 | ---------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
-| `--port=INT`                 | unspecified              | Require an exact loopback target port from 1 through 65535.                                                                      |
+| `--port=INT`                 | unspecified              | Require an exact local service port from 1 through 65535.                                                                        |
 | `--startup-timeout=DURATION` | project value, then `2m` | Wait for the local service to start and report its target. `0` is unset; the effective value must be positive and at most `10m`. |
 
 All shared remote, tunnel, and `--open` flags also apply. There is no
@@ -435,10 +435,10 @@ All shared remote, tunnel, and `--open` flags also apply.
 
 The argument selects a project service when it matches a configured service
 name. Otherwise it is a target. A target may be a bare port,
-`localhost:<port>`, or an `http://` URL whose host is `localhost` or a loopback
-address. Paths, queries, fragments, HTTPS, whitespace, and non-loopback hosts are
-not allowed. The normalized target is always
-`http://<loopback-address>:<port>`.
+`localhost:<port>`, or an `http://` URL whose host is `localhost`, a
+`127.x.x.x` address, or `::1`. Paths, queries, fragments, HTTPS, whitespace,
+and all other hosts are not allowed. The normalized target is always an HTTP
+origin on this computer.
 
 If the argument is omitted, the only configured service is selected and its
 `publish.target` is used. With multiple services, an explicit service is
@@ -1507,7 +1507,7 @@ All possible event-specific fields are:
 
 | Field           | JSON type         | Events and meaning                                                          |
 | --------------- | ----------------- | --------------------------------------------------------------------------- |
-| `target`        | string            | `starting`; normalized loopback HTTP target.                                |
+| `target`        | string            | `starting`; normalized local HTTP target.                                   |
 | `url`           | string            | `ready`; public HTTPS URL.                                                  |
 | `route_version` | unsigned integer  | `ready` and warning events tied to one route version.                       |
 | `ip`            | string            | `current_ip`; current client IP automatically included in nonpublic policy. |
@@ -1598,7 +1598,7 @@ complete schema is:
 | `tunnels[].route_version`    | unsigned integer  | no       | Current recorded route version.                              |
 | `tunnels[].hostname`         | string            | no       | Assigned public hostname.                                    |
 | `tunnels[].public_url`       | string            | no       | `https://` plus the assigned hostname.                       |
-| `tunnels[].target`           | string            | no       | Normalized loopback target.                                  |
+| `tunnels[].target`           | string            | no       | Normalized local HTTP target.                                |
 | `tunnels[].framework`        | string            | no       | Registered `tnl dev` framework.                              |
 | `tunnels[].started_at`       | RFC3339 timestamp | yes      | Local start time.                                            |
 | `tunnels[].updated_at`       | RFC3339 timestamp | yes      | Last local status update.                                    |
@@ -1652,7 +1652,7 @@ Classified diagnostics have a stable code, title, summary text, failure flow,
 | Code                                 | Frame state                        | Typical boundary                                                                                              | Help URL                                           |
 | ------------------------------------ | ---------------------------------- | ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
 | `TNL_TARGET_UNAVAILABLE`             | `local service unavailable`        | Publisher cannot connect to the target.                                                                       | `https://tnl.dev/e/target`                         |
-| `TNL_TARGET_INVALID`                 | `invalid target`                   | Target is not a supported loopback HTTP origin or port.                                                       | `https://tnl.dev/e/config`                         |
+| `TNL_TARGET_INVALID`                 | `invalid target`                   | Target is not a supported local HTTP origin or port.                                                          | `https://tnl.dev/e/config`                         |
 | `TNL_ROUTE_INVALID`                  | `invalid route`                    | Publisher cannot use the assigned hostname.                                                                   | `https://tnl.dev/e/route`                          |
 | `TNL_REQUEST_REJECTED`               | `request rejected`                 | Publisher rejects a visitor request before contacting the local service.                                      | `https://tnl.dev/e/request`                        |
 | `TNL_FRAMEWORK_REGISTRATION_TIMEOUT` | `framework registration timed out` | `tnl dev` does not receive framework configuration or target registration before the applicable wait expires. | `https://tnl.dev/e/framework-registration-timeout` |
@@ -1817,7 +1817,7 @@ $ tnld serve --config /etc/tnl/standalone.yml
 Standalone composes one ingress and two logical relay services. Control HTTPS,
 visitor ingress, and relay TLS/TCP share the TCP address configured by
 `ingress_listen`; QUIC uses `relay_udp_listen`; internal forwarding uses two
-ephemeral loopback listeners.
+temporary listeners on localhost.
 
 Representative control stderr:
 
@@ -1955,7 +1955,7 @@ merged.
 | `--ingress-listen` / `ingress_listen`                       | `TNLD_INGRESS_LISTEN`            | empty; `:443` in S/I                                     | S/I                   | Public visitor listener and standalone's shared public TCP listener.                 |
 | `--relay-tcp-listen` / `relay_tcp_listen`                   | `TNLD_RELAY_TCP_LISTEN`          | empty; `:443` in S/R                                     | R                     | Public TLS/TCP publisher-connection listener. Resolved but not used in S.            |
 | `--relay-udp-listen` / `relay_udp_listen`                   | `TNLD_RELAY_UDP_LISTEN`          | empty; `:443` in S/R                                     | S/R                   | Public QUIC publisher-connection listener.                                           |
-| `--internal-relay-listen` / `internal_relay_listen`         | `TNLD_INTERNAL_RELAY_LISTEN`     | empty; R derives `:<port>` from `internal_relay_address` | R                     | Internal forwarding listener. Standalone creates ephemeral loopback listeners.       |
+| `--internal-relay-listen` / `internal_relay_listen`         | `TNLD_INTERNAL_RELAY_LISTEN`     | empty; R derives `:<port>` from `internal_relay_address` | R                     | Internal forwarding listener. Standalone creates temporary localhost listeners.      |
 | `--dns-server` / `dns_server`                               | `TNLD_DNS_SERVER`                | empty                                                    | S/C with DNS provider | Resolver used to verify claimed domains; empty uses the system resolver.             |
 | `--server-domain` / `server_domain`                         | `TNLD_SERVER_DOMAIN`             | empty                                                    | S/C                   | Required infrastructure suffix used to derive control, ingress, and relay hostnames. |
 | `--control-hostname` / `control_hostname`                   | `TNLD_CONTROL_HOSTNAME`          | empty                                                    | I/R                   | Required canonical control hostname without scheme, path, or port.                   |
@@ -2019,8 +2019,8 @@ explicit default port 443.
 | `--ingress-ipv6-address` / `ingress_ipv6_address`       | `TNLD_INGRESS_IPV6_ADDRESSES`  | `[]`                        | S/C managed DNS   | Repeatable stable ingress IPv6 addresses published in route records. |
 
 The route usage URL and token must be configured together. The URL must use
-HTTPS, except that loopback HTTP is accepted, and cannot contain credentials,
-query, or fragment.
+HTTPS, except that HTTP on `localhost`, `127.x.x.x`, or `::1` is accepted, and
+cannot contain credentials, query, or fragment.
 
 Route 53 zone IDs are bare values without surrounding whitespace, spaces, or
 `/`. A managed-zone ID requires at least one canonical ingress IP. Ingress IPs
