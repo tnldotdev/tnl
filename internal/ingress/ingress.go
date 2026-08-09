@@ -20,7 +20,21 @@ import (
 
 const defaultOpenTimeout = 10 * time.Second
 
-type LookupFunc func(string) (worker.RouteBackend, bool)
+type Route struct {
+	ID         string
+	Generation uint64
+	Backend    worker.RouteBackend
+}
+
+type LookupFunc func(string) (Route, bool)
+
+type BackendLookupFunc func(string) (worker.RouteBackend, bool)
+
+type UsageConnection interface {
+	AddIngress(int64, time.Time)
+	AddEgress(int64, time.Time)
+	Close(time.Time)
+}
 
 type Metrics interface {
 	IncCapacityRejection(string)
@@ -30,7 +44,7 @@ type Metrics interface {
 
 type Config struct {
 	Lookup              LookupFunc
-	LookupChallenge     LookupFunc
+	LookupChallenge     BackendLookupFunc
 	ServerHostname      string
 	HandleControl       func(net.Conn) bool
 	RequireProxyHeader  bool
@@ -38,6 +52,7 @@ type Config struct {
 	MaxRouteConnections int
 	OpenTimeout         time.Duration
 	Metrics             Metrics
+	OpenUsage           func(string, uint64, time.Time) UsageConnection
 	OnError             func(error)
 }
 
@@ -154,15 +169,20 @@ func (s *Server) handle(public net.Conn) error {
 		s.transfer(public)
 		return nil
 	}
-	backend, ok := s.config.Lookup(hello.ServerName)
+	route, ok := s.config.Lookup(hello.ServerName)
+	backend := route.Backend
+	routeID := route.ID
+	challenge := hello.ACMETLSALPN && s.config.LookupChallenge != nil
 	// Challenge lookup replaces ordinary routing to prevent fallback.
-	if hello.ACMETLSALPN && s.config.LookupChallenge != nil {
+	if challenge {
 		backend, ok = s.config.LookupChallenge(hello.ServerName)
+		routeID = hello.ServerName
 	}
 	if !ok {
 		return nil
 	}
-	routeID, admitted := s.admitRoute(hello.ServerName)
+	var admitted bool
+	routeID, admitted = s.admitRoute(routeID)
 	if !admitted {
 		if s.config.Metrics != nil {
 			s.config.Metrics.IncCapacityRejection("route_connections")
@@ -190,8 +210,18 @@ func (s *Server) handle(public net.Conn) error {
 	if err := writeAll(stream, header); err != nil {
 		return fmt.Errorf("ingress: write proxy header: %w", err)
 	}
+	var usage UsageConnection
+	if !challenge && s.config.OpenUsage != nil {
+		usage = s.config.OpenUsage(route.ID, route.Generation, time.Now().UTC())
+		defer func() { usage.Close(time.Now().UTC()) }()
+	}
 	replayed := &readerConn{Conn: public, reader: hello.Replay}
-	result, err := relay.Copy(replayed, stream)
+	var observeIngress, observeEgress func(int64)
+	if usage != nil {
+		observeIngress = func(bytes int64) { usage.AddIngress(bytes, time.Now().UTC()) }
+		observeEgress = func(bytes int64) { usage.AddEgress(bytes, time.Now().UTC()) }
+	}
+	result, err := relay.CopyObserved(replayed, stream, observeIngress, observeEgress)
 	if s.config.Metrics != nil {
 		s.config.Metrics.AddForwardedBytes("ingress_to_agent", result.LeftToRight)
 		s.config.Metrics.AddForwardedBytes("agent_to_ingress", result.RightToLeft)

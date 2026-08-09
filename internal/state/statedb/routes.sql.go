@@ -103,7 +103,7 @@ func (q *Queries) ExpireRouteLeases(ctx context.Context, routeID string) error {
 }
 
 const getActiveRouteByClaim = `-- name: GetActiveRouteByClaim :one
-SELECT routes.id, routes.claim_id, routes.principal_id, routes.hostname, routes.display_target, routes.state, routes.generation, routes.created_at, routes.deleted_at
+SELECT routes.id, routes.claim_id, routes.principal_id, routes.hostname, routes.display_target, routes.state, routes.generation, routes.lifecycle_sequence, routes.created_at, routes.deleted_at
 FROM routes
 WHERE claim_id = ?1 AND state = 'active'
 `
@@ -119,6 +119,7 @@ func (q *Queries) GetActiveRouteByClaim(ctx context.Context, claimID string) (Ro
 		&i.DisplayTarget,
 		&i.State,
 		&i.Generation,
+		&i.LifecycleSequence,
 		&i.CreatedAt,
 		&i.DeletedAt,
 	)
@@ -179,7 +180,7 @@ func (q *Queries) GetRouteClaimByHostname(ctx context.Context, hostname string) 
 
 const getRouteCredential = `-- name: GetRouteCredential :one
 SELECT
-    routes.id, routes.claim_id, routes.principal_id, routes.hostname, routes.display_target, routes.state, routes.generation, routes.created_at, routes.deleted_at,
+    routes.id, routes.claim_id, routes.principal_id, routes.hostname, routes.display_target, routes.state, routes.generation, routes.lifecycle_sequence, routes.created_at, routes.deleted_at,
     route_credentials.secret_hash,
     route_credentials.revoked_at
 FROM routes
@@ -210,12 +211,26 @@ func (q *Queries) GetRouteCredential(ctx context.Context, arg GetRouteCredential
 		&i.Route.DisplayTarget,
 		&i.Route.State,
 		&i.Route.Generation,
+		&i.Route.LifecycleSequence,
 		&i.Route.CreatedAt,
 		&i.Route.DeletedAt,
 		&i.SecretHash,
 		&i.RevokedAt,
 	)
 	return i, err
+}
+
+const getRouteGeneration = `-- name: GetRouteGeneration :one
+SELECT generation
+FROM routes
+WHERE id = ?1
+`
+
+func (q *Queries) GetRouteGeneration(ctx context.Context, routeID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getRouteGeneration, routeID)
+	var generation int64
+	err := row.Scan(&generation)
+	return generation, err
 }
 
 const getRouteLeaseForAuthentication = `-- name: GetRouteLeaseForAuthentication :one
@@ -253,6 +268,27 @@ func (q *Queries) GetRouteLeaseForAuthentication(ctx context.Context, arg GetRou
 		&i.ExpiresAt,
 	)
 	return i, err
+}
+
+const getRouteLeaseStatus = `-- name: GetRouteLeaseStatus :one
+SELECT status
+FROM route_leases
+WHERE id = ?1
+    AND route_id = ?2
+    AND generation = ?3
+`
+
+type GetRouteLeaseStatusParams struct {
+	LeaseID    string
+	RouteID    string
+	Generation int64
+}
+
+func (q *Queries) GetRouteLeaseStatus(ctx context.Context, arg GetRouteLeaseStatusParams) (string, error) {
+	row := q.db.QueryRowContext(ctx, getRouteLeaseStatus, arg.LeaseID, arg.RouteID, arg.Generation)
+	var status string
+	err := row.Scan(&status)
+	return status, err
 }
 
 const heartbeatRouteLease = `-- name: HeartbeatRouteLease :execrows
@@ -473,8 +509,43 @@ func (q *Queries) InvalidateOtherBootRouteLeases(ctx context.Context, bootEpoch 
 	return err
 }
 
+const listActiveClaimRouteGenerations = `-- name: ListActiveClaimRouteGenerations :many
+SELECT id, generation
+FROM routes
+WHERE claim_id = ?1 AND state = 'active'
+ORDER BY id
+`
+
+type ListActiveClaimRouteGenerationsRow struct {
+	ID         string
+	Generation int64
+}
+
+func (q *Queries) ListActiveClaimRouteGenerations(ctx context.Context, claimID string) ([]ListActiveClaimRouteGenerationsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listActiveClaimRouteGenerations, claimID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListActiveClaimRouteGenerationsRow
+	for rows.Next() {
+		var i ListActiveClaimRouteGenerationsRow
+		if err := rows.Scan(&i.ID, &i.Generation); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listActiveRoutes = `-- name: ListActiveRoutes :many
-SELECT routes.id, routes.claim_id, routes.principal_id, routes.hostname, routes.display_target, routes.state, routes.generation, routes.created_at, routes.deleted_at
+SELECT routes.id, routes.claim_id, routes.principal_id, routes.hostname, routes.display_target, routes.state, routes.generation, routes.lifecycle_sequence, routes.created_at, routes.deleted_at
 FROM routes
 WHERE principal_id = ?1 AND state = 'active'
 ORDER BY created_at, id
@@ -497,9 +568,45 @@ func (q *Queries) ListActiveRoutes(ctx context.Context, principalID string) ([]R
 			&i.DisplayTarget,
 			&i.State,
 			&i.Generation,
+			&i.LifecycleSequence,
 			&i.CreatedAt,
 			&i.DeletedAt,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOtherBootRouteLeases = `-- name: ListOtherBootRouteLeases :many
+SELECT route_id, generation
+FROM route_leases
+WHERE boot_epoch != ?1 AND status != 'expired'
+ORDER BY route_id, generation
+`
+
+type ListOtherBootRouteLeasesRow struct {
+	RouteID    string
+	Generation int64
+}
+
+func (q *Queries) ListOtherBootRouteLeases(ctx context.Context, bootEpoch string) ([]ListOtherBootRouteLeasesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listOtherBootRouteLeases, bootEpoch)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOtherBootRouteLeasesRow
+	for rows.Next() {
+		var i ListOtherBootRouteLeasesRow
+		if err := rows.Scan(&i.RouteID, &i.Generation); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -530,7 +637,7 @@ SET status = 'ready'
 WHERE id = ?1
     AND route_id = ?2
     AND generation = ?3
-    AND status IN ('starting', 'ready')
+    AND status = 'starting'
 `
 
 type ReadyRouteLeaseParams struct {

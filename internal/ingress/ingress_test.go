@@ -12,6 +12,8 @@ import (
 	"io"
 	"math/big"
 	"net"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,13 +24,20 @@ import (
 func TestIngressRoutesTLSWithProxyMetadata(t *testing.T) {
 	certificate := testCertificate(t, "route.example")
 	backend := &tlsBackend{certificate: certificate, result: make(chan backendResult, 1)}
+	usage := &testUsageConnection{closed: make(chan struct{})}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	server, err := New(listener, Config{
-		Lookup: func(hostname string) (worker.RouteBackend, bool) {
-			return backend, hostname == "route.example"
+		Lookup: func(hostname string) (Route, bool) {
+			return Route{ID: "route_test", Generation: 1, Backend: backend}, hostname == "route.example"
+		},
+		OpenUsage: func(routeID string, generation uint64, at time.Time) UsageConnection {
+			usage.routeID = routeID
+			usage.generation = generation
+			usage.openedAt = at
+			return usage
 		},
 		MaxConnections:      8,
 		MaxRouteConnections: 2,
@@ -72,6 +81,19 @@ func TestIngressRoutesTLSWithProxyMetadata(t *testing.T) {
 	if result.request != "ping" || !result.header.Source.Addr().IsLoopback() || !result.header.Destination.Addr().IsLoopback() {
 		t.Fatalf("backend result = %#v", result)
 	}
+	select {
+	case <-usage.closed:
+	case <-time.After(time.Second):
+		t.Fatal("usage connection did not close")
+	}
+	usage.mu.Lock()
+	defer usage.mu.Unlock()
+	if usage.routeID != "route_test" || usage.generation != 1 || usage.openedAt.IsZero() || usage.closedAt.IsZero() {
+		t.Fatalf("usage identity = %#v", usage)
+	}
+	if usage.ingressBytes <= 0 || usage.egressBytes <= 0 {
+		t.Fatalf("usage bytes = %d ingress, %d egress", usage.ingressBytes, usage.egressBytes)
+	}
 }
 
 func TestIngressUsesProvisioningRouteOnlyForACMETLSALPN(t *testing.T) {
@@ -83,10 +105,15 @@ func TestIngressUsesProvisioningRouteOnlyForACMETLSALPN(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var usageOpened atomic.Bool
 	server, err := New(listener, Config{
-		Lookup: func(string) (worker.RouteBackend, bool) { return nil, false },
+		Lookup: func(string) (Route, bool) { return Route{}, false },
 		LookupChallenge: func(hostname string) (worker.RouteBackend, bool) {
 			return backend, hostname == "route.example"
+		},
+		OpenUsage: func(string, uint64, time.Time) UsageConnection {
+			usageOpened.Store(true)
+			return &testUsageConnection{closed: make(chan struct{})}
 		},
 		MaxConnections: 8, MaxRouteConnections: 2,
 	})
@@ -123,6 +150,9 @@ func TestIngressUsesProvisioningRouteOnlyForACMETLSALPN(t *testing.T) {
 	if result := <-backend.result; result.err != nil {
 		t.Fatal(result.err)
 	}
+	if usageOpened.Load() {
+		t.Fatal("ACME challenge opened usage accounting")
+	}
 }
 
 func TestIngressHandsControlTLSOffByExactSNI(t *testing.T) {
@@ -133,7 +163,7 @@ func TestIngressHandsControlTLSOffByExactSNI(t *testing.T) {
 	connections := make(chan net.Conn)
 	controlCertificate := testCertificate(t, "control.example")
 	server, err := New(listener, Config{
-		Lookup:         func(string) (worker.RouteBackend, bool) { return nil, false },
+		Lookup:         func(string) (Route, bool) { return Route{}, false },
 		ServerHostname: "control.example",
 		HandleControl: func(connection net.Conn) bool {
 			connections <- connection
@@ -207,7 +237,9 @@ func TestDrainDeadlineForcesBackendClosed(t *testing.T) {
 	}
 	backend := &holdingBackend{opened: make(chan struct{}), closed: make(chan struct{})}
 	server, err := New(listener, Config{
-		Lookup:         func(string) (worker.RouteBackend, bool) { return backend, true },
+		Lookup: func(string) (Route, bool) {
+			return Route{ID: "route_test", Generation: 1, Backend: backend}, true
+		},
 		MaxConnections: 2, MaxRouteConnections: 2,
 	})
 	if err != nil {
@@ -254,7 +286,7 @@ func TestAdmissionRegistersBeforeDrainWait(t *testing.T) {
 	}
 	defer listener.Close()
 	server, err := New(listener, Config{
-		Lookup:         func(string) (worker.RouteBackend, bool) { return nil, false },
+		Lookup:         func(string) (Route, bool) { return Route{}, false },
 		MaxConnections: 1, MaxRouteConnections: 1,
 	})
 	if err != nil {
@@ -293,6 +325,36 @@ type tlsBackend struct {
 type holdingBackend struct {
 	opened chan struct{}
 	closed chan struct{}
+}
+
+type testUsageConnection struct {
+	mu           sync.Mutex
+	routeID      string
+	generation   uint64
+	openedAt     time.Time
+	closedAt     time.Time
+	ingressBytes int64
+	egressBytes  int64
+	closed       chan struct{}
+}
+
+func (u *testUsageConnection) AddIngress(bytes int64, _ time.Time) {
+	u.mu.Lock()
+	u.ingressBytes += bytes
+	u.mu.Unlock()
+}
+
+func (u *testUsageConnection) AddEgress(bytes int64, _ time.Time) {
+	u.mu.Lock()
+	u.egressBytes += bytes
+	u.mu.Unlock()
+}
+
+func (u *testUsageConnection) Close(at time.Time) {
+	u.mu.Lock()
+	u.closedAt = at
+	u.mu.Unlock()
+	close(u.closed)
 }
 
 func (b *holdingBackend) Open(context.Context) (net.Conn, error) {

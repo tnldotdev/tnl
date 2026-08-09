@@ -145,6 +145,46 @@ func TestTNLDValidateOIDC(t *testing.T) {
 	}
 }
 
+func TestTNLDValidateRouteExport(t *testing.T) {
+	config, err := ParseTNLD([]string{"--state-dir", "/state"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, _, err := credentials.NewServiceToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.ExportURL = "https://account.example/exports"
+	config.ExportToken = token.String()
+	if err := config.Validate(); err != nil {
+		t.Fatalf("valid HTTPS export: %v", err)
+	}
+
+	loopback := config
+	loopback.ExportURL = "http://127.0.0.1:8080"
+	if err := loopback.Validate(); err != nil {
+		t.Fatalf("valid loopback export: %v", err)
+	}
+
+	for name, mutate := range map[string]func(*TNLD){
+		"missing token":   func(config *TNLD) { config.ExportToken = "" },
+		"missing URL":     func(config *TNLD) { config.ExportURL = "" },
+		"invalid token":   func(config *TNLD) { config.ExportToken = "invalid" },
+		"insecure remote": func(config *TNLD) { config.ExportURL = "http://account.example" },
+		"URL credentials": func(config *TNLD) { config.ExportURL = "https://user@account.example" },
+		"URL query":       func(config *TNLD) { config.ExportURL = "https://account.example?tenant=one" },
+		"worker mode":     func(config *TNLD) { config.Mode = TNLDModeWorker },
+	} {
+		t.Run(name, func(t *testing.T) {
+			invalid := config
+			mutate(&invalid)
+			if err := invalid.Validate(); err == nil {
+				t.Fatal("Validate succeeded")
+			}
+		})
+	}
+}
+
 func TestTNLDValidateACME(t *testing.T) {
 	valid := TNLD{
 		Mode: TNLDModeStandalone, StateDir: "/state", Domain: "example.com",

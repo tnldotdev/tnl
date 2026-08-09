@@ -127,6 +127,21 @@ RS256. The server verifies tokens locally. When OIDC login is available,
 `tnl login` uses it by default; pass `--token` with the server's login token for
 operator recovery.
 
+## Route Export
+
+An edge or standalone daemon can export ordered route lifecycle events and
+minute/hour usage snapshots to a compatible receiver. Generate a dedicated
+credential with `tnld token service`, then configure both values:
+
+- `TNLD_EXPORT_URL`: the receiver's HTTPS base URL. Loopback HTTP is allowed for
+  local development.
+- `TNLD_EXPORT_TOKEN`: the generated service token.
+
+Leaving both values empty disables export; configuring only one is invalid.
+Worker mode cannot export because it does not own the durable route state. The
+daemon retains an SQLite outbox across restarts and removes an item only after a
+`204 No Content` response.
+
 ## Split Edge And Workers
 
 `compose.split.yaml` runs one edge with durable SQLite state and one or more
