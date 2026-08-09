@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
 	"text/tabwriter"
 	"time"
 )
@@ -25,15 +26,16 @@ type planCommand struct {
 }
 
 type benchmarkProfile struct {
-	SchemaVersion int                        `json:"schema_version"`
-	ID            string                     `json:"id"`
-	UpdatedDate   string                     `json:"updated_date"`
-	Region        string                     `json:"region"`
-	Topology      benchmarkTopology          `json:"topology"`
-	Machines      benchmarkMachines          `json:"machines"`
-	WorkerLimits  benchmarkWorkerLimits      `json:"worker_limits"`
-	Pricing       benchmarkPricing           `json:"pricing"`
-	Suites        map[string]suiteDefinition `json:"suites"`
+	SchemaVersion   int                        `json:"schema_version"`
+	ID              string                     `json:"id"`
+	UpdatedDate     string                     `json:"updated_date"`
+	Region          string                     `json:"region"`
+	Topology        benchmarkTopology          `json:"topology"`
+	Machines        benchmarkMachines          `json:"machines"`
+	ManagedPostgres benchmarkManagedPostgres   `json:"managed_postgres"`
+	WorkerLimits    benchmarkWorkerLimits      `json:"worker_limits"`
+	Pricing         benchmarkPricing           `json:"pricing"`
+	Suites          map[string]suiteDefinition `json:"suites"`
 }
 
 type benchmarkTopology struct {
@@ -44,13 +46,20 @@ type benchmarkTopology struct {
 }
 
 type benchmarkMachines struct {
-	Postgres    string `json:"postgres"`
 	Control     string `json:"control"`
 	Ingress     string `json:"ingress"`
 	Relay       string `json:"relay"`
 	Coordinator string `json:"coordinator"`
 	Publisher   string `json:"publisher"`
 	Load        string `json:"load"`
+}
+
+type benchmarkManagedPostgres struct {
+	Plan                     string `json:"plan"`
+	PostgresMajorVersion     int    `json:"postgres_major_version"`
+	StorageGB                int    `json:"storage_gb"`
+	ProvisionExpectedSeconds int    `json:"provision_expected_seconds"`
+	ProvisionTimeoutSeconds  int    `json:"provision_timeout_seconds"`
 }
 
 type benchmarkWorkerLimits struct {
@@ -60,13 +69,15 @@ type benchmarkWorkerLimits struct {
 }
 
 type benchmarkPricing struct {
-	SnapshotDate        string             `json:"snapshot_date"`
-	SourceURL           string             `json:"source_url"`
-	Route53SourceURL    string             `json:"route53_source_url"`
-	MachinePerSecondUSD map[string]float64 `json:"machine_per_second_usd"`
-	PublicIPv4PerHour   float64            `json:"public_ipv4_per_hour_usd"`
-	VolumeGBPerMonth    float64            `json:"volume_gb_per_month_usd"`
-	HostedZonePerMonth  float64            `json:"hosted_zone_per_month_usd"`
+	SnapshotDate                        string             `json:"snapshot_date"`
+	SourceURL                           string             `json:"source_url"`
+	ManagedPostgresSourceURL            string             `json:"managed_postgres_source_url"`
+	Route53SourceURL                    string             `json:"route53_source_url"`
+	MachinePerSecondUSD                 map[string]float64 `json:"machine_per_second_usd"`
+	PublicIPv4PerHour                   float64            `json:"public_ipv4_per_hour_usd"`
+	ManagedPostgresPlanPerMonthUSD      map[string]float64 `json:"managed_postgres_plan_per_month_usd"`
+	ManagedPostgresStorageGBPerMonthUSD float64            `json:"managed_postgres_storage_gb_per_month_usd"`
+	HostedZonePerMonth                  float64            `json:"hosted_zone_per_month_usd"`
 }
 
 type suiteDefinition struct {
@@ -84,25 +95,27 @@ type benchmarkCellSpec struct {
 }
 
 type benchmarkPlan struct {
-	SchemaVersion           int               `json:"schema_version"`
-	ReadOnly                bool              `json:"read_only"`
-	ProfileID               string            `json:"profile_id"`
-	Suite                   string            `json:"suite"`
-	Region                  string            `json:"region"`
-	Topology                benchmarkTopology `json:"topology"`
-	Machines                benchmarkMachines `json:"machines"`
-	Cells                   []planCell        `json:"cells"`
-	ExpectedDurationSeconds int64             `json:"expected_duration_seconds"`
-	MaximumDurationSeconds  int64             `json:"maximum_duration_seconds"`
-	ExpectedResultRows      int               `json:"expected_result_rows"`
-	ExpectedSpendUSD        float64           `json:"expected_spend_usd"`
-	MaximumSpendUSD         float64           `json:"maximum_spend_usd"`
-	PricingSnapshotDate     string            `json:"pricing_snapshot_date"`
-	PricingSourceURL        string            `json:"pricing_source_url"`
-	Route53PricingSourceURL string            `json:"route53_pricing_source_url"`
-	RequiredInputs          []string          `json:"required_inputs"`
-	Overrides               map[string]string `json:"overrides"`
-	Warnings                []string          `json:"warnings"`
+	SchemaVersion                   int                      `json:"schema_version"`
+	ReadOnly                        bool                     `json:"read_only"`
+	ProfileID                       string                   `json:"profile_id"`
+	Suite                           string                   `json:"suite"`
+	Region                          string                   `json:"region"`
+	Topology                        benchmarkTopology        `json:"topology"`
+	Machines                        benchmarkMachines        `json:"machines"`
+	ManagedPostgres                 benchmarkManagedPostgres `json:"managed_postgres"`
+	Cells                           []planCell               `json:"cells"`
+	ExpectedDurationSeconds         int64                    `json:"expected_duration_seconds"`
+	MaximumDurationSeconds          int64                    `json:"maximum_duration_seconds"`
+	ExpectedResultRows              int                      `json:"expected_result_rows"`
+	ExpectedSpendUSD                float64                  `json:"expected_spend_usd"`
+	MaximumSpendUSD                 float64                  `json:"maximum_spend_usd"`
+	PricingSnapshotDate             string                   `json:"pricing_snapshot_date"`
+	PricingSourceURL                string                   `json:"pricing_source_url"`
+	ManagedPostgresPricingSourceURL string                   `json:"managed_postgres_pricing_source_url"`
+	Route53PricingSourceURL         string                   `json:"route53_pricing_source_url"`
+	RequiredInputs                  []string                 `json:"required_inputs"`
+	Overrides                       map[string]string        `json:"overrides"`
+	Warnings                        []string                 `json:"warnings"`
 }
 
 type planCell struct {
@@ -171,19 +184,22 @@ func (c planCommand) build(now time.Time) (benchmarkPlan, error) {
 	}
 
 	plan := benchmarkPlan{
-		SchemaVersion: 1, ReadOnly: true, ProfileID: profile.ID, Suite: c.Suite, Region: profile.Region,
-		Topology: profile.Topology, Machines: profile.Machines,
-		PricingSnapshotDate: profile.Pricing.SnapshotDate, PricingSourceURL: profile.Pricing.SourceURL,
-		Route53PricingSourceURL: profile.Pricing.Route53SourceURL,
+		SchemaVersion: 2, ReadOnly: true, ProfileID: profile.ID, Suite: c.Suite, Region: profile.Region,
+		Topology: profile.Topology, Machines: profile.Machines, ManagedPostgres: profile.ManagedPostgres,
+		ExpectedDurationSeconds: int64(profile.ManagedPostgres.ProvisionExpectedSeconds),
+		MaximumDurationSeconds:  int64(profile.ManagedPostgres.ProvisionTimeoutSeconds),
+		PricingSnapshotDate:     profile.Pricing.SnapshotDate, PricingSourceURL: profile.Pricing.SourceURL,
+		ManagedPostgresPricingSourceURL: profile.Pricing.ManagedPostgresSourceURL,
+		Route53PricingSourceURL:         profile.Pricing.Route53SourceURL,
 		RequiredInputs: []string{
 			"Fly organization access through flyctl", "AWS credentials with Route 53 access",
-			"an existing public Route 53 parent zone", "an ACME account email",
+			"Fly Managed Postgres access in the selected region", "an existing public Route 53 parent zone", "an ACME account email",
 		},
 		Overrides: configuredOverrides(),
 		Warnings: []string{
-			"Planning is read-only; execution creates paid Fly, IPv4, volume, and Route 53 resources.",
-			"Spend is an estimate and excludes image builds, public egress, DNS queries, ACME, failed retries, and retained Fly resources.",
-			"Maximum spend includes two full Route 53 hosted-zone charges if cleanup misses the 12-hour waiver.",
+			"Planning is read-only; execution creates paid Fly Machines, Managed Postgres, public IPv4, and Route 53 resources.",
+			"Spend excludes image builds, public egress, DNS queries, ACME, failed retries, and retained resources except the maximum's MPG allowance.",
+			"Maximum spend models one retained Managed Postgres month and two hosted-zone charges; longer retention can cost more.",
 		},
 	}
 	updated, _ := time.Parse(time.DateOnly, profile.UpdatedDate)
@@ -223,7 +239,7 @@ func (c planCommand) build(now time.Time) (benchmarkPlan, error) {
 			plan.MaximumSpendUSD += estimatedCellSpend(profile, cell, cell.TimeoutSeconds)
 		}
 	}
-	// One PostgreSQL volume, five public app IPv4s, and two transient hosted zones.
+	// One Managed Postgres cluster, five public app IPv4s, and two transient hosted zones.
 	plan.ExpectedSpendUSD += fixedResourceSpend(profile, plan.ExpectedDurationSeconds, false)
 	plan.MaximumSpendUSD += fixedResourceSpend(profile, plan.MaximumDurationSeconds, true)
 	return plan, nil
@@ -250,7 +266,7 @@ func decodeJSONFile(path string, destination any) error {
 }
 
 func validateBenchmarkProfile(profile benchmarkProfile) error {
-	if profile.SchemaVersion != 1 || profile.ID == "" || profile.Region == "" {
+	if profile.SchemaVersion != 2 || profile.ID == "" || len(profile.Region) != 3 || !validFlySlug(profile.Region) {
 		return errors.New("benchmark profile has an invalid schema or identity")
 	}
 	for label, value := range map[string]string{"updated_date": profile.UpdatedDate, "pricing snapshot_date": profile.Pricing.SnapshotDate} {
@@ -265,8 +281,16 @@ func validateBenchmarkProfile(profile benchmarkProfile) error {
 		profile.WorkerLimits.FreshConnectionsPerLoadSecond >= 40 || profile.WorkerLimits.HeldStreamsPerLoad <= 0 {
 		return errors.New("benchmark worker limits are invalid or could exercise the ingress source limiter")
 	}
+	database := profile.ManagedPostgres
+	if database.Plan == "" || database.Plan != strings.ToLower(database.Plan) ||
+		profile.Pricing.ManagedPostgresPlanPerMonthUSD[database.Plan] <= 0 ||
+		(database.PostgresMajorVersion != 16 && database.PostgresMajorVersion != 17) ||
+		database.StorageGB < 10 || database.StorageGB > 500 || database.ProvisionExpectedSeconds <= 0 ||
+		database.ProvisionTimeoutSeconds < database.ProvisionExpectedSeconds {
+		return errors.New("benchmark Managed Postgres configuration is invalid")
+	}
 	sizes := []string{
-		profile.Machines.Postgres, profile.Machines.Control, profile.Machines.Ingress, profile.Machines.Relay,
+		profile.Machines.Control, profile.Machines.Ingress, profile.Machines.Relay,
 		profile.Machines.Coordinator, profile.Machines.Publisher, profile.Machines.Load,
 	}
 	for _, size := range sizes {
@@ -274,8 +298,9 @@ func validateBenchmarkProfile(profile benchmarkProfile) error {
 			return fmt.Errorf("pricing is missing machine size %q", size)
 		}
 	}
-	if profile.Pricing.SourceURL == "" || profile.Pricing.Route53SourceURL == "" || profile.Pricing.PublicIPv4PerHour < 0 ||
-		profile.Pricing.VolumeGBPerMonth < 0 || profile.Pricing.HostedZonePerMonth < 0 {
+	if profile.Pricing.SourceURL == "" || profile.Pricing.ManagedPostgresSourceURL == "" || profile.Pricing.Route53SourceURL == "" ||
+		profile.Pricing.PublicIPv4PerHour < 0 || profile.Pricing.ManagedPostgresStorageGBPerMonthUSD < 0 ||
+		profile.Pricing.HostedZonePerMonth < 0 {
 		return errors.New("benchmark pricing is invalid")
 	}
 	for name, definition := range profile.Suites {
@@ -308,8 +333,7 @@ func divideRoundUp(value, divisor int) int {
 }
 
 func estimatedCellSpend(profile benchmarkProfile, cell planCell, seconds int) float64 {
-	fixedRate := profile.Pricing.MachinePerSecondUSD[profile.Machines.Postgres] +
-		float64(profile.Topology.ControlProcesses)*profile.Pricing.MachinePerSecondUSD[profile.Machines.Control] +
+	fixedRate := float64(profile.Topology.ControlProcesses)*profile.Pricing.MachinePerSecondUSD[profile.Machines.Control] +
 		float64(profile.Topology.IngressProcesses)*profile.Pricing.MachinePerSecondUSD[profile.Machines.Ingress] +
 		float64(profile.Topology.RelayServices*profile.Topology.RelayProcessesPerService)*profile.Pricing.MachinePerSecondUSD[profile.Machines.Relay] +
 		profile.Pricing.MachinePerSecondUSD[profile.Machines.Coordinator]
@@ -318,12 +342,14 @@ func estimatedCellSpend(profile benchmarkProfile, cell planCell, seconds int) fl
 	return (fixedRate + workerRate) * float64(seconds)
 }
 
-func fixedResourceSpend(profile benchmarkProfile, seconds int64, includeHostedZones bool) float64 {
+func fixedResourceSpend(profile benchmarkProfile, seconds int64, includeRetainedResources bool) float64 {
 	hours := float64(seconds) / 3600
 	monthShare := float64(seconds) / (30 * 24 * 3600)
-	spend := 5*profile.Pricing.PublicIPv4PerHour*hours + profile.Pricing.VolumeGBPerMonth*monthShare
-	if includeHostedZones {
-		spend += 2 * profile.Pricing.HostedZonePerMonth
+	databaseMonthly := profile.Pricing.ManagedPostgresPlanPerMonthUSD[profile.ManagedPostgres.Plan] +
+		float64(profile.ManagedPostgres.StorageGB)*profile.Pricing.ManagedPostgresStorageGBPerMonthUSD
+	spend := 5*profile.Pricing.PublicIPv4PerHour*hours + databaseMonthly*monthShare
+	if includeRetainedResources {
+		spend += databaseMonthly + 2*profile.Pricing.HostedZonePerMonth
 	}
 	return spend
 }
@@ -348,6 +374,8 @@ func writeHumanPlan(destination io.Writer, plan benchmarkPlan) error {
 	fmt.Fprintf(output, "Topology: %d control, %d ingress, %dx%d relay processes\n\n",
 		plan.Topology.ControlProcesses, plan.Topology.IngressProcesses,
 		plan.Topology.RelayServices, plan.Topology.RelayProcessesPerService)
+	fmt.Fprintf(output, "Database: Fly Managed Postgres %s, PostgreSQL %d, %d GB\n\n",
+		plan.ManagedPostgres.Plan, plan.ManagedPostgres.PostgresMajorVersion, plan.ManagedPostgres.StorageGB)
 	table := tabwriter.NewWriter(output, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(table, "CELL\tROUTES\tFRESH/S\tHELD\tPUBLISHERS\tLOAD\tFRESH/LOAD\tDURATION\tTIMEOUT")
 	for _, cell := range plan.Cells {
@@ -363,7 +391,8 @@ func writeHumanPlan(destination io.Writer, plan benchmarkPlan) error {
 		len(plan.Cells), plan.ExpectedResultRows, time.Duration(plan.ExpectedDurationSeconds)*time.Second,
 		time.Duration(plan.MaximumDurationSeconds)*time.Second)
 	fmt.Fprintf(output, "Estimated spend: $%.4f expected, $%.4f maximum (USD)\n", plan.ExpectedSpendUSD, plan.MaximumSpendUSD)
-	fmt.Fprintf(output, "Pricing: snapshot %s (%s; %s)\n", plan.PricingSnapshotDate, plan.PricingSourceURL, plan.Route53PricingSourceURL)
+	fmt.Fprintf(output, "Pricing: snapshot %s (%s; %s; %s)\n", plan.PricingSnapshotDate, plan.PricingSourceURL,
+		plan.ManagedPostgresPricingSourceURL, plan.Route53PricingSourceURL)
 	fmt.Fprintln(output, "\nRequired inputs")
 	for _, input := range plan.RequiredInputs {
 		fmt.Fprintf(output, "- %s\n", input)

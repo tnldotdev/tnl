@@ -18,6 +18,9 @@ type preflightCommand struct {
 }
 
 func (c preflightCommand) Validate() error {
+	if !validFlySlug(c.FlyOrg) {
+		return fmt.Errorf("BENCH_FLY_ORG must be a canonical Fly organization slug")
+	}
 	return validateBenchmarkInfrastructure(c.ParentDomain, c.ParentZoneID, c.ACMEEmail)
 }
 
@@ -30,6 +33,9 @@ func (c preflightCommand) run(ctx context.Context, stdout io.Writer) error {
 		return err
 	}
 	if err := fly.validateOrg(ctx); err != nil {
+		return err
+	}
+	if err := fly.validateManagedPostgresAccess(ctx); err != nil {
 		return err
 	}
 	awsConfig, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion("us-east-1"))

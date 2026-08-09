@@ -1,0 +1,4 @@
+# flyctl requires app configuration even when it only builds an image.
+# The benchmark's generated app name overrides this placeholder via --app.
+app = "tnl-benchmark-build-placeholder"
+primary_region = "sjc"

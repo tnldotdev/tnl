@@ -1,6 +1,6 @@
 {
-  "schema_version": 1,
-  "id": "fly-production-v1",
+  "schema_version": 2,
+  "id": "fly-production-v2",
   "updated_date": "2026-09-16",
   "region": "sjc",
   "topology": {
@@ -10,13 +10,19 @@
     "relay_processes_per_service": 2
   },
   "machines": {
-    "postgres": "shared-cpu-2x",
     "control": "performance-2x",
     "ingress": "performance-2x",
     "relay": "performance-1x",
     "coordinator": "shared-cpu-1x",
     "publisher": "performance-2x",
     "load": "performance-2x"
+  },
+  "managed_postgres": {
+    "plan": "basic",
+    "postgres_major_version": 17,
+    "storage_gb": 10,
+    "provision_expected_seconds": 300,
+    "provision_timeout_seconds": 1200
   },
   "worker_limits": {
     "routes_per_publisher": 250,
@@ -26,15 +32,18 @@
   "pricing": {
     "snapshot_date": "2026-09-16",
     "source_url": "https://fly.io/docs/about/pricing/",
+    "managed_postgres_source_url": "https://fly.io/docs/mpg/",
     "route53_source_url": "https://aws.amazon.com/route53/pricing/",
     "machine_per_second_usd": {
       "shared-cpu-1x": 0.00000194,
-      "shared-cpu-2x": 0.00000388,
       "performance-1x": 0.00001426,
       "performance-2x": 0.00002852
     },
     "public_ipv4_per_hour_usd": 0.002,
-    "volume_gb_per_month_usd": 0.15,
+    "managed_postgres_plan_per_month_usd": {
+      "basic": 38.0
+    },
+    "managed_postgres_storage_gb_per_month_usd": 0.28,
     "hosted_zone_per_month_usd": 0.5
   },
   "suites": {

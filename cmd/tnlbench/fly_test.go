@@ -16,11 +16,19 @@ type executorCall struct {
 type executorStub struct {
 	calls     []executorCall
 	responses [][]byte
+	errs      []error
 	err       error
 }
 
 func (e *executorStub) Run(_ context.Context, name string, arguments ...string) ([]byte, error) {
 	e.calls = append(e.calls, executorCall{name: name, args: append([]string(nil), arguments...)})
+	if len(e.errs) != 0 {
+		err := e.errs[0]
+		e.errs = e.errs[1:]
+		if err != nil {
+			return nil, err
+		}
+	}
 	if e.err != nil {
 		return nil, e.err
 	}
@@ -54,6 +62,25 @@ func TestFlyValidatesOrganizationAccess(t *testing.T) {
 	platform.org = "missing"
 	if err := platform.validateOrg(t.Context()); err == nil {
 		t.Fatal("unavailable organization was accepted")
+	}
+}
+
+func TestFlyBuildImageUsesExplicitConfig(t *testing.T) {
+	executor := &executorStub{}
+	platform := flyPlatform{binary: "flyctl", executor: executor}
+	image, err := platform.buildImage(t.Context(), "benchmark-app", "benchmark-label")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if image != "registry.fly.io/benchmark-app:benchmark-label" {
+		t.Fatalf("image = %q", image)
+	}
+	want := []string{
+		"deploy", ".", "--app", "benchmark-app", "--dockerfile", "Dockerfile.bench",
+		"--config", "benchmarks/fly-build.toml", "--build-only", "--push", "--image-label", "benchmark-label", "--yes",
+	}
+	if len(executor.calls) != 1 || !slices.Equal(executor.calls[0].args, want) {
+		t.Fatalf("calls = %#v", executor.calls)
 	}
 }
 
