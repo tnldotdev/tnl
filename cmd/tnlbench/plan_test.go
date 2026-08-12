@@ -41,6 +41,9 @@ func TestBuildScoutPlanAddsLoadWorkersBeforeSourceLimit(t *testing.T) {
 	if len(plan.Cells) != 19 {
 		t.Fatalf("cells = %d", len(plan.Cells))
 	}
+	if plan.WorkerLimits.RoutesPerChurnRoute != 1 {
+		t.Fatalf("routes per churn route = %d, want one independent route per active route", plan.WorkerLimits.RoutesPerChurnRoute)
+	}
 	axes := make(map[string]int)
 	for _, cell := range plan.Cells {
 		if cell.FreshConnectionsPerWorker >= 40 {

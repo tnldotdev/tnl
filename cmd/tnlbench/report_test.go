@@ -93,6 +93,40 @@ func TestReportCommandWritesArtifacts(t *testing.T) {
 	}
 }
 
+func TestReportCommandWritesEmptyFailureReportForInterruptedRun(t *testing.T) {
+	directory := t.TempDir()
+	plan := benchmarkPlan{SchemaVersion: 3, ProfileID: "production-test", Region: "sjc", Suite: "smoke"}
+	planData, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "plan.json"), planData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var output strings.Builder
+	if err := (reportCommand{RunDirectory: directory, allowIncomplete: true}).run(&output); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(directory, "report.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report benchmarkReport
+	if err := json.Unmarshal(data, &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Status != "failed" || !report.Incomplete || report.ResultRows != 0 || len(report.Cells) != 0 || report.ProfileID != plan.ProfileID {
+		t.Fatalf("report = %#v", report)
+	}
+	markdown, err := os.ReadFile(filepath.Join(directory, "report.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(markdown), "ended before all planned cells produced results") {
+		t.Fatalf("markdown = %s", markdown)
+	}
+}
+
 func TestBuildReportRecordsRecoveryAndCapacityEvidence(t *testing.T) {
 	results := []benchmarkResult{
 		reportTestResult("confirm-r100-c10-s100-rep1", 0, 1, "publisher", 0, 1, "passed", time.Millisecond),

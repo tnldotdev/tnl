@@ -107,55 +107,99 @@ func (d *Database) RunControlTLSLeader(ctx context.Context, run func(context.Con
 	for {
 		connection, err := d.pool.Acquire(ctx)
 		if err != nil {
-			return fmt.Errorf("controlstate: acquire control TLS leadership connection: %w", err)
+			if ctx.Err() != nil {
+				return nil
+			}
+			if !waitControlTLSLeadershipRetry(ctx, retry.C) {
+				return nil
+			}
+			continue
 		}
-		var acquired bool
-		err = connection.QueryRow(ctx, `SELECT pg_try_advisory_lock($1)`, controlTLSLeadershipKey).Scan(&acquired)
+		transaction, err := connection.Begin(ctx)
 		if err != nil {
 			connection.Release()
-			return fmt.Errorf("controlstate: acquire control TLS leadership: %w", err)
+			if ctx.Err() != nil {
+				return nil
+			}
+			if !waitControlTLSLeadershipRetry(ctx, retry.C) {
+				return nil
+			}
+			continue
+		}
+		release := func() {
+			rollbackCtx, cancel := context.WithTimeout(context.Background(), controlTLSLeadershipCheckInterval)
+			_ = transaction.Rollback(rollbackCtx)
+			cancel()
+			connection.Release()
+		}
+		var acquired bool
+		err = transaction.QueryRow(ctx, `SELECT pg_try_advisory_xact_lock($1)`, controlTLSLeadershipKey).Scan(&acquired)
+		if err != nil {
+			release()
+			if ctx.Err() != nil {
+				return nil
+			}
+			if !waitControlTLSLeadershipRetry(ctx, retry.C) {
+				return nil
+			}
+			continue
 		}
 		if acquired {
-			connectionLost := false
-			defer connection.Release()
-			defer func() {
-				if connectionLost {
-					return
-				}
-				unlockCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				_, _ = connection.Exec(unlockCtx, `SELECT pg_advisory_unlock($1)`, controlTLSLeadershipKey)
-			}()
 			leaderCtx, cancelLeader := context.WithCancel(ctx)
-			defer cancelLeader()
 			result := make(chan error, 1)
 			go func() { result <- run(leaderCtx) }()
 			check := time.NewTicker(controlTLSLeadershipCheckInterval)
-			defer check.Stop()
+		leadership:
 			for {
 				select {
 				case err := <-result:
+					check.Stop()
+					cancelLeader()
+					release()
 					return err
 				case <-ctx.Done():
+					check.Stop()
+					cancelLeader()
+					release()
 					return nil
 				case <-check.C:
 					pingCtx, cancel := context.WithTimeout(context.Background(), controlTLSLeadershipCheckInterval)
-					err := connection.Ping(pingCtx)
+					_, err := transaction.Exec(pingCtx, `SELECT 1`)
 					cancel()
 					if err != nil {
-						connectionLost = true
+						check.Stop()
 						cancelLeader()
-						return fmt.Errorf("controlstate: control TLS leadership connection lost: %w", err)
+						release()
+						select {
+						case callbackErr := <-result:
+							if callbackErr != nil && !errors.Is(callbackErr, context.Canceled) {
+								return callbackErr
+							}
+						case <-time.After(5 * time.Second):
+							return fmt.Errorf("controlstate: stop control TLS leader after connection loss: %w", err)
+						}
+						if !waitControlTLSLeadershipRetry(ctx, retry.C) {
+							return nil
+						}
+						break leadership
 					}
 				}
 			}
+			continue
 		}
-		connection.Release()
-		select {
-		case <-ctx.Done():
+		release()
+		if !waitControlTLSLeadershipRetry(ctx, retry.C) {
 			return nil
-		case <-retry.C:
 		}
+	}
+}
+
+func waitControlTLSLeadershipRetry(ctx context.Context, retry <-chan time.Time) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-retry:
+		return true
 	}
 }
 

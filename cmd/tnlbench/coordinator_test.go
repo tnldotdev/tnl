@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -78,12 +79,20 @@ func TestCoordinatorFailureAbortsWait(t *testing.T) {
 	client, _ := newCoordinatorClient(server.URL, "secret")
 	result := passedTestResult(resultWorker{Kind: "load", Index: 0, Count: 1})
 	result.Status = "failed"
-	result.Failure = &resultFailure{Message: "saturated"}
+	result.Failure = &resultFailure{Message: strings.Repeat("saturated ", coordinatorStatusFailureLimit)}
 	if err := client.postResult(t.Context(), result); err != nil {
 		t.Fatal(err)
 	}
 	if err := client.waitPublishers(context.Background()); err == nil {
 		t.Fatal("aborted publisher wait succeeded")
+	} else if len(err.Error()) > coordinatorStatusFailureLimit+128 {
+		t.Fatalf("publisher wait error is unexpectedly long: %d bytes", len(err.Error()))
+	}
+	state.mu.Lock()
+	stored := state.results["load:0"].Failure.Message
+	state.mu.Unlock()
+	if len(stored) > coordinatorStatusFailureLimit+len("\n[truncated]") || !strings.HasSuffix(stored, "\n[truncated]") {
+		t.Fatalf("stored failure length = %d", len(stored))
 	}
 }
 
@@ -97,6 +106,15 @@ func TestCoordinatorRejectsConflictingRouteRegistration(t *testing.T) {
 	}
 	if err := client.publisherReady(t.Context(), 1, []benchmarkRouteRegistration{{Index: 0, Hostname: "other.example.com"}}); err == nil {
 		t.Fatal("conflicting route registration succeeded")
+	}
+}
+
+func TestCoordinatorStatusBoundsFailure(t *testing.T) {
+	state := newCoordinatorState("cell-1", 1, 1, 1)
+	state.failure = strings.Repeat("failure ", coordinatorStatusFailureLimit)
+	status := state.statusLocked()
+	if len(status.Failure) > coordinatorStatusFailureLimit+len("\n[truncated]") || !strings.HasSuffix(status.Failure, "\n[truncated]") {
+		t.Fatalf("bounded failure length = %d, suffix = %q", len(status.Failure), status.Failure[len(status.Failure)-16:])
 	}
 }
 

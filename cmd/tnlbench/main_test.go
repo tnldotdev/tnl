@@ -30,6 +30,11 @@ func TestLoadValidationProtectsSourceLimiter(t *testing.T) {
 	if err := valid.Validate(); err == nil {
 		t.Fatal("source-limiter rate was accepted")
 	}
+	valid.FreshRate = 30
+	valid.ResolverAddress = "missing-port"
+	if err := valid.Validate(); err == nil {
+		t.Fatal("invalid resolver address was accepted")
+	}
 }
 
 func TestPublisherRouteShardingUsesStableBands(t *testing.T) {

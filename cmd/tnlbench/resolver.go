@@ -34,7 +34,7 @@ func (c resolverCommand) run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	server := &mdns.Server{Addr: benchmarkPebbleDNSServer, Net: "tcp", Handler: resolver}
+	server := &mdns.Server{Addr: benchmarkAuthoritativeDNSAddress, Net: "tcp", Handler: resolver}
 	result := make(chan error, 1)
 	go func() { result <- server.ListenAndServe() }()
 	select {
@@ -134,7 +134,7 @@ func (r *authoritativeResolver) ServeDNS(writer mdns.ResponseWriter, request *md
 		for _, answer := range answers {
 			response.Answer = append(response.Answer, answer)
 		}
-		if len(response.Answer) != 0 || request.Question[0].Qtype != mdns.TypeTXT {
+		if len(response.Answer) != 0 {
 			if rounds > 1 {
 				slog.Info("benchmark authoritative DNS answer became available", "name", request.Question[0].Name,
 					"wait", time.Since(started).Round(time.Millisecond))

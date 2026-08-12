@@ -13,9 +13,12 @@ import (
 	"strconv"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/tnldotdev/tnl/internal/naming"
 )
+
+const coordinatorStatusFailureLimit = 4 << 10
 
 type coordinatorCommand struct {
 	Listen           string        `name:"listen" env:"TNL_BENCH_COORDINATOR_LISTEN" default:":8080" help:"Coordinator HTTP listen address."`
@@ -166,7 +169,7 @@ func (s *coordinatorState) handlePublisherReady(response http.ResponseWriter, re
 	if ready && len(s.routes) != s.routeCount {
 		s.failure = fmt.Sprintf("publishers registered %d of %d routes", len(s.routes), s.routeCount)
 	}
-	failure := s.failure
+	failure := boundedCoordinatorFailure(s.failure)
 	s.mu.Unlock()
 	if failure != "" {
 		s.abortedOnce.Do(func() { close(s.abortedWait) })
@@ -218,7 +221,7 @@ func (s *coordinatorState) wait(response http.ResponseWriter, request *http.Requ
 		response.WriteHeader(http.StatusNoContent)
 	case <-s.abortedWait:
 		s.mu.Lock()
-		failure := s.failure
+		failure := boundedCoordinatorFailure(s.failure)
 		s.mu.Unlock()
 		http.Error(response, failure, http.StatusConflict)
 	case <-request.Context().Done():
@@ -252,6 +255,9 @@ func (s *coordinatorState) handleResult(response http.ResponseWriter, request *h
 		s.mu.Unlock()
 		http.Error(response, "result already recorded", http.StatusConflict)
 		return
+	}
+	if result.Failure != nil {
+		result.Failure.Message = boundedCoordinatorFailure(result.Failure.Message)
 	}
 	s.results[key] = result
 	loadResults := s.resultCountLocked("load")
@@ -323,8 +329,19 @@ func (s *coordinatorState) statusLocked() coordinatorStatus {
 	return coordinatorStatus{
 		CellID: s.cellID, Status: status, PublishersReady: len(s.publishersReady),
 		PublisherWorkers: s.publisherWorkers, PublisherResults: publishers,
-		LoadWorkers: s.loadWorkers, LoadResults: loads, Complete: complete, Failure: s.failure,
+		LoadWorkers: s.loadWorkers, LoadResults: loads, Complete: complete, Failure: boundedCoordinatorFailure(s.failure),
 	}
+}
+
+func boundedCoordinatorFailure(value string) string {
+	if len(value) <= coordinatorStatusFailureLimit {
+		return value
+	}
+	limit := coordinatorStatusFailureLimit
+	for !utf8.ValidString(value[:limit]) {
+		limit--
+	}
+	return value[:limit] + "\n[truncated]"
 }
 
 func (s *coordinatorState) resultCountLocked(kind string) int {

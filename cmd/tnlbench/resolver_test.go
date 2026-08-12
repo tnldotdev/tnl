@@ -53,7 +53,7 @@ func TestAuthoritativeResolverForwardsChallengeQueries(t *testing.T) {
 	}
 }
 
-func TestAuthoritativeResolverRetriesEmptyChallengeAnswers(t *testing.T) {
+func TestAuthoritativeResolverRetriesEmptyAnswers(t *testing.T) {
 	resolver, err := newAuthoritativeResolver(resolverCommand{
 		ServerDomain: "run.bench.example.com", ServerNameServers: "ns-1.example.net,ns-2.example.net",
 		ManagedDomain: "routes.run.bench.example.com", ManagedNameServers: "ns-3.example.net,ns-4.example.net",
@@ -69,15 +69,15 @@ func TestAuthoritativeResolverRetriesEmptyChallengeAnswers(t *testing.T) {
 		response.SetReply(request)
 		response.Authoritative = true
 		if calls > 2 {
-			response.Answer = []mdns.RR{&mdns.TXT{
-				Hdr: mdns.RR_Header{Name: request.Question[0].Name, Rrtype: mdns.TypeTXT, Class: mdns.ClassINET, Ttl: 60},
-				Txt: []string{"expected"},
+			response.Answer = []mdns.RR{&mdns.A{
+				Hdr: mdns.RR_Header{Name: request.Question[0].Name, Rrtype: mdns.TypeA, Class: mdns.ClassINET, Ttl: 60},
+				A:   net.ParseIP("192.0.2.1"),
 			}}
 		}
 		return response, 0, nil
 	}
 	request := new(mdns.Msg)
-	request.SetQuestion("_acme-challenge.relay-a.run.bench.example.com.", mdns.TypeTXT)
+	request.SetQuestion("route.routes.run.bench.example.com.", mdns.TypeA)
 	writer := &dnsResponseWriterStub{}
 	resolver.ServeDNS(writer, request)
 	if calls != 4 || writer.message == nil || len(writer.message.Answer) != 1 {

@@ -128,6 +128,40 @@ func TestPublisherChurnAssignmentBalancesActiveGenerators(t *testing.T) {
 	}
 }
 
+func TestLifecycleChurnErrorSummarizesRepeatedFailures(t *testing.T) {
+	err := lifecycleChurnError(914, 12, []string{"first", "second"}, 10)
+	message := err.Error()
+	for _, want := range []string{
+		"914 lifecycle churn attempts could not start because all 10 churn routes were busy",
+		"12 lifecycle churn operations failed; samples: first; second",
+	} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("error %q does not contain %q", message, want)
+		}
+	}
+	if len(message) > 256 {
+		t.Fatalf("summarized error is unexpectedly long: %d bytes", len(message))
+	}
+}
+
+func TestSummarizeCellResultsValidatesAndCountsRows(t *testing.T) {
+	passed := reportTestResult("smoke-r2-c2-s2-rep1", 0, 1, "publisher", 0, 1, "passed", time.Millisecond)
+	failed := reportTestResult("smoke-r2-c2-s2-rep1", 0, 1, "load", 0, 1, "failed", time.Millisecond)
+	var data strings.Builder
+	for _, result := range []benchmarkResult{passed, failed} {
+		if err := json.NewEncoder(&data).Encode(result); err != nil {
+			t.Fatal(err)
+		}
+	}
+	status, rows, err := summarizeCellResults([]byte(data.String()))
+	if err != nil || status != "failed" || rows != 2 {
+		t.Fatalf("summary = %q, %d, %v", status, rows, err)
+	}
+	if _, _, err := summarizeCellResults(nil); err == nil {
+		t.Fatal("empty results were accepted")
+	}
+}
+
 func TestBenchmarkChurnRoutesUseOneStableRoutePerGroup(t *testing.T) {
 	routes := []benchmarkRouteSpec{
 		{index: 0, namespace: "alice.example.test"},
