@@ -44,30 +44,32 @@ type benchmarkReport struct {
 }
 
 type cellReport struct {
-	CellID             string                 `json:"cell_id"`
-	Target             string                 `json:"target"`
-	Suite              string                 `json:"suite"`
-	Axis               string                 `json:"axis"`
-	Sequence           int                    `json:"sequence"`
-	Repetition         int                    `json:"repetition"`
-	Status             string                 `json:"status"`
-	ResultRows         int                    `json:"result_rows"`
-	PublisherWorkers   int                    `json:"publisher_workers"`
-	LoadWorkers        int                    `json:"load_workers"`
-	Routes             int                    `json:"routes"`
-	FreshRate          int                    `json:"fresh_connections_per_second"`
-	HeldStreams        int                    `json:"held_streams"`
-	LifecycleChurn     int                    `json:"lifecycle_churn_per_second"`
-	PayloadBytes       int                    `json:"payload_bytes"`
-	BandwidthBPS       float64                `json:"bandwidth_bytes_per_second,omitempty"`
-	MonthlyCostUSD     float64                `json:"estimated_monthly_cost_usd,omitempty"`
-	CapacityPerDollar  float64                `json:"capacity_per_monthly_dollar,omitempty"`
-	Bottleneck         string                 `json:"bottleneck"`
-	BottleneckEvidence []string               `json:"bottleneck_evidence,omitempty"`
-	Recovery           *recoveryReport        `json:"recovery,omitempty"`
-	Phases             map[string]phaseReport `json:"phases"`
-	ResourceMaximums   map[string]float64     `json:"resource_maximums,omitempty"`
-	Failures           []string               `json:"failures"`
+	FailureStage        string                 `json:"failure_stage,omitempty"`
+	DatabaseDiagnostics []databaseDiagnostic   `json:"database_diagnostics,omitempty"`
+	CellID              string                 `json:"cell_id"`
+	Target              string                 `json:"target"`
+	Suite               string                 `json:"suite"`
+	Axis                string                 `json:"axis"`
+	Sequence            int                    `json:"sequence"`
+	Repetition          int                    `json:"repetition"`
+	Status              string                 `json:"status"`
+	ResultRows          int                    `json:"result_rows"`
+	PublisherWorkers    int                    `json:"publisher_workers"`
+	LoadWorkers         int                    `json:"load_workers"`
+	Routes              int                    `json:"routes"`
+	FreshRate           int                    `json:"fresh_connections_per_second"`
+	HeldStreams         int                    `json:"held_streams"`
+	LifecycleChurn      int                    `json:"lifecycle_churn_per_second"`
+	PayloadBytes        int                    `json:"payload_bytes"`
+	BandwidthBPS        float64                `json:"bandwidth_bytes_per_second,omitempty"`
+	MonthlyCostUSD      float64                `json:"estimated_monthly_cost_usd,omitempty"`
+	CapacityPerDollar   float64                `json:"capacity_per_monthly_dollar,omitempty"`
+	Bottleneck          string                 `json:"bottleneck"`
+	BottleneckEvidence  []string               `json:"bottleneck_evidence,omitempty"`
+	Recovery            *recoveryReport        `json:"recovery,omitempty"`
+	Phases              map[string]phaseReport `json:"phases"`
+	ResourceMaximums    map[string]float64     `json:"resource_maximums,omitempty"`
+	Failures            []string               `json:"failures"`
 }
 
 type phaseReport struct {
@@ -255,6 +257,9 @@ func applyPlanToReport(report *benchmarkReport, plan benchmarkPlan) error {
 	for _, cell := range plan.Cells {
 		byID[cell.ID] = cell
 	}
+	if len(report.Cells) != len(plan.Cells) {
+		report.Status, report.Incomplete = "failed", true
+	}
 	for index := range report.Cells {
 		cell := &report.Cells[index]
 		planned, found := byID[cell.CellID]
@@ -317,9 +322,17 @@ func buildCellReport(cellID string, rows []benchmarkResult) (cellReport, error) 
 		want[row.Worker.Kind] = row.Worker.Count
 		if row.Status != "passed" {
 			cell.Status = "failed"
+			stage := resultFailureStage(row)
+			if cell.FailureStage == "" || stage != "measurement" {
+				cell.FailureStage = stage
+			}
 			if row.Failure != nil {
 				cell.Failures = append(cell.Failures, row.Failure.Message)
 			}
+		}
+		cell.DatabaseDiagnostics = append(cell.DatabaseDiagnostics, row.DatabaseDiagnostics...)
+		if row.DroppedResourceSamples > 0 {
+			cell.BottleneckEvidence = append(cell.BottleneckEvidence, fmt.Sprintf("%d older periodic resource samples omitted to bound the result payload", row.DroppedResourceSamples))
 		}
 		for _, phase := range row.Phases {
 			accumulator := phases[phase.Name]
@@ -362,6 +375,9 @@ func buildCellReport(cellID string, rows []benchmarkResult) (cellReport, error) 
 		found := workerKindCount(seen, kind)
 		if want[kind] == 0 || found != want[kind] {
 			cell.Status = "failed"
+			if cell.FailureStage == "" || cell.FailureStage == "measurement" {
+				cell.FailureStage = "instrumentation"
+			}
 			cell.Failures = append(cell.Failures, fmt.Sprintf("expected %d %s workers, found %d", want[kind], kind, found))
 		}
 	}
@@ -395,13 +411,34 @@ func buildCellReport(cellID string, rows []benchmarkResult) (cellReport, error) 
 	if fresh, found := cell.Phases["fresh"]; found && fresh.DurationMilliseconds > 0 {
 		cell.BandwidthBPS = float64(fresh.Bytes) * 1000 / fresh.DurationMilliseconds
 	}
-	cell.BottleneckEvidence = resourceBottleneckEvidence(resourceSamples, cell.ResourceMaximums)
+	cell.BottleneckEvidence = append(cell.BottleneckEvidence, resourceBottleneckEvidence(resourceSamples, cell.ResourceMaximums)...)
 	if bottleneck, found := bottleneckFromEvidence(cell.BottleneckEvidence); cell.Status != "passed" && found {
 		cell.Bottleneck = bottleneck
 	} else if cell.Status != "passed" && len(cell.Failures) != 0 {
 		cell.Bottleneck = classifyBenchmarkFailure(cell.Failures[0])
 	} else if churn, found := cell.Phases["lifecycle_churn"]; found && churn.AchievedRate+0.01 < float64(cell.LifecycleChurn) {
 		cell.Bottleneck = "publisher lifecycle churn"
+	}
+	if cell.FailureStage != "" && cell.FailureStage != "measurement" {
+		cell.Bottleneck = cell.FailureStage + " failure"
+	}
+	for _, diagnostic := range cell.DatabaseDiagnostics {
+		if diagnostic.Error != "" {
+			cell.BottleneckEvidence = append(cell.BottleneckEvidence, "database snapshot "+diagnostic.Identity+": "+diagnostic.Error)
+			continue
+		}
+		if diagnostic.Snapshot == nil {
+			continue
+		}
+		blocked := 0
+		oldest := float64(0)
+		for _, session := range diagnostic.Snapshot.Sessions {
+			if len(session.BlockingPIDs) > 0 {
+				blocked++
+			}
+			oldest = max(oldest, session.TransactionAgeSeconds)
+		}
+		cell.BottleneckEvidence = append(cell.BottleneckEvidence, fmt.Sprintf("database snapshot %s: %d blocked sessions, oldest transaction %.1fs, truncated=%t", diagnostic.Identity, blocked, oldest, diagnostic.Snapshot.Truncated))
 	}
 	return cell, nil
 }
@@ -417,7 +454,7 @@ func ingressSourceLimiterRejections(samples []resourceSample) (float64, error) {
 		if sample.Role != "ingress" {
 			continue
 		}
-		if strings.HasPrefix(sample.Moment, "load-") {
+		if strings.HasPrefix(sample.Moment, "load-") || strings.HasPrefix(sample.Moment, "sample-") || sample.Moment == "before_activation" || sample.Moment == "failure" {
 			continue
 		}
 		if sample.Error != "" {
@@ -604,6 +641,9 @@ func capacitySummary(cells []cellReport) (highest, repeatable, saturation *capac
 	targets := make(map[string]*capacityPoint)
 	failed := make(map[string]bool)
 	for _, cell := range cells {
+		if cell.FailureStage != "" && cell.FailureStage != "measurement" {
+			continue
+		}
 		point := targets[cell.Target]
 		if point == nil {
 			created := capacityPointFromCell(cell)

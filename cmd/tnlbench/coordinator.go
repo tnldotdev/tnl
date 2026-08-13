@@ -68,6 +68,7 @@ type coordinatorStatus struct {
 	LoadResults      int    `json:"load_results"`
 	Complete         bool   `json:"complete"`
 	Failure          string `json:"failure,omitempty"`
+	AbortCampaign    bool   `json:"abort_campaign,omitempty"`
 }
 
 type benchmarkRouteRegistration struct {
@@ -279,7 +280,7 @@ func (s *coordinatorState) handleResult(response http.ResponseWriter, request *h
 	response.WriteHeader(http.StatusNoContent)
 }
 
-func (s *coordinatorState) handleResults(response http.ResponseWriter, _ *http.Request) {
+func (s *coordinatorState) handleResults(response http.ResponseWriter, request *http.Request) {
 	s.mu.Lock()
 	status := s.statusLocked()
 	results := make([]benchmarkResult, 0, len(s.results))
@@ -295,7 +296,7 @@ func (s *coordinatorState) handleResults(response http.ResponseWriter, _ *http.R
 		}
 	}
 	s.mu.Unlock()
-	if !status.Complete {
+	if !status.Complete && request.URL.Query().Get("partial") != "1" {
 		http.Error(response, "benchmark is not complete", http.StatusTooEarly)
 		return
 	}
@@ -321,6 +322,12 @@ func (s *coordinatorState) statusLocked() coordinatorStatus {
 	loads := s.resultCountLocked("load")
 	status := "running"
 	complete := publishers == s.publisherWorkers && loads == s.loadWorkers
+	abort := false
+	for _, result := range s.results {
+		if stage := resultFailureStage(result); stage != "" && stage != "measurement" {
+			abort = true
+		}
+	}
 	if s.failure != "" {
 		status = "failed"
 	} else if complete {
@@ -330,6 +337,7 @@ func (s *coordinatorState) statusLocked() coordinatorStatus {
 		CellID: s.cellID, Status: status, PublishersReady: len(s.publishersReady),
 		PublisherWorkers: s.publisherWorkers, PublisherResults: publishers,
 		LoadWorkers: s.loadWorkers, LoadResults: loads, Complete: complete, Failure: boundedCoordinatorFailure(s.failure),
+		AbortCampaign: abort,
 	}
 }
 

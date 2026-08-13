@@ -23,6 +23,7 @@ type Metrics struct {
 	forwardedBytes       *prometheus.CounterVec
 	controlRequests      *prometheus.CounterVec
 	controlDuration      *prometheus.HistogramVec
+	controlInFlight      *prometheus.GaugeVec
 }
 
 // New constructs an isolated registry for one tnld role.
@@ -67,11 +68,14 @@ func New(mode string) *Metrics {
 		controlDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name: "tnl_control_request_duration_seconds", Help: "Control API request duration by operation.",
 		}, []string{"operation"}),
+		controlInFlight: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "tnl_control_requests_in_flight", Help: "Control API requests currently executing by operation.",
+		}, []string{"operation"}),
 	}
 	registry.MustRegister(
 		info, metrics.routes, metrics.relayLeases, metrics.publisherConnections, metrics.streams,
 		metrics.capacityRejections, metrics.sourceLimiterRejects, metrics.sourceLimiterEntries,
-		metrics.ipAllowlistDenials, metrics.forwardedBytes, metrics.controlRequests, metrics.controlDuration,
+		metrics.ipAllowlistDenials, metrics.forwardedBytes, metrics.controlRequests, metrics.controlDuration, metrics.controlInFlight,
 		collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 	)
 	return metrics

@@ -11,6 +11,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/authorityclient"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -38,6 +39,7 @@ type Config struct {
 	HostedSecretPrevious    string
 	HTTPClient              *http.Client
 	DNSAutomation           bool
+	Metrics                 *observability.Metrics
 }
 
 // Store is the stored state used by the control API.
@@ -121,8 +123,13 @@ func NewHandler(
 	parameterError := func(response http.ResponseWriter, _ *http.Request, _ error) {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
 	}
+	var middleware []controlv1.MiddlewareFunc
+	if cfg.Metrics != nil {
+		middleware = append(middleware, cfg.Metrics.ControlRequests)
+	}
 	controlv1.HandlerWithOptions(h, controlv1.StdHTTPServerOptions{
 		BaseRouter: mux, ErrorHandlerFunc: parameterError,
+		Middlewares: middleware,
 	})
 	mux.HandleFunc("/", notFound)
 	return mux

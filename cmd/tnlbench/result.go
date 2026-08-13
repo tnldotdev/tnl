@@ -12,17 +12,19 @@ var durationBucketBoundsMilliseconds = []float64{
 }
 
 type benchmarkResult struct {
-	SchemaVersion int                 `json:"schema_version"`
-	CellID        string              `json:"cell_id"`
-	Status        string              `json:"status"`
-	Suite         string              `json:"suite"`
-	Repetition    int                 `json:"repetition"`
-	Worker        resultWorker        `json:"worker"`
-	Configuration resultConfiguration `json:"configuration"`
-	Phases        []phaseResult       `json:"phases"`
-	Resources     []resourceSample    `json:"resources,omitempty"`
-	Cleanup       resultCleanup       `json:"cleanup"`
-	Failure       *resultFailure      `json:"failure,omitempty"`
+	SchemaVersion          int                  `json:"schema_version"`
+	CellID                 string               `json:"cell_id"`
+	Status                 string               `json:"status"`
+	Suite                  string               `json:"suite"`
+	Repetition             int                  `json:"repetition"`
+	Worker                 resultWorker         `json:"worker"`
+	Configuration          resultConfiguration  `json:"configuration"`
+	Phases                 []phaseResult        `json:"phases"`
+	Resources              []resourceSample     `json:"resources,omitempty"`
+	DroppedResourceSamples int                  `json:"dropped_resource_samples,omitempty"`
+	DatabaseDiagnostics    []databaseDiagnostic `json:"database_diagnostics,omitempty"`
+	Cleanup                resultCleanup        `json:"cleanup"`
+	Failure                *resultFailure       `json:"failure,omitempty"`
 }
 
 type resultWorker struct {
@@ -90,6 +92,7 @@ type resultCleanup struct {
 
 type resultFailure struct {
 	Message string `json:"message"`
+	Stage   string `json:"stage,omitempty"`
 }
 
 func failedResult(cellID, suite string, repetition int, worker resultWorker, configuration resultConfiguration, started time.Time, err error) benchmarkResult {
@@ -100,8 +103,23 @@ func failedResult(cellID, suite string, repetition int, worker resultWorker, con
 			Name: "worker", StartedAt: started, DurationMilliseconds: milliseconds(time.Since(started)),
 			Attempts: 1, Errors: 1,
 		}},
-		Failure: &resultFailure{Message: err.Error()},
+		Failure: &resultFailure{Message: err.Error(), Stage: "setup"},
 	}
+}
+
+func resultFailureStage(result benchmarkResult) string {
+	if result.Status == "passed" {
+		return ""
+	}
+	if result.Failure != nil && result.Failure.Stage != "" {
+		return result.Failure.Stage
+	}
+	for _, phase := range result.Phases {
+		if phase.Name == "worker" {
+			return "setup"
+		}
+	}
+	return "measurement"
 }
 
 func newDurationHistogram(samples []time.Duration) *durationHistogram {

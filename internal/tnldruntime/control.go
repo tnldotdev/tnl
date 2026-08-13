@@ -15,6 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlapi"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/ingressapi"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/oidcauth"
 	"github.com/tnldotdev/tnl/internal/relayapi"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
@@ -61,9 +62,11 @@ func newPublicAPIHandler(
 	startedAt time.Time,
 	httpClient *http.Client,
 	database *controlstate.Database,
+	metrics *observability.Metrics,
 ) (*http.ServeMux, error) {
 	controlConfig := controlAPIConfigFrom(cfg, httpClient)
 	controlConfig.StartedAt = startedAt
+	controlConfig.Metrics = metrics
 	mux := controlapi.NewHandler(
 		controlConfig, database, database, database.Readiness,
 	)
