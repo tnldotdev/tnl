@@ -39,6 +39,7 @@ func Login(ctx context.Context, config Config, output io.Writer) (string, error)
 	if endpoint.DeviceAuthURL == "" || endpoint.TokenURL == "" {
 		return "", errors.New("oidclogin: provider does not support device login")
 	}
+	endpoint.AuthStyle = oauth2.AuthStyleInParams
 	nonce, err := randomNonce()
 	if err != nil {
 		return "", err

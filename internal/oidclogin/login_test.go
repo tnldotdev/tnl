@@ -54,6 +54,15 @@ func TestLoginDiscoversProviderAndValidatesNonce(t *testing.T) {
 						"verification_uri": provider.URL + "/device-login", "expires_in": 60, "interval": 1,
 					})
 				case "/token":
+					if authorization := r.Header.Get("Authorization"); authorization != "" {
+						t.Errorf("token authorization header = %q", authorization)
+					}
+					if err := r.ParseForm(); err != nil {
+						t.Error(err)
+					}
+					if clientID := r.Form.Get("client_id"); clientID != "tnl-cli" {
+						t.Errorf("token client_id = %q", clientID)
+					}
 					mu.Lock()
 					tokenNonce := nonce
 					mu.Unlock()
