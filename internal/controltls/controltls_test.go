@@ -46,12 +46,14 @@ func TestAutomaticCertificateConfiguration(t *testing.T) {
 	if err := cache.Put(t.Context(), "control.example", testCertificate(t, "control.example")); err != nil {
 		t.Fatal(err)
 	}
+	source.refreshAt["control.example"] = time.Time{}
 	if source.Ready(time.Now()) {
 		t.Fatal("source is ready without every certificate")
 	}
 	if err := cache.Put(t.Context(), "relay.example", testCertificate(t, "relay.example")); err != nil {
 		t.Fatal(err)
 	}
+	source.refreshAt["relay.example"] = time.Time{}
 	if !source.Ready(time.Now()) {
 		t.Fatal("source is not ready with a certificate")
 	}
@@ -187,14 +189,19 @@ func testAccountKey(t *testing.T) []byte {
 
 func testCertificate(t *testing.T, hostname string) []byte {
 	t.Helper()
+	now := time.Now()
+	return testCertificateValidity(t, hostname, now.Add(-time.Minute), now.Add(time.Hour))
+}
+
+func testCertificateValidity(t *testing.T, hostname string, notBefore, notAfter time.Time) []byte {
+	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	now := time.Now()
 	template := &x509.Certificate{
 		SerialNumber: big.NewInt(1), Subject: pkix.Name{}, DNSNames: []string{hostname},
-		NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour),
+		NotBefore: notBefore, NotAfter: notAfter,
 		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
 	certificateDER, err := x509.CreateCertificate(rand.Reader, template, template, key.Public(), key)

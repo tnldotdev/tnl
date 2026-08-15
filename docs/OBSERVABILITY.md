@@ -53,6 +53,8 @@ the process role.
 - Control and standalone export `tnl_database_pool_max_connections`,
   `tnl_database_pool_acquired_connections`, `tnl_database_pool_idle_connections`,
   and `tnl_database_pool_total_connections` from their local pgx pool.
+  The pool defaults to eight connections per process; `pool_max_conns` in
+  `TNLD_DATABASE_URL` overrides the default.
   `tnl_database_pool_acquires_total`, `tnl_database_pool_waited_acquires_total`,
   `tnl_database_pool_acquire_wait_seconds_total`, and
   `tnl_database_pool_canceled_acquires_total` distinguish completed acquisitions,
@@ -85,7 +87,10 @@ observability listener. This returns up to 64 non-idle PostgreSQL sessions in
 the current database, including session state, wait events, transaction/query
 age, query IDs when available, generated query operation names, and blocking
 backend PIDs. Query text, parameter values, and connection credentials are not
-returned. A `truncated` flag identifies incomplete snapshots.
+returned. A `truncated` flag identifies an incomplete session list. Each session
+includes at most eight blocking PIDs, with `blocking_pids_truncated` set when
+additional blockers were omitted. These limits keep a maximum-shaped snapshot
+within the benchmark collector's 64 KiB per-snapshot budget.
 
 The snapshot uses a separate connection through the configured pooled URL, with
 a three-second timeout and at most one collection per process at a time. It can

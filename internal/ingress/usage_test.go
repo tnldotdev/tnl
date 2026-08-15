@@ -229,6 +229,9 @@ type usageControlStub struct {
 func (s *usageControlStub) ReportUsage(_ context.Context, batch usageReportBatch) error {
 	cloned := batch
 	cloned.reports = append([]ingressv1.IngressUsageReport(nil), batch.reports...)
+	for index := range cloned.reports {
+		cloned.reports[index].HistogramData = append([]byte(nil), batch.reports[index].HistogramData...)
+	}
 	if batch.observedThrough != nil {
 		value := *batch.observedThrough
 		cloned.observedThrough = &value
@@ -308,6 +311,7 @@ func TestUsageReporterFreezesCheckpointWhileFirstPageBlocked(t *testing.T) {
 		t.Fatal(err)
 	}
 	found := false
+	mutated := 0
 	for _, batch := range control.calls {
 		for _, report := range batch.reports {
 			if report.ObservedThrough.Before(report.BucketStart) {
@@ -316,9 +320,15 @@ func TestUsageReporterFreezesCheckpointWhileFirstPageBlocked(t *testing.T) {
 			if report.RouteId == "new-minute" {
 				found = true
 			}
+			if report.RouteId == "route-000" || report.RouteId == "route-256" {
+				if report.ConnectionAttempts != 2 {
+					t.Fatal("next checkpoint lost concurrent mutation")
+				}
+				mutated++
+			}
 		}
 	}
-	if !found {
+	if !found || mutated != 2 {
 		t.Fatal("next checkpoint lost concurrent bucket")
 	}
 }

@@ -59,6 +59,22 @@ type resourceSampler struct {
 	dropped int
 }
 
+// Failure snapshots fit beside the bounded periodic window in one result body.
+func sampleFailureResources(ctx context.Context, endpoints []string) []resourceSample {
+	samples := sampleResources(context.WithoutCancel(ctx), endpoints[:min(len(endpoints), 16)], "failure")
+	remaining := 512 << 10
+	for index := range samples {
+		data, err := json.Marshal(samples[index])
+		if err != nil || len(data) > remaining {
+			samples[index].Metrics = nil
+			samples[index].Error = "failure metrics payload limit exceeded"
+		} else {
+			remaining -= len(data)
+		}
+	}
+	return samples
+}
+
 func startResourceSampler(parent context.Context, rawURLs []string, interval time.Duration) *resourceSampler {
 	ctx, cancel := context.WithCancel(parent)
 	sampler := &resourceSampler{cancel: cancel, done: make(chan []resourceSample, 1)}
@@ -166,6 +182,7 @@ type databaseDiagnostic struct {
 func sampleDatabaseDiagnostics(parent context.Context, endpoints []string) []databaseDiagnostic {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 5*time.Second)
 	defer cancel()
+	endpoints = endpoints[:min(len(endpoints), 8)]
 	results := make([]databaseDiagnostic, len(endpoints))
 	var workers sync.WaitGroup
 	for index, endpoint := range endpoints {
@@ -192,13 +209,24 @@ func sampleDatabaseDiagnostics(parent context.Context, endpoints []string) []dat
 				return
 			}
 			var snapshot controlstate.DatabaseDiagnostics
-			if err := json.NewDecoder(io.LimitReader(response.Body, 64<<10)).Decode(&snapshot); err != nil {
+			if err := json.NewDecoder(io.LimitReader(response.Body, controlstate.MaxDatabaseDiagnosticBytes)).Decode(&snapshot); err != nil {
 				diagnostic.Error = fmt.Sprintf("decode database diagnostics: %v", err)
 				return
 			}
 			diagnostic.Snapshot = &snapshot
+			diagnostic.Error = snapshot.Error
 		})
 	}
 	workers.Wait()
 	return results
+}
+
+func databaseDiagnosticURLs(metricsURLs []string) []string {
+	var endpoints []string
+	for _, endpoint := range metricsURLs {
+		if strings.HasSuffix(endpoint, "/metrics#control") {
+			endpoints = append(endpoints, strings.TrimSuffix(endpoint, "/metrics#control")+"/debug/database")
+		}
+	}
+	return endpoints
 }
