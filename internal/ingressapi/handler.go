@@ -158,13 +158,13 @@ func (h *handler) observeRecovery(
 	response http.ResponseWriter,
 	request *http.Request,
 	ingressID ingressv1.IngressID,
-	episodeID int64,
+	recoveryEpisodeID int64,
 ) {
 	var body ingressv1.RouteRecoveryObservationRequest
 	if !serviceapi.DecodeJSON(response, request, &body) {
 		return
 	}
-	observation, err := h.service.ObserveRouteRecovery(request.Context(), ingressID, episodeID, body)
+	observation, err := h.service.ObserveRouteRecovery(request.Context(), ingressID, recoveryEpisodeID, body)
 	if h.writeServiceError(response, request, err) {
 		return
 	}
@@ -240,7 +240,7 @@ func ingressUsageBatch(value ingressv1.IngressUsageReportBatch) (controlstate.In
 		connectionAttempts, attemptsOK := serviceapi.Nonnegative(report.ConnectionAttempts)
 		policyDenials, policyOK := serviceapi.Nonnegative(report.PolicyDenials)
 		capacityDenials, capacityOK := serviceapi.Nonnegative(report.CapacityDenials)
-		publisherOpenFailures, failuresOK := serviceapi.Nonnegative(report.PublisherOpenFailures)
+		visitorStreamOpenFailures, failuresOK := serviceapi.Nonnegative(report.VisitorStreamOpenFailures)
 		successfulStreams, streamsOK := serviceapi.Nonnegative(report.SuccessfulStreams)
 		connectionNanoseconds, nanosecondsOK := serviceapi.Nonnegative(report.ConnectionNanoseconds)
 		ingressBytes, ingressOK := serviceapi.Nonnegative(report.IngressBytes)
@@ -256,7 +256,7 @@ func ingressUsageBatch(value ingressv1.IngressUsageReportBatch) (controlstate.In
 			RouteID: report.RouteId, RouteVersion: routeVersion, BucketStart: report.BucketStart,
 			BucketEnd: report.BucketEnd, ObservedThrough: report.ObservedThrough, ReportRevision: reportRevision,
 			ConnectionAttempts: connectionAttempts, PolicyDenials: policyDenials,
-			CapacityDenials: capacityDenials, PublisherOpenFailures: publisherOpenFailures,
+			CapacityDenials: capacityDenials, VisitorStreamOpenFailures: visitorStreamOpenFailures,
 			SuccessfulStreams: successfulStreams, ConnectionNanoseconds: connectionNanoseconds,
 			IngressBytes: ingressBytes, EgressBytes: egressBytes,
 			HistogramData: report.HistogramData, Final: report.Final,

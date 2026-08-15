@@ -39,7 +39,7 @@ func (h *handler) GetAdminServerStatus(response http.ResponseWriter, request *ht
 		converted[index] = int(value)
 	}
 	writeJSON(response, http.StatusOK, controlv1.AdminServerStatus{
-		Mode: controlv1.AdminServerStatusMode(h.config.Mode), StartedAt: h.config.StartedAt,
+		Role: controlv1.AdminServerStatusRole(h.config.Role), StartedAt: h.config.StartedAt,
 		CurrentTime: now, EnabledRoutes: converted[0], SuspendedRoutes: converted[1],
 		StartingRouteSessions: converted[2], ReadyRouteSessions: converted[3],
 		IngressLeases: converted[4], RelayLeases: converted[5],
@@ -147,7 +147,7 @@ func (h *handler) SetMaintenanceControl(
 		return
 	}
 	control, err := h.store.SetMaintenanceControl(
-		request.Context(), controlstate.MaintenanceControlName(name), body.Enabled,
+		request.Context(), controlstate.MaintenanceControlName(name), body.Allowed,
 		principal.identityID, newRequestID(), time.Now().UTC(),
 	)
 	if err != nil {
@@ -194,7 +194,7 @@ func adminRelayLease(lease controlstate.RelayLease) controlv1.AdminRelayLease {
 		InternalRelayAddress: lease.InternalRelayAddress, ConnectionCapacity: int64(lease.ConnectionCapacity),
 		StreamCapacity: int64(lease.StreamCapacity), ReportedConnections: int64(lease.ReportedConnections),
 		ReportedStreams: int64(lease.ReportedStreams), Draining: lease.Draining,
-		RenewedAt: lease.RenewedAt, ExpiresAt: lease.LeaseExpiresAt,
+		RenewedAt: lease.RenewedAt, LeaseExpiresAt: lease.LeaseExpiresAt,
 	}
 	if lease.DrainDeadline != nil {
 		deadline := *lease.DrainDeadline
@@ -205,7 +205,7 @@ func adminRelayLease(lease controlstate.RelayLease) controlv1.AdminRelayLease {
 
 func maintenanceControl(control controlstate.MaintenanceControl) controlv1.MaintenanceControl {
 	return controlv1.MaintenanceControl{
-		Name: controlv1.MaintenanceControlName(control.Name), Enabled: control.Enabled,
+		Name: controlv1.MaintenanceControlName(control.Name), Allowed: control.Allowed,
 		Revision: int64(control.Revision), UpdatedAt: control.UpdatedAt, UpdatedBy: control.UpdatedBy,
 	}
 }

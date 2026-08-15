@@ -255,7 +255,7 @@ func (q *Queries) ListAdminRelayLeases(ctx context.Context, arg ListAdminRelayLe
 }
 
 const listMaintenanceControls = `-- name: ListMaintenanceControls :many
-SELECT control_name, enabled, revision, updated_at, updated_by
+SELECT control_name, allowed, revision, updated_at, updated_by
 FROM control.maintenance_controls
 ORDER BY control_name
 `
@@ -271,7 +271,7 @@ func (q *Queries) ListMaintenanceControls(ctx context.Context) ([]ControlMainten
 		var i ControlMaintenanceControl
 		if err := rows.Scan(
 			&i.ControlName,
-			&i.Enabled,
+			&i.Allowed,
 			&i.Revision,
 			&i.UpdatedAt,
 			&i.UpdatedBy,
@@ -288,16 +288,16 @@ func (q *Queries) ListMaintenanceControls(ctx context.Context) ([]ControlMainten
 
 const setMaintenanceControl = `-- name: SetMaintenanceControl :one
 UPDATE control.maintenance_controls
-SET enabled = $1,
+SET allowed = $1,
     revision = revision + 1,
     updated_at = $2,
     updated_by = $3
 WHERE control_name = $4
-RETURNING control_name, enabled, revision, updated_at, updated_by
+RETURNING control_name, allowed, revision, updated_at, updated_by
 `
 
 type SetMaintenanceControlParams struct {
-	Enabled     bool
+	Allowed     bool
 	UpdatedAt   pgtype.Timestamptz
 	UpdatedBy   string
 	ControlName string
@@ -305,7 +305,7 @@ type SetMaintenanceControlParams struct {
 
 func (q *Queries) SetMaintenanceControl(ctx context.Context, arg SetMaintenanceControlParams) (ControlMaintenanceControl, error) {
 	row := q.db.QueryRow(ctx, setMaintenanceControl,
-		arg.Enabled,
+		arg.Allowed,
 		arg.UpdatedAt,
 		arg.UpdatedBy,
 		arg.ControlName,
@@ -313,7 +313,7 @@ func (q *Queries) SetMaintenanceControl(ctx context.Context, arg SetMaintenanceC
 	var i ControlMaintenanceControl
 	err := row.Scan(
 		&i.ControlName,
-		&i.Enabled,
+		&i.Allowed,
 		&i.Revision,
 		&i.UpdatedAt,
 		&i.UpdatedBy,

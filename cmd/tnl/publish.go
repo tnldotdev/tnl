@@ -76,7 +76,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if err != nil {
 		return fail(err)
 	}
-	allowedIPPrefixes, currentIP, err := resolveIPPolicy(ctx, authenticated.Control, flags.AllowIP, flags.Public)
+	allowedIPPrefixes, currentIP, err := resolveIPPolicy(ctx, authenticated.Control, flags.AllowIP, flags.AllowAllIPs)
 	if err != nil {
 		return fail(err)
 	}

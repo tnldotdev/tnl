@@ -49,7 +49,7 @@ tnl:
   server: https://control.example.com
   tunnel:
     allow_ip: [192.0.2.1]
-    public: false
+    allow_all_ips: false
   publish:
     target: 3000
   dev:
@@ -67,15 +67,15 @@ tnl:
 	if document.TNL == nil || document.TNL.Server == nil || *document.TNL.Server != "https://control.example.com" ||
 		document.TNL.Publish == nil || document.TNL.Publish.Target == nil || string(*document.TNL.Publish.Target) != "3000" ||
 		document.TNL.Dev == nil || document.TNL.Dev.StartupTimeout == nil || document.TNL.Dev.StartupTimeout.Value() != 90*time.Second ||
-		document.TNL.Tunnel == nil || document.TNL.Tunnel.Public == nil || *document.TNL.Tunnel.Public {
+		document.TNL.Tunnel == nil || document.TNL.Tunnel.AllowAllIPs == nil || *document.TNL.Tunnel.AllowAllIPs {
 		t.Fatalf("document = %#v", document)
 	}
 }
 
 func TestTNLDSectionUsesTNLDFieldMetadata(t *testing.T) {
 	for extension, contents := range map[string]string{
-		"json": `{"version":1,"tnld":{"mode":"relay","metrics_listen":"","relay_stream_capacity":12,"quic_idle_timeout":"30s"}}`,
-		"yml":  "version: 1\ntnld:\n  mode: relay\n  metrics_listen: \"\"\n  relay_stream_capacity: 12\n  quic_idle_timeout: 30s\n",
+		"json": `{"version":1,"tnld":{"role":"relay","metrics_listen":"","relay_stream_capacity":12,"quic_idle_timeout":"30s"}}`,
+		"yml":  "version: 1\ntnld:\n  role: relay\n  metrics_listen: \"\"\n  relay_stream_capacity: 12\n  quic_idle_timeout: 30s\n",
 	} {
 		t.Run(extension, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "tnl."+extension)
@@ -88,7 +88,7 @@ func TestTNLDSectionUsesTNLDFieldMetadata(t *testing.T) {
 			}
 			value := tnldconfig.Config{MetricsListen: "default", RelayStreamCapacity: 99}
 			document.TNLD.Apply(&value)
-			if value.Mode != tnldconfig.RoleRelay || value.MetricsListen != "" || value.RelayStreamCapacity != 12 || value.QUICIdleTimeout != 30*time.Second {
+			if value.Role != tnldconfig.RoleRelay || value.MetricsListen != "" || value.RelayStreamCapacity != 12 || value.QUICIdleTimeout != 30*time.Second {
 				t.Fatalf("tnld = %#v", value)
 			}
 		})

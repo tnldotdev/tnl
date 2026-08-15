@@ -55,8 +55,8 @@ func TestReadersRejectInvalidMessages(t *testing.T) {
 		{"request without ID", `{"type":"ping","protocol_version":1}`, readControl},
 		{"unknown error code", `{"type":"error","protocol_version":1,"code":"future"}`, readControl},
 		{"legacy connection", `{"type":"hello","protocol_version":1,"role":"publisher","credential":"secret","link":{"route_session_id":"session"}}`, readControl},
-		{"unknown publisher field", `{"protocol_version":1,"kind":"visitor","visitor_connection_id":"visitor","route_id":"route","route_session_id":"session","route_version":1,"publisher_connection_id":"connection","connection_assignment_revision":1,"extra":true}`, readPublisher},
-		{"legacy hops", `{"protocol_version":1,"kind":"visitor","visitor_connection_id":"visitor","route_id":"route","route_session_id":"session","route_version":1,"publisher_connection_id":"connection","connection_assignment_revision":1,"forward_hops":0}`, readPublisher},
+		{"unknown publisher field", `{"protocol_version":1,"kind":"visitor","visitor_connection_id":"visitor","route_id":"route","route_session_id":"session","route_version":1,"publisher_connection_id":"connection","connection_assignment_revision":1,"extra":true}`, readVisitor},
+		{"legacy hops", `{"protocol_version":1,"kind":"visitor","visitor_connection_id":"visitor","route_id":"route","route_session_id":"session","route_version":1,"publisher_connection_id":"connection","connection_assignment_revision":1,"forward_hops":0}`, readVisitor},
 		{"stream accepted with code", `{"type":"accepted","code":"internal"}`, readResponse},
 		{"rejected without code", `{"type":"rejected"}`, readResponse},
 	} {
@@ -73,7 +73,7 @@ func TestStreamFieldBounds(t *testing.T) {
 		name string
 		read func(io.Reader) error
 	}{
-		{"publisher-stream-header", readPublisher},
+		{"visitor-stream-header", readVisitor},
 		{"internal-forwarding-header", readForwarding},
 	} {
 		t.Run(test.name, func(t *testing.T) {

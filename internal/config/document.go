@@ -21,53 +21,53 @@ import (
 const DocumentVersion = 1
 
 // Document is the versioned static tnl.yml, tnl.yaml, or tnl.json contract.
-// TypeScript configuration evaluates directly to TNL and is wrapped in this
-// document shape by the loader.
+// TypeScript configuration evaluates directly to the TnlConfig shape and is
+// wrapped in this document shape by the loader.
 type Document struct {
-	Schema  string       `json:"$schema,omitempty" yaml:"$schema,omitempty"`
-	Version *int         `json:"version" yaml:"version" jsonschema:"required"`
-	TNL     *TNL         `json:"tnl,omitempty" yaml:"tnl,omitempty"`
-	TNLD    *TNLDSection `json:"tnld,omitempty" yaml:"tnld,omitempty"`
+	Schema  string       `json:"$schema,omitempty" yaml:"$schema,omitempty" jsonschema_description:"JSON Schema URL used by editors and validation tools."`
+	Version *int         `json:"version" yaml:"version" jsonschema:"required" jsonschema_description:"Configuration format version. Must be 1."`
+	TNL     *TNL         `json:"tnl,omitempty" yaml:"tnl,omitempty" jsonschema_description:"Project configuration used by the tnl client."`
+	TNLD    *TNLDSection `json:"tnld,omitempty" yaml:"tnld,omitempty" jsonschema_description:"Process configuration used by tnld."`
 }
 
 // TNL contains project-local client configuration.
 type TNL struct {
-	Server   *string  `json:"server,omitempty" yaml:"server,omitempty"`
-	Team     *string  `json:"team,omitempty" yaml:"team,omitempty"`
-	Tunnel   *Tunnel  `json:"tunnel,omitempty" yaml:"tunnel,omitempty"`
+	Server   *string  `json:"server,omitempty" yaml:"server,omitempty" jsonschema_description:"Control URL used by this project."`
+	Team     *string  `json:"team,omitempty" yaml:"team,omitempty" jsonschema_description:"Team ID or unambiguous display name used by this project."`
+	Tunnel   *Tunnel  `json:"tunnel,omitempty" yaml:"tunnel,omitempty" jsonschema_description:"Default route and tunnel settings."`
 	Publish  *Publish `json:"publish,omitempty" yaml:"publish,omitempty"`
 	Dev      *Dev     `json:"dev,omitempty" yaml:"dev,omitempty"`
-	Services Services `json:"services,omitempty" yaml:"services,omitempty"`
+	Services Services `json:"services,omitempty" yaml:"services,omitempty" jsonschema_description:"Named local services with optional project-setting overrides."`
 }
 
 type Services map[string]Service
 
 // Service contains project-local overrides for one named local service.
 type Service struct {
-	Directory *string  `json:"directory,omitempty" yaml:"directory,omitempty"`
-	Server    *string  `json:"server,omitempty" yaml:"server,omitempty"`
-	Team      *string  `json:"team,omitempty" yaml:"team,omitempty"`
-	Tunnel    *Tunnel  `json:"tunnel,omitempty" yaml:"tunnel,omitempty"`
+	Directory *string  `json:"directory,omitempty" yaml:"directory,omitempty" jsonschema_description:"Service directory relative to the project configuration."`
+	Server    *string  `json:"server,omitempty" yaml:"server,omitempty" jsonschema_description:"Control URL override for this service."`
+	Team      *string  `json:"team,omitempty" yaml:"team,omitempty" jsonschema_description:"Team override for this service."`
+	Tunnel    *Tunnel  `json:"tunnel,omitempty" yaml:"tunnel,omitempty" jsonschema_description:"Route and tunnel overrides for this service."`
 	Publish   *Publish `json:"publish,omitempty" yaml:"publish,omitempty"`
 	Dev       *Dev     `json:"dev,omitempty" yaml:"dev,omitempty"`
 }
 
 type Tunnel struct {
-	Host      *string  `json:"host,omitempty" yaml:"host,omitempty"`
-	Subdomain *string  `json:"subdomain,omitempty" yaml:"subdomain,omitempty"`
-	AllowIP   []string `json:"allow_ip,omitempty" yaml:"allow_ip,omitempty" jsonschema:"maxItems=63,uniqueItems=true"`
-	Public    *bool    `json:"public,omitempty" yaml:"public,omitempty"`
-	Ephemeral *bool    `json:"ephemeral,omitempty" yaml:"ephemeral,omitempty"`
+	Host        *string  `json:"host,omitempty" yaml:"host,omitempty"`
+	Subdomain   *string  `json:"subdomain,omitempty" yaml:"subdomain,omitempty"`
+	AllowIP     []string `json:"allow_ip,omitempty" yaml:"allow_ip,omitempty" jsonschema:"maxItems=63,uniqueItems=true"`
+	AllowAllIPs *bool    `json:"allow_all_ips,omitempty" yaml:"allow_all_ips,omitempty"`
+	Ephemeral   *bool    `json:"ephemeral,omitempty" yaml:"ephemeral,omitempty"`
 }
 
 type Publish struct {
-	Target *Target `json:"target,omitempty" yaml:"target,omitempty"`
+	Target *Target `json:"target,omitempty" yaml:"target,omitempty" jsonschema_description:"Local HTTP URL or port reached by the publisher."`
 }
 
 type Dev struct {
-	Command        []string  `json:"command,omitempty" yaml:"command,omitempty" jsonschema:"minItems=1"`
-	Port           *int      `json:"port,omitempty" yaml:"port,omitempty" jsonschema:"minimum=1,maximum=65535"`
-	StartupTimeout *Duration `json:"startup_timeout,omitempty" yaml:"startup_timeout,omitempty"`
+	Command        []string  `json:"command,omitempty" yaml:"command,omitempty" jsonschema:"minItems=1" jsonschema_description:"Child command and arguments run by tnl dev."`
+	Port           *int      `json:"port,omitempty" yaml:"port,omitempty" jsonschema:"minimum=1,maximum=65535" jsonschema_description:"Required local service port for tnl dev."`
+	StartupTimeout *Duration `json:"startup_timeout,omitempty" yaml:"startup_timeout,omitempty" jsonschema_description:"Maximum time to wait for the local service to start."`
 }
 
 // Target accepts either a local HTTP URL or a literal port.

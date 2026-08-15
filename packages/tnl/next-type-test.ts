@@ -12,6 +12,6 @@ const asynchronousFactory = withTnl(async (_phase, { defaultConfig }) => ({
 }));
 
 // @ts-expect-error tnl configuration belongs in the project config file.
-withTnl({}, { public: true });
+withTnl({}, { allowAllIPs: true });
 
 export { asynchronousFactory, objectConfig, promisedConfig, synchronousFactory };

@@ -13,16 +13,16 @@ SELECT r.*,
         FROM control.route_sessions AS s
         WHERE s.route_id = r.id
           AND s.closed_at IS NULL
-    ), '')::text AS attached_session_id
+    ), '')::text AS open_route_session_id
 FROM control.routes AS r
 WHERE r.created_by_identity_id = sqlc.arg(identity_id)
   AND r.idempotency_key = sqlc.arg(idempotency_key);
 
 -- name: LockRouteCreationControl :one
-SELECT enabled
+SELECT allowed
 FROM control.maintenance_controls
 WHERE control_name = 'route_creation'
-FOR UPDATE;
+FOR SHARE;
 
 -- name: GetRouteCreationContext :one
 SELECT
@@ -176,7 +176,7 @@ SELECT r.*,
         FROM control.route_sessions AS s
         WHERE s.route_id = r.id
           AND s.closed_at IS NULL
-    ), '')::text AS attached_session_id
+    ), '')::text AS open_route_session_id
 FROM control.routes AS r
 WHERE r.team_id = sqlc.arg(team_id)
   AND r.lifecycle_state <> 'deleted'
@@ -198,7 +198,7 @@ SELECT r.*,
         FROM control.route_sessions AS s
         WHERE s.route_id = r.id
           AND s.closed_at IS NULL
-    ), '')::text AS attached_session_id
+    ), '')::text AS open_route_session_id
 FROM control.routes AS r
 WHERE r.id = sqlc.arg(route_id)
   AND r.lifecycle_state <> 'deleted'

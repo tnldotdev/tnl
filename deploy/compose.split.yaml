@@ -31,7 +31,7 @@ services:
     environment:
       TNLD_CONTROL_LISTEN: :8443
       TNLD_METRICS_LISTEN: 0.0.0.0:9090
-      TNLD_MODE: control
+      TNLD_ROLE: control
       TNLD_PRIVATE_CONTROL_LISTEN: :9443
       TNLD_ROUTE53_SERVER_ZONE_ID: ${TNL_SERVER_ZONE_ID:?set TNL_SERVER_ZONE_ID}
     ports:
@@ -53,7 +53,7 @@ services:
       TNLD_INGRESS_ID: ingress-a
       TNLD_INGRESS_LISTEN: :8443
       TNLD_METRICS_LISTEN: 0.0.0.0:9090
-      TNLD_MODE: ingress
+      TNLD_ROLE: ingress
     ports:
       - "${TNL_INGRESS_BIND:?set TNL_INGRESS_BIND}:443:8443/tcp"
     expose:
@@ -72,7 +72,7 @@ services:
       TNLD_INTERNAL_RELAY_ADDRESS: relay-a:9445
       TNLD_INTERNAL_RELAY_LISTEN: :9445
       TNLD_METRICS_LISTEN: 0.0.0.0:9090
-      TNLD_MODE: relay
+      TNLD_ROLE: relay
       TNLD_RELAY_ADDRESS: relay-a.${TNLD_SERVER_DOMAIN}:443
       TNLD_RELAY_ID: relay-a-1
       TNLD_RELAY_SERVICE_ID: relay-a
@@ -98,7 +98,7 @@ services:
       TNLD_INTERNAL_RELAY_ADDRESS: relay-b:9445
       TNLD_INTERNAL_RELAY_LISTEN: :9445
       TNLD_METRICS_LISTEN: 0.0.0.0:9090
-      TNLD_MODE: relay
+      TNLD_ROLE: relay
       TNLD_RELAY_ADDRESS: relay-b.${TNLD_SERVER_DOMAIN}:443
       TNLD_RELAY_ID: relay-b-1
       TNLD_RELAY_SERVICE_ID: relay-b

@@ -20,14 +20,14 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
-// Defines values for AdminServerStatusMode.
+// Defines values for AdminServerStatusRole.
 const (
-	Control    AdminServerStatusMode = "control"
-	Standalone AdminServerStatusMode = "standalone"
+	Control    AdminServerStatusRole = "control"
+	Standalone AdminServerStatusRole = "standalone"
 )
 
-// Valid indicates whether the value is a known member of the AdminServerStatusMode enum.
-func (e AdminServerStatusMode) Valid() bool {
+// Valid indicates whether the value is a known member of the AdminServerStatusRole enum.
+func (e AdminServerStatusRole) Valid() bool {
 	switch e {
 	case Control:
 		return true
@@ -231,7 +231,7 @@ const (
 	PlacementUnavailable ProblemCode = "placement_unavailable"
 	PolicyRevisionStale  ProblemCode = "policy_revision_stale"
 	RateLimited          ProblemCode = "rate_limited"
-	RouteAttached        ProblemCode = "route_attached"
+	RouteSessionOpen     ProblemCode = "route_session_open"
 	Unauthenticated      ProblemCode = "unauthenticated"
 	Unavailable          ProblemCode = "unavailable"
 )
@@ -261,7 +261,7 @@ func (e ProblemCode) Valid() bool {
 		return true
 	case RateLimited:
 		return true
-	case RouteAttached:
+	case RouteSessionOpen:
 		return true
 	case Unauthenticated:
 		return true
@@ -410,8 +410,8 @@ type AdminRelayLease struct {
 	ConnectionCapacity   int64             `json:"connection_capacity"`
 	DrainDeadline        *time.Time        `json:"drain_deadline,omitempty"`
 	Draining             bool              `json:"draining"`
-	ExpiresAt            time.Time         `json:"expires_at"`
 	InternalRelayAddress string            `json:"internal_relay_address"`
+	LeaseExpiresAt       time.Time         `json:"lease_expires_at"`
 	ProtocolVersion      int64             `json:"protocol_version"`
 	RelayAddress         string            `json:"relay_address"`
 	RelayId              RelayID           `json:"relay_id"`
@@ -436,16 +436,16 @@ type AdminServerStatus struct {
 	CurrentTime           time.Time             `json:"current_time"`
 	EnabledRoutes         int                   `json:"enabled_routes"`
 	IngressLeases         int                   `json:"ingress_leases"`
-	Mode                  AdminServerStatusMode `json:"mode"`
 	ReadyRouteSessions    int                   `json:"ready_route_sessions"`
 	RelayLeases           int                   `json:"relay_leases"`
+	Role                  AdminServerStatusRole `json:"role"`
 	StartedAt             time.Time             `json:"started_at"`
 	StartingRouteSessions int                   `json:"starting_route_sessions"`
 	SuspendedRoutes       int                   `json:"suspended_routes"`
 }
 
-// AdminServerStatusMode defines model for AdminServerStatus.Mode.
-type AdminServerStatusMode string
+// AdminServerStatusRole defines model for AdminServerStatus.Role.
+type AdminServerStatusRole string
 
 // AuthenticationFacts defines model for AuthenticationFacts.
 type AuthenticationFacts struct {
@@ -614,7 +614,7 @@ type IssuanceID = ResourceID
 
 // MaintenanceControl defines model for MaintenanceControl.
 type MaintenanceControl struct {
-	Enabled   bool                   `json:"enabled"`
+	Allowed   bool                   `json:"allowed"`
 	Name      MaintenanceControlName `json:"name"`
 	Revision  int64                  `json:"revision"`
 	UpdatedAt time.Time              `json:"updated_at"`
@@ -684,22 +684,22 @@ type ResourceID = string
 
 // Route defines model for Route.
 type Route struct {
-	AllowedIpPrefixes *[]string           `json:"allowed_ip_prefixes,omitempty"`
-	AttachedSessionId *RouteSessionID     `json:"attached_session_id,omitempty"`
-	CanonicalHostname CanonicalHostname   `json:"canonical_hostname"`
-	CreatedAt         time.Time           `json:"created_at"`
-	DomainId          DomainID            `json:"domain_id"`
-	Ephemeral         bool                `json:"ephemeral"`
-	ExpiresAt         *time.Time          `json:"expires_at,omitempty"`
-	Id                RouteID             `json:"id"`
-	LifecycleState    RouteLifecycleState `json:"lifecycle_state"`
-	MembershipId      *MembershipID       `json:"membership_id,omitempty"`
-	NextRouteVersion  int64               `json:"next_route_version"`
-	PolicyRevision    int64               `json:"policy_revision"`
-	RouteScope        RouteScope          `json:"route_scope"`
-	Target            string              `json:"target"`
-	TeamId            TeamID              `json:"team_id"`
-	UpdatedAt         time.Time           `json:"updated_at"`
+	AllowedIpPrefixes  *[]string           `json:"allowed_ip_prefixes,omitempty"`
+	CanonicalHostname  CanonicalHostname   `json:"canonical_hostname"`
+	CreatedAt          time.Time           `json:"created_at"`
+	DomainId           DomainID            `json:"domain_id"`
+	Ephemeral          bool                `json:"ephemeral"`
+	ExpiresAt          *time.Time          `json:"expires_at,omitempty"`
+	Id                 RouteID             `json:"id"`
+	LifecycleState     RouteLifecycleState `json:"lifecycle_state"`
+	MembershipId       *MembershipID       `json:"membership_id,omitempty"`
+	NextRouteVersion   int64               `json:"next_route_version"`
+	OpenRouteSessionId *RouteSessionID     `json:"open_route_session_id,omitempty"`
+	PolicyRevision     int64               `json:"policy_revision"`
+	RouteScope         RouteScope          `json:"route_scope"`
+	Target             string              `json:"target"`
+	TeamId             TeamID              `json:"team_id"`
+	UpdatedAt          time.Time           `json:"updated_at"`
 }
 
 // RouteID defines model for RouteID.
@@ -763,7 +763,7 @@ type RouteSessionVersionRequest struct {
 
 // SetMaintenanceControlRequest defines model for SetMaintenanceControlRequest.
 type SetMaintenanceControlRequest struct {
-	Enabled bool `json:"enabled"`
+	Allowed bool `json:"allowed"`
 }
 
 // TeamID defines model for TeamID.

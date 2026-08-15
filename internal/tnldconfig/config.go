@@ -48,7 +48,7 @@ func (r Role) RunsRelay() bool   { return r == RoleStandalone || r == RoleRelay 
 // Config configures one tnld process. Migration configuration is intentionally
 // absent: tnld migrate reads only TNLD_DATABASE_DIRECT_URL.
 type Config struct {
-	Mode Role `name:"mode" env:"TNLD_MODE" default:"standalone" enum:"standalone,control,ingress,relay" help:"Process role: ${enum}."`
+	Role Role `name:"role" env:"TNLD_ROLE" default:"standalone" enum:"standalone,control,ingress,relay" help:"Process role: ${enum}."`
 
 	DatabaseURL   string `name:"database-url" env:"TNLD_DATABASE_URL" help:"Pooled PostgreSQL URL used by control and standalone."`
 	MetricsListen string `name:"metrics-listen" env:"TNLD_METRICS_LISTEN" default:"127.0.0.1:9090" help:"Private Prometheus listen address; empty disables metrics."`
@@ -106,7 +106,7 @@ type Config struct {
 	RelayAddress         string `name:"relay-address" env:"TNLD_RELAY_ADDRESS" help:"Relay address advertised by this relay service."`
 	InternalRelayAddress string `name:"internal-relay-address" env:"TNLD_INTERNAL_RELAY_ADDRESS" help:"Internal hostname and port advertised by this relay process."`
 
-	PublicConnectionLimit    int64         `name:"public-connection-limit" env:"TNLD_PUBLIC_CONNECTION_LIMIT" default:"20000" help:"Maximum concurrent public visitor connections."`
+	VisitorConnectionLimit   int64         `name:"visitor-connection-limit" env:"TNLD_VISITOR_CONNECTION_LIMIT" default:"20000" help:"Maximum concurrent visitor connections."`
 	RouteConnectionLimit     int64         `name:"route-connection-limit" env:"TNLD_ROUTE_CONNECTION_LIMIT" default:"500" help:"Maximum concurrent visitor connections per route."`
 	PublisherConnectionLimit int64         `name:"publisher-connection-limit" env:"TNLD_PUBLISHER_CONNECTION_LIMIT" default:"1000" help:"Maximum publisher connections held by one relay process."`
 	RelayStreamCapacity      int64         `name:"relay-stream-capacity" env:"TNLD_RELAY_STREAM_CAPACITY" default:"4096" help:"Maximum concurrent visitor streams held by one relay process."`
@@ -122,19 +122,19 @@ type Config struct {
 }
 
 func (c Config) Validate() error {
-	if !c.Mode.RunsControl() && !c.Mode.RunsIngress() && !c.Mode.RunsRelay() {
-		return errors.New("mode must be standalone, control, ingress, or relay")
+	if !c.Role.RunsControl() && !c.Role.RunsIngress() && !c.Role.RunsRelay() {
+		return errors.New("role must be standalone, control, ingress, or relay")
 	}
-	if c.Mode.RunsControl() {
+	if c.Role.RunsControl() {
 		if err := c.validateControl(); err != nil {
 			return err
 		}
 	} else {
 		if c.DatabaseURL != "" {
-			return errors.New("ingress and relay modes cannot receive a database URL")
+			return errors.New("ingress and relay roles cannot receive a database URL")
 		}
 		if c.LoginToken != "" || c.ControlTLSCertificateFile != "" || c.ControlTLSPrivateKeyFile != "" {
-			return errors.New("ingress and relay modes cannot receive control authentication or TLS configuration")
+			return errors.New("ingress and relay roles cannot receive control authentication or TLS configuration")
 		}
 		if err := validateControlHostname(c.ControlHostname); err != nil {
 			return err
@@ -150,13 +150,13 @@ func (c Config) Validate() error {
 		if c.HostedSecret != "" || c.HostedSecretPrevious != "" || c.StorageKey != "" || c.StorageKeyPrevious != "" ||
 			c.Route53ManagedZoneID != "" || c.Route53ServerZoneID != "" ||
 			len(c.IngressIPv4Addresses) != 0 || len(c.IngressIPv6Addresses) != 0 {
-			return errors.New("ingress and relay modes cannot receive hosted, storage, or DNS provider configuration")
+			return errors.New("ingress and relay roles cannot receive hosted, storage, or DNS provider configuration")
 		}
 	}
-	if c.Mode == RoleIngress && !validProcessID(c.IngressID) {
+	if c.Role == RoleIngress && !validProcessID(c.IngressID) {
 		return errors.New("ingress ID is required and must be canonical")
 	}
-	if c.Mode == RoleRelay {
+	if c.Role == RoleRelay {
 		if !validProcessID(c.RelayServiceID) || !validProcessID(c.RelayID) {
 			return errors.New("relay service ID and relay ID are required and must be canonical")
 		}
@@ -170,8 +170,8 @@ func (c Config) Validate() error {
 	if (c.RelayTLSCertificateFile == "") != (c.RelayTLSPrivateKeyFile == "") {
 		return errors.New("relay TLS certificate and private key must be configured together")
 	}
-	if c.Mode != RoleRelay && c.Mode != RoleStandalone && (c.RelayTLSCertificateFile != "" || c.RelayTLSPrivateKeyFile != "") {
-		return errors.New("relay TLS overrides are valid only for relay and standalone modes")
+	if c.Role != RoleRelay && c.Role != RoleStandalone && (c.RelayTLSCertificateFile != "" || c.RelayTLSPrivateKeyFile != "") {
+		return errors.New("relay TLS overrides are valid only for relay and standalone roles")
 	}
 	for name, address := range map[string]string{
 		"metrics": c.MetricsListen, "control": c.ControlListen, "private control": c.PrivateControlListen,
@@ -183,7 +183,7 @@ func (c Config) Validate() error {
 			return fmt.Errorf("%s listen address: %w", name, err)
 		}
 	}
-	if c.PublicConnectionLimit <= 0 || c.RouteConnectionLimit <= 0 || c.PublisherConnectionLimit <= 0 ||
+	if c.VisitorConnectionLimit <= 0 || c.RouteConnectionLimit <= 0 || c.PublisherConnectionLimit <= 0 ||
 		c.RelayStreamCapacity <= 0 || c.QUICMaxIncomingStreams <= 0 {
 		return errors.New("connection and stream capacities must be positive")
 	}
@@ -213,7 +213,7 @@ func (c Config) validateControl() error {
 	if c.ControlHostname != "" || c.PrivateControlAddress != "" || c.IngressID != "" || c.RelayServiceID != "" || c.RelayID != "" || c.RelayAddress != "" || c.InternalRelayAddress != "" {
 		return errors.New("split-process configuration is invalid for control and standalone")
 	}
-	if c.Mode == RoleStandalone {
+	if c.Role == RoleStandalone {
 		if c.ClusterSecret != "" || c.ClusterSecretPrevious != "" {
 			return errors.New("standalone does not accept a configured cluster secret")
 		}
@@ -233,7 +233,7 @@ func (c Config) validateControl() error {
 	if err := c.validateOIDC(); err != nil {
 		return err
 	}
-	if err := c.validateHostedAuthority(); err != nil {
+	if err := c.validateExternalAuthority(); err != nil {
 		return err
 	}
 	if _, err := storagekey.New(c.StorageKey, c.StorageKeyPrevious); err != nil {
@@ -248,7 +248,7 @@ func (c Config) validateControl() error {
 	if err := c.validateDNSAutomation(); err != nil {
 		return err
 	}
-	if c.Mode == RoleStandalone && c.ControlTLSCertificateFile != "" &&
+	if c.Role == RoleStandalone && c.ControlTLSCertificateFile != "" &&
 		c.RelayTLSCertificateFile == "" && c.Route53ServerZoneID == "" {
 		return errors.New("standalone with a static control certificate requires relay certificate automation or a static relay TLS override")
 	}
@@ -394,7 +394,7 @@ func (c Config) validateOIDC() error {
 	return nil
 }
 
-func (c Config) validateHostedAuthority() error {
+func (c Config) validateExternalAuthority() error {
 	if c.AuthorityEndpoint == "" {
 		if c.HostedSecret != "" || c.HostedSecretPrevious != "" {
 			return errors.New("hosted secret requires an external authority endpoint")
@@ -413,36 +413,36 @@ func (c Config) validateHostedAuthority() error {
 	return nil
 }
 
-func (c Config) ACMEEnabled() bool { return c.Mode.RunsControl() }
+func (c Config) ACMEEnabled() bool { return c.Role.RunsControl() }
 
 func (c Config) DNSAutomationEnabled() bool {
-	return c.Mode.RunsControl() && c.Route53ManagedZoneID != ""
+	return c.Role.RunsControl() && c.Route53ManagedZoneID != ""
 }
 
 func (c Config) DNSProviderEnabled() bool {
-	return c.Mode.RunsControl() && (c.Route53ManagedZoneID != "" || c.Route53ServerZoneID != "")
+	return c.Role.RunsControl() && (c.Route53ManagedZoneID != "" || c.Route53ServerZoneID != "")
 }
 
 func (c Config) RelayCertificateAutomationEnabled() bool {
-	return c.Mode.RunsControl() && c.Route53ServerZoneID != ""
+	return c.Role.RunsControl() && c.Route53ServerZoneID != ""
 }
 
 func (c Config) ServerHostname() string {
-	if !c.Mode.RunsControl() || c.ServerDomain == "" {
+	if !c.Role.RunsControl() || c.ServerDomain == "" {
 		return ""
 	}
 	return "control." + c.ServerDomain
 }
 
 func (c Config) IngressHostname() string {
-	if !c.Mode.RunsControl() || c.ServerDomain == "" {
+	if !c.Role.RunsControl() || c.ServerDomain == "" {
 		return ""
 	}
 	return "ingress." + c.ServerDomain
 }
 
 func (c Config) StandaloneRelayHostname() string {
-	if c.Mode != RoleStandalone || c.ServerDomain == "" {
+	if c.Role != RoleStandalone || c.ServerDomain == "" {
 		return ""
 	}
 	return "relay." + c.ServerDomain
@@ -450,7 +450,7 @@ func (c Config) StandaloneRelayHostname() string {
 
 // RelayServiceHostname derives one split relay service's public hostname.
 func (c Config) RelayServiceHostname(relayServiceID string) string {
-	if !c.Mode.RunsControl() || !validDNSLabel(relayServiceID) || c.ServerDomain == "" {
+	if !c.Role.RunsControl() || !validDNSLabel(relayServiceID) || c.ServerDomain == "" {
 		return ""
 	}
 	return relayServiceID + "." + c.ServerDomain
@@ -494,7 +494,7 @@ func Parse(args []string) (Config, error) {
 }
 
 func Resolve(config Config) (Config, error) {
-	switch config.Mode {
+	switch config.Role {
 	case RoleStandalone:
 		setControlDefaults(&config)
 		if config.IngressListen == "" {

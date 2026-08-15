@@ -1,6 +1,6 @@
 openapi: 3.1.0
 info:
-  title: tnl ingress service API
+  title: tnl ingress API
   version: 1.0.0
   license:
     name: MIT
@@ -150,13 +150,13 @@ paths:
           description: Usage reports committed or replayed
         default:
           $ref: "#/components/responses/Problem"
-  /internal/v1/ingresses/{ingress_id}/route-recovery/{episode_id}/observed:
+  /internal/v1/ingresses/{ingress_id}/route-recovery/{recovery_episode_id}/observed:
     post:
       operationId: observeRouteRecovery
       summary: Record the first publisher byte after route recovery
       parameters:
         - $ref: "#/components/parameters/IngressID"
-        - name: episode_id
+        - name: recovery_episode_id
           in: path
           required: true
           schema:
@@ -522,7 +522,7 @@ components:
         - connection_attempts
         - policy_denials
         - capacity_denials
-        - publisher_open_failures
+        - visitor_stream_open_failures
         - successful_streams
         - connection_nanoseconds
         - ingress_bytes
@@ -561,7 +561,7 @@ components:
           type: integer
           format: int64
           minimum: 0
-        publisher_open_failures:
+        visitor_stream_open_failures:
           type: integer
           format: int64
           minimum: 0
@@ -633,9 +633,10 @@ components:
     RouteRecoveryObservation:
       type: object
       additionalProperties: false
-      required: [episode_id, route_id, route_version, opened_at, observed_at, observed_seconds]
+      required:
+        [recovery_episode_id, route_id, route_version, opened_at, observed_at, observed_seconds]
       properties:
-        episode_id:
+        recovery_episode_id:
           type: integer
           format: int64
           minimum: 1

@@ -170,8 +170,8 @@ func validateServiceValues(server, team *string, tunnel *Tunnel, publish *Publis
 		if tunnel.Host != nil && tunnel.Subdomain != nil {
 			return errors.New("tunnel.host and tunnel.subdomain are mutually exclusive")
 		}
-		if tunnel.Public != nil && *tunnel.Public && tunnel.AllowIP != nil {
-			return errors.New("tunnel.public and tunnel.allow_ip are mutually exclusive")
+		if tunnel.AllowAllIPs != nil && *tunnel.AllowAllIPs && tunnel.AllowIP != nil {
+			return errors.New("tunnel.allow_all_ips and tunnel.allow_ip are mutually exclusive")
 		}
 		if len(tunnel.AllowIP) > 63 {
 			return errors.New("tunnel.allow_ip may contain at most 63 entries")

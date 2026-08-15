@@ -54,13 +54,13 @@ func standalonePublishConfig(t *testing.T, databaseURL, publicAddress, relayUDPA
 	// Standalone uses one public listener and creates its internal listeners on
 	// :0 itself. These required but unused split-role addresses need no probes.
 	return tnldconfig.Config{
-		Mode: tnldconfig.RoleStandalone, DatabaseURL: databaseURL, MetricsListen: unusedTCPAddress(t),
+		Role: tnldconfig.RoleStandalone, DatabaseURL: databaseURL, MetricsListen: unusedTCPAddress(t),
 		ControlListen: "127.0.0.1:1", PrivateControlListen: "127.0.0.1:1", IngressListen: publicAddress,
 		RelayTCPListen: "127.0.0.1:1", RelayUDPListen: relayUDPAddress, InternalRelayListen: "127.0.0.1:1",
 		ServerDomain: serverDomain, ManagedDeploymentDomain: "routes." + serverDomain,
 		ACMEDirectoryURL: directoryURL, ACMEEmail: "integration@example.test", ACMEAcceptTerms: true, ACMEProfile: "tlsserver",
 		LoginToken: testLoginToken, StorageKey: testStorageKey, AccessTokenLifetime: 5 * time.Minute, RefreshTokenLifetime: time.Hour,
-		PublicConnectionLimit: 100, RouteConnectionLimit: 100, PublisherConnectionLimit: 10,
+		VisitorConnectionLimit: 100, RouteConnectionLimit: 100, PublisherConnectionLimit: 10,
 		RelayStreamCapacity: 100, QUICMaxIncomingStreams: 100, QUICIdleTimeout: time.Minute,
 		IngressLeaseDuration: 5 * time.Second,
 		RelayLeaseDuration:   5 * time.Second, LeaseRenewalInterval: time.Second,

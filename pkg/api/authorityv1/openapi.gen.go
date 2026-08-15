@@ -473,10 +473,10 @@ type ServiceAuthorizationDecision struct {
 	DnsAuthorityReference string            `json:"dns_authority_reference"`
 	DomainId              DomainID          `json:"domain_id"`
 	IdentityId            IdentityID        `json:"identity_id"`
+	PolicyRevision        int64             `json:"policy_revision"`
 	RouteMembershipId     *MembershipID     `json:"route_membership_id,omitempty"`
 	RouteScope            RouteScope        `json:"route_scope"`
 	TeamId                TeamID            `json:"team_id"`
-	TeamPolicyRevision    int64             `json:"team_policy_revision"`
 }
 
 // ServiceAuthorizationRequest defines model for ServiceAuthorizationRequest.

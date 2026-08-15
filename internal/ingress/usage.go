@@ -13,7 +13,12 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
 )
 
-const defaultUsageReportInterval = 10 * time.Second
+const (
+	defaultUsageReportInterval = 10 * time.Second
+	// Each server transaction retains an ingress lease and all reported session
+	// locks. Bound that footprint without changing atomic replay semantics.
+	usageReportPageSize = 16
+)
 
 type usageControl interface {
 	ReportUsage(context.Context, usageReportBatch) error
@@ -33,14 +38,14 @@ type usageBucketKey struct {
 }
 
 type usageCounters struct {
-	connectionAttempts    uint64
-	policyDenials         uint64
-	capacityDenials       uint64
-	publisherOpenFailures uint64
-	successfulStreams     uint64
-	connectionNanoseconds uint64
-	ingressBytes          uint64
-	egressBytes           uint64
+	connectionAttempts        uint64
+	policyDenials             uint64
+	capacityDenials           uint64
+	visitorStreamOpenFailures uint64
+	successfulStreams         uint64
+	connectionNanoseconds     uint64
+	ingressBytes              uint64
+	egressBytes               uint64
 }
 
 type usageBucket struct {
@@ -53,7 +58,7 @@ type usageBucket struct {
 	dirty                        bool
 	final                        bool
 	finalReported                bool
-	publisherOpenLatency         routeusage.DurationHistogram
+	visitorStreamOpenLatency     routeusage.DurationHistogram
 	timeToFirstPublisherByte     routeusage.DurationHistogram
 	successfulConnectionDuration routeusage.DurationHistogram
 	visitors                     *routeusage.VisitorSketch
@@ -76,8 +81,8 @@ type UsageReporter struct {
 	visitors        map[usageVisitorKey]*routeusage.VisitorSketch
 	active          map[*usageConnection]struct{}
 	observedThrough time.Time
-	pendingBatch    *usageReportBatch
-	pendingMore     bool
+	latestAt        time.Time
+	pendingPages    []usageReportBatch
 	err             error
 	closed          bool
 }
@@ -105,9 +110,9 @@ func NewUsageReporter(control usageControl, interval time.Duration, report func(
 
 // Open starts cumulative accounting for one visitor connection.
 func (r *UsageReporter) Open(routeID string, routeVersion uint64, source netip.Addr, at time.Time) UsageConnection {
-	visitorNetworkHashKey, hasVisitorNetworkHashKey := r.control.VisitorNetworkHashKey(at)
 	r.mu.Lock()
 	at = r.normalizeAt(at)
+	visitorNetworkHashKey, hasVisitorNetworkHashKey := r.control.VisitorNetworkHashKey(at)
 	connection := &usageConnection{reporter: r, routeID: routeID, routeVersion: routeVersion, attemptedAt: at}
 	if !r.closed {
 		r.active[connection] = struct{}{}
@@ -130,8 +135,8 @@ func (r *UsageReporter) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return nil
-		case now := <-ticker.C:
-			if err := r.flush(ctx, now.UTC(), false); err != nil && ctx.Err() == nil {
+		case <-ticker.C:
+			if err := r.flush(ctx, time.Now().UTC(), false); err != nil && ctx.Err() == nil {
 				r.report(err)
 			}
 		}
@@ -162,43 +167,31 @@ func (r *UsageReporter) flush(ctx context.Context, now time.Time, final bool) er
 	now = now.UTC()
 	for {
 		r.mu.Lock()
-		pending := r.pendingBatch
-		more := r.pendingMore
+		pending := len(r.pendingPages) != 0
 		r.mu.Unlock()
-		var batch usageReportBatch
-		if pending != nil {
-			batch = *pending
-		} else {
-			reports, preparedMore, err := r.prepare(now, final)
-			if err != nil {
+		if !pending {
+			if err := r.prepare(now, final); err != nil {
 				return err
 			}
-			more = preparedMore
-			batch = usageReportBatch{reports: reports}
-			if !more {
-				batch.observedThrough = &now
-				batch.complete = final
-			}
-			r.mu.Lock()
-			r.pendingBatch = &batch
-			r.pendingMore = more
-			r.mu.Unlock()
 		}
+		r.mu.Lock()
+		batch := r.pendingPages[0]
+		r.mu.Unlock()
 		if err := r.control.ReportUsage(ctx, batch); err != nil {
 			// Idle watermarks contain no accounting state. Regenerate a rejected
 			// watermark so startup does not remain pinned before lease registration.
 			if len(batch.reports) == 0 && !batch.complete {
 				r.mu.Lock()
-				r.pendingBatch = nil
-				r.pendingMore = false
+				r.pendingPages = nil
 				r.mu.Unlock()
 			}
 			return err
 		}
 		r.acknowledge(batch.reports)
 		r.mu.Lock()
-		r.pendingBatch = nil
-		r.pendingMore = false
+		r.pendingPages[0] = usageReportBatch{}
+		r.pendingPages = r.pendingPages[1:]
+		more := len(r.pendingPages) != 0
 		r.mu.Unlock()
 		if !more && (!final || batch.complete) {
 			return nil
@@ -206,12 +199,15 @@ func (r *UsageReporter) flush(ctx context.Context, now time.Time, final bool) er
 	}
 }
 
-func (r *UsageReporter) prepare(now time.Time, final bool) ([]ingressv1.IngressUsageReport, bool, error) {
+// prepare freezes one finite checkpoint under the mutation lock. Acknowledged
+// pages never reselect live dirty buckets; mutations belong to the next checkpoint.
+func (r *UsageReporter) prepare(now time.Time, final bool) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.closed {
-		return nil, false, nil
+	if now.Before(r.latestAt) {
+		now = r.latestAt
 	}
+	now = r.normalizeAt(now)
 	for connection := range r.active {
 		r.advance(connection, now)
 	}
@@ -219,7 +215,7 @@ func (r *UsageReporter) prepare(now time.Time, final bool) ([]ingressv1.IngressU
 		r.observedThrough = now
 	}
 	if r.err != nil {
-		return nil, false, r.err
+		return r.err
 	}
 	keys := make([]usageBucketKey, 0, len(r.buckets))
 	for key, bucket := range r.buckets {
@@ -231,8 +227,8 @@ func (r *UsageReporter) prepare(now time.Time, final bool) ([]ingressv1.IngressU
 		}
 	}
 	slices.SortFunc(keys, compareUsageBucketKeys)
-	reports := make([]ingressv1.IngressUsageReport, 0, min(len(keys), 256))
-	for _, key := range keys[:min(len(keys), 256)] {
+	reports := make([]ingressv1.IngressUsageReport, 0, len(keys))
+	for _, key := range keys {
 		bucket := r.buckets[key]
 		if bucket.pending == nil {
 			bucket.revision++
@@ -242,7 +238,7 @@ func (r *UsageReporter) prepare(now time.Time, final bool) ([]ingressv1.IngressU
 				observedThrough = bucketEnd
 			}
 			checkpoint := routeusage.Checkpoint{
-				PublisherOpenLatency:         bucket.publisherOpenLatency,
+				VisitorStreamOpenLatency:     bucket.visitorStreamOpenLatency,
 				TimeToFirstPublisherByte:     bucket.timeToFirstPublisherByte,
 				SuccessfulConnectionDuration: bucket.successfulConnectionDuration,
 				VisitorNetworks:              *bucket.visitors,
@@ -252,7 +248,7 @@ func (r *UsageReporter) prepare(now time.Time, final bool) ([]ingressv1.IngressU
 				BucketStart: key.start, BucketEnd: bucketEnd, ObservedThrough: observedThrough,
 				ReportRevision:     int64(bucket.revision),
 				ConnectionAttempts: int64(bucket.counters.connectionAttempts), PolicyDenials: int64(bucket.counters.policyDenials),
-				CapacityDenials: int64(bucket.counters.capacityDenials), PublisherOpenFailures: int64(bucket.counters.publisherOpenFailures),
+				CapacityDenials: int64(bucket.counters.capacityDenials), VisitorStreamOpenFailures: int64(bucket.counters.visitorStreamOpenFailures),
 				SuccessfulStreams: int64(bucket.counters.successfulStreams), ConnectionNanoseconds: int64(bucket.counters.connectionNanoseconds),
 				IngressBytes: int64(bucket.counters.ingressBytes), EgressBytes: int64(bucket.counters.egressBytes),
 				HistogramData: checkpoint.MarshalBinary(), Final: bucket.final,
@@ -262,7 +258,12 @@ func (r *UsageReporter) prepare(now time.Time, final bool) ([]ingressv1.IngressU
 		}
 		reports = append(reports, *bucket.pending)
 	}
-	return reports, len(keys) > len(reports), nil
+	for len(reports) > usageReportPageSize {
+		r.pendingPages = append(r.pendingPages, usageReportBatch{reports: reports[:usageReportPageSize]})
+		reports = reports[usageReportPageSize:]
+	}
+	r.pendingPages = append(r.pendingPages, usageReportBatch{reports: reports, observedThrough: &now, complete: final})
+	return nil
 }
 
 func (r *UsageReporter) acknowledge(reports []ingressv1.IngressUsageReport) {
@@ -363,7 +364,10 @@ func (r *UsageReporter) advance(connection *usageConnection, at time.Time) {
 func (r *UsageReporter) normalizeAt(at time.Time) time.Time {
 	at = at.UTC()
 	if at.Before(r.observedThrough) {
-		return r.observedThrough
+		at = r.observedThrough
+	}
+	if at.After(r.latestAt) {
+		r.latestAt = at
 	}
 	return at
 }
@@ -411,7 +415,7 @@ func (c *usageConnection) CapacityDenied(at time.Time) {
 	c.deny(at, func(counters *usageCounters) *uint64 { return &counters.capacityDenials })
 }
 
-func (c *usageConnection) PublisherOpening(at time.Time) {
+func (c *usageConnection) VisitorStreamOpening(at time.Time) {
 	r := c.reporter
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -421,11 +425,11 @@ func (c *usageConnection) PublisherOpening(at time.Time) {
 	c.publisherOpeningAt = r.normalizeAt(at)
 }
 
-func (c *usageConnection) PublisherOpened(at time.Time) { c.observePublisherOpen(at) }
+func (c *usageConnection) VisitorStreamOpened(at time.Time) { c.observeVisitorStreamOpen(at) }
 
-func (c *usageConnection) PublisherOpenFailed(at time.Time) {
-	c.observePublisherOpen(at)
-	c.deny(at, func(counters *usageCounters) *uint64 { return &counters.publisherOpenFailures })
+func (c *usageConnection) VisitorStreamOpenFailed(at time.Time) {
+	c.observeVisitorStreamOpen(at)
+	c.deny(at, func(counters *usageCounters) *uint64 { return &counters.visitorStreamOpenFailures })
 }
 
 func (c *usageConnection) StreamOpened(at time.Time) {
@@ -495,7 +499,7 @@ func (c *usageConnection) Close(at time.Time) {
 	delete(r.active, c)
 }
 
-func (c *usageConnection) observePublisherOpen(at time.Time) {
+func (c *usageConnection) observeVisitorStreamOpen(at time.Time) {
 	r := c.reporter
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -508,7 +512,7 @@ func (c *usageConnection) observePublisherOpen(at time.Time) {
 		startedAt = c.attemptedAt
 	}
 	bucket := c.bucket(at)
-	r.observeDuration(bucket, &bucket.publisherOpenLatency, at.Sub(startedAt))
+	r.observeDuration(bucket, &bucket.visitorStreamOpenLatency, at.Sub(startedAt))
 	c.publisherObserved = true
 }
 

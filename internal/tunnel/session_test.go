@@ -9,7 +9,7 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-func TestSessionHandshakeAndPublisherStream(t *testing.T) {
+func TestSessionHandshakeAndVisitorStream(t *testing.T) {
 	clientTransport, serverTransport := newMemoryPair(t)
 	ctx := tunnelContext(t)
 	type accepted struct {
@@ -39,9 +39,9 @@ func TestSessionHandshakeAndPublisherStream(t *testing.T) {
 	if server.hello.Credential != "credential" || server.hello.PublisherConnection == nil || *server.hello.PublisherConnection != *publisherHello().PublisherConnection {
 		t.Fatalf("hello=%+v", server.hello)
 	}
-	header := publisherStreamHeader()
+	header := visitorStreamHeader()
 	route := tunnelWorker(t, func() { _ = server.session.Close() }, func() error {
-		incoming, err := server.session.AcceptPublisherStream(ctx)
+		incoming, err := server.session.AcceptVisitorStream(ctx)
 		if err != nil {
 			return err
 		}
@@ -58,7 +58,7 @@ func TestSessionHandshakeAndPublisherStream(t *testing.T) {
 		}
 		return err
 	})
-	stream, err := client.OpenPublisherStream(ctx, header)
+	stream, err := client.OpenVisitorStream(ctx, header)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,18 +89,18 @@ func TestSessionRejectsHello(t *testing.T) {
 	}
 }
 
-func TestPublisherStreamRejection(t *testing.T) {
+func TestVisitorStreamRejection(t *testing.T) {
 	client, server := newAuthenticatedPair(t)
 	ctx := tunnelContext(t)
 	done := tunnelWorker(t, func() { _ = server.Close() }, func() error {
-		incoming, err := server.AcceptPublisherStream(ctx)
+		incoming, err := server.AcceptVisitorStream(ctx)
 		if err != nil {
 			return err
 		}
 		defer incoming.Stream.Close()
 		return incoming.Reject(tunnelv1.StaleRouteVersion)
 	})
-	_, err := client.OpenPublisherStream(ctx, publisherStreamHeader())
+	_, err := client.OpenVisitorStream(ctx, visitorStreamHeader())
 	var p *ProtocolError
 	if !errors.As(err, &p) || p.Code != tunnelv1.StaleRouteVersion {
 		t.Fatalf("open=%v", err)

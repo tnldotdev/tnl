@@ -28,7 +28,7 @@ func controlAPIConfigFrom(cfg tnldconfig.Config, httpClient *http.Client) contro
 		loginToken = ""
 	}
 	return controlapi.Config{
-		Mode:                    string(cfg.Mode),
+		Role:                    string(cfg.Role),
 		ManagedDeploymentDomain: cfg.ManagedDomain(),
 		AuthorityEndpoint:       cfg.AuthorityOrigin(),
 		LoginToken:              loginToken,

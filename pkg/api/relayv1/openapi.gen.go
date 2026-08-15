@@ -206,8 +206,8 @@ type RelayRenewal struct {
 	ReportedStreams     int64      `json:"reported_streams"`
 }
 
-// RelayServiceCertificate defines model for RelayServiceCertificate.
-type RelayServiceCertificate struct {
+// RelayTransportCertificate defines model for RelayTransportCertificate.
+type RelayTransportCertificate struct {
 	CertificatePem string     `json:"certificate_pem"`
 	NotAfter       time.Time  `json:"not_after"`
 	PrivateKeyPem  string     `json:"private_key_pem"`
@@ -224,8 +224,8 @@ type RelayID = Identifier
 // RelayServiceID defines model for RelayServiceID.
 type RelayServiceID = Identifier
 
-// GetRelayServiceCertificateParams defines parameters for GetRelayServiceCertificate.
-type GetRelayServiceCertificateParams struct {
+// GetRelayTransportCertificateParams defines parameters for GetRelayTransportCertificate.
+type GetRelayTransportCertificateParams struct {
 	RelayId            Identifier `form:"relay_id" json:"relay_id"`
 	RelayRunId         Identifier `form:"relay_run_id" json:"relay_run_id"`
 	RelayLeaseRevision int64      `form:"relay_lease_revision" json:"relay_lease_revision"`
@@ -365,10 +365,10 @@ type ClientInterface interface {
 	// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/ready (the `MarkPublisherConnectionReady` operationId).
 	MarkPublisherConnectionReady(ctx context.Context, publisherConnectionId PublisherConnectionID, body MarkPublisherConnectionReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetRelayServiceCertificate Retrieve the current relay transport certificate and private key
+	// GetRelayTransportCertificate Retrieve the current relay transport certificate and private key
 	//
-	// Corresponds with GET /internal/v1/relay-services/{relay_service_id}/certificate (the `GetRelayServiceCertificate` operationId).
-	GetRelayServiceCertificate(ctx context.Context, relayServiceId RelayServiceID, params *GetRelayServiceCertificateParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with GET /internal/v1/relay-services/{relay_service_id}/certificate (the `GetRelayTransportCertificate` operationId).
+	GetRelayTransportCertificate(ctx context.Context, relayServiceId RelayServiceID, params *GetRelayTransportCertificateParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RegisterRelayWithBody Register one relay process run
 	//
@@ -515,11 +515,11 @@ func (c *Client) MarkPublisherConnectionReady(ctx context.Context, publisherConn
 	return c.Client.Do(req)
 }
 
-// GetRelayServiceCertificate Retrieve the current relay transport certificate and private key
+// GetRelayTransportCertificate Retrieve the current relay transport certificate and private key
 //
-// Corresponds with GET /internal/v1/relay-services/{relay_service_id}/certificate (the `GetRelayServiceCertificate` operationId).
-func (c *Client) GetRelayServiceCertificate(ctx context.Context, relayServiceId RelayServiceID, params *GetRelayServiceCertificateParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetRelayServiceCertificateRequest(c.Server, relayServiceId, params)
+// Corresponds with GET /internal/v1/relay-services/{relay_service_id}/certificate (the `GetRelayTransportCertificate` operationId).
+func (c *Client) GetRelayTransportCertificate(ctx context.Context, relayServiceId RelayServiceID, params *GetRelayTransportCertificateParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetRelayTransportCertificateRequest(c.Server, relayServiceId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -773,8 +773,8 @@ func NewMarkPublisherConnectionReadyRequestWithBody(server string, publisherConn
 	return req, nil
 }
 
-// NewGetRelayServiceCertificateRequest constructs an http.Request for the GetRelayServiceCertificate method
-func NewGetRelayServiceCertificateRequest(server string, relayServiceId RelayServiceID, params *GetRelayServiceCertificateParams) (*http.Request, error) {
+// NewGetRelayTransportCertificateRequest constructs an http.Request for the GetRelayTransportCertificate method
+func NewGetRelayTransportCertificateRequest(server string, relayServiceId RelayServiceID, params *GetRelayTransportCertificateParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -1066,12 +1066,12 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/ready (the `MarkPublisherConnectionReady` operationId).
 	MarkPublisherConnectionReadyWithResponse(ctx context.Context, publisherConnectionId PublisherConnectionID, body MarkPublisherConnectionReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*MarkPublisherConnectionReadyResponse, error)
 
-	// GetRelayServiceCertificateWithResponse Retrieve the current relay transport certificate and private key
+	// GetRelayTransportCertificateWithResponse Retrieve the current relay transport certificate and private key
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with GET /internal/v1/relay-services/{relay_service_id}/certificate (the `GetRelayServiceCertificate` operationId).
-	GetRelayServiceCertificateWithResponse(ctx context.Context, relayServiceId RelayServiceID, params *GetRelayServiceCertificateParams, reqEditors ...RequestEditorFn) (*GetRelayServiceCertificateResponse, error)
+	// Corresponds with GET /internal/v1/relay-services/{relay_service_id}/certificate (the `GetRelayTransportCertificate` operationId).
+	GetRelayTransportCertificateWithResponse(ctx context.Context, relayServiceId RelayServiceID, params *GetRelayTransportCertificateParams, reqEditors ...RequestEditorFn) (*GetRelayTransportCertificateResponse, error)
 
 	// RegisterRelayWithBodyWithResponse Register one relay process run
 	//
@@ -1260,39 +1260,39 @@ func (r MarkPublisherConnectionReadyResponse) ContentType() string {
 	return ""
 }
 
-// GetRelayServiceCertificateResponse200Headers the declared response headers of an HTTP 200 response for GetRelayServiceCertificate
-type GetRelayServiceCertificateResponse200Headers struct {
+// GetRelayTransportCertificateResponse200Headers the declared response headers of an HTTP 200 response for GetRelayTransportCertificate
+type GetRelayTransportCertificateResponse200Headers struct {
 	CacheControl string
 }
 
-type GetRelayServiceCertificateResponse struct {
+type GetRelayTransportCertificateResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *RelayServiceCertificate
+	JSON200 *RelayTransportCertificate
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
 	// Headers200 the parsed response headers for an HTTP 200 response
-	Headers200 *GetRelayServiceCertificateResponse200Headers
+	Headers200 *GetRelayTransportCertificateResponse200Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetRelayServiceCertificateResponse) GetJSON200() *RelayServiceCertificate {
+func (r GetRelayTransportCertificateResponse) GetJSON200() *RelayTransportCertificate {
 	return r.JSON200
 }
 
 // GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r GetRelayServiceCertificateResponse) GetApplicationproblemJSONDefault() *Problem {
+func (r GetRelayTransportCertificateResponse) GetApplicationproblemJSONDefault() *Problem {
 	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
-func (r GetRelayServiceCertificateResponse) GetBody() []byte {
+func (r GetRelayTransportCertificateResponse) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r GetRelayServiceCertificateResponse) Status() string {
+func (r GetRelayTransportCertificateResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -1300,7 +1300,7 @@ func (r GetRelayServiceCertificateResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r GetRelayServiceCertificateResponse) StatusCode() int {
+func (r GetRelayTransportCertificateResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -1308,7 +1308,7 @@ func (r GetRelayServiceCertificateResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetRelayServiceCertificateResponse) ContentType() string {
+func (r GetRelayTransportCertificateResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -1537,17 +1537,17 @@ func (c *ClientWithResponses) MarkPublisherConnectionReadyWithResponse(ctx conte
 	return ParseMarkPublisherConnectionReadyResponse(rsp)
 }
 
-// GetRelayServiceCertificateWithResponse Retrieve the current relay transport certificate and private key
+// GetRelayTransportCertificateWithResponse Retrieve the current relay transport certificate and private key
 //
 // Returns a wrapper object for the known response body format(s).
 //
-// Corresponds with GET /internal/v1/relay-services/{relay_service_id}/certificate (the `GetRelayServiceCertificate` operationId).
-func (c *ClientWithResponses) GetRelayServiceCertificateWithResponse(ctx context.Context, relayServiceId RelayServiceID, params *GetRelayServiceCertificateParams, reqEditors ...RequestEditorFn) (*GetRelayServiceCertificateResponse, error) {
-	rsp, err := c.GetRelayServiceCertificate(ctx, relayServiceId, params, reqEditors...)
+// Corresponds with GET /internal/v1/relay-services/{relay_service_id}/certificate (the `GetRelayTransportCertificate` operationId).
+func (c *ClientWithResponses) GetRelayTransportCertificateWithResponse(ctx context.Context, relayServiceId RelayServiceID, params *GetRelayTransportCertificateParams, reqEditors ...RequestEditorFn) (*GetRelayTransportCertificateResponse, error) {
+	rsp, err := c.GetRelayTransportCertificate(ctx, relayServiceId, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseGetRelayServiceCertificateResponse(rsp)
+	return ParseGetRelayTransportCertificateResponse(rsp)
 }
 
 // RegisterRelayWithBodyWithResponse Register one relay process run
@@ -1727,22 +1727,22 @@ func ParseMarkPublisherConnectionReadyResponse(rsp *http.Response) (*MarkPublish
 	return response, nil
 }
 
-// ParseGetRelayServiceCertificateResponse parses an HTTP response from a GetRelayServiceCertificateWithResponse call
-func ParseGetRelayServiceCertificateResponse(rsp *http.Response) (*GetRelayServiceCertificateResponse, error) {
+// ParseGetRelayTransportCertificateResponse parses an HTTP response from a GetRelayTransportCertificateWithResponse call
+func ParseGetRelayTransportCertificateResponse(rsp *http.Response) (*GetRelayTransportCertificateResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &GetRelayServiceCertificateResponse{
+	response := &GetRelayTransportCertificateResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest RelayServiceCertificate
+		var dest RelayTransportCertificate
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -1759,7 +1759,7 @@ func ParseGetRelayServiceCertificateResponse(rsp *http.Response) (*GetRelayServi
 
 	switch {
 	case rsp.StatusCode == 200:
-		var headers GetRelayServiceCertificateResponse200Headers
+		var headers GetRelayTransportCertificateResponse200Headers
 		if values := rsp.Header.Values("Cache-Control"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "Cache-Control", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
@@ -1883,9 +1883,9 @@ type ServerInterface interface {
 	// MarkPublisherConnectionReady Mark one connected publisher connection ready
 	// (POST /internal/v1/publisher-connections/{publisher_connection_id}/ready)
 	MarkPublisherConnectionReady(w http.ResponseWriter, r *http.Request, publisherConnectionId PublisherConnectionID)
-	// GetRelayServiceCertificate Retrieve the current relay transport certificate and private key
+	// GetRelayTransportCertificate Retrieve the current relay transport certificate and private key
 	// (GET /internal/v1/relay-services/{relay_service_id}/certificate)
-	GetRelayServiceCertificate(w http.ResponseWriter, r *http.Request, relayServiceId RelayServiceID, params GetRelayServiceCertificateParams)
+	GetRelayTransportCertificate(w http.ResponseWriter, r *http.Request, relayServiceId RelayServiceID, params GetRelayTransportCertificateParams)
 	// RegisterRelay Register one relay process run
 	// (POST /internal/v1/relays/register)
 	RegisterRelay(w http.ResponseWriter, r *http.Request)
@@ -1984,8 +1984,8 @@ func (siw *ServerInterfaceWrapper) MarkPublisherConnectionReady(w http.ResponseW
 	handler.ServeHTTP(w, r)
 }
 
-// GetRelayServiceCertificate operation middleware
-func (siw *ServerInterfaceWrapper) GetRelayServiceCertificate(w http.ResponseWriter, r *http.Request) {
+// GetRelayTransportCertificate operation middleware
+func (siw *ServerInterfaceWrapper) GetRelayTransportCertificate(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 	_ = err
@@ -2000,7 +2000,7 @@ func (siw *ServerInterfaceWrapper) GetRelayServiceCertificate(w http.ResponseWri
 	}
 
 	// Parameter object where we will unmarshal all parameters from the context
-	var params GetRelayServiceCertificateParams
+	var params GetRelayTransportCertificateParams
 
 	// ------------- Required query parameter "relay_id" -------------
 
@@ -2042,7 +2042,7 @@ func (siw *ServerInterfaceWrapper) GetRelayServiceCertificate(w http.ResponseWri
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetRelayServiceCertificate(w, r, relayServiceId, params)
+		siw.Handler.GetRelayTransportCertificate(w, r, relayServiceId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2241,7 +2241,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/relays/register", wrapper.RegisterRelay)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/relays/{relay_id}/renew", wrapper.RenewRelay)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/relays/{relay_id}/drain", wrapper.DrainRelay)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/internal/v1/relay-services/{relay_service_id}/certificate", wrapper.GetRelayServiceCertificate)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/internal/v1/relay-services/{relay_service_id}/certificate", wrapper.GetRelayTransportCertificate)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/publisher-connections/{publisher_connection_id}/claim", wrapper.ClaimPublisherConnection)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/publisher-connections/{publisher_connection_id}/ready", wrapper.MarkPublisherConnectionReady)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/publisher-connections/{publisher_connection_id}/disconnect", wrapper.DisconnectPublisherConnection)

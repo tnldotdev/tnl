@@ -51,8 +51,8 @@ func (c *Client) AdminListMaintenanceControls(ctx context.Context) ([]controlv1.
 	return requestWithAccess[[]controlv1.MaintenanceControl](ctx, c, c.api.ListMaintenanceControls)
 }
 
-func (c *Client) AdminSetMaintenanceControl(ctx context.Context, name controlv1.MaintenanceControlName, enabled bool) (controlv1.MaintenanceControl, error) {
-	body := controlv1.SetMaintenanceControlRequest{Enabled: enabled}
+func (c *Client) AdminSetMaintenanceControl(ctx context.Context, name controlv1.MaintenanceControlName, allowed bool) (controlv1.MaintenanceControl, error) {
+	body := controlv1.SetMaintenanceControlRequest{Allowed: allowed}
 	return requestWithAccess[controlv1.MaintenanceControl](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.SetMaintenanceControl(ctx, name, body, editors...)
 	})

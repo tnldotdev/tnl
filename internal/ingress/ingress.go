@@ -41,9 +41,9 @@ type BackendLookupFunc func(string) ([]routebackend.Backend, bool)
 type UsageConnection interface {
 	PolicyDenied(time.Time)
 	CapacityDenied(time.Time)
-	PublisherOpening(time.Time)
-	PublisherOpened(time.Time)
-	PublisherOpenFailed(time.Time)
+	VisitorStreamOpening(time.Time)
+	VisitorStreamOpened(time.Time)
+	VisitorStreamOpenFailed(time.Time)
 	StreamOpened(time.Time)
 	AddIngress(int64, time.Time)
 	AddEgress(int64, time.Time)
@@ -294,13 +294,13 @@ func (s *Server) handle(public net.Conn) error {
 	defer s.releaseRoute(routeID)
 
 	if usage != nil {
-		usage.PublisherOpening(time.Now().UTC())
+		usage.VisitorStreamOpening(time.Now().UTC())
 	}
 	streamOpened := false
 	if usage != nil {
 		defer func() {
 			if !streamOpened {
-				usage.PublisherOpenFailed(time.Now().UTC())
+				usage.VisitorStreamOpenFailed(time.Now().UTC())
 			}
 		}()
 	}
@@ -331,7 +331,7 @@ func (s *Server) handle(public net.Conn) error {
 			continue
 		}
 		if usage != nil && !opened {
-			usage.PublisherOpened(time.Now().UTC())
+			usage.VisitorStreamOpened(time.Now().UTC())
 			opened = true
 		}
 		if !s.trackBackend(candidate) {

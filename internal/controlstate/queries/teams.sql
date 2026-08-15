@@ -69,7 +69,7 @@ SELECT id
 FROM control.identities
 WHERE id = sqlc.arg(identity_id)
   AND disabled_at IS NULL
-FOR UPDATE;
+FOR NO KEY UPDATE;
 
 -- name: GetOrganizationTeamByIdempotency :one
 SELECT

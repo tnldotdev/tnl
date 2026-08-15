@@ -107,7 +107,7 @@ func TestControlDiscoverySeparatesRouteAndRelayDNSAutomation(t *testing.T) {
 		{"both", "ZMANAGED", "ZSERVER", true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			cfg := tnldconfig.Config{Mode: tnldconfig.RoleControl, ServerDomain: "infra.example.test",
+			cfg := tnldconfig.Config{Role: tnldconfig.RoleControl, ServerDomain: "infra.example.test",
 				ManagedDeploymentDomain: "routes.other.test", Route53ManagedZoneID: test.managedZone, Route53ServerZoneID: test.serverZone}
 			h := NewHandler(Config{ManagedDeploymentDomain: cfg.ManagedDomain(),
 				AuthorityEndpoint: "https://" + cfg.ServerHostname(), DNSAutomation: cfg.DNSAutomationEnabled()}, nil, nil, nil)

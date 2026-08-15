@@ -863,7 +863,7 @@ components:
         expires_at:
           type: string
           format: date-time
-        attached_session_id:
+        open_route_session_id:
           $ref: "#/components/schemas/RouteSessionID"
         created_at:
           type: string
@@ -1208,7 +1208,7 @@ components:
       additionalProperties: false
       required:
         [
-          mode,
+          role,
           started_at,
           current_time,
           enabled_routes,
@@ -1219,7 +1219,7 @@ components:
           relay_leases,
         ]
       properties:
-        mode:
+        role:
           type: string
           enum: [standalone, control]
         started_at:
@@ -1265,7 +1265,7 @@ components:
           reported_streams,
           draining,
           renewed_at,
-          expires_at,
+          lease_expires_at,
         ]
       properties:
         relay_service_id:
@@ -1312,7 +1312,7 @@ components:
         renewed_at:
           type: string
           format: date-time
-        expires_at:
+        lease_expires_at:
           type: string
           format: date-time
     AdminRelayPage:
@@ -1346,11 +1346,11 @@ components:
     MaintenanceControl:
       type: object
       additionalProperties: false
-      required: [name, enabled, revision, updated_at, updated_by]
+      required: [name, allowed, revision, updated_at, updated_by]
       properties:
         name:
           $ref: "#/components/schemas/MaintenanceControlName"
-        enabled:
+        allowed:
           type: boolean
         revision:
           type: integer
@@ -1364,9 +1364,9 @@ components:
     SetMaintenanceControlRequest:
       type: object
       additionalProperties: false
-      required: [enabled]
+      required: [allowed]
       properties:
-        enabled:
+        allowed:
           type: boolean
     ProblemCode:
       type: string
@@ -1381,7 +1381,7 @@ components:
           unavailable,
           internal,
           name_unavailable,
-          route_attached,
+          route_session_open,
           policy_revision_stale,
           dns_setup_pending,
           placement_unavailable,

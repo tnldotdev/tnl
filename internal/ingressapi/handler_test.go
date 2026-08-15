@@ -203,7 +203,7 @@ func TestReportIngressUsageConvertsCumulativeReports(t *testing.T) {
 		Reports: []ingressv1.IngressUsageReport{{
 			RouteId: "route-1", RouteVersion: 3, BucketStart: now.Add(-time.Minute), BucketEnd: now,
 			ObservedThrough: now, ReportRevision: 2, ConnectionAttempts: 10, PolicyDenials: 1, CapacityDenials: 2,
-			PublisherOpenFailures: 3, SuccessfulStreams: 4, ConnectionNanoseconds: 5,
+			VisitorStreamOpenFailures: 3, SuccessfulStreams: 4, ConnectionNanoseconds: 5,
 			IngressBytes: 6, EgressBytes: 7, HistogramData: []byte{1, 2, 3}, Final: true,
 		}},
 	}
@@ -222,7 +222,7 @@ func TestReportIngressUsageConvertsCumulativeReports(t *testing.T) {
 	got := gotBatch.Reports[0]
 	if got.RouteID != "route-1" || got.RouteVersion != 3 || got.ReportRevision != 2 ||
 		got.ConnectionAttempts != 10 || got.PolicyDenials != 1 || got.CapacityDenials != 2 ||
-		got.PublisherOpenFailures != 3 || got.SuccessfulStreams != 4 || got.ConnectionNanoseconds != 5 ||
+		got.VisitorStreamOpenFailures != 3 || got.SuccessfulStreams != 4 || got.ConnectionNanoseconds != 5 ||
 		got.IngressBytes != 6 || got.EgressBytes != 7 || !got.ObservedThrough.Equal(now) ||
 		!bytes.Equal(got.HistogramData, []byte{1, 2, 3}) || !got.Final {
 		t.Fatalf("usage report = %#v", got)
@@ -236,15 +236,15 @@ func TestObserveRouteRecoveryUsesExactIngressLease(t *testing.T) {
 		_ context.Context,
 		identity controlstate.IngressLeaseIdentity,
 		routeID string,
-		routeVersion, episodeID uint64,
+		routeVersion, recoveryEpisodeID uint64,
 		observedAt time.Time,
 	) (controlstate.RouteRecoveryObservation, error) {
 		gotIdentity = identity
-		if routeID != "route-1" || routeVersion != 3 || episodeID != 9 || !observedAt.Equal(now) {
-			t.Fatalf("recovery request = %q, %d, %d, %v", routeID, routeVersion, episodeID, observedAt)
+		if routeID != "route-1" || routeVersion != 3 || recoveryEpisodeID != 9 || !observedAt.Equal(now) {
+			t.Fatalf("recovery request = %q, %d, %d, %v", routeID, routeVersion, recoveryEpisodeID, observedAt)
 		}
 		return controlstate.RouteRecoveryObservation{
-			EpisodeID: episodeID, RouteID: routeID, RouteVersion: routeVersion,
+			RecoveryEpisodeID: recoveryEpisodeID, RouteID: routeID, RouteVersion: routeVersion,
 			OpenedAt: now.Add(-time.Second), ObservedAt: now, ObservedSeconds: 1,
 		}, nil
 	}}
@@ -436,8 +436,8 @@ func (s *ingressStoreStub) ObserveRouteRecovery(
 	ctx context.Context,
 	identity controlstate.IngressLeaseIdentity,
 	routeID string,
-	routeVersion, episodeID uint64,
+	routeVersion, recoveryEpisodeID uint64,
 	observedAt time.Time,
 ) (controlstate.RouteRecoveryObservation, error) {
-	return s.observeRecovery(ctx, identity, routeID, routeVersion, episodeID, observedAt)
+	return s.observeRecovery(ctx, identity, routeID, routeVersion, recoveryEpisodeID, observedAt)
 }

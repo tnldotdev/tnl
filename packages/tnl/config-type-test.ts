@@ -22,6 +22,6 @@ literalConfig.tunnel.subdomain satisfies "api";
 defineConfig({ version: 1 });
 
 // @ts-expect-error Server configuration is static-only.
-defineConfig({ tnld: { mode: "relay" } });
+defineConfig({ tnld: { role: "relay" } });
 
 export { dynamicConfig, literalConfig, staticConfig };

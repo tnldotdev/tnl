@@ -69,12 +69,12 @@ func extractBenchmarkRootBundle(output []byte) ([]byte, error) {
 	text := string(output)
 	begin := strings.Index(text, benchmarkRootsBegin)
 	if begin < 0 {
-		return nil, errors.New("trust bundle start marker is missing")
+		return nil, errors.New("root certificate bundle start marker is missing")
 	}
 	begin += len(benchmarkRootsBegin)
 	end := strings.Index(text[begin:], benchmarkRootsEnd)
 	if end < 0 {
-		return nil, errors.New("trust bundle end marker is missing")
+		return nil, errors.New("root certificate bundle end marker is missing")
 	}
 	return []byte(text[begin : begin+end]), nil
 }
@@ -90,21 +90,21 @@ func validateBenchmarkRootBundleCount(bundle []byte, minimum int) error {
 		block, remaining := pem.Decode(rest)
 		if block == nil {
 			if len(bytes.TrimSpace(rest)) != 0 {
-				return errors.New("trust bundle contains non-PEM data")
+				return errors.New("root certificate bundle contains non-PEM data")
 			}
 			break
 		}
 		if block.Type != "CERTIFICATE" {
-			return fmt.Errorf("trust bundle contains PEM block %q", block.Type)
+			return fmt.Errorf("root certificate bundle contains PEM block %q", block.Type)
 		}
 		if _, err := x509.ParseCertificate(block.Bytes); err != nil {
-			return errors.New("trust bundle contains an invalid certificate")
+			return errors.New("root certificate bundle contains an invalid certificate")
 		}
 		certificates++
 		rest = remaining
 	}
 	if certificates < minimum {
-		return fmt.Errorf("trust bundle contains %d certificates, need at least %d", certificates, minimum)
+		return fmt.Errorf("root certificate bundle contains %d certificates, need at least %d", certificates, minimum)
 	}
 	return nil
 }

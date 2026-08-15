@@ -149,7 +149,7 @@ func testIntegrationBinaryNextDev(t *testing.T, fixture *integrationBinaryStanda
 	t.Helper()
 	project := newIntegrationBinaryNextDevProject(t, fixture.repositoryRoot)
 	environment := append(append([]string(nil), fixture.environment...), "XDG_RUNTIME_DIR="+project.runtimeDirectory)
-	dev := startIntegrationBinaryProcess(t, project.root, environment, fixture.tnlPath, "dev", "api", "--public")
+	dev := startIntegrationBinaryProcess(t, project.root, environment, fixture.tnlPath, "dev", "api", "--allow-all-ips")
 	t.Cleanup(func() {
 		if t.Failed() {
 			t.Logf("tnl dev output:\n%s\ntnld output:\n%s", dev.output.String(), fixture.server.output.String())

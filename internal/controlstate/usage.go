@@ -38,22 +38,22 @@ var (
 // IngressUsageReport contains cumulative usage for one ingress process, route
 // version, and time bucket.
 type IngressUsageReport struct {
-	RouteID               string
-	RouteVersion          uint64
-	BucketStart           time.Time
-	BucketEnd             time.Time
-	ObservedThrough       time.Time
-	ReportRevision        uint64
-	ConnectionAttempts    uint64
-	PolicyDenials         uint64
-	CapacityDenials       uint64
-	PublisherOpenFailures uint64
-	SuccessfulStreams     uint64
-	ConnectionNanoseconds uint64
-	IngressBytes          uint64
-	EgressBytes           uint64
-	HistogramData         []byte
-	Final                 bool
+	RouteID                   string
+	RouteVersion              uint64
+	BucketStart               time.Time
+	BucketEnd                 time.Time
+	ObservedThrough           time.Time
+	ReportRevision            uint64
+	ConnectionAttempts        uint64
+	PolicyDenials             uint64
+	CapacityDenials           uint64
+	VisitorStreamOpenFailures uint64
+	SuccessfulStreams         uint64
+	ConnectionNanoseconds     uint64
+	IngressBytes              uint64
+	EgressBytes               uint64
+	HistogramData             []byte
+	Final                     bool
 }
 
 // IngressUsageBatch advances one ingress process run only after every report
@@ -222,7 +222,7 @@ func applyIngressUsageReport(
 		BucketStart: timestamptz(report.BucketStart), BucketEnd: timestamptz(report.BucketEnd),
 		ObservedThrough: timestamptz(report.ObservedThrough), ConnectionAttempts: delta.connectionAttempts,
 		PolicyDenials: delta.policyDenials, CapacityDenials: delta.capacityDenials,
-		PublisherOpenFailures: delta.publisherOpenFailures, SuccessfulStreams: delta.successfulStreams,
+		VisitorStreamOpenFailures: delta.visitorStreamOpenFailures, SuccessfulStreams: delta.successfulStreams,
 		ConnectionNanoseconds: delta.connectionNanoseconds, IngressBytes: delta.ingressBytes,
 		EgressBytes: delta.egressBytes, HistogramData: mergedHistogramData, UpdatedAt: timestamptz(receivedAt),
 		RouteID: report.RouteID, RouteVersion: routeVersion,
@@ -242,8 +242,8 @@ func applyIngressUsageReport(
 }
 
 type ingressUsageCounters struct {
-	connectionAttempts, policyDenials, capacityDenials, publisherOpenFailures int64
-	successfulStreams, connectionNanoseconds, ingressBytes, egressBytes       int64
+	connectionAttempts, policyDenials, capacityDenials, visitorStreamOpenFailures int64
+	successfulStreams, connectionNanoseconds, ingressBytes, egressBytes           int64
 }
 
 func ingressUsageDelta(
@@ -260,34 +260,34 @@ func ingressUsageDelta(
 	}
 	stored := ingressUsageCounters{
 		connectionAttempts: previous.ConnectionAttempts, policyDenials: previous.PolicyDenials,
-		capacityDenials: previous.CapacityDenials, publisherOpenFailures: previous.PublisherOpenFailures,
+		capacityDenials: previous.CapacityDenials, visitorStreamOpenFailures: previous.VisitorStreamOpenFailures,
 		successfulStreams: previous.SuccessfulStreams, connectionNanoseconds: previous.ConnectionNanoseconds,
 		ingressBytes: previous.IngressBytes, egressBytes: previous.EgressBytes,
 	}
 	if current.connectionAttempts < stored.connectionAttempts || current.policyDenials < stored.policyDenials ||
 		current.capacityDenials < stored.capacityDenials ||
-		current.publisherOpenFailures < stored.publisherOpenFailures ||
+		current.visitorStreamOpenFailures < stored.visitorStreamOpenFailures ||
 		current.successfulStreams < stored.successfulStreams ||
 		current.connectionNanoseconds < stored.connectionNanoseconds ||
 		current.ingressBytes < stored.ingressBytes || current.egressBytes < stored.egressBytes {
 		return ingressUsageCounters{}, ErrIngressUsageReportConflict
 	}
 	return ingressUsageCounters{
-		connectionAttempts:    current.connectionAttempts - stored.connectionAttempts,
-		policyDenials:         current.policyDenials - stored.policyDenials,
-		capacityDenials:       current.capacityDenials - stored.capacityDenials,
-		publisherOpenFailures: current.publisherOpenFailures - stored.publisherOpenFailures,
-		successfulStreams:     current.successfulStreams - stored.successfulStreams,
-		connectionNanoseconds: current.connectionNanoseconds - stored.connectionNanoseconds,
-		ingressBytes:          current.ingressBytes - stored.ingressBytes,
-		egressBytes:           current.egressBytes - stored.egressBytes,
+		connectionAttempts:        current.connectionAttempts - stored.connectionAttempts,
+		policyDenials:             current.policyDenials - stored.policyDenials,
+		capacityDenials:           current.capacityDenials - stored.capacityDenials,
+		visitorStreamOpenFailures: current.visitorStreamOpenFailures - stored.visitorStreamOpenFailures,
+		successfulStreams:         current.successfulStreams - stored.successfulStreams,
+		connectionNanoseconds:     current.connectionNanoseconds - stored.connectionNanoseconds,
+		ingressBytes:              current.ingressBytes - stored.ingressBytes,
+		egressBytes:               current.egressBytes - stored.egressBytes,
 	}, nil
 }
 
 func ingressUsageCountersFromReport(report IngressUsageReport) (ingressUsageCounters, bool) {
 	values := []uint64{
 		report.ConnectionAttempts, report.PolicyDenials, report.CapacityDenials,
-		report.PublisherOpenFailures, report.SuccessfulStreams, report.ConnectionNanoseconds,
+		report.VisitorStreamOpenFailures, report.SuccessfulStreams, report.ConnectionNanoseconds,
 		report.IngressBytes, report.EgressBytes,
 	}
 	for _, value := range values {
@@ -297,7 +297,7 @@ func ingressUsageCountersFromReport(report IngressUsageReport) (ingressUsageCoun
 	}
 	return ingressUsageCounters{
 		connectionAttempts: int64(report.ConnectionAttempts), policyDenials: int64(report.PolicyDenials),
-		capacityDenials: int64(report.CapacityDenials), publisherOpenFailures: int64(report.PublisherOpenFailures),
+		capacityDenials: int64(report.CapacityDenials), visitorStreamOpenFailures: int64(report.VisitorStreamOpenFailures),
 		successfulStreams: int64(report.SuccessfulStreams), connectionNanoseconds: int64(report.ConnectionNanoseconds),
 		ingressBytes: int64(report.IngressBytes), egressBytes: int64(report.EgressBytes),
 	}, true
@@ -396,7 +396,7 @@ func ingressUsageReportParams(
 		ObservedThrough: timestamptz(report.ObservedThrough), ReportRevision: positive(report.ReportRevision),
 		ConnectionAttempts: counters.connectionAttempts,
 		PolicyDenials:      counters.policyDenials, CapacityDenials: counters.capacityDenials,
-		PublisherOpenFailures: counters.publisherOpenFailures, SuccessfulStreams: counters.successfulStreams,
+		VisitorStreamOpenFailures: counters.visitorStreamOpenFailures, SuccessfulStreams: counters.successfulStreams,
 		ConnectionNanoseconds: counters.connectionNanoseconds, IngressBytes: counters.ingressBytes,
 		EgressBytes: counters.egressBytes, HistogramData: slices.Clone(report.HistogramData),
 		Final: report.Final, ReceivedAt: timestamptz(receivedAt),
@@ -411,7 +411,7 @@ func ingressUsageReportMatches(stored controlstatedb.ControlIngressUsageReport, 
 		stored.ObservedThrough.Valid && stored.ObservedThrough.Time.Equal(report.ObservedThrough) &&
 		matchesPositiveInt64(stored.ReportRevision, report.ReportRevision) &&
 		stored.ConnectionAttempts == counters.connectionAttempts && stored.PolicyDenials == counters.policyDenials &&
-		stored.CapacityDenials == counters.capacityDenials && stored.PublisherOpenFailures == counters.publisherOpenFailures &&
+		stored.CapacityDenials == counters.capacityDenials && stored.VisitorStreamOpenFailures == counters.visitorStreamOpenFailures &&
 		stored.SuccessfulStreams == counters.successfulStreams && stored.ConnectionNanoseconds == counters.connectionNanoseconds &&
 		stored.IngressBytes == counters.ingressBytes && stored.EgressBytes == counters.egressBytes &&
 		bytes.Equal(stored.HistogramData, report.HistogramData) && stored.Final == report.Final
@@ -504,30 +504,30 @@ func (d *Database) FinalizeRouteUsageBuckets(
 // RouteUsageDeliveryWork is one immutable finalized bucket held under a
 // PostgreSQL work lease.
 type RouteUsageDeliveryWork struct {
-	DeliveryID            uint64
-	DeliveryKey           string
-	SourceRevision        uint64
-	RouteID               string
-	RouteVersion          uint64
-	TeamID                string
-	ActingIdentityID      string
-	BucketStart           time.Time
-	BucketEnd             time.Time
-	ObservedThrough       time.Time
-	ConnectionAttempts    uint64
-	PolicyDenials         uint64
-	CapacityDenials       uint64
-	PublisherOpenFailures uint64
-	SuccessfulStreams     uint64
-	ConnectionNanoseconds uint64
-	IngressBytes          uint64
-	EgressBytes           uint64
-	Checkpoint            routeusage.Checkpoint
-	Complete              bool
-	Attempts              uint64
-	WorkerID              string
-	WorkEpoch             uint64
-	WorkExpiresAt         time.Time
+	DeliveryID                uint64
+	DeliveryKey               string
+	SourceRevision            uint64
+	RouteID                   string
+	RouteVersion              uint64
+	TeamID                    string
+	ActingIdentityID          string
+	BucketStart               time.Time
+	BucketEnd                 time.Time
+	ObservedThrough           time.Time
+	ConnectionAttempts        uint64
+	PolicyDenials             uint64
+	CapacityDenials           uint64
+	VisitorStreamOpenFailures uint64
+	SuccessfulStreams         uint64
+	ConnectionNanoseconds     uint64
+	IngressBytes              uint64
+	EgressBytes               uint64
+	Checkpoint                routeusage.Checkpoint
+	Complete                  bool
+	Attempts                  uint64
+	WorkerID                  string
+	WorkEpoch                 uint64
+	WorkExpiresAt             time.Time
 }
 
 // ClaimRouteUsageDeliveries claims up to batchSize finalized buckets.
@@ -641,7 +641,7 @@ func routeUsageDeliveryWork(
 		return RouteUsageDeliveryWork{}, ErrRouteUsageDeliveryInvalid
 	}
 	values := []int64{
-		bucket.ConnectionAttempts, bucket.PolicyDenials, bucket.CapacityDenials, bucket.PublisherOpenFailures,
+		bucket.ConnectionAttempts, bucket.PolicyDenials, bucket.CapacityDenials, bucket.VisitorStreamOpenFailures,
 		bucket.SuccessfulStreams, bucket.ConnectionNanoseconds, bucket.IngressBytes, bucket.EgressBytes,
 	}
 	for _, value := range values {
@@ -656,7 +656,7 @@ func routeUsageDeliveryWork(
 		BucketStart: bucket.BucketStart.Time,
 		BucketEnd:   bucket.BucketEnd.Time, ObservedThrough: bucket.ObservedThrough.Time,
 		ConnectionAttempts: uint64(bucket.ConnectionAttempts), PolicyDenials: uint64(bucket.PolicyDenials),
-		CapacityDenials: uint64(bucket.CapacityDenials), PublisherOpenFailures: uint64(bucket.PublisherOpenFailures),
+		CapacityDenials: uint64(bucket.CapacityDenials), VisitorStreamOpenFailures: uint64(bucket.VisitorStreamOpenFailures),
 		SuccessfulStreams: uint64(bucket.SuccessfulStreams), ConnectionNanoseconds: uint64(bucket.ConnectionNanoseconds),
 		IngressBytes: uint64(bucket.IngressBytes), EgressBytes: uint64(bucket.EgressBytes),
 		Checkpoint: checkpoint, Complete: bucket.Complete, Attempts: uint64(delivery.Attempts),

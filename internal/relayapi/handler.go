@@ -18,7 +18,7 @@ type Store interface {
 	RegisterRelay(context.Context, controlstate.RelayRegistration, time.Time, time.Duration) (controlstate.RelayLease, error)
 	RenewRelay(context.Context, controlstate.RelayRenewal, time.Time, time.Duration) (controlstate.RelayLease, error)
 	BeginRelayDrain(context.Context, controlstate.RelayLeaseIdentity, time.Time, time.Time) (controlstate.RelayLease, error)
-	GetRelayServiceCertificate(context.Context, controlstate.RelayLeaseIdentity, time.Time) (controlstate.RelayServiceCertificate, error)
+	GetRelayTransportCertificate(context.Context, controlstate.RelayLeaseIdentity, time.Time) (controlstate.RelayTransportCertificate, error)
 	ClaimPublisherConnection(context.Context, controlstate.PublisherConnectionClaimRequest, time.Time) (controlstate.ClaimedPublisherConnection, error)
 	MarkPublisherConnectionReady(context.Context, controlstate.PublisherConnectionClaimRequest, time.Time) (controlstate.ClaimedPublisherConnection, error)
 	DisconnectPublisherConnection(context.Context, controlstate.PublisherConnectionClaimRequest, time.Time, bool) (controlstate.ClaimedPublisherConnection, error)
@@ -113,13 +113,13 @@ func (h *handler) drainRelay(response http.ResponseWriter, request *http.Request
 	serviceapi.WriteJSON(response, http.StatusOK, lease)
 }
 
-func (h *handler) getRelayServiceCertificate(
+func (h *handler) getRelayTransportCertificate(
 	response http.ResponseWriter,
 	request *http.Request,
 	relayServiceID string,
-	params relayv1.GetRelayServiceCertificateParams,
+	params relayv1.GetRelayTransportCertificateParams,
 ) {
-	certificate, err := h.service.GetRelayServiceCertificate(request.Context(), relayServiceID, params)
+	certificate, err := h.service.GetRelayTransportCertificate(request.Context(), relayServiceID, params)
 	if h.writeServiceError(response, request, err) {
 		return
 	}
@@ -209,9 +209,9 @@ func storeProblem(err error, report func(error)) (status int, kind, detail strin
 		return http.StatusConflict, "relay_registration_conflict", "The relay identity or service configuration conflicts with live state"
 	case errors.Is(err, controlstate.ErrRelayLeaseStale):
 		return http.StatusConflict, "relay_lease_stale", "The relay lease is no longer current"
-	case errors.Is(err, controlstate.ErrRelayServiceCertificateLeaseStale):
+	case errors.Is(err, controlstate.ErrRelayTransportCertificateLeaseStale):
 		return http.StatusConflict, "relay_lease_stale", "The relay lease is no longer current"
-	case errors.Is(err, controlstate.ErrRelayServiceCertificateNotFound):
+	case errors.Is(err, controlstate.ErrRelayTransportCertificateNotFound):
 		return http.StatusServiceUnavailable, "certificate_unavailable", "The relay transport certificate is not ready"
 	case errors.Is(err, controlstate.ErrConnectionAssignmentStale), errors.Is(err, controlstate.ErrRouteSessionStale):
 		return http.StatusConflict, "stale_connection_assignment", "The publisher connection assignment is no longer current"

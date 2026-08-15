@@ -97,11 +97,11 @@ func testControllerInstallsCertificateBeforeReady(t *testing.T, fail bool) {
 		ConnectionCapacity: 10, StreamCapacity: 100, ReportedConnections: 0, ReportedStreams: 0,
 		RegisteredAt: now, RenewedAt: now, LeaseExpiresAt: now.Add(time.Minute),
 	}
-	client := &relayCertificateControlStub{lease: lease, certificate: relayv1.RelayServiceCertificate{
+	client := &relayCertificateControlStub{lease: lease, certificate: relayv1.RelayTransportCertificate{
 		RelayServiceId: lease.RelayServiceId, TlsServerName: lease.TlsServerName,
 		CertificatePem: "certificate", PrivateKeyPem: "private-key", NotAfter: now.Add(48 * time.Hour),
 	}}
-	installed := make(chan relayv1.RelayServiceCertificate, 1)
+	installed := make(chan relayv1.RelayTransportCertificate, 1)
 	release := make(chan struct{})
 	unblock := sync.OnceFunc(func() { close(release) })
 	installErr := errors.New("installer failed")
@@ -114,7 +114,7 @@ func testControllerInstallsCertificateBeforeReady(t *testing.T, fail bool) {
 			ConnectionCapacity: 10, StreamCapacity: 100,
 		},
 		RenewalInterval: time.Hour, RetryInterval: time.Second, Now: func() time.Time { return now },
-		CertificateChanged: func(certificate relayv1.RelayServiceCertificate) error {
+		CertificateChanged: func(certificate relayv1.RelayTransportCertificate) error {
 			installed <- certificate
 			<-release
 			if fail {
@@ -233,7 +233,7 @@ func testControllerDoesNotRegisterAgainAfterAcknowledgingDrain(t *testing.T) {
 type relayCertificateControlStub struct {
 	ControlClient
 	lease       relayv1.RelayLease
-	certificate relayv1.RelayServiceCertificate
+	certificate relayv1.RelayTransportCertificate
 }
 
 type relayDrainControlStub struct {
@@ -274,14 +274,14 @@ func (s *relayCertificateControlStub) RegisterRelay(
 	return s.lease, nil
 }
 
-func (s *relayCertificateControlStub) GetRelayServiceCertificate(
+func (s *relayCertificateControlStub) GetRelayTransportCertificate(
 	_ context.Context,
 	relayServiceID relayv1.RelayServiceID,
-	params relayv1.GetRelayServiceCertificateParams,
-) (relayv1.RelayServiceCertificate, error) {
+	params relayv1.GetRelayTransportCertificateParams,
+) (relayv1.RelayTransportCertificate, error) {
 	if relayServiceID != s.lease.RelayServiceId || params.RelayId != s.lease.RelayId ||
 		params.RelayRunId != s.lease.RelayRunId || params.RelayLeaseRevision != s.lease.RelayLeaseRevision {
-		return relayv1.RelayServiceCertificate{}, errors.New("unexpected certificate lease identity")
+		return relayv1.RelayTransportCertificate{}, errors.New("unexpected certificate lease identity")
 	}
 	return s.certificate, nil
 }

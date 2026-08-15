@@ -60,7 +60,7 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 	for _, tunnel := range snapshot.Tunnels {
 		fields := make([]clioutput.Field, 0, 8)
 		if tunnel.PublicURL != "" {
-			fields = append(fields, clioutput.Field{Label: "public", Value: tunnel.PublicURL})
+			fields = append(fields, clioutput.Field{Label: "URL", Value: tunnel.PublicURL})
 		} else if tunnel.Hostname != "" {
 			fields = append(fields, clioutput.Field{Label: "hostname", Value: tunnel.Hostname})
 		}

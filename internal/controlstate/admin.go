@@ -46,7 +46,7 @@ type AdminRelayPage struct {
 // MaintenanceControl is one stored gate for starting new work.
 type MaintenanceControl struct {
 	Name      MaintenanceControlName
-	Enabled   bool
+	Allowed   bool
 	Revision  uint64
 	UpdatedAt time.Time
 	UpdatedBy string
@@ -199,7 +199,7 @@ func (d *Database) ListMaintenanceControls(ctx context.Context) ([]MaintenanceCo
 func (d *Database) SetMaintenanceControl(
 	ctx context.Context,
 	name MaintenanceControlName,
-	enabled bool,
+	allowed bool,
 	actorIdentityID, requestID string,
 	now time.Time,
 ) (result MaintenanceControl, retErr error) {
@@ -216,7 +216,7 @@ func (d *Database) SetMaintenanceControl(
 	defer rollback(ctx, tx, "maintenance control update", &retErr)()
 	queries := controlstatedb.New(tx)
 	row, err := queries.SetMaintenanceControl(ctx, controlstatedb.SetMaintenanceControlParams{
-		Enabled: enabled, UpdatedAt: timestamptz(now), UpdatedBy: actorIdentityID, ControlName: string(name),
+		Allowed: allowed, UpdatedAt: timestamptz(now), UpdatedBy: actorIdentityID, ControlName: string(name),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return MaintenanceControl{}, ErrMaintenanceControlNotFound
@@ -224,7 +224,7 @@ func (d *Database) SetMaintenanceControl(
 	if err != nil {
 		return MaintenanceControl{}, fmt.Errorf("controlstate: set maintenance control: %w", err)
 	}
-	details, err := json.Marshal(map[string]any{"enabled": enabled, "revision": row.Revision})
+	details, err := json.Marshal(map[string]any{"allowed": allowed, "revision": row.Revision})
 	if err != nil {
 		return MaintenanceControl{}, fmt.Errorf("controlstate: encode maintenance audit details: %w", err)
 	}
@@ -264,7 +264,7 @@ func maintenanceControl(row controlstatedb.ControlMaintenanceControl) (Maintenan
 		return MaintenanceControl{}, errors.New("controlstate: invalid maintenance control row")
 	}
 	return MaintenanceControl{
-		Name: name, Enabled: row.Enabled, Revision: uint64(row.Revision),
+		Name: name, Allowed: row.Allowed, Revision: uint64(row.Revision),
 		UpdatedAt: row.UpdatedAt.Time, UpdatedBy: row.UpdatedBy,
 	}, nil
 }

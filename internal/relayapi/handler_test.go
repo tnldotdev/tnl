@@ -100,19 +100,19 @@ func TestRegisterRelayAuthorizesAndConvertsRequest(t *testing.T) {
 	}
 }
 
-func TestGetRelayServiceCertificateRequiresExactLease(t *testing.T) {
+func TestGetRelayTransportCertificateRequiresExactLease(t *testing.T) {
 	now := time.Date(2026, time.September, 4, 12, 0, 0, 0, time.UTC)
 	var got controlstate.RelayLeaseIdentity
-	store := &relayStoreStub{getRelayServiceCertificate: func(
+	store := &relayStoreStub{getRelayTransportCertificate: func(
 		_ context.Context,
 		identity controlstate.RelayLeaseIdentity,
 		gotNow time.Time,
-	) (controlstate.RelayServiceCertificate, error) {
+	) (controlstate.RelayTransportCertificate, error) {
 		got = identity
 		if !gotNow.Equal(now) {
 			t.Fatalf("certificate lookup time = %v, want %v", gotNow, now)
 		}
-		return controlstate.RelayServiceCertificate{
+		return controlstate.RelayTransportCertificate{
 			RelayServiceID: identity.RelayServiceID, TLSServerName: "relay.example.test",
 			CertificatePEM: "certificate", PrivateKeyPEM: "private-key", Serial: "42",
 			NotAfter: now.Add(24 * time.Hour),
@@ -131,7 +131,7 @@ func TestGetRelayServiceCertificateRequiresExactLease(t *testing.T) {
 	if response.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("Cache-Control = %q", response.Header().Get("Cache-Control"))
 	}
-	var certificate relayv1.RelayServiceCertificate
+	var certificate relayv1.RelayTransportCertificate
 	decodeRelayResponse(t, response, &certificate)
 	if certificate.PrivateKeyPem != "private-key" || certificate.CertificatePem != "certificate" ||
 		certificate.RelayServiceId != "relay-service-1" || certificate.TlsServerName != "relay.example.test" ||
@@ -306,7 +306,7 @@ type relayStoreStub struct {
 	registerRelay                 func(context.Context, controlstate.RelayRegistration, time.Time, time.Duration) (controlstate.RelayLease, error)
 	renewRelay                    func(context.Context, controlstate.RelayRenewal, time.Time, time.Duration) (controlstate.RelayLease, error)
 	beginRelayDrain               func(context.Context, controlstate.RelayLeaseIdentity, time.Time, time.Time) (controlstate.RelayLease, error)
-	getRelayServiceCertificate    func(context.Context, controlstate.RelayLeaseIdentity, time.Time) (controlstate.RelayServiceCertificate, error)
+	getRelayTransportCertificate  func(context.Context, controlstate.RelayLeaseIdentity, time.Time) (controlstate.RelayTransportCertificate, error)
 	claimPublisherConnection      func(context.Context, controlstate.PublisherConnectionClaimRequest, time.Time) (controlstate.ClaimedPublisherConnection, error)
 	markPublisherConnectionReady  func(context.Context, controlstate.PublisherConnectionClaimRequest, time.Time) (controlstate.ClaimedPublisherConnection, error)
 	disconnectPublisherConnection func(context.Context, controlstate.PublisherConnectionClaimRequest, time.Time, bool) (controlstate.ClaimedPublisherConnection, error)
@@ -330,10 +330,10 @@ func (s *relayStoreStub) BeginRelayDrain(
 	return s.beginRelayDrain(ctx, identity, now, deadline)
 }
 
-func (s *relayStoreStub) GetRelayServiceCertificate(
+func (s *relayStoreStub) GetRelayTransportCertificate(
 	ctx context.Context, identity controlstate.RelayLeaseIdentity, now time.Time,
-) (controlstate.RelayServiceCertificate, error) {
-	return s.getRelayServiceCertificate(ctx, identity, now)
+) (controlstate.RelayTransportCertificate, error) {
+	return s.getRelayTransportCertificate(ctx, identity, now)
 }
 
 func (s *relayStoreStub) ClaimPublisherConnection(

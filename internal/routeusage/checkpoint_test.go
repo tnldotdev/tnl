@@ -52,7 +52,7 @@ func checkpointGolden(t *testing.T) []byte {
 func TestCheckpointBinaryGolden(t *testing.T) {
 	var want Checkpoint
 	want.VisitorNetworks.registers[0] = 1
-	for index, histogram := range []*DurationHistogram{&want.PublisherOpenLatency, &want.TimeToFirstPublisherByte, &want.SuccessfulConnectionDuration} {
+	for index, histogram := range []*DurationHistogram{&want.VisitorStreamOpenLatency, &want.TimeToFirstPublisherByte, &want.SuccessfulConnectionDuration} {
 		if err := histogram.Observe(time.Duration(index + 1)); err != nil {
 			t.Fatal(err)
 		}
@@ -86,7 +86,7 @@ func TestCheckpointMerge(t *testing.T) {
 	if err := first.Merge(second); err != nil {
 		t.Fatal(err)
 	}
-	for index, histogram := range []DurationHistogram{first.PublisherOpenLatency, first.TimeToFirstPublisherByte, first.SuccessfulConnectionDuration} {
+	for index, histogram := range []DurationHistogram{first.VisitorStreamOpenLatency, first.TimeToFirstPublisherByte, first.SuccessfulConnectionDuration} {
 		if histogram.Count() != 2 || histogram.SumNanoseconds() != uint64(2*(index+1)) {
 			t.Fatalf("histogram %d = %#v", index, histogram)
 		}
@@ -104,7 +104,7 @@ func TestCheckpointMerge(t *testing.T) {
 	for _, field := range []string{"publisher open", "first byte", "successful duration"} {
 		t.Run(field+" overflow", func(t *testing.T) {
 			var destination, source Checkpoint
-			left, right := &destination.PublisherOpenLatency, &source.PublisherOpenLatency
+			left, right := &destination.VisitorStreamOpenLatency, &source.VisitorStreamOpenLatency
 			switch field {
 			case "first byte":
 				left, right = &destination.TimeToFirstPublisherByte, &source.TimeToFirstPublisherByte

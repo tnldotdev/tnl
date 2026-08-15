@@ -135,7 +135,7 @@ SELECT r.id, r.team_id, r.domain_id, r.membership_id, r.created_by_identity_id, 
         FROM control.route_sessions AS s
         WHERE s.route_id = r.id
           AND s.closed_at IS NULL
-    ), '')::text AS attached_session_id
+    ), '')::text AS open_route_session_id
 FROM control.routes AS r
 WHERE r.id = $1
   AND r.lifecycle_state <> 'deleted'
@@ -187,7 +187,7 @@ type GetIdentityRouteRow struct {
 	UpdatedAt             pgtype.Timestamptz
 	SuspendedAt           pgtype.Timestamptz
 	DeletedAt             pgtype.Timestamptz
-	AttachedSessionID     string
+	OpenRouteSessionID    string
 }
 
 func (q *Queries) GetIdentityRoute(ctx context.Context, arg GetIdentityRouteParams) (GetIdentityRouteRow, error) {
@@ -227,7 +227,7 @@ func (q *Queries) GetIdentityRoute(ctx context.Context, arg GetIdentityRoutePara
 		&i.UpdatedAt,
 		&i.SuspendedAt,
 		&i.DeletedAt,
-		&i.AttachedSessionID,
+		&i.OpenRouteSessionID,
 	)
 	return i, err
 }
@@ -239,7 +239,7 @@ SELECT r.id, r.team_id, r.domain_id, r.membership_id, r.created_by_identity_id, 
         FROM control.route_sessions AS s
         WHERE s.route_id = r.id
           AND s.closed_at IS NULL
-    ), '')::text AS attached_session_id
+    ), '')::text AS open_route_session_id
 FROM control.routes AS r
 WHERE r.created_by_identity_id = $1
   AND r.idempotency_key = $2
@@ -284,7 +284,7 @@ type GetRouteByCreatorIdempotencyRow struct {
 	UpdatedAt             pgtype.Timestamptz
 	SuspendedAt           pgtype.Timestamptz
 	DeletedAt             pgtype.Timestamptz
-	AttachedSessionID     string
+	OpenRouteSessionID    string
 }
 
 func (q *Queries) GetRouteByCreatorIdempotency(ctx context.Context, arg GetRouteByCreatorIdempotencyParams) (GetRouteByCreatorIdempotencyRow, error) {
@@ -324,7 +324,7 @@ func (q *Queries) GetRouteByCreatorIdempotency(ctx context.Context, arg GetRoute
 		&i.UpdatedAt,
 		&i.SuspendedAt,
 		&i.DeletedAt,
-		&i.AttachedSessionID,
+		&i.OpenRouteSessionID,
 	)
 	return i, err
 }
@@ -682,7 +682,7 @@ SELECT r.id, r.team_id, r.domain_id, r.membership_id, r.created_by_identity_id, 
         FROM control.route_sessions AS s
         WHERE s.route_id = r.id
           AND s.closed_at IS NULL
-    ), '')::text AS attached_session_id
+    ), '')::text AS open_route_session_id
 FROM control.routes AS r
 WHERE r.team_id = $1
   AND r.lifecycle_state <> 'deleted'
@@ -738,7 +738,7 @@ type ListIdentityRoutesRow struct {
 	UpdatedAt             pgtype.Timestamptz
 	SuspendedAt           pgtype.Timestamptz
 	DeletedAt             pgtype.Timestamptz
-	AttachedSessionID     string
+	OpenRouteSessionID    string
 }
 
 func (q *Queries) ListIdentityRoutes(ctx context.Context, arg ListIdentityRoutesParams) ([]ListIdentityRoutesRow, error) {
@@ -784,7 +784,7 @@ func (q *Queries) ListIdentityRoutes(ctx context.Context, arg ListIdentityRoutes
 			&i.UpdatedAt,
 			&i.SuspendedAt,
 			&i.DeletedAt,
-			&i.AttachedSessionID,
+			&i.OpenRouteSessionID,
 		); err != nil {
 			return nil, err
 		}
@@ -1020,17 +1020,17 @@ func (q *Queries) LockLocalRouteTeamForMutation(ctx context.Context, routeID str
 }
 
 const lockRouteCreationControl = `-- name: LockRouteCreationControl :one
-SELECT enabled
+SELECT allowed
 FROM control.maintenance_controls
 WHERE control_name = 'route_creation'
-FOR UPDATE
+FOR SHARE
 `
 
 func (q *Queries) LockRouteCreationControl(ctx context.Context) (bool, error) {
 	row := q.db.QueryRow(ctx, lockRouteCreationControl)
-	var enabled bool
-	err := row.Scan(&enabled)
-	return enabled, err
+	var allowed bool
+	err := row.Scan(&allowed)
+	return allowed, err
 }
 
 const lockRouteCreator = `-- name: LockRouteCreator :one

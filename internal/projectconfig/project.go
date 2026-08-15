@@ -164,11 +164,11 @@ func mergeTunnel(base, override *config.Tunnel) *config.Tunnel {
 	}
 	if override.AllowIP != nil {
 		result.AllowIP = slices.Clone(override.AllowIP)
-		result.Public = nil
+		result.AllowAllIPs = nil
 	}
-	if override.Public != nil {
-		result.Public = override.Public
-		if *override.Public {
+	if override.AllowAllIPs != nil {
+		result.AllowAllIPs = override.AllowAllIPs
+		if *override.AllowAllIPs {
 			result.AllowIP = nil
 		}
 	}

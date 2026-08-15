@@ -6,17 +6,17 @@
   "acting_identity_id": "identity_0123456789abcdef0123456789abcdef",
   "resolution": "minute",
   "bucket_start": "2026-08-31T12:34:00Z",
-  "revision": "1",
+  "report_revision": "1",
   "observed_through": "2026-08-31T12:35:00Z",
   "connection_attempts": "3",
   "policy_denials": "1",
   "capacity_denials": "0",
-  "publisher_open_failures": "1",
+  "visitor_stream_open_failures": "1",
   "successful_streams": "1",
   "connection_nanoseconds": "45000000000",
   "ingress_bytes": "1200",
   "egress_bytes": "8400",
-  "publisher_open_latency": {
+  "visitor_stream_open_latency": {
     "count": "2",
     "sum_nanoseconds": "100000000",
     "cumulative_counts": [

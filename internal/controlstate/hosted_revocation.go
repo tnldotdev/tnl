@@ -58,6 +58,7 @@ func (d *Database) ApplyHostedPolicyRevocation(
 	}
 	defer rollback(ctx, tx, "apply hosted policy revocation", &retErr)()
 	queries := controlstatedb.New(tx)
+	pendingEvents := pendingIngressRoutingTableEvents{}
 
 	// Hosted mutations share the persisted issuer/team revision guard before
 	// locking routes, including routes created while this revocation is waiting.
@@ -85,7 +86,7 @@ func (d *Database) ApplyHostedPolicyRevocation(
 		if err == nil && session.PolicyRevision < int64(policyRevision) {
 			_, membershipAffected := memberships[session.MembershipID.String]
 			if allSessions || domainAffected || session.MembershipID.Valid && membershipAffected {
-				if err := closeRouteSession(ctx, queries, route, session, RouteSessionClosed, now, "hosted_policy_revoked"); err != nil {
+				if err := closeRouteSession(ctx, queries, &pendingEvents, route, session, RouteSessionClosed, now, "hosted_policy_revoked"); err != nil {
 					return false, 0, err
 				}
 				closed++
@@ -99,6 +100,9 @@ func (d *Database) ApplyHostedPolicyRevocation(
 				return false, 0, authorityRowsError("apply hosted policy revocation: suspend route", updated, err)
 			}
 		}
+	}
+	if err := pendingEvents.publish(ctx, queries); err != nil {
+		return false, 0, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return false, 0, fmt.Errorf("controlstate: apply hosted policy revocation: commit: %w", err)

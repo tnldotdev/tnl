@@ -592,7 +592,7 @@ func provisionBenchmark(
 		machine flyMachine
 	}
 	controlEnvironment := map[string]string{
-		"TNLD_MODE": "control", "TNLD_SERVER_DOMAIN": manifest.ServerDomain,
+		"TNLD_ROLE": "control", "TNLD_SERVER_DOMAIN": manifest.ServerDomain,
 		"TNLD_MANAGED_DEPLOYMENT_DOMAIN": manifest.ManagedDomain, "TNLD_CONTROL_LISTEN": ":8443",
 		"TNLD_PRIVATE_CONTROL_LISTEN": ":9443", "TNLD_METRICS_LISTEN": ":9090",
 		"TNLD_ACME_EMAIL": command.ACMEEmail, "TNLD_ACME_ACCEPT_TERMS": "true",
@@ -658,7 +658,7 @@ func provisionBenchmark(
 		progress.printf("control: process %d/%d ready", index+1, plan.Topology.ControlProcesses)
 	}
 	ingressEnvironment := map[string]string{
-		"TNLD_MODE": "ingress", "TNLD_CONTROL_HOSTNAME": "control." + manifest.ServerDomain,
+		"TNLD_ROLE": "ingress", "TNLD_CONTROL_HOSTNAME": "control." + manifest.ServerDomain,
 		"TNLD_PRIVATE_CONTROL_ADDRESS": apps["control"] + ".internal:9443",
 		"TNLD_INGRESS_LISTEN":          ":8443", "TNLD_METRICS_LISTEN": ":9090",
 		"TNLD_REQUIRE_PROXY_HEADER": "true",
@@ -694,7 +694,7 @@ func provisionBenchmark(
 	}
 	for _, role := range benchmarkRelayRoles(plan.Topology.RelayServices) {
 		relayEnvironment := map[string]string{
-			"TNLD_MODE": "relay", "TNLD_CONTROL_HOSTNAME": "control." + manifest.ServerDomain,
+			"TNLD_ROLE": "relay", "TNLD_CONTROL_HOSTNAME": "control." + manifest.ServerDomain,
 			"TNLD_PRIVATE_CONTROL_ADDRESS": apps["control"] + ".internal:9443",
 			"TNLD_RELAY_SERVICE_ID":        role, "TNLD_RELAY_ADDRESS": role + "." + manifest.ServerDomain + ":443",
 			"TNLD_RELAY_TCP_LISTEN": ":8443", "TNLD_RELAY_UDP_LISTEN": ":8443",
@@ -808,6 +808,9 @@ func captureMachineDiagnostics(
 		"aws_session_token": secrets.AWSSessionToken, "database_url": database.PooledURL,
 		"database_direct_url": database.DirectURL,
 	})
+	if len(diagnostics) > 4<<20 {
+		diagnostics = diagnostics[:4<<20] + "\n[diagnostics payload truncated]\n"
+	}
 	directory := filepath.Join(filepath.Dir(manifestPath), "diagnostics")
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return "", fmt.Errorf("create %s diagnostics directory: %w", diagnosticName, err)
@@ -879,16 +882,8 @@ func executeCell(
 			"TNL_BENCH_PAYLOAD_BYTES":                       fmt.Sprint(cell.PayloadBytes),
 			"TNL_BENCH_TIMEOUT":                             (time.Duration(cell.TimeoutSeconds) * time.Second).String(),
 		}
-		if index == 0 {
-			environment["TNL_BENCH_METRICS_URLS"] = strings.Join(benchmark.metricsURLs, ",")
-		}
-		var diagnosticURLs []string
-		for _, endpoint := range benchmark.metricsURLs {
-			if strings.HasSuffix(endpoint, "#control") {
-				diagnosticURLs = append(diagnosticURLs, strings.TrimSuffix(endpoint, "/metrics#control")+"/debug/database")
-			}
-		}
-		environment["TNL_BENCH_DATABASE_DIAGNOSTICS_URLS"] = strings.Join(diagnosticURLs, ",")
+		environment["TNL_BENCH_METRICS_URLS"] = strings.Join(benchmark.metricsURLs, ",")
+		environment["TNL_BENCH_DATABASE_DIAGNOSTICS_URLS"] = strings.Join(databaseDiagnosticURLs(benchmark.metricsURLs), ",")
 		progress.printf(
 			"cell %s: starting publisher %d/%d (%d routes, %d churn/s)",
 			cell.ID, index+1, cell.PublisherWorkers, assigned, churn,
@@ -924,6 +919,8 @@ func executeCell(
 		for name, value := range benchmark.resolverEnv {
 			environment[name] = value
 		}
+		environment["TNL_BENCH_METRICS_URLS"] = strings.Join(benchmark.metricsURLs, ",")
+		environment["TNL_BENCH_DATABASE_DIAGNOSTICS_URLS"] = strings.Join(databaseDiagnosticURLs(benchmark.metricsURLs), ",")
 		progress.printf(
 			"cell %s: starting load worker %d/%d (%d fresh/s, %d held)",
 			cell.ID, index+1, cell.LoadWorkers, fresh, held,
@@ -1106,6 +1103,8 @@ func captureCellDiagnostics(fly flyPlatform, benchmark provisionedBenchmark, cel
 		benchmarkDiagnosticApp{name: "publisher", app: benchmark.apps["publisher"]},
 		benchmarkDiagnosticApp{name: "load", app: benchmark.apps["load"]},
 		benchmarkDiagnosticApp{name: "control", app: benchmark.apps["control"]},
+		benchmarkDiagnosticApp{name: "ingress", app: benchmark.apps["ingress"]},
+		benchmarkDiagnosticApp{name: "relay", app: benchmark.apps["relay"]},
 	)
 }
 

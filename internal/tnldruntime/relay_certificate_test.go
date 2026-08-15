@@ -21,8 +21,8 @@ func TestRelayCertificateSourceValidatesAndReloads(t *testing.T) {
 	if _, err := config.GetCertificate(nil); err == nil {
 		t.Fatal("empty certificate source returned a certificate")
 	}
-	certificate := func(material testCertificateMaterial) relayv1.RelayServiceCertificate {
-		return relayv1.RelayServiceCertificate{
+	certificate := func(material testCertificateMaterial) relayv1.RelayTransportCertificate {
+		return relayv1.RelayTransportCertificate{
 			RelayServiceId: "relay-a", TlsServerName: hostname,
 			CertificatePem: string(material.certificatePEM), PrivateKeyPem: string(material.privateKeyPEM), NotAfter: material.leaf.NotAfter,
 		}
@@ -46,11 +46,11 @@ func TestRelayCertificateSourceValidatesAndReloads(t *testing.T) {
 	}
 	for _, test := range []struct {
 		name   string
-		mutate func(*relayv1.RelayServiceCertificate)
+		mutate func(*relayv1.RelayTransportCertificate)
 	}{
-		{"identity", func(c *relayv1.RelayServiceCertificate) { c.TlsServerName = "relay-b.example.test" }},
-		{"key_pair", func(c *relayv1.RelayServiceCertificate) { c.PrivateKeyPem = string(first.privateKeyPEM) }},
-		{"expiry", func(c *relayv1.RelayServiceCertificate) { c.NotAfter = c.NotAfter.Add(-1) }},
+		{"identity", func(c *relayv1.RelayTransportCertificate) { c.TlsServerName = "relay-b.example.test" }},
+		{"key_pair", func(c *relayv1.RelayTransportCertificate) { c.PrivateKeyPem = string(first.privateKeyPEM) }},
+		{"expiry", func(c *relayv1.RelayTransportCertificate) { c.NotAfter = c.NotAfter.Add(-1) }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			invalid := certificate(second)

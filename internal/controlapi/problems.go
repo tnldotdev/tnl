@@ -28,8 +28,8 @@ func writeControlStateProblem(response http.ResponseWriter, operation string, er
 		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "route access denied")
 	case errors.Is(err, controlstate.ErrRouteConflict):
 		writeProblem(response, http.StatusConflict, controlv1.NameUnavailable, "route hostname is unavailable")
-	case errors.Is(err, controlstate.ErrRouteAttached):
-		writeProblem(response, http.StatusConflict, controlv1.RouteAttached, "route has an open route session")
+	case errors.Is(err, controlstate.ErrRouteSessionOpen):
+		writeProblem(response, http.StatusConflict, controlv1.RouteSessionOpen, "route has an open route session")
 	case errors.Is(err, controlstate.ErrRouteNotEnabled):
 		writeProblem(response, http.StatusConflict, controlv1.Conflict, "route is not enabled")
 	case errors.Is(err, controlstate.ErrRouteIdempotency), errors.Is(err, controlstate.ErrRouteSessionIdempotency),

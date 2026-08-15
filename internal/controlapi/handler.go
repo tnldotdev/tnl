@@ -23,7 +23,7 @@ const (
 
 // Config contains the public API settings derived from tnld configuration.
 type Config struct {
-	Mode                    string
+	Role                    string
 	StartedAt               time.Time
 	ManagedDeploymentDomain string
 	AuthorityEndpoint       string

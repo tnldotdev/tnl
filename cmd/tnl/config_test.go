@@ -111,11 +111,11 @@ func TestProjectConfigurationAppliesPrecedenceUnits(t *testing.T) {
 	}
 	projectServer := "https://project.example"
 	projectSubdomain := "project"
-	public := true
+	allowAllIPs := true
 	target := config.Target("3000")
 	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{
 		Server:  &projectServer,
-		Tunnel:  &config.Tunnel{Subdomain: &projectSubdomain, Public: &public},
+		Tunnel:  &config.Tunnel{Subdomain: &projectSubdomain, AllowAllIPs: &allowAllIPs},
 		Publish: &config.Publish{Target: &target},
 	}}}
 	if err := project.applyPublish(&flags.Publish); err != nil {
@@ -123,7 +123,7 @@ func TestProjectConfigurationAppliesPrecedenceUnits(t *testing.T) {
 	}
 	if flags.Publish.ServerURL != "https://environment.example" || flags.Publish.Host != "environment.example" ||
 		flags.Publish.selectedTeam != "Environment Team" ||
-		flags.Publish.Subdomain != "" || flags.Publish.Target != "3000" || flags.Publish.Public ||
+		flags.Publish.Subdomain != "" || flags.Publish.Target != "3000" || flags.Publish.AllowAllIPs ||
 		!reflect.DeepEqual(flags.Publish.AllowIP, []string{"198.51.100.0/24"}) {
 		t.Fatalf("publish flags = %#v", flags.Publish)
 	}

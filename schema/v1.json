@@ -9,16 +9,19 @@
             "type": "string"
           },
           "type": "array",
-          "minItems": 1
+          "minItems": 1,
+          "description": "Child command and arguments run by tnl dev."
         },
         "port": {
           "type": "integer",
           "maximum": 65535,
-          "minimum": 1
+          "minimum": 1,
+          "description": "Required local service port for tnl dev."
         },
         "startup_timeout": {
           "type": "string",
-          "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+          "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$",
+          "description": "Maximum time to wait for the local service to start."
         }
       },
       "additionalProperties": false,
@@ -37,7 +40,8 @@
               "maximum": 65535,
               "minimum": 1
             }
-          ]
+          ],
+          "description": "Local HTTP URL or port reached by the publisher."
         }
       },
       "additionalProperties": false,
@@ -46,10 +50,12 @@
     "TNL": {
       "properties": {
         "server": {
-          "type": "string"
+          "type": "string",
+          "description": "Control URL used by this project."
         },
         "team": {
-          "type": "string"
+          "type": "string",
+          "description": "Team ID or unambiguous display name used by this project."
         },
         "tunnel": {
           "allOf": [
@@ -61,11 +67,11 @@
             {
               "if": {
                 "properties": {
-                  "public": {
+                  "allow_all_ips": {
                     "const": true
                   }
                 },
-                "required": ["public"]
+                "required": ["allow_all_ips"]
               },
               "then": {
                 "not": {
@@ -76,10 +82,12 @@
           ],
           "properties": {
             "host": {
-              "type": "string"
+              "type": "string",
+              "description": "Complete route hostname to publish."
             },
             "subdomain": {
-              "type": "string"
+              "type": "string",
+              "description": "One DNS label beneath the current member namespace."
             },
             "allow_ip": {
               "items": {
@@ -87,17 +95,21 @@
               },
               "type": "array",
               "maxItems": 63,
-              "uniqueItems": true
+              "uniqueItems": true,
+              "description": "Visitor IP addresses or prefixes allowed to use the route; the current client IP is added automatically."
             },
-            "public": {
-              "type": "boolean"
+            "allow_all_ips": {
+              "type": "boolean",
+              "description": "Allow visitors from every IP address."
             },
             "ephemeral": {
-              "type": "boolean"
+              "type": "boolean",
+              "description": "Remove the route when this tunnel stops."
             }
           },
           "additionalProperties": false,
-          "type": "object"
+          "type": "object",
+          "description": "Default route and tunnel settings."
         },
         "publish": {
           "$ref": "#/$defs/Publish"
@@ -110,13 +122,16 @@
             "properties": {
               "directory": {
                 "type": "string",
-                "minLength": 1
+                "minLength": 1,
+                "description": "Service directory relative to the project configuration."
               },
               "server": {
-                "type": "string"
+                "type": "string",
+                "description": "Control URL override for this service."
               },
               "team": {
-                "type": "string"
+                "type": "string",
+                "description": "Team override for this service."
               },
               "tunnel": {
                 "allOf": [
@@ -128,11 +143,11 @@
                   {
                     "if": {
                       "properties": {
-                        "public": {
+                        "allow_all_ips": {
                           "const": true
                         }
                       },
-                      "required": ["public"]
+                      "required": ["allow_all_ips"]
                     },
                     "then": {
                       "not": {
@@ -143,10 +158,12 @@
                 ],
                 "properties": {
                   "host": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "Complete route hostname to publish."
                   },
                   "subdomain": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "One DNS label beneath the current member namespace."
                   },
                   "allow_ip": {
                     "items": {
@@ -154,17 +171,21 @@
                     },
                     "type": "array",
                     "maxItems": 63,
-                    "uniqueItems": true
+                    "uniqueItems": true,
+                    "description": "Visitor IP addresses or prefixes allowed to use the route; the current client IP is added automatically."
                   },
-                  "public": {
-                    "type": "boolean"
+                  "allow_all_ips": {
+                    "type": "boolean",
+                    "description": "Allow visitors from every IP address."
                   },
                   "ephemeral": {
-                    "type": "boolean"
+                    "type": "boolean",
+                    "description": "Remove the route when this tunnel stops."
                   }
                 },
                 "additionalProperties": false,
-                "type": "object"
+                "type": "object",
+                "description": "Route and tunnel overrides for this service."
               },
               "publish": {
                 "$ref": "#/$defs/Publish"
@@ -180,7 +201,8 @@
             "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
           },
           "type": "object",
-          "maxProperties": 32
+          "maxProperties": 32,
+          "description": "Named local services with optional project-setting overrides."
         }
       },
       "additionalProperties": false,
@@ -189,7 +211,8 @@
   },
   "properties": {
     "$schema": {
-      "type": "string"
+      "type": "string",
+      "description": "JSON Schema URL used by editors and validation tools."
     },
     "version": {
       "type": "integer",
@@ -197,11 +220,12 @@
       "description": "Configuration format version."
     },
     "tnl": {
-      "$ref": "#/$defs/TNL"
+      "$ref": "#/$defs/TNL",
+      "description": "Project configuration used by the tnl client."
     },
     "tnld": {
       "properties": {
-        "mode": {
+        "role": {
           "type": "string",
           "enum": ["standalone", "control", "ingress", "relay"],
           "description": "Process role: ${enum}.",
@@ -409,9 +433,9 @@
           "type": "string",
           "description": "Internal hostname and port advertised by this relay process."
         },
-        "public_connection_limit": {
+        "visitor_connection_limit": {
           "type": "integer",
-          "description": "Maximum concurrent public visitor connections.",
+          "description": "Maximum concurrent visitor connections.",
           "default": 20000
         },
         "route_connection_limit": {
@@ -475,7 +499,8 @@
         }
       },
       "additionalProperties": false,
-      "type": "object"
+      "type": "object",
+      "description": "Process configuration used by tnld."
     }
   },
   "additionalProperties": false,

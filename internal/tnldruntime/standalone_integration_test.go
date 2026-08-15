@@ -22,7 +22,7 @@ func TestIntegrationStandaloneLifecycle(t *testing.T) {
 	publicAddress := unusedTCPAddress(t)
 	metricsAddress := unusedTCPAddress(t)
 	cfg := tnldconfig.Config{
-		Mode: tnldconfig.RoleStandalone, DatabaseURL: databaseURL, MetricsListen: metricsAddress,
+		Role: tnldconfig.RoleStandalone, DatabaseURL: databaseURL, MetricsListen: metricsAddress,
 		ControlListen: "127.0.0.1:1", PrivateControlListen: "127.0.0.1:1", IngressListen: publicAddress,
 		RelayTCPListen: "127.0.0.1:1", RelayUDPListen: unusedUDPAddress(t), InternalRelayListen: "127.0.0.1:1",
 		ServerDomain: "tnl.test", ManagedDeploymentDomain: "tunnels.test",
@@ -34,7 +34,7 @@ func TestIntegrationStandaloneLifecycle(t *testing.T) {
 		ACMEAcceptTerms: true, ACMEProfile: "tlsserver", LoginToken: testLoginToken,
 		StorageKey:          testStorageKey,
 		AccessTokenLifetime: 5 * time.Minute, RefreshTokenLifetime: time.Hour,
-		PublicConnectionLimit: 100, RouteConnectionLimit: 10, PublisherConnectionLimit: 10,
+		VisitorConnectionLimit: 100, RouteConnectionLimit: 10, PublisherConnectionLimit: 10,
 		RelayStreamCapacity: 100, QUICMaxIncomingStreams: 100, QUICIdleTimeout: time.Minute,
 		IngressLeaseDuration: 3 * time.Second,
 		RelayLeaseDuration:   3 * time.Second, LeaseRenewalInterval: time.Second,

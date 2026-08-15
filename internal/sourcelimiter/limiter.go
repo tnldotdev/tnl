@@ -1,4 +1,4 @@
-// Package sourcelimiter limits new public connections by source IP address.
+// Package sourcelimiter limits new visitor connections by source IP address.
 package sourcelimiter
 
 import (

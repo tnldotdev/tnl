@@ -315,6 +315,7 @@ func (d *Database) updateCertificateChallenge(
 	}
 	defer rollback(ctx, tx, "update certificate challenge", &retErr)()
 	queries := controlstatedb.New(tx)
+	pendingEvents := pendingIngressRoutingTableEvents{}
 	route, session, err := lockAuthenticatedRouteSession(ctx, queries, authentication, now)
 	if err != nil {
 		return CertificateIssuance{}, err
@@ -355,7 +356,7 @@ func (d *Database) updateCertificateChallenge(
 			}
 			eventKind = IngressChallengeUpsert
 		}
-		if _, _, err := emitChallengeRoutingTableEvent(
+		if _, err := pendingEvents.addChallengeEvent(
 			ctx, queries, route, session, connections, eventKind, challengeExpiresAt, now,
 		); err != nil {
 			return CertificateIssuance{}, err
@@ -383,6 +384,9 @@ func (d *Database) updateCertificateChallenge(
 	}
 	result, err = loadCertificateIssuance(ctx, queries, order, now)
 	if err != nil {
+		return CertificateIssuance{}, err
+	}
+	if err := pendingEvents.publish(ctx, queries); err != nil {
 		return CertificateIssuance{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {

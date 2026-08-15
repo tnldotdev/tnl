@@ -96,10 +96,10 @@ WHERE route_session_id = sqlc.arg(route_session_id)
   AND idempotency_key = sqlc.arg(idempotency_key);
 
 -- name: LockCertificateIssuanceControl :one
-SELECT enabled
+SELECT allowed
 FROM control.maintenance_controls
 WHERE control_name = 'certificate_issuance'
-FOR UPDATE;
+FOR SHARE;
 
 -- name: InsertACMEOrder :one
 INSERT INTO control.acme_orders (

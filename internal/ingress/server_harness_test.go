@@ -229,17 +229,17 @@ func (u *testUsageConnection) CapacityDenied(time.Time) {
 	defer u.mu.Unlock()
 	u.capacityDenials++
 }
-func (u *testUsageConnection) PublisherOpening(at time.Time) {
+func (u *testUsageConnection) VisitorStreamOpening(at time.Time) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	u.publisherOpeningAt = at
 }
-func (u *testUsageConnection) PublisherOpened(at time.Time) {
+func (u *testUsageConnection) VisitorStreamOpened(at time.Time) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	u.publisherOpenedAt = at
 }
-func (u *testUsageConnection) PublisherOpenFailed(time.Time) {
+func (u *testUsageConnection) VisitorStreamOpenFailed(time.Time) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	u.publisherFailures++

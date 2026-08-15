@@ -77,6 +77,9 @@ WHERE connections.route_session_id = sqlc.arg(route_session_id)
   AND connections.state = 'ready'
   AND relays.lease_expires_at > sqlc.arg(now)
   AND NOT relays.draining
+  AND relays.protocol_version = 1
+  AND relays.connection_capacity > 0
+  AND relays.stream_capacity > 0
   AND services.enabled
 ORDER BY connections.connection_slot;
 
@@ -144,7 +147,7 @@ RETURNING *;
 -- name: LockRouteRecoveryEpisode :one
 SELECT *
 FROM control.route_recovery_episodes
-WHERE episode_id = sqlc.arg(episode_id)
+WHERE recovery_episode_id = sqlc.arg(recovery_episode_id)
 FOR UPDATE;
 
 -- name: ObserveRouteRecoveryEpisode :one
@@ -152,7 +155,7 @@ UPDATE control.route_recovery_episodes
 SET state = 'observed',
     observed_at = sqlc.arg(observed_at),
     observed_seconds = sqlc.arg(observed_seconds)
-WHERE episode_id = sqlc.arg(episode_id)
+WHERE recovery_episode_id = sqlc.arg(recovery_episode_id)
   AND route_id = sqlc.arg(route_id)
   AND route_version = sqlc.arg(route_version)
   AND state = 'open'

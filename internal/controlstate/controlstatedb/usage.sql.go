@@ -23,7 +23,7 @@ INSERT INTO control.route_usage_buckets (
     connection_attempts,
     policy_denials,
     capacity_denials,
-    publisher_open_failures,
+    visitor_stream_open_failures,
     successful_streams,
     connection_nanoseconds,
     ingress_bytes,
@@ -65,7 +65,7 @@ ON CONFLICT (route_id, route_version, bucket_start) DO UPDATE SET
     connection_attempts = control.route_usage_buckets.connection_attempts + EXCLUDED.connection_attempts,
     policy_denials = control.route_usage_buckets.policy_denials + EXCLUDED.policy_denials,
     capacity_denials = control.route_usage_buckets.capacity_denials + EXCLUDED.capacity_denials,
-    publisher_open_failures = control.route_usage_buckets.publisher_open_failures + EXCLUDED.publisher_open_failures,
+    visitor_stream_open_failures = control.route_usage_buckets.visitor_stream_open_failures + EXCLUDED.visitor_stream_open_failures,
     successful_streams = control.route_usage_buckets.successful_streams + EXCLUDED.successful_streams,
     connection_nanoseconds = control.route_usage_buckets.connection_nanoseconds + EXCLUDED.connection_nanoseconds,
     ingress_bytes = control.route_usage_buckets.ingress_bytes + EXCLUDED.ingress_bytes,
@@ -73,25 +73,25 @@ ON CONFLICT (route_id, route_version, bucket_start) DO UPDATE SET
     histogram_data = EXCLUDED.histogram_data,
     updated_at = EXCLUDED.updated_at
 WHERE NOT control.route_usage_buckets.finalized
-RETURNING bucket_id, route_id, route_version, team_id, acting_identity_id, bucket_start, bucket_end, bucket_revision, observed_through, connection_attempts, policy_denials, capacity_denials, publisher_open_failures, successful_streams, connection_nanoseconds, ingress_bytes, egress_bytes, histogram_data, finalized, complete, finalized_at, updated_at
+RETURNING bucket_id, route_id, route_version, team_id, acting_identity_id, bucket_start, bucket_end, bucket_revision, observed_through, connection_attempts, policy_denials, capacity_denials, visitor_stream_open_failures, successful_streams, connection_nanoseconds, ingress_bytes, egress_bytes, histogram_data, finalized, complete, finalized_at, updated_at
 `
 
 type ApplyIngressUsageDeltaParams struct {
-	BucketStart           pgtype.Timestamptz
-	BucketEnd             pgtype.Timestamptz
-	ObservedThrough       pgtype.Timestamptz
-	ConnectionAttempts    int64
-	PolicyDenials         int64
-	CapacityDenials       int64
-	PublisherOpenFailures int64
-	SuccessfulStreams     int64
-	ConnectionNanoseconds int64
-	IngressBytes          int64
-	EgressBytes           int64
-	HistogramData         []byte
-	UpdatedAt             pgtype.Timestamptz
-	RouteID               string
-	RouteVersion          int64
+	BucketStart               pgtype.Timestamptz
+	BucketEnd                 pgtype.Timestamptz
+	ObservedThrough           pgtype.Timestamptz
+	ConnectionAttempts        int64
+	PolicyDenials             int64
+	CapacityDenials           int64
+	VisitorStreamOpenFailures int64
+	SuccessfulStreams         int64
+	ConnectionNanoseconds     int64
+	IngressBytes              int64
+	EgressBytes               int64
+	HistogramData             []byte
+	UpdatedAt                 pgtype.Timestamptz
+	RouteID                   string
+	RouteVersion              int64
 }
 
 func (q *Queries) ApplyIngressUsageDelta(ctx context.Context, arg ApplyIngressUsageDeltaParams) (ControlRouteUsageBucket, error) {
@@ -102,7 +102,7 @@ func (q *Queries) ApplyIngressUsageDelta(ctx context.Context, arg ApplyIngressUs
 		arg.ConnectionAttempts,
 		arg.PolicyDenials,
 		arg.CapacityDenials,
-		arg.PublisherOpenFailures,
+		arg.VisitorStreamOpenFailures,
 		arg.SuccessfulStreams,
 		arg.ConnectionNanoseconds,
 		arg.IngressBytes,
@@ -126,7 +126,7 @@ func (q *Queries) ApplyIngressUsageDelta(ctx context.Context, arg ApplyIngressUs
 		&i.ConnectionAttempts,
 		&i.PolicyDenials,
 		&i.CapacityDenials,
-		&i.PublisherOpenFailures,
+		&i.VisitorStreamOpenFailures,
 		&i.SuccessfulStreams,
 		&i.ConnectionNanoseconds,
 		&i.IngressBytes,
@@ -403,7 +403,7 @@ SET finalized = true,
     updated_at = $1
 FROM finalizable
 WHERE buckets.bucket_id = finalizable.bucket_id
-RETURNING buckets.bucket_id, buckets.route_id, buckets.route_version, buckets.team_id, buckets.acting_identity_id, buckets.bucket_start, buckets.bucket_end, buckets.bucket_revision, buckets.observed_through, buckets.connection_attempts, buckets.policy_denials, buckets.capacity_denials, buckets.publisher_open_failures, buckets.successful_streams, buckets.connection_nanoseconds, buckets.ingress_bytes, buckets.egress_bytes, buckets.histogram_data, buckets.finalized, buckets.complete, buckets.finalized_at, buckets.updated_at
+RETURNING buckets.bucket_id, buckets.route_id, buckets.route_version, buckets.team_id, buckets.acting_identity_id, buckets.bucket_start, buckets.bucket_end, buckets.bucket_revision, buckets.observed_through, buckets.connection_attempts, buckets.policy_denials, buckets.capacity_denials, buckets.visitor_stream_open_failures, buckets.successful_streams, buckets.connection_nanoseconds, buckets.ingress_bytes, buckets.egress_bytes, buckets.histogram_data, buckets.finalized, buckets.complete, buckets.finalized_at, buckets.updated_at
 `
 
 type FinalizeRouteUsageBucketsParams struct {
@@ -433,7 +433,7 @@ func (q *Queries) FinalizeRouteUsageBuckets(ctx context.Context, arg FinalizeRou
 			&i.ConnectionAttempts,
 			&i.PolicyDenials,
 			&i.CapacityDenials,
-			&i.PublisherOpenFailures,
+			&i.VisitorStreamOpenFailures,
 			&i.SuccessfulStreams,
 			&i.ConnectionNanoseconds,
 			&i.IngressBytes,
@@ -455,7 +455,7 @@ func (q *Queries) FinalizeRouteUsageBuckets(ctx context.Context, arg FinalizeRou
 }
 
 const getIngressUsageReport = `-- name: GetIngressUsageReport :one
-SELECT report_id, ingress_id, ingress_run_id, route_id, route_version, bucket_start, bucket_end, observed_through, report_revision, connection_attempts, policy_denials, capacity_denials, publisher_open_failures, successful_streams, connection_nanoseconds, ingress_bytes, egress_bytes, histogram_data, final, received_at
+SELECT report_id, ingress_id, ingress_run_id, route_id, route_version, bucket_start, bucket_end, observed_through, report_revision, connection_attempts, policy_denials, capacity_denials, visitor_stream_open_failures, successful_streams, connection_nanoseconds, ingress_bytes, egress_bytes, histogram_data, final, received_at
 FROM control.ingress_usage_reports
 WHERE ingress_id = $1
   AND ingress_run_id = $2
@@ -497,7 +497,7 @@ func (q *Queries) GetIngressUsageReport(ctx context.Context, arg GetIngressUsage
 		&i.ConnectionAttempts,
 		&i.PolicyDenials,
 		&i.CapacityDenials,
-		&i.PublisherOpenFailures,
+		&i.VisitorStreamOpenFailures,
 		&i.SuccessfulStreams,
 		&i.ConnectionNanoseconds,
 		&i.IngressBytes,
@@ -510,7 +510,7 @@ func (q *Queries) GetIngressUsageReport(ctx context.Context, arg GetIngressUsage
 }
 
 const getLatestIngressUsageReport = `-- name: GetLatestIngressUsageReport :one
-SELECT report_id, ingress_id, ingress_run_id, route_id, route_version, bucket_start, bucket_end, observed_through, report_revision, connection_attempts, policy_denials, capacity_denials, publisher_open_failures, successful_streams, connection_nanoseconds, ingress_bytes, egress_bytes, histogram_data, final, received_at
+SELECT report_id, ingress_id, ingress_run_id, route_id, route_version, bucket_start, bucket_end, observed_through, report_revision, connection_attempts, policy_denials, capacity_denials, visitor_stream_open_failures, successful_streams, connection_nanoseconds, ingress_bytes, egress_bytes, histogram_data, final, received_at
 FROM control.ingress_usage_reports
 WHERE ingress_id = $1
   AND ingress_run_id = $2
@@ -552,7 +552,7 @@ func (q *Queries) GetLatestIngressUsageReport(ctx context.Context, arg GetLatest
 		&i.ConnectionAttempts,
 		&i.PolicyDenials,
 		&i.CapacityDenials,
-		&i.PublisherOpenFailures,
+		&i.VisitorStreamOpenFailures,
 		&i.SuccessfulStreams,
 		&i.ConnectionNanoseconds,
 		&i.IngressBytes,
@@ -565,7 +565,7 @@ func (q *Queries) GetLatestIngressUsageReport(ctx context.Context, arg GetLatest
 }
 
 const getRouteUsageBucketByID = `-- name: GetRouteUsageBucketByID :one
-SELECT bucket_id, route_id, route_version, team_id, acting_identity_id, bucket_start, bucket_end, bucket_revision, observed_through, connection_attempts, policy_denials, capacity_denials, publisher_open_failures, successful_streams, connection_nanoseconds, ingress_bytes, egress_bytes, histogram_data, finalized, complete, finalized_at, updated_at
+SELECT bucket_id, route_id, route_version, team_id, acting_identity_id, bucket_start, bucket_end, bucket_revision, observed_through, connection_attempts, policy_denials, capacity_denials, visitor_stream_open_failures, successful_streams, connection_nanoseconds, ingress_bytes, egress_bytes, histogram_data, finalized, complete, finalized_at, updated_at
 FROM control.route_usage_buckets
 WHERE bucket_id = $1
   AND finalized
@@ -587,7 +587,7 @@ func (q *Queries) GetRouteUsageBucketByID(ctx context.Context, bucketID int64) (
 		&i.ConnectionAttempts,
 		&i.PolicyDenials,
 		&i.CapacityDenials,
-		&i.PublisherOpenFailures,
+		&i.VisitorStreamOpenFailures,
 		&i.SuccessfulStreams,
 		&i.ConnectionNanoseconds,
 		&i.IngressBytes,
@@ -602,7 +602,7 @@ func (q *Queries) GetRouteUsageBucketByID(ctx context.Context, bucketID int64) (
 }
 
 const getRouteUsageBucketForUpdate = `-- name: GetRouteUsageBucketForUpdate :one
-SELECT bucket_id, route_id, route_version, team_id, acting_identity_id, bucket_start, bucket_end, bucket_revision, observed_through, connection_attempts, policy_denials, capacity_denials, publisher_open_failures, successful_streams, connection_nanoseconds, ingress_bytes, egress_bytes, histogram_data, finalized, complete, finalized_at, updated_at
+SELECT bucket_id, route_id, route_version, team_id, acting_identity_id, bucket_start, bucket_end, bucket_revision, observed_through, connection_attempts, policy_denials, capacity_denials, visitor_stream_open_failures, successful_streams, connection_nanoseconds, ingress_bytes, egress_bytes, histogram_data, finalized, complete, finalized_at, updated_at
 FROM control.route_usage_buckets
 WHERE route_id = $1
   AND route_version = $2
@@ -632,7 +632,7 @@ func (q *Queries) GetRouteUsageBucketForUpdate(ctx context.Context, arg GetRoute
 		&i.ConnectionAttempts,
 		&i.PolicyDenials,
 		&i.CapacityDenials,
-		&i.PublisherOpenFailures,
+		&i.VisitorStreamOpenFailures,
 		&i.SuccessfulStreams,
 		&i.ConnectionNanoseconds,
 		&i.IngressBytes,
@@ -659,7 +659,7 @@ INSERT INTO control.ingress_usage_reports (
     connection_attempts,
     policy_denials,
     capacity_denials,
-    publisher_open_failures,
+    visitor_stream_open_failures,
     successful_streams,
     connection_nanoseconds,
     ingress_bytes,
@@ -690,29 +690,29 @@ INSERT INTO control.ingress_usage_reports (
 )
 ON CONFLICT (ingress_id, ingress_run_id, route_id, route_version, bucket_start, report_revision)
 DO NOTHING
-RETURNING report_id, ingress_id, ingress_run_id, route_id, route_version, bucket_start, bucket_end, observed_through, report_revision, connection_attempts, policy_denials, capacity_denials, publisher_open_failures, successful_streams, connection_nanoseconds, ingress_bytes, egress_bytes, histogram_data, final, received_at
+RETURNING report_id, ingress_id, ingress_run_id, route_id, route_version, bucket_start, bucket_end, observed_through, report_revision, connection_attempts, policy_denials, capacity_denials, visitor_stream_open_failures, successful_streams, connection_nanoseconds, ingress_bytes, egress_bytes, histogram_data, final, received_at
 `
 
 type InsertIngressUsageReportParams struct {
-	IngressID             string
-	IngressRunID          string
-	RouteID               string
-	RouteVersion          int64
-	BucketStart           pgtype.Timestamptz
-	BucketEnd             pgtype.Timestamptz
-	ObservedThrough       pgtype.Timestamptz
-	ReportRevision        int64
-	ConnectionAttempts    int64
-	PolicyDenials         int64
-	CapacityDenials       int64
-	PublisherOpenFailures int64
-	SuccessfulStreams     int64
-	ConnectionNanoseconds int64
-	IngressBytes          int64
-	EgressBytes           int64
-	HistogramData         []byte
-	Final                 bool
-	ReceivedAt            pgtype.Timestamptz
+	IngressID                 string
+	IngressRunID              string
+	RouteID                   string
+	RouteVersion              int64
+	BucketStart               pgtype.Timestamptz
+	BucketEnd                 pgtype.Timestamptz
+	ObservedThrough           pgtype.Timestamptz
+	ReportRevision            int64
+	ConnectionAttempts        int64
+	PolicyDenials             int64
+	CapacityDenials           int64
+	VisitorStreamOpenFailures int64
+	SuccessfulStreams         int64
+	ConnectionNanoseconds     int64
+	IngressBytes              int64
+	EgressBytes               int64
+	HistogramData             []byte
+	Final                     bool
+	ReceivedAt                pgtype.Timestamptz
 }
 
 func (q *Queries) InsertIngressUsageReport(ctx context.Context, arg InsertIngressUsageReportParams) (ControlIngressUsageReport, error) {
@@ -728,7 +728,7 @@ func (q *Queries) InsertIngressUsageReport(ctx context.Context, arg InsertIngres
 		arg.ConnectionAttempts,
 		arg.PolicyDenials,
 		arg.CapacityDenials,
-		arg.PublisherOpenFailures,
+		arg.VisitorStreamOpenFailures,
 		arg.SuccessfulStreams,
 		arg.ConnectionNanoseconds,
 		arg.IngressBytes,
@@ -751,7 +751,7 @@ func (q *Queries) InsertIngressUsageReport(ctx context.Context, arg InsertIngres
 		&i.ConnectionAttempts,
 		&i.PolicyDenials,
 		&i.CapacityDenials,
-		&i.PublisherOpenFailures,
+		&i.VisitorStreamOpenFailures,
 		&i.SuccessfulStreams,
 		&i.ConnectionNanoseconds,
 		&i.IngressBytes,

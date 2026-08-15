@@ -1,9 +1,12 @@
 package controlstate
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 )
 
 func TestIntegrationAdministrationState(t *testing.T) {
@@ -79,7 +82,7 @@ func TestIntegrationAdministrationState(t *testing.T) {
 	updated, err := database.SetMaintenanceControl(
 		t.Context(), MaintenanceControlRouteCreation, false, actor, "request_maintenance", now.Add(5*time.Second),
 	)
-	if err != nil || updated.Enabled || updated.Revision != 2 || updated.UpdatedBy != actor {
+	if err != nil || updated.Allowed || updated.Revision != 2 || updated.UpdatedBy != actor {
 		t.Fatalf("updated maintenance control = %#v, %v", updated, err)
 	}
 	if _, err := database.SetMaintenanceControl(
@@ -96,5 +99,73 @@ func TestIntegrationAdministrationState(t *testing.T) {
 		  AND request_id IN ('request_drain', 'request_maintenance')
 	`, actor).Scan(&auditCount); err != nil || auditCount != 2 {
 		t.Fatalf("admin audit count = %d, %v", auditCount, err)
+	}
+}
+
+func TestIntegrationMaintenanceControlReadersShareGate(t *testing.T) {
+	database, now := newControlStateIntegrationDatabase(t, "maintenance_readers")
+	session := newBuiltinSession(t, database, now)
+	actor := session.Identity.Identity.ID
+	tests := []struct {
+		name  MaintenanceControlName
+		guard func(context.Context, *controlstatedb.Queries) (bool, error)
+	}{
+		{MaintenanceControlRouteCreation, func(ctx context.Context, queries *controlstatedb.Queries) (bool, error) {
+			return queries.LockRouteCreationControl(ctx)
+		}},
+		{MaintenanceControlRouteSessionCreation, func(ctx context.Context, queries *controlstatedb.Queries) (bool, error) {
+			return queries.LockRouteSessionCreationControl(ctx)
+		}},
+		{MaintenanceControlCertificateIssuance, func(ctx context.Context, queries *controlstatedb.Queries) (bool, error) {
+			return queries.LockCertificateIssuanceControl(ctx)
+		}},
+	}
+	for _, test := range tests {
+		t.Run(string(test.name), func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			first, err := database.pool.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer rollbackTestTransaction(t, first)
+			if enabled, err := test.guard(ctx, controlstatedb.New(first)); err != nil || !enabled {
+				t.Fatalf("first maintenance reader = %t, %v", enabled, err)
+			}
+			second, err := database.pool.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer rollbackTestTransaction(t, second)
+			if _, err := second.Exec(ctx, `SET LOCAL lock_timeout = '100ms'`); err != nil {
+				t.Fatal(err)
+			}
+			if enabled, err := test.guard(ctx, controlstatedb.New(second)); err != nil || !enabled {
+				t.Fatalf("concurrent maintenance reader = %t, %v", enabled, err)
+			}
+			workers := newIntegrationWorkers(t, cancel)
+			updated := make(chan error, 1)
+			workers.Go(func() {
+				_, err := database.SetMaintenanceControl(ctx, test.name, false, actor, "disable_"+string(test.name), now.Add(time.Second))
+				updated <- err
+			})
+			waitForPostgresBlock(t, ctx, database, int32(first.Conn().PgConn().PID()), updated)
+			if err := first.Commit(ctx); err != nil {
+				t.Fatal(err)
+			}
+			waitForPostgresBlock(t, ctx, database, int32(second.Conn().PgConn().PID()), updated)
+			if err := second.Commit(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err := awaitIntegrationResult(t, ctx, updated); err != nil {
+				t.Fatal(err)
+			}
+			if enabled, err := test.guard(ctx, controlstatedb.New(database.pool)); err != nil || enabled {
+				t.Fatalf("maintenance reader after disable = %t, %v", enabled, err)
+			}
+			if _, err := database.SetMaintenanceControl(ctx, test.name, true, actor, "enable_"+string(test.name), now.Add(2*time.Second)); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

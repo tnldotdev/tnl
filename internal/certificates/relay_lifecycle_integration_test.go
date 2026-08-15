@@ -97,7 +97,7 @@ func TestIntegrationRelayLifecycleCleanupCrossesCertificateExpiry(t *testing.T) 
 	if state != "failed" || lastError == "" || dns.cleaned != work.ID || !availableAt.Equal(notAfter.Add(time.Hour)) {
 		t.Fatalf("expired cleanup: state %q, error %q, available %v, cleaned %q", state, lastError, availableAt, dns.cleaned)
 	}
-	if _, err := database.GetRelayServiceCertificate(t.Context(), lease.RelayLeaseIdentity, current); !errors.Is(err, controlstate.ErrRelayServiceCertificateNotFound) {
+	if _, err := database.GetRelayTransportCertificate(t.Context(), lease.RelayLeaseIdentity, current); !errors.Is(err, controlstate.ErrRelayTransportCertificateNotFound) {
 		t.Fatalf("expired certificate was installed: %v", err)
 	}
 	for _, at := range []time.Time{current, availableAt.Add(-time.Microsecond), availableAt} {

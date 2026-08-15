@@ -20,11 +20,11 @@ func TestGoldenJSONAndFramedWireFixtures(t *testing.T) {
 			ConnectionAssignmentRevision: 3, RelayServiceID: "relay_service_1",
 		},
 	}, WriteControl, ReadControl)
-	assertGoldenFrame(t, "publisher-stream-header", PublisherStreamHeader{
+	assertGoldenFrame(t, "visitor-stream-header", VisitorStreamHeader{
 		ProtocolVersion: Version, Kind: VisitorStream, VisitorConnectionID: "visitor_connection_1",
 		RouteID: "route_1", RouteSessionID: "route_session_1", RouteVersion: 2,
 		PublisherConnectionID: "publisher_connection_1", ConnectionAssignmentRevision: 3,
-	}, WritePublisherStreamHeader, ReadPublisherStreamHeader)
+	}, WriteVisitorStreamHeader, ReadVisitorStreamHeader)
 	now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
 	assertGoldenFrame(t, "internal-forwarding-header", InternalForwardingHeader{
 		ProtocolVersion: Version, Kind: InternalForwardingStream, VisitorConnectionID: "visitor_connection_1",
@@ -45,7 +45,7 @@ func TestInvalidFixtures(t *testing.T) {
 		read func(io.Reader) error
 	}{
 		{"invalid-control-unknown-field", readControl},
-		{"invalid-publisher-missing-field", readPublisher},
+		{"invalid-visitor-missing-field", readVisitor},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if err := test.read(frame(string(readFixture(t, test.name+".json")))); err == nil {

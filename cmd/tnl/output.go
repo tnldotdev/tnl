@@ -175,7 +175,7 @@ func (o *publishOutput) ready(url string, routeVersion uint64) error {
 				fields = append(fields, clioutput.Field{Label: "framework", Value: o.framework})
 			}
 			if o.current != "" {
-				fields = append(fields, clioutput.Field{Label: "IP policy", Value: o.current})
+				fields = append(fields, clioutput.Field{Label: "automatically allowed IP", Value: o.current})
 			}
 			if o.fallbackRoute == routeVersion {
 				fields = append(fields, clioutput.Field{Label: "transport", Value: "TLS/TCP fallback"})
@@ -193,7 +193,7 @@ func (o *publishOutput) ready(url string, routeVersion uint64) error {
 			if openErr != nil {
 				_ = writeHumanFrame(o.stderr, o.command, "browser not opened", "route remains ready",
 					clioutput.Fields(
-						clioutput.Field{Label: "public", Value: url},
+						clioutput.Field{Label: "URL", Value: url},
 						clioutput.Field{Label: "reason", Value: openErr.Error()},
 					),
 				)

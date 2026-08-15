@@ -183,14 +183,14 @@ func assertStandaloneUsage(t *testing.T, databaseURL string, database *sql.DB, r
 		WITH latest AS (
 			SELECT DISTINCT ON (bucket_start)
 				final, connection_attempts, policy_denials, capacity_denials,
-				publisher_open_failures, successful_streams, ingress_bytes, egress_bytes
+				visitor_stream_open_failures, successful_streams, ingress_bytes, egress_bytes
 			FROM control.ingress_usage_reports
 			WHERE route_id = $1 AND route_version = $2
 			ORDER BY bucket_start, report_revision DESC
 		)
 		SELECT count(*), coalesce(bool_and(final), false),
 			coalesce(sum(connection_attempts), 0), coalesce(sum(policy_denials), 0),
-			coalesce(sum(capacity_denials), 0), coalesce(sum(publisher_open_failures), 0),
+			coalesce(sum(capacity_denials), 0), coalesce(sum(visitor_stream_open_failures), 0),
 			coalesce(sum(successful_streams), 0), coalesce(sum(ingress_bytes), 0), coalesce(sum(egress_bytes), 0)
 		FROM latest
 	`, routeID, routeVersion).Scan(&reportCount, &allFinal, &attempts, &policyDenials, &capacityDenials, &publisherFailures, &successful, &ingressBytes, &egressBytes); err != nil {

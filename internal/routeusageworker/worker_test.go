@@ -23,7 +23,7 @@ func TestWorkerDeliversAcceptedItemsAndRetriesRejections(t *testing.T) {
 		testDeliveryWork(2, "usage_report_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", now),
 	}
 	work[0].ConnectionAttempts, work[0].PolicyDenials, work[0].CapacityDenials = 11, 2, 3
-	work[0].PublisherOpenFailures, work[0].SuccessfulStreams = 4, 5
+	work[0].VisitorStreamOpenFailures, work[0].SuccessfulStreams = 4, 5
 	work[0].ConnectionNanoseconds, work[0].IngressBytes, work[0].EgressBytes = 600, 700, 800
 	work[0].Complete, work[0].SourceRevision, work[0].RouteVersion = true, 9, 10
 	type observation struct {
@@ -73,9 +73,9 @@ func TestWorkerDeliversAcceptedItemsAndRetriesRejections(t *testing.T) {
 		t.Fatalf("usage batch = %#v", batch)
 	}
 	item := batch.Items[0]
-	if item.ItemId != work[0].DeliveryKey || item.RouteId != "route_test" || item.RouteVersion != "10" || item.Revision != "9" ||
+	if item.ItemId != work[0].DeliveryKey || item.RouteId != "route_test" || item.RouteVersion != "10" || item.ReportRevision != "9" ||
 		item.ConnectionAttempts != "11" || item.PolicyDenials != "2" || item.CapacityDenials != "3" ||
-		item.PublisherOpenFailures != "4" || item.SuccessfulStreams != "5" || item.ConnectionNanoseconds != "600" ||
+		item.VisitorStreamOpenFailures != "4" || item.SuccessfulStreams != "5" || item.ConnectionNanoseconds != "600" ||
 		item.IngressBytes != "700" || item.EgressBytes != "800" || !item.Complete ||
 		!item.BucketStart.Equal(now.Add(-time.Minute)) || !item.ObservedThrough.Equal(now) {
 		t.Fatalf("usage counters and identity = %#v", item)

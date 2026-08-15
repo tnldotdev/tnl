@@ -791,17 +791,17 @@ func (q *Queries) LockACMEOrderForInstall(ctx context.Context, arg LockACMEOrder
 }
 
 const lockCertificateIssuanceControl = `-- name: LockCertificateIssuanceControl :one
-SELECT enabled
+SELECT allowed
 FROM control.maintenance_controls
 WHERE control_name = 'certificate_issuance'
-FOR UPDATE
+FOR SHARE
 `
 
 func (q *Queries) LockCertificateIssuanceControl(ctx context.Context) (bool, error) {
 	row := q.db.QueryRow(ctx, lockCertificateIssuanceControl)
-	var enabled bool
-	err := row.Scan(&enabled)
-	return enabled, err
+	var allowed bool
+	err := row.Scan(&allowed)
+	return allowed, err
 }
 
 const markACMEAuthorizationsPresented = `-- name: MarkACMEAuthorizationsPresented :execrows

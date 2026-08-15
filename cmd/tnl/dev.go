@@ -139,7 +139,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 			flags.Host = service.Hostname
 		}
 	}
-	allowedIPPrefixes, currentIP, err := resolveIPPolicy(ctx, authenticated.Control, flags.AllowIP, flags.Public)
+	allowedIPPrefixes, currentIP, err := resolveIPPolicy(ctx, authenticated.Control, flags.AllowIP, flags.AllowAllIPs)
 	if err != nil {
 		return err
 	}

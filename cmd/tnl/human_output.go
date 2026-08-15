@@ -48,9 +48,9 @@ func countState(count int, singular, plural string) string {
 	return fmt.Sprintf("%d %s", count, plural)
 }
 
-func enabledState(enabled bool) string {
-	if enabled {
-		return "enabled"
+func allowedState(allowed bool) string {
+	if allowed {
+		return "allowed"
 	}
-	return "disabled"
+	return "blocked"
 }

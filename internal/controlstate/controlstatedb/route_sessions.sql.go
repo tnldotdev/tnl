@@ -498,17 +498,17 @@ func (q *Queries) LockRouteForSession(ctx context.Context, routeID string) (Cont
 }
 
 const lockRouteSessionCreationControl = `-- name: LockRouteSessionCreationControl :one
-SELECT enabled
+SELECT allowed
 FROM control.maintenance_controls
 WHERE control_name = 'route_session_creation'
-FOR UPDATE
+FOR SHARE
 `
 
 func (q *Queries) LockRouteSessionCreationControl(ctx context.Context) (bool, error) {
 	row := q.db.QueryRow(ctx, lockRouteSessionCreationControl)
-	var enabled bool
-	err := row.Scan(&enabled)
-	return enabled, err
+	var allowed bool
+	err := row.Scan(&allowed)
+	return allowed, err
 }
 
 const replaceRouteSessionConnection = `-- name: ReplaceRouteSessionConnection :one

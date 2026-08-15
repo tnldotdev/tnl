@@ -223,26 +223,26 @@ type ControlIngressRoutingTableEvent struct {
 }
 
 type ControlIngressUsageReport struct {
-	ReportID              int64
-	IngressID             string
-	IngressRunID          string
-	RouteID               string
-	RouteVersion          int64
-	BucketStart           pgtype.Timestamptz
-	BucketEnd             pgtype.Timestamptz
-	ObservedThrough       pgtype.Timestamptz
-	ReportRevision        int64
-	ConnectionAttempts    int64
-	PolicyDenials         int64
-	CapacityDenials       int64
-	PublisherOpenFailures int64
-	SuccessfulStreams     int64
-	ConnectionNanoseconds int64
-	IngressBytes          int64
-	EgressBytes           int64
-	HistogramData         []byte
-	Final                 bool
-	ReceivedAt            pgtype.Timestamptz
+	ReportID                  int64
+	IngressID                 string
+	IngressRunID              string
+	RouteID                   string
+	RouteVersion              int64
+	BucketStart               pgtype.Timestamptz
+	BucketEnd                 pgtype.Timestamptz
+	ObservedThrough           pgtype.Timestamptz
+	ReportRevision            int64
+	ConnectionAttempts        int64
+	PolicyDenials             int64
+	CapacityDenials           int64
+	VisitorStreamOpenFailures int64
+	SuccessfulStreams         int64
+	ConnectionNanoseconds     int64
+	IngressBytes              int64
+	EgressBytes               int64
+	HistogramData             []byte
+	Final                     bool
+	ReceivedAt                pgtype.Timestamptz
 }
 
 type ControlIngressUsageRun struct {
@@ -261,7 +261,7 @@ type ControlIngressUsageRun struct {
 
 type ControlMaintenanceControl struct {
 	ControlName string
-	Enabled     bool
+	Allowed     bool
 	Revision    int64
 	UpdatedAt   pgtype.Timestamptz
 	UpdatedBy   string
@@ -395,14 +395,14 @@ type ControlRoute struct {
 }
 
 type ControlRouteRecoveryEpisode struct {
-	EpisodeID       int64
-	RouteID         string
-	RouteVersion    int64
-	State           string
-	OpenedAt        pgtype.Timestamptz
-	ObservedAt      pgtype.Timestamptz
-	CanceledAt      pgtype.Timestamptz
-	ObservedSeconds pgtype.Float8
+	RecoveryEpisodeID int64
+	RouteID           string
+	RouteVersion      int64
+	State             string
+	OpenedAt          pgtype.Timestamptz
+	ObservedAt        pgtype.Timestamptz
+	CanceledAt        pgtype.Timestamptz
+	ObservedSeconds   pgtype.Float8
 }
 
 type ControlRouteRecoveryHistogram struct {
@@ -477,28 +477,28 @@ type ControlRouteSessionConnection struct {
 }
 
 type ControlRouteUsageBucket struct {
-	BucketID              int64
-	RouteID               string
-	RouteVersion          int64
-	TeamID                string
-	ActingIdentityID      string
-	BucketStart           pgtype.Timestamptz
-	BucketEnd             pgtype.Timestamptz
-	BucketRevision        int64
-	ObservedThrough       pgtype.Timestamptz
-	ConnectionAttempts    int64
-	PolicyDenials         int64
-	CapacityDenials       int64
-	PublisherOpenFailures int64
-	SuccessfulStreams     int64
-	ConnectionNanoseconds int64
-	IngressBytes          int64
-	EgressBytes           int64
-	HistogramData         []byte
-	Finalized             bool
-	Complete              bool
-	FinalizedAt           pgtype.Timestamptz
-	UpdatedAt             pgtype.Timestamptz
+	BucketID                  int64
+	RouteID                   string
+	RouteVersion              int64
+	TeamID                    string
+	ActingIdentityID          string
+	BucketStart               pgtype.Timestamptz
+	BucketEnd                 pgtype.Timestamptz
+	BucketRevision            int64
+	ObservedThrough           pgtype.Timestamptz
+	ConnectionAttempts        int64
+	PolicyDenials             int64
+	CapacityDenials           int64
+	VisitorStreamOpenFailures int64
+	SuccessfulStreams         int64
+	ConnectionNanoseconds     int64
+	IngressBytes              int64
+	EgressBytes               int64
+	HistogramData             []byte
+	Finalized                 bool
+	Complete                  bool
+	FinalizedAt               pgtype.Timestamptz
+	UpdatedAt                 pgtype.Timestamptz
 }
 
 type ControlRouteUsageConfiguration struct {

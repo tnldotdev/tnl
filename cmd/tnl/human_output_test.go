@@ -51,7 +51,7 @@ func TestHumanOutputLabels(t *testing.T) {
 	if got := countState(2, "route", "routes"); got != "2 routes" {
 		t.Fatalf("plural count = %q", got)
 	}
-	if enabledState(true) != "enabled" || enabledState(false) != "disabled" {
+	if allowedState(true) != "allowed" || allowedState(false) != "blocked" {
 		t.Fatal("enabled state labels are inconsistent")
 	}
 }

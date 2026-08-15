@@ -126,7 +126,7 @@ func Logout(ctx context.Context, config Config) error {
 		return errors.New("no saved login")
 	}
 	if !sessionMatches(stored, resolved) {
-		return errors.New("saved login does not match the selected authority endpoint")
+		return errors.New("saved login was created for a different authority; log in to the selected server again")
 	}
 	if err := revokeSession(ctx, resolved, stored, store); err != nil &&
 		!errors.Is(err, controlclient.ErrUnauthenticated) && !errors.Is(err, authorityclient.ErrUnauthenticated) {
@@ -194,7 +194,7 @@ func (s *tokenSource) accessToken(ctx context.Context, force bool, usedToken str
 		return "", err
 	}
 	if found && !sessionMatches(stored, s.control) {
-		return "", errors.New("saved login does not match the selected authority endpoint")
+		return "", errors.New("saved login was created for a different authority; log in to the selected server again")
 	}
 	now := time.Now()
 	if found && !s.config.ForceLogin && (!force || usedToken != stored.AccessToken) &&

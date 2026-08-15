@@ -267,7 +267,7 @@ func TestSavedSessionAuthorityMismatchDoesNotSendCredentials(t *testing.T) {
 			} else {
 				_, err = Authenticate(t.Context(), f.config)
 			}
-			if err == nil || !strings.Contains(err.Error(), "does not match") || len(f.transport.snapshot()) != 1 {
+			if err == nil || !strings.Contains(err.Error(), "different authority") || len(f.transport.snapshot()) != 1 {
 				t.Fatalf("mismatch: requests=%d error=%v", len(f.transport.snapshot()), err)
 			}
 			f.assertSession(t, old)

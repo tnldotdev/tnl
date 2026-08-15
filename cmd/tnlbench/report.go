@@ -423,6 +423,13 @@ func buildCellReport(cellID string, rows []benchmarkResult) (cellReport, error) 
 		cell.Bottleneck = cell.FailureStage + " failure"
 	}
 	for _, diagnostic := range cell.DatabaseDiagnostics {
+		if diagnostic.Snapshot != nil && len(diagnostic.Snapshot.ActiveOperations) != 0 {
+			var operations []string
+			for _, operation := range diagnostic.Snapshot.ActiveOperations[:min(3, len(diagnostic.Snapshot.ActiveOperations))] {
+				operations = append(operations, fmt.Sprintf("%s %.1fs", operation.Operation, operation.ElapsedSeconds))
+			}
+			cell.BottleneckEvidence = append(cell.BottleneckEvidence, fmt.Sprintf("local database activity %s: %d active operations, oldest: %s, truncated=%t", diagnostic.Identity, len(diagnostic.Snapshot.ActiveOperations), strings.Join(operations, ", "), diagnostic.Snapshot.OperationsTruncated))
+		}
 		if diagnostic.Error != "" {
 			cell.BottleneckEvidence = append(cell.BottleneckEvidence, "database snapshot "+diagnostic.Identity+": "+diagnostic.Error)
 			continue
@@ -431,14 +438,21 @@ func buildCellReport(cellID string, rows []benchmarkResult) (cellReport, error) 
 			continue
 		}
 		blocked := 0
-		oldest := float64(0)
+		var oldest *float64
 		for _, session := range diagnostic.Snapshot.Sessions {
 			if len(session.BlockingPIDs) > 0 {
 				blocked++
 			}
-			oldest = max(oldest, session.TransactionAgeSeconds)
+			if session.TransactionAgeSeconds != nil && (oldest == nil || *session.TransactionAgeSeconds > *oldest) {
+				value := *session.TransactionAgeSeconds
+				oldest = &value
+			}
 		}
-		cell.BottleneckEvidence = append(cell.BottleneckEvidence, fmt.Sprintf("database snapshot %s: %d blocked sessions, oldest transaction %.1fs, truncated=%t", diagnostic.Identity, blocked, oldest, diagnostic.Snapshot.Truncated))
+		oldestText := "unavailable"
+		if oldest != nil {
+			oldestText = fmt.Sprintf("%.1fs", *oldest)
+		}
+		cell.BottleneckEvidence = append(cell.BottleneckEvidence, fmt.Sprintf("database snapshot %s: %d blocked sessions, oldest transaction %s, truncated=%t", diagnostic.Identity, blocked, oldestText, diagnostic.Snapshot.Truncated))
 	}
 	return cell, nil
 }

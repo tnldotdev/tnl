@@ -59,7 +59,7 @@ func TestMetricsExposeFinalRuntimeVocabulary(t *testing.T) {
 		value  float64
 	}
 	want := map[string]sample{
-		"tnl_info":                             {"GAUGE", map[string]string{"mode": "relay"}, 1},
+		"tnl_info":                             {"GAUGE", map[string]string{"role": "relay"}, 1},
 		"tnl_routes":                           {"GAUGE", map[string]string{"state": "enabled"}, 7},
 		"tnl_relay_leases":                     {"GAUGE", map[string]string{"state": "active"}, 2},
 		"tnl_publisher_connections":            {"GAUGE", map[string]string{"state": "ready"}, 3},

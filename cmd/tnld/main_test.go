@@ -49,7 +49,7 @@ func TestRunConfigCheckIsSilentAndDoesNotStartServices(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "tnl.yml")
 	contents := `version: 1
 tnld:
-  mode: relay
+  role: relay
   control_hostname: control.example.com
   cluster_secret: 0123456789abcdef0123456789abcdef
   relay_service_id: relay-test
@@ -71,17 +71,17 @@ tnld:
 
 func TestResolveConfigFileRespectsEnvironmentAndFlags(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "tnl.json")
-	contents := `{"version":1,"tnld":{"mode":"relay","metrics_listen":"file:1","relay_stream_capacity":12}}`
+	contents := `{"version":1,"tnld":{"role":"relay","metrics_listen":"file:1","relay_stream_capacity":12}}`
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("TNLD_METRICS_LISTEN", "env:2")
 	base := tnldconfig.Config{
-		Mode: tnldconfig.RoleRelay, MetricsListen: "env:2", RelayStreamCapacity: 99,
+		Role: tnldconfig.RoleRelay, MetricsListen: "env:2", RelayStreamCapacity: 99,
 		ControlHostname: "control.example.com", ClusterSecret: "0123456789abcdef0123456789abcdef",
 		RelayServiceID: "relay-test", RelayID: "relay-test", RelayAddress: "relay.example.com:443",
 		InternalRelayAddress: "relay.internal:9443", RelayTCPListen: ":443", RelayUDPListen: ":443",
-		PublicConnectionLimit: 1, RouteConnectionLimit: 1, PublisherConnectionLimit: 1, QUICMaxIncomingStreams: 1,
+		VisitorConnectionLimit: 1, RouteConnectionLimit: 1, PublisherConnectionLimit: 1, QUICMaxIncomingStreams: 1,
 		QUICIdleTimeout: time.Second, IngressLeaseDuration: 3 * time.Second,
 		RelayLeaseDuration: 3 * time.Second, LeaseRenewalInterval: time.Second, ControlRetryInterval: time.Second,
 		RoutingTableWait: time.Second, DrainTimeout: time.Second,
@@ -117,11 +117,11 @@ func TestParserAcceptsServeValuesBeforeFileResolution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	parsed, err := parser.Parse([]string{"serve", "--mode", "relay", "--control-hostname", "control.example.com"})
+	parsed, err := parser.Parse([]string{"serve", "--role", "relay", "--control-hostname", "control.example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parsed.Command() != "serve" || flags.Serve.Values.Mode != tnldconfig.RoleRelay || flags.Serve.Values.ControlHostname != "control.example.com" {
+	if parsed.Command() != "serve" || flags.Serve.Values.Role != tnldconfig.RoleRelay || flags.Serve.Values.ControlHostname != "control.example.com" {
 		t.Fatalf("serve values = %#v", flags.Serve.Values)
 	}
 }

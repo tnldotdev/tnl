@@ -15,12 +15,12 @@ var ErrRouteRecoveryEpisodeStale = errors.New("controlstate: route recovery epis
 
 // RouteRecoveryObservation is one stored route recovery measurement.
 type RouteRecoveryObservation struct {
-	EpisodeID       uint64
-	RouteID         string
-	RouteVersion    uint64
-	OpenedAt        time.Time
-	ObservedAt      time.Time
-	ObservedSeconds float64
+	RecoveryEpisodeID uint64
+	RouteID           string
+	RouteVersion      uint64
+	OpenedAt          time.Time
+	ObservedAt        time.Time
+	ObservedSeconds   float64
 }
 
 // ObserveRouteRecovery closes one open episode and updates its cumulative
@@ -30,7 +30,7 @@ func (d *Database) ObserveRouteRecovery(
 	ingressIdentity IngressLeaseIdentity,
 	routeID string,
 	routeVersion uint64,
-	episodeID uint64,
+	recoveryEpisodeID uint64,
 	observedAt time.Time,
 ) (result RouteRecoveryObservation, retErr error) {
 	if err := validateIngressLeaseIdentity(ingressIdentity); err != nil {
@@ -42,7 +42,7 @@ func (d *Database) ObserveRouteRecovery(
 	if _, ok := positiveInt64(routeVersion); !ok {
 		return RouteRecoveryObservation{}, errors.New("controlstate: recovery route version is invalid")
 	}
-	if _, ok := positiveInt64(episodeID); !ok {
+	if _, ok := positiveInt64(recoveryEpisodeID); !ok {
 		return RouteRecoveryObservation{}, errors.New("controlstate: recovery episode ID is invalid")
 	}
 	if err := d.requireOpen(); err != nil {
@@ -57,7 +57,7 @@ func (d *Database) ObserveRouteRecovery(
 	if _, err := lockCurrentIngressLease(ctx, queries, ingressIdentity, observedAt); err != nil {
 		return RouteRecoveryObservation{}, err
 	}
-	episode, err := queries.LockRouteRecoveryEpisode(ctx, positive(episodeID))
+	episode, err := queries.LockRouteRecoveryEpisode(ctx, positive(recoveryEpisodeID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return RouteRecoveryObservation{}, ErrRouteRecoveryEpisodeStale
 	}
@@ -79,7 +79,7 @@ func (d *Database) ObserveRouteRecovery(
 	seconds := observedAt.Sub(episode.OpenedAt.Time).Seconds()
 	episode, err = queries.ObserveRouteRecoveryEpisode(ctx, controlstatedb.ObserveRouteRecoveryEpisodeParams{
 		ObservedAt: timestamptz(observedAt), ObservedSeconds: float8(seconds),
-		EpisodeID: positive(episodeID), RouteID: routeID, RouteVersion: positive(routeVersion),
+		RecoveryEpisodeID: positive(recoveryEpisodeID), RouteID: routeID, RouteVersion: positive(routeVersion),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return RouteRecoveryObservation{}, ErrRouteRecoveryEpisodeStale
@@ -100,7 +100,7 @@ func (d *Database) ObserveRouteRecovery(
 
 func recoveryObservation(episode controlstatedb.ControlRouteRecoveryEpisode) RouteRecoveryObservation {
 	return RouteRecoveryObservation{
-		EpisodeID: uint64(episode.EpisodeID), RouteID: episode.RouteID,
+		RecoveryEpisodeID: uint64(episode.RecoveryEpisodeID), RouteID: episode.RouteID,
 		RouteVersion: uint64(episode.RouteVersion), OpenedAt: episode.OpenedAt.Time,
 		ObservedAt: episode.ObservedAt.Time, ObservedSeconds: episode.ObservedSeconds.Float64,
 	}
