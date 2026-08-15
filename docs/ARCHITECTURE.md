@@ -24,8 +24,9 @@ changes persistent runtime state. Ingress receives a short-lived routing table.
 Each relay knows only its own lease and the publishers connected to it.
 
 The authority API manages identities, teams, memberships, invitations, domains,
-authentication, and authorization decisions. The hosted TypeScript application
-is maintained outside this repository.
+authentication, and authorization decisions. Control or standalone can serve
+the built-in authority, or use an external authority maintained outside this
+repository.
 
 `TNLD_SERVER_DOMAIN` is the infrastructure suffix for control, ingress, and relay
 hostnames. It is independent of `TNLD_MANAGED_DEPLOYMENT_DOMAIN`, which supplies
@@ -59,9 +60,11 @@ The standalone adapters implement controller operations without HTTP
 authentication or request editors. Role controllers receive API errors rather
 than database-specific errors.
 
-Control and standalone require a login token. They obtain public control
-certificates through ACME unless static certificates are configured. Only these
-roles receive the storage key, hosted secret, PostgreSQL credentials, DNS
+Control and standalone using the built-in authority require a login token. An
+external authority instead requires an authority endpoint, OIDC configuration,
+and the hosted secret shared with control. Control and standalone obtain public
+control certificates through ACME unless static certificates are configured.
+Only these roles receive the storage key, PostgreSQL credentials, DNS
 credentials, or ACME account keys. A relay can retrieve its relay transport
 certificate and private key while its lease is current. It keeps them only in
 memory.

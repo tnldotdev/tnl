@@ -75,8 +75,9 @@ Static YAML and JSON require `version: 1` and snake-case fields; see
 [discovery and precedence](../../README.md#project-configuration) and the
 [JSON Schema](https://tnl.dev/schema/v1.json).
 
-Choose either `tunnel.host` or `tunnel.subdomain`. Choose either `public: true`
-or `allowIP`. A project-service override replaces the other inherited choice.
+Choose either `tunnel.host` or `tunnel.subdomain`. Choose either
+`allowAllIPs: true` or `allowIP`. A project-service override replaces the other
+inherited choice.
 `dev.port` requires the local service to use that port. `dev.startupTimeout`
 defaults to two minutes and must be greater than zero and no more than ten
 minutes. `dev.command` is an argument array, not a shell command string.

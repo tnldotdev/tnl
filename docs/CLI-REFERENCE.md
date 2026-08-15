@@ -114,8 +114,8 @@ The `tnl` command tree has 33 leaf commands.
 |  28 | `tnl admin relays list [flags]`                                                                 | List relay process leases.                             |
 |  29 | `tnl admin relays drain --relay-run-id=STRING --relay-lease-revision=INT-64 <relay-id> [flags]` | Drain one matching relay lease.                        |
 |  30 | `tnl admin maintenance list [flags]`                                                            | List maintenance controls.                             |
-|  31 | `tnl admin maintenance enable <name> [flags]`                                                   | Enable a maintenance control.                          |
-|  32 | `tnl admin maintenance disable <name> [flags]`                                                  | Disable a maintenance control.                         |
+|  31 | `tnl admin maintenance allow <name> [flags]`                                                    | Allow the selected operation.                          |
+|  32 | `tnl admin maintenance block <name> [flags]`                                                    | Block the selected operation.                          |
 |  33 | `tnl version [flags]`                                                                           | Print release version information.                     |
 
 ### Global Flags
@@ -173,14 +173,15 @@ These flags are used by `publish` and `dev`:
 | `--host=STRING`      | empty; `TNL_HOST`              | Publish one complete, normalized hostname.                                    |
 | `--subdomain=STRING` | empty; `TNL_SUBDOMAIN`         | Publish one label beneath the current member namespace.                       |
 | `--allow-ip=VALUE`   | empty; no environment variable | Add a visitor IP address or prefix. Repeat at most 63 times.                  |
-| `--public`           | false; `TNL_PUBLIC`            | Allow visitors from every IP address.                                         |
+| `--allow-all-ips`    | false; `TNL_ALLOW_ALL_IPS`     | Allow visitors from every IP address.                                         |
 | `--ephemeral`        | false; `TNL_EPHEMERAL`         | Request route cleanup when this tunnel stops.                                 |
 
-`--host` and `--subdomain` are mutually exclusive. `--public` and
-`--allow-ip` are mutually exclusive. Without `--public`, the current client IP
-is always added to the policy, including when explicit prefixes are supplied.
-Boolean false forms such as `--public=false` and `--ephemeral=false` are
-explicit overrides and prevent project configuration from enabling the value.
+`--host` and `--subdomain` are mutually exclusive. `--allow-all-ips` and
+`--allow-ip` are mutually exclusive. Without `--allow-all-ips`, the current
+client IP is always added to the policy, including when explicit prefixes are
+supplied. Boolean false forms such as `--allow-all-ips=false` and
+`--ephemeral=false` are explicit overrides and prevent project configuration
+from enabling the value.
 
 ### Runtime Environment
 
@@ -228,33 +229,33 @@ under `tnl`. TypeScript configuration evaluates directly to the tnl project
 settings. Root settings are inherited by named services; a service overrides
 root settings field by field.
 
-| Project setting  | Fields                                                 |
-| ---------------- | ------------------------------------------------------ |
-| Root and service | `server`, `team`, `tunnel`, `publish`, `dev`           |
-| Service only     | `directory`, relative to the project configuration     |
-| `tunnel`         | `host`, `subdomain`, `allow_ip`, `public`, `ephemeral` |
-| `publish`        | `target`                                               |
-| `dev`            | `command`, `port`, `startup_timeout`                   |
+| Project setting  | Fields                                                        |
+| ---------------- | ------------------------------------------------------------- |
+| Root and service | `server`, `team`, `tunnel`, `publish`, `dev`                  |
+| Service only     | `directory`, relative to the project configuration            |
+| `tunnel`         | `host`, `subdomain`, `allow_ip`, `allow_all_ips`, `ephemeral` |
+| `publish`        | `target`                                                      |
+| `dev`            | `command`, `port`, `startup_timeout`                          |
 
 The effective runtime precedence is:
 
-| Setting             | Highest to lowest precedence                                                               |
-| ------------------- | ------------------------------------------------------------------------------------------ |
-| Server              | `--server`, `TNL_SERVER`, service/root project server, saved server, hosted default        |
-| Access token        | `--access-token`, `TNL_ACCESS_TOKEN`, saved session, interactive login                     |
-| Tunnel team         | `--team`, `TNL_TEAM`, service/root project team, saved team, personal team                 |
-| Publish target      | Positional non-service target, service/root `publish.target`                               |
-| Dev command         | Tokens after `--`, service/root `dev.command`, no child command                            |
-| Dev port            | Nonzero `--port`, service/root `dev.port`, framework registration                          |
-| Dev startup timeout | Nonzero `--startup-timeout`, service/root value, `2m`                                      |
-| Hostname unit       | CLI host/subdomain, environment host/subdomain, project host/subdomain, built-in selection |
-| IP policy unit      | CLI public/allow list, `TNL_PUBLIC`, project public/allow list, current-IP-only policy     |
-| Ephemeral           | Explicit CLI value, presence of `TNL_EPHEMERAL`, project value, false                      |
+| Setting             | Highest to lowest precedence                                                                  |
+| ------------------- | --------------------------------------------------------------------------------------------- |
+| Server              | `--server`, `TNL_SERVER`, service/root project server, saved server, hosted default           |
+| Access token        | `--access-token`, `TNL_ACCESS_TOKEN`, saved session, interactive login                        |
+| Tunnel team         | `--team`, `TNL_TEAM`, service/root project team, saved team, personal team                    |
+| Publish target      | Positional non-service target, service/root `publish.target`                                  |
+| Dev command         | Tokens after `--`, service/root `dev.command`, no child command                               |
+| Dev port            | Nonzero `--port`, service/root `dev.port`, framework registration                             |
+| Dev startup timeout | Nonzero `--startup-timeout`, service/root value, `2m`                                         |
+| Hostname unit       | CLI host/subdomain, environment host/subdomain, project host/subdomain, built-in selection    |
+| IP policy unit      | CLI all-IP/allow list, `TNL_ALLOW_ALL_IPS`, project all-IP/allow list, current-IP-only policy |
+| Ephemeral           | Explicit CLI value, presence of `TNL_EPHEMERAL`, project value, false                         |
 
 Host and subdomain are chosen together: selecting one clears a lower-priority
-value for the other. The same rule applies to public and allow-list settings.
+value for the other. The same rule applies to all-IP and allow-list settings.
 For example, CLI `--subdomain` clears a host from the environment, and CLI
-`--allow-ip` clears public mode from the environment.
+`--allow-ip` clears the all-IP setting from the environment.
 
 Without an explicit hostname, a non-ephemeral tunnel receives a stable
 service/worktree-derived label in the current member namespace. The worktree
@@ -1244,8 +1245,8 @@ $ tnl route list
 
 Each route repeats one hostname section. Scope is `member` or `shared`, and
 lifecycle state is `enabled` or `suspended`. The displayed `route version` is
-the API's `next_route_version`, not necessarily an attached route session's
-current version.
+the API's `next_route_version`, not necessarily an open route session's current
+version.
 
 An empty list is still a successful frame:
 
@@ -1303,16 +1304,16 @@ $ tnl admin server status --server https://control.example.test
 |  |-- ingress  2 leases                                       |
 |  `-- relays  4 leases                                        |
 |                                                              |
-|  mode      control                                           |
-|  routes    12 enabled / 1 suspended                          |
-|  sessions  8 ready / 2 starting                              |
-|  started   2030-01-01T10:00:00Z                              |
-|  current   2030-01-01T12:00:00Z                              |
+|  role            control                                     |
+|  routes          12 enabled / 1 suspended                    |
+|  route sessions  8 ready / 2 starting                        |
+|  started         2030-01-01T10:00:00Z                        |
+|  current         2030-01-01T12:00:00Z                        |
 |                                                              |
 +--------------------------------------------------------------+
 ```
 
-Mode is `standalone` or `control`. Times are UTC RFC3339. The top-level state is
+Role is `standalone` or `control`. Times are UTC RFC3339. The top-level state is
 `serving` whenever the status request succeeds; route or session counts do not
 change that label.
 
@@ -1329,15 +1330,15 @@ $ tnl admin relays list --server https://control.example.test
 +--[ tnl admin relays list ]-- 1 relay process ----------------+
 |                                                              |
 |-- relay_00000000000000000000000000000000 / draining ---------|
-|  service           relay-service-example                     |
-|  run               relay-run-example                         |
-|  revision          9                                         |
-|  relay address     relay.example.test:443                    |
-|  internal address  relay.internal.example.test:8443          |
-|  connections       12 / 1000                                 |
-|  streams           48 / 4096                                 |
-|  expires           2030-01-01T12:00:30Z                      |
-|  drain deadline    2030-01-01T12:01:00Z                      |
+|  relay service          relay-service-example                |
+|  process run            relay-run-example                    |
+|  lease revision         9                                    |
+|  relay address          relay.example.test:443               |
+|  internal address       relay.internal.example.test:8443     |
+|  publisher connections  12 / 1000                            |
+|  visitor streams        48 / 4096                            |
+|  lease expires          2030-01-01T12:00:30Z                 |
+|  drain deadline         2030-01-01T12:01:00Z                 |
 |                                                              |
 +--------------------------------------------------------------+
 ```
@@ -1374,8 +1375,8 @@ $ tnl admin relays drain relay_00000000000000000000000000000000 --relay-run-id=r
 |     v                                                        |
 |  rejecting new work                                          |
 |                                                              |
-|  run       relay-run-example                                 |
-|  revision  9                                                 |
+|  process run     relay-run-example                           |
+|  lease revision  9                                           |
 |                                                              |
 +-- deadline 2030-01-01T12:01:00Z -----------------------------+
 ```
@@ -1395,35 +1396,33 @@ $ tnl admin maintenance list --server https://control.example.test
 +--[ tnl admin maintenance list ]-- 3 controls ----------------+
 |                                                              |
 |-- route_creation --------------------------------------------|
-|  state       disabled                                        |
-|  revision    3                                               |
-|  updated     2030-01-01T11:00:00Z                            |
-|  updated by  identity_00000000000000000000000000000000       |
+|  state             blocked                                   |
+|  control revision  3                                         |
+|  updated           2030-01-01T11:00:00Z                      |
+|  updated by        identity_00000000000000000000000000000000 |
 |                                                              |
 |-- route_session_creation ------------------------------------|
-|  state       enabled                                         |
-|  revision    8                                               |
-|  updated     2030-01-01T11:30:00Z                            |
-|  updated by  identity_00000000000000000000000000000000       |
+|  state             allowed                                   |
+|  control revision  8                                         |
+|  updated           2030-01-01T11:30:00Z                      |
+|  updated by        identity_00000000000000000000000000000000 |
 |                                                              |
 |-- certificate_issuance --------------------------------------|
-|  state       disabled                                        |
-|  revision    5                                               |
-|  updated     2030-01-01T11:45:00Z                            |
-|  updated by  identity_00000000000000000000000000000000       |
+|  state             blocked                                   |
+|  control revision  5                                         |
+|  updated           2030-01-01T11:45:00Z                      |
+|  updated by        identity_00000000000000000000000000000000 |
 |                                                              |
 +--------------------------------------------------------------+
 ```
 
-Each control repeats one section. Zero controls uses state `0 controls`.
-Enabling a maintenance control means enabling that gate; it should not be
-described as enabling route creation, route-session creation, or certificate
-issuance.
+Each control repeats one section. Zero controls uses state `0 controls`. An
+allowed operation may start new work; a blocked operation may not.
 
-#### `tnl admin maintenance enable`
+#### `tnl admin maintenance allow`
 
 ```text
-tnl admin maintenance enable <name> [flags]
+tnl admin maintenance allow <name> [flags]
 ```
 
 `<name>` must be `route_creation`, `route_session_creation`, or
@@ -1432,39 +1431,39 @@ tnl admin maintenance enable <name> [flags]
 Representative stdout:
 
 ```console
-$ tnl admin maintenance enable route_creation
-+--[ tnl admin maintenance enable ]-- updated -----------------+
+$ tnl admin maintenance allow route_creation
++--[ tnl admin maintenance allow ]-- updated ------------------+
 |                                                              |
 |  route_creation                                              |
 |     |                                                        |
 |     v                                                        |
-|  enabled                                                     |
+|  allowed                                                     |
 |                                                              |
-|  revision  4                                                 |
+|  control revision  4                                         |
 |                                                              |
 +--------------------------------------------------------------+
 ```
 
-#### `tnl admin maintenance disable`
+#### `tnl admin maintenance block`
 
 ```text
-tnl admin maintenance disable <name> [flags]
+tnl admin maintenance block <name> [flags]
 ```
 
-`<name>` has the same enum as `enable`.
+`<name>` has the same enum as `allow`.
 
 Representative stdout:
 
 ```console
-$ tnl admin maintenance disable route_creation
-+--[ tnl admin maintenance disable ]-- updated ----------------+
+$ tnl admin maintenance block route_creation
++--[ tnl admin maintenance block ]-- updated ------------------+
 |                                                              |
 |  route_creation                                              |
 |     |                                                        |
 |     v                                                        |
-|  disabled                                                    |
+|  blocked                                                     |
 |                                                              |
-|  revision  5                                                 |
+|  control revision  5                                         |
 |                                                              |
 +--------------------------------------------------------------+
 ```
@@ -1729,8 +1728,8 @@ serve flag select `serve`:
 
 ```text
 tnld
-tnld --mode=ingress --control-hostname=control.example.test ...
-tnld serve --mode=ingress --control-hostname=control.example.test ...
+tnld --role=ingress --control-hostname=control.example.test ...
+tnld serve --role=ingress --control-hostname=control.example.test ...
 ```
 
 Bare `tnld` does not print help. With no applicable environment it selects the
@@ -1840,7 +1839,7 @@ Representative relay stderr:
 2030/01/02 03:04:05 relay publisher UDP listening on 192.0.2.40:8443
 ```
 
-There is no general started or ready message, mode summary, or metrics-listener
+There is no general started or ready message, role summary, or metrics-listener
 log. A listener message proves only that the listener opened. Use the process's
 private `/ready` endpoint to check readiness for its role.
 
@@ -1942,7 +1941,7 @@ merged.
 | Flag / file key                       | Environment           | Parser or effective default | Applies | Behavior                                                                             |
 | ------------------------------------- | --------------------- | --------------------------- | ------- | ------------------------------------------------------------------------------------ |
 | `--config` / not a file field         | `TNLD_CONFIG`         | empty                       | all     | Select one explicit static server document.                                          |
-| `--mode` / `mode`                     | `TNLD_MODE`           | `standalone`                | all     | Enum: `standalone`, `control`, `ingress`, `relay`.                                   |
+| `--role` / `role`                     | `TNLD_ROLE`           | `standalone`                | all     | Enum: `standalone`, `control`, `ingress`, `relay`.                                   |
 | `--database-url` / `database_url`     | `TNLD_DATABASE_URL`   | empty                       | S/C     | Required pooled PostgreSQL URL; forbidden in I/R.                                    |
 | `--metrics-listen` / `metrics_listen` | `TNLD_METRICS_LISTEN` | `127.0.0.1:9090`            | all     | Private HTTP health, readiness, and Prometheus address; empty disables the listener. |
 
@@ -2064,7 +2063,7 @@ internal hostname and port; Config Check Limits describes its validation gap.
 
 | Flag / file key                                               | Environment                       | Default | Applies | Behavior                                                      |
 | ------------------------------------------------------------- | --------------------------------- | ------- | ------- | ------------------------------------------------------------- |
-| `--public-connection-limit` / `public_connection_limit`       | `TNLD_PUBLIC_CONNECTION_LIMIT`    | `20000` | S/I     | Maximum concurrent public visitor connections.                |
+| `--visitor-connection-limit` / `visitor_connection_limit`     | `TNLD_VISITOR_CONNECTION_LIMIT`   | `20000` | S/I     | Maximum concurrent visitor connections.                       |
 | `--route-connection-limit` / `route_connection_limit`         | `TNLD_ROUTE_CONNECTION_LIMIT`     | `500`   | S/I     | Maximum concurrent visitor connections per route.             |
 | `--publisher-connection-limit` / `publisher_connection_limit` | `TNLD_PUBLISHER_CONNECTION_LIMIT` | `1000`  | S/R     | Maximum publisher connections held by one relay process.      |
 | `--relay-stream-capacity` / `relay_stream_capacity`           | `TNLD_RELAY_STREAM_CAPACITY`      | `4096`  | S/R     | Maximum concurrent visitor streams held by one relay process. |
@@ -2085,17 +2084,18 @@ used by the selected role. All timing values must be positive.
 
 ### Role Requirements And Applicability
 
-| Role         | Required operational settings                                                                                                           | Listeners and responsibilities                                                                                                                                      |
-| ------------ | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `standalone` | `database_url`, `server_domain`, `managed_deployment_domain`, `acme_email`, `acme_accept_terms=true`, one authority mode, `storage_key` | Composes control, ingress, and two logical relay services. Shares `ingress_listen` for public TCP and uses `relay_udp_listen` for QUIC.                             |
-| `control`    | Standalone's control-owned settings plus `cluster_secret`                                                                               | Uses PostgreSQL; serves public control HTTPS and the private ingress/relay API; manages placement, certificates, DNS, administration, and persistent runtime state. |
-| `ingress`    | `control_hostname`, `cluster_secret`, `ingress_id`                                                                                      | Stateless; accepts visitor TCP, registers with control, loads the ingress routing table, and forwards each visitor connection once.                                 |
-| `relay`      | `control_hostname`, `cluster_secret`, `relay_service_id`, `relay_id`, `relay_address`, and operationally `internal_relay_address`       | Stateless; accepts publisher TCP/QUIC and internal forwarding, registers with control, and retrieves relay TLS when no static override is configured.               |
+| Role         | Required operational settings                                                                                                                    | Listeners and responsibilities                                                                                                                                      |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `standalone` | `database_url`, `server_domain`, `managed_deployment_domain`, `acme_email`, `acme_accept_terms=true`, one authority configuration, `storage_key` | Composes control, ingress, and two logical relay services. Shares `ingress_listen` for public TCP and uses `relay_udp_listen` for QUIC.                             |
+| `control`    | Standalone's control-owned settings plus `cluster_secret`                                                                                        | Uses PostgreSQL; serves public control HTTPS and the private ingress/relay API; manages placement, certificates, DNS, administration, and persistent runtime state. |
+| `ingress`    | `control_hostname`, `cluster_secret`, `ingress_id`                                                                                               | Stateless; accepts visitor TCP, registers with control, loads the ingress routing table, and forwards each visitor connection once.                                 |
+| `relay`      | `control_hostname`, `cluster_secret`, `relay_service_id`, `relay_id`, `relay_address`, and operationally `internal_relay_address`                | Stateless; accepts publisher TCP/QUIC and internal forwarding, registers with control, and retrieves relay TLS when no static override is configured.               |
 
-Control and standalone require exactly one authority mode. Built-in mode leaves
-`authority_endpoint` empty and requires `login_token`. External mode sets
-`authority_endpoint`, `hosted_secret`, and complete OIDC settings, and rejects
-`login_token`. OIDC may also be added to built-in mode.
+Control and standalone require exactly one authority configuration. The built-in
+authority leaves `authority_endpoint` empty and requires `login_token`. An
+external authority sets `authority_endpoint`, `hosted_secret`, and complete OIDC
+settings, and rejects `login_token`. OIDC may also be added to the built-in
+authority.
 
 Ingress and relay reject a database URL, login token, control TLS overrides,
 hosted secrets, storage keys, Route 53 zones, and ingress DNS addresses. Control
@@ -2118,7 +2118,7 @@ YAML or JSON only:
 $schema: https://tnl.dev/schema/v1.json
 version: 1
 tnld:
-  mode: ingress
+  role: ingress
   metrics_listen: ""
 ```
 
