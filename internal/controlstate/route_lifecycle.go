@@ -739,21 +739,18 @@ func (pending *pendingIngressRoutingTableEvents) publish(ctx context.Context, qu
 	if len(pending.events) == 0 {
 		return nil
 	}
-	// This is the transaction's final phase. The clock remains held through
-	// commit, and callers must not perform further database work after it.
-	if _, err := queries.LockIngressRoutingTableClock(ctx); err != nil {
-		return fmt.Errorf("controlstate: lock ingress routing-table clock: %w", err)
-	}
+	// Callers hold each event's route row through commit, so same-route
+	// publishers cannot change these entry revisions concurrently.
 	type routeVersion struct {
 		routeID      string
 		routeVersion int64
 	}
-	entryRevisions := make(map[routeVersion]int64)
-	var latestRoutingTableRevision int64
+	entryRevisionsByRoute := make(map[routeVersion]int64)
+	entryRevisions := make([]int64, len(pending.events))
 	for index := range pending.events {
 		event := &pending.events[index]
 		key := routeVersion{routeID: event.routeID, routeVersion: event.routeVersion}
-		entryRevision, found := entryRevisions[key]
+		entryRevision, found := entryRevisionsByRoute[key]
 		if !found {
 			var err error
 			entryRevision, err = queries.LatestIngressRoutingEntryRevision(ctx, controlstatedb.LatestIngressRoutingEntryRevisionParams{
@@ -767,27 +764,41 @@ func (pending *pendingIngressRoutingTableEvents) publish(ctx context.Context, qu
 			return errors.New("controlstate: ingress routing-table entry revision is exhausted")
 		}
 		entryRevision++
-		entryRevisions[key] = entryRevision
+		entryRevisionsByRoute[key] = entryRevision
+		entryRevisions[index] = entryRevision
+	}
+	// This is the transaction's final phase. The clock remains held through
+	// commit, and callers must not perform further database work after it.
+	if _, err := queries.LockIngressRoutingTableClock(ctx); err != nil {
+		return fmt.Errorf("controlstate: lock ingress routing-table clock: %w", err)
+	}
+	for index := range pending.events {
+		event := &pending.events[index]
 		routeExpiresAt := pgtype.Timestamptz{}
 		if event.eventKind == IngressRouteUpsert || event.eventKind == IngressChallengeUpsert {
 			routeExpiresAt = timestamptz(event.projectionExpiresAt)
 		}
-		routingTableRevision, err := queries.InsertIngressRoutingTableEvent(ctx, controlstatedb.InsertIngressRoutingTableEventParams{
-			EventKind: string(event.eventKind), RouteID: event.routeID, RouteVersion: event.routeVersion,
-			CanonicalHostname: event.canonicalHostname, EntryRevision: entryRevision,
-			Projection: event.projection, RouteExpiresAt: routeExpiresAt, CreatedAt: timestamptz(event.createdAt),
-		})
+		var routingTableRevision int64
+		var err error
+		if index == len(pending.events)-1 {
+			routingTableRevision, err = queries.InsertFinalIngressRoutingTableEvent(ctx, controlstatedb.InsertFinalIngressRoutingTableEventParams{
+				EventKind: string(event.eventKind), RouteID: event.routeID, RouteVersion: event.routeVersion,
+				CanonicalHostname: event.canonicalHostname, EntryRevision: entryRevisions[index],
+				Projection: event.projection, RouteExpiresAt: routeExpiresAt, CreatedAt: timestamptz(event.createdAt),
+				UpdatedAt: timestamptz(event.createdAt),
+			})
+		} else {
+			routingTableRevision, err = queries.InsertIngressRoutingTableEvent(ctx, controlstatedb.InsertIngressRoutingTableEventParams{
+				EventKind: string(event.eventKind), RouteID: event.routeID, RouteVersion: event.routeVersion,
+				CanonicalHostname: event.canonicalHostname, EntryRevision: entryRevisions[index],
+				Projection: event.projection, RouteExpiresAt: routeExpiresAt, CreatedAt: timestamptz(event.createdAt),
+			})
+		}
 		if err != nil {
 			return fmt.Errorf("controlstate: insert ingress routing-table event: %w", err)
 		}
 		event.published.routingTableRevision = routingTableRevision
-		event.published.entryRevision = entryRevision
-		latestRoutingTableRevision = routingTableRevision
-	}
-	if err := queries.AdvanceIngressRoutingTableClock(ctx, controlstatedb.AdvanceIngressRoutingTableClockParams{
-		RoutingTableRevision: latestRoutingTableRevision, UpdatedAt: timestamptz(pending.events[len(pending.events)-1].createdAt),
-	}); err != nil {
-		return fmt.Errorf("controlstate: advance ingress routing-table clock: %w", err)
+		event.published.entryRevision = entryRevisions[index]
 	}
 	return nil
 }

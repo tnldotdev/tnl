@@ -76,9 +76,36 @@ INSERT INTO control.ingress_routing_table_events (
 )
 RETURNING routing_table_revision;
 
--- name: AdvanceIngressRoutingTableClock :exec
-UPDATE control.ingress_routing_table_clock
-SET current_revision = sqlc.arg(routing_table_revision),
-    updated_at = sqlc.arg(updated_at)
-WHERE singleton = true
-  AND current_revision < sqlc.arg(routing_table_revision);
+-- name: InsertFinalIngressRoutingTableEvent :one
+WITH inserted AS (
+    INSERT INTO control.ingress_routing_table_events (
+        event_kind,
+        route_id,
+        route_version,
+        canonical_hostname,
+        entry_revision,
+        projection,
+        route_expires_at,
+        created_at
+    ) VALUES (
+        sqlc.arg(event_kind),
+        sqlc.arg(route_id),
+        sqlc.arg(route_version),
+        sqlc.arg(canonical_hostname),
+        sqlc.arg(entry_revision),
+        sqlc.arg(projection),
+        sqlc.narg(route_expires_at),
+        sqlc.arg(created_at)
+    )
+    RETURNING routing_table_revision
+), advanced AS (
+    UPDATE control.ingress_routing_table_clock
+    SET current_revision = inserted.routing_table_revision,
+        updated_at = sqlc.arg(updated_at)
+    FROM inserted
+    WHERE singleton = true
+      AND current_revision < inserted.routing_table_revision
+    RETURNING control.ingress_routing_table_clock.current_revision
+)
+SELECT current_revision AS routing_table_revision
+FROM advanced;
