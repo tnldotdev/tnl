@@ -52,16 +52,16 @@ func TestParsePoolConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if defaultConfig.MaxConns != 6 {
-		t.Fatalf("default maximum connections = %d, want 6", defaultConfig.MaxConns)
+	if defaultConfig.MaxConns != 7 {
+		t.Fatalf("default maximum connections = %d, want 7", defaultConfig.MaxConns)
 	}
 
-	config, err := parsePoolConfig("postgresql://user:secret@database.example/tnl?sslmode=require&pool_max_conns=7&default_query_exec_mode=cache_statement")
+	config, err := parsePoolConfig("postgresql://user:secret@database.example/tnl?sslmode=require&pool_max_conns=5&default_query_exec_mode=cache_statement")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.MaxConns != 7 {
-		t.Fatalf("maximum connections = %d, want 7", config.MaxConns)
+	if config.MaxConns != 5 {
+		t.Fatalf("maximum connections = %d, want 5", config.MaxConns)
 	}
 	if config.ConnConfig.DefaultQueryExecMode != pgx.QueryExecModeExec {
 		t.Fatalf("query execution mode = %v, want %v", config.ConnConfig.DefaultQueryExecMode, pgx.QueryExecModeExec)
