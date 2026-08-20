@@ -80,6 +80,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/TeamIDQuery"
         - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/CanonicalHostnameQuery"
       responses:
         "200":
           description: Route page
@@ -539,6 +540,13 @@ components:
       required: true
       schema:
         $ref: "#/components/schemas/TeamID"
+    CanonicalHostnameQuery:
+      name: canonical_hostname
+      in: query
+      required: false
+      description: Exact canonical hostname within the selected team. Returns zero or one non-deleted route with no next cursor. Cannot be combined with cursor.
+      schema:
+        $ref: "#/components/schemas/CanonicalHostname"
     RouteID:
       name: route_id
       in: path

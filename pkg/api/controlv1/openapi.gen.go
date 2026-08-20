@@ -775,6 +775,9 @@ type UpdateRouteRequest struct {
 	Target            string   `json:"target"`
 }
 
+// CanonicalHostnameQuery defines model for CanonicalHostnameQuery.
+type CanonicalHostnameQuery = CanonicalHostname
+
 // Cursor defines model for Cursor.
 type Cursor = ResourceID
 
@@ -798,6 +801,9 @@ type CreateCertificateIssuanceParams struct {
 type ListRoutesParams struct {
 	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
 	Cursor *Cursor     `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// CanonicalHostname Exact canonical hostname within the selected team. Returns zero or one non-deleted route with no next cursor. Cannot be combined with cursor.
+	CanonicalHostname *CanonicalHostnameQuery `form:"canonical_hostname,omitempty" json:"canonical_hostname,omitempty"`
 }
 
 // CreateRouteParams defines parameters for CreateRoute.
@@ -2431,6 +2437,18 @@ func NewListRoutesRequest(server string, params *ListRoutesParams) (*http.Reques
 		if params.Cursor != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.CanonicalHostname != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "canonical_hostname", *params.CanonicalHostname, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -6326,6 +6344,19 @@ func (siw *ServerInterfaceWrapper) ListRoutes(w http.ResponseWriter, r *http.Req
 			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
 		} else {
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "canonical_hostname" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "canonical_hostname", r.URL.Query(), &params.CanonicalHostname, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "canonical_hostname"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "canonical_hostname", Err: err})
 		}
 		return
 	}

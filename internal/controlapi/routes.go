@@ -1,6 +1,7 @@
 package controlapi
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -8,6 +9,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -21,7 +23,26 @@ func (h *handler) ListRoutes(response http.ResponseWriter, request *http.Request
 		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "operation is not authorized")
 		return
 	}
-	page, err := h.store.ListAuthorizedRoutes(request.Context(), teamID, request.URL.Query().Get("cursor"))
+	query := request.URL.Query()
+	var page controlstate.RoutePage
+	var err error
+	if hostnames, filtered := query["canonical_hostname"]; filtered {
+		hostname := query.Get("canonical_hostname")
+		canonical, nameErr := naming.CanonicalizeHostname(hostname)
+		if len(hostnames) != 1 || query.Has("cursor") || nameErr != nil || canonical != hostname {
+			writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "provide one canonical hostname without a cursor")
+			return
+		}
+		var route controlstate.Route
+		route, err = h.store.GetAuthorizedRouteByHostname(request.Context(), teamID, hostname)
+		if errors.Is(err, controlstate.ErrRouteNotFound) {
+			err = nil
+		} else if err == nil {
+			page.Routes = []controlstate.Route{route}
+		}
+	} else {
+		page, err = h.store.ListAuthorizedRoutes(request.Context(), teamID, query.Get("cursor"))
+	}
 	if err != nil {
 		writeControlStateProblem(response, "list routes", err)
 		return

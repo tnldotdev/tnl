@@ -76,6 +76,7 @@ type Querier interface {
 	GetActiveRouteSessionChallengeExpiry(ctx context.Context, arg GetActiveRouteSessionChallengeExpiryParams) (pgtype.Timestamptz, error)
 	GetActiveRouteSessionMembership(ctx context.Context, arg GetActiveRouteSessionMembershipParams) (GetActiveRouteSessionMembershipRow, error)
 	GetAdminRuntimeCounts(ctx context.Context, now pgtype.Timestamptz) (GetAdminRuntimeCountsRow, error)
+	GetAuthorizedRouteByHostname(ctx context.Context, arg GetAuthorizedRouteByHostnameParams) (GetAuthorizedRouteByHostnameRow, error)
 	GetClaimedDomainByIdempotency(ctx context.Context, arg GetClaimedDomainByIdempotencyParams) (GetClaimedDomainByIdempotencyRow, error)
 	GetControlSessionByAccessID(ctx context.Context, accessTokenID string) (GetControlSessionByAccessIDRow, error)
 	GetControlTLSCacheEntry(ctx context.Context, arg GetControlTLSCacheEntryParams) (GetControlTLSCacheEntryRow, error)

@@ -46,6 +46,7 @@ type Config struct {
 type Store interface {
 	EnsureExternalAuthorityPrincipal(context.Context, string, time.Time) ([32]byte, error)
 	ListAuthorizedRoutes(context.Context, string, string) (controlstate.RoutePage, error)
+	GetAuthorizedRouteByHostname(context.Context, string, string) (controlstate.Route, error)
 	CreateRoute(context.Context, controlstate.CreateRouteRequest, time.Time) (controlstate.Route, error)
 	UpdateAuthorizedRoute(context.Context, controlstate.AuthorizedRouteUpdateRequest, time.Time) (controlstate.Route, error)
 	GetRouteForAuthorization(context.Context, string) (controlstate.Route, error)
