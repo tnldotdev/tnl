@@ -168,7 +168,8 @@ func optionalTelemetryReporter(reporters []telemetryReporter) telemetryReporter 
 
 func withTelemetryObserver(
 	reporter telemetryReporter,
-	command, serverURL, framework string,
+	command, serverURL string,
+	framework func() string,
 	observe func(publisher.Event) error,
 ) func(publisher.Event) error {
 	if reporter == nil {
@@ -187,7 +188,11 @@ func withTelemetryObserver(
 		}
 		if event.Type == publisher.EventReady {
 			ready.Do(func() {
-				reporter.Report(newTelemetryPayload("route_started", command, serverKind, framework))
+				name := ""
+				if framework != nil {
+					name = telemetryFramework(framework())
+				}
+				reporter.Report(newTelemetryPayload("route_started", command, serverKind, name))
 			})
 		}
 		return nil

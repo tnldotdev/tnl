@@ -56,7 +56,7 @@ func TestTelemetryObserverReportsReadyOnce(t *testing.T) {
 				}),
 				"publish",
 				test.serverURL,
-				"",
+				nil,
 				func(event publisher.Event) error {
 					events = append(events, event)
 					return nil
@@ -87,7 +87,7 @@ func TestTelemetryObserverReportsReadyOnce(t *testing.T) {
 		telemetryReporterFunc(func(telemetryPayload) { reported = true }),
 		"publish",
 		defaultServerURL,
-		"",
+		nil,
 		func(publisher.Event) error { return wantErr },
 	)
 	if err := observe(publisher.Event{Type: publisher.EventReady}); !errors.Is(err, wantErr) {
