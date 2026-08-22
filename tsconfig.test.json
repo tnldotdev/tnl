@@ -1,0 +1,20 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "declaration": false,
+    "jsx": "react-jsx",
+    "lib": ["DOM", "DOM.Iterable", "ESNext"],
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["node", "vitest"]
+  },
+  "include": [
+    "vitest.config.ts",
+    "packages/**/*.test.ts",
+    "packages/dev/test-helper.ts",
+    "packages/next/fixtures/**/*.ts",
+    "packages/next/fixtures/**/*.tsx",
+    "packages/vite/fixtures/**/*.ts"
+  ],
+  "exclude": ["**/.next/**", "**/dist/**", "**/node_modules/**"]
+}

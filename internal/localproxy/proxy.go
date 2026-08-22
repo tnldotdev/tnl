@@ -15,7 +15,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/0xcadams/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/naming"
 )
 
 const maxHeaderFields = 100
@@ -32,6 +32,28 @@ func Preflight(ctx context.Context, target string) error {
 		return fmt.Errorf("localproxy: connect to target: %w", err)
 	}
 	return connection.Close()
+}
+
+// WaitForTarget waits until a valid target accepts a loopback TCP connection.
+func WaitForTarget(ctx context.Context, target string) error {
+	canonicalTarget, err := NormalizeTarget(target)
+	if err != nil {
+		return err
+	}
+	var lastErr error
+	for {
+		lastErr = Preflight(ctx, canonicalTarget)
+		if lastErr == nil {
+			return nil
+		}
+		timer := time.NewTimer(100 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return fmt.Errorf("localproxy: wait for target: %w", errors.Join(ctx.Err(), lastErr))
+		case <-timer.C:
+		}
+	}
 }
 
 func New(target, hostname string) (http.Handler, error) {
