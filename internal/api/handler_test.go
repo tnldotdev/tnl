@@ -16,12 +16,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/auth"
-	"github.com/0xcadams/tnl/internal/certificates"
-	"github.com/0xcadams/tnl/internal/credentials"
-	"github.com/0xcadams/tnl/internal/routes"
-	"github.com/0xcadams/tnl/internal/state"
-	"github.com/0xcadams/tnl/pkg/protocol/serverv1"
+	"github.com/tnldotdev/tnl/internal/auth"
+	"github.com/tnldotdev/tnl/internal/certificates"
+	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/routes"
+	"github.com/tnldotdev/tnl/internal/state"
+	"github.com/tnldotdev/tnl/pkg/protocol/serverv1"
 	"golang.org/x/time/rate"
 )
 

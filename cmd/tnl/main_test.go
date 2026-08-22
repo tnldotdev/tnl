@@ -16,11 +16,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/clientstate"
-	"github.com/0xcadams/tnl/internal/credentials"
-	"github.com/0xcadams/tnl/internal/serverclient"
-	"github.com/0xcadams/tnl/pkg/protocol/serverv1"
 	"github.com/alecthomas/kong"
+	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/serverclient"
+	"github.com/tnldotdev/tnl/pkg/protocol/serverv1"
 )
 
 func TestVersionCommand(t *testing.T) {
@@ -61,6 +60,47 @@ func TestPublicNameOption(t *testing.T) {
 	}
 }
 
+func TestClaimAndPublicationNameResolution(t *testing.T) {
+	kind, name, err := classifyClaimName("com", "tnl.dev")
+	if err != nil || kind != serverv1.CreateHostnameClaimRequestKindPersistentManaged || name != "com" {
+		t.Fatalf("managed com = %q, %q, %v", kind, name, err)
+	}
+	if _, _, err := classifyClaimName("com.", "tnl.dev"); err == nil {
+		t.Fatal("absolute public suffix accepted")
+	}
+	if _, _, err := classifyClaimName("api.chase.tnl.dev", "tnl.dev"); err == nil {
+		t.Fatal("managed descendant accepted as a base")
+	}
+
+	managed := serverv1.HostnameClaim{
+		Id: "claim_00000000000000000000000000000001", Hostname: "com.tnl.dev",
+		Kind: serverv1.HostnameClaimKindPersistentManaged, State: serverv1.HostnameClaimStateActive,
+	}
+	custom := serverv1.HostnameClaim{
+		Id: "claim_00000000000000000000000000000002", Hostname: "example.com",
+		Kind: serverv1.HostnameClaimKindPersistentCustomDomain, State: serverv1.HostnameClaimStateActive,
+	}
+	hostname, base, isManaged, implicit, err := resolvePublicationName("example.com", "tnl.dev", 8, []serverv1.HostnameClaim{managed})
+	if err != nil || hostname != "example.com.tnl.dev" || base != "com.tnl.dev" || !isManaged || implicit {
+		t.Fatalf("relative managed = %q, %q, %v, %v, %v", hostname, base, isManaged, implicit, err)
+	}
+	hostname, base, isManaged, _, err = resolvePublicationName("example.com", "tnl.dev", 8, []serverv1.HostnameClaim{managed, custom})
+	if err != nil || hostname != "example.com" || base != "example.com" || isManaged {
+		t.Fatalf("owned custom precedence = %q, %q, %v, %v", hostname, base, isManaged, err)
+	}
+	hostname, base, isManaged, _, err = resolvePublicationName("example.com.tnl.dev", "tnl.dev", 8, []serverv1.HostnameClaim{managed, custom})
+	if err != nil || hostname != "example.com.tnl.dev" || base != "com.tnl.dev" || !isManaged {
+		t.Fatalf("canonical managed = %q, %q, %v, %v", hostname, base, isManaged, err)
+	}
+	hostname, _, isManaged, _, err = resolvePublicationName("example.com.", "tnl.dev", 8, []serverv1.HostnameClaim{custom})
+	if err != nil || hostname != "example.com" || isManaged {
+		t.Fatalf("absolute custom = %q, %v, %v", hostname, isManaged, err)
+	}
+	if _, _, _, _, err := resolvePublicationName("a.b.c.d.e.f.g.h.i.com", "tnl.dev", 8, []serverv1.HostnameClaim{managed}); err == nil {
+		t.Fatal("ninth-level managed descendant accepted")
+	}
+}
+
 func TestReadLoginToken(t *testing.T) {
 	token, err := credentials.NewLoginToken()
 	if err != nil {
@@ -78,7 +118,7 @@ func TestReadLoginToken(t *testing.T) {
 	}
 }
 
-func TestClaimPublicHostnamePersistsRandomSelection(t *testing.T) {
+func TestClaimPublicHostnameAllocatesFreshEphemeralName(t *testing.T) {
 	var requestKeys []string
 	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodPost || request.URL.Path != "/v1/hostname-claims" {
@@ -91,14 +131,16 @@ func TestClaimPublicHostnamePersistsRandomSelection(t *testing.T) {
 			response.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		if body.Label != nil {
-			t.Errorf("random claim label = %q", *body.Label)
+		if body.Name != nil || body.Kind != serverv1.CreateHostnameClaimRequestKindEphemeral {
+			t.Errorf("ephemeral claim request = %#v", body)
 		}
 		requestKeys = append(requestKeys, request.Header.Get("Idempotency-Key"))
 		response.Header().Set("Content-Type", "application/json")
 		response.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(response).Encode(serverv1.HostnameClaim{
-			Id: "claim_0123456789abcdef0123456789abcdef", Hostname: "random.example", CreatedAt: time.Now(),
+			Id: "claim_0123456789abcdef0123456789abcdef", Hostname: "random.example",
+			Kind: serverv1.HostnameClaimKindEphemeral, State: serverv1.HostnameClaimStateHeld,
+			Source: serverv1.Generated, CreatedAt: time.Now(),
 		})
 	}))
 	defer server.Close()
@@ -106,13 +148,9 @@ func TestClaimPublicHostnamePersistsRandomSelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, err := clientstate.New(filepath.Join(t.TempDir(), "state"), server.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
 	for range 2 {
 		hostname, err := claimPublicHostname(
-			context.Background(), client, state, "http://127.0.0.1:3000", "", "example",
+			context.Background(), client, "", serverv1.Capabilities{RouteSuffix: "example", MaximumChildDepth: 8},
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -121,12 +159,8 @@ func TestClaimPublicHostnamePersistsRandomSelection(t *testing.T) {
 			t.Fatalf("hostname = %q", hostname)
 		}
 	}
-	if len(requestKeys) != 2 || requestKeys[0] == "" || requestKeys[0] != requestKeys[1] {
+	if len(requestKeys) != 2 || requestKeys[0] == "" || requestKeys[1] == "" || requestKeys[0] == requestKeys[1] {
 		t.Fatalf("request keys = %#v", requestKeys)
-	}
-	selection, found, err := state.HostnameSelection("http://127.0.0.1:3000")
-	if err != nil || !found || selection.Hostname != "random.example" || selection.ClaimID == "" {
-		t.Fatalf("selection = %#v, found = %v, err = %v", selection, found, err)
 	}
 }
 
@@ -217,14 +251,15 @@ func TestHostReleaseRecoversAfterAmbiguousDelete(t *testing.T) {
 	var deleted atomic.Bool
 	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch {
+		case request.Method == http.MethodGet && request.URL.Path == "/v1/capabilities":
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(testNamingCapabilities())
 		case request.Method == http.MethodGet && request.URL.Path == "/v1/hostname-claims":
 			response.Header().Set("Content-Type", "application/json")
-			if deleted.Load() {
-				_, _ = response.Write([]byte("[]"))
-				return
-			}
 			_ = json.NewEncoder(response).Encode(serverv1.HostnameClaimPage{Claims: []serverv1.HostnameClaim{{
-				Id: "claim_0123456789abcdef0123456789abcdef", Hostname: "random.example", CreatedAt: time.Now(),
+				Id: "claim_0123456789abcdef0123456789abcdef", Hostname: "random.example",
+				Kind: serverv1.HostnameClaimKindPersistentManaged, State: serverv1.HostnameClaimStateActive,
+				Source: serverv1.Custom, CreatedAt: time.Now(),
 			}}})
 		case request.Method == http.MethodDelete && request.URL.Path == "/v1/hostname-claims/claim_0123456789abcdef0123456789abcdef":
 			if deleted.Load() {
@@ -249,43 +284,18 @@ func TestHostReleaseRecoversAfterAmbiguousDelete(t *testing.T) {
 	previousTransport := http.DefaultTransport
 	http.DefaultTransport = server.Client().Transport
 	t.Cleanup(func() { http.DefaultTransport = previousTransport })
-	stateRoot := filepath.Join(t.TempDir(), "state")
-	state, err := clientstate.New(stateRoot, server.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := state.SaveHostnameSelection("http://127.0.0.1:3000", clientstate.HostnameSelection{
-		RequestKey: "random_request", ClaimID: "claim_0123456789abcdef0123456789abcdef", Hostname: "random.example",
-	}); err != nil {
-		t.Fatal(err)
-	}
 	var output bytes.Buffer
 	flags := hostReleaseCommand{
-		Hostname: "random.example", ServerURL: server.URL, AccessToken: access.String(), StateDir: stateRoot,
+		Hostname: "random.example", ServerURL: server.URL, AccessToken: access.String(), StateDir: filepath.Join(t.TempDir(), "state"),
 	}
 	if err := runHostRelease(context.Background(), flags, &output); !errors.Is(err, serverclient.ErrUnavailable) {
 		t.Fatalf("ambiguous release error = %v", err)
-	}
-	if claimID, found, err := state.PendingHostnameRelease("random.example"); err != nil || !found || claimID == "" {
-		t.Fatalf("pending release = %q, found = %v, err = %v", claimID, found, err)
-	}
-	if err := runHostRelease(context.Background(), flags, failingWriter{}); err == nil {
-		t.Fatal("release succeeded with a failed output write")
-	}
-	if claimID, found, err := state.PendingHostnameRelease("random.example"); err != nil || !found || claimID == "" {
-		t.Fatalf("pending release after output failure = %q, found = %v, err = %v", claimID, found, err)
 	}
 	if err := runHostRelease(context.Background(), flags, &output); err != nil {
 		t.Fatal(err)
 	}
 	if output.String() != "random.example\n" {
 		t.Fatalf("output = %q", output.String())
-	}
-	if selection, found, err := state.HostnameSelection("http://127.0.0.1:3000"); err != nil || found {
-		t.Fatalf("selection = %#v, found = %v, err = %v", selection, found, err)
-	}
-	if claimID, found, err := state.PendingHostnameRelease("random.example"); err != nil || found {
-		t.Fatalf("pending release = %q, found = %v, err = %v", claimID, found, err)
 	}
 }
 
@@ -295,10 +305,14 @@ func TestHostListWithExplicitTokenDoesNotOpenClientState(t *testing.T) {
 		t.Fatal(err)
 	}
 	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.Header.Get("Authorization") != "Bearer "+access.String() {
-			t.Errorf("authorization = %q", request.Header.Get("Authorization"))
-		}
 		response.Header().Set("Content-Type", "application/json")
+		if request.URL.Path == "/v1/capabilities" {
+			_ = json.NewEncoder(response).Encode(testNamingCapabilities())
+			return
+		}
+		if request.URL.Path != "/v1/hostname-claims" || request.Header.Get("Authorization") != "Bearer "+access.String() {
+			t.Errorf("request = %s %s authorization %q", request.Method, request.URL.Path, request.Header.Get("Authorization"))
+		}
 		_ = json.NewEncoder(response).Encode(serverv1.HostnameClaimPage{})
 	}))
 	defer server.Close()
@@ -317,8 +331,15 @@ func TestHostListWithExplicitTokenDoesNotOpenClientState(t *testing.T) {
 	}
 }
 
-type failingWriter struct{}
-
-func (failingWriter) Write([]byte) (int, error) {
-	return 0, errors.New("write failed")
+func testNamingCapabilities() serverv1.Capabilities {
+	return serverv1.Capabilities{
+		RouteSuffix: "example", MaximumChildDepth: 8, CustomDomainSupport: true,
+		IngressIpv4: []string{}, IngressIpv6: []string{},
+		ProtocolVersions:      []serverv1.CapabilitiesProtocolVersions{serverv1.CapabilitiesProtocolVersionsN1},
+		HostnameAuthorization: []serverv1.CapabilitiesHostnameAuthorization{serverv1.LocalClaim},
+		NameAuthorityType:     serverv1.Local,
+		Transport: serverv1.TransportCapabilities{
+			Type: serverv1.Tailcat, Version: serverv1.TransportCapabilitiesVersionN1, RelayProfile: "default",
+		},
+	}
 }

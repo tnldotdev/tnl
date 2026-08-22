@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/agent"
-	"github.com/0xcadams/tnl/internal/proxyproto"
+	"github.com/tnldotdev/tnl/internal/agent"
+	"github.com/tnldotdev/tnl/internal/proxyproto"
 	"golang.org/x/crypto/acme"
 )
 

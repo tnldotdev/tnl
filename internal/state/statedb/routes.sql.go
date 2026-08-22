@@ -26,6 +26,72 @@ func (q *Queries) AdvanceRouteGeneration(ctx context.Context, arg AdvanceRouteGe
 	return err
 }
 
+const bindEphemeralClaim = `-- name: BindEphemeralClaim :execrows
+UPDATE hostname_claims
+SET state = 'active', activated_at = CAST(?1 AS INTEGER), route_binding = CAST(?2 AS TEXT)
+WHERE id = ?3
+    AND principal_id = ?4
+    AND kind = 'ephemeral'
+    AND state = 'held'
+    AND route_binding IS NULL
+`
+
+type BindEphemeralClaimParams struct {
+	ActivatedAt int64
+	RouteID     string
+	ClaimID     string
+	PrincipalID string
+}
+
+func (q *Queries) BindEphemeralClaim(ctx context.Context, arg BindEphemeralClaimParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, bindEphemeralClaim,
+		arg.ActivatedAt,
+		arg.RouteID,
+		arg.ClaimID,
+		arg.PrincipalID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const burnAbandonedEphemeralHolds = `-- name: BurnAbandonedEphemeralHolds :exec
+UPDATE hostname_claims
+SET state = 'burned', released_at = CAST(?1 AS INTEGER), reason = 'abandoned hold'
+WHERE kind = 'ephemeral'
+    AND state = 'held'
+    AND created_at <= ?2
+`
+
+type BurnAbandonedEphemeralHoldsParams struct {
+	ReleasedAt    int64
+	CreatedBefore int64
+}
+
+func (q *Queries) BurnAbandonedEphemeralHolds(ctx context.Context, arg BurnAbandonedEphemeralHoldsParams) error {
+	_, err := q.db.ExecContext(ctx, burnAbandonedEphemeralHolds, arg.ReleasedAt, arg.CreatedBefore)
+	return err
+}
+
+const burnEphemeralClaimByRoute = `-- name: BurnEphemeralClaimByRoute :exec
+UPDATE hostname_claims
+SET state = 'burned', released_at = CAST(?1 AS INTEGER), route_binding = NULL, reason = 'route ended'
+WHERE route_binding = CAST(?2 AS TEXT)
+    AND kind = 'ephemeral'
+    AND state IN ('held', 'active')
+`
+
+type BurnEphemeralClaimByRouteParams struct {
+	ReleasedAt int64
+	RouteID    string
+}
+
+func (q *Queries) BurnEphemeralClaimByRoute(ctx context.Context, arg BurnEphemeralClaimByRouteParams) error {
+	_, err := q.db.ExecContext(ctx, burnEphemeralClaimByRoute, arg.ReleasedAt, arg.RouteID)
+	return err
+}
+
 const countActiveRoutesByPrincipal = `-- name: CountActiveRoutesByPrincipal :one
 SELECT COUNT(*)
 FROM routes
@@ -102,14 +168,14 @@ func (q *Queries) ExpireRouteLeases(ctx context.Context, routeID string) error {
 	return err
 }
 
-const getActiveRouteByClaim = `-- name: GetActiveRouteByClaim :one
+const getActiveRouteByHostname = `-- name: GetActiveRouteByHostname :one
 SELECT routes.id, routes.claim_id, routes.principal_id, routes.hostname, routes.display_target, routes.state, routes.generation, routes.lifecycle_sequence, routes.created_at, routes.deleted_at
 FROM routes
-WHERE claim_id = ?1 AND state = 'active'
+WHERE hostname = ?1 AND state = 'active'
 `
 
-func (q *Queries) GetActiveRouteByClaim(ctx context.Context, claimID string) (Route, error) {
-	row := q.db.QueryRowContext(ctx, getActiveRouteByClaim, claimID)
+func (q *Queries) GetActiveRouteByHostname(ctx context.Context, hostname string) (Route, error) {
+	row := q.db.QueryRowContext(ctx, getActiveRouteByHostname, hostname)
 	var i Route
 	err := row.Scan(
 		&i.ID,
@@ -146,6 +212,48 @@ func (q *Queries) GetActiveRouteIDByHostname(ctx context.Context, arg GetActiveR
 	return id, err
 }
 
+const getAuthorizingRouteClaim = `-- name: GetAuthorizingRouteClaim :one
+SELECT id, principal_id, hostname, kind, state, route_binding
+FROM hostname_claims
+WHERE principal_id = ?1
+    AND state IN ('held', 'active')
+    AND kind IN ('persistent_managed', 'persistent_custom_domain', 'ephemeral')
+    AND (
+        hostname = ?2
+        OR kind != 'ephemeral' AND ?2 LIKE '%.' || hostname
+    )
+ORDER BY length(hostname) DESC
+LIMIT 1
+`
+
+type GetAuthorizingRouteClaimParams struct {
+	PrincipalID string
+	Hostname    string
+}
+
+type GetAuthorizingRouteClaimRow struct {
+	ID           string
+	PrincipalID  string
+	Hostname     string
+	Kind         string
+	State        string
+	RouteBinding sql.NullString
+}
+
+func (q *Queries) GetAuthorizingRouteClaim(ctx context.Context, arg GetAuthorizingRouteClaimParams) (GetAuthorizingRouteClaimRow, error) {
+	row := q.db.QueryRowContext(ctx, getAuthorizingRouteClaim, arg.PrincipalID, arg.Hostname)
+	var i GetAuthorizingRouteClaimRow
+	err := row.Scan(
+		&i.ID,
+		&i.PrincipalID,
+		&i.Hostname,
+		&i.Kind,
+		&i.State,
+		&i.RouteBinding,
+	)
+	return i, err
+}
+
 const getKnownRouteLeaseCredentialMarker = `-- name: GetKnownRouteLeaseCredentialMarker :one
 SELECT 1 AS known_credential
 FROM route_leases
@@ -157,25 +265,6 @@ func (q *Queries) GetKnownRouteLeaseCredentialMarker(ctx context.Context, creden
 	var known_credential int64
 	err := row.Scan(&known_credential)
 	return known_credential, err
-}
-
-const getRouteClaimByHostname = `-- name: GetRouteClaimByHostname :one
-SELECT id, principal_id, tombstoned_at
-FROM hostname_claims
-WHERE hostname = ?1
-`
-
-type GetRouteClaimByHostnameRow struct {
-	ID           string
-	PrincipalID  string
-	TombstonedAt sql.NullInt64
-}
-
-func (q *Queries) GetRouteClaimByHostname(ctx context.Context, hostname string) (GetRouteClaimByHostnameRow, error) {
-	row := q.db.QueryRowContext(ctx, getRouteClaimByHostname, hostname)
-	var i GetRouteClaimByHostnameRow
-	err := row.Scan(&i.ID, &i.PrincipalID, &i.TombstonedAt)
-	return i, err
 }
 
 const getRouteCredential = `-- name: GetRouteCredential :one
@@ -509,6 +598,50 @@ func (q *Queries) InvalidateOtherBootRouteLeases(ctx context.Context, bootEpoch 
 	return err
 }
 
+const listAbandonedEphemeralRoutes = `-- name: ListAbandonedEphemeralRoutes :many
+SELECT hostname_claims.id AS claim_id, routes.id AS route_id
+FROM hostname_claims
+JOIN routes ON routes.claim_id = hostname_claims.id
+WHERE hostname_claims.kind = 'ephemeral'
+    AND hostname_claims.state = 'active'
+    AND routes.state = 'active'
+    AND NOT EXISTS (
+        SELECT 1
+        FROM route_leases
+        WHERE route_leases.route_id = routes.id
+            AND route_leases.expires_at > ?1
+    )
+ORDER BY routes.id
+`
+
+type ListAbandonedEphemeralRoutesRow struct {
+	ClaimID string
+	RouteID string
+}
+
+func (q *Queries) ListAbandonedEphemeralRoutes(ctx context.Context, expiredBefore int64) ([]ListAbandonedEphemeralRoutesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listAbandonedEphemeralRoutes, expiredBefore)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAbandonedEphemeralRoutesRow
+	for rows.Next() {
+		var i ListAbandonedEphemeralRoutesRow
+		if err := rows.Scan(&i.ClaimID, &i.RouteID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listActiveClaimRouteGenerations = `-- name: ListActiveClaimRouteGenerations :many
 SELECT id, generation
 FROM routes
@@ -618,17 +751,6 @@ func (q *Queries) ListOtherBootRouteLeases(ctx context.Context, bootEpoch string
 		return nil, err
 	}
 	return items, nil
-}
-
-const markRouteClaimIrreversible = `-- name: MarkRouteClaimIrreversible :exec
-UPDATE hostname_claims
-SET irreversible = 1
-WHERE id = ?1
-`
-
-func (q *Queries) MarkRouteClaimIrreversible(ctx context.Context, claimID string) error {
-	_, err := q.db.ExecContext(ctx, markRouteClaimIrreversible, claimID)
-	return err
 }
 
 const readyRouteLease = `-- name: ReadyRouteLease :execrows

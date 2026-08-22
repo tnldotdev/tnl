@@ -15,10 +15,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/clientstate"
-	"github.com/0xcadams/tnl/internal/credentials"
-	"github.com/0xcadams/tnl/pkg/protocol/serverv1"
-	"github.com/0xcadams/tnl/pkg/protocol/transportv1"
+	"github.com/tnldotdev/tnl/internal/clientstate"
+	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/pkg/protocol/serverv1"
+	"github.com/tnldotdev/tnl/pkg/protocol/transportv1"
 )
 
 const (
@@ -33,6 +33,7 @@ var (
 	ErrNotFound         = errors.New("serverclient: not found")
 	ErrStateConflict    = errors.New("serverclient: state conflict")
 	ErrCertificateState = errors.New("serverclient: certificate precondition failed")
+	ErrDNSProofPending  = errors.New("serverclient: DNS proof pending")
 	ErrRateLimited      = errors.New("serverclient: rate limited")
 	ErrUnavailable      = errors.New("serverclient: temporarily unavailable")
 )
@@ -96,10 +97,10 @@ func (c *Client) ListRoutes(ctx context.Context) ([]serverv1.Route, error) {
 	return request[[]serverv1.Route](ctx, c, http.MethodGet, "/v1/routes", c.access.String(), nil)
 }
 
-func (c *Client) ClaimHostname(ctx context.Context, label, requestKey string) (serverv1.HostnameClaim, error) {
-	requestBody := serverv1.CreateHostnameClaimRequest{}
-	if label != "" {
-		requestBody.Label = &label
+func (c *Client) ClaimName(ctx context.Context, kind serverv1.CreateHostnameClaimRequestKind, name, requestKey string) (serverv1.HostnameClaim, error) {
+	requestBody := serverv1.CreateHostnameClaimRequest{Kind: kind}
+	if name != "" {
+		requestBody.Name = &name
 	}
 	headers := make(http.Header)
 	headers.Set("Idempotency-Key", requestKey)
@@ -161,6 +162,54 @@ func (c *Client) ListHostnameClaimsPage(
 
 func (c *Client) ReleaseHostnameClaim(ctx context.Context, claimID string) error {
 	_, err := request[struct{}](ctx, c, http.MethodDelete, hostnameClaimPath(claimID), c.access.String(), nil)
+	return err
+}
+
+func (c *Client) CreateDomainChallenge(
+	ctx context.Context,
+	domain, requestKey string,
+) (serverv1.DomainChallenge, error) {
+	headers := make(http.Header)
+	headers.Set("Idempotency-Key", requestKey)
+	return requestWithTimeout[serverv1.DomainChallenge](
+		ctx, c, c.timeout, http.MethodPost, "/v1/domain-claims", c.access.String(),
+		serverv1.CreateDomainChallengeRequest{Domain: domain}, headers,
+	)
+}
+
+func (c *Client) DomainChallenge(ctx context.Context, challengeID string) (serverv1.DomainChallenge, error) {
+	return request[serverv1.DomainChallenge](
+		ctx, c, http.MethodGet, domainClaimPath(challengeID, ""), c.access.String(), nil,
+	)
+}
+
+func (c *Client) VerifyDomainChallenge(ctx context.Context, challengeID string) (serverv1.HostnameClaim, error) {
+	return request[serverv1.HostnameClaim](
+		ctx, c, http.MethodPost, domainClaimPath(challengeID, "verify"), c.access.String(), nil,
+	)
+}
+
+func (c *Client) ListDomainClaims(ctx context.Context) ([]serverv1.HostnameClaim, error) {
+	claims, err := requestWithTimeout[[]serverv1.HostnameClaim](
+		ctx, c, c.timeout, http.MethodGet, "/v1/domain-claims", c.access.String(), nil, nil,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if len(claims) > 128 {
+		return nil, errors.New("serverclient: oversized domain claim list")
+	}
+	for _, claim := range claims {
+		if !validHostnameClaimID(claim.Id) || claim.Kind != serverv1.HostnameClaimKindPersistentCustomDomain ||
+			claim.State != serverv1.HostnameClaimStateActive {
+			return nil, errors.New("serverclient: invalid domain claim list")
+		}
+	}
+	return claims, nil
+}
+
+func (c *Client) ReleaseDomainClaim(ctx context.Context, claimID string) error {
+	_, err := request[struct{}](ctx, c, http.MethodDelete, domainClaimPath(claimID, ""), c.access.String(), nil)
 	return err
 }
 
@@ -372,6 +421,9 @@ func responseError(status int, header http.Header, payload []byte) error {
 	case serverv1.StateConflict:
 		return ErrStateConflict
 	case serverv1.PreconditionFailed:
+		if strings.HasSuffix(problem.Type, "/dns-proof-pending") {
+			return ErrDNSProofPending
+		}
 		return ErrCertificateState
 	case serverv1.RateLimited:
 		seconds, err := strconv.ParseInt(header.Get("Retry-After"), 10, 64)
@@ -411,6 +463,14 @@ func routePath(routeID, operation string) string {
 
 func hostnameClaimPath(claimID string) string {
 	return "/v1/hostname-claims/" + url.PathEscape(claimID)
+}
+
+func domainClaimPath(challengeID, operation string) string {
+	path := "/v1/domain-claims/" + url.PathEscape(challengeID)
+	if operation != "" {
+		path += "/" + operation
+	}
+	return path
 }
 
 func validHostnameClaimID(value string) bool {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/state/statedb"
+	"github.com/tnldotdev/tnl/internal/state/statedb"
 )
 
 type LifecycleTransition string

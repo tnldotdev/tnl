@@ -12,10 +12,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/proxyproto"
-	"github.com/0xcadams/tnl/internal/relay"
-	"github.com/0xcadams/tnl/internal/router"
-	"github.com/0xcadams/tnl/internal/worker"
+	"github.com/tnldotdev/tnl/internal/proxyproto"
+	"github.com/tnldotdev/tnl/internal/relay"
+	"github.com/tnldotdev/tnl/internal/router"
+	"github.com/tnldotdev/tnl/internal/worker"
 )
 
 const defaultOpenTimeout = 10 * time.Second

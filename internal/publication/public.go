@@ -12,14 +12,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/agent"
-	"github.com/0xcadams/tnl/internal/clientstate"
-	"github.com/0xcadams/tnl/internal/credentials"
-	"github.com/0xcadams/tnl/internal/localproxy"
-	"github.com/0xcadams/tnl/internal/naming"
-	"github.com/0xcadams/tnl/internal/serverclient"
-	"github.com/0xcadams/tnl/pkg/protocol/serverv1"
-	"github.com/0xcadams/tnl/pkg/protocol/transportv1"
+	"github.com/tnldotdev/tnl/internal/agent"
+	"github.com/tnldotdev/tnl/internal/clientstate"
+	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/localproxy"
+	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/serverclient"
+	"github.com/tnldotdev/tnl/pkg/protocol/serverv1"
+	"github.com/tnldotdev/tnl/pkg/protocol/transportv1"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
 	"tailscale.com/types/logger"
@@ -38,6 +38,7 @@ type Server interface {
 	CreateRoute(context.Context, serverv1.CreateRouteRequest) (serverv1.LeaseSetup, error)
 	ListRoutes(context.Context) ([]serverv1.Route, error)
 	AcquireLease(context.Context, string, credentials.RouteToken) (serverv1.LeaseSetup, error)
+	DeleteRoute(context.Context, string) error
 	RegisterTransport(context.Context, string, uint64, credentials.LeaseToken, transportv1.TailcatDescriptor) error
 	Ready(context.Context, string, uint64, credentials.LeaseToken) error
 	Heartbeat(context.Context, string, uint64, credentials.LeaseToken) (serverv1.HeartbeatResponse, error)
@@ -66,7 +67,7 @@ type PublicConfig struct {
 	OnLeaseReady func(string, uint64) error
 }
 
-func RunPublic(ctx context.Context, config PublicConfig) error {
+func RunPublic(ctx context.Context, config PublicConfig) (result error) {
 	if config.Server == nil {
 		return errors.New("agent: server client is required")
 	}
@@ -111,6 +112,17 @@ func RunPublic(ctx context.Context, config PublicConfig) error {
 		return err
 	}
 	routeID := setup.Route.Id
+	defer func() {
+		if routeID == "" {
+			return
+		}
+		deleteCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := config.Server.DeleteRoute(deleteCtx, routeID); err != nil &&
+			!errors.Is(err, serverclient.ErrNotFound) && !errors.Is(err, serverclient.ErrUnauthenticated) {
+			result = errors.Join(result, fmt.Errorf("agent: delete route: %w", err))
+		}
+	}()
 	if routeID != "" && config.OnRoute != nil {
 		config.OnRoute(routeID)
 	}

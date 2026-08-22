@@ -11,11 +11,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/credentials"
-	"github.com/0xcadams/tnl/internal/naming"
-	"github.com/0xcadams/tnl/internal/tailtransport"
-	"github.com/0xcadams/tnl/internal/worker"
-	"github.com/0xcadams/tnl/pkg/protocol/transportv1"
+	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/tailtransport"
+	"github.com/tnldotdev/tnl/internal/worker"
+	"github.com/tnldotdev/tnl/pkg/protocol/transportv1"
 	"tailscale.com/types/key"
 )
 
@@ -151,6 +151,11 @@ func (c *Coordinator) Create(
 			c.observeRouteRemoval(RouteRemovalReplaced)
 		}
 	}()
+	if c.config.PublicationReady != nil {
+		if err := c.config.PublicationReady(ctx, hostname); err != nil {
+			return LeaseSetup{}, ErrUnavailable
+		}
+	}
 	c.mutationMu.Lock()
 	defer c.mutationMu.Unlock()
 	if c.isClosed() {
@@ -442,6 +447,18 @@ func (c *Coordinator) ClaimHostname(
 	return c.store.ClaimHostname(ctx, principalID, label, requestKey)
 }
 
+func (c *Coordinator) ClaimName(
+	ctx context.Context,
+	principalID, kind, name, requestKey string,
+) (HostnameClaim, error) {
+	c.mutationMu.Lock()
+	defer c.mutationMu.Unlock()
+	if c.isClosed() {
+		return HostnameClaim{}, net.ErrClosed
+	}
+	return c.store.ClaimName(ctx, principalID, kind, name, requestKey)
+}
+
 func (c *Coordinator) ListHostnameClaims(ctx context.Context, principalID string) ([]HostnameClaim, error) {
 	if c.isClosed() {
 		return nil, net.ErrClosed
@@ -459,6 +476,37 @@ func (c *Coordinator) ListHostnameClaimsPage(
 	return c.store.ListHostnameClaimsPage(ctx, principalID, cursor)
 }
 
+func (c *Coordinator) CreateDomainChallenge(
+	ctx context.Context,
+	principalID, domain, requestKey string,
+) (DomainChallenge, error) {
+	c.mutationMu.Lock()
+	defer c.mutationMu.Unlock()
+	if c.isClosed() {
+		return DomainChallenge{}, net.ErrClosed
+	}
+	return c.store.CreateDomainChallenge(ctx, principalID, domain, requestKey)
+}
+
+func (c *Coordinator) GetDomainChallenge(ctx context.Context, principalID, id string) (DomainChallenge, error) {
+	if c.isClosed() {
+		return DomainChallenge{}, net.ErrClosed
+	}
+	return c.store.GetDomainChallenge(ctx, principalID, id)
+}
+
+func (c *Coordinator) VerifyDomainChallenge(
+	ctx context.Context,
+	principalID, id string,
+) (HostnameClaim, error) {
+	c.mutationMu.Lock()
+	defer c.mutationMu.Unlock()
+	if c.isClosed() {
+		return HostnameClaim{}, net.ErrClosed
+	}
+	return c.store.VerifyDomainChallenge(ctx, principalID, id)
+}
+
 func (c *Coordinator) ReleaseHostnameClaim(ctx context.Context, principalID, claimID string) (err error) {
 	removed := false
 	defer func() {
@@ -471,19 +519,19 @@ func (c *Coordinator) ReleaseHostnameClaim(ctx context.Context, principalID, cla
 	if c.isClosed() {
 		return net.ErrClosed
 	}
-	routeID, err := c.store.ActiveRouteIDForClaim(ctx, principalID, claimID)
+	routeIDs, err := c.store.ActiveRouteIDsForClaim(ctx, principalID, claimID)
 	if err != nil {
 		return err
 	}
-	if routeID != "" {
+	for _, routeID := range routeIDs {
 		unlockRoute := c.lockRoute(routeID)
 		defer unlockRoute()
 	}
 	if err := c.store.ReleaseHostnameClaim(ctx, principalID, claimID); err != nil {
 		return err
 	}
-	if routeID != "" {
-		removed = c.deactivate(routeID)
+	for _, routeID := range routeIDs {
+		removed = c.deactivate(routeID) || removed
 	}
 	return nil
 }
@@ -785,6 +833,15 @@ func (c *Coordinator) expireDue(ctx context.Context, now time.Time) {
 			_ = backend.Close()
 		}
 		if removed {
+			c.observeRouteRemoval(RouteRemovalLeaseExpired)
+		}
+	}
+	removed, err := c.store.CleanupAbandonedEphemeral(ctx, now)
+	if err != nil {
+		return
+	}
+	for _, routeID := range removed {
+		if c.deactivate(routeID) {
 			c.observeRouteRemoval(RouteRemovalLeaseExpired)
 		}
 	}

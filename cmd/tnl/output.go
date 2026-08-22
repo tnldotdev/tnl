@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/serverclient"
+	"github.com/tnldotdev/tnl/internal/serverclient"
 )
 
 type publicEvent struct {

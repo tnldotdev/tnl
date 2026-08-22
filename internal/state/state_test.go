@@ -4,10 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/pressly/goose/v3"
 )
 
 func TestOpen(t *testing.T) {
@@ -30,8 +33,8 @@ func TestOpen(t *testing.T) {
 	if err := db.QueryRow("SELECT MAX(version_id) FROM goose_db_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 1 {
-		t.Fatalf("schema version = %d, want 1", version)
+	if version != 3 {
+		t.Fatalf("schema version = %d, want 3", version)
 	}
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
@@ -52,7 +55,7 @@ func TestOpenRejectsNewerSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec("INSERT INTO goose_db_version (version_id, is_applied) VALUES (2, 1)"); err != nil {
+	if _, err := db.Exec("INSERT INTO goose_db_version (version_id, is_applied) VALUES (4, 1)"); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {
@@ -63,6 +66,81 @@ func TestOpenRejectsNewerSchema(t *testing.T) {
 		t.Fatal("Open succeeded with a newer schema")
 	} else if !strings.Contains(err.Error(), "newer than supported") {
 		t.Fatalf("Open error = %q", err)
+	}
+}
+
+func TestOpenMigratesVersionOneClaims(t *testing.T) {
+	ctx := context.Background()
+	dir, err := prepareDirectory(filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", dataSourceName(filepath.Join(dir, databaseName)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	migrations, err := fs.Sub(migrationFiles, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, err := goose.NewProvider(goose.DialectSQLite3, db, migrations, goose.WithDisableGlobalRegistry(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO principals (id, display_name, email, created_at)
+		VALUES ('owner', 'Owner', 'owner@example.com', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO hostname_claims
+		(id, principal_id, hostname, created_at, tombstoned_at) VALUES
+		('active', 'owner', 'active.example.com', 2, NULL),
+		('released', 'owner', 'released.example.com', 3, 4)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err = Open(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	rows, err := db.Query(`SELECT id, kind, state, activated_at, released_at
+		FROM hostname_claims ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	count := 0
+	for rows.Next() {
+		var id, kind, claimState string
+		var activatedAt, releasedAt sql.NullInt64
+		if err := rows.Scan(&id, &kind, &claimState, &activatedAt, &releasedAt); err != nil {
+			t.Fatal(err)
+		}
+		count++
+		switch id {
+		case "active":
+			if kind != "persistent_managed" || claimState != "active" || !activatedAt.Valid || activatedAt.Int64 != 2 || releasedAt.Valid {
+				t.Fatalf("active claim = %q, %q, %#v, %#v", kind, claimState, activatedAt, releasedAt)
+			}
+		case "released":
+			if kind != "persistent_managed" || claimState != "released_owned" || activatedAt.Valid || !releasedAt.Valid || releasedAt.Int64 != 4 {
+				t.Fatalf("released claim = %q, %q, %#v, %#v", kind, claimState, activatedAt, releasedAt)
+			}
+		default:
+			t.Fatalf("unexpected migrated claim %q", id)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("migrated claims = %d, want 2", count)
 	}
 }
 

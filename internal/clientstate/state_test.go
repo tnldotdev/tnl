@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/credentials"
 )
 
 const testRouteID = "route_0123456789abcdef0123456789abcdef"

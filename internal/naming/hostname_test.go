@@ -3,6 +3,7 @@ package naming
 import (
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -70,5 +71,64 @@ func TestHostnameConformance(t *testing.T) {
 				t.Fatalf("got error %s, want %s", code, testCase.Error)
 			}
 		})
+	}
+}
+
+func FuzzCanonicalize(f *testing.F) {
+	contents, err := os.ReadFile("../../api/fixtures/hostname/v1.json")
+	if err != nil {
+		f.Fatal(err)
+	}
+	var fixture conformanceFixture
+	if err := json.Unmarshal(contents, &fixture); err != nil {
+		f.Fatal(err)
+	}
+	for _, testCase := range fixture.Cases {
+		f.Add(testCase.Input)
+	}
+
+	f.Fuzz(func(t *testing.T, input string) {
+		hostname, hostnameErr := CanonicalizeHostname(input)
+		if hostnameErr != nil {
+			if _, ok := ErrorCodeOf(hostnameErr); !ok {
+				t.Fatalf("hostname returned an unclassified error: %v", hostnameErr)
+			}
+		} else {
+			assertCanonicalHostname(t, hostname)
+			authority, err := CanonicalizeAuthority(hostname + ":443")
+			if err != nil || authority != hostname {
+				t.Fatalf("canonical hostname failed authority conversion: %q, %v", authority, err)
+			}
+		}
+
+		authority, authorityErr := CanonicalizeAuthority(input)
+		if authorityErr != nil {
+			if _, ok := ErrorCodeOf(authorityErr); !ok {
+				t.Fatalf("authority returned an unclassified error: %v", authorityErr)
+			}
+			return
+		}
+		assertCanonicalHostname(t, authority)
+		roundTrip, err := CanonicalizeAuthority(authority)
+		if err != nil || roundTrip != authority {
+			t.Fatalf("canonical authority is not idempotent: %q, %v", roundTrip, err)
+		}
+	})
+}
+
+func assertCanonicalHostname(t *testing.T, hostname string) {
+	t.Helper()
+	if hostname == "" || len(hostname) > MaxHostnameBytes || hostname != strings.ToLower(hostname) ||
+		strings.HasSuffix(hostname, ".") {
+		t.Fatalf("invalid canonical hostname %q", hostname)
+	}
+	for index := range len(hostname) {
+		if hostname[index] > 0x7f {
+			t.Fatalf("canonical hostname is not ASCII: %q", hostname)
+		}
+	}
+	roundTrip, err := CanonicalizeHostname(hostname)
+	if err != nil || roundTrip != hostname {
+		t.Fatalf("canonical hostname is not idempotent: %q, %v", roundTrip, err)
 	}
 }

@@ -26,6 +26,7 @@ func TestMetricsScrape(t *testing.T) {
 	metrics.IncTailcatFailure("start", "timeout")
 	metrics.AddTailcatForcedCloses(2)
 	metrics.IncCapacityRejection("routes")
+	metrics.SetFriendlyNameCapacity(100, 90)
 	metrics.AddForwardedBytes("ingress", 1024)
 	metrics.ObserveAPIRequest("routes.create", "success", 10*time.Second)
 	metrics.ObserveSQLiteOperation("route_create", 5*time.Second, nil)
@@ -54,6 +55,8 @@ func TestMetricsScrape(t *testing.T) {
 		`tnl_tailcat_failures_total{operation="start",reason="timeout"} 1`,
 		`tnl_tailcat_forced_closes_total 2`,
 		`tnl_capacity_rejections_total{resource="routes"} 1`,
+		`tnl_friendly_name_namespace_capacity 100`,
+		`tnl_friendly_name_namespace_remaining_lower_bound 90`,
 		`tnl_forwarded_bytes_total{direction="ingress"} 1024`,
 		`tnl_api_requests_total{operation="routes.create",result="success"} 1`,
 		`tnl_api_request_duration_seconds_bucket{operation="routes.create",le="10"} 1`,
