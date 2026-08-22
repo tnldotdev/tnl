@@ -87,6 +87,11 @@ func loadTypeScript(ctx context.Context, path, cwd string, worktree Worktree) (c
 	resultChannel := make(chan result, 1)
 	go func() {
 		data, err := io.ReadAll(io.LimitReader(reader, maxResultBytes+1))
+		if err == nil && len(data) > maxResultBytes {
+			// Keep draining so Node's synchronous result write can finish
+			// before Wait, without retaining oversized configuration data.
+			_, err = io.Copy(io.Discard, reader)
+		}
 		resultChannel <- result{data: data, err: err}
 	}()
 	waitErr := command.Wait()
