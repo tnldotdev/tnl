@@ -26,12 +26,14 @@ func (d *Database) PoolStats() *pgxpool.Stat { return d.pool.Stat() }
 
 // DatabaseDiagnostics contains bounded, parameter-free PostgreSQL activity.
 type DatabaseDiagnostics struct {
-	CapturedAt          time.Time           `json:"captured_at"`
-	Sessions            []DatabaseSession   `json:"sessions"`
-	Truncated           bool                `json:"truncated"`
-	ActiveOperations    []DatabaseOperation `json:"active_operations"`
-	OperationsTruncated bool                `json:"operations_truncated"`
-	Error               string              `json:"error,omitempty"`
+	CapturedAt          time.Time                           `json:"captured_at"`
+	Sessions            []DatabaseSession                   `json:"sessions"`
+	Truncated           bool                                `json:"truncated"`
+	ActiveOperations    []DatabaseOperation                 `json:"active_operations"`
+	OperationsTruncated bool                                `json:"operations_truncated"`
+	Connections         map[string]DatabaseConnectionCounts `json:"connections,omitempty"`
+	Pooler              *DatabasePoolerDiagnostics          `json:"pooler,omitempty"`
+	Error               string                              `json:"error,omitempty"`
 }
 
 type DatabaseSession struct {
@@ -54,6 +56,7 @@ func (d *Database) Diagnostics(parent context.Context) (result DatabaseDiagnosti
 	result = DatabaseDiagnostics{CapturedAt: time.Now().UTC(), Sessions: []DatabaseSession{}}
 	if d != nil {
 		result.ActiveOperations, result.OperationsTruncated = d.activity.snapshot(result.CapturedAt)
+		result.Connections = d.connections.snapshot()
 	}
 	defer func() {
 		if retErr != nil {
@@ -69,8 +72,10 @@ func (d *Database) Diagnostics(parent context.Context) (result DatabaseDiagnosti
 	defer d.diagnosticsMu.Unlock()
 	ctx, cancel := context.WithTimeout(parent, 3*time.Second)
 	defer cancel()
-	config := d.pool.Config().ConnConfig.Copy()
-	config.Tracer = nil // Diagnostics and leadership are not request-pool queries.
+	// The admin console may remain accessible when regular clients are rejected.
+	// Its own timeout consumes at most one second of the shared snapshot budget.
+	result.Pooler = d.poolerDiagnostics(ctx)
+	config := d.dedicatedConnectionConfig(diagnosticConnection)
 	connection, err := pgx.ConnectConfig(ctx, config)
 	if err != nil {
 		return result, databaseDiagnosticsError(ctx, err)

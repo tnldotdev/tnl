@@ -52,8 +52,8 @@ func TestParsePoolConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if defaultConfig.MaxConns != 7 {
-		t.Fatalf("default maximum connections = %d, want 7", defaultConfig.MaxConns)
+	if defaultConfig.MaxConns != 8 {
+		t.Fatalf("default maximum connections = %d, want 8", defaultConfig.MaxConns)
 	}
 
 	config, err := parsePoolConfig("postgresql://user:secret@database.example/tnl?sslmode=require&pool_max_conns=5&default_query_exec_mode=cache_statement")
