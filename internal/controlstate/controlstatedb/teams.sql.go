@@ -1296,18 +1296,44 @@ func (q *Queries) LockInvitationByTokenDigest(ctx context.Context, arg LockInvit
 }
 
 const lockLocalTeamForMutation = `-- name: LockLocalTeamForMutation :one
-SELECT id
-FROM control.teams
-WHERE id = $1
-  AND deleted_at IS NULL
-FOR NO KEY UPDATE
+WITH guard AS MATERIALIZED (
+    SELECT pg_advisory_xact_lock(hashtextextended('tnl:local-team:' || $1::text, 0))
+)
+SELECT teams.id
+FROM control.teams AS teams CROSS JOIN guard
+WHERE teams.id = $1
+  AND teams.deleted_at IS NULL
+FOR NO KEY UPDATE OF teams
 `
 
 // Local authority mutations lock the team before identities, memberships,
 // domains, DNS authorities, and routes. Authorization is rechecked under this
 // transaction-held guard; hosted teams never require fabricated local rows.
+// Queue writers with the session readers using a transaction advisory lock:
+// PostgreSQL row-lock readers alone can bypass a waiting writer indefinitely.
 func (q *Queries) LockLocalTeamForMutation(ctx context.Context, teamID string) (string, error) {
 	row := q.db.QueryRow(ctx, lockLocalTeamForMutation, teamID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockLocalTeamForSession = `-- name: LockLocalTeamForSession :one
+WITH guard AS MATERIALIZED (
+    SELECT pg_advisory_xact_lock_shared(hashtextextended('tnl:local-team:' || $1::text, 0))
+)
+SELECT teams.id
+FROM control.teams AS teams CROSS JOIN guard
+WHERE teams.id = $1
+  AND teams.deleted_at IS NULL
+FOR SHARE OF teams
+`
+
+// Session creation reads authority under this guard before locking its route.
+// Different routes may start together; team/role/domain mutations must wait.
+// Callers must not upgrade this guard by writing the team later in the transaction.
+func (q *Queries) LockLocalTeamForSession(ctx context.Context, teamID string) (string, error) {
+	row := q.db.QueryRow(ctx, lockLocalTeamForSession, teamID)
 	var id string
 	err := row.Scan(&id)
 	return id, err
@@ -1545,12 +1571,15 @@ func (q *Queries) LockTeamDomain(ctx context.Context, arg LockTeamDomainParams) 
 }
 
 const lockTeamForInvitationAcceptance = `-- name: LockTeamForInvitationAcceptance :one
-SELECT id
-FROM control.teams
-WHERE id = $1
-  AND kind = 'organization'
-  AND deleted_at IS NULL
-FOR UPDATE
+WITH guard AS MATERIALIZED (
+    SELECT pg_advisory_xact_lock(hashtextextended('tnl:local-team:' || $1::text, 0))
+)
+SELECT teams.id
+FROM control.teams AS teams CROSS JOIN guard
+WHERE teams.id = $1
+  AND teams.kind = 'organization'
+  AND teams.deleted_at IS NULL
+FOR UPDATE OF teams
 `
 
 func (q *Queries) LockTeamForInvitationAcceptance(ctx context.Context, teamID string) (string, error) {

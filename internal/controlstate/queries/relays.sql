@@ -1,18 +1,27 @@
+-- Blocking service operations acquire a transaction advisory guard before any
+-- service/lease row locks. Shared row readers alone can bypass a queued writer;
+-- the advisory queue lets registration, placement and certificate writes progress.
+-- SKIP LOCKED certificate preparation and bulk key rotation remain opportunistic
+-- row-only writers: they never wait for a service row or acquire this guard after
+-- holding one. Keep their nonblocking behavior rather than adding a lock upgrade.
 -- name: RegisterRelay :one
-WITH relay_service AS (
+WITH service_guard AS MATERIALIZED (
+    SELECT pg_advisory_xact_lock(hashtextextended('tnl:relay-service:' || sqlc.arg(relay_service_id)::text, 0))
+), relay_service AS (
     INSERT INTO control.relay_services (
         relay_service_id,
         relay_address,
         tls_server_name,
         created_at,
         updated_at
-    ) VALUES (
+    ) SELECT
         sqlc.arg(relay_service_id),
         sqlc.arg(relay_address),
         sqlc.arg(tls_server_name),
         sqlc.arg(registered_at),
         sqlc.arg(registered_at)
-    )
+    FROM service_guard
+    WHERE true
     ON CONFLICT (relay_service_id) DO UPDATE SET
         updated_at = EXCLUDED.updated_at
     WHERE control.relay_services.relay_address = EXCLUDED.relay_address
@@ -179,14 +188,21 @@ SELECT relay_lease.*, services.relay_address, services.tls_server_name
 FROM relay_lease
 JOIN control.relay_services AS services USING (relay_service_id);
 
+-- Claims and readiness read service configuration without changing it. Share
+-- that guard across processes, but exclusively lock the selected lease so claims
+-- on one process cannot race its capacity check. Registration and placement take
+-- the service exclusively before leases; keep that order here too.
 -- name: GetRelayLeaseForClaim :one
-WITH service AS MATERIALIZED (
+WITH service_guard AS MATERIALIZED (
+    SELECT relay_service_id,
+        pg_advisory_xact_lock_shared(hashtextextended('tnl:relay-service:' || relay_service_id, 0))
+    FROM control.relay_leases
+    WHERE relay_id = sqlc.arg(relay_id)
+), service AS MATERIALIZED (
     SELECT services.*
     FROM control.relay_services AS services
-    WHERE services.relay_service_id = (
-        SELECT relay_service_id FROM control.relay_leases WHERE relay_id = sqlc.arg(relay_id)
-    )
-    FOR UPDATE
+    JOIN service_guard USING (relay_service_id)
+    FOR SHARE OF services
 )
 SELECT leases.*, services.relay_address, services.tls_server_name
 FROM control.relay_leases AS leases
@@ -202,12 +218,22 @@ WHERE connected_relay_id = sqlc.arg(relay_id)
   AND connected_relay_lease_revision = sqlc.arg(relay_lease_revision)
   AND state IN ('connected', 'ready', 'draining');
 
+-- Acquire service guards in the same stable order as their row locks. Callers
+-- finish locking all services before locking leases or checking capacity.
 -- name: LockRelayServicesForPlacement :many
-SELECT relay_service_id
-FROM control.relay_services
-WHERE enabled
-ORDER BY relay_service_id
-FOR UPDATE;
+WITH service_guards AS MATERIALIZED (
+    SELECT relay_service_id,
+        pg_advisory_xact_lock(hashtextextended('tnl:relay-service:' || relay_service_id, 0))
+    FROM control.relay_services
+    WHERE enabled
+    ORDER BY relay_service_id
+)
+SELECT services.relay_service_id
+FROM control.relay_services AS services
+JOIN service_guards USING (relay_service_id)
+WHERE services.enabled
+ORDER BY services.relay_service_id
+FOR UPDATE OF services;
 
 -- name: LockEligibleRelayLeases :many
 SELECT leases.*, services.relay_address, services.tls_server_name
@@ -224,10 +250,13 @@ ORDER BY leases.relay_service_id, leases.relay_id
 FOR UPDATE OF leases;
 
 -- name: LockRelayServiceForCertificate :one
-SELECT relay_service_id
-FROM control.relay_services
-WHERE relay_service_id = sqlc.arg(relay_service_id)
-FOR UPDATE;
+WITH service_guard AS MATERIALIZED (
+    SELECT pg_advisory_xact_lock(hashtextextended('tnl:relay-service:' || sqlc.arg(relay_service_id)::text, 0))
+)
+SELECT services.relay_service_id
+FROM control.relay_services AS services CROSS JOIN service_guard
+WHERE services.relay_service_id = sqlc.arg(relay_service_id)
+FOR UPDATE OF services;
 
 -- name: CountOpenRouteSessionAssignmentsByRelayService :many
 SELECT connections.relay_service_id,
@@ -239,17 +268,21 @@ WHERE sessions.closed_at IS NULL
 GROUP BY connections.relay_service_id;
 
 -- name: StoreRelayTransportCertificate :one
-UPDATE control.relay_services
+WITH service_guard AS MATERIALIZED (
+    SELECT pg_advisory_xact_lock(hashtextextended('tnl:relay-service:' || sqlc.arg(relay_service_id)::text, 0))
+)
+UPDATE control.relay_services AS services
 SET transport_certificate_pem = sqlc.arg(transport_certificate_pem),
     transport_private_key_ciphertext = sqlc.arg(transport_private_key_ciphertext),
     transport_private_key_storage_key_id = sqlc.arg(transport_private_key_storage_key_id),
     transport_certificate_serial = sqlc.arg(transport_certificate_serial),
     transport_certificate_expires_at = sqlc.arg(transport_certificate_expires_at),
     updated_at = GREATEST(updated_at, sqlc.arg(updated_at))
+FROM service_guard
 WHERE relay_service_id = sqlc.arg(relay_service_id)
   AND tls_server_name = sqlc.arg(tls_server_name)
   AND enabled
-RETURNING *;
+RETURNING services.*;
 
 -- name: GetRelayTransportCertificate :one
 SELECT services.*
@@ -263,10 +296,14 @@ WHERE services.relay_service_id = sqlc.arg(relay_service_id)
   AND leases.lease_expires_at > sqlc.arg(now);
 
 -- name: RotateRelayServicePrivateKey :exec
+WITH service_guard AS MATERIALIZED (
+    SELECT pg_advisory_xact_lock(hashtextextended('tnl:relay-service:' || sqlc.arg(relay_service_id)::text, 0))
+)
 UPDATE control.relay_services
 SET transport_private_key_ciphertext = sqlc.arg(transport_private_key_ciphertext),
     transport_private_key_storage_key_id = sqlc.arg(transport_private_key_storage_key_id),
     updated_at = GREATEST(updated_at, sqlc.arg(updated_at))
+FROM service_guard
 WHERE relay_service_id = sqlc.arg(relay_service_id)
   AND transport_private_key_storage_key_id = sqlc.arg(previous_key_id)
   AND transport_private_key_ciphertext = sqlc.arg(previous_ciphertext);

@@ -276,13 +276,12 @@ func (d *Database) UpdateAuthorizedRoute(
 	if route.PolicyRevision > policyRevision {
 		return Route{}, ErrRouteAuthority
 	}
-	if err := expireStaleOpenRouteSession(ctx, queries, &pendingEvents, route, now); err != nil {
+	hasOpenSession, err := expireStaleOpenRouteSession(ctx, queries, &pendingEvents, route, now)
+	if err != nil {
 		return Route{}, err
 	}
-	if _, err := queries.GetOpenRouteSession(ctx, request.RouteID); err == nil {
+	if hasOpenSession {
 		return Route{}, ErrRouteSessionOpen
-	} else if !errors.Is(err, pgx.ErrNoRows) {
-		return Route{}, fmt.Errorf("controlstate: update route: read open route session: %w", err)
 	}
 	if request.AuthorityIssuer == "" {
 		membership, err := queries.GetActiveRouteSessionMembership(ctx, controlstatedb.GetActiveRouteSessionMembershipParams{
@@ -351,13 +350,12 @@ func (d *Database) DeleteExpiredEphemeralRoutes(ctx context.Context, now time.Ti
 		return 0, fmt.Errorf("controlstate: delete expired ephemeral routes: lock routes: %w", err)
 	}
 	for _, route := range routes {
-		if err := expireStaleOpenRouteSession(ctx, queries, &pendingEvents, route, now); err != nil {
+		hasOpenSession, err := expireStaleOpenRouteSession(ctx, queries, &pendingEvents, route, now)
+		if err != nil {
 			return 0, err
 		}
-		if _, err := queries.GetOpenRouteSession(ctx, route.ID); err == nil {
+		if hasOpenSession {
 			continue
-		} else if !errors.Is(err, pgx.ErrNoRows) {
-			return 0, fmt.Errorf("controlstate: delete expired ephemeral routes: read route session: %w", err)
 		}
 		updated, err := queries.DeleteRoute(ctx, controlstatedb.DeleteRouteParams{
 			DeletedAt: timestamptz(now), RouteID: route.ID, ExpectedMutationRevision: route.MutationRevision,
@@ -664,28 +662,30 @@ func closeOpenRouteSession(
 	return closeRouteSession(ctx, queries, pendingEvents, route, session, RouteSessionClosed, now, reason)
 }
 
+// expireStaleOpenRouteSession returns whether a live session remains. The caller
+// holds the route row through commit, so that answer stays valid in its transaction.
 func expireStaleOpenRouteSession(
 	ctx context.Context,
 	queries *controlstatedb.Queries,
 	pendingEvents *pendingIngressRoutingTableEvents,
 	route controlstatedb.ControlRoute,
 	now time.Time,
-) error {
+) (bool, error) {
 	session, err := queries.GetOpenRouteSession(ctx, route.ID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
+		return false, nil
 	}
 	if err != nil {
-		return fmt.Errorf("controlstate: expire route session: read open session: %w", err)
+		return false, fmt.Errorf("controlstate: expire route session: read open session: %w", err)
 	}
 	closedAt := now
 	if session.PublisherExpiresAt.Valid {
 		if session.PublisherExpiresAt.Time.After(now) {
-			return nil
+			return true, nil
 		}
 		closedAt = session.PublisherExpiresAt.Time
 	}
-	return closeRouteSession(ctx, queries, pendingEvents, route, session, RouteSessionExpired, closedAt, "publisher_expired")
+	return false, closeRouteSession(ctx, queries, pendingEvents, route, session, RouteSessionExpired, closedAt, "publisher_expired")
 }
 
 func closeRouteSession(

@@ -97,10 +97,17 @@ WHERE authority_reference = sqlc.arg(authority_reference)
 RETURNING *;
 
 -- name: LockDNSAuthorityLocalTeam :exec
+WITH guard AS MATERIALIZED (
+    SELECT teams.id,
+        pg_advisory_xact_lock(hashtextextended('tnl:local-team:' || teams.id, 0))
+    FROM control.teams AS teams
+    JOIN control.domains AS domains ON domains.team_id = teams.id
+    WHERE domains.dns_authority_reference = sqlc.arg(authority_reference)
+    ORDER BY teams.id
+)
 SELECT teams.id
 FROM control.teams AS teams
-JOIN control.domains AS domains ON domains.team_id = teams.id
-WHERE domains.dns_authority_reference = sqlc.arg(authority_reference)
+JOIN guard ON guard.id = teams.id
 ORDER BY teams.id
 FOR NO KEY UPDATE OF teams;
 

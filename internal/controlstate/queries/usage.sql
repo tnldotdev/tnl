@@ -42,8 +42,7 @@ WHERE ingress_id = sqlc.arg(ingress_id)
   AND route_version = sqlc.arg(route_version)
   AND bucket_start = sqlc.arg(bucket_start)
 ORDER BY report_revision DESC
-LIMIT 1
-FOR UPDATE;
+LIMIT 1;
 
 -- name: GetIngressUsageReport :one
 SELECT *

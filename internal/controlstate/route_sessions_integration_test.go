@@ -6,10 +6,13 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"math"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/routeusage"
 )
@@ -126,6 +129,81 @@ func TestIntegrationRouteSessionPlacementRequiresAvailableServices(t *testing.T)
 	setup, err := database.CreateRouteSession(t.Context(), request, now, time.Minute, time.Minute)
 	if err != nil || setup.RouteVersion != 1 {
 		t.Fatalf("failed placement consumed route version: %#v, %v", setup, err)
+	}
+}
+
+func TestIntegrationRouteSessionReplacesExpiredSession(t *testing.T) {
+	f := newRouteSessionFixture(t)
+	request := f.request
+	request.IdempotencyKey, request.RequestDigest, request.ExpectedMutationRevision = "replacement", sha256.Sum256([]byte("replacement")), 2
+	setup, err := f.database.CreateRouteSession(t.Context(), request, f.now.Add(time.Minute), time.Hour, time.Hour)
+	if err != nil || setup.RouteVersion != 2 || setup.RouteSessionID == f.setup.RouteSessionID {
+		t.Fatalf("replace expired session = %#v, %v", setup, err)
+	}
+	var closed bool
+	if err := f.database.pool.QueryRow(t.Context(), `SELECT state = 'expired' AND closed_at = publisher_expires_at FROM control.route_sessions WHERE id = $1`, f.setup.RouteSessionID).Scan(&closed); err != nil || !closed {
+		t.Fatalf("old session expiry = %t, %v", closed, err)
+	}
+}
+
+func TestIntegrationRouteSessionCreationRollsBackBothAssignmentsAndVersion(t *testing.T) {
+	database, now, request, leases := newRouteSessionPrerequisites(t)
+	if _, err := database.pool.Exec(t.Context(), `ALTER TABLE control.route_session_connections ADD CONSTRAINT reject_second_slot CHECK (connection_slot <> 1)`); err != nil {
+		t.Fatal(err)
+	}
+	_, err := database.CreateRouteSession(t.Context(), request, now, time.Hour, time.Hour)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.ConstraintName != "reject_second_slot" {
+		t.Fatalf("second assignment failure = %v", err)
+	}
+	var version, revision, sessions, connections, audits int64
+	err = database.pool.QueryRow(t.Context(), `SELECT next_route_version, mutation_revision,
+		(SELECT count(*) FROM control.route_sessions),
+		(SELECT count(*) FROM control.route_session_connections),
+		(SELECT count(*) FROM control.admin_audit_events WHERE operation = 'route_session.create')
+		FROM control.routes WHERE id = $1`, request.RouteID).Scan(&version, &revision, &sessions, &connections, &audits)
+	if err != nil || version != 1 || revision != 1 || sessions != 0 || connections != 0 || audits != 0 {
+		t.Fatalf("failed creation left version/revision/sessions/connections/audits = %d/%d/%d/%d/%d, %v", version, revision, sessions, connections, audits, err)
+	}
+	if _, err := database.pool.Exec(t.Context(), `ALTER TABLE control.route_session_connections DROP CONSTRAINT reject_second_slot`); err != nil {
+		t.Fatal(err)
+	}
+	setup, err := database.CreateRouteSession(t.Context(), request, now, time.Hour, time.Hour)
+	if err != nil || setup.RouteVersion != 1 {
+		t.Fatalf("retry after rollback = %#v, %v", setup, err)
+	}
+	f := routeSessionFixture{database: database, now: now, request: request, setup: setup, leases: leases}
+	for slot, connection := range setup.PublisherConnections {
+		lease := leases[connection.RelayServiceID]
+		if connection.RelayAddress != lease.RelayAddress || connection.TLSServerName != lease.TLSServerName {
+			t.Fatalf("slot %d has the wrong assigned relay address", slot)
+		}
+		claimTestConnection(t, f, slot, now)
+	}
+}
+
+func TestIntegrationRouteSessionCreationRejectsExhaustedCounters(t *testing.T) {
+	for _, counter := range []string{"route_version", "mutation_revision"} {
+		t.Run(counter, func(t *testing.T) {
+			database, now, request, _ := newRouteSessionPrerequisites(t)
+			version, revision := int64(1), int64(1)
+			if counter == "route_version" {
+				version = math.MaxInt64
+			} else {
+				revision = math.MaxInt64
+			}
+			if _, err := database.pool.Exec(t.Context(), `UPDATE control.routes SET next_route_version = $2, mutation_revision = $3 WHERE id = $1`, request.RouteID, version, revision); err != nil {
+				t.Fatal(err)
+			}
+			request.ExpectedMutationRevision = uint64(revision)
+			if _, err := database.CreateRouteSession(t.Context(), request, now, time.Hour, time.Hour); err == nil || !strings.Contains(err.Error(), "exhausted") {
+				t.Fatalf("exhausted %s: %v", counter, err)
+			}
+			var unchanged bool
+			if err := database.pool.QueryRow(t.Context(), `SELECT next_route_version = $2 AND mutation_revision = $3 AND NOT EXISTS (SELECT FROM control.route_sessions) FROM control.routes WHERE id = $1`, request.RouteID, version, revision).Scan(&unchanged); err != nil || !unchanged {
+				t.Fatalf("exhausted creation changed state: %t, %v", unchanged, err)
+			}
+		})
 	}
 }
 

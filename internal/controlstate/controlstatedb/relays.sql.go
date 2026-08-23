@@ -167,13 +167,16 @@ func (q *Queries) CountRelayActiveConnections(ctx context.Context, arg CountRela
 }
 
 const getRelayLeaseForClaim = `-- name: GetRelayLeaseForClaim :one
-WITH service AS MATERIALIZED (
+WITH service_guard AS MATERIALIZED (
+    SELECT relay_service_id,
+        pg_advisory_xact_lock_shared(hashtextextended('tnl:relay-service:' || relay_service_id, 0))
+    FROM control.relay_leases
+    WHERE relay_id = $1
+), service AS MATERIALIZED (
     SELECT services.relay_service_id, services.relay_address, services.tls_server_name, services.transport_certificate_pem, services.transport_private_key_ciphertext, services.transport_private_key_storage_key_id, services.transport_certificate_serial, services.transport_certificate_expires_at, services.enabled, services.created_at, services.updated_at
     FROM control.relay_services AS services
-    WHERE services.relay_service_id = (
-        SELECT relay_service_id FROM control.relay_leases WHERE relay_id = $1
-    )
-    FOR UPDATE
+    JOIN service_guard USING (relay_service_id)
+    FOR SHARE OF services
 )
 SELECT leases.relay_id, leases.relay_service_id, leases.relay_run_id, leases.relay_lease_revision, leases.protocol_version, leases.internal_relay_address, leases.observed_address, leases.internal_networks, leases.connection_capacity, leases.stream_capacity, leases.reported_connections, leases.reported_streams, leases.draining, leases.drain_deadline, leases.registered_at, leases.renewed_at, leases.lease_expires_at, services.relay_address, services.tls_server_name
 FROM control.relay_leases AS leases
@@ -204,6 +207,10 @@ type GetRelayLeaseForClaimRow struct {
 	TlsServerName        string
 }
 
+// Claims and readiness read service configuration without changing it. Share
+// that guard across processes, but exclusively lock the selected lease so claims
+// on one process cannot race its capacity check. Registration and placement take
+// the service exclusively before leases; keep that order here too.
 func (q *Queries) GetRelayLeaseForClaim(ctx context.Context, relayID string) (GetRelayLeaseForClaimRow, error) {
 	row := q.db.QueryRow(ctx, getRelayLeaseForClaim, relayID)
 	var i GetRelayLeaseForClaimRow
@@ -360,10 +367,13 @@ func (q *Queries) LockEligibleRelayLeases(ctx context.Context, arg LockEligibleR
 }
 
 const lockRelayServiceForCertificate = `-- name: LockRelayServiceForCertificate :one
-SELECT relay_service_id
-FROM control.relay_services
-WHERE relay_service_id = $1
-FOR UPDATE
+WITH service_guard AS MATERIALIZED (
+    SELECT pg_advisory_xact_lock(hashtextextended('tnl:relay-service:' || $1::text, 0))
+)
+SELECT services.relay_service_id
+FROM control.relay_services AS services CROSS JOIN service_guard
+WHERE services.relay_service_id = $1
+FOR UPDATE OF services
 `
 
 func (q *Queries) LockRelayServiceForCertificate(ctx context.Context, relayServiceID string) (string, error) {
@@ -374,13 +384,23 @@ func (q *Queries) LockRelayServiceForCertificate(ctx context.Context, relayServi
 }
 
 const lockRelayServicesForPlacement = `-- name: LockRelayServicesForPlacement :many
-SELECT relay_service_id
-FROM control.relay_services
-WHERE enabled
-ORDER BY relay_service_id
-FOR UPDATE
+WITH service_guards AS MATERIALIZED (
+    SELECT relay_service_id,
+        pg_advisory_xact_lock(hashtextextended('tnl:relay-service:' || relay_service_id, 0))
+    FROM control.relay_services
+    WHERE enabled
+    ORDER BY relay_service_id
+)
+SELECT services.relay_service_id
+FROM control.relay_services AS services
+JOIN service_guards USING (relay_service_id)
+WHERE services.enabled
+ORDER BY services.relay_service_id
+FOR UPDATE OF services
 `
 
+// Acquire service guards in the same stable order as their row locks. Callers
+// finish locking all services before locking leases or checking capacity.
 func (q *Queries) LockRelayServicesForPlacement(ctx context.Context) ([]string, error) {
 	rows, err := q.db.Query(ctx, lockRelayServicesForPlacement)
 	if err != nil {
@@ -402,20 +422,23 @@ func (q *Queries) LockRelayServicesForPlacement(ctx context.Context) ([]string, 
 }
 
 const registerRelay = `-- name: RegisterRelay :one
-WITH relay_service AS (
+WITH service_guard AS MATERIALIZED (
+    SELECT pg_advisory_xact_lock(hashtextextended('tnl:relay-service:' || $1::text, 0))
+), relay_service AS (
     INSERT INTO control.relay_services (
         relay_service_id,
         relay_address,
         tls_server_name,
         created_at,
         updated_at
-    ) VALUES (
+    ) SELECT
         $1,
         $2,
         $3,
         $4,
         $4
-    )
+    FROM service_guard
+    WHERE true
     ON CONFLICT (relay_service_id) DO UPDATE SET
         updated_at = EXCLUDED.updated_at
     WHERE control.relay_services.relay_address = EXCLUDED.relay_address
@@ -559,6 +582,12 @@ type RegisterRelayRow struct {
 	TlsServerName        string
 }
 
+// Blocking service operations acquire a transaction advisory guard before any
+// service/lease row locks. Shared row readers alone can bypass a queued writer;
+// the advisory queue lets registration, placement and certificate writes progress.
+// SKIP LOCKED certificate preparation and bulk key rotation remain opportunistic
+// row-only writers: they never wait for a service row or acquire this guard after
+// holding one. Keep their nonblocking behavior rather than adding a lock upgrade.
 func (q *Queries) RegisterRelay(ctx context.Context, arg RegisterRelayParams) (RegisterRelayRow, error) {
 	row := q.db.QueryRow(ctx, registerRelay,
 		arg.RelayServiceID,
@@ -702,10 +731,14 @@ func (q *Queries) RenewRelay(ctx context.Context, arg RenewRelayParams) (RenewRe
 }
 
 const rotateRelayServicePrivateKey = `-- name: RotateRelayServicePrivateKey :exec
+WITH service_guard AS MATERIALIZED (
+    SELECT pg_advisory_xact_lock(hashtextextended('tnl:relay-service:' || $4::text, 0))
+)
 UPDATE control.relay_services
 SET transport_private_key_ciphertext = $1,
     transport_private_key_storage_key_id = $2,
     updated_at = GREATEST(updated_at, $3)
+FROM service_guard
 WHERE relay_service_id = $4
   AND transport_private_key_storage_key_id = $5
   AND transport_private_key_ciphertext = $6
@@ -733,17 +766,21 @@ func (q *Queries) RotateRelayServicePrivateKey(ctx context.Context, arg RotateRe
 }
 
 const storeRelayTransportCertificate = `-- name: StoreRelayTransportCertificate :one
-UPDATE control.relay_services
+WITH service_guard AS MATERIALIZED (
+    SELECT pg_advisory_xact_lock(hashtextextended('tnl:relay-service:' || $7::text, 0))
+)
+UPDATE control.relay_services AS services
 SET transport_certificate_pem = $1,
     transport_private_key_ciphertext = $2,
     transport_private_key_storage_key_id = $3,
     transport_certificate_serial = $4,
     transport_certificate_expires_at = $5,
     updated_at = GREATEST(updated_at, $6)
+FROM service_guard
 WHERE relay_service_id = $7
   AND tls_server_name = $8
   AND enabled
-RETURNING relay_service_id, relay_address, tls_server_name, transport_certificate_pem, transport_private_key_ciphertext, transport_private_key_storage_key_id, transport_certificate_serial, transport_certificate_expires_at, enabled, created_at, updated_at
+RETURNING services.relay_service_id, services.relay_address, services.tls_server_name, services.transport_certificate_pem, services.transport_private_key_ciphertext, services.transport_private_key_storage_key_id, services.transport_certificate_serial, services.transport_certificate_expires_at, services.enabled, services.created_at, services.updated_at
 `
 
 type StoreRelayTransportCertificateParams struct {

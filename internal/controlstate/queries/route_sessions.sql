@@ -39,19 +39,19 @@ FROM control.maintenance_controls
 WHERE control_name = 'route_session_creation'
 FOR SHARE;
 
--- name: AllocateRouteVersion :one
+-- name: InsertRouteSession :one
+WITH version AS (
 UPDATE control.routes
 SET next_route_version = next_route_version + 1,
     mutation_revision = mutation_revision + 1,
-    updated_at = sqlc.arg(updated_at)
+    updated_at = sqlc.arg(created_at)
 WHERE id = sqlc.arg(route_id)
   AND next_route_version < 9223372036854775807
   AND mutation_revision = sqlc.arg(expected_mutation_revision)
   AND mutation_revision < 9223372036854775807
   AND lifecycle_state = 'enabled'
-RETURNING (next_route_version - 1)::bigint;
-
--- name: InsertRouteSession :one
+RETURNING (next_route_version - 1)::bigint AS route_version
+)
 INSERT INTO control.route_sessions (
     id,
     route_id,
@@ -72,13 +72,13 @@ INSERT INTO control.route_sessions (
     created_at,
     last_heartbeat_at,
     publisher_expires_at
-) VALUES (
+) SELECT
     sqlc.arg(id),
     sqlc.arg(route_id),
     sqlc.arg(team_id),
     sqlc.narg(membership_id),
     sqlc.arg(acting_identity_id),
-    sqlc.arg(route_version),
+    version.route_version,
     sqlc.arg(idempotency_key),
     sqlc.arg(request_digest),
     sqlc.arg(session_token_id),
@@ -92,10 +92,10 @@ INSERT INTO control.route_sessions (
     sqlc.arg(created_at),
     sqlc.arg(last_heartbeat_at),
     sqlc.arg(publisher_expires_at)
-)
+FROM version
 RETURNING *;
 
--- name: InsertRouteSessionConnection :one
+-- name: InsertRouteSessionConnections :many
 INSERT INTO control.route_session_connections (
     route_session_id,
     route_id,
@@ -110,21 +110,21 @@ INSERT INTO control.route_session_connections (
     publisher_connection_credential_expires_at,
     state,
     assigned_at
-) VALUES (
+) SELECT
     sqlc.arg(route_session_id),
     sqlc.arg(route_id),
     sqlc.arg(route_version),
-    sqlc.arg(connection_slot),
-    sqlc.arg(publisher_connection_id),
+    slots.connection_slot::smallint,
+    (sqlc.arg(publisher_connection_ids)::text[])[slots.connection_slot + 1],
     1,
-    sqlc.arg(relay_service_id),
-    sqlc.arg(relay_address),
-    sqlc.arg(tls_server_name),
-    sqlc.arg(publisher_connection_credential_digest),
+    (sqlc.arg(relay_service_ids)::text[])[slots.connection_slot + 1],
+    (sqlc.arg(relay_addresses)::text[])[slots.connection_slot + 1],
+    (sqlc.arg(tls_server_names)::text[])[slots.connection_slot + 1],
+    (sqlc.arg(credential_digests)::bytea[])[slots.connection_slot + 1],
     sqlc.arg(publisher_connection_credential_expires_at),
     'assigned',
     sqlc.arg(assigned_at)
-)
+FROM generate_series(0, 1) AS slots(connection_slot)
 RETURNING *;
 
 -- name: ReplaceRouteSessionConnection :one

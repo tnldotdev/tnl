@@ -15,7 +15,6 @@ type Querier interface {
 	ActivateMemberSlug(ctx context.Context, arg ActivateMemberSlugParams) (int64, error)
 	AdvanceAuthorityRevision(ctx context.Context, arg AdvanceAuthorityRevisionParams) (int64, error)
 	AdvanceTeamPolicyRevision(ctx context.Context, arg AdvanceTeamPolicyRevisionParams) (int64, error)
-	AllocateRouteVersion(ctx context.Context, arg AllocateRouteVersionParams) (int64, error)
 	ApplyIngressUsageDelta(ctx context.Context, arg ApplyIngressUsageDeltaParams) (ControlRouteUsageBucket, error)
 	ApplyRouteSessionPolicyDenials(ctx context.Context, arg ApplyRouteSessionPolicyDenialsParams) (int64, error)
 	BeginAdminRelayDrain(ctx context.Context, arg BeginAdminRelayDrainParams) (BeginAdminRelayDrainRow, error)
@@ -96,6 +95,10 @@ type Querier interface {
 	GetOrganizationTeamByIdempotency(ctx context.Context, arg GetOrganizationTeamByIdempotencyParams) (GetOrganizationTeamByIdempotencyRow, error)
 	GetPublisherConnectionForClaim(ctx context.Context, publisherConnectionID string) (ControlRouteSessionConnection, error)
 	GetRelayDNSChallengeContext(ctx context.Context, orderID string) (GetRelayDNSChallengeContextRow, error)
+	// Claims and readiness read service configuration without changing it. Share
+	// that guard across processes, but exclusively lock the selected lease so claims
+	// on one process cannot race its capacity check. Registration and placement take
+	// the service exclusively before leases; keep that order here too.
 	GetRelayLeaseForClaim(ctx context.Context, relayID string) (GetRelayLeaseForClaimRow, error)
 	GetRelayTransportCertificate(ctx context.Context, arg GetRelayTransportCertificateParams) (ControlRelayService, error)
 	GetRouteByCreatorIdempotency(ctx context.Context, arg GetRouteByCreatorIdempotencyParams) (GetRouteByCreatorIdempotencyRow, error)
@@ -121,7 +124,7 @@ type Querier interface {
 	InsertRouteDeleteAuditEvent(ctx context.Context, arg InsertRouteDeleteAuditEventParams) error
 	InsertRouteSession(ctx context.Context, arg InsertRouteSessionParams) (ControlRouteSession, error)
 	InsertRouteSessionAuditEvent(ctx context.Context, arg InsertRouteSessionAuditEventParams) error
-	InsertRouteSessionConnection(ctx context.Context, arg InsertRouteSessionConnectionParams) (ControlRouteSessionConnection, error)
+	InsertRouteSessionConnections(ctx context.Context, arg InsertRouteSessionConnectionsParams) ([]ControlRouteSessionConnection, error)
 	InsertRouteUpdateAuditEvent(ctx context.Context, arg InsertRouteUpdateAuditEventParams) error
 	InsertRouteUsageDelivery(ctx context.Context, arg InsertRouteUsageDeliveryParams) (ControlRouteUsageDelivery, error)
 	LatestIngressRoutingEntryRevision(ctx context.Context, arg LatestIngressRoutingEntryRevisionParams) (int64, error)
@@ -165,10 +168,18 @@ type Querier interface {
 	// Local authority mutations lock the team before identities, memberships,
 	// domains, DNS authorities, and routes. Authorization is rechecked under this
 	// transaction-held guard; hosted teams never require fabricated local rows.
+	// Queue writers with the session readers using a transaction advisory lock:
+	// PostgreSQL row-lock readers alone can bypass a waiting writer indefinitely.
 	LockLocalTeamForMutation(ctx context.Context, teamID string) (string, error)
+	// Session creation reads authority under this guard before locking its route.
+	// Different routes may start together; team/role/domain mutations must wait.
+	// Callers must not upgrade this guard by writing the team later in the transaction.
+	LockLocalTeamForSession(ctx context.Context, teamID string) (string, error)
 	LockManagedDomainForClaim(ctx context.Context) (ControlDomain, error)
 	LockMembershipRoutes(ctx context.Context, arg LockMembershipRoutesParams) ([]ControlRoute, error)
 	LockRelayServiceForCertificate(ctx context.Context, relayServiceID string) (string, error)
+	// Acquire service guards in the same stable order as their row locks. Callers
+	// finish locking all services before locking leases or checking capacity.
 	LockRelayServicesForPlacement(ctx context.Context) ([]string, error)
 	LockRouteCreationControl(ctx context.Context) (bool, error)
 	// Serialize creators without blocking session and audit foreign-key checks.
@@ -202,6 +213,12 @@ type Querier interface {
 	QuarantineMemberSlug(ctx context.Context, arg QuarantineMemberSlugParams) (int64, error)
 	ReadIngressRoutingTableClock(ctx context.Context) (ControlIngressRoutingTableClock, error)
 	RegisterIngress(ctx context.Context, arg RegisterIngressParams) (ControlIngressLease, error)
+	// Blocking service operations acquire a transaction advisory guard before any
+	// service/lease row locks. Shared row readers alone can bypass a queued writer;
+	// the advisory queue lets registration, placement and certificate writes progress.
+	// SKIP LOCKED certificate preparation and bulk key rotation remain opportunistic
+	// row-only writers: they never wait for a service row or acquire this guard after
+	// holding one. Keep their nonblocking behavior rather than adding a lock upgrade.
 	RegisterRelay(ctx context.Context, arg RegisterRelayParams) (RegisterRelayRow, error)
 	ReleaseInvitedMemberSlug(ctx context.Context, arg ReleaseInvitedMemberSlugParams) (int64, error)
 	RemoveTeamMembership(ctx context.Context, arg RemoveTeamMembershipParams) (int64, error)

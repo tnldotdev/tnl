@@ -222,11 +222,17 @@ WHERE r.id = sqlc.arg(route_id)
 FOR UPDATE OF r, m;
 
 -- name: LockLocalRouteTeamForMutation :one
+WITH guard AS MATERIALIZED (
+    SELECT routes.team_id,
+        pg_advisory_xact_lock(hashtextextended('tnl:local-team:' || routes.team_id, 0))
+    FROM control.routes AS routes
+    WHERE routes.id = sqlc.arg(route_id)
+)
 SELECT teams.id
 FROM control.teams AS teams
-WHERE teams.id = (SELECT routes.team_id FROM control.routes AS routes WHERE routes.id = sqlc.arg(route_id))
-  AND teams.deleted_at IS NULL
-FOR NO KEY UPDATE;
+JOIN guard ON guard.team_id = teams.id
+WHERE teams.deleted_at IS NULL
+FOR NO KEY UPDATE OF teams;
 
 -- name: DeleteRoute :execrows
 UPDATE control.routes
