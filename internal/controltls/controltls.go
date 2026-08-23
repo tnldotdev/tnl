@@ -41,13 +41,15 @@ type Config struct {
 }
 
 type Source struct {
-	hostnames []string
-	hostSet   map[string]struct{}
-	cache     autocert.Cache
-	manager   *autocert.Manager
-	runLeader func(context.Context, func(context.Context) error) error
-	report    func(error)
-	tlsConfig *tls.Config
+	hostnames   []string
+	hostSet     map[string]struct{}
+	cache       autocert.Cache
+	client      *acme.Client
+	email       string
+	acceptTerms bool
+	runLeader   func(context.Context, func(context.Context) error) error
+	report      func(error)
+	tlsConfig   *tls.Config
 
 	mu           sync.RWMutex
 	certificates map[string]*tls.Certificate
@@ -82,29 +84,21 @@ func New(config Config) (*Source, error) {
 	if err != nil {
 		return nil, err
 	}
-	manager := &autocert.Manager{
-		Prompt:     func(string) bool { return config.AcceptTerms },
-		Cache:      config.Cache,
-		HostPolicy: autocert.HostWhitelist(hostnames...),
-		Email:      config.Email,
-		Client: &acme.Client{
-			DirectoryURL: config.DirectoryURL,
-			HTTPClient:   acmeHTTPClient(config.HTTPClient),
-			Key:          key,
-			UserAgent:    "tnld/1",
-		},
-	}
-	tlsConfig := manager.TLSConfig()
 	source := &Source{
-		hostnames: hostnames, hostSet: hostSet, cache: config.Cache, manager: manager,
+		hostnames: hostnames, hostSet: hostSet, cache: config.Cache,
+		client: &acme.Client{
+			DirectoryURL: config.DirectoryURL, HTTPClient: acmeHTTPClient(config.HTTPClient), Key: key, UserAgent: "tnld/1",
+		},
+		email: config.Email, acceptTerms: config.AcceptTerms,
 		runLeader: config.RunLeader, report: config.Report,
 		certificates: make(map[string]*tls.Certificate, len(hostnames)), refreshAt: make(map[string]time.Time, len(hostnames)),
 		loading: make(map[string]*certificateLoad, len(hostnames)), refresh: make(chan struct{}, 1),
 		loadErrors: make(map[string]error, len(hostnames)),
 	}
-	tlsConfig.MinVersion = tls.VersionTLS13
-	tlsConfig.GetCertificate = source.GetCertificate
-	source.tlsConfig = tlsConfig
+	source.tlsConfig = &tls.Config{
+		MinVersion: tls.VersionTLS13, GetCertificate: source.GetCertificate,
+		NextProtos: []string{"h2", "http/1.1", acme.ALPNProto},
+	}
 	return source, nil
 }
 
@@ -138,7 +132,15 @@ func (s *Source) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, e
 		return nil, errors.New("controltls: unexpected server name")
 	}
 	if len(hello.SupportedProtos) == 1 && hello.SupportedProtos[0] == acme.ALPNProto {
-		return s.manager.GetCertificate(hello)
+		ctx := hello.Context()
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		// Read shared challenge state even on the issuing process. An old
+		// leader must never keep serving its own superseded in-memory token.
+		return s.readCachedCertificate(ctx, hostname+"+token", hostname)
 	}
 	now := time.Now()
 	s.mu.RLock()
@@ -181,34 +183,7 @@ func (s *Source) Run(ctx context.Context) error {
 		}
 	}()
 	defer func() { cancel(); <-done }()
-	return s.runLeader(ctx, func(ctx context.Context) error {
-		for {
-			var issuanceErr error
-			for _, hostname := range s.hostnames {
-				_, err := s.manager.GetCertificate(&tls.ClientHelloInfo{
-					ServerName:       hostname,
-					SupportedCurves:  []tls.CurveID{tls.CurveP256},
-					SignatureSchemes: []tls.SignatureScheme{tls.ECDSAWithP256AndSHA256},
-					CipherSuites:     []uint16{tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256},
-				})
-				issuanceErr = errors.Join(issuanceErr, err)
-			}
-			if issuanceErr == nil {
-				<-ctx.Done()
-				return nil
-			}
-			if s.report != nil && ctx.Err() == nil {
-				s.report(issuanceErr)
-			}
-			timer := time.NewTimer(time.Minute)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return nil
-			case <-timer.C:
-			}
-		}
-	})
+	return s.runLeader(ctx, s.runIssuer)
 }
 
 func (s *Source) loadCertificate(hostname string, now time.Time) (*tls.Certificate, error) {
@@ -284,21 +259,31 @@ func (s *Source) refreshCertificate(parent context.Context, hostname string, now
 }
 
 func (s *Source) readCertificate(ctx context.Context, hostname string) (*tls.Certificate, error) {
-	data, err := s.cache.Get(ctx, hostname)
+	return s.readCachedCertificate(ctx, hostname, hostname)
+}
+
+var errInvalidCertificate = errors.New("controltls: cached certificate is invalid for the requested hostname")
+
+func (s *Source) readCachedCertificate(ctx context.Context, key, hostname string) (*tls.Certificate, error) {
+	data, err := s.cache.Get(ctx, key)
 	if err != nil {
 		return nil, fmt.Errorf("controltls: load certificate: %w", err)
 	}
+	return decodeCertificate(data, hostname)
+}
+
+func decodeCertificate(data []byte, hostname string) (*tls.Certificate, error) {
 	certificate, err := tls.X509KeyPair(data, data)
 	if err != nil || len(certificate.Certificate) == 0 {
-		return nil, errors.New("controltls: cached certificate is invalid")
+		return nil, errInvalidCertificate
 	}
 	leaf, err := x509.ParseCertificate(certificate.Certificate[0])
 	if err != nil {
-		return nil, errors.New("controltls: cached certificate is not valid for the requested hostname")
+		return nil, errInvalidCertificate
 	}
 	certificate.Leaf = leaf
 	if !validCertificate(&certificate, hostname, time.Now()) {
-		return nil, errors.New("controltls: cached certificate is not valid for the requested hostname")
+		return nil, errInvalidCertificate
 	}
 	return &certificate, nil
 }

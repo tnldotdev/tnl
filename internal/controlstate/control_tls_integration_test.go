@@ -98,6 +98,43 @@ func TestIntegrationControlTLSLeadershipExclusionAndHandoff(t *testing.T) {
 	}
 }
 
+func TestIntegrationControlTLSLeadershipJoinsBeforeHandoff(t *testing.T) {
+	database, _ := newControlStateIntegrationDatabase(t, "tls_join_handoff")
+	ctx, cancel := context.WithCancel(t.Context())
+	workers := newIntegrationWorkers(t, cancel)
+	started, stopping, finish := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(finish) })
+	t.Cleanup(unblock)
+	done := make(chan error, 1)
+	workers.Go(func() {
+		done <- database.RunControlTLSLeader(ctx, func(ctx context.Context) error {
+			close(started)
+			<-ctx.Done()
+			close(stopping)
+			<-finish
+			return nil
+		})
+	})
+	awaitIntegrationResult(t, t.Context(), started)
+	cancel()
+	awaitIntegrationResult(t, t.Context(), stopping)
+	otherCtx, cancelOther := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancelOther()
+	if err := database.RunControlTLSLeader(otherCtx, func(context.Context) error {
+		t.Error("replacement acquired leadership before canceled callback finished")
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	unblock()
+	if err := awaitIntegrationResult(t, t.Context(), done); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.RunControlTLSLeader(t.Context(), func(context.Context) error { return nil }); err != nil {
+		t.Fatalf("replacement after callback finished: %v", err)
+	}
+}
+
 func TestIntegrationControlTLSLeadershipDoesNotConsumeApplicationPool(t *testing.T) {
 	database, databaseURL, _ := newControlStateIntegrationDatabaseWithURL(t, "tls_leadership_pool")
 	database.Close()
@@ -229,9 +266,8 @@ func TestIntegrationControlTLSLeadershipShutdownClosesConnection(t *testing.T) {
 	}
 }
 
-// RunControlTLSLeader returns on cancellation without joining its callback.
-// Join that callback separately, even if a startup or fault-injection assertion
-// fails. This cleanup is registered after the worker group and before startup.
+// Join the callback even if a startup or fault-injection assertion fails. This
+// cleanup is registered after the worker group and before startup.
 func joinTLSCallbackOnCleanup(t *testing.T, cancel context.CancelFunc, done <-chan struct{}) {
 	t.Helper()
 	t.Cleanup(func() {

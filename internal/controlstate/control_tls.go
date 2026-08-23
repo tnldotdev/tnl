@@ -104,8 +104,7 @@ func (d *Database) RunControlTLSLeader(ctx context.Context, run func(context.Con
 	}
 	retry := time.NewTicker(time.Second)
 	defer retry.Stop()
-	config := d.pool.Config().ConnConfig.Copy()
-	config.Tracer = nil
+	config := d.dedicatedConnectionConfig(tlsLeadershipConnection)
 	for {
 		connection, err := pgx.ConnectConfig(ctx, config)
 		if err != nil {
@@ -162,8 +161,9 @@ func (d *Database) RunControlTLSLeader(ctx context.Context, run func(context.Con
 				case <-ctx.Done():
 					check.Stop()
 					cancelLeader()
+					err := waitControlTLSLeader(result)
 					release()
-					return nil
+					return err
 				case <-check.C:
 					pingCtx, cancel := context.WithTimeout(context.Background(), controlTLSLeadershipCheckInterval)
 					_, err := transaction.Exec(pingCtx, `SELECT 1`)
@@ -171,14 +171,10 @@ func (d *Database) RunControlTLSLeader(ctx context.Context, run func(context.Con
 					if err != nil {
 						check.Stop()
 						cancelLeader()
+						callbackErr := waitControlTLSLeader(result)
 						release()
-						select {
-						case callbackErr := <-result:
-							if callbackErr != nil && !errors.Is(callbackErr, context.Canceled) {
-								return callbackErr
-							}
-						case <-time.After(5 * time.Second):
-							return fmt.Errorf("controlstate: stop control TLS leader after connection loss: %w", err)
+						if callbackErr != nil {
+							return fmt.Errorf("controlstate: stop control TLS leader after connection loss: %w", errors.Join(err, callbackErr))
 						}
 						if !waitControlTLSLeadershipRetry(ctx, retry.C) {
 							return nil
@@ -193,6 +189,20 @@ func (d *Database) RunControlTLSLeader(ctx context.Context, run func(context.Con
 		if !waitControlTLSLeadershipRetry(ctx, retry.C) {
 			return nil
 		}
+	}
+}
+
+func waitControlTLSLeader(result <-chan error) error {
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+	select {
+	case err := <-result:
+		if errors.Is(err, context.Canceled) {
+			return nil
+		}
+		return err
+	case <-timer.C:
+		return errors.New("controlstate: timed out stopping control TLS leader")
 	}
 }
 
