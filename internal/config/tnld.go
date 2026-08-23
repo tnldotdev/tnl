@@ -6,14 +6,18 @@ import (
 	"net"
 	"net/mail"
 	"net/url"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/credentials"
-	"github.com/0xcadams/tnl/internal/naming"
-	"github.com/0xcadams/tnl/pkg/protocol/workerv1"
 	"github.com/alecthomas/kong"
+	"github.com/tnldotdev/tnl/internal/backup"
+	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/pkg/protocol/workerv1"
 )
 
 // TNLDMode selects the responsibilities hosted by a tnld process.
@@ -34,19 +38,23 @@ func (m TNLDMode) UsesState() bool {
 // TNLD configures the tnl server.
 type TNLD struct {
 	Mode                     TNLDMode      `name:"mode" env:"TNLD_MODE" default:"standalone" enum:"standalone,edge,worker" help:"Process role: ${enum}."`
-	StateDir                 string        `name:"state-dir" env:"TNLD_STATE_DIR" help:"Directory for persistent state (required by standalone and edge modes)."`
+	StateDir                 string        `name:"state-dir" env:"TNLD_STATE_DIR" help:"Directory for persistent state; defaults to the platform user-state directory."`
+	BackupURL                string        `name:"backup-url" env:"TNLD_BACKUP_URL" help:"S3 URL for continuous state backup and restore."`
 	MetricsListen            string        `name:"metrics-listen" env:"TNLD_METRICS_LISTEN" default:"127.0.0.1:9090" help:"Private Prometheus listen address; empty disables metrics."`
-	PublicListen             string        `name:"public-listen" env:"TNLD_PUBLIC_LISTEN" help:"Public TLS listen address for the control API and routes; empty disables ingress."`
-	Domain                   string        `name:"domain" env:"TNLD_DOMAIN" help:"Canonical base domain; derives tnl.<domain> and apps.<domain>."`
+	PublicListen             string        `name:"public-listen" env:"TNLD_PUBLIC_LISTEN" default:":443" help:"Public TLS listen address for the control API and routes; empty disables ingress."`
+	Domain                   string        `name:"domain" env:"TNLD_DOMAIN" help:"Canonical domain shorthand; derives tnl.<domain> control and <domain> routes."`
+	ControlHostname          string        `name:"control-hostname" env:"TNLD_CONTROL_HOSTNAME" help:"Canonical control API hostname; overrides --domain derivation."`
+	PublicRouteSuffix        string        `name:"route-suffix" env:"TNLD_ROUTE_SUFFIX" help:"Canonical public route suffix; overrides --domain derivation."`
+	ReservedRouteNames       []string      `name:"reserved-route-name" env:"TNLD_RESERVED_ROUTE_NAMES" help:"Route base unavailable for user claims; repeat for each name."`
 	MaxActiveHostnameClaims  int           `name:"max-active-hostname-claims" env:"TNLD_MAX_ACTIVE_HOSTNAME_CLAIMS" default:"128" help:"Maximum active hostname claims per principal."`
 	MaxHostnameClaimRequests int           `name:"max-hostname-claim-requests" env:"TNLD_MAX_HOSTNAME_CLAIM_REQUESTS" default:"1024" help:"Maximum hostname claim request records per principal."`
-	ACMEDirectoryURL         string        `name:"acme-directory-url" env:"TNLD_ACME_DIRECTORY_URL" help:"ACME directory URL for automatic control and application certificates."`
+	ACMEDirectoryURL         string        `name:"acme-directory-url" env:"TNLD_ACME_DIRECTORY_URL" default:"https://acme-v02.api.letsencrypt.org/directory" help:"ACME directory URL for automatic control and application certificates."`
 	ACMEEmail                string        `name:"acme-email" env:"TNLD_ACME_EMAIL" help:"ACME account contact email."`
 	ACMEAcceptTerms          bool          `name:"acme-accept-terms" env:"TNLD_ACME_ACCEPT_TERMS" help:"Explicitly accept the ACME directory terms."`
 	ACMEProfile              string        `name:"acme-profile" env:"TNLD_ACME_PROFILE" default:"tlsserver" help:"ACME certificate profile advertised to agents."`
 	OIDCIssuer               string        `name:"oidc-issuer" env:"TNLD_OIDC_ISSUER" help:"OIDC issuer used for login."`
 	OIDCClientID             string        `name:"oidc-client-id" env:"TNLD_OIDC_CLIENT_ID" help:"OIDC client ID used for login."`
-	RelayProvider            string        `name:"relay-provider" env:"TNLD_RELAY_PROVIDER" help:"Hosted relay provider; set to tailcat to explicitly use Tailcat's public relays."`
+	RelayProvider            string        `name:"relay-provider" env:"TNLD_RELAY_PROVIDER" default:"tailcat" help:"Hosted relay provider."`
 	RelayMapFile             string        `name:"relay-map-file" env:"TNLD_RELAY_MAP_FILE" type:"path" help:"Approved DERP map JSON file."`
 	RelayProfile             string        `name:"relay-profile" env:"TNLD_RELAY_PROFILE" help:"DERP region code selected from a custom relay map."`
 	WorkerURL                string        `name:"worker-url" env:"TNLD_WORKER_URL" help:"Worker-mode WSS edge URL."`
@@ -65,6 +73,12 @@ type TNLD struct {
 func (c TNLD) Validate() error {
 	if c.Mode.UsesState() && strings.TrimSpace(c.StateDir) == "" {
 		return errors.New("state directory must not be empty")
+	}
+	if c.BackupURL != "" && !c.Mode.UsesState() {
+		return errors.New("backup requires a state-owning mode")
+	}
+	if err := backup.ValidateURL(c.BackupURL); err != nil {
+		return err
 	}
 	if err := validateListenAddress(c.MetricsListen); err != nil {
 		return fmt.Errorf("metrics listen address: %w", err)
@@ -94,13 +108,13 @@ func (c TNLD) Validate() error {
 	if c.RelayProvider != "" && c.RelayProvider != "tailcat" {
 		return errors.New("relay provider must be tailcat")
 	}
-	if c.RelayProvider != "" && (c.RelayMapFile != "" || c.RelayProfile != "") {
-		return errors.New("relay provider cannot be combined with a custom relay map or profile")
-	}
 	if err := c.validateOIDC(); err != nil {
 		return err
 	}
-	if c.ACMEDirectoryURL != "" || c.ACMEEmail != "" {
+	if err := c.validateHostnames(); err != nil {
+		return err
+	}
+	if c.ACMEEmail != "" {
 		if !validRelayProfile(c.ACMEProfile) {
 			return errors.New("ACME profile must contain only lowercase letters, digits, and hyphens")
 		}
@@ -121,13 +135,8 @@ func (c TNLD) Validate() error {
 		if !c.Mode.UsesState() {
 			return errors.New("worker mode cannot serve public ingress")
 		}
-		if c.Domain == "" {
-			return errors.New("domain is required when ingress is enabled")
-		}
-		canonicalDomain, err := naming.CanonicalizeHostname(c.Domain)
-		if err != nil || canonicalDomain != c.Domain ||
-			len("apps."+canonicalDomain) > naming.MaxHostnameBytes-naming.MaxLabelBytes-1 {
-			return errors.New("domain must be canonical and leave room for derived hostnames and one route label")
+		if c.ServerHostname() == "" || c.RouteSuffix() == "" {
+			return errors.New("control hostname and route suffix are required when ingress is enabled")
 		}
 		if !c.ACMEEnabled() {
 			return errors.New("ACME is required when ingress is enabled")
@@ -218,23 +227,104 @@ func (c TNLD) validateOIDC() error {
 	return nil
 }
 
+func (c TNLD) validateHostnames() error {
+	if c.Domain != "" {
+		canonical, err := naming.CanonicalizeHostname(c.Domain)
+		if err != nil || canonical != c.Domain {
+			return errors.New("domain must be canonical")
+		}
+	}
+	if hostname := c.ServerHostname(); hostname != "" {
+		canonical, err := naming.CanonicalizeHostname(hostname)
+		if err != nil || canonical != hostname {
+			return errors.New("control hostname must be canonical")
+		}
+	}
+	if suffix := c.RouteSuffix(); suffix != "" {
+		canonical, err := naming.CanonicalizeHostname(suffix)
+		if err != nil || canonical != suffix || len(suffix)+naming.MaxLabelBytes+1 > naming.MaxHostnameBytes {
+			return errors.New("route suffix must be canonical and leave room for a base label")
+		}
+	}
+	seen := make(map[string]struct{}, len(c.ReservedRouteNames))
+	for _, name := range c.ReservedRouteNames {
+		canonical, err := naming.CanonicalizeHostname(name)
+		if err != nil || canonical != name || strings.Contains(name, ".") {
+			return fmt.Errorf("reserved route name %q must be one canonical DNS label", name)
+		}
+		if _, exists := seen[name]; exists {
+			return fmt.Errorf("reserved route name %q is configured more than once", name)
+		}
+		seen[name] = struct{}{}
+	}
+	return nil
+}
+
 // ACMEEnabled reports whether automatic certificates are configured.
 func (c TNLD) ACMEEnabled() bool { return c.ACMEDirectoryURL != "" && c.ACMEEmail != "" }
 
-// ServerHostname returns the control API hostname derived from Domain.
+// ServerHostname returns the explicit or domain-derived control API hostname.
 func (c TNLD) ServerHostname() string {
+	if c.ControlHostname != "" {
+		return c.ControlHostname
+	}
 	if c.Domain == "" {
 		return ""
 	}
 	return "tnl." + c.Domain
 }
 
-// RouteSuffix returns the public application suffix derived from Domain.
+// RouteSuffix returns the explicit or domain-derived public application suffix.
 func (c TNLD) RouteSuffix() string {
+	if c.PublicRouteSuffix != "" {
+		return c.PublicRouteSuffix
+	}
 	if c.Domain == "" {
 		return ""
 	}
-	return "apps." + c.Domain
+	return c.Domain
+}
+
+// EffectiveReservedRouteNames returns configured reservations plus domains and
+// the control base when the control hostname is directly beneath the route suffix.
+func (c TNLD) EffectiveReservedRouteNames() []string {
+	result := make([]string, 0, len(c.ReservedRouteNames)+2)
+	seen := make(map[string]struct{}, len(c.ReservedRouteNames)+2)
+	add := func(name string) {
+		if _, exists := seen[name]; exists {
+			return
+		}
+		seen[name] = struct{}{}
+		result = append(result, name)
+	}
+	for _, name := range c.ReservedRouteNames {
+		add(name)
+	}
+	add("domains")
+	hostname, suffix := c.ServerHostname(), c.RouteSuffix()
+	if base, found := strings.CutSuffix(hostname, "."+suffix); found && base != "" && !strings.Contains(base, ".") {
+		add(base)
+	}
+	return result
+}
+
+// DefaultServerStateDir returns the native daemon and administration state path.
+func DefaultServerStateDir() (string, error) {
+	var root string
+	var err error
+	if runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
+		root = os.Getenv("XDG_STATE_HOME")
+		if root == "" {
+			root, err = os.UserHomeDir()
+			root = filepath.Join(root, ".local", "state")
+		}
+	} else {
+		root, err = os.UserConfigDir()
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve user state directory: %w", err)
+	}
+	return filepath.Join(root, "tnl", "server"), nil
 }
 
 func validRelayProfile(profile string) bool {
@@ -269,9 +359,10 @@ func validateListenAddress(address string) error {
 
 // ParseTNLD parses tnld flags and environment variables.
 func ParseTNLD(args []string) (TNLD, error) {
-	var config TNLD
+	type arguments TNLD
+	var flags arguments
 	parser, err := kong.New(
-		&config,
+		&flags,
 		kong.Name("tnld"),
 		kong.Description("tnl server."),
 	)
@@ -279,6 +370,19 @@ func ParseTNLD(args []string) (TNLD, error) {
 		return TNLD{}, err
 	}
 	if _, err := parser.Parse(args); err != nil {
+		return TNLD{}, err
+	}
+	config := TNLD(flags)
+	if config.Mode.UsesState() && config.StateDir == "" {
+		config.StateDir, err = DefaultServerStateDir()
+		if err != nil {
+			return TNLD{}, err
+		}
+	}
+	if config.Mode == TNLDModeWorker && config.PublicListen == ":443" {
+		config.PublicListen = ""
+	}
+	if err := config.Validate(); err != nil {
 		return TNLD{}, err
 	}
 	return config, nil

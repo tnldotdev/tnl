@@ -12,11 +12,11 @@ names:
 | Purpose | Name | Listener |
 | --- | --- | --- |
 | Server API | `tnl.example.com` | TCP 443 |
-| Public routes | `*.apps.example.com` | TCP 443 |
+| Public routes | `*.example.com` | TCP 443 |
 
-Create A and, when applicable, AAAA records for both names. The wildcard must
-resolve directly to public ingress. If CAA records are present, authorize the
-configured ACME CA.
+Create wildcard A and, when applicable, AAAA records that resolve directly to
+public ingress. The wildcard also covers `tnl.example.com`. If CAA records are
+present, authorize the configured ACME CA.
 
 The reference Compose files publish IPv4 because `TNL_PUBLIC_BIND` defaults to
 `0.0.0.0`. Publish AAAA records only after adding equivalent `[::]` mappings in
@@ -33,7 +33,7 @@ Prerequisites:
 
 - A Linux host with Docker Engine and Docker Compose v2.
 - A verified, digest-pinned tnl image.
-- DNS for `tnl.<domain>` and `*.apps.<domain>`.
+- DNS for `*.<domain>`.
 - An ACME service that supports TLS-ALPN-01 and the configured application
   certificate profile.
 
@@ -47,7 +47,7 @@ install -m 0600 .env.example .env
 Set these values in `.env`:
 
 - `TNL_IMAGE`: the verified image digest, such as
-  `ghcr.io/0xcadams/tnl@sha256:...`.
+  `ghcr.io/tnldotdev/tnl@sha256:...`.
 - `TNLD_DOMAIN`: the base domain from which control and route names are derived.
 - `TNLD_ACME_DIRECTORY_URL`, `TNLD_ACME_EMAIL`, and
   `TNLD_ACME_ACCEPT_TERMS=true`: the ACME account configuration.
@@ -92,6 +92,7 @@ otherwise `tnl login` prompts for the login token:
 
 ```console
 tnl login https://tnl.example.com
+tnl host claim demo
 tnl public http://127.0.0.1:3000 --name=demo
 ```
 
@@ -100,19 +101,26 @@ certificate automatically. It prints lifecycle messages to stderr; use
 `--output=ndjson` for bounded machine-readable events on stdout. A second
 interrupt exits immediately.
 
-The route becomes `https://demo.apps.example.com`. Omit `--name` for a stable
-random label. Manage durable claims with:
+The route becomes `https://demo.example.com`. Omit `--name` for a fresh friendly
+ephemeral name on every invocation. A persistent base can authorize its apex and
+descendants up to eight labels deep. Manage persistent claims with:
 
 ```console
 tnl host list
-tnl host release demo.apps.example.com
+tnl host release demo.example.com
 tnl logout
 ```
 
-Release is permanent: the hostname is tombstoned and cannot be reclaimed.
-Access credentials expire after 30 days at most. Existing lease-token
+Managed release stops its routes and frees active quota, but the base remains
+permanently bound to its original owner and may be reactivated. Access
+credentials expire after 30 days at most. Existing lease-token
 heartbeats can continue, but a later client restart or hostname command may
 require `tnl login` again.
+
+To use a custom domain, run `tnl host claim docs.other.com.`. The command prints
+the exact claim-specific CNAME records, or the apex verification CNAME and
+ingress addresses, then waits for DNS proof. Custom-domain release stops its
+routes and permits another owner to claim it only after fresh proof.
 
 ## OIDC Login
 
@@ -190,18 +198,32 @@ docker compose start tnld
 
 ## State And Recovery
 
-`tnld` stores SQLite files, ACME account and certificate data, the login
-token, and the pinned relay region under `/var/lib/tnl`. The default Compose
-project keeps that directory in the `tnl_tnld-state` named volume.
+`tnld.db` contains all durable daemon state, including ACME data, the login
+token, and the pinned relay region. The default Compose project stores it in the
+`tnl_tnld-state` named volume.
 
-Only take cold backups: stop `tnld`, archive the complete volume, and then
-restart it. Copying only `tnld.db` omits required files; copying a live database
-can lose WAL transactions or produce an inconsistent backup. See
-[Releases](releases.md) for backup, restore, upgrade, and rollback commands.
+Set `TNLD_BACKUP_URL=s3://bucket/path` to continuously replicate the database
+with Litestream. AWS environment variables, shared credentials, instance roles,
+and web identity are supported. For S3-compatible storage, add `endpoint` and
+optional `region` query parameters to the URL. Protect the bucket with provider
+encryption and access controls because backups contain credentials and private
+keys.
 
-Treat backups and login tokens as secrets. Test restoration regularly on an
-isolated host and encrypt backups at rest. `tnld` takes an exclusive state lock
-and refuses to start a second state-owning process on the same directory.
+At startup, a state-owning `tnld` restores the newest backup only when
+`tnld.db` is absent. If the remote path is empty, it initializes a fresh
+database. On shutdown it stops mutations and performs a final backup sync before
+releasing the state lock.
+
+For a cold standby, keep its state volume empty and do not start it until the
+active edge is stopped or fenced. Start it with the same backup URL and external
+configuration, then verify the restored control endpoint before directing
+traffic to it. Never run two state owners against one backup path. Test this
+promotion regularly; the recovery point is the latest successful Litestream
+sync.
+
+Without `TNLD_BACKUP_URL`, stop `tnld` before archiving its state volume. Do not
+copy a live SQLite file directly. See [Releases](releases.md) for upgrade and
+rollback commands.
 
 To rotate the login token, stop the state owner and run:
 
@@ -215,8 +237,8 @@ Rotation invalidates the old login credential but does not revoke access
 tokens already issued from it. Use `tnl logout` from enrolled clients to revoke
 their current access tokens.
 
-Each client stores its access credential, private keys, certificate state, and
-stable random-name selection under `TNL_STATE_DIR`. Its default is the user
+Each client stores its access credential, private keys, and certificate state
+under `TNL_STATE_DIR`. Its default is the user
 configuration directory followed by `tnl` (`~/.config/tnl` on typical Linux
 systems and `~/Library/Application Support/tnl` on macOS). Stop every `tnl`
 process before backing up that complete directory.

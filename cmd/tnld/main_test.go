@@ -15,16 +15,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/config"
-	"github.com/0xcadams/tnl/internal/credentials"
-	"github.com/0xcadams/tnl/internal/observability"
-	"github.com/0xcadams/tnl/internal/serverclient"
-	"github.com/0xcadams/tnl/internal/state"
-	"github.com/0xcadams/tnl/internal/testutil/integrationtest"
-	"github.com/0xcadams/tnl/internal/worker"
-	"github.com/0xcadams/tnl/internal/workersession"
-	"github.com/0xcadams/tnl/pkg/protocol/serverv1"
-	"github.com/0xcadams/tnl/pkg/protocol/workerv1"
+	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/dnsready"
+	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/serverclient"
+	"github.com/tnldotdev/tnl/internal/state"
+	"github.com/tnldotdev/tnl/internal/testutil/integrationtest"
+	"github.com/tnldotdev/tnl/internal/worker"
+	"github.com/tnldotdev/tnl/internal/workersession"
+	"github.com/tnldotdev/tnl/pkg/protocol/serverv1"
+	"github.com/tnldotdev/tnl/pkg/protocol/workerv1"
 	"tailscale.com/tailcfg"
 )
 
@@ -61,8 +62,15 @@ func TestTokenCommands(t *testing.T) {
 
 func TestLoginTokenCommand(t *testing.T) {
 	directory := t.TempDir()
-	token, _, err := state.EnsureLoginToken(directory)
+	db, err := state.Open(t.Context(), directory)
 	if err != nil {
+		t.Fatal(err)
+	}
+	token, _, err := state.EnsureLoginToken(t.Context(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
 	var output bytes.Buffer
@@ -103,6 +111,13 @@ func TestIntegrationStandaloneControlLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	dnsAddress := integrationtest.StartChallengeDNS(t)
+	dnsDialer := new(net.Dialer)
+	testResolver := &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return dnsDialer.DialContext(ctx, "udp", dnsAddress)
+		},
+	}
 	pebble := integrationtest.StartPebble(t, pebblePath, publicPort, dnsAddress)
 	previousTransport := http.DefaultTransport
 	http.DefaultTransport = pebble.HTTPClient().Transport
@@ -122,9 +137,11 @@ func TestIntegrationStandaloneControlLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	running := &daemon{db: db, login: login}
+	running := &daemon{db: db, login: login, dns: dnsready.NewWithResolver("tnl.example", "example", testResolver)}
 	t.Cleanup(func() { _ = running.shutdown(time.Second) })
-	controlDone, ingressDone, err := running.startServer(context.Background(), cfg, observability.New("standalone"))
+	serverContext, cancelServer := context.WithCancel(context.Background())
+	t.Cleanup(cancelServer)
+	controlDone, ingressDone, err := running.startServer(serverContext, cfg, observability.New("standalone"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +171,20 @@ func TestIntegrationStandaloneControlLifecycle(t *testing.T) {
 	if capabilities.Transport.RelayProfile != "test" || capabilities.Transport.Type != serverv1.Tailcat {
 		t.Fatalf("capabilities = %#v", capabilities)
 	}
-	claim, err := client.ClaimHostname(context.Background(), "route", "standalone-test")
+	deadline := time.Now().Add(5 * time.Second)
+	for !capabilities.DnsReady && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+		capabilities, err = client.Capabilities(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !capabilities.DnsReady || len(capabilities.IngressIpv4) != 1 || capabilities.IngressIpv4[0] != "127.0.0.1" || len(capabilities.IngressIpv6) != 0 {
+		t.Fatalf("DNS capabilities = %#v", capabilities)
+	}
+	claim, err := client.ClaimName(
+		context.Background(), serverv1.CreateHostnameClaimRequestKindPersistentManaged, "route", "standalone-test",
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +196,7 @@ func TestIntegrationStandaloneControlLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	setup, err := client.CreateRoute(context.Background(), serverv1.CreateRouteRequest{
-		Hostname: "route.apps.example", DisplayTarget: "http://127.0.0.1:3000", RouteToken: routeToken.String(),
+		Hostname: "route.example", DisplayTarget: "http://127.0.0.1:3000", RouteToken: routeToken.String(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -180,7 +210,8 @@ func TestIntegrationStandaloneControlLifecycle(t *testing.T) {
 	if err := client.ReleaseHostnameClaim(context.Background(), claim.Id); err != nil {
 		t.Fatal(err)
 	}
-	if claims, err := client.ListHostnameClaims(context.Background()); err != nil || len(claims) != 0 {
+	if claims, err := client.ListHostnameClaims(context.Background()); err != nil || len(claims) != 1 ||
+		claims[0].Id != claim.Id || claims[0].State != serverv1.HostnameClaimStateReleasedOwned {
 		t.Fatalf("hostname claims after release = %#v, %v", claims, err)
 	}
 	if err := running.shutdown(time.Second); err != nil {

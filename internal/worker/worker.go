@@ -9,7 +9,7 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/0xcadams/tnl/internal/tailtransport"
+	"github.com/tnldotdev/tnl/internal/tailtransport"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
 	"tailscale.com/types/logger"
