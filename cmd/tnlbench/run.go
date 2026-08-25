@@ -30,6 +30,7 @@ const (
 
 type runCommand struct {
 	Suite        string `name:"suite" env:"BENCH_SUITE" required:"" help:"Explicit suite to execute: smoke, scout, confirm, or compatibility."`
+	Axis         string `name:"axis" env:"BENCH_AXIS" help:"Select one axis from the suite, preserving its targets and order."`
 	ProfileFile  string `name:"profile" env:"BENCH_PROFILE" default:"benchmarks/suites/fly-production.json" type:"path" help:"Production-candidate benchmark profile."`
 	Routes       int    `name:"routes" env:"BENCH_ROUTES" help:"Route count override; required for confirm."`
 	FreshRate    int    `name:"fresh-connections-per-second" env:"BENCH_FRESH_CONNECTIONS_PER_SECOND" help:"Fresh visitor connection rate override; required for confirm."`
@@ -199,7 +200,7 @@ func (c runCommand) run(ctx context.Context, stdout io.Writer) (retErr error) {
 		return err
 	}
 	plan, err := (planCommand{
-		Suite: c.Suite, ProfileFile: c.ProfileFile, Routes: c.Routes, FreshRate: c.FreshRate,
+		Suite: c.Suite, Axis: c.Axis, ProfileFile: c.ProfileFile, Routes: c.Routes, FreshRate: c.FreshRate,
 		HeldStreams: c.HeldStreams, ChurnRate: c.ChurnRate, PayloadBytes: c.PayloadBytes,
 		Repetitions: c.Repetitions, Format: "json",
 	}).build(time.Now())
@@ -313,12 +314,6 @@ func (c runCommand) run(ctx context.Context, stdout io.Writer) (retErr error) {
 	if err := saveManifest(manifestPath, &manifest); err != nil {
 		return err
 	}
-	progress.printf("report: writing result artifacts")
-	if err := (reportCommand{RunDirectory: runDirectory}).run(stdout); err != nil {
-		return err
-	}
-	reportWritten = true
-	progress.printf("report: complete")
 	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cleanupCancel()
 	progress.printf("cleanup: starting")
@@ -327,6 +322,12 @@ func (c runCommand) run(ctx context.Context, stdout io.Writer) (retErr error) {
 	}
 	cleanupNeeded = false
 	progress.printf("cleanup: complete")
+	progress.printf("report: writing result artifacts")
+	if err := (reportCommand{RunDirectory: runDirectory}).run(stdout); err != nil {
+		return err
+	}
+	reportWritten = true
+	progress.printf("report: complete")
 	if campaignFailed {
 		return fmt.Errorf("benchmark completed with failed cells; see %s", filepath.Join(runDirectory, "report.json"))
 	}
@@ -1104,7 +1105,8 @@ func captureCellDiagnostics(fly flyPlatform, benchmark provisionedBenchmark, cel
 		benchmarkDiagnosticApp{name: "load", app: benchmark.apps["load"]},
 		benchmarkDiagnosticApp{name: "control", app: benchmark.apps["control"]},
 		benchmarkDiagnosticApp{name: "ingress", app: benchmark.apps["ingress"]},
-		benchmarkDiagnosticApp{name: "relay", app: benchmark.apps["relay"]},
+		benchmarkDiagnosticApp{name: "relay-a", app: benchmark.apps["relay-a"]},
+		benchmarkDiagnosticApp{name: "relay-b", app: benchmark.apps["relay-b"]},
 	)
 }
 

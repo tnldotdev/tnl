@@ -22,6 +22,7 @@ const (
 
 type planCommand struct {
 	Suite        string `name:"suite" env:"BENCH_SUITE" default:"smoke" help:"Named suite to expand: smoke, scout, confirm, or compatibility."`
+	Axis         string `name:"axis" env:"BENCH_AXIS" help:"Select one axis from the suite, preserving its targets and order."`
 	ProfileFile  string `name:"profile" env:"BENCH_PROFILE" default:"benchmarks/suites/fly-production.json" type:"path" help:"Production-candidate benchmark profile."`
 	Routes       int    `name:"routes" env:"BENCH_ROUTES" help:"Route count overriding the suite; required for confirm."`
 	FreshRate    int    `name:"fresh-connections-per-second" env:"BENCH_FRESH_CONNECTIONS_PER_SECOND" help:"Total fresh visitor connections per second overriding the suite; required for confirm."`
@@ -115,6 +116,7 @@ type benchmarkPlan struct {
 	ReadOnly                        bool                     `json:"read_only"`
 	ProfileID                       string                   `json:"profile_id"`
 	Suite                           string                   `json:"suite"`
+	Axis                            string                   `json:"axis,omitempty"`
 	Region                          string                   `json:"region"`
 	Topology                        benchmarkTopology        `json:"topology"`
 	Machines                        benchmarkMachines        `json:"machines"`
@@ -210,9 +212,19 @@ func (c planCommand) build(now time.Time) (benchmarkPlan, error) {
 	if definition.Repetitions < 1 || definition.Repetitions > 10 {
 		return benchmarkPlan{}, errors.New("repetitions must be between 1 and 10")
 	}
+	if c.Axis != "" {
+		found := false
+		for _, spec := range definition.Cells {
+			found = found || spec.Axis == c.Axis
+		}
+		if !found {
+			return benchmarkPlan{}, fmt.Errorf("axis %q is not present in suite %q", c.Axis, c.Suite)
+		}
+	}
 
 	plan := benchmarkPlan{
 		SchemaVersion: 3, ReadOnly: true, ProfileID: profile.ID, Suite: c.Suite, Region: profile.Region,
+		Axis:     c.Axis,
 		Topology: profile.Topology, Machines: profile.Machines, ManagedPostgres: profile.ManagedPostgres,
 		WorkerLimits:            profile.WorkerLimits,
 		CertificateAuthority:    definition.CertificateAuthority,
@@ -244,6 +256,9 @@ func (c planCommand) build(now time.Time) (benchmarkPlan, error) {
 		plan.Warnings = append(plan.Warnings, "pricing snapshot is more than 90 days old")
 	}
 	for sequence, spec := range definition.Cells {
+		if c.Axis != "" && spec.Axis != c.Axis {
+			continue
+		}
 		if err := validateCellSpec(spec); err != nil {
 			return benchmarkPlan{}, fmt.Errorf("suite %q: %w", c.Suite, err)
 		}
@@ -441,7 +456,7 @@ func estimatedMonthlyCost(profile benchmarkProfile, cell planCell, certificateAu
 func configuredOverrides() map[string]string {
 	result := make(map[string]string)
 	for _, name := range []string{
-		"BENCH_SUITE", "BENCH_PROFILE", "BENCH_ROUTES", "BENCH_FRESH_CONNECTIONS_PER_SECOND",
+		"BENCH_SUITE", "BENCH_AXIS", "BENCH_PROFILE", "BENCH_ROUTES", "BENCH_FRESH_CONNECTIONS_PER_SECOND",
 		"BENCH_HELD_STREAMS", "BENCH_LIFECYCLE_CHURN_PER_SECOND", "BENCH_PAYLOAD_BYTES", "BENCH_REPETITIONS",
 	} {
 		if value, found := os.LookupEnv(name); found {
@@ -455,6 +470,9 @@ func writeHumanPlan(destination io.Writer, plan benchmarkPlan) error {
 	output := new(bytes.Buffer)
 	fmt.Fprintln(output, "Benchmark plan (READ ONLY)")
 	fmt.Fprintf(output, "Profile: %s  Suite: %s  Region: %s\n", plan.ProfileID, plan.Suite, plan.Region)
+	if plan.Axis != "" {
+		fmt.Fprintf(output, "Selected axis: %s\n", plan.Axis)
+	}
 	fmt.Fprintf(output, "Topology: %d control, %d ingress, %dx%d relay processes\n\n",
 		plan.Topology.ControlProcesses, plan.Topology.IngressProcesses,
 		plan.Topology.RelayServices, plan.Topology.RelayProcessesPerService)

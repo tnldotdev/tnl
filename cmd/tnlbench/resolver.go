@@ -105,6 +105,10 @@ func (r *authoritativeResolver) ServeDNS(writer mdns.ResponseWriter, request *md
 		_ = writer.WriteMsg(response)
 		return
 	}
+	if request.Question[0].Qtype == mdns.TypeA || request.Question[0].Qtype == mdns.TypeAAAA {
+		r.serveAddress(writer, request, nameServers)
+		return
+	}
 	started := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), r.lookupTimeout)
 	defer cancel()
@@ -153,6 +157,37 @@ func (r *authoritativeResolver) ServeDNS(writer mdns.ResponseWriter, request *md
 		case <-timer.C:
 		}
 	}
+}
+
+// Address lookups must finish inside the Go resolver's per-attempt deadline.
+// Propagation retries belong to the explicit DNS-readiness phase, not a DNS
+// server that keeps working after its caller has abandoned the connection.
+func (r *authoritativeResolver) serveAddress(writer mdns.ResponseWriter, request *mdns.Msg, nameServers []string) {
+	response := new(mdns.Msg)
+	response.SetRcode(request, mdns.RcodeServerFailure)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	start := int(r.next.Add(1)-1) % len(nameServers)
+	for offset := range len(nameServers) {
+		attemptCtx, stop := context.WithTimeout(ctx, 500*time.Millisecond)
+		upstream, _, err := r.exchange(attemptCtx, request.Copy(), nameServers[(start+offset)%len(nameServers)])
+		stop()
+		if err != nil || upstream == nil || !upstream.Authoritative {
+			continue
+		}
+		if upstream.Rcode != mdns.RcodeSuccess && upstream.Rcode != mdns.RcodeNameError {
+			continue
+		}
+		response = upstream
+		for _, answer := range upstream.Answer {
+			if upstream.Rcode == mdns.RcodeSuccess && answer.Header().Rrtype == request.Question[0].Qtype &&
+				strings.EqualFold(answer.Header().Name, request.Question[0].Name) {
+				_ = writer.WriteMsg(response)
+				return
+			}
+		}
+	}
+	_ = writer.WriteMsg(response)
 }
 
 func (r *authoritativeResolver) nameServers(name string) ([]string, bool) {

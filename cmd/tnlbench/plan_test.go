@@ -6,6 +6,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -158,5 +159,44 @@ func TestDecodeJSONFileRejectsUnknownFields(t *testing.T) {
 func repositoryPlanCommand(suite string) planCommand {
 	return planCommand{
 		Suite: suite, ProfileFile: filepath.Join("..", "..", "benchmarks", "suites", "fly-production.json"), Format: "human",
+	}
+}
+
+func TestAxisSelectionPreservesTargetsAndRepricesPlan(t *testing.T) {
+	now := time.Now()
+	full, err := repositoryPlanCommand("scout").build(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, axis := range []string{"active_routes", "bandwidth"} {
+		command := repositoryPlanCommand("scout")
+		command.Axis = axis
+		selected, err := command.build(now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var want []planCell
+		for _, cell := range full.Cells {
+			if cell.Axis == axis {
+				want = append(want, cell)
+			}
+		}
+		if !slices.Equal(selected.Cells, want) || selected.Axis != axis || selected.ExpectedSpendUSD >= full.ExpectedSpendUSD || selected.MaximumSpendUSD >= full.MaximumSpendUSD {
+			t.Fatalf("axis selection changed targets or failed to reprice: %+v", selected)
+		}
+		if axis == "active_routes" && (selected.ExpectedResultRows != 14 || selected.ExpectedDurationSeconds != 2360 || selected.MaximumDurationSeconds != 6560) {
+			t.Fatalf("active-route estimates include excluded cells: %+v", selected)
+		}
+		var text bytes.Buffer
+		if err := writeHumanPlan(&text, selected); err != nil || !strings.Contains(text.String(), "Selected axis: "+axis) {
+			t.Fatalf("selected axis missing from plan: %v", err)
+		}
+	}
+	for _, axis := range []string{"typo", "confirm", "active_routes,bandwidth"} {
+		command := repositoryPlanCommand("scout")
+		command.Axis = axis
+		if _, err := command.build(now); err == nil {
+			t.Fatalf("absent axis %q silently accepted", axis)
+		}
 	}
 }
