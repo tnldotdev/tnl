@@ -2,6 +2,7 @@ package tnldruntime
 
 import (
 	"context"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -294,7 +295,7 @@ func TestTopologyCleanupKeepsControlUntilAllIncarnationsDrain(t *testing.T) {
 
 func TestDNSGateAllowsTrafficAndCancelsAtomically(t *testing.T) {
 	f := &integrationRoute53{zoneID: "unit", zone: &integrationDNSZone{Name: "example.test.", records: map[string]integrationDNSRecord{
-		"existing.example.test./A": {Name: "existing.example.test.", Type: "A", TTL: 1, Values: []string{"127.0.0.1"}},
+		"existing.example.test./A": {Name: "existing.example.test.", Type: "A", TTL: 1, Values: []integrationDNSValue{{Value: "127.0.0.1"}}},
 	}}}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -364,5 +365,32 @@ func TestDNSGateAllowsTrafficAndCancelsAtomically(t *testing.T) {
 	defer f.mu.Unlock()
 	if len(f.zone.records) != 2 || len(f.changes) != 1 {
 		t.Fatalf("canceled/invalid batch mutated records: %#v, %#v", f.zone.records, f.changes)
+	}
+}
+
+func TestRoute53FixtureEncodesMultipleResourceRecords(t *testing.T) {
+	response := struct {
+		Records []integrationDNSRecord `xml:"ResourceRecordSets>ResourceRecordSet"`
+	}{Records: []integrationDNSRecord{{
+		Name: "_acme-challenge.example.test.", Type: "TXT", TTL: 60,
+		Values: []integrationDNSValue{{Value: "first"}, {Value: "second"}},
+	}}}
+	var encoded strings.Builder
+	if err := xml.NewEncoder(&encoded).EncodeElement(response, xml.StartElement{Name: xml.Name{Local: "ListResourceRecordSetsResponse"}}); err != nil {
+		t.Fatal(err)
+	}
+	const records = "<ResourceRecords><ResourceRecord><Value>first</Value></ResourceRecord><ResourceRecord><Value>second</Value></ResourceRecord></ResourceRecords>"
+	if !strings.Contains(encoded.String(), records) {
+		t.Fatalf("Route 53 resource records encoded as %s", encoded.String())
+	}
+	var decoded struct {
+		Records []integrationDNSRecord `xml:"ResourceRecordSets>ResourceRecordSet"`
+	}
+	if err := xml.Unmarshal([]byte(encoded.String()), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Records) != 1 || len(decoded.Records[0].Values) != 2 ||
+		decoded.Records[0].Values[0].Value != "first" || decoded.Records[0].Values[1].Value != "second" {
+		t.Fatalf("Route 53 resource records decoded as %#v", decoded.Records)
 	}
 }
