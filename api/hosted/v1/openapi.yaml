@@ -1,0 +1,11 @@
+openapi: 3.1.0
+info:
+  title: tnl hosted API
+  version: 1.0.0
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+servers:
+  - url: https://accounts.tnl.dev
+paths: {}

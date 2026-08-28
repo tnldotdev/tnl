@@ -1,0 +1,8 @@
+{
+  "type": "https://tnl.dev/problems/name-unavailable",
+  "title": "Name unavailable",
+  "status": 409,
+  "code": "name_unavailable",
+  "request_id": "req_example",
+  "details": {}
+}

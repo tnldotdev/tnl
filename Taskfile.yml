@@ -5,6 +5,10 @@ tasks:
     desc: Regenerate all committed artifacts
     deps: [go:generate, ts:generate]
 
+  generate-check:
+    desc: Check generated files for drift
+    deps: [go:generate-check, ts:generate-check]
+
   format:
     desc: Format all source files
     deps: [go:format, ts:format]
@@ -32,6 +36,11 @@ tasks:
   go:generate:
     cmds:
       - go generate ./...
+
+  go:generate-check:
+    cmds:
+      - task: go:generate
+      - git diff --exit-code -- pkg/protocol
 
   go:format:
     cmds:
@@ -69,6 +78,11 @@ tasks:
     cmds:
       - pnpm generate
 
+  ts:generate-check:
+    cmds:
+      - task: ts:generate
+      - git diff --exit-code -- packages/hosted-protocol/src/generated
+
   ts:format:
     cmds:
       - pnpm format
@@ -84,6 +98,7 @@ tasks:
   ts:lint:
     cmds:
       - pnpm lint
+      - pnpm lint:contracts
 
   ts:test:
     cmds:
