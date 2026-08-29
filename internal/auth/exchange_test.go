@@ -12,23 +12,23 @@ import (
 	"github.com/0xcadams/tnl/internal/state"
 )
 
-func TestNewTokenExchangeRejectsInvalidConfiguration(t *testing.T) {
+func TestNewServiceRejectsInvalidConfiguration(t *testing.T) {
 	db, err := state.Open(context.Background(), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	if _, err := NewTokenExchange(db, "invalid"); !errors.Is(err, credentials.ErrInvalidBootstrapToken) {
+	if _, err := NewService(db, "invalid"); !errors.Is(err, credentials.ErrInvalidBootstrapToken) {
 		t.Fatalf("invalid bootstrap configuration error = %v", err)
 	}
-	if _, err := NewTokenExchange(nil, "invalid"); err == nil {
+	if _, err := NewService(nil, "invalid"); err == nil {
 		t.Fatal("nil state database accepted")
 	}
 }
 
 func TestTokenExchangeReusesLocalPrincipal(t *testing.T) {
-	db, bootstrap, exchange := newTestTokenExchange(t)
+	db, bootstrap, exchange := newTestService(t)
 	now := time.Date(2026, time.August, 29, 12, 0, 0, 0, time.UTC)
 	exchange.now = func() time.Time { return now }
 
@@ -66,7 +66,7 @@ func TestTokenExchangeReusesLocalPrincipal(t *testing.T) {
 }
 
 func TestTokenExchangeRejectsInvalidWrongClassAndRotatedTokens(t *testing.T) {
-	db, bootstrap, exchange := newTestTokenExchange(t)
+	db, bootstrap, exchange := newTestService(t)
 	var err error
 	access, _, _, err := credentials.NewAccessToken()
 	if err != nil {
@@ -90,7 +90,7 @@ func TestTokenExchangeRejectsInvalidWrongClassAndRotatedTokens(t *testing.T) {
 		})
 	}
 
-	rotatedExchange, err := NewTokenExchange(db, rotated)
+	rotatedExchange, err := NewService(db, rotated)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestTokenExchangeRejectsInvalidWrongClassAndRotatedTokens(t *testing.T) {
 }
 
 func TestTokenExchangeReturnsNoSecretAfterStorageFailure(t *testing.T) {
-	db, bootstrap, exchange := newTestTokenExchange(t)
+	db, bootstrap, exchange := newTestService(t)
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestTokenExchangeReturnsNoSecretAfterStorageFailure(t *testing.T) {
 }
 
 func TestTokenExchangeConcurrentFirstUse(t *testing.T) {
-	db, bootstrap, exchange := newTestTokenExchange(t)
+	db, bootstrap, exchange := newTestService(t)
 	const exchanges = 8
 	errors := make(chan error, exchanges)
 	for range exchanges {
@@ -139,7 +139,7 @@ func TestTokenExchangeConcurrentFirstUse(t *testing.T) {
 	}
 }
 
-func newTestTokenExchange(t *testing.T) (*sql.DB, credentials.BootstrapToken, *TokenExchange) {
+func newTestService(t *testing.T) (*sql.DB, credentials.BootstrapToken, *Service) {
 	t.Helper()
 	db, err := state.Open(context.Background(), t.TempDir())
 	if err != nil {
@@ -150,7 +150,7 @@ func newTestTokenExchange(t *testing.T) (*sql.DB, credentials.BootstrapToken, *T
 	if err != nil {
 		t.Fatal(err)
 	}
-	exchange, err := NewTokenExchange(db, bootstrap)
+	exchange, err := NewService(db, bootstrap)
 	if err != nil {
 		t.Fatal(err)
 	}
