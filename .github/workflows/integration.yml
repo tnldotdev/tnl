@@ -1,11 +1,9 @@
-name: Fuzz
+name: Integration
 
 on:
   pull_request:
   push:
     branches: [main]
-  schedule:
-    - cron: "0 8 * * *"
 
 permissions:
   contents: read
@@ -14,14 +12,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  GOFLAGS: -tags=ts_omit_ssh
-
 jobs:
-  fuzz:
-    name: Go fuzz
+  integration:
+    name: Go integration
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -34,9 +29,10 @@ jobs:
           go-version-file: go.mod
           cache: false
 
-      - name: Run fuzz tests
-        env:
-          FUZZ_TIME: ${{ github.event_name == 'schedule' && '5m' || '15s' }}
+      - name: Install pinned tools
         run: |
-          go test ./internal/router -run='^$' -fuzz=. -fuzztime="$FUZZ_TIME"
-          go test ./internal/proxyproto -run='^$' -fuzz=. -fuzztime="$FUZZ_TIME"
+          go install github.com/go-task/task/v3/cmd/task@v3.53.1
+          go install github.com/letsencrypt/pebble/v2/cmd/pebble@v2.10.1
+
+      - name: Run integration tests
+        run: task go:test-integration
