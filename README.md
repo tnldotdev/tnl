@@ -24,3 +24,6 @@ mise exec -- task format-check lint test build
 
 Go and TypeScript checks remain independent. Building the core Go commands does
 not require Node.
+
+The opt-in Tailcat capacity and churn benchmarks are documented in
+[`docs/benchmarks`](docs/benchmarks/README.md).
