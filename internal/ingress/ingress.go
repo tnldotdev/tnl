@@ -30,6 +30,7 @@ type Metrics interface {
 
 type Config struct {
 	Lookup              LookupFunc
+	LookupChallenge     LookupFunc
 	RequireProxyHeader  bool
 	MaxConnections      int
 	MaxRouteConnections int
@@ -138,6 +139,9 @@ func (s *Server) handle(public net.Conn) error {
 		return nil
 	}
 	backend, ok := s.config.Lookup(hello.ServerName)
+	if hello.ACMETLSALPN && s.config.LookupChallenge != nil {
+		backend, ok = s.config.LookupChallenge(hello.ServerName)
+	}
 	if !ok {
 		return nil
 	}

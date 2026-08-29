@@ -71,6 +71,7 @@ type Coordinator struct {
 	owners      map[string]*ownerState
 	pending     map[worker.RouteRef]pendingLease
 	assignments map[string]*assignment
+	challenges  map[string]*assignment
 	routeLocks  [routeLockStripes]sync.Mutex
 	snapshot    atomic.Pointer[routeSnapshot]
 	closed      bool
@@ -92,6 +93,7 @@ func NewCoordinator(ctx context.Context, store *Store, bootEpoch string) (*Coord
 		owners:      make(map[string]*ownerState),
 		pending:     make(map[worker.RouteRef]pendingLease),
 		assignments: make(map[string]*assignment),
+		challenges:  make(map[string]*assignment),
 		stopReaper:  stopReaper,
 		reaperDone:  make(chan struct{}),
 	}
@@ -267,6 +269,7 @@ func (c *Coordinator) RegisterTransport(
 			ref: ref, hostname: currentPending.hostname, expiresAt: lease.ExpiresAt, owner: owner, backend: backend,
 		}
 		c.assignments[routeID] = assignment
+		c.challenges[assignment.hostname] = assignment
 		owner.routes[routeID] = backend
 		c.mu.Unlock()
 		if previous != nil {
@@ -346,6 +349,21 @@ func (c *Coordinator) Heartbeat(
 	return expiresAt, nil
 }
 
+// AuthorizeLease verifies that a lease token owns the current route generation
+// without mutating the lease lifetime or route state.
+func (c *Coordinator) AuthorizeLease(
+	ctx context.Context,
+	routeID string,
+	generation uint64,
+	token credentials.LeaseToken,
+) error {
+	if c.isClosed() {
+		return net.ErrClosed
+	}
+	_, err := c.store.AuthenticateLease(ctx, routeID, generation, token, c.bootEpoch)
+	return err
+}
+
 func (c *Coordinator) List(ctx context.Context, principalID string) ([]Route, error) {
 	return c.store.List(ctx, principalID)
 }
@@ -382,6 +400,27 @@ func (c *Coordinator) Lookup(hostname string) (ActiveRoute, bool) {
 	}
 	result, ok := c.snapshot.Load().byHostname[canonical]
 	return result, ok
+}
+
+// LookupChallenge resolves current assigned routes before ordinary traffic is
+// published. Callers must use it only for TLS-ALPN-01 ClientHellos.
+func (c *Coordinator) LookupChallenge(hostname string) (ActiveRoute, bool) {
+	canonical, err := naming.CanonicalizeHostname(hostname)
+	if err != nil || canonical != hostname {
+		return ActiveRoute{}, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return ActiveRoute{}, false
+	}
+	current := c.challenges[hostname]
+	if current != nil && current.expiresAt.After(c.store.now()) {
+		return ActiveRoute{
+			RouteID: current.ref.RouteID, Generation: current.ref.Generation, Backend: current.backend,
+		}, true
+	}
+	return ActiveRoute{}, false
 }
 
 func (c *Coordinator) DrainOwner(ctx context.Context, id string) error {
@@ -480,6 +519,9 @@ func (c *Coordinator) deactivate(routeID string) {
 	current := c.assignments[routeID]
 	if current != nil {
 		delete(c.assignments, routeID)
+		if c.challenges[current.hostname] == current {
+			delete(c.challenges, current.hostname)
+		}
 		delete(current.owner.routes, routeID)
 		c.unpublishLocked(routeID, current.ref.Generation)
 	}
@@ -526,6 +568,9 @@ func (c *Coordinator) removeOwner(owner *ownerState) {
 	assigned := c.ownerAssignmentsLocked(owner)
 	for _, current := range assigned {
 		delete(c.assignments, current.ref.RouteID)
+		if c.challenges[current.hostname] == current {
+			delete(c.challenges, current.hostname)
+		}
 		delete(c.pending, current.ref)
 		c.unpublishLocked(current.ref.RouteID, current.ref.Generation)
 	}
@@ -613,6 +658,9 @@ func (c *Coordinator) expireMemory(ref worker.RouteRef, now time.Time) (worker.O
 		return nil, expired
 	}
 	delete(c.assignments, ref.RouteID)
+	if c.challenges[current.hostname] == current {
+		delete(c.challenges, current.hostname)
+	}
 	delete(current.owner.routes, ref.RouteID)
 	c.unpublishLocked(ref.RouteID, ref.Generation)
 	return current.backend, true

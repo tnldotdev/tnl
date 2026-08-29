@@ -31,6 +31,9 @@ func TestCoordinatorPublishesOnlyReadyCurrentGeneration(t *testing.T) {
 	if _, ok := coordinator.Lookup("route.example"); ok {
 		t.Fatal("pending route was published")
 	}
+	if _, ok := coordinator.LookupChallenge("route.example"); ok {
+		t.Fatal("pending route was challenge-routable before transport attachment")
+	}
 	serverKey := key.NewNode().Public().String()
 	if err := coordinator.RegisterTransport(
 		context.Background(), created.Route.ID, 1, created.LeaseToken, serverKey, "test",
@@ -39,6 +42,9 @@ func TestCoordinatorPublishesOnlyReadyCurrentGeneration(t *testing.T) {
 	}
 	if _, ok := coordinator.Lookup("route.example"); ok {
 		t.Fatal("starting route was published")
+	}
+	if challenge, ok := coordinator.LookupChallenge("route.example"); !ok || challenge.Generation != 1 {
+		t.Fatalf("starting challenge route = %#v, %v", challenge, ok)
 	}
 	if err := coordinator.Ready(context.Background(), created.Route.ID, 1, created.LeaseToken); err != nil {
 		t.Fatal(err)
@@ -58,6 +64,9 @@ func TestCoordinatorPublishesOnlyReadyCurrentGeneration(t *testing.T) {
 	if _, ok := coordinator.Lookup("route.example"); ok {
 		t.Fatal("old generation remained published")
 	}
+	if _, ok := coordinator.LookupChallenge("route.example"); ok {
+		t.Fatal("old generation remained challenge-routable")
+	}
 	if owner.routes[0].closed.Load() != 1 {
 		t.Fatal("old generation was not closed")
 	}
@@ -76,6 +85,9 @@ func TestCoordinatorPublishesOnlyReadyCurrentGeneration(t *testing.T) {
 	coordinator.RemoveOwner("local")
 	if _, ok := coordinator.Lookup("route.example"); ok {
 		t.Fatal("route remained published after owner loss")
+	}
+	if _, ok := coordinator.LookupChallenge("route.example"); ok {
+		t.Fatal("route remained challenge-routable after owner loss")
 	}
 	if _, err := coordinator.Heartbeat(context.Background(), created.Route.ID, 2, replacement.LeaseToken); !errors.Is(err, ErrStaleLease) {
 		t.Fatalf("lost-owner heartbeat error = %v", err)

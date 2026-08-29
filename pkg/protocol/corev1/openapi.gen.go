@@ -40,6 +40,54 @@ func (e CapabilitiesProtocolVersions) Valid() bool {
 	}
 }
 
+// Defines values for CertificateOrderState.
+const (
+	Authorizing         CertificateOrderState = "authorizing"
+	Blocked             CertificateOrderState = "blocked"
+	Canceled            CertificateOrderState = "canceled"
+	CreatingOrder       CertificateOrderState = "creating_order"
+	Downloading         CertificateOrderState = "downloading"
+	Finalizing          CertificateOrderState = "finalizing"
+	Invalid             CertificateOrderState = "invalid"
+	ReadyToFinalize     CertificateOrderState = "ready_to_finalize"
+	Succeeded           CertificateOrderState = "succeeded"
+	Validating          CertificateOrderState = "validating"
+	WaitingForChallenge CertificateOrderState = "waiting_for_challenge"
+	WaitingForInstall   CertificateOrderState = "waiting_for_install"
+)
+
+// Valid indicates whether the value is a known member of the CertificateOrderState enum.
+func (e CertificateOrderState) Valid() bool {
+	switch e {
+	case Authorizing:
+		return true
+	case Blocked:
+		return true
+	case Canceled:
+		return true
+	case CreatingOrder:
+		return true
+	case Downloading:
+		return true
+	case Finalizing:
+		return true
+	case Invalid:
+		return true
+	case ReadyToFinalize:
+		return true
+	case Succeeded:
+		return true
+	case Validating:
+		return true
+	case WaitingForChallenge:
+		return true
+	case WaitingForInstall:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ProblemCode.
 const (
 	CredentialReplayed     ProblemCode = "credential_replayed"
@@ -209,6 +257,50 @@ type CapabilitiesHostnameAuthorization string
 // CapabilitiesProtocolVersions defines model for Capabilities.ProtocolVersions.
 type CapabilitiesProtocolVersions int
 
+// CertificateChallenge defines model for CertificateChallenge.
+type CertificateChallenge struct {
+	Digest    string    `json:"digest"`
+	ExpiresAt time.Time `json:"expires_at"`
+	Hostname  string    `json:"hostname"`
+	Id        string    `json:"id"`
+}
+
+// CertificateInstalledRequest defines model for CertificateInstalledRequest.
+type CertificateInstalledRequest struct {
+	Generation int    `json:"generation"`
+	OrderId    string `json:"order_id"`
+}
+
+// CertificateOrder defines model for CertificateOrder.
+type CertificateOrder struct {
+	CertificatePem *string               `json:"certificate_pem,omitempty"`
+	Challenge      *CertificateChallenge `json:"challenge,omitempty"`
+	CreatedAt      time.Time             `json:"created_at"`
+	Error          *string               `json:"error,omitempty"`
+	Generation     int                   `json:"generation"`
+	Hostname       string                `json:"hostname"`
+	Id             string                `json:"id"`
+	NotAfter       *time.Time            `json:"not_after,omitempty"`
+	NotBefore      *time.Time            `json:"not_before,omitempty"`
+	Profile        string                `json:"profile"`
+	RenewAt        *time.Time            `json:"renew_at,omitempty"`
+	RetryAt        *time.Time            `json:"retry_at,omitempty"`
+	RouteId        string                `json:"route_id"`
+	State          CertificateOrderState `json:"state"`
+	UpdatedAt      time.Time             `json:"updated_at"`
+}
+
+// CertificateOrderState defines model for CertificateOrder.State.
+type CertificateOrderState string
+
+// CreateCertificateOrderRequest defines model for CreateCertificateOrderRequest.
+type CreateCertificateOrderRequest struct {
+	Csr        string `json:"csr"`
+	Generation int    `json:"generation"`
+	Profile    string `json:"profile"`
+	RouteId    string `json:"route_id"`
+}
+
 // CreateRouteRequest defines model for CreateRouteRequest.
 type CreateRouteRequest struct {
 	DisplayTarget string `json:"display_target"`
@@ -321,6 +413,9 @@ type TransportCapabilitiesType string
 // TransportCapabilitiesVersion defines model for TransportCapabilities.Version.
 type TransportCapabilitiesVersion int
 
+// CertificateOrderID defines model for CertificateOrderID.
+type CertificateOrderID = string
+
 // RouteID defines model for RouteID.
 type RouteID = string
 
@@ -330,8 +425,14 @@ type BearerProblem = Problem
 // ExchangeBootstrapTokenJSONRequestBody defines body for ExchangeBootstrapToken for application/json ContentType.
 type ExchangeBootstrapTokenJSONRequestBody = TokenExchangeRequest
 
+// CreateCertificateOrderJSONRequestBody defines body for CreateCertificateOrder for application/json ContentType.
+type CreateCertificateOrderJSONRequestBody = CreateCertificateOrderRequest
+
 // CreateRouteJSONRequestBody defines body for CreateRoute for application/json ContentType.
 type CreateRouteJSONRequestBody = CreateRouteRequest
+
+// MarkRouteCertificateInstalledJSONRequestBody defines body for MarkRouteCertificateInstalled for application/json ContentType.
+type MarkRouteCertificateInstalledJSONRequestBody = CertificateInstalledRequest
 
 // HeartbeatRouteLeaseJSONRequestBody defines body for HeartbeatRouteLease for application/json ContentType.
 type HeartbeatRouteLeaseJSONRequestBody = LeaseGenerationRequest

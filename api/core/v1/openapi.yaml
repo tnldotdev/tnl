@@ -258,6 +258,123 @@ paths:
           $ref: "#/components/responses/Problem"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/routes/{id}/certificate-installed:
+    post:
+      operationId: markRouteCertificateInstalled
+      summary: Acknowledge installation of a validated route certificate
+      security:
+        - leaseAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RouteID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CertificateInstalledRequest"
+      responses:
+        "204":
+          description: Certificate installation recorded
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/certs/orders:
+    post:
+      operationId: createCertificateOrder
+      summary: Create or resume a certificate order for a current route lease
+      security:
+        - leaseAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCertificateOrderRequest"
+      responses:
+        "201":
+          description: Durable certificate order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertificateOrder"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/certs/orders/{id}:
+    get:
+      operationId: getCertificateOrder
+      summary: Read a durable certificate order
+      security:
+        - leaseAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CertificateOrderID"
+      responses:
+        "200":
+          description: Certificate order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertificateOrder"
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/certs/orders/{id}/challenge-ready:
+    post:
+      operationId: markCertificateChallengeReady
+      summary: Probe and complete an installed TLS-ALPN challenge
+      security:
+        - leaseAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CertificateOrderID"
+      responses:
+        "200":
+          description: Advanced certificate order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertificateOrder"
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/certs/orders/{id}/challenge-removed:
+    post:
+      operationId: markCertificateChallengeRemoved
+      summary: Acknowledge challenge-specific cleanup by the route agent
+      security:
+        - leaseAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CertificateOrderID"
+      responses:
+        "204":
+          description: Challenge cleanup recorded
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
 components:
   securitySchemes:
     bearerAuth:
@@ -276,6 +393,13 @@ components:
       schema:
         type: string
         pattern: ^route_[0-9a-f]{32}$
+    CertificateOrderID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^cert_[0-9a-f]{32}$
   responses:
     Problem:
       description: Request failed
@@ -510,6 +634,117 @@ components:
         expires_at:
           type: string
           format: date-time
+    CreateCertificateOrderRequest:
+      type: object
+      additionalProperties: false
+      required: [route_id, generation, csr, profile]
+      properties:
+        route_id:
+          type: string
+          pattern: ^route_[0-9a-f]{32}$
+        generation:
+          type: integer
+          minimum: 1
+        csr:
+          type: string
+          minLength: 1
+          maxLength: 16384
+          pattern: ^[A-Za-z0-9_-]+$
+        profile:
+          type: string
+          pattern: ^[a-z0-9][a-z0-9-]{0,62}$
+    CertificateOrder:
+      type: object
+      additionalProperties: false
+      required: [id, route_id, generation, hostname, profile, state, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          pattern: ^cert_[0-9a-f]{32}$
+        route_id:
+          type: string
+          pattern: ^route_[0-9a-f]{32}$
+        generation:
+          type: integer
+          minimum: 1
+        hostname:
+          type: string
+          minLength: 1
+          maxLength: 253
+        profile:
+          type: string
+          pattern: ^[a-z0-9][a-z0-9-]{0,62}$
+        state:
+          type: string
+          enum:
+            - creating_order
+            - authorizing
+            - waiting_for_challenge
+            - validating
+            - ready_to_finalize
+            - finalizing
+            - downloading
+            - waiting_for_install
+            - succeeded
+            - invalid
+            - blocked
+            - canceled
+        challenge:
+          $ref: "#/components/schemas/CertificateChallenge"
+        certificate_pem:
+          type: string
+          maxLength: 49152
+        not_before:
+          type: string
+          format: date-time
+        not_after:
+          type: string
+          format: date-time
+        renew_at:
+          type: string
+          format: date-time
+        retry_at:
+          type: string
+          format: date-time
+        error:
+          type: string
+          maxLength: 1024
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    CertificateChallenge:
+      type: object
+      additionalProperties: false
+      required: [id, hostname, digest, expires_at]
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 2048
+        hostname:
+          type: string
+          minLength: 1
+          maxLength: 253
+        digest:
+          type: string
+          pattern: ^[A-Za-z0-9_-]{43}$
+        expires_at:
+          type: string
+          format: date-time
+    CertificateInstalledRequest:
+      type: object
+      additionalProperties: false
+      required: [generation, order_id]
+      properties:
+        generation:
+          type: integer
+          minimum: 1
+        order_id:
+          type: string
+          pattern: ^cert_[0-9a-f]{32}$
     Problem:
       type: object
       additionalProperties: false

@@ -3,16 +3,19 @@ package api
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"mime"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/0xcadams/tnl/internal/auth"
+	"github.com/0xcadams/tnl/internal/certificates"
 	"github.com/0xcadams/tnl/internal/credentials"
 	"github.com/0xcadams/tnl/internal/naming"
 	"github.com/0xcadams/tnl/internal/routes"
@@ -22,17 +25,19 @@ import (
 )
 
 const (
-	capabilitiesPath     = "/v1/capabilities"
-	tokenExchangePath    = "/v1/auth/token"
-	credentialsPath      = "/v1/auth/credentials/"
-	routesPath           = "/v1/routes"
-	routePathPrefix      = "/v1/routes/"
-	authorizationHeader  = "Authorization"
-	requestIDHeader      = "X-Request-ID"
-	maxCredentialBytes   = 128
-	maxJSONRequestBytes  = 16 << 10
-	maxJSONResponseBytes = 64 << 10
-	jsonReadTimeout      = 10 * time.Second
+	capabilitiesPath       = "/v1/capabilities"
+	tokenExchangePath      = "/v1/auth/token"
+	credentialsPath        = "/v1/auth/credentials/"
+	certificateOrdersPath  = "/v1/certs/orders"
+	certificateOrderPrefix = "/v1/certs/orders/"
+	routesPath             = "/v1/routes"
+	routePathPrefix        = "/v1/routes/"
+	authorizationHeader    = "Authorization"
+	requestIDHeader        = "X-Request-ID"
+	maxCredentialBytes     = 128
+	maxJSONRequestBytes    = 20 << 10
+	maxJSONResponseBytes   = 64 << 10
+	jsonReadTimeout        = 10 * time.Second
 )
 
 var (
@@ -55,14 +60,25 @@ type RouteService interface {
 	RegisterTransport(context.Context, string, uint64, credentials.LeaseToken, string, string) error
 	Ready(context.Context, string, uint64, credentials.LeaseToken) error
 	Heartbeat(context.Context, string, uint64, credentials.LeaseToken) (time.Time, error)
+	AuthorizeLease(context.Context, string, uint64, credentials.LeaseToken) error
 	List(context.Context, string) ([]routes.Route, error)
 	Delete(context.Context, string, string) error
+}
+
+// CertificateService implements durable certificate transitions without exposing storage to HTTP.
+type CertificateService interface {
+	Create(context.Context, string, uint64, string, []byte) (certificates.Job, error)
+	Get(context.Context, string) (certificates.Job, error)
+	ChallengeReady(context.Context, string) (certificates.Job, error)
+	ChallengeRemoved(context.Context, string) (certificates.Job, error)
+	Installed(context.Context, string, string, uint64) (certificates.Job, error)
 }
 
 type handler struct {
 	capabilities corev1.Capabilities
 	auth         AuthService
 	routes       RouteService
+	certificates CertificateService
 }
 
 // NewHandler creates the core API handler without binding a listener.
@@ -72,7 +88,17 @@ func NewHandler(capabilities corev1.Capabilities, auth AuthService) http.Handler
 
 // NewHandlerWithRoutes creates the complete core API handler without binding a listener.
 func NewHandlerWithRoutes(capabilities corev1.Capabilities, auth AuthService, routeService RouteService) http.Handler {
-	return &handler{capabilities: capabilities, auth: auth, routes: routeService}
+	return NewHandlerWithServices(capabilities, auth, routeService, nil)
+}
+
+// NewHandlerWithServices creates the complete core API handler without binding a listener.
+func NewHandlerWithServices(
+	capabilities corev1.Capabilities,
+	auth AuthService,
+	routeService RouteService,
+	certificateService CertificateService,
+) http.Handler {
+	return &handler{capabilities: capabilities, auth: auth, routes: routeService, certificates: certificateService}
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -86,6 +112,8 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveTokenExchange(w, r, requestID)
 	case routesPath:
 		h.serveRoutes(w, r, requestID)
+	case certificateOrdersPath:
+		h.serveCertificateOrders(w, r, requestID)
 	default:
 		credentialID, ok := strings.CutPrefix(r.URL.Path, credentialsPath)
 		if ok && credentialID != "" && !strings.Contains(credentialID, "/") {
@@ -94,6 +122,10 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if routeID, operation, ok := routePath(r.URL.Path); ok {
 			h.serveRoute(w, r, requestID, routeID, operation)
+			return
+		}
+		if orderID, operation, ok := certificateOrderPath(r.URL.Path); ok {
+			h.serveCertificateOrder(w, r, requestID, orderID, operation)
 			return
 		}
 		writeNotFound(w, requestID)
@@ -271,9 +303,139 @@ func (h *handler) serveRoute(
 		h.serveHeartbeat(w, r, requestID, routeID)
 	case "ready":
 		h.serveReady(w, r, requestID, routeID)
+	case "certificate-installed":
+		h.serveCertificateInstalled(w, r, requestID, routeID)
 	default:
 		writeNotFound(w, requestID)
 	}
+}
+
+func (h *handler) serveCertificateOrders(w http.ResponseWriter, r *http.Request, requestID string) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w, requestID, http.MethodPost)
+		return
+	}
+	if h.routes == nil || h.certificates == nil {
+		writeInternalProblem(w, requestID)
+		return
+	}
+	token, ok := leaseBearer(r.Header)
+	if !ok {
+		writeUnauthenticated(w, requestID)
+		return
+	}
+	var request corev1.CreateCertificateOrderRequest
+	if !decodeRequest(w, r, requestID, &request) {
+		return
+	}
+	csrDER, err := base64.RawURLEncoding.DecodeString(request.Csr)
+	if request.RouteId == "" || request.Generation <= 0 || request.Profile == "" || err != nil ||
+		base64.RawURLEncoding.EncodeToString(csrDER) != request.Csr {
+		writeInvalidRequest(w, requestID)
+		return
+	}
+	if err := h.routes.AuthorizeLease(
+		r.Context(), request.RouteId, uint64(request.Generation), token,
+	); err != nil {
+		writeRouteError(w, requestID, err)
+		return
+	}
+	job, err := h.certificates.Create(
+		r.Context(), request.RouteId, uint64(request.Generation), request.Profile, csrDER,
+	)
+	if err != nil {
+		writeCertificateError(w, requestID, err)
+		return
+	}
+	writeModel(w, requestID, http.StatusCreated, certificateOrderResponse(job))
+}
+
+func (h *handler) serveCertificateOrder(
+	w http.ResponseWriter,
+	r *http.Request,
+	requestID, orderID, operation string,
+) {
+	if h.routes == nil || h.certificates == nil {
+		writeInternalProblem(w, requestID)
+		return
+	}
+	wantMethod := http.MethodPost
+	if operation == "" {
+		wantMethod = http.MethodGet
+	} else if operation != "challenge-ready" && operation != "challenge-removed" {
+		writeNotFound(w, requestID)
+		return
+	}
+	if r.Method != wantMethod {
+		writeMethodNotAllowed(w, requestID, wantMethod)
+		return
+	}
+	token, ok := leaseBearer(r.Header)
+	if !ok {
+		writeUnauthenticated(w, requestID)
+		return
+	}
+	job, err := h.certificates.Get(r.Context(), orderID)
+	if err != nil {
+		writeCertificateError(w, requestID, err)
+		return
+	}
+	if err := h.routes.AuthorizeLease(r.Context(), job.RouteID, job.Generation, token); err != nil {
+		writeRouteError(w, requestID, err)
+		return
+	}
+	switch operation {
+	case "":
+		writeModel(w, requestID, http.StatusOK, certificateOrderResponse(job))
+	case "challenge-ready":
+		job, err = h.certificates.ChallengeReady(r.Context(), orderID)
+		if err != nil {
+			writeCertificateError(w, requestID, err)
+			return
+		}
+		writeModel(w, requestID, http.StatusOK, certificateOrderResponse(job))
+	case "challenge-removed":
+		if _, err := h.certificates.ChallengeRemoved(r.Context(), orderID); err != nil {
+			writeCertificateError(w, requestID, err)
+			return
+		}
+		writeNoContent(w)
+	}
+}
+
+func (h *handler) serveCertificateInstalled(w http.ResponseWriter, r *http.Request, requestID, routeID string) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w, requestID, http.MethodPost)
+		return
+	}
+	if h.certificates == nil {
+		writeInternalProblem(w, requestID)
+		return
+	}
+	token, ok := leaseBearer(r.Header)
+	if !ok {
+		writeUnauthenticated(w, requestID)
+		return
+	}
+	var request corev1.CertificateInstalledRequest
+	if !decodeRequest(w, r, requestID, &request) {
+		return
+	}
+	if request.Generation <= 0 || !validCertificateOrderID(request.OrderId) {
+		writeInvalidRequest(w, requestID)
+		return
+	}
+	if err := h.routes.AuthorizeLease(r.Context(), routeID, uint64(request.Generation), token); err != nil {
+		writeRouteError(w, requestID, err)
+		return
+	}
+	if _, err := h.certificates.Installed(
+		r.Context(), request.OrderId, routeID, uint64(request.Generation),
+	); err != nil {
+		writeCertificateError(w, requestID, err)
+		return
+	}
+	writeNoContent(w)
 }
 
 func (h *handler) serveLeaseAcquisition(w http.ResponseWriter, r *http.Request, requestID, routeID string) {
@@ -434,6 +596,30 @@ func routePath(path string) (routeID, operation string, ok bool) {
 	return parts[0], operation, true
 }
 
+func certificateOrderPath(path string) (orderID, operation string, ok bool) {
+	remainder, ok := strings.CutPrefix(path, certificateOrderPrefix)
+	if !ok || remainder == "" {
+		return "", "", false
+	}
+	parts := strings.Split(remainder, "/")
+	if len(parts) > 2 || !validCertificateOrderID(parts[0]) || len(parts) == 2 && parts[1] == "" {
+		return "", "", false
+	}
+	if len(parts) == 2 {
+		operation = parts[1]
+	}
+	return parts[0], operation, true
+}
+
+func validCertificateOrderID(value string) bool {
+	const prefix = "cert_"
+	if len(value) != len(prefix)+32 || !strings.HasPrefix(value, prefix) {
+		return false
+	}
+	_, err := hex.DecodeString(value[len(prefix):])
+	return err == nil
+}
+
 func decodeRequest(w http.ResponseWriter, r *http.Request, requestID string, value any) bool {
 	if err := decodeJSON(w, r, value); err != nil {
 		status, title, problemType := http.StatusBadRequest, "Invalid request", "invalid-request"
@@ -468,6 +654,39 @@ func leaseSetupResponse(setup routes.LeaseSetup) corev1.LeaseSetup {
 	}
 }
 
+func certificateOrderResponse(job certificates.Job) corev1.CertificateOrder {
+	response := corev1.CertificateOrder{
+		Id: job.ID, RouteId: job.RouteID, Generation: int(job.Generation), Hostname: job.Hostname,
+		Profile: job.Profile, State: corev1.CertificateOrderState(job.State), CreatedAt: job.CreatedAt, UpdatedAt: job.UpdatedAt,
+	}
+	if challenge := job.Challenge(); challenge != nil {
+		response.Challenge = &corev1.CertificateChallenge{
+			Id: challenge.ID, Hostname: challenge.Hostname,
+			Digest: base64.RawURLEncoding.EncodeToString(challenge.Digest[:]), ExpiresAt: challenge.ExpiresAt,
+		}
+	}
+	if len(job.CertificatePEM) != 0 {
+		value := string(job.CertificatePEM)
+		response.CertificatePem = &value
+	}
+	if !job.NotBefore.IsZero() {
+		response.NotBefore = &job.NotBefore
+	}
+	if !job.NotAfter.IsZero() {
+		response.NotAfter = &job.NotAfter
+	}
+	if !job.RenewAt.IsZero() {
+		response.RenewAt = &job.RenewAt
+	}
+	if !job.RetryAt.IsZero() {
+		response.RetryAt = &job.RetryAt
+	}
+	if job.LastError != "" {
+		response.Error = &job.LastError
+	}
+	return response
+}
+
 func writeModel(w http.ResponseWriter, requestID string, status int, value any) {
 	body, err := marshalJSON(value)
 	if err != nil {
@@ -494,6 +713,28 @@ func writeRouteError(w http.ResponseWriter, requestID string, err error) {
 			writeProblem(w, requestID, http.StatusBadRequest, corev1.InvalidArgument, "Invalid request", "invalid-request")
 			return
 		}
+		writeInternalProblem(w, requestID)
+	}
+}
+
+func writeCertificateError(w http.ResponseWriter, requestID string, err error) {
+	switch {
+	case errors.Is(err, certificates.ErrInvalidArgument):
+		writeInvalidRequest(w, requestID)
+	case errors.Is(err, certificates.ErrNotFound):
+		writeNotFound(w, requestID)
+	case errors.Is(err, certificates.ErrInvalidState):
+		writeProblem(w, requestID, http.StatusConflict, corev1.StateConflict, "State conflict", "state-conflict")
+	case errors.Is(err, certificates.ErrRateLimited):
+		var limit *certificates.RateLimitError
+		if errors.As(err, &limit) {
+			seconds := max(1, int((time.Until(limit.RetryAt)+time.Second-1)/time.Second))
+			w.Header().Set("Retry-After", strconv.Itoa(seconds))
+		}
+		writeProblem(w, requestID, http.StatusTooManyRequests, corev1.RateLimited, "Rate limited", "rate-limited")
+	case errors.Is(err, certificates.ErrUnavailable):
+		writeProblem(w, requestID, http.StatusServiceUnavailable, corev1.TemporarilyUnavailable, "Temporarily unavailable", "temporarily-unavailable")
+	default:
 		writeInternalProblem(w, requestID)
 	}
 }

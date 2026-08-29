@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/mail"
 	"net/url"
 	"strconv"
 	"strings"
@@ -37,6 +38,10 @@ type TNLD struct {
 	PublicListen       string        `name:"public-listen" env:"TNLD_PUBLIC_LISTEN" help:"Public opaque TLS listen address; empty disables ingress."`
 	ControlCertFile    string        `name:"control-cert-file" env:"TNLD_CONTROL_CERT_FILE" type:"path" help:"Control HTTPS certificate file."`
 	ControlKeyFile     string        `name:"control-key-file" env:"TNLD_CONTROL_KEY_FILE" type:"path" help:"Control HTTPS private key file."`
+	ACMEDirectoryURL   string        `name:"acme-directory-url" env:"TNLD_ACME_DIRECTORY_URL" help:"ACME directory URL for application certificates; empty disables automatic certificates."`
+	ACMEEmail          string        `name:"acme-email" env:"TNLD_ACME_EMAIL" help:"ACME account contact email."`
+	ACMEAcceptTerms    bool          `name:"acme-accept-terms" env:"TNLD_ACME_ACCEPT_TERMS" help:"Explicitly accept the ACME directory terms."`
+	ACMEProfile        string        `name:"acme-profile" env:"TNLD_ACME_PROFILE" default:"tlsserver" help:"ACME certificate profile advertised to agents."`
 	BootstrapToken     string        `name:"bootstrap-token" env:"TNLD_BOOTSTRAP_TOKEN" help:"Local deployment bootstrap credential."`
 	RelayMapFile       string        `name:"relay-map-file" env:"TNLD_RELAY_MAP_FILE" type:"path" help:"Approved DERP map JSON file."`
 	RelayProfile       string        `name:"relay-profile" env:"TNLD_RELAY_PROFILE" default:"default" help:"DERP region code advertised as the relay profile."`
@@ -72,6 +77,23 @@ func (c TNLD) Validate() error {
 	}
 	if !validRelayProfile(c.RelayProfile) {
 		return errors.New("relay profile must contain only lowercase letters, digits, and hyphens")
+	}
+	if c.ACMEDirectoryURL != "" || c.ACMEEmail != "" {
+		if !validRelayProfile(c.ACMEProfile) {
+			return errors.New("ACME profile must contain only lowercase letters, digits, and hyphens")
+		}
+		directory, err := url.Parse(c.ACMEDirectoryURL)
+		if err != nil || directory.Scheme != "https" || directory.Host == "" || directory.User != nil ||
+			directory.Fragment != "" {
+			return errors.New("ACME directory must be an HTTPS URL")
+		}
+		address, err := mail.ParseAddress(c.ACMEEmail)
+		if err != nil || address.Address != c.ACMEEmail || address.Name != "" {
+			return errors.New("ACME email must be a plain email address")
+		}
+		if !c.Mode.UsesState() || c.ControlListen == "" || c.PublicListen == "" {
+			return errors.New("automatic certificates require state, control API, and public ingress")
+		}
 	}
 	if c.ControlListen != "" {
 		if !c.Mode.UsesState() {
@@ -119,6 +141,9 @@ func (c TNLD) Validate() error {
 	}
 	return nil
 }
+
+// ACMEEnabled reports whether automatic application certificates are configured.
+func (c TNLD) ACMEEnabled() bool { return c.ACMEDirectoryURL != "" && c.ACMEEmail != "" }
 
 func validRelayProfile(profile string) bool {
 	if len(profile) == 0 || len(profile) > 63 || (profile[0] < 'a' || profile[0] > 'z') && (profile[0] < '0' || profile[0] > '9') {
