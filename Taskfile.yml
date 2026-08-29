@@ -111,6 +111,11 @@ tasks:
     cmds:
       - ./scripts/bench-tailcat-fly.sh
 
+  go:bench-tailcat-fly-autoscale:
+    desc: Run the sharded Fly Tailcat autoscaling benchmark
+    cmds:
+      - ./scripts/bench-tailcat-fly-autoscale.sh
+
   go:build:
     cmds:
       - go build ./cmd/...

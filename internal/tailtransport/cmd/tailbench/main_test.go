@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/0xcadams/tnl/internal/observability"
 	"tailscale.com/types/key"
 )
 
@@ -65,6 +66,19 @@ func TestCreateRunRejectsShutdown(t *testing.T) {
 
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d; want %d", response.Code, http.StatusServiceUnavailable)
+	}
+}
+
+func TestShutdownKeepsDrainingMetricSet(t *testing.T) {
+	metrics := observability.New("worker")
+	agent := &agent{state: runActive, metrics: metrics}
+	if result := agent.shutdown(context.Background()); result != (closeResult{}) {
+		t.Fatalf("shutdown result = %+v; want empty", result)
+	}
+	response := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if !strings.Contains(response.Body.String(), "tnl_worker_draining 1") {
+		t.Fatalf("metrics do not report draining:\n%s", response.Body.String())
 	}
 }
 
