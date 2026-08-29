@@ -16,6 +16,8 @@ func TestExamplesMatchGeneratedModels(t *testing.T) {
 	}{
 		{name: "capabilities", path: "../../../api/fixtures/core/v1/capabilities.json", model: &Capabilities{}},
 		{name: "problem", path: "../../../api/fixtures/core/v1/problem.json", model: &Problem{}},
+		{name: "token exchange request", path: "../../../api/fixtures/core/v1/token-exchange-request.json", model: &TokenExchangeRequest{}},
+		{name: "token exchange response", path: "../../../api/fixtures/core/v1/token-exchange-response.json", model: &TokenExchangeResponse{}},
 	}
 
 	for _, test := range tests {
