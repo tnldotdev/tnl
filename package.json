@@ -7,7 +7,7 @@
     "clean": "pnpm --recursive --if-present run clean",
     "format": "oxfmt --write '**/*'",
     "format:check": "oxfmt --check '**/*'",
-    "lint": "oxlint --deny-warnings packages scripts vitest.config.ts",
+    "lint": "oxlint --deny-warnings internal/projectconfig/loader.mjs packages scripts vitest.config.ts",
     "pack": "node scripts/verify-packages.mjs",
     "pretest": "pnpm build",
     "pretypecheck": "pnpm build",
@@ -18,13 +18,12 @@
     "typecheck:ci": "tsc --project packages/tnl/type-test.tsconfig.json && tsc --project packages/tnl/augmented-type-test.tsconfig.json && tsc --project tsconfig.test.json"
   },
   "devDependencies": {
-    "@types/node": "26.3.0",
+    "@types/node": "22.20.3",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.5",
     "@types/ws": "8.18.1",
     "@vitest/coverage-v8": "4.1.11",
     "json-schema-to-typescript": "16.0.0",
-    "npm": "12.0.2",
     "oxfmt": "0.65.0",
     "oxlint": "1.80.0",
     "typescript": "7.0.2",
@@ -32,7 +31,7 @@
     "ws": "8.21.3"
   },
   "engines": {
-    "node": ">=20.9"
+    "node": ">=22.18"
   },
   "packageManager": "pnpm@11.25.0"
 }
