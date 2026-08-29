@@ -21,13 +21,19 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Check patch
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: git diff --check "$BASE_SHA" HEAD
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache: false
+          cache: true
 
       - name: Install pinned tools
         run: |
@@ -54,6 +60,30 @@ jobs:
 
       - name: Build commands
         run: task go:build
+
+  go-race:
+    name: Go race
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GOFLAGS: -tags=ts_omit_ssh
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install pinned tools
+        run: go install github.com/go-task/task/v3/cmd/task@v3.53.1
+
+      - name: Run race tests
+        run: task go:test-race
 
   typescript:
     name: TypeScript
@@ -114,7 +144,7 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache: false
+          cache: true
 
       - name: Run actionlint
         run: |
