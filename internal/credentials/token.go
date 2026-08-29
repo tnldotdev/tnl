@@ -1,4 +1,3 @@
-// Package credentials creates and validates typed credentials.
 package credentials
 
 import (
@@ -14,6 +13,9 @@ import (
 const (
 	accessPrefix    = "tnl_access_"
 	bootstrapPrefix = "tnl_bootstrap_"
+	routePrefix     = "tnl_route_"
+	leasePrefix     = "tnl_lease_"
+	workerPrefix    = "tnl_worker_"
 	lookupBytes     = 16
 	secretBytes     = 32
 )
@@ -23,6 +25,12 @@ var (
 	ErrInvalidAccessToken = errors.New("invalid access token")
 	// ErrInvalidBootstrapToken is returned for malformed bootstrap tokens.
 	ErrInvalidBootstrapToken = errors.New("invalid bootstrap token")
+	// ErrInvalidRouteToken is returned for malformed or rejected route tokens.
+	ErrInvalidRouteToken = errors.New("invalid route token")
+	// ErrInvalidLeaseToken is returned for malformed or rejected lease tokens.
+	ErrInvalidLeaseToken = errors.New("invalid lease token")
+	// ErrInvalidWorkerToken is returned for malformed or rejected worker tokens.
+	ErrInvalidWorkerToken = errors.New("invalid worker token")
 )
 
 // AccessToken authenticates a local principal to the standalone core API.
@@ -30,6 +38,15 @@ type AccessToken string
 
 // BootstrapToken authenticates only to the standalone token exchange.
 type BootstrapToken string
+
+// RouteToken authorizes lease acquisition for one route.
+type RouteToken string
+
+// LeaseToken authorizes operations on one lease generation.
+type LeaseToken string
+
+// WorkerToken authenticates one worker session to an edge.
+type WorkerToken string
 
 // CredentialID is the nonsecret lookup portion of a credential.
 type CredentialID string
@@ -39,6 +56,12 @@ type SecretHash [sha256.Size]byte
 
 // BootstrapVerifier is the verification material for one bootstrap token.
 type BootstrapVerifier struct {
+	id   CredentialID
+	hash SecretHash
+}
+
+// WorkerVerifier is the nonsecret verification material for one worker token.
+type WorkerVerifier struct {
 	id   CredentialID
 	hash SecretHash
 }
@@ -66,9 +89,53 @@ func ParseBootstrapToken(token BootstrapToken) (BootstrapVerifier, error) {
 	return BootstrapVerifier{id: lookupID, hash: hash}, err
 }
 
+// NewRouteToken creates a route token and its storage values.
+func NewRouteToken() (RouteToken, CredentialID, SecretHash, error) {
+	token, lookupID, hash, err := newToken(routePrefix)
+	return RouteToken(token), lookupID, hash, err
+}
+
+// ParseRouteToken validates a route token and returns its storage lookup values.
+func ParseRouteToken(token RouteToken) (CredentialID, SecretHash, error) {
+	return parseToken(string(token), routePrefix, ErrInvalidRouteToken)
+}
+
+// NewLeaseToken creates a lease token and its storage values.
+func NewLeaseToken() (LeaseToken, CredentialID, SecretHash, error) {
+	token, lookupID, hash, err := newToken(leasePrefix)
+	return LeaseToken(token), lookupID, hash, err
+}
+
+// ParseLeaseToken validates a lease token and returns its storage lookup values.
+func ParseLeaseToken(token LeaseToken) (CredentialID, SecretHash, error) {
+	return parseToken(string(token), leasePrefix, ErrInvalidLeaseToken)
+}
+
+// NewWorkerToken creates a worker token and its verifier.
+func NewWorkerToken() (WorkerToken, WorkerVerifier, error) {
+	token, lookupID, hash, err := newToken(workerPrefix)
+	return WorkerToken(token), WorkerVerifier{id: lookupID, hash: hash}, err
+}
+
+// ParseWorkerToken validates a worker token and returns its verifier.
+func ParseWorkerToken(token WorkerToken) (WorkerVerifier, error) {
+	lookupID, hash, err := parseToken(string(token), workerPrefix, ErrInvalidWorkerToken)
+	return WorkerVerifier{id: lookupID, hash: hash}, err
+}
+
 // Matches reports whether token matches this verifier.
 func (v BootstrapVerifier) Matches(token BootstrapToken) bool {
 	candidate, err := ParseBootstrapToken(token)
+	if err != nil {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(v.id), []byte(candidate.id)) == 1 &&
+		SecretHashMatches(v.hash[:], candidate.hash)
+}
+
+// Matches reports whether token matches this verifier.
+func (v WorkerVerifier) Matches(token WorkerToken) bool {
+	candidate, err := ParseWorkerToken(token)
 	if err != nil {
 		return false
 	}
@@ -81,6 +148,15 @@ func (t AccessToken) String() string { return string(t) }
 
 // String returns the serialized bootstrap token.
 func (t BootstrapToken) String() string { return string(t) }
+
+// String returns the serialized route token.
+func (t RouteToken) String() string { return string(t) }
+
+// String returns the serialized lease token.
+func (t LeaseToken) String() string { return string(t) }
+
+// String returns the serialized worker token.
+func (t WorkerToken) String() string { return string(t) }
 
 // String returns the nonsecret credential ID.
 func (id CredentialID) String() string { return string(id) }

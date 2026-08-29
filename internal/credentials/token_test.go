@@ -86,6 +86,38 @@ func TestBootstrapTokenRoundTripAndClassIsolation(t *testing.T) {
 	}
 }
 
+func TestDataPlaneTokenClasses(t *testing.T) {
+	route, routeID, routeHash, err := NewRouteToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotID, gotHash, err := ParseRouteToken(route); err != nil || gotID != routeID || gotHash != routeHash {
+		t.Fatalf("route round trip = %q, %x, %v", gotID, gotHash, err)
+	}
+
+	lease, leaseID, leaseHash, err := NewLeaseToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotID, gotHash, err := ParseLeaseToken(lease); err != nil || gotID != leaseID || gotHash != leaseHash {
+		t.Fatalf("lease round trip = %q, %x, %v", gotID, gotHash, err)
+	}
+	if _, _, err := ParseRouteToken(RouteToken(lease)); !errors.Is(err, ErrInvalidRouteToken) {
+		t.Fatalf("lease as route error = %v", err)
+	}
+	if _, _, err := ParseLeaseToken(LeaseToken(route)); !errors.Is(err, ErrInvalidLeaseToken) {
+		t.Fatalf("route as lease error = %v", err)
+	}
+
+	worker, verifier, err := NewWorkerToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !verifier.Matches(worker) || verifier.Matches(WorkerToken(route)) {
+		t.Fatal("worker verifier did not enforce its credential class")
+	}
+}
+
 func TestTokenExchangeFixturesUseCanonicalCredentials(t *testing.T) {
 	var request struct {
 		BootstrapToken BootstrapToken `json:"bootstrap_token"`
