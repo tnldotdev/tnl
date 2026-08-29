@@ -155,7 +155,7 @@ func TestControllerExpiresWhileSnapshotIsBlocked(t *testing.T) {
 func TestControllerRejectsLateRenewalAndChangedRevision(t *testing.T) {
 	for _, mode := range []string{"late-valid", "expired-response", "changed-revision"} {
 		t.Run(mode, func(t *testing.T) {
-			now := time.Now()
+			now := time.Date(2026, 9, 18, 23, 30, 0, 0, time.UTC)
 			controller := testLeaseController(t, leaseTestClient{})
 			controller.now = func() time.Time { return now }
 			lease := testIngressLease(now)
@@ -166,7 +166,8 @@ func TestControllerRejectsLateRenewalAndChangedRevision(t *testing.T) {
 			switch mode {
 			case "late-valid":
 				now = lease.LeaseExpiresAt
-				updated.LeaseExpiresAt = now.Add(time.Hour)
+				updated = testIngressLease(now)
+				updated.RegisteredAt = lease.RegisteredAt
 			case "expired-response":
 				updated.LeaseExpiresAt = now
 			case "changed-revision":
