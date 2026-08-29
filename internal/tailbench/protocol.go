@@ -12,22 +12,20 @@ import (
 
 const RelayProfile = "public-derp"
 
-type Resources = processmetrics.Snapshot
-
 type CreateRunRequest struct {
 	ClientPublicKeys []string `json:"client_public_keys"`
 }
 
 type CreateRunResponse struct {
 	Endpoints []transportv1.TailcatDescriptor `json:"endpoints"`
-	Before    Resources                       `json:"before"`
-	Ready     Resources                       `json:"ready"`
+	Before    processmetrics.Snapshot         `json:"before"`
+	Ready     processmetrics.Snapshot         `json:"ready"`
 }
 
 type CloseRunResponse struct {
-	After        Resources `json:"after"`
-	ForcedCloses int       `json:"forced_closes"`
-	DrainError   string    `json:"drain_error,omitempty"`
+	After        processmetrics.Snapshot `json:"after"`
+	ForcedCloses int                     `json:"forced_closes"`
+	DrainError   string                  `json:"drain_error,omitempty"`
 }
 
 func PublicRegion(ctx context.Context, regionID int) (*tailcfg.DERPRegion, error) {

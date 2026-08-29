@@ -5,10 +5,11 @@ set -euo pipefail
 org="${ORG:-tnl}"
 region="${REGION:-sjc}"
 size="${AGENT_SIZE:-performance-8x}"
-routes="${ROUTES:-1,10,100,250,500,1000}"
+routes="${ROUTES:-1,10,100,250,500,1000,1500}"
 modes="${MODES:-direct,derp}"
 parallel="${PARALLEL:-8}"
 local_port="${LOCAL_PORT:-18080}"
+agent_gomemlimit="${AGENT_GOMEMLIMIT:-}"
 run_id="$(date -u +%Y%m%d%H%M%S)-$(openssl rand -hex 3)"
 app="tnl-tailbench-${run_id}"
 image="registry.fly.io/${app}:${run_id}"
@@ -57,6 +58,9 @@ for mode in "${mode_list[@]}"; do
     --restart no
     --env "TNL_TAILBENCH_TOKEN=${token}"
   )
+  if [[ -n "${agent_gomemlimit}" ]]; then
+    machine_args+=(--env "GOMEMLIMIT=${agent_gomemlimit}")
+  fi
   if [[ "${mode}" == "derp" ]]; then
     machine_args+=(--env TS_DEBUG_NEVER_DIRECT_UDP=1)
   fi
