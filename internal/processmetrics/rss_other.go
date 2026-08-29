@@ -1,6 +1,6 @@
 //go:build !linux
 
-package tailtransport
+package processmetrics
 
 func currentRSS() int64 {
 	return -1

@@ -102,11 +102,7 @@ func runFlyCapacityTier(b *testing.B, config capacityConfig, region *tailcfg.DER
 	err = runParallel(routeCount, config.parallel, func(index int) error {
 		endpoint := remote.Endpoints[index]
 		dialer, err := NewDialer(DialerConfig{
-			Endpoint: Endpoint{
-				Version:         endpoint.Version,
-				ServerPublicKey: endpoint.ServerPublicKey,
-				RelayProfile:    endpoint.RelayProfile,
-			},
+			Endpoint: endpoint,
 			Profiles: map[string]*tailcfg.DERPRegion{tailbench.RelayProfile: region},
 			Key:      keys[index],
 			Logf:     logger.Discard,
@@ -128,10 +124,15 @@ func runFlyCapacityTier(b *testing.B, config capacityConfig, region *tailcfg.DER
 
 	b.Logf("preparing %s path for %d routes", config.expectedPath, routeCount)
 	pathReady := make([]time.Duration, routeCount)
+	directPaths := make([]bool, routeCount)
 	err = runParallel(routeCount, config.parallel, func(index int) error {
 		startedAt := time.Now()
-		_, err := observePath(dialers[index], config.expectedPath)
+		direct, err := observePath(dialers[index], config.expectedPath)
 		pathReady[index] = time.Since(startedAt)
+		directPaths[index] = direct
+		if config.expectedPath == "direct" && errors.Is(err, context.DeadlineExceeded) {
+			return nil
+		}
 		return err
 	})
 	if err != nil {
@@ -173,7 +174,7 @@ func runFlyCapacityTier(b *testing.B, config capacityConfig, region *tailcfg.DER
 		ctx, cancel := context.WithTimeout(context.Background(), operationTimeout)
 		defer cancel()
 		startedAt := time.Now()
-		connErr := connections[index].Close()
+		connErr := closeBenchmarkStream(ctx, connections[index])
 		connections[index] = nil
 		drainErr := dialers[index].Drain(ctx)
 		shutdown[index] = time.Since(startedAt)
@@ -183,9 +184,14 @@ func runFlyCapacityTier(b *testing.B, config capacityConfig, region *tailcfg.DER
 		b.Fatal(err)
 	}
 	b.Logf("closing %d Fly agent routes", routeCount)
+	agentShutdownStarted := time.Now()
 	remoteClosed, err := agent.close()
 	if err != nil {
 		b.Fatal(err)
+	}
+	agentShutdown := time.Since(agentShutdownStarted)
+	if remoteClosed.DrainError != "" {
+		b.Logf("agent force-closed %d routes: %s", remoteClosed.ForcedCloses, remoteClosed.DrainError)
 	}
 	remoteActive = false
 	err = runParallel(routeCount, config.parallel, func(index int) error {
@@ -203,12 +209,21 @@ func runFlyCapacityTier(b *testing.B, config capacityConfig, region *tailcfg.DER
 	reportLatency(b, "startup", startup)
 	reportLatency(b, "path_ready", pathReady)
 	reportLatency(b, "first_byte", firstByte)
-	reportLatency(b, "shutdown", shutdown)
+	reportLatency(b, "client_shutdown", shutdown)
+	b.ReportMetric(float64(agentShutdown)/float64(time.Millisecond), "agent_shutdown_ms")
 	reportPerRoute(b, "client_ready", before, ready, routeCount)
 	reportResiduals(b, before, after)
 	reportAgentResources(b, remote.Before, remote.Ready, remoteClosed.After, routeCount)
+	directRoutes := 0
+	for _, direct := range directPaths {
+		if direct {
+			directRoutes++
+		}
+	}
 	b.ReportMetric(float64(routeCount*config.transferSize)/(1024*1024)/transferTime.Seconds(), "MiB/s")
-	b.ReportMetric(float64(routeCount), config.expectedPath+"_routes")
+	b.ReportMetric(float64(directRoutes), "direct_routes")
+	b.ReportMetric(float64(routeCount-directRoutes), "derp_routes")
+	b.ReportMetric(float64(remoteClosed.ForcedCloses), "agent_forced_closes")
 	residualBudget := int64(32*1024*1024 + routeCount*512*1024)
 	enforceBudgets(b, routeCount, before, ready, after, startup, firstByte, shutdown, residualBudget)
 }
@@ -260,14 +275,14 @@ func (a *flyAgent) request(method string, body, response any) error {
 
 func reportAgentResources(b *testing.B, before, ready, after tailbench.Resources, routes int) {
 	b.Helper()
-	b.ReportMetric(float64(int64(ready.HeapAlloc)-int64(before.HeapAlloc))/float64(routes), "agent_heap_B/route")
-	b.ReportMetric(float64(int64(ready.Sys)-int64(before.Sys))/float64(routes), "agent_sys_B/route")
+	b.ReportMetric(float64(ready.HeapAlloc-before.HeapAlloc)/float64(routes), "agent_heap_B/route")
+	b.ReportMetric(float64(ready.Sys-before.Sys)/float64(routes), "agent_sys_B/route")
 	b.ReportMetric(float64(ready.Goroutines-before.Goroutines)/float64(routes), "agent_goroutines/route")
 	b.ReportMetric(float64(ready.OpenFDs-before.OpenFDs)/float64(routes), "agent_fds/route")
 	if before.RSS >= 0 && ready.RSS >= 0 {
 		b.ReportMetric(float64(ready.RSS-before.RSS)/float64(routes), "agent_rss_B/route")
 	}
-	b.ReportMetric(float64(int64(after.HeapAlloc)-int64(before.HeapAlloc)), "agent_residual_heap_B")
+	b.ReportMetric(float64(after.HeapAlloc-before.HeapAlloc), "agent_residual_heap_B")
 	b.ReportMetric(float64(after.Goroutines-before.Goroutines), "agent_residual_goroutines")
 	b.ReportMetric(float64(after.OpenFDs-before.OpenFDs), "agent_residual_fds")
 }

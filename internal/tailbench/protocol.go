@@ -4,38 +4,30 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/0xcadams/tnl/internal/processmetrics"
+	"github.com/0xcadams/tnl/pkg/protocol/transportv1"
 	"github.com/tailscale/tailcat"
 	"tailscale.com/tailcfg"
 )
 
 const RelayProfile = "public-derp"
 
-type Endpoint struct {
-	Version         int    `json:"version"`
-	ServerPublicKey string `json:"server_public_key"`
-	RelayProfile    string `json:"relay_profile"`
-}
-
-type Resources struct {
-	HeapAlloc  uint64 `json:"heap_alloc"`
-	Sys        uint64 `json:"sys"`
-	RSS        int64  `json:"rss"`
-	Goroutines int    `json:"goroutines"`
-	OpenFDs    int    `json:"open_fds"`
-}
+type Resources = processmetrics.Snapshot
 
 type CreateRunRequest struct {
 	ClientPublicKeys []string `json:"client_public_keys"`
 }
 
 type CreateRunResponse struct {
-	Endpoints []Endpoint `json:"endpoints"`
-	Before    Resources  `json:"before"`
-	Ready     Resources  `json:"ready"`
+	Endpoints []transportv1.TailcatDescriptor `json:"endpoints"`
+	Before    Resources                       `json:"before"`
+	Ready     Resources                       `json:"ready"`
 }
 
 type CloseRunResponse struct {
-	After Resources `json:"after"`
+	After        Resources `json:"after"`
+	ForcedCloses int       `json:"forced_closes"`
+	DrainError   string    `json:"drain_error,omitempty"`
 }
 
 func PublicRegion(ctx context.Context, regionID int) (*tailcfg.DERPRegion, error) {
