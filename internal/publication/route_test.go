@@ -6,6 +6,8 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -19,7 +21,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/0xcadams/tnl/internal/agent"
 	"github.com/0xcadams/tnl/internal/proxyproto"
+	"golang.org/x/crypto/acme"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
 )
@@ -96,6 +100,73 @@ func TestRouteTerminatesTLSAndProxiesLoopbackHTTP(t *testing.T) {
 	case <-handled:
 	case <-time.After(time.Second):
 		t.Fatal("route handler did not close")
+	}
+}
+
+func TestRouteSelectsChallengeAndInstalledCertificate(t *testing.T) {
+	route, err := NewRoute(RouteConfig{
+		Hostname: "route.example", Target: "http://127.0.0.1:3000", AllowedClient: key.NewNode().Public(),
+		RelayProfile: "test", Profiles: map[string]*tailcfg.DERPRegion{"test": {
+			RegionID: 1, Nodes: []*tailcfg.DERPNode{{RegionID: 1, HostName: "derp.example"}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = route.Close() })
+	if _, err := route.getCertificate(&tls.ClientHelloInfo{
+		ServerName: "route.example", SupportedProtos: []string{"http/1.1"},
+	}); err == nil {
+		t.Fatal("ordinary certificate was available before installation")
+	}
+	digest := sha256.Sum256([]byte("key authorization"))
+	challenge := agent.TLSALPNChallenge{
+		ID: "challenge", Hostname: "route.example", Digest: digest, ExpiresAt: time.Now().Add(time.Hour),
+	}
+	if err := route.InstallChallenge(challenge); err != nil {
+		t.Fatal(err)
+	}
+	selected, err := route.getCertificate(&tls.ClientHelloInfo{
+		ServerName: "route.example", SupportedProtos: []string{acme.ALPNProto},
+	})
+	if err != nil || selected.Leaf == nil || selected.Leaf.DNSNames[0] != "route.example" {
+		t.Fatalf("challenge certificate = %#v, %v", selected, err)
+	}
+	if !route.RemoveChallenge(challenge.ID) {
+		t.Fatal("challenge was not removed")
+	}
+	application := routeTestCertificate(t, "route.example")
+	if err := route.InstallCertificate(application); err != nil {
+		t.Fatal(err)
+	}
+	selected, err = route.getCertificate(&tls.ClientHelloInfo{
+		ServerName: "route.example", SupportedProtos: []string{"http/1.1"},
+	})
+	if err != nil || selected.Leaf == nil || selected.Leaf.SerialNumber.Cmp(application.Leaf.SerialNumber) != 0 {
+		t.Fatalf("application certificate = %#v, %v", selected, err)
+	}
+}
+
+func TestManualCertificateRetainsStandardTLSCompatibility(t *testing.T) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1), DNSNames: []string{"*.example", "other.invalid"},
+		NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(time.Hour),
+		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, privateKey.Public(), privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certificate := tls.Certificate{Certificate: [][]byte{der}, PrivateKey: privateKey}
+	if err := validateCertificate(certificate, "route.example", false); err != nil {
+		t.Fatalf("manual certificate rejected: %v", err)
+	}
+	if err := validateCertificate(certificate, "route.example", true); err == nil {
+		t.Fatal("automatic certificate policy accepted a wildcard RSA certificate")
 	}
 }
 

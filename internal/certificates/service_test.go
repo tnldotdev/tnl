@@ -74,6 +74,30 @@ func TestServiceCertificateLifecycle(t *testing.T) {
 	if idempotent.ID != job.ID || fake.orders != 1 {
 		t.Fatalf("idempotent job ID = %q, orders = %d", idempotent.ID, fake.orders)
 	}
+	if _, err := db.Exec(`UPDATE routes SET generation = 2 WHERE id = ?`, testRouteID); err != nil {
+		t.Fatal(err)
+	}
+	job, err = service.Create(context.Background(), testRouteID, 2, "tlsserver", csrDER)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.ID != idempotent.ID || job.Generation != 2 || fake.orders != 1 {
+		t.Fatalf("rebound job = %+v, orders = %d", job, fake.orders)
+	}
+	job.State = StateValidating
+	if err := service.store.saveJob(context.Background(), job); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE routes SET generation = 3 WHERE id = ?`, testRouteID); err != nil {
+		t.Fatal(err)
+	}
+	job, err = service.Create(context.Background(), testRouteID, 3, "tlsserver", csrDER)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.ID != idempotent.ID || job.Generation != 3 || job.State != StateValidating || fake.orders != 1 {
+		t.Fatalf("processing rebound job = %+v, orders = %d", job, fake.orders)
+	}
 
 	job, err = service.ChallengeReady(context.Background(), job.ID)
 	if err != nil {
@@ -86,14 +110,14 @@ func TestServiceCertificateLifecycle(t *testing.T) {
 	if !job.RenewAt.After(job.NotBefore) || !job.RenewAt.Before(job.NotAfter) {
 		t.Fatalf("renewal time = %v outside validity", job.RenewAt)
 	}
-	if _, err := service.Installed(context.Background(), job.ID, testRouteID, 1); !errors.Is(err, ErrInvalidState) {
+	if _, err := service.Installed(context.Background(), job.ID, testRouteID, 3); !errors.Is(err, ErrInvalidState) {
 		t.Fatalf("install before cleanup error = %v", err)
 	}
 	job, err = service.ChallengeRemoved(context.Background(), job.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	job, err = service.Installed(context.Background(), job.ID, testRouteID, 1)
+	job, err = service.Installed(context.Background(), job.ID, testRouteID, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,11 +126,11 @@ func TestServiceCertificateLifecycle(t *testing.T) {
 	}
 	_, replacementCSR := testCSR(t, testHostname, pkix.Name{})
 	if _, err := service.Create(
-		context.Background(), testRouteID, 1, "tlsserver", replacementCSR,
+		context.Background(), testRouteID, 3, "tlsserver", replacementCSR,
 	); !errors.Is(err, ErrInvalidState) {
 		t.Fatalf("early replacement error = %v", err)
 	}
-	for generation := 2; generation <= 5; generation++ {
+	for generation := 4; generation <= 7; generation++ {
 		if _, err := db.Exec(`UPDATE routes SET generation = ? WHERE id = ?`, generation, testRouteID); err != nil {
 			t.Fatal(err)
 		}

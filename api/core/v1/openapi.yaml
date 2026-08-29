@@ -281,6 +281,8 @@ paths:
           $ref: "#/components/responses/BearerProblem"
         "409":
           $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
         default:
           $ref: "#/components/responses/Problem"
   /v1/certs/orders:
@@ -307,6 +309,8 @@ paths:
         "401":
           $ref: "#/components/responses/BearerProblem"
         "409":
+          $ref: "#/components/responses/Problem"
+        "412":
           $ref: "#/components/responses/Problem"
         "429":
           $ref: "#/components/responses/Problem"
@@ -354,6 +358,8 @@ paths:
           $ref: "#/components/responses/BearerProblem"
         "409":
           $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
         "503":
           $ref: "#/components/responses/Problem"
         default:
@@ -372,6 +378,8 @@ paths:
         "401":
           $ref: "#/components/responses/BearerProblem"
         "409":
+          $ref: "#/components/responses/Problem"
+        "412":
           $ref: "#/components/responses/Problem"
         default:
           $ref: "#/components/responses/Problem"
