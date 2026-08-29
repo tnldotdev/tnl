@@ -9,7 +9,13 @@ a public url for localhost.
 - `internal/router` performs bounded TLS ClientHello inspection for routing.
 - `internal/tailtransport` carries lease traffic over Tailcat.
 - `pkg/protocol/corev1` contains generated Go types for the core API contract.
-- `cmd/tnl` and `cmd/tnld` are the client and hosted-service entry points.
+- `cmd/tnl` and `cmd/tnld` are the client and core-service entry points.
+
+## Hosted service
+
+The hosted web and accounts service is maintained separately from this public
+core repository. Core API contracts and shared conformance fixtures remain in
+`api` so hosted integrations can consume the same definitions.
 
 ## Development
 
@@ -22,8 +28,7 @@ mise install
 mise exec -- task format-check lint test build
 ```
 
-Go and TypeScript checks remain independent. Building the core Go commands does
-not require Node.
+This repository is Go-only and does not require Node.
 
 The opt-in Tailcat capacity and churn benchmarks are documented in
 [`docs/benchmarks`](docs/benchmarks/README.md).

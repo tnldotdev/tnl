@@ -10,9 +10,12 @@ mise install
 mise exec -- task format-check lint test build
 ```
 
-Use Oxfmt and Oxlint for TypeScript. Use `gofmt`, `goimports`, `go vet`,
-`staticcheck`, and `govulncheck` for Go. Generated files are committed and must
-not drift from their source contracts.
+Use `gofmt`, `goimports`, `go vet`, `staticcheck`, and `govulncheck` for Go.
+Generated files are committed and must not drift from their source contracts.
+
+The hosted TypeScript application is maintained separately from this public
+core repository. Shared contracts and fixtures remain authoritative under
+`api`.
 
 ## Engineering Rules
 
@@ -22,8 +25,6 @@ not drift from their source contracts.
 - Use a maintained library instead of hand-rolling a capability. Ask before
   introducing a custom implementation when the tradeoff is unclear.
 - Keep portable core packages independent of hosted protocol and domain types.
-- Derive TypeScript database types from the Drizzle schema rather than
-  maintaining handwritten equivalents.
 - Add tests for behavior, boundaries, and regressions. Do not add tautological
   tests solely to increase test counts.
 
