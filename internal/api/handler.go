@@ -1,4 +1,3 @@
-// Package api serves the core HTTP API.
 package api
 
 import (
@@ -11,22 +10,29 @@ import (
 	"mime"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/0xcadams/tnl/internal/auth"
 	"github.com/0xcadams/tnl/internal/credentials"
+	"github.com/0xcadams/tnl/internal/naming"
+	"github.com/0xcadams/tnl/internal/routes"
 	"github.com/0xcadams/tnl/internal/state"
 	"github.com/0xcadams/tnl/pkg/protocol/corev1"
+	"tailscale.com/types/key"
 )
 
 const (
 	capabilitiesPath     = "/v1/capabilities"
 	tokenExchangePath    = "/v1/auth/token"
 	credentialsPath      = "/v1/auth/credentials/"
+	routesPath           = "/v1/routes"
+	routePathPrefix      = "/v1/routes/"
 	authorizationHeader  = "Authorization"
 	requestIDHeader      = "X-Request-ID"
 	maxCredentialBytes   = 128
 	maxJSONRequestBytes  = 16 << 10
 	maxJSONResponseBytes = 64 << 10
+	jsonReadTimeout      = 10 * time.Second
 )
 
 var (
@@ -42,14 +48,31 @@ type AuthService interface {
 	Revoke(context.Context, state.Principal, credentials.CredentialID) error
 }
 
+// RouteService implements fenced route transitions without exposing storage to HTTP.
+type RouteService interface {
+	Create(context.Context, string, string, string, credentials.RouteToken) (routes.LeaseSetup, error)
+	Acquire(context.Context, string, string, credentials.RouteToken) (routes.LeaseSetup, error)
+	RegisterTransport(context.Context, string, uint64, credentials.LeaseToken, string, string) error
+	Ready(context.Context, string, uint64, credentials.LeaseToken) error
+	Heartbeat(context.Context, string, uint64, credentials.LeaseToken) (time.Time, error)
+	List(context.Context, string) ([]routes.Route, error)
+	Delete(context.Context, string, string) error
+}
+
 type handler struct {
 	capabilities corev1.Capabilities
 	auth         AuthService
+	routes       RouteService
 }
 
 // NewHandler creates the core API handler without binding a listener.
 func NewHandler(capabilities corev1.Capabilities, auth AuthService) http.Handler {
-	return &handler{capabilities: capabilities, auth: auth}
+	return NewHandlerWithRoutes(capabilities, auth, nil)
+}
+
+// NewHandlerWithRoutes creates the complete core API handler without binding a listener.
+func NewHandlerWithRoutes(capabilities corev1.Capabilities, auth AuthService, routeService RouteService) http.Handler {
+	return &handler{capabilities: capabilities, auth: auth, routes: routeService}
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -61,10 +84,16 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveCapabilities(w, r, requestID)
 	case tokenExchangePath:
 		h.serveTokenExchange(w, r, requestID)
+	case routesPath:
+		h.serveRoutes(w, r, requestID)
 	default:
 		credentialID, ok := strings.CutPrefix(r.URL.Path, credentialsPath)
 		if ok && credentialID != "" && !strings.Contains(credentialID, "/") {
 			h.serveCredentialRevocation(w, r, requestID, credentialID)
+			return
+		}
+		if routeID, operation, ok := routePath(r.URL.Path); ok {
+			h.serveRoute(w, r, requestID, routeID, operation)
 			return
 		}
 		writeNotFound(w, requestID)
@@ -91,16 +120,7 @@ func (h *handler) serveTokenExchange(w http.ResponseWriter, r *http.Request, req
 		return
 	}
 	var request corev1.TokenExchangeRequest
-	if err := decodeJSON(w, r, &request); err != nil {
-		status, title, problemType := http.StatusBadRequest, "Invalid request", "invalid-request"
-		var maxBytesError *http.MaxBytesError
-		switch {
-		case errors.As(err, &maxBytesError):
-			status, title, problemType = http.StatusRequestEntityTooLarge, "Request body too large", "request-too-large"
-		case errors.Is(err, errUnsupportedMediaType):
-			status, title, problemType = http.StatusUnsupportedMediaType, "Unsupported media type", "unsupported-media-type"
-		}
-		writeProblem(w, requestID, status, corev1.InvalidArgument, title, problemType)
+	if !decodeRequest(w, r, requestID, &request) {
 		return
 	}
 	if request.BootstrapToken == "" || len(request.BootstrapToken) > maxCredentialBytes {
@@ -149,22 +169,8 @@ func (h *handler) serveCredentialRevocation(
 		writeMethodNotAllowed(w, requestID, http.MethodDelete)
 		return
 	}
-	if h.auth == nil {
-		writeInternalProblem(w, requestID)
-		return
-	}
-	token, ok := bearerToken(r.Header)
+	principal, ok := h.authenticate(w, r, requestID)
 	if !ok {
-		writeUnauthenticated(w, requestID)
-		return
-	}
-	principal, err := h.auth.Authenticate(r.Context(), token)
-	if errors.Is(err, auth.ErrUnauthenticated) {
-		writeUnauthenticated(w, requestID)
-		return
-	}
-	if err != nil {
-		writeInternalProblem(w, requestID)
 		return
 	}
 	credentialID, err := credentials.ParseCredentialID(credentialIDValue)
@@ -185,22 +191,325 @@ func (h *handler) serveCredentialRevocation(
 	writeNoContent(w)
 }
 
-func bearerToken(header http.Header) (credentials.AccessToken, bool) {
-	values := header.Values(authorizationHeader)
-	if len(values) != 1 || len(values[0]) > len("Bearer ")+maxCredentialBytes {
-		return "", false
+func (h *handler) serveRoutes(w http.ResponseWriter, r *http.Request, requestID string) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		writeMethodNotAllowed(w, requestID, http.MethodGet+", "+http.MethodPost)
+		return
 	}
-	scheme, token, ok := strings.Cut(values[0], " ")
-	if !ok || !strings.EqualFold(scheme, "Bearer") || token == "" || strings.ContainsAny(token, " \t") {
+	principal, ok := h.authenticate(w, r, requestID)
+	if !ok {
+		return
+	}
+	if h.routes == nil {
+		writeInternalProblem(w, requestID)
+		return
+	}
+	if r.Method == http.MethodGet {
+		stored, err := h.routes.List(r.Context(), principal.ID)
+		if err != nil {
+			writeRouteError(w, requestID, err)
+			return
+		}
+		response := make([]corev1.Route, 0, len(stored))
+		for _, route := range stored {
+			response = append(response, routeResponse(route))
+		}
+		writeModel(w, requestID, http.StatusOK, response)
+		return
+	}
+	var request corev1.CreateRouteRequest
+	if !decodeRequest(w, r, requestID, &request) {
+		return
+	}
+	routeToken := credentials.RouteToken(request.RouteToken)
+	if strings.TrimSpace(request.DisplayTarget) == "" || len(request.DisplayTarget) > 256 ||
+		len(request.RouteToken) > maxCredentialBytes {
+		writeInvalidRequest(w, requestID)
+		return
+	}
+	if _, _, err := credentials.ParseRouteToken(routeToken); err != nil {
+		writeInvalidRequest(w, requestID)
+		return
+	}
+	setup, err := h.routes.Create(r.Context(), principal.ID, request.Hostname, request.DisplayTarget, routeToken)
+	if err != nil {
+		writeRouteError(w, requestID, err)
+		return
+	}
+	writeModel(w, requestID, http.StatusCreated, leaseSetupResponse(setup))
+}
+
+func (h *handler) serveRoute(
+	w http.ResponseWriter,
+	r *http.Request,
+	requestID, routeID, operation string,
+) {
+	if h.routes == nil {
+		writeInternalProblem(w, requestID)
+		return
+	}
+	switch operation {
+	case "":
+		if r.Method != http.MethodDelete {
+			writeMethodNotAllowed(w, requestID, http.MethodDelete)
+			return
+		}
+		principal, ok := h.authenticate(w, r, requestID)
+		if !ok {
+			return
+		}
+		if err := h.routes.Delete(r.Context(), principal.ID, routeID); err != nil {
+			writeRouteError(w, requestID, err)
+			return
+		}
+		writeNoContent(w)
+	case "leases":
+		h.serveLeaseAcquisition(w, r, requestID, routeID)
+	case "transport":
+		h.serveTransport(w, r, requestID, routeID)
+	case "heartbeat":
+		h.serveHeartbeat(w, r, requestID, routeID)
+	case "ready":
+		h.serveReady(w, r, requestID, routeID)
+	default:
+		writeNotFound(w, requestID)
+	}
+}
+
+func (h *handler) serveLeaseAcquisition(w http.ResponseWriter, r *http.Request, requestID, routeID string) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w, requestID, http.MethodPost)
+		return
+	}
+	principal, ok := h.authenticate(w, r, requestID)
+	if !ok {
+		return
+	}
+	var request corev1.AcquireLeaseRequest
+	if !decodeRequest(w, r, requestID, &request) {
+		return
+	}
+	if request.RouteToken == "" || len(request.RouteToken) > maxCredentialBytes {
+		writeInvalidRequest(w, requestID)
+		return
+	}
+	setup, err := h.routes.Acquire(r.Context(), principal.ID, routeID, credentials.RouteToken(request.RouteToken))
+	if err != nil {
+		writeRouteError(w, requestID, err)
+		return
+	}
+	writeModel(w, requestID, http.StatusCreated, leaseSetupResponse(setup))
+}
+
+func (h *handler) serveTransport(w http.ResponseWriter, r *http.Request, requestID, routeID string) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w, requestID, http.MethodPost)
+		return
+	}
+	token, ok := leaseBearer(r.Header)
+	if !ok {
+		writeUnauthenticated(w, requestID)
+		return
+	}
+	var request corev1.RegisterTransportRequest
+	if !decodeRequest(w, r, requestID, &request) {
+		return
+	}
+	var serverKey key.NodePublic
+	if request.Generation <= 0 || request.Endpoint.Version != corev1.TailcatDescriptorVersionN1 ||
+		serverKey.UnmarshalText([]byte(request.Endpoint.ServerPublicKey)) != nil || serverKey.IsZero() ||
+		request.Endpoint.RelayProfile != h.capabilities.Transport.RelayProfile {
+		writeInvalidRequest(w, requestID)
+		return
+	}
+	err := h.routes.RegisterTransport(
+		r.Context(), routeID, uint64(request.Generation), token,
+		request.Endpoint.ServerPublicKey, request.Endpoint.RelayProfile,
+	)
+	if err != nil {
+		writeRouteError(w, requestID, err)
+		return
+	}
+	writeNoContent(w)
+}
+
+func (h *handler) serveHeartbeat(w http.ResponseWriter, r *http.Request, requestID, routeID string) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w, requestID, http.MethodPost)
+		return
+	}
+	token, ok := leaseBearer(r.Header)
+	if !ok {
+		writeUnauthenticated(w, requestID)
+		return
+	}
+	var request corev1.LeaseGenerationRequest
+	if !decodeRequest(w, r, requestID, &request) {
+		return
+	}
+	if request.Generation <= 0 {
+		writeInvalidRequest(w, requestID)
+		return
+	}
+	expiresAt, err := h.routes.Heartbeat(r.Context(), routeID, uint64(request.Generation), token)
+	if err != nil {
+		writeRouteError(w, requestID, err)
+		return
+	}
+	writeModel(w, requestID, http.StatusOK, corev1.HeartbeatResponse{ExpiresAt: expiresAt})
+}
+
+func (h *handler) serveReady(w http.ResponseWriter, r *http.Request, requestID, routeID string) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w, requestID, http.MethodPost)
+		return
+	}
+	token, ok := leaseBearer(r.Header)
+	if !ok {
+		writeUnauthenticated(w, requestID)
+		return
+	}
+	var request corev1.LeaseGenerationRequest
+	if !decodeRequest(w, r, requestID, &request) {
+		return
+	}
+	if request.Generation <= 0 {
+		writeInvalidRequest(w, requestID)
+		return
+	}
+	if err := h.routes.Ready(r.Context(), routeID, uint64(request.Generation), token); err != nil {
+		writeRouteError(w, requestID, err)
+		return
+	}
+	writeNoContent(w)
+}
+
+func bearerToken(header http.Header) (credentials.AccessToken, bool) {
+	token, err := credentials.Bearer(header)
+	if err != nil || len(token) > maxCredentialBytes {
 		return "", false
 	}
 	return credentials.AccessToken(token), true
+}
+
+func leaseBearer(header http.Header) (credentials.LeaseToken, bool) {
+	token, err := credentials.Bearer(header)
+	return credentials.LeaseToken(token), err == nil && len(token) <= maxCredentialBytes
+}
+
+func (h *handler) authenticate(w http.ResponseWriter, r *http.Request, requestID string) (state.Principal, bool) {
+	if h.auth == nil {
+		writeInternalProblem(w, requestID)
+		return state.Principal{}, false
+	}
+	token, ok := bearerToken(r.Header)
+	if !ok {
+		writeUnauthenticated(w, requestID)
+		return state.Principal{}, false
+	}
+	principal, err := h.auth.Authenticate(r.Context(), token)
+	if errors.Is(err, auth.ErrUnauthenticated) {
+		writeUnauthenticated(w, requestID)
+		return state.Principal{}, false
+	}
+	if err != nil {
+		writeInternalProblem(w, requestID)
+		return state.Principal{}, false
+	}
+	return principal, true
+}
+
+func routePath(path string) (routeID, operation string, ok bool) {
+	remainder, ok := strings.CutPrefix(path, routePathPrefix)
+	if !ok || remainder == "" {
+		return "", "", false
+	}
+	parts := strings.Split(remainder, "/")
+	if len(parts) > 2 || parts[0] == "" || len(parts) == 2 && parts[1] == "" {
+		return "", "", false
+	}
+	if len(parts) == 2 {
+		operation = parts[1]
+	}
+	return parts[0], operation, true
+}
+
+func decodeRequest(w http.ResponseWriter, r *http.Request, requestID string, value any) bool {
+	if err := decodeJSON(w, r, value); err != nil {
+		status, title, problemType := http.StatusBadRequest, "Invalid request", "invalid-request"
+		var maxBytesError *http.MaxBytesError
+		switch {
+		case errors.As(err, &maxBytesError):
+			status, title, problemType = http.StatusRequestEntityTooLarge, "Request body too large", "request-too-large"
+		case errors.Is(err, errUnsupportedMediaType):
+			status, title, problemType = http.StatusUnsupportedMediaType, "Unsupported media type", "unsupported-media-type"
+		}
+		writeProblem(w, requestID, status, corev1.InvalidArgument, title, problemType)
+		return false
+	}
+	return true
+}
+
+func routeResponse(route routes.Route) corev1.Route {
+	return corev1.Route{
+		Id: route.ID, Hostname: route.Hostname, DisplayTarget: route.DisplayTarget,
+		State: corev1.RouteState(route.State), Generation: int(route.Generation), CreatedAt: route.CreatedAt,
+	}
+}
+
+func leaseSetupResponse(setup routes.LeaseSetup) corev1.LeaseSetup {
+	return corev1.LeaseSetup{
+		Route: routeResponse(setup.Route),
+		Lease: corev1.RouteLease{
+			Id: setup.Lease.ID, RouteId: setup.Lease.RouteID, Generation: int(setup.Lease.Generation),
+			Status: corev1.RouteLeaseStatus(setup.Lease.Status), CreatedAt: setup.Lease.CreatedAt, ExpiresAt: setup.Lease.ExpiresAt,
+		},
+		LeaseToken: setup.LeaseToken.String(), IngressPublicKey: setup.IngressPublicKey,
+	}
+}
+
+func writeModel(w http.ResponseWriter, requestID string, status int, value any) {
+	body, err := marshalJSON(value)
+	if err != nil {
+		writeInternalProblem(w, requestID)
+		return
+	}
+	writeJSON(w, status, "application/json", body)
+}
+
+func writeRouteError(w http.ResponseWriter, requestID string, err error) {
+	switch {
+	case errors.Is(err, routes.ErrUnauthenticated):
+		writeUnauthenticated(w, requestID)
+	case errors.Is(err, routes.ErrNotFound):
+		writeNotFound(w, requestID)
+	case errors.Is(err, routes.ErrNameUnavailable):
+		writeProblem(w, requestID, http.StatusConflict, corev1.NameUnavailable, "Name unavailable", "name-unavailable")
+	case errors.Is(err, routes.ErrRouteExists), errors.Is(err, routes.ErrStaleLease), errors.Is(err, routes.ErrInvalidState):
+		writeProblem(w, requestID, http.StatusConflict, corev1.StateConflict, "State conflict", "state-conflict")
+	case errors.Is(err, routes.ErrNoWorkerCapacity):
+		writeProblem(w, requestID, http.StatusServiceUnavailable, corev1.TemporarilyUnavailable, "Temporarily unavailable", "temporarily-unavailable")
+	default:
+		if _, ok := naming.ErrorCodeOf(err); ok {
+			writeProblem(w, requestID, http.StatusBadRequest, corev1.InvalidArgument, "Invalid request", "invalid-request")
+			return
+		}
+		writeInternalProblem(w, requestID)
+	}
+}
+
+func writeInvalidRequest(w http.ResponseWriter, requestID string) {
+	writeProblem(w, requestID, http.StatusBadRequest, corev1.InvalidArgument, "Invalid request", "invalid-request")
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, value any) error {
 	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || mediaType != "application/json" {
 		return errUnsupportedMediaType
+	}
+	responseController := http.NewResponseController(w)
+	if err := responseController.SetReadDeadline(time.Now().Add(jsonReadTimeout)); err == nil {
+		defer responseController.SetReadDeadline(time.Time{})
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxJSONRequestBytes))
 	decoder.DisallowUnknownFields()

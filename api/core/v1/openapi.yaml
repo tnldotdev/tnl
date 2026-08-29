@@ -86,12 +86,196 @@ paths:
           $ref: "#/components/responses/Problem"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/routes:
+    get:
+      operationId: listRoutes
+      summary: List routes owned by the authenticated principal
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Routes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Route"
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        default:
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: createRoute
+      summary: Create or reclaim an owned route with a new lease generation
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRouteRequest"
+      responses:
+        "201":
+          description: Route created or reclaimed and lease acquired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LeaseSetup"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/routes/{id}:
+    delete:
+      operationId: deleteRoute
+      summary: Delete a route owned by the authenticated principal
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RouteID"
+      responses:
+        "204":
+          description: Route deleted
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/routes/{id}/leases:
+    post:
+      operationId: acquireRouteLease
+      summary: Acquire the next route lease generation
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RouteID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcquireLeaseRequest"
+      responses:
+        "201":
+          description: Lease acquired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LeaseSetup"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/routes/{id}/transport:
+    post:
+      operationId: registerRouteTransport
+      summary: Register the agent Tailcat endpoint for a lease
+      security:
+        - leaseAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RouteID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterTransportRequest"
+      responses:
+        "204":
+          description: Transport registered and attached
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/routes/{id}/heartbeat:
+    post:
+      operationId: heartbeatRouteLease
+      summary: Refresh one current route lease
+      security:
+        - leaseAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RouteID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LeaseGenerationRequest"
+      responses:
+        "200":
+          description: Lease refreshed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HeartbeatResponse"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/routes/{id}/ready:
+    post:
+      operationId: markRouteReady
+      summary: Publish a current attached route
+      security:
+        - leaseAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RouteID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LeaseGenerationRequest"
+      responses:
+        "204":
+          description: Route published
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: tnl access token
+    leaseAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: tnl lease token
+  parameters:
+    RouteID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^route_[0-9a-f]{32}$
   responses:
     Problem:
       description: Request failed
@@ -119,7 +303,6 @@ components:
         - anonymous_public
         - hostname_authorization
         - transport
-        - acme
       properties:
         protocol_versions:
           type: array
@@ -194,6 +377,139 @@ components:
     CredentialID:
       type: string
       pattern: ^[A-Za-z0-9_-]{21}[AQgw]$
+    CreateRouteRequest:
+      type: object
+      additionalProperties: false
+      required: [hostname, display_target, route_token]
+      properties:
+        hostname:
+          type: string
+          minLength: 1
+          maxLength: 254
+        display_target:
+          type: string
+          minLength: 1
+          maxLength: 256
+        route_token:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^tnl_route_[A-Za-z0-9_-]{21}[AQgw]\.[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$'
+    AcquireLeaseRequest:
+      type: object
+      additionalProperties: false
+      required: [route_token]
+      properties:
+        route_token:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^tnl_route_[A-Za-z0-9_-]{21}[AQgw]\.[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$'
+    LeaseGenerationRequest:
+      type: object
+      additionalProperties: false
+      required: [generation]
+      properties:
+        generation:
+          type: integer
+          minimum: 1
+    RegisterTransportRequest:
+      type: object
+      additionalProperties: false
+      required: [generation, endpoint]
+      properties:
+        generation:
+          type: integer
+          minimum: 1
+        endpoint:
+          $ref: "#/components/schemas/TailcatDescriptor"
+    TailcatDescriptor:
+      type: object
+      additionalProperties: false
+      required: [version, server_public_key, relay_profile]
+      properties:
+        version:
+          type: integer
+          const: 1
+        server_public_key:
+          type: string
+          pattern: ^nodekey:[0-9a-f]{64}$
+        relay_profile:
+          type: string
+          pattern: ^[a-z0-9][a-z0-9-]{0,62}$
+    Route:
+      type: object
+      additionalProperties: false
+      required: [id, hostname, display_target, state, generation, created_at]
+      properties:
+        id:
+          type: string
+          pattern: ^route_[0-9a-f]{32}$
+        hostname:
+          type: string
+          minLength: 1
+          maxLength: 253
+        display_target:
+          type: string
+          minLength: 1
+          maxLength: 256
+        state:
+          type: string
+          enum: [active]
+        generation:
+          type: integer
+          minimum: 1
+        created_at:
+          type: string
+          format: date-time
+    RouteLease:
+      type: object
+      additionalProperties: false
+      required: [id, route_id, generation, status, created_at, expires_at]
+      properties:
+        id:
+          type: string
+          pattern: ^lease_[0-9a-f]{32}$
+        route_id:
+          type: string
+          pattern: ^route_[0-9a-f]{32}$
+        generation:
+          type: integer
+          minimum: 1
+        status:
+          type: string
+          enum: [pending, starting, ready]
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+    LeaseSetup:
+      type: object
+      additionalProperties: false
+      required: [route, lease, lease_token, ingress_public_key]
+      properties:
+        route:
+          $ref: "#/components/schemas/Route"
+        lease:
+          $ref: "#/components/schemas/RouteLease"
+        lease_token:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^tnl_lease_[A-Za-z0-9_-]{21}[AQgw]\.[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$'
+        ingress_public_key:
+          type: string
+          pattern: ^nodekey:[0-9a-f]{64}$
+    HeartbeatResponse:
+      type: object
+      additionalProperties: false
+      required: [expires_at]
+      properties:
+        expires_at:
+          type: string
+          format: date-time
     Problem:
       type: object
       additionalProperties: false
