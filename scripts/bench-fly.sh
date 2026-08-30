@@ -29,6 +29,7 @@ temp_dir="$(mktemp -d)"
 results_dir="${RESULTS_DIR:-bench-results}"
 results_file="${results_dir}/${run_id}.jsonl"
 proxy_pid=""
+edge_metrics_url=""
 
 stop_proxy() {
   if [[ -n "${proxy_pid}" ]]; then
@@ -59,9 +60,27 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 run_machine() {
+  local machine_name=""
+  local previous=""
+  for argument in "$@"; do
+    if [[ "${previous}" == "--name" ]]; then
+      machine_name="${argument}"
+      break
+    fi
+    previous="${argument}"
+  done
   for _ in $(seq 1 5); do
     if fly machine run "$@"; then
       return 0
+    fi
+    if [[ -n "${machine_name}" ]]; then
+      local ids=()
+      while IFS= read -r id; do
+        [[ -n "${id}" ]] && ids+=("${id}")
+      done < <(fly machine list --app "${app}" --json 2>/dev/null | jq -r --arg name "${machine_name}" '.[] | select(.name == $name) | .id' 2>/dev/null || true)
+      if ((${#ids[@]} > 0)); then
+        fly machine destroy --force --app "${app}" "${ids[@]}" >/dev/null 2>&1 || true
+      fi
     fi
     sleep 5
   done
@@ -84,19 +103,33 @@ machine_value() {
   return 1
 }
 
-wait_for_machine_stop() {
-  local machine_id="$1"
+wait_for_drivers() {
+  local machine_ids=("$@")
   local deadline=$((SECONDS + driver_wait_seconds))
   while ((SECONDS < deadline)); do
-    if fly machine wait "${machine_id}" --app "${app}" --state stopped --wait-timeout 55s >/dev/null 2>&1; then
+    local machines
+    if ! machines="$(fly machine list --app "${app}" --json 2>/dev/null)"; then
+      sleep 5
+      continue
+    fi
+    local all_stopped=1
+    for machine_id in "${machine_ids[@]}"; do
+      local state
+      state="$(jq -r --arg id "${machine_id}" '.[] | select(.id == $id) | .state // empty' <<<"${machines}")"
+      if [[ "${state}" != "stopped" ]]; then
+        all_stopped=0
+        continue
+      fi
+      local exit_code
+      exit_code="$(jq -r --arg id "${machine_id}" '[.[] | select(.id == $id) | .events[]? | select(.type == "exit")][0].request.exit_event.exit_code // empty' <<<"${machines}")"
+      if [[ -n "${exit_code}" && "${exit_code}" != "0" ]]; then
+        return 1
+      fi
+    done
+    if ((all_stopped != 0)); then
       return 0
     fi
-    local state
-    state="$(fly machine list --app "${app}" --json | jq -r --arg id "${machine_id}" '.[] | select(.id == $id) | .state // empty')"
-    if [[ "${state}" == "stopped" ]]; then
-      return 0
-    fi
-    printf 'driver %s is still %s; continuing to wait\n' "${machine_id}" "${state:-unknown}"
+    sleep 5
   done
   return 1
 }
@@ -121,7 +154,7 @@ capture_failure_diagnostics() {
 
 wait_for_core() {
   stop_proxy
-  fly proxy "${local_control_port}:8443" --app "${app}" --quiet >"${temp_dir}/proxy.log" 2>&1 &
+  fly proxy "${local_control_port}:4443" --app "${app}" --quiet >"${temp_dir}/proxy.log" 2>&1 &
   proxy_pid=$!
   local deadline=$((SECONDS + 180))
   while ((SECONDS < deadline)); do
@@ -140,18 +173,24 @@ wait_for_core() {
 }
 
 launch_single_node() {
+  local total_routes="$1"
+  local active_claim_limit=$((total_routes > 128 ? total_routes : 128))
+  local claim_request_limit=$((total_routes > 1024 ? total_routes : 1024))
   run_machine "${image}" \
     --app "${app}" --name single-node --region "${region}" --vm-size "${single_size}" \
     --entrypoint /tnld --detach --restart no \
-    --port 443:4443/tcp --port 8443:8443/tcp \
+    --port 443:4443/tcp \
     --file-local "/etc/tnl/control.crt=${temp_dir}/control.crt" \
     --file-local "/etc/tnl/control.key=${temp_dir}/control.key" \
     --file-local "/etc/tnl/relay.json=${temp_dir}/relay.json" \
     --env TNLD_MODE=standalone \
     --env TNLD_STATE_DIR=/tmp/tnl-state \
     --env 'TNLD_METRICS_LISTEN=[::]:9090' \
-    --env 'TNLD_CONTROL_LISTEN=[::]:8443' \
     --env 'TNLD_PUBLIC_LISTEN=[::]:4443' \
+    --env "TNLD_CONTROL_HOSTNAME=${app}.fly.dev" \
+    --env "TNLD_ROUTE_SUFFIX=${run_id}.bench.test" \
+    --env "TNLD_MAX_ACTIVE_HOSTNAME_CLAIMS=${active_claim_limit}" \
+    --env "TNLD_MAX_HOSTNAME_CLAIM_REQUESTS=${claim_request_limit}" \
     --env TNLD_CONTROL_CERT_FILE=/etc/tnl/control.crt \
     --env TNLD_CONTROL_KEY_FILE=/etc/tnl/control.key \
     --env "TNLD_BOOTSTRAP_TOKEN=${bootstrap_token}" \
@@ -162,17 +201,23 @@ launch_single_node() {
 }
 
 launch_edge() {
+  local total_routes="$1"
+  local active_claim_limit=$((total_routes > 128 ? total_routes : 128))
+  local claim_request_limit=$((total_routes > 1024 ? total_routes : 1024))
   run_machine "${image}" \
     --app "${app}" --name edge --region "${region}" --vm-size "${edge_size}" \
     --entrypoint /tnld --detach --restart no \
-    --port 443:4443/tcp --port 8443:8443/tcp \
+    --port 443:4443/tcp \
     --file-local "/etc/tnl/control.crt=${temp_dir}/control.crt" \
     --file-local "/etc/tnl/control.key=${temp_dir}/control.key" \
     --env TNLD_MODE=edge \
     --env TNLD_STATE_DIR=/tmp/tnl-state \
     --env 'TNLD_METRICS_LISTEN=[::]:9090' \
-    --env 'TNLD_CONTROL_LISTEN=[::]:8443' \
     --env 'TNLD_PUBLIC_LISTEN=[::]:4443' \
+    --env "TNLD_CONTROL_HOSTNAME=${app}.fly.dev" \
+    --env "TNLD_ROUTE_SUFFIX=${run_id}.bench.test" \
+    --env "TNLD_MAX_ACTIVE_HOSTNAME_CLAIMS=${active_claim_limit}" \
+    --env "TNLD_MAX_HOSTNAME_CLAIM_REQUESTS=${claim_request_limit}" \
     --env TNLD_CONTROL_CERT_FILE=/etc/tnl/control.crt \
     --env TNLD_CONTROL_KEY_FILE=/etc/tnl/control.key \
     --env "TNLD_BOOTSTRAP_TOKEN=${bootstrap_token}" \
@@ -191,7 +236,7 @@ launch_workers() {
       --file-local "/etc/tnl/relay.json=${temp_dir}/relay.json" \
       --env TNLD_MODE=worker \
       --env 'TNLD_METRICS_LISTEN=[::]:9090' \
-      --env "TNLD_WORKER_URL=wss://${app}.fly.dev:8443/internal/v1/worker" \
+      --env "TNLD_WORKER_URL=wss://${app}.fly.dev/internal/v1/worker" \
       --env "TNLD_WORKER_TOKEN=${worker_token}" \
       --env TNLD_RELAY_MAP_FILE=/etc/tnl/relay.json \
       --env "TNLD_WORKER_CAPACITY=${worker_capacity}" \
@@ -249,13 +294,14 @@ run_tier() {
       --file-local "/etc/tnl/control-ca.crt=${temp_dir}/control-ca.crt" \
       --file-local "/etc/tnl/relay.json=${temp_dir}/relay.json" \
       --env "TNL_BENCH_TOPOLOGY=${topology}" \
-      --env "TNL_BENCH_CORE_URL=https://${app}.fly.dev:8443" \
+      --env "TNL_BENCH_CORE_URL=https://${app}.fly.dev" \
       --env "TNL_BENCH_BOOTSTRAP_TOKEN=${bootstrap_token}" \
       --env TNL_BENCH_CONTROL_CA_FILE=/etc/tnl/control-ca.crt \
       --env "TNL_BENCH_PUBLIC_ADDRESS=${app}.fly.dev:443" \
       --env TNL_BENCH_RELAY_MAP_FILE=/etc/tnl/relay.json \
-      --env "TNL_BENCH_HOSTNAME_SUFFIX=d${index}-${topology}-${total_routes}.${run_id}.bench.test" \
+      --env "TNL_BENCH_HOSTNAME_SUFFIX=${run_id}.bench.test" \
       --env "TNL_BENCH_METRICS_URLS=${metrics_csv}" \
+      --env "TNL_BENCH_EDGE_METRICS_URL=${edge_metrics_url}" \
       --env "TNL_BENCH_ROUTES=${count}" \
       --env "TNL_BENCH_EXPECTED_ROUTES=${total_routes}" \
       "${barrier_args[@]}" \
@@ -280,12 +326,9 @@ run_tier() {
   done
 
   local failed=0
-  for index in "${!driver_ids[@]}"; do
-    if ! wait_for_machine_stop "${driver_ids[index]}"; then
-      fly logs --app "${app}" --machine "${driver_ids[index]}" --no-tail >&2 || true
-      failed=1
-    fi
-  done
+  if ! wait_for_drivers "${driver_ids[@]}"; then
+    failed=1
+  fi
 
   for index in "${!driver_ids[@]}"; do
     local log_file="${temp_dir}/${topology}-${total_routes}-${index}.log"
@@ -369,9 +412,10 @@ for mode in "${mode_list[@]}"; do
         completed=0
         for ((attempt = 1; attempt <= attempts; attempt++)); do
           destroy_machines
-          launch_single_node
+          launch_single_node "${routes}"
           wait_for_core
           single_ip="$(machine_value single-node private_ip)"
+          edge_metrics_url="http://[${single_ip}]:9090/metrics"
           if run_tier single-node "${routes}" "${single_size}" "http://[${single_ip}]:9090/metrics"; then
             completed=1
             break
@@ -393,8 +437,10 @@ for mode in "${mode_list[@]}"; do
         completed=0
         for ((attempt = 1; attempt <= attempts; attempt++)); do
           destroy_machines
-          launch_edge
+          launch_edge "${routes}"
           wait_for_core
+          edge_ip="$(machine_value edge private_ip)"
+          edge_metrics_url="http://[${edge_ip}]:9090/metrics"
           launch_workers
           sleep 5
           if run_tier ha "${routes}" "${edge_size}+${workers}x${worker_size}" "${worker_metrics[@]}"; then

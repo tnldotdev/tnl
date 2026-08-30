@@ -56,14 +56,18 @@ Results are written as JSON Lines under `bench-results/`. Each tier reports:
 - route teardown p50, p95, and maximum
 - aggregate payload throughput
 - worker route count, capacity, RSS, goroutines, and open file descriptors
+- worker file-descriptor limit and Tailcat file-limit failures
 - post-cleanup worker state
 
 Each route transfers one validated 64 KiB response by default. Every run uses a
-fresh benchmark hostname suffix. Every tier starts fresh topology Machines,
+fresh benchmark hostname suffix. The harness raises hostname claim quotas only
+for the aggregate tier size, claims every route through the production API, and
+releases every claim during cleanup. Every tier starts fresh topology Machines,
 explicitly deletes its routes, and waits for worker route counts to return to
 zero. A failed tier is retried up to three times with fresh Machines and is only
-recorded after full validation. The harness destroys all Machines between tiers
-and finally destroys the temporary Fly app.
+recorded after full validation. Failure logs include a compact scrape of the
+same production Prometheus metrics used for service monitoring. The harness
+destroys all Machines between tiers and finally destroys the temporary Fly app.
 
 `DRIVERS` defaults to one. With multiple drivers, the harness divides a tier's
 routes evenly across driver Machines. Each driver waits for the aggregate worker

@@ -51,6 +51,7 @@ func (b *driverBarrier) ServeHTTP(response http.ResponseWriter, request *http.Re
 		return
 	}
 
+	// Each driver counts once; closing release broadcasts to every waiter.
 	b.mu.Lock()
 	phase := b.phases[phaseName]
 	if phase == nil {
@@ -110,6 +111,7 @@ func waitDriverBarrier(ctx context.Context, flags cli, phase string) error {
 	query.Set("driver", strconv.Itoa(flags.DriverIndex))
 	endpoint.RawQuery = query.Encode()
 	client := &http.Client{}
+	// Drivers may beat the coordinator, so retry transport and server failures.
 	for {
 		request, requestErr := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), nil)
 		if requestErr != nil {
