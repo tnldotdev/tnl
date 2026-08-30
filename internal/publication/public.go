@@ -56,7 +56,9 @@ type PublicConfig struct {
 	Profiles     map[string]*tailcfg.DERPRegion
 	DrainTime    time.Duration
 	Logf         logger.Logf
-	OnReady      func(string)
+	// OnRoute runs after creation or recovery, before activation.
+	OnRoute func(string)
+	OnReady func(string)
 }
 
 func RunPublic(ctx context.Context, config PublicConfig) error {
@@ -97,6 +99,9 @@ func RunPublic(ctx context.Context, config PublicConfig) error {
 		return err
 	}
 	routeID := setup.Route.Id
+	if routeID != "" && config.OnRoute != nil {
+		config.OnRoute(routeID)
+	}
 	var routeState *clientstate.Route
 	if automaticCertificates {
 		routeState, err = clientstate.LockContext(ctx, config.State, routeID)
@@ -144,6 +149,7 @@ func createOrRecover(
 			return setup, nil
 		}
 		if errors.Is(err, coreclient.ErrStateConflict) || errors.Is(err, coreclient.ErrUnavailable) {
+			// Creation may commit before its response is lost; recover with the same token.
 			routes, listErr := core.ListRoutes(ctx)
 			if listErr == nil {
 				for _, route := range routes {
@@ -198,6 +204,7 @@ func runLease(
 	leaseCtx, cancelLease := context.WithCancel(ctx)
 	defer cancelLease()
 	heartbeatErrors := make(chan error, 1)
+	// Start heartbeats before route and certificate setup consume the lease lifetime.
 	go func() {
 		if err := heartbeatLease(
 			leaseCtx, config.Core, setup.Route.Id, generation, leaseToken, setup.Lease.ExpiresAt,
@@ -357,6 +364,7 @@ func refreshCertificate(
 	heartbeatErrors <-chan error,
 ) (clientstate.Material, error) {
 	if !material.Installed && material.RenewAt.After(time.Now()) && material.NotAfter.After(time.Now().Add(24*time.Hour)) {
+		// Reconcile a committed certificate before issuing another order.
 		reconciled, err := reconcileCertificateInstallation(
 			ctx, core, route, state, routeID, generation, leaseToken, hostname, profile, material, heartbeatErrors,
 		)
@@ -399,6 +407,7 @@ func issueCertificate(
 			)
 			var terminal *terminalCertificateOrderError
 			if errors.As(createErr, &terminal) && !rotatedTerminalOrder {
+				// Retry one terminal order with fresh key material.
 				pending, createErr = state.NewPending(hostname)
 				if createErr != nil {
 					return corev1.CertificateOrder{}, createErr
@@ -515,6 +524,7 @@ func installCertificateOrder(
 	order corev1.CertificateOrder,
 	heartbeatErrors <-chan error,
 ) (clientstate.Material, error) {
+	// Persist and verify before acknowledging core; MarkInstalled closes the recovery window.
 	material, err := state.Commit(
 		hostname, pending, []byte(*order.CertificatePem), *order.RenewAt, order.Id, generation,
 	)

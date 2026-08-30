@@ -21,8 +21,9 @@ import (
 )
 
 const (
-	maxResponseBytes        = 64 << 10
-	defaultRequestTimeout   = 20 * time.Second
+	maxResponseBytes      = 64 << 10
+	defaultRequestTimeout = 20 * time.Second
+	// Challenge requests include core-side probing and ACME finalization.
 	challengeRequestTimeout = 150 * time.Second
 )
 

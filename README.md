@@ -93,5 +93,5 @@ mise exec -- task format-check lint test build
 
 This repository is Go-only and does not require Node.
 
-The opt-in Tailcat capacity and churn benchmarks are documented in
+The opt-in complete route-path Fly benchmark is documented in
 [`docs/benchmarks`](docs/benchmarks/README.md).

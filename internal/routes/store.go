@@ -108,6 +108,7 @@ func (s *Store) Create(
 		return Provisioning{}, fmt.Errorf("routes: begin create: %w", err)
 	}
 	defer tx.Rollback()
+	// Claims remain bound to their principal after route deletion.
 	if _, err := tx.ExecContext(ctx, `INSERT INTO hostname_claims
 		(id, principal_id, hostname, created_at) VALUES (?, ?, ?, ?)
 		ON CONFLICT (hostname) DO NOTHING`, claimID, principalID, hostname, now.Unix()); err != nil {
@@ -134,6 +135,7 @@ func (s *Store) Create(
 		return Provisioning{}, fmt.Errorf("routes: check existing route: %w", err)
 	}
 	if err == nil {
+		// Recreate in place, rotating credentials and fencing the old agent.
 		generation := existing.Generation + 1
 		result, err := tx.ExecContext(ctx, `UPDATE route_credentials
 			SET id = ?, secret_hash = ?, created_at = ?, revoked_at = NULL WHERE route_id = ?`,
@@ -342,6 +344,7 @@ func (s *Store) AuthenticateLease(
 		&serverPublicKey, &relayProfile, &storedHash, &createdAt, &lastHeartbeat, &expiresAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
+		// Known credentials are stale; unknown IDs remain unauthenticated.
 		var known int
 		knownErr := s.db.QueryRowContext(
 			ctx, `SELECT 1 FROM route_leases WHERE credential_id = ?`, credentialID.String(),

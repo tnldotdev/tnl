@@ -171,6 +171,7 @@ func (h *Hub) untrack(connection *websocket.Conn) {
 
 func (h *Hub) matches(token credentials.WorkerToken) bool {
 	matched := false
+	// Run every verifier so token position does not affect timing.
 	for _, verifier := range h.config.Tokens {
 		matched = verifier.Matches(token) || matched
 	}
@@ -274,6 +275,7 @@ func (o *remoteOwner) Attach(ctx context.Context, assignment worker.Assignment) 
 		return nil, errors.New("workersession: unexpected attach response")
 	}
 	route := &remoteRoute{owner: o, ref: ref}
+	// The request ran unlocked; reject routes that raced with drain or shutdown.
 	o.mu.Lock()
 	if o.closed || o.draining {
 		o.mu.Unlock()
@@ -333,6 +335,7 @@ func (o *remoteOwner) Drain(ctx context.Context) error {
 		return result
 	}
 
+	// Worker-initiated drains report RouteDrained as local routes finish.
 	for {
 		o.mu.Lock()
 		if len(o.routes) == 0 {
@@ -385,6 +388,7 @@ func (o *remoteOwner) readLoop() error {
 			o.notifyLocked()
 			o.mu.Unlock()
 			if first && o.onDraining != nil {
+				// DrainOwner waits for replies consumed by this loop.
 				go o.onDraining()
 			}
 			continue
@@ -409,6 +413,7 @@ func (o *remoteOwner) readLoop() error {
 			continue
 		}
 		if message.Type == workerv1.RouteReady {
+			// A timed-out attach may finish remotely; detach the orphaned route.
 			if err := o.write(workerv1.Message{Type: workerv1.DetachRoute, Route: message.Route}); err != nil {
 				return err
 			}

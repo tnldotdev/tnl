@@ -8,7 +8,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// Metrics contains the bounded-cardinality metrics exported by a TNL process.
+// Metrics owns a process-local Prometheus registry.
 type Metrics struct {
 	registry           *prometheus.Registry
 	routes             *prometheus.GaugeVec
