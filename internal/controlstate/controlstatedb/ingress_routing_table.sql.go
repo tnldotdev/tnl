@@ -195,30 +195,18 @@ func (q *Queries) ListIngressRoutingTableEvents(ctx context.Context, arg ListIng
 
 const listIngressRoutingTableSnapshot = `-- name: ListIngressRoutingTableSnapshot :many
 WITH latest AS (
-    SELECT DISTINCT ON (
-        canonical_hostname,
-        CASE WHEN event_kind IN ('route_upsert', 'route_tombstone') THEN 'route' ELSE 'challenge' END
-    )
-        routing_table_revision,
-        event_kind,
-        route_id,
-        route_version,
-        canonical_hostname,
-        entry_revision,
-        projection,
-        route_expires_at,
-        created_at
-    FROM control.ingress_routing_table_events
-    WHERE routing_table_revision <= $2
-    ORDER BY canonical_hostname,
-        CASE WHEN event_kind IN ('route_upsert', 'route_tombstone') THEN 'route' ELSE 'challenge' END,
-        routing_table_revision DESC
+    SELECT max(history.routing_table_revision) AS routing_table_revision
+    FROM control.ingress_routing_table_events AS history
+    WHERE history.routing_table_revision <= $2
+    GROUP BY history.canonical_hostname,
+        CASE WHEN history.event_kind IN ('route_upsert', 'route_tombstone') THEN 'route' ELSE 'challenge' END
 )
-SELECT routing_table_revision, event_kind, route_id, route_version, canonical_hostname, entry_revision, projection, route_expires_at, created_at
+SELECT events.routing_table_revision, events.event_kind, events.route_id, events.route_version, events.canonical_hostname, events.entry_revision, events.projection, events.route_expires_at, events.created_at
 FROM latest
-WHERE event_kind IN ('route_upsert', 'challenge_upsert')
-  AND route_expires_at > $1
-ORDER BY canonical_hostname
+JOIN control.ingress_routing_table_events AS events ON events.routing_table_revision = latest.routing_table_revision
+WHERE events.event_kind IN ('route_upsert', 'challenge_upsert')
+  AND events.route_expires_at > $1
+ORDER BY events.canonical_hostname
 `
 
 type ListIngressRoutingTableSnapshotParams struct {
@@ -226,27 +214,17 @@ type ListIngressRoutingTableSnapshotParams struct {
 	ThroughRevision int64
 }
 
-type ListIngressRoutingTableSnapshotRow struct {
-	RoutingTableRevision int64
-	EventKind            string
-	RouteID              string
-	RouteVersion         int64
-	CanonicalHostname    string
-	EntryRevision        int64
-	Projection           []byte
-	RouteExpiresAt       pgtype.Timestamptz
-	CreatedAt            pgtype.Timestamptz
-}
-
-func (q *Queries) ListIngressRoutingTableSnapshot(ctx context.Context, arg ListIngressRoutingTableSnapshotParams) ([]ListIngressRoutingTableSnapshotRow, error) {
+// Group only entry keys and revisions across history, then fetch the selected
+// payloads. Filter after selection so tombstones/expiry cannot revive old rows.
+func (q *Queries) ListIngressRoutingTableSnapshot(ctx context.Context, arg ListIngressRoutingTableSnapshotParams) ([]ControlIngressRoutingTableEvent, error) {
 	rows, err := q.db.Query(ctx, listIngressRoutingTableSnapshot, arg.Now, arg.ThroughRevision)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListIngressRoutingTableSnapshotRow
+	var items []ControlIngressRoutingTableEvent
 	for rows.Next() {
-		var i ListIngressRoutingTableSnapshotRow
+		var i ControlIngressRoutingTableEvent
 		if err := rows.Scan(
 			&i.RoutingTableRevision,
 			&i.EventKind,

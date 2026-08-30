@@ -10,31 +10,21 @@ WHERE singleton = true
 FOR UPDATE;
 
 -- name: ListIngressRoutingTableSnapshot :many
+-- Group only entry keys and revisions across history, then fetch the selected
+-- payloads. Filter after selection so tombstones/expiry cannot revive old rows.
 WITH latest AS (
-    SELECT DISTINCT ON (
-        canonical_hostname,
-        CASE WHEN event_kind IN ('route_upsert', 'route_tombstone') THEN 'route' ELSE 'challenge' END
-    )
-        routing_table_revision,
-        event_kind,
-        route_id,
-        route_version,
-        canonical_hostname,
-        entry_revision,
-        projection,
-        route_expires_at,
-        created_at
-    FROM control.ingress_routing_table_events
-    WHERE routing_table_revision <= sqlc.arg(through_revision)
-    ORDER BY canonical_hostname,
-        CASE WHEN event_kind IN ('route_upsert', 'route_tombstone') THEN 'route' ELSE 'challenge' END,
-        routing_table_revision DESC
+    SELECT max(history.routing_table_revision) AS routing_table_revision
+    FROM control.ingress_routing_table_events AS history
+    WHERE history.routing_table_revision <= sqlc.arg(through_revision)
+    GROUP BY history.canonical_hostname,
+        CASE WHEN history.event_kind IN ('route_upsert', 'route_tombstone') THEN 'route' ELSE 'challenge' END
 )
-SELECT *
+SELECT events.*
 FROM latest
-WHERE event_kind IN ('route_upsert', 'challenge_upsert')
-  AND route_expires_at > sqlc.arg(now)
-ORDER BY canonical_hostname;
+JOIN control.ingress_routing_table_events AS events ON events.routing_table_revision = latest.routing_table_revision
+WHERE events.event_kind IN ('route_upsert', 'challenge_upsert')
+  AND events.route_expires_at > sqlc.arg(now)
+ORDER BY events.canonical_hostname;
 
 -- name: ListIngressRoutingTableEvents :many
 SELECT *

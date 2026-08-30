@@ -138,7 +138,9 @@ type Querier interface {
 	ListIdentityTeamDomains(ctx context.Context, arg ListIdentityTeamDomainsParams) ([]ListIdentityTeamDomainsRow, error)
 	ListIdentityTeams(ctx context.Context, identityID string) ([]ListIdentityTeamsRow, error)
 	ListIngressRoutingTableEvents(ctx context.Context, arg ListIngressRoutingTableEventsParams) ([]ControlIngressRoutingTableEvent, error)
-	ListIngressRoutingTableSnapshot(ctx context.Context, arg ListIngressRoutingTableSnapshotParams) ([]ListIngressRoutingTableSnapshotRow, error)
+	// Group only entry keys and revisions across history, then fetch the selected
+	// payloads. Filter after selection so tombstones/expiry cannot revive old rows.
+	ListIngressRoutingTableSnapshot(ctx context.Context, arg ListIngressRoutingTableSnapshotParams) ([]ControlIngressRoutingTableEvent, error)
 	ListMaintenanceControls(ctx context.Context) ([]ControlMaintenanceControl, error)
 	ListRelayDNSChallengePresentations(ctx context.Context, tlsServerName string) ([]ListRelayDNSChallengePresentationsRow, error)
 	ListRouteSessionConnections(ctx context.Context, routeSessionID string) ([]ControlRouteSessionConnection, error)
