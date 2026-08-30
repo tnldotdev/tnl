@@ -250,11 +250,11 @@ func TestIntegrationAutomaticCertificatePublicationRestartAndRenewal(t *testing.
 	renewalRun := startIntegrationPublication(ctx, publicationConfig)
 	defer renewalRun.Stop(t)
 	renewalRun.WaitReady(t, ctx, hostname, pebble)
+	assertPersistedPublication(t, database, routeID, 2)
 	replacementSPKI := requestPublication()
 	if bytes.Equal(replacementSPKI, initialSPKI) {
 		t.Fatal("due restart did not rotate the application key")
 	}
-	assertPersistedPublication(t, database, routeID, 2)
 	renewalRun.Stop(t)
 	replacement := readCurrentMaterial(t, agentState, routeID, hostname)
 	if !replacement.Installed || replacement.OrderID == initial.OrderID ||
@@ -278,13 +278,20 @@ func assertPersistedPublication(t *testing.T, database *sql.DB, routeID string, 
 		t.Fatalf("lease status = %q", leaseStatus)
 	}
 	var installedAt, challengeRemovedAt sql.NullInt64
-	if err := database.QueryRow(`SELECT state, installed_at, challenge_removed_at FROM certificate_jobs WHERE route_id = ? ORDER BY generation DESC LIMIT 1`, routeID).Scan(
-		&jobState, &installedAt, &challengeRemovedAt,
-	); err != nil {
-		t.Fatal(err)
-	}
-	if jobState != certificates.StateSucceeded || !installedAt.Valid || !challengeRemovedAt.Valid {
-		t.Fatalf("certificate job = %q, installed = %v, challenge removed = %v", jobState, installedAt.Valid, challengeRemovedAt.Valid)
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if err := database.QueryRow(`SELECT state, installed_at, challenge_removed_at FROM certificate_jobs WHERE route_id = ? ORDER BY generation DESC LIMIT 1`, routeID).Scan(
+			&jobState, &installedAt, &challengeRemovedAt,
+		); err != nil {
+			t.Fatal(err)
+		}
+		if jobState == certificates.StateSucceeded && installedAt.Valid && challengeRemovedAt.Valid {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("certificate job = %q, installed = %v, challenge removed = %v", jobState, installedAt.Valid, challengeRemovedAt.Valid)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	var jobs int
 	if err := database.QueryRow(`SELECT COUNT(*) FROM certificate_jobs WHERE route_id = ?`, routeID).Scan(&jobs); err != nil {
