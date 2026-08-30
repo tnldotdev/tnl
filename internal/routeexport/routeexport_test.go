@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/routes"
-	"github.com/0xcadams/tnl/internal/state"
-	"github.com/0xcadams/tnl/internal/state/statedb"
-	"github.com/0xcadams/tnl/pkg/protocol/routeexportv1"
+	"github.com/tnldotdev/tnl/internal/routes"
+	"github.com/tnldotdev/tnl/internal/state"
+	"github.com/tnldotdev/tnl/internal/state/statedb"
+	"github.com/tnldotdev/tnl/pkg/protocol/routeexportv1"
 )
 
 const testRouteID = "route_test"

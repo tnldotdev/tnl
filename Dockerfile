@@ -17,7 +17,7 @@ COPY . .
 RUN --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH GOFLAGS=-tags=ts_omit_ssh \
     go build -mod=readonly -trimpath \
-    -ldflags="-s -w -X github.com/0xcadams/tnl/internal/buildinfo.Version=${VERSION} -X github.com/0xcadams/tnl/internal/buildinfo.Commit=${COMMIT}" \
+    -ldflags="-s -w -X github.com/tnldotdev/tnl/internal/buildinfo.Version=${VERSION} -X github.com/tnldotdev/tnl/internal/buildinfo.Commit=${COMMIT}" \
     -o /out/tnld ./cmd/tnld && \
     install -d -m 0750 /out/state
 
@@ -26,9 +26,9 @@ FROM gcr.io/distroless/static-debian13:nonroot@sha256:1c2c046bc09ed40fad370b599a
 ARG VERSION
 ARG COMMIT
 
-LABEL org.opencontainers.image.source="https://github.com/0xcadams/tnl" \
+LABEL org.opencontainers.image.source="https://github.com/tnldotdev/tnl" \
       org.opencontainers.image.description="tnl self-hosted server daemon" \
-      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.version=$VERSION \
       org.opencontainers.image.revision=$COMMIT
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -11,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/0xcadams/tnl/pkg/protocol/transportv1"
+	"github.com/tnldotdev/tnl/pkg/protocol/transportv1"
 )
 
 func TestControlFramesAreStrictAndBounded(t *testing.T) {
@@ -108,4 +109,101 @@ func TestControlSchemaTracksMessageTypes(t *testing.T) {
 	if !json.Valid(data) {
 		t.Fatal("data header schema is not valid JSON")
 	}
+}
+
+func FuzzReadFrames(f *testing.F) {
+	controls := []Message{
+		{Type: Hello, Capacity: 500},
+		{Type: Accepted},
+		{Type: AttachRoute, Route: &RouteRef{RouteID: "route", Generation: 2}, Endpoint: &transportv1.TailcatDescriptor{Version: 1, ServerPublicKey: "nodekey:key", RelayProfile: "test"}, ClientPrivateKey: "privkey:key"},
+		{Type: RouteReady, Route: &RouteRef{RouteID: "route", Generation: 2}},
+		{Type: DetachRoute, Route: &RouteRef{RouteID: "route", Generation: 2}},
+		{Type: RouteDrained, Route: &RouteRef{RouteID: "route", Generation: 2}},
+		{Type: WorkerDraining},
+		{Type: Error, Route: &RouteRef{RouteID: "route", Generation: 2}, Code: StaleAssignment},
+	}
+	for _, message := range controls {
+		var wire bytes.Buffer
+		if err := WriteControl(&wire, message); err != nil {
+			f.Fatal(err)
+		}
+		f.Add(uint8(0), wire.Bytes(), uint8(1))
+	}
+	var dataWire bytes.Buffer
+	if err := WriteDataHeader(&dataWire, DataHeader{RouteID: "route", Generation: 2}); err != nil {
+		f.Fatal(err)
+	}
+	f.Add(uint8(1), dataWire.Bytes(), uint8(1))
+	f.Add(uint8(0), []byte{}, uint8(1))
+	f.Add(uint8(0), []byte{0, 0, 0, 0}, uint8(2))
+	f.Add(uint8(0), []byte{0, 1, 0, 1}, uint8(4))
+	f.Add(uint8(1), []byte{0, 0, 4, 1}, uint8(4))
+	f.Add(uint8(1), []byte{0, 0, 0, 1, '{'}, uint8(3))
+
+	f.Fuzz(func(t *testing.T, kind uint8, input []byte, readSize uint8) {
+		decodeCanonical := func(reader io.Reader) ([]byte, error) {
+			var canonical bytes.Buffer
+			if kind%2 == 0 {
+				message, err := ReadControl(reader)
+				if err != nil {
+					return nil, err
+				}
+				if err := WriteControl(&canonical, message); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				header, err := ReadDataHeader(reader)
+				if err != nil {
+					return nil, err
+				}
+				if err := WriteDataHeader(&canonical, header); err != nil {
+					t.Fatal(err)
+				}
+			}
+			return canonical.Bytes(), nil
+		}
+
+		reader := &limitedReadReader{
+			Reader: bytes.NewReader(input),
+			Size:   int(readSize%32) + 1,
+		}
+		canonical, err := decodeCanonical(reader)
+		if err != nil {
+			return
+		}
+		if len(input) < 4 {
+			t.Fatal("frame succeeded without a length header")
+		}
+		payloadBytes := int(binary.BigEndian.Uint32(input[:4]))
+		if payloadBytes > len(input)-4 {
+			t.Fatal("truncated frame succeeded")
+		}
+		remaining, err := io.ReadAll(reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(remaining, input[4+payloadBytes:]) {
+			t.Fatal("frame reader consumed trailing bytes")
+		}
+
+		roundTrip, err := decodeCanonical(bytes.NewReader(canonical))
+		if err != nil {
+			t.Fatalf("canonical frame was rejected: %v", err)
+		}
+		if !bytes.Equal(roundTrip, canonical) {
+			t.Fatal("frame changed after canonical round trip")
+		}
+	})
+}
+
+type limitedReadReader struct {
+	Reader io.Reader
+	Size   int
+}
+
+func (r *limitedReadReader) Read(destination []byte) (int, error) {
+	if len(destination) > r.Size {
+		destination = destination[:r.Size]
+	}
+	return r.Reader.Read(destination)
 }

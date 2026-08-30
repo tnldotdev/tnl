@@ -10,7 +10,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/0xcadams/tnl/pkg/protocol/transportv1"
+	"github.com/tnldotdev/tnl/pkg/protocol/transportv1"
 )
 
 const (

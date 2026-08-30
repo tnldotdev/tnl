@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/credentials"
-	"github.com/0xcadams/tnl/internal/state"
+	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/state"
 )
 
 const AccessTokenLifetime = 30 * 24 * time.Hour

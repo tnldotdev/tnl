@@ -18,8 +18,8 @@ builds:
       - -trimpath
     ldflags:
       - -s -w
-      - -X github.com/0xcadams/tnl/internal/buildinfo.Version={{ .Version }}
-      - -X github.com/0xcadams/tnl/internal/buildinfo.Commit={{ .FullCommit }}
+      - -X github.com/tnldotdev/tnl/internal/buildinfo.Version={{ .Version }}
+      - -X github.com/tnldotdev/tnl/internal/buildinfo.Commit={{ .FullCommit }}
     goos:
       - darwin
       - linux
@@ -39,8 +39,8 @@ builds:
       - -trimpath
     ldflags:
       - -s -w
-      - -X github.com/0xcadams/tnl/internal/buildinfo.Version={{ .Version }}
-      - -X github.com/0xcadams/tnl/internal/buildinfo.Commit={{ .FullCommit }}
+      - -X github.com/tnldotdev/tnl/internal/buildinfo.Version={{ .Version }}
+      - -X github.com/tnldotdev/tnl/internal/buildinfo.Commit={{ .FullCommit }}
     goos:
       - darwin
       - linux

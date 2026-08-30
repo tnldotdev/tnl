@@ -23,13 +23,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/config"
-	"github.com/0xcadams/tnl/internal/credentials"
-	"github.com/0xcadams/tnl/internal/naming"
-	"github.com/0xcadams/tnl/internal/publication"
-	"github.com/0xcadams/tnl/internal/serverclient"
-	"github.com/0xcadams/tnl/pkg/protocol/serverv1"
 	"github.com/alecthomas/kong"
+	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/publication"
+	"github.com/tnldotdev/tnl/internal/serverclient"
+	"github.com/tnldotdev/tnl/pkg/protocol/serverv1"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/logger"
 )
@@ -382,8 +382,9 @@ func activateRoutes(
 					}{index: index, duration: time.Since(started), err: err}
 				})
 			}
-			claim, err := server.ClaimHostname(
-				routeCtx, benchmarkRouteLabel(flags.DriverIndex, index), benchmarkClaimRequestKey(flags.DriverIndex, index),
+			claim, err := server.ClaimName(
+				routeCtx, serverv1.CreateHostnameClaimRequestKindPersistentManaged,
+				benchmarkRouteLabel(flags.DriverIndex, index), benchmarkClaimRequestKey(flags.DriverIndex, index),
 			)
 			if err != nil {
 				err = fmt.Errorf("claim hostname: %w", err)

@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"golang.org/x/crypto/acme"
 )
 

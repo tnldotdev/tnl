@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/testutil/oidctest"
+	"github.com/tnldotdev/tnl/internal/testutil/oidctest"
 )
 
 func TestLoginDiscoversProviderAndValidatesNonce(t *testing.T) {

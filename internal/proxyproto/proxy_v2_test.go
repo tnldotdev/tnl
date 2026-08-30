@@ -2,6 +2,7 @@ package proxyproto
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"net"
 	"net/netip"
@@ -169,6 +170,7 @@ func FuzzDecode(f *testing.F) {
 	} {
 		encoded, _ := Encode(header)
 		f.Add(append(encoded, "TLS bytes"...))
+		f.Add(append(bytes.Clone(encoded), encoded...))
 	}
 	f.Add([]byte{})
 
@@ -184,11 +186,20 @@ func FuzzDecode(f *testing.F) {
 		if !bytes.Equal(encoded, input[:len(encoded)]) {
 			t.Fatal("decoded header changed during encoding")
 		}
+		payload := input[len(encoded):]
+		duplicate := bytes.HasPrefix(payload, []byte(v1Signature)) || bytes.HasPrefix(payload, []byte(v2Signature))
 		remaining, err := io.ReadAll(replay)
 		if err != nil {
-			t.Fatal(err)
+			var protocolError *ProtocolError
+			if !duplicate || !errors.As(err, &protocolError) || protocolError.Code != ErrorDuplicateHeader {
+				t.Fatal(err)
+			}
+			return
 		}
-		if !bytes.Equal(remaining, input[len(encoded):]) {
+		if duplicate {
+			t.Fatal("duplicate header was replayed")
+		}
+		if !bytes.Equal(remaining, payload) {
 			t.Fatal("replayed bytes differ from input")
 		}
 	})
