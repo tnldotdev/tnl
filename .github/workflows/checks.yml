@@ -126,7 +126,7 @@ jobs:
           test "${#archives[@]}" -eq 4
           test "${#sboms[@]}" -eq 4
           for archive in "${archives[@]}"; do
-            tar -tzf "$archive" LICENSE NOTICE tnl tnld >/dev/null
+            tar -tzf "$archive" LICENSE NOTICE THIRD_PARTY_LICENSES.txt tnl tnld >/dev/null
           done
           (cd dist && sha256sum --check checksums.txt)
 

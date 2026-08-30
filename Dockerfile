@@ -34,7 +34,7 @@ LABEL org.opencontainers.image.source="https://github.com/0xcadams/tnl" \
 
 COPY --from=build --chown=65532:65532 /out/tnld /usr/local/bin/tnld
 COPY --from=build --chown=65532:65532 /out/state/ /var/lib/tnl/
-COPY --chown=65532:65532 LICENSE NOTICE /licenses/tnl/
+COPY --chown=65532:65532 LICENSE NOTICE THIRD_PARTY_LICENSES.txt /licenses/tnl/
 
 USER 65532:65532
 WORKDIR /var/lib/tnl
