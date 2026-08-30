@@ -7,8 +7,13 @@ COPY . .
 RUN CGO_ENABLED=0 GOFLAGS=-tags=ts_omit_ssh go build -trimpath -o /out/tnld ./cmd/tnld
 RUN CGO_ENABLED=0 GOFLAGS=-tags=ts_omit_ssh go build -trimpath -o /out/tnlbench ./cmd/tnlbench
 
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM alpine:3.22
+
+RUN apk add --no-cache su-exec
 
 COPY --from=build /out/tnld /tnld
 COPY --from=build /out/tnlbench /tnlbench
-ENTRYPOINT ["/tnlbench"]
+
+USER 0:0
+ENTRYPOINT ["/bin/sh", "-c", "ulimit -n \"${TNL_NOFILE_LIMIT:-65536}\" && exec /sbin/su-exec 65532:65532 \"$@\"", "--"]
+CMD ["/tnlbench"]

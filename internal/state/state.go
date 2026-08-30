@@ -13,7 +13,7 @@ import (
 	"strings"
 
 	"github.com/pressly/goose/v3"
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
 )
 
 const databaseName = "tnld.db"
@@ -108,4 +108,14 @@ func checkForeignKeys(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("state: check foreign keys: %w", err)
 	}
 	return nil
+}
+
+// IsDatabaseContention reports whether err is a transient SQLite writer conflict.
+func IsDatabaseContention(err error) bool {
+	var sqliteErr *sqlite.Error
+	if !errors.As(err, &sqliteErr) {
+		return false
+	}
+	code := sqliteErr.Code() & 0xff
+	return code == 5 || code == 6
 }

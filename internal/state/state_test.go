@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -168,6 +169,36 @@ func TestDatabaseConstraints(t *testing.T) {
 	}
 	if succeeded != 1 {
 		t.Fatalf("successful duplicate inserts = %d, want 1", succeeded)
+	}
+}
+
+func TestIsDatabaseContention(t *testing.T) {
+	db, err := sql.Open(
+		"sqlite",
+		"file:"+filepath.ToSlash(filepath.Join(t.TempDir(), "contention.db"))+"?_busy_timeout=1&_txlock=immediate",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	db.SetMaxOpenConns(2)
+	if _, err := db.Exec("CREATE TABLE values_table (value INTEGER)"); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = tx.Rollback() })
+	if _, err := tx.Exec("INSERT INTO values_table VALUES (1)"); err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec("INSERT INTO values_table VALUES (2)")
+	if !IsDatabaseContention(err) {
+		t.Fatalf("IsDatabaseContention(%v) = false", err)
+	}
+	if IsDatabaseContention(errors.New("storage failed")) {
+		t.Fatal("non-SQLite error classified as database contention")
 	}
 }
 

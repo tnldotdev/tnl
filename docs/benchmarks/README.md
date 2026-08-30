@@ -41,13 +41,20 @@ MODES=ha DRIVERS=4 HA_ROUTES=2000,3000 mise exec -- task go:bench-fly
 The main settings are `ORG`, `REGION`, `MODES`, `SINGLE_ROUTES`, `HA_ROUTES`,
 `WORKERS`, `DRIVERS`, `PARALLEL`, `PAYLOAD_BYTES`, `WORKER_CAPACITY`, `SINGLE_SIZE`,
 `EDGE_SIZE`, `WORKER_SIZE`, `DRIVER_SIZE`, `TIMEOUT`, `ATTEMPTS`, and
-`DRIVER_WAIT_SECONDS`.
+`DRIVER_WAIT_SECONDS`. `NOFILE_LIMIT` sets the benchmark process file-descriptor
+limit and defaults to 65,536.
 
 The default standalone and worker Machines use `performance-6x`; the edge uses
 `performance-2x`, and the load driver uses `performance-8x`. The route path is
 memory-bound at the larger tiers, so smaller Machines may restart before the
 configured route capacity is reached. Setup, load, and cleanup concurrency
 defaults to eight for both topologies.
+
+Fly starts an image's non-root user with a hard file-descriptor limit of 10,240.
+The benchmark image therefore uses `ulimit` in its root entrypoint and immediately
+executes the selected benchmark binary through `su-exec` as UID/GID 65532. The
+published tnl image remains non-root from startup and does not include this
+Fly-specific entrypoint.
 
 Results are written as JSON Lines under `bench-results/`. Each tier reports:
 
