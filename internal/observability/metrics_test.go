@@ -29,6 +29,7 @@ func TestMetricsScrape(t *testing.T) {
 	metrics.AddForwardedBytes("ingress", 1024)
 	metrics.ObserveAPIRequest("routes.create", "success", 10*time.Second)
 	metrics.ObserveSQLiteOperation("route_create", 5*time.Second, nil)
+	metrics.ObserveRouteCoordinatorStage("heartbeat_route_lock_wait", 10*time.Second)
 	metrics.ObserveRouteLeaseHeartbeat("success")
 	metrics.ObserveRouteRemoval("lease_expired")
 	metrics.SetRouteLeaseMinSecondsRemaining("active", 17.5)
@@ -57,6 +58,9 @@ func TestMetricsScrape(t *testing.T) {
 		`tnl_sqlite_operation_duration_seconds_bucket{operation="route_create",le="5"} 1`,
 		`tnl_sqlite_operation_duration_seconds_count{operation="route_create"} 1`,
 		`tnl_sqlite_operation_duration_seconds_sum{operation="route_create"} 5`,
+		`tnl_route_coordinator_stage_duration_seconds_bucket{stage="heartbeat_route_lock_wait",le="10"} 1`,
+		`tnl_route_coordinator_stage_duration_seconds_count{stage="heartbeat_route_lock_wait"} 1`,
+		`tnl_route_coordinator_stage_duration_seconds_sum{stage="heartbeat_route_lock_wait"} 10`,
 		`tnl_route_lease_heartbeats_total{result="success"} 1`,
 		`tnl_route_removals_total{reason="lease_expired"} 1`,
 		`tnl_route_lease_min_seconds_remaining{state="active"} 17.5`,
