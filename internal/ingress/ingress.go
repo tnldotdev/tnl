@@ -56,7 +56,7 @@ type Metrics interface {
 	SetSourceLimiterEntries(int)
 	IncIPAllowlistDenial()
 	AddForwardedBytes(string, int64)
-	SetStreams(int)
+	SetIngressStreams(int)
 }
 
 type Config struct {
@@ -472,7 +472,7 @@ func (s *Server) trackBackend(connection net.Conn) bool {
 	active := len(s.backends)
 	s.mu.Unlock()
 	if s.config.Metrics != nil {
-		s.config.Metrics.SetStreams(active)
+		s.config.Metrics.SetIngressStreams(active)
 	}
 	return true
 }
@@ -484,7 +484,7 @@ func (s *Server) releaseBackend(connection net.Conn) {
 	active := len(s.backends)
 	s.mu.Unlock()
 	if s.config.Metrics != nil {
-		s.config.Metrics.SetStreams(active)
+		s.config.Metrics.SetIngressStreams(active)
 	}
 }
 

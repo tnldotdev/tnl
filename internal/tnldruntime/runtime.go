@@ -100,7 +100,7 @@ func serveWithRelayClientTLS(
 			return err
 		}
 		d.database = database
-		metrics.RegisterDatabasePool(database.PoolStats)
+		metrics.RegisterDatabase(databaseMetricsSource(database))
 		d.forward("clean up ephemeral routes", runAsync(func() error {
 			return runEphemeralRouteCleanup(lifetime, database)
 		}))

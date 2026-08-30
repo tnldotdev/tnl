@@ -105,9 +105,14 @@ type DatabaseOperation struct {
 }
 
 func (q *queryActivity) snapshot(now time.Time) ([]DatabaseOperation, bool) {
+	result, omitted := q.snapshotWithOmitted(now)
+	return result, omitted > 0
+}
+
+func (q *queryActivity) snapshotWithOmitted(now time.Time) ([]DatabaseOperation, int) {
 	result := []DatabaseOperation{}
 	if q == nil {
-		return result, false
+		return result, 0
 	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -123,5 +128,5 @@ func (q *queryActivity) snapshot(now time.Time) ([]DatabaseOperation, bool) {
 		}
 		return strings.Compare(a.Operation, b.Operation)
 	})
-	return result, q.omitted > 0
+	return result, q.omitted
 }

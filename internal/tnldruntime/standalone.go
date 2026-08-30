@@ -130,6 +130,7 @@ func (d *daemon) startStandalone(
 			return runtime.controller, runtime.registry, true
 		},
 		ReadyConnectionsDelta: func(delta int) { metrics.AddPublisherConnections("ready", delta) },
+		CapacityRejected:      func() { metrics.IncCapacityRejection("publisher_connections") },
 		Report:                func(err error) { log.Printf("relay publisher: %v", err) },
 	})
 	if err != nil {

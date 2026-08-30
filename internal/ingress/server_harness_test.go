@@ -286,4 +286,4 @@ func (m *testMetrics) AddForwardedBytes(direction string, n int64) {
 	}
 	m.forwardedBytes[direction] += n
 }
-func (*testMetrics) SetStreams(int) {}
+func (*testMetrics) SetIngressStreams(int) {}

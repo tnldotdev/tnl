@@ -24,6 +24,29 @@ const (
 // PoolStats returns an in-memory snapshot without acquiring a connection.
 func (d *Database) PoolStats() *pgxpool.Stat { return d.pool.Stat() }
 
+// DatabaseMetrics contains process-local state that is safe to collect on every
+// metrics scrape. It never acquires a database connection.
+type DatabaseMetrics struct {
+	Pool              *pgxpool.Stat
+	ActiveOperations  []DatabaseOperation
+	OperationsOmitted int
+	Connections       map[string]DatabaseConnectionCounts
+}
+
+// Metrics returns one process-local database metrics snapshot.
+func (d *Database) Metrics(now time.Time) DatabaseMetrics {
+	if d == nil {
+		return DatabaseMetrics{}
+	}
+	result := DatabaseMetrics{}
+	if d.pool != nil {
+		result.Pool = d.pool.Stat()
+	}
+	result.ActiveOperations, result.OperationsOmitted = d.activity.snapshotWithOmitted(now)
+	result.Connections = d.connections.snapshot()
+	return result
+}
+
 // DatabaseDiagnostics contains bounded, parameter-free PostgreSQL activity.
 type DatabaseDiagnostics struct {
 	CapturedAt          time.Time                           `json:"captured_at"`
@@ -54,10 +77,10 @@ type DatabaseSession struct {
 // still bounded by the timeout. It never returns query text or connection data.
 func (d *Database) Diagnostics(parent context.Context) (result DatabaseDiagnostics, retErr error) {
 	result = DatabaseDiagnostics{CapturedAt: time.Now().UTC(), Sessions: []DatabaseSession{}}
-	if d != nil {
-		result.ActiveOperations, result.OperationsTruncated = d.activity.snapshot(result.CapturedAt)
-		result.Connections = d.connections.snapshot()
-	}
+	local := d.Metrics(result.CapturedAt)
+	result.ActiveOperations = local.ActiveOperations
+	result.OperationsTruncated = local.OperationsOmitted > 0
+	result.Connections = local.Connections
 	defer func() {
 		if retErr != nil {
 			result.Error = retErr.Error()

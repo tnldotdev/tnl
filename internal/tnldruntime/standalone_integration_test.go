@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -46,6 +48,27 @@ func TestIntegrationStandaloneLifecycle(t *testing.T) {
 	serviceClient := splitTestServiceHTTPClient(t, certificateAuthority.roots, cfg.PrivateControlListen)
 	process := startIntegrationProcess(t, cfg, acmeServer.Client(), serviceClient)
 	waitForProcessReady(t, process)
+	metricsResponse, err := http.Get("http://" + metricsAddress + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	metricsBody, readErr := io.ReadAll(metricsResponse.Body)
+	closeErr := metricsResponse.Body.Close()
+	if readErr != nil || closeErr != nil || metricsResponse.StatusCode != http.StatusOK {
+		t.Fatalf("read standalone metrics: status=%s read=%v close=%v", metricsResponse.Status, readErr, closeErr)
+	}
+	metricsText := string(metricsBody)
+	for _, want := range []string{
+		"tnl_database_client_connections", "tnl_database_operations_omitted",
+		`tnl_streams_active{stage="ingress"}`, `tnl_streams_active{stage="relay"}`,
+	} {
+		if !strings.Contains(metricsText, want) {
+			t.Errorf("standalone metrics missing %q", want)
+		}
+	}
+	if strings.Contains(metricsText, "tnl_routes") {
+		t.Error("standalone metrics retained the unwired route family")
+	}
 
 	transport := &http.Transport{
 		TLSClientConfig: &tls.Config{RootCAs: certificateAuthority.roots, MinVersion: tls.VersionTLS13},

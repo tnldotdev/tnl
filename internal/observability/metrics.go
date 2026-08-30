@@ -12,10 +12,9 @@ import (
 // Metrics owns a process-local Prometheus registry.
 type Metrics struct {
 	registry             *prometheus.Registry
-	routes               *prometheus.GaugeVec
 	relayLeases          *prometheus.GaugeVec
 	publisherConnections *prometheus.GaugeVec
-	streams              prometheus.Gauge
+	streams              *prometheus.GaugeVec
 	capacityRejections   *prometheus.CounterVec
 	sourceLimiterRejects prometheus.Counter
 	sourceLimiterEntries prometheus.Gauge
@@ -35,18 +34,15 @@ func New(role string) *Metrics {
 	info.Set(1)
 	metrics := &Metrics{
 		registry: registry,
-		routes: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Name: "tnl_routes", Help: "Current routes by lifecycle state.",
-		}, []string{"state"}),
 		relayLeases: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "tnl_relay_leases", Help: "Current relay leases by state.",
 		}, []string{"state"}),
 		publisherConnections: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "tnl_publisher_connections", Help: "Current publisher connections by state.",
 		}, []string{"state"}),
-		streams: prometheus.NewGauge(prometheus.GaugeOpts{
+		streams: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "tnl_streams_active", Help: "Current active visitor streams.",
-		}),
+		}, []string{"stage"}),
 		capacityRejections: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "tnl_capacity_rejections_total", Help: "Operations rejected because a bounded resource was full.",
 		}, []string{"resource"}),
@@ -72,21 +68,32 @@ func New(role string) *Metrics {
 			Name: "tnl_control_requests_in_flight", Help: "Control API requests currently executing by operation.",
 		}, []string{"operation"}),
 	}
-	registry.MustRegister(
-		info, metrics.routes, metrics.relayLeases, metrics.publisherConnections, metrics.streams,
-		metrics.capacityRejections, metrics.sourceLimiterRejects, metrics.sourceLimiterEntries,
-		metrics.ipAllowlistDenials, metrics.forwardedBytes, metrics.controlRequests, metrics.controlDuration, metrics.controlInFlight,
-		collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
-	)
+	registered := []prometheus.Collector{
+		info, collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+	}
+	if role == "control" || role == "standalone" {
+		registered = append(registered, metrics.controlRequests, metrics.controlDuration, metrics.controlInFlight)
+	}
+	if role == "ingress" || role == "standalone" {
+		registered = append(registered,
+			metrics.streams, metrics.capacityRejections, metrics.sourceLimiterRejects,
+			metrics.sourceLimiterEntries, metrics.ipAllowlistDenials, metrics.forwardedBytes,
+		)
+		metrics.streams.WithLabelValues("ingress").Set(0)
+	}
+	if role == "relay" || role == "standalone" {
+		registered = append(registered, metrics.relayLeases, metrics.publisherConnections)
+		if role == "relay" {
+			registered = append(registered, metrics.streams, metrics.capacityRejections)
+		}
+		metrics.streams.WithLabelValues("relay").Set(0)
+	}
+	registry.MustRegister(registered...)
 	return metrics
 }
 
 func (m *Metrics) Handler() http.Handler {
 	return promhttp.HandlerFor(m.registry, promhttp.HandlerOpts{})
-}
-
-func (m *Metrics) SetRoutes(state string, count int) {
-	m.routes.WithLabelValues(state).Set(float64(count))
 }
 
 func (m *Metrics) SetRelayLeases(state string, count int) {
@@ -105,7 +112,13 @@ func (m *Metrics) AddPublisherConnections(state string, delta int) {
 	m.publisherConnections.WithLabelValues(state).Add(float64(delta))
 }
 
-func (m *Metrics) SetStreams(count int) { m.streams.Set(float64(count)) }
+func (m *Metrics) SetIngressStreams(count int) {
+	m.streams.WithLabelValues("ingress").Set(float64(count))
+}
+
+func (m *Metrics) AddRelayStreams(delta int) {
+	m.streams.WithLabelValues("relay").Add(float64(delta))
+}
 
 func (m *Metrics) IncCapacityRejection(resource string) {
 	m.capacityRejections.WithLabelValues(resource).Inc()

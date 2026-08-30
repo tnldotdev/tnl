@@ -61,13 +61,24 @@ the process role.
   successful acquisitions that waited, their cumulative waiting time, and
   canceled acquisitions. These metrics use in-memory statistics and remain
   available when the application pool is exhausted.
-- `tnl_routes{state}` reports stored routes by state.
-- `tnl_relay_leases{state}` reports control-owned relay leases in a relay or
-  standalone process.
+- `tnl_database_client_connections{purpose,state}` reports process-local client
+  sockets by fixed purpose and the `open` or `connecting` state.
+  `tnl_database_client_connection_events_total{purpose,event}` reports cumulative
+  `opened`, `closed`, and `failed` events for the same clients.
+- `tnl_database_operations_active{operation}` and
+  `tnl_database_operation_oldest_age_seconds{operation}` report active
+  request-pool operations and the oldest operation age. Operation labels are
+  restricted to compiled sqlc names, transaction commands, or `unknown`.
+  `tnl_database_operations_omitted` reports active operations beyond the
+  bounded 64-operation tracker.
+- `tnl_relay_leases{state}` reports active and draining local relay leases. A
+  standalone process reports both of its logical relay services.
 - `tnl_publisher_connections{state}` reports publisher connections by state.
-- `tnl_streams_active` reports active visitor streams in the process.
+- `tnl_streams_active{stage}` reports active visitor streams observed at the
+  `ingress` or `relay` stage. Standalone exports both stages separately.
 - `tnl_capacity_rejections_total{resource}` reports operations rejected because
-  a resource is full.
+  a resource is full. Resources are `public_connections`, `route_connections`,
+  `publisher_connections`, or `relay_streams`.
 - `tnl_source_limiter_rejections_total` and `tnl_source_limiter_entries` report
   excessive connection attempts and source-IP table usage.
 - `tnl_ip_allowlist_denials_total` reports visitor connections rejected by route
@@ -80,6 +91,10 @@ IDs, membership IDs, ingress IDs, relay IDs, request IDs, error text, or SQL.
 Use structured logs for request-specific details. Client responses do not expose
 internal details.
 
+Prometheus collection uses only process-local memory and never opens a database
+connection. This keeps `/metrics` available during pool exhaustion and avoids
+adding PostgreSQL or PgBouncer pressure during a failure.
+
 ## Database Failure Snapshots
 
 Control and standalone also serve `GET /debug/database` on the private
@@ -91,6 +106,11 @@ returned. A `truncated` flag identifies an incomplete session list. Each session
 includes at most eight blocking PIDs, with `blocking_pids_truncated` set when
 additional blockers were omitted. These limits keep a maximum-shaped snapshot
 within the benchmark collector's 64 KiB per-snapshot budget.
+
+Unlike Prometheus collection, this detailed snapshot actively connects to
+PostgreSQL and PgBouncer. It remains an explicit diagnostic operation rather
+than running on every metrics scrape. Benchmark failure reports collect and
+retain these snapshots automatically.
 
 The snapshot uses a separate connection through the configured pooled URL, with
 a three-second timeout and at most one collection per process at a time. It can

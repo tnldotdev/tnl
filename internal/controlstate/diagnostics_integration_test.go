@@ -22,12 +22,15 @@ func TestIntegrationDatabaseMetricsDuringPoolExhaustion(t *testing.T) {
 		t.Fatal(err)
 	}
 	config.MaxConns = 1
+	activity := new(queryActivity)
+	connections := new(connectionActivity)
+	config.ConnConfig.Tracer = &connectionTracer{connections: connections, purpose: requestPoolConnection, queries: activity}
 	pool, err := pgxpool.NewWithConfig(t.Context(), config)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer pool.Close()
-	database := &Database{pool: pool}
+	database := &Database{pool: pool, activity: activity, connections: connections}
 	held, err := pool.Acquire(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -39,7 +42,26 @@ func TestIntegrationDatabaseMetricsDuringPoolExhaustion(t *testing.T) {
 		t.Fatalf("exhausted acquire: %v", err)
 	}
 	metrics := observability.New("control")
-	metrics.RegisterDatabasePool(database.PoolStats)
+	metrics.RegisterDatabase(func(now time.Time) observability.DatabaseSnapshot {
+		local := database.Metrics(now)
+		result := observability.DatabaseSnapshot{
+			Pool: local.Pool, OperationsOmitted: local.OperationsOmitted,
+			Connections:      make(map[string]observability.DatabaseConnectionSnapshot, len(local.Connections)),
+			ActiveOperations: make([]observability.DatabaseOperationSnapshot, len(local.ActiveOperations)),
+		}
+		for purpose, counts := range local.Connections {
+			result.Connections[purpose] = observability.DatabaseConnectionSnapshot{
+				Open: counts.Open, Connecting: counts.Connecting, Opened: counts.Opened,
+				Closed: counts.Closed, Failed: counts.Failed,
+			}
+		}
+		for index, operation := range local.ActiveOperations {
+			result.ActiveOperations[index] = observability.DatabaseOperationSnapshot{
+				Operation: operation.Operation, ElapsedSeconds: operation.ElapsedSeconds,
+			}
+		}
+		return result
+	})
 	response := httptest.NewRecorder()
 	metrics.Handler().ServeHTTP(response, httptest.NewRequest("GET", "/metrics", nil))
 	for _, want := range []string{
@@ -48,6 +70,11 @@ func TestIntegrationDatabaseMetricsDuringPoolExhaustion(t *testing.T) {
 	} {
 		if !strings.Contains(response.Body.String(), want) {
 			t.Errorf("metrics missing %q", want)
+		}
+	}
+	for _, purpose := range []string{"diagnostics", "pooler_diagnostics"} {
+		if counts := database.Metrics(time.Now()).Connections[purpose]; counts != (DatabaseConnectionCounts{}) {
+			t.Fatalf("metrics scrape opened %s connection: %+v", purpose, counts)
 		}
 	}
 	ctx, stop := context.WithTimeout(t.Context(), time.Second)

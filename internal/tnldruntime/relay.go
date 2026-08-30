@@ -222,6 +222,11 @@ func (d *daemon) startRelayRuntime(
 				runtimeConfig.metrics.AddPublisherConnections("ready", delta)
 			}
 		},
+		CapacityRejected: func() {
+			if runtimeConfig.metrics != nil {
+				runtimeConfig.metrics.IncCapacityRejection("publisher_connections")
+			}
+		},
 		Report: func(err error) { log.Printf("relay publisher: %v", err) },
 	})
 	if err != nil {
@@ -234,6 +239,16 @@ func (d *daemon) startRelayRuntime(
 	}
 	forwardingAcceptor, err := relay.NewForwardingAcceptor(relay.ForwardingAcceptorConfig{
 		Registry: registry, ClusterSecrets: runtimeConfig.clusterSecrets, StreamCapacity: streamCapacity,
+		StreamsDelta: func(delta int) {
+			if runtimeConfig.metrics != nil {
+				runtimeConfig.metrics.AddRelayStreams(delta)
+			}
+		},
+		CapacityRejected: func() {
+			if runtimeConfig.metrics != nil {
+				runtimeConfig.metrics.IncCapacityRejection("relay_streams")
+			}
+		},
 		Report: func(err error) { log.Printf("relay forwarding: %v", err) },
 	})
 	if err != nil {

@@ -28,6 +28,7 @@ type PublisherAcceptorConfig struct {
 	Registry              *Registry
 	Select                func(string) (PublisherConnectionController, *Registry, bool)
 	ReadyConnectionsDelta func(int)
+	CapacityRejected      func()
 	Report                func(error)
 }
 
@@ -37,6 +38,7 @@ type PublisherAcceptor struct {
 	registry     *Registry
 	selectTarget func(string) (PublisherConnectionController, *Registry, bool)
 	readyDelta   func(int)
+	capacity     func()
 	report       func(error)
 }
 
@@ -51,9 +53,12 @@ func NewPublisherAcceptor(config PublisherAcceptorConfig) (*PublisherAcceptor, e
 	if config.ReadyConnectionsDelta == nil {
 		config.ReadyConnectionsDelta = func(int) {}
 	}
+	if config.CapacityRejected == nil {
+		config.CapacityRejected = func() {}
+	}
 	return &PublisherAcceptor{
 		control: config.Control, registry: config.Registry, selectTarget: config.Select,
-		readyDelta: config.ReadyConnectionsDelta, report: config.Report,
+		readyDelta: config.ReadyConnectionsDelta, capacity: config.CapacityRejected, report: config.Report,
 	}, nil
 }
 
@@ -81,7 +86,7 @@ func (a *PublisherAcceptor) Accept(ctx context.Context, transport muxsession.Ses
 			authCtx, *message.PublisherConnection, claimID, message.Credential,
 		)
 		if err != nil {
-			return &tunnel.ProtocolError{Code: ControlErrorCode(err)}
+			return &tunnel.ProtocolError{Code: a.controlErrorCode(err)}
 		}
 		return nil
 	})
@@ -146,4 +151,12 @@ func (a *PublisherAcceptor) Accept(ctx context.Context, transport muxsession.Ses
 		retErr = nil
 	}
 	return retErr
+}
+
+func (a *PublisherAcceptor) controlErrorCode(err error) tunnelv1.ErrorCode {
+	code := ControlErrorCode(err)
+	if code == tunnelv1.CapacityExceeded {
+		a.capacity()
+	}
+	return code
 }

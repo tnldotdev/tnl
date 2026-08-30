@@ -16,21 +16,25 @@ import (
 )
 
 type ForwardingAcceptorConfig struct {
-	Registry       *Registry
-	ClusterSecrets serviceapi.BearerSecrets
-	StreamCapacity int
-	Now            func() time.Time
-	Report         func(error)
+	Registry         *Registry
+	ClusterSecrets   serviceapi.BearerSecrets
+	StreamCapacity   int
+	StreamsDelta     func(int)
+	CapacityRejected func()
+	Now              func() time.Time
+	Report           func(error)
 }
 
 // ForwardingAcceptor carries internal visitor streams from ingress to locally
 // connected publishers. It never receives the ingress routing table.
 type ForwardingAcceptor struct {
-	registry *Registry
-	secrets  serviceapi.BearerSecrets
-	streams  chan struct{}
-	now      func() time.Time
-	report   func(error)
+	registry         *Registry
+	secrets          serviceapi.BearerSecrets
+	streams          chan struct{}
+	streamsDelta     func(int)
+	capacityRejected func()
+	now              func() time.Time
+	report           func(error)
 }
 
 func NewForwardingAcceptor(config ForwardingAcceptorConfig) (*ForwardingAcceptor, error) {
@@ -43,8 +47,15 @@ func NewForwardingAcceptor(config ForwardingAcceptorConfig) (*ForwardingAcceptor
 	if config.Report == nil {
 		config.Report = func(error) {}
 	}
+	if config.StreamsDelta == nil {
+		config.StreamsDelta = func(int) {}
+	}
+	if config.CapacityRejected == nil {
+		config.CapacityRejected = func() {}
+	}
 	return &ForwardingAcceptor{
 		registry: config.Registry, secrets: config.ClusterSecrets, streams: make(chan struct{}, config.StreamCapacity),
+		streamsDelta: config.StreamsDelta, capacityRejected: config.CapacityRejected,
 		now: config.Now, report: config.Report,
 	}, nil
 }
@@ -87,12 +98,10 @@ func (a *ForwardingAcceptor) Accept(ctx context.Context, transport muxsession.Se
 }
 
 func (a *ForwardingAcceptor) forward(ctx context.Context, incoming *tunnel.IncomingInternalForwardingStream) error {
-	select {
-	case a.streams <- struct{}{}:
-		defer func() { <-a.streams }()
-	default:
+	if !a.acquireStream() {
 		return incoming.Reject(tunnelv1.CapacityExceeded)
 	}
+	defer a.releaseStream()
 	connection, ok := a.registry.Candidate(incoming.Header, a.now())
 	if !ok {
 		return incoming.Reject(tunnelv1.StaleConnectionAssignment)
@@ -115,4 +124,20 @@ func (a *ForwardingAcceptor) forward(ctx context.Context, incoming *tunnel.Incom
 		return fmt.Errorf("relay: forward visitor connection %s: %w", incoming.Header.VisitorConnectionID, err)
 	}
 	return nil
+}
+
+func (a *ForwardingAcceptor) acquireStream() bool {
+	select {
+	case a.streams <- struct{}{}:
+		a.streamsDelta(1)
+		return true
+	default:
+		a.capacityRejected()
+		return false
+	}
+}
+
+func (a *ForwardingAcceptor) releaseStream() {
+	<-a.streams
+	a.streamsDelta(-1)
 }

@@ -23,9 +23,9 @@ func TestQueryActivityPrivacyBoundsAndCancellation(t *testing.T) {
 		}
 		contexts = append(contexts, activity.TraceQueryStart(parent, nil, pgx.TraceQueryStartData{SQL: statement, Args: []any{"private-token"}}))
 	}
-	operations, truncated := activity.snapshot(time.Now())
-	if len(operations) != maximumActiveQueries || !truncated {
-		t.Fatalf("operations=%d truncated=%t", len(operations), truncated)
+	operations, omitted := activity.snapshotWithOmitted(time.Now())
+	if len(operations) != maximumActiveQueries || omitted != 5 {
+		t.Fatalf("operations=%d omitted=%d", len(operations), omitted)
 	}
 	for _, operation := range operations {
 		if operation.ElapsedSeconds < 0 || operation.Operation != "unknown" && operation.Operation != "LockRouteSessionForUsage" {

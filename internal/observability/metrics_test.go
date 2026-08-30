@@ -35,13 +35,13 @@ func TestProcessHandlerHealthAndReadiness(t *testing.T) {
 }
 
 func TestMetricsExposeFinalRuntimeVocabulary(t *testing.T) {
-	metrics := New("relay")
-	metrics.SetRoutes("enabled", 7)
+	metrics := New("standalone")
 	metrics.SetRelayLeases("active", 3)
 	metrics.AddRelayLeases("active", -1)
 	metrics.SetPublisherConnections("ready", 2)
 	metrics.AddPublisherConnections("ready", 1)
-	metrics.SetStreams(4)
+	metrics.SetIngressStreams(4)
+	metrics.AddRelayStreams(2)
 	metrics.IncCapacityRejection("route_connections")
 	metrics.IncSourceLimiterRejection()
 	metrics.SetSourceLimiterEntries(5)
@@ -59,11 +59,10 @@ func TestMetricsExposeFinalRuntimeVocabulary(t *testing.T) {
 		value  float64
 	}
 	want := map[string]sample{
-		"tnl_info":                             {"GAUGE", map[string]string{"role": "relay"}, 1},
-		"tnl_routes":                           {"GAUGE", map[string]string{"state": "enabled"}, 7},
+		"tnl_info":                             {"GAUGE", map[string]string{"role": "standalone"}, 1},
 		"tnl_relay_leases":                     {"GAUGE", map[string]string{"state": "active"}, 2},
 		"tnl_publisher_connections":            {"GAUGE", map[string]string{"state": "ready"}, 3},
-		"tnl_streams_active":                   {kind: "GAUGE", value: 4},
+		"tnl_streams_active":                   {kind: "GAUGE"},
 		"tnl_capacity_rejections_total":        {"COUNTER", map[string]string{"resource": "route_connections"}, 1},
 		"tnl_source_limiter_rejections_total":  {kind: "COUNTER", value: 1},
 		"tnl_source_limiter_entries":           {kind: "GAUGE", value: 5},
@@ -88,6 +87,24 @@ func TestMetricsExposeFinalRuntimeVocabulary(t *testing.T) {
 			continue
 		}
 		delete(want, name)
+		if name == "tnl_streams_active" {
+			if family.GetType().String() != expected.kind || len(family.Metric) != 2 {
+				t.Errorf("%s: type=%v samples=%d", name, family.GetType(), len(family.Metric))
+				continue
+			}
+			values := make(map[string]float64)
+			for _, metric := range family.Metric {
+				if len(metric.Label) != 1 || metric.Label[0].GetName() != "stage" {
+					t.Errorf("%s: labels=%v", name, metric.Label)
+					continue
+				}
+				values[metric.Label[0].GetValue()] = metric.GetGauge().GetValue()
+			}
+			if !reflect.DeepEqual(values, map[string]float64{"ingress": 4, "relay": 2}) {
+				t.Errorf("%s: values=%v", name, values)
+			}
+			continue
+		}
 		if family.GetType().String() != expected.kind || len(family.Metric) != 1 {
 			t.Errorf("%s: type=%v samples=%d", name, family.GetType(), len(family.Metric))
 			continue
@@ -133,5 +150,66 @@ func TestMetricsExposeFinalRuntimeVocabulary(t *testing.T) {
 	}
 	for name := range want {
 		t.Errorf("missing application metric %q", name)
+	}
+}
+
+func TestMetricsExposeOnlyApplicableRoleFamilies(t *testing.T) {
+	for _, test := range []struct {
+		role string
+		want []string
+	}{
+		{role: "control", want: []string{
+			"tnl_info", "tnl_control_requests_total", "tnl_control_request_duration_seconds",
+		}},
+		{role: "ingress", want: []string{
+			"tnl_info", "tnl_streams_active", "tnl_capacity_rejections_total",
+			"tnl_source_limiter_rejections_total", "tnl_source_limiter_entries",
+			"tnl_ip_allowlist_denials_total", "tnl_forwarded_bytes_total",
+		}},
+		{role: "relay", want: []string{
+			"tnl_info", "tnl_relay_leases", "tnl_publisher_connections",
+			"tnl_streams_active", "tnl_capacity_rejections_total",
+		}},
+		{role: "standalone", want: []string{
+			"tnl_info", "tnl_control_requests_total", "tnl_control_request_duration_seconds",
+			"tnl_relay_leases", "tnl_publisher_connections", "tnl_streams_active",
+			"tnl_capacity_rejections_total", "tnl_source_limiter_rejections_total",
+			"tnl_source_limiter_entries", "tnl_ip_allowlist_denials_total", "tnl_forwarded_bytes_total",
+		}},
+	} {
+		t.Run(test.role, func(t *testing.T) {
+			metrics := New(test.role)
+			metrics.SetRelayLeases("active", 1)
+			metrics.SetPublisherConnections("ready", 1)
+			metrics.SetIngressStreams(1)
+			metrics.AddRelayStreams(1)
+			metrics.IncCapacityRejection("test")
+			metrics.IncSourceLimiterRejection()
+			metrics.SetSourceLimiterEntries(1)
+			metrics.IncIPAllowlistDenial()
+			metrics.AddForwardedBytes("visitor_to_publisher", 1)
+			metrics.ObserveControlRequest("test", "success", time.Millisecond)
+			families, err := metrics.registry.Gather()
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := make(map[string]bool, len(test.want))
+			for _, name := range test.want {
+				want[name] = true
+			}
+			for _, family := range families {
+				name := family.GetName()
+				if !strings.HasPrefix(name, "tnl_") {
+					continue
+				}
+				if !want[name] {
+					t.Errorf("unexpected %s metric %q", test.role, name)
+				}
+				delete(want, name)
+			}
+			for name := range want {
+				t.Errorf("missing %s metric %q", test.role, name)
+			}
+		})
 	}
 }

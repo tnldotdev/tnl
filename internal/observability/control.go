@@ -3,9 +3,6 @@ package observability
 import (
 	"net/http"
 	"time"
-
-	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/prometheus/client_golang/prometheus"
 )
 
 // ControlRequests records matched route patterns, never URLs or route IDs.
@@ -55,35 +52,4 @@ func (w *controlResponseWriter) Write(data []byte) (int, error) {
 		w.WriteHeader(http.StatusOK)
 	}
 	return w.ResponseWriter.Write(data)
-}
-
-// RegisterDatabasePool exposes in-memory statistics; scraping never acquires a
-// database connection, including when the application's pool is exhausted.
-func (m *Metrics) RegisterDatabasePool(stats func() *pgxpool.Stat) {
-	for _, metric := range []struct {
-		name, help string
-		value      func(*pgxpool.Stat) float64
-	}{
-		{"max_connections", "Configured connection limit.", func(s *pgxpool.Stat) float64 { return float64(s.MaxConns()) }},
-		{"acquired_connections", "Connections currently in use.", func(s *pgxpool.Stat) float64 { return float64(s.AcquiredConns()) }},
-		{"idle_connections", "Connections available for acquisition.", func(s *pgxpool.Stat) float64 { return float64(s.IdleConns()) }},
-		{"total_connections", "Total pool connections, including those being constructed.", func(s *pgxpool.Stat) float64 { return float64(s.TotalConns()) }},
-	} {
-		m.registry.MustRegister(prometheus.NewGaugeFunc(prometheus.GaugeOpts{
-			Name: "tnl_database_pool_" + metric.name, Help: metric.help,
-		}, func() float64 { return metric.value(stats()) }))
-	}
-	for _, metric := range []struct {
-		name, help string
-		value      func(*pgxpool.Stat) float64
-	}{
-		{"acquires_total", "Successful connection acquisitions.", func(s *pgxpool.Stat) float64 { return float64(s.AcquireCount()) }},
-		{"waited_acquires_total", "Successful acquisitions that waited for an available connection.", func(s *pgxpool.Stat) float64 { return float64(s.EmptyAcquireCount()) }},
-		{"acquire_wait_seconds_total", "Time spent waiting on successful acquisitions from an empty pool.", func(s *pgxpool.Stat) float64 { return s.EmptyAcquireWaitTime().Seconds() }},
-		{"canceled_acquires_total", "Connection acquisitions canceled before completion.", func(s *pgxpool.Stat) float64 { return float64(s.CanceledAcquireCount()) }},
-	} {
-		m.registry.MustRegister(prometheus.NewCounterFunc(prometheus.CounterOpts{
-			Name: "tnl_database_pool_" + metric.name, Help: metric.help,
-		}, func() float64 { return metric.value(stats()) }))
-	}
 }
