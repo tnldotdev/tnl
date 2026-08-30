@@ -146,9 +146,10 @@ func TestServiceCertificateLifecycle(t *testing.T) {
 	}
 }
 
-func TestServiceReusesPersistedAccountKey(t *testing.T) {
+func TestServiceRecoversAccountCreationWithPersistedKey(t *testing.T) {
 	db := testDatabase(t)
 	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	fake := &fakeACME{now: now}
 	var firstPublic, secondPublic []byte
 	newClient := func(destination *[]byte) func(*http.Client, string, string, crypto.Signer) (acmeClient, error) {
 		return func(_ *http.Client, _, _ string, signer crypto.Signer) (acmeClient, error) {
@@ -157,7 +158,7 @@ func TestServiceReusesPersistedAccountKey(t *testing.T) {
 				t.Fatal(err)
 			}
 			*destination = encoded
-			return &fakeACME{now: now}, nil
+			return fake, nil
 		}
 	}
 	config := Config{
@@ -168,12 +169,21 @@ func TestServiceReusesPersistedAccountKey(t *testing.T) {
 	if _, err := New(context.Background(), db, config); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.Exec(`UPDATE acme_accounts SET kid = NULL WHERE directory_url = ?`, config.DirectoryURL); err != nil {
+		t.Fatal(err)
+	}
 	config.newACME = newClient(&secondPublic)
 	if _, err := New(context.Background(), db, config); err != nil {
 		t.Fatal(err)
 	}
-	if string(firstPublic) != string(secondPublic) {
-		t.Fatal("ACME account key changed across restart")
+	if string(firstPublic) != string(secondPublic) || fake.createAccountCalls != 2 {
+		t.Fatalf("account key changed or creation did not converge: calls = %d", fake.createAccountCalls)
+	}
+	if _, err := New(context.Background(), db, config); err != nil {
+		t.Fatal(err)
+	}
+	if fake.createAccountCalls != 2 {
+		t.Fatalf("persisted account creation was replayed %d times", fake.createAccountCalls)
 	}
 }
 
@@ -219,9 +229,109 @@ func TestServiceUpdatesAccountContact(t *testing.T) {
 	if fake.updatedContact != "mailto:new@example.com" {
 		t.Fatalf("updated contact = %q", fake.updatedContact)
 	}
+	if _, err := db.Exec(`UPDATE acme_accounts SET email = 'operator@example.com'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(context.Background(), db, config); err != nil {
+		t.Fatal(err)
+	}
+	if fake.updateAccountCalls != 1 {
+		t.Fatalf("completed account update was replayed %d times", fake.updateAccountCalls)
+	}
+	var email string
+	if err := db.QueryRow(`SELECT email FROM acme_accounts`).Scan(&email); err != nil {
+		t.Fatal(err)
+	}
+	if email != "new@example.com" {
+		t.Fatalf("persisted account email = %q", email)
+	}
 }
 
-func TestServiceResumesProcessingAuthorization(t *testing.T) {
+func TestServiceBlocksAmbiguousOrderCreation(t *testing.T) {
+	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	for _, cause := range []error{
+		errors.New("connection reset after write"),
+		&legoacme.ProblemDetails{HTTPStatus: http.StatusServiceUnavailable},
+	} {
+		db := testDatabase(t)
+		fake := &fakeACME{now: now, createOrderErrors: []error{cause}}
+		service := testService(t, db, fake, nil, now)
+		_, csrDER := testCSR(t, testHostname, pkix.Name{})
+		if _, err := service.Create(context.Background(), testRouteID, 1, "tlsserver", csrDER); !errors.Is(err, ErrUnavailable) {
+			t.Fatalf("ambiguous order error = %v", err)
+		}
+		fake.orders = 1
+		restarted := testService(t, db, fake, nil, now.Add(6*time.Second))
+		if _, err := restarted.Create(context.Background(), testRouteID, 1, "tlsserver", csrDER); !errors.Is(err, ErrInvalidState) {
+			t.Fatalf("ambiguous order error = %v", err)
+		}
+		_, csrHash, _, err := validateCSR(csrDER, testHostname)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stored, err := restarted.store.findBoundJob(context.Background(), testRouteID, 1, csrHash)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stored.State != StateBlocked || stored.OrderAttempts != 1 || fake.createOrderCalls != 1 || fake.orders != 1 {
+			t.Fatalf("ambiguous job = %+v, calls = %d, remote orders = %d", stored, fake.createOrderCalls, fake.orders)
+		}
+	}
+}
+
+func TestServiceRetriesRejectedOrderCreation(t *testing.T) {
+	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	for _, test := range []struct {
+		name  string
+		cause error
+		want  error
+		delay time.Duration
+	}{
+		{
+			name: "bad nonce", cause: &legoacme.ProblemDetails{HTTPStatus: http.StatusBadRequest, Type: legoacme.BadNonceErrorType},
+			want: ErrUnavailable, delay: 5 * time.Second,
+		},
+		{
+			name: "rate limit",
+			cause: &legoacme.RateLimitedError{
+				ProblemDetails: &legoacme.ProblemDetails{HTTPStatus: http.StatusTooManyRequests, Type: legoacme.RateLimitedErrorType},
+				RetryAfter:     time.Minute,
+			},
+			want: ErrRateLimited, delay: time.Minute,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			db := testDatabase(t)
+			_, csrDER := testCSR(t, testHostname, pkix.Name{})
+			fake := &fakeACME{now: now, createOrderErrors: []error{test.cause}}
+			service := testService(t, db, fake, nil, now)
+			if _, err := service.Create(context.Background(), testRouteID, 1, "tlsserver", csrDER); !errors.Is(err, test.want) {
+				t.Fatalf("first create error = %v", err)
+			}
+			_, csrHash, _, err := validateCSR(csrDER, testHostname)
+			if err != nil {
+				t.Fatal(err)
+			}
+			stored, err := service.store.findBoundJob(context.Background(), testRouteID, 1, csrHash)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stored.State != StateCreatingOrder || stored.OrderAttempts != 0 || !stored.RetryAt.Equal(now.Add(test.delay)) {
+				t.Fatalf("retryable order job = %+v", stored)
+			}
+			restarted := testService(t, db, fake, nil, now.Add(test.delay+time.Second))
+			job, err := restarted.Create(context.Background(), testRouteID, 1, "tlsserver", csrDER)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if job.State != StateWaitingChallenge || fake.createOrderCalls != 2 || fake.orders != 1 {
+				t.Fatalf("retried job = %+v, calls = %d, orders = %d", job, fake.createOrderCalls, fake.orders)
+			}
+		})
+	}
+}
+
+func TestServiceDoesNotReplayAcceptedChallenge(t *testing.T) {
 	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	db := testDatabase(t)
 	key, csrDER := testCSR(t, testHostname, pkix.Name{})
@@ -236,13 +346,15 @@ func TestServiceResumesProcessingAuthorization(t *testing.T) {
 	if err := service.store.saveJob(context.Background(), job); err != nil {
 		t.Fatal(err)
 	}
-	fake.authorizationStatuses = []string{legoacme.StatusProcessing, legoacme.StatusValid}
-	job, err = service.ChallengeReady(context.Background(), job.ID)
+	fake.authorizationStatuses = []string{legoacme.StatusPending, legoacme.StatusValid}
+	fake.challengeStatus = legoacme.StatusProcessing
+	restarted := testService(t, db, fake, roots, now)
+	job, err = restarted.ChallengeReady(context.Background(), job.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if job.State != StateWaitingForInstall {
-		t.Fatalf("resumed state = %q", job.State)
+	if job.State != StateWaitingForInstall || fake.acceptChallengeCalls != 0 {
+		t.Fatalf("resumed job = %+v, challenge accepts = %d", job, fake.acceptChallengeCalls)
 	}
 }
 
@@ -267,6 +379,32 @@ func TestServiceResumesPreauthorizedFinalization(t *testing.T) {
 	}
 	if job.State != StateWaitingForInstall || job.Challenge() != nil {
 		t.Fatalf("resumed preauthorized job = %+v", job)
+	}
+}
+
+func TestServiceDoesNotReplayFinalization(t *testing.T) {
+	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	db := testDatabase(t)
+	key, csrDER := testCSR(t, testHostname, pkix.Name{})
+	chain, roots := testCertificateChain(t, key, testHostname, now)
+	fake := &fakeACME{now: now, certificate: chain}
+	service := testService(t, db, fake, roots, now)
+	job, err := service.Create(context.Background(), testRouteID, 1, "tlsserver", csrDER)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job.State = StateFinalizing
+	if err := service.store.saveJob(context.Background(), job); err != nil {
+		t.Fatal(err)
+	}
+	fake.orderStatuses = []string{legoacme.StatusProcessing, legoacme.StatusValid}
+	restarted := testService(t, db, fake, roots, now)
+	job, err = restarted.Create(context.Background(), testRouteID, 1, "tlsserver", csrDER)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.State != StateWaitingForInstall || fake.finalizeOrderCalls != 0 {
+		t.Fatalf("resumed job = %+v, finalizations = %d", job, fake.finalizeOrderCalls)
 	}
 }
 
@@ -343,7 +481,16 @@ type fakeACME struct {
 	accepted              bool
 	finalized             bool
 	orders                int
+	createOrderCalls      int
+	createAccountCalls    int
+	updateAccountCalls    int
+	acceptChallengeCalls  int
+	finalizeOrderCalls    int
+	accountContact        string
+	challengeStatus       string
 	authorizationStatuses []string
+	orderStatuses         []string
+	createOrderErrors     []error
 	finalizeErr           error
 	terms                 string
 	updatedContact        string
@@ -361,23 +508,39 @@ func (f *fakeACME) Directory() legoacme.Directory {
 
 func (*fakeACME) KeyAuthorization(string) (string, error) { return "key-authorization", nil }
 
-func (f *fakeACME) CreateAccount(context.Context, legoacme.Account) (legoacme.ExtendedAccount, error) {
+func (f *fakeACME) CreateAccount(_ context.Context, request legoacme.Account) (legoacme.ExtendedAccount, error) {
 	f.account = true
+	f.createAccountCalls++
+	if len(request.Contact) == 1 && f.accountContact == "" {
+		f.accountContact = request.Contact[0]
+	}
 	return legoacme.ExtendedAccount{Account: legoacme.Account{Status: legoacme.StatusValid}, Location: "https://acme.test/account/1"}, nil
 }
 
-func (*fakeACME) GetAccount(context.Context, string) (legoacme.Account, error) {
-	return legoacme.Account{Status: legoacme.StatusValid, Contact: []string{"mailto:operator@example.com"}}, nil
+func (f *fakeACME) GetAccount(context.Context, string) (legoacme.Account, error) {
+	contact := f.accountContact
+	if contact == "" {
+		contact = "mailto:operator@example.com"
+	}
+	return legoacme.Account{Status: legoacme.StatusValid, Contact: []string{contact}}, nil
 }
 
 func (f *fakeACME) UpdateAccount(_ context.Context, _ string, request legoacme.Account) (legoacme.Account, error) {
+	f.updateAccountCalls++
 	if len(request.Contact) == 1 {
 		f.updatedContact = request.Contact[0]
+		f.accountContact = request.Contact[0]
 	}
 	return legoacme.Account{Status: legoacme.StatusValid}, nil
 }
 
 func (f *fakeACME) CreateOrder(context.Context, []string, *legoapi.OrderOptions) (legoacme.ExtendedOrder, error) {
+	f.createOrderCalls++
+	if len(f.createOrderErrors) != 0 {
+		err := f.createOrderErrors[0]
+		f.createOrderErrors = f.createOrderErrors[1:]
+		return legoacme.ExtendedOrder{}, err
+	}
 	f.orders++
 	return legoacme.ExtendedOrder{Order: legoacme.Order{
 		Status: legoacme.StatusPending, Expires: f.now.Add(time.Hour).Format(time.RFC3339),
@@ -389,8 +552,13 @@ func (f *fakeACME) CreateOrder(context.Context, []string, *legoapi.OrderOptions)
 func (f *fakeACME) GetOrder(context.Context, string) (legoacme.ExtendedOrder, error) {
 	status := legoacme.StatusReady
 	certificateURL := ""
-	if f.finalized {
+	if len(f.orderStatuses) != 0 {
+		status = f.orderStatuses[0]
+		f.orderStatuses = f.orderStatuses[1:]
+	} else if f.finalized {
 		status = legoacme.StatusValid
+	}
+	if status == legoacme.StatusValid {
 		certificateURL = "https://acme.test/certificate/1"
 	}
 	return legoacme.ExtendedOrder{Order: legoacme.Order{Status: status, Certificate: certificateURL}, Location: "https://acme.test/order/1"}, nil
@@ -404,18 +572,29 @@ func (f *fakeACME) GetAuthorization(context.Context, string) (legoacme.Authoriza
 	} else if f.accepted {
 		status = legoacme.StatusValid
 	}
+	challengeStatus := f.challengeStatus
+	if challengeStatus == "" {
+		challengeStatus = legoacme.StatusPending
+		if f.accepted {
+			challengeStatus = legoacme.StatusValid
+		}
+	}
 	return legoacme.Authorization{
 		Status: status, Expires: f.now.Add(time.Hour), Identifier: legoacme.Identifier{Type: "dns", Value: testHostname},
-		Challenges: []legoacme.Challenge{{Type: tlsALPNChallengeType, URL: "https://acme.test/challenge/1", Token: "token"}},
+		Challenges: []legoacme.Challenge{{
+			Type: tlsALPNChallengeType, URL: "https://acme.test/challenge/1", Token: "token", Status: challengeStatus,
+		}},
 	}, nil
 }
 
 func (f *fakeACME) AcceptChallenge(context.Context, string) (legoacme.ExtendedChallenge, error) {
 	f.accepted = true
+	f.acceptChallengeCalls++
 	return legoacme.ExtendedChallenge{}, nil
 }
 
 func (f *fakeACME) FinalizeOrder(context.Context, string, []byte) (legoacme.ExtendedOrder, error) {
+	f.finalizeOrderCalls++
 	if f.finalizeErr != nil {
 		return legoacme.ExtendedOrder{}, f.finalizeErr
 	}

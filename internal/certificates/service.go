@@ -207,10 +207,7 @@ func (s *Service) continueJob(ctx context.Context, job Job) (Job, error) {
 	case StateAuthorizing:
 		return s.prepareAuthorization(ctx, job)
 	case StateReadyToFinalize, StateFinalizing, StateDownloading:
-		if job.ChallengeURL == "" {
-			return s.advance(ctx, job)
-		}
-		return job, nil
+		return s.advance(ctx, job)
 	default:
 		return job, nil
 	}
@@ -308,9 +305,10 @@ func (s *Service) Installed(ctx context.Context, id, routeID string, generation 
 }
 
 func (s *Service) createOrder(ctx context.Context, job Job) (Job, error) {
-	if job.OrderAttempts >= 3 {
+	// Without the response URL, another request could create a second order.
+	if job.OrderAttempts != 0 {
 		job.State = StateBlocked
-		job.LastError = "ACME order creation remained ambiguous after three attempts"
+		job.LastError = "ACME order creation outcome is ambiguous; refusing to create a duplicate order"
 		if err := s.store.saveJob(ctx, job); err != nil {
 			return Job{}, err
 		}
@@ -323,7 +321,7 @@ func (s *Service) createOrder(ctx context.Context, job Job) (Job, error) {
 	}
 	order, err := s.client.CreateOrder(ctx, []string{job.Hostname}, &legoapi.OrderOptions{Profile: job.Profile})
 	if err != nil {
-		return s.transientFailure(ctx, job, "create ACME order", err)
+		return s.createOrderFailure(ctx, job, err)
 	}
 	if order.Location == "" || order.Finalize == "" || len(order.Authorizations) != 1 || order.Profile != job.Profile {
 		return s.terminalFailure(ctx, job, "ACME order response is incomplete")
@@ -366,15 +364,9 @@ func (s *Service) prepareAuthorization(ctx context.Context, job Job) (Job, error
 	if authorization.Status != legoacme.StatusPending {
 		return s.terminalFailure(ctx, job, "ACME authorization is not pending")
 	}
-	var challenge *legoacme.Challenge
-	for index := range authorization.Challenges {
-		if authorization.Challenges[index].Type == tlsALPNChallengeType {
-			challenge = &authorization.Challenges[index]
-			break
-		}
-	}
-	if challenge == nil || challenge.URL == "" || challenge.Token == "" {
-		return s.terminalFailure(ctx, job, "ACME authorization omitted TLS-ALPN-01")
+	challenge, err := tlsALPNChallenge(authorization)
+	if err != nil {
+		return s.terminalFailure(ctx, job, err.Error())
 	}
 	keyAuthorization, err := s.client.KeyAuthorization(challenge.Token)
 	if err != nil {
@@ -403,7 +395,7 @@ func (s *Service) prepareAuthorization(ctx context.Context, job Job) (Job, error
 func (s *Service) advance(ctx context.Context, job Job) (Job, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	if job.ChallengeURL != "" {
+	if job.State == StateWaitingChallenge || job.State == StateValidating {
 		job.State = StateValidating
 		job.LastError = ""
 		if err := s.store.saveJob(ctx, job); err != nil {
@@ -413,18 +405,38 @@ func (s *Service) advance(ctx context.Context, job Job) (Job, error) {
 		if err != nil {
 			return s.transientFailure(ctx, job, "reconcile ACME authorization", err)
 		}
-		if authorization.Status == legoacme.StatusPending {
-			if err := s.ensureCurrent(ctx, job); err != nil {
-				return Job{}, err
+		if authorization.Identifier.Type != "dns" || authorization.Identifier.Value != job.Hostname || authorization.Wildcard {
+			return s.terminalFailure(ctx, job, "ACME authorization changed the identifier")
+		}
+		switch authorization.Status {
+		case legoacme.StatusPending:
+			challenge, challengeErr := tlsALPNChallenge(authorization)
+			if challengeErr != nil {
+				return s.terminalFailure(ctx, job, challengeErr.Error())
 			}
-			if _, err := s.client.AcceptChallenge(ctx, job.ChallengeURL); err != nil {
-				return s.transientFailure(ctx, job, "accept ACME challenge", err)
+			if challenge.URL != job.ChallengeURL || challenge.Token != job.ChallengeToken {
+				return s.terminalFailure(ctx, job, "ACME TLS-ALPN-01 challenge changed")
 			}
-			authorization, err = s.waitAuthorization(ctx, job.AuthorizationURL)
-			if err != nil {
-				return s.transientFailure(ctx, job, "wait for ACME authorization", err)
+			switch challenge.Status {
+			case legoacme.StatusPending:
+				if err := s.ensureCurrent(ctx, job); err != nil {
+					return Job{}, err
+				}
+				if _, err := s.client.AcceptChallenge(ctx, job.ChallengeURL); err != nil {
+					return s.transientFailure(ctx, job, "accept ACME challenge", err)
+				}
+			case legoacme.StatusProcessing, legoacme.StatusValid:
+				// The previous acceptance reached the CA; reconcile instead of replaying it.
+			case legoacme.StatusInvalid:
+				return s.terminalFailure(ctx, job, "ACME TLS-ALPN-01 challenge became invalid")
+			default:
+				return s.terminalFailure(ctx, job, "ACME TLS-ALPN-01 challenge has an invalid status")
 			}
-		} else if authorization.Status == legoacme.StatusProcessing {
+		case legoacme.StatusProcessing, legoacme.StatusValid:
+		default:
+			return s.terminalFailure(ctx, job, "ACME authorization became invalid")
+		}
+		if authorization.Status != legoacme.StatusValid {
 			authorization, err = s.waitAuthorization(ctx, job.AuthorizationURL)
 			if err != nil {
 				return s.transientFailure(ctx, job, "wait for ACME authorization", err)
@@ -434,12 +446,12 @@ func (s *Service) advance(ctx context.Context, job Job) (Job, error) {
 			return s.terminalFailure(ctx, job, "ACME authorization became invalid")
 		}
 		job.ACMEStatus = authorization.Status
+		job.State = StateReadyToFinalize
+		if err := s.store.saveJob(ctx, job); err != nil {
+			return Job{}, err
+		}
 	}
 
-	job.State = StateReadyToFinalize
-	if err := s.store.saveJob(ctx, job); err != nil {
-		return Job{}, err
-	}
 	order, err := s.client.GetOrder(ctx, job.OrderURL)
 	if err != nil {
 		return s.transientFailure(ctx, job, "reconcile ACME order", err)
@@ -479,7 +491,7 @@ func (s *Service) advance(ctx context.Context, job Job) (Job, error) {
 	if err := s.store.saveJob(ctx, job); err != nil {
 		return Job{}, err
 	}
-	raw, err := s.client.GetCertificate(ctx, order.Certificate)
+	raw, err := s.client.GetCertificate(ctx, job.CertificateURL)
 	if err != nil {
 		return s.transientFailure(ctx, job, "download ACME certificate", err)
 	}
@@ -502,6 +514,44 @@ func (s *Service) advance(ctx context.Context, job Job) (Job, error) {
 		return Job{}, err
 	}
 	return s.store.getJob(ctx, job.ID)
+}
+
+func (s *Service) createOrderFailure(ctx context.Context, job Job, cause error) (Job, error) {
+	var limited *legoacme.RateLimitedError
+	if errors.As(cause, &limited) {
+		job.OrderAttempts = 0
+		delay := limited.RetryAfter
+		if delay <= 0 {
+			delay = 5 * time.Second
+		}
+		job.LastError = boundedError(fmt.Errorf("create ACME order: %w", cause))
+		job.RetryAt = s.now().Add(delay)
+		if err := s.store.saveJob(ctx, job); err != nil {
+			return Job{}, err
+		}
+		return Job{}, &RateLimitError{RetryAt: job.RetryAt}
+	}
+	var problem *legoacme.ProblemDetails
+	if !errors.As(cause, &problem) || problem.HTTPStatus >= http.StatusInternalServerError {
+		return s.transientFailure(ctx, job, "create ACME order", cause)
+	}
+	if problem.Type == legoacme.BadNonceErrorType {
+		job.OrderAttempts = 0
+		return s.transientFailure(ctx, job, "create ACME order", cause)
+	}
+	return s.terminalFailure(ctx, job, boundedError(fmt.Errorf("create ACME order: %w", cause)))
+}
+
+func tlsALPNChallenge(authorization legoacme.Authorization) (legoacme.Challenge, error) {
+	for _, challenge := range authorization.Challenges {
+		if challenge.Type == tlsALPNChallengeType {
+			if challenge.URL == "" || challenge.Token == "" {
+				break
+			}
+			return challenge, nil
+		}
+	}
+	return legoacme.Challenge{}, errors.New("ACME authorization omitted TLS-ALPN-01")
 }
 
 func (s *Service) waitAuthorization(ctx context.Context, authorizationURL string) (legoacme.Authorization, error) {
