@@ -50,12 +50,16 @@ jobs:
         include:
           - framework: next
             version: "16.3.4"
+            vitest-version: "5.0.0"
           - framework: vite
             version: "6.0.9"
+            vitest-version: "4.1.11"
           - framework: vite
             version: "7.0.0"
+            vitest-version: "5.0.0"
           - framework: vite
             version: "8.2.2"
+            vitest-version: "5.0.0"
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -68,6 +72,11 @@ jobs:
           runtime: node@22.23.2
           cache: true
           require-lockfile: true
+
+      - name: Install test runner version
+        env:
+          VITEST_VERSION: ${{ matrix.vitest-version }}
+        run: pnpm --workspace-root add --save-dev --save-exact --ignore-scripts "vitest@$VITEST_VERSION" "@vitest/coverage-v8@$VITEST_VERSION" # zizmor: ignore[adhoc-packages] compatibility matrix
 
       - name: Install framework version
         env:
@@ -344,7 +353,7 @@ jobs:
           actionlint
 
       - name: Run zizmor
-        uses: zizmorcore/zizmor-action@70fb788f84895a7701f5643d103d587e460b5c99 # v0.6.3
+        uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
         with:
           advanced-security: false
           inputs: .github
