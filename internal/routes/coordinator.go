@@ -22,7 +22,6 @@ import (
 var ErrNoWorkerCapacity = errors.New("routes: no worker capacity")
 
 const (
-	routeLockStripes  = 64
 	leaseReapInterval = time.Second
 )
 
@@ -63,23 +62,29 @@ type pendingLease struct {
 	expiresAt time.Time
 }
 
+type routeMutex struct {
+	sync.Mutex
+	users int
+}
+
 type Coordinator struct {
 	store     *Store
 	bootEpoch string
 	config    CoordinatorConfig
 
 	// mutationMu sequences claim and route changes; routeLocks fence leases; mu guards runtime state.
-	mu          sync.Mutex
-	mutationMu  sync.Mutex
-	owners      map[string]*ownerState
-	pending     map[worker.RouteRef]pendingLease
-	assignments map[string]*assignment
-	challenges  map[string]*assignment
-	routeLocks  [routeLockStripes]sync.Mutex
-	snapshot    atomic.Pointer[routeSnapshot]
-	closed      bool
-	stopReaper  context.CancelFunc
-	reaperDone  chan struct{}
+	mu           sync.Mutex
+	mutationMu   sync.Mutex
+	routeLocksMu sync.Mutex
+	owners       map[string]*ownerState
+	pending      map[worker.RouteRef]pendingLease
+	assignments  map[string]*assignment
+	challenges   map[string]*assignment
+	routeLocks   map[string]*routeMutex
+	snapshot     atomic.Pointer[routeSnapshot]
+	closed       bool
+	stopReaper   context.CancelFunc
+	reaperDone   chan struct{}
 }
 
 func NewCoordinator(
@@ -110,6 +115,7 @@ func NewCoordinator(
 		pending:     make(map[worker.RouteRef]pendingLease),
 		assignments: make(map[string]*assignment),
 		challenges:  make(map[string]*assignment),
+		routeLocks:  make(map[string]*routeMutex),
 		stopReaper:  stopReaper,
 		reaperDone:  make(chan struct{}),
 	}
@@ -155,9 +161,8 @@ func (c *Coordinator) Create(
 		return LeaseSetup{}, err
 	}
 	if existingRouteID != "" {
-		lock := c.routeLock(existingRouteID)
-		lock.Lock()
-		defer lock.Unlock()
+		unlockRoute := c.lockRoute(existingRouteID)
+		defer unlockRoute()
 	}
 	provisioning, err := c.store.Create(ctx, principalID, hostname, displayTarget, c.bootEpoch, routeToken)
 	if err != nil {
@@ -188,9 +193,8 @@ func (c *Coordinator) Acquire(
 	if _, err := c.store.AuthorizeRoute(ctx, principalID, routeID, token); err != nil {
 		return LeaseSetup{}, err
 	}
-	lock := c.routeLock(routeID)
-	lock.Lock()
-	defer lock.Unlock()
+	unlockRoute := c.lockRoute(routeID)
+	defer unlockRoute()
 	provisioning, err := c.store.Acquire(ctx, principalID, routeID, c.bootEpoch, token)
 	if err != nil {
 		return LeaseSetup{}, err
@@ -226,13 +230,12 @@ func (c *Coordinator) RegisterTransport(
 	token credentials.LeaseToken,
 	serverPublicKey, relayProfile string,
 ) (err error) {
-	lock := c.routeLock(routeID)
 	lockStarted := time.Now()
-	lock.Lock()
+	unlockRoute := c.lockRoute(routeID)
 	lockWait := time.Since(lockStarted)
 	replaced := false
 	defer func() {
-		lock.Unlock()
+		unlockRoute()
 		c.observeStage(CoordinatorStageTransportRouteLockWait, lockWait)
 		if replaced {
 			c.observeRouteRemoval(RouteRemovalReplaced)
@@ -329,12 +332,11 @@ func (c *Coordinator) Ready(
 	generation uint64,
 	token credentials.LeaseToken,
 ) error {
-	lock := c.routeLock(routeID)
 	lockStarted := time.Now()
-	lock.Lock()
+	unlockRoute := c.lockRoute(routeID)
 	lockWait := time.Since(lockStarted)
 	defer func() {
-		lock.Unlock()
+		unlockRoute()
 		c.observeStage(CoordinatorStageReadyRouteLockWait, lockWait)
 	}()
 	lease, err := c.store.AuthenticateLease(ctx, routeID, generation, token, c.bootEpoch)
@@ -372,12 +374,11 @@ func (c *Coordinator) Heartbeat(
 	generation uint64,
 	token credentials.LeaseToken,
 ) (expiresAt time.Time, err error) {
-	lock := c.routeLock(routeID)
 	lockStarted := time.Now()
-	lock.Lock()
+	unlockRoute := c.lockRoute(routeID)
 	lockWait := time.Since(lockStarted)
 	defer func() {
-		lock.Unlock()
+		unlockRoute()
 		c.observeStage(CoordinatorStageHeartbeatRouteLockWait, lockWait)
 		c.observeHeartbeat(heartbeatResult(err))
 	}()
@@ -475,9 +476,8 @@ func (c *Coordinator) ReleaseHostnameClaim(ctx context.Context, principalID, cla
 		return err
 	}
 	if routeID != "" {
-		lock := c.routeLock(routeID)
-		lock.Lock()
-		defer lock.Unlock()
+		unlockRoute := c.lockRoute(routeID)
+		defer unlockRoute()
 	}
 	if err := c.store.ReleaseHostnameClaim(ctx, principalID, claimID); err != nil {
 		return err
@@ -503,9 +503,8 @@ func (c *Coordinator) Delete(ctx context.Context, principalID, routeID string) (
 	if err := c.store.AuthorizePrincipal(ctx, principalID, routeID); err != nil {
 		return err
 	}
-	lock := c.routeLock(routeID)
-	lock.Lock()
-	defer lock.Unlock()
+	unlockRoute := c.lockRoute(routeID)
+	defer unlockRoute()
 	if err := c.store.Delete(ctx, principalID, routeID); err != nil {
 		return err
 	}
@@ -723,13 +722,26 @@ func (c *Coordinator) ownerAssignmentsLocked(owner *ownerState) []*assignment {
 	return assigned
 }
 
-func (c *Coordinator) routeLock(routeID string) *sync.Mutex {
-	var hash uint32 = 2166136261
-	for index := range len(routeID) {
-		hash ^= uint32(routeID[index])
-		hash *= 16777619
+func (c *Coordinator) lockRoute(routeID string) func() {
+	c.routeLocksMu.Lock()
+	lock := c.routeLocks[routeID]
+	if lock == nil {
+		lock = new(routeMutex)
+		c.routeLocks[routeID] = lock
 	}
-	return &c.routeLocks[hash%routeLockStripes]
+	lock.users++
+	c.routeLocksMu.Unlock()
+
+	lock.Lock()
+	return func() {
+		lock.Unlock()
+		c.routeLocksMu.Lock()
+		lock.users--
+		if lock.users == 0 {
+			delete(c.routeLocks, routeID)
+		}
+		c.routeLocksMu.Unlock()
+	}
 }
 
 func (c *Coordinator) reapLeases(ctx context.Context) {
@@ -763,13 +775,12 @@ func (c *Coordinator) expireDue(ctx context.Context, now time.Time) {
 
 	// A heartbeat may race the scan, so recheck each candidate under its route lock.
 	for ref := range due {
-		lock := c.routeLock(ref.RouteID)
-		lock.Lock()
+		unlockRoute := c.lockRoute(ref.RouteID)
 		backend, expired, removed := c.expireMemory(ref, now)
 		if expired {
 			_ = c.store.Expire(ctx, ref.RouteID, ref.Generation)
 		}
-		lock.Unlock()
+		unlockRoute()
 		if backend != nil {
 			_ = backend.Close()
 		}
