@@ -85,6 +85,90 @@ jobs:
       - name: Run race tests
         run: task go:test-race
 
+  release-snapshot:
+    name: Release snapshot
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Install Go tools
+        run: go install github.com/go-task/task/v3/cmd/task@v3.53.1
+
+      - name: Install Syft
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          syft-version: v1.51.1
+
+      - name: Install GoReleaser
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7
+        with:
+          version: v2.18.0
+          install-only: true
+
+      - name: Build release snapshot
+        run: task release:snapshot
+
+      - name: Verify release snapshot
+        run: |
+          archives=(dist/*.tar.gz)
+          sboms=(dist/*.spdx.json)
+          test "${#archives[@]}" -eq 4
+          test "${#sboms[@]}" -eq 4
+          for archive in "${archives[@]}"; do
+            tar -tzf "$archive" LICENSE NOTICE tnl tnld >/dev/null
+          done
+          (cd dist && sha256sum --check checksums.txt)
+
+  container:
+    name: Container
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Build multi-platform image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          outputs: type=oci,dest=/tmp/tnl-image.tar
+          provenance: false
+          sbom: false
+          build-args: |
+            VERSION=ci
+            COMMIT=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke-test image
+        env:
+          COMMIT: ${{ github.sha }}
+        run: |
+          docker build --build-arg VERSION=ci --build-arg COMMIT="$COMMIT" --tag tnl:ci .
+          test "$(docker run --rm tnl:ci version)" = "tnld ci ($COMMIT)"
+
+      - name: Validate Compose deployment
+        env:
+          TNL_ENV_FILE: .env.example
+        run: docker compose --env-file deploy/.env.example --file deploy/compose.yaml config --quiet
+
   github-actions:
     name: GitHub Actions
     runs-on: ubuntu-latest

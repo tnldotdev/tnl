@@ -2,10 +2,3 @@ tnl
 Copyright 2026 Chase Adams
 
 This product includes software developed for the tnl project.
-
-This product includes github.com/coder/websocket, licensed under the ISC
-license, Copyright (c) 2025 Coder.
-
-This product includes github.com/libp2p/go-yamux/v5, licensed under the Mozilla
-Public License 2.0 and containing BSD-licensed portions Copyright (c) 2009 The
-Go Authors.
