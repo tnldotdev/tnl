@@ -40,7 +40,7 @@ func TestRouteAPILifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := routes.NewStore(db)
+	store, err := routes.NewStore(db, "example")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,6 +52,7 @@ func TestRouteAPILifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler := NewHandlerWithRoutes(fixtureCapabilities(t), authService, coordinator)
+	claimRequest(t, handler, issued.Token.String(), "route")
 
 	routeToken, _, _, err := credentials.NewRouteToken()
 	if err != nil {
@@ -106,7 +107,7 @@ func TestCertificateAPIRequiresBoundCurrentLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := routes.NewStore(db)
+	store, err := routes.NewStore(db, "example")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,6 +118,7 @@ func TestCertificateAPIRequiresBoundCurrentLease(t *testing.T) {
 	t.Cleanup(func() { _ = coordinator.Close() })
 	certificates := &apiCertificateService{}
 	handler := NewHandlerWithServices(fixtureCapabilities(t), authService, coordinator, certificates)
+	claimRequest(t, handler, issued.Token.String(), "route")
 	routeToken, _, _, err := credentials.NewRouteToken()
 	if err != nil {
 		t.Fatal(err)
@@ -190,6 +192,28 @@ func routeRequest[T any](
 		}
 	}
 	return result
+}
+
+func claimRequest(t *testing.T, handler http.Handler, token, label string) corev1.HostnameClaim {
+	t.Helper()
+	var body bytes.Buffer
+	if err := json.NewEncoder(&body).Encode(corev1.CreateHostnameClaimRequest{Label: &label}); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, hostnameClaimsPath, &body)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("Idempotency-Key", "api-route-test")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("claim status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var claim corev1.HostnameClaim
+	if err := json.NewDecoder(response.Body).Decode(&claim); err != nil {
+		t.Fatal(err)
+	}
+	return claim
 }
 
 type apiRouteOwner struct{}

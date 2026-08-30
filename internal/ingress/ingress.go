@@ -31,6 +31,8 @@ type Metrics interface {
 type Config struct {
 	Lookup              LookupFunc
 	LookupChallenge     LookupFunc
+	ControlHostname     string
+	HandleControl       func(net.Conn) bool
 	RequireProxyHeader  bool
 	MaxConnections      int
 	MaxRouteConnections int
@@ -58,6 +60,9 @@ func New(listener net.Listener, config Config) (*Server, error) {
 	}
 	if config.MaxConnections <= 0 || config.MaxRouteConnections <= 0 {
 		return nil, errors.New("ingress: connection limits must be positive")
+	}
+	if config.ControlHostname == "" != (config.HandleControl == nil) {
+		return nil, errors.New("ingress: control hostname and handler must be configured together")
 	}
 	if config.OpenTimeout <= 0 {
 		config.OpenTimeout = defaultOpenTimeout
@@ -124,7 +129,6 @@ func (s *Server) Drain(ctx context.Context) error {
 func (s *Server) Done() <-chan struct{} { return s.done }
 
 func (s *Server) handle(public net.Conn) error {
-	defer public.Close()
 	if err := public.SetReadDeadline(time.Now().Add(router.ClientHelloReadTimeout)); err != nil {
 		return nil
 	}
@@ -136,6 +140,18 @@ func (s *Server) handle(public net.Conn) error {
 	inspected := &readerConn{Conn: public, reader: reader}
 	hello, err := router.InspectClientHello(inspected)
 	if err != nil {
+		return nil
+	}
+	if hello.ServerName == s.config.ControlHostname {
+		connection := &readerConn{
+			Conn:   &addressConn{Conn: public, remote: source, local: destination},
+			reader: hello.Replay,
+		}
+		if !s.config.HandleControl(connection) {
+			return nil
+		}
+		// The HTTP server owns control connections after a successful handoff.
+		s.transfer(public)
 		return nil
 	}
 	backend, ok := s.config.Lookup(hello.ServerName)
@@ -215,7 +231,16 @@ func (s *Server) admit(connection net.Conn) bool {
 }
 
 func (s *Server) release(connection net.Conn) {
-	_ = connection.Close()
+	s.mu.Lock()
+	_, owned := s.connections[connection]
+	delete(s.connections, connection)
+	s.mu.Unlock()
+	if owned {
+		_ = connection.Close()
+	}
+}
+
+func (s *Server) transfer(connection net.Conn) {
 	s.mu.Lock()
 	delete(s.connections, connection)
 	s.mu.Unlock()
@@ -286,6 +311,16 @@ type readerConn struct {
 	reader io.Reader
 }
 
+type addressConn struct {
+	net.Conn
+	remote netip.AddrPort
+	local  netip.AddrPort
+}
+
+func (c *addressConn) RemoteAddr() net.Addr { return tcpAddress(c.remote) }
+
+func (c *addressConn) LocalAddr() net.Addr { return tcpAddress(c.local) }
+
 func (c *readerConn) Read(destination []byte) (int, error) {
 	return c.reader.Read(destination)
 }
@@ -310,6 +345,10 @@ func addressPort(address net.Addr) (netip.AddrPort, error) {
 		return netip.AddrPort{}, fmt.Errorf("ingress: parse connection address: %w", err)
 	}
 	return endpoint, nil
+}
+
+func tcpAddress(endpoint netip.AddrPort) net.Addr {
+	return &net.TCPAddr{IP: net.IP(endpoint.Addr().AsSlice()), Port: int(endpoint.Port())}
 }
 
 func writeAll(writer io.Writer, data []byte) error {

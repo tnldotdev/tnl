@@ -26,11 +26,13 @@ type Registry interface {
 }
 
 type HubConfig struct {
-	Tokens     []credentials.WorkerVerifier
-	Registry   Registry
-	MaxStreams int
-	DrainTime  time.Duration
-	OnError    func(error)
+	Tokens                []credentials.WorkerVerifier
+	Registry              Registry
+	MaxStreams            int
+	DrainTime             time.Duration
+	OnError               func(error)
+	OnSessionEstablished  func(SessionRole)
+	OnSessionDisconnected func(SessionRole, DisconnectReason)
 }
 
 type Hub struct {
@@ -110,6 +112,14 @@ func (h *Hub) ServeHTTP(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	_ = control.SetDeadline(time.Time{})
+	reason := DisconnectInternal
+	h.sessionEstablished(RoleEdge)
+	defer func() {
+		if h.isClosed() {
+			reason = DisconnectShutdown
+		}
+		h.sessionDisconnected(RoleEdge, reason)
+	}()
 
 	id, err := sessionID()
 	if err != nil {
@@ -131,6 +141,11 @@ func (h *Hub) ServeHTTP(response http.ResponseWriter, request *http.Request) {
 	err = owner.readLoop()
 	h.config.Registry.RemoveOwner(id)
 	_ = owner.Close()
+	if h.isClosed() {
+		reason = DisconnectShutdown
+	} else {
+		reason = disconnectReason(err)
+	}
 	if !errors.Is(err, net.ErrClosed) {
 		h.report(err)
 	}
@@ -169,6 +184,12 @@ func (h *Hub) untrack(connection *websocket.Conn) {
 	h.mu.Unlock()
 }
 
+func (h *Hub) isClosed() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.closed
+}
+
 func (h *Hub) matches(token credentials.WorkerToken) bool {
 	matched := false
 	// Run every verifier so token position does not affect timing.
@@ -181,6 +202,18 @@ func (h *Hub) matches(token credentials.WorkerToken) bool {
 func (h *Hub) report(err error) {
 	if err != nil && h.config.OnError != nil {
 		h.config.OnError(err)
+	}
+}
+
+func (h *Hub) sessionEstablished(role SessionRole) {
+	if h.config.OnSessionEstablished != nil {
+		h.config.OnSessionEstablished(role)
+	}
+}
+
+func (h *Hub) sessionDisconnected(role SessionRole, reason DisconnectReason) {
+	if h.config.OnSessionDisconnected != nil {
+		h.config.OnSessionDisconnected(role, reason)
 	}
 }
 

@@ -148,6 +148,7 @@ func (s *Service) Create(
 	if err != nil {
 		return Job{}, err
 	}
+	// Recover bound or resumable work before allocating another ACME order.
 	job, err := s.store.findBoundJob(ctx, routeID, generation, csrHash)
 	created := false
 	if errors.Is(err, ErrNotFound) {

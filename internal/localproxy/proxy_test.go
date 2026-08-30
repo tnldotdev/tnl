@@ -65,14 +65,44 @@ func TestProxyForwardsOnlyExactTrustedRequests(t *testing.T) {
 	}
 }
 
-func TestTargetMustBeLiteralLoopbackHTTP(t *testing.T) {
-	for _, target := range []string{
-		"http://localhost:3000", "http://192.0.2.1:3000", "https://127.0.0.1:3000",
-		"http://127.0.0.1", "http://127.0.0.1:3000/path", "http://user@127.0.0.1:3000",
-	} {
-		if _, err := New(target, "route.example"); err == nil {
-			t.Errorf("New(%q) succeeded", target)
-		}
+func TestNormalizeTarget(t *testing.T) {
+	accepted := map[string]string{
+		"3000":                           "http://127.0.0.1:3000",
+		"03000":                          "http://127.0.0.1:3000",
+		"http://127.0.0.1:3000":          "http://127.0.0.1:3000",
+		"http://127.0.0.2:03000":         "http://127.0.0.2:3000",
+		"http://[::1]:3000":              "http://[::1]:3000",
+		"http://[0:0:0:0:0:0:0:1]:03000": "http://[::1]:3000",
+		"HTTP://[0:0:0:0:0:0:0:1]:3000":  "http://[::1]:3000",
+	}
+	for target, want := range accepted {
+		t.Run(target, func(t *testing.T) {
+			got, err := NormalizeTarget(target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != want {
+				t.Fatalf("NormalizeTarget(%q) = %q, want %q", target, got, want)
+			}
+		})
+	}
+
+	rejected := []string{
+		"", "0", "65536", "+3000", "-3000", "30x00", "127.0.0.1:3000",
+		" 3000", "3000 ", "3 000", "\t3000",
+		"http://localhost:3000", "http://192.0.2.1:3000", "http://[::2]:3000",
+		"https://127.0.0.1:3000", "http://127.0.0.1", "http://127.0.0.1:0",
+		"http://127.0.0.1:65536", "http://127.0.0.1:bad",
+		"http://127.0.0.1:3000/", "http://127.0.0.1:3000/path",
+		"http://user@127.0.0.1:3000", "http://127.0.0.1:3000?query",
+		"http://127.0.0.1:3000#fragment",
+	}
+	for _, target := range rejected {
+		t.Run(target, func(t *testing.T) {
+			if got, err := NormalizeTarget(target); err == nil {
+				t.Fatalf("NormalizeTarget(%q) = %q, want error", target, got)
+			}
+		})
 	}
 }
 

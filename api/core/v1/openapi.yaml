@@ -86,6 +86,84 @@ paths:
           $ref: "#/components/responses/Problem"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/hostname-claims:
+    get:
+      operationId: listHostnameClaims
+      summary: List active hostname claims owned by the authenticated principal
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/HostnameClaimID"
+      responses:
+        "200":
+          description: Hostname claims
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HostnameClaimPage"
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        default:
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: createHostnameClaim
+      summary: Claim an exact hostname or allocate a random hostname
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateHostnameClaimRequest"
+      responses:
+        "201":
+          description: Hostname claimed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HostnameClaim"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/hostname-claims/{id}:
+    delete:
+      operationId: releaseHostnameClaim
+      summary: Permanently release and tombstone an owned hostname claim
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/HostnameClaimID"
+      responses:
+        "204":
+          description: Hostname claim released
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/routes:
     get:
       operationId: listRoutes
@@ -452,6 +530,8 @@ components:
           items:
             type: string
             enum: [local_claim, external_assertion]
+        local_claim:
+          $ref: "#/components/schemas/LocalClaimCapabilities"
         transport:
           $ref: "#/components/schemas/TransportCapabilities"
         acme:
@@ -478,6 +558,15 @@ components:
         profile:
           type: string
           pattern: ^[a-z0-9][a-z0-9-]{0,62}$
+    LocalClaimCapabilities:
+      type: object
+      additionalProperties: false
+      required: [suffix]
+      properties:
+        suffix:
+          type: string
+          minLength: 1
+          maxLength: 189
     TokenExchangeRequest:
       type: object
       additionalProperties: false
@@ -509,6 +598,45 @@ components:
     CredentialID:
       type: string
       pattern: ^[A-Za-z0-9_-]{21}[AQgw]$
+    HostnameClaimID:
+      type: string
+      pattern: ^claim_[0-9a-f]{32}$
+    CreateHostnameClaimRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        label:
+          type: string
+          minLength: 1
+          maxLength: 63
+    HostnameClaim:
+      type: object
+      additionalProperties: false
+      required: [id, hostname, irreversible, created_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/HostnameClaimID"
+        hostname:
+          type: string
+          minLength: 1
+          maxLength: 253
+        irreversible:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+    HostnameClaimPage:
+      type: object
+      additionalProperties: false
+      required: [claims]
+      properties:
+        claims:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/HostnameClaim"
+        next_cursor:
+          $ref: "#/components/schemas/HostnameClaimID"
     CreateRouteRequest:
       type: object
       additionalProperties: false

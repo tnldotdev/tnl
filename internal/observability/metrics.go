@@ -1,11 +1,17 @@
 package observability
 
 import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"modernc.org/sqlite"
 )
 
 // Metrics owns a process-local Prometheus registry.
@@ -21,6 +27,17 @@ type Metrics struct {
 	tailcatForcedClose prometheus.Counter
 	capacityRejections *prometheus.CounterVec
 	forwardedBytes     *prometheus.CounterVec
+	apiRequests        *prometheus.CounterVec
+	apiRequestDuration *prometheus.HistogramVec
+	sqliteDuration     *prometheus.HistogramVec
+	sqliteErrors       *prometheus.CounterVec
+	routeHeartbeats    *prometheus.CounterVec
+	routeRemovals      *prometheus.CounterVec
+	routeLeaseMinimum  *prometheus.GaugeVec
+	workerOwners       prometheus.Gauge
+	workerSessions     *prometheus.GaugeVec
+	sessionStarts      *prometheus.CounterVec
+	sessionDisconnects *prometheus.CounterVec
 }
 
 // New constructs an isolated registry for one process role.
@@ -74,6 +91,52 @@ func New(mode string) *Metrics {
 			Name: "tnl_forwarded_bytes_total",
 			Help: "Bytes forwarded by direction.",
 		}, []string{"direction"}),
+		apiRequests: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "tnl_api_requests_total",
+			Help: "Completed API requests by operation and result.",
+		}, []string{"operation", "result"}),
+		apiRequestDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "tnl_api_request_duration_seconds",
+			Help:    "API request duration by operation.",
+			Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10},
+		}, []string{"operation"}),
+		sqliteDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "tnl_sqlite_operation_duration_seconds",
+			Help:    "SQLite operation duration by operation.",
+			Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5},
+		}, []string{"operation"}),
+		sqliteErrors: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "tnl_sqlite_errors_total",
+			Help: "SQLite and database-context errors by operation and stable reason.",
+		}, []string{"operation", "reason"}),
+		routeHeartbeats: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "tnl_route_lease_heartbeats_total",
+			Help: "Route lease heartbeat attempts by result.",
+		}, []string{"result"}),
+		routeRemovals: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "tnl_route_removals_total",
+			Help: "Route removals by reason.",
+		}, []string{"reason"}),
+		routeLeaseMinimum: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "tnl_route_lease_min_seconds_remaining",
+			Help: "Minimum seconds remaining on a route lease by lifecycle state.",
+		}, []string{"state"}),
+		workerOwners: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "tnl_worker_owners_connected",
+			Help: "Current connected worker owners.",
+		}),
+		workerSessions: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "tnl_worker_sessions_active",
+			Help: "Current established worker sessions by endpoint role.",
+		}, []string{"role"}),
+		sessionStarts: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "tnl_worker_session_establishments_total",
+			Help: "Established worker sessions by endpoint role.",
+		}, []string{"role"}),
+		sessionDisconnects: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "tnl_worker_session_disconnects_total",
+			Help: "Disconnected worker sessions by endpoint role and reason.",
+		}, []string{"role", "reason"}),
 	}
 	registry.MustRegister(
 		info,
@@ -87,6 +150,17 @@ func New(mode string) *Metrics {
 		metrics.tailcatForcedClose,
 		metrics.capacityRejections,
 		metrics.forwardedBytes,
+		metrics.apiRequests,
+		metrics.apiRequestDuration,
+		metrics.sqliteDuration,
+		metrics.sqliteErrors,
+		metrics.routeHeartbeats,
+		metrics.routeRemovals,
+		metrics.routeLeaseMinimum,
+		metrics.workerOwners,
+		metrics.workerSessions,
+		metrics.sessionStarts,
+		metrics.sessionDisconnects,
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 	)
@@ -152,4 +226,143 @@ func (m *Metrics) IncCapacityRejection(resource string) {
 // AddForwardedBytes records bytes forwarded in a stable direction.
 func (m *Metrics) AddForwardedBytes(direction string, count int64) {
 	m.forwardedBytes.WithLabelValues(direction).Add(float64(count))
+}
+
+// ObserveAPIRequest records a completed request. Operation and result must be bounded producer values.
+func (m *Metrics) ObserveAPIRequest(operation, result string, duration time.Duration) {
+	m.apiRequests.WithLabelValues(operation, result).Inc()
+	m.apiRequestDuration.WithLabelValues(operation).Observe(duration.Seconds())
+}
+
+// ObserveSQLiteOperation records database latency and classified failures. Operation must be a bounded producer value.
+func (m *Metrics) ObserveSQLiteOperation(operation string, duration time.Duration, err error) {
+	m.sqliteDuration.WithLabelValues(operation).Observe(duration.Seconds())
+	if reason, ok := sqliteErrorReason(err); ok {
+		m.sqliteErrors.WithLabelValues(operation, reason).Inc()
+	}
+}
+
+func sqliteErrorReason(err error) (string, bool) {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "canceled", true
+	case errors.Is(err, context.DeadlineExceeded):
+		return "deadline", true
+	}
+	var sqliteErr *sqlite.Error
+	if !errors.As(err, &sqliteErr) {
+		return "", false
+	}
+	return sqlitePrimaryReason(sqliteErr.Code()), true
+}
+
+func sqlitePrimaryReason(code int) string {
+	switch code & 0xff {
+	case 5:
+		return "busy"
+	case 6:
+		return "locked"
+	case 10:
+		return "io"
+	case 11:
+		return "corrupt"
+	case 19:
+		return "constraint"
+	default:
+		return "other"
+	}
+}
+
+// RegisterDatabase adds scrape-time pool metrics for db.
+func (m *Metrics) RegisterDatabase(db *sql.DB) error {
+	if db == nil {
+		return errors.New("observability: nil database")
+	}
+	if err := m.registry.Register(newDatabaseCollector(db)); err != nil {
+		return fmt.Errorf("observability: register database metrics: %w", err)
+	}
+	return nil
+}
+
+// ObserveRouteLeaseHeartbeat records a heartbeat result from a bounded producer value.
+func (m *Metrics) ObserveRouteLeaseHeartbeat(result string) {
+	m.routeHeartbeats.WithLabelValues(result).Inc()
+}
+
+// ObserveRouteRemoval records a removal reason from a bounded producer value.
+func (m *Metrics) ObserveRouteRemoval(reason string) {
+	m.routeRemovals.WithLabelValues(reason).Inc()
+}
+
+// SetRouteLeaseMinSecondsRemaining records a lifecycle state from a bounded producer value.
+func (m *Metrics) SetRouteLeaseMinSecondsRemaining(state string, seconds float64) {
+	m.routeLeaseMinimum.WithLabelValues(state).Set(seconds)
+}
+
+// SetWorkerOwnersConnected records the number of owners connected to the coordinator.
+func (m *Metrics) SetWorkerOwnersConnected(count int) {
+	m.workerOwners.Set(float64(count))
+}
+
+// ObserveWorkerSessionEstablished records an endpoint role from a bounded producer value.
+func (m *Metrics) ObserveWorkerSessionEstablished(role string) {
+	m.workerSessions.WithLabelValues(role).Inc()
+	m.sessionStarts.WithLabelValues(role).Inc()
+}
+
+// ObserveWorkerSessionDisconnected records bounded endpoint role and reason values.
+func (m *Metrics) ObserveWorkerSessionDisconnected(role, reason string) {
+	m.workerSessions.WithLabelValues(role).Dec()
+	m.sessionDisconnects.WithLabelValues(role, reason).Inc()
+}
+
+type databaseCollector struct {
+	db              *sql.DB
+	connections     *prometheus.Desc
+	connectionLimit *prometheus.Desc
+	waits           *prometheus.Desc
+	waitSeconds     *prometheus.Desc
+}
+
+func newDatabaseCollector(db *sql.DB) *databaseCollector {
+	return &databaseCollector{
+		db: db,
+		connections: prometheus.NewDesc(
+			"tnl_sqlite_pool_connections",
+			"Current SQLite pool connections by state.",
+			[]string{"state"}, nil,
+		),
+		connectionLimit: prometheus.NewDesc(
+			"tnl_sqlite_pool_connection_limit",
+			"Maximum number of open SQLite pool connections; zero means unlimited.",
+			nil, nil,
+		),
+		waits: prometheus.NewDesc(
+			"tnl_sqlite_pool_waits_total",
+			"Total waits for an available SQLite pool connection.",
+			nil, nil,
+		),
+		waitSeconds: prometheus.NewDesc(
+			"tnl_sqlite_pool_wait_seconds_total",
+			"Total seconds spent waiting for an available SQLite pool connection.",
+			nil, nil,
+		),
+	}
+}
+
+func (c *databaseCollector) Describe(descriptions chan<- *prometheus.Desc) {
+	descriptions <- c.connections
+	descriptions <- c.connectionLimit
+	descriptions <- c.waits
+	descriptions <- c.waitSeconds
+}
+
+func (c *databaseCollector) Collect(metrics chan<- prometheus.Metric) {
+	stats := c.db.Stats()
+	metrics <- prometheus.MustNewConstMetric(c.connections, prometheus.GaugeValue, float64(stats.OpenConnections), "open")
+	metrics <- prometheus.MustNewConstMetric(c.connections, prometheus.GaugeValue, float64(stats.InUse), "in_use")
+	metrics <- prometheus.MustNewConstMetric(c.connections, prometheus.GaugeValue, float64(stats.Idle), "idle")
+	metrics <- prometheus.MustNewConstMetric(c.connectionLimit, prometheus.GaugeValue, float64(stats.MaxOpenConnections))
+	metrics <- prometheus.MustNewConstMetric(c.waits, prometheus.CounterValue, float64(stats.WaitCount))
+	metrics <- prometheus.MustNewConstMetric(c.waitSeconds, prometheus.CounterValue, stats.WaitDuration.Seconds())
 }

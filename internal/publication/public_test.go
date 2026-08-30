@@ -5,7 +5,9 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
@@ -47,6 +49,30 @@ func TestRunPublicChecksTargetBeforeCreatingRoute(t *testing.T) {
 	}
 	if core.createCalls != 0 {
 		t.Fatalf("CreateRoute calls = %d, want 0", core.createCalls)
+	}
+}
+
+func TestRunPublicRejectsWeakManualCertificate(t *testing.T) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1), DNSNames: []string{"*.example", "other.invalid"},
+		NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour),
+		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, privateKey.Public(), privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = RunPublic(context.Background(), PublicConfig{
+		Core: new(publicCoreStub), Hostname: "route.example", Target: "http://127.0.0.1:3000",
+		Certificate: tls.Certificate{Certificate: [][]byte{der}, PrivateKey: privateKey},
+	})
+	if err == nil {
+		t.Fatal("RunPublic accepted a wildcard RSA application certificate")
 	}
 }
 
@@ -114,6 +140,76 @@ func TestHeartbeatLeaseSurvivesTransientFailure(t *testing.T) {
 	)
 	if !errors.Is(err, coreclient.ErrStateConflict) || core.heartbeatCalls != 2 {
 		t.Fatalf("heartbeat error = %v, calls = %d", err, core.heartbeatCalls)
+	}
+}
+
+func TestHeartbeatLeaseStartsImmediately(t *testing.T) {
+	previous := heartbeatInterval
+	heartbeatInterval = time.Hour
+	t.Cleanup(func() { heartbeatInterval = previous })
+	core := &publicCoreStub{heartbeatErrors: []error{coreclient.ErrStateConflict}}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	err := heartbeatLease(ctx, core, "route_id", 1, "tnl_lease_test", time.Now().Add(time.Second))
+	if !errors.Is(err, coreclient.ErrStateConflict) || core.heartbeatCalls != 1 {
+		t.Fatalf("heartbeat error = %v, calls = %d", err, core.heartbeatCalls)
+	}
+}
+
+func TestRunPublicReacquiresAfterHeartbeatFence(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	firstLease, _, _, err := credentials.NewLeaseToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondLease, _, _, err := credentials.NewLeaseToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	routeID := "route_0123456789abcdef0123456789abcdef"
+	setup := func(generation int, token credentials.LeaseToken) corev1.LeaseSetup {
+		return corev1.LeaseSetup{
+			Route: corev1.Route{Id: routeID, Hostname: "route.example", Generation: generation},
+			Lease: corev1.RouteLease{
+				Id: "lease_0123456789abcdef0123456789abcdef", RouteId: routeID,
+				Generation: generation, ExpiresAt: time.Now().Add(time.Minute),
+			},
+			LeaseToken: token.String(), IngressPublicKey: key.NewNode().Public().String(),
+		}
+	}
+	core := &publicCoreStub{
+		createErrors:    []error{nil},
+		createSetups:    []corev1.LeaseSetup{setup(1, firstLease)},
+		acquired:        setup(2, secondLease),
+		heartbeatErrors: []error{coreclient.ErrStateConflict, nil},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var generations []uint64
+	err = RunPublic(ctx, PublicConfig{
+		Core: core, Hostname: "route.example", Target: "http://" + listener.Addr().String(),
+		Certificate:  routeTestCertificate(t, "route.example"),
+		RelayProfile: "test", Profiles: map[string]*tailcfg.DERPRegion{"test": {
+			RegionID: 1, Nodes: []*tailcfg.DERPNode{{RegionID: 1, HostName: "derp.example"}},
+		}},
+		DrainTime: time.Millisecond,
+		OnLeaseReady: func(_ string, generation uint64) error {
+			generations = append(generations, generation)
+			if generation == 2 {
+				cancel()
+			}
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if core.acquireCalls != 1 || len(generations) != 1 || generations[0] != 2 {
+		t.Fatalf("acquire calls = %d, generations = %v", core.acquireCalls, generations)
 	}
 }
 
@@ -401,7 +497,7 @@ func TestRenewalFailureKeepsCurrentCertificateServing(t *testing.T) {
 			Route:      corev1.Route{Id: "route_0123456789abcdef0123456789abcdef", Hostname: "route.example"},
 			Lease:      corev1.RouteLease{Generation: 1, ExpiresAt: time.Now().Add(time.Minute)},
 			LeaseToken: leaseToken.String(), IngressPublicKey: key.NewNode().Public().String(),
-		}, state, func() {})
+		}, state, func() error { return nil })
 	}()
 	select {
 	case <-core.called:
@@ -455,6 +551,7 @@ type publicCoreStub struct {
 	acquired        corev1.LeaseSetup
 	acquiredToken   credentials.RouteToken
 	acquireErr      error
+	acquireCalls    int
 	heartbeatCalls  int
 	heartbeatErrors []error
 }
@@ -649,6 +746,7 @@ func (c *publicCoreStub) AcquireLease(
 	_ string,
 	token credentials.RouteToken,
 ) (corev1.LeaseSetup, error) {
+	c.acquireCalls++
 	c.acquiredToken = token
 	return c.acquired, c.acquireErr
 }

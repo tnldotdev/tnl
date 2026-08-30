@@ -247,6 +247,7 @@ type Capabilities struct {
 	Acme                  *AcmeCapabilities                   `json:"acme,omitempty"`
 	AnonymousPublic       bool                                `json:"anonymous_public"`
 	HostnameAuthorization []CapabilitiesHostnameAuthorization `json:"hostname_authorization"`
+	LocalClaim            *LocalClaimCapabilities             `json:"local_claim,omitempty"`
 	ProtocolVersions      []CapabilitiesProtocolVersions      `json:"protocol_versions"`
 	Transport             TransportCapabilities               `json:"transport"`
 }
@@ -301,6 +302,11 @@ type CreateCertificateOrderRequest struct {
 	RouteId    string `json:"route_id"`
 }
 
+// CreateHostnameClaimRequest defines model for CreateHostnameClaimRequest.
+type CreateHostnameClaimRequest struct {
+	Label *string `json:"label,omitempty"`
+}
+
 // CreateRouteRequest defines model for CreateRouteRequest.
 type CreateRouteRequest struct {
 	DisplayTarget string `json:"display_target"`
@@ -316,6 +322,23 @@ type HeartbeatResponse struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
+// HostnameClaim defines model for HostnameClaim.
+type HostnameClaim struct {
+	CreatedAt    time.Time       `json:"created_at"`
+	Hostname     string          `json:"hostname"`
+	Id           HostnameClaimID `json:"id"`
+	Irreversible bool            `json:"irreversible"`
+}
+
+// HostnameClaimID defines model for HostnameClaimID.
+type HostnameClaimID = string
+
+// HostnameClaimPage defines model for HostnameClaimPage.
+type HostnameClaimPage struct {
+	Claims     []HostnameClaim  `json:"claims"`
+	NextCursor *HostnameClaimID `json:"next_cursor,omitempty"`
+}
+
 // LeaseGenerationRequest defines model for LeaseGenerationRequest.
 type LeaseGenerationRequest struct {
 	Generation int `json:"generation"`
@@ -327,6 +350,11 @@ type LeaseSetup struct {
 	Lease            RouteLease `json:"lease"`
 	LeaseToken       string     `json:"lease_token"`
 	Route            Route      `json:"route"`
+}
+
+// LocalClaimCapabilities defines model for LocalClaimCapabilities.
+type LocalClaimCapabilities struct {
+	Suffix string `json:"suffix"`
 }
 
 // Problem defines model for Problem.
@@ -422,11 +450,24 @@ type RouteID = string
 // BearerProblem defines model for BearerProblem.
 type BearerProblem = Problem
 
+// ListHostnameClaimsParams defines parameters for ListHostnameClaims.
+type ListHostnameClaimsParams struct {
+	Cursor *HostnameClaimID `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// CreateHostnameClaimParams defines parameters for CreateHostnameClaim.
+type CreateHostnameClaimParams struct {
+	IdempotencyKey string `json:"Idempotency-Key"`
+}
+
 // ExchangeBootstrapTokenJSONRequestBody defines body for ExchangeBootstrapToken for application/json ContentType.
 type ExchangeBootstrapTokenJSONRequestBody = TokenExchangeRequest
 
 // CreateCertificateOrderJSONRequestBody defines body for CreateCertificateOrder for application/json ContentType.
 type CreateCertificateOrderJSONRequestBody = CreateCertificateOrderRequest
+
+// CreateHostnameClaimJSONRequestBody defines body for CreateHostnameClaim for application/json ContentType.
+type CreateHostnameClaimJSONRequestBody = CreateHostnameClaimRequest
 
 // CreateRouteJSONRequestBody defines body for CreateRoute for application/json ContentType.
 type CreateRouteJSONRequestBody = CreateRouteRequest

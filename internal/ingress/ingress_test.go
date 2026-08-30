@@ -125,6 +125,81 @@ func TestIngressUsesProvisioningRouteOnlyForACMETLSALPN(t *testing.T) {
 	}
 }
 
+func TestIngressHandsControlTLSOffByExactSNI(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	connections := make(chan net.Conn)
+	controlCertificate := testCertificate(t, "control.example")
+	server, err := New(listener, Config{
+		Lookup:          func(string) (worker.RouteBackend, bool) { return nil, false },
+		ControlHostname: "control.example",
+		HandleControl: func(connection net.Conn) bool {
+			connections <- connection
+			return true
+		},
+		MaxConnections: 8, MaxRouteConnections: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	served := make(chan error, 1)
+	go func() { served <- server.Serve() }()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = server.Drain(ctx)
+		<-served
+	})
+
+	controlResult := make(chan error, 1)
+	go func() {
+		connection := <-connections
+		defer connection.Close()
+		secured := tls.Server(connection, &tls.Config{
+			Certificates: []tls.Certificate{controlCertificate}, MinVersion: tls.VersionTLS12,
+		})
+		if err := secured.Handshake(); err != nil {
+			controlResult <- err
+			return
+		}
+		request := make([]byte, 4)
+		if _, err := io.ReadFull(secured, request); err != nil {
+			controlResult <- err
+			return
+		}
+		if string(request) != "ping" || !connection.RemoteAddr().(*net.TCPAddr).IP.IsLoopback() {
+			controlResult <- errors.New("unexpected control connection")
+			return
+		}
+		_, err := secured.Write([]byte("pong"))
+		controlResult <- err
+	}()
+
+	client, err := tls.Dial("tcp", listener.Addr().String(), &tls.Config{
+		ServerName: "control.example", MinVersion: tls.VersionTLS12,
+		InsecureSkipVerify: true, // The test certificate is self-signed.
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Write([]byte("ping")); err != nil {
+		t.Fatal(err)
+	}
+	response := make([]byte, 4)
+	if _, err := io.ReadFull(client, response); err != nil {
+		t.Fatal(err)
+	}
+	_ = client.Close()
+	if string(response) != "pong" {
+		t.Fatalf("response = %q", response)
+	}
+	if err := <-controlResult; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDrainDeadlineForcesBackendClosed(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

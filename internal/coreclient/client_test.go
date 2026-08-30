@@ -119,6 +119,51 @@ func TestRateLimitRetryAfterIsBounded(t *testing.T) {
 	}
 }
 
+func TestClientMapsNotFound(t *testing.T) {
+	err := responseError(http.StatusNotFound, nil, []byte(`{"code":"not_found"}`))
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestClientPaginatesHostnameClaims(t *testing.T) {
+	var requests int
+	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		requests++
+		response.Header().Set("Content-Type", "application/json")
+		cursor := request.URL.Query().Get("cursor")
+		if cursor == "" {
+			next := "claim_00000000000000000000000000000001"
+			_ = json.NewEncoder(response).Encode(corev1.HostnameClaimPage{
+				Claims: []corev1.HostnameClaim{
+					{Id: "claim_00000000000000000000000000000000"},
+					{Id: next},
+				},
+				NextCursor: &next,
+			})
+			return
+		}
+		if cursor != "claim_00000000000000000000000000000001" {
+			t.Errorf("cursor = %q", cursor)
+		}
+		_ = json.NewEncoder(response).Encode(corev1.HostnameClaimPage{Claims: []corev1.HostnameClaim{{
+			Id: "claim_00000000000000000000000000000002",
+		}}})
+	}))
+	defer server.Close()
+	client, err := New(server.URL, server.Client(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims, err := client.ListHostnameClaims(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(claims) != 3 || requests != 2 {
+		t.Fatalf("claims = %d, requests = %d", len(claims), requests)
+	}
+}
+
 func TestClientCertificateLifecycleRequests(t *testing.T) {
 	lease, _, _, err := credentials.NewLeaseToken()
 	if err != nil {

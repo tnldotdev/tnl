@@ -104,6 +104,132 @@ func TestRemoteOwnerMatchesLocalSemantics(t *testing.T) {
 	}
 }
 
+func TestSessionObservers(t *testing.T) {
+	tests := []struct {
+		name   string
+		abrupt bool
+	}{
+		{name: "clean shutdown"},
+		{name: "abnormal disconnect", abrupt: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			token, verifier, err := credentials.NewWorkerToken()
+			if err != nil {
+				t.Fatal(err)
+			}
+			established := make(chan SessionRole, 4)
+			disconnected := make(chan struct {
+				role   SessionRole
+				reason DisconnectReason
+			}, 4)
+			onEstablished := func(role SessionRole) { established <- role }
+			onDisconnected := func(role SessionRole, reason DisconnectReason) {
+				disconnected <- struct {
+					role   SessionRole
+					reason DisconnectReason
+				}{role: role, reason: reason}
+			}
+			registry := newTestRegistry()
+			hub, err := NewHub(HubConfig{
+				Tokens: []credentials.WorkerVerifier{verifier}, Registry: registry,
+				OnSessionEstablished: onEstablished, OnSessionDisconnected: onDisconnected,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer hub.Close()
+			server := httptest.NewServer(hub)
+			defer server.Close()
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			workerDone := make(chan error, 1)
+			go func() {
+				workerDone <- RunWorker(ctx, WorkerConfig{
+					URL: "ws" + strings.TrimPrefix(server.URL, "http"), Token: token,
+					Owner: &echoOwner{limit: 1}, OnSessionEstablished: onEstablished,
+					OnSessionDisconnected: onDisconnected,
+				})
+			}()
+			select {
+			case <-registry.added:
+			case <-time.After(5 * time.Second):
+				t.Fatal("worker did not establish")
+			}
+			roles := make(map[SessionRole]int)
+			for range 2 {
+				select {
+				case role := <-established:
+					roles[role]++
+				case <-time.After(5 * time.Second):
+					t.Fatal("missing establishment callback")
+				}
+			}
+			if roles[RoleEdge] != 1 || roles[RoleWorker] != 1 {
+				t.Fatalf("established roles = %v", roles)
+			}
+
+			if test.abrupt {
+				hub.mu.Lock()
+				var connection *websocket.Conn
+				for current := range hub.connections {
+					connection = current
+					break
+				}
+				hub.mu.Unlock()
+				if connection == nil {
+					t.Fatal("hub did not track worker connection")
+				}
+				_ = connection.CloseNow()
+			} else {
+				cancel()
+			}
+			select {
+			case err := <-workerDone:
+				if !test.abrupt && err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("worker did not exit")
+			}
+
+			exits := make(map[SessionRole]int)
+			for range 2 {
+				select {
+				case event := <-disconnected:
+					if !validDisconnectReason(event.reason) {
+						t.Errorf("%s disconnect reason = %q", event.role, event.reason)
+					}
+					if !test.abrupt && event.role == RoleWorker && event.reason != DisconnectShutdown {
+						t.Errorf("worker disconnect reason = %q, want %q", event.reason, DisconnectShutdown)
+					}
+					exits[event.role]++
+				case <-time.After(5 * time.Second):
+					t.Fatal("missing disconnect callback")
+				}
+			}
+			if exits[RoleEdge] != 1 || exits[RoleWorker] != 1 {
+				t.Fatalf("disconnected roles = %v", exits)
+			}
+			select {
+			case event := <-disconnected:
+				t.Fatalf("extra disconnect callback = %#v", event)
+			case <-time.After(20 * time.Millisecond):
+			}
+		})
+	}
+}
+
+func validDisconnectReason(reason DisconnectReason) bool {
+	switch reason {
+	case DisconnectShutdown, DisconnectNetwork, DisconnectProtocol, DisconnectTimeout, DisconnectInternal:
+		return true
+	default:
+		return false
+	}
+}
+
 func TestRemoteOwnerDetachesLateAttachResponse(t *testing.T) {
 	edge, remote := net.Pipe()
 	owner := newRemoteOwner(nil, edge, 1)
