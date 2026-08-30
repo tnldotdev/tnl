@@ -205,7 +205,7 @@ func ParseTNLD(args []string) (TNLD, error) {
 	parser, err := kong.New(
 		&config,
 		kong.Name("tnld"),
-		kong.Description("TNL core daemon."),
+		kong.Description("tnl core daemon."),
 	)
 	if err != nil {
 		return TNLD{}, err

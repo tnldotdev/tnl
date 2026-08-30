@@ -180,7 +180,7 @@ type result struct {
 
 func main() {
 	var flags cli
-	kong.Parse(&flags, kong.Name("tnlbench"), kong.Description("Benchmark the complete TNL route path."))
+	kong.Parse(&flags, kong.Name("tnlbench"), kong.Description("Benchmark the complete tnl route path."))
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	ctx, cancel := context.WithTimeout(ctx, flags.Timeout)

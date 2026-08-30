@@ -1,4 +1,4 @@
-# Self-hosting TNL
+# Self-hosting tnl
 
 This guide covers the supported standalone-preview deployment. Standalone mode
 runs the control API, public ingress, route worker, certificate coordinator,

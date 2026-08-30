@@ -1,7 +1,7 @@
-TNL THIRD-PARTY SOFTWARE LICENSES
+tnl THIRD-PARTY SOFTWARE LICENSES
 
 This file contains license terms and notices for dependencies distributed in
-the TNL release binaries. Source for the MPL-2.0 component is available at:
+the tnl release binaries. Source for the MPL-2.0 component is available at:
 https://github.com/libp2p/go-yamux/tree/v5.1.0
 
 

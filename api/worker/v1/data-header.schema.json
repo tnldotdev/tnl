@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://tnl.dev/schemas/worker/v1/data-header.json",
-  "title": "TNL worker data stream header v1",
+  "title": "tnl worker data stream header v1",
   "type": "object",
   "additionalProperties": false,
   "required": ["route_id", "generation"],
