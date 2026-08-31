@@ -91,15 +91,16 @@ type Principal struct {
 }
 
 type Route struct {
-	ID            string
-	ClaimID       string
-	PrincipalID   string
-	Hostname      string
-	DisplayTarget string
-	State         string
-	Generation    int64
-	CreatedAt     int64
-	DeletedAt     sql.NullInt64
+	ID                string
+	ClaimID           string
+	PrincipalID       string
+	Hostname          string
+	DisplayTarget     string
+	State             string
+	Generation        int64
+	LifecycleSequence int64
+	CreatedAt         int64
+	DeletedAt         sql.NullInt64
 }
 
 type RouteCredential struct {
@@ -108,6 +109,13 @@ type RouteCredential struct {
 	SecretHash []byte
 	CreatedAt  int64
 	RevokedAt  sql.NullInt64
+}
+
+type RouteExportOutbox struct {
+	SourceKind     string
+	SourceID       int64
+	SourceRevision int64
+	CreatedAtNs    int64
 }
 
 type RouteLease struct {
@@ -123,4 +131,29 @@ type RouteLease struct {
 	CreatedAt       int64
 	LastHeartbeat   int64
 	ExpiresAt       int64
+}
+
+type RouteLifecycleEvent struct {
+	ID           int64
+	EventID      string
+	RouteID      string
+	Generation   int64
+	Sequence     int64
+	OccurredAtNs int64
+	Transition   string
+}
+
+type RouteUsageBucket struct {
+	ID                int64
+	RouteID           string
+	Generation        int64
+	Resolution        string
+	BucketStartNs     int64
+	Revision          int64
+	SourceThroughNs   int64
+	ConnectionsOpened int64
+	ConnectionNs      int64
+	IngressBytes      int64
+	EgressBytes       int64
+	Complete          int64
 }

@@ -1,0 +1,12 @@
+{
+  "generation": "7",
+  "resolution": "minute",
+  "bucket_start": "2026-08-31T12:34:00Z",
+  "revision": "1",
+  "source_through": "2026-08-31T12:35:00Z",
+  "connections_opened": "3",
+  "connection_nanoseconds": "45000000000",
+  "ingress_bytes": "1200",
+  "egress_bytes": "8400",
+  "complete": true
+}

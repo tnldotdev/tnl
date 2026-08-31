@@ -37,6 +37,10 @@ func TestMetricsScrape(t *testing.T) {
 	metrics.ObserveWorkerSessionEstablished("edge")
 	metrics.ObserveWorkerSessionEstablished("edge")
 	metrics.ObserveWorkerSessionDisconnected("edge", "network")
+	metrics.SetRouteExportOutbox("usage", 3)
+	metrics.SetRouteExportOldestAge(12 * time.Second)
+	metrics.ObserveRouteExportCheckpoint("success")
+	metrics.ObserveRouteExportDelivery("usage", "error")
 
 	body := scrape(t, metrics)
 	for _, line := range []string{
@@ -68,6 +72,10 @@ func TestMetricsScrape(t *testing.T) {
 		`tnl_worker_sessions_active{role="edge"} 1`,
 		`tnl_worker_session_establishments_total{role="edge"} 2`,
 		`tnl_worker_session_disconnects_total{reason="network",role="edge"} 1`,
+		`tnl_route_export_outbox_items{kind="usage"} 3`,
+		`tnl_route_export_oldest_item_age_seconds 12`,
+		`tnl_route_export_checkpoints_total{result="success"} 1`,
+		`tnl_route_export_deliveries_total{kind="usage",result="error"} 1`,
 	} {
 		if !strings.Contains(body, line) {
 			t.Errorf("scrape does not contain %q", line)

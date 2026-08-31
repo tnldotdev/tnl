@@ -39,6 +39,10 @@ type Metrics struct {
 	workerSessions     *prometheus.GaugeVec
 	sessionStarts      *prometheus.CounterVec
 	sessionDisconnects *prometheus.CounterVec
+	exportOutbox       *prometheus.GaugeVec
+	exportOldestAge    prometheus.Gauge
+	exportCheckpoints  *prometheus.CounterVec
+	exportDeliveries   *prometheus.CounterVec
 }
 
 // New constructs an isolated registry for one process role.
@@ -143,6 +147,22 @@ func New(mode string) *Metrics {
 			Name: "tnl_worker_session_disconnects_total",
 			Help: "Disconnected worker sessions by endpoint role and reason.",
 		}, []string{"role", "reason"}),
+		exportOutbox: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "tnl_route_export_outbox_items",
+			Help: "Current queued route export items by bounded kind.",
+		}, []string{"kind"}),
+		exportOldestAge: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "tnl_route_export_oldest_item_age_seconds",
+			Help: "Age in seconds of the oldest queued route export item.",
+		}),
+		exportCheckpoints: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "tnl_route_export_checkpoints_total",
+			Help: "Route usage checkpoints by result.",
+		}, []string{"result"}),
+		exportDeliveries: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "tnl_route_export_deliveries_total",
+			Help: "Route export delivery attempts by bounded kind and result.",
+		}, []string{"kind", "result"}),
 	}
 	registry.MustRegister(
 		info,
@@ -168,6 +188,10 @@ func New(mode string) *Metrics {
 		metrics.workerSessions,
 		metrics.sessionStarts,
 		metrics.sessionDisconnects,
+		metrics.exportOutbox,
+		metrics.exportOldestAge,
+		metrics.exportCheckpoints,
+		metrics.exportDeliveries,
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 	)
@@ -233,6 +257,26 @@ func (m *Metrics) IncCapacityRejection(resource string) {
 // AddForwardedBytes records bytes forwarded in a stable direction.
 func (m *Metrics) AddForwardedBytes(direction string, count int64) {
 	m.forwardedBytes.WithLabelValues(direction).Add(float64(count))
+}
+
+// SetRouteExportOutbox records queued export items for a bounded source kind.
+func (m *Metrics) SetRouteExportOutbox(kind string, count int64) {
+	m.exportOutbox.WithLabelValues(kind).Set(float64(count))
+}
+
+// SetRouteExportOldestAge records the age of the oldest queued export item.
+func (m *Metrics) SetRouteExportOldestAge(age time.Duration) {
+	m.exportOldestAge.Set(age.Seconds())
+}
+
+// ObserveRouteExportCheckpoint records a usage checkpoint result.
+func (m *Metrics) ObserveRouteExportCheckpoint(result string) {
+	m.exportCheckpoints.WithLabelValues(result).Inc()
+}
+
+// ObserveRouteExportDelivery records a delivery result for a bounded source kind.
+func (m *Metrics) ObserveRouteExportDelivery(kind, result string) {
+	m.exportDeliveries.WithLabelValues(kind, result).Inc()
 }
 
 // ObserveAPIRequest records a completed request. Operation and result must be bounded producer values.

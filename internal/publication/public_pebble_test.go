@@ -86,9 +86,9 @@ func TestIntegrationAutomaticCertificatePublicationRestartAndRenewal(t *testing.
 
 	ingressErrors := make(chan error, 8)
 	publicIngress, err := ingress.New(publicListener, ingress.Config{
-		Lookup: func(name string) (worker.RouteBackend, bool) {
+		Lookup: func(name string) (ingress.Route, bool) {
 			active, ok := coordinator.Lookup(name)
-			return active.Backend, ok
+			return ingress.Route{ID: active.RouteID, Generation: active.Generation, Backend: active.Backend}, ok
 		},
 		LookupChallenge: func(name string) (worker.RouteBackend, bool) {
 			active, ok := coordinator.LookupChallenge(name)

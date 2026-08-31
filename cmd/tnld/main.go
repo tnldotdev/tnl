@@ -28,6 +28,7 @@ import (
 	"github.com/0xcadams/tnl/internal/credentials"
 	"github.com/0xcadams/tnl/internal/ingress"
 	"github.com/0xcadams/tnl/internal/observability"
+	"github.com/0xcadams/tnl/internal/routeexport"
 	"github.com/0xcadams/tnl/internal/routes"
 	"github.com/0xcadams/tnl/internal/serverclient"
 	"github.com/0xcadams/tnl/internal/state"
@@ -154,6 +155,7 @@ type daemon struct {
 	coordinator     *routes.Coordinator
 	workerHub       *workersession.Hub
 	workerDone      <-chan error
+	routeExporter   *routeexport.Exporter
 }
 
 var (
@@ -190,6 +192,15 @@ func serve(ctx context.Context, cfg config.TNLD) error {
 		}
 		if err := metrics.RegisterDatabase(db); err != nil {
 			return errors.Join(err, running.shutdown(cfg.DrainTimeout))
+		}
+		if cfg.ExportURL != "" {
+			running.routeExporter, err = routeexport.New(db, cfg.ExportURL, cfg.ExportToken, metrics)
+			if err != nil {
+				return errors.Join(err, running.shutdown(cfg.DrainTimeout))
+			}
+			if err := running.routeExporter.Start(lifetime, report); err != nil {
+				return errors.Join(err, running.shutdown(cfg.DrainTimeout))
+			}
 		}
 	}
 
@@ -260,13 +271,17 @@ func (d *daemon) startServer(
 	if err != nil {
 		return nil, nil, err
 	}
-	store, err := routes.NewStore(d.db, cfg.RouteSuffix(), routes.StoreConfig{
+	storeConfig := routes.StoreConfig{
 		MaxActiveHostnameClaims:  cfg.MaxActiveHostnameClaims,
 		MaxHostnameClaimRequests: cfg.MaxHostnameClaimRequests,
 		ObserveOperation: func(operation routes.StoreOperation, duration time.Duration, err error) {
 			metrics.ObserveSQLiteOperation(string(operation), duration, err)
 		},
-	})
+	}
+	if d.routeExporter != nil {
+		storeConfig.LifecycleRecorder = d.routeExporter.Store
+	}
+	store, err := routes.NewStore(d.db, cfg.RouteSuffix(), storeConfig)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -379,14 +394,19 @@ func (d *daemon) startServer(
 		TLSConfig: controlTLS,
 	}
 	ingressConfig := ingress.Config{
-		Lookup: func(hostname string) (worker.RouteBackend, bool) {
+		Lookup: func(hostname string) (ingress.Route, bool) {
 			route, ok := d.coordinator.Lookup(hostname)
-			return route.Backend, ok
+			return ingress.Route{ID: route.RouteID, Generation: route.Generation, Backend: route.Backend}, ok
 		},
 		ServerHostname:     cfg.ServerHostname(),
 		HandleControl:      controlListener.Enqueue,
 		RequireProxyHeader: cfg.RequireProxyHeader, MaxConnections: cfg.PublicConnLimit,
 		MaxRouteConnections: cfg.RouteConnLimit, Metrics: metrics, OnError: report,
+	}
+	if d.routeExporter != nil {
+		ingressConfig.OpenUsage = func(routeID string, generation uint64, at time.Time) ingress.UsageConnection {
+			return d.routeExporter.Collector.Open(routeID, generation, at)
+		}
 	}
 	if cfg.ACMEEnabled() {
 		ingressConfig.LookupChallenge = func(hostname string) (worker.RouteBackend, bool) {
@@ -611,6 +631,10 @@ func (d *daemon) shutdown(timeout time.Duration) error {
 	}
 	if d.coordinator != nil {
 		result = errors.Join(result, d.coordinator.Close())
+	}
+	if d.routeExporter != nil {
+		result = errors.Join(result, d.routeExporter.Close(ctx))
+		d.routeExporter = nil
 	}
 	if d.workerDone != nil {
 		select {
