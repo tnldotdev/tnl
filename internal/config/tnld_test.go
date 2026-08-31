@@ -82,7 +82,6 @@ func TestParseTNLDWorkerDoesNotRequireState(t *testing.T) {
 		"--mode", "worker",
 		"--worker-url", "wss://edge.example/internal/v1/worker",
 		"--worker-token", workerToken.String(),
-		"--relay-map-file", "/relay.json",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -120,6 +119,38 @@ func TestParseTNLDRejectsInvalidInput(t *testing.T) {
 				t.Fatal("ParseTNLD succeeded")
 			}
 		})
+	}
+}
+
+func TestTNLDValidateExternalAuthentication(t *testing.T) {
+	workloadToken, _, err := credentials.NewWorkloadToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := ParseTNLD([]string{"--state-dir", "/state"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.ExternalAuthIssuer = "https://account.example"
+	config.ExternalAuthDeviceURL = "https://account.example/api/auth/device/code"
+	config.ExternalAuthTokenURL = "https://account.example/api/auth/device/token"
+	config.ExternalAuthClientID = "tnl-cli"
+	config.ExternalAuthScope = "tnl:core"
+	config.ExternalAuthIntrospectURL = "https://account.example/v1/auth/introspect"
+	config.ExternalAuthToken = workloadToken.String()
+	if err := config.Validate(); err != nil {
+		t.Fatalf("valid external authentication: %v", err)
+	}
+
+	foreignEndpoint := config
+	foreignEndpoint.ExternalAuthIntrospectURL = "https://attacker.example/introspect"
+	if err := foreignEndpoint.Validate(); err == nil {
+		t.Fatal("foreign introspection origin accepted")
+	}
+	multipleScopes := config
+	multipleScopes.ExternalAuthScope = "openid tnl:core"
+	if err := multipleScopes.Validate(); err == nil {
+		t.Fatal("multiple external scopes accepted as one required scope")
 	}
 }
 

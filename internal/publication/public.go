@@ -8,6 +8,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 	"time"
 
@@ -27,9 +28,10 @@ import (
 const heartbeatCallTimeout = 10 * time.Second
 
 var (
-	heartbeatInterval = 15 * time.Second
-	activationRetry   = 2 * time.Second
-	renewalRetry      = time.Minute
+	heartbeatInterval  = 15 * time.Second
+	activationRetry    = 2 * time.Second
+	renewalRetry       = time.Minute
+	relayCheckInterval = 15 * time.Second
 )
 
 type Core interface {
@@ -54,6 +56,7 @@ type PublicConfig struct {
 	ACMEProfile  string
 	RelayProfile string
 	Profiles     map[string]*tailcfg.DERPRegion
+	LoadProfiles func(context.Context) (map[string]*tailcfg.DERPRegion, error)
 	DrainTime    time.Duration
 	Logf         logger.Logf
 	// OnRoute runs after creation or recovery, before activation.
@@ -95,6 +98,9 @@ func RunPublic(ctx context.Context, config PublicConfig) error {
 			return err
 		}
 		defer hostLock.Close()
+	}
+	if err := refreshRelayProfiles(ctx, &config); err != nil {
+		return err
 	}
 	routeToken, _, _, err := credentials.NewRouteToken()
 	if err != nil {
@@ -143,7 +149,10 @@ func RunPublic(ctx context.Context, config PublicConfig) error {
 		for {
 			setup, err = config.Core.AcquireLease(ctx, routeID, routeToken)
 			if err == nil {
-				break
+				err = refreshRelayProfiles(ctx, &config)
+				if err == nil {
+					break
+				}
 			}
 			if !errors.Is(err, coreclient.ErrUnavailable) {
 				return err
@@ -155,6 +164,20 @@ func RunPublic(ctx context.Context, config PublicConfig) error {
 			}
 		}
 	}
+}
+
+func refreshRelayProfiles(ctx context.Context, config *PublicConfig) error {
+	if config.LoadProfiles != nil {
+		profiles, err := config.LoadProfiles(ctx)
+		if err != nil {
+			return fmt.Errorf("agent: load relay profiles: %w", err)
+		}
+		config.Profiles = profiles
+	}
+	if config.Profiles[config.RelayProfile] == nil {
+		return fmt.Errorf("agent: relay profile %q is absent from the relay map", config.RelayProfile)
+	}
+	return nil
 }
 
 func createOrRecover(
@@ -349,12 +372,32 @@ func runLease(
 		renewal = renewalTimer.C
 		defer renewalTimer.Stop()
 	}
+	var relayTimer *time.Timer
+	var relayCheck <-chan time.Time
+	if config.LoadProfiles != nil {
+		relayTimer = time.NewTimer(relayCheckInterval)
+		relayCheck = relayTimer.C
+		defer relayTimer.Stop()
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return drainRoute(route, config.DrainTime)
 		case err := <-heartbeatErrors:
 			return fmt.Errorf("agent: heartbeat: %w", err)
+		case <-relayCheck:
+			profiles, relayErr := config.LoadProfiles(ctx)
+			if relayErr != nil {
+				if config.Logf != nil {
+					config.Logf("relay map refresh failed: %v", relayErr)
+				}
+				relayTimer.Reset(relayCheckInterval)
+				continue
+			}
+			if !reflect.DeepEqual(config.Profiles[config.RelayProfile], profiles[config.RelayProfile]) {
+				return coreclient.ErrStateConflict
+			}
+			relayTimer.Reset(relayCheckInterval)
 		case <-renewal:
 			replacement, renewalErr := refreshCertificate(
 				ctx, config.Core, route, state, setup.Route.Id, generation, leaseToken,

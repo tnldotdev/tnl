@@ -116,6 +116,18 @@ func TestDataPlaneTokenClasses(t *testing.T) {
 	if !verifier.Matches(worker) || verifier.Matches(WorkerToken(route)) {
 		t.Fatal("worker verifier did not enforce its credential class")
 	}
+
+	workload, workloadVerifier, err := NewWorkloadToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsedWorkload, err := ParseWorkloadToken(workload)
+	if err != nil || !workloadVerifier.Matches(workload) || !parsedWorkload.Matches(workload) {
+		t.Fatalf("workload round trip failed: %v", err)
+	}
+	if _, err := ParseWorkloadToken(WorkloadToken(worker)); !errors.Is(err, ErrInvalidWorkloadToken) {
+		t.Fatalf("worker as workload error = %v", err)
+	}
 }
 
 func TestTokenExchangeFixturesUseCanonicalCredentials(t *testing.T) {

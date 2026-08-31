@@ -27,6 +27,24 @@ paths:
           $ref: "#/components/responses/Problem"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/transport/relay-map:
+    get:
+      operationId: getRelayMap
+      summary: Return the selected Tailcat DERP region
+      security: []
+      responses:
+        "200":
+          description: A bounded Tailscale DERP map containing the selected region
+          content:
+            application/json:
+              schema:
+                type: object
+        "429":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/auth/token:
     post:
       operationId: exchangeBootstrapToken
@@ -38,6 +56,38 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/TokenExchangeRequest"
+      responses:
+        "200":
+          description: Access token issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenExchangeResponse"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "413":
+          $ref: "#/components/responses/Problem"
+        "415":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/auth/external:
+    post:
+      operationId: exchangeExternalToken
+      summary: Exchange an externally authenticated bearer for a core access token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExternalTokenExchangeRequest"
       responses:
         "200":
           description: Access token issued
@@ -534,8 +584,32 @@ components:
           $ref: "#/components/schemas/LocalClaimCapabilities"
         transport:
           $ref: "#/components/schemas/TransportCapabilities"
+        device_authorization:
+          $ref: "#/components/schemas/DeviceAuthorizationCapabilities"
         acme:
           $ref: "#/components/schemas/AcmeCapabilities"
+    DeviceAuthorizationCapabilities:
+      type: object
+      additionalProperties: false
+      required: [issuer, client_id, scope, device_authorization_endpoint, token_endpoint]
+      properties:
+        issuer:
+          type: string
+          format: uri
+        client_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        scope:
+          type: string
+          minLength: 1
+          maxLength: 256
+        device_authorization_endpoint:
+          type: string
+          format: uri
+        token_endpoint:
+          type: string
+          format: uri
     TransportCapabilities:
       type: object
       additionalProperties: false
@@ -577,6 +651,15 @@ components:
           minLength: 1
           maxLength: 128
           pattern: '^tnl_bootstrap_[A-Za-z0-9_-]{21}[AQgw]\.[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$'
+    ExternalTokenExchangeRequest:
+      type: object
+      additionalProperties: false
+      required: [access_token]
+      properties:
+        access_token:
+          type: string
+          minLength: 1
+          maxLength: 4096
     TokenExchangeResponse:
       type: object
       additionalProperties: false

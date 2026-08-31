@@ -164,6 +164,55 @@ func TestClientPaginatesHostnameClaims(t *testing.T) {
 	}
 }
 
+func TestClientExternalAuthAndRelayRequests(t *testing.T) {
+	access, credentialID, _, err := credentials.NewAccessToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiresAt := time.Now().Add(time.Hour).UTC()
+	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.Method + " " + request.URL.Path {
+		case "GET /v1/transport/relay-map":
+			_, _ = response.Write([]byte(`{"Regions":{"1":{"RegionID":1}}}`))
+		case "POST /v1/auth/external":
+			var body corev1.ExternalTokenExchangeRequest
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+				t.Error(err)
+			}
+			if body.AccessToken != "external-session" {
+				t.Errorf("external token = %q", body.AccessToken)
+			}
+			_ = json.NewEncoder(response).Encode(corev1.TokenExchangeResponse{
+				AccessToken: access.String(), CredentialId: credentialID.String(),
+				ExpiresAt: expiresAt, TokenType: corev1.Bearer,
+			})
+		case "DELETE /v1/auth/credentials/" + credentialID.String():
+			if request.Header.Get("Authorization") != "Bearer "+access.String() {
+				t.Errorf("authorization = %q", request.Header.Get("Authorization"))
+			}
+			response.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+	client, err := New(server.URL, server.Client(), access)
+	if err != nil {
+		t.Fatal(err)
+	}
+	relayMap, err := client.RelayMap(context.Background())
+	if err != nil || string(relayMap) != `{"Regions":{"1":{"RegionID":1}}}` {
+		t.Fatalf("relay map = %s, error = %v", relayMap, err)
+	}
+	issued, err := client.ExchangeExternal(context.Background(), "external-session")
+	if err != nil || issued.AccessToken != access.String() || issued.CredentialId != credentialID.String() {
+		t.Fatalf("issued = %#v, error = %v", issued, err)
+	}
+	if err := client.RevokeAccessCredential(context.Background(), credentialID.String()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestClientCertificateLifecycleRequests(t *testing.T) {
 	lease, _, _, err := credentials.NewLeaseToken()
 	if err != nil {

@@ -33,15 +33,17 @@ const (
 )
 
 var (
-	ErrLocked             = errors.New("clientstate: route state is locked by another process")
+	ErrLocked             = errors.New("clientstate: state is locked by another process")
 	ErrCertificateExpired = errors.New("clientstate: application certificate is expired")
 )
 
 type Store struct {
-	routesDir      string
-	locksDir       string
-	selectionsPath string
-	releasesPath   string
+	serverDir       string
+	routesDir       string
+	locksDir        string
+	selectionsPath  string
+	releasesPath    string
+	credentialsPath string
 }
 
 type Lock struct {
@@ -150,9 +152,10 @@ func New(root, serverOrigin string) (*Store, error) {
 		return nil, err
 	}
 	return &Store{
-		routesDir: routes, locksDir: locks,
-		selectionsPath: filepath.Join(server, "hostname-selections.json"),
-		releasesPath:   filepath.Join(server, "hostname-releases.json"),
+		serverDir: server, routesDir: routes, locksDir: locks,
+		selectionsPath:  filepath.Join(server, "hostname-selections.json"),
+		releasesPath:    filepath.Join(server, "hostname-releases.json"),
+		credentialsPath: filepath.Join(server, "access-credential.json"),
 	}, nil
 }
 
@@ -162,6 +165,10 @@ func (s *Store) LockHostname(hostname string) (*Lock, error) {
 	}
 	digest := sha256.Sum256([]byte(hostname))
 	return openLock(filepath.Join(s.locksDir, hex.EncodeToString(digest[:])+".lock"), "hostname")
+}
+
+func (s *Store) LockCredentials() (*Lock, error) {
+	return openLock(filepath.Join(s.locksDir, "access-credential.lock"), "access credential")
 }
 
 func (s *Store) OpenRoute(routeID string) (*Route, error) {

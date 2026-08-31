@@ -33,31 +33,38 @@ func (m TNLDMode) UsesState() bool {
 
 // TNLD configures the core daemon.
 type TNLD struct {
-	Mode                     TNLDMode      `name:"mode" env:"TNLD_MODE" default:"standalone" enum:"standalone,edge,worker" help:"Process role: ${enum}."`
-	StateDir                 string        `name:"state-dir" env:"TNLD_STATE_DIR" help:"Directory for persistent state (required by standalone and edge modes)."`
-	MetricsListen            string        `name:"metrics-listen" env:"TNLD_METRICS_LISTEN" default:"127.0.0.1:9090" help:"Private Prometheus listen address; empty disables metrics."`
-	PublicListen             string        `name:"public-listen" env:"TNLD_PUBLIC_LISTEN" help:"Public TLS listen address for the control API and routes; empty disables ingress."`
-	ControlHostname          string        `name:"control-hostname" env:"TNLD_CONTROL_HOSTNAME" help:"Canonical hostname for the control API."`
-	RouteSuffix              string        `name:"route-suffix" env:"TNLD_ROUTE_SUFFIX" help:"Canonical DNS suffix for self-hosted public routes."`
-	MaxActiveHostnameClaims  int           `name:"max-active-hostname-claims" env:"TNLD_MAX_ACTIVE_HOSTNAME_CLAIMS" default:"128" help:"Maximum active hostname claims per principal."`
-	MaxHostnameClaimRequests int           `name:"max-hostname-claim-requests" env:"TNLD_MAX_HOSTNAME_CLAIM_REQUESTS" default:"1024" help:"Maximum hostname claim request records per principal."`
-	ControlCertFile          string        `name:"control-cert-file" env:"TNLD_CONTROL_CERT_FILE" type:"path" help:"Control HTTPS certificate file."`
-	ControlKeyFile           string        `name:"control-key-file" env:"TNLD_CONTROL_KEY_FILE" type:"path" help:"Control HTTPS private key file."`
-	ACMEDirectoryURL         string        `name:"acme-directory-url" env:"TNLD_ACME_DIRECTORY_URL" help:"ACME directory URL for automatic control and application certificates."`
-	ACMEEmail                string        `name:"acme-email" env:"TNLD_ACME_EMAIL" help:"ACME account contact email."`
-	ACMEAcceptTerms          bool          `name:"acme-accept-terms" env:"TNLD_ACME_ACCEPT_TERMS" help:"Explicitly accept the ACME directory terms."`
-	ACMEProfile              string        `name:"acme-profile" env:"TNLD_ACME_PROFILE" default:"tlsserver" help:"ACME certificate profile advertised to agents."`
-	BootstrapToken           string        `name:"bootstrap-token" env:"TNLD_BOOTSTRAP_TOKEN" help:"Local deployment bootstrap credential."`
-	RelayMapFile             string        `name:"relay-map-file" env:"TNLD_RELAY_MAP_FILE" type:"path" help:"Approved DERP map JSON file."`
-	RelayProfile             string        `name:"relay-profile" env:"TNLD_RELAY_PROFILE" default:"default" help:"DERP region code advertised as the relay profile."`
-	WorkerURL                string        `name:"worker-url" env:"TNLD_WORKER_URL" help:"Worker-mode WSS edge URL."`
-	WorkerToken              string        `name:"worker-token" env:"TNLD_WORKER_TOKEN" help:"Edge-to-worker authentication token."`
-	WorkerCapacity           int           `name:"worker-capacity" env:"TNLD_WORKER_CAPACITY" default:"500" help:"Hard route capacity for this worker."`
-	WorkerStreamLimit        int           `name:"worker-stream-limit" env:"TNLD_WORKER_STREAM_LIMIT" default:"4096" help:"Maximum multiplexed streams per worker session."`
-	PublicConnLimit          int           `name:"public-connection-limit" env:"TNLD_PUBLIC_CONNECTION_LIMIT" default:"20000" help:"Maximum concurrent public connections."`
-	RouteConnLimit           int           `name:"route-connection-limit" env:"TNLD_ROUTE_CONNECTION_LIMIT" default:"500" help:"Maximum concurrent public connections per route."`
-	RequireProxyHeader       bool          `name:"require-proxy-header" env:"TNLD_REQUIRE_PROXY_HEADER" help:"Require one trusted outer PROXY v2 header on public ingress."`
-	DrainTimeout             time.Duration `name:"drain-timeout" env:"TNLD_DRAIN_TIMEOUT" default:"30s" help:"Graceful stream drain deadline."`
+	Mode                      TNLDMode      `name:"mode" env:"TNLD_MODE" default:"standalone" enum:"standalone,edge,worker" help:"Process role: ${enum}."`
+	StateDir                  string        `name:"state-dir" env:"TNLD_STATE_DIR" help:"Directory for persistent state (required by standalone and edge modes)."`
+	MetricsListen             string        `name:"metrics-listen" env:"TNLD_METRICS_LISTEN" default:"127.0.0.1:9090" help:"Private Prometheus listen address; empty disables metrics."`
+	PublicListen              string        `name:"public-listen" env:"TNLD_PUBLIC_LISTEN" help:"Public TLS listen address for the control API and routes; empty disables ingress."`
+	ControlHostname           string        `name:"control-hostname" env:"TNLD_CONTROL_HOSTNAME" help:"Canonical hostname for the control API."`
+	RouteSuffix               string        `name:"route-suffix" env:"TNLD_ROUTE_SUFFIX" help:"Canonical DNS suffix for self-hosted public routes."`
+	MaxActiveHostnameClaims   int           `name:"max-active-hostname-claims" env:"TNLD_MAX_ACTIVE_HOSTNAME_CLAIMS" default:"128" help:"Maximum active hostname claims per principal."`
+	MaxHostnameClaimRequests  int           `name:"max-hostname-claim-requests" env:"TNLD_MAX_HOSTNAME_CLAIM_REQUESTS" default:"1024" help:"Maximum hostname claim request records per principal."`
+	ControlCertFile           string        `name:"control-cert-file" env:"TNLD_CONTROL_CERT_FILE" type:"path" help:"Control HTTPS certificate file."`
+	ControlKeyFile            string        `name:"control-key-file" env:"TNLD_CONTROL_KEY_FILE" type:"path" help:"Control HTTPS private key file."`
+	ACMEDirectoryURL          string        `name:"acme-directory-url" env:"TNLD_ACME_DIRECTORY_URL" help:"ACME directory URL for automatic control and application certificates."`
+	ACMEEmail                 string        `name:"acme-email" env:"TNLD_ACME_EMAIL" help:"ACME account contact email."`
+	ACMEAcceptTerms           bool          `name:"acme-accept-terms" env:"TNLD_ACME_ACCEPT_TERMS" help:"Explicitly accept the ACME directory terms."`
+	ACMEProfile               string        `name:"acme-profile" env:"TNLD_ACME_PROFILE" default:"tlsserver" help:"ACME certificate profile advertised to agents."`
+	BootstrapToken            string        `name:"bootstrap-token" env:"TNLD_BOOTSTRAP_TOKEN" help:"Local deployment bootstrap credential."`
+	ExternalAuthIssuer        string        `name:"external-auth-issuer" env:"TNLD_EXTERNAL_AUTH_ISSUER" help:"Exact external identity issuer origin."`
+	ExternalAuthDeviceURL     string        `name:"external-auth-device-url" env:"TNLD_EXTERNAL_AUTH_DEVICE_URL" help:"External device authorization endpoint."`
+	ExternalAuthTokenURL      string        `name:"external-auth-token-url" env:"TNLD_EXTERNAL_AUTH_TOKEN_URL" help:"External device token endpoint."`
+	ExternalAuthClientID      string        `name:"external-auth-client-id" env:"TNLD_EXTERNAL_AUTH_CLIENT_ID" help:"Public device-flow client ID."`
+	ExternalAuthScope         string        `name:"external-auth-scope" env:"TNLD_EXTERNAL_AUTH_SCOPE" default:"tnl:core" help:"Required external authorization scope."`
+	ExternalAuthIntrospectURL string        `name:"external-auth-introspection-url" env:"TNLD_EXTERNAL_AUTH_INTROSPECTION_URL" help:"External RFC 7662 token introspection endpoint."`
+	ExternalAuthToken         string        `name:"external-auth-introspection-token" env:"TNLD_EXTERNAL_AUTH_INTROSPECTION_TOKEN" help:"Workload token for external introspection."`
+	RelayMapFile              string        `name:"relay-map-file" env:"TNLD_RELAY_MAP_FILE" type:"path" help:"Approved DERP map JSON file."`
+	RelayProfile              string        `name:"relay-profile" env:"TNLD_RELAY_PROFILE" default:"default" help:"DERP region code advertised as the relay profile."`
+	WorkerURL                 string        `name:"worker-url" env:"TNLD_WORKER_URL" help:"Worker-mode WSS edge URL."`
+	WorkerToken               string        `name:"worker-token" env:"TNLD_WORKER_TOKEN" help:"Edge-to-worker authentication token."`
+	WorkerCapacity            int           `name:"worker-capacity" env:"TNLD_WORKER_CAPACITY" default:"500" help:"Hard route capacity for this worker."`
+	WorkerStreamLimit         int           `name:"worker-stream-limit" env:"TNLD_WORKER_STREAM_LIMIT" default:"4096" help:"Maximum multiplexed streams per worker session."`
+	PublicConnLimit           int           `name:"public-connection-limit" env:"TNLD_PUBLIC_CONNECTION_LIMIT" default:"20000" help:"Maximum concurrent public connections."`
+	RouteConnLimit            int           `name:"route-connection-limit" env:"TNLD_ROUTE_CONNECTION_LIMIT" default:"500" help:"Maximum concurrent public connections per route."`
+	RequireProxyHeader        bool          `name:"require-proxy-header" env:"TNLD_REQUIRE_PROXY_HEADER" help:"Require one trusted outer PROXY v2 header on public ingress."`
+	DrainTimeout              time.Duration `name:"drain-timeout" env:"TNLD_DRAIN_TIMEOUT" default:"30s" help:"Graceful stream drain deadline."`
 }
 
 // Validate rejects values that are present but unusable.
@@ -90,6 +97,9 @@ func (c TNLD) Validate() error {
 	if !validRelayProfile(c.RelayProfile) {
 		return errors.New("relay profile must contain only lowercase letters, digits, and hyphens")
 	}
+	if err := c.validateExternalAuth(); err != nil {
+		return err
+	}
 	if c.ACMEDirectoryURL != "" || c.ACMEEmail != "" {
 		if !validRelayProfile(c.ACMEProfile) {
 			return errors.New("ACME profile must contain only lowercase letters, digits, and hyphens")
@@ -111,8 +121,8 @@ func (c TNLD) Validate() error {
 		if !c.Mode.UsesState() {
 			return errors.New("worker mode cannot serve public ingress")
 		}
-		if c.ControlHostname == "" || c.BootstrapToken == "" || c.RouteSuffix == "" {
-			return errors.New("control hostname, bootstrap token, and route suffix are required when ingress is enabled")
+		if c.ControlHostname == "" || c.RouteSuffix == "" || c.BootstrapToken == "" && !c.ExternalAuthEnabled() {
+			return errors.New("control hostname, route suffix, and at least one authentication method are required when ingress is enabled")
 		}
 		canonicalControl, err := naming.CanonicalizeHostname(c.ControlHostname)
 		if err != nil || canonicalControl != c.ControlHostname {
@@ -129,11 +139,13 @@ func (c TNLD) Validate() error {
 			len(canonicalSuffix) > naming.MaxHostnameBytes-naming.MaxLabelBytes-1 {
 			return errors.New("route suffix must be canonical and leave room for one DNS label")
 		}
-		if _, err := credentials.ParseBootstrapToken(credentials.BootstrapToken(c.BootstrapToken)); err != nil {
-			return errors.New("control bootstrap token is invalid")
+		if c.BootstrapToken != "" {
+			if _, err := credentials.ParseBootstrapToken(credentials.BootstrapToken(c.BootstrapToken)); err != nil {
+				return errors.New("control bootstrap token is invalid")
+			}
 		}
-		if c.Mode == TNLDModeStandalone && c.RelayMapFile == "" {
-			return errors.New("standalone control requires a relay map")
+		if c.RelayMapFile == "" {
+			return errors.New("control requires a relay map")
 		}
 		if c.Mode == TNLDModeEdge && c.WorkerToken == "" {
 			return errors.New("edge control requires a worker token")
@@ -151,8 +163,8 @@ func (c TNLD) Validate() error {
 		if c.Mode != TNLDModeWorker {
 			return errors.New("worker URL is valid only in worker mode")
 		}
-		if c.WorkerToken == "" || c.RelayMapFile == "" {
-			return errors.New("worker token and relay map are required when worker URL is set")
+		if c.WorkerToken == "" {
+			return errors.New("worker token is required when worker URL is set")
 		}
 		if _, err := credentials.ParseWorkerToken(credentials.WorkerToken(c.WorkerToken)); err != nil {
 			return errors.New("worker token is invalid")
@@ -162,6 +174,49 @@ func (c TNLD) Validate() error {
 			workerURL.Path != workerv1.Endpoint || workerURL.RawQuery != "" || workerURL.Fragment != "" {
 			return fmt.Errorf("worker URL must be a wss origin with path %s", workerv1.Endpoint)
 		}
+	}
+	return nil
+}
+
+func (c TNLD) ExternalAuthEnabled() bool {
+	return c.ExternalAuthIssuer != ""
+}
+
+func (c TNLD) validateExternalAuth() error {
+	configured := c.ExternalAuthIssuer != "" || c.ExternalAuthDeviceURL != "" ||
+		c.ExternalAuthTokenURL != "" || c.ExternalAuthClientID != "" ||
+		c.ExternalAuthIntrospectURL != "" || c.ExternalAuthToken != ""
+	if !configured {
+		return nil
+	}
+	if c.ExternalAuthIssuer == "" || c.ExternalAuthDeviceURL == "" || c.ExternalAuthTokenURL == "" ||
+		c.ExternalAuthClientID == "" || c.ExternalAuthScope == "" ||
+		c.ExternalAuthIntrospectURL == "" || c.ExternalAuthToken == "" {
+		return errors.New("external authentication configuration is incomplete")
+	}
+	issuer, err := url.Parse(c.ExternalAuthIssuer)
+	if err != nil || issuer.Scheme != "https" || issuer.Host == "" || issuer.User != nil ||
+		issuer.Path != "" && issuer.Path != "/" || issuer.RawQuery != "" || issuer.Fragment != "" {
+		return errors.New("external authentication issuer must be an HTTPS origin")
+	}
+	for name, value := range map[string]string{
+		"device": c.ExternalAuthDeviceURL, "token": c.ExternalAuthTokenURL,
+		"introspection": c.ExternalAuthIntrospectURL,
+	} {
+		endpoint, endpointErr := url.Parse(value)
+		if endpointErr != nil || endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.User != nil ||
+			endpoint.RawQuery != "" || endpoint.Fragment != "" || endpoint.Scheme != issuer.Scheme ||
+			!strings.EqualFold(endpoint.Host, issuer.Host) {
+			return fmt.Errorf("external authentication %s endpoint must use the issuer HTTPS origin", name)
+		}
+	}
+	if strings.TrimSpace(c.ExternalAuthClientID) != c.ExternalAuthClientID || len(c.ExternalAuthClientID) > 128 ||
+		strings.TrimSpace(c.ExternalAuthScope) != c.ExternalAuthScope || len(c.ExternalAuthScope) > 256 ||
+		strings.ContainsAny(c.ExternalAuthScope, " \t\r\n") {
+		return errors.New("external authentication client ID and scope are invalid")
+	}
+	if _, err := credentials.ParseWorkloadToken(credentials.WorkloadToken(c.ExternalAuthToken)); err != nil {
+		return errors.New("external authentication introspection token is invalid")
 	}
 	return nil
 }
