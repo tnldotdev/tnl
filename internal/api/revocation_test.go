@@ -12,7 +12,7 @@ import (
 	"github.com/0xcadams/tnl/internal/auth"
 	"github.com/0xcadams/tnl/internal/credentials"
 	"github.com/0xcadams/tnl/internal/state"
-	"github.com/0xcadams/tnl/pkg/protocol/corev1"
+	"github.com/0xcadams/tnl/pkg/protocol/serverv1"
 )
 
 func TestCredentialRevocation(t *testing.T) {
@@ -71,7 +71,7 @@ func TestCredentialRevocation(t *testing.T) {
 }
 
 func TestCredentialRevocationRejectsBearerCredentialsWithoutDisclosure(t *testing.T) {
-	bootstrap, err := credentials.NewBootstrapToken()
+	login, err := credentials.NewLoginToken()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func TestCredentialRevocationRejectsBearerCredentialsWithoutDisclosure(t *testin
 		"leading space":     {" Bearer " + accessToken.String()},
 		"repeated space":    {"Bearer  " + accessToken.String()},
 		"trailing space":    {"Bearer " + accessToken.String() + " "},
-		"wrong token class": {"Bearer " + bootstrap.String()},
+		"wrong token class": {"Bearer " + login.String()},
 		"oversized":         {"Bearer " + strings.Repeat("x", maxCredentialBytes+1)},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -105,9 +105,9 @@ func TestCredentialRevocationRejectsBearerCredentialsWithoutDisclosure(t *testin
 
 			NewHandler(fixtureCapabilities(t), service).ServeHTTP(response, request)
 
-			assertBearerProblem(t, response, http.StatusUnauthorized, corev1.Unauthenticated)
+			assertBearerProblem(t, response, http.StatusUnauthorized, serverv1.Unauthenticated)
 			if strings.Contains(response.Body.String(), accessToken.String()) ||
-				strings.Contains(response.Body.String(), bootstrap.String()) {
+				strings.Contains(response.Body.String(), login.String()) {
 				t.Fatalf("response exposed credential: %s", response.Body.String())
 			}
 		})
@@ -126,22 +126,22 @@ func TestCredentialRevocationProblems(t *testing.T) {
 		authenticateErr error
 		revokeErr       error
 		status          int
-		code            corev1.ProblemCode
+		code            serverv1.ProblemCode
 	}{
 		"invalid ID": {
-			path: credentialsPath + "invalid", status: http.StatusBadRequest, code: corev1.InvalidArgument,
+			path: credentialsPath + "invalid", status: http.StatusBadRequest, code: serverv1.InvalidArgument,
 		},
 		"authentication storage failure": {
 			path: credentialsPath + targetID.String(), authenticateErr: errors.New("read failed"),
-			status: http.StatusInternalServerError, code: corev1.Internal,
+			status: http.StatusInternalServerError, code: serverv1.Internal,
 		},
 		"not found": {
 			path: credentialsPath + targetID.String(), revokeErr: auth.ErrCredentialNotFound,
-			status: http.StatusNotFound, code: corev1.NotFound,
+			status: http.StatusNotFound, code: serverv1.NotFound,
 		},
 		"revocation storage failure": {
 			path: credentialsPath + targetID.String(), revokeErr: errors.New("write failed"),
-			status: http.StatusInternalServerError, code: corev1.Internal,
+			status: http.StatusInternalServerError, code: serverv1.Internal,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -162,7 +162,7 @@ func TestCredentialRevocationProblems(t *testing.T) {
 			if response.Code != test.status {
 				t.Fatalf("status = %d, want %d: %s", response.Code, test.status, response.Body.String())
 			}
-			var problem corev1.Problem
+			var problem serverv1.Problem
 			if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil {
 				t.Fatal(err)
 			}
@@ -179,19 +179,19 @@ func TestCredentialRevocationEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	bootstrap, err := credentials.NewBootstrapToken()
+	login, err := credentials.NewLoginToken()
 	if err != nil {
 		t.Fatal(err)
 	}
-	service, err := auth.NewService(db, bootstrap)
+	service, err := auth.NewService(db, login)
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := service.Exchange(context.Background(), bootstrap)
+	first, err := service.Exchange(context.Background(), login)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := service.Exchange(context.Background(), bootstrap)
+	second, err := service.Exchange(context.Background(), login)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +238,7 @@ type authServiceStub struct {
 
 func (authServiceStub) Exchange(
 	context.Context,
-	credentials.BootstrapToken,
+	credentials.LoginToken,
 ) (auth.IssuedAccessToken, error) {
 	panic("unexpected Exchange call")
 }
@@ -268,7 +268,7 @@ func assertBearerProblem(
 	t *testing.T,
 	response *httptest.ResponseRecorder,
 	status int,
-	code corev1.ProblemCode,
+	code serverv1.ProblemCode,
 ) {
 	t.Helper()
 	if response.Code != status {
@@ -277,7 +277,7 @@ func assertBearerProblem(
 	if authenticate := response.Header().Get("WWW-Authenticate"); authenticate != "Bearer" {
 		t.Fatalf("WWW-Authenticate = %q, want Bearer", authenticate)
 	}
-	var problem corev1.Problem
+	var problem serverv1.Problem
 	if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil {
 		t.Fatal(err)
 	}

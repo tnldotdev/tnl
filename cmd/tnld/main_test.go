@@ -16,14 +16,14 @@ import (
 	"time"
 
 	"github.com/0xcadams/tnl/internal/config"
-	"github.com/0xcadams/tnl/internal/coreclient"
 	"github.com/0xcadams/tnl/internal/credentials"
 	"github.com/0xcadams/tnl/internal/observability"
+	"github.com/0xcadams/tnl/internal/serverclient"
 	"github.com/0xcadams/tnl/internal/state"
 	"github.com/0xcadams/tnl/internal/testutil/integrationtest"
 	"github.com/0xcadams/tnl/internal/worker"
 	"github.com/0xcadams/tnl/internal/workersession"
-	"github.com/0xcadams/tnl/pkg/protocol/corev1"
+	"github.com/0xcadams/tnl/pkg/protocol/serverv1"
 	"github.com/0xcadams/tnl/pkg/protocol/workerv1"
 	"tailscale.com/tailcfg"
 )
@@ -39,7 +39,7 @@ func TestVersionCommand(t *testing.T) {
 }
 
 func TestTokenCommands(t *testing.T) {
-	for _, tokenType := range []string{"worker", "workload"} {
+	for _, tokenType := range []string{"worker", "service"} {
 		t.Run(tokenType, func(t *testing.T) {
 			var output bytes.Buffer
 			if err := run(context.Background(), []string{"token", tokenType}, &output); err != nil {
@@ -50,7 +50,7 @@ func TestTokenCommands(t *testing.T) {
 			if tokenType == "worker" {
 				_, err = credentials.ParseWorkerToken(credentials.WorkerToken(value))
 			} else {
-				_, err = credentials.ParseWorkloadToken(credentials.WorkloadToken(value))
+				_, err = credentials.ParseServiceToken(credentials.ServiceToken(value))
 			}
 			if err != nil {
 				t.Fatal(err)
@@ -59,18 +59,18 @@ func TestTokenCommands(t *testing.T) {
 	}
 }
 
-func TestBootstrapTokenCommand(t *testing.T) {
+func TestLoginTokenCommand(t *testing.T) {
 	directory := t.TempDir()
-	token, _, err := state.EnsureBootstrapToken(directory, "")
+	token, _, err := state.EnsureLoginToken(directory)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var output bytes.Buffer
-	if err := run(context.Background(), []string{"bootstrap-token", "--state-dir", directory}, &output); err != nil {
+	if err := run(context.Background(), []string{"login-token", "--state-dir", directory}, &output); err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.TrimSpace(output.String()); got != token.String() {
-		t.Fatalf("bootstrap token = %q", got)
+		t.Fatalf("login token = %q", got)
 	}
 }
 
@@ -89,7 +89,7 @@ func TestIntegrationStandaloneControlLifecycle(t *testing.T) {
 	if err := os.WriteFile(relayFile, relayData, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	bootstrap, err := credentials.NewBootstrapToken()
+	login, err := credentials.NewLoginToken()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,9 +122,9 @@ func TestIntegrationStandaloneControlLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	running := &daemon{db: db, bootstrap: bootstrap}
+	running := &daemon{db: db, login: login}
 	t.Cleanup(func() { _ = running.shutdown(time.Second) })
-	controlDone, ingressDone, err := running.startCore(context.Background(), cfg, observability.New("standalone"))
+	controlDone, ingressDone, err := running.startServer(context.Background(), cfg, observability.New("standalone"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,16 +134,16 @@ func TestIntegrationStandaloneControlLifecycle(t *testing.T) {
 			return new(net.Dialer).DialContext(ctx, network, running.controlListener.Addr().String())
 		},
 	}, Timeout: 5 * time.Second}
-	baseURL := "https://core.example"
-	anonymous, err := coreclient.New(baseURL, httpClient, "")
+	baseURL := "https://tnl.example"
+	anonymous, err := serverclient.New(baseURL, httpClient, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	issued, err := anonymous.Exchange(context.Background(), bootstrap)
+	issued, err := anonymous.Exchange(context.Background(), login)
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, err := coreclient.New(baseURL, httpClient, credentials.AccessToken(issued.AccessToken))
+	client, err := serverclient.New(baseURL, httpClient, credentials.AccessToken(issued.AccessToken))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestIntegrationStandaloneControlLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if capabilities.Transport.RelayProfile != "test" || capabilities.Transport.Type != corev1.Tailcat {
+	if capabilities.Transport.RelayProfile != "test" || capabilities.Transport.Type != serverv1.Tailcat {
 		t.Fatalf("capabilities = %#v", capabilities)
 	}
 	claim, err := client.ClaimHostname(context.Background(), "route", "standalone-test")
@@ -165,7 +165,7 @@ func TestIntegrationStandaloneControlLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	setup, err := client.CreateRoute(context.Background(), corev1.CreateRouteRequest{
+	setup, err := client.CreateRoute(context.Background(), serverv1.CreateRouteRequest{
 		Hostname: "route.apps.example", DisplayTarget: "http://127.0.0.1:3000", RouteToken: routeToken.String(),
 	})
 	if err != nil {

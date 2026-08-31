@@ -139,7 +139,7 @@ func (r *Route) VerifyCertificate(expected tls.Certificate) error {
 	}()
 	client := tls.Client(clientConnection, &tls.Config{
 		ServerName: r.hostname, MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"},
-		InsecureSkipVerify: true, // This probes selection and key usability; the core validated the chain.
+		InsecureSkipVerify: true, // This probes selection and key usability; the server validated the chain.
 	})
 	clientErr := client.HandshakeContext(ctx)
 	serverErr := <-serverResult

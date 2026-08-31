@@ -31,7 +31,7 @@ type Metrics interface {
 type Config struct {
 	Lookup              LookupFunc
 	LookupChallenge     LookupFunc
-	ControlHostname     string
+	ServerHostname      string
 	HandleControl       func(net.Conn) bool
 	RequireProxyHeader  bool
 	MaxConnections      int
@@ -61,7 +61,7 @@ func New(listener net.Listener, config Config) (*Server, error) {
 	if config.MaxConnections <= 0 || config.MaxRouteConnections <= 0 {
 		return nil, errors.New("ingress: connection limits must be positive")
 	}
-	if config.ControlHostname == "" != (config.HandleControl == nil) {
+	if config.ServerHostname == "" != (config.HandleControl == nil) {
 		return nil, errors.New("ingress: control hostname and handler must be configured together")
 	}
 	if config.OpenTimeout <= 0 {
@@ -142,7 +142,7 @@ func (s *Server) handle(public net.Conn) error {
 	if err != nil {
 		return nil
 	}
-	if hello.ServerName == s.config.ControlHostname {
+	if hello.ServerName == s.config.ServerHostname {
 		connection := &readerConn{
 			Conn:   &addressConn{Conn: public, remote: source, local: destination},
 			reader: hello.Replay,

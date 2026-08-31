@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/0xcadams/tnl/internal/state"
+	"github.com/0xcadams/tnl/internal/state/statedb"
 	legoacme "github.com/go-acme/lego/v5/acme"
 	legoapi "github.com/go-acme/lego/v5/acme/api"
 )
@@ -31,6 +32,7 @@ const (
 func TestServiceCertificateLifecycle(t *testing.T) {
 	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	db := testDatabase(t)
+	queries := statedb.New(db)
 	key, csrDER := testCSR(t, testHostname, pkix.Name{})
 	chain, roots := testCertificateChain(t, key, testHostname, now)
 	fake := &fakeACME{now: now, certificate: chain}
@@ -74,7 +76,10 @@ func TestServiceCertificateLifecycle(t *testing.T) {
 	if idempotent.ID != job.ID || fake.orders != 1 {
 		t.Fatalf("idempotent job ID = %q, orders = %d", idempotent.ID, fake.orders)
 	}
-	if _, err := db.Exec(`UPDATE routes SET generation = 2 WHERE id = ?`, testRouteID); err != nil {
+	if err := queries.AdvanceRouteGeneration(context.Background(), statedb.AdvanceRouteGenerationParams{
+		Generation: 2,
+		RouteID:    testRouteID,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	job, err = service.Create(context.Background(), testRouteID, 2, "tlsserver", csrDER)
@@ -88,7 +93,10 @@ func TestServiceCertificateLifecycle(t *testing.T) {
 	if err := service.store.saveJob(context.Background(), job); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`UPDATE routes SET generation = 3 WHERE id = ?`, testRouteID); err != nil {
+	if err := queries.AdvanceRouteGeneration(context.Background(), statedb.AdvanceRouteGenerationParams{
+		Generation: 3,
+		RouteID:    testRouteID,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	job, err = service.Create(context.Background(), testRouteID, 3, "tlsserver", csrDER)
@@ -131,7 +139,10 @@ func TestServiceCertificateLifecycle(t *testing.T) {
 		t.Fatalf("early replacement error = %v", err)
 	}
 	for generation := 4; generation <= 7; generation++ {
-		if _, err := db.Exec(`UPDATE routes SET generation = ? WHERE id = ?`, generation, testRouteID); err != nil {
+		if err := queries.AdvanceRouteGeneration(context.Background(), statedb.AdvanceRouteGenerationParams{
+			Generation: int64(generation),
+			RouteID:    testRouteID,
+		}); err != nil {
 			t.Fatal(err)
 		}
 		reused, err := service.Create(
@@ -148,6 +159,7 @@ func TestServiceCertificateLifecycle(t *testing.T) {
 
 func TestServiceRecoversAccountCreationWithPersistedKey(t *testing.T) {
 	db := testDatabase(t)
+	queries := statedb.New(db)
 	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	fake := &fakeACME{now: now}
 	var firstPublic, secondPublic []byte
@@ -169,7 +181,7 @@ func TestServiceRecoversAccountCreationWithPersistedKey(t *testing.T) {
 	if _, err := New(context.Background(), db, config); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`UPDATE acme_accounts SET kid = NULL WHERE directory_url = ?`, config.DirectoryURL); err != nil {
+	if err := queries.ClearACMEAccountKID(context.Background(), config.DirectoryURL); err != nil {
 		t.Fatal(err)
 	}
 	config.newACME = newClient(&secondPublic)
@@ -212,6 +224,7 @@ func TestServiceRequiresExplicitChangedTermsAcceptance(t *testing.T) {
 
 func TestServiceUpdatesAccountContact(t *testing.T) {
 	db := testDatabase(t)
+	queries := statedb.New(db)
 	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	fake := &fakeACME{now: now}
 	config := Config{
@@ -229,7 +242,7 @@ func TestServiceUpdatesAccountContact(t *testing.T) {
 	if fake.updatedContact != "mailto:new@example.com" {
 		t.Fatalf("updated contact = %q", fake.updatedContact)
 	}
-	if _, err := db.Exec(`UPDATE acme_accounts SET email = 'operator@example.com'`); err != nil {
+	if err := queries.SetACMEAccountEmail(context.Background(), "operator@example.com"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := New(context.Background(), db, config); err != nil {
@@ -238,12 +251,12 @@ func TestServiceUpdatesAccountContact(t *testing.T) {
 	if fake.updateAccountCalls != 1 {
 		t.Fatalf("completed account update was replayed %d times", fake.updateAccountCalls)
 	}
-	var email string
-	if err := db.QueryRow(`SELECT email FROM acme_accounts`).Scan(&email); err != nil {
+	account, err := queries.GetACMEAccount(context.Background(), config.DirectoryURL)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if email != "new@example.com" {
-		t.Fatalf("persisted account email = %q", email)
+	if account.Email != "new@example.com" {
+		t.Fatalf("persisted account email = %q", account.Email)
 	}
 }
 
@@ -629,17 +642,31 @@ func testDatabase(t *testing.T) *sql.DB {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	if _, err := db.Exec(`INSERT INTO principals (id, display_name, email, created_at)
-		VALUES ('principal', 'Principal', 'principal@example.com', 1)`); err != nil {
+	queries := statedb.New(db)
+	if err := queries.UpsertPrincipal(context.Background(), statedb.UpsertPrincipalParams{
+		PrincipalID: "principal",
+		DisplayName: "Principal",
+		Email:       "principal@example.com",
+		CreatedAt:   1,
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO hostname_claims (id, principal_id, hostname, created_at)
-		VALUES ('claim', 'principal', ?, 1)`, testHostname); err != nil {
+	if _, err := queries.InsertClaim(context.Background(), statedb.InsertClaimParams{
+		ID:          "claim",
+		PrincipalID: "principal",
+		Hostname:    testHostname,
+		CreatedAt:   1,
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO routes
-		(id, claim_id, principal_id, hostname, display_target, state, generation, created_at)
-		VALUES (?, 'claim', 'principal', ?, 'http://127.0.0.1:3000', 'active', 1, 1)`, testRouteID, testHostname); err != nil {
+	if err := queries.InsertRoute(context.Background(), statedb.InsertRouteParams{
+		RouteID:       testRouteID,
+		ClaimID:       "claim",
+		PrincipalID:   "principal",
+		Hostname:      testHostname,
+		DisplayTarget: "http://127.0.0.1:3000",
+		CreatedAt:     1,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	return db

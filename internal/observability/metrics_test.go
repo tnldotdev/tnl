@@ -81,7 +81,7 @@ func TestMetricsScrape(t *testing.T) {
 }
 
 func TestRegisterDatabase(t *testing.T) {
-	metrics := New("core")
+	metrics := New("server")
 	if err := metrics.RegisterDatabase(nil); err == nil {
 		t.Fatal("RegisterDatabase(nil) succeeded")
 	}
@@ -163,7 +163,7 @@ func TestSQLiteErrorClassification(t *testing.T) {
 		t.Fatalf("syntax error type = %T, want wrapped *sqlite.Error", syntaxErr)
 	}
 
-	metrics := New("core")
+	metrics := New("server")
 	metrics.ObserveSQLiteOperation("canceled", time.Millisecond, fmt.Errorf("query: %w", context.Canceled))
 	metrics.ObserveSQLiteOperation("deadline", time.Millisecond, fmt.Errorf("query: %w", context.DeadlineExceeded))
 	metrics.ObserveSQLiteOperation("constraint", time.Millisecond, fmt.Errorf("insert: %w", constraintErr))

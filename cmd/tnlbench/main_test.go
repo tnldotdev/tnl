@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/0xcadams/tnl/internal/naming"
-	"github.com/0xcadams/tnl/pkg/protocol/corev1"
+	"github.com/0xcadams/tnl/pkg/protocol/serverv1"
 )
 
 func TestBenchmarkCertificate(t *testing.T) {
@@ -57,22 +57,22 @@ func TestBenchmarkHostnamesAreUniqueSingleLabelClaims(t *testing.T) {
 }
 
 func TestBenchmarkHostnameSuffix(t *testing.T) {
-	valid := corev1.Capabilities{
-		HostnameAuthorization: []corev1.CapabilitiesHostnameAuthorization{corev1.LocalClaim},
-		LocalClaim:            &corev1.LocalClaimCapabilities{Suffix: "run.bench.test"},
+	valid := serverv1.Capabilities{
+		HostnameAuthorization: []serverv1.CapabilitiesHostnameAuthorization{serverv1.LocalClaim},
+		LocalClaim:            &serverv1.LocalClaimCapabilities{Suffix: "run.bench.test"},
 	}
 	if suffix, err := benchmarkHostnameSuffix(valid, "run.bench.test"); err != nil || suffix != "run.bench.test" {
 		t.Fatalf("valid capability = %q, %v", suffix, err)
 	}
 
-	for name, capabilities := range map[string]corev1.Capabilities{
+	for name, capabilities := range map[string]serverv1.Capabilities{
 		"authorization omitted": {LocalClaim: valid.LocalClaim},
 		"metadata omitted": {
-			HostnameAuthorization: []corev1.CapabilitiesHostnameAuthorization{corev1.LocalClaim},
+			HostnameAuthorization: []serverv1.CapabilitiesHostnameAuthorization{serverv1.LocalClaim},
 		},
 		"invalid advertised suffix": {
-			HostnameAuthorization: []corev1.CapabilitiesHostnameAuthorization{corev1.LocalClaim},
-			LocalClaim:            &corev1.LocalClaimCapabilities{Suffix: "Run.Bench.Test"},
+			HostnameAuthorization: []serverv1.CapabilitiesHostnameAuthorization{serverv1.LocalClaim},
+			LocalClaim:            &serverv1.LocalClaimCapabilities{Suffix: "Run.Bench.Test"},
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

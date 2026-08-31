@@ -21,7 +21,7 @@ import (
 	"github.com/0xcadams/tnl/internal/credentials"
 	"github.com/0xcadams/tnl/internal/routes"
 	"github.com/0xcadams/tnl/internal/state"
-	"github.com/0xcadams/tnl/pkg/protocol/corev1"
+	"github.com/0xcadams/tnl/pkg/protocol/serverv1"
 	"golang.org/x/time/rate"
 )
 
@@ -39,7 +39,7 @@ func TestCapabilities(t *testing.T) {
 	}
 	assertResponseHeaders(t, response, "application/json", "req_client123")
 
-	var got corev1.Capabilities
+	var got serverv1.Capabilities
 	if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
@@ -66,26 +66,26 @@ func TestRelayMapReturnsConfiguredSelectedRegion(t *testing.T) {
 	}
 }
 
-func TestExternalTokenExchangeIsBoundedAndRateLimited(t *testing.T) {
+func TestOIDCTokenExchangeIsBoundedAndRateLimited(t *testing.T) {
 	token, credentialID, _, err := credentials.NewAccessToken()
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := &externalAuthServiceStub{issued: auth.IssuedAccessToken{
+	service := &oidcAuthServiceStub{issued: auth.IssuedAccessToken{
 		Token: token, CredentialID: credentialID, ExpiresAt: time.Now().Add(time.Hour).UTC(),
 	}}
 	handler := NewHandler(fixtureCapabilities(t), service).(*handler)
-	handler.externalLimit = rate.NewLimiter(0, 1)
+	handler.oidcLimit = rate.NewLimiter(0, 1)
 
-	request := httptest.NewRequest(http.MethodPost, externalExchangePath, strings.NewReader(`{"access_token":"external-session"}`))
+	request := httptest.NewRequest(http.MethodPost, oidcExchangePath, strings.NewReader(`{"id_token":"id-token"}`))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusOK || service.token != "external-session" {
+	if response.Code != http.StatusOK || service.token != "id-token" {
 		t.Fatalf("status = %d, token = %q, body = %s", response.Code, service.token, response.Body.String())
 	}
 
-	request = httptest.NewRequest(http.MethodPost, externalExchangePath, strings.NewReader(`{"access_token":"external-session"}`))
+	request = httptest.NewRequest(http.MethodPost, oidcExchangePath, strings.NewReader(`{"id_token":"id-token"}`))
 	request.Header.Set("Content-Type", "application/json")
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -116,8 +116,8 @@ func TestRequestObservation(t *testing.T) {
 		},
 		"server error": {
 			method: http.MethodPost, path: tokenExchangePath,
-			body: `{"bootstrap_token":"tnl_bootstrap_test"}`, contentType: "application/json",
-			auth: tokenExchangerFunc(func(context.Context, credentials.BootstrapToken) (auth.IssuedAccessToken, error) {
+			body: `{"login_token":"tnl_login_test"}`, contentType: "application/json",
+			auth: tokenExchangerFunc(func(context.Context, credentials.LoginToken) (auth.IssuedAccessToken, error) {
 				return auth.IssuedAccessToken{}, internalErr
 			}),
 			wantStatus: http.StatusInternalServerError, wantOp: OperationTokenExchange, wantResult: RequestServerError,
@@ -171,15 +171,15 @@ func TestUnexpectedAuthErrorIsReportedAndSanitized(t *testing.T) {
 	reporter := &recordingErrorReporter{}
 	exchanger := tokenExchangerFunc(func(
 		context.Context,
-		credentials.BootstrapToken,
+		credentials.LoginToken,
 	) (auth.IssuedAccessToken, error) {
 		return auth.IssuedAccessToken{}, wrapped
 	})
-	const credential = "tnl_bootstrap_do-not-report"
+	const credential = "tnl_login_do-not-report"
 	request := httptest.NewRequest(
 		http.MethodPost,
 		tokenExchangePath,
-		strings.NewReader(`{"bootstrap_token":"`+credential+`"}`),
+		strings.NewReader(`{"login_token":"`+credential+`"}`),
 	)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set(requestIDHeader, "req_authfailure")
@@ -245,12 +245,12 @@ func TestDatabaseContentionIsTemporarilyUnavailable(t *testing.T) {
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusServiceUnavailable)
 	}
-	var problem corev1.Problem
+	var problem serverv1.Problem
 	if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil {
 		t.Fatal(err)
 	}
-	if problem.Code != corev1.TemporarilyUnavailable {
-		t.Fatalf("problem code = %q, want %q", problem.Code, corev1.TemporarilyUnavailable)
+	if problem.Code != serverv1.TemporarilyUnavailable {
+		t.Fatalf("problem code = %q, want %q", problem.Code, serverv1.TemporarilyUnavailable)
 	}
 }
 
@@ -272,11 +272,11 @@ func TestCertificateStateResponseIsNotALeaseConflict(t *testing.T) {
 	if response.Code != http.StatusPreconditionFailed {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusPreconditionFailed)
 	}
-	var problem corev1.Problem
+	var problem serverv1.Problem
 	if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil {
 		t.Fatal(err)
 	}
-	if problem.Code != corev1.PreconditionFailed {
+	if problem.Code != serverv1.PreconditionFailed {
 		t.Fatalf("code = %q", problem.Code)
 	}
 }
@@ -313,7 +313,7 @@ func TestProblemResponses(t *testing.T) {
 		method      string
 		path        string
 		status      int
-		code        corev1.ProblemCode
+		code        serverv1.ProblemCode
 		problemType string
 		allow       string
 	}{
@@ -321,14 +321,14 @@ func TestProblemResponses(t *testing.T) {
 			method:      http.MethodGet,
 			path:        "/v1/unknown",
 			status:      http.StatusNotFound,
-			code:        corev1.NotFound,
+			code:        serverv1.NotFound,
 			problemType: "https://tnl.dev/problems/not-found",
 		},
 		"unsupported method": {
 			method:      http.MethodPost,
 			path:        capabilitiesPath,
 			status:      http.StatusMethodNotAllowed,
-			code:        corev1.InvalidArgument,
+			code:        serverv1.InvalidArgument,
 			problemType: "https://tnl.dev/problems/method-not-allowed",
 			allow:       http.MethodGet,
 		},
@@ -336,7 +336,7 @@ func TestProblemResponses(t *testing.T) {
 			method:      http.MethodGet,
 			path:        tokenExchangePath,
 			status:      http.StatusMethodNotAllowed,
-			code:        corev1.InvalidArgument,
+			code:        serverv1.InvalidArgument,
 			problemType: "https://tnl.dev/problems/method-not-allowed",
 			allow:       http.MethodPost,
 		},
@@ -358,7 +358,7 @@ func TestProblemResponses(t *testing.T) {
 				t.Fatalf("Allow = %q, want %q", got, test.allow)
 			}
 
-			var problem corev1.Problem
+			var problem serverv1.Problem
 			if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil {
 				t.Fatal(err)
 			}
@@ -383,17 +383,17 @@ func TestCapabilitiesResponseIsBounded(t *testing.T) {
 	if response.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusInternalServerError)
 	}
-	var problem corev1.Problem
+	var problem serverv1.Problem
 	if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil {
 		t.Fatal(err)
 	}
-	if problem.Code != corev1.Internal {
-		t.Fatalf("problem code = %q, want %q", problem.Code, corev1.Internal)
+	if problem.Code != serverv1.Internal {
+		t.Fatalf("problem code = %q, want %q", problem.Code, serverv1.Internal)
 	}
 }
 
 func TestTokenExchange(t *testing.T) {
-	bootstrap, err := credentials.NewBootstrapToken()
+	login, err := credentials.NewLoginToken()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -402,17 +402,17 @@ func TestTokenExchange(t *testing.T) {
 		t.Fatal(err)
 	}
 	expiresAt := time.Date(2026, time.September, 28, 12, 0, 0, 0, time.UTC)
-	var received credentials.BootstrapToken
+	var received credentials.LoginToken
 	exchanger := tokenExchangerFunc(func(
 		_ context.Context,
-		token credentials.BootstrapToken,
+		token credentials.LoginToken,
 	) (auth.IssuedAccessToken, error) {
 		received = token
 		return auth.IssuedAccessToken{
 			Token: access, CredentialID: credentialID, ExpiresAt: expiresAt,
 		}, nil
 	})
-	body, err := json.Marshal(corev1.TokenExchangeRequest{BootstrapToken: bootstrap.String()})
+	body, err := json.Marshal(serverv1.TokenExchangeRequest{LoginToken: login.String()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -427,18 +427,18 @@ func TestTokenExchange(t *testing.T) {
 		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
 	}
 	assertResponseHeaders(t, response, "application/json", "req_exchange")
-	if received != bootstrap {
-		t.Fatalf("bootstrap token = %q, want configured token", received)
+	if received != login {
+		t.Fatalf("login token = %q, want configured token", received)
 	}
-	var got corev1.TokenExchangeResponse
+	var got serverv1.TokenExchangeResponse
 	if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	want := corev1.TokenExchangeResponse{
+	want := serverv1.TokenExchangeResponse{
 		AccessToken:  access.String(),
 		CredentialId: credentialID.String(),
 		ExpiresAt:    expiresAt,
-		TokenType:    corev1.Bearer,
+		TokenType:    serverv1.Bearer,
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("response = %#v, want %#v", got, want)
@@ -451,15 +451,15 @@ func TestTokenExchangePersistsUsableAccessToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	bootstrap, err := credentials.NewBootstrapToken()
+	login, err := credentials.NewLoginToken()
 	if err != nil {
 		t.Fatal(err)
 	}
-	exchange, err := auth.NewService(db, bootstrap)
+	exchange, err := auth.NewService(db, login)
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, err := json.Marshal(corev1.TokenExchangeRequest{BootstrapToken: bootstrap.String()})
+	body, err := json.Marshal(serverv1.TokenExchangeRequest{LoginToken: login.String()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -472,7 +472,7 @@ func TestTokenExchangePersistsUsableAccessToken(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
 	}
-	var issued corev1.TokenExchangeResponse
+	var issued serverv1.TokenExchangeResponse
 	if err := json.Unmarshal(response.Body.Bytes(), &issued); err != nil {
 		t.Fatal(err)
 	}
@@ -495,26 +495,26 @@ func TestTokenExchangePersistsUsableAccessToken(t *testing.T) {
 }
 
 func TestTokenExchangeRejectsCredentialsWithoutDisclosure(t *testing.T) {
-	bootstrap := "tnl_bootstrap_do-not-disclose"
+	login := "tnl_login_do-not-disclose"
 	for name, test := range map[string]struct {
 		err    error
 		status int
-		code   corev1.ProblemCode
+		code   serverv1.ProblemCode
 	}{
-		"unauthenticated": {err: auth.ErrUnauthenticated, status: http.StatusUnauthorized, code: corev1.Unauthenticated},
-		"internal":        {err: errors.New("storage failed"), status: http.StatusInternalServerError, code: corev1.Internal},
+		"unauthenticated": {err: auth.ErrUnauthenticated, status: http.StatusUnauthorized, code: serverv1.Unauthenticated},
+		"internal":        {err: errors.New("storage failed"), status: http.StatusInternalServerError, code: serverv1.Internal},
 	} {
 		t.Run(name, func(t *testing.T) {
 			exchanger := tokenExchangerFunc(func(
 				context.Context,
-				credentials.BootstrapToken,
+				credentials.LoginToken,
 			) (auth.IssuedAccessToken, error) {
 				return auth.IssuedAccessToken{}, test.err
 			})
 			request := httptest.NewRequest(
 				http.MethodPost,
 				tokenExchangePath,
-				strings.NewReader(`{"bootstrap_token":"`+bootstrap+`"}`),
+				strings.NewReader(`{"login_token":"`+login+`"}`),
 			)
 			request.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()
@@ -524,11 +524,11 @@ func TestTokenExchangeRejectsCredentialsWithoutDisclosure(t *testing.T) {
 			if response.Code != test.status {
 				t.Fatalf("status = %d, want %d", response.Code, test.status)
 			}
-			var problem corev1.Problem
+			var problem serverv1.Problem
 			if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil {
 				t.Fatal(err)
 			}
-			if problem.Code != test.code || strings.Contains(response.Body.String(), bootstrap) {
+			if problem.Code != test.code || strings.Contains(response.Body.String(), login) {
 				t.Fatalf("problem = %s", response.Body.String())
 			}
 		})
@@ -544,11 +544,11 @@ func TestTokenExchangeRejectsInvalidRequests(t *testing.T) {
 		"missing content type": {body: `{}`, status: http.StatusUnsupportedMediaType},
 		"wrong content type":   {contentType: "text/plain", body: `{}`, status: http.StatusUnsupportedMediaType},
 		"empty object":         {contentType: "application/json", body: `{}`, status: http.StatusBadRequest},
-		"unknown field":        {contentType: "application/json", body: `{"bootstrap_token":"x","extra":true}`, status: http.StatusBadRequest},
-		"trailing value":       {contentType: "application/json", body: `{"bootstrap_token":"x"} {}`, status: http.StatusBadRequest},
+		"unknown field":        {contentType: "application/json", body: `{"login_token":"x","extra":true}`, status: http.StatusBadRequest},
+		"trailing value":       {contentType: "application/json", body: `{"login_token":"x"} {}`, status: http.StatusBadRequest},
 		"malformed JSON":       {contentType: "application/json", body: `{`, status: http.StatusBadRequest},
-		"oversized token":      {contentType: "application/json", body: `{"bootstrap_token":"` + strings.Repeat("x", maxCredentialBytes+1) + `"}`, status: http.StatusBadRequest},
-		"oversized body":       {contentType: "application/json", body: `{"bootstrap_token":"` + strings.Repeat("x", maxJSONRequestBytes) + `"}`, status: http.StatusRequestEntityTooLarge},
+		"oversized token":      {contentType: "application/json", body: `{"login_token":"` + strings.Repeat("x", maxCredentialBytes+1) + `"}`, status: http.StatusBadRequest},
+		"oversized body":       {contentType: "application/json", body: `{"login_token":"` + strings.Repeat("x", maxJSONRequestBytes) + `"}`, status: http.StatusRequestEntityTooLarge},
 	}
 
 	for name, test := range tests {
@@ -571,43 +571,43 @@ func TestTokenExchangeRejectsInvalidRequests(t *testing.T) {
 
 type tokenExchangerFunc func(
 	context.Context,
-	credentials.BootstrapToken,
+	credentials.LoginToken,
 ) (auth.IssuedAccessToken, error)
 
 func (f tokenExchangerFunc) Exchange(
 	ctx context.Context,
-	token credentials.BootstrapToken,
+	token credentials.LoginToken,
 ) (auth.IssuedAccessToken, error) {
 	return f(ctx, token)
 }
 
-type externalAuthServiceStub struct {
+type oidcAuthServiceStub struct {
 	issued auth.IssuedAccessToken
 	token  string
 	calls  int
 }
 
-func (*externalAuthServiceStub) Exchange(
+func (*oidcAuthServiceStub) Exchange(
 	context.Context,
-	credentials.BootstrapToken,
+	credentials.LoginToken,
 ) (auth.IssuedAccessToken, error) {
 	panic("unexpected Exchange call")
 }
 
-func (s *externalAuthServiceStub) ExchangeExternal(_ context.Context, token string) (auth.IssuedAccessToken, error) {
+func (s *oidcAuthServiceStub) ExchangeOIDC(_ context.Context, token string) (auth.IssuedAccessToken, error) {
 	s.calls++
 	s.token = token
 	return s.issued, nil
 }
 
-func (*externalAuthServiceStub) Authenticate(
+func (*oidcAuthServiceStub) Authenticate(
 	context.Context,
 	credentials.AccessToken,
 ) (state.Principal, error) {
 	panic("unexpected Authenticate call")
 }
 
-func (*externalAuthServiceStub) Revoke(
+func (*oidcAuthServiceStub) Revoke(
 	context.Context,
 	state.Principal,
 	credentials.CredentialID,
@@ -713,15 +713,15 @@ func assertSanitizedInternalProblem(
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusInternalServerError)
 	}
 	assertResponseHeaders(t, response, "application/problem+json", requestID)
-	var problem corev1.Problem
+	var problem serverv1.Problem
 	if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil {
 		t.Fatal(err)
 	}
-	want := corev1.Problem{
+	want := serverv1.Problem{
 		Type:      "https://tnl.dev/problems/internal",
 		Title:     "Internal server error",
 		Status:    http.StatusInternalServerError,
-		Code:      corev1.Internal,
+		Code:      serverv1.Internal,
 		RequestId: requestID,
 		Details:   map[string]interface{}{},
 	}
@@ -735,13 +735,13 @@ func assertSanitizedInternalProblem(
 	}
 }
 
-func fixtureCapabilities(t *testing.T) corev1.Capabilities {
+func fixtureCapabilities(t *testing.T) serverv1.Capabilities {
 	t.Helper()
-	data, err := os.ReadFile("../../api/fixtures/core/v1/capabilities.json")
+	data, err := os.ReadFile("../../api/fixtures/server/v1/capabilities.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var capabilities corev1.Capabilities
+	var capabilities serverv1.Capabilities
 	if err := json.Unmarshal(data, &capabilities); err != nil {
 		t.Fatal(err)
 	}

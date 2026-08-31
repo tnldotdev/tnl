@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/coreclient"
+	"github.com/0xcadams/tnl/internal/serverclient"
 )
 
 type publicEvent struct {
@@ -64,9 +64,9 @@ func (o *publicOutput) failed(err error) error {
 	if o.mode == "human" {
 		return nil
 	}
-	retryable := errors.Is(err, coreclient.ErrUnavailable) || errors.Is(err, coreclient.ErrRateLimited)
+	retryable := errors.Is(err, serverclient.ErrUnavailable) || errors.Is(err, serverclient.ErrRateLimited)
 	event := publicEvent{Type: "error", Message: boundedOutputError(err), Retryable: &retryable}
-	var limited *coreclient.RateLimitError
+	var limited *serverclient.RateLimitError
 	if errors.As(err, &limited) && limited.RetryAfter > 0 {
 		retryAt := time.Now().Add(limited.RetryAfter).UTC()
 		event.RetryAt = &retryAt

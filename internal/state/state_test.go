@@ -4,13 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/pressly/goose/v3"
 )
 
 func TestOpen(t *testing.T) {
@@ -33,8 +30,8 @@ func TestOpen(t *testing.T) {
 	if err := db.QueryRow("SELECT MAX(version_id) FROM goose_db_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 5 {
-		t.Fatalf("schema version = %d, want 5", version)
+	if version != 1 {
+		t.Fatalf("schema version = %d, want 1", version)
 	}
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
@@ -55,7 +52,7 @@ func TestOpenRejectsNewerSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec("INSERT INTO goose_db_version (version_id, is_applied) VALUES (6, 1)"); err != nil {
+	if _, err := db.Exec("INSERT INTO goose_db_version (version_id, is_applied) VALUES (2, 1)"); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {
@@ -66,70 +63,6 @@ func TestOpenRejectsNewerSchema(t *testing.T) {
 		t.Fatal("Open succeeded with a newer schema")
 	} else if !strings.Contains(err.Error(), "newer than supported") {
 		t.Fatalf("Open error = %q", err)
-	}
-}
-
-func TestOpenMigratesPopulatedV3(t *testing.T) {
-	ctx := context.Background()
-	dir := filepath.Join(t.TempDir(), "state")
-	if err := os.Mkdir(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	db, err := sql.Open("sqlite", dataSourceName(filepath.Join(dir, databaseName)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	migrations, err := fs.Sub(migrationFiles, "migrations")
-	if err != nil {
-		t.Fatal(err)
-	}
-	provider, err := goose.NewProvider(
-		goose.DialectSQLite3, db, migrations, goose.WithDisableGlobalRegistry(true),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := provider.UpTo(ctx, 3); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`INSERT INTO principals (id, display_name, email, created_at)
-		VALUES ('owner', 'Owner', '', 1)`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`INSERT INTO hostname_claims (id, principal_id, hostname, created_at)
-		VALUES ('claim_0123456789abcdef0123456789abcdef', 'owner', 'route.example', 1)`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`INSERT INTO routes
-		(id, claim_id, principal_id, hostname, display_target, state, generation, created_at)
-		VALUES ('route_0123456789abcdef0123456789abcdef', 'claim_0123456789abcdef0123456789abcdef',
-		'owner', 'route.example', 'http://127.0.0.1:3000', 'active', 1, 1)`); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	db, err = Open(ctx, dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	var irreversible int
-	var tombstonedAt sql.NullInt64
-	if err := db.QueryRow(`SELECT irreversible, tombstoned_at FROM hostname_claims
-		WHERE id = 'claim_0123456789abcdef0123456789abcdef'`).Scan(&irreversible, &tombstonedAt); err != nil {
-		t.Fatal(err)
-	}
-	if irreversible != 1 || tombstonedAt.Valid {
-		t.Fatalf("migrated claim = irreversible %d, tombstoned %v", irreversible, tombstonedAt)
-	}
-	var routes int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM routes WHERE state = 'active'`).Scan(&routes); err != nil {
-		t.Fatal(err)
-	}
-	if routes != 1 {
-		t.Fatalf("active routes after migration = %d", routes)
 	}
 }
 

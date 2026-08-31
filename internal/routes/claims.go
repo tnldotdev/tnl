@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/0xcadams/tnl/internal/naming"
+	"github.com/0xcadams/tnl/internal/state/statedb"
 )
 
 const (
@@ -58,9 +59,10 @@ func (s *Store) ClaimHostname(
 		return HostnameClaim{}, fmt.Errorf("routes: begin hostname claim: %w", err)
 	}
 	defer tx.Rollback()
+	queries := s.queries.WithTx(tx)
 
 	// Resolve request-key replays before quota checks or allocation.
-	claim, requestedLabel, found, err := readClaimRequest(ctx, tx, principalID, requestKey)
+	claim, requestedLabel, found, err := readClaimRequest(ctx, queries, principalID, requestKey)
 	if err != nil {
 		return HostnameClaim{}, err
 	}
@@ -71,12 +73,12 @@ func (s *Store) ClaimHostname(
 		return claim, nil
 	}
 	if canonicalLabel != "" {
-		claim, err = readClaimByHostname(ctx, tx, canonicalLabel+"."+s.routeSuffix)
+		claim, err = readClaimByHostname(ctx, queries, canonicalLabel+"."+s.routeSuffix)
 		if err == nil {
 			if claim.PrincipalID != principalID || !claim.TombstonedAt.IsZero() {
 				return HostnameClaim{}, ErrNameUnavailable
 			}
-			if err := s.recordClaimRequest(ctx, tx, principalID, requestKey, canonicalLabel, claim.ID, now); err != nil {
+			if err := s.recordClaimRequest(ctx, queries, principalID, requestKey, canonicalLabel, claim.ID, now); err != nil {
 				return HostnameClaim{}, err
 			}
 			if err := tx.Commit(); err != nil {
@@ -88,12 +90,11 @@ func (s *Store) ClaimHostname(
 			return HostnameClaim{}, err
 		}
 	}
-	var active int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM hostname_claims
-		WHERE principal_id = ? AND tombstoned_at IS NULL`, principalID).Scan(&active); err != nil {
+	active, err := queries.CountActiveClaims(ctx, principalID)
+	if err != nil {
 		return HostnameClaim{}, fmt.Errorf("routes: count hostname claims: %w", err)
 	}
-	if active >= s.maxActiveHostnameClaims {
+	if active >= int64(s.maxActiveHostnameClaims) {
 		return HostnameClaim{}, ErrInvalidState
 	}
 
@@ -104,7 +105,7 @@ func (s *Store) ClaimHostname(
 			if candidateErr != nil {
 				return HostnameClaim{}, candidateErr
 			}
-			claim, found, err = s.insertClaim(ctx, tx, principalID, candidate, now)
+			claim, found, err = s.insertClaim(ctx, queries, principalID, candidate, now)
 			if err != nil {
 				return HostnameClaim{}, err
 			}
@@ -116,12 +117,12 @@ func (s *Store) ClaimHostname(
 			return HostnameClaim{}, errors.New("routes: allocate hostname")
 		}
 	} else {
-		claim, found, err = s.insertClaim(ctx, tx, principalID, canonicalLabel, now)
+		claim, found, err = s.insertClaim(ctx, queries, principalID, canonicalLabel, now)
 		if err != nil {
 			return HostnameClaim{}, err
 		}
 		if !found {
-			claim, err = readClaimByHostname(ctx, tx, canonicalLabel+"."+s.routeSuffix)
+			claim, err = readClaimByHostname(ctx, queries, canonicalLabel+"."+s.routeSuffix)
 			if err != nil {
 				return HostnameClaim{}, err
 			}
@@ -130,7 +131,7 @@ func (s *Store) ClaimHostname(
 			}
 		}
 	}
-	if err := s.recordClaimRequest(ctx, tx, principalID, requestKey, canonicalLabel, claim.ID, now); err != nil {
+	if err := s.recordClaimRequest(ctx, queries, principalID, requestKey, canonicalLabel, claim.ID, now); err != nil {
 		return HostnameClaim{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -159,23 +160,17 @@ func (s *Store) ListHostnameClaimsPage(
 	ctx context.Context,
 	principalID, cursor string,
 ) ([]HostnameClaim, string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, principal_id, hostname, irreversible, tombstoned_at, created_at
-		FROM hostname_claims WHERE principal_id = ? AND tombstoned_at IS NULL AND (? = '' OR id > ?)
-		ORDER BY id LIMIT ?`, principalID, cursor, cursor, hostnameClaimPageSize+1)
+	dbClaims, err := s.queries.ListActiveClaimsPage(ctx, statedb.ListActiveClaimsPageParams{
+		PrincipalID: principalID,
+		Cursor:      cursor,
+		Limit:       hostnameClaimPageSize + 1,
+	})
 	if err != nil {
 		return nil, "", fmt.Errorf("routes: list hostname claims: %w", err)
 	}
-	defer rows.Close()
 	var claims []HostnameClaim
-	for rows.Next() {
-		claim, err := scanClaim(rows)
-		if err != nil {
-			return nil, "", err
-		}
-		claims = append(claims, claim)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, "", fmt.Errorf("routes: list hostname claims: %w", err)
+	for _, claim := range dbClaims {
+		claims = append(claims, hostnameClaimFromDB(claim))
 	}
 	if len(claims) <= hostnameClaimPageSize {
 		return claims, "", nil
@@ -185,10 +180,10 @@ func (s *Store) ListHostnameClaimsPage(
 }
 
 func (s *Store) ActiveRouteIDForClaim(ctx context.Context, principalID, claimID string) (string, error) {
-	var routeID sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT r.id FROM hostname_claims c
-		LEFT JOIN routes r ON r.claim_id = c.id AND r.state = 'active'
-		WHERE c.id = ? AND c.principal_id = ? AND c.tombstoned_at IS NULL`, claimID, principalID).Scan(&routeID)
+	routeID, err := s.queries.GetActiveRouteForClaim(ctx, statedb.GetActiveRouteForClaimParams{
+		ClaimID:     claimID,
+		PrincipalID: principalID,
+	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", ErrNotFound
 	}
@@ -207,25 +202,32 @@ func (s *Store) ReleaseHostnameClaim(ctx context.Context, principalID, claimID s
 		return fmt.Errorf("routes: begin hostname release: %w", err)
 	}
 	defer tx.Rollback()
+	queries := s.queries.WithTx(tx)
 	// Tombstone the claim and revoke all route authority in one transaction.
-	result, err := tx.ExecContext(ctx, `UPDATE hostname_claims SET tombstoned_at = ?
-		WHERE id = ? AND principal_id = ? AND tombstoned_at IS NULL`, now.Unix(), claimID, principalID)
+	count, err := queries.TombstoneClaim(ctx, statedb.TombstoneClaimParams{
+		TombstonedAt: now.Unix(),
+		ID:           claimID,
+		PrincipalID:  principalID,
+	})
 	if err != nil {
 		return fmt.Errorf("routes: release hostname: %w", err)
 	}
-	if err := requireUpdated(result, ErrNotFound); err != nil {
+	if err := requireCount(count, ErrNotFound); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE routes SET state = 'deleted', deleted_at = ?
-		WHERE claim_id = ? AND state = 'active'`, now.Unix(), claimID); err != nil {
+	if err := queries.DeleteClaimRoutes(ctx, statedb.DeleteClaimRoutesParams{
+		DeletedAt: now.Unix(),
+		ClaimID:   claimID,
+	}); err != nil {
 		return fmt.Errorf("routes: delete released routes: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE route_credentials SET revoked_at = COALESCE(revoked_at, ?)
-		WHERE route_id IN (SELECT id FROM routes WHERE claim_id = ?)`, now.Unix(), claimID); err != nil {
+	if err := queries.RevokeClaimRouteCredentials(ctx, statedb.RevokeClaimRouteCredentialsParams{
+		RevokedAt: now.Unix(),
+		ClaimID:   claimID,
+	}); err != nil {
 		return fmt.Errorf("routes: revoke released routes: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE route_leases SET status = 'expired'
-		WHERE route_id IN (SELECT id FROM routes WHERE claim_id = ?) AND status != 'expired'`, claimID); err != nil {
+	if err := queries.ExpireClaimRouteLeases(ctx, claimID); err != nil {
 		return fmt.Errorf("routes: expire released routes: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -236,7 +238,7 @@ func (s *Store) ReleaseHostnameClaim(ctx context.Context, principalID, claimID s
 
 func (s *Store) insertClaim(
 	ctx context.Context,
-	tx *sql.Tx,
+	queries *statedb.Queries,
 	principalID, label string,
 	now time.Time,
 ) (HostnameClaim, bool, error) {
@@ -249,15 +251,14 @@ func (s *Store) insertClaim(
 	if err != nil || canonical != hostname {
 		return HostnameClaim{}, false, ErrInvalidArgument
 	}
-	result, err := tx.ExecContext(ctx, `INSERT INTO hostname_claims
-		(id, principal_id, hostname, irreversible, created_at) VALUES (?, ?, ?, 0, ?)
-		ON CONFLICT (hostname) DO NOTHING`, id, principalID, hostname, now.Unix())
+	count, err := queries.InsertClaim(ctx, statedb.InsertClaimParams{
+		ID:          id,
+		PrincipalID: principalID,
+		Hostname:    hostname,
+		CreatedAt:   now.Unix(),
+	})
 	if err != nil {
 		return HostnameClaim{}, false, fmt.Errorf("routes: insert hostname claim: %w", err)
-	}
-	count, err := result.RowsAffected()
-	if err != nil {
-		return HostnameClaim{}, false, err
 	}
 	if count == 0 {
 		return HostnameClaim{}, false, nil
@@ -267,21 +268,24 @@ func (s *Store) insertClaim(
 
 func (s *Store) recordClaimRequest(
 	ctx context.Context,
-	tx *sql.Tx,
+	queries *statedb.Queries,
 	principalID, requestKey, requestedLabel, claimID string,
 	now time.Time,
 ) error {
-	var requests int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM hostname_claim_requests
-		WHERE principal_id = ?`, principalID).Scan(&requests); err != nil {
+	requests, err := queries.CountClaimRequests(ctx, principalID)
+	if err != nil {
 		return fmt.Errorf("routes: count hostname claim requests: %w", err)
 	}
-	if requests >= s.maxHostnameClaimRequests {
+	if requests >= int64(s.maxHostnameClaimRequests) {
 		return ErrInvalidState
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO hostname_claim_requests
-		(principal_id, request_key, requested_label, claim_id, created_at) VALUES (?, ?, ?, ?, ?)`,
-		principalID, requestKey, requestedLabel, claimID, now.Unix()); err != nil {
+	if err := queries.InsertClaimRequest(ctx, statedb.InsertClaimRequestParams{
+		PrincipalID:    principalID,
+		RequestKey:     requestKey,
+		RequestedLabel: requestedLabel,
+		ClaimID:        claimID,
+		CreatedAt:      now.Unix(),
+	}); err != nil {
 		return fmt.Errorf("routes: record hostname claim request: %w", err)
 	}
 	return nil
@@ -325,58 +329,42 @@ func randomClaimLabel() (string, error) {
 	return strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(material[:])), nil
 }
 
-type claimScanner interface {
-	Scan(...any) error
+func hostnameClaimFromDB(claim statedb.HostnameClaim) HostnameClaim {
+	result := HostnameClaim{
+		ID:           claim.ID,
+		PrincipalID:  claim.PrincipalID,
+		Hostname:     claim.Hostname,
+		Irreversible: claim.Irreversible != 0,
+		CreatedAt:    time.Unix(claim.CreatedAt, 0).UTC(),
+	}
+	if claim.TombstonedAt.Valid {
+		result.TombstonedAt = time.Unix(claim.TombstonedAt.Int64, 0).UTC()
+	}
+	return result
 }
 
-func scanClaim(row claimScanner) (HostnameClaim, error) {
-	var claim HostnameClaim
-	var irreversible int
-	var tombstonedAt sql.NullInt64
-	var createdAt int64
-	if err := row.Scan(&claim.ID, &claim.PrincipalID, &claim.Hostname, &irreversible, &tombstonedAt, &createdAt); err != nil {
+func readClaimByHostname(ctx context.Context, queries *statedb.Queries, hostname string) (HostnameClaim, error) {
+	claim, err := queries.GetClaimByHostname(ctx, hostname)
+	if err != nil {
 		return HostnameClaim{}, fmt.Errorf("routes: scan hostname claim: %w", err)
 	}
-	claim.Irreversible = irreversible != 0
-	claim.CreatedAt = time.Unix(createdAt, 0).UTC()
-	if tombstonedAt.Valid {
-		claim.TombstonedAt = time.Unix(tombstonedAt.Int64, 0).UTC()
-	}
-	return claim, nil
-}
-
-func readClaimByHostname(ctx context.Context, tx *sql.Tx, hostname string) (HostnameClaim, error) {
-	return scanClaim(tx.QueryRowContext(ctx, `SELECT
-		id, principal_id, hostname, irreversible, tombstoned_at, created_at
-		FROM hostname_claims WHERE hostname = ?`, hostname))
+	return hostnameClaimFromDB(claim), nil
 }
 
 func readClaimRequest(
 	ctx context.Context,
-	tx *sql.Tx,
+	queries *statedb.Queries,
 	principalID, requestKey string,
 ) (HostnameClaim, string, bool, error) {
-	var claim HostnameClaim
-	var requestedLabel string
-	var irreversible int
-	var tombstonedAt sql.NullInt64
-	var createdAt int64
-	err := tx.QueryRowContext(ctx, `SELECT
-		c.id, c.principal_id, c.hostname, c.irreversible, c.tombstoned_at, c.created_at, r.requested_label
-		FROM hostname_claim_requests r JOIN hostname_claims c ON c.id = r.claim_id
-		WHERE r.principal_id = ? AND r.request_key = ?`, principalID, requestKey).Scan(
-		&claim.ID, &claim.PrincipalID, &claim.Hostname, &irreversible, &tombstonedAt, &createdAt, &requestedLabel,
-	)
+	request, err := queries.GetClaimRequest(ctx, statedb.GetClaimRequestParams{
+		PrincipalID: principalID,
+		RequestKey:  requestKey,
+	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return HostnameClaim{}, "", false, nil
 	}
 	if err != nil {
 		return HostnameClaim{}, "", false, fmt.Errorf("routes: read hostname claim request: %w", err)
 	}
-	claim.Irreversible = irreversible != 0
-	claim.CreatedAt = time.Unix(createdAt, 0).UTC()
-	if tombstonedAt.Valid {
-		claim.TombstonedAt = time.Unix(tombstonedAt.Int64, 0).UTC()
-	}
-	return claim, requestedLabel, true, nil
+	return hostnameClaimFromDB(request.HostnameClaim), request.RequestedLabel, true, nil
 }

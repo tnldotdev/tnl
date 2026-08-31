@@ -17,9 +17,9 @@ import (
 	"time"
 
 	"github.com/0xcadams/tnl/internal/clientstate"
-	"github.com/0xcadams/tnl/internal/coreclient"
 	"github.com/0xcadams/tnl/internal/credentials"
-	"github.com/0xcadams/tnl/pkg/protocol/corev1"
+	"github.com/0xcadams/tnl/internal/serverclient"
+	"github.com/0xcadams/tnl/pkg/protocol/serverv1"
 )
 
 func TestVersionCommand(t *testing.T) {
@@ -32,19 +32,19 @@ func TestVersionCommand(t *testing.T) {
 	}
 }
 
-func TestReadBootstrapToken(t *testing.T) {
-	token, err := credentials.NewBootstrapToken()
+func TestReadLoginToken(t *testing.T) {
+	token, err := credentials.NewLoginToken()
 	if err != nil {
 		t.Fatal(err)
 	}
-	parsed, err := readBootstrapToken(strings.NewReader(token.String()+"\n"), io.Discard)
+	parsed, err := readLoginToken(strings.NewReader(token.String()+"\n"), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if parsed != token {
 		t.Fatalf("token = %q", parsed)
 	}
-	if _, err := readBootstrapToken(strings.NewReader("invalid"), io.Discard); err == nil {
+	if _, err := readLoginToken(strings.NewReader("invalid"), io.Discard); err == nil {
 		t.Fatal("invalid token accepted")
 	}
 }
@@ -56,7 +56,7 @@ func TestClaimPublicHostnamePersistsRandomSelection(t *testing.T) {
 			http.NotFound(response, request)
 			return
 		}
-		var body corev1.CreateHostnameClaimRequest
+		var body serverv1.CreateHostnameClaimRequest
 		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
 			t.Error(err)
 			response.WriteHeader(http.StatusBadRequest)
@@ -68,12 +68,12 @@ func TestClaimPublicHostnamePersistsRandomSelection(t *testing.T) {
 		requestKeys = append(requestKeys, request.Header.Get("Idempotency-Key"))
 		response.Header().Set("Content-Type", "application/json")
 		response.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(response).Encode(corev1.HostnameClaim{
+		_ = json.NewEncoder(response).Encode(serverv1.HostnameClaim{
 			Id: "claim_0123456789abcdef0123456789abcdef", Hostname: "random.example", CreatedAt: time.Now(),
 		})
 	}))
 	defer server.Close()
-	client, err := coreclient.New(server.URL, server.Client(), "")
+	client, err := serverclient.New(server.URL, server.Client(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestClaimPublicHostnamePersistsRandomSelection(t *testing.T) {
 	}
 }
 
-func TestRunPublicPreflightsBeforeCoreRequests(t *testing.T) {
+func TestRunPublicPreflightsBeforeServerRequests(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -117,13 +117,13 @@ func TestRunPublicPreflightsBeforeCoreRequests(t *testing.T) {
 	defer server.Close()
 	var stdout, stderr bytes.Buffer
 	err = runPublic(context.Background(), publicCommand{
-		Target: target, CoreURL: server.URL, AccessToken: "invalid", Output: "ndjson",
+		Target: target, ServerURL: server.URL, AccessToken: "invalid", Output: "ndjson",
 	}, &stdout, &stderr)
 	if err == nil {
 		t.Fatal("runPublic accepted an offline target")
 	}
 	if requests.Load() != 0 {
-		t.Fatalf("core requests = %d", requests.Load())
+		t.Fatalf("server requests = %d", requests.Load())
 	}
 	var starting, failed publicEvent
 	decoder := json.NewDecoder(&stdout)
@@ -194,14 +194,14 @@ func TestHostReleaseRecoversAfterAmbiguousDelete(t *testing.T) {
 				_, _ = response.Write([]byte("[]"))
 				return
 			}
-			_ = json.NewEncoder(response).Encode(corev1.HostnameClaimPage{Claims: []corev1.HostnameClaim{{
+			_ = json.NewEncoder(response).Encode(serverv1.HostnameClaimPage{Claims: []serverv1.HostnameClaim{{
 				Id: "claim_0123456789abcdef0123456789abcdef", Hostname: "random.example", CreatedAt: time.Now(),
 			}}})
 		case request.Method == http.MethodDelete && request.URL.Path == "/v1/hostname-claims/claim_0123456789abcdef0123456789abcdef":
 			if deleted.Load() {
 				response.Header().Set("Content-Type", "application/problem+json")
 				response.WriteHeader(http.StatusNotFound)
-				_ = json.NewEncoder(response).Encode(corev1.Problem{Code: corev1.NotFound})
+				_ = json.NewEncoder(response).Encode(serverv1.Problem{Code: serverv1.NotFound})
 				return
 			}
 			deleted.Store(true)
@@ -232,9 +232,9 @@ func TestHostReleaseRecoversAfterAmbiguousDelete(t *testing.T) {
 	}
 	var output bytes.Buffer
 	flags := hostReleaseCommand{
-		Hostname: "random.example", CoreURL: server.URL, AccessToken: access.String(), StateDir: stateRoot,
+		Hostname: "random.example", ServerURL: server.URL, AccessToken: access.String(), StateDir: stateRoot,
 	}
-	if err := runHostRelease(context.Background(), flags, &output); !errors.Is(err, coreclient.ErrUnavailable) {
+	if err := runHostRelease(context.Background(), flags, &output); !errors.Is(err, serverclient.ErrUnavailable) {
 		t.Fatalf("ambiguous release error = %v", err)
 	}
 	if claimID, found, err := state.PendingHostnameRelease("random.example"); err != nil || !found || claimID == "" {
@@ -270,7 +270,7 @@ func TestHostListWithExplicitTokenDoesNotOpenClientState(t *testing.T) {
 			t.Errorf("authorization = %q", request.Header.Get("Authorization"))
 		}
 		response.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(response).Encode(corev1.HostnameClaimPage{})
+		_ = json.NewEncoder(response).Encode(serverv1.HostnameClaimPage{})
 	}))
 	defer server.Close()
 	previousTransport := http.DefaultTransport
@@ -282,7 +282,7 @@ func TestHostListWithExplicitTokenDoesNotOpenClientState(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := runHostList(context.Background(), hostListCommand{
-		CoreURL: server.URL, AccessToken: access.String(), StateDir: statePath,
+		ServerURL: server.URL, AccessToken: access.String(), StateDir: statePath,
 	}, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}

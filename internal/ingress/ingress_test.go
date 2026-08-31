@@ -133,8 +133,8 @@ func TestIngressHandsControlTLSOffByExactSNI(t *testing.T) {
 	connections := make(chan net.Conn)
 	controlCertificate := testCertificate(t, "control.example")
 	server, err := New(listener, Config{
-		Lookup:          func(string) (worker.RouteBackend, bool) { return nil, false },
-		ControlHostname: "control.example",
+		Lookup:         func(string) (worker.RouteBackend, bool) { return nil, false },
+		ServerHostname: "control.example",
 		HandleControl: func(connection net.Conn) bool {
 			connections <- connection
 			return true

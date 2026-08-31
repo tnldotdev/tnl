@@ -10,6 +10,7 @@ import (
 
 	"github.com/0xcadams/tnl/internal/credentials"
 	"github.com/0xcadams/tnl/internal/state"
+	"github.com/0xcadams/tnl/internal/state/statedb"
 )
 
 func TestNewServiceRejectsInvalidConfiguration(t *testing.T) {
@@ -19,8 +20,8 @@ func TestNewServiceRejectsInvalidConfiguration(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	if _, err := NewService(db, "invalid"); !errors.Is(err, credentials.ErrInvalidBootstrapToken) {
-		t.Fatalf("invalid bootstrap configuration error = %v", err)
+	if _, err := NewService(db, "invalid"); !errors.Is(err, credentials.ErrInvalidLoginToken) {
+		t.Fatalf("invalid login configuration error = %v", err)
 	}
 	if _, err := NewService(nil, "invalid"); err == nil {
 		t.Fatal("nil state database accepted")
@@ -28,15 +29,15 @@ func TestNewServiceRejectsInvalidConfiguration(t *testing.T) {
 }
 
 func TestTokenExchangeReusesLocalPrincipal(t *testing.T) {
-	db, bootstrap, exchange := newTestService(t)
+	db, login, exchange := newTestService(t)
 	now := time.Date(2026, time.August, 29, 12, 0, 0, 0, time.UTC)
 	exchange.now = func() time.Time { return now }
 
-	first, err := exchange.Exchange(context.Background(), bootstrap)
+	first, err := exchange.Exchange(context.Background(), login)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := exchange.Exchange(context.Background(), bootstrap)
+	second, err := exchange.Exchange(context.Background(), login)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,20 +67,20 @@ func TestTokenExchangeReusesLocalPrincipal(t *testing.T) {
 }
 
 func TestTokenExchangeRejectsInvalidWrongClassAndRotatedTokens(t *testing.T) {
-	db, bootstrap, exchange := newTestService(t)
+	db, login, exchange := newTestService(t)
 	var err error
 	access, _, _, err := credentials.NewAccessToken()
 	if err != nil {
 		t.Fatal(err)
 	}
-	rotated, err := credentials.NewBootstrapToken()
+	rotated, err := credentials.NewLoginToken()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	for name, token := range map[string]credentials.BootstrapToken{
+	for name, token := range map[string]credentials.LoginToken{
 		"malformed":   "invalid",
-		"wrong class": credentials.BootstrapToken(access.String()),
+		"wrong class": credentials.LoginToken(access.String()),
 		"rotated":     rotated,
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -94,33 +95,33 @@ func TestTokenExchangeRejectsInvalidWrongClassAndRotatedTokens(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rotatedExchange.Exchange(context.Background(), bootstrap); !errors.Is(err, ErrUnauthenticated) {
+	if _, err := rotatedExchange.Exchange(context.Background(), login); !errors.Is(err, ErrUnauthenticated) {
 		t.Fatalf("old token after rotation error = %v", err)
 	}
 }
 
 func TestTokenExchangeReturnsNoSecretAfterStorageFailure(t *testing.T) {
-	db, bootstrap, exchange := newTestService(t)
+	db, login, exchange := newTestService(t)
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
 
-	issued, err := exchange.Exchange(context.Background(), bootstrap)
+	issued, err := exchange.Exchange(context.Background(), login)
 	if err == nil || issued != (IssuedAccessToken{}) {
 		t.Fatalf("issued = %#v, error = %v", issued, err)
 	}
-	if strings.Contains(err.Error(), bootstrap.String()) {
-		t.Fatal("storage error exposed bootstrap token")
+	if strings.Contains(err.Error(), login.String()) {
+		t.Fatal("storage error exposed login token")
 	}
 }
 
 func TestTokenExchangeConcurrentFirstUse(t *testing.T) {
-	db, bootstrap, exchange := newTestService(t)
+	db, login, exchange := newTestService(t)
 	const exchanges = 8
 	errors := make(chan error, exchanges)
 	for range exchanges {
 		go func() {
-			_, err := exchange.Exchange(context.Background(), bootstrap)
+			_, err := exchange.Exchange(context.Background(), login)
 			errors <- err
 		}()
 	}
@@ -139,17 +140,17 @@ func TestTokenExchangeConcurrentFirstUse(t *testing.T) {
 	}
 }
 
-func TestExternalExchangeUsesStablePrincipalAndBoundsExpiry(t *testing.T) {
+func TestOIDCExchangeUsesStablePrincipalAndBoundsExpiry(t *testing.T) {
 	db, err := state.Open(context.Background(), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	now := time.Date(2026, time.August, 30, 12, 0, 0, 0, time.UTC)
-	identity := ExternalIdentity{
+	identity := OIDCIdentity{
 		Issuer: "https://account.example", Subject: "user-123", ExpiresAt: now.Add(60 * 24 * time.Hour),
 	}
-	service, err := NewServiceWithExternal(db, "", externalVerifierFunc(func(context.Context, string) (ExternalIdentity, error) {
+	service, err := NewServiceWithOIDC(db, "", oidcVerifierFunc(func(context.Context, string) (OIDCIdentity, error) {
 		return identity, nil
 	}))
 	if err != nil {
@@ -157,34 +158,41 @@ func TestExternalExchangeUsesStablePrincipalAndBoundsExpiry(t *testing.T) {
 	}
 	service.now = func() time.Time { return now }
 
-	issued, err := service.ExchangeExternal(context.Background(), "device-session")
+	issued, err := service.ExchangeOIDC(context.Background(), "id-token")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if issued.ExpiresAt != now.Add(AccessTokenLifetime) {
 		t.Fatalf("expiry = %v, want %v", issued.ExpiresAt, now.Add(AccessTokenLifetime))
 	}
+	assertionExpiresAt, err := statedb.New(db).GetOIDCAssertionExpiry(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if assertionExpiresAt != identity.ExpiresAt.Unix() {
+		t.Fatalf("assertion expiry = %d, want %d", assertionExpiresAt, identity.ExpiresAt.Unix())
+	}
 	principal, err := service.Authenticate(context.Background(), issued.Token)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(principal.ID, "principal_external_") || principal.DisplayName != "" || principal.Email != "" {
+	if !strings.HasPrefix(principal.ID, "principal_oidc_") || principal.DisplayName != "" || principal.Email != "" {
 		t.Fatalf("principal = %#v", principal)
 	}
-	if repeated, err := service.ExchangeExternal(context.Background(), "device-session"); !errors.Is(err, ErrUnauthenticated) || repeated != (IssuedAccessToken{}) {
-		t.Fatalf("repeated external exchange = %#v, error = %v", repeated, err)
+	if repeated, err := service.ExchangeOIDC(context.Background(), "id-token"); !errors.Is(err, ErrUnauthenticated) || repeated != (IssuedAccessToken{}) {
+		t.Fatalf("repeated OIDC exchange = %#v, error = %v", repeated, err)
 	}
 }
 
-func TestExternalExchangeConsumesBearerOnceAcrossConcurrentRequests(t *testing.T) {
+func TestOIDCExchangeConsumesBearerOnceAcrossConcurrentRequests(t *testing.T) {
 	db, err := state.Open(context.Background(), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	now := time.Date(2026, time.August, 30, 12, 0, 0, 0, time.UTC)
-	service, err := NewServiceWithExternal(db, "", externalVerifierFunc(func(context.Context, string) (ExternalIdentity, error) {
-		return ExternalIdentity{
+	service, err := NewServiceWithOIDC(db, "", oidcVerifierFunc(func(context.Context, string) (OIDCIdentity, error) {
+		return OIDCIdentity{
 			Issuer: "https://account.example", Subject: "user-123", ExpiresAt: now.Add(time.Hour),
 		}, nil
 	}))
@@ -197,7 +205,7 @@ func TestExternalExchangeConsumesBearerOnceAcrossConcurrentRequests(t *testing.T
 	results := make(chan error, attempts)
 	for range attempts {
 		go func() {
-			_, err := service.ExchangeExternal(context.Background(), "one-time-device-session")
+			_, err := service.ExchangeOIDC(context.Background(), "one-time-id-token")
 			results <- err
 		}()
 	}
@@ -221,37 +229,40 @@ func TestExternalExchangeConsumesBearerOnceAcrossConcurrentRequests(t *testing.T
 	}
 }
 
-type externalVerifierFunc func(context.Context, string) (ExternalIdentity, error)
+type oidcVerifierFunc func(context.Context, string) (OIDCIdentity, error)
 
-func (f externalVerifierFunc) Verify(ctx context.Context, token string) (ExternalIdentity, error) {
+func (f oidcVerifierFunc) Verify(ctx context.Context, token string) (OIDCIdentity, error) {
 	return f(ctx, token)
 }
 
-func newTestService(t *testing.T) (*sql.DB, credentials.BootstrapToken, *Service) {
+func newTestService(t *testing.T) (*sql.DB, credentials.LoginToken, *Service) {
 	t.Helper()
 	db, err := state.Open(context.Background(), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	bootstrap, err := credentials.NewBootstrapToken()
+	login, err := credentials.NewLoginToken()
 	if err != nil {
 		t.Fatal(err)
 	}
-	exchange, err := NewService(db, bootstrap)
+	exchange, err := NewService(db, login)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return db, bootstrap, exchange
+	return db, login, exchange
 }
 
 func stateCounts(t *testing.T, db *sql.DB) (principals, accessCredentials int) {
 	t.Helper()
-	if err := db.QueryRow("SELECT COUNT(*) FROM principals").Scan(&principals); err != nil {
+	queries := statedb.New(db)
+	principalCount, err := queries.CountPrincipals(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.QueryRow("SELECT COUNT(*) FROM access_credentials").Scan(&accessCredentials); err != nil {
+	accessCredentialCount, err := queries.CountAccessCredentials(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
-	return principals, accessCredentials
+	return int(principalCount), int(accessCredentialCount)
 }

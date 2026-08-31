@@ -1,2 +1,2 @@
-// Package auth implements standalone core authentication flows.
+// Package auth implements tnl server authentication flows.
 package auth

@@ -25,15 +25,15 @@ import (
 	"github.com/0xcadams/tnl/internal/certificates"
 	"github.com/0xcadams/tnl/internal/config"
 	"github.com/0xcadams/tnl/internal/controltls"
-	"github.com/0xcadams/tnl/internal/coreclient"
 	"github.com/0xcadams/tnl/internal/credentials"
 	"github.com/0xcadams/tnl/internal/ingress"
 	"github.com/0xcadams/tnl/internal/observability"
 	"github.com/0xcadams/tnl/internal/routes"
+	"github.com/0xcadams/tnl/internal/serverclient"
 	"github.com/0xcadams/tnl/internal/state"
 	"github.com/0xcadams/tnl/internal/worker"
 	"github.com/0xcadams/tnl/internal/workersession"
-	"github.com/0xcadams/tnl/pkg/protocol/corev1"
+	"github.com/0xcadams/tnl/pkg/protocol/serverv1"
 	"github.com/0xcadams/tnl/pkg/protocol/workerv1"
 	"github.com/alecthomas/kong"
 	"tailscale.com/tailcfg"
@@ -62,20 +62,20 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 				return err
 			}
 			value = token.String()
-		case "workload":
-			token, _, err := credentials.NewWorkloadToken()
+		case "service":
+			token, _, err := credentials.NewServiceToken()
 			if err != nil {
 				return err
 			}
 			value = token.String()
 		default:
-			return errors.New("token type must be worker or workload")
+			return errors.New("token type must be worker or service")
 		}
 		_, err := fmt.Fprintln(stdout, value)
 		return err
 	}
-	if len(args) > 0 && args[0] == "bootstrap-token" {
-		return runBootstrapToken(args[1:], stdout)
+	if len(args) > 0 && args[0] == "login-token" {
+		return runLoginToken(args[1:], stdout)
 	}
 	if len(args) > 0 && args[0] == "relay" {
 		return runRelay(ctx, args[1:], stdout)
@@ -87,25 +87,25 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 	return serve(ctx, cfg)
 }
 
-type bootstrapTokenCommand struct {
+type loginTokenCommand struct {
 	StateDir string `name:"state-dir" env:"TNLD_STATE_DIR" type:"path" required:"" help:"Directory containing persistent daemon state."`
-	Rotate   bool   `name:"rotate" help:"Replace the bootstrap token; the daemon must be stopped."`
+	Rotate   bool   `name:"rotate" help:"Replace the login token; the daemon must be stopped."`
 }
 
-func runBootstrapToken(args []string, stdout io.Writer) error {
-	var command bootstrapTokenCommand
-	parser, err := kong.New(&command, kong.Name("tnld bootstrap-token"))
+func runLoginToken(args []string, stdout io.Writer) error {
+	var command loginTokenCommand
+	parser, err := kong.New(&command, kong.Name("tnld login-token"))
 	if err != nil {
 		return err
 	}
 	if _, err := parser.Parse(args); err != nil {
 		return err
 	}
-	var token credentials.BootstrapToken
+	var token credentials.LoginToken
 	if command.Rotate {
-		token, err = state.RotateBootstrapToken(command.StateDir)
+		token, err = state.RotateLoginToken(command.StateDir)
 	} else {
-		token, err = state.ReadBootstrapToken(command.StateDir)
+		token, err = state.ReadLoginToken(command.StateDir)
 	}
 	if err != nil {
 		return err
@@ -146,7 +146,7 @@ func runRelay(ctx context.Context, args []string, stdout io.Writer) error {
 type daemon struct {
 	db              *sql.DB
 	stateLock       *state.DirectoryLock
-	bootstrap       credentials.BootstrapToken
+	login           credentials.LoginToken
 	metricsServer   *observability.Server
 	controlListener net.Listener
 	controlServer   *http.Server
@@ -180,16 +180,13 @@ func serve(ctx context.Context, cfg config.TNLD) error {
 			return errors.Join(err, running.shutdown(cfg.DrainTimeout))
 		}
 		running.db = db
-		legacy := credentials.BootstrapToken(os.Getenv("TNLD_BOOTSTRAP_TOKEN"))
-		bootstrap, generated, err := state.EnsureBootstrapToken(cfg.StateDir, legacy)
+		login, generated, err := state.EnsureLoginToken(cfg.StateDir)
 		if err != nil {
 			return errors.Join(err, running.shutdown(cfg.DrainTimeout))
 		}
-		running.bootstrap = bootstrap
-		if legacy != "" {
-			log.Print("TNLD_BOOTSTRAP_TOKEN is deprecated; the token is now persisted in the state directory")
-		} else if generated {
-			log.Print("generated bootstrap token; retrieve it with tnld bootstrap-token")
+		running.login = login
+		if generated {
+			log.Print("generated login token; retrieve it with tnld login-token")
 		}
 		if err := metrics.RegisterDatabase(db); err != nil {
 			return errors.Join(err, running.shutdown(cfg.DrainTimeout))
@@ -212,7 +209,7 @@ func serve(ctx context.Context, cfg config.TNLD) error {
 		running.workerDone = workerDone
 	}
 	if cfg.Mode.UsesState() && cfg.PublicListen != "" {
-		controlDone, ingressDone, err := running.startCore(lifetime, cfg, metrics)
+		controlDone, ingressDone, err := running.startServer(lifetime, cfg, metrics)
 		if err != nil {
 			return errors.Join(err, running.shutdown(cfg.DrainTimeout))
 		}
@@ -236,7 +233,7 @@ func serve(ctx context.Context, cfg config.TNLD) error {
 	return errors.Join(serveErr, running.shutdown(cfg.DrainTimeout))
 }
 
-func (d *daemon) startCore(
+func (d *daemon) startServer(
 	ctx context.Context,
 	cfg config.TNLD,
 	metrics *observability.Metrics,
@@ -250,18 +247,16 @@ func (d *daemon) startCore(
 	if err != nil {
 		return nil, nil, err
 	}
-	var externalVerifier auth.ExternalVerifier
-	if cfg.ExternalAuthEnabled() {
-		externalVerifier, err = auth.NewIntrospectionVerifier(auth.IntrospectionConfig{
-			URL: cfg.ExternalAuthIntrospectURL, Issuer: cfg.ExternalAuthIssuer,
-			RequiredScope: cfg.ExternalAuthScope,
-			WorkloadToken: credentials.WorkloadToken(cfg.ExternalAuthToken),
+	var oidcVerifier auth.OIDCVerifier
+	if cfg.OIDCEnabled() {
+		oidcVerifier, err = auth.NewOIDCVerifier(auth.OIDCConfig{
+			Issuer: cfg.OIDCIssuer, ClientID: cfg.OIDCClientID,
 		})
 		if err != nil {
 			return nil, nil, err
 		}
 	}
-	authService, err := auth.NewServiceWithExternal(d.db, d.bootstrap, externalVerifier)
+	authService, err := auth.NewServiceWithOIDC(d.db, d.login, oidcVerifier)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -353,13 +348,13 @@ func (d *daemon) startCore(
 	}
 
 	controlTLS, err := controltls.New(controltls.Config{
-		Hostname: cfg.ControlHostname(), StateDir: cfg.StateDir,
+		Hostname: cfg.ServerHostname(), StateDir: cfg.StateDir,
 		DirectoryURL: cfg.ACMEDirectoryURL, Email: cfg.ACMEEmail, AcceptTerms: cfg.ACMEAcceptTerms,
 	})
 	if err != nil {
 		return nil, nil, err
 	}
-	apiMetrics := coreAPIObserver{metrics: metrics}
+	apiMetrics := serverAPIObserver{metrics: metrics}
 	handler := api.NewHandlerWithServicesAndConfig(
 		capabilities(cfg, relayProfile),
 		authService,
@@ -388,7 +383,7 @@ func (d *daemon) startCore(
 			route, ok := d.coordinator.Lookup(hostname)
 			return route.Backend, ok
 		},
-		ControlHostname:    cfg.ControlHostname(),
+		ServerHostname:     cfg.ServerHostname(),
 		HandleControl:      controlListener.Enqueue,
 		RequireProxyHeader: cfg.RequireProxyHeader, MaxConnections: cfg.PublicConnLimit,
 		MaxRouteConnections: cfg.RouteConnLimit, Metrics: metrics, OnError: report,
@@ -504,11 +499,11 @@ func startWorker(ctx context.Context, cfg config.TNLD, metrics *observability.Me
 	if err != nil {
 		return nil, err
 	}
-	coreScheme := "https"
+	serverScheme := "https"
 	if workerURL.Scheme == "ws" {
-		coreScheme = "http"
+		serverScheme = "http"
 	}
-	core, err := coreclient.New((&url.URL{Scheme: coreScheme, Host: workerURL.Host}).String(), nil, "")
+	server, err := serverclient.New((&url.URL{Scheme: serverScheme, Host: workerURL.Host}).String(), nil, "")
 	if err != nil {
 		return nil, err
 	}
@@ -521,7 +516,7 @@ func startWorker(ctx context.Context, cfg config.TNLD, metrics *observability.Me
 		defer close(done)
 		backoff := workerReconnectMin
 		for {
-			relayMap, relayErr := core.RelayMap(ctx)
+			relayMap, relayErr := server.RelayMap(ctx)
 			if relayErr != nil {
 				if ctx.Err() != nil {
 					done <- nil
@@ -655,24 +650,22 @@ func relayProfiles(ctx context.Context, cfg config.TNLD) (map[string]*tailcfg.DE
 	return profiles, profile, nil
 }
 
-func capabilities(cfg config.TNLD, relayProfile string) corev1.Capabilities {
-	result := corev1.Capabilities{
-		ProtocolVersions:      []corev1.CapabilitiesProtocolVersions{corev1.CapabilitiesProtocolVersionsN1},
-		HostnameAuthorization: []corev1.CapabilitiesHostnameAuthorization{corev1.LocalClaim},
-		LocalClaim:            &corev1.LocalClaimCapabilities{Suffix: cfg.RouteSuffix()},
-		Transport: corev1.TransportCapabilities{
-			Type: corev1.Tailcat, Version: corev1.TransportCapabilitiesVersionN1, RelayProfile: relayProfile,
+func capabilities(cfg config.TNLD, relayProfile string) serverv1.Capabilities {
+	result := serverv1.Capabilities{
+		ProtocolVersions:      []serverv1.CapabilitiesProtocolVersions{serverv1.CapabilitiesProtocolVersionsN1},
+		HostnameAuthorization: []serverv1.CapabilitiesHostnameAuthorization{serverv1.LocalClaim},
+		LocalClaim:            &serverv1.LocalClaimCapabilities{Suffix: cfg.RouteSuffix()},
+		Transport: serverv1.TransportCapabilities{
+			Type: serverv1.Tailcat, Version: serverv1.TransportCapabilitiesVersionN1, RelayProfile: relayProfile,
 		},
 	}
-	if cfg.ExternalAuthEnabled() {
-		result.DeviceAuthorization = &corev1.DeviceAuthorizationCapabilities{
-			Issuer: cfg.ExternalAuthIssuer, ClientId: cfg.ExternalAuthClientID,
-			Scope: cfg.ExternalAuthScope, DeviceAuthorizationEndpoint: cfg.ExternalAuthDeviceURL,
-			TokenEndpoint: cfg.ExternalAuthTokenURL,
+	if cfg.OIDCEnabled() {
+		result.Oidc = &serverv1.OIDCCapabilities{
+			Issuer: cfg.OIDCIssuer, ClientId: cfg.OIDCClientID,
 		}
 	}
 	if cfg.ACMEEnabled() {
-		result.Acme = &corev1.AcmeCapabilities{Profile: cfg.ACMEProfile}
+		result.Acme = &serverv1.AcmeCapabilities{Profile: cfg.ACMEProfile}
 	}
 	return result
 }
@@ -736,16 +729,16 @@ func report(err error) {
 	}
 }
 
-type coreAPIObserver struct {
+type serverAPIObserver struct {
 	metrics *observability.Metrics
 }
 
-func (o coreAPIObserver) ObserveRequest(operation api.Operation, result api.RequestResult, duration time.Duration) {
+func (o serverAPIObserver) ObserveRequest(operation api.Operation, result api.RequestResult, duration time.Duration) {
 	o.metrics.ObserveAPIRequest(string(operation), string(result), duration)
 }
 
-func (coreAPIObserver) ReportError(err error, requestID string, operation api.Operation) {
-	report(fmt.Errorf("core API operation=%s request_id=%s: %w", operation, requestID, err))
+func (serverAPIObserver) ReportError(err error, requestID string, operation api.Operation) {
+	report(fmt.Errorf("server API operation=%s request_id=%s: %w", operation, requestID, err))
 }
 
 func monitorWorker(ctx context.Context, owner worker.RouteOwner, metrics *observability.Metrics) {

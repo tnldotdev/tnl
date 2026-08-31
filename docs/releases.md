@@ -95,18 +95,13 @@ license files are available under `/licenses/tnl` in the image filesystem.
 
 ## Pre-1.0 Configuration Changes
 
-Current daemon releases derive `core.<domain>` and `apps.<domain>` from one
-`TNLD_DOMAIN` value. Remove `TNLD_CONTROL_HOSTNAME`, `TNLD_ROUTE_SUFFIX`, and
-manual control-certificate settings when upgrading. Public ingress now requires
-automatic ACME configuration.
+Current daemon releases derive `tnl.<domain>` and `apps.<domain>` from one
+`TNLD_DOMAIN` value. Public ingress requires automatic ACME configuration.
 
-The daemon creates its bootstrap token in the state directory. An existing
-`TNLD_BOOTSTRAP_TOKEN` is imported only when that state has no token yet; remove
-the environment variable after the first successful startup so it cannot block
-a later offline rotation. Retrieve the persisted value with `tnld
-bootstrap-token --state-dir DIR`, and use `tnl login` instead of the removed
-`tnl auth` and client-side token-generation commands. Worker and workload
-credentials are generated with `tnld token worker` and `tnld token workload`.
+The daemon creates its login token in the state directory. Retrieve it with
+`tnld login-token --state-dir DIR`, and use `tnl login` to save a revocable
+access credential. Worker and service credentials are generated with `tnld
+token worker` and `tnld token service`.
 
 Use `TNLD_RELAY_PROVIDER=tailcat` to explicitly opt into automatic hosted relay
 selection, or retain `TNLD_RELAY_MAP_FILE` for an operator-approved custom map.
@@ -133,7 +128,7 @@ docker compose start tnld
 ```
 
 Confirm `tnld` is stopped before the archive starts. Back up the whole volume,
-including SQLite files, ACME state, the bootstrap token, and the pinned relay
+including SQLite files, ACME state, the login token, and the pinned relay
 map. Encrypt the archive and retain the matching daemon version alongside it.
 
 Test restoration with a new disposable volume:
