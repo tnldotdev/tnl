@@ -14,6 +14,9 @@ import (
 )
 
 func loadCertPool(path string) (*x509.CertPool, error) {
+	if path == "" {
+		return nil, nil
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err

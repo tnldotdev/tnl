@@ -23,18 +23,9 @@ var migrationFiles embed.FS
 
 // Open creates, configures, and migrates the database in dir.
 func Open(ctx context.Context, dir string) (*sql.DB, error) {
-	if strings.TrimSpace(dir) == "" {
-		return nil, errors.New("state: empty directory")
-	}
-	dir, err := filepath.Abs(dir)
+	dir, err := prepareDirectory(dir)
 	if err != nil {
-		return nil, fmt.Errorf("state: resolve directory: %w", err)
-	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, fmt.Errorf("state: create directory: %w", err)
-	}
-	if err := os.Chmod(dir, 0o700); err != nil {
-		return nil, fmt.Errorf("state: secure directory: %w", err)
+		return nil, err
 	}
 
 	path := filepath.Join(dir, databaseName)
@@ -56,6 +47,23 @@ func Open(ctx context.Context, dir string) (*sql.DB, error) {
 		return nil, err
 	}
 	return db, nil
+}
+
+func prepareDirectory(dir string) (string, error) {
+	if strings.TrimSpace(dir) == "" {
+		return "", errors.New("state: empty directory")
+	}
+	dir, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("state: resolve directory: %w", err)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("state: create directory: %w", err)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return "", fmt.Errorf("state: secure directory: %w", err)
+	}
+	return dir, nil
 }
 
 func dataSourceName(path string) string {

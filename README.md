@@ -2,12 +2,12 @@
 
 A public URL for localhost.
 
-tnl is a standalone-preview tunnel service. `tnld` owns the control API,
+tnl is a self-hosted tunnel service. `tnld` owns the control API,
 hostname claims, public TLS ingress, and durable SQLite state. `tnl` claims a
 hostname and carries public connections to one literal-loopback HTTP service.
 
-The standalone deployment is the supported preview path. Split edge and worker
-modes are experimental.
+Run one standalone daemon for the smallest deployment, or separate the stateful
+edge from a fixed pool of stateless route workers.
 
 ## Install
 
@@ -32,19 +32,14 @@ cd deploy
 install -m 0600 .env.example .env
 ```
 
-Add an approved Tailscale DERP map as `derp-map.json` and replace every value
-in `.env`. Generate `TNLD_BOOTSTRAP_TOKEN` with:
-
-```console
-tnl token bootstrap
-```
-
-Start the daemon after replacing every placeholder:
+Set `TNL_IMAGE`, `TNLD_DOMAIN`, and the ACME account values in `.env`, then
+start the daemon:
 
 ```console
 docker compose pull
 docker compose up -d
 curl --fail https://core.example.com/v1/capabilities
+docker compose exec tnld tnld bootstrap-token --state-dir /var/lib/tnl
 ```
 
 The Compose deployment runs the container as a non-root user with a read-only
@@ -59,25 +54,21 @@ the client's private state directory:
 
 ```console
 export TNL_CORE_URL=https://core.example.com
-tnl auth login
+tnl login
 tnl public 3000 --host=demo
 ```
 
 The command prints the account URL and one-time code to approve. Use
-`tnl auth logout` to revoke and remove the saved credential.
+`tnl logout` to revoke and remove the saved credential.
 
-For a self-hosted core without browser login, exchange its deployment bootstrap
-token on the client, then remove it from the environment. Keep the returned
-access token private to that client. In both flows, the client fetches the
-deployment's selected relay region from the core API:
+For a self-hosted core without browser login, `tnl login` securely prompts for
+the bootstrap token printed by the daemon command above and stores a revocable
+access credential in the client's private state directory. The client fetches
+the deployment's pinned relay region from the core API:
 
 ```console
 export TNL_CORE_URL=https://core.example.com
-read -rsp 'Bootstrap token: ' TNL_BOOTSTRAP_TOKEN && printf '\n'
-export TNL_BOOTSTRAP_TOKEN
-export TNL_ACCESS_TOKEN="$(tnl auth exchange)"
-unset TNL_BOOTSTRAP_TOKEN
-
+tnl login
 tnl public 3000 --host=demo
 ```
 
@@ -90,10 +81,6 @@ With automatic certificates enabled, the route becomes available at
 `https://demo.apps.example.com`. Omit `--host` to allocate a stable random name
 for that local target. Use `tnl host list` to list active claims and
 `tnl host release HOSTNAME` to permanently release and tombstone one.
-
-Manual application certificates require an ECDSA P-256 key and exactly one DNS
-SAN equal to the complete route hostname. Pass them with `--cert-file` and
-`--key-file`.
 
 ## Components
 

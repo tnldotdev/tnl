@@ -35,6 +35,7 @@ import (
 	"github.com/0xcadams/tnl/internal/workersession"
 	"github.com/0xcadams/tnl/pkg/protocol/corev1"
 	"github.com/0xcadams/tnl/pkg/protocol/workerv1"
+	"github.com/alecthomas/kong"
 	"tailscale.com/tailcfg"
 )
 
@@ -52,6 +53,33 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 		_, err := fmt.Fprintln(stdout, buildinfo.Line("tnld"))
 		return err
 	}
+	if len(args) == 2 && args[0] == "token" {
+		var value string
+		switch args[1] {
+		case "worker":
+			token, _, err := credentials.NewWorkerToken()
+			if err != nil {
+				return err
+			}
+			value = token.String()
+		case "workload":
+			token, _, err := credentials.NewWorkloadToken()
+			if err != nil {
+				return err
+			}
+			value = token.String()
+		default:
+			return errors.New("token type must be worker or workload")
+		}
+		_, err := fmt.Fprintln(stdout, value)
+		return err
+	}
+	if len(args) > 0 && args[0] == "bootstrap-token" {
+		return runBootstrapToken(args[1:], stdout)
+	}
+	if len(args) > 0 && args[0] == "relay" {
+		return runRelay(ctx, args[1:], stdout)
+	}
 	cfg, err := config.ParseTNLD(args)
 	if err != nil {
 		return err
@@ -59,8 +87,66 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 	return serve(ctx, cfg)
 }
 
+type bootstrapTokenCommand struct {
+	StateDir string `name:"state-dir" env:"TNLD_STATE_DIR" type:"path" required:"" help:"Directory containing persistent daemon state."`
+	Rotate   bool   `name:"rotate" help:"Replace the bootstrap token; the daemon must be stopped."`
+}
+
+func runBootstrapToken(args []string, stdout io.Writer) error {
+	var command bootstrapTokenCommand
+	parser, err := kong.New(&command, kong.Name("tnld bootstrap-token"))
+	if err != nil {
+		return err
+	}
+	if _, err := parser.Parse(args); err != nil {
+		return err
+	}
+	var token credentials.BootstrapToken
+	if command.Rotate {
+		token, err = state.RotateBootstrapToken(command.StateDir)
+	} else {
+		token, err = state.ReadBootstrapToken(command.StateDir)
+	}
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(stdout, token.String())
+	return err
+}
+
+type relayCommand struct {
+	StateDir string `name:"state-dir" env:"TNLD_STATE_DIR" type:"path" required:"" help:"Directory containing persistent daemon state."`
+}
+
+func runRelay(ctx context.Context, args []string, stdout io.Writer) error {
+	if len(args) == 0 || args[0] != "refresh" {
+		return errors.New("usage: tnld relay refresh [--state-dir DIR]")
+	}
+	var command relayCommand
+	parser, err := kong.New(&command, kong.Name("tnld relay refresh"))
+	if err != nil {
+		return err
+	}
+	if _, err := parser.Parse(args[1:]); err != nil {
+		return err
+	}
+	lock, err := state.LockDirectory(command.StateDir)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	_, profile, err := config.LoadTailcatRelayProfiles(ctx, command.StateDir, true)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(stdout, profile)
+	return err
+}
+
 type daemon struct {
 	db              *sql.DB
+	stateLock       *state.DirectoryLock
+	bootstrap       credentials.BootstrapToken
 	metricsServer   *observability.Server
 	controlListener net.Listener
 	controlServer   *http.Server
@@ -84,11 +170,27 @@ func serve(ctx context.Context, cfg config.TNLD) error {
 	done := make(chan error, 4)
 
 	if cfg.Mode.UsesState() {
-		db, err := state.Open(ctx, cfg.StateDir)
+		stateLock, err := state.LockDirectory(cfg.StateDir)
 		if err != nil {
 			return err
 		}
+		running.stateLock = stateLock
+		db, err := state.Open(ctx, cfg.StateDir)
+		if err != nil {
+			return errors.Join(err, running.shutdown(cfg.DrainTimeout))
+		}
 		running.db = db
+		legacy := credentials.BootstrapToken(os.Getenv("TNLD_BOOTSTRAP_TOKEN"))
+		bootstrap, generated, err := state.EnsureBootstrapToken(cfg.StateDir, legacy)
+		if err != nil {
+			return errors.Join(err, running.shutdown(cfg.DrainTimeout))
+		}
+		running.bootstrap = bootstrap
+		if legacy != "" {
+			log.Print("TNLD_BOOTSTRAP_TOKEN is deprecated; the token is now persisted in the state directory")
+		} else if generated {
+			log.Print("generated bootstrap token; retrieve it with tnld bootstrap-token")
+		}
 		if err := metrics.RegisterDatabase(db); err != nil {
 			return errors.Join(err, running.shutdown(cfg.DrainTimeout))
 		}
@@ -139,11 +241,12 @@ func (d *daemon) startCore(
 	cfg config.TNLD,
 	metrics *observability.Metrics,
 ) (<-chan error, <-chan error, error) {
-	profiles, err := relayProfiles(cfg)
+	profiles, relayProfile, err := relayProfiles(ctx, cfg)
 	if err != nil {
 		return nil, nil, err
 	}
-	relayMap, err := config.SelectedRelayMap(profiles, cfg.RelayProfile)
+	log.Printf("using relay profile %q", relayProfile)
+	relayMap, err := config.SelectedRelayMap(profiles, relayProfile)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -158,13 +261,11 @@ func (d *daemon) startCore(
 			return nil, nil, err
 		}
 	}
-	authService, err := auth.NewServiceWithExternal(
-		d.db, credentials.BootstrapToken(cfg.BootstrapToken), externalVerifier,
-	)
+	authService, err := auth.NewServiceWithExternal(d.db, d.bootstrap, externalVerifier)
 	if err != nil {
 		return nil, nil, err
 	}
-	store, err := routes.NewStore(d.db, cfg.RouteSuffix, routes.StoreConfig{
+	store, err := routes.NewStore(d.db, cfg.RouteSuffix(), routes.StoreConfig{
 		MaxActiveHostnameClaims:  cfg.MaxActiveHostnameClaims,
 		MaxHostnameClaimRequests: cfg.MaxHostnameClaimRequests,
 		ObserveOperation: func(operation routes.StoreOperation, duration time.Duration, err error) {
@@ -252,16 +353,15 @@ func (d *daemon) startCore(
 	}
 
 	controlTLS, err := controltls.New(controltls.Config{
-		Hostname: cfg.ControlHostname, StateDir: cfg.StateDir,
+		Hostname: cfg.ControlHostname(), StateDir: cfg.StateDir,
 		DirectoryURL: cfg.ACMEDirectoryURL, Email: cfg.ACMEEmail, AcceptTerms: cfg.ACMEAcceptTerms,
-		CertFile: cfg.ControlCertFile, KeyFile: cfg.ControlKeyFile,
 	})
 	if err != nil {
 		return nil, nil, err
 	}
 	apiMetrics := coreAPIObserver{metrics: metrics}
 	handler := api.NewHandlerWithServicesAndConfig(
-		capabilities(cfg),
+		capabilities(cfg, relayProfile),
 		authService,
 		d.coordinator,
 		certificateService,
@@ -288,7 +388,7 @@ func (d *daemon) startCore(
 			route, ok := d.coordinator.Lookup(hostname)
 			return route.Backend, ok
 		},
-		ControlHostname:    cfg.ControlHostname,
+		ControlHostname:    cfg.ControlHostname(),
 		HandleControl:      controlListener.Enqueue,
 		RequireProxyHeader: cfg.RequireProxyHeader, MaxConnections: cfg.PublicConnLimit,
 		MaxRouteConnections: cfg.RouteConnLimit, Metrics: metrics, OnError: report,
@@ -533,27 +633,35 @@ func (d *daemon) shutdown(timeout time.Duration) error {
 			result = errors.Join(result, fmt.Errorf("close state: %w", err))
 		}
 	}
+	if d.stateLock != nil {
+		result = errors.Join(result, d.stateLock.Close())
+		d.stateLock = nil
+	}
 	return result
 }
 
-func relayProfiles(cfg config.TNLD) (map[string]*tailcfg.DERPRegion, error) {
+func relayProfiles(ctx context.Context, cfg config.TNLD) (map[string]*tailcfg.DERPRegion, string, error) {
+	if cfg.RelayProvider == "tailcat" {
+		return config.LoadTailcatRelayProfiles(ctx, cfg.StateDir, false)
+	}
 	profiles, err := config.LoadRelayProfiles(cfg.RelayMapFile)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	if profiles[cfg.RelayProfile] == nil {
-		return nil, fmt.Errorf("relay profile %q is absent from the relay map", cfg.RelayProfile)
+	profile, err := config.SelectRelayProfile(profiles, cfg.RelayProfile)
+	if err != nil {
+		return nil, "", err
 	}
-	return profiles, nil
+	return profiles, profile, nil
 }
 
-func capabilities(cfg config.TNLD) corev1.Capabilities {
+func capabilities(cfg config.TNLD, relayProfile string) corev1.Capabilities {
 	result := corev1.Capabilities{
 		ProtocolVersions:      []corev1.CapabilitiesProtocolVersions{corev1.CapabilitiesProtocolVersionsN1},
 		HostnameAuthorization: []corev1.CapabilitiesHostnameAuthorization{corev1.LocalClaim},
-		LocalClaim:            &corev1.LocalClaimCapabilities{Suffix: cfg.RouteSuffix},
+		LocalClaim:            &corev1.LocalClaimCapabilities{Suffix: cfg.RouteSuffix()},
 		Transport: corev1.TransportCapabilities{
-			Type: corev1.Tailcat, Version: corev1.TransportCapabilitiesVersionN1, RelayProfile: cfg.RelayProfile,
+			Type: corev1.Tailcat, Version: corev1.TransportCapabilitiesVersionN1, RelayProfile: relayProfile,
 		},
 	}
 	if cfg.ExternalAuthEnabled() {

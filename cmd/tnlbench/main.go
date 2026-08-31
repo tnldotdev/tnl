@@ -38,7 +38,7 @@ type cli struct {
 	Topology       string        `name:"topology" env:"TNL_BENCH_TOPOLOGY" enum:"single-node,ha" required:"" help:"Deployment topology under test."`
 	CoreURL        string        `name:"core-url" env:"TNL_BENCH_CORE_URL" required:"" help:"Core HTTPS origin."`
 	BootstrapToken string        `name:"bootstrap-token" env:"TNL_BENCH_BOOTSTRAP_TOKEN" required:"" help:"Core bootstrap token."`
-	ControlCAFile  string        `name:"control-ca-file" env:"TNL_BENCH_CONTROL_CA_FILE" type:"path" required:"" help:"PEM CA for the core endpoint."`
+	ControlCAFile  string        `name:"control-ca-file" env:"TNL_BENCH_CONTROL_CA_FILE" type:"path" help:"Optional PEM CA for the core endpoint; system roots are used when omitted."`
 	PublicAddress  string        `name:"public-address" env:"TNL_BENCH_PUBLIC_ADDRESS" required:"" help:"Public ingress host:port to dial."`
 	HostnameSuffix string        `name:"hostname-suffix" env:"TNL_BENCH_HOSTNAME_SUFFIX" required:"" help:"Suffix below which benchmark routes are created."`
 	MetricsURLs    []string      `name:"metrics-url" env:"TNL_BENCH_METRICS_URLS" help:"Private worker metrics URL; repeat for each worker."`

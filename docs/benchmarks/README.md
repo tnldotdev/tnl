@@ -14,8 +14,20 @@ single point of failure.
 
 ## Run
 
-The benchmark requires `fly`, `jq`, `curl`, and `openssl`, plus access to the
-configured Fly organization. Run the default matrix with:
+The benchmark requires `fly`, `jq`, `curl`, and `openssl`, access to the
+configured Fly organization, and a DNS/ACME test environment. Set:
+
+- `DOMAIN` to a dedicated benchmark base domain.
+- `DNS_HOOK` to an executable that accepts the base domain and generated
+  `<app>.fly.dev` target, then updates `core.<domain>` and `*.apps.<domain>` to
+  route to that target. The hook must wait until the records are observable.
+- `ACME_DIRECTORY_URL` and `ACME_EMAIL` for an ACME service that supports
+  TLS-ALPN-01 and the `tlsserver` profile.
+- `CONTROL_CA_FILE` to a PEM bundle that trusts both the ACME directory and its
+  issued control certificates.
+
+Use a dedicated benchmark CA to avoid public issuance rate limits. Run the
+default matrix with:
 
 ```console
 mise exec -- task go:bench-fly
@@ -97,9 +109,9 @@ for the four large benchmark workers. At idle, only one 2-CPU, 4 GB worker runs.
 
 Fly's request-based autoscaler cannot observe route demand because workers
 connect outbound to the edge. Keep Fly request autoscaling and edge auto-stop
-disabled, and use an external metrics scaler. Automatic scale-in remains
-experimental until graceful worker drain and lease reacquisition are qualified
-under continuous traffic.
+disabled, and use an external metrics scaler. Do not enable automatic scale-in
+until graceful worker drain and lease reacquisition are qualified under
+continuous traffic.
 
 ## Results
 

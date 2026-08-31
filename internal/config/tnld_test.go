@@ -155,39 +155,57 @@ func TestTNLDValidateExternalAuthentication(t *testing.T) {
 }
 
 func TestTNLDValidateACME(t *testing.T) {
-	bootstrap, err := credentials.NewBootstrapToken()
-	if err != nil {
-		t.Fatal(err)
-	}
 	valid := TNLD{
-		Mode: TNLDModeStandalone, StateDir: "/state", ControlHostname: "control.example.com", RouteSuffix: "example.com",
-		PublicListen: "127.0.0.1:443", ControlCertFile: "/control.crt", ControlKeyFile: "/control.key",
-		BootstrapToken: bootstrap.String(), RelayMapFile: "/relay.json", RelayProfile: "default",
+		Mode: TNLDModeStandalone, StateDir: "/state", Domain: "example.com",
+		PublicListen: "127.0.0.1:443", RelayMapFile: "/relay.json", RelayProfile: "default",
 		WorkerCapacity: 1, WorkerStreamLimit: 1, PublicConnLimit: 1, RouteConnLimit: 1, DrainTimeout: 30,
 		MaxActiveHostnameClaims: 128, MaxHostnameClaimRequests: 1024,
-		ACMEDirectoryURL: "https://acme.example/directory", ACMEEmail: "operator@example.com", ACMEProfile: "tlsserver",
+		ACMEDirectoryURL: "https://acme.example/directory", ACMEEmail: "operator@example.com",
+		ACMEAcceptTerms: true, ACMEProfile: "tlsserver",
 	}
 	if err := valid.Validate(); err != nil {
 		t.Fatalf("valid ACME config: %v", err)
 	}
-	automaticControl := valid
-	automaticControl.ControlCertFile = ""
-	automaticControl.ControlKeyFile = ""
-	if err := automaticControl.Validate(); err != nil {
-		t.Fatalf("automatic control config: %v", err)
+	if got := valid.ControlHostname(); got != "core.example.com" {
+		t.Fatalf("ControlHostname = %q", got)
 	}
-	missingControlTLS := automaticControl
+	if got := valid.RouteSuffix(); got != "apps.example.com" {
+		t.Fatalf("RouteSuffix = %q", got)
+	}
+	provider := valid
+	provider.RelayMapFile = ""
+	provider.RelayProfile = ""
+	provider.RelayProvider = "tailcat"
+	if err := provider.Validate(); err != nil {
+		t.Fatalf("valid relay provider config: %v", err)
+	}
+	conflictingRelaySource := provider
+	conflictingRelaySource.RelayMapFile = "/relay.json"
+	if err := conflictingRelaySource.Validate(); err == nil {
+		t.Fatal("relay provider and custom map accepted together")
+	}
+	missingControlTLS := valid
 	missingControlTLS.ACMEDirectoryURL = ""
 	missingControlTLS.ACMEEmail = ""
 	if err := missingControlTLS.Validate(); err == nil {
-		t.Fatal("control config without ACME or a manual keypair succeeded")
+		t.Fatal("control config without ACME succeeded")
 	}
 	for name, mutate := range map[string]func(*TNLD){
-		"non-HTTPS directory":  func(config *TNLD) { config.ACMEDirectoryURL = "http://acme.example/directory" },
-		"invalid email":        func(config *TNLD) { config.ACMEEmail = "Operator <operator@example.com>" },
-		"missing ingress":      func(config *TNLD) { config.PublicListen = "" },
-		"invalid control host": func(config *TNLD) { config.ControlHostname = "Control.example.com" },
-		"long route suffix":    func(config *TNLD) { config.RouteSuffix = strings.Repeat("a.", 95) + "a" },
+		"non-HTTPS directory": func(config *TNLD) { config.ACMEDirectoryURL = "http://acme.example/directory" },
+		"invalid email":       func(config *TNLD) { config.ACMEEmail = "Operator <operator@example.com>" },
+		"missing ingress":     func(config *TNLD) { config.PublicListen = "" },
+		"terms not accepted":  func(config *TNLD) { config.ACMEAcceptTerms = false },
+		"invalid domain":      func(config *TNLD) { config.Domain = "Example.com" },
+		"long domain":         func(config *TNLD) { config.Domain = strings.Repeat("a.", 95) + "a" },
+		"missing relay source": func(config *TNLD) {
+			config.RelayMapFile = ""
+			config.RelayProfile = ""
+		},
+		"unknown relay provider": func(config *TNLD) {
+			config.RelayMapFile = ""
+			config.RelayProfile = ""
+			config.RelayProvider = "other"
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			config := valid

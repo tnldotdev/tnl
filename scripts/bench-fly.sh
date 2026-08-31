@@ -22,6 +22,13 @@ worker_size="${WORKER_SIZE:-performance-6x}"
 driver_size="${DRIVER_SIZE:-performance-8x}"
 local_control_port="${LOCAL_CONTROL_PORT:-18443}"
 derp_region="${DERP_REGION:-302}"
+domain="${DOMAIN:?set DOMAIN to the benchmark base domain}"
+dns_hook="${DNS_HOOK:?set DNS_HOOK to an executable that updates benchmark DNS}"
+acme_directory_url="${ACME_DIRECTORY_URL:?set ACME_DIRECTORY_URL to the benchmark ACME directory}"
+acme_email="${ACME_EMAIL:?set ACME_EMAIL to the benchmark ACME account contact}"
+control_ca_file="${CONTROL_CA_FILE:?set CONTROL_CA_FILE to the ACME issuer root bundle}"
+core_hostname="core.${domain}"
+route_suffix="apps.${domain}"
 run_id="$(date -u +%m%d%H%M)-$(openssl rand -hex 2)"
 barrier_token="$(openssl rand -hex 32)"
 app="tnl-bench-${run_id}"
@@ -31,6 +38,12 @@ results_dir="${RESULTS_DIR:-bench-results}"
 results_file="${results_dir}/${run_id}.jsonl"
 proxy_pid=""
 edge_metrics_url=""
+bootstrap_token=""
+
+if [[ ! -x "${dns_hook}" ]]; then
+  printf 'DNS_HOOK must be executable: %s\n' "${dns_hook}" >&2
+  exit 2
+fi
 
 stop_proxy() {
   if [[ -n "${proxy_pid}" ]]; then
@@ -161,8 +174,8 @@ wait_for_core() {
   while ((SECONDS < deadline)); do
     if curl --fail --silent --show-error \
       --cacert "${temp_dir}/control-ca.crt" \
-      --resolve "${app}.fly.dev:${local_control_port}:127.0.0.1" \
-      "https://${app}.fly.dev:${local_control_port}/v1/capabilities" >/dev/null; then
+      --resolve "${core_hostname}:${local_control_port}:127.0.0.1" \
+      "https://${core_hostname}:${local_control_port}/v1/capabilities" >/dev/null; then
       stop_proxy
       return 0
     fi
@@ -170,6 +183,28 @@ wait_for_core() {
   done
   stop_proxy
   printf 'core did not become ready\n' >&2
+  return 1
+}
+
+read_bootstrap_token() {
+  local machine_name="$1"
+  local machine_id
+  machine_id="$(machine_value "${machine_name}" id)"
+  local deadline=$((SECONDS + 120))
+  while ((SECONDS < deadline)); do
+    local output
+    output="$(fly ssh console --app "${app}" --machine "${machine_id}" \
+      --command '/tnld bootstrap-token --state-dir /tmp/tnl-state' 2>/dev/null || true)"
+    while IFS= read -r line; do
+      line="${line//$'\r'/}"
+      if [[ "${line}" =~ ^tnl_bootstrap_[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$ ]]; then
+        printf '%s\n' "${line}"
+        return 0
+      fi
+    done <<<"${output}"
+    sleep 2
+  done
+  printf 'could not retrieve bootstrap token from %s\n' "${machine_name}" >&2
   return 1
 }
 
@@ -181,23 +216,22 @@ launch_single_node() {
     --app "${app}" --name single-node --region "${region}" --vm-size "${single_size}" \
     --detach --restart no \
     --port 443:4443/tcp \
-    --file-local "/etc/tnl/control.crt=${temp_dir}/control.crt" \
-    --file-local "/etc/tnl/control.key=${temp_dir}/control.key" \
+    --file-local "/etc/tnl/control-ca.crt=${temp_dir}/control-ca.crt" \
     --file-local "/etc/tnl/relay.json=${temp_dir}/relay.json" \
     --env TNLD_MODE=standalone \
     --env TNLD_STATE_DIR=/tmp/tnl-state \
     --env 'TNLD_METRICS_LISTEN=[::]:9090' \
     --env 'TNLD_PUBLIC_LISTEN=[::]:4443' \
-    --env "TNLD_CONTROL_HOSTNAME=${app}.fly.dev" \
-    --env "TNLD_ROUTE_SUFFIX=${run_id}.bench.test" \
+    --env "TNLD_DOMAIN=${domain}" \
     --env "TNLD_MAX_ACTIVE_HOSTNAME_CLAIMS=${active_claim_limit}" \
     --env "TNLD_MAX_HOSTNAME_CLAIM_REQUESTS=${claim_request_limit}" \
-    --env TNLD_CONTROL_CERT_FILE=/etc/tnl/control.crt \
-    --env TNLD_CONTROL_KEY_FILE=/etc/tnl/control.key \
-    --env "TNLD_BOOTSTRAP_TOKEN=${bootstrap_token}" \
+    --env "TNLD_ACME_DIRECTORY_URL=${acme_directory_url}" \
+    --env "TNLD_ACME_EMAIL=${acme_email}" \
+    --env TNLD_ACME_ACCEPT_TERMS=true \
     --env TNLD_RELAY_MAP_FILE=/etc/tnl/relay.json \
     --env "TNLD_RELAY_PROFILE=${relay_profile}" \
     --env "TNLD_WORKER_CAPACITY=${worker_capacity}" \
+    --env SSL_CERT_FILE=/etc/tnl/control-ca.crt \
     --env "TNL_NOFILE_LIMIT=${nofile_limit}" \
     --env TS_DEBUG_NEVER_DIRECT_UDP=1
 }
@@ -210,23 +244,22 @@ launch_edge() {
     --app "${app}" --name edge --region "${region}" --vm-size "${edge_size}" \
     --detach --restart no \
     --port 443:4443/tcp \
-    --file-local "/etc/tnl/control.crt=${temp_dir}/control.crt" \
-    --file-local "/etc/tnl/control.key=${temp_dir}/control.key" \
+    --file-local "/etc/tnl/control-ca.crt=${temp_dir}/control-ca.crt" \
     --file-local "/etc/tnl/relay.json=${temp_dir}/relay.json" \
     --env TNLD_MODE=edge \
     --env TNLD_STATE_DIR=/tmp/tnl-state \
     --env 'TNLD_METRICS_LISTEN=[::]:9090' \
     --env 'TNLD_PUBLIC_LISTEN=[::]:4443' \
-    --env "TNLD_CONTROL_HOSTNAME=${app}.fly.dev" \
-    --env "TNLD_ROUTE_SUFFIX=${run_id}.bench.test" \
+    --env "TNLD_DOMAIN=${domain}" \
     --env "TNLD_MAX_ACTIVE_HOSTNAME_CLAIMS=${active_claim_limit}" \
     --env "TNLD_MAX_HOSTNAME_CLAIM_REQUESTS=${claim_request_limit}" \
-    --env TNLD_CONTROL_CERT_FILE=/etc/tnl/control.crt \
-    --env TNLD_CONTROL_KEY_FILE=/etc/tnl/control.key \
-    --env "TNLD_BOOTSTRAP_TOKEN=${bootstrap_token}" \
+    --env "TNLD_ACME_DIRECTORY_URL=${acme_directory_url}" \
+    --env "TNLD_ACME_EMAIL=${acme_email}" \
+    --env TNLD_ACME_ACCEPT_TERMS=true \
     --env TNLD_RELAY_MAP_FILE=/etc/tnl/relay.json \
     --env "TNLD_RELAY_PROFILE=${relay_profile}" \
     --env "TNLD_WORKER_TOKEN=${worker_token}" \
+    --env SSL_CERT_FILE=/etc/tnl/control-ca.crt \
     --env "TNL_NOFILE_LIMIT=${nofile_limit}"
 }
 
@@ -240,7 +273,7 @@ launch_workers() {
       --file-local "/etc/tnl/control-ca.crt=${temp_dir}/control-ca.crt" \
       --env TNLD_MODE=worker \
       --env 'TNLD_METRICS_LISTEN=[::]:9090' \
-      --env "TNLD_WORKER_URL=wss://${app}.fly.dev/internal/v1/worker" \
+      --env "TNLD_WORKER_URL=wss://${core_hostname}/internal/v1/worker" \
       --env "TNLD_WORKER_TOKEN=${worker_token}" \
       --env "TNLD_WORKER_CAPACITY=${worker_capacity}" \
       --env SSL_CERT_FILE=/etc/tnl/control-ca.crt \
@@ -298,11 +331,11 @@ run_tier() {
       --file-local "/etc/tnl/control-ca.crt=${temp_dir}/control-ca.crt" \
       --file-local "/etc/tnl/relay.json=${temp_dir}/relay.json" \
       --env "TNL_BENCH_TOPOLOGY=${topology}" \
-      --env "TNL_BENCH_CORE_URL=https://${app}.fly.dev" \
+      --env "TNL_BENCH_CORE_URL=https://${core_hostname}" \
       --env "TNL_BENCH_BOOTSTRAP_TOKEN=${bootstrap_token}" \
       --env TNL_BENCH_CONTROL_CA_FILE=/etc/tnl/control-ca.crt \
       --env "TNL_BENCH_PUBLIC_ADDRESS=${app}.fly.dev:443" \
-      --env "TNL_BENCH_HOSTNAME_SUFFIX=${run_id}.bench.test" \
+      --env "TNL_BENCH_HOSTNAME_SUFFIX=${route_suffix}" \
       --env "TNL_BENCH_METRICS_URLS=${metrics_csv}" \
       --env "TNL_BENCH_EDGE_METRICS_URL=${edge_metrics_url}" \
       --env "TNL_BENCH_ROUTES=${count}" \
@@ -379,8 +412,8 @@ run_tier() {
 }
 
 mkdir -p "${results_dir}"
-bootstrap_token="$(go run ./cmd/tnl token bootstrap)"
-worker_token="$(go run ./cmd/tnl token worker)"
+worker_token="$(go run ./cmd/tnld token worker)"
+cp "${control_ca_file}" "${temp_dir}/control-ca.crt"
 
 curl --fail --silent --show-error https://tailcat.dev/derpmap.json >"${temp_dir}/relay.json"
 relay_profile="$(jq -r --arg region "${derp_region}" '.Regions[$region].RegionCode // empty' "${temp_dir}/relay.json")"
@@ -389,19 +422,9 @@ if [[ -z "${relay_profile}" ]]; then
   exit 2
 fi
 
-openssl req -x509 -newkey rsa:2048 -sha256 -nodes \
-  -keyout "${temp_dir}/control-ca.key" -out "${temp_dir}/control-ca.crt" \
-  -days 1 -subj '/CN=tnl benchmark control CA' >/dev/null 2>&1
-openssl req -newkey rsa:2048 -sha256 -nodes \
-  -keyout "${temp_dir}/control.key" -out "${temp_dir}/control.csr" \
-  -subj "/CN=${app}.fly.dev" >/dev/null 2>&1
-printf 'subjectAltName=DNS:%s.fly.dev\nextendedKeyUsage=serverAuth\n' "${app}" >"${temp_dir}/control.ext"
-openssl x509 -req -sha256 -in "${temp_dir}/control.csr" \
-  -CA "${temp_dir}/control-ca.crt" -CAkey "${temp_dir}/control-ca.key" -CAcreateserial \
-  -out "${temp_dir}/control.crt" -days 1 -extfile "${temp_dir}/control.ext" >/dev/null 2>&1
-
 fly apps create "${app}" --org "${org}" --yes
 fly ips allocate-v6 --app "${app}" >/dev/null
+"${dns_hook}" "${domain}" "${app}.fly.dev"
 fly deploy . --app "${app}" --config fly.bench.toml --build-only --push \
   --image-label "${run_id}" --no-public-ips
 
@@ -418,6 +441,7 @@ for mode in "${mode_list[@]}"; do
           destroy_machines
           launch_single_node "${routes}"
           wait_for_core
+          bootstrap_token="$(read_bootstrap_token single-node)"
           single_ip="$(machine_value single-node private_ip)"
           edge_metrics_url="http://[${single_ip}]:9090/metrics"
           if run_tier single-node "${routes}" "${single_size}" "http://[${single_ip}]:9090/metrics"; then
@@ -443,6 +467,7 @@ for mode in "${mode_list[@]}"; do
           destroy_machines
           launch_edge "${routes}"
           wait_for_core
+          bootstrap_token="$(read_bootstrap_token edge)"
           edge_ip="$(machine_value edge private_ip)"
           edge_metrics_url="http://[${edge_ip}]:9090/metrics"
           launch_workers
