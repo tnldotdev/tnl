@@ -9,6 +9,28 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 )
 
+func TestIntegrationUsageReplayPreservesPostgresTimestampPrecision(t *testing.T) {
+	database, base, lease, report := newIngressUsageFixture(t)
+	report.ObservedThrough = base.Add(20*time.Second + 123456789*time.Nanosecond)
+	report.ConnectionAttempts = 1
+	batch := IngressUsageBatch{Reports: []IngressUsageReport{report}, ObservedThrough: &report.ObservedThrough}
+	for range 2 {
+		if err := database.ReportIngressUsage(t.Context(), lease.IngressLeaseIdentity, batch, base.Add(21*time.Second)); err != nil {
+			t.Fatalf("identical high-precision report/replay: %v", err)
+		}
+	}
+	changed := report
+	changed.ObservedThrough = changed.ObservedThrough.Add(time.Microsecond)
+	if err := database.ReportIngressUsage(t.Context(), lease.IngressLeaseIdentity, IngressUsageBatch{Reports: []IngressUsageReport{changed}}, base.Add(22*time.Second)); !errors.Is(err, ErrIngressUsageReportConflict) {
+		t.Fatalf("changed stored timestamp: %v", err)
+	}
+	var attempts int64
+	var observed time.Time
+	if err := database.pool.QueryRow(t.Context(), `SELECT connection_attempts, observed_through FROM control.route_usage_buckets WHERE route_id = $1`, report.RouteID).Scan(&attempts, &observed); err != nil || attempts != 1 || !observed.Equal(report.ObservedThrough.Truncate(time.Microsecond)) {
+		t.Fatalf("replayed usage attempts=%d observed=%s: %v", attempts, observed, err)
+	}
+}
+
 func TestIntegrationIngressUsageReplaySkipsRouteLocks(t *testing.T) {
 	for _, lock := range []string{"route", "session"} {
 		t.Run(lock, func(t *testing.T) {
@@ -30,7 +52,9 @@ func TestIntegrationIngressUsageReplaySkipsRouteLocks(t *testing.T) {
 			}
 			defer rollbackTestTransaction(t, gate)
 			if lock == "route" {
-				_, err = controlstatedb.New(gate).LockRouteForSession(ctx, older.RouteID)
+				// Simulate an identity-changing/deleting writer. Session operations
+				// deliberately allow usage's KEY SHARE route references now.
+				_, err = gate.Exec(ctx, `SELECT id FROM control.routes WHERE id = $1 FOR UPDATE`, older.RouteID)
 			} else {
 				_, err = controlstatedb.New(gate).LockRouteSessionForUsage(ctx, controlstatedb.LockRouteSessionForUsageParams{
 					RouteID: older.RouteID, RouteVersion: int64(older.RouteVersion),

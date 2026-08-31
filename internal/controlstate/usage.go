@@ -413,7 +413,9 @@ func ingressUsageReportMatches(stored controlstatedb.ControlIngressUsageReport, 
 	return ok && stored.RouteID == report.RouteID && matchesPositiveInt64(stored.RouteVersion, report.RouteVersion) &&
 		stored.BucketStart.Valid && stored.BucketStart.Time.Equal(report.BucketStart) &&
 		stored.BucketEnd.Valid && stored.BucketEnd.Time.Equal(report.BucketEnd) &&
-		stored.ObservedThrough.Valid && stored.ObservedThrough.Time.Equal(report.ObservedThrough) &&
+		// PostgreSQL stores timestamptz at microsecond precision. Reporter clocks
+		// can carry nanoseconds, including on an otherwise identical retry.
+		stored.ObservedThrough.Valid && stored.ObservedThrough.Time.Equal(report.ObservedThrough.Truncate(time.Microsecond)) &&
 		matchesPositiveInt64(stored.ReportRevision, report.ReportRevision) &&
 		stored.ConnectionAttempts == counters.connectionAttempts && stored.PolicyDenials == counters.policyDenials &&
 		stored.CapacityDenials == counters.capacityDenials && stored.VisitorStreamOpenFailures == counters.visitorStreamOpenFailures &&
