@@ -42,6 +42,7 @@ func Open(ctx context.Context, dir string) (*sql.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("state: open database: %w", err)
 	}
+	db.SetMaxOpenConns(1)
 	if err := db.PingContext(ctx); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("state: connect database: %w", err)

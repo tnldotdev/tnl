@@ -25,6 +25,9 @@ func TestOpen(t *testing.T) {
 	assertPragma(t, db, "journal_mode", "wal")
 	assertPragma(t, db, "foreign_keys", "1")
 	assertPragma(t, db, "busy_timeout", "5000")
+	if got := db.Stats().MaxOpenConnections; got != 1 {
+		t.Fatalf("maximum open connections = %d, want 1", got)
+	}
 
 	var version int
 	if err := db.QueryRow("SELECT MAX(version_id) FROM goose_db_version").Scan(&version); err != nil {
