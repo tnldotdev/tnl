@@ -4,12 +4,12 @@ import { describe, expect, onTestFinished, test } from "vitest";
 import {
   errorMessage,
   openTestWebSocket,
+  openTestWebSocketWithMessage,
   requestTestServer,
   reserveLoopbackPort,
   startTestBootstrap,
   startTestProcess,
   waitForBootstrapRequest,
-  waitForWebSocketMessage,
   withProcessArguments,
   withProcessEnvironment,
 } from "../dev/test-helper.js";
@@ -153,11 +153,13 @@ test("runs Next.js with protected development assets and HMR", { timeout: 60_000
     });
     expect(attackerAsset.status).toBe(403);
 
-    const socket = await openTestWebSocket(port, "/_next/hmr?id=tnl-test", {
-      origin: "https://demo.tnl.dev",
-    });
+    const { message: socketMessage, socket } = await openTestWebSocketWithMessage(
+      port,
+      "/_next/hmr?id=tnl-test",
+      { origin: "https://demo.tnl.dev" },
+    );
     onTestFinished(() => socket.close());
-    const message = JSON.parse(await waitForWebSocketMessage(socket)) as { type?: string };
+    const message = JSON.parse(socketMessage) as { type?: string };
     expect(["isrManifest", "turbopack-connected"]).toContain(message.type);
 
     const attackerHmr = await requestTestServer(port, {

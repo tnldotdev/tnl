@@ -306,6 +306,28 @@ export async function openTestWebSocket(
   options: TestWebSocketOptions = {},
 ): Promise<WebSocket> {
   const socket = createTestWebSocket(port, path, options);
+  await waitForWebSocketOpen(socket);
+  return socket;
+}
+
+export async function openTestWebSocketWithMessage(
+  port: number,
+  path: string,
+  options: TestWebSocketOptions = {},
+): Promise<{ message: string; socket: WebSocket }> {
+  const socket = createTestWebSocket(port, path, options);
+  const message = waitForWebSocketMessage(socket);
+  try {
+    await waitForWebSocketOpen(socket);
+    return { message: await message, socket };
+  } catch (error) {
+    socket.close();
+    await message.catch(() => undefined);
+    throw error;
+  }
+}
+
+async function waitForWebSocketOpen(socket: WebSocket): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     socket.once("open", resolve);
     socket.once("unexpected-response", (_request, response) => {
@@ -314,7 +336,6 @@ export async function openTestWebSocket(
     });
     socket.once("error", reject);
   });
-  return socket;
 }
 
 export async function waitForWebSocketMessage(
