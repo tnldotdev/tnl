@@ -1,6 +1,6 @@
 {
   "name": "@tnldotdev/next",
-  "version": "0.1.0",
+  "version": "0.1.0-rc.1",
   "description": "Safe public development URLs for Next.js with tnl.",
   "license": "MIT",
   "repository": {
@@ -21,8 +21,7 @@
     }
   },
   "publishConfig": {
-    "access": "public",
-    "provenance": true
+    "access": "public"
   },
   "scripts": {
     "build": "pnpm --filter @tnldotdev/dev build && pnpm run build:self",

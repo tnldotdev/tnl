@@ -1,6 +1,6 @@
 {
   "name": "@tnldotdev/dev",
-  "version": "0.1.0",
+  "version": "0.1.0-rc.1",
   "description": "Support package for the official tnl framework integrations.",
   "license": "MIT",
   "repository": {
@@ -21,8 +21,7 @@
     }
   },
   "publishConfig": {
-    "access": "public",
-    "provenance": true
+    "access": "public"
   },
   "scripts": {
     "build": "pnpm run clean && tsc --project tsconfig.json",

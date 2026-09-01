@@ -1,9 +1,9 @@
 # tnl Releases
 
 tnl releases provide combined `tnl` and `tnld` archives for macOS and Linux on
-amd64 and arm64, a multi-platform `tnld` image in GHCR, and the official npm
-framework integrations. Releases before 1.0 are standalone previews and may
-include forward-only state migrations.
+amd64 and arm64 and a multi-platform `tnld` image in GHCR. The npm framework
+integrations are versioned and released independently. Releases before 1.0 are
+standalone previews and may include forward-only state migrations.
 
 ## Install With Homebrew
 
@@ -200,9 +200,10 @@ GitHub token with Contents read/write access to `tnldotdev/homebrew-tap`. Enable
 immutable releases, tag protection, GitHub Packages, and artifact attestations
 before the first release.
 
-Configure `release.yml` as the npm trusted publisher for `@tnldotdev/dev`,
-`@tnldotdev/next`, and `@tnldotdev/vite`. The workflow uses npm OIDC and does not
-use an npm token. All three package versions must match the release tag.
+Use the `tnl-release` agent skill to assess changes, propose versions, run the
+required checks, and prepare either release family. `tnl` and `tnld` share a
+root `v<version>` tag; npm packages use independent
+`npm/<package>/v<version>` tags.
 
 From a clean, fully verified `main` commit:
 
@@ -214,7 +215,28 @@ git push origin v0.1.0
 The tag must be an annotated signature that GitHub verifies and must point
 directly to a commit reachable from `main`; the workflow enforces both
 conditions. After environment approval it builds signed archives and SBOMs,
-pushes and signs the versioned image, attaches its digest, and publishes the
-release and npm packages. Stable tags then update `Formula/tnl.rb` in the
-Homebrew tap. Review the completed release and never move or reuse a release
-tag.
+pushes and signs the versioned image, and attaches its digest. Stable tags then
+update `Formula/tnl.rb` in the Homebrew tap. Review the completed release and
+never move or reuse a release tag.
+
+### npm packages
+
+`@tnldotdev/dev`, `@tnldotdev/next`, and `@tnldotdev/vite` have independent
+versions. Configure `release-npm.yml` as the trusted publisher for each package.
+The workflow uses npm OIDC and does not use an npm token.
+
+Use the `tnl-release` agent skill to identify changed packages, propose version
+bumps, and run the release checks. After the version bump is committed to a
+fully verified `main`, create a signed tag for each selected package:
+
+```console
+git tag -s npm/vite/v0.1.0-rc.1 -m '@tnldotdev/vite 0.1.0-rc.1'
+git push origin npm/vite/v0.1.0-rc.1
+```
+
+The tag must use `npm/<package>/v<version>`, match the selected package's
+manifest version, and point directly to a commit reachable from `main`. The
+workflow verifies those conditions and publishes only that package. Push a
+`dev` tag before tags for adapters that depend on its new version. Prereleases
+receive the npm `next` dist-tag; stable versions receive `latest`. Never move or
+reuse a package tag.
