@@ -19,34 +19,36 @@ import (
 	"sync"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/naming"
 	legoacme "github.com/go-acme/lego/v5/acme"
 	legoapi "github.com/go-acme/lego/v5/acme/api"
+	"github.com/tnldotdev/tnl/internal/naming"
 )
 
 type ProbeFunc func(context.Context, Job) error
 
 type Config struct {
-	DirectoryURL string
-	Email        string
-	AcceptTerms  bool
-	Profile      string
-	HTTPClient   *http.Client
-	Roots        *x509.CertPool
-	Probe        ProbeFunc
-	Now          func() time.Time
+	DirectoryURL  string
+	Email         string
+	AcceptTerms   bool
+	Profile       string
+	HTTPClient    *http.Client
+	Roots         *x509.CertPool
+	Probe         ProbeFunc
+	HostnameReady func(context.Context, string) error
+	Now           func() time.Time
 
 	newACME func(*http.Client, string, string, crypto.Signer) (acmeClient, error)
 }
 
 type Service struct {
-	store   *store
-	client  acmeClient
-	profile string
-	roots   *x509.CertPool
-	probe   ProbeFunc
-	now     func() time.Time
-	locks   [64]sync.Mutex
+	store         *store
+	client        acmeClient
+	profile       string
+	roots         *x509.CertPool
+	probe         ProbeFunc
+	hostnameReady func(context.Context, string) error
+	now           func() time.Time
+	locks         [64]sync.Mutex
 }
 
 // New constructs the durable ACME service and reconciles its persisted account.
@@ -122,7 +124,7 @@ func New(ctx context.Context, db *sql.DB, config Config) (*Service, error) {
 	}
 	return &Service{
 		store: stored, client: client, profile: config.Profile, roots: config.Roots,
-		probe: config.Probe, now: config.Now,
+		probe: config.Probe, hostnameReady: config.HostnameReady, now: config.Now,
 	}, nil
 }
 
@@ -143,6 +145,11 @@ func (s *Service) Create(
 	canonical, err := naming.CanonicalizeHostname(hostname)
 	if err != nil || canonical != hostname || strings.TrimSpace(routeID) == "" || generation == 0 || profile != s.profile {
 		return Job{}, ErrInvalidArgument
+	}
+	if s.hostnameReady != nil {
+		if err := s.hostnameReady(ctx, hostname); err != nil {
+			return Job{}, ErrUnavailable
+		}
 	}
 	_, csrHash, spkiHash, err := validateCSR(csrDER, hostname)
 	if err != nil {

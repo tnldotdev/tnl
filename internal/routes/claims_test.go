@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/credentials"
-	"github.com/0xcadams/tnl/internal/state"
-	"github.com/0xcadams/tnl/internal/state/statedb"
+	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/state"
+	"github.com/tnldotdev/tnl/internal/state/statedb"
 )
 
 func TestStoreHostnameClaimQuotaConfig(t *testing.T) {
@@ -60,6 +60,191 @@ func TestStoreHostnameClaimQuotaConfig(t *testing.T) {
 	}
 }
 
+func TestConfiguredReservationConflictsFailClosed(t *testing.T) {
+	ctx := context.Background()
+	db, err := state.Open(ctx, filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	queries := statedb.New(db)
+	upsertTestPrincipal(t, ctx, queries, "owner", "Owner", 1)
+	if _, err := queries.InsertClaim(ctx, statedb.InsertClaimParams{
+		ID: "claim_00000000000000000000000000000001", PrincipalID: "owner",
+		Hostname: "control.example", CreatedAt: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewStore(db, "example", StoreConfig{ReservedRouteNames: []string{"control"}}); err == nil {
+		t.Fatal("reservation conflicting with ownership succeeded")
+	}
+	store, err := NewStore(db, "example", StoreConfig{ReservedRouteNames: []string{"domains"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ClaimName(ctx, "owner", NameKindPersistentManaged, "domains", "reserved"); !errors.Is(err, ErrNameUnavailable) {
+		t.Fatalf("reserved claim error = %v", err)
+	}
+}
+
+func TestEphemeralClaimsDoNotConsumePersistentQuota(t *testing.T) {
+	ctx := context.Background()
+	db, err := state.Open(ctx, filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	queries := statedb.New(db)
+	upsertTestPrincipal(t, ctx, queries, "owner", "Owner", 1)
+	store, err := NewStore(db, "example", StoreConfig{MaxActiveHostnameClaims: 1, MaxHostnameClaimRequests: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ClaimName(ctx, "owner", NameKindPersistentManaged, "owned", "persistent"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ClaimName(ctx, "owner", NameKindEphemeral, "", "ephemeral"); err != nil {
+		t.Fatalf("ephemeral claim with full persistent quota: %v", err)
+	}
+	total, remaining, err := store.FriendlyNameCapacity(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 4_429_593 || remaining != total-2 {
+		t.Fatalf("friendly name capacity = %d/%d", remaining, total)
+	}
+}
+
+func TestBurnedEphemeralClaimsDoNotConsumeRequestQuota(t *testing.T) {
+	ctx := context.Background()
+	db, err := state.Open(ctx, filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	queries := statedb.New(db)
+	upsertTestPrincipal(t, ctx, queries, "owner", "Owner", 1)
+	store, err := NewStore(db, "example", StoreConfig{MaxActiveHostnameClaims: 1, MaxHostnameClaimRequests: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := store.ClaimName(ctx, "owner", NameKindEphemeral, "", "first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	routeToken, _, _, err := credentials.NewRouteToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := store.Create(ctx, "owner", claim.Hostname, "localhost:3000", "boot", routeToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Delete(ctx, "owner", created.Route.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ClaimName(ctx, "owner", NameKindEphemeral, "", "second"); err != nil {
+		t.Fatalf("claim after ephemeral burn: %v", err)
+	}
+}
+
+func TestEphemeralRestartReacquisitionAndAbandonedCleanup(t *testing.T) {
+	ctx := context.Background()
+	db, err := state.Open(ctx, filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	queries := statedb.New(db)
+	upsertTestPrincipal(t, ctx, queries, "owner", "Owner", 1)
+	t0 := time.Unix(1_700_000_000, 0).UTC()
+	store, err := NewStore(db, "example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.now = func() time.Time { return t0 }
+	claim, err := store.ClaimName(ctx, "owner", NameKindEphemeral, "", "route")
+	if err != nil {
+		t.Fatal(err)
+	}
+	routeToken, _, _, err := credentials.NewRouteToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := store.Create(ctx, "owner", claim.Hostname, "localhost:3000", "boot-one", routeToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	restarted, err := NewStore(db, "example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	restartedAt := t0.Add(time.Minute)
+	restarted.now = func() time.Time { return restartedAt }
+	replacementToken, _, _, err := credentials.NewRouteToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := restarted.Create(ctx, "owner", claim.Hostname, "localhost:3000", "boot-two", replacementToken)
+	if err != nil || replacement.Route.ID != created.Route.ID || replacement.Route.Generation != 2 {
+		t.Fatalf("restart reacquisition = %#v, %v", replacement, err)
+	}
+	held, err := restarted.ClaimName(ctx, "owner", NameKindEphemeral, "", "held")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanupAt := restartedAt.Add(EphemeralReacquisitionWindow + LeaseLifetime + time.Second)
+	removed, err := restarted.CleanupAbandonedEphemeral(ctx, cleanupAt)
+	if err != nil || len(removed) != 1 || removed[0] != created.Route.ID {
+		t.Fatalf("abandoned cleanup = %q, %v", removed, err)
+	}
+	for _, hostname := range []string{claim.Hostname, held.Hostname} {
+		stored, err := queries.GetClaimByHostname(ctx, hostname)
+		if err != nil || stored.State != NameStateBurned {
+			t.Fatalf("cleaned claim %s = %#v, %v", hostname, stored, err)
+		}
+	}
+}
+
+func TestConcurrentFriendlyAllocationsAreUnique(t *testing.T) {
+	ctx := context.Background()
+	db, err := state.Open(ctx, filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	queries := statedb.New(db)
+	upsertTestPrincipal(t, ctx, queries, "owner", "Owner", 1)
+	store, err := NewStore(db, "example", StoreConfig{MaxActiveHostnameClaims: 32, MaxHostnameClaimRequests: 32})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := make(chan struct{})
+	results := make(chan HostnameClaim, 32)
+	errors := make(chan error, 32)
+	for index := range 32 {
+		go func() {
+			<-start
+			claim, err := store.ClaimName(ctx, "owner", NameKindPersistentManaged, "", fmt.Sprintf("request-%d", index))
+			results <- claim
+			errors <- err
+		}()
+	}
+	close(start)
+	names := make(map[string]struct{}, 32)
+	for range 32 {
+		claim, err := <-results, <-errors
+		if err != nil {
+			t.Fatal(err)
+		}
+		names[claim.Hostname] = struct{}{}
+	}
+	if len(names) != 32 {
+		t.Fatalf("unique names = %d, want 32", len(names))
+	}
+}
+
 func TestHostnameClaimLifecycle(t *testing.T) {
 	ctx := context.Background()
 	db, err := state.Open(ctx, filepath.Join(t.TempDir(), "state"))
@@ -81,7 +266,8 @@ func TestHostnameClaimLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if claim.Hostname != "demo.example" || claim.Irreversible || claim.CreatedAt != now {
+	if claim.Hostname != "demo.example" || claim.Kind != NameKindPersistentManaged ||
+		claim.State != NameStateActive || claim.Source != NameSourceCustom || claim.CreatedAt != now {
 		t.Fatalf("claim = %#v", claim)
 	}
 	replayed, err := store.ClaimHostname(ctx, "owner", "demo", "exact-request")
@@ -132,8 +318,8 @@ func TestHostnameClaimLifecycle(t *testing.T) {
 		t.Fatalf("claims = %#v, %v", claims, err)
 	}
 	for _, listed := range claims {
-		if listed.ID == claim.ID && !listed.Irreversible {
-			t.Fatal("routed claim was not marked irreversible")
+		if listed.ID == claim.ID && listed.State != NameStateActive {
+			t.Fatalf("routed claim state = %q", listed.State)
 		}
 	}
 	if err := store.ReleaseHostnameClaim(ctx, "owner", claim.ID); err != nil {
@@ -145,14 +331,15 @@ func TestHostnameClaimLifecycle(t *testing.T) {
 	if _, err := store.AuthenticateLease(ctx, created.Route.ID, 1, created.LeaseToken, "boot"); !errors.Is(err, ErrStaleLease) {
 		t.Fatalf("released lease error = %v", err)
 	}
-	if _, err := store.ClaimHostname(ctx, "owner", "demo", "replacement-request"); !errors.Is(err, ErrNameUnavailable) {
-		t.Fatalf("tombstone reclaim error = %v", err)
+	reactivated, err := store.ClaimHostname(ctx, "owner", "demo", "replacement-request")
+	if err != nil || reactivated.ID != claim.ID || reactivated.State != NameStateActive {
+		t.Fatalf("managed reactivation = %#v, %v", reactivated, err)
 	}
-	if _, err := store.ClaimHostname(ctx, "owner", "demo", "exact-request"); !errors.Is(err, ErrInvalidState) {
-		t.Fatalf("tombstoned replay error = %v", err)
+	if _, err := store.ClaimHostname(ctx, "other", "demo", "other-replacement"); !errors.Is(err, ErrNameUnavailable) {
+		t.Fatalf("managed transfer error = %v", err)
 	}
-	if err := store.ReleaseHostnameClaim(ctx, "owner", claim.ID); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("second release error = %v", err)
+	if replayed, err := store.ClaimHostname(ctx, "owner", "demo", "exact-request"); err != nil || replayed.ID != claim.ID {
+		t.Fatalf("original replay = %#v, %v", replayed, err)
 	}
 }
 
@@ -165,6 +352,7 @@ func TestRouteCreationRequiresOwnedClaim(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	queries := statedb.New(db)
 	upsertTestPrincipal(t, ctx, queries, "owner", "Owner", 1)
+	upsertTestPrincipal(t, ctx, queries, "other", "Other", 1)
 	store, err := NewStore(db, "example")
 	if err != nil {
 		t.Fatal(err)
@@ -175,6 +363,19 @@ func TestRouteCreationRequiresOwnedClaim(t *testing.T) {
 	}
 	if _, err := store.Create(ctx, "owner", "missing.example", "http://127.0.0.1:3000", "boot", routeToken); !errors.Is(err, ErrNameUnavailable) {
 		t.Fatalf("unclaimed route error = %v", err)
+	}
+	if _, err := store.ClaimName(ctx, "owner", NameKindPersistentManaged, "base", "base"); err != nil {
+		t.Fatal(err)
+	}
+	deep := "a.b.c.d.e.f.g.h.base.example"
+	if _, err := store.Create(ctx, "owner", deep, "http://127.0.0.1:3000", "boot", routeToken); err != nil {
+		t.Fatalf("eight-level route: %v", err)
+	}
+	if _, err := store.Create(ctx, "owner", "x."+deep, "http://127.0.0.1:3000", "boot", routeToken); !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("ninth-level route error = %v", err)
+	}
+	if _, err := store.Create(ctx, "other", deep, "http://127.0.0.1:3000", "boot", routeToken); !errors.Is(err, ErrNameUnavailable) {
+		t.Fatalf("cross-principal route error = %v", err)
 	}
 }
 
@@ -254,8 +455,8 @@ func TestHostnameClaimActiveLimitOverride(t *testing.T) {
 	if _, err := store.ClaimHostname(ctx, "owner", "third", "replacement-request"); err != nil {
 		t.Fatalf("replacement claim: %v", err)
 	}
-	if _, err := store.ClaimHostname(ctx, "owner", "first", "tombstone-request"); !errors.Is(err, ErrNameUnavailable) {
-		t.Fatalf("tombstone reclaim error = %v", err)
+	if _, err := store.ClaimHostname(ctx, "owner", "first", "reactivation-over-limit"); !errors.Is(err, ErrInvalidState) {
+		t.Fatalf("reactivation over limit error = %v", err)
 	}
 }
 
@@ -295,6 +496,7 @@ func TestClaimRequestLimitStillAllowsKnownReplay(t *testing.T) {
 			PrincipalID:    "owner",
 			RequestKey:     fmt.Sprintf("request-%04d", index),
 			RequestedLabel: "route",
+			RequestedKind:  NameKindPersistentManaged,
 			ClaimID:        claimID,
 			CreatedAt:      1,
 		}); err != nil {

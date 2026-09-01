@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/credentials"
-	"github.com/0xcadams/tnl/pkg/protocol/serverv1"
+	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/pkg/protocol/serverv1"
 )
 
 func TestClientMapsProblemsAndRejectsTrailingJSON(t *testing.T) {
@@ -161,6 +161,36 @@ func TestClientPaginatesHostnameClaims(t *testing.T) {
 	}
 	if len(claims) != 3 || requests != 2 {
 		t.Fatalf("claims = %d, requests = %d", len(claims), requests)
+	}
+}
+
+func TestClientListsAndReleasesDomainClaims(t *testing.T) {
+	const claimID = "claim_00000000000000000000000000000001"
+	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.Method + " " + request.URL.Path {
+		case "GET /v1/domain-claims":
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode([]serverv1.HostnameClaim{{
+				Id: claimID, Kind: serverv1.HostnameClaimKindPersistentCustomDomain,
+				State: serverv1.HostnameClaimStateActive,
+			}})
+		case "DELETE /v1/domain-claims/" + claimID:
+			response.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+	client, err := New(server.URL, server.Client(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims, err := client.ListDomainClaims(context.Background())
+	if err != nil || len(claims) != 1 || claims[0].Id != claimID {
+		t.Fatalf("claims = %#v, error = %v", claims, err)
+	}
+	if err := client.ReleaseDomainClaim(context.Background(), claimID); err != nil {
+		t.Fatal(err)
 	}
 }
 

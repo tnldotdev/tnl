@@ -1,6 +1,9 @@
 package routes
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 type StoreOperation string
 
@@ -49,6 +52,7 @@ const (
 )
 
 type CoordinatorConfig struct {
+	PublicationReady               func(context.Context, string) error
 	ObserveHeartbeat               func(HeartbeatResult)
 	ObserveRouteRemoval            func(RouteRemovalReason)
 	ObserveWorkerCapacityRejection func()

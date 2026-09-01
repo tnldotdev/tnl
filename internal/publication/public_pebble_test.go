@@ -18,19 +18,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/api"
-	"github.com/0xcadams/tnl/internal/auth"
-	"github.com/0xcadams/tnl/internal/certificates"
-	"github.com/0xcadams/tnl/internal/clientstate"
-	"github.com/0xcadams/tnl/internal/credentials"
-	"github.com/0xcadams/tnl/internal/ingress"
-	"github.com/0xcadams/tnl/internal/routes"
-	"github.com/0xcadams/tnl/internal/serverclient"
-	serverstate "github.com/0xcadams/tnl/internal/state"
-	"github.com/0xcadams/tnl/internal/state/statedb"
-	"github.com/0xcadams/tnl/internal/testutil/integrationtest"
-	"github.com/0xcadams/tnl/internal/worker"
-	"github.com/0xcadams/tnl/pkg/protocol/serverv1"
+	"github.com/tnldotdev/tnl/internal/api"
+	"github.com/tnldotdev/tnl/internal/auth"
+	"github.com/tnldotdev/tnl/internal/certificates"
+	"github.com/tnldotdev/tnl/internal/clientstate"
+	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/ingress"
+	"github.com/tnldotdev/tnl/internal/routes"
+	"github.com/tnldotdev/tnl/internal/serverclient"
+	serverstate "github.com/tnldotdev/tnl/internal/state"
+	"github.com/tnldotdev/tnl/internal/state/statedb"
+	"github.com/tnldotdev/tnl/internal/testutil/integrationtest"
+	"github.com/tnldotdev/tnl/internal/worker"
+	"github.com/tnldotdev/tnl/pkg/protocol/serverv1"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/logger"
 )
@@ -153,7 +153,9 @@ func TestIntegrationAutomaticCertificatePublicationRestartAndRenewal(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.ClaimHostname(ctx, "route", "pebble-integration"); err != nil {
+	if _, err := client.ClaimName(
+		ctx, serverv1.CreateHostnameClaimRequestKindPersistentManaged, "route", "pebble-integration",
+	); err != nil {
 		t.Fatal(err)
 	}
 
@@ -172,7 +174,8 @@ func TestIntegrationAutomaticCertificatePublicationRestartAndRenewal(t *testing.
 		t.Fatal(err)
 	}
 	publicationConfig := PublicConfig{
-		Server: client, Hostname: hostname, Target: origin.URL, State: agentState, ACMEProfile: "tlsserver",
+		// Suppress graceful deletion to model abrupt process loss for the restart path.
+		Server: crashRestartServer{Server: client}, Hostname: hostname, Target: origin.URL, State: agentState, ACMEProfile: "tlsserver",
 		RelayProfile: "test", Profiles: profiles, DrainTime: 5 * time.Second, Logf: logger.Discard,
 	}
 	firstRun := startIntegrationPublication(ctx, publicationConfig)
@@ -268,6 +271,10 @@ func TestIntegrationAutomaticCertificatePublicationRestartAndRenewal(t *testing.
 	default:
 	}
 }
+
+type crashRestartServer struct{ Server }
+
+func (crashRestartServer) DeleteRoute(context.Context, string) error { return nil }
 
 func assertPersistedPublication(t *testing.T, database *sql.DB, routeID string, wantJobs int) {
 	t.Helper()

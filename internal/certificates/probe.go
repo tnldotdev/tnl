@@ -12,8 +12,8 @@ import (
 	"net/netip"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/proxyproto"
-	"github.com/0xcadams/tnl/internal/worker"
+	"github.com/tnldotdev/tnl/internal/proxyproto"
+	"github.com/tnldotdev/tnl/internal/worker"
 	"golang.org/x/crypto/acme"
 )
 

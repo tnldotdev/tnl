@@ -26,6 +26,8 @@ type Metrics struct {
 	tailcatFailures    *prometheus.CounterVec
 	tailcatForcedClose prometheus.Counter
 	capacityRejections *prometheus.CounterVec
+	nameCapacity       prometheus.Gauge
+	nameRemaining      prometheus.Gauge
 	forwardedBytes     *prometheus.CounterVec
 	apiRequests        *prometheus.CounterVec
 	apiRequestDuration *prometheus.HistogramVec
@@ -92,6 +94,14 @@ func New(mode string) *Metrics {
 			Name: "tnl_capacity_rejections_total",
 			Help: "Operations rejected because a bounded resource was full.",
 		}, []string{"resource"}),
+		nameCapacity: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "tnl_friendly_name_namespace_capacity",
+			Help: "Total usable friendly-name pairs in the reviewed corpus.",
+		}),
+		nameRemaining: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "tnl_friendly_name_namespace_remaining_lower_bound",
+			Help: "Conservative lower bound of friendly-name pairs not present in the name ledger.",
+		}),
 		forwardedBytes: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "tnl_forwarded_bytes_total",
 			Help: "Bytes forwarded by direction.",
@@ -175,6 +185,8 @@ func New(mode string) *Metrics {
 		metrics.tailcatFailures,
 		metrics.tailcatForcedClose,
 		metrics.capacityRejections,
+		metrics.nameCapacity,
+		metrics.nameRemaining,
 		metrics.forwardedBytes,
 		metrics.apiRequests,
 		metrics.apiRequestDuration,
@@ -252,6 +264,12 @@ func (m *Metrics) AddTailcatForcedCloses(count int) {
 // IncCapacityRejection records one bounded-resource rejection.
 func (m *Metrics) IncCapacityRejection(resource string) {
 	m.capacityRejections.WithLabelValues(resource).Inc()
+}
+
+// SetFriendlyNameCapacity records total and conservatively remaining allocator capacity.
+func (m *Metrics) SetFriendlyNameCapacity(total, remaining int64) {
+	m.nameCapacity.Set(float64(total))
+	m.nameRemaining.Set(float64(remaining))
 }
 
 // AddForwardedBytes records bytes forwarded in a stable direction.

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/serverclient"
+	"github.com/tnldotdev/tnl/internal/serverclient"
 )
 
 func TestPublicOutputNDJSONLifecycle(t *testing.T) {

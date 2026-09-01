@@ -3,8 +3,8 @@ info:
   title: tnl server API
   version: 1.0.0
   license:
-    name: Apache-2.0
-    identifier: Apache-2.0
+    name: MIT
+    identifier: MIT
 jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://control.tnl.dev
@@ -161,7 +161,7 @@ paths:
           $ref: "#/components/responses/Problem"
     post:
       operationId: createHostnameClaim
-      summary: Claim an exact hostname or allocate a random hostname
+      summary: Claim a persistent base or allocate an ephemeral exact name
       security:
         - bearerAuth: []
       parameters:
@@ -196,7 +196,7 @@ paths:
   /v1/hostname-claims/{id}:
     delete:
       operationId: releaseHostnameClaim
-      summary: Permanently release and tombstone an owned hostname claim
+      summary: Release an owned persistent hostname claim
       security:
         - bearerAuth: []
       parameters:
@@ -211,6 +211,125 @@ paths:
         "401":
           $ref: "#/components/responses/BearerProblem"
         "404":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/domain-claims:
+    get:
+      operationId: listDomainClaims
+      summary: List active custom domains owned by the authenticated principal
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Active custom-domain claims
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/HostnameClaim"
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        default:
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: createDomainChallenge
+      summary: Create a pending custom-domain DNS challenge
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDomainChallengeRequest"
+      responses:
+        "201":
+          description: Pending DNS challenge
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DomainChallenge"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/domain-claims/{id}:
+    get:
+      operationId: getDomainChallenge
+      summary: Read an owned custom-domain challenge
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/DomainChallengeID"
+      responses:
+        "200":
+          description: Domain challenge
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DomainChallenge"
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: releaseDomainClaim
+      summary: Release an active custom-domain claim
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/HostnameClaimID"
+      responses:
+        "204":
+          description: Custom-domain claim released
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/domain-claims/{id}/verify:
+    post:
+      operationId: verifyDomainChallenge
+      summary: Verify DNS and activate custom-domain ownership
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/DomainChallengeID"
+      responses:
+        "200":
+          description: Active custom-domain claim
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HostnameClaim"
+        "401":
+          $ref: "#/components/responses/BearerProblem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "412":
           $ref: "#/components/responses/Problem"
         default:
           $ref: "#/components/responses/Problem"
@@ -536,6 +655,13 @@ components:
       schema:
         type: string
         pattern: ^cert_[0-9a-f]{32}$
+    DomainChallengeID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^domain_[0-9a-f]{32}$
   responses:
     Problem:
       description: Request failed
@@ -562,6 +688,15 @@ components:
         - protocol_versions
         - anonymous_public
         - hostname_authorization
+        - route_suffix
+        - name_authority_type
+        - ephemeral_name_support
+        - persistent_base_support
+        - custom_domain_support
+        - maximum_child_depth
+        - dns_ready
+        - ingress_ipv4
+        - ingress_ipv6
         - transport
       properties:
         protocol_versions:
@@ -580,6 +715,38 @@ components:
           items:
             type: string
             enum: [local_claim, external_assertion]
+        route_suffix:
+          type: string
+          minLength: 1
+          maxLength: 189
+        name_authority_type:
+          type: string
+          enum: [local, hosted]
+        ephemeral_name_support:
+          type: boolean
+        persistent_base_support:
+          type: boolean
+        custom_domain_support:
+          type: boolean
+        maximum_child_depth:
+          type: integer
+          minimum: 0
+          maximum: 8
+        hosted_authority_endpoint:
+          type: string
+          format: uri
+        dns_ready:
+          type: boolean
+        ingress_ipv4:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+        ingress_ipv6:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
         local_claim:
           $ref: "#/components/schemas/LocalClaimCapabilities"
         transport:
@@ -677,15 +844,19 @@ components:
     CreateHostnameClaimRequest:
       type: object
       additionalProperties: false
+      required: [kind]
       properties:
-        label:
+        kind:
+          type: string
+          enum: [persistent_managed, ephemeral]
+        name:
           type: string
           minLength: 1
-          maxLength: 63
+          maxLength: 253
     HostnameClaim:
       type: object
       additionalProperties: false
-      required: [id, hostname, irreversible, created_at]
+      required: [id, hostname, kind, state, source, created_at]
       properties:
         id:
           $ref: "#/components/schemas/HostnameClaimID"
@@ -693,9 +864,22 @@ components:
           type: string
           minLength: 1
           maxLength: 253
-        irreversible:
-          type: boolean
+        kind:
+          type: string
+          enum: [persistent_managed, persistent_custom_domain, ephemeral]
+        state:
+          type: string
+          enum: [held, active, released_owned, burned, quarantined]
+        source:
+          type: string
+          enum: [generated, custom]
         created_at:
+          type: string
+          format: date-time
+        activated_at:
+          type: string
+          format: date-time
+        released_at:
           type: string
           format: date-time
     HostnameClaimPage:
@@ -710,6 +894,69 @@ components:
             $ref: "#/components/schemas/HostnameClaim"
         next_cursor:
           $ref: "#/components/schemas/HostnameClaimID"
+    CreateDomainChallengeRequest:
+      type: object
+      additionalProperties: false
+      required: [domain]
+      properties:
+        domain:
+          type: string
+          minLength: 1
+          maxLength: 254
+    DomainChallenge:
+      type: object
+      additionalProperties: false
+      required: [id, domain, verification_target, apex, state, records, created_at]
+      properties:
+        id:
+          type: string
+          pattern: ^domain_[0-9a-f]{32}$
+        domain:
+          type: string
+          minLength: 1
+          maxLength: 253
+        verification_target:
+          type: string
+          minLength: 1
+          maxLength: 253
+        apex:
+          type: boolean
+        state:
+          type: string
+          enum: [pending_dns, verified, invalidated]
+        claim_id:
+          $ref: "#/components/schemas/HostnameClaimID"
+        records:
+          type: array
+          minItems: 2
+          maxItems: 4
+          items:
+            $ref: "#/components/schemas/DNSRecord"
+        created_at:
+          type: string
+          format: date-time
+        verified_at:
+          type: string
+          format: date-time
+        invalidated_at:
+          type: string
+          format: date-time
+    DNSRecord:
+      type: object
+      additionalProperties: false
+      required: [name, type, value]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        type:
+          type: string
+          enum: [A, AAAA, CNAME]
+        value:
+          type: string
+          minLength: 1
+          maxLength: 255
     CreateRouteRequest:
       type: object
       additionalProperties: false

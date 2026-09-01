@@ -60,6 +60,21 @@ type CertificateJob struct {
 	UpdatedAt          int64
 }
 
+type DomainClaimChallenge struct {
+	ID                 string
+	PrincipalID        string
+	RequestKey         string
+	Domain             string
+	Token              string
+	VerificationTarget string
+	IsApex             int64
+	State              string
+	ClaimID            sql.NullString
+	CreatedAt          int64
+	VerifiedAt         sql.NullInt64
+	InvalidatedAt      sql.NullInt64
+}
+
 type HostnameClaim struct {
 	ID           string
 	PrincipalID  string
@@ -67,6 +82,13 @@ type HostnameClaim struct {
 	CreatedAt    int64
 	Irreversible int64
 	TombstonedAt sql.NullInt64
+	Kind         string
+	State        string
+	Source       string
+	ActivatedAt  sql.NullInt64
+	ReleasedAt   sql.NullInt64
+	RouteBinding sql.NullString
+	Reason       sql.NullString
 }
 
 type HostnameClaimRequest struct {
@@ -75,6 +97,7 @@ type HostnameClaimRequest struct {
 	RequestedLabel string
 	ClaimID        string
 	CreatedAt      int64
+	RequestedKind  string
 }
 
 type OidcAssertionExchange struct {
@@ -156,4 +179,9 @@ type RouteUsageBucket struct {
 	IngressBytes      int64
 	EgressBytes       int64
 	Complete          int64
+}
+
+type ServerState struct {
+	StateKey string
+	Value    []byte
 }
