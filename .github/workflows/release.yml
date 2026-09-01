@@ -144,3 +144,113 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
         run: gh release edit "$TAG" --draft=false
+
+  homebrew:
+    name: Publish Homebrew formula
+    if: ${{ !contains(github.ref_name, '-') }}
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: homebrew
+    permissions:
+      contents: read
+    steps:
+      - name: Download release checksums
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          mkdir artifacts
+          gh release download "$TAG" --pattern checksums.txt --dir artifacts
+
+      - name: Generate formula
+        env:
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          version="${TAG#v}"
+          test "$version" != "$TAG"
+
+          checksum() {
+            awk -v name="$1" '$2 == name { print $1 }' artifacts/checksums.txt
+          }
+
+          darwin_arm64="$(checksum "tnl_${version}_darwin_arm64.tar.gz")"
+          darwin_amd64="$(checksum "tnl_${version}_darwin_amd64.tar.gz")"
+          linux_arm64="$(checksum "tnl_${version}_linux_arm64.tar.gz")"
+          linux_amd64="$(checksum "tnl_${version}_linux_amd64.tar.gz")"
+
+          for value in "$darwin_arm64" "$darwin_amd64" "$linux_arm64" "$linux_amd64"; do
+            if [[ ! "$value" =~ ^[0-9a-f]{64}$ ]]; then
+              echo "missing release checksum" >&2
+              exit 1
+            fi
+          done
+
+          mkdir Formula
+          cat > Formula/tnl.rb <<EOF
+          class Tnl < Formula
+            desc "Public urls for localhost"
+            homepage "https://github.com/0xcadams/tnl"
+            version "$version"
+            license "Apache-2.0"
+
+            on_macos do
+              on_arm do
+                url "https://github.com/0xcadams/tnl/releases/download/$TAG/tnl_${version}_darwin_arm64.tar.gz"
+                sha256 "$darwin_arm64"
+              end
+
+              on_intel do
+                url "https://github.com/0xcadams/tnl/releases/download/$TAG/tnl_${version}_darwin_amd64.tar.gz"
+                sha256 "$darwin_amd64"
+              end
+            end
+
+            on_linux do
+              on_arm do
+                url "https://github.com/0xcadams/tnl/releases/download/$TAG/tnl_${version}_linux_arm64.tar.gz"
+                sha256 "$linux_arm64"
+              end
+
+              on_intel do
+                url "https://github.com/0xcadams/tnl/releases/download/$TAG/tnl_${version}_linux_amd64.tar.gz"
+                sha256 "$linux_amd64"
+              end
+            end
+
+            def install
+              bin.install "tnl", "tnld"
+            end
+
+            test do
+              assert_match(/^tnl #{Regexp.escape(version.to_s)} \([0-9a-f]{40}\)$/, shell_output("#{bin}/tnl version").strip)
+              assert_match(/^tnld #{Regexp.escape(version.to_s)} \([0-9a-f]{40}\)$/, shell_output("#{bin}/tnld version").strip)
+            end
+          end
+          EOF
+
+          ruby -c Formula/tnl.rb
+
+      - name: Publish formula
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          content="$(base64 -w 0 Formula/tnl.rb)"
+          sha="$(gh api repos/0xcadams/homebrew-tap/contents/Formula/tnl.rb --jq .sha 2>/dev/null || true)"
+
+          if [ -n "$sha" ]; then
+            gh api repos/0xcadams/homebrew-tap/contents/Formula/tnl.rb \
+              --method PUT \
+              -f message="tnl ${VERSION#v}" \
+              -f content="$content" \
+              -f sha="$sha"
+          else
+            gh api repos/0xcadams/homebrew-tap/contents/Formula/tnl.rb \
+              --method PUT \
+              -f message="tnl ${VERSION#v}" \
+              -f content="$content"
+          fi

@@ -1,6 +1,6 @@
 # tnl
 
-A public URL for localhost.
+public urls for localhost.
 
 tnl is a self-hosted tunnel service. `tnld` owns the control API,
 hostname claims, public TLS ingress, and durable SQLite state. `tnl` claims a
@@ -10,6 +10,15 @@ Run one standalone daemon for the smallest deployment, or separate the stateful
 edge from a fixed pool of stateless route workers.
 
 ## Install
+
+Install a stable release with Homebrew:
+
+```console
+brew install 0xcadams/tap/tnl
+```
+
+The formula installs both `tnl` and `tnld` on macOS or Linux. Homebrew
+packages are published only for stable releases.
 
 Release archives contain `tnl` and `tnld` for macOS and Linux on amd64 and
 arm64. Each release also publishes checksums, SPDX SBOMs, a Sigstore bundle,
