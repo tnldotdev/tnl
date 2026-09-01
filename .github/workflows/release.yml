@@ -105,8 +105,8 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ghcr.io/0xcadams/tnl:${{ github.ref_name }}
-            ghcr.io/0xcadams/tnl:${{ steps.version.outputs.value }}
+            ghcr.io/tnldotdev/tnl:${{ github.ref_name }}
+            ghcr.io/tnldotdev/tnl:${{ steps.version.outputs.value }}
           build-args: |
             VERSION=${{ steps.version.outputs.value }}
             COMMIT=${{ github.sha }}
@@ -118,14 +118,14 @@ jobs:
       - name: Sign image
         env:
           DIGEST: ${{ steps.image.outputs.digest }}
-          IMAGE: ghcr.io/0xcadams/tnl
+          IMAGE: ghcr.io/tnldotdev/tnl
         run: cosign sign --yes "$IMAGE@$DIGEST"
 
       - name: Attest image provenance
         if: github.event.repository.visibility == 'public'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-name: ghcr.io/0xcadams/tnl
+          subject-name: ghcr.io/tnldotdev/tnl
           subject-digest: ${{ steps.image.outputs.digest }}
           push-to-registry: true
 
@@ -133,7 +133,7 @@ jobs:
         env:
           DIGEST: ${{ steps.image.outputs.digest }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          IMAGE: ghcr.io/0xcadams/tnl
+          IMAGE: ghcr.io/tnldotdev/tnl
           TAG: ${{ github.ref_name }}
         run: |
           printf '%s@%s\n' "$IMAGE" "$DIGEST" > "$RUNNER_TEMP/tnld-image-digest.txt"
@@ -144,6 +144,70 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
         run: gh release edit "$TAG" --draft=false
+
+  npm:
+    name: Publish npm packages
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
+        with:
+          version: 11.24.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.23.1
+          package-manager-cache: false
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify package version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: node scripts/verify-package-versions.mjs "${TAG#v}"
+
+      - name: Check packages
+        run: |
+          pnpm build
+          pnpm typecheck
+          pnpm test
+          pnpm lint
+          pnpm format:check
+          pnpm run pack
+
+      - name: Pack packages for publishing
+        run: |
+          mkdir "$RUNNER_TEMP/npm-packages"
+          pnpm --filter @tnldotdev/dev pack --pack-destination "$RUNNER_TEMP/npm-packages"
+          pnpm --filter @tnldotdev/next pack --pack-destination "$RUNNER_TEMP/npm-packages"
+          pnpm --filter @tnldotdev/vite pack --pack-destination "$RUNNER_TEMP/npm-packages"
+
+      - name: Publish packages with npm OIDC
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          dist_tag=latest
+          if [[ "$version" == *-* ]]; then
+            dist_tag=next
+          fi
+          pnpm exec npm publish "$RUNNER_TEMP/npm-packages/tnldotdev-dev-$version.tgz" --access public --tag "$dist_tag"
+          pnpm exec npm publish "$RUNNER_TEMP/npm-packages/tnldotdev-next-$version.tgz" --access public --tag "$dist_tag"
+          pnpm exec npm publish "$RUNNER_TEMP/npm-packages/tnldotdev-vite-$version.tgz" --access public --tag "$dist_tag"
 
   homebrew:
     name: Publish Homebrew formula
@@ -192,30 +256,30 @@ jobs:
           cat > Formula/tnl.rb <<EOF
           class Tnl < Formula
             desc "Public urls for localhost"
-            homepage "https://github.com/0xcadams/tnl"
+            homepage "https://github.com/tnldotdev/tnl"
             version "$version"
-            license "Apache-2.0"
+            license "MIT"
 
             on_macos do
               on_arm do
-                url "https://github.com/0xcadams/tnl/releases/download/$TAG/tnl_${version}_darwin_arm64.tar.gz"
+                url "https://github.com/tnldotdev/tnl/releases/download/$TAG/tnl_${version}_darwin_arm64.tar.gz"
                 sha256 "$darwin_arm64"
               end
 
               on_intel do
-                url "https://github.com/0xcadams/tnl/releases/download/$TAG/tnl_${version}_darwin_amd64.tar.gz"
+                url "https://github.com/tnldotdev/tnl/releases/download/$TAG/tnl_${version}_darwin_amd64.tar.gz"
                 sha256 "$darwin_amd64"
               end
             end
 
             on_linux do
               on_arm do
-                url "https://github.com/0xcadams/tnl/releases/download/$TAG/tnl_${version}_linux_arm64.tar.gz"
+                url "https://github.com/tnldotdev/tnl/releases/download/$TAG/tnl_${version}_linux_arm64.tar.gz"
                 sha256 "$linux_arm64"
               end
 
               on_intel do
-                url "https://github.com/0xcadams/tnl/releases/download/$TAG/tnl_${version}_linux_amd64.tar.gz"
+                url "https://github.com/tnldotdev/tnl/releases/download/$TAG/tnl_${version}_linux_amd64.tar.gz"
                 sha256 "$linux_amd64"
               end
             end
@@ -240,16 +304,16 @@ jobs:
         shell: bash
         run: |
           content="$(base64 -w 0 Formula/tnl.rb)"
-          sha="$(gh api repos/0xcadams/homebrew-tap/contents/Formula/tnl.rb --jq .sha 2>/dev/null || true)"
+          sha="$(gh api repos/tnldotdev/homebrew-tap/contents/Formula/tnl.rb --jq .sha 2>/dev/null || true)"
 
           if [ -n "$sha" ]; then
-            gh api repos/0xcadams/homebrew-tap/contents/Formula/tnl.rb \
+            gh api repos/tnldotdev/homebrew-tap/contents/Formula/tnl.rb \
               --method PUT \
               -f message="tnl ${VERSION#v}" \
               -f content="$content" \
               -f sha="$sha"
           else
-            gh api repos/0xcadams/homebrew-tap/contents/Formula/tnl.rb \
+            gh api repos/tnldotdev/homebrew-tap/contents/Formula/tnl.rb \
               --method PUT \
               -f message="tnl ${VERSION#v}" \
               -f content="$content"

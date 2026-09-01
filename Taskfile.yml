@@ -14,27 +14,27 @@ tasks:
 
   format:
     desc: Format all source files
-    deps: [go:format]
+    deps: [go:format, js:format]
 
   format-check:
     desc: Check formatting without changing files
-    deps: [go:format-check]
+    deps: [go:format-check, js:format-check]
 
   lint:
     desc: Run static analysis
-    deps: [go:lint, go:vulncheck, workflows:lint]
+    deps: [go:lint, go:vulncheck, js:lint, js:typecheck, workflows:lint]
 
   test:
     desc: Run all tests
-    deps: [go:test]
+    deps: [go:test, js:test]
 
   build:
     desc: Build all packages and commands
-    deps: [go:build]
+    deps: [go:build, js:build]
 
   package:
     desc: Build a local release snapshot
-    deps: [release:snapshot]
+    deps: [release:snapshot, js:pack]
 
   go:generate:
     cmds:
@@ -94,6 +94,34 @@ tasks:
   go:build:
     cmds:
       - go build ./cmd/...
+
+  js:format:
+    cmds:
+      - pnpm format
+
+  js:format-check:
+    cmds:
+      - pnpm format:check
+
+  js:lint:
+    cmds:
+      - pnpm lint
+
+  js:typecheck:
+    cmds:
+      - pnpm typecheck
+
+  js:test:
+    cmds:
+      - pnpm test
+
+  js:build:
+    cmds:
+      - pnpm build
+
+  js:pack:
+    cmds:
+      - pnpm run pack
 
   release:snapshot:
     desc: Build release archives, checksums, and SBOMs without publishing or signing
