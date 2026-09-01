@@ -32,6 +32,18 @@ jobs:
           - name: proxy protocol
             package: ./internal/proxyproto
             target: FuzzDecode
+          - name: worker protocol
+            package: ./pkg/protocol/workerv1
+            target: FuzzReadFrames
+          - name: local target policy
+            package: ./internal/localproxy
+            target: FuzzNormalizeTarget
+          - name: hostname policy
+            package: ./internal/naming
+            target: FuzzCanonicalize
+          - name: custom domain policy
+            package: ./internal/naming
+            target: FuzzDomainPolicy
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/naming"
-	"github.com/0xcadams/tnl/pkg/protocol/serverv1"
+	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/pkg/protocol/serverv1"
 )
 
 func TestBenchmarkCertificate(t *testing.T) {

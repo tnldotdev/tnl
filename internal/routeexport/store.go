@@ -10,8 +10,8 @@ import (
 	"math"
 	"time"
 
-	"github.com/0xcadams/tnl/internal/routes"
-	"github.com/0xcadams/tnl/internal/state/statedb"
+	"github.com/tnldotdev/tnl/internal/routes"
+	"github.com/tnldotdev/tnl/internal/state/statedb"
 )
 
 const (
