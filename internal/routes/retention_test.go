@@ -22,7 +22,7 @@ func TestPruneRouteStatePreservesCurrentAndProtectedState(t *testing.T) {
 		"INSERT INTO hostnames (id, identity_id, hostname, kind, status, source, created_at, activated_at) VALUES ('hostname_current', 'identity_test', 'current.routes.test', 'managed', 'active', 'user', 1, 1)",
 		"INSERT INTO hostnames (id, identity_id, hostname, kind, status, source, created_at, activated_at) VALUES ('hostname_deleted', 'identity_test', 'deleted.routes.test', 'managed', 'active', 'user', 1, 1)",
 		"INSERT INTO hostnames (id, identity_id, hostname, kind, status, source, created_at, activated_at) VALUES ('hostname_pending', 'identity_test', 'pending.routes.test', 'managed', 'active', 'user', 1, 1)",
-		"INSERT INTO routes (id, hostname_id, identity_id, hostname, local_target, status, version, created_at) VALUES ('route_current', 'hostname_current', 'identity_test', 'current.routes.test', 'localhost:3000', 'active', 2, 1)",
+		"INSERT INTO routes (id, hostname_id, identity_id, hostname, local_target, status, route_version, created_at) VALUES ('route_current', 'hostname_current', 'identity_test', 'current.routes.test', 'localhost:3000', 'enabled', 2, 1)",
 	} {
 		if _, err := db.ExecContext(t.Context(), statement); err != nil {
 			t.Fatal(err)
@@ -33,7 +33,7 @@ func TestPruneRouteStatePreservesCurrentAndProtectedState(t *testing.T) {
 		{id: "route_pending", hostnameID: "hostname_pending", hostname: "pending.routes.test"},
 	} {
 		if _, err := db.ExecContext(t.Context(), `
-			INSERT INTO routes (id, hostname_id, identity_id, hostname, local_target, status, version, created_at, deleted_at)
+			INSERT INTO routes (id, hostname_id, identity_id, hostname, local_target, status, route_version, created_at, deleted_at)
 			VALUES (?, ?, 'identity_test', ?, 'localhost:3000', 'deleted', 1, 1, ?)
 		`, route.id, route.hostnameID, route.hostname, old); err != nil {
 			t.Fatal(err)
@@ -49,7 +49,7 @@ func TestPruneRouteStatePreservesCurrentAndProtectedState(t *testing.T) {
 	} {
 		if _, err := db.ExecContext(t.Context(), `
 			INSERT INTO route_sessions (
-				id, route_id, version, status, token_id, secret_hash, server_instance_id,
+				id, route_id, route_version, status, token_id, secret_hash, server_instance_id,
 				created_at, last_heartbeat_at, expires_at
 			) VALUES (?, ?, ?, 'expired', ?, ?, 'instance', 1, 1, 2)
 		`, session.id, session.routeID, session.version, session.id+"_token", []byte(session.id)); err != nil {
@@ -84,7 +84,7 @@ func TestPruneRouteStatePreservesCurrentAndProtectedState(t *testing.T) {
 	}
 	certificateSQL := `
 		INSERT INTO certificate_issuances (
-			id, route_id, version, hostname, acme_profile, status, csr_der, csr_hash, spki_hash,
+			id, route_id, route_version, hostname, acme_profile, status, csr_der, csr_hash, spki_hash,
 			order_attempts, order_expires_at, certificate_pem, not_after, created_at, updated_at
 		) VALUES (?, 'route_current', 1, 'current.routes.test', 'tlsserver', ?, X'01', ?, X'02', ?, ?, ?, ?, ?, ?)
 	`
@@ -108,7 +108,7 @@ func TestPruneRouteStatePreservesCurrentAndProtectedState(t *testing.T) {
 		}
 	}
 	if _, err := db.ExecContext(t.Context(), `
-		INSERT INTO route_lifecycle_events (event_id, route_id, version, sequence, occurred_at, transition)
+		INSERT INTO route_lifecycle_events (event_id, route_id, route_version, sequence, occurred_at, transition)
 		VALUES ('event_pending', 'route_pending', 1, 1, ?, 'deleted')
 	`, old); err != nil {
 		t.Fatal(err)
