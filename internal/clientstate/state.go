@@ -625,10 +625,6 @@ func openLock(path, kind string) (*Lock, error) {
 	return openLockOperation(path, kind, unix.LOCK_EX|unix.LOCK_NB)
 }
 
-func openBlockingLock(path, kind string) (*Lock, error) {
-	return openLockOperation(path, kind, unix.LOCK_EX)
-}
-
 func openLockOperation(path, kind string, operation int) (*Lock, error) {
 	descriptor, err := unix.Open(path, unix.O_CREAT|unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0o600)
 	if err != nil {
