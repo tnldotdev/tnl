@@ -34,4 +34,8 @@ func TestDeterministicSessionDerivation(t *testing.T) {
 	if err != nil || firstMaterial != retryMaterial {
 		t.Fatalf("derived key material differs: %v", err)
 	}
+	sourceKey, err := DeriveSessionSourceKey(first)
+	if err != nil || sourceKey == firstMaterial {
+		t.Fatalf("source key is not independently derived: %v", err)
+	}
 }

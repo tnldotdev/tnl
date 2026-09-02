@@ -331,7 +331,7 @@ func (d *daemon) startServer(
 				if !ok || active.RouteID != issuance.RouteID || active.Version != issuance.Version {
 					return errors.New("assigned challenge route is unavailable")
 				}
-				return certificates.ProbeTLSALPN(probeCtx, active.Backend, issuance)
+				return certificates.ProbeTLSALPN(probeCtx, active.Backend, active.SourceKey, issuance)
 			},
 		}, report)
 	}
@@ -424,7 +424,7 @@ func (d *daemon) startServer(
 			route, ok := d.coordinator.Lookup(hostname)
 			return ingress.Route{
 				ID: route.RouteID, Version: route.Version,
-				AllowedIPPrefixes: route.AllowedIPPrefixes, Backend: route.Backend,
+				AllowedIPPrefixes: route.AllowedIPPrefixes, Backend: route.Backend, SourceKey: route.SourceKey,
 			}, ok
 		},
 		ServerHostname:     cfg.ServerHostname(),
@@ -438,9 +438,11 @@ func (d *daemon) startServer(
 		}
 	}
 	if cfg.ACMEEnabled() {
-		ingressConfig.LookupChallenge = func(hostname string) (worker.RouteBackend, bool) {
+		ingressConfig.LookupChallenge = func(hostname string) (ingress.Route, bool) {
 			route, ok := d.coordinator.LookupChallenge(hostname)
-			return route.Backend, ok
+			return ingress.Route{
+				ID: route.RouteID, Version: route.Version, Backend: route.Backend, SourceKey: route.SourceKey,
+			}, ok
 		}
 	}
 	d.ingress, err = ingress.New(publicListener, ingressConfig)
