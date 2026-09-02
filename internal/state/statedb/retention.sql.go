@@ -49,7 +49,7 @@ WHERE id IN (
             AND issuance.status NOT IN ('installed', 'failed', 'blocked', 'canceled')
             AND issuance.order_expires_at IS NOT NULL
             AND issuance.order_expires_at <= CAST(?2 AS INTEGER)
-        OR issuance.version < route.version
+		OR issuance.route_version < route.route_version
             AND issuance.certificate_pem IS NULL
             AND issuance.updated_at <= ?3
     )
@@ -93,7 +93,7 @@ WHERE id IN (
         AND NOT EXISTS (
             SELECT 1
             FROM route_usage_outbox_items AS outbox
-            WHERE outbox.source_kind = 'usage_snapshot'
+			WHERE outbox.source_kind = 'usage_bucket_report'
                 AND outbox.source_id = snapshot.id
         )
     ORDER BY snapshot.bucket_start, snapshot.id
@@ -161,7 +161,7 @@ WHERE (route_id, route_version, position) IN (
     SELECT prefix.route_id, prefix.route_version, prefix.position
     FROM route_allowed_ip_prefixes AS prefix
     JOIN routes AS route ON route.id = prefix.route_id
-    WHERE prefix.route_version < route.version OR route.status = 'deleted'
+	WHERE prefix.route_version < route.route_version OR route.status = 'deleted'
     ORDER BY prefix.route_id, prefix.route_version, prefix.position
     LIMIT ?1
 )
@@ -223,7 +223,7 @@ WHERE id IN (
     FROM route_sessions AS session
     JOIN routes AS route ON route.id = session.route_id
     WHERE session.status = 'expired'
-        AND (session.version < route.version OR route.status = 'deleted')
+		AND (session.route_version < route.route_version OR route.status = 'deleted')
     ORDER BY session.expires_at, session.id
     LIMIT ?1
 )

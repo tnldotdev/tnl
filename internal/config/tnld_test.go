@@ -172,7 +172,7 @@ func TestTNLDValidateEdgeURLMessage(t *testing.T) {
 	_, err := ParseTNLD([]string{
 		"--mode", "worker", "--edge-url", "https://edge.example/internal/v1/worker", "--worker-token", testWorkerToken(t),
 	})
-	if err == nil || err.Error() != "Worker endpoint must be a WSS URL with path /internal/v1/worker." {
+	if err == nil || err.Error() != "worker endpoint must be a WSS URL with path /internal/v1/worker" {
 		t.Fatalf("edge URL validation error = %v", err)
 	}
 }
