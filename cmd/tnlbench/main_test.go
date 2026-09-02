@@ -3,9 +3,12 @@ package main
 import (
 	"context"
 	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -18,7 +21,7 @@ import (
 
 func TestBenchmarkCertificate(t *testing.T) {
 	hostnames := []string{"tnlbench-d3-r0.run.bench.test", "exact-name.run.bench.test"}
-	certificates, roots, err := benchmarkCertificates(hostnames)
+	certificates, roots, err := benchmarkCertificates(hostnames, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,6 +36,42 @@ func TestBenchmarkCertificate(t *testing.T) {
 		DNSName: hostnames[1], Roots: roots,
 	}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestLoadBenchmarkCertificate(t *testing.T) {
+	hostname := "route.run.bench.test"
+	generated, _, err := benchmarkCertificates([]string{hostname}, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var certificatePEM []byte
+	for _, certificate := range generated[0].Certificate {
+		certificatePEM = append(certificatePEM, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate})...)
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(generated[0].PrivateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory := t.TempDir()
+	certificatePath := filepath.Join(directory, "route.crt")
+	keyPath := filepath.Join(directory, "route.key")
+	if err := os.WriteFile(certificatePath, certificatePEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, roots, err := benchmarkCertificates([]string{hostname}, certificatePath, keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded) != 1 || loaded[0].Leaf == nil || roots != nil {
+		t.Fatalf("loaded certificate = %d, leaf %v, roots %v", len(loaded), loaded[0].Leaf, roots)
+	}
+	if _, _, err := benchmarkCertificates([]string{"other.bench.test"}, certificatePath, keyPath); err == nil {
+		t.Fatal("certificate hostname mismatch succeeded")
 	}
 }
 

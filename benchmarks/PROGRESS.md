@@ -97,7 +97,7 @@ milestones work.
   `report.json` plus `report.md`.
 - Updated legacy result extraction to select schema version 2.
 
-## Current Uncommitted Work
+### `642db7f feat: run planned Fly benchmark cells`
 
 - Reworked `scripts/bench-fly.sh` to require `BENCH_APPROVED=1`, consume the
   machine-readable plan, and run the expanded `smoke`, `density`, or `scale`
@@ -109,6 +109,23 @@ milestones work.
 - A failed cell is retained and stops the suite without retry. Per user
   direction, actual benchmark failures will be reported without runtime fixes
   or reruns intended to obtain a preferred result.
+
+## Current Uncommitted Work
+
+- Restored the benchmark files after an accidental local deletion; the user
+  confirmed those deletions were not intentional.
+- Created persistent Fly app `tnl-bench` and allocated dedicated IPv4
+  `149.248.193.175` with explicit user approval. The address costs about
+  $2/month. No Machines are currently running.
+- Vercel DNS now delegates `tnl.wtf`, and `*.bench.tnl.wtf` resolves publicly
+  to `149.248.193.175` through Cloudflare and Google resolvers.
+- The runner now retains the app/IP, uses a unique control hostname per cell,
+  relies on production Let's Encrypt plus system roots for control TLS, and
+  removes the DNS hook and private control-CA inputs.
+- Added optional driver certificate/key inputs so all generated routes can use
+  one real `*.bench.tnl.wtf` wildcard certificate.
+- Added system CA certificates to the benchmark image.
+- Wildcard issuance through a temporary DNS-01 TXT record is the next action.
 
 ## Important Limitations
 
@@ -123,20 +140,15 @@ milestones work.
 
 ## Next Steps
 
-1. Finish verification, commit, and push the profile/planner foundation.
-2. Add the result-v2 cell/shard envelope, mergeable histograms, structured
-   partial failures, and `tnlbench report`.
-3. Make driver phases profile-defined and make the shell consume JSON plan
-   cells instead of expanding its own matrix.
-4. Rewrite Fly orchestration for one `performance-2x` edge and
-   `performance-1x` workers, complete run directories, diagnostics, and exact
-   row/cleanup checks.
-5. Run the cheap smoke suite, inspect results, and fix benchmark defects.
-6. Run density scouting, rerun the candidate knee and adjacent point three
+1. Issue and locally store the real `*.bench.tnl.wtf` wildcard certificate.
+2. Verify, commit, and push the persistent-app and wildcard TLS changes.
+3. Run the cheap smoke suite once. If it fails, preserve and report the result
+   without fixes or a preferred-outcome rerun.
+4. Run density scouting, rerun the candidate knee and adjacent point three
    times, then record an approximately 80% scheduling target.
-7. Run the 1/2/4/8/10-worker scale matrix at that target.
-8. Add manual drain coordination and qualify 3 to 2 and 4 to 3.
-9. Qualify the pinned hosted autoscaler policy through 4 to 3 to 2 before
+5. Run the 1/2/4/8/10-worker scale matrix at that target.
+6. Add manual drain coordination and qualify 3 to 2 and 4 to 3.
+7. Qualify the pinned hosted autoscaler policy through 4 to 3 to 2 before
    changing the authoritative `tnl.dev` policy.
 
 ## Commands Verified So Far
@@ -153,7 +165,8 @@ BENCH_SUITE=smoke BENCH_PLAN_FORMAT=json mise exec -- task go:bench-fly:plan
 - `cmd/tnlbench/main.go`: current driver and cleanup lifecycle.
 - `cmd/tnlbench/plan.go`: profile decoding, validation, expansion, and pricing.
 - `cmd/tnlbench/barrier.go`: hardcoded barriers that still need generalizing.
-- `scripts/bench-fly.sh`: legacy Fly runner awaiting plan-driven rewrite.
+- `scripts/bench-fly.sh`: plan-driven persistent-app Fly runner for smoke,
+  density, and horizontal-scale cells.
 - `Taskfile.yml`: benchmark task entry points.
 - `docs/benchmarks/README.md`: historical benchmark results and outdated
   scaling guidance; rewrite after new evidence exists.
