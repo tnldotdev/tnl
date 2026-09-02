@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "id": "p1-horizontal",
+  "updated_date": "2026-09-02",
+  "workload": "agent-worktrees-assumed-v1",
+  "pricing": "fly-sjc",
+  "region": "sjc",
+  "transport": "forced-derp",
+  "machines": {
+    "edge": {"size": "performance-2x", "count": 1},
+    "worker": {"size": "performance-1x", "capacity": 500},
+    "driver": {"size": "performance-2x"}
+  },
+  "hosted_worker_limits": {"minimum": 2, "maximum": 10},
+  "required_inputs": [
+    "Fly organization access",
+    "Dedicated benchmark base domain",
+    "DNS update hook",
+    "ACME directory and account email",
+    "Control CA bundle"
+  ],
+  "suites": {
+    "smoke": {
+      "workers": [1],
+      "total_routes": [25],
+      "repetitions": 1,
+      "routes_per_driver": 500,
+      "phase_duration_scale": 0.1
+    },
+    "density": {
+      "workers": [1],
+      "total_routes": [100, 200, 300, 400, 500],
+      "repetitions": 1,
+      "routes_per_driver": 500,
+      "phase_duration_scale": 1
+    },
+    "scale": {
+      "workers": [1, 2, 4, 8, 10],
+      "routes_per_worker": 0,
+      "repetitions": 3,
+      "routes_per_driver": 500,
+      "phase_duration_scale": 1,
+      "requires_scheduling_target": true
+    }
+  }
+}

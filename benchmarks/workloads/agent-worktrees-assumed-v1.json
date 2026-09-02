@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "id": "agent-worktrees-assumed-v1",
+  "updated_date": "2026-09-02",
+  "classification": "assumed",
+  "seed": 7640891576956012809,
+  "model": {
+    "concurrent_routes_per_active_developer": 3,
+    "peak_active_share": 0.2,
+    "traffic_route_share": 0.25,
+    "idle_route_share": 0.75,
+    "average_route_restart_interval_seconds": 7200,
+    "typical_active_session_seconds": 21600,
+    "active_weekdays_per_month": 22
+  },
+  "traffic": {
+    "persistent_streams_per_busy_route": 1,
+    "fresh_connections_per_busy_route_per_minute": 2,
+    "typical_response_bytes": 65536,
+    "burst_connections_per_participating_route": 10,
+    "burst_response_bytes": 262144
+  },
+  "transport": {
+    "capacity_mode": "forced-derp",
+    "derp_share": 1
+  },
+  "phases": [
+    {"name": "activation", "duration_seconds": 30, "timeout_seconds": 300},
+    {"name": "idle", "duration_seconds": 60, "timeout_seconds": 90},
+    {"name": "development", "duration_seconds": 300, "timeout_seconds": 360},
+    {"name": "correctness", "duration_seconds": 60, "timeout_seconds": 300},
+    {"name": "burst", "duration_seconds": 30, "timeout_seconds": 60},
+    {"name": "churn", "duration_seconds": 60, "timeout_seconds": 120},
+    {"name": "settle", "duration_seconds": 60, "timeout_seconds": 120},
+    {"name": "cleanup", "duration_seconds": 60, "timeout_seconds": 180}
+  ],
+  "reference_notes": [
+    "These values are assumptions, not observed customer measurements.",
+    "Held-open HTTP or TLS responses model HMR-like traffic because the edge forwards opaque route bytes and does not interpret application messages.",
+    "Replace individual assumptions only with privacy-preserving aggregate observations that identify their sample window and completeness."
+  ]
+}

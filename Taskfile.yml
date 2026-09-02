@@ -164,6 +164,11 @@ tasks:
     cmds:
       - ./scripts/bench-fly.sh
 
+  go:bench-fly:plan:
+    desc: Expand and price a Fly benchmark without creating resources
+    cmds:
+      - go run ./cmd/tnlbench plan
+
   go:build:
     cmds:
       - go build ./cmd/...

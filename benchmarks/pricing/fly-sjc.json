@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "id": "fly-sjc",
+  "snapshot_date": "2026-09-02",
+  "source_url": "https://fly.io/docs/about/pricing/",
+  "region": "sjc",
+  "currency": "USD",
+  "machine_per_second": {
+    "performance-1x": 0.00001426,
+    "performance-2x": 0.00002852
+  },
+  "public_egress_per_gb": 0.02,
+  "volume_per_gb_month": 0.15,
+  "snapshot_per_gb_month": 0.08,
+  "single_hostname_certificate_per_month": 0.1,
+  "wildcard_certificate_per_month": 1,
+  "stopped_rootfs_per_gb_month": 0.15,
+  "performance_reservation_discount": 0.4,
+  "notes": [
+    "Machine rates use the default RAM for each named preset in San Jose.",
+    "The first 10 single-hostname certificates per organization are free.",
+    "Same-region private transfer is free for organizations using granular data transfer rates."
+  ]
+}

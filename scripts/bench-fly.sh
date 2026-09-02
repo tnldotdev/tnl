@@ -325,7 +325,7 @@ run_tier() {
       fi
       barrier_args+=(--env "TNL_BENCH_BARRIER_TOKEN=${barrier_token}")
     fi
-    if ! run_machine "${image}" /tnlbench \
+    if ! run_machine "${image}" /tnlbench driver \
       --app "${app}" --name "${driver_name}" --region "${region}" --vm-size "${driver_size}" \
       --detach --restart no \
       --file-local "/etc/tnl/control-ca.crt=${temp_dir}/control-ca.crt" \
