@@ -16,16 +16,18 @@ import (
 )
 
 const (
-	registrationSource = "registration"
-	lifecycleSource    = "lifecycle_event"
-	usageSource        = "usage_snapshot"
-	visitorSecretKey   = "route-usage-visitor-master-secret"
+	registrationSource           = "registration"
+	lifecycleSource              = "lifecycle_event"
+	usageSource                  = "usage_snapshot"
+	visitorSecretKey             = "route-usage-visitor-master-secret"
+	maximumPendingUsageSnapshots = 10_000
 )
 
 type Store struct {
-	db      *sql.DB
-	queries *statedb.Queries
-	wake    chan struct{}
+	db              *sql.DB
+	queries         *statedb.Queries
+	wake            chan struct{}
+	maxPendingUsage int
 
 	visitorMasterSecret [sha256.Size]byte
 }
@@ -39,7 +41,8 @@ func NewStore(db *sql.DB) (*Store, error) {
 		return nil, err
 	}
 	return &Store{
-		db: db, queries: statedb.New(db), wake: make(chan struct{}, 1), visitorMasterSecret: visitorMasterSecret,
+		db: db, queries: statedb.New(db), wake: make(chan struct{}, 1),
+		maxPendingUsage: maximumPendingUsageSnapshots, visitorMasterSecret: visitorMasterSecret,
 	}, nil
 }
 
@@ -269,6 +272,18 @@ func (s *Store) SaveUsage(ctx context.Context, snapshots []UsageSnapshot) error 
 			}); err != nil {
 				return fmt.Errorf("routeusage: enqueue usage snapshot: %w", err)
 			}
+		}
+	}
+	dropped, err := queries.DropExcessRouteUsageOutbox(ctx, int64(s.maxPendingUsage))
+	if err != nil {
+		return fmt.Errorf("routeusage: cap usage backlog: %w", err)
+	}
+	for _, snapshotID := range dropped {
+		if err := queries.DeleteUnqueuedRouteUsageReport(ctx, snapshotID); err != nil {
+			return fmt.Errorf("routeusage: delete dropped usage report: %w", err)
+		}
+		if _, err := queries.DeleteAcknowledgedRouteUsageSnapshot(ctx, snapshotID); err != nil {
+			return fmt.Errorf("routeusage: delete dropped finalized snapshot: %w", err)
 		}
 	}
 	if err := tx.Commit(); err != nil {
