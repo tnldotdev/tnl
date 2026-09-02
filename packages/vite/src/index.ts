@@ -31,6 +31,8 @@ export default function tnl(options: TnlOptionsInput = {}): Plugin {
       }
 
       const server = userConfig.server ?? {};
+      const allowedHosts = (server as typeof server & { allowedHosts?: true | string[] })
+        .allowedHosts;
       assignment = await requestTunnelAssignment({ framework: "vite", options });
       if (assignment === null) {
         return undefined;
@@ -44,7 +46,7 @@ export default function tnl(options: TnlOptionsInput = {}): Plugin {
         ),
         server: {
           host: "127.0.0.1",
-          allowedHosts: addAllowedHost(server.allowedHosts, assignment.hostname),
+          allowedHosts: addAllowedHost(allowedHosts, assignment.hostname),
         },
       };
       if (session.port !== undefined) {
