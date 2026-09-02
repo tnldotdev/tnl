@@ -133,7 +133,28 @@ milestones work.
   private key, and key pairing were validated locally.
 - The temporary `_acme-challenge.bench.tnl.wtf` TXT record was removed after
   issuance and is absent from Vercel's authoritative nameserver.
-- The persistent app currently has no Machines. No benchmark has run yet.
+- The persistent app currently has no Machines.
+
+## Benchmark Outcomes
+
+### Smoke `09022129-2aa6`
+
+- Explicitly approved run from clean git SHA
+  `ee0fbc81d472b675797be8b6032642a036cb4f9c` in SJC.
+- The image built and pushed. The first edge launch request received a transient
+  registry manifest 404; the runner's existing Machine-launch retry then
+  started edge Machine `7812320cd3d668`.
+- The edge emitted repeated `acme/autocert: missing certificate` TLS handshake
+  errors during readiness checks.
+- Login-token retrieval then failed because `/usr/local/bin/tnl` was absent
+  from the benchmark image.
+- No worker or driver Machine was created, `results.jsonl` contains zero rows,
+  and `tnlbench report` correctly refused to report an empty result set. This
+  run produced no capacity or latency evidence.
+- The run is preserved under `bench-results/09022129-2aa6/`. The edge Machine
+  was destroyed; the persistent app and dedicated IPv4 remain.
+- Per user direction, the failed smoke was not retried and no runtime or policy
+  changes were made in response.
 
 ## Important Limitations
 
@@ -148,15 +169,13 @@ milestones work.
 
 ## Next Steps
 
-1. Review the read-only smoke plan and obtain explicit approval to create its
-   temporary Fly Machines.
-2. Run the cheap smoke suite once. If it fails, preserve and report the result
-   without fixes or a preferred-outcome rerun.
-3. Run density scouting, rerun the candidate knee and adjacent point three
+1. Do not run another benchmark until the failed smoke outcome is reviewed and
+   a separate future run is explicitly approved.
+2. Run density scouting, rerun the candidate knee and adjacent point three
    times, then record an approximately 80% scheduling target.
-4. Run the 1/2/4/8/10-worker scale matrix at that target.
-5. Add manual drain coordination and qualify 3 to 2 and 4 to 3.
-6. Qualify the pinned hosted autoscaler policy through 4 to 3 to 2 before
+3. Run the 1/2/4/8/10-worker scale matrix at that target.
+4. Add manual drain coordination and qualify 3 to 2 and 4 to 3.
+5. Qualify the pinned hosted autoscaler policy through 4 to 3 to 2 before
    changing the authoritative `tnl.dev` policy.
 
 ## Commands Verified So Far
