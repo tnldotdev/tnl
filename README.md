@@ -193,7 +193,7 @@ creation of the installation ID as well as telemetry requests.
 reported its loopback port. The integration runs only beneath
 `tnl dev`, so the project's usual development command remains local.
 
-For Next.js 15.2 or newer, install the adapter and update `next.config.ts`:
+For Next.js 16.3.4 or newer, install the adapter and update `next.config.ts`:
 
 ```console
 pnpm add --save-dev @tnldotdev/tnl@next @tnldotdev/next@next
@@ -205,7 +205,7 @@ import { withTnl } from "@tnldotdev/next";
 export default withTnl({});
 ```
 
-For Vite 6 or newer, install the plugin:
+For Vite 6.0.9 or newer, install the plugin:
 
 ```console
 pnpm add --save-dev @tnldotdev/tnl@next @tnldotdev/vite@next
