@@ -79,6 +79,9 @@ type WorkerVerifier struct {
 	hash SecretHash
 }
 
+// ID returns the nonsecret lookup ID for this worker credential.
+func (v WorkerVerifier) ID() CredentialID { return v.id }
+
 // ServiceVerifier is the nonsecret verification material for one service token.
 type ServiceVerifier struct {
 	id   CredentialID
@@ -164,6 +167,19 @@ func DeriveSessionKeyMaterial(token SessionToken) ([secretBytes]byte, error) {
 	secret := validatedTokenSecret(token.String(), sessionPrefix)
 	mac := hmac.New(sha256.New, secret)
 	_, _ = mac.Write([]byte("tnl/ingress-key/v1"))
+	var material [secretBytes]byte
+	copy(material[:], mac.Sum(nil))
+	return material, nil
+}
+
+// DeriveSessionSourceKey derives an edge-to-publisher source authentication key.
+func DeriveSessionSourceKey(token SessionToken) ([secretBytes]byte, error) {
+	if _, _, err := ParseSessionToken(token); err != nil {
+		return [secretBytes]byte{}, err
+	}
+	secret := validatedTokenSecret(token.String(), sessionPrefix)
+	mac := hmac.New(sha256.New, secret)
+	_, _ = mac.Write([]byte("tnl/source-auth-key/v1"))
 	var material [secretBytes]byte
 	copy(material[:], mac.Sum(nil))
 	return material, nil

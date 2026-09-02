@@ -78,6 +78,9 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		if err != nil {
 			return err
 		}
+		if err := checkDevPortAvailable(flags.Port); err != nil {
+			return err
+		}
 	}
 
 	bootstrap, err := newDevBootstrap(forcedTarget)
@@ -373,6 +376,17 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		<-publishDone
 		return context.Cause(ctx)
 	}
+}
+
+func checkDevPortAvailable(port int) error {
+	listener, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	if err != nil {
+		return fmt.Errorf("development target port %d is already in use", port)
+	}
+	if err := listener.Close(); err != nil {
+		return fmt.Errorf("check development target port %d: %w", port, err)
+	}
+	return nil
 }
 
 type devConfigurationResult struct {

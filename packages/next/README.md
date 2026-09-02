@@ -36,9 +36,9 @@ export default withTnl({ reactStrictMode: true }, ({ worktree }) => ({
 
 The options factory runs only for a Next.js development server beneath
 `tnl dev`. It receives a frozen environment snapshot, the process working
-directory, and worktree metadata. Next.js retains its normal behavior of trying
-the next port when its default is occupied; the integration registers the final
-listening port exposed by Next.js.
+directory, and worktree metadata. The integration registers the final listening
+port exposed by Next.js. If `tnl dev --port` is set, Next.js must bind that exact
+port.
 
 ## Run
 

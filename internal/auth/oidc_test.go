@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/oidcnonce"
 	"github.com/tnldotdev/tnl/internal/testutil/oidctest"
 )
 
@@ -39,8 +40,13 @@ func TestOIDCVerifierValidatesClaimsAndCachesJWKS(t *testing.T) {
 	}))
 	defer provider.Close()
 
+	const coreEndpoint = "https://core-a.example"
+	nonce, err := oidcnonce.New(coreEndpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
 	verifier, err := NewOIDCVerifier(OIDCConfig{
-		Issuer: provider.URL, ClientID: "tnl-cli", HTTPClient: provider.Client(),
+		Issuer: provider.URL, ClientID: "tnl-cli", CoreEndpoint: coreEndpoint, HTTPClient: provider.Client(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -48,7 +54,7 @@ func TestOIDCVerifierValidatesClaimsAndCachesJWKS(t *testing.T) {
 	now := time.Now()
 	claims := map[string]any{
 		"iss": provider.URL, "sub": "user-123", "aud": "tnl-cli",
-		"iat": now.Unix(), "exp": now.Add(5 * time.Minute).Unix(),
+		"iat": now.Unix(), "exp": now.Add(5 * time.Minute).Unix(), "nonce": nonce,
 	}
 	raw := signer.Token(t, "key-1", claims)
 	identity, err := verifier.Verify(context.Background(), raw)
@@ -56,6 +62,15 @@ func TestOIDCVerifierValidatesClaimsAndCachesJWKS(t *testing.T) {
 		t.Fatalf("identity = %#v, error = %v", identity, err)
 	}
 
+	otherCore, err := NewOIDCVerifier(OIDCConfig{
+		Issuer: provider.URL, ClientID: "tnl-cli", CoreEndpoint: "https://core-b.example", HTTPClient: provider.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := otherCore.Verify(context.Background(), raw); !errors.Is(err, ErrUnauthenticated) {
+		t.Fatalf("cross-Core nonce error = %v", err)
+	}
 	jwksAvailable.Store(false)
 	if _, err := verifier.Verify(context.Background(), raw); err != nil {
 		t.Fatalf("cached key failed during outage: %v", err)
@@ -72,7 +87,9 @@ func TestOIDCVerifierValidatesClaimsAndCachesJWKS(t *testing.T) {
 }
 
 func TestOIDCVerifierDoesNotDiscoverAtStartup(t *testing.T) {
-	verifier, err := NewOIDCVerifier(OIDCConfig{Issuer: "https://offline.example", ClientID: "tnl-cli"})
+	verifier, err := NewOIDCVerifier(OIDCConfig{
+		Issuer: "https://offline.example", ClientID: "tnl-cli", CoreEndpoint: "https://core.example",
+	})
 	if err != nil || verifier == nil {
 		t.Fatalf("verifier = %#v, error = %v", verifier, err)
 	}

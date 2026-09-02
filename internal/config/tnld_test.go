@@ -140,6 +140,27 @@ func TestParseTNLDWorkerDoesNotRequireState(t *testing.T) {
 	}
 }
 
+func TestParseTNLDAcceptsDistinctWorkerTokens(t *testing.T) {
+	first := testWorkerToken(t)
+	second := testWorkerToken(t)
+	config, err := ParseTNLD([]string{
+		"--mode", "edge", "--state-dir", "/state", "--public-listen", "",
+		"--accepted-worker-token", first, "--accepted-worker-token", second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(config.AcceptedWorkerTokens) != 2 {
+		t.Fatalf("accepted worker tokens = %d", len(config.AcceptedWorkerTokens))
+	}
+	if _, err := ParseTNLD([]string{
+		"--mode", "edge", "--state-dir", "/state", "--public-listen", "",
+		"--accepted-worker-token", first, "--accepted-worker-token", first,
+	}); err == nil {
+		t.Fatal("duplicate worker tokens accepted")
+	}
+}
+
 func TestParseTNLDRejectsInvalidInput(t *testing.T) {
 	t.Setenv("TNLD_STATE_DIR", "")
 
@@ -243,7 +264,8 @@ func TestTNLDValidateACME(t *testing.T) {
 	valid := TNLD{
 		Mode: TNLDModeStandalone, StateDir: "/state", Domain: "example.com",
 		PublicListen: "127.0.0.1:443", RelayMapFile: "/relay.json", RelayRegion: "default",
-		WorkerCapacity: 1, WorkerStreamLimit: 1, PublicConnLimit: 1, RouteConnLimit: 1, DrainTimeout: 30,
+		WorkerCapacity: 1, WorkerStreamLimit: 1, WorkerSessionLimit: 1, WorkerTotalCapacity: 1,
+		PublicConnLimit: 1, RouteConnLimit: 1, DrainTimeout: 30,
 		MaxActiveHostnames: 128, MaxHostnameRequests: 1024,
 		AccessTokenLifetime: time.Hour, RefreshTokenLifetime: 30 * 24 * time.Hour,
 		ACMEDirectoryURL: "https://acme.example/directory", ACMEEmail: "operator@example.com",

@@ -48,12 +48,14 @@ UPDATE route_sessions
 SET status = 'expired'
 WHERE route_id = sqlc.arg(route_id) AND status != 'expired';
 
--- name: ReplaceRoute :exec
+-- name: ReplaceRoute :execrows
 UPDATE routes
 SET
     local_target = sqlc.arg(local_target),
     version = sqlc.arg(version)
-WHERE id = sqlc.arg(route_id);
+WHERE id = sqlc.arg(route_id)
+    AND identity_id = CAST(sqlc.arg(identity_id) AS TEXT)
+    AND status = 'active';
 
 -- name: ReplaceSignedRoute :execrows
 UPDATE routes

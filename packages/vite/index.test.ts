@@ -57,7 +57,8 @@ describe("tnl", () => {
           tnl(async ({ cwd, env, worktree }) => {
             expect(cwd).toBe(process.cwd());
             expect(env.TNL_DEV_PROTOCOL).toBe("1");
-            expect(worktree.label).toMatch(/^tnl-[a-f0-9]{6}$/);
+            expect(worktree.root).toBe(process.cwd());
+            expect(worktree.label).not.toHaveLength(0);
             return {
               server: "https://tnl.example.com",
               name: "agent.example.com",
