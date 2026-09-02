@@ -64,7 +64,10 @@ describe("withTnl", () => {
       body: {
         protocol: 1,
         framework: "next",
-        options: { name: "tnl.example.com", allowCurrentIP: true },
+        options: {
+          name: expect.stringMatching(/^tnl-[a-f0-9]{6}\.example\.com$/),
+          allowCurrentIP: true,
+        },
       },
     });
     expect(bootstrap.requests[1]).toMatchObject({

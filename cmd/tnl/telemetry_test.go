@@ -52,6 +52,7 @@ func TestTelemetryObserverReportsReadyOnce(t *testing.T) {
 				}),
 				"publish",
 				test.serverURL,
+				"",
 				func(event publisher.Event) error {
 					events = append(events, event)
 					return nil
@@ -82,6 +83,7 @@ func TestTelemetryObserverReportsReadyOnce(t *testing.T) {
 		telemetryReporterFunc(func(telemetryPayload) { reported = true }),
 		"publish",
 		defaultServerURL,
+		"",
 		func(publisher.Event) error { return wantErr },
 	)
 	if err := observe(publisher.Event{Type: publisher.EventReady}); !errors.Is(err, wantErr) {
@@ -89,5 +91,22 @@ func TestTelemetryObserverReportsReadyOnce(t *testing.T) {
 	}
 	if reported {
 		t.Fatal("reported readiness after wrapped observer failed")
+	}
+}
+
+func TestTelemetryFramework(t *testing.T) {
+	for _, test := range []struct {
+		framework string
+		want      string
+	}{
+		{framework: "", want: ""},
+		{framework: "vite", want: "vite"},
+		{framework: "next", want: "next"},
+		{framework: "astro", want: "other"},
+		{framework: "private-project-name", want: "other"},
+	} {
+		if got := telemetryFramework(test.framework); got != test.want {
+			t.Errorf("telemetryFramework(%q) = %q, want %q", test.framework, got, test.want)
+		}
 	}
 }

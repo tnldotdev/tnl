@@ -141,7 +141,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 			telemetry = reporterFactories[0](root)
 			command := canonicalTelemetryCommand(parsed)
 			if telemetry != nil && command != "" {
-				telemetry.Report(newTelemetryPayload("command", command, ""))
+				telemetry.Report(newTelemetryPayload("command", command, "", ""))
 			}
 		}
 	}
@@ -395,7 +395,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 			}
 			return config.DecodeRelayRegions(relayMap)
 		},
-		Observe: withTelemetryObserver(telemetry, "publish", serverURL, func(event publisher.Event) error {
+		Observe: withTelemetryObserver(telemetry, "publish", serverURL, "", func(event publisher.Event) error {
 			switch event.Type {
 			case publisher.EventRoute:
 				return tunnel.SetRoute(ctx, event.RouteID, event.Hostname)

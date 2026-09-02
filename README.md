@@ -144,9 +144,10 @@ The `tnl` CLI sends pseudonymous usage telemetry to
 routes become ready on the hosted service versus self-hosted servers. Each
 payload contains only `installation_id` (a stable random ID), `event`
 (`command` or `route_started`), `command`, optional `server_kind` (`hosted` or
-`self_hosted`, only for `route_started`), `version`, `os`, `arch`, and `ci`.
-It does not include arguments, flags, route IDs, hostnames, URLs, targets,
-errors, credentials, or timestamps.
+`self_hosted`, only for `route_started`), optional `framework` (`vite`, `next`,
+or `other`, only for `tnl dev` routes), `version`, `os`, `arch`, and `ci`. It
+does not include arguments, flags, route IDs, hostnames, URLs, targets, errors,
+credentials, or timestamps.
 
 Telemetry is retained by the server for 365 days. The source IP is visible in
 transit to the endpoint but is not stored in the telemetry table. Disable
@@ -213,7 +214,8 @@ export default defineConfig({
 ```
 
 `worktree.root` is the Git worktree root, `worktree.name` is its directory name,
-and `worktree.label` is a DNS-safe identifier. Outside Git, the current working
+and `worktree.label` is a readable DNS-safe identifier with a stable suffix that
+prevents same-name worktrees from colliding. Outside Git, the current working
 directory is used as a fallback. Vite and Next.js choose their normal listening
 ports and report the final port to `tnl`; multiple worktrees therefore do not
 need coordinated port assignments.
