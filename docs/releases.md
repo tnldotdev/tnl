@@ -119,8 +119,13 @@ The daemon creates its login token in the state directory. Retrieve it with
 access credential. Worker and service credentials are generated with `tnld
 token worker` and `tnld token service`.
 
+`TNLD_ACCESS_TOKEN_LIFETIME` controls newly issued credentials from five
+minutes through 30 days and defaults to seven days. Existing credentials retain
+their stored expiry.
+
 Use `TNLD_RELAY_PROVIDER=tailcat` to explicitly opt into automatic hosted relay
-selection, or retain `TNLD_RELAY_MAP_FILE` for an operator-approved custom map.
+selection, or use `TNLD_RELAY_MAP_FILE` for an operator-approved custom map.
+Public ingress requires exactly one source.
 Review the matching release's [self-hosting guide](self-hosting.md) before
 recreating containers.
 
@@ -169,7 +174,7 @@ running daemon or an existing non-empty volume.
 3. Take and test a cold backup with the currently running version recorded.
 4. Set `TNL_IMAGE` to the new digest and run `docker compose pull`.
 5. Run `docker compose up -d --force-recreate` and inspect `docker compose logs tnld`.
-6. Query `/v1/capabilities` and publish a test route.
+6. Query `/v1/ready`, inspect `/v1/capabilities`, and publish a test route.
 7. Upgrade every `tnl` client to the same version before normal use resumes.
 
 The daemon applies embedded SQLite migrations at startup. It refuses a database
@@ -186,7 +191,7 @@ To roll back after an upgrade:
 4. Set `TNL_IMAGE` to the previous verified digest.
 5. Set `TNL_STATE_VOLUME` to the restored volume name.
 6. Run `docker compose pull` and `docker compose up -d --force-recreate`.
-7. Confirm `/v1/capabilities`, inspect logs, and publish a test route.
+7. Confirm `/v1/ready`, inspect `/v1/capabilities` and logs, and publish a test route.
 8. Restore matching previous `tnl` clients.
 
 If no pre-upgrade backup exists, stop rather than attempting an in-place schema

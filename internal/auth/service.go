@@ -13,7 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/state"
 )
 
-const AccessTokenLifetime = 30 * 24 * time.Hour
+const DefaultAccessTokenLifetime = 7 * 24 * time.Hour
 
 var (
 	// ErrUnauthenticated hides why a credential was rejected.
@@ -32,24 +32,29 @@ type IssuedAccessToken struct {
 
 // Service implements standalone login and access credential flows.
 type Service struct {
-	db    *sql.DB
-	login *credentials.LoginVerifier
-	oidc  OIDCVerifier
-	now   func() time.Time
+	db                  *sql.DB
+	login               *credentials.LoginVerifier
+	oidc                OIDCVerifier
+	now                 func() time.Time
+	accessTokenLifetime time.Duration
 }
 
 // NewService parses login once so the service does not retain the raw token.
-func NewService(db *sql.DB, login credentials.LoginToken) (*Service, error) {
-	return NewServiceWithOIDC(db, login, nil)
+func NewService(db *sql.DB, login credentials.LoginToken, accessTokenLifetime time.Duration) (*Service, error) {
+	return NewServiceWithOIDC(db, login, nil, accessTokenLifetime)
 }
 
 func NewServiceWithOIDC(
 	db *sql.DB,
 	login credentials.LoginToken,
 	oidc OIDCVerifier,
+	accessTokenLifetime time.Duration,
 ) (*Service, error) {
 	if db == nil {
 		return nil, errors.New("auth: nil state database")
+	}
+	if accessTokenLifetime <= 0 {
+		return nil, errors.New("auth: access token lifetime must be positive")
 	}
 	var verifier *credentials.LoginVerifier
 	if login != "" {
@@ -62,7 +67,10 @@ func NewServiceWithOIDC(
 	if verifier == nil && oidc == nil {
 		return nil, errors.New("auth: no authentication method configured")
 	}
-	return &Service{db: db, login: verifier, oidc: oidc, now: time.Now}, nil
+	return &Service{
+		db: db, login: verifier, oidc: oidc, now: time.Now,
+		accessTokenLifetime: accessTokenLifetime,
+	}, nil
 }
 
 // Exchange issues a new access credential for the stable local principal.
@@ -73,7 +81,7 @@ func (s *Service) Exchange(
 	if s.login == nil || !s.login.Matches(login) {
 		return IssuedAccessToken{}, ErrUnauthenticated
 	}
-	return s.issue(ctx, localPrincipal, s.now().Add(AccessTokenLifetime), nil)
+	return s.issue(ctx, localPrincipal, s.now().Add(s.accessTokenLifetime), nil)
 }
 
 func (s *Service) ExchangeOIDC(ctx context.Context, token string) (IssuedAccessToken, error) {
@@ -89,7 +97,7 @@ func (s *Service) ExchangeOIDC(ctx context.Context, token string) (IssuedAccessT
 		ID: "principal_oidc_" + hex.EncodeToString(digest[:]),
 	}
 	tokenHash := sha256.Sum256([]byte(token))
-	issued, err := s.issueOIDC(ctx, principal, s.now().Add(AccessTokenLifetime), tokenHash[:], identity.ExpiresAt)
+	issued, err := s.issueOIDC(ctx, principal, s.now().Add(s.accessTokenLifetime), tokenHash[:], identity.ExpiresAt)
 	if errors.Is(err, state.ErrOIDCAssertionAlreadyExchanged) {
 		return IssuedAccessToken{}, ErrUnauthenticated
 	}

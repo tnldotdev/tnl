@@ -60,6 +60,48 @@ func TestTokenCommands(t *testing.T) {
 	}
 }
 
+func TestCommandTreeIncludesServeAndAdministration(t *testing.T) {
+	var flags tnldCLI
+	parser, err := newTNLDParser(&flags, &bytes.Buffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	commands := map[string]bool{}
+	for _, command := range parser.Model.Leaves(true) {
+		commands[command.Path()] = true
+	}
+	for _, command := range []string{"serve", "version", "login-token", "token worker", "token service", "relay refresh"} {
+		if !commands[command] {
+			t.Fatalf("command %q missing from help model: %#v", command, commands)
+		}
+	}
+
+	for name, test := range map[string]struct {
+		args []string
+		want string
+	}{
+		"default serve":  {args: []string{"--public-listen", ""}, want: "serve"},
+		"explicit serve": {args: []string{"serve", "--public-listen", ""}, want: "serve"},
+		"login token":    {args: []string{"login-token", "--state-dir", "/state"}, want: "login-token"},
+		"relay refresh":  {args: []string{"relay", "refresh", "--state-dir", "/state"}, want: "relay refresh"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var flags tnldCLI
+			parser, err := newTNLDParser(&flags, &bytes.Buffer{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			parsed, err := parser.Parse(test.args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if parsed.Command() != test.want {
+				t.Fatalf("command = %q, want %q", parsed.Command(), test.want)
+			}
+		})
+	}
+}
+
 func TestLoginTokenCommand(t *testing.T) {
 	directory := t.TempDir()
 	db, err := state.Open(t.Context(), directory)
@@ -129,6 +171,7 @@ func TestIntegrationStandaloneControlLifecycle(t *testing.T) {
 		ACMEProfile: "tlsserver", RelayMapFile: relayFile, RelayProfile: "test",
 		WorkerCapacity: 10, WorkerStreamLimit: 10, PublicConnLimit: 10, RouteConnLimit: 5, DrainTimeout: time.Second,
 		MaxActiveHostnameClaims: 128, MaxHostnameClaimRequests: 1024,
+		AccessTokenLifetime: time.Hour,
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
@@ -152,6 +195,18 @@ func TestIntegrationStandaloneControlLifecycle(t *testing.T) {
 		},
 	}, Timeout: 5 * time.Second}
 	baseURL := "https://tnl.example"
+	for _, path := range []string{"/v1/health", "/v1/ready"} {
+		response, err := httpClient.Get(baseURL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var body map[string]any
+		decodeErr := json.NewDecoder(response.Body).Decode(&body)
+		closeErr := response.Body.Close()
+		if response.StatusCode != http.StatusOK || decodeErr != nil || closeErr != nil || body["status"] == nil {
+			t.Fatalf("probe %s: status = %d, body = %#v, decode = %v, close = %v", path, response.StatusCode, body, decodeErr, closeErr)
+		}
+	}
 	anonymous, err := serverclient.New(baseURL, httpClient, "")
 	if err != nil {
 		t.Fatal(err)
@@ -159,6 +214,9 @@ func TestIntegrationStandaloneControlLifecycle(t *testing.T) {
 	issued, err := anonymous.Exchange(context.Background(), login)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if lifetime := time.Until(issued.ExpiresAt); lifetime < 59*time.Minute || lifetime > time.Hour {
+		t.Fatalf("issued access token lifetime = %s, want 1h", lifetime)
 	}
 	client, err := serverclient.New(baseURL, httpClient, credentials.AccessToken(issued.AccessToken))
 	if err != nil {

@@ -9,6 +9,40 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://control.tnl.dev
 paths:
+  /v1/health:
+    get:
+      operationId: getHealth
+      summary: Confirm that the control HTTP server is serving
+      security: []
+      responses:
+        "200":
+          description: Control HTTP server is serving
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/ready:
+    get:
+      operationId: getReadiness
+      summary: Confirm that the control server and durable state are ready
+      security: []
+      responses:
+        "200":
+          description: Control server is ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+        "503":
+          description: Durable state is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/capabilities:
     get:
       operationId: getCapabilities
@@ -681,6 +715,32 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          const: ok
+    ReadinessResponse:
+      type: object
+      additionalProperties: false
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          enum: [ready, not_ready]
+        checks:
+          $ref: "#/components/schemas/ReadinessChecks"
+    ReadinessChecks:
+      type: object
+      additionalProperties: false
+      required: [state]
+      properties:
+        state:
+          type: string
+          enum: [ok, failed]
     Capabilities:
       type: object
       additionalProperties: false

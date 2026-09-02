@@ -27,6 +27,8 @@ import (
 )
 
 const (
+	healthPath             = "/v1/health"
+	readinessPath          = "/v1/ready"
 	capabilitiesPath       = "/v1/capabilities"
 	relayMapPath           = "/v1/transport/relay-map"
 	tokenExchangePath      = "/v1/auth/token"
@@ -47,6 +49,7 @@ const (
 	maxJSONRequestBytes    = 20 << 10
 	maxJSONResponseBytes   = 64 << 10
 	jsonReadTimeout        = 10 * time.Second
+	readinessTimeout       = time.Second
 )
 
 var (
@@ -63,6 +66,8 @@ type Operation string
 
 const (
 	OperationUnknown                     Operation = "unknown"
+	OperationHealthGet                   Operation = "health.get"
+	OperationReadinessGet                Operation = "readiness.get"
 	OperationCapabilitiesGet             Operation = "capabilities.get"
 	OperationRelayMapGet                 Operation = "transport.relay_map.get"
 	OperationTokenExchange               Operation = "auth.token.exchange"
@@ -118,6 +123,7 @@ type HandlerConfig struct {
 	RelayMap         []byte
 	DNSReady         func() bool
 	IngressAddresses func() []string
+	Readiness        func(context.Context) error
 }
 
 // AuthService implements authentication flows without exposing storage to HTTP.
@@ -168,6 +174,7 @@ type handler struct {
 	relayMap         []byte
 	dnsReady         func() bool
 	ingressAddresses func() []string
+	readiness        func(context.Context) error
 	oidcLimit        *rate.Limiter
 }
 
@@ -213,6 +220,7 @@ func NewHandlerWithServicesAndConfig(
 		relayMap:         append([]byte(nil), config.RelayMap...),
 		dnsReady:         config.DNSReady,
 		ingressAddresses: config.IngressAddresses,
+		readiness:        config.Readiness,
 		oidcLimit:        oidcLimit,
 	}
 }
@@ -242,6 +250,10 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (h *handler) serveHTTP(w http.ResponseWriter, r *http.Request, requestID string) {
 	switch r.URL.Path {
+	case healthPath:
+		h.serveHealth(w, r, requestID)
+	case readinessPath:
+		h.serveReadiness(w, r, requestID)
 	case capabilitiesPath:
 		h.serveCapabilities(w, r, requestID)
 	case relayMapPath:
@@ -323,6 +335,14 @@ func (w *observedResponseWriter) report(err error) {
 
 func operationForRequest(method, path string) Operation {
 	switch path {
+	case healthPath:
+		if method == http.MethodGet {
+			return OperationHealthGet
+		}
+	case readinessPath:
+		if method == http.MethodGet {
+			return OperationReadinessGet
+		}
 	case capabilitiesPath:
 		if method == http.MethodGet {
 			return OperationCapabilitiesGet
@@ -425,6 +445,44 @@ func resultForStatus(status int) RequestResult {
 	default:
 		return RequestSuccess
 	}
+}
+
+func (h *handler) serveHealth(w http.ResponseWriter, r *http.Request, requestID string) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w, requestID, http.MethodGet)
+		return
+	}
+	body, err := marshalJSON(serverv1.HealthResponse{Status: serverv1.HealthResponseStatusOk})
+	if err != nil {
+		writeInternalError(w, requestID, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, "application/json", body)
+}
+
+func (h *handler) serveReadiness(w http.ResponseWriter, r *http.Request, requestID string) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w, requestID, http.MethodGet)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), readinessTimeout)
+	defer cancel()
+	status := http.StatusOK
+	response := serverv1.ReadinessResponse{
+		Status: serverv1.ReadinessResponseStatusReady,
+		Checks: serverv1.ReadinessChecks{State: serverv1.ReadinessChecksStateOk},
+	}
+	if h.readiness == nil || h.readiness(ctx) != nil {
+		status = http.StatusServiceUnavailable
+		response.Status = serverv1.ReadinessResponseStatusNotReady
+		response.Checks.State = serverv1.ReadinessChecksStateFailed
+	}
+	body, err := marshalJSON(response)
+	if err != nil {
+		writeInternalError(w, requestID, err)
+		return
+	}
+	writeJSON(w, status, "application/json", body)
 }
 
 func (h *handler) serveHostnameClaims(w http.ResponseWriter, r *http.Request, requestID string) {

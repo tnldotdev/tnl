@@ -46,7 +46,7 @@ start the daemon:
 ```console
 docker compose pull
 docker compose up -d
-curl --fail https://tnl.example.com/v1/capabilities
+curl --fail https://tnl.example.com/v1/ready
 docker compose exec tnld tnld login-token --state-dir /var/lib/tnl
 ```
 
@@ -58,7 +58,7 @@ metrics, and backup requirements.
 ## Publish
 
 A server with browser login enabled can save a revocable access credential in
-the client's private state directory:
+the client's persistent state:
 
 ```console
 tnl login https://tnl.example.com
@@ -70,8 +70,8 @@ The command prints the account URL and one-time code to approve. Use
 
 For a server without browser login, `tnl login` securely prompts for the login
 token printed by the daemon command above and stores a revocable access
-credential in the client's private state directory. The client fetches the
-deployment's pinned relay region from the server API:
+credential. The client fetches the deployment's pinned relay region from the
+server API:
 
 ```console
 tnl login https://tnl.example.com
@@ -79,12 +79,17 @@ tnl host claim demo
 tnl public 3000 --name=demo
 ```
 
-Access credentials expire after 30 days. Authenticate again before a later
-client restart or hostname administration operation when necessary.
+Access credentials expire after seven days by default; operators configure new
+credentials with `TNLD_ACCESS_TOKEN_LIFETIME`.
+
+On macOS, `tnl` keeps a profile encryption key in Keychain and encrypts saved
+access tokens and route TLS private keys in its state files. On Linux, those
+secrets remain in private user-owned files with mode `0600`.
 
 The named route becomes available at `https://demo.example.com`. Omitting
 `--name` allocates a fresh friendly ephemeral name for every invocation. A
 persistent base may serve its apex and descendants up to eight labels deep.
+`localhost:3000` is also accepted and canonicalized to `127.0.0.1:3000`.
 
 Use `tnl host claim`, `tnl host list`, and `tnl host release HOSTNAME` to manage
 persistent bases and verified custom domains. Managed bases remain bound to

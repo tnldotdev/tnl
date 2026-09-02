@@ -203,7 +203,7 @@ func TestRunPublicPreflightsBeforeServerRequests(t *testing.T) {
 
 func TestRunPublicNDJSONReportsInvalidTarget(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	err := runPublic(context.Background(), publicCommand{Target: "localhost:3000", Output: "ndjson"}, &stdout, &stderr)
+	err := runPublic(context.Background(), publicCommand{Target: "example.com:3000", Output: "ndjson"}, &stdout, &stderr)
 	if err == nil {
 		t.Fatal("runPublic accepted an invalid target")
 	}

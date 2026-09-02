@@ -16,7 +16,7 @@ type AccessCredential struct {
 
 type accessCredentialFile struct {
 	Version      int       `json:"version"`
-	AccessToken  string    `json:"access_token"`
+	AccessToken  []byte    `json:"access_token"`
 	CredentialID string    `json:"credential_id"`
 	ExpiresAt    time.Time `json:"expires_at"`
 }
@@ -27,7 +27,11 @@ func (s *Store) AccessCredential() (AccessCredential, bool, error) {
 	if err != nil || !found {
 		return AccessCredential{}, found, err
 	}
-	token := credentials.AccessToken(stored.AccessToken)
+	plaintext, err := s.secrets.Open("access-credential", stored.AccessToken)
+	if err != nil {
+		return AccessCredential{}, true, err
+	}
+	token := credentials.AccessToken(plaintext)
 	credentialID, _, err := credentials.ParseAccessToken(token)
 	if err != nil || stored.Version != stateVersion || credentialID.String() != stored.CredentialID ||
 		stored.ExpiresAt.IsZero() {
@@ -41,8 +45,12 @@ func (s *Store) SaveAccessCredential(credential AccessCredential) error {
 	if err != nil || credentialID != credential.CredentialID || credential.ExpiresAt.IsZero() {
 		return errors.New("clientstate: invalid access credential")
 	}
+	protected, err := s.secrets.Seal("access-credential", []byte(credential.Token))
+	if err != nil {
+		return err
+	}
 	return writeJSON(s.credentialsPath, accessCredentialFile{
-		Version: stateVersion, AccessToken: credential.Token.String(),
+		Version: stateVersion, AccessToken: protected,
 		CredentialID: credential.CredentialID.String(), ExpiresAt: credential.ExpiresAt,
 	})
 }

@@ -189,6 +189,10 @@ func TestNormalizeTarget(t *testing.T) {
 	accepted := map[string]string{
 		"3000":                           "http://127.0.0.1:3000",
 		"03000":                          "http://127.0.0.1:3000",
+		"localhost:3000":                 "http://127.0.0.1:3000",
+		"LOCALHOST:03000":                "http://127.0.0.1:3000",
+		"http://localhost:3000":          "http://127.0.0.1:3000",
+		"HTTP://LOCALHOST:03000":         "http://127.0.0.1:3000",
 		"http://127.0.0.1:3000":          "http://127.0.0.1:3000",
 		"http://127.0.0.2:03000":         "http://127.0.0.2:3000",
 		"http://[::1]:3000":              "http://[::1]:3000",
@@ -210,7 +214,8 @@ func TestNormalizeTarget(t *testing.T) {
 	rejected := []string{
 		"", "0", "65536", "+3000", "-3000", "30x00", "127.0.0.1:3000",
 		" 3000", "3000 ", "3 000", "\t3000",
-		"http://localhost:3000", "http://192.0.2.1:3000", "http://[::2]:3000",
+		"localhost", "localhost:", "localhost:3000/path", "localhost:3000:4000",
+		"http://localhost.:3000", "http://192.0.2.1:3000", "http://[::2]:3000",
 		"https://127.0.0.1:3000", "http://127.0.0.1", "http://127.0.0.1:0",
 		"http://127.0.0.1:65536", "http://127.0.0.1:bad",
 		"http://127.0.0.1:3000/", "http://127.0.0.1:3000/path",
@@ -271,6 +276,7 @@ func FuzzNormalizeTarget(f *testing.F) {
 		"03000",
 		"http://127.0.0.1:3000",
 		"HTTP://[0:0:0:0:0:0:0:1]:03000",
+		"localhost:3000",
 		"http://localhost:3000",
 		"http://127.0.0.1:3000/path",
 		"http://user@127.0.0.1:3000",

@@ -29,18 +29,20 @@ import (
 	"tailscale.com/tailcfg"
 )
 
+const defaultServerURL = "https://control.tnl.dev"
+
 type cli struct {
 	Public  publicCommand `cmd:"" help:"Publish one local HTTP service."`
 	Dev     devCommand    `cmd:"" help:"Run and publish a development server."`
-	Host    hostCommand   `cmd:"" help:"Manage self-hosted public names."`
+	Host    hostCommand   `cmd:"" help:"Manage persistent public names."`
 	Login   loginCommand  `cmd:"" help:"Authenticate to a tnl server."`
 	Logout  logoutCommand `cmd:"" help:"Revoke and remove the saved access token."`
 	Version struct{}      `cmd:"" help:"Print release version information."`
 }
 
 type publicCommand struct {
-	Target      string `arg:"" name:"target" required:"" help:"Local port or literal-loopback HTTP origin."`
-	ServerURL   string `name:"server" env:"TNL_SERVER" help:"tnl server HTTPS origin; defaults to the saved server."`
+	Target      string `arg:"" name:"target" required:"" help:"Local port, localhost port, or literal-loopback HTTP origin."`
+	ServerURL   string `name:"server" env:"TNL_SERVER" help:"tnl server HTTPS origin; defaults to the selected server or https://control.tnl.dev."`
 	AccessToken string `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Server access token; defaults to the saved login."`
 	Name        string `name:"name" env:"TNL_NAME" help:"Requested single-label public name; omit for a random name."`
 	Output      string `name:"output" enum:"human,ndjson" default:"human" help:"Output format: ${enum}."`
@@ -55,33 +57,33 @@ type hostCommand struct {
 
 type hostClaimCommand struct {
 	Name        string `arg:"" name:"name" optional:"" help:"Managed base name or absolute custom domain; omit to generate a base."`
-	ServerURL   string `name:"server" env:"TNL_SERVER" help:"tnl server HTTPS origin; defaults to the saved server."`
+	ServerURL   string `name:"server" env:"TNL_SERVER" help:"tnl server HTTPS origin; defaults to the selected server or https://control.tnl.dev."`
 	AccessToken string `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Server access token; defaults to the saved login."`
 	StateDir    string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent client state."`
 }
 
 type hostListCommand struct {
-	ServerURL   string `name:"server" env:"TNL_SERVER" help:"tnl server HTTPS origin; defaults to the saved server."`
+	ServerURL   string `name:"server" env:"TNL_SERVER" help:"tnl server HTTPS origin; defaults to the selected server or https://control.tnl.dev."`
 	AccessToken string `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Server access token; defaults to the saved login."`
 	StateDir    string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent client state."`
 }
 
 type hostReleaseCommand struct {
 	Hostname    string `arg:"" name:"hostname" required:"" help:"Exact hostname to release."`
-	ServerURL   string `name:"server" env:"TNL_SERVER" help:"tnl server HTTPS origin; defaults to the saved server."`
+	ServerURL   string `name:"server" env:"TNL_SERVER" help:"tnl server HTTPS origin; defaults to the selected server or https://control.tnl.dev."`
 	AccessToken string `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Server access token; defaults to the saved login."`
 	StateDir    string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent route state."`
 }
 
 type loginCommand struct {
-	Server    string `arg:"" name:"server" optional:"" help:"tnl server HTTPS origin."`
-	ServerURL string `name:"server" env:"TNL_SERVER" help:"tnl server HTTPS origin; defaults to the saved server."`
+	Server    string `arg:"" name:"server" optional:"" help:"tnl server HTTPS origin; defaults to the selected server or https://control.tnl.dev."`
+	ServerURL string `name:"server" env:"TNL_SERVER" help:"tnl server HTTPS origin; defaults to the selected server or https://control.tnl.dev."`
 	StateDir  string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent client state."`
 	Token     bool   `name:"token" help:"Use the local login token even when OIDC is available."`
 }
 
 type logoutCommand struct {
-	ServerURL string `name:"server" env:"TNL_SERVER" help:"tnl server HTTPS origin; defaults to the saved server."`
+	ServerURL string `name:"server" env:"TNL_SERVER" help:"tnl server HTTPS origin; defaults to the selected server or https://control.tnl.dev."`
 	StateDir  string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent client state."`
 }
 
@@ -725,7 +727,7 @@ func resolveServer(root, value string) (string, string, error) {
 		return "", "", err
 	}
 	if !found {
-		return "", "", errors.New("server is required; run tnl login SERVER or use --server")
+		return defaultServerURL, root, nil
 	}
 	return server, root, nil
 }
