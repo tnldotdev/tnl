@@ -453,6 +453,9 @@ func (t *bearerTransport) RoundTrip(request *http.Request) (*http.Response, erro
 	if request.URL.Scheme+"://"+request.URL.Host != t.source.control.controlEndpoint {
 		return nil, errors.New("clientauth: refused to send credentials to an unexpected origin")
 	}
+	if request.Header.Get("Authorization") != "" {
+		return t.base.RoundTrip(request)
+	}
 	token, err := t.source.accessToken(request.Context(), false, "")
 	if err != nil {
 		return nil, err

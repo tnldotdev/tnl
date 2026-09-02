@@ -132,17 +132,28 @@ func TestExplicitAccessTokenDoesNotOpenStateOrRefresh(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	session, _, _, err := credentials.NewSessionToken()
+	if err != nil {
+		t.Fatal(err)
+	}
 	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
-		if request.URL.Path == "/v1/capabilities" {
+		switch request.URL.Path {
+		case "/v1/capabilities":
 			_ = json.NewEncoder(response).Encode(localCapabilities())
-			return
-		}
-		if request.URL.Path == "/v1/routes" && request.Header.Get("Authorization") == "Bearer "+access.String() {
+		case "/v1/routes":
+			if request.Header.Get("Authorization") != "Bearer "+access.String() {
+				t.Errorf("routes authorization = %q", request.Header.Get("Authorization"))
+			}
 			_, _ = response.Write([]byte("[]"))
-			return
+		case "/v1/routes/route/heartbeat":
+			if request.Header.Get("Authorization") != "Bearer "+session.String() {
+				t.Errorf("heartbeat authorization = %q", request.Header.Get("Authorization"))
+			}
+			_ = json.NewEncoder(response).Encode(serverv1.HeartbeatResponse{ExpiresAt: time.Now().Add(time.Minute)})
+		default:
+			http.NotFound(response, request)
 		}
-		http.NotFound(response, request)
 	}))
 	defer server.Close()
 	client, err := Authenticate(context.Background(), Config{
@@ -153,6 +164,9 @@ func TestExplicitAccessTokenDoesNotOpenStateOrRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := client.Core.ListRoutes(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Core.Heartbeat(context.Background(), "route", 1, session); err != nil {
 		t.Fatal(err)
 	}
 }

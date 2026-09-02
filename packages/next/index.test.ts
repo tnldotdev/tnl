@@ -6,7 +6,6 @@ import {
   openTestWebSocket,
   openTestWebSocketWithMessage,
   requestTestServer,
-  reserveLoopbackPort,
   startTestBootstrap,
   startTestProcess,
   waitForBootstrapRequest,
@@ -36,14 +35,21 @@ describe("withTnl", () => {
     let receivedContext: NextConfigContext | undefined;
 
     await withProcessEnvironment({ ...bootstrap.environment, TNL_DEV_PORT: "3200" }, async () => {
-      const wrapped = withTnl(async (phase, factoryContext) => {
-        receivedPhase = phase;
-        receivedContext = factoryContext;
-        return {
-          allowedDevOrigins: ["existing.example", "demo.tnl.dev"],
-          reactStrictMode: true,
-        };
-      });
+      const wrapped = withTnl(
+        async (phase, factoryContext) => {
+          receivedPhase = phase;
+          receivedContext = factoryContext;
+          return {
+            allowedDevOrigins: ["existing.example", "demo.tnl.dev"],
+            reactStrictMode: true,
+          };
+        },
+        ({ cwd, env, worktree }) => {
+          expect(cwd).toBe(process.cwd());
+          expect(env.TNL_DEV_PORT).toBe("3200");
+          return { name: `${worktree.label}.example.com`, allowCurrentIP: true };
+        },
+      );
 
       await expect(wrapped(developmentPhase, originalContext)).resolves.toMatchObject({
         allowedDevOrigins: ["existing.example", "demo.tnl.dev"],
@@ -53,10 +59,21 @@ describe("withTnl", () => {
 
     expect(receivedPhase).toBe(developmentPhase);
     expect(receivedContext).toBe(originalContext);
-    expect(bootstrap.requests[0]?.body).toEqual({
-      protocol: 1,
-      framework: "next",
-      port: 3200,
+    expect(bootstrap.requests[0]).toMatchObject({
+      path: "/v1/configure",
+      body: {
+        protocol: 1,
+        framework: "next",
+        options: { name: "tnl.example.com", allowCurrentIP: true },
+      },
+    });
+    expect(bootstrap.requests[1]).toMatchObject({
+      path: "/v1/target",
+      body: {
+        protocol: 1,
+        framework: "next",
+        port: 3200,
+      },
     });
   });
 
@@ -98,6 +115,11 @@ describe("withTnl", () => {
     expect(bootstrap.requests[0]?.body).toEqual({
       protocol: 1,
       framework: "next",
+      options: {},
+    });
+    expect(bootstrap.requests[1]?.body).toEqual({
+      protocol: 1,
+      framework: "next",
       port: expected,
     });
   });
@@ -117,11 +139,10 @@ test("runs Next.js with protected development assets and HMR", { timeout: 60_000
 
   const bootstrap = await startTestBootstrap();
   onTestFinished(() => bootstrap.close());
-  const port = await reserveLoopbackPort();
   const nextCLI = fileURLToPath(new URL("node_modules/next/dist/bin/next", import.meta.url));
   const process_ = startTestProcess(
     process.execPath,
-    [nextCLI, "dev", "--hostname", "127.0.0.1", "--port", String(port)],
+    [nextCLI, "dev", "--hostname", "127.0.0.1", "--port", "0"],
     { cwd: fixture, env: { ...process.env, ...bootstrap.environment } },
   );
   onTestFinished(async () => {
@@ -132,8 +153,16 @@ test("runs Next.js with protected development assets and HMR", { timeout: 60_000
   });
 
   try {
-    const registration = await waitForBootstrapRequest(bootstrap);
-    expect(registration.body).toEqual({ protocol: 1, framework: "next", port });
+    const assignment = await waitForBootstrapRequest(bootstrap);
+    expect(assignment).toMatchObject({
+      body: { protocol: 1, framework: "next", options: {} },
+      path: "/v1/configure",
+    });
+    const target = await waitForBootstrapRequest(bootstrap, 1);
+    expect(target.path).toBe("/v1/target");
+    expect(target.body).toMatchObject({ protocol: 1, framework: "next" });
+    const port = (target.body as { port: number }).port;
+    expect(port).toBeGreaterThan(0);
 
     const page = await requestTestServer(port);
     expect(page.status).toBe(200);

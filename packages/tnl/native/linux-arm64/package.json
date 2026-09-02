@@ -1,0 +1,26 @@
+{
+  "name": "@tnldotdev/tnl-linux-arm64",
+  "version": "0.0.0-development",
+  "description": "The Linux arm64 binary for tnl.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tnldotdev/tnl.git",
+    "directory": "packages/tnl/native/linux-arm64"
+  },
+  "files": [
+    "bin",
+    "NOTICE",
+    "THIRD_PARTY_LICENSES.txt"
+  ],
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "preferUnplugged": true
+}

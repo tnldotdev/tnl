@@ -54,6 +54,7 @@ type TNLD struct {
 	StateDir                       string        `name:"state-dir" env:"TNLD_STATE_DIR" help:"Directory for persistent state; defaults to the platform user-state directory."`
 	BackupURL                      string        `name:"backup-url" env:"TNLD_BACKUP_URL" help:"S3 URL for continuous state backup and restore."`
 	MetricsListen                  string        `name:"metrics-listen" env:"TNLD_METRICS_LISTEN" default:"127.0.0.1:9090" help:"Private Prometheus listen address; empty disables metrics."`
+	DNSServer                      string        `name:"dns-server" env:"TNLD_DNS_SERVER" help:"DNS resolver address for public-hostname readiness checks; defaults to the system resolver."`
 	PublicListen                   string        `name:"public-listen" env:"TNLD_PUBLIC_LISTEN" default:":443" help:"Public TLS listen address for the control API and routes; empty disables ingress."`
 	Domain                         string        `name:"domain" env:"TNLD_DOMAIN" help:"Canonical domain shorthand; derives tnl.<domain> control and <domain> routes."`
 	ControlHostname                string        `name:"control-hostname" env:"TNLD_CONTROL_HOSTNAME" help:"Canonical control API hostname; overrides --domain derivation."`
@@ -103,6 +104,9 @@ func (c TNLD) Validate() error {
 	}
 	if err := validateListenAddress(c.MetricsListen); err != nil {
 		return fmt.Errorf("metrics listen address: %w", err)
+	}
+	if err := validateListenAddress(c.DNSServer); err != nil {
+		return fmt.Errorf("DNS server address: %w", err)
 	}
 	if err := validateListenAddress(c.PublicListen); err != nil {
 		return fmt.Errorf("public listen address: %w", err)

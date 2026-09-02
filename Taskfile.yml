@@ -104,7 +104,10 @@ tasks:
 
   package:
     desc: Build a local release snapshot
-    deps: [release:snapshot, js:pack]
+    cmds:
+      - task: js:pack
+      - task: release:snapshot
+      - task: release:npm-package
 
   go:generate:
     cmds:
@@ -154,7 +157,7 @@ tasks:
     env:
       TNL_TEST_INTEGRATION: "1"
     cmds:
-      - go test -race -v ./cmd/tnld ./internal/controltls ./internal/tailtransport ./internal/publisher -run='^TestIntegration' -count=1 -timeout=5m
+      - go test -race -v ./cmd/tnld ./internal/controltls ./internal/tailtransport ./internal/publisher ./internal/integration -run='^TestIntegration' -count=1 -timeout=15m
 
   go:bench-fly:
     desc: Benchmark complete single-node and HA route paths on Fly
@@ -197,6 +200,12 @@ tasks:
     desc: Build release archives, checksums, and SBOMs without publishing or signing
     cmds:
       - goreleaser release --snapshot --clean --skip=sign
+
+  release:npm-package:
+    desc: Package the tnl release binaries for npm
+    cmds:
+      - node scripts/pack-tnl.mjs dist/npm
+      - node scripts/verify-tnl-install.mjs dist/npm
 
   workflows:lint:
     cmds:

@@ -1,7 +1,16 @@
-import { readDevEnvironment, registerTarget } from "@tnldotdev/dev";
+import { readDevEnvironment, registerTarget, requestTunnelAssignment } from "@tnldotdev/dev";
+import type { TnlOptionsInput, TnlTunnelAssignment } from "@tnldotdev/dev";
 import type { Plugin } from "vite";
 
-export default function tnl(): Plugin {
+export type { TnlOptions, TnlOptionsContext, TnlOptionsInput, TnlWorktree } from "@tnldotdev/dev";
+
+/**
+ * Adds tnl support to the Vite development server. It does nothing during
+ * builds, previews, or development started without `tnl dev`.
+ */
+export default function tnl(options: TnlOptionsInput = {}): Plugin {
+  let assignment: TnlTunnelAssignment | null = null;
+  let targetRegistered = false;
   return {
     name: "tnl",
     apply: "serve",
@@ -16,19 +25,50 @@ export default function tnl(): Plugin {
       }
 
       const server = userConfig.server ?? {};
-      const port = session.port ?? server.port ?? 5173;
-      if (!Number.isInteger(port) || port < 1 || port > 65535) {
-        throw new Error("Vite server.port must be between 1 and 65535 when used with tnl");
+      assignment = await requestTunnelAssignment({ framework: "vite", options });
+      if (assignment === null) {
+        return undefined;
       }
-      const allowedHosts = addAllowedHost(server.allowedHosts, session.hostname);
-      await registerTarget("vite", port);
-      return {
+      const result = {
         server: {
           host: "127.0.0.1",
-          port,
-          strictPort: true,
-          allowedHosts,
+          allowedHosts: addAllowedHost(server.allowedHosts, assignment.hostname),
         },
+      };
+      if (session.port !== undefined) {
+        return {
+          server: { ...result.server, port: session.port, strictPort: true },
+        };
+      }
+      return result;
+    },
+    configureServer(server) {
+      const configured = assignment;
+      if (configured === null) {
+        return;
+      }
+      if (server.httpServer === null) {
+        throw new Error("Vite middleware mode cannot register a listening target with tnl dev");
+      }
+      const originalListen = server.listen.bind(server);
+      server.listen = async (port, isRestart) => {
+        const listening = await originalListen(port, isRestart);
+        if (targetRegistered) {
+          return listening;
+        }
+        const address = server.httpServer?.address();
+        if (address === null || address === undefined || typeof address === "string") {
+          await server.close();
+          throw new Error("Vite did not report its listening port to tnl dev");
+        }
+        try {
+          await registerTarget(configured, address.port);
+          targetRegistered = true;
+        } catch (error) {
+          await server.close();
+          throw error;
+        }
+        return listening;
       };
     },
   };

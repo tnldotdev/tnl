@@ -20,6 +20,17 @@ brew install tnldotdev/tap/tnl
 The formula installs both `tnl` and `tnld` on macOS or Linux. Homebrew
 packages are published only for stable releases.
 
+For a project-local client during the prerelease series, install the npm
+package with the `next` tag:
+
+```console
+pnpm add --save-dev @tnldotdev/tnl@next
+```
+
+The npm package makes `tnl` available to project scripts on macOS or Linux. It
+does not include `tnld`; deploy the server with the release container or install
+both commands through Homebrew or a release archive.
+
 Release archives contain `tnl` and `tnld` for macOS and Linux on amd64 and
 arm64. Each release also publishes checksums, SPDX SBOMs, a Sigstore bundle,
 and a multi-platform daemon image at `ghcr.io/tnldotdev/tnl`.
@@ -151,7 +162,7 @@ registered its loopback port. The integration is active only beneath
 For Next.js 15.2 or newer, install the adapter and update `next.config.ts`:
 
 ```console
-pnpm add --save-dev @tnldotdev/next
+pnpm add --save-dev @tnldotdev/tnl@next @tnldotdev/next@next
 ```
 
 ```ts
@@ -163,7 +174,7 @@ export default withTnl({});
 For Vite 6 or newer, install the plugin:
 
 ```console
-pnpm add --save-dev @tnldotdev/vite
+pnpm add --save-dev @tnldotdev/tnl@next @tnldotdev/vite@next
 ```
 
 Add it to `vite.config.ts`:
@@ -176,6 +187,43 @@ export default defineConfig({
   plugins: [tnl()],
 });
 ```
+
+Both integrations accept tunnel options in project configuration. To give each
+Git worktree a predictable URL, first reserve one managed base:
+
+```console
+tnl host add myapp
+```
+
+Then derive a child name from the built-in worktree context. The factory is
+evaluated only beneath `tnl dev`:
+
+```ts
+import { defineConfig } from "vite";
+import tnl from "@tnldotdev/vite";
+
+export default defineConfig({
+  plugins: [
+    tnl(({ worktree }) => ({
+      name: `${worktree.label}.myapp`,
+      allowCurrentIP: true,
+    })),
+  ],
+});
+```
+
+`worktree.root` is the Git worktree root, `worktree.name` is its directory name,
+and `worktree.label` is a DNS-safe identifier. Outside Git, the current working
+directory is used as a fallback. Vite and Next.js choose their normal listening
+ports and report the final port to `tnl`; multiple worktrees therefore do not
+need coordinated port assignments.
+
+`allowIP` accepts IP addresses and prefixes; `allowCurrentIP` adds the public
+address observed by the selected server. With no `allowIP` entries,
+`allowCurrentIP: true` restricts the route to that address only. CLI
+`--server`/`TNL_SERVER` and `--name`/`TNL_NAME` override project configuration.
+Authentication credentials and client state remain controlled by the CLI and
+are never sent to project code.
 
 Add one shared project script:
 

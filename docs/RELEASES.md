@@ -1,9 +1,10 @@
 # tnl Releases
 
 tnl releases provide combined `tnl` and `tnld` archives for macOS and Linux on
-amd64 and arm64 and a multi-platform `tnld` image in GHCR. The npm framework
-integrations are versioned and released independently. Releases before 1.0 are
-standalone previews and may include forward-only state migrations.
+amd64 and arm64, a multi-platform `tnld` image in GHCR, and the project-local
+`@tnldotdev/tnl` client package. The npm framework integrations are versioned
+and released independently. Releases before 1.0 are standalone previews and
+may include forward-only state migrations.
 
 ## Install With Homebrew
 
@@ -17,6 +18,25 @@ The formula installs both `tnl` and `tnld` and verifies the selected release
 archive's SHA-256 checksum. Homebrew does not verify the release's Sigstore
 bundle or GitHub provenance; use the manual process below when those checks are
 required.
+
+## Install With npm
+
+Install the prerelease client in a JavaScript project with:
+
+```console
+pnpm add --save-dev @tnldotdev/tnl@next
+pnpm exec tnl version
+```
+
+Stable releases use the default `latest` tag and do not require the `@next`
+suffix. The package exposes only `tnl`; use the release container, Homebrew, or
+an archive for `tnld`.
+
+The launcher has exact-version optional dependencies for macOS and Linux on
+arm64 and x64. npm and pnpm install only the package matching the current
+platform, and no install script downloads executable code. Do not disable
+optional dependencies. The reported client version must match the selected
+root release tag without its leading `v`. Node.js 22.15 or newer is required.
 
 ## Verify A Release
 
@@ -207,9 +227,9 @@ immutable releases, tag protection, GitHub Packages, and artifact attestations
 before the first release.
 
 Use the `tnl-release` agent skill to assess changes, propose versions, run the
-required checks, and prepare either release family. `tnl` and `tnld` share a
-root `v<version>` tag; npm packages use independent
-`npm/<package>/v<version>` tags.
+required checks, and prepare either release family. `tnl`, `tnld`, and the five
+packages that distribute the npm client share a root `v<version>` tag. The
+framework integration packages use independent `npm/<package>/v<version>` tags.
 
 From a clean, fully verified `main` commit:
 
@@ -221,15 +241,42 @@ git push origin v0.1.0
 The tag must be an annotated signature that GitHub verifies and must point
 directly to a commit reachable from `main`; the workflow enforces both
 conditions. After environment approval it builds signed archives and SBOMs,
-pushes and signs the versioned image, and attaches its digest. Stable tags then
-update `Formula/tnl.rb` in the Homebrew tap. Review the completed release and
-never move or reuse a release tag.
+pushes and signs the versioned image, publishes the npm client packages, and
+attaches the image digest. Stable tags then update `Formula/tnl.rb` in the
+Homebrew tap. Review the completed release and never move or reuse a release
+tag.
 
-### npm packages
+### npm client
+
+`@tnldotdev/tnl` exposes the client launcher. Its four implementation packages
+contain the native clients for Darwin and Linux on arm64 and x64. The workflow
+uses npm OIDC and does not use an npm token.
+
+npm requires a package to exist before its trusted publisher can be configured.
+Before the first root release, an npm organization owner must publish reviewed,
+inert placeholders for all five names under a non-release dist-tag, configure
+`release.yml` as their trusted publisher, and revoke the bootstrap credential.
+This one-time setup is the only manual-publish exception. Normal releases must
+use the workflow.
+
+The release workflow derives every npm package version from the root tag and
+packages the exact GoReleaser binaries already placed in the release archives.
+It verifies installation through npm and pnpm with lifecycle scripts disabled,
+publishes the four native packages first, and publishes the launcher last.
+Prereleases receive the npm `next` dist-tag; stable releases receive `latest`.
+Do not create an `npm/tnl/v<version>` tag or publish these packages manually.
+
+### npm framework integrations
 
 `@tnldotdev/dev`, `@tnldotdev/next`, and `@tnldotdev/vite` have independent
 versions. Configure `release-npm.yml` as the trusted publisher for each package.
 The workflow uses npm OIDC and does not use an npm token.
+
+Changes to the local `tnl dev` protocol must release `dev`, `next`, and `vite`
+in the same release window as the root product. Publish the integrations first,
+then the root product immediately afterward. The protocol is replaced in place
+during the pre-1.0 series; mismatched installed versions fail with an upgrade
+error instead of using compatibility code.
 
 Use the `tnl-release` agent skill to identify changed packages, propose version
 bumps, and run the release checks. After the version bump is committed to a

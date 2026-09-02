@@ -16,7 +16,7 @@ jobs:
   integration:
     name: Go integration
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -28,6 +28,18 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Set up pnpm and Node
+        uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
+        with:
+          runtime: node@22.23.2
+          cache: true
+          require-lockfile: true
+
+      - name: Build JavaScript packages
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
 
       - name: Install pinned tools
         run: |

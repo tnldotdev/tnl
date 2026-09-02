@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -11,7 +12,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -72,12 +75,8 @@ func TestResolveDevCommandFindsProjectLocalExecutable(t *testing.T) {
 	}
 }
 
-func TestDevBootstrapRegistersOneTarget(t *testing.T) {
-	var framework, registeredTarget string
-	bootstrap, err := newDevBootstrap("", func(_ context.Context, gotFramework, gotTarget string) error {
-		framework, registeredTarget = gotFramework, gotTarget
-		return nil
-	})
+func TestDevBootstrapConfiguresAndRegistersOneTarget(t *testing.T) {
+	bootstrap, err := newDevBootstrap("")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,37 +86,74 @@ func TestDevBootstrapRegistersOneTarget(t *testing.T) {
 		}
 	})
 
-	if status := registerDevTarget(t, bootstrap, bootstrap.token, devTargetRequest{
+	name := "agent-feature.example"
+	premature := postDevRequest(bootstrap, bootstrap.token, "/v1/target", devTargetRequest{
 		Protocol: 1, Framework: "vite", Port: 5173,
-	}); status != http.StatusNoContent {
-		t.Fatalf("registration status = %d", status)
+	})
+	if premature.err != nil || premature.status != http.StatusConflict {
+		t.Fatalf("premature target result = %#v", premature)
 	}
-	target, err := bootstrap.Target(context.Background())
-	if err != nil || target != "http://127.0.0.1:5173" {
-		t.Fatalf("target = %q, err = %v", target, err)
+	configuration := devConfigurationRequest{
+		Protocol: 1, Framework: "vite",
+		Options: devTunnelOptions{Name: &name, AllowCurrentIP: true},
 	}
-	if framework != "vite" || registeredTarget != target {
-		t.Fatalf("registered framework = %q, target = %q", framework, registeredTarget)
+	configurationDone := make(chan devHTTPResult, 1)
+	go func() {
+		configurationDone <- postDevRequest(bootstrap, bootstrap.token, "/v1/configure", configuration)
+	}()
+	configured, err := bootstrap.Configuration(context.Background())
+	if err != nil || !reflect.DeepEqual(configured, configuration) {
+		t.Fatalf("configuration = %#v, err = %v", configured, err)
 	}
-	if status := registerDevTarget(t, bootstrap, bootstrap.token, devTargetRequest{
-		Protocol: 1, Framework: "vite", Port: 5173,
-	}); status != http.StatusNoContent {
-		t.Fatalf("idempotent registration status = %d", status)
+	want := devConfigurationResponse{
+		Protocol: 1, TunnelID: "tunnel_0123456789abcdef0123456789abcdef",
+		Hostname: "agent-feature.example", PublicURL: "https://agent-feature.example",
 	}
-	if status := registerDevTarget(t, bootstrap, bootstrap.token, devTargetRequest{
-		Protocol: 1, Framework: "next", Port: 3000,
-	}); status != http.StatusConflict {
-		t.Fatalf("conflicting registration status = %d", status)
+	bootstrap.Resolve(want, nil)
+	result := <-configurationDone
+	var response devConfigurationResponse
+	if result.err != nil || result.status != http.StatusOK || json.Unmarshal(result.body, &response) != nil ||
+		!reflect.DeepEqual(response, want) {
+		t.Fatalf("configuration result = %#v, response = %#v", result, response)
 	}
-	if status := registerDevTarget(t, bootstrap, "invalid", devTargetRequest{
-		Protocol: 1, Framework: "vite", Port: 5173,
-	}); status != http.StatusUnauthorized {
-		t.Fatalf("unauthorized registration status = %d", status)
+	result = postDevRequest(bootstrap, bootstrap.token, "/v1/configure", configuration)
+	if result.err != nil || result.status != http.StatusOK {
+		t.Fatalf("idempotent configuration result = %#v", result)
+	}
+	conflictingConfiguration := configuration
+	conflictingConfiguration.Framework = "next"
+	result = postDevRequest(bootstrap, bootstrap.token, "/v1/configure", conflictingConfiguration)
+	if result.err != nil || result.status != http.StatusConflict {
+		t.Fatalf("conflicting configuration result = %#v", result)
+	}
+
+	target := devTargetRequest{Protocol: 1, Framework: "vite", Port: 5173}
+	result = postDevRequest(bootstrap, bootstrap.token, "/v1/target", target)
+	if result.err != nil || result.status != http.StatusNoContent {
+		t.Fatalf("target result = %#v", result)
+	}
+	registered, err := bootstrap.Target(context.Background())
+	if err != nil || !reflect.DeepEqual(registered, target) {
+		t.Fatalf("target = %#v, err = %v", registered, err)
+	}
+	result = postDevRequest(bootstrap, bootstrap.token, "/v1/target", target)
+	if result.err != nil || result.status != http.StatusNoContent {
+		t.Fatalf("idempotent target result = %#v", result)
+	}
+	result = postDevRequest(bootstrap, bootstrap.token, "/v1/target", devTargetRequest{
+		Protocol: 1, Framework: "vite", Port: 3000,
+	})
+	if result.err != nil || result.status != http.StatusConflict {
+		t.Fatalf("conflicting target result = %#v", result)
+	}
+	result = postDevRequest(bootstrap, "invalid", "/v1/target", target)
+	if result.err != nil || result.status != http.StatusUnauthorized {
+		t.Fatalf("unauthorized target result = %#v", result)
 	}
 }
 
 func TestDevBootstrapTimesOutAndClosesIdempotently(t *testing.T) {
-	bootstrap, err := newDevBootstrap("", nil)
+	bootstrap, err := newDevBootstrap("")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,8 +174,8 @@ func TestDevBootstrapTimesOutAndClosesIdempotently(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
 	defer cancel()
-	if _, err := bootstrap.Target(ctx); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("target error = %v", err)
+	if _, err := bootstrap.Configuration(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("configuration error = %v", err)
 	}
 	if err := bootstrap.Close(); err != nil {
 		t.Fatal(err)
@@ -156,17 +192,19 @@ func TestDevEnvironmentReplacesProtocolAndRemovesAccessToken(t *testing.T) {
 	t.Setenv("PORT", "9999")
 	t.Setenv("TNL_ACCESS_TOKEN", "secret")
 	t.Setenv("TNL_DEV_PROTOCOL", "old")
+	t.Setenv("TNL_TUNNEL_ID", "stale")
+	t.Setenv("TNL_PUBLIC_HOSTNAME", "stale.example")
+	t.Setenv("TNL_PUBLIC_URL", "https://stale.example")
 	bootstrap := &devBootstrap{socket: "/private/control.sock", token: strings.Repeat("a", 64)}
-	environment := environmentMap(devEnvironment(
-		bootstrap, "tunnel_0123456789abcdef0123456789abcdef", "demo.example", 3000,
-	))
+	environment := environmentMap(devEnvironment(bootstrap, 3000))
 	if environment["PORT"] != "3000" || environment["TNL_DEV_PORT"] != "3000" ||
-		environment["TNL_DEV_PROTOCOL"] != "1" || environment["TNL_PUBLIC_URL"] != "https://demo.example" ||
-		environment["TNL_TUNNEL_ID"] != "tunnel_0123456789abcdef0123456789abcdef" {
+		environment["TNL_DEV_PROTOCOL"] != "1" {
 		t.Fatalf("environment = %#v", environment)
 	}
-	if _, found := environment["TNL_ACCESS_TOKEN"]; found {
-		t.Fatal("access token was passed to the development server")
+	for _, name := range []string{"TNL_ACCESS_TOKEN", "TNL_TUNNEL_ID", "TNL_PUBLIC_HOSTNAME", "TNL_PUBLIC_URL"} {
+		if _, found := environment[name]; found {
+			t.Fatalf("%s was passed to the development server", name)
+		}
 	}
 }
 
@@ -183,11 +221,58 @@ func TestChildResultPreservesExitStatus(t *testing.T) {
 	}
 }
 
-func registerDevTarget(t *testing.T, bootstrap *devBootstrap, token string, registration devTargetRequest) int {
-	t.Helper()
-	body, err := json.Marshal(registration)
+func TestDevProcessStopTerminatesProcessGroup(t *testing.T) {
+	reader, writer, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
+	}
+	process, err := startDevProcess(
+		[]string{"sh", "-c", `sleep 30 & printf '%s\n' "$!"; wait`},
+		os.Environ(), nil, writer, io.Discard,
+	)
+	if err != nil {
+		reader.Close()
+		writer.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = process.Stop(time.Second) })
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	line, err := bufio.NewReader(reader).ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatal(err)
+	}
+	childPID, err := strconv.Atoi(strings.TrimSpace(line))
+	if err != nil || childPID <= 0 {
+		t.Fatalf("child PID = %q, error = %v", line, err)
+	}
+	if err := process.Stop(time.Second); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if err := syscall.Kill(childPID, 0); errors.Is(err, syscall.ESRCH) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("development process group child %d survived shutdown", childPID)
+}
+
+type devHTTPResult struct {
+	status int
+	body   []byte
+	err    error
+}
+
+func postDevRequest(bootstrap *devBootstrap, token, path string, value any) devHTTPResult {
+	body, err := json.Marshal(value)
+	if err != nil {
+		return devHTTPResult{err: err}
 	}
 	transport := &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
@@ -195,19 +280,22 @@ func registerDevTarget(t *testing.T, bootstrap *devBootstrap, token string, regi
 		},
 	}
 	client := &http.Client{Transport: transport, Timeout: time.Second}
-	request, err := http.NewRequest(http.MethodPost, "http://unix/v1/target", bytes.NewReader(body))
+	request, err := http.NewRequest(http.MethodPost, "http://unix"+path, bytes.NewReader(body))
 	if err != nil {
-		t.Fatal(err)
+		return devHTTPResult{err: err}
 	}
 	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set("Content-Type", "application/json")
 	response, err := client.Do(request)
 	if err != nil {
-		t.Fatal(err)
+		return devHTTPResult{err: err}
 	}
 	defer response.Body.Close()
-	_, _ = io.Copy(io.Discard, response.Body)
-	return response.StatusCode
+	responseBody, err := io.ReadAll(response.Body)
+	if err != nil {
+		return devHTTPResult{err: err}
+	}
+	return devHTTPResult{status: response.StatusCode, body: responseBody}
 }
 
 func environmentMap(environment []string) map[string]string {

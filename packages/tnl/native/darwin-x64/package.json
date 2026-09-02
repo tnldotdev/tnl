@@ -1,0 +1,26 @@
+{
+  "name": "@tnldotdev/tnl-darwin-x64",
+  "version": "0.0.0-development",
+  "description": "The macOS x64 binary for tnl.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tnldotdev/tnl.git",
+    "directory": "packages/tnl/native/darwin-x64"
+  },
+  "files": [
+    "bin",
+    "NOTICE",
+    "THIRD_PARTY_LICENSES.txt"
+  ],
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "preferUnplugged": true
+}

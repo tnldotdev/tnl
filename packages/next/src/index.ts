@@ -1,12 +1,15 @@
-import { readDevEnvironment, registerTarget } from "@tnldotdev/dev";
+import { readDevEnvironment, registerTarget, requestTunnelAssignment } from "@tnldotdev/dev";
+import type { TnlOptionsInput } from "@tnldotdev/dev";
 import type { NextConfig } from "next";
 
 const developmentServerPhase = "phase-development-server";
 
 export interface NextConfigContext {
+  /** The default Next.js configuration. */
   readonly defaultConfig: NextConfig;
 }
 
+/** A function that returns Next.js configuration. */
 export type NextConfigFactory = (
   phase: string,
   context: NextConfigContext,
@@ -14,7 +17,16 @@ export type NextConfigFactory = (
 
 type NextConfigInput = NextConfig | Promise<NextConfig> | NextConfigFactory;
 
-export function withTnl(config: NextConfigInput = {}): NextConfigFactory {
+export type { TnlOptions, TnlOptionsContext, TnlOptionsInput, TnlWorktree } from "@tnldotdev/dev";
+
+/**
+ * Adds tnl support to a Next.js development server. It preserves the original
+ * Next.js configuration and does nothing when started without `tnl dev`.
+ */
+export function withTnl(
+  config: NextConfigInput = {},
+  options: TnlOptionsInput = {},
+): NextConfigFactory {
   return async function tnlNextConfig(phase, context) {
     const resolved = typeof config === "function" ? await config(phase, context) : await config;
     const nextConfig = resolved ?? {};
@@ -28,10 +40,14 @@ export function withTnl(config: NextConfigInput = {}): NextConfigFactory {
       throw new Error("Next.js allowedDevOrigins must be an array when used with tnl");
     }
     const port = session.port ?? nextPort(process.env, process.argv);
-    await registerTarget("next", port);
+    const assignment = await requestTunnelAssignment({ framework: "next", options });
+    if (assignment === null) {
+      return nextConfig;
+    }
+    await registerTarget(assignment, port);
     return {
       ...nextConfig,
-      allowedDevOrigins: unique([...allowedDevOrigins, session.hostname]),
+      allowedDevOrigins: unique([...allowedDevOrigins, assignment.hostname]),
     };
   };
 }
