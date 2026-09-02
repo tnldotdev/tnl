@@ -36,6 +36,7 @@ type Querier interface {
 	CompleteACMEAuthorizationCleanup(ctx context.Context, arg CompleteACMEAuthorizationCleanupParams) (int64, error)
 	CompleteRouteUsageDelivery(ctx context.Context, arg CompleteRouteUsageDeliveryParams) (ControlRouteUsageDelivery, error)
 	ConsumeOIDCAssertion(ctx context.Context, arg ConsumeOIDCAssertionParams) (int64, error)
+	// Diagnostic/test oracle only; placement reads the trigger-maintained totals.
 	CountOpenRouteSessionAssignmentsByRelayService(ctx context.Context) ([]CountOpenRouteSessionAssignmentsByRelayServiceRow, error)
 	CountRelayActiveConnections(ctx context.Context, arg CountRelayActiveConnectionsParams) (int64, error)
 	CountTeamOwners(ctx context.Context, teamID string) (int64, error)
@@ -96,10 +97,18 @@ type Querier interface {
 	GetPublisherConnectionForClaim(ctx context.Context, publisherConnectionID string) (ControlRouteSessionConnection, error)
 	GetRelayDNSChallengeContext(ctx context.Context, orderID string) (GetRelayDNSChallengeContextRow, error)
 	// Claims and readiness read service configuration without changing it. Share
-	// that guard across processes, but exclusively lock the selected lease so claims
-	// on one process cannot race its capacity check. Registration and placement take
-	// the service exclusively before leases; keep that order here too.
+	// that guard across processes. Claims exclusively lock the selected lease's
+	// non-key fields so capacity checks cannot race each other, renewal, or drain.
+	// NO KEY UPDATE also permits readiness's KEY SHARE guard: becoming ready does
+	// not consume another connection. Registration and placement take the service
+	// exclusively before leases; keep that order here too.
 	GetRelayLeaseForClaim(ctx context.Context, relayID string) (GetRelayLeaseForClaimRow, error)
+	// Readiness retains the service guard through routing publication so process
+	// registration/replacement cannot change its identity. KEY SHARE protects the
+	// lease's existence without serializing claims or other readiness publications.
+	// Renewal/drain may overlap; readiness validates the lease it reads, and routing
+	// projection reads independently exclude a lease that has since drained.
+	GetRelayLeaseForReady(ctx context.Context, relayID string) (GetRelayLeaseForReadyRow, error)
 	GetRelayTransportCertificate(ctx context.Context, arg GetRelayTransportCertificateParams) (ControlRelayService, error)
 	GetRouteByCreatorIdempotency(ctx context.Context, arg GetRouteByCreatorIdempotencyParams) (GetRouteByCreatorIdempotencyRow, error)
 	GetRouteCreationContext(ctx context.Context, arg GetRouteCreationContextParams) (GetRouteCreationContextRow, error)
@@ -143,6 +152,7 @@ type Querier interface {
 	ListIngressRoutingTableSnapshot(ctx context.Context, arg ListIngressRoutingTableSnapshotParams) ([]ControlIngressRoutingTableEvent, error)
 	ListMaintenanceControls(ctx context.Context) ([]ControlMaintenanceControl, error)
 	ListRelayDNSChallengePresentations(ctx context.Context, tlsServerName string) ([]ListRelayDNSChallengePresentationsRow, error)
+	ListRelayServiceAssignmentTotals(ctx context.Context) ([]ControlRelayServiceAssignmentTotal, error)
 	ListRouteSessionConnections(ctx context.Context, routeSessionID string) ([]ControlRouteSessionConnection, error)
 	ListTeamInvitations(ctx context.Context, teamID string) ([]ListTeamInvitationsRow, error)
 	ListTeamMemberNamespaceLabels(ctx context.Context, teamID string) ([]ListTeamMemberNamespaceLabelsRow, error)
@@ -180,12 +190,15 @@ type Querier interface {
 	LockManagedDomainForClaim(ctx context.Context) (ControlDomain, error)
 	LockMembershipRoutes(ctx context.Context, arg LockMembershipRoutesParams) ([]ControlRoute, error)
 	LockRelayServiceForCertificate(ctx context.Context, relayServiceID string) (string, error)
-	// Acquire service guards in the same stable order as their row locks. Callers
-	// finish locking all services before locking leases or checking capacity.
+	// Acquire the reservation guard before service guards and rows, in one command.
+	// Callers finish locking all services before locking leases or checking capacity.
 	LockRelayServicesForPlacement(ctx context.Context) ([]string, error)
 	LockRouteCreationControl(ctx context.Context) (bool, error)
 	// Serialize creators without blocking session and audit foreign-key checks.
 	LockRouteCreator(ctx context.Context, identityID string) (string, error)
+	// Session operations serialize route mutations but never change the route's
+	// identity. Let usage's KEY SHARE references coexist; overlapping usage pages
+	// can otherwise starve a waiting heartbeat's stronger UPDATE lock.
 	LockRouteForSession(ctx context.Context, routeID string) (ControlRoute, error)
 	LockRouteForUsage(ctx context.Context, routeID string) (string, error)
 	LockRouteRecoveryEpisode(ctx context.Context, recoveryEpisodeID int64) (ControlRouteRecoveryEpisode, error)
@@ -227,6 +240,14 @@ type Querier interface {
 	RenewEphemeralRouteExpiry(ctx context.Context, arg RenewEphemeralRouteExpiryParams) (pgtype.Timestamptz, error)
 	RenewIngress(ctx context.Context, arg RenewIngressParams) (ControlIngressLease, error)
 	RenewRelay(ctx context.Context, arg RenewRelayParams) (RenewRelayRow, error)
+	// A failed ready connection can keep its existing service reservation. This
+	// atomic ready -> assigned transition has zero counter delta and needs only the
+	// caller's route/session locks, not placement's global/service/lease guards.
+	// Check failure and eligible service capacity in the statement snapshot. A
+	// concurrent lease/configuration change may invalidate the returned assignment,
+	// just as one immediately after commit can; claim checks the exact current lease
+	// and process capacity under its exclusive lease guard. No capacity is added here.
+	// Closed/expired slots have no reservation and require guarded placement first.
 	ReplaceRouteSessionConnection(ctx context.Context, arg ReplaceRouteSessionConnectionParams) (ControlRouteSessionConnection, error)
 	ReserveInvitedMemberSlug(ctx context.Context, arg ReserveInvitedMemberSlugParams) (string, error)
 	ReserveManagedLabel(ctx context.Context, arg ReserveManagedLabelParams) (string, error)

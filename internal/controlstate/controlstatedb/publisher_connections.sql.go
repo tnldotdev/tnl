@@ -38,7 +38,7 @@ WHERE publisher_connection_id = $6
           AND claim_id = $4
       )
   )
-RETURNING route_session_id, route_id, route_version, connection_slot, publisher_connection_id, connection_assignment_revision, relay_service_id, relay_address, tls_server_name, publisher_connection_credential_digest, publisher_connection_credential_expires_at, connected_relay_id, connected_relay_run_id, connected_relay_lease_revision, claim_id, state, assigned_at, connected_at, ready_at, disconnected_at, closed_at
+RETURNING route_session_id, route_id, route_version, connection_slot, publisher_connection_id, connection_assignment_revision, relay_service_id, relay_address, tls_server_name, publisher_connection_credential_digest, publisher_connection_credential_expires_at, connected_relay_id, connected_relay_run_id, connected_relay_lease_revision, claim_id, state, assigned_at, connected_at, ready_at, disconnected_at, closed_at, session_open
 `
 
 type ClaimPublisherConnectionParams struct {
@@ -94,6 +94,7 @@ func (q *Queries) ClaimPublisherConnection(ctx context.Context, arg ClaimPublish
 		&i.ReadyAt,
 		&i.DisconnectedAt,
 		&i.ClosedAt,
+		&i.SessionOpen,
 	)
 	return i, err
 }
@@ -115,7 +116,7 @@ WHERE publisher_connection_id = $2
   AND connected_relay_lease_revision = $11
   AND claim_id = $12
   AND state IN ('connected', 'ready', 'draining')
-RETURNING route_session_id, route_id, route_version, connection_slot, publisher_connection_id, connection_assignment_revision, relay_service_id, relay_address, tls_server_name, publisher_connection_credential_digest, publisher_connection_credential_expires_at, connected_relay_id, connected_relay_run_id, connected_relay_lease_revision, claim_id, state, assigned_at, connected_at, ready_at, disconnected_at, closed_at
+RETURNING route_session_id, route_id, route_version, connection_slot, publisher_connection_id, connection_assignment_revision, relay_service_id, relay_address, tls_server_name, publisher_connection_credential_digest, publisher_connection_credential_expires_at, connected_relay_id, connected_relay_run_id, connected_relay_lease_revision, claim_id, state, assigned_at, connected_at, ready_at, disconnected_at, closed_at, session_open
 `
 
 type DisconnectPublisherConnectionParams struct {
@@ -171,12 +172,13 @@ func (q *Queries) DisconnectPublisherConnection(ctx context.Context, arg Disconn
 		&i.ReadyAt,
 		&i.DisconnectedAt,
 		&i.ClosedAt,
+		&i.SessionOpen,
 	)
 	return i, err
 }
 
 const getPublisherConnectionForClaim = `-- name: GetPublisherConnectionForClaim :one
-SELECT route_session_id, route_id, route_version, connection_slot, publisher_connection_id, connection_assignment_revision, relay_service_id, relay_address, tls_server_name, publisher_connection_credential_digest, publisher_connection_credential_expires_at, connected_relay_id, connected_relay_run_id, connected_relay_lease_revision, claim_id, state, assigned_at, connected_at, ready_at, disconnected_at, closed_at
+SELECT route_session_id, route_id, route_version, connection_slot, publisher_connection_id, connection_assignment_revision, relay_service_id, relay_address, tls_server_name, publisher_connection_credential_digest, publisher_connection_credential_expires_at, connected_relay_id, connected_relay_run_id, connected_relay_lease_revision, claim_id, state, assigned_at, connected_at, ready_at, disconnected_at, closed_at, session_open
 FROM control.route_session_connections
 WHERE publisher_connection_id = $1
 FOR UPDATE
@@ -207,6 +209,7 @@ func (q *Queries) GetPublisherConnectionForClaim(ctx context.Context, publisherC
 		&i.ReadyAt,
 		&i.DisconnectedAt,
 		&i.ClosedAt,
+		&i.SessionOpen,
 	)
 	return i, err
 }
@@ -229,7 +232,7 @@ WHERE publisher_connection_id = $2
   AND connected_relay_lease_revision = $11
   AND claim_id = $12
   AND state IN ('connected', 'ready')
-RETURNING route_session_id, route_id, route_version, connection_slot, publisher_connection_id, connection_assignment_revision, relay_service_id, relay_address, tls_server_name, publisher_connection_credential_digest, publisher_connection_credential_expires_at, connected_relay_id, connected_relay_run_id, connected_relay_lease_revision, claim_id, state, assigned_at, connected_at, ready_at, disconnected_at, closed_at
+RETURNING route_session_id, route_id, route_version, connection_slot, publisher_connection_id, connection_assignment_revision, relay_service_id, relay_address, tls_server_name, publisher_connection_credential_digest, publisher_connection_credential_expires_at, connected_relay_id, connected_relay_run_id, connected_relay_lease_revision, claim_id, state, assigned_at, connected_at, ready_at, disconnected_at, closed_at, session_open
 `
 
 type MarkPublisherConnectionReadyParams struct {
@@ -285,6 +288,7 @@ func (q *Queries) MarkPublisherConnectionReady(ctx context.Context, arg MarkPubl
 		&i.ReadyAt,
 		&i.DisconnectedAt,
 		&i.ClosedAt,
+		&i.SessionOpen,
 	)
 	return i, err
 }

@@ -319,8 +319,8 @@ func availableRelayServicePlacements(
 	queries *controlstatedb.Queries,
 	now time.Time,
 ) ([]relayServicePlacement, []controlstatedb.LockEligibleRelayLeasesRow, error) {
-	// Registration also locks the service before its lease. Hold all service
-	// locks before taking any lease locks or counting capacity reservations.
+	// The query takes the reservation guard before service guards/rows. Finish
+	// locking services before leases, matching registration's service-first order.
 	serviceIDs, err := queries.LockRelayServicesForPlacement(ctx)
 	if err != nil {
 		return nil, nil, fmt.Errorf("lock relay services: %w", err)
@@ -331,9 +331,9 @@ func availableRelayServicePlacements(
 	if err != nil {
 		return nil, nil, fmt.Errorf("lock relay leases: %w", err)
 	}
-	counts, err := queries.CountOpenRouteSessionAssignmentsByRelayService(ctx)
+	counts, err := queries.ListRelayServiceAssignmentTotals(ctx)
 	if err != nil {
-		return nil, nil, fmt.Errorf("count relay-service assignments: %w", err)
+		return nil, nil, fmt.Errorf("read relay-service assignment totals: %w", err)
 	}
 	assignments := make(map[string]int64, len(counts))
 	for _, count := range counts {

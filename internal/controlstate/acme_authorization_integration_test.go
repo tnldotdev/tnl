@@ -66,7 +66,7 @@ func TestIntegrationControlStateMigrationUpgrade(t *testing.T) {
 	}
 	const snapshotQuery = `SELECT jsonb_build_object(
 		'route', (SELECT to_jsonb(r) FROM control.routes r WHERE id = 'route_legacy'),
-		'session', (SELECT to_jsonb(s) FROM control.route_sessions s WHERE id = 'legacy-session'),
+		'session', (SELECT to_jsonb(s) - 'assignments_open' FROM control.route_sessions s WHERE id = 'legacy-session'),
 		'account', (SELECT to_jsonb(a) FROM control.acme_accounts a WHERE id = 'legacy-account'),
 		'orders', (SELECT jsonb_agg(to_jsonb(o) ORDER BY id) FROM control.acme_orders o),
 		'authorization', (SELECT to_jsonb(a) FROM control.acme_authorizations a WHERE id = 'legacy-authorization'))::text`
@@ -97,6 +97,11 @@ func TestIntegrationControlStateMigrationUpgrade(t *testing.T) {
 	}
 	if after != before {
 		t.Fatal("upgrade changed legacy route, session, account, order or authorization material")
+	}
+	// The reservation migration adds derived eligibility, not session material.
+	var assignmentsOpen bool
+	if err := pool.QueryRow(t.Context(), `SELECT assignments_open FROM control.route_sessions WHERE id = 'legacy-session'`).Scan(&assignmentsOpen); err != nil || !assignmentsOpen {
+		t.Fatalf("upgraded open session eligibility=%t: %v", assignmentsOpen, err)
 	}
 	var version int64
 	if err := pool.QueryRow(t.Context(), `SELECT max(version_id) FROM control.goose_db_version WHERE is_applied`).Scan(&version); err != nil || version != schemaVersion {

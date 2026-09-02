@@ -48,6 +48,25 @@ func TestIntegrationSessionStartsOnDifferentRoutesShareTeamGuard(t *testing.T) {
 	}
 }
 
+func TestIntegrationHeartbeatProgressesWithUsageRouteReference(t *testing.T) {
+	f := newRouteSessionFixture(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	usage, err := f.database.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rollbackTestTransaction(t, usage)
+	if _, err := controlstatedb.New(usage).LockRouteForUsage(ctx, f.setup.RouteID); err != nil {
+		t.Fatal(err)
+	}
+	// Usage retains this reference until its page commits. A heartbeat may
+	// serialize on the session, but must not wait for a route identity reference.
+	if _, err := f.database.HeartbeatRouteSession(ctx, f.authentication(), f.now.Add(time.Second), time.Hour, time.Hour); err != nil {
+		t.Fatalf("heartbeat blocked behind usage's route reference: %v", err)
+	}
+}
+
 func TestIntegrationAuthorityMutationIncludesConcurrentSessionStarts(t *testing.T) {
 	for _, mutation := range []string{"role", "remove", "release"} {
 		t.Run(mutation, func(t *testing.T) {

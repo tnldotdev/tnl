@@ -358,6 +358,11 @@ type ControlRelayService struct {
 	UpdatedAt                       pgtype.Timestamptz
 }
 
+type ControlRelayServiceAssignmentTotal struct {
+	RelayServiceID  string
+	AssignmentCount int64
+}
+
 type ControlRoute struct {
 	ID                    string
 	TeamID                string
@@ -450,6 +455,7 @@ type ControlRouteSession struct {
 	ReadyAt                pgtype.Timestamptz
 	ClosedAt               pgtype.Timestamptz
 	CloseReason            pgtype.Text
+	AssignmentsOpen        pgtype.Bool
 }
 
 type ControlRouteSessionConnection struct {
@@ -474,6 +480,7 @@ type ControlRouteSessionConnection struct {
 	ReadyAt                                pgtype.Timestamptz
 	DisconnectedAt                         pgtype.Timestamptz
 	ClosedAt                               pgtype.Timestamptz
+	SessionOpen                            bool
 }
 
 type ControlRouteUsageBucket struct {

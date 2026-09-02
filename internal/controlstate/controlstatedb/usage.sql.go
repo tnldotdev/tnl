@@ -834,7 +834,7 @@ func (q *Queries) LockRouteForUsage(ctx context.Context, routeID string) (string
 }
 
 const lockRouteSessionForUsage = `-- name: LockRouteSessionForUsage :one
-SELECT id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason
+SELECT id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
 FROM control.route_sessions
 WHERE route_id = $1
   AND route_version = $2
@@ -876,6 +876,7 @@ func (q *Queries) LockRouteSessionForUsage(ctx context.Context, arg LockRouteSes
 		&i.ReadyAt,
 		&i.ClosedAt,
 		&i.CloseReason,
+		&i.AssignmentsOpen,
 	)
 	return i, err
 }

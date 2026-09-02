@@ -124,6 +124,7 @@ type CountOpenRouteSessionAssignmentsByRelayServiceRow struct {
 	AssignmentCount int64
 }
 
+// Diagnostic/test oracle only; placement reads the trigger-maintained totals.
 func (q *Queries) CountOpenRouteSessionAssignmentsByRelayService(ctx context.Context) ([]CountOpenRouteSessionAssignmentsByRelayServiceRow, error) {
 	rows, err := q.db.Query(ctx, countOpenRouteSessionAssignmentsByRelayService)
 	if err != nil {
@@ -182,7 +183,7 @@ SELECT leases.relay_id, leases.relay_service_id, leases.relay_run_id, leases.rel
 FROM control.relay_leases AS leases
 JOIN service AS services USING (relay_service_id)
 WHERE leases.relay_id = $1
-FOR UPDATE OF leases
+FOR NO KEY UPDATE OF leases
 `
 
 type GetRelayLeaseForClaimRow struct {
@@ -208,12 +209,87 @@ type GetRelayLeaseForClaimRow struct {
 }
 
 // Claims and readiness read service configuration without changing it. Share
-// that guard across processes, but exclusively lock the selected lease so claims
-// on one process cannot race its capacity check. Registration and placement take
-// the service exclusively before leases; keep that order here too.
+// that guard across processes. Claims exclusively lock the selected lease's
+// non-key fields so capacity checks cannot race each other, renewal, or drain.
+// NO KEY UPDATE also permits readiness's KEY SHARE guard: becoming ready does
+// not consume another connection. Registration and placement take the service
+// exclusively before leases; keep that order here too.
 func (q *Queries) GetRelayLeaseForClaim(ctx context.Context, relayID string) (GetRelayLeaseForClaimRow, error) {
 	row := q.db.QueryRow(ctx, getRelayLeaseForClaim, relayID)
 	var i GetRelayLeaseForClaimRow
+	err := row.Scan(
+		&i.RelayID,
+		&i.RelayServiceID,
+		&i.RelayRunID,
+		&i.RelayLeaseRevision,
+		&i.ProtocolVersion,
+		&i.InternalRelayAddress,
+		&i.ObservedAddress,
+		&i.InternalNetworks,
+		&i.ConnectionCapacity,
+		&i.StreamCapacity,
+		&i.ReportedConnections,
+		&i.ReportedStreams,
+		&i.Draining,
+		&i.DrainDeadline,
+		&i.RegisteredAt,
+		&i.RenewedAt,
+		&i.LeaseExpiresAt,
+		&i.RelayAddress,
+		&i.TlsServerName,
+	)
+	return i, err
+}
+
+const getRelayLeaseForReady = `-- name: GetRelayLeaseForReady :one
+WITH service_guard AS MATERIALIZED (
+    SELECT relay_service_id,
+        pg_advisory_xact_lock_shared(hashtextextended('tnl:relay-service:' || relay_service_id, 0))
+    FROM control.relay_leases
+    WHERE relay_id = $1
+), service AS MATERIALIZED (
+    SELECT services.relay_service_id, services.relay_address, services.tls_server_name, services.transport_certificate_pem, services.transport_private_key_ciphertext, services.transport_private_key_storage_key_id, services.transport_certificate_serial, services.transport_certificate_expires_at, services.enabled, services.created_at, services.updated_at
+    FROM control.relay_services AS services
+    JOIN service_guard USING (relay_service_id)
+    FOR SHARE OF services
+)
+SELECT leases.relay_id, leases.relay_service_id, leases.relay_run_id, leases.relay_lease_revision, leases.protocol_version, leases.internal_relay_address, leases.observed_address, leases.internal_networks, leases.connection_capacity, leases.stream_capacity, leases.reported_connections, leases.reported_streams, leases.draining, leases.drain_deadline, leases.registered_at, leases.renewed_at, leases.lease_expires_at, services.relay_address, services.tls_server_name
+FROM control.relay_leases AS leases
+JOIN service AS services USING (relay_service_id)
+WHERE leases.relay_id = $1
+FOR KEY SHARE OF leases
+`
+
+type GetRelayLeaseForReadyRow struct {
+	RelayID              string
+	RelayServiceID       string
+	RelayRunID           string
+	RelayLeaseRevision   int64
+	ProtocolVersion      int64
+	InternalRelayAddress string
+	ObservedAddress      *netip.Addr
+	InternalNetworks     []netip.Prefix
+	ConnectionCapacity   int64
+	StreamCapacity       int64
+	ReportedConnections  int64
+	ReportedStreams      int64
+	Draining             bool
+	DrainDeadline        pgtype.Timestamptz
+	RegisteredAt         pgtype.Timestamptz
+	RenewedAt            pgtype.Timestamptz
+	LeaseExpiresAt       pgtype.Timestamptz
+	RelayAddress         string
+	TlsServerName        string
+}
+
+// Readiness retains the service guard through routing publication so process
+// registration/replacement cannot change its identity. KEY SHARE protects the
+// lease's existence without serializing claims or other readiness publications.
+// Renewal/drain may overlap; readiness validates the lease it reads, and routing
+// projection reads independently exclude a lease that has since drained.
+func (q *Queries) GetRelayLeaseForReady(ctx context.Context, relayID string) (GetRelayLeaseForReadyRow, error) {
+	row := q.db.QueryRow(ctx, getRelayLeaseForReady, relayID)
+	var i GetRelayLeaseForReadyRow
 	err := row.Scan(
 		&i.RelayID,
 		&i.RelayServiceID,
@@ -281,6 +357,31 @@ func (q *Queries) GetRelayTransportCertificate(ctx context.Context, arg GetRelay
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const listRelayServiceAssignmentTotals = `-- name: ListRelayServiceAssignmentTotals :many
+SELECT relay_service_id, assignment_count
+FROM control.relay_service_assignment_totals
+`
+
+func (q *Queries) ListRelayServiceAssignmentTotals(ctx context.Context) ([]ControlRelayServiceAssignmentTotal, error) {
+	rows, err := q.db.Query(ctx, listRelayServiceAssignmentTotals)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ControlRelayServiceAssignmentTotal
+	for rows.Next() {
+		var i ControlRelayServiceAssignmentTotal
+		if err := rows.Scan(&i.RelayServiceID, &i.AssignmentCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const lockEligibleRelayLeases = `-- name: LockEligibleRelayLeases :many
@@ -384,10 +485,12 @@ func (q *Queries) LockRelayServiceForCertificate(ctx context.Context, relayServi
 }
 
 const lockRelayServicesForPlacement = `-- name: LockRelayServicesForPlacement :many
-WITH service_guards AS MATERIALIZED (
+WITH assignment_guard AS MATERIALIZED (
+    SELECT pg_advisory_xact_lock(hashtextextended('tnl:relay-assignment-totals', 0))
+), service_guards AS MATERIALIZED (
     SELECT relay_service_id,
         pg_advisory_xact_lock(hashtextextended('tnl:relay-service:' || relay_service_id, 0))
-    FROM control.relay_services
+    FROM control.relay_services CROSS JOIN assignment_guard
     WHERE enabled
     ORDER BY relay_service_id
 )
@@ -399,8 +502,8 @@ ORDER BY services.relay_service_id
 FOR UPDATE OF services
 `
 
-// Acquire service guards in the same stable order as their row locks. Callers
-// finish locking all services before locking leases or checking capacity.
+// Acquire the reservation guard before service guards and rows, in one command.
+// Callers finish locking all services before locking leases or checking capacity.
 func (q *Queries) LockRelayServicesForPlacement(ctx context.Context) ([]string, error) {
 	rows, err := q.db.Query(ctx, lockRelayServicesForPlacement)
 	if err != nil {

@@ -42,7 +42,7 @@ func (q *Queries) GetActiveRouteSessionMembership(ctx context.Context, arg GetAc
 }
 
 const getOpenRouteSession = `-- name: GetOpenRouteSession :one
-SELECT id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason
+SELECT id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
 FROM control.route_sessions
 WHERE route_id = $1
   AND closed_at IS NULL
@@ -78,12 +78,13 @@ func (q *Queries) GetOpenRouteSession(ctx context.Context, routeID string) (Cont
 		&i.ReadyAt,
 		&i.ClosedAt,
 		&i.CloseReason,
+		&i.AssignmentsOpen,
 	)
 	return i, err
 }
 
 const getRouteSessionByIdempotency = `-- name: GetRouteSessionByIdempotency :one
-SELECT id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason
+SELECT id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
 FROM control.route_sessions
 WHERE route_id = $1
   AND idempotency_key = $2
@@ -124,6 +125,7 @@ func (q *Queries) GetRouteSessionByIdempotency(ctx context.Context, arg GetRoute
 		&i.ReadyAt,
 		&i.ClosedAt,
 		&i.CloseReason,
+		&i.AssignmentsOpen,
 	)
 	return i, err
 }
@@ -182,7 +184,7 @@ INSERT INTO control.route_sessions (
     $16,
     $17
 FROM version
-RETURNING id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason
+RETURNING id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
 `
 
 type InsertRouteSessionParams struct {
@@ -255,6 +257,7 @@ func (q *Queries) InsertRouteSession(ctx context.Context, arg InsertRouteSession
 		&i.ReadyAt,
 		&i.ClosedAt,
 		&i.CloseReason,
+		&i.AssignmentsOpen,
 	)
 	return i, err
 }
@@ -328,7 +331,7 @@ INSERT INTO control.route_session_connections (
     'assigned',
     $10
 FROM generate_series(0, 1) AS slots(connection_slot)
-RETURNING route_session_id, route_id, route_version, connection_slot, publisher_connection_id, connection_assignment_revision, relay_service_id, relay_address, tls_server_name, publisher_connection_credential_digest, publisher_connection_credential_expires_at, connected_relay_id, connected_relay_run_id, connected_relay_lease_revision, claim_id, state, assigned_at, connected_at, ready_at, disconnected_at, closed_at
+RETURNING route_session_id, route_id, route_version, connection_slot, publisher_connection_id, connection_assignment_revision, relay_service_id, relay_address, tls_server_name, publisher_connection_credential_digest, publisher_connection_credential_expires_at, connected_relay_id, connected_relay_run_id, connected_relay_lease_revision, claim_id, state, assigned_at, connected_at, ready_at, disconnected_at, closed_at, session_open
 `
 
 type InsertRouteSessionConnectionsParams struct {
@@ -386,6 +389,7 @@ func (q *Queries) InsertRouteSessionConnections(ctx context.Context, arg InsertR
 			&i.ReadyAt,
 			&i.DisconnectedAt,
 			&i.ClosedAt,
+			&i.SessionOpen,
 		); err != nil {
 			return nil, err
 		}
@@ -398,7 +402,7 @@ func (q *Queries) InsertRouteSessionConnections(ctx context.Context, arg InsertR
 }
 
 const listRouteSessionConnections = `-- name: ListRouteSessionConnections :many
-SELECT route_session_id, route_id, route_version, connection_slot, publisher_connection_id, connection_assignment_revision, relay_service_id, relay_address, tls_server_name, publisher_connection_credential_digest, publisher_connection_credential_expires_at, connected_relay_id, connected_relay_run_id, connected_relay_lease_revision, claim_id, state, assigned_at, connected_at, ready_at, disconnected_at, closed_at
+SELECT route_session_id, route_id, route_version, connection_slot, publisher_connection_id, connection_assignment_revision, relay_service_id, relay_address, tls_server_name, publisher_connection_credential_digest, publisher_connection_credential_expires_at, connected_relay_id, connected_relay_run_id, connected_relay_lease_revision, claim_id, state, assigned_at, connected_at, ready_at, disconnected_at, closed_at, session_open
 FROM control.route_session_connections
 WHERE route_session_id = $1
 ORDER BY connection_slot
@@ -435,6 +439,7 @@ func (q *Queries) ListRouteSessionConnections(ctx context.Context, routeSessionI
 			&i.ReadyAt,
 			&i.DisconnectedAt,
 			&i.ClosedAt,
+			&i.SessionOpen,
 		); err != nil {
 			return nil, err
 		}
@@ -450,9 +455,12 @@ const lockRouteForSession = `-- name: LockRouteForSession :one
 SELECT id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key, request_digest, canonical_hostname, target, route_scope, policy_revision, ip_policy, allowed_ip_prefixes, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_route_version, mutation_revision, ephemeral, expires_at, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at
 FROM control.routes
 WHERE id = $1
-FOR UPDATE
+FOR NO KEY UPDATE
 `
 
+// Session operations serialize route mutations but never change the route's
+// identity. Let usage's KEY SHARE references coexist; overlapping usage pages
+// can otherwise starve a waiting heartbeat's stronger UPDATE lock.
 func (q *Queries) LockRouteForSession(ctx context.Context, routeID string) (ControlRoute, error) {
 	row := q.db.QueryRow(ctx, lockRouteForSession, routeID)
 	var i ControlRoute
@@ -509,7 +517,7 @@ func (q *Queries) LockRouteSessionCreationControl(ctx context.Context) (bool, er
 }
 
 const replaceRouteSessionConnection = `-- name: ReplaceRouteSessionConnection :one
-UPDATE control.route_session_connections
+UPDATE control.route_session_connections AS connections
 SET publisher_connection_id = $1,
     connection_assignment_revision = $2,
     relay_service_id = $3,
@@ -531,8 +539,37 @@ WHERE route_session_id = $9
   AND connection_slot = $10
   AND publisher_connection_id = $11
   AND connection_assignment_revision = $12
-  AND state IN ('closed', 'expired')
-RETURNING route_session_id, route_id, route_version, connection_slot, publisher_connection_id, connection_assignment_revision, relay_service_id, relay_address, tls_server_name, publisher_connection_credential_digest, publisher_connection_credential_expires_at, connected_relay_id, connected_relay_run_id, connected_relay_lease_revision, claim_id, state, assigned_at, connected_at, ready_at, disconnected_at, closed_at
+  AND (
+      state IN ('closed', 'expired')
+      OR (
+          state = 'ready' AND session_open
+          AND connections.relay_service_id = $3
+          AND NOT EXISTS (
+              SELECT 1 FROM control.relay_leases AS leases
+              WHERE leases.relay_service_id = connections.relay_service_id
+                AND leases.relay_id = connections.connected_relay_id
+                AND leases.relay_run_id = connections.connected_relay_run_id
+                AND leases.relay_lease_revision = connections.connected_relay_lease_revision
+                AND leases.lease_expires_at > $8
+                AND NOT leases.draining AND leases.protocol_version = 1
+                AND leases.connection_capacity > 0 AND leases.stream_capacity > 0
+          )
+          AND EXISTS (
+              SELECT services.relay_service_id
+              FROM control.relay_services AS services
+              JOIN control.relay_service_assignment_totals AS totals USING (relay_service_id)
+              JOIN control.relay_leases AS leases USING (relay_service_id)
+              WHERE services.relay_service_id = connections.relay_service_id
+                AND services.enabled
+                AND leases.lease_expires_at > $8
+                AND NOT leases.draining AND leases.protocol_version = 1
+                AND leases.connection_capacity > 0 AND leases.stream_capacity > 0
+              GROUP BY services.relay_service_id, totals.assignment_count
+              HAVING sum(leases.connection_capacity) >= totals.assignment_count
+          )
+      )
+  )
+RETURNING connections.route_session_id, connections.route_id, connections.route_version, connections.connection_slot, connections.publisher_connection_id, connections.connection_assignment_revision, connections.relay_service_id, connections.relay_address, connections.tls_server_name, connections.publisher_connection_credential_digest, connections.publisher_connection_credential_expires_at, connections.connected_relay_id, connections.connected_relay_run_id, connections.connected_relay_lease_revision, connections.claim_id, connections.state, connections.assigned_at, connections.connected_at, connections.ready_at, connections.disconnected_at, connections.closed_at, connections.session_open
 `
 
 type ReplaceRouteSessionConnectionParams struct {
@@ -550,6 +587,14 @@ type ReplaceRouteSessionConnectionParams struct {
 	PreviousConnectionAssignmentRevision   int64
 }
 
+// A failed ready connection can keep its existing service reservation. This
+// atomic ready -> assigned transition has zero counter delta and needs only the
+// caller's route/session locks, not placement's global/service/lease guards.
+// Check failure and eligible service capacity in the statement snapshot. A
+// concurrent lease/configuration change may invalidate the returned assignment,
+// just as one immediately after commit can; claim checks the exact current lease
+// and process capacity under its exclusive lease guard. No capacity is added here.
+// Closed/expired slots have no reservation and require guarded placement first.
 func (q *Queries) ReplaceRouteSessionConnection(ctx context.Context, arg ReplaceRouteSessionConnectionParams) (ControlRouteSessionConnection, error) {
 	row := q.db.QueryRow(ctx, replaceRouteSessionConnection,
 		arg.NewPublisherConnectionID,
@@ -588,6 +633,7 @@ func (q *Queries) ReplaceRouteSessionConnection(ctx context.Context, arg Replace
 		&i.ReadyAt,
 		&i.DisconnectedAt,
 		&i.ClosedAt,
+		&i.SessionOpen,
 	)
 	return i, err
 }

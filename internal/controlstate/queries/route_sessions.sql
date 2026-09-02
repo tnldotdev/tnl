@@ -1,8 +1,11 @@
 -- name: LockRouteForSession :one
+-- Session operations serialize route mutations but never change the route's
+-- identity. Let usage's KEY SHARE references coexist; overlapping usage pages
+-- can otherwise starve a waiting heartbeat's stronger UPDATE lock.
 SELECT *
 FROM control.routes
 WHERE id = sqlc.arg(route_id)
-FOR UPDATE;
+FOR NO KEY UPDATE;
 
 -- name: GetRouteSessionByIdempotency :one
 SELECT *
@@ -127,8 +130,16 @@ INSERT INTO control.route_session_connections (
 FROM generate_series(0, 1) AS slots(connection_slot)
 RETURNING *;
 
+-- A failed ready connection can keep its existing service reservation. This
+-- atomic ready -> assigned transition has zero counter delta and needs only the
+-- caller's route/session locks, not placement's global/service/lease guards.
+-- Check failure and eligible service capacity in the statement snapshot. A
+-- concurrent lease/configuration change may invalidate the returned assignment,
+-- just as one immediately after commit can; claim checks the exact current lease
+-- and process capacity under its exclusive lease guard. No capacity is added here.
+-- Closed/expired slots have no reservation and require guarded placement first.
 -- name: ReplaceRouteSessionConnection :one
-UPDATE control.route_session_connections
+UPDATE control.route_session_connections AS connections
 SET publisher_connection_id = sqlc.arg(new_publisher_connection_id),
     connection_assignment_revision = sqlc.arg(new_connection_assignment_revision),
     relay_service_id = sqlc.arg(relay_service_id),
@@ -150,8 +161,37 @@ WHERE route_session_id = sqlc.arg(route_session_id)
   AND connection_slot = sqlc.arg(connection_slot)
   AND publisher_connection_id = sqlc.arg(previous_publisher_connection_id)
   AND connection_assignment_revision = sqlc.arg(previous_connection_assignment_revision)
-  AND state IN ('closed', 'expired')
-RETURNING *;
+  AND (
+      state IN ('closed', 'expired')
+      OR (
+          state = 'ready' AND session_open
+          AND connections.relay_service_id = sqlc.arg(relay_service_id)
+          AND NOT EXISTS (
+              SELECT 1 FROM control.relay_leases AS leases
+              WHERE leases.relay_service_id = connections.relay_service_id
+                AND leases.relay_id = connections.connected_relay_id
+                AND leases.relay_run_id = connections.connected_relay_run_id
+                AND leases.relay_lease_revision = connections.connected_relay_lease_revision
+                AND leases.lease_expires_at > sqlc.arg(assigned_at)
+                AND NOT leases.draining AND leases.protocol_version = 1
+                AND leases.connection_capacity > 0 AND leases.stream_capacity > 0
+          )
+          AND EXISTS (
+              SELECT services.relay_service_id
+              FROM control.relay_services AS services
+              JOIN control.relay_service_assignment_totals AS totals USING (relay_service_id)
+              JOIN control.relay_leases AS leases USING (relay_service_id)
+              WHERE services.relay_service_id = connections.relay_service_id
+                AND services.enabled
+                AND leases.lease_expires_at > sqlc.arg(assigned_at)
+                AND NOT leases.draining AND leases.protocol_version = 1
+                AND leases.connection_capacity > 0 AND leases.stream_capacity > 0
+              GROUP BY services.relay_service_id, totals.assignment_count
+              HAVING sum(leases.connection_capacity) >= totals.assignment_count
+          )
+      )
+  )
+RETURNING connections.*;
 
 -- name: InsertRouteSessionAuditEvent :exec
 INSERT INTO control.admin_audit_events (

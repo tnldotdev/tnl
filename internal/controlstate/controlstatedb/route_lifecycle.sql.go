@@ -52,7 +52,7 @@ WHERE publisher_connection_id = $2
   AND route_session_id = $3
   AND connection_assignment_revision = $4
   AND state IN ('assigned', 'connected', 'ready', 'draining')
-RETURNING route_session_id, route_id, route_version, connection_slot, publisher_connection_id, connection_assignment_revision, relay_service_id, relay_address, tls_server_name, publisher_connection_credential_digest, publisher_connection_credential_expires_at, connected_relay_id, connected_relay_run_id, connected_relay_lease_revision, claim_id, state, assigned_at, connected_at, ready_at, disconnected_at, closed_at
+RETURNING route_session_id, route_id, route_version, connection_slot, publisher_connection_id, connection_assignment_revision, relay_service_id, relay_address, tls_server_name, publisher_connection_credential_digest, publisher_connection_credential_expires_at, connected_relay_id, connected_relay_run_id, connected_relay_lease_revision, claim_id, state, assigned_at, connected_at, ready_at, disconnected_at, closed_at, session_open
 `
 
 type ExpirePublisherConnectionParams struct {
@@ -92,6 +92,7 @@ func (q *Queries) ExpirePublisherConnection(ctx context.Context, arg ExpirePubli
 		&i.ReadyAt,
 		&i.DisconnectedAt,
 		&i.ClosedAt,
+		&i.SessionOpen,
 	)
 	return i, err
 }
@@ -126,7 +127,7 @@ func (q *Queries) GetOpenRouteRecoveryEpisode(ctx context.Context, arg GetOpenRo
 }
 
 const getRouteSession = `-- name: GetRouteSession :one
-SELECT id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason
+SELECT id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
 FROM control.route_sessions
 WHERE id = $1
 `
@@ -161,6 +162,7 @@ func (q *Queries) GetRouteSession(ctx context.Context, routeSessionID string) (C
 		&i.ReadyAt,
 		&i.ClosedAt,
 		&i.CloseReason,
+		&i.AssignmentsOpen,
 	)
 	return i, err
 }
@@ -174,7 +176,7 @@ WHERE id = $3
   AND route_version = $5
   AND closed_at IS NULL
   AND publisher_expires_at > $1
-RETURNING id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason
+RETURNING id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
 `
 
 type HeartbeatRouteSessionParams struct {
@@ -221,6 +223,7 @@ func (q *Queries) HeartbeatRouteSession(ctx context.Context, arg HeartbeatRouteS
 		&i.ReadyAt,
 		&i.ClosedAt,
 		&i.CloseReason,
+		&i.AssignmentsOpen,
 	)
 	return i, err
 }
@@ -314,7 +317,7 @@ func (q *Queries) ListValidReadyPublisherConnections(ctx context.Context, arg Li
 }
 
 const lockInvalidReadyPublisherConnections = `-- name: LockInvalidReadyPublisherConnections :many
-SELECT connections.route_session_id, connections.route_id, connections.route_version, connections.connection_slot, connections.publisher_connection_id, connections.connection_assignment_revision, connections.relay_service_id, connections.relay_address, connections.tls_server_name, connections.publisher_connection_credential_digest, connections.publisher_connection_credential_expires_at, connections.connected_relay_id, connections.connected_relay_run_id, connections.connected_relay_lease_revision, connections.claim_id, connections.state, connections.assigned_at, connections.connected_at, connections.ready_at, connections.disconnected_at, connections.closed_at
+SELECT connections.route_session_id, connections.route_id, connections.route_version, connections.connection_slot, connections.publisher_connection_id, connections.connection_assignment_revision, connections.relay_service_id, connections.relay_address, connections.tls_server_name, connections.publisher_connection_credential_digest, connections.publisher_connection_credential_expires_at, connections.connected_relay_id, connections.connected_relay_run_id, connections.connected_relay_lease_revision, connections.claim_id, connections.state, connections.assigned_at, connections.connected_at, connections.ready_at, connections.disconnected_at, connections.closed_at, connections.session_open
 FROM control.route_session_connections AS connections
 LEFT JOIN control.relay_leases AS relays
   ON relays.relay_service_id = connections.relay_service_id
@@ -365,6 +368,7 @@ func (q *Queries) LockInvalidReadyPublisherConnections(ctx context.Context, now 
 			&i.ReadyAt,
 			&i.DisconnectedAt,
 			&i.ClosedAt,
+			&i.SessionOpen,
 		); err != nil {
 			return nil, err
 		}
@@ -400,7 +404,7 @@ func (q *Queries) LockRouteRecoveryEpisode(ctx context.Context, recoveryEpisodeI
 }
 
 const lockRouteSession = `-- name: LockRouteSession :one
-SELECT id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason
+SELECT id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
 FROM control.route_sessions
 WHERE id = $1
 FOR UPDATE
@@ -436,6 +440,7 @@ func (q *Queries) LockRouteSession(ctx context.Context, routeSessionID string) (
 		&i.ReadyAt,
 		&i.ClosedAt,
 		&i.CloseReason,
+		&i.AssignmentsOpen,
 	)
 	return i, err
 }
@@ -452,7 +457,7 @@ WHERE id = $4
   AND route_id = $5
   AND route_version = $6
   AND closed_at IS NULL
-RETURNING id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason
+RETURNING id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
 `
 
 type MarkRouteSessionCertificateInstalledParams struct {
@@ -501,6 +506,7 @@ func (q *Queries) MarkRouteSessionCertificateInstalled(ctx context.Context, arg 
 		&i.ReadyAt,
 		&i.ClosedAt,
 		&i.CloseReason,
+		&i.AssignmentsOpen,
 	)
 	return i, err
 }
@@ -520,7 +526,7 @@ WHERE sessions.id = $2
       WHERE connections.route_session_id = $2
         AND connections.state = 'ready'
   ) = 2
-RETURNING sessions.id, sessions.route_id, sessions.team_id, sessions.membership_id, sessions.acting_identity_id, sessions.route_version, sessions.idempotency_key, sessions.request_digest, sessions.session_token_id, sessions.session_token_digest, sessions.policy_revision, sessions.policy_denials, sessions.certificate_cache_key, sessions.certificate_scope, sessions.certificate_identifiers, sessions.certificate_challenge, sessions.state, sessions.created_at, sessions.last_heartbeat_at, sessions.publisher_expires_at, sessions.certificate_installed_at, sessions.certificate_issuance_id, sessions.certificate_not_after, sessions.ready_at, sessions.closed_at, sessions.close_reason
+RETURNING sessions.id, sessions.route_id, sessions.team_id, sessions.membership_id, sessions.acting_identity_id, sessions.route_version, sessions.idempotency_key, sessions.request_digest, sessions.session_token_id, sessions.session_token_digest, sessions.policy_revision, sessions.policy_denials, sessions.certificate_cache_key, sessions.certificate_scope, sessions.certificate_identifiers, sessions.certificate_challenge, sessions.state, sessions.created_at, sessions.last_heartbeat_at, sessions.publisher_expires_at, sessions.certificate_installed_at, sessions.certificate_issuance_id, sessions.certificate_not_after, sessions.ready_at, sessions.closed_at, sessions.close_reason, sessions.assignments_open
 `
 
 type MarkRouteSessionReadyParams struct {
@@ -565,6 +571,7 @@ func (q *Queries) MarkRouteSessionReady(ctx context.Context, arg MarkRouteSessio
 		&i.ReadyAt,
 		&i.ClosedAt,
 		&i.CloseReason,
+		&i.AssignmentsOpen,
 	)
 	return i, err
 }

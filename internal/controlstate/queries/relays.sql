@@ -189,9 +189,11 @@ FROM relay_lease
 JOIN control.relay_services AS services USING (relay_service_id);
 
 -- Claims and readiness read service configuration without changing it. Share
--- that guard across processes, but exclusively lock the selected lease so claims
--- on one process cannot race its capacity check. Registration and placement take
--- the service exclusively before leases; keep that order here too.
+-- that guard across processes. Claims exclusively lock the selected lease's
+-- non-key fields so capacity checks cannot race each other, renewal, or drain.
+-- NO KEY UPDATE also permits readiness's KEY SHARE guard: becoming ready does
+-- not consume another connection. Registration and placement take the service
+-- exclusively before leases; keep that order here too.
 -- name: GetRelayLeaseForClaim :one
 WITH service_guard AS MATERIALIZED (
     SELECT relay_service_id,
@@ -208,7 +210,30 @@ SELECT leases.*, services.relay_address, services.tls_server_name
 FROM control.relay_leases AS leases
 JOIN service AS services USING (relay_service_id)
 WHERE leases.relay_id = sqlc.arg(relay_id)
-FOR UPDATE OF leases;
+FOR NO KEY UPDATE OF leases;
+
+-- Readiness retains the service guard through routing publication so process
+-- registration/replacement cannot change its identity. KEY SHARE protects the
+-- lease's existence without serializing claims or other readiness publications.
+-- Renewal/drain may overlap; readiness validates the lease it reads, and routing
+-- projection reads independently exclude a lease that has since drained.
+-- name: GetRelayLeaseForReady :one
+WITH service_guard AS MATERIALIZED (
+    SELECT relay_service_id,
+        pg_advisory_xact_lock_shared(hashtextextended('tnl:relay-service:' || relay_service_id, 0))
+    FROM control.relay_leases
+    WHERE relay_id = sqlc.arg(relay_id)
+), service AS MATERIALIZED (
+    SELECT services.*
+    FROM control.relay_services AS services
+    JOIN service_guard USING (relay_service_id)
+    FOR SHARE OF services
+)
+SELECT leases.*, services.relay_address, services.tls_server_name
+FROM control.relay_leases AS leases
+JOIN service AS services USING (relay_service_id)
+WHERE leases.relay_id = sqlc.arg(relay_id)
+FOR KEY SHARE OF leases;
 
 -- name: CountRelayActiveConnections :one
 SELECT count(*)
@@ -218,13 +243,15 @@ WHERE connected_relay_id = sqlc.arg(relay_id)
   AND connected_relay_lease_revision = sqlc.arg(relay_lease_revision)
   AND state IN ('connected', 'ready', 'draining');
 
--- Acquire service guards in the same stable order as their row locks. Callers
--- finish locking all services before locking leases or checking capacity.
+-- Acquire the reservation guard before service guards and rows, in one command.
+-- Callers finish locking all services before locking leases or checking capacity.
 -- name: LockRelayServicesForPlacement :many
-WITH service_guards AS MATERIALIZED (
+WITH assignment_guard AS MATERIALIZED (
+    SELECT pg_advisory_xact_lock(hashtextextended('tnl:relay-assignment-totals', 0))
+), service_guards AS MATERIALIZED (
     SELECT relay_service_id,
         pg_advisory_xact_lock(hashtextextended('tnl:relay-service:' || relay_service_id, 0))
-    FROM control.relay_services
+    FROM control.relay_services CROSS JOIN assignment_guard
     WHERE enabled
     ORDER BY relay_service_id
 )
@@ -258,6 +285,7 @@ FROM control.relay_services AS services CROSS JOIN service_guard
 WHERE services.relay_service_id = sqlc.arg(relay_service_id)
 FOR UPDATE OF services;
 
+-- Diagnostic/test oracle only; placement reads the trigger-maintained totals.
 -- name: CountOpenRouteSessionAssignmentsByRelayService :many
 SELECT connections.relay_service_id,
     count(*) AS assignment_count
@@ -266,6 +294,10 @@ JOIN control.route_sessions AS sessions ON sessions.id = connections.route_sessi
 WHERE sessions.closed_at IS NULL
   AND connections.state IN ('assigned', 'connected', 'ready', 'draining')
 GROUP BY connections.relay_service_id;
+
+-- name: ListRelayServiceAssignmentTotals :many
+SELECT relay_service_id, assignment_count
+FROM control.relay_service_assignment_totals;
 
 -- name: StoreRelayTransportCertificate :one
 WITH service_guard AS MATERIALIZED (
