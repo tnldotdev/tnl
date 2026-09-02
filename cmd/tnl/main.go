@@ -402,7 +402,7 @@ func runHostAdd(ctx context.Context, flags hostAddCommand, output io.Writer) err
 	if !capabilities.CustomDomainSupport {
 		return errors.New("server does not support custom domains")
 	}
-	challenge, err := client.CreateDomainVerification(ctx, name, requestKey)
+	verification, err := client.CreateDomainVerification(ctx, name, requestKey)
 	if err != nil {
 		return err
 	}
@@ -412,7 +412,7 @@ func runHostAdd(ctx context.Context, flags hostAddCommand, output io.Writer) err
 	if _, err := fmt.Fprintln(output); err != nil {
 		return err
 	}
-	for _, record := range challenge.Records {
+	for _, record := range verification.Records {
 		if _, err := fmt.Fprintf(output, "%-32s %-5s %s\n", record.Name, record.Type, record.Value); err != nil {
 			return err
 		}
@@ -424,9 +424,9 @@ func runHostAdd(ctx context.Context, flags hostAddCommand, output io.Writer) err
 		return err
 	}
 	for {
-		hostname, err := client.CompleteDomainVerification(ctx, challenge.Id)
+		hostname, err := client.CompleteDomainVerification(ctx, verification.Id)
 		if err == nil {
-			_, err = fmt.Fprintf(output, "Claimed %s\n", hostname.Hostname)
+			_, err = fmt.Fprintf(output, "Added %s\n", hostname.Hostname)
 			return err
 		}
 		if !errors.Is(err, serverclient.ErrDNSProofPending) {

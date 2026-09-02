@@ -195,7 +195,7 @@ paths:
           $ref: "#/components/responses/Problem"
     post:
       operationId: addHostname
-      summary: Claim a persistent base or allocate an temporary exact name
+      summary: Add a persistent base or allocate a temporary exact name
       security:
         - bearerAuth: []
       parameters:
@@ -463,7 +463,7 @@ paths:
               $ref: "#/components/schemas/RouteVersionRequest"
       responses:
         "200":
-          description: Lease refreshed
+          description: Route session refreshed
           content:
             application/json:
               schema:

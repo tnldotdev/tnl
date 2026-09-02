@@ -47,13 +47,13 @@ type TNLD struct {
 	Domain               string        `name:"domain" env:"TNLD_DOMAIN" help:"Canonical domain shorthand; derives tnl.<domain> control and <domain> routes."`
 	ControlHostname      string        `name:"control-hostname" env:"TNLD_CONTROL_HOSTNAME" help:"Canonical control API hostname; overrides --domain derivation."`
 	PublicHostnameSuffix string        `name:"hostname-suffix" env:"TNLD_HOSTNAME_SUFFIX" help:"Canonical public hostname suffix; overrides --domain derivation."`
-	ReservedRouteNames   []string      `name:"reserved-route-name" env:"TNLD_RESERVED_ROUTE_NAMES" help:"Route base unavailable for user claims; repeat for each name."`
+	ReservedRouteNames   []string      `name:"reserved-route-name" env:"TNLD_RESERVED_ROUTE_NAMES" help:"Route base unavailable for user hostnames; repeat for each name."`
 	MaxActiveHostnames   int           `name:"max-active-hostnames" env:"TNLD_MAX_ACTIVE_HOSTNAMES" default:"128" help:"Maximum active hostnames per identity."`
 	MaxHostnameRequests  int           `name:"max-hostname-requests" env:"TNLD_MAX_HOSTNAME_REQUESTS" default:"1024" help:"Maximum hostname request records per identity."`
 	ACMEDirectoryURL     string        `name:"acme-directory-url" env:"TNLD_ACME_DIRECTORY_URL" default:"https://acme-v02.api.letsencrypt.org/directory" help:"ACME directory URL for automatic control and application certificates."`
 	ACMEEmail            string        `name:"acme-email" env:"TNLD_ACME_EMAIL" help:"ACME account contact email."`
 	ACMEAcceptTerms      bool          `name:"acme-accept-terms" env:"TNLD_ACME_ACCEPT_TERMS" help:"Explicitly accept the ACME directory terms."`
-	ACMEProfile          string        `name:"acme-profile" env:"TNLD_ACME_PROFILE" default:"tlsserver" help:"ACME certificate profile advertised to agents."`
+	ACMEProfile          string        `name:"acme-profile" env:"TNLD_ACME_PROFILE" default:"tlsserver" help:"ACME certificate profile advertised to publishers."`
 	OIDCIssuer           string        `name:"oidc-issuer" env:"TNLD_OIDC_ISSUER" help:"OIDC issuer used for login."`
 	OIDCClientID         string        `name:"oidc-client-id" env:"TNLD_OIDC_CLIENT_ID" help:"OIDC client ID used for login."`
 	AccessTokenLifetime  time.Duration `name:"access-token-lifetime" env:"TNLD_ACCESS_TOKEN_LIFETIME" default:"168h" help:"Lifetime of newly issued access tokens."`

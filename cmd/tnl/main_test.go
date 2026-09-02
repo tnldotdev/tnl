@@ -118,7 +118,7 @@ func TestReadLoginToken(t *testing.T) {
 	}
 }
 
-func TestClaimPublicHostnameAllocatesFreshTemporaryName(t *testing.T) {
+func TestAddTemporaryHostnameAllocatesFreshName(t *testing.T) {
 	var requestKeys []string
 	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodPost || request.URL.Path != "/v1/hostnames" {
@@ -132,7 +132,7 @@ func TestClaimPublicHostnameAllocatesFreshTemporaryName(t *testing.T) {
 			return
 		}
 		if body.Name != nil || body.Kind != serverv1.AddHostnameRequestKindTemporary {
-			t.Errorf("temporary claim request = %#v", body)
+			t.Errorf("temporary hostname request = %#v", body)
 		}
 		requestKeys = append(requestKeys, request.Header.Get("Idempotency-Key"))
 		response.Header().Set("Content-Type", "application/json")

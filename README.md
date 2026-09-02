@@ -3,7 +3,7 @@
 public urls for localhost.
 
 tnl is a self-hosted tunnel service. `tnld` owns the control API,
-hostnames, public TLS ingress, and durable SQLite state. `tnl` claims a
+hostnames, public TLS ingress, and durable SQLite state. `tnl` uses a
 hostname and carries public connections to one literal-loopback HTTP service.
 
 Run one standalone daemon for the smallest deployment, or separate the stateful
@@ -160,8 +160,8 @@ Another developer can use `TNL_NAME=john.example.com`. The flag form is:
 tnl dev --name chase.example.com -- pnpm dev
 ```
 
-The signed-in user must own the custom domain or an eligible parent claim.
-Separate users cannot currently share one parent claim.
+The signed-in user must own the custom domain or an eligible parent hostname.
+Separate users cannot currently share one parent hostname.
 
 For another framework, provide its fixed port:
 
@@ -208,9 +208,9 @@ root.
 - `internal/api` serves bounded server HTTP responses using the generated contract.
 - `internal/auth`, `internal/credentials`, and `internal/state` own standalone identity and token storage.
 - `internal/naming` owns canonical public-hostname policy.
-- `internal/routes`, `internal/ingress`, and `internal/worker` coordinate leases and forward public streams.
+- `internal/routes`, `internal/ingress`, and `internal/worker` coordinate route sessions and forward public streams.
 - `internal/publisher` terminates application TLS and proxies only to a literal-loopback HTTP target.
-- `internal/tailtransport` carries lease traffic over Tailcat.
+- `internal/tailtransport` carries route-session traffic over Tailcat.
 - `internal/observability` exports provider-neutral Prometheus metrics.
 - `pkg/protocol/serverv1` contains generated Go types for the server API contract.
 - `cmd/tnl` and `cmd/tnld` are the client and daemon entry points.

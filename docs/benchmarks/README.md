@@ -110,7 +110,7 @@ for the four large benchmark workers. At idle, only one 2-CPU, 4 GB worker runs.
 Fly's request-based autoscaler cannot observe route demand because workers
 connect outbound to the edge. Keep Fly request autoscaling and edge auto-stop
 disabled, and use an external metrics scaler. Do not enable automatic scale-in
-until graceful worker drain and lease reacquisition are qualified under
+until graceful worker drain and route-session recreation are qualified under
 continuous traffic.
 
 ## Results
