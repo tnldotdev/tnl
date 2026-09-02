@@ -39,7 +39,12 @@ export function withTnl(
     if (!Array.isArray(allowedDevOrigins)) {
       throw new Error("Next.js allowedDevOrigins must be an array when used with tnl");
     }
-    const port = session.port ?? nextPort(process.env, process.argv);
+    const port = parsePort(process.env.PORT, "PORT");
+    if (session.port !== undefined && session.port !== port) {
+      throw new Error(
+        `Next.js listened on port ${port}, but tnl dev --port requires ${session.port}`,
+      );
+    }
     const assignment = await requestTunnelAssignment({ framework: "next", options });
     if (assignment === null) {
       return nextConfig;
@@ -50,22 +55,6 @@ export function withTnl(
       allowedDevOrigins: unique([...allowedDevOrigins, assignment.hostname]),
     };
   };
-}
-
-function nextPort(environment: NodeJS.ProcessEnv, arguments_: readonly string[]): number {
-  for (let index = 0; index < arguments_.length; index += 1) {
-    const argument = arguments_[index];
-    if (argument.startsWith("--port=")) {
-      return parsePort(argument.slice("--port=".length), "--port");
-    }
-    if (argument === "--port" || argument === "-p") {
-      return parsePort(arguments_[index + 1], argument);
-    }
-  }
-  if (environment.PORT !== undefined && environment.PORT !== "") {
-    return parsePort(environment.PORT, "PORT");
-  }
-  return 3000;
 }
 
 function parsePort(value: string | undefined, source: string): number {
