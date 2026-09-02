@@ -64,7 +64,7 @@ milestones work.
 - Verified with `go test ./cmd/tnlbench` and
   `go test -race ./cmd/tnlbench`.
 
-## Current Uncommitted Work
+### `8b76625 feat: add profile-driven benchmark planning`
 
 - Added `benchmarks/workloads/agent-worktrees-assumed-v1.json` with the agreed
   deterministic assumed workload and phase durations.
@@ -84,6 +84,18 @@ milestones work.
   $0.0113 maximum modeled spend.
 - `scale` intentionally fails planning until
   `BENCH_ROUTES_PER_WORKER` supplies a qualified density.
+
+## Current Uncommitted Work
+
+- Added result schema v2 with cell, repetition, shard, configuration, phase,
+  resource, cleanup, and failure fields.
+- Added fixed cumulative duration histograms that merge counts before report
+  percentiles are calculated.
+- The driver now emits a schema-v2 row on success or ordinary failure.
+- Added `tnlbench report` and `go:bench-fly:report`; they read
+  `results.jsonl`, validate shard identities, merge phase histograms, and write
+  `report.json` plus `report.md`.
+- Updated legacy result extraction to select schema version 2.
 
 ## Important Limitation
 

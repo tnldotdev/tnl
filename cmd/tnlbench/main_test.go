@@ -131,7 +131,7 @@ func TestExpectedRoutes(t *testing.T) {
 func TestValidateExpectedRoutes(t *testing.T) {
 	flags := cli{
 		PublicAddress: "bench.test:443", HostnameSuffix: "bench.test",
-		Routes: 12, ExpectedRoutes: 11, DriverCount: 1, Parallel: 1, PayloadBytes: 1, Timeout: time.Second,
+		Routes: 12, ExpectedRoutes: 11, DriverCount: 1, Parallel: 1, PayloadBytes: 1, Timeout: time.Second, Repetition: 1,
 	}
 	if err := flags.Validate(); err == nil {
 		t.Fatal("expected aggregate route count below shard size to fail validation")

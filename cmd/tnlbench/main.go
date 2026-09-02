@@ -35,6 +35,10 @@ import (
 )
 
 type cli struct {
+	CellID         string        `name:"cell-id" env:"TNL_BENCH_CELL_ID" help:"Stable expanded benchmark cell ID."`
+	Suite          string        `name:"suite" env:"TNL_BENCH_SUITE" default:"legacy" help:"Benchmark suite name."`
+	Workload       string        `name:"workload" env:"TNL_BENCH_WORKLOAD" default:"agent-worktrees-assumed-v1" help:"Benchmark workload ID."`
+	Repetition     int           `name:"repetition" env:"TNL_BENCH_REPETITION" default:"1" help:"One-based cell repetition."`
 	Topology       string        `name:"topology" env:"TNL_BENCH_TOPOLOGY" enum:"single-node,ha" required:"" help:"Deployment topology under test."`
 	ServerURL      string        `name:"server" env:"TNL_BENCH_SERVER" required:"" help:"Server HTTPS origin."`
 	LoginToken     string        `name:"login-token" env:"TNL_BENCH_LOGIN_TOKEN" required:"" help:"Server login token."`
@@ -56,11 +60,15 @@ type cli struct {
 }
 
 type benchmarkCLI struct {
-	Plan   planCommand `cmd:"" help:"Expand and price a benchmark suite without creating resources."`
-	Driver cli         `cmd:"" help:"Run one benchmark driver shard."`
+	Plan   planCommand   `cmd:"" help:"Expand and price a benchmark suite without creating resources."`
+	Driver cli           `cmd:"" help:"Run one benchmark driver shard."`
+	Report reportCommand `cmd:"" help:"Merge driver results and write report artifacts."`
 }
 
 func (c cli) Validate() error {
+	if c.Repetition <= 0 {
+		return errors.New("repetition must be positive")
+	}
 	if c.Routes <= 0 || c.Routes > 5000 {
 		return errors.New("routes must be between 1 and 5000")
 	}
@@ -123,6 +131,13 @@ func (c cli) expectedRoutes() int {
 	return c.ExpectedRoutes
 }
 
+func (c cli) cellID() string {
+	if c.CellID != "" {
+		return c.CellID
+	}
+	return fmt.Sprintf("%s-r%d-rep%d", c.Topology, c.expectedRoutes(), c.Repetition)
+}
+
 type routeProcess struct {
 	hostname      string
 	routeID       string
@@ -168,19 +183,19 @@ type failureEvidence struct {
 	EdgeError             string             `json:"edge_error,omitempty"`
 }
 
-type result struct {
-	SchemaVersion       int            `json:"schema_version"`
-	Topology            string         `json:"topology"`
-	Routes              int            `json:"routes"`
-	Parallel            int            `json:"parallel"`
-	PayloadBytes        int            `json:"payload_bytes"`
-	Activation          timingSummary  `json:"activation"`
-	FirstByte           timingSummary  `json:"first_byte"`
-	Request             timingSummary  `json:"request"`
-	Teardown            timingSummary  `json:"teardown"`
-	ThroughputMiBSecond float64        `json:"throughput_mib_per_second"`
-	ReadyWorkers        []workerSample `json:"ready_workers,omitempty"`
-	SettledWorkers      []workerSample `json:"settled_workers,omitempty"`
+type measurements struct {
+	ActivationStarted time.Time
+	ActivationElapsed time.Duration
+	Activation        []time.Duration
+	RequestStarted    time.Time
+	RequestElapsed    time.Duration
+	FirstByte         []time.Duration
+	Request           []time.Duration
+	CleanupStarted    time.Time
+	CleanupElapsed    time.Duration
+	Teardown          []time.Duration
+	ReadyWorkers      []workerSample
+	SettledWorkers    []workerSample
 }
 
 func main() {
@@ -194,18 +209,25 @@ func main() {
 		}
 	case "driver":
 		runDriver(commands.Driver)
+	case "report":
+		if err := commands.Report.run(os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "tnlbench: report: %v\n", err)
+			os.Exit(1)
+		}
 	default:
 		panic("unhandled tnlbench command")
 	}
 }
 
 func runDriver(flags cli) {
+	started := time.Now().UTC()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	ctx, cancel := context.WithTimeout(ctx, flags.Timeout)
 	defer cancel()
 	stopBarrier, err := startDriverBarrier(flags)
 	if err != nil {
+		_ = json.NewEncoder(os.Stdout).Encode(newBenchmarkResult(flags, started, measurements{}, err))
 		fmt.Fprintf(os.Stderr, "tnlbench: start driver barrier: %v\n", err)
 		os.Exit(1)
 	}
@@ -218,70 +240,71 @@ func runDriver(flags cli) {
 		fmt.Fprintln(os.Stderr, "tnlbench: cleanup exceeded two minutes; forcing exit")
 		os.Exit(1)
 	}()
-	benchmarkResult, err := run(ctx, flags)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "tnlbench: %v\n", err)
-		os.Exit(1)
-	}
+	measured, runErr := run(ctx, flags)
+	benchmarkResult := newBenchmarkResult(flags, started, measured, runErr)
 	if err := json.NewEncoder(os.Stdout).Encode(benchmarkResult); err != nil {
 		fmt.Fprintf(os.Stderr, "tnlbench: encode result: %v\n", err)
 		os.Exit(1)
 	}
+	if runErr != nil {
+		fmt.Fprintf(os.Stderr, "tnlbench: %v\n", runErr)
+		os.Exit(1)
+	}
 }
 
-func run(ctx context.Context, flags cli) (result, error) {
+func run(ctx context.Context, flags cli) (measurements, error) {
 	fmt.Fprintf(
 		os.Stderr, "tnlbench: starting %s shard with %d of %d routes\n",
 		flags.Topology, flags.Routes, flags.expectedRoutes(),
 	)
 	controlRoots, err := loadCertPool(flags.ControlCAFile)
 	if err != nil {
-		return result{}, err
+		return measurements{}, err
 	}
 	controlHTTP := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{
 		RootCAs: controlRoots, MinVersion: tls.VersionTLS13,
 	}}, Timeout: 30 * time.Second}
 	anonymous, err := serverclient.New(flags.ServerURL, controlHTTP, "")
 	if err != nil {
-		return result{}, err
+		return measurements{}, err
 	}
 	login := credentials.LoginToken(flags.LoginToken)
 	if _, err := credentials.ParseLoginToken(login); err != nil {
-		return result{}, errors.New("invalid login token")
+		return measurements{}, errors.New("invalid login token")
 	}
 	issued, err := anonymous.Exchange(ctx, login)
 	if err != nil {
-		return result{}, fmt.Errorf("exchange login token: %w", err)
+		return measurements{}, fmt.Errorf("exchange login token: %w", err)
 	}
 	access := credentials.AccessToken(issued.AccessToken)
 	if _, _, err := credentials.ParseAccessToken(access); err != nil {
-		return result{}, errors.New("server returned invalid access token")
+		return measurements{}, errors.New("server returned invalid access token")
 	}
 	server, err := serverclient.New(flags.ServerURL, controlHTTP, access)
 	if err != nil {
-		return result{}, err
+		return measurements{}, err
 	}
 	capabilities, err := server.Capabilities(ctx)
 	if err != nil {
-		return result{}, fmt.Errorf("read capabilities: %w", err)
+		return measurements{}, fmt.Errorf("read capabilities: %w", err)
 	}
 	if capabilities.Transport.Type != serverv1.Tailcat || capabilities.Transport.Version != serverv1.TransportCapabilitiesVersionN1 {
-		return result{}, errors.New("server does not advertise Tailcat transport version 1")
+		return measurements{}, errors.New("server does not advertise Tailcat transport version 1")
 	}
 	hostnameSuffix, err := benchmarkHostnameSuffix(capabilities, flags.HostnameSuffix)
 	if err != nil {
-		return result{}, err
+		return measurements{}, err
 	}
 	relayMap, err := server.RelayMap(ctx)
 	if err != nil {
-		return result{}, fmt.Errorf("read server relay map: %w", err)
+		return measurements{}, fmt.Errorf("read server relay map: %w", err)
 	}
 	regions, err := config.DecodeRelayRegions(relayMap)
 	if err != nil {
-		return result{}, err
+		return measurements{}, err
 	}
 	if regions[capabilities.Transport.RelayRegion] == nil {
-		return result{}, fmt.Errorf("relay region %q is absent from the relay map", capabilities.Transport.RelayRegion)
+		return measurements{}, fmt.Errorf("relay region %q is absent from the relay map", capabilities.Transport.RelayRegion)
 	}
 	hostnames := make([]string, flags.Routes)
 	for index := range hostnames {
@@ -289,7 +312,7 @@ func run(ctx context.Context, flags cli) (result, error) {
 	}
 	applicationCertificates, applicationRoots, err := benchmarkCertificates(hostnames)
 	if err != nil {
-		return result{}, err
+		return measurements{}, err
 	}
 	payload := make([]byte, flags.PayloadBytes)
 	for index := range payload {
@@ -301,6 +324,7 @@ func run(ctx context.Context, flags cli) (result, error) {
 	}))
 	defer origin.Close()
 
+	activationStarted := time.Now().UTC()
 	processes, activation, err := activateRoutes(
 		ctx, flags, server, regions, capabilities.Transport.RelayRegion, origin.URL, hostnames, applicationCertificates,
 	)
@@ -309,8 +333,9 @@ func run(ctx context.Context, flags cli) (result, error) {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 		_, _ = cleanupRoutes(cleanupCtx, flags, server, processes)
-		return result{}, err
+		return measurements{}, err
 	}
+	activationElapsed := time.Since(activationStarted)
 	fmt.Fprintln(os.Stderr, "tnlbench: activation complete")
 	cleaned := false
 	defer func() {
@@ -322,41 +347,43 @@ func run(ctx context.Context, flags cli) (result, error) {
 	}()
 	// Barriers keep faster shards from entering the next phase early.
 	if err := waitDriverBarrier(ctx, flags, "activated"); err != nil {
-		return result{}, err
+		return measurements{}, err
 	}
 	readyWorkers, err := waitWorkerRoutes(ctx, flags.MetricsURLs, flags.expectedRoutes())
 	if err != nil {
 		writeFailureEvidence(flags)
-		return result{}, err
+		return measurements{}, err
 	}
 	fmt.Fprintln(os.Stderr, "tnlbench: worker route count ready")
 	if err := waitDriverBarrier(ctx, flags, "ready"); err != nil {
-		return result{}, err
+		return measurements{}, err
 	}
+	requestStarted := time.Now().UTC()
 	firstByte, requests, elapsed, err := loadRoutes(ctx, flags, processes, applicationRoots, payload)
 	if err != nil {
-		return result{}, err
+		return measurements{}, err
 	}
 	fmt.Fprintln(os.Stderr, "tnlbench: request load complete")
 	if err := waitDriverBarrier(ctx, flags, "loaded"); err != nil {
-		return result{}, err
+		return measurements{}, err
 	}
+	cleanupStarted := time.Now().UTC()
 	teardown, err := cleanupRoutes(ctx, flags, server, processes)
 	if err != nil {
-		return result{}, err
+		return measurements{}, err
 	}
+	cleanupElapsed := time.Since(cleanupStarted)
 	fmt.Fprintln(os.Stderr, "tnlbench: route cleanup complete")
 	cleaned = true
 	settledWorkers, err := waitWorkerRoutes(ctx, flags.MetricsURLs, 0)
 	if err != nil {
-		return result{}, err
+		return measurements{}, err
 	}
 	fmt.Fprintln(os.Stderr, "tnlbench: worker route count settled")
-	throughput := float64(flags.Routes*flags.PayloadBytes) / (1024 * 1024) / elapsed.Seconds()
-	return result{
-		SchemaVersion: 1, Topology: flags.Topology, Routes: flags.Routes, Parallel: flags.Parallel,
-		PayloadBytes: flags.PayloadBytes, Activation: summarize(activation), FirstByte: summarize(firstByte),
-		Request: summarize(requests), Teardown: summarize(teardown), ThroughputMiBSecond: throughput,
+	return measurements{
+		ActivationStarted: activationStarted, ActivationElapsed: activationElapsed, Activation: activation,
+		RequestStarted: requestStarted, RequestElapsed: elapsed, FirstByte: firstByte, Request: requests,
+		CleanupStarted: cleanupStarted, CleanupElapsed: cleanupElapsed, Teardown: teardown,
 		ReadyWorkers: readyWorkers, SettledWorkers: settledWorkers,
 	}, nil
 }
