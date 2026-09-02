@@ -351,13 +351,22 @@ func (d *daemon) startServer(
 		}
 		go monitorWorker(ctx, worker, metrics)
 	} else {
-		verifier, err := credentials.ParseWorkerToken(credentials.WorkerToken(cfg.WorkerToken))
-		if err != nil {
-			return nil, nil, fmt.Errorf("configure worker token: %w", err)
+		workerTokens := cfg.AcceptedWorkerTokens
+		if len(workerTokens) == 0 {
+			workerTokens = []string{cfg.WorkerToken}
+		}
+		verifiers := make([]credentials.WorkerVerifier, len(workerTokens))
+		for index, token := range workerTokens {
+			verifiers[index], err = credentials.ParseWorkerToken(credentials.WorkerToken(token))
+			if err != nil {
+				return nil, nil, fmt.Errorf("configure worker token: %w", err)
+			}
 		}
 		hub, err = workercontrol.NewHub(workercontrol.HubConfig{
-			Tokens: []credentials.WorkerVerifier{verifier}, Registry: d.coordinator,
-			MaxStreams: cfg.WorkerStreamLimit, DrainTime: cfg.DrainTimeout, OnError: report,
+			Tokens: verifiers, Registry: d.coordinator,
+			MaxStreams: cfg.WorkerStreamLimit, MaxSessions: cfg.WorkerSessionLimit,
+			MaxWorkerCapacity: cfg.WorkerCapacity, MaxTotalCapacity: cfg.WorkerTotalCapacity,
+			DrainTime: cfg.DrainTimeout, OnError: report,
 			OnSessionEstablished: func(role workercontrol.SessionRole) {
 				metrics.ObserveWorkerSessionEstablished(string(role))
 			},

@@ -79,6 +79,9 @@ type WorkerVerifier struct {
 	hash SecretHash
 }
 
+// ID returns the nonsecret lookup ID for this worker credential.
+func (v WorkerVerifier) ID() CredentialID { return v.id }
+
 // ServiceVerifier is the nonsecret verification material for one service token.
 type ServiceVerifier struct {
 	id   CredentialID
