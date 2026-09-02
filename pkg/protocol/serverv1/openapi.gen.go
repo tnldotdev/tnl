@@ -25,6 +25,174 @@ func (e AddHostnameRequestKind) Valid() bool {
 	}
 }
 
+// Defines values for AdminHostnameKind.
+const (
+	AdminHostnameKindCustomDomain AdminHostnameKind = "custom_domain"
+	AdminHostnameKindManaged      AdminHostnameKind = "managed"
+	AdminHostnameKindTemporary    AdminHostnameKind = "temporary"
+)
+
+// Valid indicates whether the value is a known member of the AdminHostnameKind enum.
+func (e AdminHostnameKind) Valid() bool {
+	switch e {
+	case AdminHostnameKindCustomDomain:
+		return true
+	case AdminHostnameKindManaged:
+		return true
+	case AdminHostnameKindTemporary:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AdminHostnameStatus.
+const (
+	AdminHostnameStatusActive       AdminHostnameStatus = "active"
+	AdminHostnameStatusAvailable    AdminHostnameStatus = "available"
+	AdminHostnameStatusInactive     AdminHostnameStatus = "inactive"
+	AdminHostnameStatusPendingRoute AdminHostnameStatus = "pending_route"
+	AdminHostnameStatusQuarantined  AdminHostnameStatus = "quarantined"
+	AdminHostnameStatusRetired      AdminHostnameStatus = "retired"
+)
+
+// Valid indicates whether the value is a known member of the AdminHostnameStatus enum.
+func (e AdminHostnameStatus) Valid() bool {
+	switch e {
+	case AdminHostnameStatusActive:
+		return true
+	case AdminHostnameStatusAvailable:
+		return true
+	case AdminHostnameStatusInactive:
+		return true
+	case AdminHostnameStatusPendingRoute:
+		return true
+	case AdminHostnameStatusQuarantined:
+		return true
+	case AdminHostnameStatusRetired:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AdminRouteStatus.
+const (
+	AdminRouteStatusActive    AdminRouteStatus = "active"
+	AdminRouteStatusDeleted   AdminRouteStatus = "deleted"
+	AdminRouteStatusSuspended AdminRouteStatus = "suspended"
+)
+
+// Valid indicates whether the value is a known member of the AdminRouteStatus enum.
+func (e AdminRouteStatus) Valid() bool {
+	switch e {
+	case AdminRouteStatusActive:
+		return true
+	case AdminRouteStatusDeleted:
+		return true
+	case AdminRouteStatusSuspended:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AdminServerStatusMode.
+const (
+	Edge       AdminServerStatusMode = "edge"
+	Standalone AdminServerStatusMode = "standalone"
+)
+
+// Valid indicates whether the value is a known member of the AdminServerStatusMode enum.
+func (e AdminServerStatusMode) Valid() bool {
+	switch e {
+	case Edge:
+		return true
+	case Standalone:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AdministrationCapabilitiesOperations.
+const (
+	ControlSessions     AdministrationCapabilitiesOperations = "control_sessions"
+	Credentials         AdministrationCapabilitiesOperations = "credentials"
+	Hostnames           AdministrationCapabilitiesOperations = "hostnames"
+	OperationalSwitches AdministrationCapabilitiesOperations = "operational_switches"
+	Routes              AdministrationCapabilitiesOperations = "routes"
+	ServerStatus        AdministrationCapabilitiesOperations = "server_status"
+)
+
+// Valid indicates whether the value is a known member of the AdministrationCapabilitiesOperations enum.
+func (e AdministrationCapabilitiesOperations) Valid() bool {
+	switch e {
+	case ControlSessions:
+		return true
+	case Credentials:
+		return true
+	case Hostnames:
+		return true
+	case OperationalSwitches:
+		return true
+	case Routes:
+		return true
+	case ServerStatus:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AdministrationCapabilitiesVersion.
+const (
+	AdministrationCapabilitiesVersionN1 AdministrationCapabilitiesVersion = 1
+)
+
+// Valid indicates whether the value is a known member of the AdministrationCapabilitiesVersion enum.
+func (e AdministrationCapabilitiesVersion) Valid() bool {
+	switch e {
+	case AdministrationCapabilitiesVersionN1:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AuthenticationCapabilitiesMethods.
+const (
+	LoginToken AuthenticationCapabilitiesMethods = "login_token"
+	Oidc       AuthenticationCapabilitiesMethods = "oidc"
+)
+
+// Valid indicates whether the value is a known member of the AuthenticationCapabilitiesMethods enum.
+func (e AuthenticationCapabilitiesMethods) Valid() bool {
+	switch e {
+	case LoginToken:
+		return true
+	case Oidc:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AuthenticationCapabilitiesRequired.
+const (
+	True AuthenticationCapabilitiesRequired = true
+)
+
+// Valid indicates whether the value is a known member of the AuthenticationCapabilitiesRequired enum.
+func (e AuthenticationCapabilitiesRequired) Valid() bool {
+	switch e {
+	case True:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CapabilitiesHostnameAuthorization.
 const (
 	LocalHostnames      CapabilitiesHostnameAuthorization = "local_hostnames"
@@ -37,24 +205,6 @@ func (e CapabilitiesHostnameAuthorization) Valid() bool {
 	case LocalHostnames:
 		return true
 	case SignedAuthorization:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for CapabilitiesNameAuthorityType.
-const (
-	Hosted CapabilitiesNameAuthorityType = "hosted"
-	Local  CapabilitiesNameAuthorityType = "local"
-)
-
-// Valid indicates whether the value is a known member of the CapabilitiesNameAuthorityType enum.
-func (e CapabilitiesNameAuthorityType) Valid() bool {
-	switch e {
-	case Hosted:
-		return true
-	case Local:
 		return true
 	default:
 		return false
@@ -166,6 +316,24 @@ func (e DomainVerificationStatus) Valid() bool {
 	}
 }
 
+// Defines values for Grant.
+const (
+	Admin   Grant = "admin"
+	Publish Grant = "publish"
+)
+
+// Valid indicates whether the value is a known member of the Grant enum.
+func (e Grant) Valid() bool {
+	switch e {
+	case Admin:
+		return true
+	case Publish:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for HealthResponseStatus.
 const (
 	HealthResponseStatusOk HealthResponseStatus = "ok"
@@ -247,6 +415,45 @@ func (e HostnameStatus) Valid() bool {
 	}
 }
 
+// Defines values for OIDCCapabilitiesLoginFlow.
+const (
+	AuthorizationCodePkce OIDCCapabilitiesLoginFlow = "authorization_code_pkce"
+	DeviceCode            OIDCCapabilitiesLoginFlow = "device_code"
+)
+
+// Valid indicates whether the value is a known member of the OIDCCapabilitiesLoginFlow enum.
+func (e OIDCCapabilitiesLoginFlow) Valid() bool {
+	switch e {
+	case AuthorizationCodePkce:
+		return true
+	case DeviceCode:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OperationalSwitchName.
+const (
+	OperationalSwitchNameCertificateIssuance OperationalSwitchName = "certificate_issuance"
+	OperationalSwitchNameNewRoutes           OperationalSwitchName = "new_routes"
+	OperationalSwitchNameNewSessions         OperationalSwitchName = "new_sessions"
+)
+
+// Valid indicates whether the value is a known member of the OperationalSwitchName enum.
+func (e OperationalSwitchName) Valid() bool {
+	switch e {
+	case OperationalSwitchNameCertificateIssuance:
+		return true
+	case OperationalSwitchNameNewRoutes:
+		return true
+	case OperationalSwitchNameNewSessions:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ProblemCode.
 const (
 	CredentialReplayed     ProblemCode = "credential_replayed"
@@ -261,6 +468,7 @@ const (
 	StatusConflict         ProblemCode = "status_conflict"
 	TemporarilyUnavailable ProblemCode = "temporarily_unavailable"
 	Unauthenticated        ProblemCode = "unauthenticated"
+	Unsupported            ProblemCode = "unsupported"
 )
 
 // Valid indicates whether the value is a known member of the ProblemCode enum.
@@ -289,6 +497,8 @@ func (e ProblemCode) Valid() bool {
 	case TemporarilyUnavailable:
 		return true
 	case Unauthenticated:
+		return true
+	case Unsupported:
 		return true
 	default:
 		return false
@@ -385,21 +595,6 @@ func (e TailcatDescriptorVersion) Valid() bool {
 	}
 }
 
-// Defines values for TokenExchangeResponseTokenType.
-const (
-	Bearer TokenExchangeResponseTokenType = "Bearer"
-)
-
-// Valid indicates whether the value is a known member of the TokenExchangeResponseTokenType enum.
-func (e TokenExchangeResponseTokenType) Valid() bool {
-	switch e {
-	case Bearer:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for TransportCapabilitiesType.
 const (
 	Tailcat TransportCapabilitiesType = "tailcat"
@@ -444,32 +639,167 @@ type AddHostnameRequest struct {
 // AddHostnameRequestKind defines model for AddHostnameRequest.Kind.
 type AddHostnameRequestKind string
 
+// AdminControlSession defines model for AdminControlSession.
+type AdminControlSession struct {
+	AccessExpiresAt      time.Time        `json:"access_expires_at"`
+	AuthenticationMethod string           `json:"authentication_method"`
+	CreatedAt            time.Time        `json:"created_at"`
+	Grants               []Grant          `json:"grants"`
+	Id                   ControlSessionID `json:"id"`
+	IdentityId           string           `json:"identity_id"`
+	RefreshExpiresAt     time.Time        `json:"refresh_expires_at"`
+	RevokedAt            *time.Time       `json:"revoked_at,omitempty"`
+}
+
+// AdminControlSessionPage defines model for AdminControlSessionPage.
+type AdminControlSessionPage struct {
+	ControlSessions []AdminControlSession `json:"control_sessions"`
+	NextCursor      *ControlSessionID     `json:"next_cursor,omitempty"`
+}
+
+// AdminCredential defines model for AdminCredential.
+type AdminCredential struct {
+	CreatedAt time.Time    `json:"created_at"`
+	Id        CredentialID `json:"id"`
+	RevokedAt *time.Time   `json:"revoked_at,omitempty"`
+	RouteId   RouteID      `json:"route_id"`
+}
+
+// AdminCredentialPage defines model for AdminCredentialPage.
+type AdminCredentialPage struct {
+	Credentials []AdminCredential `json:"credentials"`
+	NextCursor  *CredentialID     `json:"next_cursor,omitempty"`
+}
+
+// AdminHostname defines model for AdminHostname.
+type AdminHostname struct {
+	ActivatedAt      *time.Time          `json:"activated_at,omitempty"`
+	CreatedAt        time.Time           `json:"created_at"`
+	DeactivatedAt    *time.Time          `json:"deactivated_at,omitempty"`
+	Hostname         string              `json:"hostname"`
+	Id               HostnameID          `json:"id"`
+	IdentityId       *string             `json:"identity_id,omitempty"`
+	Kind             AdminHostnameKind   `json:"kind"`
+	QuarantineReason *string             `json:"quarantine_reason,omitempty"`
+	QuarantinedAt    *time.Time          `json:"quarantined_at,omitempty"`
+	Source           string              `json:"source"`
+	Status           AdminHostnameStatus `json:"status"`
+}
+
+// AdminHostnameKind defines model for AdminHostname.Kind.
+type AdminHostnameKind string
+
+// AdminHostnameStatus defines model for AdminHostname.Status.
+type AdminHostnameStatus string
+
+// AdminHostnamePage defines model for AdminHostnamePage.
+type AdminHostnamePage struct {
+	Hostnames  []AdminHostname `json:"hostnames"`
+	NextCursor *HostnameID     `json:"next_cursor,omitempty"`
+}
+
+// AdminOperationalSwitch defines model for AdminOperationalSwitch.
+type AdminOperationalSwitch struct {
+	Enabled   bool                  `json:"enabled"`
+	Name      OperationalSwitchName `json:"name"`
+	Revision  int                   `json:"revision"`
+	UpdatedAt time.Time             `json:"updated_at"`
+	UpdatedBy string                `json:"updated_by"`
+}
+
+// AdminReasonRequest defines model for AdminReasonRequest.
+type AdminReasonRequest struct {
+	Reason string `json:"reason"`
+}
+
+// AdminRoute defines model for AdminRoute.
+type AdminRoute struct {
+	CreatedAt          time.Time        `json:"created_at"`
+	DeletedAt          *time.Time       `json:"deleted_at,omitempty"`
+	Hostname           string           `json:"hostname"`
+	Id                 RouteID          `json:"id"`
+	IdentityId         *string          `json:"identity_id,omitempty"`
+	LocalTarget        string           `json:"local_target"`
+	Status             AdminRouteStatus `json:"status"`
+	SuspendedAt        *time.Time       `json:"suspended_at,omitempty"`
+	SuspensionReason   *string          `json:"suspension_reason,omitempty"`
+	SuspensionRevision int              `json:"suspension_revision"`
+	Version            int              `json:"version"`
+}
+
+// AdminRouteStatus defines model for AdminRoute.Status.
+type AdminRouteStatus string
+
+// AdminRoutePage defines model for AdminRoutePage.
+type AdminRoutePage struct {
+	NextCursor *RouteID     `json:"next_cursor,omitempty"`
+	Routes     []AdminRoute `json:"routes"`
+}
+
+// AdminServerStatus defines model for AdminServerStatus.
+type AdminServerStatus struct {
+	ActiveRoutes       int                   `json:"active_routes"`
+	ConnectedWorkers   int                   `json:"connected_workers"`
+	CurrentTime        time.Time             `json:"current_time"`
+	Mode               AdminServerStatusMode `json:"mode"`
+	ProvisioningRoutes int                   `json:"provisioning_routes"`
+	StartedAt          time.Time             `json:"started_at"`
+	SuspendedRoutes    int                   `json:"suspended_routes"`
+}
+
+// AdminServerStatusMode defines model for AdminServerStatus.Mode.
+type AdminServerStatusMode string
+
+// AdministrationCapabilities defines model for AdministrationCapabilities.
+type AdministrationCapabilities struct {
+	Operations []AdministrationCapabilitiesOperations `json:"operations"`
+	Version    AdministrationCapabilitiesVersion      `json:"version"`
+}
+
+// AdministrationCapabilitiesOperations defines model for AdministrationCapabilities.Operations.
+type AdministrationCapabilitiesOperations string
+
+// AdministrationCapabilitiesVersion defines model for AdministrationCapabilities.Version.
+type AdministrationCapabilitiesVersion int
+
+// AllowedIPPrefixes Canonical, masked IPv4 or IPv6 prefixes that replace the route policy for this version. An empty or omitted list allows all source addresses.
+type AllowedIPPrefixes = []string
+
+// AuthenticationCapabilities defines model for AuthenticationCapabilities.
+type AuthenticationCapabilities struct {
+	Methods  []AuthenticationCapabilitiesMethods `json:"methods"`
+	Required AuthenticationCapabilitiesRequired  `json:"required"`
+}
+
+// AuthenticationCapabilitiesMethods defines model for AuthenticationCapabilities.Methods.
+type AuthenticationCapabilitiesMethods string
+
+// AuthenticationCapabilitiesRequired defines model for AuthenticationCapabilities.Required.
+type AuthenticationCapabilitiesRequired bool
+
 // Capabilities defines model for Capabilities.
 type Capabilities struct {
-	Acme                    *AcmeCapabilities                   `json:"acme,omitempty"`
-	AnonymousPublic         bool                                `json:"anonymous_public"`
-	CustomDomainSupport     bool                                `json:"custom_domain_support"`
-	DnsReady                bool                                `json:"dns_ready"`
-	HostedAuthorityEndpoint *string                             `json:"hosted_authority_endpoint,omitempty"`
-	HostnameAuthorization   []CapabilitiesHostnameAuthorization `json:"hostname_authorization"`
-	HostnameSuffix          string                              `json:"hostname_suffix"`
-	IngressIpv4             []string                            `json:"ingress_ipv4"`
-	IngressIpv6             []string                            `json:"ingress_ipv6"`
-	LocalHostnames          *LocalHostnameCapabilities          `json:"local_hostnames,omitempty"`
-	MaximumSubdomainDepth   int                                 `json:"maximum_subdomain_depth"`
-	NameAuthorityType       CapabilitiesNameAuthorityType       `json:"name_authority_type"`
-	Oidc                    *OIDCCapabilities                   `json:"oidc,omitempty"`
-	PersistentBaseSupport   bool                                `json:"persistent_base_support"`
-	ProtocolVersions        []CapabilitiesProtocolVersions      `json:"protocol_versions"`
-	TemporaryNameSupport    bool                                `json:"temporary_name_support"`
-	Transport               TransportCapabilities               `json:"transport"`
+	Acme                           *AcmeCapabilities                   `json:"acme,omitempty"`
+	Administration                 AdministrationCapabilities          `json:"administration"`
+	Authentication                 AuthenticationCapabilities          `json:"authentication"`
+	AuthorizationAuthorityEndpoint *string                             `json:"authorization_authority_endpoint,omitempty"`
+	CustomDomainSupport            bool                                `json:"custom_domain_support"`
+	DnsReady                       bool                                `json:"dns_ready"`
+	HostnameAuthorization          []CapabilitiesHostnameAuthorization `json:"hostname_authorization"`
+	HostnameSuffix                 string                              `json:"hostname_suffix"`
+	IngressIpv4                    []string                            `json:"ingress_ipv4"`
+	IngressIpv6                    []string                            `json:"ingress_ipv6"`
+	LocalHostnames                 *LocalHostnameCapabilities          `json:"local_hostnames,omitempty"`
+	MaximumSubdomainDepth          int                                 `json:"maximum_subdomain_depth"`
+	Oidc                           *OIDCCapabilities                   `json:"oidc,omitempty"`
+	PersistentBaseSupport          bool                                `json:"persistent_base_support"`
+	ProtocolVersions               []CapabilitiesProtocolVersions      `json:"protocol_versions"`
+	TemporaryNameSupport           bool                                `json:"temporary_name_support"`
+	Transport                      TransportCapabilities               `json:"transport"`
 }
 
 // CapabilitiesHostnameAuthorization defines model for Capabilities.HostnameAuthorization.
 type CapabilitiesHostnameAuthorization string
-
-// CapabilitiesNameAuthorityType defines model for Capabilities.NameAuthorityType.
-type CapabilitiesNameAuthorityType string
 
 // CapabilitiesProtocolVersions defines model for Capabilities.ProtocolVersions.
 type CapabilitiesProtocolVersions int
@@ -510,6 +840,25 @@ type CertificateIssuance struct {
 // CertificateIssuanceStatus defines model for CertificateIssuance.Status.
 type CertificateIssuanceStatus string
 
+// ClientIPResponse defines model for ClientIPResponse.
+type ClientIPResponse struct {
+	// Ip Canonical IPv4 or IPv6 text as returned by net/netip.Addr.String.
+	Ip string `json:"ip"`
+}
+
+// ControlSessionID defines model for ControlSessionID.
+type ControlSessionID = string
+
+// ControlSessionResponse defines model for ControlSessionResponse.
+type ControlSessionResponse struct {
+	AccessExpiresAt  time.Time        `json:"access_expires_at"`
+	AccessToken      string           `json:"access_token"`
+	Grants           []Grant          `json:"grants"`
+	RefreshExpiresAt time.Time        `json:"refresh_expires_at"`
+	RefreshToken     string           `json:"refresh_token"`
+	SessionId        ControlSessionID `json:"session_id"`
+}
+
 // CreateCertificateIssuanceRequest defines model for CreateCertificateIssuanceRequest.
 type CreateCertificateIssuanceRequest struct {
 	AcmeProfile string `json:"acme_profile"`
@@ -525,14 +874,24 @@ type CreateDomainVerificationRequest struct {
 
 // CreateRouteRequest defines model for CreateRouteRequest.
 type CreateRouteRequest struct {
-	Hostname    string `json:"hostname"`
-	LocalTarget string `json:"local_target"`
-	RouteToken  string `json:"route_token"`
+	// AllowedIpPrefixes Canonical, masked IPv4 or IPv6 prefixes that replace the route policy for this version. An empty or omitted list allows all source addresses.
+	AllowedIpPrefixes *AllowedIPPrefixes `json:"allowed_ip_prefixes,omitempty"`
+	Hostname          string             `json:"hostname"`
+	LocalTarget       string             `json:"local_target"`
+	RouteToken        string             `json:"route_token"`
+
+	// SignedAuthorization Compact EdDSA JWS with kid and typ=tnl-authorization+jwt protected headers.
+	SignedAuthorization *SignedAuthorizationToken `json:"signed_authorization,omitempty"`
 }
 
 // CreateRouteSessionRequest defines model for CreateRouteSessionRequest.
 type CreateRouteSessionRequest struct {
-	RouteToken string `json:"route_token"`
+	// AllowedIpPrefixes Canonical, masked IPv4 or IPv6 prefixes that replace the route policy for this version. An empty or omitted list allows all source addresses.
+	AllowedIpPrefixes *AllowedIPPrefixes `json:"allowed_ip_prefixes,omitempty"`
+	RouteToken        string             `json:"route_token"`
+
+	// SignedAuthorization Compact EdDSA JWS with kid and typ=tnl-authorization+jwt protected headers.
+	SignedAuthorization *SignedAuthorizationToken `json:"signed_authorization,omitempty"`
 }
 
 // CredentialID defines model for CredentialID.
@@ -565,6 +924,9 @@ type DomainVerification struct {
 // DomainVerificationStatus defines model for DomainVerification.Status.
 type DomainVerificationStatus string
 
+// Grant defines model for Grant.
+type Grant string
+
 // HealthResponse defines model for HealthResponse.
 type HealthResponse struct {
 	Status HealthResponseStatus `json:"status"`
@@ -576,6 +938,13 @@ type HealthResponseStatus string
 // HeartbeatResponse defines model for HeartbeatResponse.
 type HeartbeatResponse struct {
 	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// HeartbeatRouteSessionRequest defines model for HeartbeatRouteSessionRequest.
+type HeartbeatRouteSessionRequest struct {
+	// SignedAuthorization Compact EdDSA JWS with kid and typ=tnl-authorization+jwt protected headers.
+	SignedAuthorization *SignedAuthorizationToken `json:"signed_authorization,omitempty"`
+	Version             int                       `json:"version"`
 }
 
 // Hostname defines model for Hostname.
@@ -615,14 +984,21 @@ type LocalHostnameCapabilities struct {
 
 // OIDCCapabilities defines model for OIDCCapabilities.
 type OIDCCapabilities struct {
-	ClientId string `json:"client_id"`
-	Issuer   string `json:"issuer"`
+	ClientId  string                    `json:"client_id"`
+	Issuer    string                    `json:"issuer"`
+	LoginFlow OIDCCapabilitiesLoginFlow `json:"login_flow"`
 }
+
+// OIDCCapabilitiesLoginFlow defines model for OIDCCapabilities.LoginFlow.
+type OIDCCapabilitiesLoginFlow string
 
 // OIDCTokenExchangeRequest defines model for OIDCTokenExchangeRequest.
 type OIDCTokenExchangeRequest struct {
 	IdToken string `json:"id_token"`
 }
+
+// OperationalSwitchName defines model for OperationalSwitchName.
+type OperationalSwitchName string
 
 // Problem defines model for Problem.
 type Problem struct {
@@ -654,10 +1030,20 @@ type ReadinessResponse struct {
 // ReadinessResponseStatus defines model for ReadinessResponse.Status.
 type ReadinessResponseStatus string
 
+// RefreshControlSessionRequest defines model for RefreshControlSessionRequest.
+type RefreshControlSessionRequest struct {
+	RefreshToken string `json:"refresh_token"`
+}
+
 // RegisterTransportRequest defines model for RegisterTransportRequest.
 type RegisterTransportRequest struct {
 	Endpoint TailcatDescriptor `json:"endpoint"`
 	Version  int               `json:"version"`
+}
+
+// ResumeAdminRouteRequest defines model for ResumeAdminRouteRequest.
+type ResumeAdminRouteRequest struct {
+	Revision int `json:"revision"`
 }
 
 // Route defines model for Route.
@@ -672,6 +1058,9 @@ type Route struct {
 
 // RouteStatus defines model for Route.Status.
 type RouteStatus string
+
+// RouteID defines model for RouteID.
+type RouteID = string
 
 // RouteSession defines model for RouteSession.
 type RouteSession struct {
@@ -699,6 +1088,20 @@ type SessionSetup struct {
 	WorkerPublicKey string       `json:"worker_public_key"`
 }
 
+// SetAdminSwitchRequest defines model for SetAdminSwitchRequest.
+type SetAdminSwitchRequest struct {
+	Enabled bool `json:"enabled"`
+}
+
+// SignedAuthorizationToken Compact EdDSA JWS with kid and typ=tnl-authorization+jwt protected headers.
+type SignedAuthorizationToken = string
+
+// SuspendAdminRouteRequest defines model for SuspendAdminRouteRequest.
+type SuspendAdminRouteRequest struct {
+	Reason   string `json:"reason"`
+	Revision int    `json:"revision"`
+}
+
 // TailcatDescriptor defines model for TailcatDescriptor.
 type TailcatDescriptor struct {
 	PublisherPublicKey string                   `json:"publisher_public_key"`
@@ -713,17 +1116,6 @@ type TailcatDescriptorVersion int
 type TokenExchangeRequest struct {
 	LoginToken string `json:"login_token"`
 }
-
-// TokenExchangeResponse defines model for TokenExchangeResponse.
-type TokenExchangeResponse struct {
-	AccessToken  string                         `json:"access_token"`
-	CredentialId CredentialID                   `json:"credential_id"`
-	ExpiresAt    time.Time                      `json:"expires_at"`
-	TokenType    TokenExchangeResponseTokenType `json:"token_type"`
-}
-
-// TokenExchangeResponseTokenType defines model for TokenExchangeResponse.TokenType.
-type TokenExchangeResponseTokenType string
 
 // TransportCapabilities defines model for TransportCapabilities.
 type TransportCapabilities struct {
@@ -744,11 +1136,28 @@ type CertificateIssuanceID = string
 // DomainVerificationID defines model for DomainVerificationID.
 type DomainVerificationID = string
 
-// RouteID defines model for RouteID.
-type RouteID = string
-
 // BearerProblem defines model for BearerProblem.
 type BearerProblem = Problem
+
+// ListAdminControlSessionsParams defines parameters for ListAdminControlSessions.
+type ListAdminControlSessionsParams struct {
+	Cursor *ControlSessionID `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// ListAdminCredentialsParams defines parameters for ListAdminCredentials.
+type ListAdminCredentialsParams struct {
+	Cursor *CredentialID `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// ListAdminHostnamesParams defines parameters for ListAdminHostnames.
+type ListAdminHostnamesParams struct {
+	Cursor *HostnameID `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// ListAdminRoutesParams defines parameters for ListAdminRoutes.
+type ListAdminRoutesParams struct {
+	Cursor *RouteID `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
 
 // CreateDomainVerificationParams defines parameters for CreateDomainVerification.
 type CreateDomainVerificationParams struct {
@@ -765,8 +1174,23 @@ type AddHostnameParams struct {
 	IdempotencyKey string `json:"Idempotency-Key"`
 }
 
+// QuarantineAdminHostnameJSONRequestBody defines body for QuarantineAdminHostname for application/json ContentType.
+type QuarantineAdminHostnameJSONRequestBody = AdminReasonRequest
+
+// ResumeAdminRouteJSONRequestBody defines body for ResumeAdminRoute for application/json ContentType.
+type ResumeAdminRouteJSONRequestBody = ResumeAdminRouteRequest
+
+// SuspendAdminRouteJSONRequestBody defines body for SuspendAdminRoute for application/json ContentType.
+type SuspendAdminRouteJSONRequestBody = SuspendAdminRouteRequest
+
+// SetAdminSwitchJSONRequestBody defines body for SetAdminSwitch for application/json ContentType.
+type SetAdminSwitchJSONRequestBody = SetAdminSwitchRequest
+
 // ExchangeOIDCTokenJSONRequestBody defines body for ExchangeOIDCToken for application/json ContentType.
 type ExchangeOIDCTokenJSONRequestBody = OIDCTokenExchangeRequest
+
+// RefreshControlSessionJSONRequestBody defines body for RefreshControlSession for application/json ContentType.
+type RefreshControlSessionJSONRequestBody = RefreshControlSessionRequest
 
 // ExchangeLoginTokenJSONRequestBody defines body for ExchangeLoginToken for application/json ContentType.
 type ExchangeLoginTokenJSONRequestBody = TokenExchangeRequest
@@ -787,7 +1211,7 @@ type CreateRouteJSONRequestBody = CreateRouteRequest
 type MarkRouteCertificateInstalledJSONRequestBody = CertificateInstalledRequest
 
 // HeartbeatRouteSessionJSONRequestBody defines body for HeartbeatRouteSession for application/json ContentType.
-type HeartbeatRouteSessionJSONRequestBody = RouteVersionRequest
+type HeartbeatRouteSessionJSONRequestBody = HeartbeatRouteSessionRequest
 
 // MarkRouteReadyJSONRequestBody defines body for MarkRouteReady for application/json ContentType.
 type MarkRouteReadyJSONRequestBody = RouteVersionRequest

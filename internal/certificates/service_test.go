@@ -661,7 +661,7 @@ func testDatabase(t *testing.T) *sql.DB {
 	}
 	if err := queries.InsertRoute(context.Background(), statedb.InsertRouteParams{
 		RouteID:     testRouteID,
-		HostnameID:  "hostname",
+		HostnameID:  sql.NullString{String: "hostname", Valid: true},
 		IdentityID:  "identity",
 		Hostname:    testHostname,
 		LocalTarget: "http://127.0.0.1:3000",

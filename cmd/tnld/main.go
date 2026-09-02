@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"os/signal"
@@ -20,8 +21,10 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
+	coreadmin "github.com/tnldotdev/tnl/internal/admin"
 	"github.com/tnldotdev/tnl/internal/api"
 	"github.com/tnldotdev/tnl/internal/auth"
+	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/backup"
 	"github.com/tnldotdev/tnl/internal/buildinfo"
 	"github.com/tnldotdev/tnl/internal/certificates"
@@ -71,28 +74,6 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 	case "version":
 		_, err := fmt.Fprintln(stdout, buildinfo.Line("tnld"))
 		return err
-	case "token worker", "token service":
-		var value string
-		switch parsed.Command() {
-		case "token worker":
-			token, _, err := credentials.NewWorkerToken()
-			if err != nil {
-				return err
-			}
-			value = token.String()
-		case "token service":
-			token, _, err := credentials.NewServiceToken()
-			if err != nil {
-				return err
-			}
-			value = token.String()
-		}
-		_, err := fmt.Fprintln(stdout, value)
-		return err
-	case "login-token":
-		return runLoginToken(ctx, flags.LoginToken, stdout)
-	case "relay refresh":
-		return runRelayRefresh(ctx, flags.Relay.Refresh, stdout)
 	default:
 		return errors.New("command is required")
 	}
@@ -110,89 +91,8 @@ func newTNLDParser(flags *tnldCLI, output io.Writer) (*kong.Kong, error) {
 type tnldServeCommand config.TNLD
 
 type tnldCLI struct {
-	Serve      tnldServeCommand  `cmd:"" default:"withargs" help:"Run the tnl server."`
-	Version    struct{}          `cmd:"" help:"Print release version information."`
-	LoginToken loginTokenCommand `cmd:"" help:"Read or rotate the local login token."`
-	Token      tokenCommand      `cmd:"" help:"Generate an internal authentication token."`
-	Relay      relayCommands     `cmd:"" help:"Manage the selected relay region."`
-}
-
-type tokenCommand struct {
-	Worker  struct{} `cmd:"" help:"Generate an edge-to-worker token."`
-	Service struct{} `cmd:"" help:"Generate a route-usage service token."`
-}
-
-type relayCommands struct {
-	Refresh relayCommand `cmd:"" help:"Discover and pin the best Tailcat relay region; the daemon must be stopped."`
-}
-
-type loginTokenCommand struct {
-	StateDir string `name:"state-dir" env:"TNLD_STATE_DIR" type:"path" help:"Directory containing persistent daemon state."`
-	Rotate   bool   `name:"rotate" help:"Replace the login token; the daemon must be stopped."`
-}
-
-func runLoginToken(ctx context.Context, command loginTokenCommand, stdout io.Writer) error {
-	var err error
-	if command.StateDir == "" {
-		command.StateDir, err = config.DefaultStateDir()
-		if err != nil {
-			return err
-		}
-	}
-	var lock *state.DirectoryLock
-	if command.Rotate {
-		lock, err = state.LockDirectory(command.StateDir)
-		if err != nil {
-			return err
-		}
-		defer lock.Close()
-	}
-	db, err := state.Open(ctx, command.StateDir)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	var token credentials.LoginToken
-	if command.Rotate {
-		token, err = state.RotateLoginToken(ctx, db)
-	} else {
-		token, err = state.ReadLoginToken(ctx, db)
-	}
-	if err != nil {
-		return err
-	}
-	_, err = fmt.Fprintln(stdout, token.String())
-	return err
-}
-
-type relayCommand struct {
-	StateDir string `name:"state-dir" env:"TNLD_STATE_DIR" type:"path" help:"Directory containing persistent daemon state."`
-}
-
-func runRelayRefresh(ctx context.Context, command relayCommand, stdout io.Writer) error {
-	var err error
-	if command.StateDir == "" {
-		command.StateDir, err = config.DefaultStateDir()
-		if err != nil {
-			return err
-		}
-	}
-	lock, err := state.LockDirectory(command.StateDir)
-	if err != nil {
-		return err
-	}
-	defer lock.Close()
-	db, err := state.Open(ctx, command.StateDir)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	_, profile, err := config.LoadTailcatRelayRegions(ctx, db, true)
-	if err != nil {
-		return err
-	}
-	_, err = fmt.Fprintln(stdout, profile)
-	return err
+	Serve   tnldServeCommand `cmd:"" default:"withargs" help:"Run the tnl server."`
+	Version struct{}         `cmd:"" help:"Print release version information."`
 }
 
 type daemon struct {
@@ -200,6 +100,7 @@ type daemon struct {
 	backup             *backup.Manager
 	stateLock          *state.DirectoryLock
 	login              credentials.LoginToken
+	loginRevision      int64
 	metricsServer      *observability.Server
 	controlListener    net.Listener
 	controlServer      *http.Server
@@ -253,8 +154,12 @@ func serve(ctx context.Context, cfg config.TNLD) error {
 			return errors.Join(err, running.shutdown(cfg.DrainTimeout))
 		}
 		running.login = login
+		running.loginRevision, err = state.ReadLoginTokenRevision(ctx, db)
+		if err != nil {
+			return errors.Join(err, running.shutdown(cfg.DrainTimeout))
+		}
 		if generated {
-			log.Print("generated login token; retrieve it with tnld login-token")
+			log.Print("generated login token; retrieve it with tnl admin server login-token")
 		}
 		if running.backup != nil {
 			if err := running.backup.Start(ctx); err != nil {
@@ -339,7 +244,10 @@ func (d *daemon) startServer(
 			return nil, nil, err
 		}
 	}
-	authService, err := auth.NewServiceWithOIDC(d.db, d.login, oidcVerifier, cfg.AccessTokenLifetime)
+	authService, err := auth.NewService(d.db, auth.ServiceConfig{
+		LoginToken: d.login, LoginTokenRevision: d.loginRevision, OIDC: oidcVerifier,
+		AccessLifetime: cfg.AccessTokenLifetime, RefreshLifetime: cfg.RefreshTokenLifetime,
+	})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -360,6 +268,13 @@ func (d *daemon) startServer(
 		dns = dnsready.New(cfg.ServerHostname(), cfg.HostnameSuffix())
 	}
 	storeConfig.DomainVerifier = dns
+	if cfg.SignedAuthorizationEnabled() {
+		verifier, err := authorization.NewVerifier(cfg.AuthorizationConfig())
+		if err != nil {
+			return nil, nil, fmt.Errorf("configure signed authorization: %w", err)
+		}
+		storeConfig.AuthorizationVerifier = verifier
+	}
 	store, err := routes.NewStore(d.db, cfg.HostnameSuffix(), storeConfig)
 	if err != nil {
 		return nil, nil, err
@@ -454,6 +369,10 @@ func (d *daemon) startServer(
 		return nil, nil, err
 	}
 	apiMetrics := serverAPIObserver{metrics: metrics}
+	adminService, err := coreadmin.NewService(d.db, d.coordinator, string(cfg.Mode), cfg.DrainTimeout)
+	if err != nil {
+		return nil, nil, err
+	}
 	handler := api.NewHandlerWithServicesAndConfig(
 		capabilities(cfg, relayRegion),
 		authService,
@@ -462,7 +381,7 @@ func (d *daemon) startServer(
 		api.HandlerConfig{
 			Observer: apiMetrics, ErrorReporter: apiMetrics, RelayMap: relayMap,
 			DNSReady: dns.Ready, IngressAddresses: dns.IngressAddresses,
-			Readiness: d.db.PingContext,
+			Readiness: d.db.PingContext, SignedAuthorization: cfg.SignedAuthorizationEnabled(), Admin: adminService,
 		},
 	)
 	if hub != nil {
@@ -484,7 +403,10 @@ func (d *daemon) startServer(
 	ingressConfig := ingress.Config{
 		Lookup: func(hostname string) (ingress.Route, bool) {
 			route, ok := d.coordinator.Lookup(hostname)
-			return ingress.Route{ID: route.RouteID, Version: route.Version, Backend: route.Backend}, ok
+			return ingress.Route{
+				ID: route.RouteID, Version: route.Version,
+				AllowedIPPrefixes: route.AllowedIPPrefixes, Backend: route.Backend,
+			}, ok
 		},
 		ServerHostname:     cfg.ServerHostname(),
 		HandleControl:      controlListener.Enqueue,
@@ -492,8 +414,8 @@ func (d *daemon) startServer(
 		MaxRouteConnections: cfg.RouteConnLimit, Metrics: metrics, OnError: report,
 	}
 	if d.routeUsageReporter != nil {
-		ingressConfig.OpenUsage = func(routeID string, version uint64, at time.Time) ingress.UsageConnection {
-			return d.routeUsageReporter.Collector.Open(routeID, version, at)
+		ingressConfig.OpenUsage = func(routeID string, version uint64, source netip.Addr, at time.Time) ingress.UsageConnection {
+			return d.routeUsageReporter.Collector.Open(routeID, version, source, at)
 		}
 	}
 	if cfg.ACMEEnabled() {
@@ -772,10 +694,20 @@ func relayRegions(ctx context.Context, cfg config.TNLD, db *sql.DB) (map[string]
 
 func capabilities(cfg config.TNLD, relayRegion string) serverv1.Capabilities {
 	result := serverv1.Capabilities{
-		ProtocolVersions:      []serverv1.CapabilitiesProtocolVersions{serverv1.CapabilitiesProtocolVersionsN1},
+		ProtocolVersions: []serverv1.CapabilitiesProtocolVersions{serverv1.CapabilitiesProtocolVersionsN1},
+		Administration: serverv1.AdministrationCapabilities{
+			Version: serverv1.AdministrationCapabilitiesVersionN1,
+			Operations: []serverv1.AdministrationCapabilitiesOperations{
+				serverv1.ServerStatus, serverv1.Routes, serverv1.Hostnames, serverv1.Credentials,
+				serverv1.ControlSessions, serverv1.OperationalSwitches,
+			},
+		},
+		Authentication: serverv1.AuthenticationCapabilities{
+			Required: serverv1.True,
+			Methods:  []serverv1.AuthenticationCapabilitiesMethods{serverv1.LoginToken},
+		},
 		HostnameAuthorization: []serverv1.CapabilitiesHostnameAuthorization{serverv1.LocalHostnames},
 		HostnameSuffix:        cfg.HostnameSuffix(),
-		NameAuthorityType:     serverv1.Local,
 		TemporaryNameSupport:  true,
 		PersistentBaseSupport: true,
 		CustomDomainSupport:   true,
@@ -787,9 +719,16 @@ func capabilities(cfg config.TNLD, relayRegion string) serverv1.Capabilities {
 			Type: serverv1.Tailcat, Version: serverv1.TransportCapabilitiesVersionN1, RelayRegion: relayRegion,
 		},
 	}
+	if cfg.SignedAuthorizationEnabled() {
+		result.HostnameAuthorization = []serverv1.CapabilitiesHostnameAuthorization{serverv1.SignedAuthorization}
+		result.AuthorizationAuthorityEndpoint = &cfg.AuthorizationAuthorityEndpoint
+		result.LocalHostnames = nil
+	}
 	if cfg.OIDCEnabled() {
+		result.Authentication.Methods = append(result.Authentication.Methods, serverv1.Oidc)
 		result.Oidc = &serverv1.OIDCCapabilities{
 			Issuer: cfg.OIDCIssuer, ClientId: cfg.OIDCClientID,
+			LoginFlow: serverv1.OIDCCapabilitiesLoginFlow(cfg.OIDCLoginFlow),
 		}
 	}
 	if cfg.ACMEEnabled() {
@@ -799,7 +738,7 @@ func capabilities(cfg config.TNLD, relayRegion string) serverv1.Capabilities {
 }
 
 func newServerInstanceID() (string, error) {
-	// Prior sessions cannot use process-local keys and assignments after restart.
+	// Fence process-local assignments; an exact signed retry may explicitly restore its session.
 	var material [16]byte
 	if _, err := rand.Read(material[:]); err != nil {
 		return "", err

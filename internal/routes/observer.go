@@ -43,12 +43,14 @@ const (
 type RouteRemovalReason string
 
 const (
-	RouteRemovalHostnameRemoved    RouteRemovalReason = "hostname_removed"
-	RouteRemovalDeleted            RouteRemovalReason = "deleted"
-	RouteRemovalSessionExpired     RouteRemovalReason = "session_expired"
-	RouteRemovalWorkerDisconnected RouteRemovalReason = "worker_disconnected"
-	RouteRemovalWorkerDraining     RouteRemovalReason = "worker_draining"
-	RouteRemovalVersionReplaced    RouteRemovalReason = "version_replaced"
+	RouteRemovalHostnameRemoved     RouteRemovalReason = "hostname_removed"
+	RouteRemovalDeleted             RouteRemovalReason = "deleted"
+	RouteRemovalSessionExpired      RouteRemovalReason = "session_expired"
+	RouteRemovalWorkerDisconnected  RouteRemovalReason = "worker_disconnected"
+	RouteRemovalWorkerDraining      RouteRemovalReason = "worker_draining"
+	RouteRemovalVersionReplaced     RouteRemovalReason = "version_replaced"
+	RouteRemovalSuspended           RouteRemovalReason = "suspended"
+	RouteRemovalHostnameQuarantined RouteRemovalReason = "hostname_quarantined"
 )
 
 type CoordinatorConfig struct {

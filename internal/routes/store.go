@@ -8,9 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/state/statedb"
@@ -26,24 +28,39 @@ const (
 )
 
 var (
-	ErrNameUnavailable = errors.New("routes: name unavailable")
-	ErrInvalidArgument = errors.New("routes: invalid argument")
-	ErrRouteExists     = errors.New("routes: route already exists")
-	ErrNotFound        = errors.New("routes: not found")
-	ErrUnauthenticated = errors.New("routes: unauthenticated")
-	ErrStaleSession    = errors.New("routes: stale session")
-	ErrInvalidStatus   = errors.New("routes: invalid status")
-	ErrUnavailable     = errors.New("routes: temporarily unavailable")
+	ErrNameUnavailable       = errors.New("routes: name unavailable")
+	ErrInvalidArgument       = errors.New("routes: invalid argument")
+	ErrRouteExists           = errors.New("routes: route already exists")
+	ErrNotFound              = errors.New("routes: not found")
+	ErrUnauthenticated       = errors.New("routes: unauthenticated")
+	ErrStaleSession          = errors.New("routes: stale session")
+	ErrInvalidStatus         = errors.New("routes: invalid status")
+	ErrUnavailable           = errors.New("routes: temporarily unavailable")
+	ErrAuthorizationReplayed = errors.New("routes: authorization replayed")
 )
 
 type Route struct {
-	ID          string
-	IdentityID  string
-	Hostname    string
-	LocalTarget string
-	Status      string
-	Version     uint64
-	CreatedAt   time.Time
+	ID                        string
+	HostnameID                string
+	IdentityID                string
+	Hostname                  string
+	LocalTarget               string
+	Status                    string
+	Version                   uint64
+	SuspensionRevision        uint64
+	SuspensionReason          string
+	SuspendedAt               time.Time
+	AuthorizationIssuer       string
+	AuthorizationID           string
+	AuthorizationKeyID        string
+	AuthorizationRetryID      string
+	AuthorizationRevision     uint64
+	AuthorizationExpiresAt    time.Time
+	AuthorizationRequestHash  authorization.Digest
+	AuthorizationIPPolicyHash *authorization.Digest
+	AllowedIPPrefixes         []string
+	CreatedAt                 time.Time
+	DeletedAt                 time.Time
 }
 
 type Session struct {
@@ -63,31 +80,42 @@ type Provisioning struct {
 	Route        Route
 	Session      Session
 	SessionToken credentials.SessionToken
+	Replayed     bool
+	Restored     bool
+}
+
+type SignedRequest struct {
+	Token             string
+	RequestHash       authorization.Digest
+	IPPolicyHash      *authorization.Digest
+	AllowedIPPrefixes []string
 }
 
 type StoreConfig struct {
-	MaxActiveHostnames  int
-	MaxHostnameRequests int
-	ReservedRouteNames  []string
-	ObserveOperation    StoreObserver
-	LifecycleRecorder   LifecycleRecorder
-	VerificationSuffix  string
-	DomainVerifier      DomainVerifier
+	MaxActiveHostnames    int
+	MaxHostnameRequests   int
+	ReservedRouteNames    []string
+	ObserveOperation      StoreObserver
+	LifecycleRecorder     LifecycleRecorder
+	VerificationSuffix    string
+	DomainVerifier        DomainVerifier
+	AuthorizationVerifier *authorization.Verifier
 }
 
 type Store struct {
-	db                  *sql.DB
-	queries             *statedb.Queries
-	hostnameSuffix      string
-	now                 func() time.Time
-	sessionLifetime     time.Duration
-	maxActiveHostnames  int
-	maxHostnameRequests int
-	reservedRouteNames  map[string]struct{}
-	observeOperation    StoreObserver
-	lifecycleRecorder   LifecycleRecorder
-	verificationSuffix  string
-	domainVerifier      DomainVerifier
+	db                    *sql.DB
+	queries               *statedb.Queries
+	hostnameSuffix        string
+	now                   func() time.Time
+	sessionLifetime       time.Duration
+	maxActiveHostnames    int
+	maxHostnameRequests   int
+	reservedRouteNames    map[string]struct{}
+	observeOperation      StoreObserver
+	lifecycleRecorder     LifecycleRecorder
+	verificationSuffix    string
+	domainVerifier        DomainVerifier
+	authorizationVerifier *authorization.Verifier
 }
 
 func NewStore(db *sql.DB, hostnameSuffix string, configs ...StoreConfig) (*Store, error) {
@@ -125,18 +153,19 @@ func NewStore(db *sql.DB, hostnameSuffix string, configs ...StoreConfig) (*Store
 		return nil, errors.New("routes: hostname suffix must be canonical and leave room for one DNS label")
 	}
 	store := &Store{
-		db:                  db,
-		queries:             statedb.New(db),
-		hostnameSuffix:      hostnameSuffix,
-		now:                 time.Now,
-		sessionLifetime:     SessionLifetime,
-		maxActiveHostnames:  config.MaxActiveHostnames,
-		maxHostnameRequests: config.MaxHostnameRequests,
-		reservedRouteNames:  make(map[string]struct{}, len(config.ReservedRouteNames)),
-		observeOperation:    config.ObserveOperation,
-		lifecycleRecorder:   config.LifecycleRecorder,
-		verificationSuffix:  config.VerificationSuffix,
-		domainVerifier:      config.DomainVerifier,
+		db:                    db,
+		queries:               statedb.New(db),
+		hostnameSuffix:        hostnameSuffix,
+		now:                   time.Now,
+		sessionLifetime:       SessionLifetime,
+		maxActiveHostnames:    config.MaxActiveHostnames,
+		maxHostnameRequests:   config.MaxHostnameRequests,
+		reservedRouteNames:    make(map[string]struct{}, len(config.ReservedRouteNames)),
+		observeOperation:      config.ObserveOperation,
+		lifecycleRecorder:     config.LifecycleRecorder,
+		verificationSuffix:    config.VerificationSuffix,
+		domainVerifier:        config.DomainVerifier,
+		authorizationVerifier: config.AuthorizationVerifier,
 	}
 	if config.VerificationSuffix != "" {
 		verificationSuffix, err := naming.CanonicalizeHostname(config.VerificationSuffix)
@@ -175,6 +204,7 @@ func (s *Store) Create(
 	ctx context.Context,
 	identityID, hostname, localTarget, serverInstanceID string,
 	routeToken credentials.RouteToken,
+	allowedIPPrefixes []string,
 ) (provisioning Provisioning, err error) {
 	started := time.Now()
 	defer func() { s.observe(StoreOperationRouteCreate, started, err) }()
@@ -184,6 +214,10 @@ func (s *Store) Create(
 	}
 	if strings.TrimSpace(identityID) == "" || strings.TrimSpace(localTarget) == "" || strings.TrimSpace(serverInstanceID) == "" {
 		return Provisioning{}, errors.New("routes: identity, target, and server instance ID are required")
+	}
+	allowedIPPrefixes, err = validateAllowedIPPrefixes(allowedIPPrefixes)
+	if err != nil {
+		return Provisioning{}, err
 	}
 
 	routeCredentialID, routeHash, err := credentials.ParseRouteToken(routeToken)
@@ -239,6 +273,9 @@ func (s *Store) Create(
 	if err == nil {
 		// Recreate in place, rotating credentials and fencing the old tlschallenge.
 		existing := routeFromDB(existingRoute)
+		if existing.Status != "active" {
+			return Provisioning{}, ErrInvalidStatus
+		}
 		version := existing.Version + 1
 		if err := s.recordLifecycle(ctx, queries, existing.ID, existing.Version, now, LifecycleDisconnected); err != nil {
 			return Provisioning{}, err
@@ -269,6 +306,9 @@ func (s *Store) Create(
 		}); err != nil {
 			return Provisioning{}, fmt.Errorf("routes: advance replaced route: %w", err)
 		}
+		if err := insertAllowedIPPrefixes(ctx, queries, existing.ID, version, allowedIPPrefixes); err != nil {
+			return Provisioning{}, err
+		}
 		if err := queries.InsertRouteSession(ctx, statedb.InsertRouteSessionParams{
 			SessionID:        sessionID,
 			RouteID:          existing.ID,
@@ -289,6 +329,7 @@ func (s *Store) Create(
 		}
 		existing.LocalTarget = localTarget
 		existing.Version = version
+		existing.AllowedIPPrefixes = slices.Clone(allowedIPPrefixes)
 		return Provisioning{
 			Route: existing,
 			Session: Session{
@@ -300,13 +341,16 @@ func (s *Store) Create(
 	}
 	if err := queries.InsertRoute(ctx, statedb.InsertRouteParams{
 		RouteID:     routeID,
-		HostnameID:  authorizingHostname.ID,
+		HostnameID:  sql.NullString{String: authorizingHostname.ID, Valid: true},
 		IdentityID:  identityID,
 		Hostname:    hostname,
 		LocalTarget: localTarget,
 		CreatedAt:   now.UnixNano(),
 	}); err != nil {
 		return Provisioning{}, fmt.Errorf("routes: create route: %w", err)
+	}
+	if err := insertAllowedIPPrefixes(ctx, queries, routeID, 1, allowedIPPrefixes); err != nil {
+		return Provisioning{}, err
 	}
 	if authorizingHostname.Kind == HostnameKindTemporary {
 		count, err := queries.ActivateTemporaryHostname(ctx, statedb.ActivateTemporaryHostnameParams{
@@ -345,7 +389,10 @@ func (s *Store) Create(
 		return Provisioning{}, fmt.Errorf("routes: commit create: %w", err)
 	}
 	return Provisioning{
-		Route:        Route{ID: routeID, IdentityID: identityID, Hostname: hostname, LocalTarget: localTarget, Status: "active", Version: 1, CreatedAt: now},
+		Route: Route{
+			ID: routeID, IdentityID: identityID, Hostname: hostname, LocalTarget: localTarget,
+			Status: "active", Version: 1, AllowedIPPrefixes: slices.Clone(allowedIPPrefixes), CreatedAt: now,
+		},
 		Session:      Session{ID: sessionID, RouteID: routeID, Version: 1, Status: "pending", ServerInstanceID: serverInstanceID, CreatedAt: now, LastHeartbeatAt: now, ExpiresAt: expiresAt},
 		SessionToken: sessionToken,
 	}, nil
@@ -355,9 +402,14 @@ func (s *Store) CreateSession(
 	ctx context.Context,
 	identityID, routeID, serverInstanceID string,
 	routeToken credentials.RouteToken,
+	allowedIPPrefixes []string,
 ) (provisioning Provisioning, err error) {
 	started := time.Now()
 	defer func() { s.observe(StoreOperationSessionCreate, started, err) }()
+	allowedIPPrefixes, err = validateAllowedIPPrefixes(allowedIPPrefixes)
+	if err != nil {
+		return Provisioning{}, err
+	}
 	credentialID, candidate, err := credentials.ParseRouteToken(routeToken)
 	if err != nil {
 		return Provisioning{}, ErrUnauthenticated
@@ -406,6 +458,9 @@ func (s *Store) CreateSession(
 	}); err != nil {
 		return Provisioning{}, fmt.Errorf("routes: advance version: %w", err)
 	}
+	if err := insertAllowedIPPrefixes(ctx, queries, routeID, version, allowedIPPrefixes); err != nil {
+		return Provisioning{}, err
+	}
 	if err := queries.InsertRouteSession(ctx, statedb.InsertRouteSessionParams{
 		SessionID:        sessionID,
 		RouteID:          routeID,
@@ -425,6 +480,7 @@ func (s *Store) CreateSession(
 		return Provisioning{}, fmt.Errorf("routes: commit session creation: %w", err)
 	}
 	route.Version = version
+	route.AllowedIPPrefixes = slices.Clone(allowedIPPrefixes)
 	return Provisioning{
 		Route:        route,
 		Session:      Session{ID: sessionID, RouteID: routeID, Version: version, Status: "pending", ServerInstanceID: serverInstanceID, CreatedAt: now, LastHeartbeatAt: now, ExpiresAt: expiresAt},
@@ -507,6 +563,7 @@ func (s *Store) AuthenticateSession(
 		RouteID: routeID,
 		Version: dbVersion,
 		TokenID: tokenID.String(),
+		Now:     s.now().UnixNano(),
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		// Known tokens are stale; unknown IDs remain unauthenticated.
@@ -522,11 +579,43 @@ func (s *Store) AuthenticateSession(
 	if err != nil {
 		return Session{}, fmt.Errorf("routes: read session: %w", err)
 	}
-	now := s.now()
-	if dbSession.ServerInstanceID != serverInstanceID || dbSession.Status == "expired" || now.UnixNano() >= dbSession.ExpiresAt {
+	if dbSession.ServerInstanceID != serverInstanceID {
 		return Session{}, ErrStaleSession
 	}
 	if !credentials.SecretHashMatches(dbSession.SecretHash, candidate) {
+		return Session{}, ErrUnauthenticated
+	}
+	return sessionFromDB(dbSession), nil
+}
+
+func (s *Store) AuthenticateSessionForRenewal(
+	ctx context.Context,
+	routeID string,
+	version uint64,
+	token credentials.SessionToken,
+	serverInstanceID string,
+) (session Session, err error) {
+	started := time.Now()
+	defer func() { s.observe(StoreOperationSessionAuthenticate, started, err) }()
+	dbVersion, err := versionToInt64(version)
+	if err != nil {
+		return Session{}, ErrUnauthenticated
+	}
+	tokenID, candidate, err := credentials.ParseSessionToken(token)
+	if err != nil {
+		return Session{}, ErrUnauthenticated
+	}
+	dbSession, err := s.queries.GetRouteSessionByVersion(ctx, statedb.GetRouteSessionByVersionParams{
+		RouteID: routeID, Version: dbVersion,
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return Session{}, ErrUnauthenticated
+	}
+	if err != nil {
+		return Session{}, fmt.Errorf("routes: authenticate renewal session: %w", err)
+	}
+	if dbSession.Status == "expired" || dbSession.ServerInstanceID != serverInstanceID ||
+		dbSession.TokenID != tokenID.String() || !credentials.SecretHashMatches(dbSession.SecretHash, candidate) {
 		return Session{}, ErrUnauthenticated
 	}
 	return sessionFromDB(dbSession), nil
@@ -552,6 +641,7 @@ func (s *Store) RegisterTransport(
 		SessionID:          session.ID,
 		RouteID:            session.RouteID,
 		Version:            dbVersion,
+		Now:                s.now().UnixNano(),
 	})
 	if err != nil {
 		return fmt.Errorf("routes: register transport: %w", err)
@@ -566,6 +656,7 @@ func (s *Store) Ready(ctx context.Context, session Session) (err error) {
 	if err != nil {
 		return fmt.Errorf("routes: mark ready: %w", err)
 	}
+	now := time.Unix(0, s.now().UnixNano()).UTC()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("routes: begin ready: %w", err)
@@ -574,6 +665,7 @@ func (s *Store) Ready(ctx context.Context, session Session) (err error) {
 	queries := s.queries.WithTx(tx)
 	status, err := queries.GetRouteSessionStatus(ctx, statedb.GetRouteSessionStatusParams{
 		SessionID: session.ID, RouteID: session.RouteID, Version: dbVersion,
+		Now: now.UnixNano(),
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrInvalidStatus
@@ -588,6 +680,7 @@ func (s *Store) Ready(ctx context.Context, session Session) (err error) {
 		SessionID: session.ID,
 		RouteID:   session.RouteID,
 		Version:   dbVersion,
+		Now:       now.UnixNano(),
 	})
 	if err != nil {
 		return fmt.Errorf("routes: mark ready: %w", err)
@@ -595,7 +688,7 @@ func (s *Store) Ready(ctx context.Context, session Session) (err error) {
 	if err := requireCount(count, ErrInvalidStatus); err != nil {
 		return err
 	}
-	if err := s.recordLifecycle(ctx, queries, session.RouteID, session.Version, s.now().UTC(), LifecycleReady); err != nil {
+	if err := s.recordLifecycle(ctx, queries, session.RouteID, session.Version, now, LifecycleReady); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -619,6 +712,7 @@ func (s *Store) Heartbeat(ctx context.Context, session Session) (expiresAt time.
 		SessionID:       session.ID,
 		RouteID:         session.RouteID,
 		Version:         dbVersion,
+		Now:             now.UnixNano(),
 	})
 	if err != nil {
 		return time.Time{}, fmt.Errorf("routes: heartbeat: %w", err)
@@ -809,6 +903,14 @@ func readRouteCredential(
 	return routeFromDB(credential.Route), credential.SecretHash, credential.RevokedAt.Valid, nil
 }
 
+func validateAllowedIPPrefixes(values []string) ([]string, error) {
+	canonical, err := authorization.CanonicalizeIPPrefixes(values)
+	if err != nil || (values == nil) != (canonical == nil) || !slices.Equal(values, canonical) {
+		return nil, ErrInvalidArgument
+	}
+	return canonical, nil
+}
+
 func requireCount(count int64, missing error) error {
 	if count == 0 {
 		return missing
@@ -817,15 +919,39 @@ func requireCount(count int64, missing error) error {
 }
 
 func routeFromDB(route statedb.Route) Route {
-	return Route{
-		ID:          route.ID,
-		IdentityID:  route.IdentityID,
-		Hostname:    route.Hostname,
-		LocalTarget: route.LocalTarget,
-		Status:      route.Status,
-		Version:     uint64(route.Version),
-		CreatedAt:   time.Unix(0, route.CreatedAt).UTC(),
+	result := Route{
+		ID:                 route.ID,
+		HostnameID:         route.HostnameID.String,
+		IdentityID:         route.IdentityID.String,
+		Hostname:           route.Hostname,
+		LocalTarget:        route.LocalTarget,
+		Status:             route.Status,
+		Version:            uint64(route.Version),
+		SuspensionRevision: uint64(route.SuspensionRevision),
+		SuspensionReason:   route.SuspensionReason.String,
+		CreatedAt:          time.Unix(0, route.CreatedAt).UTC(),
 	}
+	if route.SuspendedAt.Valid {
+		result.SuspendedAt = time.Unix(0, route.SuspendedAt.Int64).UTC()
+	}
+	if route.DeletedAt.Valid {
+		result.DeletedAt = time.Unix(0, route.DeletedAt.Int64).UTC()
+	}
+	if route.AuthorizationID.Valid {
+		result.AuthorizationIssuer = route.AuthorizationIssuer.String
+		result.AuthorizationID = route.AuthorizationID.String
+		result.AuthorizationKeyID = route.AuthorizationKeyID.String
+		result.AuthorizationRetryID = route.AuthorizationRetryID.String
+		result.AuthorizationRevision = uint64(route.AuthorizationRevision.Int64)
+		result.AuthorizationExpiresAt = time.Unix(0, route.AuthorizationExpiresAt.Int64).UTC()
+		copy(result.AuthorizationRequestHash[:], route.AuthorizationRequestHash)
+		if len(route.AuthorizationIpPolicyHash) != 0 {
+			digest := new(authorization.Digest)
+			copy(digest[:], route.AuthorizationIpPolicyHash)
+			result.AuthorizationIPPolicyHash = digest
+		}
+	}
+	return result
 }
 
 func sessionFromDB(session statedb.RouteSession) Session {
@@ -879,6 +1005,20 @@ func (s *Store) recordLifecycle(
 		RouteID: routeID, Version: version, OccurredAt: occurredAt, Transition: transition,
 	}); err != nil {
 		return fmt.Errorf("routes: record lifecycle: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) recordRegistration(
+	ctx context.Context,
+	queries *statedb.Queries,
+	registration RouteRegistration,
+) error {
+	if s.lifecycleRecorder == nil {
+		return nil
+	}
+	if err := s.lifecycleRecorder.RecordRegistration(ctx, queries, registration); err != nil {
+		return fmt.Errorf("routes: record registration: %w", err)
 	}
 	return nil
 }

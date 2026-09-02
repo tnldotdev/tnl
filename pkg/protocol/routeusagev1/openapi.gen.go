@@ -82,6 +82,13 @@ func (e RouteUsageSnapshotResolution) Valid() bool {
 	}
 }
 
+// DurationHistogram A cumulative duration histogram. cumulative_counts uses fixed inclusive upper bounds of 1ms, 5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2.5s, 5s, 10s, 30s, 1m, 5m, 15m, 1h, 6h, 24h, and +Inf, in that order.
+type DurationHistogram struct {
+	Count            PositiveInteger   `json:"count"`
+	CumulativeCounts []UnsignedInteger `json:"cumulative_counts"`
+	SumNanoseconds   UnsignedInteger   `json:"sum_nanoseconds"`
+}
+
 // PositiveInteger defines model for PositiveInteger.
 type PositiveInteger = string
 
@@ -110,18 +117,64 @@ type RouteLifecycleEvent struct {
 // RouteLifecycleEventTransition defines model for RouteLifecycleEvent.Transition.
 type RouteLifecycleEventTransition string
 
+// RouteRegistration defines model for RouteRegistration.
+type RouteRegistration struct {
+	AuthorizationId string    `json:"authorization_id"`
+	CreatedAt       time.Time `json:"created_at"`
+	Hostname        string    `json:"hostname"`
+	RegistrationId  string    `json:"registration_id"`
+	RetryId         string    `json:"retry_id"`
+	RouteId         string    `json:"route_id"`
+	SigningKeyId    string    `json:"signing_key_id"`
+}
+
 // RouteUsageSnapshot defines model for RouteUsageSnapshot.
 type RouteUsageSnapshot struct {
-	BucketStart           time.Time                    `json:"bucket_start"`
-	Complete              bool                         `json:"complete"`
-	ConnectionNanoseconds UnsignedInteger              `json:"connection_nanoseconds"`
-	ConnectionsOpened     UnsignedInteger              `json:"connections_opened"`
-	EgressBytes           UnsignedInteger              `json:"egress_bytes"`
-	IngressBytes          UnsignedInteger              `json:"ingress_bytes"`
-	ObservedThrough       time.Time                    `json:"observed_through"`
-	Resolution            RouteUsageSnapshotResolution `json:"resolution"`
-	Revision              PositiveInteger              `json:"revision"`
-	Version               PositiveInteger              `json:"version"`
+	BucketStart time.Time `json:"bucket_start"`
+
+	// CapacityDenials Matched attempts rejected by the route connection limit.
+	CapacityDenials UnsignedInteger `json:"capacity_denials"`
+	Complete        bool            `json:"complete"`
+
+	// ConnectionAttempts Connections counted immediately after an ordinary route match, before policy and capacity checks.
+	ConnectionAttempts UnsignedInteger `json:"connection_attempts"`
+
+	// ConnectionNanoseconds Wall-clock duration of successful streams, split across the buckets in which time elapsed.
+	ConnectionNanoseconds UnsignedInteger `json:"connection_nanoseconds"`
+
+	// EgressBytes Bytes successfully forwarded from publishers to visitors.
+	EgressBytes UnsignedInteger `json:"egress_bytes"`
+
+	// IngressBytes Bytes successfully forwarded from visitors to publishers.
+	IngressBytes    UnsignedInteger `json:"ingress_bytes"`
+	ObservedThrough time.Time       `json:"observed_through"`
+
+	// PolicyDenials Matched attempts rejected by route access policy.
+	PolicyDenials UnsignedInteger `json:"policy_denials"`
+
+	// PublisherOpenFailures Attempts for which opening a publisher stream failed.
+	PublisherOpenFailures UnsignedInteger `json:"publisher_open_failures"`
+
+	// PublisherOpenLatency Latency of publisher open calls, including failed calls, attributed when the call returns. Absent when the bucket has no observations; absence is undefined and is not a zero-valued observation.
+	PublisherOpenLatency *DurationHistogram           `json:"publisher_open_latency,omitempty"`
+	Resolution           RouteUsageSnapshotResolution `json:"resolution"`
+	Revision             PositiveInteger              `json:"revision"`
+
+	// SuccessfulConnectionDuration End-to-end duration of successful forwarding streams, attributed when a stream closes. Absent when the bucket has no observations; absence is undefined and is not a zero-valued observation.
+	SuccessfulConnectionDuration *DurationHistogram `json:"successful_connection_duration,omitempty"`
+
+	// SuccessfulStreams Publisher streams that entered bidirectional forwarding.
+	SuccessfulStreams UnsignedInteger `json:"successful_streams"`
+
+	// TimeToFirstPublisherByte Time from route match until the first publisher byte is forwarded to the visitor, attributed when that byte is written. Absent when the bucket has no observations; absence is undefined and is not a zero-valued observation.
+	TimeToFirstPublisherByte *DurationHistogram `json:"time_to_first_publisher_byte,omitempty"`
+	Version                  PositiveInteger    `json:"version"`
+
+	// VisitorNetworkEstimate Precision-12 HyperLogLog estimate of distinct visitor networks for this route and bucket. The sketch is shared by route versions, so version snapshots for the same route and bucket carry the same estimate and must not be summed.
+	VisitorNetworkEstimate UnsignedInteger `json:"visitor_network_estimate"`
+
+	// VisitorNetworkHll Versioned precision-12 HyperLogLog checkpoint. Decoded bytes start with version 1, precision 12, and an encoding byte. Sparse encoding 0 continues with a big-endian uint16 entry count followed by sorted (big-endian uint16 register index, uint8 register value) entries; dense encoding 1 continues with 4096 uint8 registers. Inputs are IPv4 /32 or IPv6 /64 networks HMACed with a route-scoped secret derived daily from the daemon's stable master secret; no source identifier is included. Merge registers by their maximum rather than summing estimates when aggregating snapshots.
+	VisitorNetworkHll []byte `json:"visitor_network_hll"`
 }
 
 // RouteUsageSnapshotResolution defines model for RouteUsageSnapshot.Resolution.
@@ -132,6 +185,9 @@ type UnsignedInteger = string
 
 // RouteID defines model for RouteID.
 type RouteID = string
+
+// RegisterRouteJSONRequestBody defines body for RegisterRoute for application/json ContentType.
+type RegisterRouteJSONRequestBody = RouteRegistration
 
 // IngestRouteLifecycleEventJSONRequestBody defines body for IngestRouteLifecycleEvent for application/json ContentType.
 type IngestRouteLifecycleEventJSONRequestBody = RouteLifecycleEvent

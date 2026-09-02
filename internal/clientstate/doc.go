@@ -1,2 +1,2 @@
-// Package clientstate persists client access credentials, route keys, and certificates.
+// Package clientstate persists client control sessions, route keys, and certificates.
 package clientstate

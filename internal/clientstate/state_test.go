@@ -6,11 +6,13 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"math/big"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -205,55 +207,107 @@ func TestStateAllowsStickyWritableAncestor(t *testing.T) {
 	}
 }
 
-func TestAccessCredentialPersistsPrivatelyAndCanBeRemoved(t *testing.T) {
+func TestControlSessionPersistsPrivatelyAndCanBeRemoved(t *testing.T) {
 	store, err := New(filepath.Join(t.TempDir(), "state"), "https://server.example")
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, credentialID, _, err := credentials.NewAccessToken()
+	token, _, _, err := credentials.NewAccessToken()
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := AccessCredential{Token: token, CredentialID: credentialID, ExpiresAt: time.Now().Add(time.Hour).UTC()}
-	if err := store.SaveAccessCredential(want); err != nil {
+	refresh, _, _, err := credentials.NewRefreshToken()
+	if err != nil {
 		t.Fatal(err)
 	}
-	info, err := os.Stat(store.credentialsPath)
+	want := ControlSession{
+		Kind: ControlSessionKindCore, ControlEndpoint: "https://server.example",
+		SessionID: "control_session_0123456789abcdef0123456789abcdef", Issuer: "https://issuer.example", ClientID: "tnl-cli",
+		AccessToken: token.String(), AccessExpiresAt: time.Now().Add(time.Hour).UTC(),
+		RefreshToken: refresh.String(), RefreshExpiresAt: time.Now().Add(24 * time.Hour).UTC(), Grants: []string{"publish"},
+	}
+	if err := store.SaveControlSession(want); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(store.controlSessionPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("credential mode = %o", info.Mode().Perm())
+		t.Fatalf("control session mode = %o", info.Mode().Perm())
 	}
-	got, found, err := store.AccessCredential()
-	if err != nil || !found || got.Token != want.Token || got.CredentialID != want.CredentialID ||
-		!got.ExpiresAt.Equal(want.ExpiresAt) {
-		t.Fatalf("credential = %#v, found = %v, error = %v", got, found, err)
-	}
-	if err := store.RemoveAccessCredential(); err != nil {
+	encoded, err := os.ReadFile(store.controlSessionPath)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, found, err := store.AccessCredential(); err != nil || found {
-		t.Fatalf("credential found after removal = %v, error = %v", found, err)
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{
+		"schema_version", "kind", "control_endpoint", "session_id", "issuer", "client_id", "access_token",
+		"access_expires_at", "refresh_token", "refresh_expires_at", "grants",
+	} {
+		if _, found := fields[name]; !found {
+			t.Errorf("control session field %q is missing", name)
+		}
+	}
+	if len(fields) != 11 {
+		t.Fatalf("control session fields = %v", fields)
+	}
+	got, found, err := store.ControlSession()
+	if err != nil || !found || got.Kind != want.Kind || got.ControlEndpoint != want.ControlEndpoint ||
+		got.SessionID != want.SessionID || got.Issuer != want.Issuer || got.ClientID != want.ClientID ||
+		got.AccessToken != want.AccessToken || !got.AccessExpiresAt.Equal(want.AccessExpiresAt) ||
+		got.RefreshToken != want.RefreshToken || !got.RefreshExpiresAt.Equal(want.RefreshExpiresAt) ||
+		!reflect.DeepEqual(got.Grants, want.Grants) {
+		t.Fatalf("control session = %#v, found = %v, error = %v", got, found, err)
+	}
+	if err := store.RemoveControlSession(); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := store.ControlSession(); err != nil || found {
+		t.Fatalf("control session found after removal = %v, error = %v", found, err)
 	}
 }
 
-func TestAccessCredentialLockSerializesUpdates(t *testing.T) {
+func TestAuthorizationAuthoritySessionAllowsOpaqueTokensAndSeparateEndpoint(t *testing.T) {
+	store, err := New(filepath.Join(t.TempDir(), "state"), "https://core.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := ControlSession{
+		Kind: ControlSessionKindAuthorizationAuthority, ControlEndpoint: "https://accounts.example",
+		SessionID: "oauth_session_0123456789abcdef0123456789abcdef",
+		Issuer:    "https://issuer.example/tenant", ClientID: "tnl-cli",
+		AccessToken: "opaque-access", AccessExpiresAt: time.Now().Add(time.Hour).UTC(),
+		RefreshToken: "opaque-refresh", Scopes: []string{"openid", "offline_access", "product", "operations"},
+	}
+	if err := store.SaveControlSession(want); err != nil {
+		t.Fatal(err)
+	}
+	got, found, err := store.ControlSession()
+	if err != nil || !found || !reflect.DeepEqual(got, want) {
+		t.Fatalf("session = %#v, found = %v, error = %v", got, found, err)
+	}
+}
+
+func TestControlSessionLockSerializesUpdates(t *testing.T) {
 	store, err := New(filepath.Join(t.TempDir(), "state"), "https://server.example")
 	if err != nil {
 		t.Fatal(err)
 	}
-	lock, err := store.LockCredentials()
+	lock, err := store.LockControlSession()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.LockCredentials(); !errors.Is(err, ErrLocked) {
-		t.Fatalf("second credential lock error = %v", err)
+	if _, err := store.LockControlSession(); !errors.Is(err, ErrLocked) {
+		t.Fatalf("second control session lock error = %v", err)
 	}
 	if err := lock.Close(); err != nil {
 		t.Fatal(err)
 	}
-	lock, err = store.LockCredentials()
+	lock, err = store.LockControlSession()
 	if err != nil {
 		t.Fatal(err)
 	}

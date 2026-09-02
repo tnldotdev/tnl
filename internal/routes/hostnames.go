@@ -18,15 +18,17 @@ const (
 )
 
 type Hostname struct {
-	ID            string
-	IdentityID    string
-	Hostname      string
-	Kind          string
-	Status        string
-	Source        string
-	CreatedAt     time.Time
-	ActivatedAt   time.Time
-	DeactivatedAt time.Time
+	ID               string
+	IdentityID       string
+	Hostname         string
+	Kind             string
+	Status           string
+	Source           string
+	CreatedAt        time.Time
+	ActivatedAt      time.Time
+	DeactivatedAt    time.Time
+	QuarantineReason string
+	QuarantinedAt    time.Time
 }
 
 const (
@@ -39,6 +41,7 @@ const (
 	HostnameStatusInactive     = "inactive"
 	HostnameStatusAvailable    = "available"
 	HostnameStatusRetired      = "retired"
+	HostnameStatusQuarantined  = "quarantined"
 
 	HostnameSourceUser      = "user"
 	HostnameSourceGenerated = "generated"
@@ -330,17 +333,18 @@ func (s *Store) stopHostnameRoutes(
 	hostnameID string,
 	now time.Time,
 ) ([]string, error) {
-	routes, err := queries.ListActiveHostnameRouteVersions(ctx, hostnameID)
+	dbHostnameID := sql.NullString{String: hostnameID, Valid: true}
+	routes, err := queries.ListActiveHostnameRouteVersions(ctx, dbHostnameID)
 	if err != nil {
 		return nil, fmt.Errorf("routes: list stopped routes: %w", err)
 	}
-	if err := queries.DeleteHostnameRoutes(ctx, statedb.DeleteHostnameRoutesParams{DeletedAt: now.UnixNano(), HostnameID: hostnameID}); err != nil {
+	if err := queries.DeleteHostnameRoutes(ctx, statedb.DeleteHostnameRoutesParams{DeletedAt: now.UnixNano(), HostnameID: dbHostnameID}); err != nil {
 		return nil, fmt.Errorf("routes: delete stopped routes: %w", err)
 	}
-	if err := queries.RevokeHostnameRouteCredentials(ctx, statedb.RevokeHostnameRouteCredentialsParams{RevokedAt: now.UnixNano(), HostnameID: hostnameID}); err != nil {
+	if err := queries.RevokeHostnameRouteCredentials(ctx, statedb.RevokeHostnameRouteCredentialsParams{RevokedAt: now.UnixNano(), HostnameID: dbHostnameID}); err != nil {
 		return nil, fmt.Errorf("routes: revoke stopped routes: %w", err)
 	}
-	if err := queries.ExpireHostnameRouteSessions(ctx, hostnameID); err != nil {
+	if err := queries.ExpireHostnameRouteSessions(ctx, dbHostnameID); err != nil {
 		return nil, fmt.Errorf("routes: expire stopped routes: %w", err)
 	}
 	result := make([]string, 0, len(routes))
@@ -493,6 +497,10 @@ func hostnameFromDB(hostname statedb.Hostname) Hostname {
 	}
 	if hostname.DeactivatedAt.Valid {
 		result.DeactivatedAt = time.Unix(0, hostname.DeactivatedAt.Int64).UTC()
+	}
+	result.QuarantineReason = hostname.QuarantineReason.String
+	if hostname.QuarantinedAt.Valid {
+		result.QuarantinedAt = time.Unix(0, hostname.QuarantinedAt.Int64).UTC()
 	}
 	return result
 }

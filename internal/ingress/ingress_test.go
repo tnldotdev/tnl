@@ -12,12 +12,14 @@ import (
 	"io"
 	"math/big"
 	"net"
+	"net/netip"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/proxyproto"
+	"github.com/tnldotdev/tnl/internal/sourcelimiter"
 	"github.com/tnldotdev/tnl/internal/worker"
 )
 
@@ -33,9 +35,10 @@ func TestIngressRoutesTLSWithProxyMetadata(t *testing.T) {
 		Lookup: func(hostname string) (Route, bool) {
 			return Route{ID: "route_test", Version: 1, Backend: backend}, hostname == "route.example"
 		},
-		OpenUsage: func(routeID string, version uint64, at time.Time) UsageConnection {
+		OpenUsage: func(routeID string, version uint64, source netip.Addr, at time.Time) UsageConnection {
 			usage.routeID = routeID
 			usage.version = version
+			usage.source = source
 			usage.openedAt = at
 			return usage
 		},
@@ -88,8 +91,11 @@ func TestIngressRoutesTLSWithProxyMetadata(t *testing.T) {
 	}
 	usage.mu.Lock()
 	defer usage.mu.Unlock()
-	if usage.routeID != "route_test" || usage.version != 1 || usage.openedAt.IsZero() || usage.closedAt.IsZero() {
+	if usage.routeID != "route_test" || usage.version != 1 || !usage.source.IsLoopback() || usage.openedAt.IsZero() || usage.closedAt.IsZero() {
 		t.Fatalf("usage identity = %#v", usage)
+	}
+	if usage.publisherOpeningAt.IsZero() || usage.publisherOpenedAt.IsZero() || usage.streams != 1 {
+		t.Fatalf("usage lifecycle = %#v", usage)
 	}
 	if usage.ingressBytes <= 0 || usage.egressBytes <= 0 {
 		t.Fatalf("usage bytes = %d ingress, %d egress", usage.ingressBytes, usage.egressBytes)
@@ -107,11 +113,13 @@ func TestIngressUsesProvisioningRouteOnlyForACMETLSALPN(t *testing.T) {
 	}
 	var usageOpened atomic.Bool
 	server, err := New(listener, Config{
-		Lookup: func(string) (Route, bool) { return Route{}, false },
+		Lookup: func(string) (Route, bool) {
+			return Route{AllowedIPPrefixes: []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}}, true
+		},
 		LookupChallenge: func(hostname string) (worker.RouteBackend, bool) {
 			return backend, hostname == "route.example"
 		},
-		OpenUsage: func(string, uint64, time.Time) UsageConnection {
+		OpenUsage: func(string, uint64, netip.Addr, time.Time) UsageConnection {
 			usageOpened.Store(true)
 			return &testUsageConnection{closed: make(chan struct{})}
 		},
@@ -153,6 +161,207 @@ func TestIngressUsesProvisioningRouteOnlyForACMETLSALPN(t *testing.T) {
 	if usageOpened.Load() {
 		t.Fatal("ACME challenge opened usage accounting")
 	}
+}
+
+func TestIngressEnforcesProxySourceLimitsAndRouteAllowlistInOrder(t *testing.T) {
+	certificate := testCertificate(t, "route.example")
+	backend := &tlsBackend{certificate: certificate, result: make(chan backendResult, 1)}
+	metrics := &testMetrics{}
+	usage := new(testUsageRecorder)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lookups atomic.Int32
+	server, err := New(listener, Config{
+		Lookup: func(hostname string) (Route, bool) {
+			lookups.Add(1)
+			return Route{
+				ID: "route_test", Version: 1, Backend: backend,
+				AllowedIPPrefixes: []netip.Prefix{netip.MustParsePrefix("198.51.100.0/24")},
+			}, hostname == "route.example"
+		},
+		RequireProxyHeader: true, Metrics: metrics,
+		OpenUsage:      usage.Open,
+		MaxConnections: 8, MaxRouteConnections: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.limiter, err = sourcelimiter.New(sourcelimiter.Config{
+		Rate: 0.000001, Burst: 1, MaxEntries: 8, IdleExpiration: time.Hour, Shards: 4,
+		OnEntriesChanged: metrics.SetSourceLimiterEntries,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	served := make(chan error, 1)
+	go func() { served <- server.Serve() }()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = server.Drain(ctx)
+		<-served
+	})
+
+	malformed, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeProxyHeader(malformed, "198.51.100.1:40001"); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = malformed.Write([]byte("not TLS"))
+	_ = malformed.Close()
+	for deadline := time.Now().Add(time.Second); server.limiter.Entries() != 1 && time.Now().Before(deadline); {
+		time.Sleep(time.Millisecond)
+	}
+	if server.limiter.Entries() != 1 || lookups.Load() != 0 {
+		t.Fatalf("malformed connection: limiter entries=%d, route lookups=%d", server.limiter.Entries(), lookups.Load())
+	}
+
+	allowed, err := dialProxyTLS(listener.Addr().String(), "198.51.100.2:40002")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := allowed.Write([]byte("ping")); err != nil {
+		t.Fatal(err)
+	}
+	response := make([]byte, 4)
+	if _, err := io.ReadFull(allowed, response); err != nil || string(response) != "pong" {
+		t.Fatalf("allowed response = %q, %v", response, err)
+	}
+	_ = allowed.Close()
+	result := <-backend.result
+	if result.err != nil || result.header.Source != netip.MustParseAddrPort("198.51.100.2:40002") {
+		t.Fatalf("allowed backend result = %#v", result)
+	}
+
+	if connection, err := dialProxyTLS(listener.Addr().String(), "198.51.100.2:40003"); err == nil {
+		_ = connection.Close()
+		t.Fatal("rate-limited source completed TLS")
+	}
+	if connection, err := dialProxyTLS(listener.Addr().String(), "203.0.113.3:40004"); err == nil {
+		_ = connection.Close()
+		t.Fatal("disallowed source completed TLS")
+	}
+	if metrics.sourceLimiterRejections.Load() != 1 || metrics.ipAllowlistDenials.Load() != 1 ||
+		backend.opens.Load() != 1 || lookups.Load() != 2 {
+		t.Fatalf("rejections=%d denials=%d backend opens=%d lookups=%d",
+			metrics.sourceLimiterRejections.Load(), metrics.ipAllowlistDenials.Load(), backend.opens.Load(), lookups.Load())
+	}
+	server.mu.Lock()
+	remainingByRoute := len(server.byRoute)
+	server.mu.Unlock()
+	if remainingByRoute != 0 {
+		t.Fatalf("route capacity retained denied connections: %#v", server.byRoute)
+	}
+	attempts := usage.snapshot()
+	if len(attempts) != 2 {
+		t.Fatalf("usage attempts = %d, want allowed and policy-denied attempts", len(attempts))
+	}
+	var policies, streams int
+	for _, attempt := range attempts {
+		attempt.mu.Lock()
+		policies += attempt.policyDenials
+		streams += attempt.streams
+		attempt.mu.Unlock()
+	}
+	if policies != 1 || streams != 1 {
+		t.Fatalf("usage outcomes = %d policy denials, %d streams", policies, streams)
+	}
+}
+
+func TestIngressRecordsRouteCapacityAndPublisherOpenFailure(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend := &blockingOpenBackend{entered: make(chan struct{}), release: make(chan struct{})}
+	usage := new(testUsageRecorder)
+	server, err := New(listener, Config{
+		Lookup: func(hostname string) (Route, bool) {
+			return Route{ID: "route_test", Version: 1, Backend: backend}, hostname == "route.example"
+		},
+		OpenUsage: usage.Open, OpenTimeout: time.Second,
+		MaxConnections: 4, MaxRouteConnections: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	served := make(chan error, 1)
+	go func() { served <- server.Serve() }()
+	t.Cleanup(func() {
+		backend.releaseOpen()
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = server.Drain(ctx)
+		<-served
+	})
+
+	firstResult := make(chan error, 1)
+	go func() {
+		connection, err := tls.Dial("tcp", listener.Addr().String(), &tls.Config{
+			ServerName: "route.example", MinVersion: tls.VersionTLS12,
+			InsecureSkipVerify: true, // The publisher intentionally fails to open.
+		})
+		if err == nil {
+			_ = connection.Close()
+		}
+		firstResult <- err
+	}()
+	select {
+	case <-backend.entered:
+	case <-time.After(time.Second):
+		t.Fatal("first publisher open did not start")
+	}
+	second, err := tls.Dial("tcp", listener.Addr().String(), &tls.Config{
+		ServerName: "route.example", MinVersion: tls.VersionTLS12,
+		InsecureSkipVerify: true, // The route-capacity denial closes before TLS completes.
+	})
+	if err == nil {
+		_ = second.Close()
+		t.Fatal("route-capacity-denied connection completed TLS")
+	}
+	backend.releaseOpen()
+	if err := <-firstResult; err == nil {
+		t.Fatal("publisher-open-failed connection completed TLS")
+	}
+
+	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); {
+		attempts := usage.snapshot()
+		var capacity, failures int
+		for _, attempt := range attempts {
+			attempt.mu.Lock()
+			capacity += attempt.capacityDenials
+			failures += attempt.publisherFailures
+			attempt.mu.Unlock()
+		}
+		if len(attempts) == 2 && capacity == 1 && failures == 1 {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("usage outcomes after capacity and open failure = %#v", usage.snapshot())
+}
+
+func TestIngressRecordsPublisherFailureWhenBackendTrackingFails(t *testing.T) {
+	backend := &blockingSuccessfulOpenBackend{entered: make(chan struct{}), release: make(chan struct{})}
+	testIngressPublisherSetupFailure(t, backend, func(server *Server) {
+		select {
+		case <-backend.entered:
+		case <-time.After(time.Second):
+			t.Fatal("publisher open did not start")
+		}
+		server.mu.Lock()
+		server.closing = true
+		server.mu.Unlock()
+		close(backend.release)
+	})
+}
+
+func TestIngressRecordsPublisherFailureWhenProxyHeaderWriteFails(t *testing.T) {
+	testIngressPublisherSetupFailure(t, proxyWriteFailBackend{}, nil)
 }
 
 func TestIngressHandsControlTLSOffByExactSNI(t *testing.T) {
@@ -320,6 +529,7 @@ type tlsBackend struct {
 	certificate tls.Certificate
 	result      chan backendResult
 	nextProtos  []string
+	opens       atomic.Int32
 }
 
 type holdingBackend struct {
@@ -327,15 +537,97 @@ type holdingBackend struct {
 	closed chan struct{}
 }
 
+type blockingOpenBackend struct {
+	entered     chan struct{}
+	release     chan struct{}
+	once        sync.Once
+	releaseOnce sync.Once
+}
+
+type blockingSuccessfulOpenBackend struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+type proxyWriteFailBackend struct{}
+
+type writeFailConn struct {
+	net.Conn
+}
+
 type testUsageConnection struct {
-	mu           sync.Mutex
-	routeID      string
-	version      uint64
-	openedAt     time.Time
-	closedAt     time.Time
-	ingressBytes int64
-	egressBytes  int64
-	closed       chan struct{}
+	mu                 sync.Mutex
+	routeID            string
+	version            uint64
+	source             netip.Addr
+	openedAt           time.Time
+	closedAt           time.Time
+	publisherOpeningAt time.Time
+	publisherOpenedAt  time.Time
+	policyDenials      int
+	capacityDenials    int
+	publisherFailures  int
+	streams            int
+	ingressBytes       int64
+	egressBytes        int64
+	closed             chan struct{}
+}
+
+type testUsageRecorder struct {
+	mu          sync.Mutex
+	connections []*testUsageConnection
+}
+
+func (r *testUsageRecorder) Open(routeID string, version uint64, source netip.Addr, at time.Time) UsageConnection {
+	connection := &testUsageConnection{
+		routeID: routeID, version: version, source: source, openedAt: at, closed: make(chan struct{}),
+	}
+	r.mu.Lock()
+	r.connections = append(r.connections, connection)
+	r.mu.Unlock()
+	return connection
+}
+
+func (r *testUsageRecorder) snapshot() []*testUsageConnection {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]*testUsageConnection(nil), r.connections...)
+}
+
+func (u *testUsageConnection) PolicyDenied(time.Time) {
+	u.mu.Lock()
+	u.policyDenials++
+	u.mu.Unlock()
+}
+
+func (u *testUsageConnection) CapacityDenied(time.Time) {
+	u.mu.Lock()
+	u.capacityDenials++
+	u.mu.Unlock()
+}
+
+func (u *testUsageConnection) PublisherOpening(at time.Time) {
+	u.mu.Lock()
+	u.publisherOpeningAt = at
+	u.mu.Unlock()
+}
+
+func (u *testUsageConnection) PublisherOpened(at time.Time) {
+	u.mu.Lock()
+	u.publisherOpenedAt = at
+	u.mu.Unlock()
+}
+
+func (u *testUsageConnection) PublisherOpenFailed(time.Time) {
+	u.mu.Lock()
+	u.publisherFailures++
+	u.mu.Unlock()
+}
+
+func (u *testUsageConnection) StreamOpened(time.Time) {
+	u.mu.Lock()
+	u.streams++
+	u.mu.Unlock()
 }
 
 func (u *testUsageConnection) AddIngress(bytes int64, _ time.Time) {
@@ -373,6 +665,42 @@ func (b *holdingBackend) Open(context.Context) (net.Conn, error) {
 	return ingress, nil
 }
 
+func (b *blockingOpenBackend) Open(ctx context.Context) (net.Conn, error) {
+	b.once.Do(func() { close(b.entered) })
+	select {
+	case <-b.release:
+		return nil, errors.New("publisher unavailable")
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (b *blockingOpenBackend) releaseOpen() {
+	b.releaseOnce.Do(func() { close(b.release) })
+}
+
+func (b *blockingSuccessfulOpenBackend) Open(ctx context.Context) (net.Conn, error) {
+	close(b.entered)
+	select {
+	case <-b.release:
+		connection, peer := net.Pipe()
+		_ = peer.Close()
+		return connection, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (proxyWriteFailBackend) Open(context.Context) (net.Conn, error) {
+	connection, peer := net.Pipe()
+	_ = peer.Close()
+	return &writeFailConn{Conn: connection}, nil
+}
+
+func (*writeFailConn) Write([]byte) (int, error) {
+	return 0, errors.New("proxy header write failed")
+}
+
 type backendResult struct {
 	header  proxyproto.Header
 	request string
@@ -380,6 +708,7 @@ type backendResult struct {
 }
 
 func (b *tlsBackend) Open(context.Context) (net.Conn, error) {
+	b.opens.Add(1)
 	ingress, publisher := net.Pipe()
 	go func() {
 		defer publisher.Close()
@@ -404,6 +733,124 @@ func (b *tlsBackend) Open(context.Context) (net.Conn, error) {
 		b.result <- backendResult{header: header, request: string(request), err: err}
 	}()
 	return ingress, nil
+}
+
+type testMetrics struct {
+	sourceLimiterRejections atomic.Int32
+	sourceLimiterEntries    atomic.Int32
+	ipAllowlistDenials      atomic.Int32
+}
+
+func (*testMetrics) IncCapacityRejection(string)  {}
+func (m *testMetrics) IncSourceLimiterRejection() { m.sourceLimiterRejections.Add(1) }
+func (m *testMetrics) SetSourceLimiterEntries(entries int) {
+	m.sourceLimiterEntries.Store(int32(entries))
+}
+func (m *testMetrics) IncIPAllowlistDenial()         { m.ipAllowlistDenials.Add(1) }
+func (*testMetrics) AddForwardedBytes(string, int64) {}
+func (*testMetrics) SetStreams(int)                  {}
+
+func dialProxyTLS(address, source string) (*tls.Conn, error) {
+	connection, err := net.Dial("tcp", address)
+	if err != nil {
+		return nil, err
+	}
+	if err := writeProxyHeader(connection, source); err != nil {
+		_ = connection.Close()
+		return nil, err
+	}
+	secured := tls.Client(connection, &tls.Config{
+		ServerName: "route.example", MinVersion: tls.VersionTLS12,
+		InsecureSkipVerify: true, // The test certificate is self-signed.
+	})
+	if err := secured.Handshake(); err != nil {
+		_ = secured.Close()
+		return nil, err
+	}
+	return secured, nil
+}
+
+func testIngressPublisherSetupFailure(
+	t *testing.T,
+	backend worker.RouteBackend,
+	afterOpen func(*Server),
+) {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	usage := new(testUsageRecorder)
+	server, err := New(listener, Config{
+		Lookup: func(hostname string) (Route, bool) {
+			return Route{ID: "route_test", Version: 1, Backend: backend}, hostname == "route.example"
+		},
+		OpenUsage: usage.Open, OpenTimeout: time.Second,
+		MaxConnections: 2, MaxRouteConnections: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	served := make(chan error, 1)
+	go func() { served <- server.Serve() }()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = server.Drain(ctx)
+		<-served
+	})
+
+	result := make(chan error, 1)
+	go func() {
+		connection, err := tls.Dial("tcp", listener.Addr().String(), &tls.Config{
+			ServerName: "route.example", MinVersion: tls.VersionTLS12,
+			InsecureSkipVerify: true, // Stream setup intentionally fails before TLS reaches the publisher.
+		})
+		if err == nil {
+			_ = connection.Close()
+		}
+		result <- err
+	}()
+	if afterOpen != nil {
+		afterOpen(server)
+	}
+	if err := <-result; err == nil {
+		t.Fatal("publisher-setup-failed connection completed TLS")
+	}
+
+	var attempt *testUsageConnection
+	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); {
+		attempts := usage.snapshot()
+		if len(attempts) == 1 {
+			attempt = attempts[0]
+			select {
+			case <-attempt.closed:
+				goto closed
+			default:
+			}
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("usage connection did not close")
+
+closed:
+	attempt.mu.Lock()
+	defer attempt.mu.Unlock()
+	outcomes := attempt.policyDenials + attempt.capacityDenials + attempt.publisherFailures + attempt.streams
+	if attempt.publisherOpeningAt.IsZero() || attempt.publisherOpenedAt.IsZero() ||
+		attempt.publisherFailures != 1 || attempt.streams != 0 || outcomes != 1 {
+		t.Fatalf("usage lifecycle = %#v", attempt)
+	}
+}
+
+func writeProxyHeader(connection net.Conn, source string) error {
+	header, err := proxyproto.Encode(proxyproto.Header{
+		Source: netip.MustParseAddrPort(source), Destination: netip.MustParseAddrPort("203.0.113.10:443"),
+	})
+	if err != nil {
+		return err
+	}
+	return writeAll(connection, header)
 }
 
 type testReaderConn struct {

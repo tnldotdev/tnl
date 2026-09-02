@@ -1,0 +1,22 @@
+{
+  "public_key": "iKtxNkH-18e1_h9hxjRnTtPhrDVseTQUcnhGLsLd3mw",
+  "authorization": "eyJhbGciOiJFZERTQSIsImtpZCI6Imhvc3RlZC1jb25mb3JtYW5jZS0yMDI2LTA5IiwidHlwIjoidG5sLWF1dGhvcml6YXRpb24rand0In0.eyJ2ZXJzaW9uIjoxLCJraWQiOiJob3N0ZWQtY29uZm9ybWFuY2UtMjAyNi0wOSIsImFsZyI6IkVkRFNBIiwib3BlcmF0aW9uIjoiYXV0aG9yaXphdGlvbi5yZW5ldyIsImlzc3VlciI6Imh0dHBzOi8vYWNjb3VudC50bmwuZGV2IiwicmVjZWl2ZXIiOiJodHRwczovL2NvbnRyb2wudG5sLmRldiIsImF1dGhvcml6YXRpb25faWQiOiJhdXRob3JpemF0aW9uXzAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmIiwiaG9zdG5hbWUiOiJkZW1vLnRubC5kZXYiLCJyb3V0ZV9pZCI6InJvdXRlXzAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmIiwicm91dGVfdmVyc2lvbiI6NywicmV2aXNpb24iOjMsImlzc3VlZF9hdCI6IjIwMjYtMDktMDJUMTI6MDA6MDAuMDAwWiIsImV4cGlyZXNfYXQiOiIyMDI2LTA5LTAyVDEzOjAwOjAwLjAwMFoiLCJyZXRyeV9pZCI6InJldHJ5X2ZlZGNiYTk4NzY1NDMyMTBmZWRjYmE5ODc2NTQzMjEwIiwiY2Fub25pY2FsX3JlcXVlc3RfaGFzaCI6IkFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUEiLCJpcF9wb2xpY3lfaGFzaCI6IkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkEifQ.a1uTPNep0aYxmB9bVmMuzXWRxTAVpkKBqPX0vjNH3Gaus8HdElWglzyoEXoebD5njz6cmQtNM5JwIWVUeJqAAg",
+  "claims": {
+    "version": 1,
+    "kid": "hosted-conformance-2026-09",
+    "alg": "EdDSA",
+    "operation": "authorization.renew",
+    "issuer": "https://account.tnl.dev",
+    "receiver": "https://control.tnl.dev",
+    "authorization_id": "authorization_0123456789abcdef0123456789abcdef",
+    "hostname": "demo.tnl.dev",
+    "route_id": "route_0123456789abcdef0123456789abcdef",
+    "route_version": 7,
+    "revision": 3,
+    "issued_at": "2026-09-02T12:00:00.000Z",
+    "expires_at": "2026-09-02T13:00:00.000Z",
+    "retry_id": "retry_fedcba9876543210fedcba9876543210",
+    "canonical_request_hash": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "ip_policy_hash": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA"
+  }
+}

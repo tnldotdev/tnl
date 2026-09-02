@@ -32,7 +32,10 @@ func TestRouteAPILifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	authService, err := auth.NewService(db, login, auth.DefaultAccessTokenLifetime)
+	authService, err := auth.NewService(db, auth.ServiceConfig{
+		LoginToken: login, LoginTokenRevision: 1,
+		AccessLifetime: auth.DefaultAccessTokenLifetime, RefreshLifetime: auth.DefaultRefreshTokenLifetime,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,13 +55,13 @@ func TestRouteAPILifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler := NewHandlerWithRoutes(fixtureCapabilities(t), authService, coordinator)
-	addHostnameRequest(t, handler, issued.Token.String(), "route")
+	addHostnameRequest(t, handler, issued.AccessToken.String(), "route")
 
 	routeToken, _, _, err := credentials.NewRouteToken()
 	if err != nil {
 		t.Fatal(err)
 	}
-	created := routeRequest[serverv1.SessionSetup](t, handler, issued.Token.String(), http.MethodPost, routesPath, serverv1.CreateRouteRequest{
+	created := routeRequest[serverv1.SessionSetup](t, handler, issued.AccessToken.String(), http.MethodPost, routesPath, serverv1.CreateRouteRequest{
 		Hostname: "route.example", LocalTarget: "localhost:3000", RouteToken: routeToken.String(),
 	}, http.StatusCreated)
 	if created.Route.Version != 1 || created.Session.Version != 1 {
@@ -72,21 +75,36 @@ func TestRouteAPILifecycle(t *testing.T) {
 		},
 	}, http.StatusNoContent)
 	routeRequest[struct{}](t, handler, created.SessionToken, http.MethodPost, routesPath+"/"+created.Route.Id+"/ready", serverv1.RouteVersionRequest{Version: 1}, http.StatusNoContent)
-	heartbeat := routeRequest[serverv1.HeartbeatResponse](t, handler, created.SessionToken, http.MethodPost, routesPath+"/"+created.Route.Id+"/heartbeat", serverv1.RouteVersionRequest{Version: 1}, http.StatusOK)
+	heartbeat := routeRequest[serverv1.HeartbeatResponse](t, handler, created.SessionToken, http.MethodPost, routesPath+"/"+created.Route.Id+"/heartbeat", serverv1.HeartbeatRouteSessionRequest{Version: 1}, http.StatusOK)
 	if heartbeat.ExpiresAt.IsZero() {
 		t.Fatal("heartbeat omitted expiry")
 	}
-	listed := routeRequest[[]serverv1.Route](t, handler, issued.Token.String(), http.MethodGet, routesPath, nil, http.StatusOK)
+	listed := routeRequest[[]serverv1.Route](t, handler, issued.AccessToken.String(), http.MethodGet, routesPath, nil, http.StatusOK)
 	if len(listed) != 1 || listed[0].Id != created.Route.Id {
 		t.Fatalf("listed routes = %#v", listed)
 	}
-	replacement := routeRequest[serverv1.SessionSetup](t, handler, issued.Token.String(), http.MethodPost, routesPath+"/"+created.Route.Id+"/sessions", serverv1.CreateRouteSessionRequest{
+	replacement := routeRequest[serverv1.SessionSetup](t, handler, issued.AccessToken.String(), http.MethodPost, routesPath+"/"+created.Route.Id+"/sessions", serverv1.CreateRouteSessionRequest{
 		RouteToken: routeToken.String(),
 	}, http.StatusCreated)
 	if replacement.Session.Version != 2 {
 		t.Fatalf("replacement setup = %#v", replacement)
 	}
-	routeRequest[struct{}](t, handler, issued.Token.String(), http.MethodDelete, routesPath+"/"+created.Route.Id, nil, http.StatusNoContent)
+	routeRequest[struct{}](t, handler, issued.AccessToken.String(), http.MethodDelete, routesPath+"/"+created.Route.Id, nil, http.StatusNoContent)
+}
+
+func TestRouteAllowedIPPrefixesPreservesExplicitEmptyPolicy(t *testing.T) {
+	empty := serverv1.AllowedIPPrefixes{}
+	prefixes, err := routeAllowedIPPrefixes(&empty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prefixes == nil || len(prefixes) != 0 {
+		t.Fatalf("explicit empty policy = %#v", prefixes)
+	}
+	missing, err := routeAllowedIPPrefixes(nil)
+	if err != nil || missing != nil {
+		t.Fatalf("omitted policy = %#v, %v", missing, err)
+	}
 }
 
 func TestHostnameListAndRemove(t *testing.T) {
@@ -100,7 +118,10 @@ func TestHostnameListAndRemove(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	authService, err := auth.NewService(db, login, auth.DefaultAccessTokenLifetime)
+	authService, err := auth.NewService(db, auth.ServiceConfig{
+		LoginToken: login, LoginTokenRevision: 1,
+		AccessLifetime: auth.DefaultAccessTokenLifetime, RefreshLifetime: auth.DefaultRefreshTokenLifetime,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +129,7 @@ func TestHostnameListAndRemove(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity, err := authService.Authenticate(ctx, issued.Token)
+	principal, err := authService.Authenticate(ctx, issued.AccessToken)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +140,7 @@ func TestHostnameListAndRemove(t *testing.T) {
 		VALUES
 		(?, ?, 'docs.other.com', 1, 'custom_domain', 'active', 'user', 1),
 		(?, ?, 'managed.example', 1, 'managed', 'active', 'user', 1)`,
-		customID, identity.ID, managedID, identity.ID); err != nil {
+		customID, principal.Identity.ID, managedID, principal.Identity.ID); err != nil {
 		t.Fatal(err)
 	}
 	store, err := routes.NewStore(db, "example")
@@ -133,25 +154,25 @@ func TestHostnameListAndRemove(t *testing.T) {
 	t.Cleanup(func() { _ = coordinator.Close() })
 	handler := NewHandlerWithRoutes(fixtureCapabilities(t), authService, coordinator)
 	listed := routeRequest[serverv1.HostnamePage](
-		t, handler, issued.Token.String(), http.MethodGet, hostnamesPath, nil, http.StatusOK,
+		t, handler, issued.AccessToken.String(), http.MethodGet, hostnamesPath, nil, http.StatusOK,
 	)
 	if len(listed.Hostnames) != 2 || listed.Hostnames[0].Id != customID || listed.Hostnames[1].Id != managedID {
 		t.Fatalf("hostnames = %#v", listed)
 	}
 	routeRequest[struct{}](
-		t, handler, issued.Token.String(), http.MethodDelete, hostnamesPath+"/"+customID, nil, http.StatusNoContent,
+		t, handler, issued.AccessToken.String(), http.MethodDelete, hostnamesPath+"/"+customID, nil, http.StatusNoContent,
 	)
 	listed = routeRequest[serverv1.HostnamePage](
-		t, handler, issued.Token.String(), http.MethodGet, hostnamesPath, nil, http.StatusOK,
+		t, handler, issued.AccessToken.String(), http.MethodGet, hostnamesPath, nil, http.StatusOK,
 	)
 	if len(listed.Hostnames) != 1 || listed.Hostnames[0].Id != managedID || listed.Hostnames[0].Status != serverv1.HostnameStatusActive {
 		t.Fatalf("hostnames after custom-domain removal = %#v", listed)
 	}
 	routeRequest[struct{}](
-		t, handler, issued.Token.String(), http.MethodDelete, hostnamesPath+"/"+managedID, nil, http.StatusNoContent,
+		t, handler, issued.AccessToken.String(), http.MethodDelete, hostnamesPath+"/"+managedID, nil, http.StatusNoContent,
 	)
 	listed = routeRequest[serverv1.HostnamePage](
-		t, handler, issued.Token.String(), http.MethodGet, hostnamesPath, nil, http.StatusOK,
+		t, handler, issued.AccessToken.String(), http.MethodGet, hostnamesPath, nil, http.StatusOK,
 	)
 	if len(listed.Hostnames) != 1 || listed.Hostnames[0].Id != managedID || listed.Hostnames[0].Status != serverv1.HostnameStatusInactive {
 		t.Fatalf("hostnames after managed removal = %#v", listed)
@@ -168,7 +189,10 @@ func TestCertificateAPIRequiresBoundCurrentSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	authService, err := auth.NewService(db, login, auth.DefaultAccessTokenLifetime)
+	authService, err := auth.NewService(db, auth.ServiceConfig{
+		LoginToken: login, LoginTokenRevision: 1,
+		AccessLifetime: auth.DefaultAccessTokenLifetime, RefreshLifetime: auth.DefaultRefreshTokenLifetime,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,12 +211,12 @@ func TestCertificateAPIRequiresBoundCurrentSession(t *testing.T) {
 	t.Cleanup(func() { _ = coordinator.Close() })
 	certificates := &apiCertificateService{}
 	handler := NewHandlerWithServices(fixtureCapabilities(t), authService, coordinator, certificates)
-	addHostnameRequest(t, handler, issued.Token.String(), "route")
+	addHostnameRequest(t, handler, issued.AccessToken.String(), "route")
 	routeToken, _, _, err := credentials.NewRouteToken()
 	if err != nil {
 		t.Fatal(err)
 	}
-	created := routeRequest[serverv1.SessionSetup](t, handler, issued.Token.String(), http.MethodPost, routesPath, serverv1.CreateRouteRequest{
+	created := routeRequest[serverv1.SessionSetup](t, handler, issued.AccessToken.String(), http.MethodPost, routesPath, serverv1.CreateRouteRequest{
 		Hostname: "route.example", LocalTarget: "localhost:3000", RouteToken: routeToken.String(),
 	}, http.StatusCreated)
 	request := serverv1.CreateCertificateIssuanceRequest{

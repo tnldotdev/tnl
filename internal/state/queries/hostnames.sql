@@ -141,9 +141,9 @@ WHERE id = sqlc.arg(id);
 
 -- name: DeleteHostnameRoutes :exec
 UPDATE routes
-SET status = 'deleted', deleted_at = CAST(sqlc.arg(deleted_at) AS INTEGER)
+SET status = 'deleted', deleted_at = CAST(sqlc.arg(deleted_at) AS INTEGER), suspended_at = NULL
 WHERE hostname_id = sqlc.arg(hostname_id)
-    AND status = 'active';
+    AND status IN ('active', 'suspended');
 
 -- name: RevokeHostnameRouteCredentials :exec
 UPDATE route_credentials

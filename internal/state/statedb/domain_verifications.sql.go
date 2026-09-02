@@ -235,7 +235,7 @@ func (q *Queries) InvalidateOtherDomainVerifications(ctx context.Context, arg In
 }
 
 const listActiveCustomDomainHostnames = `-- name: ListActiveCustomDomainHostnames :many
-SELECT hostnames.id, hostnames.identity_id, hostnames.hostname, hostnames.kind, hostnames.status, hostnames.source, hostnames.created_at, hostnames.activated_at, hostnames.deactivated_at
+SELECT hostnames.id, hostnames.identity_id, hostnames.hostname, hostnames.kind, hostnames.status, hostnames.source, hostnames.created_at, hostnames.activated_at, hostnames.deactivated_at, hostnames.quarantine_reason, hostnames.quarantined_at
 FROM hostnames
 WHERE kind = 'custom_domain'
     AND status = 'active'
@@ -261,6 +261,8 @@ func (q *Queries) ListActiveCustomDomainHostnames(ctx context.Context) ([]Hostna
 			&i.CreatedAt,
 			&i.ActivatedAt,
 			&i.DeactivatedAt,
+			&i.QuarantineReason,
+			&i.QuarantinedAt,
 		); err != nil {
 			return nil, err
 		}

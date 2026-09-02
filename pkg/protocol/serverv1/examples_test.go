@@ -16,11 +16,12 @@ func TestExamplesMatchGeneratedModels(t *testing.T) {
 	}{
 		{name: "capabilities", path: "../../../api/fixtures/server/v1/capabilities.json", model: &Capabilities{}},
 		{name: "health", path: "../../../api/fixtures/server/v1/health.json", model: &HealthResponse{}},
+		{name: "client IP", path: "../../../api/fixtures/server/v1/client-ip.json", model: &ClientIPResponse{}},
 		{name: "readiness", path: "../../../api/fixtures/server/v1/readiness.json", model: &ReadinessResponse{}},
 		{name: "not ready", path: "../../../api/fixtures/server/v1/not-ready.json", model: &ReadinessResponse{}},
 		{name: "problem", path: "../../../api/fixtures/server/v1/problem.json", model: &Problem{}},
 		{name: "token exchange request", path: "../../../api/fixtures/server/v1/token-exchange-request.json", model: &TokenExchangeRequest{}},
-		{name: "token exchange response", path: "../../../api/fixtures/server/v1/token-exchange-response.json", model: &TokenExchangeResponse{}},
+		{name: "token exchange response", path: "../../../api/fixtures/server/v1/token-exchange-response.json", model: &ControlSessionResponse{}},
 	}
 
 	for _, test := range tests {

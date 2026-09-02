@@ -47,7 +47,7 @@ start the daemon:
 docker compose pull
 docker compose up -d
 curl --fail https://tnl.example.com/v1/ready
-docker compose exec tnld tnld login-token --state-dir /var/lib/tnl
+docker compose exec tnld tnl admin server login-token --state-dir /var/lib/tnl
 ```
 
 The Compose deployment runs the container as a non-root user with a read-only
@@ -57,8 +57,8 @@ metrics, and backup requirements.
 
 ## Publish
 
-A server with browser login enabled can save a revocable access credential in
-the client's persistent state:
+A server with browser login enabled can save a revocable control session in the
+client's persistent state:
 
 ```console
 tnl login https://tnl.example.com
@@ -66,11 +66,11 @@ tnl publish 3000
 ```
 
 The command prints the account URL and one-time code to approve. Use
-`tnl logout` to revoke and remove the saved credential.
+`tnl logout` to revoke and remove the saved session.
 
 For a server without browser login, `tnl login` securely prompts for the login
-token printed by the daemon command above and stores a revocable access
-credential. The client fetches the deployment's pinned relay region from the
+token printed by the daemon command above and stores a revocable control
+session. The client fetches the deployment's pinned relay region from the
 server API:
 
 ```console
@@ -79,17 +79,32 @@ tnl host add demo
 tnl publish 3000 --name=demo
 ```
 
-Access credentials expire after seven days by default; operators configure new
-credentials with `TNLD_ACCESS_TOKEN_LIFETIME`.
+Control sessions have a fixed 30-day lifetime by default. Their one-hour access
+tokens rotate automatically. Operators configure these lifetimes with
+`TNLD_REFRESH_TOKEN_LIFETIME` and `TNLD_ACCESS_TOKEN_LIFETIME`.
 
 On macOS, `tnl` keeps a profile encryption key in Keychain and encrypts saved
-access tokens and route TLS private keys in its state files. On Linux, those
+access and refresh tokens and route TLS private keys in its state files. On Linux, those
 secrets remain in private user-owned files with mode `0600`.
 
 The named route becomes available at `https://demo.example.com`. Omitting
 `--name` allocates a fresh friendly temporary name for every invocation. A
 persistent base may serve its apex and descendants up to eight labels deep.
 `localhost:3000` is also accepted and canonicalized to `127.0.0.1:3000`.
+
+Restrict a route to specific visitor addresses or networks with repeatable
+`--allow-ip` options. Individual addresses are accepted and converted to host
+prefixes. `--allow-current-ip` adds the public address observed by the server
+after authentication and prints that address before publishing:
+
+```console
+tnl publish 3000 --allow-current-ip
+tnl publish 3000 --allow-ip=198.51.100.0/24 --allow-ip=2001:db8::/64
+```
+
+The effective list replaces the route's allowlist on every new session
+version. Omit both options to allow visitors from any source. ACME certificate
+validation remains reachable independently of the visitor allowlist.
 
 Use `tnl host add`, `tnl host list`, and `tnl host remove HOSTNAME` to manage
 persistent bases and verified custom domains. Managed bases remain bound to

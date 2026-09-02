@@ -115,13 +115,14 @@ override those values independently. Public ingress requires automatic ACME
 configuration.
 
 The daemon creates its login token in the state directory. Retrieve it with
-`tnld login-token --state-dir DIR`, and use `tnl login` to save a revocable
-access credential. Worker and service credentials are generated with `tnld
-token worker` and `tnld token service`.
+`tnl admin server login-token --state-dir DIR`, and use `tnl login` to save a revocable
+control session. Worker and service credentials are generated with `tnl admin
+server token worker` and `tnl admin server token service`.
 
-`TNLD_ACCESS_TOKEN_LIFETIME` controls newly issued credentials from five
-minutes through 30 days and defaults to seven days. Existing credentials retain
-their stored expiry.
+`TNLD_ACCESS_TOKEN_LIFETIME` controls rotating access tokens from five minutes
+through 30 days and defaults to one hour. `TNLD_REFRESH_TOKEN_LIFETIME` controls
+the fixed absolute session lifetime through 365 days and defaults to 30 days.
+Existing control sessions retain their stored absolute expiry.
 
 Use `TNLD_RELAY_PROVIDER=tailcat` to explicitly opt into automatic hosted relay
 selection, or use `TNLD_RELAY_MAP_FILE` for an operator-approved custom map.

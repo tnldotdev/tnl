@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -73,9 +74,12 @@ func TestDatabaseConstraints(t *testing.T) {
 	}
 	t.Cleanup(func() { db.Close() })
 
-	if _, err := db.Exec(`INSERT INTO access_credentials
-		(id, identity_id, secret_hash, created_at, expires_at)
-		VALUES ('credential', 'missing', X'01', 1, 2)`); err == nil {
+	if _, err := db.Exec(`INSERT INTO control_sessions
+		(id, identity_id, authentication_method, authentication_source_revision, grants, created_at,
+		 refresh_expires_at, access_token_id, access_token_hash, access_expires_at,
+		 refresh_token_id, refresh_token_hash)
+		VALUES ('control_session_00000000000000000000000000000000', 'missing', 'login_token', 1, 'publish', 1,
+		 3, 'access', X'01', 2, 'refresh', X'02')`); err == nil {
 		t.Fatal("foreign key insert succeeded")
 	}
 	if _, err := db.Exec(`INSERT INTO identities
@@ -86,12 +90,18 @@ func TestDatabaseConstraints(t *testing.T) {
 
 	start := make(chan struct{})
 	results := make(chan error, 2)
-	for _, id := range []string{"first", "second"} {
+	for index, id := range []string{
+		"control_session_00000000000000000000000000000001",
+		"control_session_00000000000000000000000000000002",
+	} {
 		go func() {
 			<-start
-			_, err := db.Exec(`INSERT INTO access_credentials
-				(id, identity_id, secret_hash, created_at, expires_at)
-				VALUES (?, 'identity', X'02', 1, 2)`, id)
+			_, err := db.Exec(`INSERT INTO control_sessions
+				(id, identity_id, authentication_method, authentication_source_revision, grants, created_at,
+				 refresh_expires_at, access_token_id, access_token_hash, access_expires_at,
+				 refresh_token_id, refresh_token_hash)
+				VALUES (?, 'identity', 'login_token', 1, 'publish', 1, 3, ?, X'03', 2, ?, ?)`,
+				id, fmt.Sprintf("access-%d", index), fmt.Sprintf("refresh-%d", index), []byte{byte(4 + index)})
 			results <- err
 		}()
 	}

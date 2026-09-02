@@ -47,92 +47,371 @@ func (q *Queries) DeleteExpiredOIDCAssertions(ctx context.Context, issuedAt int6
 	return err
 }
 
-const getAccessCredential = `-- name: GetAccessCredential :one
+const deleteInactiveControlSessionRefreshTokens = `-- name: DeleteInactiveControlSessionRefreshTokens :exec
+DELETE FROM control_session_refresh_tokens
+WHERE session_id IN (
+    SELECT id
+    FROM control_sessions
+    WHERE revoked_at IS NOT NULL
+       OR refresh_expires_at <= ?1
+)
+`
+
+func (q *Queries) DeleteInactiveControlSessionRefreshTokens(ctx context.Context, now int64) error {
+	_, err := q.db.ExecContext(ctx, deleteInactiveControlSessionRefreshTokens, now)
+	return err
+}
+
+const getControlSessionByAccessToken = `-- name: GetControlSessionByAccessToken :one
 SELECT
+    c.id AS session_id,
     p.id AS identity_id,
     p.display_name,
     p.email,
-    c.secret_hash,
-    c.expires_at,
+    c.grants,
+    c.access_token_hash,
+    c.access_expires_at,
+    c.access_token_revoked_at,
     c.revoked_at
-FROM access_credentials AS c
+FROM control_sessions AS c
 JOIN identities AS p ON p.id = c.identity_id
-WHERE c.id = ?1
+WHERE c.access_token_id = ?1
 `
 
-type GetAccessCredentialRow struct {
-	IdentityID  string
-	DisplayName string
-	Email       string
-	SecretHash  []byte
-	ExpiresAt   int64
-	RevokedAt   sql.NullInt64
+type GetControlSessionByAccessTokenRow struct {
+	SessionID            string
+	IdentityID           string
+	DisplayName          string
+	Email                string
+	Grants               string
+	AccessTokenHash      []byte
+	AccessExpiresAt      int64
+	AccessTokenRevokedAt sql.NullInt64
+	RevokedAt            sql.NullInt64
 }
 
-func (q *Queries) GetAccessCredential(ctx context.Context, credentialID string) (GetAccessCredentialRow, error) {
-	row := q.db.QueryRowContext(ctx, getAccessCredential, credentialID)
-	var i GetAccessCredentialRow
+func (q *Queries) GetControlSessionByAccessToken(ctx context.Context, accessTokenID string) (GetControlSessionByAccessTokenRow, error) {
+	row := q.db.QueryRowContext(ctx, getControlSessionByAccessToken, accessTokenID)
+	var i GetControlSessionByAccessTokenRow
 	err := row.Scan(
+		&i.SessionID,
 		&i.IdentityID,
 		&i.DisplayName,
 		&i.Email,
-		&i.SecretHash,
-		&i.ExpiresAt,
+		&i.Grants,
+		&i.AccessTokenHash,
+		&i.AccessExpiresAt,
+		&i.AccessTokenRevokedAt,
 		&i.RevokedAt,
 	)
 	return i, err
 }
 
-const insertAccessCredential = `-- name: InsertAccessCredential :exec
-INSERT INTO access_credentials (
+const getControlSessionByRefreshToken = `-- name: GetControlSessionByRefreshToken :one
+SELECT
+    id AS session_id,
+    identity_id,
+    grants,
+    refresh_token_hash,
+    refresh_expires_at,
+    refresh_token_revoked_at,
+    revoked_at
+FROM control_sessions
+WHERE refresh_token_id = ?1
+`
+
+type GetControlSessionByRefreshTokenRow struct {
+	SessionID             string
+	IdentityID            string
+	Grants                string
+	RefreshTokenHash      []byte
+	RefreshExpiresAt      int64
+	RefreshTokenRevokedAt sql.NullInt64
+	RevokedAt             sql.NullInt64
+}
+
+func (q *Queries) GetControlSessionByRefreshToken(ctx context.Context, refreshTokenID string) (GetControlSessionByRefreshTokenRow, error) {
+	row := q.db.QueryRowContext(ctx, getControlSessionByRefreshToken, refreshTokenID)
+	var i GetControlSessionByRefreshTokenRow
+	err := row.Scan(
+		&i.SessionID,
+		&i.IdentityID,
+		&i.Grants,
+		&i.RefreshTokenHash,
+		&i.RefreshExpiresAt,
+		&i.RefreshTokenRevokedAt,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
+const getReplacedControlSessionRefreshToken = `-- name: GetReplacedControlSessionRefreshToken :one
+SELECT
+    h.session_id,
+    h.token_hash,
+    c.revoked_at
+FROM control_session_refresh_tokens AS h
+JOIN control_sessions AS c ON c.id = h.session_id
+WHERE h.token_id = ?1
+`
+
+type GetReplacedControlSessionRefreshTokenRow struct {
+	SessionID string
+	TokenHash []byte
+	RevokedAt sql.NullInt64
+}
+
+func (q *Queries) GetReplacedControlSessionRefreshToken(ctx context.Context, refreshTokenID string) (GetReplacedControlSessionRefreshTokenRow, error) {
+	row := q.db.QueryRowContext(ctx, getReplacedControlSessionRefreshToken, refreshTokenID)
+	var i GetReplacedControlSessionRefreshTokenRow
+	err := row.Scan(&i.SessionID, &i.TokenHash, &i.RevokedAt)
+	return i, err
+}
+
+const insertControlSession = `-- name: InsertControlSession :exec
+INSERT INTO control_sessions (
     id,
     identity_id,
-    secret_hash,
+    authentication_method,
+    authentication_source_revision,
+    grants,
     created_at,
-    expires_at
+    refresh_expires_at,
+    access_token_id,
+    access_token_hash,
+    access_expires_at,
+    refresh_token_id,
+    refresh_token_hash
 ) VALUES (
     ?1,
     ?2,
     ?3,
     ?4,
-    ?5
+    ?5,
+    ?6,
+    ?7,
+    ?8,
+    ?9,
+    ?10,
+    ?11,
+    ?12
 )
 `
 
-type InsertAccessCredentialParams struct {
-	CredentialID string
-	IdentityID   string
-	SecretHash   []byte
-	CreatedAt    int64
-	ExpiresAt    int64
+type InsertControlSessionParams struct {
+	SessionID                    string
+	IdentityID                   string
+	AuthenticationMethod         string
+	AuthenticationSourceRevision int64
+	Grants                       string
+	CreatedAt                    int64
+	RefreshExpiresAt             int64
+	AccessTokenID                string
+	AccessTokenHash              []byte
+	AccessExpiresAt              int64
+	RefreshTokenID               string
+	RefreshTokenHash             []byte
 }
 
-func (q *Queries) InsertAccessCredential(ctx context.Context, arg InsertAccessCredentialParams) error {
-	_, err := q.db.ExecContext(ctx, insertAccessCredential,
-		arg.CredentialID,
+func (q *Queries) InsertControlSession(ctx context.Context, arg InsertControlSessionParams) error {
+	_, err := q.db.ExecContext(ctx, insertControlSession,
+		arg.SessionID,
 		arg.IdentityID,
-		arg.SecretHash,
+		arg.AuthenticationMethod,
+		arg.AuthenticationSourceRevision,
+		arg.Grants,
 		arg.CreatedAt,
-		arg.ExpiresAt,
+		arg.RefreshExpiresAt,
+		arg.AccessTokenID,
+		arg.AccessTokenHash,
+		arg.AccessExpiresAt,
+		arg.RefreshTokenID,
+		arg.RefreshTokenHash,
 	)
 	return err
 }
 
-const revokeAccessCredential = `-- name: RevokeAccessCredential :execrows
-UPDATE access_credentials
-SET revoked_at = COALESCE(revoked_at, CAST(?1 AS INTEGER))
+const insertReplacedControlSessionRefreshToken = `-- name: InsertReplacedControlSessionRefreshToken :exec
+INSERT INTO control_session_refresh_tokens (
+    token_id,
+    session_id,
+    token_hash,
+    replaced_at
+) VALUES (
+    ?1,
+    ?2,
+    ?3,
+    ?4
+)
+`
+
+type InsertReplacedControlSessionRefreshTokenParams struct {
+	RefreshTokenID string
+	SessionID      string
+	TokenHash      []byte
+	ReplacedAt     int64
+}
+
+func (q *Queries) InsertReplacedControlSessionRefreshToken(ctx context.Context, arg InsertReplacedControlSessionRefreshTokenParams) error {
+	_, err := q.db.ExecContext(ctx, insertReplacedControlSessionRefreshToken,
+		arg.RefreshTokenID,
+		arg.SessionID,
+		arg.TokenHash,
+		arg.ReplacedAt,
+	)
+	return err
+}
+
+const revokeControlSession = `-- name: RevokeControlSession :execrows
+UPDATE control_sessions
+SET access_token_revoked_at = COALESCE(access_token_revoked_at, CAST(?1 AS INTEGER)),
+    refresh_token_revoked_at = COALESCE(refresh_token_revoked_at, CAST(?1 AS INTEGER)),
+    revoked_at = COALESCE(revoked_at, CAST(?1 AS INTEGER))
+WHERE id = ?2
+`
+
+type RevokeControlSessionParams struct {
+	RevokedAt int64
+	SessionID string
+}
+
+func (q *Queries) RevokeControlSession(ctx context.Context, arg RevokeControlSessionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, revokeControlSession, arg.RevokedAt, arg.SessionID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const revokeControlSessionsByAuthenticationSource = `-- name: RevokeControlSessionsByAuthenticationSource :execrows
+UPDATE control_sessions
+SET access_token_revoked_at = COALESCE(access_token_revoked_at, CAST(?1 AS INTEGER)),
+    refresh_token_revoked_at = COALESCE(refresh_token_revoked_at, CAST(?1 AS INTEGER)),
+    revoked_at = COALESCE(revoked_at, CAST(?1 AS INTEGER))
+WHERE authentication_method = ?2
+  AND authentication_source_revision < ?3
+  AND revoked_at IS NULL
+`
+
+type RevokeControlSessionsByAuthenticationSourceParams struct {
+	RevokedAt                    int64
+	AuthenticationMethod         string
+	AuthenticationSourceRevision int64
+}
+
+func (q *Queries) RevokeControlSessionsByAuthenticationSource(ctx context.Context, arg RevokeControlSessionsByAuthenticationSourceParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, revokeControlSessionsByAuthenticationSource, arg.RevokedAt, arg.AuthenticationMethod, arg.AuthenticationSourceRevision)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const revokeExcessControlSessions = `-- name: RevokeExcessControlSessions :execrows
+UPDATE control_sessions
+SET access_token_revoked_at = COALESCE(access_token_revoked_at, CAST(?1 AS INTEGER)),
+    refresh_token_revoked_at = COALESCE(refresh_token_revoked_at, CAST(?1 AS INTEGER)),
+    revoked_at = COALESCE(revoked_at, CAST(?1 AS INTEGER))
+WHERE id IN (
+    SELECT candidate.id
+    FROM control_sessions AS candidate
+    WHERE candidate.identity_id = ?2
+      AND candidate.refresh_expires_at > ?1
+      AND candidate.revoked_at IS NULL
+    ORDER BY candidate.created_at DESC, candidate.rowid DESC
+    LIMIT -1 OFFSET ?3
+)
+`
+
+type RevokeExcessControlSessionsParams struct {
+	RevokedAt         int64
+	IdentityID        string
+	MaxActiveSessions int64
+}
+
+func (q *Queries) RevokeExcessControlSessions(ctx context.Context, arg RevokeExcessControlSessionsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, revokeExcessControlSessions, arg.RevokedAt, arg.IdentityID, arg.MaxActiveSessions)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const revokeExpiredControlSessions = `-- name: RevokeExpiredControlSessions :execrows
+UPDATE control_sessions
+SET access_token_revoked_at = COALESCE(access_token_revoked_at, CAST(?1 AS INTEGER)),
+    refresh_token_revoked_at = COALESCE(refresh_token_revoked_at, CAST(?1 AS INTEGER)),
+    revoked_at = COALESCE(revoked_at, CAST(?1 AS INTEGER))
+WHERE refresh_expires_at <= ?1
+  AND revoked_at IS NULL
+`
+
+func (q *Queries) RevokeExpiredControlSessions(ctx context.Context, revokedAt int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, revokeExpiredControlSessions, revokedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const revokeOwnedControlSession = `-- name: RevokeOwnedControlSession :execrows
+UPDATE control_sessions
+SET access_token_revoked_at = COALESCE(access_token_revoked_at, CAST(?1 AS INTEGER)),
+    refresh_token_revoked_at = COALESCE(refresh_token_revoked_at, CAST(?1 AS INTEGER)),
+    revoked_at = COALESCE(revoked_at, CAST(?1 AS INTEGER))
 WHERE id = ?2
   AND identity_id = ?3
 `
 
-type RevokeAccessCredentialParams struct {
-	RevokedAt    int64
-	CredentialID string
-	IdentityID   string
+type RevokeOwnedControlSessionParams struct {
+	RevokedAt  int64
+	SessionID  string
+	IdentityID string
 }
 
-func (q *Queries) RevokeAccessCredential(ctx context.Context, arg RevokeAccessCredentialParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, revokeAccessCredential, arg.RevokedAt, arg.CredentialID, arg.IdentityID)
+func (q *Queries) RevokeOwnedControlSession(ctx context.Context, arg RevokeOwnedControlSessionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, revokeOwnedControlSession, arg.RevokedAt, arg.SessionID, arg.IdentityID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const rotateControlSessionTokens = `-- name: RotateControlSessionTokens :execrows
+UPDATE control_sessions
+SET access_token_id = ?1,
+    access_token_hash = ?2,
+    access_expires_at = ?3,
+    access_token_revoked_at = NULL,
+    refresh_token_id = ?4,
+    refresh_token_hash = ?5,
+    refresh_token_revoked_at = NULL
+WHERE id = ?6
+  AND refresh_token_id = ?7
+  AND revoked_at IS NULL
+  AND refresh_token_revoked_at IS NULL
+`
+
+type RotateControlSessionTokensParams struct {
+	AccessTokenID          string
+	AccessTokenHash        []byte
+	AccessExpiresAt        int64
+	RefreshTokenID         string
+	RefreshTokenHash       []byte
+	SessionID              string
+	PreviousRefreshTokenID string
+}
+
+func (q *Queries) RotateControlSessionTokens(ctx context.Context, arg RotateControlSessionTokensParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, rotateControlSessionTokens,
+		arg.AccessTokenID,
+		arg.AccessTokenHash,
+		arg.AccessExpiresAt,
+		arg.RefreshTokenID,
+		arg.RefreshTokenHash,
+		arg.SessionID,
+		arg.PreviousRefreshTokenID,
+	)
 	if err != nil {
 		return 0, err
 	}

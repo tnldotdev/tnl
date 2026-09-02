@@ -3,6 +3,7 @@ package routeusage
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"errors"
@@ -15,21 +16,58 @@ import (
 )
 
 const (
-	lifecycleSource = "lifecycle_event"
-	usageSource     = "usage_snapshot"
+	registrationSource = "registration"
+	lifecycleSource    = "lifecycle_event"
+	usageSource        = "usage_snapshot"
+	visitorSecretKey   = "route-usage-visitor-master-secret"
 )
 
 type Store struct {
 	db      *sql.DB
 	queries *statedb.Queries
 	wake    chan struct{}
+
+	visitorMasterSecret [sha256.Size]byte
 }
 
 func NewStore(db *sql.DB) (*Store, error) {
 	if db == nil {
 		return nil, errors.New("routeusage: nil state database")
 	}
-	return &Store{db: db, queries: statedb.New(db), wake: make(chan struct{}, 1)}, nil
+	visitorMasterSecret, err := ensureVisitorMasterSecret(db)
+	if err != nil {
+		return nil, err
+	}
+	return &Store{
+		db: db, queries: statedb.New(db), wake: make(chan struct{}, 1), visitorMasterSecret: visitorMasterSecret,
+	}, nil
+}
+
+func (s *Store) RecordRegistration(
+	ctx context.Context,
+	queries *statedb.Queries,
+	registration routes.RouteRegistration,
+) error {
+	rowID, err := queries.InsertRouteRegistration(ctx, statedb.InsertRouteRegistrationParams{
+		RegistrationID:  registration.RegistrationID,
+		RouteID:         registration.RouteID,
+		Hostname:        registration.Hostname,
+		SigningKeyID:    registration.SigningKeyID,
+		AuthorizationID: registration.AuthorizationID,
+		CreatedAt:       registration.CreatedAt.UTC().UnixNano(),
+		RetryID:         registration.RetryID,
+	})
+	if err != nil {
+		return fmt.Errorf("routeusage: insert route registration: %w", err)
+	}
+	if err := queries.UpsertRouteUsageOutbox(ctx, statedb.UpsertRouteUsageOutboxParams{
+		SourceKind: registrationSource, SourceID: rowID, SourceRevision: 1,
+		EnqueuedAt: time.Now().UTC().UnixNano(),
+	}); err != nil {
+		return fmt.Errorf("routeusage: enqueue route registration: %w", err)
+	}
+	s.wakeSender()
+	return nil
 }
 
 func (s *Store) RecordLifecycle(
@@ -76,18 +114,27 @@ func (s *Store) RecordLifecycle(
 }
 
 type UsageSnapshot struct {
-	RouteID               string
-	Version               uint64
-	Resolution            string
-	BucketStart           time.Time
-	Revision              uint64
-	ObservedThrough       time.Time
-	ConnectionsOpened     uint64
-	ConnectionNanoseconds uint64
-	IngressBytes          uint64
-	EgressBytes           uint64
-	Complete              bool
-	Publish               bool
+	RouteID                      string
+	Version                      uint64
+	Resolution                   string
+	BucketStart                  time.Time
+	Revision                     uint64
+	ObservedThrough              time.Time
+	ConnectionAttempts           uint64
+	PolicyDenials                uint64
+	CapacityDenials              uint64
+	PublisherOpenFailures        uint64
+	SuccessfulStreams            uint64
+	ConnectionNanoseconds        uint64
+	IngressBytes                 uint64
+	EgressBytes                  uint64
+	PublisherOpenLatency         []byte
+	TimeToFirstPublisherByte     []byte
+	SuccessfulConnectionDuration []byte
+	VisitorNetworkHLL            []byte
+	VisitorNetworkEstimate       uint64
+	Complete                     bool
+	Publish                      bool
 }
 
 func (s *Store) SaveUsage(ctx context.Context, snapshots []UsageSnapshot) error {
@@ -109,7 +156,23 @@ func (s *Store) SaveUsage(ctx context.Context, snapshots []UsageSnapshot) error 
 		if err != nil {
 			return err
 		}
-		connections, err := databaseInteger(snapshot.ConnectionsOpened)
+		connectionAttempts, err := databaseInteger(snapshot.ConnectionAttempts)
+		if err != nil {
+			return err
+		}
+		policyDenials, err := databaseInteger(snapshot.PolicyDenials)
+		if err != nil {
+			return err
+		}
+		capacityDenials, err := databaseInteger(snapshot.CapacityDenials)
+		if err != nil {
+			return err
+		}
+		publisherOpenFailures, err := databaseInteger(snapshot.PublisherOpenFailures)
+		if err != nil {
+			return err
+		}
+		successfulStreams, err := databaseInteger(snapshot.SuccessfulStreams)
 		if err != nil {
 			return err
 		}
@@ -125,6 +188,31 @@ func (s *Store) SaveUsage(ctx context.Context, snapshots []UsageSnapshot) error 
 		if err != nil {
 			return err
 		}
+		for _, checkpoint := range [][]byte{
+			snapshot.PublisherOpenLatency,
+			snapshot.TimeToFirstPublisherByte,
+			snapshot.SuccessfulConnectionDuration,
+		} {
+			if _, err := unmarshalDurationHistogram(checkpoint); err != nil {
+				return err
+			}
+		}
+		visitorCheckpoint := snapshot.VisitorNetworkHLL
+		if len(visitorCheckpoint) == 0 {
+			visitorCheckpoint = new(visitorSketch).checkpoint()
+		}
+		visitorSketch, err := visitorSketchFromCheckpoint(visitorCheckpoint)
+		if err != nil {
+			return err
+		}
+		visitorEstimate := visitorSketch.estimate()
+		if snapshot.VisitorNetworkEstimate != 0 && snapshot.VisitorNetworkEstimate != visitorEstimate {
+			return errors.New("routeusage: visitor HLL estimate does not match checkpoint")
+		}
+		visitorEstimateInteger, err := databaseInteger(visitorEstimate)
+		if err != nil {
+			return err
+		}
 		complete := int64(0)
 		if snapshot.Complete {
 			complete = 1
@@ -132,8 +220,14 @@ func (s *Store) SaveUsage(ctx context.Context, snapshots []UsageSnapshot) error 
 		rowID, err := queries.UpsertRouteUsageSnapshot(ctx, statedb.UpsertRouteUsageSnapshotParams{
 			RouteID: snapshot.RouteID, Version: version, Resolution: snapshot.Resolution,
 			BucketStart: snapshot.BucketStart.UTC().UnixNano(), Revision: revision,
-			ObservedThrough: snapshot.ObservedThrough.UTC().UnixNano(), ConnectionsOpened: connections,
-			ConnectionNanoseconds: connectionNanoseconds, IngressBytes: ingressBytes, EgressBytes: egressBytes, Complete: complete,
+			ObservedThrough: snapshot.ObservedThrough.UTC().UnixNano(), ConnectionAttempts: connectionAttempts,
+			PolicyDenials: policyDenials, CapacityDenials: capacityDenials,
+			PublisherOpenFailures: publisherOpenFailures, SuccessfulStreams: successfulStreams,
+			ConnectionNanoseconds: connectionNanoseconds, IngressBytes: ingressBytes, EgressBytes: egressBytes,
+			PublisherOpenLatency:         snapshot.PublisherOpenLatency,
+			TimeToFirstPublisherByte:     snapshot.TimeToFirstPublisherByte,
+			SuccessfulConnectionDuration: snapshot.SuccessfulConnectionDuration,
+			VisitorNetworkHll:            visitorCheckpoint, VisitorNetworkEstimate: visitorEstimateInteger, Complete: complete,
 		})
 		if err != nil {
 			return fmt.Errorf("routeusage: save usage bucket: %w", err)
@@ -141,6 +235,22 @@ func (s *Store) SaveUsage(ctx context.Context, snapshots []UsageSnapshot) error 
 		if snapshot.Publish {
 			if revision < 1 {
 				return errors.New("routeusage: deliverable usage snapshot has no revision")
+			}
+			count, err := queries.UpsertRouteUsageReport(ctx, statedb.UpsertRouteUsageReportParams{
+				SnapshotID: rowID, Revision: revision, ObservedThrough: snapshot.ObservedThrough.UTC().UnixNano(),
+				ConnectionAttempts: connectionAttempts, PolicyDenials: policyDenials, CapacityDenials: capacityDenials,
+				PublisherOpenFailures: publisherOpenFailures, SuccessfulStreams: successfulStreams,
+				ConnectionNanoseconds: connectionNanoseconds, IngressBytes: ingressBytes, EgressBytes: egressBytes,
+				PublisherOpenLatency:         snapshot.PublisherOpenLatency,
+				TimeToFirstPublisherByte:     snapshot.TimeToFirstPublisherByte,
+				SuccessfulConnectionDuration: snapshot.SuccessfulConnectionDuration,
+				VisitorNetworkHll:            visitorCheckpoint, VisitorNetworkEstimate: visitorEstimateInteger, Complete: complete,
+			})
+			if err != nil {
+				return fmt.Errorf("routeusage: save deliverable usage report: %w", err)
+			}
+			if count != 1 {
+				return errors.New("routeusage: usage revision does not identify one payload")
 			}
 			if err := queries.UpsertRouteUsageOutbox(ctx, statedb.UpsertRouteUsageOutboxParams{
 				SourceKind: usageSource, SourceID: rowID, SourceRevision: revision,
@@ -165,27 +275,31 @@ func (s *Store) LoadIncompleteUsage(ctx context.Context) ([]statedb.RouteUsageSn
 	return rows, nil
 }
 
-func (s *Store) outboxStats(ctx context.Context, now time.Time) (int64, int64, time.Duration, error) {
+func (s *Store) outboxStats(ctx context.Context, now time.Time) (int64, int64, int64, time.Duration, error) {
+	registration, err := s.queries.CountRouteUsageOutboxByKind(ctx, registrationSource)
+	if err != nil {
+		return 0, 0, 0, 0, fmt.Errorf("routeusage: count registration outbox: %w", err)
+	}
 	lifecycle, err := s.queries.CountRouteUsageOutboxByKind(ctx, lifecycleSource)
 	if err != nil {
-		return 0, 0, 0, fmt.Errorf("routeusage: count lifecycle outbox: %w", err)
+		return 0, 0, 0, 0, fmt.Errorf("routeusage: count lifecycle outbox: %w", err)
 	}
 	usage, err := s.queries.CountRouteUsageOutboxByKind(ctx, usageSource)
 	if err != nil {
-		return 0, 0, 0, fmt.Errorf("routeusage: count usage outbox: %w", err)
+		return 0, 0, 0, 0, fmt.Errorf("routeusage: count usage outbox: %w", err)
 	}
 	oldest, err := s.queries.GetOldestRouteUsageOutboxTime(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
-		return lifecycle, usage, 0, nil
+		return registration, lifecycle, usage, 0, nil
 	}
 	if err != nil {
-		return 0, 0, 0, fmt.Errorf("routeusage: read oldest outbox item: %w", err)
+		return 0, 0, 0, 0, fmt.Errorf("routeusage: read oldest outbox item: %w", err)
 	}
 	age := now.UTC().Sub(time.Unix(0, oldest).UTC())
 	if age < 0 {
 		age = 0
 	}
-	return lifecycle, usage, age, nil
+	return registration, lifecycle, usage, age, nil
 }
 
 func (s *Store) acknowledge(ctx context.Context, kind string, sourceID, revision int64) (bool, error) {
@@ -196,6 +310,39 @@ func (s *Store) acknowledge(ctx context.Context, kind string, sourceID, revision
 		return false, fmt.Errorf("routeusage: acknowledge report: %w", err)
 	}
 	return count == 1, nil
+}
+
+func (s *Store) acknowledgeRegistration(ctx context.Context, sourceID, revision int64) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("routeusage: begin registration acknowledgment: %w", err)
+	}
+	defer tx.Rollback()
+	queries := s.queries.WithTx(tx)
+	count, err := queries.AcknowledgeRouteRegistrationRevision(ctx, statedb.AcknowledgeRouteRegistrationRevisionParams{
+		SourceRevision: revision,
+		AcknowledgedAt: time.Now().UTC().UnixNano(),
+		SourceID:       sourceID,
+	})
+	if err != nil {
+		return false, fmt.Errorf("routeusage: acknowledge route registration: %w", err)
+	}
+	if count != 1 {
+		return false, nil
+	}
+	count, err = queries.DeleteRouteUsageOutboxRevision(ctx, statedb.DeleteRouteUsageOutboxRevisionParams{
+		SourceKind: registrationSource, SourceID: sourceID, SourceRevision: revision,
+	})
+	if err != nil {
+		return false, fmt.Errorf("routeusage: acknowledge registration outbox: %w", err)
+	}
+	if count != 1 {
+		return false, nil
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("routeusage: commit registration acknowledgment: %w", err)
+	}
+	return true, nil
 }
 
 func (s *Store) deleteUsage(ctx context.Context, id int64) error {
@@ -231,4 +378,34 @@ func newEventID() (string, error) {
 		return "", fmt.Errorf("routeusage: generate lifecycle event ID: %w", err)
 	}
 	return "event_" + hex.EncodeToString(material[:]), nil
+}
+
+func ensureVisitorMasterSecret(db *sql.DB) ([sha256.Size]byte, error) {
+	var generated [sha256.Size]byte
+	if _, err := rand.Read(generated[:]); err != nil {
+		return generated, fmt.Errorf("routeusage: generate visitor master secret: %w", err)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return generated, fmt.Errorf("routeusage: begin visitor master secret initialization: %w", err)
+	}
+	defer tx.Rollback()
+	queries := statedb.New(tx)
+	if _, err := queries.InsertServerValue(context.Background(), statedb.InsertServerValueParams{
+		Key: visitorSecretKey, Value: generated[:],
+	}); err != nil {
+		return generated, fmt.Errorf("routeusage: persist visitor master secret: %w", err)
+	}
+	data, err := queries.GetServerValue(context.Background(), visitorSecretKey)
+	if err != nil {
+		return generated, fmt.Errorf("routeusage: read visitor master secret: %w", err)
+	}
+	if len(data) != len(generated) {
+		return generated, errors.New("routeusage: persisted visitor master secret is invalid")
+	}
+	copy(generated[:], data)
+	if err := tx.Commit(); err != nil {
+		return generated, fmt.Errorf("routeusage: commit visitor master secret initialization: %w", err)
+	}
+	return generated, nil
 }

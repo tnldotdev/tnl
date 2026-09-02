@@ -8,15 +8,6 @@ import (
 	"database/sql"
 )
 
-type AccessCredential struct {
-	ID         string
-	IdentityID string
-	SecretHash []byte
-	CreatedAt  int64
-	ExpiresAt  int64
-	RevokedAt  sql.NullInt64
-}
-
 type AcmeAccount struct {
 	DirectoryUrl     string
 	Email            string
@@ -25,6 +16,15 @@ type AcmeAccount struct {
 	AcceptedTermsUrl sql.NullString
 	CreatedAt        int64
 	UpdatedAt        int64
+}
+
+type AdminAuditEvent struct {
+	ID         int64
+	Actor      string
+	RequestID  string
+	Operation  string
+	Target     string
+	OccurredAt int64
 }
 
 type CertificateIssuance struct {
@@ -60,6 +60,31 @@ type CertificateIssuance struct {
 	UpdatedAt          int64
 }
 
+type ControlSession struct {
+	ID                           string
+	IdentityID                   string
+	AuthenticationMethod         string
+	AuthenticationSourceRevision int64
+	Grants                       string
+	CreatedAt                    int64
+	RefreshExpiresAt             int64
+	AccessTokenID                string
+	AccessTokenHash              []byte
+	AccessExpiresAt              int64
+	AccessTokenRevokedAt         sql.NullInt64
+	RefreshTokenID               string
+	RefreshTokenHash             []byte
+	RefreshTokenRevokedAt        sql.NullInt64
+	RevokedAt                    sql.NullInt64
+}
+
+type ControlSessionRefreshToken struct {
+	TokenID    string
+	SessionID  string
+	TokenHash  []byte
+	ReplacedAt int64
+}
+
 type DomainVerification struct {
 	ID                 string
 	IdentityID         string
@@ -76,15 +101,17 @@ type DomainVerification struct {
 }
 
 type Hostname struct {
-	ID            string
-	IdentityID    sql.NullString
-	Hostname      string
-	Kind          string
-	Status        string
-	Source        string
-	CreatedAt     int64
-	ActivatedAt   sql.NullInt64
-	DeactivatedAt sql.NullInt64
+	ID               string
+	IdentityID       sql.NullString
+	Hostname         string
+	Kind             string
+	Status           string
+	Source           string
+	CreatedAt        int64
+	ActivatedAt      sql.NullInt64
+	DeactivatedAt    sql.NullInt64
+	QuarantineReason sql.NullString
+	QuarantinedAt    sql.NullInt64
 }
 
 type HostnameRequest struct {
@@ -109,17 +136,59 @@ type OidcAssertionExchange struct {
 	ExpiresAt     int64
 }
 
+type OperationalSwitch struct {
+	Name      string
+	Enabled   int64
+	Revision  int64
+	UpdatedAt int64
+	UpdatedBy string
+}
+
 type Route struct {
-	ID                string
-	HostnameID        string
-	IdentityID        string
-	Hostname          string
-	LocalTarget       string
-	Status            string
-	Version           int64
-	LifecycleSequence int64
-	CreatedAt         int64
-	DeletedAt         sql.NullInt64
+	ID                        string
+	HostnameID                sql.NullString
+	IdentityID                sql.NullString
+	Hostname                  string
+	LocalTarget               string
+	Status                    string
+	Version                   int64
+	SuspensionRevision        int64
+	SuspensionReason          sql.NullString
+	SuspendedAt               sql.NullInt64
+	AuthorizationIssuer       sql.NullString
+	AuthorizationID           sql.NullString
+	AuthorizationKeyID        sql.NullString
+	AuthorizationRetryID      sql.NullString
+	AuthorizationRevision     sql.NullInt64
+	AuthorizationExpiresAt    sql.NullInt64
+	AuthorizationRequestHash  []byte
+	AuthorizationIpPolicyHash []byte
+	LifecycleSequence         int64
+	CreatedAt                 int64
+	DeletedAt                 sql.NullInt64
+}
+
+type RouteAllowedIpPrefix struct {
+	RouteID      string
+	RouteVersion int64
+	Position     int64
+	Prefix       string
+}
+
+type RouteAuthorizationUse struct {
+	AuthorizationIssuer    string
+	AuthorizationID        string
+	AuthorizationKeyID     string
+	AuthorizationRetryID   string
+	AuthorizationRevision  int64
+	AuthorizationExpiresAt int64
+	Operation              string
+	RouteID                string
+	RouteVersion           int64
+	Hostname               string
+	RequestHash            []byte
+	IpPolicyHash           []byte
+	CreatedAt              int64
 }
 
 type RouteCredential struct {
@@ -140,6 +209,20 @@ type RouteLifecycleEvent struct {
 	Transition string
 }
 
+type RouteRegistration struct {
+	ID                   int64
+	RegistrationID       string
+	RouteID              string
+	Hostname             string
+	SigningKeyID         string
+	AuthorizationID      string
+	CreatedAt            int64
+	RetryID              string
+	Revision             int64
+	AcknowledgedRevision sql.NullInt64
+	AcknowledgedAt       sql.NullInt64
+}
+
 type RouteSession struct {
 	ID                 string
 	RouteID            string
@@ -156,25 +239,55 @@ type RouteSession struct {
 }
 
 type RouteUsageOutboxItem struct {
-	SourceKind     string
-	SourceID       int64
-	SourceRevision int64
-	EnqueuedAt     int64
+	SourceKind      string
+	SourceID        int64
+	SourceRevision  int64
+	EnqueuedAt      int64
+	LastAttemptedAt sql.NullInt64
+}
+
+type RouteUsageReport struct {
+	SnapshotID                   int64
+	Revision                     int64
+	ObservedThrough              int64
+	ConnectionAttempts           int64
+	PolicyDenials                int64
+	CapacityDenials              int64
+	PublisherOpenFailures        int64
+	SuccessfulStreams            int64
+	ConnectionNanoseconds        int64
+	IngressBytes                 int64
+	EgressBytes                  int64
+	PublisherOpenLatency         []byte
+	TimeToFirstPublisherByte     []byte
+	SuccessfulConnectionDuration []byte
+	VisitorNetworkHll            []byte
+	VisitorNetworkEstimate       int64
+	Complete                     int64
 }
 
 type RouteUsageSnapshot struct {
-	ID                    int64
-	RouteID               string
-	Version               int64
-	Resolution            string
-	BucketStart           int64
-	Revision              int64
-	ObservedThrough       int64
-	ConnectionsOpened     int64
-	ConnectionNanoseconds int64
-	IngressBytes          int64
-	EgressBytes           int64
-	Complete              int64
+	ID                           int64
+	RouteID                      string
+	Version                      int64
+	Resolution                   string
+	BucketStart                  int64
+	Revision                     int64
+	ObservedThrough              int64
+	ConnectionAttempts           int64
+	PolicyDenials                int64
+	CapacityDenials              int64
+	PublisherOpenFailures        int64
+	SuccessfulStreams            int64
+	ConnectionNanoseconds        int64
+	IngressBytes                 int64
+	EgressBytes                  int64
+	PublisherOpenLatency         []byte
+	TimeToFirstPublisherByte     []byte
+	SuccessfulConnectionDuration []byte
+	VisitorNetworkHll            []byte
+	VisitorNetworkEstimate       int64
+	Complete                     int64
 }
 
 type ServerValue struct {

@@ -136,7 +136,7 @@ func TestRetiredTemporaryClaimsDoNotConsumeRequestQuota(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := store.Create(ctx, "owner", hostname.Hostname, "localhost:3000", "instance", routeToken)
+	created, err := store.Create(ctx, "owner", hostname.Hostname, "localhost:3000", "instance", routeToken, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +171,7 @@ func TestTemporaryRestartReacquisitionAndAbandonedCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := store.Create(ctx, "owner", hostname.Hostname, "localhost:3000", "instance-one", routeToken)
+	created, err := store.Create(ctx, "owner", hostname.Hostname, "localhost:3000", "instance-one", routeToken, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ func TestTemporaryRestartReacquisitionAndAbandonedCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	replacement, err := restarted.Create(ctx, "owner", hostname.Hostname, "localhost:3000", "instance-two", replacementToken)
+	replacement, err := restarted.Create(ctx, "owner", hostname.Hostname, "localhost:3000", "instance-two", replacementToken, nil)
 	if err != nil || replacement.Route.ID != created.Route.ID || replacement.Route.Version != 2 {
 		t.Fatalf("restart reacquisition = %#v, %v", replacement, err)
 	}
@@ -309,7 +309,7 @@ func TestHostnameLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := store.Create(ctx, "owner", hostname.Hostname, "http://127.0.0.1:3000", "instance", routeToken)
+	created, err := store.Create(ctx, "owner", hostname.Hostname, "http://127.0.0.1:3000", "instance", routeToken, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -361,20 +361,20 @@ func TestRouteCreationRequiresOwnedClaim(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Create(ctx, "owner", "missing.example", "http://127.0.0.1:3000", "instance", routeToken); !errors.Is(err, ErrNameUnavailable) {
+	if _, err := store.Create(ctx, "owner", "missing.example", "http://127.0.0.1:3000", "instance", routeToken, nil); !errors.Is(err, ErrNameUnavailable) {
 		t.Fatalf("unclaimed route error = %v", err)
 	}
 	if _, err := store.AddHostname(ctx, "owner", HostnameKindManaged, "base", "base"); err != nil {
 		t.Fatal(err)
 	}
 	deep := "a.b.c.d.e.f.g.h.base.example"
-	if _, err := store.Create(ctx, "owner", deep, "http://127.0.0.1:3000", "instance", routeToken); err != nil {
+	if _, err := store.Create(ctx, "owner", deep, "http://127.0.0.1:3000", "instance", routeToken, nil); err != nil {
 		t.Fatalf("eight-level route: %v", err)
 	}
-	if _, err := store.Create(ctx, "owner", "x."+deep, "http://127.0.0.1:3000", "instance", routeToken); !errors.Is(err, ErrInvalidArgument) {
+	if _, err := store.Create(ctx, "owner", "x."+deep, "http://127.0.0.1:3000", "instance", routeToken, nil); !errors.Is(err, ErrInvalidArgument) {
 		t.Fatalf("ninth-level route error = %v", err)
 	}
-	if _, err := store.Create(ctx, "other", deep, "http://127.0.0.1:3000", "instance", routeToken); !errors.Is(err, ErrNameUnavailable) {
+	if _, err := store.Create(ctx, "other", deep, "http://127.0.0.1:3000", "instance", routeToken, nil); !errors.Is(err, ErrNameUnavailable) {
 		t.Fatalf("cross-identity route error = %v", err)
 	}
 }

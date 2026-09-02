@@ -33,6 +33,10 @@ The main availability signals are:
   `tnl_worker_session_disconnects_total{role,reason}` for edge/worker health.
 - `tnl_worker_routes_active`, `tnl_worker_route_capacity`, and
   `tnl_capacity_rejections_total{resource="worker_routes"}` for route capacity.
+- `tnl_source_limiter_rejections_total` and `tnl_source_limiter_entries` for
+  abusive connection starts and pressure on the bounded source table.
+- `tnl_ip_allowlist_denials_total` for visitor connections rejected by route
+  IP policy. This counter intentionally has no route or source labels.
 - `tnl_tailcat_failures_total{operation,reason}` for Tailcat setup failures,
   including `process_file_limit` and `system_file_limit`.
 - `tnl_route_session_heartbeats_total{result}`,
@@ -69,6 +73,9 @@ increase(tnl_worker_session_disconnects_total{reason!="shutdown"}[10m]) > 3
 increase(tnl_route_removals_total{reason="session_expired"}[10m]) > 0
 tnl_route_session_min_seconds_remaining{status="active"} < 15
 increase(tnl_capacity_rejections_total{resource="worker_routes"}[5m]) > 0
+increase(tnl_source_limiter_rejections_total[5m]) > 0
+tnl_source_limiter_entries > 7372
+increase(tnl_ip_allowlist_denials_total[10m]) > 0
 ```
 
 Gate the session-margin query on `tnl_routes{status="active"} > 0`, because the

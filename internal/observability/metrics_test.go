@@ -26,6 +26,9 @@ func TestMetricsScrape(t *testing.T) {
 	metrics.IncTailcatFailure("start", "timeout")
 	metrics.AddTailcatForcedCloses(2)
 	metrics.IncCapacityRejection("routes")
+	metrics.IncSourceLimiterRejection()
+	metrics.SetSourceLimiterEntries(17)
+	metrics.IncIPAllowlistDenial()
 	metrics.SetFriendlyNameCapacity(100, 90)
 	metrics.AddForwardedBytes("ingress", 1024)
 	metrics.ObserveAPIRequest("routes.create", "success", 10*time.Second)
@@ -39,9 +42,11 @@ func TestMetricsScrape(t *testing.T) {
 	metrics.ObserveWorkerSessionEstablished("edge")
 	metrics.ObserveWorkerSessionDisconnected("edge", "network")
 	metrics.SetRouteUsageOutbox("usage", 3)
+	metrics.SetRouteUsageOutbox("registration", 2)
 	metrics.SetRouteUsageOldestAge(12 * time.Second)
 	metrics.ObserveRouteUsageCheckpoint("success")
 	metrics.ObserveRouteUsageDelivery("usage", "error")
+	metrics.ObserveRouteUsageDelivery("registration", "success")
 
 	body := scrape(t, metrics)
 	for _, line := range []string{
@@ -55,6 +60,9 @@ func TestMetricsScrape(t *testing.T) {
 		`tnl_tailcat_failures_total{operation="start",reason="timeout"} 1`,
 		`tnl_tailcat_forced_closes_total 2`,
 		`tnl_capacity_rejections_total{resource="routes"} 1`,
+		`tnl_source_limiter_rejections_total 1`,
+		`tnl_source_limiter_entries 17`,
+		`tnl_ip_allowlist_denials_total 1`,
 		`tnl_friendly_name_namespace_capacity 100`,
 		`tnl_friendly_name_namespace_remaining_lower_bound 90`,
 		`tnl_forwarded_bytes_total{direction="ingress"} 1024`,
@@ -76,9 +84,11 @@ func TestMetricsScrape(t *testing.T) {
 		`tnl_worker_session_establishments_total{role="edge"} 2`,
 		`tnl_worker_session_disconnects_total{reason="network",role="edge"} 1`,
 		`tnl_route_usage_outbox_items{kind="usage"} 3`,
+		`tnl_route_usage_outbox_items{kind="registration"} 2`,
 		`tnl_route_usage_oldest_item_age_seconds 12`,
 		`tnl_route_usage_checkpoints_total{result="success"} 1`,
 		`tnl_route_usage_deliveries_total{kind="usage",result="error"} 1`,
+		`tnl_route_usage_deliveries_total{kind="registration",result="success"} 1`,
 	} {
 		if !strings.Contains(body, line) {
 			t.Errorf("scrape does not contain %q", line)

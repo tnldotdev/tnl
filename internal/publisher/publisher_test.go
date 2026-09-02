@@ -88,14 +88,19 @@ func TestCreateOrRecoverUsesLocalRouteToken(t *testing.T) {
 		}},
 		sessionSetup: serverv1.SessionSetup{Route: serverv1.Route{Id: "route_id"}},
 	}
+	policy := []string{"192.0.2.0/24"}
 	setup, err := createOrRecover(
-		context.Background(), server, "route.example", "http://127.0.0.1:3000", routeToken,
+		context.Background(), server, "route.example", "http://127.0.0.1:3000", routeToken, policy,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if setup.Route.Id != "route_id" || server.sessionRouteToken != routeToken {
 		t.Fatalf("setup = %#v, session route token = %q", setup, server.sessionRouteToken)
+	}
+	if server.created.AllowedIpPrefixes == nil || fmt.Sprint(*server.created.AllowedIpPrefixes) != "[192.0.2.0/24]" ||
+		fmt.Sprint(server.sessionAllowedIPPrefixes) != "[192.0.2.0/24]" {
+		t.Fatalf("create/session policies = %v, %v", server.created.AllowedIpPrefixes, server.sessionAllowedIPPrefixes)
 	}
 	if _, _, err := credentials.ParseRouteToken(credentials.RouteToken(server.created.RouteToken)); err != nil {
 		t.Fatalf("create route token = %q: %v", server.created.RouteToken, err)
@@ -120,7 +125,7 @@ func TestCreateOrRecoverRetriesBeforeCredentialRotationCommits(t *testing.T) {
 		sessionErr: serverclient.ErrUnauthenticated,
 	}
 	setup, err := createOrRecover(
-		context.Background(), server, "route.example", "http://127.0.0.1:3000", routeToken,
+		context.Background(), server, "route.example", "http://127.0.0.1:3000", routeToken, nil,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -558,19 +563,20 @@ func testCertificateRoute(t *testing.T, strict bool) *Route {
 }
 
 type publisherServerStub struct {
-	createCalls       int
-	createErr         error
-	createErrors      []error
-	createSetups      []serverv1.SessionSetup
-	created           serverv1.CreateRouteRequest
-	routes            []serverv1.Route
-	sessionSetup      serverv1.SessionSetup
-	sessionRouteToken credentials.RouteToken
-	sessionErr        error
-	sessionCalls      int
-	heartbeatCalls    int
-	heartbeatErrors   []error
-	deleteCalls       int
+	createCalls              int
+	createErr                error
+	createErrors             []error
+	createSetups             []serverv1.SessionSetup
+	created                  serverv1.CreateRouteRequest
+	routes                   []serverv1.Route
+	sessionSetup             serverv1.SessionSetup
+	sessionRouteToken        credentials.RouteToken
+	sessionAllowedIPPrefixes []string
+	sessionErr               error
+	sessionCalls             int
+	heartbeatCalls           int
+	heartbeatErrors          []error
+	deleteCalls              int
 }
 
 type issuanceServer struct {
@@ -767,9 +773,11 @@ func (c *publisherServerStub) CreateRouteSession(
 	_ context.Context,
 	_ string,
 	token credentials.RouteToken,
+	allowedIPPrefixes []string,
 ) (serverv1.SessionSetup, error) {
 	c.sessionCalls++
 	c.sessionRouteToken = token
+	c.sessionAllowedIPPrefixes = append([]string(nil), allowedIPPrefixes...)
 	return c.sessionSetup, c.sessionErr
 }
 

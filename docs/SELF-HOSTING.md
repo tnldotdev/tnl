@@ -52,8 +52,11 @@ Set these values in `.env`:
 - `TNLD_ACME_DIRECTORY_URL`, `TNLD_ACME_EMAIL`, and
   `TNLD_ACME_ACCEPT_TERMS=true`: the ACME account configuration.
 - `TNLD_ACME_PROFILE`: the profile used for application certificates.
-- `TNLD_ACCESS_TOKEN_LIFETIME`: lifetime of newly issued credentials; defaults
-  to seven days and accepts values from five minutes through 30 days.
+- `TNLD_ACCESS_TOKEN_LIFETIME`: lifetime of each rotating access token; defaults
+  to one hour and accepts values from five minutes through 30 days.
+- `TNLD_REFRESH_TOKEN_LIFETIME`: fixed absolute control-session lifetime;
+  defaults to 30 days and accepts values through 365 days. It must be at least
+  the access-token lifetime.
 - `TNLD_RELAY_PROVIDER=tailcat`: explicit consent to use Tailcat's hosted public
   relays.
 
@@ -86,7 +89,7 @@ On first startup, `tnld` creates a login token in its state volume. Retrieve
 it without printing it in daemon logs or storing it in `.env`:
 
 ```console
-docker compose exec tnld tnld login-token --state-dir /var/lib/tnl
+docker compose exec tnld tnl admin server login-token --state-dir /var/lib/tnl
 ```
 
 Install and verify a release archive as described in [Releases](RELEASES.md),
@@ -115,10 +118,44 @@ tnl logout
 ```
 
 Managed removal stops its routes and frees active quota, but the base remains
-permanently bound to its original owner and may be reactivated. Access
-credentials expire after `TNLD_ACCESS_TOKEN_LIFETIME`, seven days by default.
-Existing session-token heartbeats can continue, but a later client restart or
-hostname command may require `tnl login` again.
+permanently bound to its original owner and may be reactivated. The client
+rotates access and refresh tokens automatically without extending the fixed
+`TNLD_REFRESH_TOKEN_LIFETIME` session expiry. Existing route-session heartbeats
+can continue after control-session expiry, but a later client restart or
+hostname command requires `tnl login` again.
+
+The daemon stores only credential hashes. If a refresh rotation commits but its
+response is lost, retrying the replaced refresh token is treated as reuse and
+revokes that control-session family; run `tnl login` again. Recovering the exact
+rotated credentials would require retaining recoverable credential material and
+would weaken replay protection.
+
+## Administer Core
+
+Login-token control sessions include the `admin` grant; OIDC sessions are
+publish-only. The remote commands use the selected server and saved control
+session, or explicit `--server` and `--access-token` values:
+
+```console
+tnl admin server status
+tnl admin routes list
+tnl admin routes suspend route_... --revision=1 --reason='maintenance'
+tnl admin routes resume route_... --revision=2
+tnl admin hostnames list
+tnl admin credentials list
+tnl admin control-sessions list
+tnl admin switches disable new_sessions
+```
+
+Suspension revisions must increase monotonically. Suspending a route expires
+its sessions, removes ingress and certificate-challenge routing, and drains its
+worker backend. Resuming advances the route version but does not restore a
+session. Hostname quarantine suspends all current routes and prevents them from
+resuming; removing the quarantined hostname deletes those routes.
+
+List and show output excludes credential secrets. Commands that print or create
+secret material are limited to `tnl admin server login-token` and the explicit
+`tnl admin server token worker|service` commands.
 
 To use a custom domain, run `tnl host add docs.other.com.`. The command prints
 the exact verification-specific CNAME records, or the apex verification CNAME
@@ -130,8 +167,9 @@ its routes and makes it available to another identity only after fresh proof.
 To enable browser login through an OpenID Connect provider, configure:
 
 - `TNLD_OIDC_ISSUER`: the provider's exact HTTPS issuer.
-- `TNLD_OIDC_CLIENT_ID`: a public client that supports the device authorization
-  grant and `openid` scope.
+- `TNLD_OIDC_CLIENT_ID`: a public client with the `openid` scope.
+- `TNLD_OIDC_LOGIN_FLOW`: `device_code` for the device authorization grant, or
+  `authorization_code_pkce` for a loopback callback and PKCE.
 
 The provider must publish standard discovery metadata and sign ID tokens with
 RS256. The server verifies tokens locally. When OIDC login is available,
@@ -141,8 +179,13 @@ operator recovery.
 ## Route Usage
 
 An edge or standalone daemon can report ordered route lifecycle events and
-minute/hour usage snapshots to a compatible receiver. Generate a dedicated
-credential with `tnld token service`, then configure both values:
+minute/hour usage snapshots to a compatible receiver. Snapshots include route
+attempt outcomes, successful-stream duration and bytes, fixed cumulative
+latency histograms, and precision-12 HyperLogLog visitor-network estimates. The
+visitor input is reduced to an IPv4 /32 or IPv6 /64 and HMACed with a
+route-scoped daily key derived from a stable secret in the state database; raw
+source identifiers are never persisted or reported. Generate a dedicated
+credential with `tnl admin server token service`, then configure both values:
 
 - `TNLD_ROUTE_USAGE_URL`: the receiver's HTTPS base URL. Loopback HTTP is allowed for
   local development.
@@ -150,8 +193,8 @@ credential with `tnld token service`, then configure both values:
 
 Leaving both values empty disables reporting; configuring only one is invalid.
 Worker mode cannot report usage because it does not own the durable route state. The
-daemon retains an SQLite outbox across restarts and removes an item only after a
-`204 No Content` response.
+daemon checkpoints aggregates and visitor sketches in SQLite, retains an outbox
+across restarts, and removes an item only after a `204 No Content` response.
 
 ## Split Edge And Workers
 
@@ -160,11 +203,11 @@ stateless workers. Generate one worker credential with the verified `tnld`
 binary and add it to `.env` as `TNLD_WORKER_TOKEN`:
 
 ```console
-tnld token worker
+tnl admin server token worker
 docker compose --file compose.split.yaml pull
 docker compose --file compose.split.yaml up -d --scale worker=2
 docker compose --file compose.split.yaml exec edge \
-  tnld login-token --state-dir /var/lib/tnl
+  tnl admin server login-token --state-dir /var/lib/tnl
 ```
 
 The worker connects outbound to `wss://tnl.<domain>/internal/v1/worker`, so no
@@ -195,7 +238,7 @@ and run the offline refresh command against its state volume:
 
 ```console
 docker compose stop tnld
-docker compose run --rm tnld relay refresh --state-dir /var/lib/tnl
+docker compose run --rm --entrypoint tnl tnld admin server relay refresh --state-dir /var/lib/tnl
 docker compose start tnld
 ```
 
@@ -238,20 +281,19 @@ To rotate the login token, stop the state owner and run:
 
 ```console
 docker compose stop tnld
-docker compose run --rm tnld login-token --state-dir /var/lib/tnl --rotate
+docker compose run --rm --entrypoint tnl tnld admin server login-token --state-dir /var/lib/tnl --rotate
 docker compose start tnld
 ```
 
-Rotation invalidates the old login credential but does not revoke access
-tokens already issued from it. Use `tnl logout` from enrolled clients to revoke
-their current access tokens.
+Rotation increments the login-token source revision and revokes every control
+session issued from an older revision.
 
-Each client stores its access credential, private keys, and certificate state
+Each client stores its control session, private keys, and certificate state
 under `TNL_STATE_DIR`. Its default is the user configuration directory followed
 by `tnl` (`~/.config/tnl` on typical Linux systems and
 `~/Library/Application Support/tnl` on macOS). Linux protects secret state with
 user-owned directories and `0600` files. On macOS, a profile key in Keychain
-encrypts access tokens and route TLS private keys before they are written to the
+encrypts access and refresh tokens and route TLS private keys before they are written to the
 state directory.
 
 Stop every `tnl` process before backing up its complete state directory. A

@@ -2,15 +2,18 @@ package routes
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/tailtransport"
@@ -31,9 +34,11 @@ type SessionSetup struct {
 }
 
 type ActiveRoute struct {
-	RouteID string
-	Version uint64
-	Backend worker.RouteBackend
+	RouteID           string
+	Version           uint64
+	AllowedIPPrefixes []netip.Prefix
+	Backend           worker.RouteBackend
+	expires           time.Time
 }
 
 // routeSnapshot is immutable after publishing for lock-free ingress reads.
@@ -49,17 +54,19 @@ type workerState struct {
 }
 
 type assignment struct {
-	ref       worker.RouteRef
-	hostname  string
-	expiresAt time.Time
-	worker    *workerState
-	backend   worker.WorkerRoute
+	ref               worker.RouteRef
+	hostname          string
+	allowedIPPrefixes []netip.Prefix
+	expiresAt         time.Time
+	worker            *workerState
+	backend           worker.WorkerRoute
 }
 
 type pendingSession struct {
-	hostname  string
-	key       key.NodePrivate
-	expiresAt time.Time
+	hostname          string
+	allowedIPPrefixes []netip.Prefix
+	key               key.NodePrivate
+	expiresAt         time.Time
 }
 
 type routeMutex struct {
@@ -144,6 +151,7 @@ func (c *Coordinator) Create(
 	ctx context.Context,
 	identityID, hostname, localTarget string,
 	routeToken credentials.RouteToken,
+	allowedIPPrefixes []string,
 ) (SessionSetup, error) {
 	removed := false
 	defer func() {
@@ -169,7 +177,9 @@ func (c *Coordinator) Create(
 		unlockRoute := c.lockRoute(existingRouteID)
 		defer unlockRoute()
 	}
-	provisioning, err := c.store.Create(ctx, identityID, hostname, localTarget, c.serverInstanceID, routeToken)
+	provisioning, err := c.store.Create(
+		ctx, identityID, hostname, localTarget, c.serverInstanceID, routeToken, allowedIPPrefixes,
+	)
 	if err != nil {
 		return SessionSetup{}, err
 	}
@@ -183,6 +193,7 @@ func (c *Coordinator) CreateSession(
 	ctx context.Context,
 	identityID, routeID string,
 	token credentials.RouteToken,
+	allowedIPPrefixes []string,
 ) (SessionSetup, error) {
 	removed := false
 	defer func() {
@@ -200,7 +211,9 @@ func (c *Coordinator) CreateSession(
 	}
 	unlockRoute := c.lockRoute(routeID)
 	defer unlockRoute()
-	provisioning, err := c.store.CreateSession(ctx, identityID, routeID, c.serverInstanceID, token)
+	provisioning, err := c.store.CreateSession(
+		ctx, identityID, routeID, c.serverInstanceID, token, allowedIPPrefixes,
+	)
 	if err != nil {
 		return SessionSetup{}, err
 	}
@@ -208,8 +221,100 @@ func (c *Coordinator) CreateSession(
 	return c.prepare(provisioning)
 }
 
+func (c *Coordinator) CreateSigned(
+	ctx context.Context,
+	hostname, localTarget string,
+	routeToken credentials.RouteToken,
+	request SignedRequest,
+) (SessionSetup, error) {
+	removed := false
+	defer func() {
+		if removed {
+			c.observeRouteRemoval(RouteRemovalVersionReplaced)
+		}
+	}()
+	validated, err := c.store.validateSignedCreate(hostname, localTarget, routeToken, request)
+	if err != nil {
+		return SessionSetup{}, err
+	}
+	if c.config.PublishReady != nil {
+		if err := c.config.PublishReady(ctx, validated.hostname); err != nil {
+			return SessionSetup{}, ErrUnavailable
+		}
+	}
+	c.mutationMu.Lock()
+	defer c.mutationMu.Unlock()
+	if c.isClosed() {
+		return SessionSetup{}, net.ErrClosed
+	}
+	existingRouteID, err := c.store.ActiveSignedRouteID(ctx, validated.hostname)
+	if err != nil {
+		return SessionSetup{}, err
+	}
+	if existingRouteID != "" {
+		unlockRoute := c.lockRoute(existingRouteID)
+		defer unlockRoute()
+	}
+	provisioning, err := c.store.CreateSigned(
+		ctx, validated.hostname, localTarget, c.serverInstanceID, routeToken, request,
+	)
+	if err != nil {
+		return SessionSetup{}, err
+	}
+	if provisioning.Restored || !provisioning.Replayed && provisioning.Route.Version > 1 {
+		removed = c.deactivate(provisioning.Route.ID)
+	}
+	return c.prepare(provisioning)
+}
+
+func (c *Coordinator) CreateSignedSession(
+	ctx context.Context,
+	routeID string,
+	routeToken credentials.RouteToken,
+	request SignedRequest,
+) (SessionSetup, error) {
+	removed := false
+	defer func() {
+		if removed {
+			c.observeRouteRemoval(RouteRemovalVersionReplaced)
+		}
+	}()
+	c.mutationMu.Lock()
+	defer c.mutationMu.Unlock()
+	if c.isClosed() {
+		return SessionSetup{}, net.ErrClosed
+	}
+	unlockRoute := c.lockRoute(routeID)
+	defer unlockRoute()
+	provisioning, err := c.store.CreateSignedSession(
+		ctx, routeID, c.serverInstanceID, routeToken, request,
+	)
+	if err != nil {
+		return SessionSetup{}, err
+	}
+	if provisioning.Restored || !provisioning.Replayed {
+		removed = c.deactivate(routeID)
+	}
+	return c.prepare(provisioning)
+}
+
 func (c *Coordinator) prepare(provisioning Provisioning) (SessionSetup, error) {
+	allowedIPPrefixes := make([]netip.Prefix, len(provisioning.Route.AllowedIPPrefixes))
+	for index, value := range provisioning.Route.AllowedIPPrefixes {
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil || prefix.String() != value {
+			return SessionSetup{}, errors.New("routes: stored IP policy is invalid")
+		}
+		allowedIPPrefixes[index] = prefix
+	}
 	ingressKey := key.NewNode()
+	if provisioning.Route.AuthorizationID != "" {
+		var err error
+		ingressKey, err = signedIngressKey(provisioning.SessionToken)
+		if err != nil {
+			return SessionSetup{}, err
+		}
+	}
 	ref := worker.RouteRef{RouteID: provisioning.Route.ID, Version: provisioning.Session.Version}
 	c.mu.Lock()
 	if c.closed {
@@ -222,7 +327,8 @@ func (c *Coordinator) prepare(provisioning Provisioning) (SessionSetup, error) {
 		}
 	}
 	c.pending[ref] = pendingSession{
-		hostname: provisioning.Route.Hostname, key: ingressKey, expiresAt: provisioning.Session.ExpiresAt,
+		hostname: provisioning.Route.Hostname, allowedIPPrefixes: allowedIPPrefixes,
+		key: ingressKey, expiresAt: provisioning.Session.ExpiresAt,
 	}
 	c.mu.Unlock()
 	return SessionSetup{Provisioning: provisioning, WorkerPublicKey: ingressKey.Public().String()}, nil
@@ -317,7 +423,8 @@ func (c *Coordinator) RegisterTransport(
 		}
 		previous := c.assignments[routeID]
 		assignment := &assignment{
-			ref: ref, hostname: currentPending.hostname, expiresAt: session.ExpiresAt, worker: selectedWorker, backend: backend,
+			ref: ref, hostname: currentPending.hostname, allowedIPPrefixes: currentPending.allowedIPPrefixes,
+			expiresAt: session.ExpiresAt, worker: selectedWorker, backend: backend,
 		}
 		c.assignments[routeID] = assignment
 		c.challenges[assignment.hostname] = assignment
@@ -395,6 +502,48 @@ func (c *Coordinator) Heartbeat(
 	if err != nil {
 		return time.Time{}, err
 	}
+	if err := c.updateHeartbeatExpiry(routeID, version, expiresAt); err != nil {
+		return time.Time{}, err
+	}
+	return expiresAt, nil
+}
+
+func (c *Coordinator) HeartbeatSigned(
+	ctx context.Context,
+	routeID string,
+	version uint64,
+	token credentials.SessionToken,
+	signedAuthorization string,
+	requestHash authorization.Digest,
+) (expiresAt time.Time, err error) {
+	lockStarted := time.Now()
+	unlockRoute := c.lockRoute(routeID)
+	lockWait := time.Since(lockStarted)
+	defer func() {
+		unlockRoute()
+		c.observeStage(CoordinatorStageHeartbeatRouteLockWait, lockWait)
+		c.observeHeartbeat(heartbeatResult(err))
+	}()
+	var session Session
+	if signedAuthorization == "" {
+		session, err = c.store.AuthenticateSession(ctx, routeID, version, token, c.serverInstanceID)
+	} else {
+		session, err = c.store.AuthenticateSessionForRenewal(ctx, routeID, version, token, c.serverInstanceID)
+	}
+	if err != nil {
+		return time.Time{}, err
+	}
+	expiresAt, err = c.store.HeartbeatSigned(ctx, session, signedAuthorization, requestHash)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if err := c.updateHeartbeatExpiry(routeID, version, expiresAt); err != nil {
+		return time.Time{}, err
+	}
+	return expiresAt, nil
+}
+
+func (c *Coordinator) updateHeartbeatExpiry(routeID string, version uint64, expiresAt time.Time) error {
 	ref := worker.RouteRef{RouteID: routeID, Version: version}
 	stateStarted := time.Now()
 	c.mu.Lock()
@@ -406,14 +555,30 @@ func (c *Coordinator) Heartbeat(
 	}
 	if current := c.assignments[routeID]; current != nil && current.ref == ref {
 		current.expiresAt = expiresAt
+		c.publishLocked(current)
 		updated = true
 	}
 	c.mu.Unlock()
 	c.observeStage(CoordinatorStageHeartbeatPersistence, time.Since(stateStarted))
 	if !updated {
-		return time.Time{}, ErrStaleSession
+		return ErrStaleSession
 	}
-	return expiresAt, nil
+	return nil
+}
+
+func signedIngressKey(token credentials.SessionToken) (key.NodePrivate, error) {
+	material, err := credentials.DeriveSessionKeyMaterial(token)
+	if err != nil {
+		return key.NodePrivate{}, ErrUnauthenticated
+	}
+	material[0] &= 248
+	material[31] &= 127
+	material[31] |= 64
+	var result key.NodePrivate
+	if err := result.UnmarshalText([]byte("privkey:" + hex.EncodeToString(material[:]))); err != nil {
+		return key.NodePrivate{}, fmt.Errorf("routes: derive signed ingress key: %w", err)
+	}
+	return result, nil
 }
 
 // AuthorizeSession verifies that a session token owns the current route version
@@ -560,6 +725,140 @@ func (c *Coordinator) Delete(ctx context.Context, identityID, routeID string) (e
 	return nil
 }
 
+func (c *Coordinator) DeleteSigned(ctx context.Context, routeID string, token credentials.RouteToken) (err error) {
+	removed := false
+	defer func() {
+		if removed {
+			c.observeRouteRemoval(RouteRemovalDeleted)
+		}
+	}()
+	c.mutationMu.Lock()
+	defer c.mutationMu.Unlock()
+	if c.isClosed() {
+		return net.ErrClosed
+	}
+	unlockRoute := c.lockRoute(routeID)
+	defer unlockRoute()
+	if err := c.store.DeleteSigned(ctx, routeID, token); err != nil {
+		return err
+	}
+	removed = c.deactivate(routeID)
+	return nil
+}
+
+func (c *Coordinator) ListAdminRoutes(ctx context.Context, cursor string) ([]Route, string, error) {
+	if c.isClosed() {
+		return nil, "", net.ErrClosed
+	}
+	return c.store.ListAdminRoutes(ctx, cursor)
+}
+
+func (c *Coordinator) GetAdminRoute(ctx context.Context, routeID string) (Route, error) {
+	if c.isClosed() {
+		return Route{}, net.ErrClosed
+	}
+	return c.store.GetAdminRoute(ctx, routeID)
+}
+
+func (c *Coordinator) SuspendAdminRoute(
+	ctx context.Context,
+	routeID string,
+	revision uint64,
+	reason, actor, requestID string,
+) (Route, error) {
+	c.mutationMu.Lock()
+	defer c.mutationMu.Unlock()
+	if c.isClosed() {
+		return Route{}, net.ErrClosed
+	}
+	unlockRoute := c.lockRoute(routeID)
+	defer unlockRoute()
+	route, err := c.store.SuspendAdminRoute(ctx, routeID, revision, reason, actor, requestID)
+	if err != nil {
+		return Route{}, err
+	}
+	if c.deactivateDraining(ctx, routeID) {
+		c.observeRouteRemoval(RouteRemovalSuspended)
+	}
+	return route, nil
+}
+
+func (c *Coordinator) ResumeAdminRoute(
+	ctx context.Context,
+	routeID string,
+	revision uint64,
+	actor, requestID string,
+) (Route, error) {
+	c.mutationMu.Lock()
+	defer c.mutationMu.Unlock()
+	if c.isClosed() {
+		return Route{}, net.ErrClosed
+	}
+	unlockRoute := c.lockRoute(routeID)
+	defer unlockRoute()
+	return c.store.ResumeAdminRoute(ctx, routeID, revision, actor, requestID)
+}
+
+func (c *Coordinator) ListAdminHostnames(ctx context.Context, cursor string) ([]Hostname, string, error) {
+	if c.isClosed() {
+		return nil, "", net.ErrClosed
+	}
+	return c.store.ListAdminHostnames(ctx, cursor)
+}
+
+func (c *Coordinator) GetAdminHostname(ctx context.Context, hostnameID string) (Hostname, error) {
+	if c.isClosed() {
+		return Hostname{}, net.ErrClosed
+	}
+	return c.store.GetAdminHostname(ctx, hostnameID)
+}
+
+func (c *Coordinator) RemoveAdminHostname(ctx context.Context, hostnameID, actor, requestID string) error {
+	return c.mutateAdminHostname(ctx, hostnameID, RouteRemovalHostnameRemoved, func() ([]string, error) {
+		return c.store.RemoveAdminHostname(ctx, hostnameID, actor, requestID)
+	})
+}
+
+func (c *Coordinator) QuarantineAdminHostname(
+	ctx context.Context,
+	hostnameID, reason, actor, requestID string,
+) error {
+	return c.mutateAdminHostname(ctx, hostnameID, RouteRemovalHostnameQuarantined, func() ([]string, error) {
+		return c.store.QuarantineAdminHostname(ctx, hostnameID, reason, actor, requestID)
+	})
+}
+
+func (c *Coordinator) mutateAdminHostname(
+	ctx context.Context,
+	hostnameID string,
+	removal RouteRemovalReason,
+	mutate func() ([]string, error),
+) error {
+	c.mutationMu.Lock()
+	defer c.mutationMu.Unlock()
+	if c.isClosed() {
+		return net.ErrClosed
+	}
+	routeIDs, err := c.store.ListCurrentAdminHostnameRouteIDs(ctx, hostnameID)
+	if err != nil {
+		return err
+	}
+	for _, routeID := range routeIDs {
+		unlockRoute := c.lockRoute(routeID)
+		defer unlockRoute()
+	}
+	mutatedRoutes, err := mutate()
+	if err != nil {
+		return err
+	}
+	for _, routeID := range mutatedRoutes {
+		if c.deactivateDraining(ctx, routeID) {
+			c.observeRouteRemoval(removal)
+		}
+	}
+	return nil
+}
+
 func (c *Coordinator) isClosed() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -572,7 +871,7 @@ func (c *Coordinator) Lookup(hostname string) (ActiveRoute, bool) {
 		return ActiveRoute{}, false
 	}
 	result, ok := c.snapshot.Load().byHostname[canonical]
-	return result, ok
+	return result, ok && result.expires.After(c.store.now())
 }
 
 // LookupChallenge resolves current assigned routes before ordinary traffic is
@@ -705,10 +1004,35 @@ func (c *Coordinator) deactivate(routeID string) bool {
 	return current != nil
 }
 
+func (c *Coordinator) deactivateDraining(ctx context.Context, routeID string) bool {
+	c.mu.Lock()
+	for ref := range c.pending {
+		if ref.RouteID == routeID {
+			delete(c.pending, ref)
+		}
+	}
+	current := c.assignments[routeID]
+	if current != nil {
+		delete(c.assignments, routeID)
+		if c.challenges[current.hostname] == current {
+			delete(c.challenges, current.hostname)
+		}
+		delete(current.worker.routes, routeID)
+		c.unpublishLocked(routeID, current.ref.Version)
+	}
+	c.mu.Unlock()
+	if current != nil {
+		_ = current.backend.Drain(ctx)
+		_ = current.backend.Close()
+	}
+	return current != nil
+}
+
 func (c *Coordinator) publishLocked(current *assignment) {
 	next := cloneSnapshot(c.snapshot.Load())
 	next.byHostname[current.hostname] = ActiveRoute{
-		RouteID: current.ref.RouteID, Version: current.ref.Version, Backend: current.backend,
+		RouteID: current.ref.RouteID, Version: current.ref.Version,
+		AllowedIPPrefixes: current.allowedIPPrefixes, Backend: current.backend, expires: current.expiresAt,
 	}
 	c.snapshot.Store(next)
 }

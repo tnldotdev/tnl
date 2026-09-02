@@ -21,6 +21,9 @@ func TestPublishOutputNDJSONLifecycle(t *testing.T) {
 	if err := output.starting("http://127.0.0.1:3000"); err != nil {
 		t.Fatal(err)
 	}
+	if err := output.currentIP("192.0.2.1"); err != nil {
+		t.Fatal(err)
+	}
 	if err := output.ready("https://demo.example", 1); err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +40,7 @@ func TestPublishOutputNDJSONLifecycle(t *testing.T) {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 	decoder := json.NewDecoder(&stdout)
-	wantTypes := []string{"starting", "ready", "ready", "error", "stopped"}
+	wantTypes := []string{"starting", "current_ip", "ready", "ready", "error", "stopped"}
 	for index, wantType := range wantTypes {
 		var event publishEvent
 		if err := decoder.Decode(&event); err != nil {
@@ -45,6 +48,9 @@ func TestPublishOutputNDJSONLifecycle(t *testing.T) {
 		}
 		if event.SchemaVersion != 1 || event.Cursor != uint64(index+1) || event.Type != wantType {
 			t.Fatalf("event %d = %#v", index, event)
+		}
+		if wantType == "current_ip" && event.IP != "192.0.2.1" {
+			t.Fatalf("current IP event = %#v", event)
 		}
 		if wantType == "error" && (event.Retryable == nil || !*event.Retryable || event.RetryAt == nil) {
 			t.Fatalf("error event = %#v", event)
@@ -65,13 +71,16 @@ func TestPublishOutputHumanPrintsURLOnce(t *testing.T) {
 	if err := output.ready("https://demo.example", 1); err != nil {
 		t.Fatal(err)
 	}
+	if err := output.currentIP("2001:db8::1"); err != nil {
+		t.Fatal(err)
+	}
 	if err := output.ready("https://demo.example", 2); err != nil {
 		t.Fatal(err)
 	}
 	if err := output.failed(errors.New("failure")); err != nil {
 		t.Fatal(err)
 	}
-	if stdout.Len() != 0 || stderr.String() != "https://demo.example\n" {
+	if stdout.Len() != 0 || stderr.String() != "https://demo.example\nCurrent IP: 2001:db8::1\n" {
 		t.Fatalf("stdout = %q, stderr = %q", stdout.String(), stderr.String())
 	}
 }

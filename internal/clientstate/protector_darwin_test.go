@@ -105,34 +105,44 @@ func TestKeychainProtectorDoesNotReplaceMissingOrInvalidKey(t *testing.T) {
 	}
 }
 
-func TestDarwinClientStateEncryptsAccessAndRouteKeys(t *testing.T) {
+func TestDarwinClientStateEncryptsControlSessionAndRouteKeys(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "state")
 	store, err := New(root, "https://server.example")
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, credentialID, _, err := credentials.NewAccessToken()
+	token, _, _, err := credentials.NewAccessToken()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SaveAccessCredential(AccessCredential{
-		Token: token, CredentialID: credentialID, ExpiresAt: time.Now().Add(time.Hour).UTC(),
+	refresh, _, _, err := credentials.NewRefreshToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveControlSession(ControlSession{
+		Kind: ControlSessionKindCore, ControlEndpoint: "https://server.example",
+		SessionID: "control_session_0123456789abcdef0123456789abcdef", Issuer: "https://server.example",
+		AccessToken: token.String(), AccessExpiresAt: time.Now().Add(time.Hour).UTC(),
+		RefreshToken: refresh.String(), RefreshExpiresAt: time.Now().Add(24 * time.Hour).UTC(), Grants: []string{"publish"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	credentialJSON, err := os.ReadFile(store.credentialsPath)
+	credentialJSON, err := os.ReadFile(store.controlSessionPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if bytes.Contains(credentialJSON, []byte(token)) {
 		t.Fatal("credential state contains the access token")
 	}
-	var storedCredential accessCredentialFile
+	var storedCredential controlSessionFile
 	if err := json.Unmarshal(credentialJSON, &storedCredential); err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.HasPrefix(storedCredential.AccessToken, sealedValuePrefix) {
 		t.Fatal("access token is not encrypted")
+	}
+	if !bytes.HasPrefix(storedCredential.RefreshToken, sealedValuePrefix) {
+		t.Fatal("refresh token is not encrypted")
 	}
 
 	route, err := store.OpenRoute(testRouteID)
@@ -176,9 +186,9 @@ func TestDarwinClientStateEncryptsAccessAndRouteKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	credential, found, err := reopened.AccessCredential()
-	if err != nil || !found || credential.Token != token {
-		t.Fatalf("credential = %#v, found = %v, error = %v", credential, found, err)
+	session, found, err := reopened.ControlSession()
+	if err != nil || !found || session.AccessToken != token.String() {
+		t.Fatalf("control session = %#v, found = %v, error = %v", session, found, err)
 	}
 	route, err = reopened.OpenRoute(testRouteID)
 	if err != nil {

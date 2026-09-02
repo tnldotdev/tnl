@@ -1,6 +1,8 @@
 package config
 
 import (
+	"crypto/ed25519"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net"
@@ -14,6 +16,7 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
+	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/backup"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -24,12 +27,20 @@ import (
 type TNLDMode string
 
 const (
-	TNLDModeStandalone         TNLDMode = "standalone"
-	TNLDModeEdge               TNLDMode = "edge"
-	TNLDModeWorker             TNLDMode = "worker"
-	maximumHostnameQuota                = 100_000
-	minimumAccessTokenLifetime          = 5 * time.Minute
-	maximumAccessTokenLifetime          = 30 * 24 * time.Hour
+	TNLDModeStandalone          TNLDMode = "standalone"
+	TNLDModeEdge                TNLDMode = "edge"
+	TNLDModeWorker              TNLDMode = "worker"
+	maximumHostnameQuota                 = 100_000
+	minimumAccessTokenLifetime           = 5 * time.Minute
+	maximumAccessTokenLifetime           = 30 * 24 * time.Hour
+	maximumRefreshTokenLifetime          = 365 * 24 * time.Hour
+)
+
+type OIDCLoginFlow string
+
+const (
+	OIDCLoginFlowDeviceCode            OIDCLoginFlow = "device_code"
+	OIDCLoginFlowAuthorizationCodePKCE OIDCLoginFlow = "authorization_code_pkce"
 )
 
 // UsesState reports whether the mode owns durable server state.
@@ -39,37 +50,44 @@ func (m TNLDMode) UsesState() bool {
 
 // TNLD configures the tnl server.
 type TNLD struct {
-	Mode                 TNLDMode      `name:"mode" env:"TNLD_MODE" default:"standalone" enum:"standalone,edge,worker" help:"Process role: ${enum}."`
-	StateDir             string        `name:"state-dir" env:"TNLD_STATE_DIR" help:"Directory for persistent state; defaults to the platform user-state directory."`
-	BackupURL            string        `name:"backup-url" env:"TNLD_BACKUP_URL" help:"S3 URL for continuous state backup and restore."`
-	MetricsListen        string        `name:"metrics-listen" env:"TNLD_METRICS_LISTEN" default:"127.0.0.1:9090" help:"Private Prometheus listen address; empty disables metrics."`
-	PublicListen         string        `name:"public-listen" env:"TNLD_PUBLIC_LISTEN" default:":443" help:"Public TLS listen address for the control API and routes; empty disables ingress."`
-	Domain               string        `name:"domain" env:"TNLD_DOMAIN" help:"Canonical domain shorthand; derives tnl.<domain> control and <domain> routes."`
-	ControlHostname      string        `name:"control-hostname" env:"TNLD_CONTROL_HOSTNAME" help:"Canonical control API hostname; overrides --domain derivation."`
-	PublicHostnameSuffix string        `name:"hostname-suffix" env:"TNLD_HOSTNAME_SUFFIX" help:"Canonical public hostname suffix; overrides --domain derivation."`
-	ReservedRouteNames   []string      `name:"reserved-route-name" env:"TNLD_RESERVED_ROUTE_NAMES" help:"Route base unavailable for user hostnames; repeat for each name."`
-	MaxActiveHostnames   int           `name:"max-active-hostnames" env:"TNLD_MAX_ACTIVE_HOSTNAMES" default:"128" help:"Maximum active hostnames per identity."`
-	MaxHostnameRequests  int           `name:"max-hostname-requests" env:"TNLD_MAX_HOSTNAME_REQUESTS" default:"1024" help:"Maximum hostname request records per identity."`
-	ACMEDirectoryURL     string        `name:"acme-directory-url" env:"TNLD_ACME_DIRECTORY_URL" default:"https://acme-v02.api.letsencrypt.org/directory" help:"ACME directory URL for automatic control and application certificates."`
-	ACMEEmail            string        `name:"acme-email" env:"TNLD_ACME_EMAIL" help:"ACME account contact email."`
-	ACMEAcceptTerms      bool          `name:"acme-accept-terms" env:"TNLD_ACME_ACCEPT_TERMS" help:"Explicitly accept the ACME directory terms."`
-	ACMEProfile          string        `name:"acme-profile" env:"TNLD_ACME_PROFILE" default:"tlsserver" help:"ACME certificate profile advertised to publishers."`
-	OIDCIssuer           string        `name:"oidc-issuer" env:"TNLD_OIDC_ISSUER" help:"OIDC issuer used for login."`
-	OIDCClientID         string        `name:"oidc-client-id" env:"TNLD_OIDC_CLIENT_ID" help:"OIDC client ID used for login."`
-	AccessTokenLifetime  time.Duration `name:"access-token-lifetime" env:"TNLD_ACCESS_TOKEN_LIFETIME" default:"168h" help:"Lifetime of newly issued access tokens."`
-	RelayProvider        string        `name:"relay-provider" env:"TNLD_RELAY_PROVIDER" help:"Hosted relay provider; set to tailcat to explicitly use Tailcat's public relays."`
-	RelayMapFile         string        `name:"relay-map-file" env:"TNLD_RELAY_MAP_FILE" type:"path" help:"Approved DERP map JSON file."`
-	RelayRegion          string        `name:"relay-region" env:"TNLD_RELAY_REGION" help:"DERP region code selected from a custom relay map."`
-	WorkerURL            string        `name:"worker-url" env:"TNLD_WORKER_URL" help:"Worker-mode WSS edge URL."`
-	WorkerToken          string        `name:"worker-token" env:"TNLD_WORKER_TOKEN" help:"Edge-to-worker authentication token."`
-	RouteUsageURL        string        `name:"route-usage-url" env:"TNLD_ROUTE_USAGE_URL" help:"Route usage receiver base URL."`
-	RouteUsageToken      string        `name:"route-usage-token" env:"TNLD_ROUTE_USAGE_TOKEN" help:"Service token for the route usage receiver."`
-	WorkerCapacity       int           `name:"worker-capacity" env:"TNLD_WORKER_CAPACITY" default:"500" help:"Hard route capacity for this worker."`
-	WorkerStreamLimit    int           `name:"worker-stream-limit" env:"TNLD_WORKER_STREAM_LIMIT" default:"4096" help:"Maximum multiplexed streams per worker session."`
-	PublicConnLimit      int           `name:"public-connection-limit" env:"TNLD_PUBLIC_CONNECTION_LIMIT" default:"20000" help:"Maximum concurrent public connections."`
-	RouteConnLimit       int           `name:"route-connection-limit" env:"TNLD_ROUTE_CONNECTION_LIMIT" default:"500" help:"Maximum concurrent public connections per route."`
-	RequireProxyHeader   bool          `name:"require-proxy-header" env:"TNLD_REQUIRE_PROXY_HEADER" help:"Require one trusted outer PROXY v2 header on public ingress."`
-	DrainTimeout         time.Duration `name:"drain-timeout" env:"TNLD_DRAIN_TIMEOUT" default:"30s" help:"Graceful stream drain deadline."`
+	Mode                           TNLDMode      `name:"mode" env:"TNLD_MODE" default:"standalone" enum:"standalone,edge,worker" help:"Process role: ${enum}."`
+	StateDir                       string        `name:"state-dir" env:"TNLD_STATE_DIR" help:"Directory for persistent state; defaults to the platform user-state directory."`
+	BackupURL                      string        `name:"backup-url" env:"TNLD_BACKUP_URL" help:"S3 URL for continuous state backup and restore."`
+	MetricsListen                  string        `name:"metrics-listen" env:"TNLD_METRICS_LISTEN" default:"127.0.0.1:9090" help:"Private Prometheus listen address; empty disables metrics."`
+	PublicListen                   string        `name:"public-listen" env:"TNLD_PUBLIC_LISTEN" default:":443" help:"Public TLS listen address for the control API and routes; empty disables ingress."`
+	Domain                         string        `name:"domain" env:"TNLD_DOMAIN" help:"Canonical domain shorthand; derives tnl.<domain> control and <domain> routes."`
+	ControlHostname                string        `name:"control-hostname" env:"TNLD_CONTROL_HOSTNAME" help:"Canonical control API hostname; overrides --domain derivation."`
+	PublicHostnameSuffix           string        `name:"hostname-suffix" env:"TNLD_HOSTNAME_SUFFIX" help:"Canonical public hostname suffix; overrides --domain derivation."`
+	ReservedRouteNames             []string      `name:"reserved-route-name" env:"TNLD_RESERVED_ROUTE_NAMES" help:"Route base unavailable for user hostnames; repeat for each name."`
+	MaxActiveHostnames             int           `name:"max-active-hostnames" env:"TNLD_MAX_ACTIVE_HOSTNAMES" default:"128" help:"Maximum active hostnames per identity."`
+	MaxHostnameRequests            int           `name:"max-hostname-requests" env:"TNLD_MAX_HOSTNAME_REQUESTS" default:"1024" help:"Maximum hostname request records per identity."`
+	ACMEDirectoryURL               string        `name:"acme-directory-url" env:"TNLD_ACME_DIRECTORY_URL" default:"https://acme-v02.api.letsencrypt.org/directory" help:"ACME directory URL for automatic control and application certificates."`
+	ACMEEmail                      string        `name:"acme-email" env:"TNLD_ACME_EMAIL" help:"ACME account contact email."`
+	ACMEAcceptTerms                bool          `name:"acme-accept-terms" env:"TNLD_ACME_ACCEPT_TERMS" help:"Explicitly accept the ACME directory terms."`
+	ACMEProfile                    string        `name:"acme-profile" env:"TNLD_ACME_PROFILE" default:"tlsserver" help:"ACME certificate profile advertised to publishers."`
+	OIDCIssuer                     string        `name:"oidc-issuer" env:"TNLD_OIDC_ISSUER" help:"OIDC issuer used for login."`
+	OIDCClientID                   string        `name:"oidc-client-id" env:"TNLD_OIDC_CLIENT_ID" help:"OIDC client ID used for login."`
+	OIDCLoginFlow                  OIDCLoginFlow `name:"oidc-login-flow" env:"TNLD_OIDC_LOGIN_FLOW" help:"OIDC login flow: device_code or authorization_code_pkce."`
+	AuthorizationAuthorityEndpoint string        `name:"authorization-authority-endpoint" env:"TNLD_AUTHORIZATION_AUTHORITY_ENDPOINT" help:"Canonical HTTPS authorization authority origin advertised to clients."`
+	AuthorizationIssuer            string        `name:"authorization-issuer" env:"TNLD_AUTHORIZATION_ISSUER" help:"Exact trusted signed-authorization issuer."`
+	AuthorizationReceiver          string        `name:"authorization-receiver" env:"TNLD_AUTHORIZATION_RECEIVER" help:"Exact signed-authorization receiver for this Core."`
+	AuthorizationKeyID             string        `name:"authorization-key-id" env:"TNLD_AUTHORIZATION_KEY_ID" help:"Trusted authorization Ed25519 key ID."`
+	AuthorizationPublicKey         string        `name:"authorization-public-key" env:"TNLD_AUTHORIZATION_PUBLIC_KEY" help:"Trusted Ed25519 public key in unpadded base64url form."`
+	AccessTokenLifetime            time.Duration `name:"access-token-lifetime" env:"TNLD_ACCESS_TOKEN_LIFETIME" default:"1h" help:"Lifetime of newly issued access tokens."`
+	RefreshTokenLifetime           time.Duration `name:"refresh-token-lifetime" env:"TNLD_REFRESH_TOKEN_LIFETIME" default:"720h" help:"Absolute lifetime of newly issued control sessions."`
+	RelayProvider                  string        `name:"relay-provider" env:"TNLD_RELAY_PROVIDER" help:"Hosted relay provider; set to tailcat to explicitly use Tailcat's public relays."`
+	RelayMapFile                   string        `name:"relay-map-file" env:"TNLD_RELAY_MAP_FILE" type:"path" help:"Approved DERP map JSON file."`
+	RelayRegion                    string        `name:"relay-region" env:"TNLD_RELAY_REGION" help:"DERP region code selected from a custom relay map."`
+	WorkerURL                      string        `name:"worker-url" env:"TNLD_WORKER_URL" help:"Worker-mode WSS edge URL."`
+	WorkerToken                    string        `name:"worker-token" env:"TNLD_WORKER_TOKEN" help:"Edge-to-worker authentication token."`
+	RouteUsageURL                  string        `name:"route-usage-url" env:"TNLD_ROUTE_USAGE_URL" help:"Route usage receiver base URL."`
+	RouteUsageToken                string        `name:"route-usage-token" env:"TNLD_ROUTE_USAGE_TOKEN" help:"Service token for the route usage receiver."`
+	WorkerCapacity                 int           `name:"worker-capacity" env:"TNLD_WORKER_CAPACITY" default:"500" help:"Hard route capacity for this worker."`
+	WorkerStreamLimit              int           `name:"worker-stream-limit" env:"TNLD_WORKER_STREAM_LIMIT" default:"4096" help:"Maximum multiplexed streams per worker session."`
+	PublicConnLimit                int           `name:"public-connection-limit" env:"TNLD_PUBLIC_CONNECTION_LIMIT" default:"20000" help:"Maximum concurrent public connections."`
+	RouteConnLimit                 int           `name:"route-connection-limit" env:"TNLD_ROUTE_CONNECTION_LIMIT" default:"500" help:"Maximum concurrent public connections per route."`
+	RequireProxyHeader             bool          `name:"require-proxy-header" env:"TNLD_REQUIRE_PROXY_HEADER" help:"Require one trusted outer PROXY v2 header on public ingress."`
+	DrainTimeout                   time.Duration `name:"drain-timeout" env:"TNLD_DRAIN_TIMEOUT" default:"30s" help:"Graceful stream drain deadline."`
 }
 
 // Validate rejects values that are present but unusable.
@@ -108,6 +126,9 @@ func (c TNLD) Validate() error {
 	if c.AccessTokenLifetime < minimumAccessTokenLifetime || c.AccessTokenLifetime > maximumAccessTokenLifetime {
 		return fmt.Errorf("access token lifetime must be between %s and %s", minimumAccessTokenLifetime, maximumAccessTokenLifetime)
 	}
+	if c.RefreshTokenLifetime < c.AccessTokenLifetime || c.RefreshTokenLifetime > maximumRefreshTokenLifetime {
+		return fmt.Errorf("refresh token lifetime must be between the access token lifetime and %s", maximumRefreshTokenLifetime)
+	}
 	if c.RelayRegion != "" && !validRelayRegion(c.RelayRegion) {
 		return errors.New("relay region must contain only lowercase letters, digits, and hyphens")
 	}
@@ -115,6 +136,9 @@ func (c TNLD) Validate() error {
 		return errors.New("relay provider must be tailcat")
 	}
 	if err := c.validateOIDC(); err != nil {
+		return err
+	}
+	if err := c.validateAuthorization(); err != nil {
 		return err
 	}
 	if err := c.validateHostnames(); err != nil {
@@ -218,11 +242,11 @@ func (c TNLD) OIDCEnabled() bool {
 }
 
 func (c TNLD) validateOIDC() error {
-	configured := c.OIDCIssuer != "" || c.OIDCClientID != ""
+	configured := c.OIDCIssuer != "" || c.OIDCClientID != "" || c.OIDCLoginFlow != ""
 	if !configured {
 		return nil
 	}
-	if c.OIDCIssuer == "" || c.OIDCClientID == "" {
+	if c.OIDCIssuer == "" || c.OIDCClientID == "" || c.OIDCLoginFlow == "" {
 		return errors.New("OIDC configuration is incomplete")
 	}
 	issuer, err := url.Parse(c.OIDCIssuer)
@@ -232,6 +256,79 @@ func (c TNLD) validateOIDC() error {
 	}
 	if strings.TrimSpace(c.OIDCClientID) != c.OIDCClientID || c.OIDCClientID == "" || len(c.OIDCClientID) > 128 {
 		return errors.New("OIDC client ID is invalid")
+	}
+	if c.OIDCLoginFlow != OIDCLoginFlowDeviceCode && c.OIDCLoginFlow != OIDCLoginFlowAuthorizationCodePKCE {
+		return errors.New("OIDC login flow is invalid")
+	}
+	return nil
+}
+
+// SignedAuthorizationEnabled reports whether Core delegates hostname
+// authorization to the configured authority.
+func (c TNLD) SignedAuthorizationEnabled() bool {
+	return c.AuthorizationAuthorityEndpoint != ""
+}
+
+// AuthorizationConfig returns validated verifier configuration. Callers must
+// use it only after Validate succeeds and SignedAuthorizationEnabled is true.
+func (c TNLD) AuthorizationConfig() authorization.Config {
+	publicKey, _ := base64.RawURLEncoding.DecodeString(c.AuthorizationPublicKey)
+	return authorization.Config{
+		Issuer: c.AuthorizationIssuer, Receiver: c.AuthorizationReceiver,
+		KeyID: c.AuthorizationKeyID, PublicKey: ed25519.PublicKey(publicKey),
+	}
+}
+
+func (c TNLD) validateAuthorization() error {
+	values := []string{
+		c.AuthorizationAuthorityEndpoint,
+		c.AuthorizationIssuer,
+		c.AuthorizationReceiver,
+		c.AuthorizationKeyID,
+		c.AuthorizationPublicKey,
+	}
+	configured := false
+	complete := true
+	for _, value := range values {
+		configured = configured || value != ""
+		complete = complete && value != ""
+	}
+	if !configured {
+		return nil
+	}
+	if !complete {
+		return errors.New("authorization authority configuration is incomplete")
+	}
+	if !c.Mode.UsesState() {
+		return errors.New("authorization authority requires a state-owning mode")
+	}
+	authorityEndpoint, err := url.Parse(c.AuthorizationAuthorityEndpoint)
+	if err != nil || authorityEndpoint.Scheme != "https" || authorityEndpoint.Host == "" || authorityEndpoint.User != nil ||
+		authorityEndpoint.Path != "" || authorityEndpoint.RawQuery != "" || authorityEndpoint.Fragment != "" ||
+		authorityEndpoint.Hostname() != strings.ToLower(authorityEndpoint.Hostname()) || authorityEndpoint.Port() == "443" {
+		return errors.New("authorization authority endpoint must be a canonical HTTPS origin")
+	}
+	for name, value := range map[string]string{
+		"authorization issuer":   c.AuthorizationIssuer,
+		"authorization receiver": c.AuthorizationReceiver,
+	} {
+		parsed, err := url.Parse(value)
+		if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil ||
+			parsed.RawQuery != "" || parsed.Fragment != "" {
+			return fmt.Errorf("%s must be an HTTPS URL without credentials, query, or fragment", name)
+		}
+	}
+	if strings.TrimSpace(c.AuthorizationKeyID) != c.AuthorizationKeyID ||
+		c.AuthorizationKeyID == "" || len(c.AuthorizationKeyID) > 128 {
+		return errors.New("authorization key ID is invalid")
+	}
+	publicKey, err := base64.RawURLEncoding.DecodeString(c.AuthorizationPublicKey)
+	if err != nil || len(publicKey) != ed25519.PublicKeySize ||
+		base64.RawURLEncoding.EncodeToString(publicKey) != c.AuthorizationPublicKey {
+		return errors.New("authorization public key must be a canonical unpadded base64url Ed25519 key")
+	}
+	if _, err := authorization.NewVerifier(c.AuthorizationConfig()); err != nil {
+		return fmt.Errorf("authorization authority configuration: %w", err)
 	}
 	return nil
 }

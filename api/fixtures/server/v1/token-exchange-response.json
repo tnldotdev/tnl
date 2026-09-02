@@ -1,6 +1,8 @@
 {
+  "session_id": "control_session_000102030405060708090a0b0c0d0e0f",
   "access_token": "tnl_access_AAECAwQFBgcICQoLDA0ODw.EBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8",
-  "credential_id": "AAECAwQFBgcICQoLDA0ODw",
-  "token_type": "Bearer",
-  "expires_at": "2026-09-28T12:00:00Z"
+  "access_expires_at": "2026-09-28T12:00:00Z",
+  "refresh_token": "tnl_refresh_AAECAwQFBgcICQoLDA0ODw.EBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8",
+  "refresh_expires_at": "2026-10-27T12:00:00Z",
+  "grants": ["publish", "admin"]
 }
