@@ -1,9 +1,9 @@
 [tools]
 go = "1.27.0"
-node = "22.23.1"
-pnpm = "11.24.0"
+node = "22.23.2"
+pnpm = "11.25.0"
 task = "3.53.1"
-"aqua:zizmorcore/zizmor" = "1.29.0"
+"aqua:zizmorcore/zizmor" = "1.30.0"
 "go:github.com/rhysd/actionlint/cmd/actionlint" = "1.7.12"
 "go:github.com/letsencrypt/pebble/v2/cmd/pebble" = "2.10.1"
 "go:github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen" = "2.8.0"
