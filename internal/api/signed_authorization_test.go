@@ -17,7 +17,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/routes"
 	"github.com/tnldotdev/tnl/internal/state"
 	"github.com/tnldotdev/tnl/pkg/protocol/serverv1"
-	"golang.org/x/time/rate"
 )
 
 func TestSignedRouteAPIBypassesCoreIdentityAndRetriesExactly(t *testing.T) {
@@ -99,7 +98,7 @@ func TestSignedRouteAPIBypassesCoreIdentityAndRetriesExactly(t *testing.T) {
 
 func TestClientIPUsesRemoteAddressAndDedicatedLimit(t *testing.T) {
 	handler := NewHandlerWithServicesAndConfig(fixtureCapabilities(t), nil, nil, nil, HandlerConfig{}).(*handler)
-	handler.clientIPLimit = rate.NewLimiter(0, 1)
+	handler.clientIPLimit = testAPISourceLimiter(t)
 
 	request := httptest.NewRequest(http.MethodGet, clientIPPath, nil)
 	request.RemoteAddr = "[::ffff:192.0.2.10]:4321"
@@ -118,6 +117,13 @@ func TestClientIPUsesRemoteAddressAndDedicatedLimit(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusTooManyRequests || response.Header().Get("Retry-After") != "1" {
 		t.Fatalf("limited status = %d, retry-after = %q", response.Code, response.Header().Get("Retry-After"))
+	}
+	request = httptest.NewRequest(http.MethodGet, clientIPPath, nil)
+	request.RemoteAddr = "192.0.2.11:4321"
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("independent source status = %d: %s", response.Code, response.Body.String())
 	}
 
 	malformed := NewHandlerWithServicesAndConfig(fixtureCapabilities(t), nil, nil, nil, HandlerConfig{})
