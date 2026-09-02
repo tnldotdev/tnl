@@ -7,33 +7,60 @@ import (
 	"time"
 )
 
+// Defines values for BatchProblemCode.
+const (
+	BatchProblemCodeIdempotencyConflict BatchProblemCode = "idempotency_conflict"
+	BatchProblemCodeInternal            BatchProblemCode = "internal"
+	BatchProblemCodeInvalidArgument     BatchProblemCode = "invalid_argument"
+	BatchProblemCodeNotFound            BatchProblemCode = "not_found"
+	BatchProblemCodeStatusConflict      BatchProblemCode = "status_conflict"
+)
+
+// Valid indicates whether the value is a known member of the BatchProblemCode enum.
+func (e BatchProblemCode) Valid() bool {
+	switch e {
+	case BatchProblemCodeIdempotencyConflict:
+		return true
+	case BatchProblemCodeInternal:
+		return true
+	case BatchProblemCodeInvalidArgument:
+		return true
+	case BatchProblemCodeNotFound:
+		return true
+	case BatchProblemCodeStatusConflict:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ProblemCode.
 const (
-	IdempotencyConflict    ProblemCode = "idempotency_conflict"
-	Internal               ProblemCode = "internal"
-	InvalidArgument        ProblemCode = "invalid_argument"
-	NotFound               ProblemCode = "not_found"
-	StatusConflict         ProblemCode = "status_conflict"
-	TemporarilyUnavailable ProblemCode = "temporarily_unavailable"
-	Unauthenticated        ProblemCode = "unauthenticated"
+	ProblemCodeIdempotencyConflict    ProblemCode = "idempotency_conflict"
+	ProblemCodeInternal               ProblemCode = "internal"
+	ProblemCodeInvalidArgument        ProblemCode = "invalid_argument"
+	ProblemCodeNotFound               ProblemCode = "not_found"
+	ProblemCodeStatusConflict         ProblemCode = "status_conflict"
+	ProblemCodeTemporarilyUnavailable ProblemCode = "temporarily_unavailable"
+	ProblemCodeUnauthenticated        ProblemCode = "unauthenticated"
 )
 
 // Valid indicates whether the value is a known member of the ProblemCode enum.
 func (e ProblemCode) Valid() bool {
 	switch e {
-	case IdempotencyConflict:
+	case ProblemCodeIdempotencyConflict:
 		return true
-	case Internal:
+	case ProblemCodeInternal:
 		return true
-	case InvalidArgument:
+	case ProblemCodeInvalidArgument:
 		return true
-	case NotFound:
+	case ProblemCodeNotFound:
 		return true
-	case StatusConflict:
+	case ProblemCodeStatusConflict:
 		return true
-	case TemporarilyUnavailable:
+	case ProblemCodeTemporarilyUnavailable:
 		return true
-	case Unauthenticated:
+	case ProblemCodeUnauthenticated:
 		return true
 	default:
 		return false
@@ -82,7 +109,17 @@ func (e RouteUsageSnapshotResolution) Valid() bool {
 	}
 }
 
-// DurationHistogram A cumulative duration histogram. cumulative_counts uses fixed inclusive upper bounds of 1ms, 5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2.5s, 5s, 10s, 30s, 1m, 5m, 15m, 1h, 6h, 24h, and +Inf, in that order.
+// BatchProblemCode defines model for BatchProblemCode.
+type BatchProblemCode string
+
+// BatchResult defines model for BatchResult.
+type BatchResult struct {
+	Accepted bool              `json:"accepted"`
+	Code     *BatchProblemCode `json:"code,omitempty"`
+	ItemId   string            `json:"item_id"`
+}
+
+// DurationHistogram A cumulative duration histogram. cumulative_counts uses fixed inclusive upper bounds of 1ms, 5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2.5s, 5s, 10s, 30s, 1m, 5m, 15m, 1h, 6h, 24h, 3d, 7d, and +Inf, in that order.
 type DurationHistogram struct {
 	Count            PositiveInteger   `json:"count"`
 	CumulativeCounts []UnsignedInteger `json:"cumulative_counts"`
@@ -107,8 +144,9 @@ type ProblemCode string
 
 // RouteLifecycleEvent defines model for RouteLifecycleEvent.
 type RouteLifecycleEvent struct {
-	EventId    string                        `json:"event_id"`
+	ItemId     string                        `json:"item_id"`
 	OccurredAt time.Time                     `json:"occurred_at"`
+	RouteId    string                        `json:"route_id"`
 	Sequence   PositiveInteger               `json:"sequence"`
 	Transition RouteLifecycleEventTransition `json:"transition"`
 	Version    PositiveInteger               `json:"version"`
@@ -116,6 +154,16 @@ type RouteLifecycleEvent struct {
 
 // RouteLifecycleEventTransition defines model for RouteLifecycleEvent.Transition.
 type RouteLifecycleEventTransition string
+
+// RouteLifecycleEventBatch defines model for RouteLifecycleEventBatch.
+type RouteLifecycleEventBatch struct {
+	Items []RouteLifecycleEvent `json:"items"`
+}
+
+// RouteLifecycleEventBatchResponse defines model for RouteLifecycleEventBatchResponse.
+type RouteLifecycleEventBatchResponse struct {
+	Results []BatchResult `json:"results"`
+}
 
 // RouteRegistration defines model for RouteRegistration.
 type RouteRegistration struct {
@@ -147,6 +195,7 @@ type RouteUsageSnapshot struct {
 
 	// IngressBytes Bytes successfully forwarded from visitors to publishers.
 	IngressBytes    UnsignedInteger `json:"ingress_bytes"`
+	ItemId          string          `json:"item_id"`
 	ObservedThrough time.Time       `json:"observed_through"`
 
 	// PolicyDenials Matched attempts rejected by route access policy.
@@ -159,6 +208,7 @@ type RouteUsageSnapshot struct {
 	PublisherOpenLatency *DurationHistogram           `json:"publisher_open_latency,omitempty"`
 	Resolution           RouteUsageSnapshotResolution `json:"resolution"`
 	Revision             PositiveInteger              `json:"revision"`
+	RouteId              string                       `json:"route_id"`
 
 	// SuccessfulConnectionDuration End-to-end duration of successful forwarding streams, attributed when a stream closes. Absent when the bucket has no observations; absence is undefined and is not a zero-valued observation.
 	SuccessfulConnectionDuration *DurationHistogram `json:"successful_connection_duration,omitempty"`
@@ -180,17 +230,24 @@ type RouteUsageSnapshot struct {
 // RouteUsageSnapshotResolution defines model for RouteUsageSnapshot.Resolution.
 type RouteUsageSnapshotResolution string
 
+// RouteUsageSnapshotBatch defines model for RouteUsageSnapshotBatch.
+type RouteUsageSnapshotBatch struct {
+	Items []RouteUsageSnapshot `json:"items"`
+}
+
+// RouteUsageSnapshotBatchResponse defines model for RouteUsageSnapshotBatchResponse.
+type RouteUsageSnapshotBatchResponse struct {
+	Results []BatchResult `json:"results"`
+}
+
 // UnsignedInteger defines model for UnsignedInteger.
 type UnsignedInteger = string
-
-// RouteID defines model for RouteID.
-type RouteID = string
 
 // RegisterRouteJSONRequestBody defines body for RegisterRoute for application/json ContentType.
 type RegisterRouteJSONRequestBody = RouteRegistration
 
-// IngestRouteLifecycleEventJSONRequestBody defines body for IngestRouteLifecycleEvent for application/json ContentType.
-type IngestRouteLifecycleEventJSONRequestBody = RouteLifecycleEvent
+// IngestRouteLifecycleEventsJSONRequestBody defines body for IngestRouteLifecycleEvents for application/json ContentType.
+type IngestRouteLifecycleEventsJSONRequestBody = RouteLifecycleEventBatch
 
-// IngestRouteUsageSnapshotJSONRequestBody defines body for IngestRouteUsageSnapshot for application/json ContentType.
-type IngestRouteUsageSnapshotJSONRequestBody = RouteUsageSnapshot
+// IngestRouteUsageSnapshotsJSONRequestBody defines body for IngestRouteUsageSnapshots for application/json ContentType.
+type IngestRouteUsageSnapshotsJSONRequestBody = RouteUsageSnapshotBatch

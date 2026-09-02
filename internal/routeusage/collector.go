@@ -41,10 +41,9 @@ type usageBucket struct {
 	successfulConnectionDuration durationHistogram
 	visitors                     *visitorSketch
 	revision                     uint64
-	lastPublishedThrough         time.Time
 	canComplete                  bool
 	complete                     bool
-	sealed                       bool
+	finalized                    bool
 	dirty                        bool
 	publish                      bool
 	publishVersion               uint64
@@ -134,10 +133,10 @@ func (c *Collector) Recover(ctx context.Context) error {
 			connectionNanoseconds: uint64(row.ConnectionNanoseconds), ingressBytes: uint64(row.IngressBytes),
 			egressBytes: uint64(row.EgressBytes), publisherOpenLatency: publisherOpenLatency,
 			timeToFirstPublisherByte: timeToFirstPublisherByte, successfulConnectionDuration: successfulConnectionDuration,
-			visitors: c.visitors[visitorKey], revision: uint64(row.Revision),
-			lastPublishedThrough: time.Unix(0, row.ObservedThrough).UTC(), canComplete: false,
+			visitors: c.visitors[visitorKey], revision: uint64(row.Revision), canComplete: false,
 		}
 		if !now.Before(bucketEnd(start, row.Resolution)) {
+			bucket.finalized = true
 			bucket.revision++
 			stale = append(stale, bucket.snapshot(true))
 			continue
@@ -307,7 +306,7 @@ func (c *Collector) Run(ctx context.Context, report func(error)) {
 				report(err)
 			}
 		case now := <-boundary.C:
-			if err := c.Checkpoint(ctx, now, true); err != nil && report != nil {
+			if err := c.Checkpoint(ctx, now, false); err != nil && report != nil {
 				report(err)
 			}
 			boundary.Reset(untilNextMinute(c.now()))
@@ -315,7 +314,7 @@ func (c *Collector) Run(ctx context.Context, report func(error)) {
 	}
 }
 
-func (c *Collector) Checkpoint(ctx context.Context, now time.Time, publishHours bool) (result error) {
+func (c *Collector) Checkpoint(ctx context.Context, now time.Time, finalizeHours bool) (result error) {
 	defer func() {
 		if c.observer == nil {
 			return
@@ -347,15 +346,17 @@ func (c *Collector) Checkpoint(ctx context.Context, now time.Time, publishHours 
 			markDirty(bucket)
 		}
 		if !now.Before(end) {
-			bucket.sealed = true
+			bucket.finalized = true
 			bucket.complete = bucket.canComplete
 			bucket.observedThrough = end
 			markDirty(bucket)
 		}
-		shouldPublish := bucket.key.resolution == "minute" && bucket.sealed
-		if bucket.key.resolution == "hour" && publishHours && bucket.observedThrough.After(bucket.lastPublishedThrough) {
-			shouldPublish = true
+		if finalizeHours && bucket.key.resolution == "hour" && !bucket.finalized {
+			bucket.finalized = true
+			bucket.complete = false
+			markDirty(bucket)
 		}
+		shouldPublish := bucket.finalized
 		// A retried checkpoint may already have committed, so changed retry content needs a new revision.
 		if bucket.publish && bucket.version != bucket.publishVersion {
 			bucket.revision++
@@ -392,10 +393,9 @@ func (c *Collector) Checkpoint(ctx context.Context, now time.Time, publishHours 
 			bucket.dirty = false
 		}
 		if snapshots[index].Publish {
-			bucket.lastPublishedThrough = snapshots[index].ObservedThrough
 			bucket.publish = false
 		}
-		if bucket.sealed && unchanged {
+		if bucket.finalized && unchanged {
 			delete(c.buckets, bucket.key)
 		}
 	}
@@ -416,7 +416,7 @@ func (b *usageBucket) snapshot(publish bool) UsageSnapshot {
 		TimeToFirstPublisherByte:     b.timeToFirstPublisherByte.marshalBinary(),
 		SuccessfulConnectionDuration: b.successfulConnectionDuration.marshalBinary(),
 		VisitorNetworkHLL:            b.visitors.checkpoint(), VisitorNetworkEstimate: b.visitors.estimate(),
-		Complete: b.complete, Publish: publish,
+		Complete: b.complete, Finalized: b.finalized, Publish: publish,
 	}
 }
 

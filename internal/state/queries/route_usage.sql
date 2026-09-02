@@ -113,6 +113,19 @@ WHERE
                         AND registration.acknowledged_revision IS NOT NULL
                 )
             )
+            AND EXISTS (
+                SELECT 1
+                FROM route_lifecycle_events AS started
+                WHERE started.route_id = snapshot.route_id
+                    AND started.version = snapshot.version
+                    AND started.transition = 'version_started'
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM route_usage_outbox_items AS started_outbox
+                        WHERE started_outbox.source_kind = 'lifecycle_event'
+                            AND started_outbox.source_id = started.id
+                    )
+            )
     ))
 ORDER BY
     coalesce(outbox.last_attempted_at, outbox.enqueued_at),
@@ -124,30 +137,54 @@ ORDER BY
     outbox.source_id
 LIMIT 1;
 
--- name: MarkRouteUsageOutboxAttempt :execrows
-UPDATE route_usage_outbox_items
-SET last_attempted_at = CAST(sqlc.arg(attempted_at) AS INTEGER)
-WHERE source_kind = sqlc.arg(source_kind)
-    AND source_id = sqlc.arg(source_id)
-    AND source_revision = sqlc.arg(source_revision);
-
--- name: GetRouteRegistrationReport :one
-SELECT *
-FROM route_registrations
-WHERE id = sqlc.arg(id);
-
--- name: GetRouteLifecycleReport :one
-SELECT *
-FROM route_lifecycle_events
-WHERE id = sqlc.arg(id);
-
--- name: GetRouteUsageReport :one
+-- name: ListRouteLifecycleOutboxBatch :many
 SELECT
-    snapshot.id,
+    outbox.source_kind,
+    outbox.source_id,
+    outbox.source_revision,
+    outbox.enqueued_at,
+    outbox.last_attempted_at,
+    event.event_id,
+    event.route_id,
+    event.version,
+    event.sequence,
+    event.occurred_at,
+    event.transition
+FROM route_usage_outbox_items AS outbox
+JOIN route_lifecycle_events AS event ON event.id = outbox.source_id
+JOIN routes AS route ON route.id = event.route_id
+WHERE outbox.source_kind = 'lifecycle_event'
+    AND (
+        route.authorization_id IS NULL OR EXISTS (
+            SELECT 1
+            FROM route_registrations AS registration
+            WHERE registration.route_id = event.route_id
+                AND registration.acknowledged_revision IS NOT NULL
+        )
+    )
+    AND NOT EXISTS (
+        SELECT 1
+        FROM route_usage_outbox_items AS earlier_outbox
+        JOIN route_lifecycle_events AS earlier_event ON earlier_event.id = earlier_outbox.source_id
+        WHERE earlier_outbox.source_kind = 'lifecycle_event'
+            AND earlier_event.route_id = event.route_id
+            AND earlier_event.sequence < event.sequence
+    )
+ORDER BY coalesce(outbox.last_attempted_at, outbox.enqueued_at), outbox.source_id
+LIMIT sqlc.arg(batch_size);
+
+-- name: ListRouteUsageOutboxBatch :many
+SELECT
+    outbox.source_kind,
+    outbox.source_id,
+    outbox.source_revision,
+    outbox.enqueued_at,
+    outbox.last_attempted_at,
     snapshot.route_id,
     snapshot.version,
     snapshot.resolution,
     snapshot.bucket_start,
+    report.report_id,
     report.revision,
     report.observed_through,
     report.connection_attempts,
@@ -163,15 +200,49 @@ SELECT
     report.successful_connection_duration,
     report.visitor_network_hll,
     report.visitor_network_estimate,
-    report.complete
-FROM route_usage_snapshots AS snapshot
-JOIN route_usage_reports AS report ON report.snapshot_id = snapshot.id
-JOIN route_usage_outbox_items AS outbox
-    ON outbox.source_kind = 'usage_snapshot'
-    AND outbox.source_id = snapshot.id
-WHERE snapshot.id = sqlc.arg(source_id)
-    AND outbox.source_revision = sqlc.arg(source_revision)
-    AND report.revision = sqlc.arg(source_revision);
+    report.complete,
+    snapshot.finalized
+FROM route_usage_outbox_items AS outbox
+JOIN route_usage_snapshots AS snapshot ON snapshot.id = outbox.source_id
+JOIN route_usage_reports AS report
+    ON report.snapshot_id = snapshot.id AND report.revision = outbox.source_revision
+JOIN routes AS route ON route.id = snapshot.route_id
+WHERE outbox.source_kind = 'usage_snapshot'
+    AND (
+        route.authorization_id IS NULL OR EXISTS (
+            SELECT 1
+            FROM route_registrations AS registration
+            WHERE registration.route_id = snapshot.route_id
+                AND registration.acknowledged_revision IS NOT NULL
+        )
+    )
+    AND EXISTS (
+        SELECT 1
+        FROM route_lifecycle_events AS started
+        WHERE started.route_id = snapshot.route_id
+            AND started.version = snapshot.version
+            AND started.transition = 'version_started'
+            AND NOT EXISTS (
+                SELECT 1
+                FROM route_usage_outbox_items AS started_outbox
+                WHERE started_outbox.source_kind = 'lifecycle_event'
+                    AND started_outbox.source_id = started.id
+            )
+    )
+ORDER BY coalesce(outbox.last_attempted_at, outbox.enqueued_at), outbox.source_id
+LIMIT sqlc.arg(batch_size);
+
+-- name: MarkRouteUsageOutboxAttempt :execrows
+UPDATE route_usage_outbox_items
+SET last_attempted_at = CAST(sqlc.arg(attempted_at) AS INTEGER)
+WHERE source_kind = sqlc.arg(source_kind)
+    AND source_id = sqlc.arg(source_id)
+    AND source_revision = sqlc.arg(source_revision);
+
+-- name: GetRouteRegistrationReport :one
+SELECT *
+FROM route_registrations
+WHERE id = sqlc.arg(id);
 
 -- name: AcknowledgeRouteRegistrationRevision :execrows
 UPDATE route_registrations
@@ -227,7 +298,8 @@ INSERT INTO route_usage_snapshots (
     successful_connection_duration,
     visitor_network_hll,
     visitor_network_estimate,
-    complete
+    complete,
+    finalized
 ) VALUES (
     sqlc.arg(route_id),
     sqlc.arg(version),
@@ -248,7 +320,8 @@ INSERT INTO route_usage_snapshots (
     sqlc.narg(successful_connection_duration),
     sqlc.arg(visitor_network_hll),
     sqlc.arg(visitor_network_estimate),
-    sqlc.arg(complete)
+    sqlc.arg(complete),
+    sqlc.arg(finalized)
 )
 ON CONFLICT (route_id, version, resolution, bucket_start) DO UPDATE SET
     revision = excluded.revision,
@@ -266,13 +339,15 @@ ON CONFLICT (route_id, version, resolution, bucket_start) DO UPDATE SET
     successful_connection_duration = excluded.successful_connection_duration,
     visitor_network_hll = excluded.visitor_network_hll,
     visitor_network_estimate = excluded.visitor_network_estimate,
-    complete = excluded.complete
+    complete = excluded.complete,
+    finalized = excluded.finalized
 WHERE excluded.revision >= route_usage_snapshots.revision
 RETURNING id;
 
 -- name: UpsertRouteUsageReport :execrows
 INSERT INTO route_usage_reports (
     snapshot_id,
+    report_id,
     revision,
     observed_through,
     connection_attempts,
@@ -291,6 +366,10 @@ INSERT INTO route_usage_reports (
     complete
 ) VALUES (
     sqlc.arg(snapshot_id),
+    coalesce(
+        (SELECT report_id FROM route_usage_reports WHERE snapshot_id = sqlc.arg(snapshot_id) AND revision = sqlc.arg(revision)),
+        CAST(sqlc.arg(report_id) AS TEXT)
+    ),
     sqlc.arg(revision),
     sqlc.arg(observed_through),
     sqlc.arg(connection_attempts),
@@ -309,6 +388,10 @@ INSERT INTO route_usage_reports (
     sqlc.arg(complete)
 )
 ON CONFLICT (snapshot_id) DO UPDATE SET
+    report_id = CASE
+        WHEN excluded.revision > route_usage_reports.revision THEN excluded.report_id
+        ELSE route_usage_reports.report_id
+    END,
     revision = excluded.revision,
     observed_through = excluded.observed_through,
     connection_attempts = excluded.connection_attempts,
@@ -355,13 +438,13 @@ WHERE route_id = sqlc.arg(route_id)
 -- name: ListIncompleteRouteUsageSnapshots :many
 SELECT *
 FROM route_usage_snapshots
-WHERE complete = 0
+WHERE finalized = 0
 ORDER BY bucket_start, route_id, version, resolution;
 
 -- name: DeleteAcknowledgedRouteUsageSnapshot :execrows
 DELETE FROM route_usage_snapshots
 WHERE id = sqlc.arg(id)
-    AND complete = 1
+    AND finalized = 1
     AND NOT EXISTS (
         SELECT 1
         FROM route_usage_outbox_items
@@ -375,6 +458,16 @@ WHERE id IN (
     SELECT event.id
     FROM route_lifecycle_events AS event
     WHERE event.occurred_at < sqlc.arg(cutoff)
+        AND NOT (
+            event.transition = 'version_started'
+            AND EXISTS (
+                SELECT 1
+                FROM routes AS current_route
+                WHERE current_route.id = event.route_id
+                    AND current_route.version = event.version
+                    AND current_route.status <> 'deleted'
+            )
+        )
         AND NOT EXISTS (
             SELECT 1
             FROM route_usage_outbox_items

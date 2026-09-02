@@ -1,5 +1,6 @@
 {
-  "event_id": "event_0123456789abcdef0123456789abcdef",
+  "item_id": "event_0123456789abcdef0123456789abcdef",
+  "route_id": "route_0123456789abcdef0123456789abcdef",
   "version": "7",
   "sequence": "42",
   "occurred_at": "2026-08-31T12:34:56.789Z",

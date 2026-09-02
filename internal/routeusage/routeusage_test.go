@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -134,6 +135,74 @@ func TestCollectorLeavesUnobservedHistogramsUndefined(t *testing.T) {
 	if bucket.PublisherOpenLatency != nil || bucket.TimeToFirstPublisherByte != nil ||
 		bucket.SuccessfulConnectionDuration != nil {
 		t.Fatalf("unobserved histograms are defined: %+v", bucket)
+	}
+}
+
+func TestCollectorPublishesHoursOnlyWhenFinalized(t *testing.T) {
+	db, store := newTestStore(t)
+	collector := NewCollector(store, nil)
+	start := time.Date(2026, time.September, 2, 12, 0, 0, 0, time.UTC)
+	connection := collector.Open(testRouteID, 1, netip.MustParseAddr("192.0.2.1"), start)
+	connection.PolicyDenied(start)
+	connection.Close(start)
+
+	if err := collector.Checkpoint(t.Context(), start.Add(time.Minute), false); err != nil {
+		t.Fatal(err)
+	}
+	if count := scalar(t, db, "SELECT COUNT(*) FROM route_usage_outbox_items WHERE source_kind = 'usage_snapshot'"); count != 1 {
+		t.Fatalf("outbox count after minute = %d, want 1", count)
+	}
+	hour := loadUsageBucket(t, statedb.New(db), "hour", start)
+	if hour.Finalized != 0 || hour.Complete != 0 {
+		t.Fatalf("active hour state = %+v", hour)
+	}
+
+	if err := collector.Checkpoint(t.Context(), start.Add(time.Hour), false); err != nil {
+		t.Fatal(err)
+	}
+	hour = loadUsageBucket(t, statedb.New(db), "hour", start)
+	if hour.Finalized != 1 || hour.Complete != 1 {
+		t.Fatalf("completed hour state = %+v", hour)
+	}
+	if count := scalar(t, db, "SELECT COUNT(*) FROM route_usage_outbox_items WHERE source_kind = 'usage_snapshot'"); count != 2 {
+		t.Fatalf("outbox count after hour = %d, want 2", count)
+	}
+}
+
+func TestCollectorFinalizesCurrentHourAsPartial(t *testing.T) {
+	db, store := newTestStore(t)
+	collector := NewCollector(store, nil)
+	start := time.Date(2026, time.September, 2, 12, 0, 0, 0, time.UTC)
+	connection := collector.Open(testRouteID, 1, netip.MustParseAddr("192.0.2.1"), start)
+	connection.PolicyDenied(start)
+	connection.Close(start)
+	if err := collector.Checkpoint(t.Context(), start.Add(30*time.Second), true); err != nil {
+		t.Fatal(err)
+	}
+	hour := loadUsageBucket(t, statedb.New(db), "hour", start)
+	if hour.Finalized != 1 || hour.Complete != 0 || hour.ObservedThrough != start.Add(30*time.Second).UnixNano() {
+		t.Fatalf("partial hour state = %+v", hour)
+	}
+	if count := scalar(t, db, "SELECT COUNT(*) FROM route_usage_outbox_items WHERE source_kind = 'usage_snapshot'"); count != 1 {
+		t.Fatalf("partial hour outbox count = %d, want 1", count)
+	}
+}
+
+func TestDurationHistogramIncludesMultiDayBounds(t *testing.T) {
+	var histogram durationHistogram
+	for _, duration := range []time.Duration{24 * time.Hour, 3 * 24 * time.Hour, 7 * 24 * time.Hour, 7*24*time.Hour + 1} {
+		if !histogram.observe(duration) {
+			t.Fatalf("observe %s", duration)
+		}
+	}
+	if durationHistogramSize != 184 || len(histogram.counts) != 22 {
+		t.Fatalf("histogram size=%d buckets=%d", durationHistogramSize, len(histogram.counts))
+	}
+	if histogram.counts[18] != 1 || histogram.counts[19] != 2 || histogram.counts[20] != 3 || histogram.counts[21] != 4 {
+		t.Fatalf("multi-day cumulative counts = %v", histogram.counts[18:])
+	}
+	if _, err := unmarshalDurationHistogram(histogram.marshalBinary()); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -351,7 +420,7 @@ func TestSenderDeliversRegistrationBeforeRouteReports(t *testing.T) {
 	paths := make(chan string, 3)
 	receiver := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		paths <- request.URL.Path
-		response.WriteHeader(http.StatusNoContent)
+		acceptRouteUsageRequest(response, request)
 	}))
 	t.Cleanup(receiver.Close)
 	sender, err := NewSender(store, receiver.URL, "secret", nil)
@@ -365,8 +434,8 @@ func TestSenderDeliversRegistrationBeforeRouteReports(t *testing.T) {
 	}
 	want := []string{
 		"/v1/routes",
-		"/v1/routes/" + testSignedRouteA + "/lifecycle-events",
-		"/v1/routes/" + testSignedRouteA + "/usage-snapshots",
+		"/v1/routes/lifecycle-events",
+		"/v1/routes/usage-snapshots",
 	}
 	for index, expected := range want {
 		if got := <-paths; got != expected {
@@ -453,7 +522,11 @@ func TestSenderFormatsAllWireTimestamps(t *testing.T) {
 			return
 		}
 		received <- receivedRequest{path: request.URL.Path, body: body}
-		response.WriteHeader(http.StatusNoContent)
+		if request.URL.Path == "/v1/routes" {
+			response.WriteHeader(http.StatusNoContent)
+		} else {
+			writeAcceptedBatchResponse(response, body)
+		}
 	}))
 	t.Cleanup(receiver.Close)
 	sender, err := NewSender(store, receiver.URL, "secret", nil)
@@ -470,10 +543,10 @@ func TestSenderFormatsAllWireTimestamps(t *testing.T) {
 		"/v1/routes": {
 			"created_at": "2026-09-02T12:00:00.123Z",
 		},
-		"/v1/routes/" + testSignedRouteA + "/lifecycle-events": {
+		"/v1/routes/lifecycle-events": {
 			"occurred_at": "2026-09-02T12:01:00.987Z",
 		},
-		"/v1/routes/" + testSignedRouteA + "/usage-snapshots": {
+		"/v1/routes/usage-snapshots": {
 			"bucket_start":     "2026-09-02T12:02:00Z",
 			"observed_through": "2026-09-02T12:02:59.999Z",
 		},
@@ -483,6 +556,13 @@ func TestSenderFormatsAllWireTimestamps(t *testing.T) {
 		var payload map[string]json.RawMessage
 		if err := json.Unmarshal(request.body, &payload); err != nil {
 			t.Fatal(err)
+		}
+		if request.path != "/v1/routes" {
+			var items []map[string]json.RawMessage
+			if err := json.Unmarshal(payload["items"], &items); err != nil || len(items) != 1 {
+				t.Fatalf("decode %s batch: items=%d err=%v", request.path, len(items), err)
+			}
+			payload = items[0]
 		}
 		for field, expected := range want[request.path] {
 			var got string
@@ -538,8 +618,10 @@ func TestFailedRegistrationBlocksOnlyItsRoute(t *testing.T) {
 				response.WriteHeader(http.StatusServiceUnavailable)
 				return
 			}
+			response.WriteHeader(http.StatusNoContent)
+			return
 		}
-		response.WriteHeader(http.StatusNoContent)
+		acceptRouteUsageRequest(response, request)
 	}))
 	t.Cleanup(receiver.Close)
 	sender, err := NewSender(store, receiver.URL, "secret", nil)
@@ -555,7 +637,7 @@ func TestFailedRegistrationBlocksOnlyItsRoute(t *testing.T) {
 		}
 	}
 	if first, second, third := <-paths, <-paths, <-paths; first != "/v1/routes" || second != "/v1/routes" ||
-		third != "/v1/routes/"+testSignedRouteB+"/lifecycle-events" {
+		third != "/v1/routes/lifecycle-events" {
 		t.Fatalf("delivery order = %q, %q, %q", first, second, third)
 	}
 	if count := scalar(t, db, `
@@ -611,6 +693,7 @@ func TestRegistrationRetryPayloadIsIdentical(t *testing.T) {
 
 func TestUsageRetryRevisionIdentifiesImmutablePayload(t *testing.T) {
 	db, store := newTestStore(t)
+	acknowledgeVersionStarted(t, db, store)
 	start := time.Date(2026, time.September, 2, 12, 0, 0, 0, time.UTC)
 	first := UsageSnapshot{
 		RouteID: testRouteID, Version: 1, Resolution: "hour", BucketStart: start,
@@ -639,7 +722,7 @@ func TestUsageRetryRevisionIdentifiesImmutablePayload(t *testing.T) {
 			}
 			return
 		}
-		response.WriteHeader(http.StatusNoContent)
+		writeAcceptedBatchResponse(response, body)
 	}))
 	t.Cleanup(receiver.Close)
 	sender, err := NewSender(store, receiver.URL, "secret", nil)
@@ -678,12 +761,19 @@ func TestUsageRetryRevisionIdentifiesImmutablePayload(t *testing.T) {
 	if delivered, err := sender.SendOne(t.Context()); err != nil || !delivered {
 		t.Fatalf("changed publish: delivered=%v err=%v", delivered, err)
 	}
-	var changedPayload routeusagev1.RouteUsageSnapshot
+	var changedPayload routeusagev1.RouteUsageSnapshotBatch
 	if err := json.Unmarshal(<-bodies, &changedPayload); err != nil {
 		t.Fatal(err)
 	}
-	if changedPayload.Revision != "2" || changedPayload.IngressBytes != "20" {
+	if len(changedPayload.Items) != 1 || changedPayload.Items[0].Revision != "2" || changedPayload.Items[0].IngressBytes != "20" {
 		t.Fatalf("changed usage payload = %+v", changedPayload)
+	}
+	var acceptedPayload routeusagev1.RouteUsageSnapshotBatch
+	if err := json.Unmarshal(accepted, &acceptedPayload); err != nil {
+		t.Fatal(err)
+	}
+	if acceptedPayload.Items[0].ItemId == changedPayload.Items[0].ItemId {
+		t.Fatal("usage report ID did not change with the revision")
 	}
 	if count := scalar(t, db, "SELECT COUNT(*) FROM route_usage_outbox_items"); count != 0 {
 		t.Fatalf("outbox count = %d, want 0", count)
@@ -754,13 +844,18 @@ func TestLifecycleDeliveryUsesRouteSequenceNotEnqueueTime(t *testing.T) {
 	}
 	sequences := make(chan string, 2)
 	receiver := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		var event routeusagev1.RouteLifecycleEvent
-		if err := json.NewDecoder(request.Body).Decode(&event); err != nil {
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
 			response.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		sequences <- event.Sequence
-		response.WriteHeader(http.StatusNoContent)
+		var batch routeusagev1.RouteLifecycleEventBatch
+		if err := json.Unmarshal(body, &batch); err != nil || len(batch.Items) != 1 {
+			response.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		sequences <- batch.Items[0].Sequence
+		writeAcceptedBatchResponse(response, body)
 	}))
 	t.Cleanup(receiver.Close)
 	sender, err := NewSender(store, receiver.URL, "secret", nil)
@@ -777,8 +872,233 @@ func TestLifecycleDeliveryUsesRouteSequenceNotEnqueueTime(t *testing.T) {
 	}
 }
 
+func TestLifecycleBatchSelectsOnlyEarliestEventPerRoute(t *testing.T) {
+	db, store := newTestStore(t)
+	otherRouteID := "route_other"
+	insertLocalTestRoute(t, db, otherRouteID, "other.tnl.dev")
+	enqueueRouteLifecycle(t, db, store, testRouteID, routes.LifecycleVersionStarted, time.Now())
+	enqueueRouteLifecycle(t, db, store, testRouteID, routes.LifecycleReady, time.Now())
+	enqueueRouteLifecycle(t, db, store, otherRouteID, routes.LifecycleVersionStarted, time.Now())
+
+	rows, err := store.queries.ListRouteLifecycleOutboxBatch(t.Context(), maximumBatchItems)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("lifecycle batch size = %d, want 2", len(rows))
+	}
+	for _, row := range rows {
+		if row.Sequence != 1 {
+			t.Fatalf("route %q sequence = %d, want 1", row.RouteID, row.Sequence)
+		}
+	}
+}
+
+func TestSenderBatchesLifecycleEventsAcrossRoutesAndCorrelatesResultsByID(t *testing.T) {
+	db, store := newTestStore(t)
+	otherRouteID := "route_other"
+	insertLocalTestRoute(t, db, otherRouteID, "other.tnl.dev")
+	enqueueRouteLifecycle(t, db, store, testRouteID, routes.LifecycleVersionStarted, time.Now())
+	enqueueRouteLifecycle(t, db, store, otherRouteID, routes.LifecycleVersionStarted, time.Now())
+
+	received := make(chan routeusagev1.RouteLifecycleEventBatch, 1)
+	receiver := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		var batch routeusagev1.RouteLifecycleEventBatch
+		if err := json.NewDecoder(request.Body).Decode(&batch); err != nil {
+			response.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		received <- batch
+		code := routeusagev1.BatchProblemCodeStatusConflict
+		results := []routeusagev1.BatchResult{
+			{ItemId: batch.Items[1].ItemId, Accepted: false, Code: &code},
+			{ItemId: batch.Items[0].ItemId, Accepted: true},
+		}
+		_ = json.NewEncoder(response).Encode(struct {
+			Results []routeusagev1.BatchResult `json:"results"`
+		}{Results: results})
+	}))
+	t.Cleanup(receiver.Close)
+	sender, err := NewSender(store, receiver.URL, "secret", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if delivered, err := sender.SendOne(t.Context()); !delivered || err == nil {
+		t.Fatalf("mixed lifecycle batch: delivered=%v err=%v", delivered, err)
+	}
+	batch := <-received
+	if len(batch.Items) != 2 || batch.Items[0].RouteId == batch.Items[1].RouteId {
+		t.Fatalf("lifecycle batch = %+v", batch)
+	}
+	if count := scalar(t, db, "SELECT COUNT(*) FROM route_usage_outbox_items"); count != 1 {
+		t.Fatalf("remaining lifecycle outbox count = %d, want 1", count)
+	}
+	var remainingEventID string
+	if err := db.QueryRowContext(t.Context(), `
+		SELECT event.event_id
+		FROM route_usage_outbox_items AS outbox
+		JOIN route_lifecycle_events AS event ON event.id = outbox.source_id
+	`).Scan(&remainingEventID); err != nil {
+		t.Fatal(err)
+	}
+	if remainingEventID != batch.Items[1].ItemId {
+		t.Fatalf("remaining event = %q, want %q", remainingEventID, batch.Items[1].ItemId)
+	}
+}
+
+func TestSenderRejectsIncompleteBatchResponseWithoutAcknowledging(t *testing.T) {
+	db, store := newTestStore(t)
+	otherRouteID := "route_other"
+	insertLocalTestRoute(t, db, otherRouteID, "other.tnl.dev")
+	enqueueRouteLifecycle(t, db, store, testRouteID, routes.LifecycleVersionStarted, time.Now())
+	enqueueRouteLifecycle(t, db, store, otherRouteID, routes.LifecycleVersionStarted, time.Now())
+	receiver := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		var batch routeusagev1.RouteLifecycleEventBatch
+		if err := json.NewDecoder(request.Body).Decode(&batch); err != nil {
+			response.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		_ = json.NewEncoder(response).Encode(struct {
+			Results []routeusagev1.BatchResult `json:"results"`
+		}{Results: []routeusagev1.BatchResult{{ItemId: batch.Items[0].ItemId, Accepted: true}}})
+	}))
+	t.Cleanup(receiver.Close)
+	sender, err := NewSender(store, receiver.URL, "secret", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if delivered, err := sender.SendOne(t.Context()); !delivered || err == nil {
+		t.Fatalf("incomplete response: delivered=%v err=%v", delivered, err)
+	}
+	if count := scalar(t, db, "SELECT COUNT(*) FROM route_usage_outbox_items"); count != 2 {
+		t.Fatalf("outbox count = %d, want 2", count)
+	}
+}
+
+func TestSenderRejectsInvalidBatchResponses(t *testing.T) {
+	const (
+		firstID   = "event_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		secondID  = "event_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		unknownID = "event_cccccccccccccccccccccccccccccccc"
+	)
+	tests := map[string]struct {
+		body    string
+		message string
+	}{
+		"duplicate item": {
+			body:    `{"results":[{"item_id":"` + firstID + `","accepted":true},{"item_id":"` + firstID + `","accepted":true}]}`,
+			message: "duplicate item",
+		},
+		"unknown item": {
+			body:    `{"results":[{"item_id":"` + firstID + `","accepted":true},{"item_id":"` + unknownID + `","accepted":true}]}`,
+			message: "unknown item",
+		},
+		"malformed JSON": {body: `{"results":[`, message: "decode batch response"},
+		"oversized body": {body: strings.Repeat(" ", maximumResponseBytes+1), message: "exceeds size limit"},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			receiver := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(response, test.body)
+			}))
+			t.Cleanup(receiver.Close)
+			sender, err := NewSender(nil, receiver.URL, "secret", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := sender.postBatch(t.Context(), "/v1/routes/lifecycle-events", []byte(`{"items":[]}`), []string{firstID, secondID}); err == nil || !strings.Contains(err.Error(), test.message) {
+				t.Fatalf("batch response error = %v, want message containing %q", err, test.message)
+			}
+		})
+	}
+}
+
+func TestSenderBatchesUsageReportsWithStableIDs(t *testing.T) {
+	db, store := newTestStore(t)
+	acknowledgeVersionStarted(t, db, store)
+	start := time.Date(2026, time.September, 2, 12, 0, 0, 0, time.UTC)
+	for _, snapshot := range []UsageSnapshot{
+		{RouteID: testRouteID, Version: 1, Resolution: "minute", BucketStart: start, Revision: 1, ObservedThrough: start.Add(time.Minute), Publish: true},
+		{RouteID: testRouteID, Version: 1, Resolution: "hour", BucketStart: start, Revision: 1, ObservedThrough: start.Add(time.Minute), Publish: true},
+	} {
+		if err := store.SaveUsage(t.Context(), []UsageSnapshot{snapshot}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var initialIDs []string
+	rows, err := db.QueryContext(t.Context(), "SELECT report_id FROM route_usage_reports ORDER BY report_id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var reportID string
+		if err := rows.Scan(&reportID); err != nil {
+			t.Fatal(err)
+		}
+		initialIDs = append(initialIDs, reportID)
+	}
+	if err := rows.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	received := make(chan routeusagev1.RouteUsageSnapshotBatch, 1)
+	receiver := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			response.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		var batch routeusagev1.RouteUsageSnapshotBatch
+		if err := json.Unmarshal(body, &batch); err != nil {
+			response.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		received <- batch
+		writeAcceptedBatchResponse(response, body)
+	}))
+	t.Cleanup(receiver.Close)
+	sender, err := NewSender(store, receiver.URL, "secret", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if delivered, err := sender.SendOne(t.Context()); err != nil || !delivered {
+		t.Fatalf("usage batch: delivered=%v err=%v", delivered, err)
+	}
+	batch := <-received
+	if len(batch.Items) != 2 {
+		t.Fatalf("usage batch size = %d, want 2", len(batch.Items))
+	}
+	wireIDs := []string{batch.Items[0].ItemId, batch.Items[1].ItemId}
+	slices.Sort(wireIDs)
+	if !slices.Equal(wireIDs, initialIDs) {
+		t.Fatalf("usage report IDs = %v, want %v", wireIDs, initialIDs)
+	}
+	if count := scalar(t, db, "SELECT COUNT(*) FROM route_usage_outbox_items"); count != 0 {
+		t.Fatalf("outbox count = %d, want 0", count)
+	}
+}
+
+func TestEncodeBatchHonorsRequestLimit(t *testing.T) {
+	items := make([]string, maximumBatchItems)
+	for index := range items {
+		items[index] = strings.Repeat("x", maximumRequestBytes/maximumBatchItems)
+	}
+	count, body, err := encodeBatch(items)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count <= 0 || count >= maximumBatchItems || len(body) > maximumRequestBytes {
+		t.Fatalf("encoded batch count=%d bytes=%d", count, len(body))
+	}
+	count, _, err = encodeBatch(make([]int, maximumBatchItems+1))
+	if err != nil || count != maximumBatchItems {
+		t.Fatalf("item-limited batch count=%d err=%v", count, err)
+	}
+}
+
 func TestSenderIncludesExtendedUsageAndOmitsUndefinedHistograms(t *testing.T) {
 	db, store := newTestStore(t)
+	acknowledgeVersionStarted(t, db, store)
 	start := time.Date(2026, time.September, 2, 12, 0, 0, 0, time.UTC)
 	var openLatency durationHistogram
 	if !openLatency.observe(25 * time.Millisecond) {
@@ -802,13 +1122,18 @@ func TestSenderIncludesExtendedUsageAndOmitsUndefinedHistograms(t *testing.T) {
 	}
 	received := make(chan routeusagev1.RouteUsageSnapshot, 1)
 	receiver := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		var snapshot routeusagev1.RouteUsageSnapshot
-		if err := json.NewDecoder(request.Body).Decode(&snapshot); err != nil {
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
 			response.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		received <- snapshot
-		response.WriteHeader(http.StatusNoContent)
+		var batch routeusagev1.RouteUsageSnapshotBatch
+		if err := json.Unmarshal(body, &batch); err != nil || len(batch.Items) != 1 {
+			response.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		received <- batch.Items[0]
+		writeAcceptedBatchResponse(response, body)
 	}))
 	t.Cleanup(receiver.Close)
 	sender, err := NewSender(store, receiver.URL, "secret", nil)
@@ -825,7 +1150,7 @@ func TestSenderIncludesExtendedUsageAndOmitsUndefinedHistograms(t *testing.T) {
 		t.Fatalf("usage payload counters = %+v", snapshot)
 	}
 	if snapshot.PublisherOpenLatency == nil || snapshot.PublisherOpenLatency.Count != "1" ||
-		snapshot.PublisherOpenLatency.SumNanoseconds != "25000000" || len(snapshot.PublisherOpenLatency.CumulativeCounts) != 20 {
+		snapshot.PublisherOpenLatency.SumNanoseconds != "25000000" || len(snapshot.PublisherOpenLatency.CumulativeCounts) != 22 {
 		t.Fatalf("usage payload publisher open latency = %+v", snapshot.PublisherOpenLatency)
 	}
 	if snapshot.TimeToFirstPublisherByte != nil || snapshot.SuccessfulConnectionDuration != nil {
@@ -857,7 +1182,7 @@ func TestPublisherPrioritizesLifecycleAndDeletesCompletedUsage(t *testing.T) {
 			return
 		}
 		paths <- request.URL.Path
-		response.WriteHeader(http.StatusNoContent)
+		acceptRouteUsageRequest(response, request)
 	}))
 	t.Cleanup(receiver.Close)
 	sender, err := NewSender(store, receiver.URL, "secret", nil)
@@ -874,7 +1199,7 @@ func TestPublisherPrioritizesLifecycleAndDeletesCompletedUsage(t *testing.T) {
 			t.Fatal("expected queued report")
 		}
 	}
-	if first, second := <-paths, <-paths; first != "/v1/routes/route_test/lifecycle-events" || second != "/v1/routes/route_test/usage-snapshots" {
+	if first, second := <-paths, <-paths; first != "/v1/routes/lifecycle-events" || second != "/v1/routes/usage-snapshots" {
 		t.Fatalf("delivery order = %q, %q", first, second)
 	}
 	if count := scalar(t, db, "SELECT COUNT(*) FROM route_usage_outbox_items"); count != 0 {
@@ -887,6 +1212,7 @@ func TestPublisherPrioritizesLifecycleAndDeletesCompletedUsage(t *testing.T) {
 
 func TestPublisherAcknowledgesOnlyDeliveredRevision(t *testing.T) {
 	db, store := newTestStore(t)
+	acknowledgeVersionStarted(t, db, store)
 	start := time.Date(2026, time.January, 2, 12, 0, 0, 0, time.UTC)
 	first := UsageSnapshot{
 		RouteID: testRouteID, Version: 1, Resolution: "hour", BucketStart: start,
@@ -899,8 +1225,14 @@ func TestPublisherAcknowledgesOnlyDeliveredRevision(t *testing.T) {
 	var requests atomic.Int64
 	updateErrors := make(chan error, 1)
 	receiver := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		var payload routeusagev1.RouteUsageSnapshot
-		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			updateErrors <- err
+			response.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		var payload routeusagev1.RouteUsageSnapshotBatch
+		if err := json.Unmarshal(body, &payload); err != nil || len(payload.Items) != 1 {
 			updateErrors <- err
 			response.WriteHeader(http.StatusBadRequest)
 			return
@@ -912,7 +1244,7 @@ func TestPublisherAcknowledgesOnlyDeliveredRevision(t *testing.T) {
 			second.IngressBytes = 20
 			updateErrors <- store.SaveUsage(context.Background(), []UsageSnapshot{second})
 		}
-		response.WriteHeader(http.StatusNoContent)
+		writeAcceptedBatchResponse(response, body)
 	}))
 	t.Cleanup(receiver.Close)
 	sender, err := NewSender(store, receiver.URL, "secret", nil)
@@ -1021,6 +1353,45 @@ func TestPublisherPollsTheDurableOutbox(t *testing.T) {
 	}
 }
 
+func TestSenderWakeDoesNotBypassFailureBackoff(t *testing.T) {
+	db, store := newTestStore(t)
+	enqueueLifecycle(t, db, store, time.Now())
+	attempts := make(chan struct{}, 2)
+	receiver := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		attempts <- struct{}{}
+		response.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(receiver.Close)
+	sender, err := NewSender(store, receiver.URL, "secret", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() {
+		sender.Run(ctx, nil)
+		close(done)
+	}()
+	defer func() {
+		cancel()
+		<-done
+	}()
+
+	select {
+	case <-attempts:
+	case <-time.After(time.Second):
+		t.Fatal("sender did not make its first attempt")
+	}
+	for range 100 {
+		store.wakeSender()
+	}
+	select {
+	case <-attempts:
+		t.Fatal("sender wake bypassed failure backoff")
+	case <-time.After(750 * time.Millisecond):
+	}
+}
+
 func TestCollectorRecoversExpiredBucketAsIncomplete(t *testing.T) {
 	db, store := newTestStore(t)
 	start := time.Date(2026, time.January, 2, 12, 0, 0, 0, time.UTC)
@@ -1038,8 +1409,19 @@ func TestCollectorRecoversExpiredBucketAsIncomplete(t *testing.T) {
 
 	bucket := loadUsageBucket(t, statedb.New(db), "minute", start)
 	assertUsage(t, bucket, 0, 30*time.Second, 0, 0, 0, 1)
+	if bucket.Finalized != 1 {
+		t.Fatalf("recovered bucket finalized = %d, want 1", bucket.Finalized)
+	}
 	if count := scalar(t, db, "SELECT COUNT(*) FROM route_usage_outbox_items"); count != 1 {
 		t.Fatalf("outbox count = %d, want 1", count)
+	}
+	recoveredAgain := NewCollector(store, nil)
+	recoveredAgain.now = func() time.Time { return start.Add(3 * time.Minute) }
+	if err := recoveredAgain.Recover(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if revision := scalar(t, db, "SELECT revision FROM route_usage_reports"); revision != 1 {
+		t.Fatalf("recovered report revision = %d, want 1", revision)
 	}
 }
 
@@ -1108,6 +1490,23 @@ func insertSignedTestRoute(t *testing.T, db *sql.DB, routeID, hostname, marker s
 	if _, err := db.ExecContext(t.Context(), signedRouteInsertSQL,
 		routeID, hostname, testAuthorizationID(marker), "key-"+marker, testRetryID(marker),
 	); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func insertLocalTestRoute(t *testing.T, db *sql.DB, routeID, hostname string) {
+	t.Helper()
+	hostnameID := "hostname_" + strings.TrimPrefix(routeID, "route_")
+	if _, err := db.ExecContext(t.Context(), `
+		INSERT INTO hostnames (id, identity_id, hostname, kind, status, source, created_at, activated_at)
+		VALUES (?, 'identity_test', ?, 'managed', 'active', 'user', 1, 1)
+	`, hostnameID, hostname); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(t.Context(), `
+		INSERT INTO routes (id, hostname_id, identity_id, hostname, local_target, status, version, created_at)
+		VALUES (?, ?, 'identity_test', ?, 'localhost:8080', 'active', 1, 1)
+	`, routeID, hostnameID, hostname); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -1198,6 +1597,50 @@ func assertUsage(
 		bucket.Revision != revision {
 		t.Fatalf("usage bucket = %+v", bucket)
 	}
+}
+
+func acknowledgeVersionStarted(t *testing.T, db *sql.DB, store *Store) {
+	t.Helper()
+	enqueueLifecycle(t, db, store, time.Now())
+	if _, err := db.ExecContext(t.Context(), `
+		DELETE FROM route_usage_outbox_items
+		WHERE source_kind = 'lifecycle_event'
+	`); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func acceptRouteUsageRequest(response http.ResponseWriter, request *http.Request) {
+	if request.URL.Path == "/v1/routes" {
+		response.WriteHeader(http.StatusNoContent)
+		return
+	}
+	body, err := io.ReadAll(request.Body)
+	if err != nil {
+		response.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	writeAcceptedBatchResponse(response, body)
+}
+
+func writeAcceptedBatchResponse(response http.ResponseWriter, body []byte) {
+	var envelope struct {
+		Items []struct {
+			ItemID string `json:"item_id"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		response.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	results := make([]routeusagev1.BatchResult, len(envelope.Items))
+	for index, item := range envelope.Items {
+		results[index] = routeusagev1.BatchResult{ItemId: item.ItemID, Accepted: true}
+	}
+	response.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(response).Encode(struct {
+		Results []routeusagev1.BatchResult `json:"results"`
+	}{Results: results})
 }
 
 func scalar(t *testing.T, db *sql.DB, query string, arguments ...any) int64 {

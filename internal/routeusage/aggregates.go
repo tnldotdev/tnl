@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	durationHistogramBucketCount = 20
+	durationHistogramBucketCount = 22
 	durationHistogramSize        = 8 * (durationHistogramBucketCount + 1)
 	visitorHLLPrecision          = 12
 	visitorHLLRegisterCount      = 1 << visitorHLLPrecision
@@ -41,6 +41,8 @@ var durationHistogramUpperBounds = [...]time.Duration{
 	time.Hour,
 	6 * time.Hour,
 	24 * time.Hour,
+	3 * 24 * time.Hour,
+	7 * 24 * time.Hour,
 }
 
 type durationHistogram struct {

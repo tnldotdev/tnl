@@ -342,25 +342,29 @@ CREATE TABLE route_usage_snapshots (
     ingress_bytes INTEGER NOT NULL CHECK (ingress_bytes >= 0),
     egress_bytes INTEGER NOT NULL CHECK (egress_bytes >= 0),
     publisher_open_latency BLOB CHECK (
-        publisher_open_latency IS NULL OR typeof(publisher_open_latency) = 'blob' AND length(publisher_open_latency) = 168
+        publisher_open_latency IS NULL OR typeof(publisher_open_latency) = 'blob' AND length(publisher_open_latency) = 184
     ),
     time_to_first_publisher_byte BLOB CHECK (
-        time_to_first_publisher_byte IS NULL OR typeof(time_to_first_publisher_byte) = 'blob' AND length(time_to_first_publisher_byte) = 168
+        time_to_first_publisher_byte IS NULL OR typeof(time_to_first_publisher_byte) = 'blob' AND length(time_to_first_publisher_byte) = 184
     ),
     successful_connection_duration BLOB CHECK (
-        successful_connection_duration IS NULL OR typeof(successful_connection_duration) = 'blob' AND length(successful_connection_duration) = 168
+        successful_connection_duration IS NULL OR typeof(successful_connection_duration) = 'blob' AND length(successful_connection_duration) = 184
     ),
     visitor_network_hll BLOB NOT NULL CHECK (typeof(visitor_network_hll) = 'blob' AND length(visitor_network_hll) >= 5),
     visitor_network_estimate INTEGER NOT NULL CHECK (visitor_network_estimate >= 0),
     complete INTEGER NOT NULL DEFAULT 0 CHECK (complete IN (0, 1)),
+    finalized INTEGER NOT NULL DEFAULT 0 CHECK (finalized IN (0, 1)),
+    CHECK (complete = 0 OR finalized = 1),
     UNIQUE (route_id, version, resolution, bucket_start)
 ) STRICT;
 
 CREATE INDEX route_usage_snapshots_incomplete
-    ON route_usage_snapshots (resolution, bucket_start, id) WHERE complete = 0;
+    ON route_usage_snapshots (resolution, bucket_start, id) WHERE finalized = 0;
 
 CREATE TABLE route_usage_reports (
     snapshot_id INTEGER PRIMARY KEY REFERENCES route_usage_snapshots(id) ON DELETE CASCADE,
+    report_id TEXT NOT NULL UNIQUE
+        CHECK (report_id GLOB 'usage_report_[0-9a-f]*' AND length(report_id) = 45),
     revision INTEGER NOT NULL CHECK (revision >= 1),
     observed_through INTEGER NOT NULL CHECK (observed_through >= 0),
     connection_attempts INTEGER NOT NULL CHECK (connection_attempts >= 0),
@@ -372,13 +376,13 @@ CREATE TABLE route_usage_reports (
     ingress_bytes INTEGER NOT NULL CHECK (ingress_bytes >= 0),
     egress_bytes INTEGER NOT NULL CHECK (egress_bytes >= 0),
     publisher_open_latency BLOB CHECK (
-        publisher_open_latency IS NULL OR typeof(publisher_open_latency) = 'blob' AND length(publisher_open_latency) = 168
+        publisher_open_latency IS NULL OR typeof(publisher_open_latency) = 'blob' AND length(publisher_open_latency) = 184
     ),
     time_to_first_publisher_byte BLOB CHECK (
-        time_to_first_publisher_byte IS NULL OR typeof(time_to_first_publisher_byte) = 'blob' AND length(time_to_first_publisher_byte) = 168
+        time_to_first_publisher_byte IS NULL OR typeof(time_to_first_publisher_byte) = 'blob' AND length(time_to_first_publisher_byte) = 184
     ),
     successful_connection_duration BLOB CHECK (
-        successful_connection_duration IS NULL OR typeof(successful_connection_duration) = 'blob' AND length(successful_connection_duration) = 168
+        successful_connection_duration IS NULL OR typeof(successful_connection_duration) = 'blob' AND length(successful_connection_duration) = 184
     ),
     visitor_network_hll BLOB NOT NULL CHECK (typeof(visitor_network_hll) = 'blob' AND length(visitor_network_hll) >= 5),
     visitor_network_estimate INTEGER NOT NULL CHECK (visitor_network_estimate >= 0),
