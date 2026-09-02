@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/proxyproto"
@@ -128,7 +129,8 @@ func (s *Server) Serve() error {
 			}
 			return err
 		}
-		if !s.admit(connection) {
+		accounted, ok := s.admit(connection)
+		if !ok {
 			_ = connection.Close()
 			if s.config.Metrics != nil {
 				s.config.Metrics.IncCapacityRejection("public_connections")
@@ -137,8 +139,12 @@ func (s *Server) Serve() error {
 		}
 		go func() {
 			defer s.active.Done()
-			defer s.release(connection)
-			if err := s.handle(connection); err != nil && s.config.OnError != nil {
+			defer func() {
+				if !accounted.transferred.Load() {
+					_ = accounted.Close()
+				}
+			}()
+			if err := s.handle(accounted); err != nil && s.config.OnError != nil {
 				s.config.OnError(err)
 			}
 		}()
@@ -157,6 +163,7 @@ func (s *Server) Drain(ctx context.Context) error {
 	}()
 	select {
 	case <-wait:
+		s.closeConnections()
 		return nil
 	case <-ctx.Done():
 		s.closeConnections()
@@ -309,32 +316,29 @@ func (s *Server) connectionMetadata(public net.Conn) (netip.AddrPort, netip.Addr
 	return source, destination, public, nil
 }
 
-func (s *Server) admit(connection net.Conn) bool {
+func (s *Server) admit(connection net.Conn) (*accountedConn, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closing || len(s.connections) >= s.config.MaxConnections {
-		return false
+		return nil, false
 	}
-	s.connections[connection] = struct{}{}
+	accounted := &accountedConn{Conn: connection, server: s}
+	s.connections[accounted] = struct{}{}
 	// Register before launch so Drain cannot miss an accepted handler.
 	s.active.Add(1)
-	return true
+	return accounted, true
 }
 
 func (s *Server) release(connection net.Conn) {
 	s.mu.Lock()
-	_, owned := s.connections[connection]
 	delete(s.connections, connection)
 	s.mu.Unlock()
-	if owned {
-		_ = connection.Close()
-	}
 }
 
 func (s *Server) transfer(connection net.Conn) {
-	s.mu.Lock()
-	delete(s.connections, connection)
-	s.mu.Unlock()
+	if accounted, ok := connection.(*accountedConn); ok {
+		accounted.transferred.Store(true)
+	}
 }
 
 func (s *Server) trackBackend(connection net.Conn) bool {
@@ -400,6 +404,22 @@ func (s *Server) closeConnections() {
 type readerConn struct {
 	net.Conn
 	reader io.Reader
+}
+
+type accountedConn struct {
+	net.Conn
+	server      *Server
+	closeOnce   sync.Once
+	closeErr    error
+	transferred atomic.Bool
+}
+
+func (c *accountedConn) Close() error {
+	c.closeOnce.Do(func() {
+		c.closeErr = c.Conn.Close()
+		c.server.release(c)
+	})
+	return c.closeErr
 }
 
 type addressConn struct {

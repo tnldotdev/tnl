@@ -503,7 +503,8 @@ func TestAdmissionRegistersBeforeDrainWait(t *testing.T) {
 	}
 	connection, peer := net.Pipe()
 	defer peer.Close()
-	if !server.admit(connection) {
+	accounted, ok := server.admit(connection)
+	if !ok {
 		t.Fatal("connection was not admitted")
 	}
 	waited := make(chan struct{})
@@ -516,13 +517,53 @@ func TestAdmissionRegistersBeforeDrainWait(t *testing.T) {
 		t.Fatal("wait completed before the admitted handler")
 	case <-time.After(20 * time.Millisecond):
 	}
-	server.release(connection)
+	_ = accounted.Close()
 	server.active.Done()
 	select {
 	case <-waited:
 	case <-time.After(time.Second):
 		t.Fatal("wait did not complete after the handler")
 	}
+}
+
+func TestTransferredControlConnectionRetainsAdmissionSlot(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	server, err := New(listener, Config{
+		Lookup: func(string) (Route, bool) { return Route{}, false }, MaxConnections: 1, MaxRouteConnections: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, firstPeer := net.Pipe()
+	defer firstPeer.Close()
+	accounted, ok := server.admit(first)
+	if !ok {
+		t.Fatal("first connection was not admitted")
+	}
+	server.transfer(accounted)
+	server.active.Done()
+	second, secondPeer := net.Pipe()
+	defer secondPeer.Close()
+	if admitted, ok := server.admit(second); ok {
+		_ = admitted.Close()
+		t.Fatal("transferred connection released its admission slot")
+	}
+	_ = second.Close()
+	if err := accounted.Close(); err != nil {
+		t.Fatal(err)
+	}
+	third, thirdPeer := net.Pipe()
+	defer thirdPeer.Close()
+	admitted, ok := server.admit(third)
+	if !ok {
+		t.Fatal("slot was not released when transferred connection closed")
+	}
+	_ = admitted.Close()
+	server.active.Done()
 }
 
 type tlsBackend struct {
