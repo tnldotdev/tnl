@@ -11,23 +11,23 @@ import (
 )
 
 const findBoundCertificateIssuance = `-- name: FindBoundCertificateIssuance :one
-SELECT id, route_id, version, hostname, acme_profile, status, csr_der, csr_hash, spki_hash, order_url, acme_status, order_attempts, order_expires_at, retry_at, authorization_url, finalize_url, challenge_url, challenge_token, challenge_digest, challenge_expires_at, certificate_url, certificate_pem, not_before, not_after, renew_at, installed_at, challenge_removed_at, last_error, created_at, updated_at FROM certificate_issuances
-WHERE route_id = ? AND version = ? AND csr_hash = ?
+SELECT id, route_id, route_version, hostname, acme_profile, status, csr_der, csr_hash, spki_hash, order_url, acme_status, order_attempts, order_expires_at, retry_at, authorization_url, finalize_url, challenge_url, challenge_token, challenge_digest, challenge_expires_at, certificate_url, certificate_pem, not_before, not_after, renew_at, installed_at, challenge_removed_at, last_error, created_at, updated_at FROM certificate_issuances
+WHERE route_id = ? AND route_version = ? AND csr_hash = ?
 `
 
 type FindBoundCertificateIssuanceParams struct {
-	RouteID string
-	Version int64
-	CsrHash []byte
+	RouteID      string
+	RouteVersion int64
+	CsrHash      []byte
 }
 
 func (q *Queries) FindBoundCertificateIssuance(ctx context.Context, arg FindBoundCertificateIssuanceParams) (CertificateIssuance, error) {
-	row := q.db.QueryRowContext(ctx, findBoundCertificateIssuance, arg.RouteID, arg.Version, arg.CsrHash)
+	row := q.db.QueryRowContext(ctx, findBoundCertificateIssuance, arg.RouteID, arg.RouteVersion, arg.CsrHash)
 	var i CertificateIssuance
 	err := row.Scan(
 		&i.ID,
 		&i.RouteID,
-		&i.Version,
+		&i.RouteVersion,
 		&i.Hostname,
 		&i.AcmeProfile,
 		&i.Status,
@@ -60,7 +60,7 @@ func (q *Queries) FindBoundCertificateIssuance(ctx context.Context, arg FindBoun
 }
 
 const findResumableCertificateIssuance = `-- name: FindResumableCertificateIssuance :one
-SELECT id, route_id, version, hostname, acme_profile, status, csr_der, csr_hash, spki_hash, order_url, acme_status, order_attempts, order_expires_at, retry_at, authorization_url, finalize_url, challenge_url, challenge_token, challenge_digest, challenge_expires_at, certificate_url, certificate_pem, not_before, not_after, renew_at, installed_at, challenge_removed_at, last_error, created_at, updated_at FROM certificate_issuances
+SELECT id, route_id, route_version, hostname, acme_profile, status, csr_der, csr_hash, spki_hash, order_url, acme_status, order_attempts, order_expires_at, retry_at, authorization_url, finalize_url, challenge_url, challenge_token, challenge_digest, challenge_expires_at, certificate_url, certificate_pem, not_before, not_after, renew_at, installed_at, challenge_removed_at, last_error, created_at, updated_at FROM certificate_issuances
 WHERE route_id = ? AND csr_hash = ? AND certificate_pem IS NULL
     AND status NOT IN ('installed', 'failed', 'blocked', 'canceled')
     AND (order_expires_at IS NULL OR order_expires_at > CAST(?3 AS INTEGER))
@@ -81,7 +81,7 @@ func (q *Queries) FindResumableCertificateIssuance(ctx context.Context, arg Find
 	err := row.Scan(
 		&i.ID,
 		&i.RouteID,
-		&i.Version,
+		&i.RouteVersion,
 		&i.Hostname,
 		&i.AcmeProfile,
 		&i.Status,
@@ -114,7 +114,7 @@ func (q *Queries) FindResumableCertificateIssuance(ctx context.Context, arg Find
 }
 
 const findReusableCertificateIssuance = `-- name: FindReusableCertificateIssuance :one
-SELECT id, route_id, version, hostname, acme_profile, status, csr_der, csr_hash, spki_hash, order_url, acme_status, order_attempts, order_expires_at, retry_at, authorization_url, finalize_url, challenge_url, challenge_token, challenge_digest, challenge_expires_at, certificate_url, certificate_pem, not_before, not_after, renew_at, installed_at, challenge_removed_at, last_error, created_at, updated_at FROM certificate_issuances
+SELECT id, route_id, route_version, hostname, acme_profile, status, csr_der, csr_hash, spki_hash, order_url, acme_status, order_attempts, order_expires_at, retry_at, authorization_url, finalize_url, challenge_url, challenge_token, challenge_digest, challenge_expires_at, certificate_url, certificate_pem, not_before, not_after, renew_at, installed_at, challenge_removed_at, last_error, created_at, updated_at FROM certificate_issuances
 WHERE route_id = ?1
     AND csr_hash = ?2
     AND certificate_pem IS NOT NULL
@@ -136,7 +136,7 @@ func (q *Queries) FindReusableCertificateIssuance(ctx context.Context, arg FindR
 	err := row.Scan(
 		&i.ID,
 		&i.RouteID,
-		&i.Version,
+		&i.RouteVersion,
 		&i.Hostname,
 		&i.AcmeProfile,
 		&i.Status,
@@ -189,30 +189,8 @@ func (q *Queries) GetACMEAccount(ctx context.Context, directoryUrl string) (Acme
 	return i, err
 }
 
-const getActiveRouteHostname = `-- name: GetActiveRouteHostname :one
-SELECT hostname
-FROM routes
-WHERE id = ?1
-    AND version = ?2
-    AND status = 'active'
-    AND (authorization_expires_at IS NULL OR authorization_expires_at > ?3)
-`
-
-type GetActiveRouteHostnameParams struct {
-	RouteID string
-	Version int64
-	Now     sql.NullInt64
-}
-
-func (q *Queries) GetActiveRouteHostname(ctx context.Context, arg GetActiveRouteHostnameParams) (string, error) {
-	row := q.db.QueryRowContext(ctx, getActiveRouteHostname, arg.RouteID, arg.Version, arg.Now)
-	var hostname string
-	err := row.Scan(&hostname)
-	return hostname, err
-}
-
 const getCertificateIssuance = `-- name: GetCertificateIssuance :one
-SELECT id, route_id, version, hostname, acme_profile, status, csr_der, csr_hash, spki_hash, order_url, acme_status, order_attempts, order_expires_at, retry_at, authorization_url, finalize_url, challenge_url, challenge_token, challenge_digest, challenge_expires_at, certificate_url, certificate_pem, not_before, not_after, renew_at, installed_at, challenge_removed_at, last_error, created_at, updated_at FROM certificate_issuances
+SELECT id, route_id, route_version, hostname, acme_profile, status, csr_der, csr_hash, spki_hash, order_url, acme_status, order_attempts, order_expires_at, retry_at, authorization_url, finalize_url, challenge_url, challenge_token, challenge_digest, challenge_expires_at, certificate_url, certificate_pem, not_before, not_after, renew_at, installed_at, challenge_removed_at, last_error, created_at, updated_at FROM certificate_issuances
 WHERE id = ?
 `
 
@@ -222,7 +200,7 @@ func (q *Queries) GetCertificateIssuance(ctx context.Context, id string) (Certif
 	err := row.Scan(
 		&i.ID,
 		&i.RouteID,
-		&i.Version,
+		&i.RouteVersion,
 		&i.Hostname,
 		&i.AcmeProfile,
 		&i.Status,
@@ -254,6 +232,28 @@ func (q *Queries) GetCertificateIssuance(ctx context.Context, id string) (Certif
 	return i, err
 }
 
+const getEnabledRouteHostname = `-- name: GetEnabledRouteHostname :one
+SELECT hostname
+FROM routes
+WHERE id = ?1
+    AND route_version = ?2
+    AND status = 'enabled'
+    AND (authorization_expires_at IS NULL OR authorization_expires_at > ?3)
+`
+
+type GetEnabledRouteHostnameParams struct {
+	RouteID      string
+	RouteVersion int64
+	Now          sql.NullInt64
+}
+
+func (q *Queries) GetEnabledRouteHostname(ctx context.Context, arg GetEnabledRouteHostnameParams) (string, error) {
+	row := q.db.QueryRowContext(ctx, getEnabledRouteHostname, arg.RouteID, arg.RouteVersion, arg.Now)
+	var hostname string
+	err := row.Scan(&hostname)
+	return hostname, err
+}
+
 const getRecentCertificateAttempts = `-- name: GetRecentCertificateAttempts :one
 SELECT COUNT(*), CAST(COALESCE(MIN(created_at), 0) AS INTEGER) AS earliest_created_at
 FROM certificate_issuances
@@ -281,7 +281,7 @@ const hasBlockingCertificateIssuance = `-- name: HasBlockingCertificateIssuance 
 SELECT CAST(EXISTS (
     SELECT 1
     FROM certificate_issuances
-    WHERE route_id = ? AND version = ? AND csr_hash != ?
+    WHERE route_id = ? AND route_version = ? AND csr_hash != ?
         AND (
             status NOT IN ('installed', 'failed', 'blocked', 'canceled')
             OR (status = 'installed' AND renew_at > CAST(?4 AS INTEGER))
@@ -290,16 +290,16 @@ SELECT CAST(EXISTS (
 `
 
 type HasBlockingCertificateIssuanceParams struct {
-	RouteID string
-	Version int64
-	CsrHash []byte
-	Now     int64
+	RouteID      string
+	RouteVersion int64
+	CsrHash      []byte
+	Now          int64
 }
 
 func (q *Queries) HasBlockingCertificateIssuance(ctx context.Context, arg HasBlockingCertificateIssuanceParams) (int64, error) {
 	row := q.db.QueryRowContext(ctx, hasBlockingCertificateIssuance,
 		arg.RouteID,
-		arg.Version,
+		arg.RouteVersion,
 		arg.CsrHash,
 		arg.Now,
 	)
@@ -344,7 +344,7 @@ const insertCertificateIssuance = `-- name: InsertCertificateIssuance :exec
 INSERT INTO certificate_issuances (
     id,
     route_id,
-    version,
+    route_version,
     hostname,
     acme_profile,
     status,
@@ -355,28 +355,28 @@ INSERT INTO certificate_issuances (
     updated_at
 )
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT (route_id, version, csr_hash) DO NOTHING
+ON CONFLICT (route_id, route_version, csr_hash) DO NOTHING
 `
 
 type InsertCertificateIssuanceParams struct {
-	ID          string
-	RouteID     string
-	Version     int64
-	Hostname    string
-	AcmeProfile string
-	Status      string
-	CsrDer      []byte
-	CsrHash     []byte
-	SpkiHash    []byte
-	CreatedAt   int64
-	UpdatedAt   int64
+	ID           string
+	RouteID      string
+	RouteVersion int64
+	Hostname     string
+	AcmeProfile  string
+	Status       string
+	CsrDer       []byte
+	CsrHash      []byte
+	SpkiHash     []byte
+	CreatedAt    int64
+	UpdatedAt    int64
 }
 
 func (q *Queries) InsertCertificateIssuance(ctx context.Context, arg InsertCertificateIssuanceParams) error {
 	_, err := q.db.ExecContext(ctx, insertCertificateIssuance,
 		arg.ID,
 		arg.RouteID,
-		arg.Version,
+		arg.RouteVersion,
 		arg.Hostname,
 		arg.AcmeProfile,
 		arg.Status,
@@ -391,18 +391,18 @@ func (q *Queries) InsertCertificateIssuance(ctx context.Context, arg InsertCerti
 
 const rebindCertificateIssuance = `-- name: RebindCertificateIssuance :execrows
 UPDATE certificate_issuances
-SET version = ?, updated_at = ?
+SET route_version = ?, updated_at = ?
 WHERE id = ?
 `
 
 type RebindCertificateIssuanceParams struct {
-	Version   int64
-	UpdatedAt int64
-	ID        string
+	RouteVersion int64
+	UpdatedAt    int64
+	ID           string
 }
 
 func (q *Queries) RebindCertificateIssuance(ctx context.Context, arg RebindCertificateIssuanceParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, rebindCertificateIssuance, arg.Version, arg.UpdatedAt, arg.ID)
+	result, err := q.db.ExecContext(ctx, rebindCertificateIssuance, arg.RouteVersion, arg.UpdatedAt, arg.ID)
 	if err != nil {
 		return 0, err
 	}

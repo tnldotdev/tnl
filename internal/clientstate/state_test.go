@@ -55,6 +55,9 @@ func TestRouteStatePersistsPendingAndCurrentMaterial(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if pending.RouteVersion != 1 {
+		t.Fatalf("pending route version = %d", pending.RouteVersion)
+	}
 	renewAt := time.Now().Add(30 * 24 * time.Hour).UTC().Truncate(time.Second)
 	material, err := route.Commit(
 		t.Context(), "route.example", pending, signedCertificate(t, pending.Key, "route.example"), renewAt, "issuance_current", 1,
@@ -69,7 +72,7 @@ func TestRouteStatePersistsPendingAndCurrentMaterial(t *testing.T) {
 	if err != nil || !found || loaded.Certificate.Leaf == nil || !loaded.RenewAt.Equal(renewAt) {
 		t.Fatalf("loaded material = %+v, %v, %v", loaded, found, err)
 	}
-	if loaded.Installed || loaded.IssuanceID != "issuance_current" || loaded.Version != 1 || !bytes.Equal(loaded.CSRDER, firstCSR) {
+	if loaded.Installed || loaded.IssuanceID != "issuance_current" || loaded.RouteVersion != 1 || !bytes.Equal(loaded.CSRDER, firstCSR) {
 		t.Fatalf("loaded durable phase = %+v", loaded)
 	}
 	loaded, err = route.MarkInstalled(t.Context(), "route.example", "issuance_current", 1)
@@ -199,7 +202,7 @@ func TestControlSessionPersistsPrivatelyAndCanBeRemoved(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := ControlSession{
-		Kind: ControlSessionKindCore, ControlEndpoint: "https://server.example",
+		Kind: ControlSessionKindServer, ControlEndpoint: "https://server.example",
 		SessionID: "control_session_0123456789abcdef0123456789abcdef", Issuer: "https://issuer.example", ClientID: "tnl-cli",
 		AccessToken: token.String(), AccessExpiresAt: time.Now().Add(time.Hour).UTC(),
 		RefreshToken: refresh.String(), RefreshExpiresAt: time.Now().Add(24 * time.Hour).UTC(), Grants: []string{"publish"},
@@ -231,7 +234,7 @@ func TestControlSessionPersistsPrivatelyAndCanBeRemoved(t *testing.T) {
 }
 
 func TestAuthorizationAuthoritySessionAllowsOpaqueTokensAndSeparateEndpoint(t *testing.T) {
-	store := testStore(t, filepath.Join(t.TempDir(), "state"), "https://core.example")
+	store := testStore(t, filepath.Join(t.TempDir(), "state"), "https://server.example")
 	want := ControlSession{
 		Kind: ControlSessionKindAuthorizationAuthority, ControlEndpoint: "https://accounts.example",
 		SessionID: "oauth_session_0123456789abcdef0123456789abcdef",

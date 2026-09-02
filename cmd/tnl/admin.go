@@ -20,12 +20,12 @@ import (
 )
 
 type adminCommand struct {
-	Server          adminServerCommands            `cmd:"" help:"Inspect a server and manage local server state."`
-	Routes          adminRouteCommands             `cmd:"" help:"Inspect, suspend, and resume routes."`
-	Hostnames       adminHostnameCommands          `cmd:"" help:"Inspect, remove, and quarantine hostnames."`
-	Credentials     adminCredentialCommands        `cmd:"" help:"List and revoke route credentials."`
-	ControlSessions adminControlSessionCommands    `cmd:"" help:"List and revoke control sessions."`
-	Switches        adminOperationalSwitchCommands `cmd:"" help:"Manage operational switches."`
+	Server          adminServerCommands         `cmd:"" help:"Inspect a server and manage local server state."`
+	Routes          adminRouteCommands          `cmd:"" help:"Inspect, suspend, and resume routes."`
+	Hostnames       adminHostnameCommands       `cmd:"" help:"Inspect, remove, and quarantine hostnames."`
+	Credentials     adminCredentialCommands     `cmd:"" help:"List and revoke route credentials."`
+	ControlSessions adminControlSessionCommands `cmd:"" help:"List and revoke control sessions."`
+	Maintenance     adminMaintenanceCommands    `cmd:"" help:"Manage maintenance controls."`
 }
 
 type adminRemoteFlags struct {
@@ -35,8 +35,8 @@ type adminRemoteFlags struct {
 }
 
 type adminServerCommands struct {
-	Status     adminServerStatusCommand `cmd:"" help:"Show Core process and route status."`
-	LoginToken adminLoginTokenCommand   `cmd:"" help:"Read or rotate the local Core login token."`
+	Status     adminServerStatusCommand `cmd:"" help:"Show server process and route status."`
+	LoginToken adminLoginTokenCommand   `cmd:"" help:"Read or rotate the local server login token."`
 	Token      adminTokenCommands       `cmd:"" help:"Generate an internal authentication token."`
 	Relay      adminRelayCommands       `cmd:"" help:"Manage the selected relay region."`
 }
@@ -139,18 +139,18 @@ type adminControlSessionRevokeCommand struct {
 	ControlSessionID string `arg:"" name:"control-session-id" required:""`
 }
 
-type adminOperationalSwitchCommands struct {
-	List    adminSwitchesListCommand `cmd:"" help:"List operational switches."`
-	Enable  adminSwitchSetCommand    `cmd:"" help:"Enable an operational path."`
-	Disable adminSwitchSetCommand    `cmd:"" help:"Disable an operational path."`
+type adminMaintenanceCommands struct {
+	List    adminMaintenanceListCommand `cmd:"" help:"List maintenance controls."`
+	Enable  adminMaintenanceSetCommand  `cmd:"" help:"Enable a maintenance control."`
+	Disable adminMaintenanceSetCommand  `cmd:"" help:"Disable a maintenance control."`
 }
 
-type adminSwitchesListCommand struct {
+type adminMaintenanceListCommand struct {
 	adminRemoteFlags `embed:""`
 }
-type adminSwitchSetCommand struct {
+type adminMaintenanceSetCommand struct {
 	adminRemoteFlags `embed:""`
-	Name             string `arg:"" name:"name" required:"" enum:"new_routes,new_sessions,certificate_issuance"`
+	Name             string `arg:"" name:"name" required:"" enum:"route_creation,route_session_creation,certificate_issuance"`
 }
 
 func runAdminServerStatus(
@@ -168,9 +168,9 @@ func runAdminServerStatus(
 		return adminClientError(err)
 	}
 	table := newAdminTable(stdout)
-	fmt.Fprintln(table, "MODE\tSTARTED\tCURRENT\tACTIVE\tSUSPENDED\tPROVISIONING\tWORKERS")
+	fmt.Fprintln(table, "MODE\tSTARTED\tCURRENT\tENABLED\tSUSPENDED\tPROVISIONING\tWORKERS")
 	fmt.Fprintf(table, "%s\t%s\t%s\t%d\t%d\t%d\t%d\n", value.Mode, adminTime(value.StartedAt),
-		adminTime(value.CurrentTime), value.ActiveRoutes, value.SuspendedRoutes, value.ProvisioningRoutes, value.ConnectedWorkers)
+		adminTime(value.CurrentTime), value.EnabledRoutes, value.SuspendedRoutes, value.ProvisioningRoutes, value.ConnectedWorkers)
 	return table.Flush()
 }
 
@@ -181,7 +181,7 @@ func runAdminRoutesList(ctx context.Context, command adminRoutesListCommand, std
 	}
 	defer client.Close()
 	table := newAdminTable(stdout)
-	fmt.Fprintln(table, "ID\tSTATUS\tHOSTNAME\tLOCAL TARGET\tVERSION\tSUSPENSION REVISION")
+	fmt.Fprintln(table, "ID\tSTATUS\tHOSTNAME\tLOCAL TARGET\tROUTE VERSION\tSUSPENSION REVISION")
 	cursor := ""
 	for {
 		page, err := client.AdminListRoutes(ctx, cursor)
@@ -213,7 +213,7 @@ func runAdminRouteShow(ctx context.Context, command adminRouteShowCommand, stdou
 		return adminClientError(err)
 	}
 	table := newAdminTable(stdout)
-	fmt.Fprintln(table, "ID\tSTATUS\tHOSTNAME\tLOCAL TARGET\tVERSION\tSUSPENSION REVISION")
+	fmt.Fprintln(table, "ID\tSTATUS\tHOSTNAME\tLOCAL TARGET\tROUTE VERSION\tSUSPENSION REVISION")
 	writeAdminRoute(table, value)
 	return table.Flush()
 }
@@ -248,7 +248,7 @@ func runAdminRouteResume(ctx context.Context, command adminRouteResumeCommand, s
 	if err != nil {
 		return adminClientError(err)
 	}
-	_, err = fmt.Fprintf(stdout, "Resumed %s at version %d\n", value.Id, value.Version)
+	_, err = fmt.Fprintf(stdout, "Resumed %s at route version %d\n", value.Id, value.RouteVersion)
 	return err
 }
 
@@ -413,13 +413,13 @@ func runAdminControlSessionRevoke(ctx context.Context, command adminControlSessi
 	return err
 }
 
-func runAdminSwitchesList(ctx context.Context, command adminSwitchesListCommand, stdout, stderr io.Writer) error {
+func runAdminMaintenanceList(ctx context.Context, command adminMaintenanceListCommand, stdout, stderr io.Writer) error {
 	client, err := remoteAdminClient(ctx, command.adminRemoteFlags, stderr)
 	if err != nil {
 		return err
 	}
 	defer client.Close()
-	values, err := client.AdminListSwitches(ctx)
+	values, err := client.AdminListMaintenanceControls(ctx)
 	if err != nil {
 		return adminClientError(err)
 	}
@@ -431,9 +431,9 @@ func runAdminSwitchesList(ctx context.Context, command adminSwitchesListCommand,
 	return table.Flush()
 }
 
-func runAdminSwitchSet(
+func runAdminMaintenanceSet(
 	ctx context.Context,
-	command adminSwitchSetCommand,
+	command adminMaintenanceSetCommand,
 	enabled bool,
 	stdout, stderr io.Writer,
 ) error {
@@ -442,7 +442,7 @@ func runAdminSwitchSet(
 		return err
 	}
 	defer client.Close()
-	value, err := client.AdminSetSwitch(ctx, serverv1.OperationalSwitchName(command.Name), enabled)
+	value, err := client.AdminSetMaintenanceControl(ctx, serverv1.MaintenanceControlName(command.Name), enabled)
 	if err != nil {
 		return adminClientError(err)
 	}
@@ -519,11 +519,11 @@ func runAdminRelayRefresh(ctx context.Context, command adminRelayRefreshCommand,
 		return err
 	}
 	defer db.Close()
-	_, profile, err := config.LoadTailcatRelayRegions(ctx, db, true)
+	_, relayRegion, err := config.LoadTailcatRelayRegions(ctx, db, true)
 	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintln(stdout, profile)
+	_, err = fmt.Fprintln(stdout, relayRegion)
 	return err
 }
 
@@ -540,23 +540,23 @@ func remoteAdminClient(ctx context.Context, flags adminRemoteFlags, diagnostics 
 		return nil, err
 	}
 	authenticated, err := clientauth.Authenticate(ctx, clientauth.Config{
-		CoreEndpoint: serverURL, State: state, AccessToken: flags.AccessToken,
+		ServerEndpoint: serverURL, State: state, AccessToken: flags.AccessToken,
 		Diagnostics: diagnostics, LoginToken: loginTokenPrompt(os.Stdin, diagnostics),
 	})
 	if err != nil {
 		state.Close()
 		return nil, err
 	}
-	if err := serverclient.RequireAdministrationCapability(authenticated.CoreCapabilities); err != nil {
+	if err := serverclient.RequireAdministrationCapability(authenticated.ServerCapabilities); err != nil {
 		state.Close()
 		return nil, adminClientError(err)
 	}
-	return &localAdminClient{Client: authenticated.Core, state: state}, nil
+	return &localAdminClient{Client: authenticated.Server, state: state}, nil
 }
 
 func adminClientError(err error) error {
 	if errors.Is(err, serverclient.ErrUnsupported) {
-		return errors.New("server does not support Core administration version 1")
+		return errors.New("server does not support administration version 1")
 	}
 	return err
 }
@@ -574,7 +574,7 @@ func newAdminTable(output io.Writer) *tabwriter.Writer {
 
 func writeAdminRoute(table io.Writer, value serverv1.AdminRoute) {
 	fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%d\t%d\n", value.Id, value.Status, value.Hostname,
-		value.LocalTarget, value.Version, value.SuspensionRevision)
+		value.LocalTarget, value.RouteVersion, value.SuspensionRevision)
 }
 
 func writeAdminHostname(table io.Writer, value serverv1.AdminHostname) {

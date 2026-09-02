@@ -180,7 +180,7 @@ const getLatestCertificateIssuanceStatus = `-- name: GetLatestCertificateIssuanc
 SELECT status, installed_at, challenge_removed_at
 FROM certificate_issuances
 WHERE route_id = ?1
-ORDER BY version DESC
+ORDER BY route_version DESC
 LIMIT 1
 `
 
@@ -201,7 +201,7 @@ const getLatestRouteSessionStatus = `-- name: GetLatestRouteSessionStatus :one
 SELECT status
 FROM route_sessions
 WHERE route_id = ?1
-ORDER BY version DESC
+ORDER BY route_version DESC
 LIMIT 1
 `
 
@@ -224,7 +224,7 @@ func (q *Queries) GetOIDCAssertionExpiry(ctx context.Context) (int64, error) {
 }
 
 const getRouteForTesting = `-- name: GetRouteForTesting :one
-SELECT id, hostname_id, identity_id, hostname, local_target, status, version, suspension_revision, suspension_reason, suspended_at, authorization_issuer, authorization_id, authorization_key_id, authorization_retry_id, authorization_revision, authorization_expires_at, authorization_request_hash, authorization_ip_policy_hash, lifecycle_sequence, created_at, deleted_at FROM routes WHERE id = ?1
+SELECT id, hostname_id, identity_id, hostname, local_target, status, route_version, suspension_revision, suspension_reason, suspended_at, authorization_issuer, authorization_id, authorization_key_id, authorization_retry_id, authorization_revision, authorization_expires_at, authorization_request_hash, authorization_ip_policy_hash, lifecycle_sequence, created_at, deleted_at FROM routes WHERE id = ?1
 `
 
 func (q *Queries) GetRouteForTesting(ctx context.Context, routeID string) (Route, error) {
@@ -237,7 +237,7 @@ func (q *Queries) GetRouteForTesting(ctx context.Context, routeID string) (Route
 		&i.Hostname,
 		&i.LocalTarget,
 		&i.Status,
-		&i.Version,
+		&i.RouteVersion,
 		&i.SuspensionRevision,
 		&i.SuspensionReason,
 		&i.SuspendedAt,

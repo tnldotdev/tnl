@@ -55,7 +55,7 @@ func TestRouteAPILifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler := NewHandlerWithRoutes(fixtureCapabilities(t), authService, coordinator)
-	addHostnameRequest(t, handler, issued.AccessToken.String(), "route")
+	claimHostnameRequest(t, handler, issued.AccessToken.String(), "route")
 
 	routeToken, _, _, err := credentials.NewRouteToken()
 	if err != nil {
@@ -64,18 +64,18 @@ func TestRouteAPILifecycle(t *testing.T) {
 	created := routeRequest[serverv1.SessionSetup](t, handler, issued.AccessToken.String(), http.MethodPost, routesPath, serverv1.CreateRouteRequest{
 		Hostname: "route.example", LocalTarget: "localhost:3000", RouteToken: routeToken.String(),
 	}, http.StatusCreated)
-	if created.Route.Version != 1 || created.Session.Version != 1 {
+	if created.Route.RouteVersion != 1 || created.Session.RouteVersion != 1 || created.Route.Status != serverv1.RouteStatusEnabled {
 		t.Fatalf("created setup = %#v", created)
 	}
 	serverKey := key.NewNode().Public().String()
 	routeRequest[struct{}](t, handler, created.SessionToken, http.MethodPost, routesPath+"/"+created.Route.Id+"/transport", serverv1.RegisterTransportRequest{
-		Version: 1,
+		RouteVersion: 1,
 		Endpoint: serverv1.TailcatDescriptor{
 			Version: serverv1.TailcatDescriptorVersionN1, PublisherPublicKey: serverKey, RelayRegion: "default",
 		},
 	}, http.StatusNoContent)
-	routeRequest[struct{}](t, handler, created.SessionToken, http.MethodPost, routesPath+"/"+created.Route.Id+"/ready", serverv1.RouteVersionRequest{Version: 1}, http.StatusNoContent)
-	heartbeat := routeRequest[serverv1.HeartbeatResponse](t, handler, created.SessionToken, http.MethodPost, routesPath+"/"+created.Route.Id+"/heartbeat", serverv1.HeartbeatRouteSessionRequest{Version: 1}, http.StatusOK)
+	routeRequest[struct{}](t, handler, created.SessionToken, http.MethodPost, routesPath+"/"+created.Route.Id+"/ready", serverv1.RouteVersionRequest{RouteVersion: 1}, http.StatusNoContent)
+	heartbeat := routeRequest[serverv1.HeartbeatResponse](t, handler, created.SessionToken, http.MethodPost, routesPath+"/"+created.Route.Id+"/heartbeat", serverv1.HeartbeatRouteSessionRequest{RouteVersion: 1}, http.StatusOK)
 	if heartbeat.ExpiresAt.IsZero() {
 		t.Fatal("heartbeat omitted expiry")
 	}
@@ -86,7 +86,7 @@ func TestRouteAPILifecycle(t *testing.T) {
 	replacement := routeRequest[serverv1.SessionSetup](t, handler, issued.AccessToken.String(), http.MethodPost, routesPath+"/"+created.Route.Id+"/sessions", serverv1.CreateRouteSessionRequest{
 		RouteToken: routeToken.String(),
 	}, http.StatusCreated)
-	if replacement.Session.Version != 2 {
+	if replacement.Session.RouteVersion != 2 {
 		t.Fatalf("replacement setup = %#v", replacement)
 	}
 	routeRequest[struct{}](t, handler, issued.AccessToken.String(), http.MethodDelete, routesPath+"/"+created.Route.Id, nil, http.StatusNoContent)
@@ -107,7 +107,7 @@ func TestRouteAllowedIPPrefixesPreservesExplicitEmptyPolicy(t *testing.T) {
 	}
 }
 
-func TestHostnameListAndRemove(t *testing.T) {
+func TestHostnameListAndRelease(t *testing.T) {
 	ctx := context.Background()
 	db, err := state.Open(ctx, filepath.Join(t.TempDir(), "state"))
 	if err != nil {
@@ -211,7 +211,7 @@ func TestCertificateAPIRequiresBoundCurrentSession(t *testing.T) {
 	t.Cleanup(func() { _ = coordinator.Close() })
 	certificates := &apiCertificateService{}
 	handler := NewHandlerWithServices(fixtureCapabilities(t), authService, coordinator, certificates)
-	addHostnameRequest(t, handler, issued.AccessToken.String(), "route")
+	claimHostnameRequest(t, handler, issued.AccessToken.String(), "route")
 	routeToken, _, _, err := credentials.NewRouteToken()
 	if err != nil {
 		t.Fatal(err)
@@ -220,7 +220,7 @@ func TestCertificateAPIRequiresBoundCurrentSession(t *testing.T) {
 		Hostname: "route.example", LocalTarget: "localhost:3000", RouteToken: routeToken.String(),
 	}, http.StatusCreated)
 	request := serverv1.CreateCertificateIssuanceRequest{
-		RouteId: created.Route.Id, Version: 1, AcmeProfile: "tlsserver",
+		RouteId: created.Route.Id, RouteVersion: 1, AcmeProfile: "tlsserver",
 		Csr: base64.RawURLEncoding.EncodeToString([]byte("csr")),
 	}
 	issuance := routeRequest[serverv1.CertificateIssuance](
@@ -250,7 +250,7 @@ func TestCertificateAPIRequiresBoundCurrentSession(t *testing.T) {
 	routeRequest[struct{}](
 		t, handler, created.SessionToken, http.MethodPost,
 		routesPath+"/"+created.Route.Id+"/certificate-installed",
-		serverv1.CertificateInstalledRequest{Version: 1, IssuanceId: issuance.Id}, http.StatusNoContent,
+		serverv1.CertificateInstalledRequest{RouteVersion: 1, IssuanceId: issuance.Id}, http.StatusNoContent,
 	)
 }
 
@@ -287,11 +287,11 @@ func routeRequest[T any](
 	return result
 }
 
-func addHostnameRequest(t *testing.T, handler http.Handler, token, label string) serverv1.Hostname {
+func claimHostnameRequest(t *testing.T, handler http.Handler, token, label string) serverv1.Hostname {
 	t.Helper()
 	var body bytes.Buffer
-	if err := json.NewEncoder(&body).Encode(serverv1.AddHostnameRequest{
-		Kind: serverv1.AddHostnameRequestKindManaged, Name: &label,
+	if err := json.NewEncoder(&body).Encode(serverv1.ClaimHostnameRequest{
+		Kind: serverv1.ClaimHostnameRequestKindManaged, Label: &label,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -342,7 +342,7 @@ func (s *apiCertificateService) Create(
 ) (certificates.Issuance, error) {
 	now := time.Now().UTC()
 	s.issuance = certificates.Issuance{
-		ID: "issuance_0123456789abcdef0123456789abcdef", RouteID: routeID, Version: version,
+		ID: "issuance_0123456789abcdef0123456789abcdef", RouteID: routeID, RouteVersion: version,
 		Hostname: "route.example", ACMEProfile: profile, Status: certificates.StatusWaitingChallenge,
 		ChallengeURL: "challenge", ChallengeExpires: now.Add(time.Hour), CreatedAt: now, UpdatedAt: now,
 	}
@@ -369,7 +369,7 @@ func (s *apiCertificateService) Installed(
 	_, routeID string,
 	version uint64,
 ) (certificates.Issuance, error) {
-	if routeID != s.issuance.RouteID || version != s.issuance.Version || s.issuance.ChallengeRemoved.IsZero() {
+	if routeID != s.issuance.RouteID || version != s.issuance.RouteVersion || s.issuance.ChallengeRemoved.IsZero() {
 		return certificates.Issuance{}, certificates.ErrInvalidStatus
 	}
 	s.issuance.Status = certificates.StatusInstalled

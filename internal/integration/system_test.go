@@ -70,7 +70,7 @@ func TestIntegrationRealTNLDevViteHTTPHMRAndCleanup(t *testing.T) {
 		path: tnlBinary,
 		args: []string{
 			"dev", "--server", system.controlURL, "--state-dir", system.clientState,
-			"--access-token", system.accessToken, "--name", "vite-system", "--startup-timeout", "2m", "--",
+			"--access-token", system.accessToken, "--host", "vite-system", "--startup-timeout", "2m", "--",
 			node, viteCLI,
 		},
 		dir: fixture,
@@ -139,17 +139,18 @@ func TestIntegrationRealTNLDevViteHTTPHMRAndCleanup(t *testing.T) {
 }
 
 type publishEvent struct {
-	Type string `json:"type"`
-	URL  string `json:"url"`
+	Type         string `json:"type"`
+	URL          string `json:"url"`
+	RouteVersion uint64 `json:"route_version"`
 }
 
-func (s *systemFixture) startPublisher(t *testing.T, target, name string) (*childProcess, publishEvent) {
+func (s *systemFixture) startPublisher(t *testing.T, target, host string) (*childProcess, publishEvent) {
 	t.Helper()
 	process := startChild(t, childOptions{
 		path: tnlBinary,
 		args: []string{
 			"publish", target, "--server", s.controlURL, "--state-dir", s.clientState,
-			"--access-token", s.accessToken, "--name", name, "--output", "ndjson",
+			"--access-token", s.accessToken, "--host", host, "--output", "ndjson",
 		},
 		dir: repositoryRoot, env: s.environment(nil),
 	})
@@ -168,8 +169,8 @@ func waitForPublishReady(t *testing.T, process *childProcess, system *systemFixt
 			}
 			switch event.Type {
 			case "ready":
-				if event.URL == "" {
-					t.Fatalf("publisher ready event omitted URL\n%s", process.logs())
+				if event.URL == "" || event.RouteVersion == 0 {
+					t.Fatalf("publisher ready event omitted URL or route version\n%s", process.logs())
 				}
 				return event
 			case "error":

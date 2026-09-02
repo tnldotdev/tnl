@@ -21,8 +21,8 @@ export default defineConfig({
 ```
 
 Pass static options or a synchronous or asynchronous factory to select route
-settings from runtime context. Reserve a managed base once with `tnl host add
-myapp`, then give every Git worktree its own child name:
+settings from runtime context. Claim a managed hostname once with `tnl host
+claim myapp`, then give every Git worktree its own child hostname:
 
 ```ts
 // vite.config.ts
@@ -32,7 +32,7 @@ import tnl from "@tnldotdev/vite";
 export default defineConfig({
   plugins: [
     tnl(({ worktree }) => ({
-      name: `${worktree.label}.myapp`,
+      host: `${worktree.label}.myapp`,
       allowCurrentIP: true,
     })),
   ],
@@ -40,9 +40,9 @@ export default defineConfig({
 ```
 
 The factory runs only for a Vite development server beneath `tnl dev`, not for
-ordinary development, builds, or previews. It receives a frozen environment
-snapshot, the process working directory, and worktree metadata. Vite retains
-its normal behavior of trying the next port when its preferred port is occupied;
+ordinary development, builds, or previews. It receives a read-only environment
+copy, the process working directory, and worktree metadata. Vite retains its
+normal behavior of trying the next port when its preferred port is occupied;
 the plugin reports the final listening port to `tnl`.
 
 ## Run
@@ -74,12 +74,12 @@ For typed values, add `/// <reference types="@tnldotdev/vite/env" />` to
 
 ## Tunnel Options
 
-`tnl` accepts these project options:
+`tnl` accepts `TnlTunnelOptions` in project configuration:
 
 ```ts
 tnl({
-  server: "https://tnl.example.com",
-  name: "feature.chase.example.com",
+  controlURL: "https://tnl.example.com",
+  host: "feature.chase.example.com",
   allowIP: ["198.51.100.0/24", "2001:db8::/64"],
   allowCurrentIP: true,
 });
@@ -88,11 +88,13 @@ tnl({
 `allowCurrentIP` is additive with `allowIP`. When `allowIP` is omitted,
 `allowCurrentIP: true` restricts access to the current public IP only. The Go
 client performs server authentication, hostname authorization, and IP
-canonicalization. CLI `--server`/`TNL_SERVER` and `--name`/`TNL_NAME` take
+normalization. CLI `--server`/`TNL_SERVER` and `--host`/`TNL_HOST` take
 precedence over project options.
 
-The signed-in user must own the configured custom domain or an eligible parent
-hostname. Separate users cannot currently share one parent hostname.
+The selected server-local identity must own a managed hostname or custom domain
+with active status. The `host` hostname must match it exactly or add no more
+than eight labels to its left. A temporary hostname authorizes only itself. An
+identity cannot publish beneath a hostname owned by another identity.
 
 ## Configuration
 
@@ -100,7 +102,8 @@ Keep Vite settings in `vite.config.ts`. Vite uses `server.port`. The `--port`
 flag on `tnl dev` overrides it and enables strict port handling. Existing
 `server.allowedHosts` entries and other settings remain in place. During
 `tnl dev`, the server is bound to loopback and its actual listening port is
-registered after startup. Outside `tnl dev`, the plugin makes no changes.
+reported with `registerLocalPort` after startup. Outside `tnl dev`, the plugin
+makes no changes.
 
 ## Requirements
 

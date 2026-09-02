@@ -195,10 +195,10 @@ func TestRunPublishCreatesSessionAfterHeartbeatFence(t *testing.T) {
 	routeID := "route_0123456789abcdef0123456789abcdef"
 	setup := func(version int, token credentials.SessionToken) serverv1.SessionSetup {
 		return serverv1.SessionSetup{
-			Route: serverv1.Route{Id: routeID, Hostname: "route.example", Version: version},
+			Route: serverv1.Route{Id: routeID, Hostname: "route.example", RouteVersion: version},
 			Session: serverv1.RouteSession{
 				Id: "session_0123456789abcdef0123456789abcdef", RouteId: routeID,
-				Version: version, ExpiresAt: time.Now().Add(time.Minute),
+				RouteVersion: version, ExpiresAt: time.Now().Add(time.Minute),
 			},
 			SessionToken: token.String(), WorkerPublicKey: key.NewNode().Public().String(),
 		}
@@ -232,8 +232,8 @@ func TestRunPublishCreatesSessionAfterHeartbeatFence(t *testing.T) {
 		DrainTime: time.Millisecond,
 		Observe: func(event Event) error {
 			if event.Type == EventReady {
-				versions = append(versions, event.Version)
-				if event.Version == 2 {
+				versions = append(versions, event.RouteVersion)
+				if event.RouteVersion == 2 {
 					cancel()
 				}
 			}
@@ -259,7 +259,6 @@ func TestIssueCertificatePersistsAndRotatesApplicationKey(t *testing.T) {
 	defer state.Close()
 	route, err := NewRoute(RouteConfig{
 		Hostname: "route.example", Target: "http://127.0.0.1:3000", AllowedClient: key.NewNode().Public(),
-		SourceKey:   [32]byte{1, 2, 3},
 		RelayRegion: "test", Regions: map[string]*tailcfg.DERPRegion{"test": {
 			RegionID: 1, Nodes: []*tailcfg.DERPNode{{RegionID: 1, HostName: "derp.example"}},
 		}},
@@ -322,7 +321,7 @@ func TestUnacknowledgedCertificateRebindsAfterRestart(t *testing.T) {
 		context.Background(), server, route, state, "route_0123456789abcdef0123456789abcdef", 2,
 		"session", "route.example", "tlsserver", loaded, make(chan error),
 	)
-	if err != nil || !material.Installed || material.Version != 2 || server.issuances != 2 || server.installedCalls != 2 {
+	if err != nil || !material.Installed || material.RouteVersion != 2 || server.issuances != 2 || server.installedCalls != 2 {
 		t.Fatalf("reconciled material = %+v, issuances = %d, installs = %d, error = %v", material, server.issuances, server.installedCalls, err)
 	}
 }
@@ -388,7 +387,7 @@ func TestUnacknowledgedCertificatePastRenewalFallsBackToReplacement(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if replacement.Version != 2 || bytes.Equal(
+	if replacement.RouteVersion != 2 || bytes.Equal(
 		current.Certificate.Leaf.RawSubjectPublicKeyInfo, replacement.Certificate.Leaf.RawSubjectPublicKeyInfo,
 	) {
 		t.Fatalf("replacement = %+v", replacement)
@@ -423,7 +422,7 @@ func TestUnacknowledgedCertificateCanCompleteFreshReboundIssuance(t *testing.T) 
 		context.Background(), server, route, state, "route_0123456789abcdef0123456789abcdef", 2,
 		"session", "route.example", "tlsserver", current, make(chan error),
 	)
-	if err != nil || !replacement.Installed || replacement.Version != 2 || !bytes.Equal(
+	if err != nil || !replacement.Installed || replacement.RouteVersion != 2 || !bytes.Equal(
 		current.Certificate.Leaf.RawSubjectPublicKeyInfo, replacement.Certificate.Leaf.RawSubjectPublicKeyInfo,
 	) {
 		t.Fatalf("rebound replacement = %+v, %v", replacement, err)
@@ -456,7 +455,7 @@ func TestCertificateIssuanceAcceptsChallengeBearingResumeStates(t *testing.T) {
 		serverv1.CertificateIssuanceStatusWaitingForChallenge, serverv1.CertificateIssuanceStatusValidating, serverv1.CertificateIssuanceStatusReadyToFinalize, serverv1.CertificateIssuanceStatusFinalizing, serverv1.CertificateIssuanceStatusDownloading,
 	} {
 		issuance := serverv1.CertificateIssuance{
-			Id: "issuance_id", RouteId: "route_id", Version: 2, Hostname: "route.example", AcmeProfile: "tlsserver", Status: state,
+			Id: "issuance_id", RouteId: "route_id", RouteVersion: 2, Hostname: "route.example", AcmeProfile: "tlsserver", Status: state,
 			Challenge: &serverv1.CertificateChallenge{
 				Id: "challenge", Hostname: "route.example", Digest: base64.RawURLEncoding.EncodeToString(digest[:]),
 				ExpiresAt: time.Now().Add(time.Hour),
@@ -489,7 +488,7 @@ func TestRenewalFailureKeepsCurrentCertificateServing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := state.MarkInstalled(t.Context(), "route.example", material.IssuanceID, material.Version); err != nil {
+	if _, err := state.MarkInstalled(t.Context(), "route.example", material.IssuanceID, material.RouteVersion); err != nil {
 		t.Fatal(err)
 	}
 	material, found, err := state.Current(t.Context(), "route.example")
@@ -512,7 +511,7 @@ func TestRenewalFailureKeepsCurrentCertificateServing(t *testing.T) {
 			}}, DrainTime: 20 * time.Millisecond, Logf: func(string, ...any) { logs.Add(1) },
 		}, serverv1.SessionSetup{
 			Route:        serverv1.Route{Id: "route_0123456789abcdef0123456789abcdef", Hostname: "route.example"},
-			Session:      serverv1.RouteSession{Version: 1, ExpiresAt: time.Now().Add(time.Minute)},
+			Session:      serverv1.RouteSession{RouteVersion: 1, ExpiresAt: time.Now().Add(time.Minute)},
 			SessionToken: sessionToken.String(), WorkerPublicKey: key.NewNode().Public().String(),
 		}, state, func() error { return nil })
 	}()
@@ -548,7 +547,6 @@ func testCertificateRoute(t *testing.T, strict bool) *Route {
 	t.Helper()
 	route, err := NewRoute(RouteConfig{
 		Hostname: "route.example", Target: "http://127.0.0.1:3000", StrictCertificate: strict,
-		SourceKey:     [32]byte{1, 2, 3},
 		AllowedClient: key.NewNode().Public(), RelayRegion: "test", Regions: map[string]*tailcfg.DERPRegion{"test": {
 			RegionID: 1, Nodes: []*tailcfg.DERPNode{{RegionID: 1, HostName: "derp.example"}},
 		}},
@@ -650,14 +648,14 @@ func (c *issuanceServer) CreateCertificateIssuance(
 	if c.terminalFirst && c.issuances == 1 {
 		return serverv1.CertificateIssuance{
 			Id: c.currentIssuanceID, RouteId: "route_0123456789abcdef0123456789abcdef",
-			Version: c.currentVersion, Hostname: "route.example", AcmeProfile: "tlsserver", Status: serverv1.CertificateIssuanceStatusBlocked,
+			RouteVersion: c.currentVersion, Hostname: "route.example", AcmeProfile: "tlsserver", Status: serverv1.CertificateIssuanceStatusBlocked,
 			CreatedAt: time.Now(), UpdatedAt: time.Now(),
 		}, nil
 	}
 	if c.reuseCurrent {
 		return serverv1.CertificateIssuance{
 			Id: c.currentIssuanceID, RouteId: "route_0123456789abcdef0123456789abcdef",
-			Version: c.currentVersion, Hostname: "route.example", AcmeProfile: "tlsserver", Status: serverv1.CertificateIssuanceStatusWaitingForInstall,
+			RouteVersion: c.currentVersion, Hostname: "route.example", AcmeProfile: "tlsserver", Status: serverv1.CertificateIssuanceStatusWaitingForInstall,
 			CertificatePem: &c.certificate, NotBefore: &c.notBefore, NotAfter: &c.notAfter,
 			RenewAt: &c.renewAt, CreatedAt: time.Now(), UpdatedAt: time.Now(),
 		}, nil
@@ -665,7 +663,7 @@ func (c *issuanceServer) CreateCertificateIssuance(
 	digest := sha256.Sum256([]byte(fmt.Sprintf("key authorization %d", c.issuances)))
 	return serverv1.CertificateIssuance{
 		Id: c.currentIssuanceID, RouteId: "route_0123456789abcdef0123456789abcdef",
-		Version: c.currentVersion, Hostname: "route.example", AcmeProfile: "tlsserver", Status: serverv1.CertificateIssuanceStatusWaitingForChallenge,
+		RouteVersion: c.currentVersion, Hostname: "route.example", AcmeProfile: "tlsserver", Status: serverv1.CertificateIssuanceStatusWaitingForChallenge,
 		Challenge: &serverv1.CertificateChallenge{
 			Id: fmt.Sprintf("challenge-%d", c.issuances), Hostname: "route.example", Digest: base64.RawURLEncoding.EncodeToString(digest[:]),
 			ExpiresAt: time.Now().Add(time.Hour),
@@ -691,7 +689,7 @@ func (c *issuanceServer) CertificateChallengeReady(
 	c.renewAt = time.Now().Add(30 * 24 * time.Hour).UTC()
 	return serverv1.CertificateIssuance{
 		Id: c.currentIssuanceID, RouteId: "route_0123456789abcdef0123456789abcdef",
-		Version: c.currentVersion, Hostname: "route.example", AcmeProfile: "tlsserver", Status: serverv1.CertificateIssuanceStatusWaitingForInstall,
+		RouteVersion: c.currentVersion, Hostname: "route.example", AcmeProfile: "tlsserver", Status: serverv1.CertificateIssuanceStatusWaitingForInstall,
 		CertificatePem: &c.certificate, NotBefore: &c.notBefore, NotAfter: &c.notAfter,
 		RenewAt: &c.renewAt, CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}, nil
@@ -778,7 +776,7 @@ func (c *publisherServerStub) CreateRouteSession(
 	return c.sessionSetup, c.sessionErr
 }
 
-func (*publisherServerStub) RegisterTransport(
+func (*publisherServerStub) AttachRouteTransport(
 	context.Context,
 	string,
 	uint64,

@@ -5,53 +5,13 @@ import (
 	"net/http"
 	"strings"
 
-	coreadmin "github.com/tnldotdev/tnl/internal/admin"
+	adminservice "github.com/tnldotdev/tnl/internal/admin"
 	"github.com/tnldotdev/tnl/internal/auth"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/routes"
 	"github.com/tnldotdev/tnl/pkg/protocol/serverv1"
 )
-
-func adminOperationForRequest(method, path string) Operation {
-	parts, ok := adminPathParts(path)
-	if !ok {
-		return OperationUnknown
-	}
-	switch {
-	case len(parts) == 1 && parts[0] == "status" && method == http.MethodGet:
-		return OperationAdminServerStatus
-	case len(parts) == 1 && parts[0] == "routes" && method == http.MethodGet:
-		return OperationAdminRoutesList
-	case len(parts) == 2 && parts[0] == "routes" && method == http.MethodGet:
-		return OperationAdminRouteShow
-	case len(parts) == 3 && parts[0] == "routes" && parts[2] == "suspend" && method == http.MethodPost:
-		return OperationAdminRouteSuspend
-	case len(parts) == 3 && parts[0] == "routes" && parts[2] == "resume" && method == http.MethodPost:
-		return OperationAdminRouteResume
-	case len(parts) == 1 && parts[0] == "hostnames" && method == http.MethodGet:
-		return OperationAdminHostnamesList
-	case len(parts) == 2 && parts[0] == "hostnames" && method == http.MethodGet:
-		return OperationAdminHostnameShow
-	case len(parts) == 2 && parts[0] == "hostnames" && method == http.MethodDelete:
-		return OperationAdminHostnameRemove
-	case len(parts) == 3 && parts[0] == "hostnames" && parts[2] == "quarantine" && method == http.MethodPost:
-		return OperationAdminHostnameQuarantine
-	case len(parts) == 1 && parts[0] == "credentials" && method == http.MethodGet:
-		return OperationAdminCredentialsList
-	case len(parts) == 2 && parts[0] == "credentials" && method == http.MethodDelete:
-		return OperationAdminCredentialRevoke
-	case len(parts) == 1 && parts[0] == "control-sessions" && method == http.MethodGet:
-		return OperationAdminControlSessionsList
-	case len(parts) == 2 && parts[0] == "control-sessions" && method == http.MethodDelete:
-		return OperationAdminControlSessionRevoke
-	case len(parts) == 1 && parts[0] == "switches" && method == http.MethodGet:
-		return OperationAdminSwitchesList
-	case len(parts) == 2 && parts[0] == "switches" && method == http.MethodPut:
-		return OperationAdminSwitchSet
-	default:
-		return OperationUnknown
-	}
-}
 
 func adminPathParts(path string) ([]string, bool) {
 	remainder, ok := strings.CutPrefix(path, "/v1/admin/")
@@ -70,12 +30,12 @@ func adminPathParts(path string) ([]string, bool) {
 	return parts, true
 }
 
-func (h *handler) serveAdmin(w http.ResponseWriter, r *http.Request, requestID string) {
-	parts, ok := adminPathParts(r.URL.Path)
-	if !ok {
-		writeNotFound(w, requestID)
-		return
-	}
+func (h *handler) serveAdminEndpoint(
+	w http.ResponseWriter,
+	r *http.Request,
+	requestID string,
+	serve func(auth.Principal),
+) {
 	principal, ok := h.authenticateAdmin(w, r, requestID)
 	if !ok {
 		return
@@ -85,26 +45,7 @@ func (h *handler) serveAdmin(w http.ResponseWriter, r *http.Request, requestID s
 		return
 	}
 
-	switch parts[0] {
-	case "status":
-		if len(parts) != 1 || r.Method != http.MethodGet {
-			writeMethodOrNotFound(w, r.Method, requestID, len(parts) == 1, http.MethodGet)
-			return
-		}
-		h.serveAdminStatus(w, r, requestID)
-	case "routes":
-		h.serveAdminRoutes(w, r, requestID, principal, parts[1:])
-	case "hostnames":
-		h.serveAdminHostnames(w, r, requestID, principal, parts[1:])
-	case "credentials":
-		h.serveAdminCredentials(w, r, requestID, principal, parts[1:])
-	case "control-sessions":
-		h.serveAdminControlSessions(w, r, requestID, principal, parts[1:])
-	case "switches":
-		h.serveAdminSwitches(w, r, requestID, principal, parts[1:])
-	default:
-		writeNotFound(w, requestID)
-	}
+	serve(principal)
 }
 
 func (h *handler) authenticateAdmin(
@@ -131,7 +72,7 @@ func (h *handler) serveAdminStatus(w http.ResponseWriter, r *http.Request, reque
 	}
 	writeModel(w, requestID, http.StatusOK, serverv1.AdminServerStatus{
 		Mode: serverv1.AdminServerStatusMode(status.Mode), StartedAt: status.StartedAt,
-		CurrentTime: status.CurrentTime, ActiveRoutes: int(status.ActiveRoutes),
+		CurrentTime: status.CurrentTime, EnabledRoutes: int(status.EnabledRoutes),
 		SuspendedRoutes: int(status.SuspendedRoutes), ProvisioningRoutes: status.Provisioning,
 		ConnectedWorkers: status.ConnectedWorkers,
 	})
@@ -423,7 +364,7 @@ func (h *handler) serveAdminControlSessions(
 	writeNoContent(w)
 }
 
-func (h *handler) serveAdminSwitches(
+func (h *handler) serveAdminMaintenanceControls(
 	w http.ResponseWriter,
 	r *http.Request,
 	requestID string,
@@ -435,19 +376,19 @@ func (h *handler) serveAdminSwitches(
 			writeMethodNotAllowed(w, requestID, http.MethodGet)
 			return
 		}
-		values, err := h.admin.Switches(r.Context())
+		values, err := h.admin.ListMaintenanceControls(r.Context())
 		if err != nil {
 			writeAdminError(w, requestID, err)
 			return
 		}
-		response := make([]serverv1.AdminOperationalSwitch, 0, len(values))
+		response := make([]serverv1.AdminMaintenanceControl, 0, len(values))
 		for _, value := range values {
-			response = append(response, adminSwitchResponse(value))
+			response = append(response, adminMaintenanceControlResponse(value))
 		}
 		writeModel(w, requestID, http.StatusOK, response)
 		return
 	}
-	if len(parts) != 1 || !validAdminSwitch(parts[0]) {
+	if len(parts) != 1 || !validAdminMaintenanceControl(parts[0]) {
 		writeNotFound(w, requestID)
 		return
 	}
@@ -455,34 +396,34 @@ func (h *handler) serveAdminSwitches(
 		writeMethodNotAllowed(w, requestID, http.MethodPut)
 		return
 	}
-	var request serverv1.SetAdminSwitchRequest
+	var request serverv1.SetAdminMaintenanceControlRequest
 	if !decodeRequest(w, r, requestID, &request) {
 		return
 	}
-	value, err := h.admin.SetSwitch(
-		r.Context(), coreadmin.SwitchName(parts[0]), request.Enabled, principal.Identity.ID, requestID,
+	value, err := h.admin.SetMaintenanceControl(
+		r.Context(), adminservice.MaintenanceControlName(parts[0]), request.Enabled, principal.Identity.ID, requestID,
 	)
 	if err != nil {
 		writeAdminError(w, requestID, err)
 		return
 	}
-	writeModel(w, requestID, http.StatusOK, adminSwitchResponse(value))
+	writeModel(w, requestID, http.StatusOK, adminMaintenanceControlResponse(value))
 }
 
-func (h *handler) requireOperationalSwitch(
+func (h *handler) requireMaintenanceControl(
 	w http.ResponseWriter,
 	r *http.Request,
 	requestID string,
-	name coreadmin.SwitchName,
+	name adminservice.MaintenanceControlName,
 ) bool {
 	if h.admin == nil {
 		return true
 	}
 	err := h.admin.RequireEnabled(r.Context(), name)
-	if errors.Is(err, coreadmin.ErrOperationallyDisabled) {
+	if errors.Is(err, adminservice.ErrMaintenanceControlDisabled) {
 		writeProblem(
 			w, requestID, http.StatusServiceUnavailable, serverv1.TemporarilyUnavailable,
-			"Operation disabled", "operation-disabled",
+			"Maintenance control disabled", "maintenance-control-disabled",
 		)
 		return false
 	}
@@ -496,7 +437,7 @@ func (h *handler) requireOperationalSwitch(
 func adminRouteResponse(route routes.Route) serverv1.AdminRoute {
 	result := serverv1.AdminRoute{
 		Id: serverv1.RouteID(route.ID), Hostname: route.Hostname, LocalTarget: route.LocalTarget,
-		Status: serverv1.AdminRouteStatus(route.Status), Version: int(route.Version),
+		Status: serverv1.AdminRouteStatus(route.Status), RouteVersion: int(route.RouteVersion),
 		SuspensionRevision: int(route.SuspensionRevision), CreatedAt: route.CreatedAt,
 	}
 	if route.IdentityID != "" {
@@ -538,9 +479,9 @@ func adminHostnameResponse(hostname routes.Hostname) serverv1.AdminHostname {
 	return result
 }
 
-func adminSwitchResponse(value coreadmin.OperationalSwitch) serverv1.AdminOperationalSwitch {
-	return serverv1.AdminOperationalSwitch{
-		Name: serverv1.OperationalSwitchName(value.Name), Enabled: value.Enabled,
+func adminMaintenanceControlResponse(value adminservice.MaintenanceControl) serverv1.AdminMaintenanceControl {
+	return serverv1.AdminMaintenanceControl{
+		Name: serverv1.MaintenanceControlName(value.Name), Enabled: value.Enabled,
 		Revision: int(value.Revision), UpdatedAt: value.UpdatedAt, UpdatedBy: value.UpdatedBy,
 	}
 }
@@ -562,22 +503,11 @@ func validAdminReason(value string) bool {
 }
 
 func validRouteID(value string) bool {
-	const prefix = "route_"
-	return len(value) == len(prefix)+32 && strings.HasPrefix(value, prefix) && validLowerHex(value[len(prefix):])
+	return opaqueid.Valid(value, "route_")
 }
 
 func validControlSessionID(value string) bool {
-	const prefix = "control_session_"
-	return len(value) == len(prefix)+32 && strings.HasPrefix(value, prefix) && validLowerHex(value[len(prefix):])
-}
-
-func validLowerHex(value string) bool {
-	for _, character := range value {
-		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
-			return false
-		}
-	}
-	return value != ""
+	return opaqueid.Valid(value, "control_session_")
 }
 
 func validCredentialID(value string) bool {
@@ -585,19 +515,11 @@ func validCredentialID(value string) bool {
 	return err == nil
 }
 
-func validAdminSwitch(value string) bool {
-	name := coreadmin.SwitchName(value)
-	return name == coreadmin.SwitchNewRoutes || name == coreadmin.SwitchNewSessions || name == coreadmin.SwitchCertificateIssuance
-}
-
-func writeMethodOrNotFound(w http.ResponseWriter, method, requestID string, found bool, allowed string) {
-	if !found {
-		writeNotFound(w, requestID)
-		return
-	}
-	if method != allowed {
-		writeMethodNotAllowed(w, requestID, allowed)
-	}
+func validAdminMaintenanceControl(value string) bool {
+	name := adminservice.MaintenanceControlName(value)
+	return name == adminservice.MaintenanceControlRouteCreation ||
+		name == adminservice.MaintenanceControlRouteSessionCreation ||
+		name == adminservice.MaintenanceControlCertificateIssuance
 }
 
 func writeUnsupported(w http.ResponseWriter, requestID string) {
@@ -606,11 +528,11 @@ func writeUnsupported(w http.ResponseWriter, requestID string) {
 
 func writeAdminError(w http.ResponseWriter, requestID string, err error) {
 	switch {
-	case errors.Is(err, routes.ErrNotFound), errors.Is(err, coreadmin.ErrNotFound):
+	case errors.Is(err, routes.ErrNotFound), errors.Is(err, adminservice.ErrNotFound):
 		writeNotFound(w, requestID)
-	case errors.Is(err, routes.ErrInvalidArgument), errors.Is(err, coreadmin.ErrInvalidArgument):
+	case errors.Is(err, routes.ErrInvalidArgument), errors.Is(err, adminservice.ErrInvalidArgument):
 		writeInvalidRequest(w, requestID)
-	case errors.Is(err, routes.ErrInvalidStatus), errors.Is(err, coreadmin.ErrStatusConflict):
+	case errors.Is(err, routes.ErrInvalidStatus), errors.Is(err, adminservice.ErrStatusConflict):
 		writeProblem(w, requestID, http.StatusConflict, serverv1.StatusConflict, "Status conflict", "status-conflict")
 	default:
 		writeInternalError(w, requestID, err)

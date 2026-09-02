@@ -1,4 +1,4 @@
-name: tnl-core-dev
+name: tnl-local-dev
 
 services:
   pebble:

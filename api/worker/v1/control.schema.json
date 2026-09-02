@@ -4,7 +4,7 @@
   "title": "tnl worker control message v1",
   "oneOf": [
     {"$ref": "#/$defs/hello"},
-    {"$ref": "#/$defs/accepted"},
+    {"$ref": "#/$defs/helloAccepted"},
     {"$ref": "#/$defs/attachRoute"},
     {"$ref": "#/$defs/routeReady"},
     {"$ref": "#/$defs/detachRoute"},
@@ -16,36 +16,36 @@
     "route": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["route_id", "version"],
+      "required": ["route_id", "route_version"],
       "properties": {
         "route_id": {"type": "string", "minLength": 1, "pattern": "^\\S(?:.*\\S)?$"},
-        "version": {"type": "integer", "minimum": 1}
+        "route_version": {"type": "integer", "description": "Route version assigned to the worker.", "minimum": 1}
       }
     },
     "hello": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["type", "capacity"],
+      "required": ["type", "route_capacity"],
       "properties": {
         "type": {"const": "hello"},
-        "capacity": {"type": "integer", "minimum": 1}
+        "route_capacity": {"type": "integer", "description": "Maximum number of routes the worker can serve concurrently.", "minimum": 1}
       }
     },
-    "accepted": {
+    "helloAccepted": {
       "type": "object",
       "additionalProperties": false,
       "required": ["type"],
-      "properties": {"type": {"const": "accepted"}}
+      "properties": {"type": {"const": "hello_accepted"}}
     },
     "attachRoute": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["type", "route", "endpoint", "worker_private_key"],
+      "required": ["type", "route", "publisher_transport", "tailcat_dialer_private_key"],
       "properties": {
         "type": {"const": "attach_route"},
         "route": {"$ref": "#/$defs/route"},
-        "endpoint": {"$ref": "../../transport/v1/tailcat-descriptor.schema.json"},
-        "worker_private_key": {"type": "string", "minLength": 1}
+        "publisher_transport": {"$ref": "../../transport/v1/tailcat-descriptor.schema.json", "description": "Tailcat transport advertised by the route publisher."},
+        "tailcat_dialer_private_key": {"type": "string", "description": "Private node key used by the worker to dial the publisher transport.", "minLength": 1}
       }
     },
     "routeReady": {
@@ -88,7 +88,7 @@
       "properties": {
         "type": {"const": "error"},
         "route": {"$ref": "#/$defs/route"},
-        "code": {"enum": ["invalid_message", "stale_assignment", "at_capacity", "internal"]}
+        "code": {"enum": ["invalid_message", "stale_route_version", "route_capacity_exceeded", "internal"]}
       }
     }
   }

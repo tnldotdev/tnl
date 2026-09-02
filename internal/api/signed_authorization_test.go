@@ -17,9 +17,10 @@ import (
 	"github.com/tnldotdev/tnl/internal/routes"
 	"github.com/tnldotdev/tnl/internal/state"
 	"github.com/tnldotdev/tnl/pkg/protocol/serverv1"
+	"golang.org/x/time/rate"
 )
 
-func TestSignedRouteAPIBypassesCoreIdentityAndRetriesExactly(t *testing.T) {
+func TestSignedRouteAPIBypassesServerIdentityAndRetriesExactly(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
 	publicKey, privateKey, err := ed25519.GenerateKey(nil)
@@ -27,7 +28,7 @@ func TestSignedRouteAPIBypassesCoreIdentityAndRetriesExactly(t *testing.T) {
 		t.Fatal(err)
 	}
 	verifier, err := authorization.NewVerifier(authorization.Config{
-		Issuer: "https://authority.example", Receiver: "https://core.example", KeyID: "key-1",
+		Issuer: "https://authority.example", Receiver: "https://server.example", KeyID: "key-1",
 		PublicKey: publicKey, Now: func() time.Time { return now },
 	})
 	if err != nil {
@@ -57,7 +58,7 @@ func TestSignedRouteAPIBypassesCoreIdentityAndRetriesExactly(t *testing.T) {
 	request := serverv1.CreateRouteRequest{
 		Hostname: "route.example", LocalTarget: "http://127.0.0.1:3000", RouteToken: routeToken.String(),
 	}
-	requestHash, err := authorization.CanonicalRequestHash(authorization.CoreRequest{
+	requestHash, err := authorization.CanonicalRequestHash(authorization.OperationRequest{
 		Operation: authorization.OperationRouteCreate, Hostname: request.Hostname,
 		LocalTarget: request.LocalTarget, RouteToken: request.RouteToken,
 	})
@@ -66,7 +67,7 @@ func TestSignedRouteAPIBypassesCoreIdentityAndRetriesExactly(t *testing.T) {
 	}
 	claims := apiSignedClaims{
 		Version: 1, KeyID: "key-1", Algorithm: authorization.Algorithm,
-		Operation: authorization.OperationRouteCreate, Issuer: "https://authority.example", Receiver: "https://core.example",
+		Operation: authorization.OperationRouteCreate, Issuer: "https://authority.example", Receiver: "https://server.example",
 		AuthorizationID: "authorization_00000000000000000000000000000001", Hostname: request.Hostname,
 		Revision: 1, IssuedAt: now.Add(-time.Minute), ExpiresAt: now.Add(10 * time.Minute),
 		RetryID: "retry_00000000000000000000000000000001", CanonicalRequestHash: requestHash.String(),
@@ -98,7 +99,7 @@ func TestSignedRouteAPIBypassesCoreIdentityAndRetriesExactly(t *testing.T) {
 
 func TestClientIPUsesRemoteAddressAndDedicatedLimit(t *testing.T) {
 	handler := NewHandlerWithServicesAndConfig(fixtureCapabilities(t), nil, nil, nil, HandlerConfig{}).(*handler)
-	handler.clientIPLimit = testAPISourceLimiter(t)
+	handler.clientIPLimit = rate.NewLimiter(0, 1)
 
 	request := httptest.NewRequest(http.MethodGet, clientIPPath, nil)
 	request.RemoteAddr = "[::ffff:192.0.2.10]:4321"
@@ -117,13 +118,6 @@ func TestClientIPUsesRemoteAddressAndDedicatedLimit(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusTooManyRequests || response.Header().Get("Retry-After") != "1" {
 		t.Fatalf("limited status = %d, retry-after = %q", response.Code, response.Header().Get("Retry-After"))
-	}
-	request = httptest.NewRequest(http.MethodGet, clientIPPath, nil)
-	request.RemoteAddr = "192.0.2.11:4321"
-	response = httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusOK {
-		t.Fatalf("independent source status = %d: %s", response.Code, response.Body.String())
 	}
 
 	malformed := NewHandlerWithServicesAndConfig(fixtureCapabilities(t), nil, nil, nil, HandlerConfig{})

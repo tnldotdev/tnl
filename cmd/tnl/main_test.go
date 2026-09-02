@@ -156,7 +156,7 @@ func TestAdminCommandTree(t *testing.T) {
 		"admin routes show", "admin routes suspend", "admin routes resume", "admin hostnames list",
 		"admin hostnames show", "admin hostnames remove", "admin hostnames quarantine",
 		"admin credentials list", "admin credentials revoke", "admin control-sessions list",
-		"admin control-sessions revoke", "admin switches list", "admin switches enable", "admin switches disable",
+		"admin control-sessions revoke", "admin maintenance list", "admin maintenance enable", "admin maintenance disable",
 	} {
 		if !commands[command] {
 			t.Fatalf("command %q missing from help model", command)
@@ -226,19 +226,19 @@ func TestAdminServerLoginTokenRequiresLockForRotation(t *testing.T) {
 	}
 }
 
-func TestPublishNameOption(t *testing.T) {
-	t.Setenv("TNL_NAME", "env-name")
+func TestPublishHostOption(t *testing.T) {
+	t.Setenv("TNL_HOST", "env-host")
 	var flags cli
 	parser, err := kong.New(&flags)
 	if err != nil {
 		t.Fatal(err)
 	}
-	parsed, err := parser.Parse([]string{"publish", "3000", "--name", "flag-name"})
+	parsed, err := parser.Parse([]string{"publish", "3000", "--host", "flag-host"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parsed.Command() != "publish <target>" || flags.Publish.Name != "flag-name" {
-		t.Fatalf("command = %q, name = %q", parsed.Command(), flags.Publish.Name)
+	if parsed.Command() != "publish <target>" || flags.Publish.Host != "flag-host" {
+		t.Fatalf("command = %q, host = %q", parsed.Command(), flags.Publish.Host)
 	}
 
 	var envFlags cli
@@ -249,8 +249,8 @@ func TestPublishNameOption(t *testing.T) {
 	if _, err := envParser.Parse([]string{"publish", "3000"}); err != nil {
 		t.Fatal(err)
 	}
-	if envFlags.Publish.Name != "env-name" {
-		t.Fatalf("environment name = %q", envFlags.Publish.Name)
+	if envFlags.Publish.Host != "env-host" {
+		t.Fatalf("environment host = %q", envFlags.Publish.Host)
 	}
 }
 
@@ -276,6 +276,53 @@ func TestPublishAndDevOpenOptions(t *testing.T) {
 	}
 }
 
+func TestCLIHardCutoverCommandsAndFlags(t *testing.T) {
+	for _, args := range [][]string{
+		{"host", "claim", "demo"},
+		{"host", "release", "demo.example"},
+		{"admin", "maintenance", "enable", "route_creation"},
+		{"admin", "maintenance", "enable", "route_session_creation"},
+		{"admin", "maintenance", "enable", "certificate_issuance"},
+	} {
+		var flags cli
+		parser, err := kong.New(&flags)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := parser.Parse(args); err != nil {
+			t.Fatalf("parse %q: %v", args, err)
+		}
+	}
+	for _, args := range [][]string{
+		{"publish", "3000", "--unknown-host-option", "demo"},
+		{"host", "unknown", "demo"},
+		{"admin", "unknown", "list"},
+		{"admin", "maintenance", "enable", "new_routes"},
+	} {
+		var flags cli
+		parser, err := kong.New(&flags)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := parser.Parse(args); err == nil {
+			t.Fatalf("unknown CLI input accepted %q", args)
+		}
+	}
+	t.Setenv("TNL_HOST", "")
+	t.Setenv("TNL_UNKNOWN_HOST", "ignored")
+	var flags cli
+	parser, err := kong.New(&flags)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parser.Parse([]string{"publish", "3000"}); err != nil {
+		t.Fatal(err)
+	}
+	if flags.Publish.Host != "" {
+		t.Fatalf("unknown environment variable set host to %q", flags.Publish.Host)
+	}
+}
+
 func TestPublishIPAllowlistOptions(t *testing.T) {
 	var flags cli
 	parser, err := kong.New(&flags)
@@ -292,16 +339,20 @@ func TestPublishIPAllowlistOptions(t *testing.T) {
 	}
 }
 
-func TestHostnameAndPublishNameResolution(t *testing.T) {
-	kind, name, err := classifyAddHostname("com", "tnl.dev")
-	if err != nil || kind != serverv1.AddHostnameRequestKindManaged || name != "com" {
-		t.Fatalf("managed com = %q, %q, %v", kind, name, err)
+func TestHostnameAndPublishHostResolution(t *testing.T) {
+	kind, label, err := classifyClaimHostname("com", "tnl.dev")
+	if err != nil || kind != serverv1.ClaimHostnameRequestKindManaged || label != "com" {
+		t.Fatalf("managed com = %q, %q, %v", kind, label, err)
 	}
-	if _, _, err := classifyAddHostname("com.", "tnl.dev"); err == nil {
+	kind, label, err = classifyClaimHostname("com.tnl.dev", "tnl.dev")
+	if err != nil || kind != serverv1.ClaimHostnameRequestKindManaged || label != "com" {
+		t.Fatalf("managed hostname = %q, %q, %v", kind, label, err)
+	}
+	if _, _, err := classifyClaimHostname("com.", "tnl.dev"); err == nil {
 		t.Fatal("absolute public suffix accepted")
 	}
-	if _, _, err := classifyAddHostname("api.chase.tnl.dev", "tnl.dev"); err == nil {
-		t.Fatal("managed descendant accepted as a base")
+	if _, _, err := classifyClaimHostname("api.chase.tnl.dev", "tnl.dev"); err == nil {
+		t.Fatal("managed descendant accepted as a claim")
 	}
 
 	managed := serverv1.Hostname{
@@ -312,23 +363,23 @@ func TestHostnameAndPublishNameResolution(t *testing.T) {
 		Id: "hostname_00000000000000000000000000000002", Hostname: "example.com",
 		Kind: serverv1.HostnameKindCustomDomain, Status: serverv1.HostnameStatusActive,
 	}
-	hostname, base, isManaged, implicit, err := resolvePublishName("example.com", "tnl.dev", 8, []serverv1.Hostname{managed})
+	hostname, base, isManaged, implicit, err := resolvePublishHostname("example.com", "tnl.dev", 8, []serverv1.Hostname{managed})
 	if err != nil || hostname != "example.com.tnl.dev" || base != "com.tnl.dev" || !isManaged || implicit {
 		t.Fatalf("relative managed = %q, %q, %v, %v, %v", hostname, base, isManaged, implicit, err)
 	}
-	hostname, base, isManaged, _, err = resolvePublishName("example.com", "tnl.dev", 8, []serverv1.Hostname{managed, custom})
+	hostname, base, isManaged, _, err = resolvePublishHostname("example.com", "tnl.dev", 8, []serverv1.Hostname{managed, custom})
 	if err != nil || hostname != "example.com" || base != "example.com" || isManaged {
 		t.Fatalf("owned custom precedence = %q, %q, %v, %v", hostname, base, isManaged, err)
 	}
-	hostname, base, isManaged, _, err = resolvePublishName("example.com.tnl.dev", "tnl.dev", 8, []serverv1.Hostname{managed, custom})
+	hostname, base, isManaged, _, err = resolvePublishHostname("example.com.tnl.dev", "tnl.dev", 8, []serverv1.Hostname{managed, custom})
 	if err != nil || hostname != "example.com.tnl.dev" || base != "com.tnl.dev" || !isManaged {
 		t.Fatalf("canonical managed = %q, %q, %v, %v", hostname, base, isManaged, err)
 	}
-	hostname, _, isManaged, _, err = resolvePublishName("example.com.", "tnl.dev", 8, []serverv1.Hostname{custom})
+	hostname, _, isManaged, _, err = resolvePublishHostname("example.com.", "tnl.dev", 8, []serverv1.Hostname{custom})
 	if err != nil || hostname != "example.com" || isManaged {
 		t.Fatalf("absolute custom = %q, %v, %v", hostname, isManaged, err)
 	}
-	if _, _, _, _, err := resolvePublishName("a.b.c.d.e.f.g.h.i.com", "tnl.dev", 8, []serverv1.Hostname{managed}); err == nil {
+	if _, _, _, _, err := resolvePublishHostname("a.b.c.d.e.f.g.h.i.com", "tnl.dev", 8, []serverv1.Hostname{managed}); err == nil {
 		t.Fatal("ninth-level managed descendant accepted")
 	}
 }
@@ -351,23 +402,23 @@ func TestReadLoginToken(t *testing.T) {
 	}
 }
 
-func TestAddTemporaryHostnameAllocatesFreshName(t *testing.T) {
-	var requestKeys []string
+func TestClaimTemporaryHostnameAllocatesFreshHostname(t *testing.T) {
+	var idempotencyKeys []string
 	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodPost || request.URL.Path != "/v1/hostnames" {
 			http.NotFound(response, request)
 			return
 		}
-		var body serverv1.AddHostnameRequest
+		var body serverv1.ClaimHostnameRequest
 		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
 			t.Error(err)
 			response.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		if body.Name != nil || body.Kind != serverv1.AddHostnameRequestKindTemporary {
+		if body.Label != nil || body.Kind != serverv1.ClaimHostnameRequestKindTemporary {
 			t.Errorf("temporary hostname request = %#v", body)
 		}
-		requestKeys = append(requestKeys, request.Header.Get("Idempotency-Key"))
+		idempotencyKeys = append(idempotencyKeys, request.Header.Get("Idempotency-Key"))
 		response.Header().Set("Content-Type", "application/json")
 		response.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(response).Encode(serverv1.Hostname{
@@ -386,7 +437,7 @@ func TestAddTemporaryHostnameAllocatesFreshName(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		hostname, err := addPublishHostname(
+		hostname, err := claimPublishHostname(
 			context.Background(), client, "", serverv1.Capabilities{HostnameSuffix: "example", MaximumSubdomainDepth: 8},
 		)
 		if err != nil {
@@ -396,8 +447,8 @@ func TestAddTemporaryHostnameAllocatesFreshName(t *testing.T) {
 			t.Fatalf("hostname = %q", hostname)
 		}
 	}
-	if len(requestKeys) != 2 || requestKeys[0] == "" || requestKeys[1] == "" || requestKeys[0] == requestKeys[1] {
-		t.Fatalf("request keys = %#v", requestKeys)
+	if len(idempotencyKeys) != 2 || idempotencyKeys[0] == "" || idempotencyKeys[1] == "" || idempotencyKeys[0] == idempotencyKeys[1] {
+		t.Fatalf("idempotency keys = %#v", idempotencyKeys)
 	}
 }
 
@@ -576,13 +627,13 @@ func TestHostReleaseRecoversAfterAmbiguousDelete(t *testing.T) {
 	http.DefaultTransport = server.Client().Transport
 	t.Cleanup(func() { http.DefaultTransport = previousTransport })
 	var output bytes.Buffer
-	flags := hostRemoveCommand{
+	flags := hostReleaseCommand{
 		Hostname: "random.example", ServerURL: server.URL, AccessToken: access.String(), StateDir: filepath.Join(t.TempDir(), "state"),
 	}
-	if err := runHostRemove(context.Background(), flags, &output); !errors.Is(err, serverclient.ErrUnavailable) {
+	if err := runHostRelease(context.Background(), flags, &output); !errors.Is(err, serverclient.ErrUnavailable) {
 		t.Fatalf("ambiguous release error = %v", err)
 	}
-	if err := runHostRemove(context.Background(), flags, &output); err != nil {
+	if err := runHostRelease(context.Background(), flags, &output); err != nil {
 		t.Fatal(err)
 	}
 	if output.String() != "random.example\n" {
@@ -621,17 +672,17 @@ func TestHostListWithExplicitTokenUsesClientState(t *testing.T) {
 	}, &output); err != nil {
 		t.Fatal(err)
 	}
-	if output.String() != "NAME\tTYPE\tSTATE\nrandom.example\ttemporary\tpending_route\n" {
+	if output.String() != "HOSTNAME\tTYPE\tSTATE\nrandom.example\ttemporary\tpending_route\n" {
 		t.Fatalf("output = %q", output.String())
 	}
 }
 
-func TestResolveReleaseNameRejectsTemporaryHostname(t *testing.T) {
-	_, _, err := resolveReleaseName("random", "example", []serverv1.Hostname{{
+func TestResolveReleaseHostnameRejectsTemporaryHostname(t *testing.T) {
+	_, _, err := resolveReleaseHostname("random", "example", []serverv1.Hostname{{
 		Id: "hostname_0123456789abcdef0123456789abcdef", Hostname: "random.example",
 		Kind: serverv1.HostnameKindTemporary, Status: serverv1.HostnameStatusActive,
 	}})
-	if err == nil || err.Error() != "temporary hostnames are retired with their route and cannot be removed" {
+	if err == nil || err.Error() != "temporary hostnames are retired with their route and cannot be released" {
 		t.Fatalf("error = %v", err)
 	}
 }

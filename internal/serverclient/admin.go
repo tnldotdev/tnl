@@ -4,19 +4,25 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/pkg/protocol/serverv1"
 )
 
 func (c *Client) AdminServerStatus(ctx context.Context) (serverv1.AdminServerStatus, error) {
-	return requestWithAccess[serverv1.AdminServerStatus](ctx, c, http.MethodGet, "/v1/admin/status", nil)
+	return requestWithAccess[serverv1.AdminServerStatus](ctx, c, c.api.GetAdminServerStatus)
 }
 
 func (c *Client) AdminListRoutes(ctx context.Context, cursor string) (serverv1.AdminRoutePage, error) {
-	page, err := adminPage[serverv1.AdminRoutePage](ctx, c, "/v1/admin/routes", cursor)
+	params := &serverv1.ListAdminRoutesParams{}
+	if cursor != "" {
+		params.Cursor = &cursor
+	}
+	page, err := requestWithAccess[serverv1.AdminRoutePage](ctx, c, func(ctx context.Context, editors ...serverv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.ListAdminRoutes(ctx, params, editors...)
+	})
 	if err == nil {
 		err = validateAdminRoutePage(page, cursor)
 	}
@@ -24,7 +30,9 @@ func (c *Client) AdminListRoutes(ctx context.Context, cursor string) (serverv1.A
 }
 
 func (c *Client) AdminRoute(ctx context.Context, routeID string) (serverv1.AdminRoute, error) {
-	return requestWithAccess[serverv1.AdminRoute](ctx, c, http.MethodGet, adminResourcePath("routes", routeID, ""), nil)
+	return requestWithAccess[serverv1.AdminRoute](ctx, c, func(ctx context.Context, editors ...serverv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.GetAdminRoute(ctx, routeID, editors...)
+	})
 }
 
 func (c *Client) AdminSuspendRoute(
@@ -36,10 +44,10 @@ func (c *Client) AdminSuspendRoute(
 	if !validAdminRevision(revision) || !validAdminReason(reason) {
 		return serverv1.AdminRoute{}, errors.New("serverclient: invalid admin route suspension")
 	}
-	return requestWithAccess[serverv1.AdminRoute](
-		ctx, c, http.MethodPost, adminResourcePath("routes", routeID, "suspend"),
-		serverv1.SuspendAdminRouteRequest{Revision: int(revision), Reason: reason},
-	)
+	body := serverv1.SuspendAdminRouteRequest{Revision: int(revision), Reason: reason}
+	return requestWithAccess[serverv1.AdminRoute](ctx, c, func(ctx context.Context, editors ...serverv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.SuspendAdminRoute(ctx, routeID, body, editors...)
+	})
 }
 
 func (c *Client) AdminResumeRoute(
@@ -50,14 +58,20 @@ func (c *Client) AdminResumeRoute(
 	if !validAdminRevision(revision) {
 		return serverv1.AdminRoute{}, errors.New("serverclient: invalid admin route revision")
 	}
-	return requestWithAccess[serverv1.AdminRoute](
-		ctx, c, http.MethodPost, adminResourcePath("routes", routeID, "resume"),
-		serverv1.ResumeAdminRouteRequest{Revision: int(revision)},
-	)
+	body := serverv1.ResumeAdminRouteRequest{Revision: int(revision)}
+	return requestWithAccess[serverv1.AdminRoute](ctx, c, func(ctx context.Context, editors ...serverv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.ResumeAdminRoute(ctx, routeID, body, editors...)
+	})
 }
 
 func (c *Client) AdminListHostnames(ctx context.Context, cursor string) (serverv1.AdminHostnamePage, error) {
-	page, err := adminPage[serverv1.AdminHostnamePage](ctx, c, "/v1/admin/hostnames", cursor)
+	params := &serverv1.ListAdminHostnamesParams{}
+	if cursor != "" {
+		params.Cursor = &cursor
+	}
+	page, err := requestWithAccess[serverv1.AdminHostnamePage](ctx, c, func(ctx context.Context, editors ...serverv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.ListAdminHostnames(ctx, params, editors...)
+	})
 	if err == nil {
 		err = validateAdminHostnamePage(page, cursor)
 	}
@@ -65,11 +79,15 @@ func (c *Client) AdminListHostnames(ctx context.Context, cursor string) (serverv
 }
 
 func (c *Client) AdminHostname(ctx context.Context, hostnameID string) (serverv1.AdminHostname, error) {
-	return requestWithAccess[serverv1.AdminHostname](ctx, c, http.MethodGet, adminResourcePath("hostnames", hostnameID, ""), nil)
+	return requestWithAccess[serverv1.AdminHostname](ctx, c, func(ctx context.Context, editors ...serverv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.GetAdminHostname(ctx, hostnameID, editors...)
+	})
 }
 
 func (c *Client) AdminRemoveHostname(ctx context.Context, hostnameID string) error {
-	_, err := requestWithAccess[struct{}](ctx, c, http.MethodDelete, adminResourcePath("hostnames", hostnameID, ""), nil)
+	_, err := requestWithAccess[struct{}](ctx, c, func(ctx context.Context, editors ...serverv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.RemoveAdminHostname(ctx, hostnameID, editors...)
+	})
 	return err
 }
 
@@ -77,15 +95,20 @@ func (c *Client) AdminQuarantineHostname(ctx context.Context, hostnameID, reason
 	if !validAdminReason(reason) {
 		return errors.New("serverclient: invalid admin quarantine reason")
 	}
-	_, err := requestWithAccess[struct{}](
-		ctx, c, http.MethodPost, adminResourcePath("hostnames", hostnameID, "quarantine"),
-		serverv1.AdminReasonRequest{Reason: reason},
-	)
+	_, err := requestWithAccess[struct{}](ctx, c, func(ctx context.Context, editors ...serverv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.QuarantineAdminHostname(ctx, hostnameID, serverv1.AdminReasonRequest{Reason: reason}, editors...)
+	})
 	return err
 }
 
 func (c *Client) AdminListCredentials(ctx context.Context, cursor string) (serverv1.AdminCredentialPage, error) {
-	page, err := adminPage[serverv1.AdminCredentialPage](ctx, c, "/v1/admin/credentials", cursor)
+	params := &serverv1.ListAdminCredentialsParams{}
+	if cursor != "" {
+		params.Cursor = &cursor
+	}
+	page, err := requestWithAccess[serverv1.AdminCredentialPage](ctx, c, func(ctx context.Context, editors ...serverv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.ListAdminCredentials(ctx, params, editors...)
+	})
 	if err == nil {
 		err = validateAdminCredentialPage(page, cursor)
 	}
@@ -93,12 +116,20 @@ func (c *Client) AdminListCredentials(ctx context.Context, cursor string) (serve
 }
 
 func (c *Client) AdminRevokeCredential(ctx context.Context, credentialID string) error {
-	_, err := requestWithAccess[struct{}](ctx, c, http.MethodDelete, adminResourcePath("credentials", credentialID, ""), nil)
+	_, err := requestWithAccess[struct{}](ctx, c, func(ctx context.Context, editors ...serverv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.RevokeAdminCredential(ctx, credentialID, editors...)
+	})
 	return err
 }
 
 func (c *Client) AdminListControlSessions(ctx context.Context, cursor string) (serverv1.AdminControlSessionPage, error) {
-	page, err := adminPage[serverv1.AdminControlSessionPage](ctx, c, "/v1/admin/control-sessions", cursor)
+	params := &serverv1.ListAdminControlSessionsParams{}
+	if cursor != "" {
+		params.Cursor = &cursor
+	}
+	page, err := requestWithAccess[serverv1.AdminControlSessionPage](ctx, c, func(ctx context.Context, editors ...serverv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.ListAdminControlSessions(ctx, params, editors...)
+	})
 	if err == nil {
 		err = validateAdminControlSessionPage(page, cursor)
 	}
@@ -106,43 +137,29 @@ func (c *Client) AdminListControlSessions(ctx context.Context, cursor string) (s
 }
 
 func (c *Client) AdminRevokeControlSession(ctx context.Context, sessionID string) error {
-	_, err := requestWithAccess[struct{}](ctx, c, http.MethodDelete, adminResourcePath("control-sessions", sessionID, ""), nil)
+	_, err := requestWithAccess[struct{}](ctx, c, func(ctx context.Context, editors ...serverv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.RevokeAdminControlSession(ctx, sessionID, editors...)
+	})
 	return err
 }
 
-func (c *Client) AdminListSwitches(ctx context.Context) ([]serverv1.AdminOperationalSwitch, error) {
-	values, err := requestWithAccess[[]serverv1.AdminOperationalSwitch](ctx, c, http.MethodGet, "/v1/admin/switches", nil)
+func (c *Client) AdminListMaintenanceControls(ctx context.Context) ([]serverv1.AdminMaintenanceControl, error) {
+	values, err := requestWithAccess[[]serverv1.AdminMaintenanceControl](ctx, c, c.api.ListAdminMaintenanceControls)
 	if err == nil {
-		err = validateAdminSwitches(values)
+		err = validateAdminMaintenanceControls(values)
 	}
 	return values, err
 }
 
-func (c *Client) AdminSetSwitch(
+func (c *Client) AdminSetMaintenanceControl(
 	ctx context.Context,
-	name serverv1.OperationalSwitchName,
+	name serverv1.MaintenanceControlName,
 	enabled bool,
-) (serverv1.AdminOperationalSwitch, error) {
-	return requestWithAccess[serverv1.AdminOperationalSwitch](
-		ctx, c, http.MethodPut, adminResourcePath("switches", string(name), ""),
-		serverv1.SetAdminSwitchRequest{Enabled: enabled},
-	)
-}
-
-func adminPage[T any](ctx context.Context, client *Client, path, cursor string) (T, error) {
-	query := make(url.Values)
-	if cursor != "" {
-		query.Set("cursor", cursor)
-	}
-	return requestWithAccessAndQuery[T](ctx, client, http.MethodGet, path, nil, query)
-}
-
-func adminResourcePath(resource, id, operation string) string {
-	path := "/v1/admin/" + resource + "/" + url.PathEscape(id)
-	if operation != "" {
-		path += "/" + operation
-	}
-	return path
+) (serverv1.AdminMaintenanceControl, error) {
+	body := serverv1.SetAdminMaintenanceControlRequest{Enabled: enabled}
+	return requestWithAccess[serverv1.AdminMaintenanceControl](ctx, c, func(ctx context.Context, editors ...serverv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.SetAdminMaintenanceControl(ctx, name, body, editors...)
+	})
 }
 
 func RequireAdministrationCapability(capabilities serverv1.Capabilities) error {
@@ -166,7 +183,7 @@ func validateAdminRoutePage(page serverv1.AdminRoutePage, cursor string) error {
 	ids := make([]string, len(page.Routes))
 	for index, route := range page.Routes {
 		ids[index] = string(route.Id)
-		if !route.Status.Valid() || route.Version < 1 || route.SuspensionRevision < 0 {
+		if !route.Status.Valid() || route.RouteVersion < 1 || route.SuspensionRevision < 0 {
 			return errors.New("serverclient: invalid admin route page")
 		}
 	}
@@ -255,14 +272,14 @@ func validateAdminPage(
 	return nil
 }
 
-func validateAdminSwitches(values []serverv1.AdminOperationalSwitch) error {
+func validateAdminMaintenanceControls(values []serverv1.AdminMaintenanceControl) error {
 	if len(values) != 3 {
-		return errors.New("serverclient: invalid operational switches")
+		return errors.New("serverclient: invalid maintenance controls")
 	}
-	seen := make(map[serverv1.OperationalSwitchName]bool, 3)
+	seen := make(map[serverv1.MaintenanceControlName]bool, 3)
 	for _, value := range values {
 		if !value.Name.Valid() || value.Revision < 1 || seen[value.Name] {
-			return errors.New("serverclient: invalid operational switches")
+			return errors.New("serverclient: invalid maintenance controls")
 		}
 		seen[value.Name] = true
 	}
@@ -279,15 +296,7 @@ func validAdminCredentialID(value string) bool {
 }
 
 func validAdminPrefixedHex(value, prefix string) bool {
-	if len(value) != len(prefix)+32 || !strings.HasPrefix(value, prefix) {
-		return false
-	}
-	for _, character := range value[len(prefix):] {
-		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
-			return false
-		}
-	}
-	return true
+	return opaqueid.Valid(value, prefix)
 }
 
 func validAdminRevision(revision uint64) bool {

@@ -1,7 +1,8 @@
-// Package ingress routes opaque TLS streams by exact SNI.
+// Package ingress routes TLS streams without terminating them, using exact SNI hostnames.
 package ingress
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -9,13 +10,11 @@ import (
 	"net"
 	"net/netip"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/proxyproto"
 	"github.com/tnldotdev/tnl/internal/relay"
 	"github.com/tnldotdev/tnl/internal/router"
-	"github.com/tnldotdev/tnl/internal/sourceauth"
 	"github.com/tnldotdev/tnl/internal/sourcelimiter"
 	"github.com/tnldotdev/tnl/internal/worker"
 )
@@ -24,13 +23,14 @@ const defaultOpenTimeout = 10 * time.Second
 
 type Route struct {
 	ID                string
-	Version           uint64
+	RouteVersion      uint64
 	AllowedIPPrefixes []netip.Prefix
 	Backend           worker.RouteBackend
-	SourceKey         [32]byte
 }
 
 type LookupFunc func(string) (Route, bool)
+
+type BackendLookupFunc func(string) (worker.RouteBackend, bool)
 
 type UsageConnection interface {
 	PolicyDenied(time.Time)
@@ -55,7 +55,7 @@ type Metrics interface {
 
 type Config struct {
 	Lookup              LookupFunc
-	LookupChallenge     LookupFunc
+	LookupChallenge     BackendLookupFunc
 	ServerHostname      string
 	HandleControl       func(net.Conn) bool
 	RequireProxyHeader  bool
@@ -128,8 +128,7 @@ func (s *Server) Serve() error {
 			}
 			return err
 		}
-		accounted, ok := s.admit(connection)
-		if !ok {
+		if !s.admit(connection) {
 			_ = connection.Close()
 			if s.config.Metrics != nil {
 				s.config.Metrics.IncCapacityRejection("public_connections")
@@ -138,12 +137,8 @@ func (s *Server) Serve() error {
 		}
 		go func() {
 			defer s.active.Done()
-			defer func() {
-				if !accounted.transferred.Load() {
-					_ = accounted.Close()
-				}
-			}()
-			if err := s.handle(accounted); err != nil && s.config.OnError != nil {
+			defer s.release(connection)
+			if err := s.handle(connection); err != nil && s.config.OnError != nil {
 				s.config.OnError(err)
 			}
 		}()
@@ -162,7 +157,6 @@ func (s *Server) Drain(ctx context.Context) error {
 	}()
 	select {
 	case <-wait:
-		s.closeConnections()
 		return nil
 	case <-ctx.Done():
 		s.closeConnections()
@@ -205,11 +199,12 @@ func (s *Server) handle(public net.Conn) error {
 		return nil
 	}
 	route, ok := s.config.Lookup(hello.ServerName)
+	backend := route.Backend
 	routeID := route.ID
 	challenge := hello.ACMETLSALPN && s.config.LookupChallenge != nil
 	// Challenge lookup replaces ordinary routing to prevent fallback.
 	if challenge {
-		route, ok = s.config.LookupChallenge(hello.ServerName)
+		backend, ok = s.config.LookupChallenge(hello.ServerName)
 		routeID = hello.ServerName
 	}
 	if !ok {
@@ -217,7 +212,7 @@ func (s *Server) handle(public net.Conn) error {
 	}
 	var usage UsageConnection
 	if !challenge && s.config.OpenUsage != nil {
-		usage = s.config.OpenUsage(route.ID, route.Version, source.Addr(), time.Now().UTC())
+		usage = s.config.OpenUsage(route.ID, route.RouteVersion, source.Addr(), time.Now().UTC())
 		if usage != nil {
 			defer func() { usage.Close(time.Now().UTC()) }()
 		}
@@ -256,7 +251,7 @@ func (s *Server) handle(public net.Conn) error {
 		}()
 	}
 	openCtx, cancel := context.WithTimeout(context.Background(), s.config.OpenTimeout)
-	stream, err := route.Backend.Open(openCtx)
+	stream, err := backend.Open(openCtx)
 	cancel()
 	if err != nil {
 		return fmt.Errorf("ingress: open route: %w", err)
@@ -270,19 +265,13 @@ func (s *Server) handle(public net.Conn) error {
 	}
 	defer s.releaseBackend(stream)
 	defer stream.Close()
-	if err := stream.SetDeadline(time.Now().Add(s.config.OpenTimeout)); err != nil {
-		return fmt.Errorf("ingress: set source authentication deadline: %w", err)
+	header, err := proxyproto.Encode(proxyproto.Header{Source: source, Destination: destination})
+	if err != nil {
+		return fmt.Errorf("ingress: encode proxy header: %w", err)
 	}
-	purpose := sourceauth.PurposeApplication
-	if challenge {
-		purpose = sourceauth.PurposeACME
+	if err := writeAll(stream, header); err != nil {
+		return fmt.Errorf("ingress: write proxy header: %w", err)
 	}
-	if err := sourceauth.Client(stream, route.SourceKey, purpose, proxyproto.Header{
-		Source: source, Destination: destination,
-	}); err != nil {
-		return fmt.Errorf("ingress: authenticate source metadata: %w", err)
-	}
-	_ = stream.SetDeadline(time.Time{})
 	if usage != nil {
 		usage.StreamOpened(time.Now().UTC())
 		streamOpened = true
@@ -295,8 +284,8 @@ func (s *Server) handle(public net.Conn) error {
 	}
 	result, err := relay.CopyObserved(replayed, stream, observeIngress, observeEgress)
 	if s.config.Metrics != nil {
-		s.config.Metrics.AddForwardedBytes("ingress_to_agent", result.LeftToRight)
-		s.config.Metrics.AddForwardedBytes("agent_to_ingress", result.RightToLeft)
+		s.config.Metrics.AddForwardedBytes("visitor_to_publisher", result.LeftToRight)
+		s.config.Metrics.AddForwardedBytes("publisher_to_visitor", result.RightToLeft)
 	}
 	return err
 }
@@ -320,29 +309,32 @@ func (s *Server) connectionMetadata(public net.Conn) (netip.AddrPort, netip.Addr
 	return source, destination, public, nil
 }
 
-func (s *Server) admit(connection net.Conn) (*accountedConn, bool) {
+func (s *Server) admit(connection net.Conn) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closing || len(s.connections) >= s.config.MaxConnections {
-		return nil, false
+		return false
 	}
-	accounted := &accountedConn{Conn: connection, server: s}
-	s.connections[accounted] = struct{}{}
+	s.connections[connection] = struct{}{}
 	// Register before launch so Drain cannot miss an accepted handler.
 	s.active.Add(1)
-	return accounted, true
+	return true
 }
 
 func (s *Server) release(connection net.Conn) {
 	s.mu.Lock()
+	_, owned := s.connections[connection]
 	delete(s.connections, connection)
 	s.mu.Unlock()
+	if owned {
+		_ = connection.Close()
+	}
 }
 
 func (s *Server) transfer(connection net.Conn) {
-	if accounted, ok := connection.(*accountedConn); ok {
-		accounted.transferred.Store(true)
-	}
+	s.mu.Lock()
+	delete(s.connections, connection)
+	s.mu.Unlock()
 }
 
 func (s *Server) trackBackend(connection net.Conn) bool {
@@ -410,22 +402,6 @@ type readerConn struct {
 	reader io.Reader
 }
 
-type accountedConn struct {
-	net.Conn
-	server      *Server
-	closeOnce   sync.Once
-	closeErr    error
-	transferred atomic.Bool
-}
-
-func (c *accountedConn) Close() error {
-	c.closeOnce.Do(func() {
-		c.closeErr = c.Conn.Close()
-		c.server.release(c)
-	})
-	return c.closeErr
-}
-
 type addressConn struct {
 	net.Conn
 	remote netip.AddrPort
@@ -477,4 +453,9 @@ func ipAllowed(source netip.Addr, prefixes []netip.Prefix) bool {
 
 func tcpAddress(endpoint netip.AddrPort) net.Addr {
 	return &net.TCPAddr{IP: net.IP(endpoint.Addr().AsSlice()), Port: int(endpoint.Port())}
+}
+
+func writeAll(writer io.Writer, data []byte) error {
+	_, err := io.Copy(writer, bytes.NewReader(data))
+	return err
 }

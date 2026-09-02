@@ -69,10 +69,10 @@ paths:
           $ref: "#/components/responses/Problem"
         default:
           $ref: "#/components/responses/Problem"
-  /v1/routes/usage-snapshots:
+  /v1/routes/usage-bucket-reports:
     post:
-      operationId: ingestRouteUsageSnapshots
-      summary: Ingest revisions of route usage buckets
+      operationId: ingestRouteUsageBucketReports
+      summary: Ingest route usage bucket reports
       security:
         - serviceToken: []
       requestBody:
@@ -80,14 +80,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/RouteUsageSnapshotBatch"
+              $ref: "#/components/schemas/RouteUsageBucketReportBatch"
       responses:
         "200":
-          description: Per-snapshot ingestion results
+          description: Per-report ingestion results
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/RouteUsageSnapshotBatchResponse"
+                $ref: "#/components/schemas/RouteUsageBucketReportBatchResponse"
         "400":
           $ref: "#/components/responses/Problem"
         "401":
@@ -180,7 +180,7 @@ components:
     RouteLifecycleEvent:
       type: object
       additionalProperties: false
-      required: [item_id, route_id, version, sequence, occurred_at, transition]
+      required: [item_id, route_id, route_version, sequence, occurred_at, transition]
       properties:
         item_id:
           type: string
@@ -188,8 +188,9 @@ components:
         route_id:
           type: string
           pattern: ^route_[0-9a-f]{32}$
-        version:
+        route_version:
           $ref: "#/components/schemas/PositiveInteger"
+          description: Route version in which the transition occurred.
         sequence:
           $ref: "#/components/schemas/PositiveInteger"
         occurred_at:
@@ -197,14 +198,14 @@ components:
           format: date-time
         transition:
           type: string
-          enum: [version_started, ready, disconnected, deleted]
-    RouteUsageSnapshot:
+          enum: [route_version_started, ready, disconnected, deleted]
+    RouteUsageBucketReport:
       type: object
       additionalProperties: false
       required:
         - item_id
         - route_id
-        - version
+        - route_version
         - resolution
         - bucket_start
         - revision
@@ -227,8 +228,9 @@ components:
         route_id:
           type: string
           pattern: ^route_[0-9a-f]{32}$
-        version:
+        route_version:
           $ref: "#/components/schemas/PositiveInteger"
+          description: Route version measured by this report.
         resolution:
           type: string
           enum: [minute, hour]
@@ -291,7 +293,7 @@ components:
           description: >-
             Precision-12 HyperLogLog estimate of distinct visitor networks for
             this route and bucket. The sketch is shared by route versions, so
-            version snapshots for the same route and bucket carry the same
+            reports for the same route and bucket carry the same
             estimate and must not be summed.
         visitor_network_hll:
           type: string
@@ -305,7 +307,7 @@ components:
             IPv4 /32 or IPv6 /64 networks HMACed with a route-scoped secret
             derived daily from the daemon's stable master secret; no source
             identifier is included. Merge registers by their maximum rather
-            than summing estimates when aggregating snapshots.
+            than summing estimates when aggregating reports.
         complete:
           type: boolean
     BatchProblemCode:
@@ -345,7 +347,7 @@ components:
           maxItems: 32
           items:
             $ref: "#/components/schemas/BatchResult"
-    RouteUsageSnapshotBatch:
+    RouteUsageBucketReportBatch:
       type: object
       additionalProperties: false
       required: [items]
@@ -355,8 +357,8 @@ components:
           minItems: 1
           maxItems: 32
           items:
-            $ref: "#/components/schemas/RouteUsageSnapshot"
-    RouteUsageSnapshotBatchResponse:
+            $ref: "#/components/schemas/RouteUsageBucketReport"
+    RouteUsageBucketReportBatchResponse:
       type: object
       additionalProperties: false
       required: [results]

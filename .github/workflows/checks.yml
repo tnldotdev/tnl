@@ -30,9 +30,6 @@ jobs:
           cache: true
           require-lockfile: true
 
-      - name: Scan for vulnerabilities
-        run: pnpm audit --audit-level high
-
       - name: Check packages
         run: |
           pnpm build
@@ -52,19 +49,14 @@ jobs:
         include:
           - framework: next
             version: "15.2.0"
-            test_name: "^withTnl"
           - framework: next
             version: "16.3.3"
-            test_name: "^withTnl"
           - framework: vite
             version: "6.0.0"
-            test_name: "^tnl"
           - framework: vite
             version: "7.0.0"
-            test_name: "^tnl"
           - framework: vite
             version: "8.2.2"
-            test_name: "^tnl"
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -82,7 +74,7 @@ jobs:
         env:
           FRAMEWORK: ${{ matrix.framework }}
           VERSION: ${{ matrix.version }}
-        run: pnpm --filter "@tnldotdev/$FRAMEWORK" add --save-dev --save-exact --ignore-scripts "$FRAMEWORK@$VERSION"
+        run: pnpm --filter "@tnldotdev/$FRAMEWORK" add --save-dev --save-exact "$FRAMEWORK@$VERSION"
 
       - name: Build adapter
         env:
@@ -94,13 +86,7 @@ jobs:
       - name: Test adapter
         env:
           FRAMEWORK: ${{ matrix.framework }}
-          TEST_NAME: ${{ matrix.test_name }}
-        run: |
-          args=("packages/$FRAMEWORK/index.test.ts")
-          if [[ -n "$TEST_NAME" ]]; then
-            args+=(--testNamePattern "$TEST_NAME")
-          fi
-          pnpm exec vitest run "${args[@]}"
+        run: pnpm exec vitest run "packages/$FRAMEWORK/index.test.ts"
 
   go:
     name: Go

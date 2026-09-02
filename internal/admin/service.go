@@ -1,4 +1,4 @@
-// Package admin implements the concrete self-hosted Core administration operations.
+// Package admin implements the concrete self-hosted server administration operations.
 package admin
 
 import (
@@ -15,26 +15,26 @@ import (
 
 const PageSize = 100
 
-type SwitchName string
+type MaintenanceControlName string
 
 const (
-	SwitchNewRoutes           SwitchName = "new_routes"
-	SwitchNewSessions         SwitchName = "new_sessions"
-	SwitchCertificateIssuance SwitchName = "certificate_issuance"
+	MaintenanceControlRouteCreation        MaintenanceControlName = "route_creation"
+	MaintenanceControlRouteSessionCreation MaintenanceControlName = "route_session_creation"
+	MaintenanceControlCertificateIssuance  MaintenanceControlName = "certificate_issuance"
 )
 
 var (
-	ErrNotFound              = errors.New("admin: not found")
-	ErrInvalidArgument       = errors.New("admin: invalid argument")
-	ErrStatusConflict        = errors.New("admin: status conflict")
-	ErrOperationallyDisabled = errors.New("admin: operation disabled")
+	ErrNotFound                   = errors.New("admin: not found")
+	ErrInvalidArgument            = errors.New("admin: invalid argument")
+	ErrStatusConflict             = errors.New("admin: status conflict")
+	ErrMaintenanceControlDisabled = errors.New("admin: maintenance control disabled")
 )
 
 type ServerStatus struct {
 	Mode             string
 	StartedAt        time.Time
 	CurrentTime      time.Time
-	ActiveRoutes     int64
+	EnabledRoutes    int64
 	SuspendedRoutes  int64
 	Provisioning     int
 	ConnectedWorkers int
@@ -58,8 +58,8 @@ type ControlSession struct {
 	RevokedAt            time.Time
 }
 
-type OperationalSwitch struct {
-	Name      SwitchName
+type MaintenanceControl struct {
+	Name      MaintenanceControlName
 	Enabled   bool
 	Revision  uint64
 	UpdatedAt time.Time
@@ -90,9 +90,9 @@ func (s *Service) Status(ctx context.Context) (ServerStatus, error) {
 		return ServerStatus{}, fmt.Errorf("admin: ping state: %w", err)
 	}
 	queries := statedb.New(s.db)
-	active, err := queries.CountAdminRoutesByStatus(ctx, "active")
+	enabled, err := queries.CountAdminRoutesByStatus(ctx, "enabled")
 	if err != nil {
-		return ServerStatus{}, fmt.Errorf("admin: count active routes: %w", err)
+		return ServerStatus{}, fmt.Errorf("admin: count enabled routes: %w", err)
 	}
 	suspended, err := queries.CountAdminRoutesByStatus(ctx, "suspended")
 	if err != nil {
@@ -101,7 +101,7 @@ func (s *Service) Status(ctx context.Context) (ServerStatus, error) {
 	health := s.routes.HealthStats()
 	return ServerStatus{
 		Mode: s.mode, StartedAt: s.startedAt, CurrentTime: s.now().UTC(),
-		ActiveRoutes: active, SuspendedRoutes: suspended, Provisioning: health.Provisioning,
+		EnabledRoutes: enabled, SuspendedRoutes: suspended, Provisioning: health.Provisioning,
 		ConnectedWorkers: health.ConnectedWorkers,
 	}, nil
 }
@@ -266,31 +266,31 @@ func (s *Service) RevokeControlSession(ctx context.Context, sessionID, actor, re
 	return nil
 }
 
-func (s *Service) Switches(ctx context.Context) ([]OperationalSwitch, error) {
-	rows, err := statedb.New(s.db).ListOperationalSwitches(ctx)
+func (s *Service) ListMaintenanceControls(ctx context.Context) ([]MaintenanceControl, error) {
+	rows, err := statedb.New(s.db).ListMaintenanceControls(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("admin: list operational switches: %w", err)
+		return nil, fmt.Errorf("admin: list maintenance controls: %w", err)
 	}
-	result := make([]OperationalSwitch, 0, len(rows))
+	result := make([]MaintenanceControl, 0, len(rows))
 	for _, row := range rows {
-		result = append(result, operationalSwitch(row))
+		result = append(result, maintenanceControl(row))
 	}
 	return result, nil
 }
 
-func (s *Service) SetSwitch(
+func (s *Service) SetMaintenanceControl(
 	ctx context.Context,
-	name SwitchName,
+	name MaintenanceControlName,
 	enabled bool,
 	actor, requestID string,
-) (OperationalSwitch, error) {
-	if !validSwitch(name) {
-		return OperationalSwitch{}, ErrInvalidArgument
+) (MaintenanceControl, error) {
+	if !validMaintenanceControl(name) {
+		return MaintenanceControl{}, ErrInvalidArgument
 	}
 	now := time.Unix(0, s.now().UnixNano()).UTC()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return OperationalSwitch{}, fmt.Errorf("admin: begin switch update: %w", err)
+		return MaintenanceControl{}, fmt.Errorf("admin: begin maintenance control update: %w", err)
 	}
 	defer tx.Rollback()
 	queries := statedb.New(tx)
@@ -298,51 +298,53 @@ func (s *Service) SetSwitch(
 	if enabled {
 		value = 1
 	}
-	count, err := queries.SetOperationalSwitch(ctx, statedb.SetOperationalSwitchParams{
+	count, err := queries.SetMaintenanceControl(ctx, statedb.SetMaintenanceControlParams{
 		Enabled: value, UpdatedAt: now.UnixNano(), UpdatedBy: actor, Name: string(name),
 	})
 	if err != nil {
-		return OperationalSwitch{}, fmt.Errorf("admin: set operational switch: %w", err)
+		return MaintenanceControl{}, fmt.Errorf("admin: set maintenance control: %w", err)
 	}
 	if count == 0 {
-		return OperationalSwitch{}, ErrNotFound
+		return MaintenanceControl{}, ErrNotFound
 	}
-	if err := insertAudit(ctx, queries, actor, requestID, "switch.set", string(name), now); err != nil {
-		return OperationalSwitch{}, err
+	if err := insertAudit(ctx, queries, actor, requestID, "maintenance_control.set", string(name), now); err != nil {
+		return MaintenanceControl{}, err
 	}
-	row, err := queries.GetOperationalSwitch(ctx, string(name))
+	row, err := queries.GetMaintenanceControl(ctx, string(name))
 	if err != nil {
-		return OperationalSwitch{}, fmt.Errorf("admin: read updated switch: %w", err)
+		return MaintenanceControl{}, fmt.Errorf("admin: read updated maintenance control: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return OperationalSwitch{}, fmt.Errorf("admin: commit switch update: %w", err)
+		return MaintenanceControl{}, fmt.Errorf("admin: commit maintenance control update: %w", err)
 	}
-	return operationalSwitch(row), nil
+	return maintenanceControl(row), nil
 }
 
-func (s *Service) RequireEnabled(ctx context.Context, name SwitchName) error {
-	if !validSwitch(name) {
+func (s *Service) RequireEnabled(ctx context.Context, name MaintenanceControlName) error {
+	if !validMaintenanceControl(name) {
 		return ErrInvalidArgument
 	}
-	value, err := statedb.New(s.db).GetOperationalSwitch(ctx, string(name))
+	value, err := statedb.New(s.db).GetMaintenanceControl(ctx, string(name))
 	if err != nil {
-		return fmt.Errorf("admin: read operational switch: %w", err)
+		return fmt.Errorf("admin: read maintenance control: %w", err)
 	}
 	if value.Enabled == 0 {
-		return fmt.Errorf("%w: %s", ErrOperationallyDisabled, name)
+		return fmt.Errorf("%w: %s", ErrMaintenanceControlDisabled, name)
 	}
 	return nil
 }
 
-func operationalSwitch(row statedb.OperationalSwitch) OperationalSwitch {
-	return OperationalSwitch{
-		Name: SwitchName(row.Name), Enabled: row.Enabled != 0, Revision: uint64(row.Revision),
+func maintenanceControl(row statedb.MaintenanceControl) MaintenanceControl {
+	return MaintenanceControl{
+		Name: MaintenanceControlName(row.Name), Enabled: row.Enabled != 0, Revision: uint64(row.Revision),
 		UpdatedAt: time.Unix(0, row.UpdatedAt).UTC(), UpdatedBy: row.UpdatedBy,
 	}
 }
 
-func validSwitch(name SwitchName) bool {
-	return name == SwitchNewRoutes || name == SwitchNewSessions || name == SwitchCertificateIssuance
+func validMaintenanceControl(name MaintenanceControlName) bool {
+	return name == MaintenanceControlRouteCreation ||
+		name == MaintenanceControlRouteSessionCreation ||
+		name == MaintenanceControlCertificateIssuance
 }
 
 func insertAudit(

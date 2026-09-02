@@ -235,7 +235,7 @@ launch_workers() {
       --detach --restart no \
       --env TNLD_MODE=worker \
       --env 'TNLD_METRICS_LISTEN=[::]:9090' \
-      --env "TNLD_WORKER_URL=wss://${server_hostname}/internal/v1/worker" \
+      --env "TNLD_EDGE_URL=wss://${server_hostname}/internal/v1/worker" \
       --env "TNLD_WORKER_TOKEN=${worker_token}" \
       --env "TNLD_WORKER_CAPACITY=${worker_capacity}" \
       --env "TNL_NOFILE_LIMIT=${nofile_limit}" \
@@ -479,8 +479,8 @@ while IFS=$'\t' read -r current_cell_id workers routes current_repetition driver
   edge_metrics_url="http://[${edge_ip}]:9090/metrics"
   launch_workers
   sleep 5
-  if ! run_tier ha "${routes}" "${edge_size}+${workers}x${worker_size}" "${worker_metrics[@]}"; then
-    capture_failure_diagnostics ha "${routes}" 1
+  if ! run_tier split "${routes}" "${edge_size}+${workers}x${worker_size}" "${worker_metrics[@]}"; then
+    capture_failure_diagnostics split "${routes}" 1
     BENCH_RUN="${run_dir}" go run ./cmd/tnlbench report || true
     printf 'benchmark cell failed; stopping suite without retry: %s\n' "${current_cell_id}" >&2
     exit 1

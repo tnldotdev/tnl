@@ -2,6 +2,7 @@ package clientstate
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -36,9 +37,16 @@ func TestTunnelSnapshotTracksLifecycleConsistently(t *testing.T) {
 	}
 	snapshot := assertTunnelSnapshot(t, database, TunnelStateReady, TunnelSummary{Total: 1, Ready: 1})
 	got := snapshot.Tunnels[0]
-	if got.ID != tunnel.ID() || got.RouteID != testRouteID || got.SessionVersion != 3 ||
+	if got.ID != tunnel.ID() || got.RouteID != testRouteID || got.RouteVersion != 3 ||
 		got.PublicURL != "https://route.example" || got.Target != "http://127.0.0.1:3000" {
 		t.Fatalf("tunnel = %#v", got)
+	}
+	encoded, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"route_version":3`) || strings.Contains(string(encoded), `"session_version"`) {
+		t.Fatalf("snapshot JSON route version fields = %s", encoded)
 	}
 
 	now = now.Add(tunnelLeaseDuration + time.Nanosecond)

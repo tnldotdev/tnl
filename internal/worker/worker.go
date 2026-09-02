@@ -23,13 +23,13 @@ var (
 )
 
 type RouteRef struct {
-	RouteID string `json:"route_id"`
-	Version uint64 `json:"version"`
+	RouteID      string `json:"route_id"`
+	RouteVersion uint64 `json:"route_version"`
 }
 
 type Assignment struct {
 	RouteRef
-	Endpoint tailtransport.Endpoint
+	Endpoint tailtransport.TransportDescriptor
 	Key      key.NodePrivate
 }
 
@@ -132,10 +132,10 @@ func (e *Engine) Attach(ctx context.Context, assignment Assignment) (WorkerRoute
 		return nil, ErrDraining
 	}
 	previous := e.routes[assignment.RouteID]
-	if previous != nil && previous.ref.Version >= assignment.Version {
+	if previous != nil && previous.ref.RouteVersion >= assignment.RouteVersion {
 		e.mu.Unlock()
 		_ = dialer.Close()
-		if previous.ref.Version == assignment.Version {
+		if previous.ref.RouteVersion == assignment.RouteVersion {
 			return previous, nil
 		}
 		return nil, ErrStaleAssignment
@@ -241,8 +241,8 @@ func (e *Engine) reportTailcatFailure(operation string, ref RouteRef, err error)
 	capacity := e.Capacity()
 	if e.logf != nil {
 		e.logf(
-			"tailcat failure: operation=%s reason=%s route_id=%q version=%d active=%d limit=%d err=%q",
-			operation, reason, ref.RouteID, ref.Version, capacity.Active, capacity.Limit, err,
+			"tailcat failure: operation=%s reason=%s route_id=%q route_version=%d active=%d limit=%d err=%q",
+			operation, reason, ref.RouteID, ref.RouteVersion, capacity.Active, capacity.Limit, err,
 		)
 	}
 	if e.onTailcatFailure != nil {
@@ -318,8 +318,8 @@ func (r *workerRoute) remove() {
 }
 
 func validateAssignment(assignment Assignment) error {
-	if strings.TrimSpace(assignment.RouteID) == "" || assignment.Version == 0 {
-		return errors.New("worker: route ID and version are required")
+	if strings.TrimSpace(assignment.RouteID) == "" || assignment.RouteVersion == 0 {
+		return errors.New("worker: route ID and route version are required")
 	}
 	if assignment.Key.IsZero() {
 		return errors.New("worker: Tailcat key is required")

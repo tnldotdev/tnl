@@ -17,7 +17,7 @@ WHERE identity_id = CAST(sqlc.arg(identity_id) AS TEXT)
     AND kind IN ('managed', 'custom_domain')
     AND status = 'active';
 
--- name: CountFriendlyNameCapacityConsumers :one
+-- name: CountGeneratedHostnameCapacityConsumers :one
 SELECT COUNT(*)
 FROM hostnames
 WHERE kind IN ('managed', 'temporary');
@@ -106,11 +106,11 @@ WHERE identity_id = CAST(sqlc.arg(identity_id) AS TEXT)
 ORDER BY id
 LIMIT sqlc.arg(limit);
 
--- name: ListActiveRoutesForHostname :many
+-- name: ListEnabledRoutesForHostname :many
 SELECT routes.id
 FROM hostnames
 LEFT JOIN routes ON routes.hostname_id = hostnames.id
-    AND routes.status = 'active'
+    AND routes.status = 'enabled'
 WHERE hostnames.id = sqlc.arg(hostname_id)
     AND hostnames.identity_id = CAST(sqlc.arg(identity_id) AS TEXT)
     AND hostnames.kind IN ('managed', 'custom_domain')
@@ -143,7 +143,7 @@ WHERE id = sqlc.arg(id);
 UPDATE routes
 SET status = 'deleted', deleted_at = CAST(sqlc.arg(deleted_at) AS INTEGER), suspended_at = NULL
 WHERE hostname_id = sqlc.arg(hostname_id)
-    AND status IN ('active', 'suspended');
+    AND status IN ('enabled', 'suspended');
 
 -- name: RevokeHostnameRouteCredentials :exec
 UPDATE route_credentials

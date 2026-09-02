@@ -23,7 +23,7 @@ func TestSignedRouteTransactionsReplayRenewalAndExpiry(t *testing.T) {
 		t.Fatal(err)
 	}
 	verifier, err := authorization.NewVerifier(authorization.Config{
-		Issuer: "https://authority.example", Receiver: "https://core.example", KeyID: "key-1",
+		Issuer: "https://authority.example", Receiver: "https://server.example", KeyID: "key-1",
 		PublicKey: publicKey, Now: func() time.Time { return now },
 	})
 	if err != nil {
@@ -48,13 +48,13 @@ func TestSignedRouteTransactionsReplayRenewalAndExpiry(t *testing.T) {
 		t.Fatal(err)
 	}
 	prefixes := []string{"192.0.2.0/24", "2001:db8::/64"}
-	createRequest := signedStoreRequest(t, authorization.CoreRequest{
+	createRequest := signedStoreRequest(t, authorization.OperationRequest{
 		Operation: authorization.OperationRouteCreate, Hostname: "route.example",
 		LocalTarget: "http://127.0.0.1:3000", RouteToken: routeToken.String(), AllowedIPPrefixes: prefixes,
 	})
 	publishChecks := 0
 	coordinator, err := NewCoordinator(ctx, store, "preflight", CoordinatorConfig{
-		PublishReady: func(context.Context, string) error {
+		CheckHostnamePublishability: func(context.Context, string) error {
 			publishChecks++
 			return nil
 		},
@@ -70,7 +70,7 @@ func TestSignedRouteTransactionsReplayRenewalAndExpiry(t *testing.T) {
 	}
 	createClaims := signedClaims{
 		Version: 1, KeyID: "key-1", Algorithm: authorization.Algorithm,
-		Operation: authorization.OperationRouteCreate, Issuer: "https://authority.example", Receiver: "https://core.example",
+		Operation: authorization.OperationRouteCreate, Issuer: "https://authority.example", Receiver: "https://server.example",
 		AuthorizationID: "authorization_00000000000000000000000000000001", Hostname: "route.example",
 		Revision: 1, IssuedAt: now.Add(-time.Minute), ExpiresAt: now.Add(20 * time.Second),
 		RetryID:              "retry_00000000000000000000000000000001",
@@ -118,7 +118,7 @@ func TestSignedRouteTransactionsReplayRenewalAndExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !replayed.Replayed || replayed.Route.ID != created.Route.ID || replayed.Session.ID != created.Session.ID ||
+	if !replayed.ReusedResult || replayed.Route.ID != created.Route.ID || replayed.Session.ID != created.Session.ID ||
 		replayed.SessionToken != created.SessionToken {
 		t.Fatalf("replayed = %#v, created = %#v", replayed, created)
 	}
@@ -131,17 +131,17 @@ func TestSignedRouteTransactionsReplayRenewalAndExpiry(t *testing.T) {
 	restored, err := store.CreateSigned(
 		ctx, "route.example", "http://127.0.0.1:3000", "instance-2", routeToken, createRequest,
 	)
-	if err != nil || !restored.Replayed || !restored.Restored || restored.Session.Status != "pending" ||
+	if err != nil || !restored.ReusedResult || !restored.Restored || restored.Session.Status != SessionStatusPending ||
 		restored.Session.ID != created.Session.ID || restored.SessionToken != created.SessionToken {
 		t.Fatalf("restored retry = %#v, %v", restored, err)
 	}
-	createdKey, err := signedIngressKey(created.SessionToken)
+	createdKey, err := signedTailcatDialerKey(created.SessionToken)
 	if err != nil {
 		t.Fatal(err)
 	}
-	replayedKey, err := signedIngressKey(replayed.SessionToken)
+	replayedKey, err := signedTailcatDialerKey(replayed.SessionToken)
 	if err != nil || !createdKey.Equal(replayedKey) {
-		t.Fatalf("replayed ingress key differs: %v", err)
+		t.Fatalf("reused tailcat dialer key differs: %v", err)
 	}
 	var hostnameRows, identityRows, prefixRows, useRows int
 	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM hostnames").Scan(&hostnameRows); err != nil {
@@ -166,21 +166,21 @@ func TestSignedRouteTransactionsReplayRenewalAndExpiry(t *testing.T) {
 	reusedIDRequest.Token = signSignedClaims(t, privateKey, reusedIDClaims)
 	if _, err := store.CreateSigned(
 		ctx, "route.example", "http://127.0.0.1:3000", "instance", routeToken, reusedIDRequest,
-	); !errors.Is(err, ErrAuthorizationReplayed) {
+	); !errors.Is(err, ErrAuthorizationReuseRejected) {
 		t.Fatalf("authorization ID replay error = %v", err)
 	}
 
-	sessionRequest := signedStoreRequest(t, authorization.CoreRequest{
+	sessionRequest := signedStoreRequest(t, authorization.OperationRequest{
 		Operation:  authorization.OperationRouteSessionCreate,
 		RouteToken: routeToken.String(), AllowedIPPrefixes: prefixes,
 	})
 	routeID := created.Route.ID
-	version := uint64(2)
+	routeVersion := uint64(2)
 	sessionClaims := signedClaims{
 		Version: 1, KeyID: "key-1", Algorithm: authorization.Algorithm,
-		Operation: authorization.OperationRouteSessionCreate, Issuer: "https://authority.example", Receiver: "https://core.example",
+		Operation: authorization.OperationRouteSessionCreate, Issuer: "https://authority.example", Receiver: "https://server.example",
 		AuthorizationID: "authorization_00000000000000000000000000000002", Hostname: "route.example",
-		RouteID: &routeID, RouteVersion: &version, Revision: 2,
+		RouteID: &routeID, RouteVersion: &routeVersion, Revision: 2,
 		IssuedAt: now.Add(-time.Minute), ExpiresAt: now.Add(20 * time.Second),
 		RetryID:              "retry_00000000000000000000000000000003",
 		CanonicalRequestHash: sessionRequest.RequestHash.String(), IPPolicyHash: digestString(sessionRequest.IPPolicyHash),
@@ -191,13 +191,13 @@ func TestSignedRouteTransactionsReplayRenewalAndExpiry(t *testing.T) {
 		t.Fatal(err)
 	}
 	sessionReplay, err := store.CreateSignedSession(ctx, routeID, "instance", routeToken, sessionRequest)
-	if err != nil || !sessionReplay.Replayed || sessionReplay.SessionToken != replacement.SessionToken ||
+	if err != nil || !sessionReplay.ReusedResult || sessionReplay.SessionToken != replacement.SessionToken ||
 		sessionReplay.Session.ID != replacement.Session.ID {
 		t.Fatalf("session replay = %#v, %v", sessionReplay, err)
 	}
 
-	renewHash, err := authorization.CanonicalRequestHash(authorization.CoreRequest{
-		Operation: authorization.OperationRenew, Version: version,
+	renewHash, err := authorization.CanonicalRequestHash(authorization.OperationRequest{
+		Operation: authorization.OperationRenew, RouteVersion: routeVersion,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -212,14 +212,14 @@ func TestSignedRouteTransactionsReplayRenewalAndExpiry(t *testing.T) {
 	lowerRevisionClaims.Revision = 1
 	if _, err := store.HeartbeatSigned(
 		ctx, replacement.Session, signSignedClaims(t, privateKey, lowerRevisionClaims), renewHash,
-	); !errors.Is(err, ErrAuthorizationReplayed) {
+	); !errors.Is(err, ErrAuthorizationReuseRejected) {
 		t.Fatalf("lower revision renewal error = %v", err)
 	}
 	shorterClaims := renewClaims
 	shorterClaims.ExpiresAt = now.Add(10 * time.Second)
 	if _, err := store.HeartbeatSigned(
 		ctx, replacement.Session, signSignedClaims(t, privateKey, shorterClaims), renewHash,
-	); !errors.Is(err, ErrAuthorizationReplayed) {
+	); !errors.Is(err, ErrAuthorizationReuseRejected) {
 		t.Fatalf("shorter renewal error = %v", err)
 	}
 	renewal := signSignedClaims(t, privateKey, renewClaims)
@@ -230,16 +230,16 @@ func TestSignedRouteTransactionsReplayRenewalAndExpiry(t *testing.T) {
 	if want := now.Add(SessionLifetime); !expiresAt.Equal(want) {
 		t.Fatalf("renewed session expiry = %v, want %v", expiresAt, want)
 	}
-	if _, err := store.HeartbeatSigned(ctx, replacement.Session, renewal, renewHash); !errors.Is(err, ErrAuthorizationReplayed) {
+	if _, err := store.HeartbeatSigned(ctx, replacement.Session, renewal, renewHash); !errors.Is(err, ErrAuthorizationReuseRejected) {
 		t.Fatalf("renewal replay error = %v", err)
 	}
 	if _, err := store.CreateSignedSession(
 		ctx, routeID, "instance", routeToken, sessionRequest,
-	); !errors.Is(err, ErrAuthorizationReplayed) {
+	); !errors.Is(err, ErrAuthorizationReuseRejected) {
 		t.Fatalf("superseded session authorization replay error = %v", err)
 	}
 	now = now.Add(21 * time.Second)
-	if _, err := store.AuthenticateSession(ctx, routeID, version, replacement.SessionToken, "instance"); err != nil {
+	if _, err := store.AuthenticateSession(ctx, routeID, routeVersion, replacement.SessionToken, "instance"); err != nil {
 		t.Fatalf("renewed session authentication: %v", err)
 	}
 	now = renewClaims.ExpiresAt.Add(time.Nanosecond)
@@ -249,7 +249,7 @@ func TestSignedRouteTransactionsReplayRenewalAndExpiry(t *testing.T) {
 	expiredRenewalClaims.IssuedAt = now
 	expiredRenewalClaims.ExpiresAt = now.Add(10 * time.Minute)
 	expiredRenewal := signSignedClaims(t, privateKey, expiredRenewalClaims)
-	expiredSession, err := store.AuthenticateSessionForRenewal(ctx, routeID, version, replacement.SessionToken, "instance")
+	expiredSession, err := store.AuthenticateSessionForRenewal(ctx, routeID, routeVersion, replacement.SessionToken, "instance")
 	if err != nil {
 		t.Fatalf("authenticate expired session for renewal: %v", err)
 	}
@@ -257,11 +257,11 @@ func TestSignedRouteTransactionsReplayRenewalAndExpiry(t *testing.T) {
 		!expiry.Equal(now.Add(SessionLifetime)) {
 		t.Fatalf("expired authorization renewal = %v, %v", expiry, err)
 	}
-	if _, err := store.AuthenticateSession(ctx, routeID, version, replacement.SessionToken, "instance"); err != nil {
+	if _, err := store.AuthenticateSession(ctx, routeID, routeVersion, replacement.SessionToken, "instance"); err != nil {
 		t.Fatalf("authenticate recovered session: %v", err)
 	}
 	now = expiredRenewalClaims.ExpiresAt.Add(time.Nanosecond)
-	if _, err := store.AuthenticateSession(ctx, routeID, version, replacement.SessionToken, "instance"); !errors.Is(err, ErrStaleSession) {
+	if _, err := store.AuthenticateSession(ctx, routeID, routeVersion, replacement.SessionToken, "instance"); !errors.Is(err, ErrStaleSession) {
 		t.Fatalf("expired authorization session error = %v", err)
 	}
 	wrongRouteToken, _, _, err := credentials.NewRouteToken()
@@ -303,19 +303,19 @@ type signedClaims struct {
 	IPPolicyHash         *string                 `json:"ip_policy_hash,omitempty"`
 }
 
-func signedStoreRequest(t *testing.T, core authorization.CoreRequest) SignedRequest {
+func signedStoreRequest(t *testing.T, operation authorization.OperationRequest) SignedRequest {
 	t.Helper()
-	requestHash, err := authorization.CanonicalRequestHash(core)
+	requestHash, err := authorization.CanonicalRequestHash(operation)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ipHash, err := authorization.IPPolicyHash(core.AllowedIPPrefixes)
+	ipHash, err := authorization.IPPolicyHash(operation.AllowedIPPrefixes)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return SignedRequest{
 		RequestHash: requestHash, IPPolicyHash: ipHash,
-		AllowedIPPrefixes: append([]string(nil), core.AllowedIPPrefixes...),
+		AllowedIPPrefixes: append([]string(nil), operation.AllowedIPPrefixes...),
 	}
 }
 

@@ -3,8 +3,8 @@
 tnl releases provide combined `tnl` and `tnld` archives for macOS and Linux on
 amd64 and arm64, a multi-platform `tnld` image in GHCR, and the project-local
 `@tnldotdev/tnl` client package. The npm framework integrations are versioned
-and released independently. Releases before 1.0 are standalone previews and
-may include forward-only state migrations.
+and released independently. Releases before 1.0 are previews and may include
+forward-only state migrations.
 
 ## Install With Homebrew
 
@@ -129,10 +129,11 @@ license files are available under `/licenses/tnl` in the image filesystem.
 
 ## Pre-1.0 Configuration Changes
 
-Current daemon releases derive control host `tnl.<domain>` and hostname suffix
-`<domain>` from `TNLD_DOMAIN`. `TNLD_CONTROL_HOSTNAME` and `TNLD_HOSTNAME_SUFFIX`
-override those values independently. Public ingress requires automatic ACME
-configuration.
+`tnld` derives the control API hostname `tnl.<domain>` and deployment hostname
+suffix `<domain>` from `TNLD_DOMAIN`. Set `TNLD_DOMAIN` to a lowercase DNS
+domain without a trailing dot. `TNLD_CONTROL_HOSTNAME` and
+`TNLD_HOSTNAME_SUFFIX` set those values independently. Public ingress requires
+automatic ACME configuration.
 
 The daemon creates its login token in the state directory. Retrieve it with
 `tnl admin server login-token --state-dir DIR`, and use `tnl login` to save a revocable
@@ -146,15 +147,15 @@ Existing control sessions retain their stored absolute expiry.
 
 Use `TNLD_RELAY_PROVIDER=tailcat` to explicitly opt into automatic hosted relay
 selection, or use `TNLD_RELAY_MAP_FILE` for an operator-approved custom map.
-Public ingress requires exactly one source.
+Public ingress requires exactly one of those relay configurations.
 Review the matching release's [self-hosting guide](SELF-HOSTING.md) before
 recreating containers.
 
 ## Cold Backup
 
 Run these commands from `deploy`. Set `TNL_STATE_VOLUME` to the value in
-`.env`; the default is shown below. Use a trusted, pinned backup utility image
-in production; `alpine:3.22` is shown as a portable example.
+`.env`; the default is shown below. In production, select a reviewed backup
+utility image by digest; `alpine:3.22` is shown as a portable example.
 
 ```console
 mkdir -p backups
@@ -170,8 +171,8 @@ docker compose start tnld
 ```
 
 Confirm `tnld` is stopped before the archive starts. Back up the whole volume,
-including SQLite files, ACME state, the login token, and the pinned relay
-map. Encrypt the archive and retain the matching daemon version alongside it.
+including SQLite files, ACME state, the login token, and the stored relay map.
+Encrypt the archive and retain the matching daemon version alongside it.
 
 Test restoration with a new disposable volume:
 
@@ -276,7 +277,7 @@ Changes to the local `tnl dev` protocol must release `dev`, `next`, and `vite`
 in the same release window as the root product. Publish the integrations first,
 then the root product immediately afterward. The protocol is replaced in place
 during the pre-1.0 series; mismatched installed versions fail with an upgrade
-error instead of using compatibility code.
+error.
 
 Use the `tnl-release` agent skill to identify changed packages, propose version
 bumps, and run the release checks. After the version bump is committed to a

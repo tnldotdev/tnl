@@ -28,7 +28,7 @@ paths:
   /v1/hostnames:
     get:
       operationId: listHostnames
-      summary: List active hostnames owned by the authenticated identity
+      summary: List hostname claims owned by the authenticated identity
       security:
         - bearerAuth: []
       parameters:
@@ -53,8 +53,8 @@ paths:
         default:
           $ref: "#/components/responses/Problem"
     post:
-      operationId: addHostname
-      summary: Add a managed hostname or allocate a temporary hostname
+      operationId: claimHostname
+      summary: Claim a managed hostname or allocate a temporary hostname
       security:
         - bearerAuth: []
       parameters:
@@ -64,10 +64,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/AddHostnameRequest"
+              $ref: "#/components/schemas/ClaimHostnameRequest"
       responses:
         "201":
-          description: Hostname added
+          description: Hostname claimed
           content:
             application/json:
               schema:
@@ -84,15 +84,15 @@ paths:
           $ref: "#/components/responses/Problem"
   /v1/hostnames/{id}:
     delete:
-      operationId: removeHostname
-      summary: Remove an owned persistent hostname
+      operationId: releaseHostname
+      summary: Release an owned persistent hostname claim
       security:
         - bearerAuth: []
       parameters:
         - $ref: "#/components/parameters/HostnameID"
       responses:
         "204":
-          description: Hostname removed
+          description: Hostname released
         "400":
           $ref: "#/components/responses/Problem"
         "401":
@@ -162,14 +162,14 @@ paths:
   /v1/domain-verifications/{id}/complete:
     post:
       operationId: completeDomainVerification
-      summary: Verify DNS and activate custom-domain ownership
+      summary: Verify DNS and claim a custom domain
       security:
         - bearerAuth: []
       parameters:
         - $ref: "#/components/parameters/DomainVerificationID"
       responses:
         "200":
-          description: Active custom domain
+          description: Claimed custom domain
           content:
             application/json:
               schema:
@@ -191,7 +191,7 @@ paths:
   /v1/authorizations:
     post:
       operationId: issueAuthorization
-      summary: Issue a short-lived authorization for a Core operation
+      summary: Issue a short-lived authorization for a route operation
       security:
         - bearerAuth: []
       parameters:
@@ -365,18 +365,28 @@ components:
     HostnameID:
       type: string
       pattern: ^hostname_[0-9a-f]{32}$
-    AddHostnameRequest:
+    ClaimHostnameRequest:
       type: object
       additionalProperties: false
       required: [kind]
+      allOf:
+        - if:
+            properties:
+              kind:
+                const: temporary
+          then:
+            not:
+              required: [label]
       properties:
         kind:
           type: string
+          description: Managed claims persist until released; temporary hostnames are allocated by the authority.
           enum: [managed, temporary]
-        name:
+        label:
           type: string
+          description: Preferred DNS label for a managed claim. Omit it to let the authority allocate a label.
           minLength: 1
-          maxLength: 253
+          maxLength: 63
     Hostname:
       type: object
       additionalProperties: false
@@ -523,7 +533,7 @@ components:
           pattern: ^route_[0-9a-f]{32}$
         route_version:
           type: integer
-          description: Required for route_session.create and authorization.renew. For route_session.create this is the new session version expected from Core; for authorization.renew this is the current route version.
+          description: Required for route_session.create and authorization.renew. For route_session.create this is the new route version expected by the server; for authorization.renew this is the current route version.
           minimum: 1
           maximum: 2147483647
         canonical_request_hash:
@@ -613,7 +623,7 @@ components:
           $ref: "#/components/schemas/SHA256Digest"
     SHA256Digest:
       type: string
-      description: Unpadded RFC 4648 base64url encoding of the 32-byte SHA-256 digest of the RFC 8785 JSON serialization of the Core operation request body before authorization credentials are attached.
+      description: Unpadded RFC 4648 base64url encoding of the 32-byte SHA-256 digest of the RFC 8785 JSON serialization of the route operation request body before authorization credentials are attached.
       pattern: ^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$
     Problem:
       type: object

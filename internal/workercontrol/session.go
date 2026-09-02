@@ -13,12 +13,9 @@ import (
 )
 
 const (
-	defaultMaxStreams        = 10_000
-	defaultMaxSessions       = 10
-	defaultMaxWorkerCapacity = 500
-	defaultMaxTotalCapacity  = 5_000
-	handshakeTimeout         = 10 * time.Second
-	requestTimeout           = 30 * time.Second
+	defaultMaxStreams = 10_000
+	handshakeTimeout  = 10 * time.Second
+	requestTimeout    = 30 * time.Second
 )
 
 // SessionRole is the stable endpoint role reported to session observers.

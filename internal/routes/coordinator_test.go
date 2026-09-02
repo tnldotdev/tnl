@@ -38,7 +38,7 @@ func TestCoordinatorPublishesOnlyReadyCurrentVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	if created.WorkerPublicKey == "" {
-		t.Fatal("create omitted ingress key")
+		t.Fatal("create omitted tailcat dialer key")
 	}
 	if _, ok := coordinator.Lookup("route.example"); ok {
 		t.Fatal("pending route was published")
@@ -47,7 +47,7 @@ func TestCoordinatorPublishesOnlyReadyCurrentVersion(t *testing.T) {
 		t.Fatal("pending route was challenge-routable before transport attachment")
 	}
 	serverKey := key.NewNode().Public().String()
-	if err := coordinator.RegisterTransport(
+	if err := coordinator.AttachRouteTransport(
 		context.Background(), created.Route.ID, 1, created.SessionToken, serverKey, "test",
 	); err != nil {
 		t.Fatal(err)
@@ -55,16 +55,16 @@ func TestCoordinatorPublishesOnlyReadyCurrentVersion(t *testing.T) {
 	if _, ok := coordinator.Lookup("route.example"); ok {
 		t.Fatal("starting route was published")
 	}
-	if challenge, ok := coordinator.LookupChallenge("route.example"); !ok || challenge.Version != 1 {
+	if challenge, ok := coordinator.LookupChallenge("route.example"); !ok || challenge.RouteVersion != 1 {
 		t.Fatalf("starting challenge route = %#v, %v", challenge, ok)
 	}
 	if err := coordinator.Ready(context.Background(), created.Route.ID, 1, created.SessionToken); err != nil {
 		t.Fatal(err)
 	}
-	active, ok := coordinator.Lookup("route.example")
-	if !ok || active.Version != 1 ||
-		!slices.Equal(active.AllowedIPPrefixes, []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}) {
-		t.Fatalf("active route = %#v, %v", active, ok)
+	routable, ok := coordinator.Lookup("route.example")
+	if !ok || routable.RouteVersion != 1 ||
+		!slices.Equal(routable.AllowedIPPrefixes, []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}) {
+		t.Fatalf("routable route = %#v, %v", routable, ok)
 	}
 
 	replacement, err := coordinator.CreateSession(
@@ -73,8 +73,8 @@ func TestCoordinatorPublishesOnlyReadyCurrentVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if replacement.Session.Version != 2 {
-		t.Fatalf("replacement version = %d", replacement.Session.Version)
+	if replacement.Session.RouteVersion != 2 {
+		t.Fatalf("replacement version = %d", replacement.Session.RouteVersion)
 	}
 	if _, ok := coordinator.Lookup("route.example"); ok {
 		t.Fatal("old version remained published")
@@ -85,14 +85,14 @@ func TestCoordinatorPublishesOnlyReadyCurrentVersion(t *testing.T) {
 	if worker.routes[0].closed.Load() != 1 {
 		t.Fatal("old version was not closed")
 	}
-	if !slices.Equal(removals, []RouteRemovalReason{RouteRemovalVersionReplaced}) {
+	if !slices.Equal(removals, []RouteRemovalReason{RouteRemovalRouteVersionReplaced}) {
 		t.Fatalf("replacement removals = %v", removals)
 	}
 	if _, err := coordinator.Heartbeat(context.Background(), created.Route.ID, 1, created.SessionToken); !errors.Is(err, ErrStaleSession) {
 		t.Fatalf("stale heartbeat error = %v", err)
 	}
 
-	if err := coordinator.RegisterTransport(
+	if err := coordinator.AttachRouteTransport(
 		context.Background(), created.Route.ID, 2, replacement.SessionToken, serverKey, "test",
 	); err != nil {
 		t.Fatal(err)
@@ -100,13 +100,13 @@ func TestCoordinatorPublishesOnlyReadyCurrentVersion(t *testing.T) {
 	if err := coordinator.Ready(context.Background(), created.Route.ID, 2, replacement.SessionToken); err != nil {
 		t.Fatal(err)
 	}
-	active, ok = coordinator.Lookup("route.example")
-	if !ok || active.Version != 2 ||
-		!slices.Equal(active.AllowedIPPrefixes, []netip.Prefix{netip.MustParsePrefix("2001:db8::/64")}) {
-		t.Fatalf("replacement active route = %#v, %v", active, ok)
+	routable, ok = coordinator.Lookup("route.example")
+	if !ok || routable.RouteVersion != 2 ||
+		!slices.Equal(routable.AllowedIPPrefixes, []netip.Prefix{netip.MustParsePrefix("2001:db8::/64")}) {
+		t.Fatalf("replacement routable route = %#v, %v", routable, ok)
 	}
 	coordinator.RemoveWorker("local")
-	if !slices.Equal(removals, []RouteRemovalReason{RouteRemovalVersionReplaced, RouteRemovalWorkerDisconnected}) {
+	if !slices.Equal(removals, []RouteRemovalReason{RouteRemovalRouteVersionReplaced, RouteRemovalWorkerDisconnected}) {
 		t.Fatalf("worker removals = %v", removals)
 	}
 	if _, ok := coordinator.Lookup("route.example"); ok {
@@ -135,7 +135,7 @@ func TestCoordinatorAdminSuspensionUnpublishesAndDrainsRoute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := coordinator.RegisterTransport(
+	if err := coordinator.AttachRouteTransport(
 		t.Context(), created.Route.ID, 1, created.SessionToken, key.NewNode().Public().String(), "test",
 	); err != nil {
 		t.Fatal(err)
@@ -150,7 +150,7 @@ func TestCoordinatorAdminSuspensionUnpublishesAndDrainsRoute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if suspended.Status != "suspended" || suspended.SuspensionRevision != 1 {
+	if suspended.Status != RouteStatusSuspended || suspended.SuspensionRevision != 1 {
 		t.Fatalf("suspended route = %#v", suspended)
 	}
 	if _, ok := coordinator.Lookup("route.example"); ok {
@@ -170,8 +170,8 @@ func TestCoordinatorAdminSuspensionUnpublishesAndDrainsRoute(t *testing.T) {
 	); !errors.Is(err, ErrStaleSession) {
 		t.Fatalf("suspended heartbeat error = %v", err)
 	}
-	if provisioning, active := coordinator.Stats(); provisioning != 0 || active != 0 {
-		t.Fatalf("stats after suspension = %d provisioning, %d active", provisioning, active)
+	if provisioning, routable := coordinator.Stats(); provisioning != 0 || routable != 0 {
+		t.Fatalf("stats after suspension = %d provisioning, %d routable", provisioning, routable)
 	}
 
 	resumed, err := coordinator.ResumeAdminRoute(
@@ -180,7 +180,7 @@ func TestCoordinatorAdminSuspensionUnpublishesAndDrainsRoute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resumed.Status != "active" || resumed.Version != 2 {
+	if resumed.Status != RouteStatusEnabled || resumed.RouteVersion != 2 {
 		t.Fatalf("resumed route = %#v", resumed)
 	}
 	if _, ok := coordinator.Lookup("route.example"); ok {
@@ -203,7 +203,7 @@ func TestCoordinatorExpiresUnrenewedSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := coordinator.RegisterTransport(
+	if err := coordinator.AttachRouteTransport(
 		context.Background(), created.Route.ID, 1, created.SessionToken,
 		key.NewNode().Public().String(), "test",
 	); err != nil {
@@ -223,8 +223,8 @@ func TestCoordinatorExpiresUnrenewedSession(t *testing.T) {
 	if !slices.Equal(removals, []RouteRemovalReason{RouteRemovalSessionExpired}) {
 		t.Fatalf("expiry removals = %v", removals)
 	}
-	if provisioning, active := coordinator.Stats(); provisioning != 0 || active != 0 {
-		t.Fatalf("stats after expiry = %d provisioning, %d active", provisioning, active)
+	if provisioning, routable := coordinator.Stats(); provisioning != 0 || routable != 0 {
+		t.Fatalf("stats after expiry = %d provisioning, %d routable", provisioning, routable)
 	}
 	if _, err := coordinator.Heartbeat(
 		context.Background(), created.Route.ID, 1, created.SessionToken,
@@ -243,7 +243,7 @@ func TestCoordinatorReclaimsDurableRoute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := coordinator.RegisterTransport(
+	if err := coordinator.AttachRouteTransport(
 		context.Background(), first.Route.ID, 1, first.SessionToken, key.NewNode().Public().String(), "test",
 	); err != nil {
 		t.Fatal(err)
@@ -262,7 +262,7 @@ func TestCoordinatorReclaimsDurableRoute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if replacement.Route.ID != first.Route.ID || replacement.Route.Version != 2 {
+	if replacement.Route.ID != first.Route.ID || replacement.Route.RouteVersion != 2 {
 		t.Fatalf("replacement = %#v", replacement)
 	}
 	if _, ok := coordinator.Lookup("route.example"); ok {
@@ -287,25 +287,25 @@ func TestCoordinatorAcceptsOnlyExactTransportReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	serverKey := key.NewNode().Public().String()
-	register := func(key, profile string) error {
-		return coordinator.RegisterTransport(
-			context.Background(), created.Route.ID, 1, created.SessionToken, key, profile,
+	attach := func(key, relayRegion string) error {
+		return coordinator.AttachRouteTransport(
+			context.Background(), created.Route.ID, 1, created.SessionToken, key, relayRegion,
 		)
 	}
-	if err := register(serverKey, "test"); err != nil {
+	if err := attach(serverKey, "test"); err != nil {
 		t.Fatal(err)
 	}
-	if err := register(serverKey, "test"); err != nil {
+	if err := attach(serverKey, "test"); err != nil {
 		t.Fatalf("exact replay error = %v", err)
 	}
 	if len(worker.routes) != 1 {
 		t.Fatalf("attached routes = %d, want 1", len(worker.routes))
 	}
-	if err := register(key.NewNode().Public().String(), "test"); !errors.Is(err, ErrInvalidStatus) {
+	if err := attach(key.NewNode().Public().String(), "test"); !errors.Is(err, ErrInvalidStatus) {
 		t.Fatalf("changed key replay error = %v", err)
 	}
-	if err := register(serverKey, "other"); !errors.Is(err, ErrInvalidStatus) {
-		t.Fatalf("changed profile replay error = %v", err)
+	if err := attach(serverKey, "other"); !errors.Is(err, ErrInvalidStatus) {
+		t.Fatalf("changed relay region replay error = %v", err)
 	}
 }
 
@@ -358,7 +358,7 @@ func TestCoordinatorRejectsChangedTransportBeforeAssignment(t *testing.T) {
 		t.Fatal(err)
 	}
 	serverKey := key.NewNode().Public().String()
-	if err := coordinator.RegisterTransport(
+	if err := coordinator.AttachRouteTransport(
 		context.Background(), created.Route.ID, 1, created.SessionToken, serverKey, "test",
 	); !errors.Is(err, ErrNoWorkerCapacity) {
 		t.Fatalf("first registration error = %v", err)
@@ -366,7 +366,7 @@ func TestCoordinatorRejectsChangedTransportBeforeAssignment(t *testing.T) {
 	if capacityRejections != 1 {
 		t.Fatalf("capacity rejections = %d, want 1", capacityRejections)
 	}
-	if err := coordinator.RegisterTransport(
+	if err := coordinator.AttachRouteTransport(
 		context.Background(), created.Route.ID, 1, created.SessionToken,
 		key.NewNode().Public().String(), "test",
 	); !errors.Is(err, ErrInvalidStatus) {
@@ -392,7 +392,7 @@ func TestCoordinatorReleaseDeactivatesRoute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := coordinator.RegisterTransport(
+	if err := coordinator.AttachRouteTransport(
 		context.Background(), created.Route.ID, 1, created.SessionToken,
 		key.NewNode().Public().String(), "test",
 	); err != nil {
@@ -405,20 +405,20 @@ func TestCoordinatorReleaseDeactivatesRoute(t *testing.T) {
 	if err != nil || len(hostnames) != 1 {
 		t.Fatalf("hostnames = %#v, %v", hostnames, err)
 	}
-	if err := coordinator.RemoveHostname(context.Background(), "worker", hostnames[0].ID); err != nil {
+	if err := coordinator.ReleaseHostname(context.Background(), "worker", hostnames[0].ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := coordinator.Lookup("route.example"); ok {
-		t.Fatal("removed route remained published")
+		t.Fatal("released route remained published")
 	}
 	if worker.routes[0].closed.Load() != 1 {
-		t.Fatal("removed route was not closed")
+		t.Fatal("released route was not closed")
 	}
 	if !slices.Equal(removals, []RouteRemovalReason{RouteRemovalHostnameRemoved}) {
 		t.Fatalf("removal reasons = %v", removals)
 	}
 	if _, err := coordinator.Heartbeat(context.Background(), created.Route.ID, 1, created.SessionToken); !errors.Is(err, ErrStaleSession) {
-		t.Fatalf("removed session error = %v", err)
+		t.Fatalf("released session error = %v", err)
 	}
 }
 
@@ -476,7 +476,7 @@ func TestCoordinatorObservesStages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := coordinator.RegisterTransport(
+	if err := coordinator.AttachRouteTransport(
 		context.Background(), created.Route.ID, 1, created.SessionToken,
 		key.NewNode().Public().String(), "test",
 	); err != nil {
@@ -540,7 +540,7 @@ func TestCoordinatorObservesDeletedAndDrainingRemovals(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := coordinator.RegisterTransport(
+			if err := coordinator.AttachRouteTransport(
 				context.Background(), created.Route.ID, 1, created.SessionToken,
 				key.NewNode().Public().String(), "test",
 			); err != nil {
@@ -572,11 +572,11 @@ func TestCoordinatorHealthStats(t *testing.T) {
 		t.Fatal(err)
 	}
 	stats := coordinator.HealthStats()
-	if stats.Provisioning != 1 || stats.Active != 0 || stats.ConnectedWorkers != 1 ||
-		stats.MinimumProvisioningSessionSeconds != SessionLifetime.Seconds() || stats.MinimumActiveSessionSeconds != 0 {
+	if stats.Provisioning != 1 || stats.Routable != 0 || stats.ConnectedWorkers != 1 ||
+		stats.MinimumProvisioningSessionSeconds != SessionLifetime.Seconds() || stats.MinimumRoutableSessionSeconds != 0 {
 		t.Fatalf("provisioning health stats = %#v", stats)
 	}
-	if err := coordinator.RegisterTransport(
+	if err := coordinator.AttachRouteTransport(
 		context.Background(), created.Route.ID, 1, created.SessionToken,
 		key.NewNode().Public().String(), "test",
 	); err != nil {
@@ -587,9 +587,9 @@ func TestCoordinatorHealthStats(t *testing.T) {
 	}
 	now = now.Add(10 * time.Second)
 	stats = coordinator.HealthStats()
-	if stats.Provisioning != 0 || stats.Active != 1 || stats.ConnectedWorkers != 1 ||
-		stats.MinimumProvisioningSessionSeconds != 0 || stats.MinimumActiveSessionSeconds != 35 {
-		t.Fatalf("active health stats = %#v", stats)
+	if stats.Provisioning != 0 || stats.Routable != 1 || stats.ConnectedWorkers != 1 ||
+		stats.MinimumProvisioningSessionSeconds != 0 || stats.MinimumRoutableSessionSeconds != 35 {
+		t.Fatalf("routable health stats = %#v", stats)
 	}
 }
 
@@ -609,7 +609,7 @@ func newCoordinatorFixture(t *testing.T, configs ...CoordinatorConfig) (*Coordin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := coordinator.AddManagedHostname(context.Background(), "worker", "route", "coordinator-test"); err != nil {
+	if _, err := coordinator.ClaimManagedHostname(context.Background(), "worker", "route", "coordinator-test"); err != nil {
 		t.Fatal(err)
 	}
 	worker := &fakeWorker{limit: 2}

@@ -10,6 +10,7 @@ require (
 	github.com/go-acme/lego/v5 v5.4.0
 	github.com/letsencrypt/challtestsrv v1.4.2
 	github.com/libp2p/go-yamux/v5 v5.1.0
+	github.com/oapi-codegen/runtime v1.7.0
 	github.com/pires/go-proxyproto v0.15.0
 	github.com/pressly/goose/v3 v3.27.3
 	github.com/prometheus/client_golang v1.24.1
@@ -31,6 +32,7 @@ require (
 	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/akutz/memconn v0.1.0 // indirect
 	github.com/anmitsu/go-shlex v0.0.0-20200514113438-38f4b401e2be // indirect
+	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/aws/aws-sdk-go-v2 v1.42.1 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.14 // indirect
 	github.com/aws/aws-sdk-go-v2/config v1.32.30 // indirect

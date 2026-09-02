@@ -11,20 +11,20 @@ import (
 
 const MaxIPPrefixes = 64
 
-// CoreRequest is one of the three fixed request bodies covered by the
+// OperationRequest is one of the three fixed request bodies covered by the
 // authorization protocol. SignedAuthorization is intentionally absent.
-type CoreRequest struct {
+type OperationRequest struct {
 	Operation         Operation
 	Hostname          string
 	LocalTarget       string
 	RouteToken        string
 	AllowedIPPrefixes []string
-	Version           uint64
+	RouteVersion      uint64
 }
 
-// CanonicalRequestHash hashes the RFC 8785 representation of an exact Core
-// request shape. It intentionally does not implement general JSON canonicalization.
-func CanonicalRequestHash(request CoreRequest) (Digest, error) {
+// CanonicalRequestHash hashes the RFC 8785 representation of an exact authorized
+// operation request shape. It intentionally does not implement general JSON canonicalization.
+func CanonicalRequestHash(request OperationRequest) (Digest, error) {
 	var canonical []byte
 	var err error
 	switch request.Operation {
@@ -34,10 +34,10 @@ func CanonicalRequestHash(request CoreRequest) (Digest, error) {
 	case OperationRouteSessionCreate:
 		canonical, err = appendObject(nil, request.AllowedIPPrefixes, []field{{"route_token", request.RouteToken}})
 	case OperationRenew:
-		if request.Version == 0 {
-			return Digest{}, invalid("renewal version is required")
+		if request.RouteVersion == 0 {
+			return Digest{}, invalid("renewal route version is required")
 		}
-		canonical = strconv.AppendUint([]byte(`{"version":`), request.Version, 10)
+		canonical = strconv.AppendUint([]byte(`{"route_version":`), request.RouteVersion, 10)
 		canonical = append(canonical, '}')
 	default:
 		return Digest{}, invalid("unknown request operation")

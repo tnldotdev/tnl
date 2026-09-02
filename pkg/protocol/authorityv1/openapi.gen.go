@@ -4,26 +4,18 @@
 package authorityv1
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
 	"time"
-)
 
-// Defines values for AddHostnameRequestKind.
-const (
-	AddHostnameRequestKindManaged   AddHostnameRequestKind = "managed"
-	AddHostnameRequestKindTemporary AddHostnameRequestKind = "temporary"
+	"github.com/oapi-codegen/runtime"
 )
-
-// Valid indicates whether the value is a known member of the AddHostnameRequestKind enum.
-func (e AddHostnameRequestKind) Valid() bool {
-	switch e {
-	case AddHostnameRequestKindManaged:
-		return true
-	case AddHostnameRequestKindTemporary:
-		return true
-	default:
-		return false
-	}
-}
 
 // Defines values for AuthorizationClaimsAlg.
 const (
@@ -100,6 +92,24 @@ const (
 func (e CapabilitiesAuthenticationRequired) Valid() bool {
 	switch e {
 	case CapabilitiesAuthenticationRequiredTrue:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ClaimHostnameRequestKind.
+const (
+	ClaimHostnameRequestKindManaged   ClaimHostnameRequestKind = "managed"
+	ClaimHostnameRequestKindTemporary ClaimHostnameRequestKind = "temporary"
+)
+
+// Valid indicates whether the value is a known member of the ClaimHostnameRequestKind enum.
+func (e ClaimHostnameRequestKind) Valid() bool {
+	switch e {
+	case ClaimHostnameRequestKindManaged:
+		return true
+	case ClaimHostnameRequestKindTemporary:
 		return true
 	default:
 		return false
@@ -418,26 +428,17 @@ func (e ProblemCode) Valid() bool {
 	}
 }
 
-// AddHostnameRequest defines model for AddHostnameRequest.
-type AddHostnameRequest struct {
-	Kind AddHostnameRequestKind `json:"kind"`
-	Name *string                `json:"name,omitempty"`
-}
-
-// AddHostnameRequestKind defines model for AddHostnameRequest.Kind.
-type AddHostnameRequestKind string
-
 // AuthorizationClaims defines model for AuthorizationClaims.
 type AuthorizationClaims struct {
 	Alg             AuthorizationClaimsAlg `json:"alg"`
 	AuthorizationId string                 `json:"authorization_id"`
 
-	// CanonicalRequestHash Unpadded RFC 4648 base64url encoding of the 32-byte SHA-256 digest of the RFC 8785 JSON serialization of the Core operation request body before authorization credentials are attached.
+	// CanonicalRequestHash Unpadded RFC 4648 base64url encoding of the 32-byte SHA-256 digest of the RFC 8785 JSON serialization of the route operation request body before authorization credentials are attached.
 	CanonicalRequestHash SHA256Digest `json:"canonical_request_hash"`
 	ExpiresAt            time.Time    `json:"expires_at"`
 	Hostname             string       `json:"hostname"`
 
-	// IpPolicyHash Unpadded RFC 4648 base64url encoding of the 32-byte SHA-256 digest of the RFC 8785 JSON serialization of the Core operation request body before authorization credentials are attached.
+	// IpPolicyHash Unpadded RFC 4648 base64url encoding of the 32-byte SHA-256 digest of the RFC 8785 JSON serialization of the route operation request body before authorization credentials are attached.
 	IpPolicyHash *SHA256Digest                `json:"ip_policy_hash,omitempty"`
 	IssuedAt     time.Time                    `json:"issued_at"`
 	Issuer       string                       `json:"issuer"`
@@ -493,6 +494,18 @@ type Capabilities struct {
 
 // CapabilitiesAuthenticationRequired defines model for Capabilities.AuthenticationRequired.
 type CapabilitiesAuthenticationRequired bool
+
+// ClaimHostnameRequest defines model for ClaimHostnameRequest.
+type ClaimHostnameRequest struct {
+	// Kind Managed claims persist until released; temporary hostnames are allocated by the authority.
+	Kind ClaimHostnameRequestKind `json:"kind"`
+
+	// Label Preferred DNS label for a managed claim. Omit it to let the authority allocate a label.
+	Label *string `json:"label,omitempty"`
+}
+
+// ClaimHostnameRequestKind Managed claims persist until released; temporary hostnames are allocated by the authority.
+type ClaimHostnameRequestKind string
 
 // CreateDomainVerificationRequest defines model for CreateDomainVerificationRequest.
 type CreateDomainVerificationRequest struct {
@@ -589,16 +602,16 @@ type HostnamePolicyTemporaryNameSupport bool
 
 // IssueAuthorizationRequest defines model for IssueAuthorizationRequest.
 type IssueAuthorizationRequest struct {
-	// CanonicalRequestHash Unpadded RFC 4648 base64url encoding of the 32-byte SHA-256 digest of the RFC 8785 JSON serialization of the Core operation request body before authorization credentials are attached.
+	// CanonicalRequestHash Unpadded RFC 4648 base64url encoding of the 32-byte SHA-256 digest of the RFC 8785 JSON serialization of the route operation request body before authorization credentials are attached.
 	CanonicalRequestHash SHA256Digest `json:"canonical_request_hash"`
 	Hostname             string       `json:"hostname"`
 
-	// IpPolicyHash Unpadded RFC 4648 base64url encoding of the 32-byte SHA-256 digest of the RFC 8785 JSON serialization of the Core operation request body before authorization credentials are attached.
+	// IpPolicyHash Unpadded RFC 4648 base64url encoding of the 32-byte SHA-256 digest of the RFC 8785 JSON serialization of the route operation request body before authorization credentials are attached.
 	IpPolicyHash *SHA256Digest                      `json:"ip_policy_hash,omitempty"`
 	Operation    IssueAuthorizationRequestOperation `json:"operation"`
 	RouteId      *string                            `json:"route_id,omitempty"`
 
-	// RouteVersion Required for route_session.create and authorization.renew. For route_session.create this is the new session version expected from Core; for authorization.renew this is the current route version.
+	// RouteVersion Required for route_session.create and authorization.renew. For route_session.create this is the new route version expected by the server; for authorization.renew this is the current route version.
 	RouteVersion *int `json:"route_version,omitempty"`
 }
 
@@ -637,7 +650,7 @@ type Problem struct {
 // ProblemCode defines model for Problem.Code.
 type ProblemCode string
 
-// SHA256Digest Unpadded RFC 4648 base64url encoding of the 32-byte SHA-256 digest of the RFC 8785 JSON serialization of the Core operation request body before authorization credentials are attached.
+// SHA256Digest Unpadded RFC 4648 base64url encoding of the 32-byte SHA-256 digest of the RFC 8785 JSON serialization of the route operation request body before authorization credentials are attached.
 type SHA256Digest = string
 
 // IdempotencyKey defines model for IdempotencyKey.
@@ -661,8 +674,8 @@ type ListHostnamesParams struct {
 	Cursor *HostnameID `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
-// AddHostnameParams defines parameters for AddHostname.
-type AddHostnameParams struct {
+// ClaimHostnameParams defines parameters for ClaimHostname.
+type ClaimHostnameParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
 
@@ -672,5 +685,2142 @@ type IssueAuthorizationJSONRequestBody = IssueAuthorizationRequest
 // CreateDomainVerificationJSONRequestBody defines body for CreateDomainVerification for application/json ContentType.
 type CreateDomainVerificationJSONRequestBody = CreateDomainVerificationRequest
 
-// AddHostnameJSONRequestBody defines body for AddHostname for application/json ContentType.
-type AddHostnameJSONRequestBody = AddHostnameRequest
+// ClaimHostnameJSONRequestBody defines body for ClaimHostname for application/json ContentType.
+type ClaimHostnameJSONRequestBody = ClaimHostnameRequest
+
+// RequestEditorFn is the function signature for the RequestEditor callback function
+type RequestEditorFn func(ctx context.Context, req *http.Request) error
+
+// Doer performs HTTP requests.
+//
+// The standard http.Client implements this interface.
+type HttpRequestDoer interface {
+	Do(req *http.Request) (*http.Response, error)
+}
+
+// Client which conforms to the OpenAPI3 specification for this service.
+type Client struct {
+	// The endpoint of the server conforming to this interface, with scheme,
+	// https://api.deepmap.com for example. This can contain a path relative
+	// to the server, such as https://api.deepmap.com/dev-test, and all the
+	// paths in the swagger spec will be appended to the server.
+	Server string
+
+	// Doer for performing requests, typically a *http.Client with any
+	// customized settings, such as certificate chains.
+	Client HttpRequestDoer
+
+	// A list of callbacks for modifying requests which are generated before sending over
+	// the network.
+	RequestEditors []RequestEditorFn
+}
+
+// ClientOption allows setting custom parameters during construction
+type ClientOption func(*Client) error
+
+// Creates a new Client, with reasonable defaults
+func NewClient(server string, opts ...ClientOption) (*Client, error) {
+	// create a client with sane default values
+	client := Client{
+		Server: server,
+	}
+	// mutate client and add all optional params
+	for _, o := range opts {
+		if err := o(&client); err != nil {
+			return nil, err
+		}
+	}
+	// ensure the server URL always has a trailing slash
+	if !strings.HasSuffix(client.Server, "/") {
+		client.Server += "/"
+	}
+	// create httpClient, if not already present
+	if client.Client == nil {
+		client.Client = &http.Client{}
+	}
+	return &client, nil
+}
+
+// WithHTTPClient allows overriding the default Doer, which is
+// automatically created using http.Client. This is useful for tests.
+func WithHTTPClient(doer HttpRequestDoer) ClientOption {
+	return func(c *Client) error {
+		c.Client = doer
+		return nil
+	}
+}
+
+// WithRequestEditorFn allows setting up a callback function, which will be
+// called right before sending the request. This can be used to mutate the request.
+func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
+	return func(c *Client) error {
+		c.RequestEditors = append(c.RequestEditors, fn)
+		return nil
+	}
+}
+
+// The interface specification for the client above.
+type ClientInterface interface {
+
+	// IssueAuthorizationWithBody Issue a short-lived authorization for a route operation
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/authorizations (the `IssueAuthorization` operationId).
+	IssueAuthorizationWithBody(ctx context.Context, params *IssueAuthorizationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// IssueAuthorization Issue a short-lived authorization for a route operation
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/authorizations (the `IssueAuthorization` operationId).
+	IssueAuthorization(ctx context.Context, params *IssueAuthorizationParams, body IssueAuthorizationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetCapabilities Describe authentication, hostname, and authorization policy
+	//
+	// Corresponds with GET /v1/capabilities (the `GetCapabilities` operationId).
+	GetCapabilities(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateDomainVerificationWithBody Create a pending custom-domain verification
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/domain-verifications (the `CreateDomainVerification` operationId).
+	CreateDomainVerificationWithBody(ctx context.Context, params *CreateDomainVerificationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateDomainVerification Create a pending custom-domain verification
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/domain-verifications (the `CreateDomainVerification` operationId).
+	CreateDomainVerification(ctx context.Context, params *CreateDomainVerificationParams, body CreateDomainVerificationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetDomainVerification Read an owned custom-domain verification
+	//
+	// Corresponds with GET /v1/domain-verifications/{id} (the `GetDomainVerification` operationId).
+	GetDomainVerification(ctx context.Context, id DomainVerificationID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CompleteDomainVerification Verify DNS and claim a custom domain
+	//
+	// Corresponds with POST /v1/domain-verifications/{id}/complete (the `CompleteDomainVerification` operationId).
+	CompleteDomainVerification(ctx context.Context, id DomainVerificationID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListHostnames List hostname claims owned by the authenticated identity
+	//
+	// Corresponds with GET /v1/hostnames (the `ListHostnames` operationId).
+	ListHostnames(ctx context.Context, params *ListHostnamesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ClaimHostnameWithBody Claim a managed hostname or allocate a temporary hostname
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/hostnames (the `ClaimHostname` operationId).
+	ClaimHostnameWithBody(ctx context.Context, params *ClaimHostnameParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ClaimHostname Claim a managed hostname or allocate a temporary hostname
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/hostnames (the `ClaimHostname` operationId).
+	ClaimHostname(ctx context.Context, params *ClaimHostnameParams, body ClaimHostnameJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReleaseHostname Release an owned persistent hostname claim
+	//
+	// Corresponds with DELETE /v1/hostnames/{id} (the `ReleaseHostname` operationId).
+	ReleaseHostname(ctx context.Context, id HostnameID, reqEditors ...RequestEditorFn) (*http.Response, error)
+}
+
+// IssueAuthorizationWithBody Issue a short-lived authorization for a route operation
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/authorizations (the `IssueAuthorization` operationId).
+func (c *Client) IssueAuthorizationWithBody(ctx context.Context, params *IssueAuthorizationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIssueAuthorizationRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// IssueAuthorization Issue a short-lived authorization for a route operation
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/authorizations (the `IssueAuthorization` operationId).
+func (c *Client) IssueAuthorization(ctx context.Context, params *IssueAuthorizationParams, body IssueAuthorizationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIssueAuthorizationRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetCapabilities Describe authentication, hostname, and authorization policy
+//
+// Corresponds with GET /v1/capabilities (the `GetCapabilities` operationId).
+func (c *Client) GetCapabilities(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetCapabilitiesRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateDomainVerificationWithBody Create a pending custom-domain verification
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/domain-verifications (the `CreateDomainVerification` operationId).
+func (c *Client) CreateDomainVerificationWithBody(ctx context.Context, params *CreateDomainVerificationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateDomainVerificationRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateDomainVerification Create a pending custom-domain verification
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/domain-verifications (the `CreateDomainVerification` operationId).
+func (c *Client) CreateDomainVerification(ctx context.Context, params *CreateDomainVerificationParams, body CreateDomainVerificationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateDomainVerificationRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetDomainVerification Read an owned custom-domain verification
+//
+// Corresponds with GET /v1/domain-verifications/{id} (the `GetDomainVerification` operationId).
+func (c *Client) GetDomainVerification(ctx context.Context, id DomainVerificationID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetDomainVerificationRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CompleteDomainVerification Verify DNS and claim a custom domain
+//
+// Corresponds with POST /v1/domain-verifications/{id}/complete (the `CompleteDomainVerification` operationId).
+func (c *Client) CompleteDomainVerification(ctx context.Context, id DomainVerificationID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCompleteDomainVerificationRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListHostnames List hostname claims owned by the authenticated identity
+//
+// Corresponds with GET /v1/hostnames (the `ListHostnames` operationId).
+func (c *Client) ListHostnames(ctx context.Context, params *ListHostnamesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListHostnamesRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ClaimHostnameWithBody Claim a managed hostname or allocate a temporary hostname
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/hostnames (the `ClaimHostname` operationId).
+func (c *Client) ClaimHostnameWithBody(ctx context.Context, params *ClaimHostnameParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewClaimHostnameRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ClaimHostname Claim a managed hostname or allocate a temporary hostname
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/hostnames (the `ClaimHostname` operationId).
+func (c *Client) ClaimHostname(ctx context.Context, params *ClaimHostnameParams, body ClaimHostnameJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewClaimHostnameRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReleaseHostname Release an owned persistent hostname claim
+//
+// Corresponds with DELETE /v1/hostnames/{id} (the `ReleaseHostname` operationId).
+func (c *Client) ReleaseHostname(ctx context.Context, id HostnameID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReleaseHostnameRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// NewIssueAuthorizationRequest calls the generic IssueAuthorization builder with application/json body
+func NewIssueAuthorizationRequest(server string, params *IssueAuthorizationParams, body IssueAuthorizationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewIssueAuthorizationRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewIssueAuthorizationRequestWithBody constructs an http.Request for the IssueAuthorization method, with any body, and a specified content type
+func NewIssueAuthorizationRequestWithBody(server string, params *IssueAuthorizationParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/authorizations")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewGetCapabilitiesRequest constructs an http.Request for the GetCapabilities method
+func NewGetCapabilitiesRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/capabilities")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateDomainVerificationRequest calls the generic CreateDomainVerification builder with application/json body
+func NewCreateDomainVerificationRequest(server string, params *CreateDomainVerificationParams, body CreateDomainVerificationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateDomainVerificationRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewCreateDomainVerificationRequestWithBody constructs an http.Request for the CreateDomainVerification method, with any body, and a specified content type
+func NewCreateDomainVerificationRequestWithBody(server string, params *CreateDomainVerificationParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/domain-verifications")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewGetDomainVerificationRequest constructs an http.Request for the GetDomainVerification method
+func NewGetDomainVerificationRequest(server string, id DomainVerificationID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/domain-verifications/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCompleteDomainVerificationRequest constructs an http.Request for the CompleteDomainVerification method
+func NewCompleteDomainVerificationRequest(server string, id DomainVerificationID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/domain-verifications/%s/complete", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListHostnamesRequest constructs an http.Request for the ListHostnames method
+func NewListHostnamesRequest(server string, params *ListHostnamesParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/hostnames")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewClaimHostnameRequest calls the generic ClaimHostname builder with application/json body
+func NewClaimHostnameRequest(server string, params *ClaimHostnameParams, body ClaimHostnameJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewClaimHostnameRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewClaimHostnameRequestWithBody constructs an http.Request for the ClaimHostname method, with any body, and a specified content type
+func NewClaimHostnameRequestWithBody(server string, params *ClaimHostnameParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/hostnames")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewReleaseHostnameRequest constructs an http.Request for the ReleaseHostname method
+func NewReleaseHostnameRequest(server string, id HostnameID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/hostnames/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+func (c *Client) applyEditors(ctx context.Context, req *http.Request, additionalEditors []RequestEditorFn) error {
+	for _, r := range c.RequestEditors {
+		if err := r(ctx, req); err != nil {
+			return err
+		}
+	}
+	for _, r := range additionalEditors {
+		if err := r(ctx, req); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ClientWithResponses builds on ClientInterface to offer response payloads
+type ClientWithResponses struct {
+	ClientInterface
+}
+
+// NewClientWithResponses creates a new ClientWithResponses, which wraps
+// Client with return type handling
+func NewClientWithResponses(server string, opts ...ClientOption) (*ClientWithResponses, error) {
+	client, err := NewClient(server, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &ClientWithResponses{client}, nil
+}
+
+// WithBaseURL overrides the baseURL.
+func WithBaseURL(baseURL string) ClientOption {
+	return func(c *Client) error {
+		newBaseURL, err := url.Parse(baseURL)
+		if err != nil {
+			return err
+		}
+		c.Server = newBaseURL.String()
+		return nil
+	}
+}
+
+// ClientWithResponsesInterface is the interface specification for the client with responses above.
+type ClientWithResponsesInterface interface {
+
+	// IssueAuthorizationWithBodyWithResponse Issue a short-lived authorization for a route operation
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/authorizations (the `IssueAuthorization` operationId).
+	IssueAuthorizationWithBodyWithResponse(ctx context.Context, params *IssueAuthorizationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IssueAuthorizationResponse, error)
+
+	// IssueAuthorizationWithResponse Issue a short-lived authorization for a route operation
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/authorizations (the `IssueAuthorization` operationId).
+	IssueAuthorizationWithResponse(ctx context.Context, params *IssueAuthorizationParams, body IssueAuthorizationJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueAuthorizationResponse, error)
+
+	// GetCapabilitiesWithResponse Describe authentication, hostname, and authorization policy
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/capabilities (the `GetCapabilities` operationId).
+	GetCapabilitiesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetCapabilitiesResponse, error)
+
+	// CreateDomainVerificationWithBodyWithResponse Create a pending custom-domain verification
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/domain-verifications (the `CreateDomainVerification` operationId).
+	CreateDomainVerificationWithBodyWithResponse(ctx context.Context, params *CreateDomainVerificationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateDomainVerificationResponse, error)
+
+	// CreateDomainVerificationWithResponse Create a pending custom-domain verification
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/domain-verifications (the `CreateDomainVerification` operationId).
+	CreateDomainVerificationWithResponse(ctx context.Context, params *CreateDomainVerificationParams, body CreateDomainVerificationJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateDomainVerificationResponse, error)
+
+	// GetDomainVerificationWithResponse Read an owned custom-domain verification
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/domain-verifications/{id} (the `GetDomainVerification` operationId).
+	GetDomainVerificationWithResponse(ctx context.Context, id DomainVerificationID, reqEditors ...RequestEditorFn) (*GetDomainVerificationResponse, error)
+
+	// CompleteDomainVerificationWithResponse Verify DNS and claim a custom domain
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/domain-verifications/{id}/complete (the `CompleteDomainVerification` operationId).
+	CompleteDomainVerificationWithResponse(ctx context.Context, id DomainVerificationID, reqEditors ...RequestEditorFn) (*CompleteDomainVerificationResponse, error)
+
+	// ListHostnamesWithResponse List hostname claims owned by the authenticated identity
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/hostnames (the `ListHostnames` operationId).
+	ListHostnamesWithResponse(ctx context.Context, params *ListHostnamesParams, reqEditors ...RequestEditorFn) (*ListHostnamesResponse, error)
+
+	// ClaimHostnameWithBodyWithResponse Claim a managed hostname or allocate a temporary hostname
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/hostnames (the `ClaimHostname` operationId).
+	ClaimHostnameWithBodyWithResponse(ctx context.Context, params *ClaimHostnameParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClaimHostnameResponse, error)
+
+	// ClaimHostnameWithResponse Claim a managed hostname or allocate a temporary hostname
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/hostnames (the `ClaimHostname` operationId).
+	ClaimHostnameWithResponse(ctx context.Context, params *ClaimHostnameParams, body ClaimHostnameJSONRequestBody, reqEditors ...RequestEditorFn) (*ClaimHostnameResponse, error)
+
+	// ReleaseHostnameWithResponse Release an owned persistent hostname claim
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/hostnames/{id} (the `ReleaseHostname` operationId).
+	ReleaseHostnameWithResponse(ctx context.Context, id HostnameID, reqEditors ...RequestEditorFn) (*ReleaseHostnameResponse, error)
+}
+
+// IssueAuthorizationResponse401Headers the declared response headers of an HTTP 401 response for IssueAuthorization
+type IssueAuthorizationResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type IssueAuthorizationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *AuthorizationEnvelope
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *IssueAuthorizationResponse401Headers
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r IssueAuthorizationResponse) GetJSON201() *AuthorizationEnvelope {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r IssueAuthorizationResponse) GetApplicationproblemJSON400() *Problem {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r IssueAuthorizationResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r IssueAuthorizationResponse) GetApplicationproblemJSON403() *Problem {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r IssueAuthorizationResponse) GetApplicationproblemJSON404() *Problem {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r IssueAuthorizationResponse) GetApplicationproblemJSON409() *Problem {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r IssueAuthorizationResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r IssueAuthorizationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r IssueAuthorizationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r IssueAuthorizationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r IssueAuthorizationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetCapabilitiesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Capabilities
+	// ApplicationproblemJSON429 the response for an HTTP 429 `application/problem+json` response
+	ApplicationproblemJSON429 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetCapabilitiesResponse) GetJSON200() *Capabilities {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON429 returns the response for an HTTP 429 `application/problem+json` response
+func (r GetCapabilitiesResponse) GetApplicationproblemJSON429() *Problem {
+	return r.ApplicationproblemJSON429
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetCapabilitiesResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetCapabilitiesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetCapabilitiesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetCapabilitiesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetCapabilitiesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// CreateDomainVerificationResponse401Headers the declared response headers of an HTTP 401 response for CreateDomainVerification
+type CreateDomainVerificationResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type CreateDomainVerificationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *DomainVerification
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *CreateDomainVerificationResponse401Headers
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateDomainVerificationResponse) GetJSON201() *DomainVerification {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r CreateDomainVerificationResponse) GetApplicationproblemJSON400() *Problem {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r CreateDomainVerificationResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r CreateDomainVerificationResponse) GetApplicationproblemJSON403() *Problem {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r CreateDomainVerificationResponse) GetApplicationproblemJSON409() *Problem {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateDomainVerificationResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateDomainVerificationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateDomainVerificationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateDomainVerificationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateDomainVerificationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetDomainVerificationResponse401Headers the declared response headers of an HTTP 401 response for GetDomainVerification
+type GetDomainVerificationResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type GetDomainVerificationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *DomainVerification
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *GetDomainVerificationResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetDomainVerificationResponse) GetJSON200() *DomainVerification {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r GetDomainVerificationResponse) GetApplicationproblemJSON400() *Problem {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetDomainVerificationResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetDomainVerificationResponse) GetApplicationproblemJSON403() *Problem {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GetDomainVerificationResponse) GetApplicationproblemJSON404() *Problem {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetDomainVerificationResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetDomainVerificationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetDomainVerificationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetDomainVerificationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetDomainVerificationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// CompleteDomainVerificationResponse401Headers the declared response headers of an HTTP 401 response for CompleteDomainVerification
+type CompleteDomainVerificationResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type CompleteDomainVerificationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Hostname
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem
+	// ApplicationproblemJSON412 the response for an HTTP 412 `application/problem+json` response
+	ApplicationproblemJSON412 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *CompleteDomainVerificationResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r CompleteDomainVerificationResponse) GetJSON200() *Hostname {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r CompleteDomainVerificationResponse) GetApplicationproblemJSON400() *Problem {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r CompleteDomainVerificationResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r CompleteDomainVerificationResponse) GetApplicationproblemJSON403() *Problem {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r CompleteDomainVerificationResponse) GetApplicationproblemJSON404() *Problem {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r CompleteDomainVerificationResponse) GetApplicationproblemJSON409() *Problem {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON412 returns the response for an HTTP 412 `application/problem+json` response
+func (r CompleteDomainVerificationResponse) GetApplicationproblemJSON412() *Problem {
+	return r.ApplicationproblemJSON412
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CompleteDomainVerificationResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CompleteDomainVerificationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CompleteDomainVerificationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CompleteDomainVerificationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CompleteDomainVerificationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ListHostnamesResponse401Headers the declared response headers of an HTTP 401 response for ListHostnames
+type ListHostnamesResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ListHostnamesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *HostnamePage
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ListHostnamesResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListHostnamesResponse) GetJSON200() *HostnamePage {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListHostnamesResponse) GetApplicationproblemJSON400() *Problem {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListHostnamesResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListHostnamesResponse) GetApplicationproblemJSON403() *Problem {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListHostnamesResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListHostnamesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListHostnamesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListHostnamesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListHostnamesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ClaimHostnameResponse401Headers the declared response headers of an HTTP 401 response for ClaimHostname
+type ClaimHostnameResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ClaimHostnameResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *Hostname
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ClaimHostnameResponse401Headers
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r ClaimHostnameResponse) GetJSON201() *Hostname {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ClaimHostnameResponse) GetApplicationproblemJSON400() *Problem {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ClaimHostnameResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ClaimHostnameResponse) GetApplicationproblemJSON403() *Problem {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r ClaimHostnameResponse) GetApplicationproblemJSON409() *Problem {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ClaimHostnameResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ClaimHostnameResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ClaimHostnameResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ClaimHostnameResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ClaimHostnameResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ReleaseHostnameResponse401Headers the declared response headers of an HTTP 401 response for ReleaseHostname
+type ReleaseHostnameResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ReleaseHostnameResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *BearerProblem
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ReleaseHostnameResponse401Headers
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ReleaseHostnameResponse) GetApplicationproblemJSON400() *Problem {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ReleaseHostnameResponse) GetApplicationproblemJSON401() *BearerProblem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ReleaseHostnameResponse) GetApplicationproblemJSON403() *Problem {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ReleaseHostnameResponse) GetApplicationproblemJSON404() *Problem {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ReleaseHostnameResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ReleaseHostnameResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReleaseHostnameResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReleaseHostnameResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReleaseHostnameResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// IssueAuthorizationWithBodyWithResponse Issue a short-lived authorization for a route operation
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/authorizations (the `IssueAuthorization` operationId).
+func (c *ClientWithResponses) IssueAuthorizationWithBodyWithResponse(ctx context.Context, params *IssueAuthorizationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IssueAuthorizationResponse, error) {
+	rsp, err := c.IssueAuthorizationWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIssueAuthorizationResponse(rsp)
+}
+
+// IssueAuthorizationWithResponse Issue a short-lived authorization for a route operation
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/authorizations (the `IssueAuthorization` operationId).
+func (c *ClientWithResponses) IssueAuthorizationWithResponse(ctx context.Context, params *IssueAuthorizationParams, body IssueAuthorizationJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueAuthorizationResponse, error) {
+	rsp, err := c.IssueAuthorization(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIssueAuthorizationResponse(rsp)
+}
+
+// GetCapabilitiesWithResponse Describe authentication, hostname, and authorization policy
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/capabilities (the `GetCapabilities` operationId).
+func (c *ClientWithResponses) GetCapabilitiesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetCapabilitiesResponse, error) {
+	rsp, err := c.GetCapabilities(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetCapabilitiesResponse(rsp)
+}
+
+// CreateDomainVerificationWithBodyWithResponse Create a pending custom-domain verification
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/domain-verifications (the `CreateDomainVerification` operationId).
+func (c *ClientWithResponses) CreateDomainVerificationWithBodyWithResponse(ctx context.Context, params *CreateDomainVerificationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateDomainVerificationResponse, error) {
+	rsp, err := c.CreateDomainVerificationWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateDomainVerificationResponse(rsp)
+}
+
+// CreateDomainVerificationWithResponse Create a pending custom-domain verification
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/domain-verifications (the `CreateDomainVerification` operationId).
+func (c *ClientWithResponses) CreateDomainVerificationWithResponse(ctx context.Context, params *CreateDomainVerificationParams, body CreateDomainVerificationJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateDomainVerificationResponse, error) {
+	rsp, err := c.CreateDomainVerification(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateDomainVerificationResponse(rsp)
+}
+
+// GetDomainVerificationWithResponse Read an owned custom-domain verification
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/domain-verifications/{id} (the `GetDomainVerification` operationId).
+func (c *ClientWithResponses) GetDomainVerificationWithResponse(ctx context.Context, id DomainVerificationID, reqEditors ...RequestEditorFn) (*GetDomainVerificationResponse, error) {
+	rsp, err := c.GetDomainVerification(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetDomainVerificationResponse(rsp)
+}
+
+// CompleteDomainVerificationWithResponse Verify DNS and claim a custom domain
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/domain-verifications/{id}/complete (the `CompleteDomainVerification` operationId).
+func (c *ClientWithResponses) CompleteDomainVerificationWithResponse(ctx context.Context, id DomainVerificationID, reqEditors ...RequestEditorFn) (*CompleteDomainVerificationResponse, error) {
+	rsp, err := c.CompleteDomainVerification(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCompleteDomainVerificationResponse(rsp)
+}
+
+// ListHostnamesWithResponse List hostname claims owned by the authenticated identity
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/hostnames (the `ListHostnames` operationId).
+func (c *ClientWithResponses) ListHostnamesWithResponse(ctx context.Context, params *ListHostnamesParams, reqEditors ...RequestEditorFn) (*ListHostnamesResponse, error) {
+	rsp, err := c.ListHostnames(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListHostnamesResponse(rsp)
+}
+
+// ClaimHostnameWithBodyWithResponse Claim a managed hostname or allocate a temporary hostname
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/hostnames (the `ClaimHostname` operationId).
+func (c *ClientWithResponses) ClaimHostnameWithBodyWithResponse(ctx context.Context, params *ClaimHostnameParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClaimHostnameResponse, error) {
+	rsp, err := c.ClaimHostnameWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseClaimHostnameResponse(rsp)
+}
+
+// ClaimHostnameWithResponse Claim a managed hostname or allocate a temporary hostname
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/hostnames (the `ClaimHostname` operationId).
+func (c *ClientWithResponses) ClaimHostnameWithResponse(ctx context.Context, params *ClaimHostnameParams, body ClaimHostnameJSONRequestBody, reqEditors ...RequestEditorFn) (*ClaimHostnameResponse, error) {
+	rsp, err := c.ClaimHostname(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseClaimHostnameResponse(rsp)
+}
+
+// ReleaseHostnameWithResponse Release an owned persistent hostname claim
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/hostnames/{id} (the `ReleaseHostname` operationId).
+func (c *ClientWithResponses) ReleaseHostnameWithResponse(ctx context.Context, id HostnameID, reqEditors ...RequestEditorFn) (*ReleaseHostnameResponse, error) {
+	rsp, err := c.ReleaseHostname(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReleaseHostnameResponse(rsp)
+}
+
+// ParseIssueAuthorizationResponse parses an HTTP response from a IssueAuthorizationWithResponse call
+func ParseIssueAuthorizationResponse(rsp *http.Response) (*IssueAuthorizationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &IssueAuthorizationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest AuthorizationEnvelope
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers IssueAuthorizationResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetCapabilitiesResponse parses an HTTP response from a GetCapabilitiesWithResponse call
+func ParseGetCapabilitiesResponse(rsp *http.Response) (*GetCapabilitiesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetCapabilitiesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Capabilities
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateDomainVerificationResponse parses an HTTP response from a CreateDomainVerificationWithResponse call
+func ParseCreateDomainVerificationResponse(rsp *http.Response) (*CreateDomainVerificationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateDomainVerificationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest DomainVerification
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers CreateDomainVerificationResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetDomainVerificationResponse parses an HTTP response from a GetDomainVerificationWithResponse call
+func ParseGetDomainVerificationResponse(rsp *http.Response) (*GetDomainVerificationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetDomainVerificationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DomainVerification
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers GetDomainVerificationResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseCompleteDomainVerificationResponse parses an HTTP response from a CompleteDomainVerificationWithResponse call
+func ParseCompleteDomainVerificationResponse(rsp *http.Response) (*CompleteDomainVerificationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CompleteDomainVerificationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Hostname
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 412:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON412 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers CompleteDomainVerificationResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListHostnamesResponse parses an HTTP response from a ListHostnamesWithResponse call
+func ParseListHostnamesResponse(rsp *http.Response) (*ListHostnamesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListHostnamesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest HostnamePage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ListHostnamesResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseClaimHostnameResponse parses an HTTP response from a ClaimHostnameWithResponse call
+func ParseClaimHostnameResponse(rsp *http.Response) (*ClaimHostnameResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ClaimHostnameResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest Hostname
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ClaimHostnameResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseReleaseHostnameResponse parses an HTTP response from a ReleaseHostnameWithResponse call
+func ParseReleaseHostnameResponse(rsp *http.Response) (*ReleaseHostnameResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReleaseHostnameResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest BearerProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ReleaseHostnameResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}

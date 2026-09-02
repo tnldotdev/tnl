@@ -1,24 +1,27 @@
 # Route-Path Benchmark
 
-The Fly benchmark exercises the complete tnl route path, from publishing and
-public TLS ingress through Tailcat and the application origin. Tailcat is forced
-through one DERP region so direct peer connectivity cannot affect the result.
+The Fly benchmark exercises the complete tnl route path: public TLS ingress, a
+worker backend, the Tailcat transport, the publisher, and the local benchmark
+service. Tailcat normally uses DERP for peer introduction and fallback while
+attempting a direct peer-to-peer path. The benchmark forces Tailcat traffic
+through one DERP region so direct connectivity cannot affect the result.
 
 It supports two topologies:
 
-- `single-node`: one standalone `tnld` Machine.
-- `ha`: one edge and a fixed worker pool.
+- `standalone`: one standalone `tnld` Machine.
+- `split`: one edge and a fixed worker pool.
 
-`ha` provides worker redundancy only. The edge and its SQLite database remain a
-single point of failure.
+`split` provides worker redundancy only. The edge is the only process that owns
+its SQLite database and remains a single point of failure.
 
 ## Run
 
 The benchmark requires `fly`, `jq`, `curl`, and `openssl`, access to the
 configured Fly organization, and a DNS/ACME test environment. Set:
 
-- `DOMAIN` to a dedicated benchmark base domain.
-- `DNS_HOOK` to an executable that accepts the base domain and generated
+- `DOMAIN` to a dedicated lowercase benchmark DNS domain without a trailing
+  dot.
+- `DNS_HOOK` to an executable that accepts that DNS domain and the generated
   `<app>.fly.dev` target, then updates `*.<domain>` to route to that target. The
   hook must wait until the record is observable.
 - `ACME_DIRECTORY_URL` and `ACME_EMAIL` for an ACME service that supports
@@ -36,7 +39,7 @@ mise exec -- task go:bench-fly
 The proven 10,000-route profile is:
 
 ```console
-MODES=ha HA_ROUTES=10000 WORKERS=4 WORKER_CAPACITY=5000 \
+MODES=split SPLIT_ROUTES=10000 WORKERS=4 WORKER_CAPACITY=5000 \
   EDGE_SIZE=performance-2x WORKER_SIZE=performance-16x \
   DRIVERS=8 DRIVER_SIZE=performance-16x PARALLEL=4 \
   TIMEOUT=30m DRIVER_WAIT_SECONDS=2100 ATTEMPTS=1 \
@@ -45,21 +48,22 @@ MODES=ha HA_ROUTES=10000 WORKERS=4 WORKER_CAPACITY=5000 \
 
 ## Capacity Results
 
-Both forced-DERP runs transferred and validated a 64 KiB response through every
-route, deleted every route, and returned all workers to zero:
+Both split-topology forced-DERP runs transferred and validated a 64 KiB
+response through every route, deleted every route, and returned all workers to
+zero:
 
-| Metric | 5,125 routes | 10,000 routes |
-| --- | --- | --- |
-| Workers | 2 | 4 |
-| Drivers | 4 | 8 |
-| Routes per worker | 2,562 / 2,563 | 2,500 each |
-| Activation p95 | 1.15-1.26 s | 0.89-10.08 s |
-| Request p95 | 104-110 ms | 147-260 ms |
-| Teardown p95 | 39.1-39.4 s | 104.8-108.2 s |
-| Ready worker RSS | 2.37 / 2.41 GB | 2.09-2.10 GB |
-| Worker goroutines | about 233,000 | about 227,500 |
-| Open worker FDs | 10,261 / 10,265 | 10,011-10,021 |
-| Routes after cleanup | 0 / 0 | 0 / 0 / 0 / 0 |
+| Metric               | 5,125 routes    | 10,000 routes |
+| -------------------- | --------------- | ------------- |
+| Workers              | 2               | 4             |
+| Drivers              | 4               | 8             |
+| Routes per worker    | 2,562 / 2,563   | 2,500 each    |
+| Activation p95       | 1.15-1.26 s     | 0.89-10.08 s  |
+| Request p95          | 104-110 ms      | 147-260 ms    |
+| Teardown p95         | 39.1-39.4 s     | 104.8-108.2 s |
+| Ready worker RSS     | 2.37 / 2.41 GB  | 2.09-2.10 GB  |
+| Worker goroutines    | about 233,000   | about 227,500 |
+| Open worker FDs      | 10,261 / 10,265 | 10,011-10,021 |
+| Routes after cleanup | 0 / 0           | 0 / 0 / 0 / 0 |
 
 The 10,000-route run emitted all eight valid result rows. Its local failure
 bundle came from the benchmark process losing stdout after writing the results,
@@ -71,8 +75,9 @@ not from a route, worker, or cleanup failure.
   large worker.
 - Worker resource use remained stable, but activation tails and teardown time
   increased. The serialized SQLite edge is now the main scaling constraint.
-- Each active route uses about four file descriptors. The benchmark raises the
-  limit to 65,536; the released image retains Fly's lower default limit.
+- Each route with a runtime worker backend uses about four file descriptors.
+  The benchmark raises the limit to 65,536; the released image retains Fly's
+  lower default limit.
 - Limiting SQLite to one open connection prevents writer contention from
   amplifying retries and failures.
 - The large benchmark Machines prove capacity but are not the recommended
@@ -83,22 +88,22 @@ not from a route, worker, or cleanup failure.
 For a cost-first deployment, start with the historical forced-DERP small-worker
 density:
 
-| Setting | Value |
-| --- | --- |
-| Edge | 1 fixed `performance-2x` Machine |
-| Worker size | `performance-2x` |
-| Scheduling target | 400 routes per worker |
-| `TNLD_WORKER_CAPACITY` | 500 routes |
-| Minimum workers | 1 |
-| Maximum workers | 10 |
-| Scale-in cooldown | 15 minutes |
+| Setting                | Value                            |
+| ---------------------- | -------------------------------- |
+| Edge                   | 1 fixed `performance-2x` Machine |
+| Worker size            | `performance-2x`                 |
+| Scheduling target      | 400 routes per worker            |
+| `TNLD_WORKER_CAPACITY` | 500 routes                       |
+| Minimum workers        | 1                                |
+| Maximum workers        | 10                               |
+| Scale-in cooldown      | 15 minutes                       |
 
 The complete route path has not yet been rerun with 10 small workers.
 
-Calculate the desired pool from authoritative edge state:
+Calculate the desired pool from the route counts reported by the edge:
 
 ```text
-demand = active routes + provisioning routes
+demand = enabled routes + routes awaiting worker assignment
 desired workers = clamp(ceil(demand / 400), 1, 10)
 ```
 

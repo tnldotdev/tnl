@@ -35,7 +35,7 @@ UPDATE acme_accounts SET email = sqlc.arg(email);
 SELECT status
 FROM route_sessions
 WHERE route_id = sqlc.arg(route_id)
-ORDER BY version DESC
+ORDER BY route_version DESC
 LIMIT 1;
 
 -- name: GetRouteForTesting :one
@@ -54,7 +54,7 @@ SELECT COUNT(*) FROM route_authorization_uses;
 SELECT status, installed_at, challenge_removed_at
 FROM certificate_issuances
 WHERE route_id = sqlc.arg(route_id)
-ORDER BY version DESC
+ORDER BY route_version DESC
 LIMIT 1;
 
 -- name: CountCertificateIssuancesByRoute :one

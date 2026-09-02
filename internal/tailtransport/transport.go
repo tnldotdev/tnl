@@ -218,8 +218,8 @@ func NewServer(config ServerConfig) (*Server, error) {
 
 // Start starts the server and returns the endpoint advertised to hosted
 // ingress. It may be called only once.
-func (s *Server) Start(ctx context.Context) (Endpoint, error) {
-	var zero Endpoint
+func (s *Server) Start(ctx context.Context) (TransportDescriptor, error) {
+	var zero TransportDescriptor
 	if err := s.lifecycle.beginStart(); err != nil {
 		return zero, err
 	}
@@ -261,7 +261,7 @@ func (s *Server) Start(ctx context.Context) (Endpoint, error) {
 	if err != nil {
 		return zero, operationError(operationCtx, err)
 	}
-	return Endpoint{Version: descriptorVersion, PublisherPublicKey: serverKey.Public().String(), RelayRegion: s.relayRegion}, nil
+	return TransportDescriptor{Version: descriptorVersion, PublisherPublicKey: serverKey.Public().String(), RelayRegion: s.relayRegion}, nil
 }
 
 func (s *Server) handle(conn net.Conn) {
@@ -317,7 +317,7 @@ func (s *Server) Close() error {
 
 // DialerConfig configures the hosted-ingress side of one session transport.
 type DialerConfig struct {
-	Endpoint Endpoint
+	Endpoint TransportDescriptor
 	Regions  map[string]*tailcfg.DERPRegion
 	Key      key.NodePrivate
 	Logf     logger.Logf

@@ -2,12 +2,38 @@
 
 public urls for localhost.
 
-tnl is a self-hosted tunnel service. `tnld` owns the control API,
-hostnames, public TLS ingress, and durable SQLite state. `tnl` uses a
-hostname and carries public connections to one literal-loopback HTTP service.
+tnl is a self-hosted tunnel service. A `tnld` process owns the control API,
+hostnames, public TLS ingress, and durable SQLite state. The `tnl` client
+publishes one loopback-only HTTP service at a public hostname.
 
-Run one standalone daemon for the smallest deployment, or separate the stateful
-edge from a fixed pool of stateless route workers.
+Run a standalone deployment for the smallest setup, or a split deployment with
+one stateful edge and a fixed pool of stateless workers.
+
+## Route model
+
+- A **local service** is the HTTP service that an application exposes on the
+  publisher's loopback interface.
+- A **target** is the loopback port or HTTP URL that tells `tnl` how to reach
+  the local service.
+- A **publisher** is the `tnl publish` or `tnl dev` process. It accepts tunneled
+  connections, terminates route TLS, and sends HTTP to the target.
+- A **worker backend** is the server-side forwarding object for one route
+  version. It connects public ingress to that route's publisher. A standalone
+  `tnld` hosts worker backends itself; a split deployment hosts them in worker
+  processes.
+
+A durable route is **enabled** until it is suspended or deleted. It is
+**routable** only while its current route version has a ready publisher session
+and worker backend. An enabled route can therefore be temporarily unroutable
+during publisher startup, process restarts, or worker loss.
+
+The **deployment hostname suffix** is the DNS suffix served by a deployment,
+such as `example.com`. A **managed hostname** is claimed exactly one label
+beneath that suffix, such as `demo.example.com`. A **custom domain** is a DNS
+domain proved and claimed outside that suffix. A **child hostname** is below a
+claimed managed hostname or custom domain. A **temporary hostname** is
+generated for one publish invocation without `--host`. In all cases,
+**hostname** means the complete DNS name used by a route.
 
 ## Install
 
@@ -42,7 +68,7 @@ downloaded artifact. macOS binaries are not Apple-signed or notarized.
 
 A deployment needs one static wildcard DNS record pointing to public ingress:
 
-- `*.example.com` for the server API and public routes on TCP 443.
+- `*.example.com` for the control API and public routes on TCP 443.
 
 The reference deployment is under [`deploy`](deploy):
 
@@ -78,18 +104,18 @@ tnl publish 3000
 
 Add `--open` to launch the public URL in the default browser once it is ready.
 
-The command prints the account URL and one-time code to approve. Use
+The command prints the authorization URL and one-time code to approve. Use
 `tnl logout` to revoke and remove the saved session.
 
 For a server without browser login, `tnl login` securely prompts for the login
 token printed by the daemon command above and stores a revocable control
-session. The client fetches the deployment's pinned relay region from the
+session. The client fetches the deployment's stored relay region from the
 server API:
 
 ```console
 tnl login https://tnl.example.com
-tnl host add demo
-tnl publish 3000 --name=demo
+tnl host claim demo
+tnl publish 3000 --host=demo
 ```
 
 Control sessions have a fixed 30-day lifetime by default. Their one-hour access
@@ -102,10 +128,11 @@ macOS, `tnl` keeps a profile encryption key in Keychain and encrypts saved acces
 and refresh tokens and route TLS private keys in the database. On Linux, the
 database remains private and user-owned with mode `0600`.
 
-The named route becomes available at `https://demo.example.com`. Omitting
-`--name` allocates a fresh friendly temporary name for every invocation. A
-persistent base may serve its apex and descendants up to eight labels deep.
-`localhost:3000` is also accepted and canonicalized to `127.0.0.1:3000`.
+The route becomes available at `https://demo.example.com`. Omitting `--host`
+asks the server to generate a temporary hostname for that invocation. A
+claimed managed hostname or custom domain authorizes its exact hostname and
+child hostnames up to eight labels below it. `localhost:3000` is also accepted
+and normalized to the loopback target `http://127.0.0.1:3000`.
 
 Restrict a route to specific visitor addresses or networks with repeatable
 `--allow-ip` options. Individual addresses are accepted and converted to host
@@ -117,14 +144,18 @@ tnl publish 3000 --allow-current-ip
 tnl publish 3000 --allow-ip=198.51.100.0/24 --allow-ip=2001:db8::/64
 ```
 
-The effective list replaces the route's allowlist on every new session
-version. Omit both options to allow visitors from any source. ACME certificate
+The effective list replaces the route's allowlist on every new route version.
+Omit both options to allow visitors from any source. ACME certificate
 validation remains reachable independently of the visitor allowlist.
 
-Use `tnl host add`, `tnl host list`, and `tnl host remove HOSTNAME` to manage
-persistent bases and verified custom domains. Managed bases remain bound to
-their original owner after removal; available custom domains are transferable
-after fresh DNS proof.
+Use `tnl host claim`, `tnl host list`, and `tnl host release HOSTNAME` to manage
+managed hostnames and custom domains. Releasing a managed hostname stops its
+routes and changes its status to inactive, but ownership remains with the same
+server-local identity. That identity may claim it again, which restores active
+status. Releasing a custom domain stops its routes and changes its status to
+available; an identity may claim it only after completing new DNS proof.
+Running `tnl host claim` without an argument generates a managed hostname that
+remains claimed until released; it is not a temporary hostname.
 
 Query every local tunnel without contacting a server:
 
@@ -133,10 +164,10 @@ tnl status
 tnl status --output=json
 ```
 
-Each `publish` or `dev` invocation receives an opaque `tunnel_id` that is
-distinct from its server-side `route_id`. The versioned JSON snapshot reports
-one observation time, lifecycle counts, and the exact tunnel rows used for
-those counts. A tunnel whose local process lease expires is reported as
+Each `publish` or `dev` invocation receives a randomly generated `tunnel_id`
+that is distinct from its server-side `route_id`. The versioned JSON response
+reports one observation time, lifecycle counts, and the exact tunnel rows used
+for those counts. A tunnel whose local process lease expires is reported as
 `stale`, rather than `ready`.
 
 ## Telemetry
@@ -159,7 +190,7 @@ creation of the installation ID as well as telemetry requests.
 ## Framework development
 
 `tnl dev` starts a development server and publishes it after the framework has
-registered its loopback port. The integration is active only beneath
+reported its loopback port. The integration runs only beneath
 `tnl dev`, so the project's usual development command remains local.
 
 For Next.js 15.2 or newer, install the adapter and update `next.config.ts`:
@@ -192,13 +223,13 @@ export default defineConfig({
 ```
 
 Both integrations accept tunnel options in project configuration. To give each
-Git worktree a predictable URL, first reserve one managed base:
+Git worktree a predictable URL, first claim one managed hostname:
 
 ```console
-tnl host add myapp
+tnl host claim myapp
 ```
 
-Then derive a child name from the built-in worktree context. The factory is
+Then derive a child hostname from the built-in worktree context. The factory is
 evaluated only beneath `tnl dev`:
 
 ```ts
@@ -208,7 +239,7 @@ import tnl from "@tnldotdev/vite";
 export default defineConfig({
   plugins: [
     tnl(({ worktree }) => ({
-      name: `${worktree.label}.myapp`,
+      host: `${worktree.label}.myapp`,
       allowCurrentIP: true,
     })),
   ],
@@ -225,7 +256,8 @@ need coordinated port assignments.
 `allowIP` accepts IP addresses and prefixes; `allowCurrentIP` adds the public
 address observed by the selected server. With no `allowIP` entries,
 `allowCurrentIP: true` restricts the route to that address only. CLI
-`--server`/`TNL_SERVER` and `--name`/`TNL_NAME` override project configuration.
+`--server`/`TNL_SERVER` and `--host`/`TNL_HOST` override project configuration.
+The corresponding `TnlTunnelOptions` fields are `controlURL` and `host`.
 Authentication credentials and client state remain controlled by the CLI and
 are never sent to project code.
 
@@ -250,18 +282,20 @@ Use `tnl dev --open -- pnpm dev` to open the public URL once it is ready.
 Each developer can select a hostname in their local shell:
 
 ```console
-export TNL_NAME=chase.example.com
+export TNL_HOST=chase.example.com
 pnpm dev:public
 ```
 
-Another developer can use `TNL_NAME=john.example.com`. The flag form is:
+Another developer can use `TNL_HOST=john.example.com`. The flag form is:
 
 ```console
-tnl dev --name chase.example.com -- pnpm dev
+tnl dev --host chase.example.com -- pnpm dev
 ```
 
-The signed-in user must own the custom domain or an eligible parent hostname.
-Separate users cannot currently share one parent hostname.
+The selected server-local identity must own a managed hostname or custom domain
+with active status. The requested hostname must match it exactly or add no more
+than eight labels to its left. A temporary hostname authorizes only itself. An
+identity cannot publish beneath a hostname owned by another identity.
 
 For another framework, provide its fixed port:
 
@@ -269,15 +303,15 @@ For another framework, provide its fixed port:
 tnl dev --port=3000 -- pnpm dev
 ```
 
-The public proxy connects only to a literal-loopback target. HTTP, streaming
+The publisher connects only to a loopback HTTP target. HTTP, streaming
 responses, and WebSocket hot reload use the public HTTPS URL printed by `tnl`.
 
-## Core development
+## Local development stack
 
-The local Core stack builds `tnld` from this checkout and runs it with Pebble's
-test ACME service in Docker. It serves the control API at
-`https://tnl.localhost` and routes at `https://<name>.localhost`. Tailcat remains
-an external relay dependency.
+The local development stack builds `tnld` from this checkout and runs it with
+Pebble's test ACME service in Docker. It serves the control API at
+`https://tnl.localhost` and routes at `https://<hostname>.localhost`. Tailcat
+remains an external relay dependency.
 
 Start the services, temporarily trust Pebble's generated issuance root, and
 authenticate an isolated local client:
@@ -291,7 +325,7 @@ mise exec -- task local:login
 Run the client from this checkout by passing its arguments after `--`:
 
 ```console
-mise exec -- task local:tnl -- publish 3000 --name demo
+mise exec -- task local:tnl -- publish 3000 --host demo
 ```
 
 Pebble creates a new issuance root when its container is recreated. Run
@@ -305,24 +339,27 @@ root.
 
 ## Components
 
-- `internal/api` serves bounded server HTTP responses using the generated contract.
-- `internal/auth`, `internal/credentials`, and `internal/state` own standalone identity and token storage.
-- `internal/naming` owns canonical public-hostname policy.
+- `internal/api` serves the server HTTP API using the generated contract and
+  explicit request and response size limits.
+- `internal/auth`, `internal/credentials`, and `internal/state` own server-local
+  identities and token storage.
+- `internal/naming` validates and normalizes lowercase DNS hostnames.
 - `internal/routes`, `internal/ingress`, and `internal/worker` coordinate route sessions and forward public streams.
-- `internal/publisher` terminates application TLS and proxies only to a literal-loopback HTTP target.
-- `internal/clientstate` owns the shared client SQLite database and local tunnel snapshots.
+- `internal/publisher` terminates route TLS and proxies only to a loopback HTTP target.
+- `internal/clientstate` owns the shared client SQLite database and local tunnel
+  status records.
 - `internal/sqlite` owns SQLite connection and migration mechanics shared by client and server state.
 - `internal/tailtransport` carries route-session traffic over Tailcat.
 - `internal/observability` exports provider-neutral Prometheus metrics.
 - `pkg/protocol/serverv1` contains generated Go types for the server API contract.
 - `cmd/tnl` and `cmd/tnld` are the client and daemon entry points.
 
-The hosted web and accounts service is maintained separately. Server contracts
-and conformance fixtures remain under `api`.
+The hosted website and browser-authorization service are maintained separately.
+Server contracts and conformance fixtures are under `api`.
 
-## Core checks
+## Repository checks
 
-Install the pinned toolchain and run the repository checks:
+Install the tool versions configured by the repository and run its checks:
 
 ```console
 brew install mise

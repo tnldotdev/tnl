@@ -76,14 +76,14 @@ func RunWorker(ctx context.Context, config WorkerConfig) error {
 		return err
 	}
 	_ = control.SetDeadline(time.Now().Add(handshakeTimeout))
-	if err := workerv1.WriteControl(control, workerv1.Message{Type: workerv1.Hello, Capacity: config.Worker.Capacity().Limit}); err != nil {
+	if err := workerv1.WriteControl(control, workerv1.Message{Type: workerv1.Hello, RouteCapacity: config.Worker.Capacity().Limit}); err != nil {
 		return err
 	}
 	accepted, err := workerv1.ReadControl(control)
 	if err != nil {
 		return fmt.Errorf("workercontrol: edge rejected hello: %w", err)
 	}
-	if accepted.Type != workerv1.Accepted {
+	if accepted.Type != workerv1.HelloAccepted {
 		return errors.New("workercontrol: edge rejected hello")
 	}
 	_ = control.SetDeadline(time.Time{})
@@ -145,7 +145,7 @@ func (s *workerSession) controlLoop() error {
 		switch message.Type {
 		case workerv1.AttachRoute:
 			if !s.startCommand() {
-				s.sendError(routeRef(message.Route), workerv1.AtCapacity)
+				s.sendError(routeRef(message.Route), workerv1.RouteCapacityExceeded)
 				continue
 			}
 			go func() {
@@ -180,11 +180,11 @@ func (s *workerSession) acceptLoop() error {
 func (s *workerSession) handleAttach(message workerv1.Message) {
 	ref := routeRef(message.Route)
 	if s.draining.Load() {
-		s.sendError(ref, workerv1.AtCapacity)
+		s.sendError(ref, workerv1.RouteCapacityExceeded)
 		return
 	}
-	var privateKey key.NodePrivate
-	if err := privateKey.UnmarshalText([]byte(message.WorkerPrivateKey)); err != nil || privateKey.IsZero() {
+	var tailcatDialerKey key.NodePrivate
+	if err := tailcatDialerKey.UnmarshalText([]byte(message.TailcatDialerPrivateKey)); err != nil || tailcatDialerKey.IsZero() {
 		s.sendError(ref, workerv1.InvalidMessage)
 		return
 	}
@@ -192,8 +192,8 @@ func (s *workerSession) handleAttach(message workerv1.Message) {
 	defer cancel()
 	owned, err := s.config.Worker.Attach(ctx, worker.Assignment{
 		RouteRef: ref,
-		Endpoint: *message.Endpoint,
-		Key:      privateKey,
+		Endpoint: *message.PublisherTransport,
+		Key:      tailcatDialerKey,
 	})
 	if err != nil {
 		s.sendError(ref, workerError(err))
@@ -234,7 +234,7 @@ func (s *workerSession) handleData(stream *yamux.Stream) {
 		s.report(err)
 		return
 	}
-	ref := worker.RouteRef{RouteID: header.RouteID, Version: header.Version}
+	ref := worker.RouteRef{RouteID: header.RouteID, RouteVersion: header.RouteVersion}
 	s.mu.RLock()
 	owned := s.routes[ref]
 	s.mu.RUnlock()
@@ -311,19 +311,19 @@ func (s *workerSession) report(err error) {
 }
 
 func protocolRef(ref worker.RouteRef) *workerv1.RouteRef {
-	return &workerv1.RouteRef{RouteID: ref.RouteID, Version: ref.Version}
+	return &workerv1.RouteRef{RouteID: ref.RouteID, RouteVersion: ref.RouteVersion}
 }
 
 func routeRef(ref *workerv1.RouteRef) worker.RouteRef {
-	return worker.RouteRef{RouteID: ref.RouteID, Version: ref.Version}
+	return worker.RouteRef{RouteID: ref.RouteID, RouteVersion: ref.RouteVersion}
 }
 
 func workerError(err error) workerv1.ErrorCode {
 	switch {
 	case errors.Is(err, worker.ErrStaleAssignment):
-		return workerv1.StaleAssignment
+		return workerv1.StaleRouteVersion
 	case errors.Is(err, worker.ErrAtCapacity), errors.Is(err, worker.ErrDraining):
-		return workerv1.AtCapacity
+		return workerv1.RouteCapacityExceeded
 	default:
 		return workerv1.Internal
 	}

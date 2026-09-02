@@ -35,12 +35,12 @@ var (
 	relayCheckInterval = 15 * time.Second
 )
 
-type Server interface {
+type RouteControlClient interface {
 	CreateRoute(context.Context, serverv1.CreateRouteRequest) (serverv1.SessionSetup, error)
 	ListRoutes(context.Context) ([]serverv1.Route, error)
 	CreateRouteSession(context.Context, string, credentials.RouteToken, []string) (serverv1.SessionSetup, error)
 	DeleteRoute(context.Context, string) error
-	RegisterTransport(context.Context, string, uint64, credentials.SessionToken, transportv1.TailcatDescriptor) error
+	AttachRouteTransport(context.Context, string, uint64, credentials.SessionToken, transportv1.TailcatDescriptor) error
 	Ready(context.Context, string, uint64, credentials.SessionToken) error
 	Heartbeat(context.Context, string, uint64, credentials.SessionToken) (serverv1.HeartbeatResponse, error)
 	CreateCertificateIssuance(context.Context, string, uint64, credentials.SessionToken, string, []byte) (serverv1.CertificateIssuance, error)
@@ -50,7 +50,7 @@ type Server interface {
 }
 
 type Config struct {
-	Server            Server
+	Server            RouteControlClient
 	Hostname          string
 	Target            string
 	AllowedIPPrefixes []string
@@ -68,18 +68,18 @@ type Config struct {
 type EventType string
 
 const (
-	EventRoute        EventType = "route"
-	EventProvisioning EventType = "provisioning"
-	EventReady        EventType = "ready"
-	EventDraining     EventType = "draining"
+	EventRouteAssigned EventType = "route"
+	EventProvisioning  EventType = "provisioning"
+	EventReady         EventType = "ready"
+	EventDraining      EventType = "draining"
 )
 
 type Event struct {
-	Type      EventType
-	RouteID   string
-	Hostname  string
-	PublicURL string
-	Version   uint64
+	Type         EventType
+	RouteID      string
+	Hostname     string
+	PublicURL    string
+	RouteVersion uint64
 }
 
 func Run(ctx context.Context, config Config) (result error) {
@@ -143,12 +143,12 @@ func Run(ctx context.Context, config Config) (result error) {
 			result = errors.Join(result, fmt.Errorf("publisher: delete route: %w", err))
 		}
 	}()
-	if err := observe(config, Event{Type: EventRoute, RouteID: routeID, Hostname: setup.Route.Hostname}); err != nil {
+	if err := observe(config, Event{Type: EventRouteAssigned, RouteID: routeID, Hostname: setup.Route.Hostname}); err != nil {
 		return err
 	}
-	var routeState *clientstate.Route
+	var routeState *clientstate.RouteCertificateHandle
 	if automaticCertificates {
-		routeState, err = clientstate.LockContext(ctx, config.State, routeID)
+		routeState, err = clientstate.LockRouteCertificates(ctx, config.State, routeID)
 		if err != nil {
 			return err
 		}
@@ -160,14 +160,14 @@ func Run(ctx context.Context, config Config) (result error) {
 		}
 		if err := observe(config, Event{
 			Type: EventProvisioning, RouteID: routeID, Hostname: setup.Route.Hostname,
-			Version: uint64(setup.Session.Version),
+			RouteVersion: uint64(setup.Session.RouteVersion),
 		}); err != nil {
 			return err
 		}
 		err := runSession(ctx, config, setup, routeState, func() error {
 			return observe(config, Event{
 				Type: EventReady, RouteID: routeID, Hostname: setup.Route.Hostname,
-				PublicURL: "https://" + setup.Route.Hostname, Version: uint64(setup.Session.Version),
+				PublicURL: "https://" + setup.Route.Hostname, RouteVersion: uint64(setup.Session.RouteVersion),
 			})
 		})
 		if ctx.Err() != nil {
@@ -212,7 +212,7 @@ func refreshRelayRegions(ctx context.Context, config *Config) error {
 
 func createOrRecover(
 	ctx context.Context,
-	server Server,
+	server RouteControlClient,
 	hostname, target string,
 	routeToken credentials.RouteToken,
 	allowedIPPrefixes []string,
@@ -267,25 +267,21 @@ func runSession(
 	ctx context.Context,
 	config Config,
 	setup serverv1.SessionSetup,
-	state *clientstate.Route,
+	state *clientstate.RouteCertificateHandle,
 	ready func() error,
 ) error {
-	if setup.Route.Id == "" || setup.Session.Version <= 0 || setup.SessionToken == "" || setup.WorkerPublicKey == "" {
+	if setup.Route.Id == "" || setup.Session.RouteVersion <= 0 || setup.SessionToken == "" || setup.WorkerPublicKey == "" {
 		return errors.New("publisher: server returned incomplete session setup")
 	}
 	sessionToken := credentials.SessionToken(setup.SessionToken)
 	if _, _, err := credentials.ParseSessionToken(sessionToken); err != nil {
 		return errors.New("publisher: server returned invalid session token")
 	}
-	sourceKey, err := credentials.DeriveSessionSourceKey(sessionToken)
-	if err != nil {
-		return errors.New("publisher: server returned invalid session token")
+	var tailcatDialerKey key.NodePublic
+	if err := tailcatDialerKey.UnmarshalText([]byte(setup.WorkerPublicKey)); err != nil || tailcatDialerKey.IsZero() {
+		return errors.New("publisher: server returned invalid tailcat dialer key")
 	}
-	var ingressKey key.NodePublic
-	if err := ingressKey.UnmarshalText([]byte(setup.WorkerPublicKey)); err != nil || ingressKey.IsZero() {
-		return errors.New("publisher: server returned invalid ingress key")
-	}
-	version := uint64(setup.Session.Version)
+	version := uint64(setup.Session.RouteVersion)
 	sessionCtx, cancelSession := context.WithCancel(ctx)
 	defer cancelSession()
 	// Refresh before setup consumes the session, then continue heartbeats in the background.
@@ -323,8 +319,7 @@ func runSession(
 	route, err := NewRoute(RouteConfig{
 		Hostname: setup.Route.Hostname, Target: config.Target, Certificate: certificate,
 		StrictCertificate: true,
-		SourceKey:         sourceKey, AllowedIPPrefixes: config.AllowedIPPrefixes,
-		AllowedClient: ingressKey, RelayRegion: config.RelayRegion, Regions: config.Regions, Logf: config.Logf,
+		AllowedClient:     tailcatDialerKey, RelayRegion: config.RelayRegion, Regions: config.Regions, Logf: config.Logf,
 	})
 	if err != nil {
 		return err
@@ -336,7 +331,7 @@ func runSession(
 	}
 
 	for {
-		err = config.Server.RegisterTransport(ctx, setup.Route.Id, version, sessionToken, endpoint)
+		err = config.Server.AttachRouteTransport(ctx, setup.Route.Id, version, sessionToken, endpoint)
 		if err == nil {
 			break
 		}
@@ -424,7 +419,7 @@ func runSession(
 		select {
 		case <-ctx.Done():
 			return errors.Join(
-				observe(config, Event{Type: EventDraining, RouteID: setup.Route.Id, Hostname: setup.Route.Hostname, Version: version}),
+				observe(config, Event{Type: EventDraining, RouteID: setup.Route.Id, Hostname: setup.Route.Hostname, RouteVersion: version}),
 				drainRoute(route, config.DrainTime),
 			)
 		case err := <-heartbeatErrors:
@@ -479,9 +474,9 @@ func observe(config Config, event Event) error {
 
 func refreshCertificate(
 	ctx context.Context,
-	server Server,
+	server RouteControlClient,
 	route *Route,
-	state *clientstate.Route,
+	state *clientstate.RouteCertificateHandle,
 	routeID string,
 	version uint64,
 	sessionToken credentials.SessionToken,
@@ -512,9 +507,9 @@ func logRenewalFailure(logf logger.Logf, err error) {
 
 func issueCertificate(
 	ctx context.Context,
-	server Server,
+	server RouteControlClient,
 	route *Route,
-	state *clientstate.Route,
+	state *clientstate.RouteCertificateHandle,
 	routeID string,
 	version uint64,
 	sessionToken credentials.SessionToken,
@@ -639,9 +634,9 @@ issuanceLoop:
 
 func installCertificateIssuance(
 	ctx context.Context,
-	server Server,
+	server RouteControlClient,
 	route *Route,
-	state *clientstate.Route,
+	state *clientstate.RouteCertificateHandle,
 	routeID string,
 	version uint64,
 	sessionToken credentials.SessionToken,
@@ -678,7 +673,7 @@ func installCertificateIssuance(
 
 func createCertificateIssuance(
 	ctx context.Context,
-	server Server,
+	server RouteControlClient,
 	routeID string,
 	version uint64,
 	sessionToken credentials.SessionToken,
@@ -705,9 +700,9 @@ func createCertificateIssuance(
 
 func reconcileCertificateInstallation(
 	ctx context.Context,
-	server Server,
+	server RouteControlClient,
 	route *Route,
-	state *clientstate.Route,
+	state *clientstate.RouteCertificateHandle,
 	routeID string,
 	version uint64,
 	sessionToken credentials.SessionToken,
@@ -763,9 +758,9 @@ func reconcileCertificateInstallation(
 
 func completeReboundCertificateIssuance(
 	ctx context.Context,
-	server Server,
+	server RouteControlClient,
 	route *Route,
-	state *clientstate.Route,
+	state *clientstate.RouteCertificateHandle,
 	routeID string,
 	version uint64,
 	sessionToken credentials.SessionToken,
@@ -828,7 +823,7 @@ func completeReboundCertificateIssuance(
 
 func acknowledgeCertificate(
 	ctx context.Context,
-	server Server,
+	server RouteControlClient,
 	routeID string,
 	version uint64,
 	issuanceID string,
@@ -851,7 +846,7 @@ func acknowledgeCertificate(
 
 func acknowledgeChallengeRemoval(
 	ctx context.Context,
-	server Server,
+	server RouteControlClient,
 	issuanceID string,
 	sessionToken credentials.SessionToken,
 	heartbeatErrors <-chan error,
@@ -877,7 +872,7 @@ func validateCertificateIssuance(
 	hostname, profile string,
 	expectedID string,
 ) error {
-	if issuance.Id == "" || issuance.RouteId != routeID || issuance.Version != int(version) ||
+	if issuance.Id == "" || issuance.RouteId != routeID || issuance.RouteVersion != int(version) ||
 		issuance.Hostname != hostname || issuance.AcmeProfile != profile || expectedID != "" && issuance.Id != expectedID {
 		return errors.New("publisher: server returned a certificate issuance for a different route session")
 	}
@@ -989,7 +984,7 @@ func certificateRetryDelay(err error) time.Duration {
 
 func heartbeatSession(
 	ctx context.Context,
-	server Server,
+	server RouteControlClient,
 	routeID string,
 	version uint64,
 	sessionToken credentials.SessionToken,
@@ -1004,7 +999,7 @@ func heartbeatSession(
 
 func heartbeatSessionAfter(
 	ctx context.Context,
-	server Server,
+	server RouteControlClient,
 	routeID string,
 	version uint64,
 	sessionToken credentials.SessionToken,
@@ -1028,7 +1023,7 @@ func heartbeatSessionAfter(
 
 func heartbeatOnce(
 	ctx context.Context,
-	server Server,
+	server RouteControlClient,
 	routeID string,
 	version uint64,
 	sessionToken credentials.SessionToken,

@@ -37,7 +37,7 @@ func CustomDomain(input, hostnameSuffix string) (string, bool, error) {
 	if err != nil {
 		return "", false, err
 	}
-	if IsWithin(domain, suffix) || IsWithin(suffix, domain) {
+	if IsWithin(domain, suffix) {
 		return "", false, ErrUnclaimableDomain
 	}
 	registrable, err := publicsuffix.EffectiveTLDPlusOne(domain)

@@ -2,9 +2,7 @@ package routes
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"math"
@@ -15,6 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/state/statedb"
 )
 
@@ -28,15 +27,32 @@ const (
 )
 
 var (
-	ErrNameUnavailable       = errors.New("routes: name unavailable")
-	ErrInvalidArgument       = errors.New("routes: invalid argument")
-	ErrRouteExists           = errors.New("routes: route already exists")
-	ErrNotFound              = errors.New("routes: not found")
-	ErrUnauthenticated       = errors.New("routes: unauthenticated")
-	ErrStaleSession          = errors.New("routes: stale session")
-	ErrInvalidStatus         = errors.New("routes: invalid status")
-	ErrUnavailable           = errors.New("routes: temporarily unavailable")
-	ErrAuthorizationReplayed = errors.New("routes: authorization replayed")
+	ErrNameUnavailable            = errors.New("routes: name unavailable")
+	ErrInvalidArgument            = errors.New("routes: invalid argument")
+	ErrRouteExists                = errors.New("routes: route already exists")
+	ErrNotFound                   = errors.New("routes: not found")
+	ErrUnauthenticated            = errors.New("routes: unauthenticated")
+	ErrStaleSession               = errors.New("routes: stale session")
+	ErrInvalidStatus              = errors.New("routes: invalid status")
+	ErrUnavailable                = errors.New("routes: temporarily unavailable")
+	ErrAuthorizationReuseRejected = errors.New("routes: authorization reuse rejected")
+)
+
+type RouteStatus string
+
+const (
+	RouteStatusEnabled   RouteStatus = "enabled"
+	RouteStatusSuspended RouteStatus = "suspended"
+	RouteStatusDeleted   RouteStatus = "deleted"
+)
+
+type SessionStatus string
+
+const (
+	SessionStatusPending  SessionStatus = "pending"
+	SessionStatusStarting SessionStatus = "starting"
+	SessionStatusReady    SessionStatus = "ready"
+	SessionStatusExpired  SessionStatus = "expired"
 )
 
 type Route struct {
@@ -45,8 +61,8 @@ type Route struct {
 	IdentityID                string
 	Hostname                  string
 	LocalTarget               string
-	Status                    string
-	Version                   uint64
+	Status                    RouteStatus
+	RouteVersion              uint64
 	SuspensionRevision        uint64
 	SuspensionReason          string
 	SuspendedAt               time.Time
@@ -66,8 +82,8 @@ type Route struct {
 type Session struct {
 	ID                 string
 	RouteID            string
-	Version            uint64
-	Status             string
+	RouteVersion       uint64
+	Status             SessionStatus
 	ServerInstanceID   string
 	PublisherPublicKey string
 	RelayRegion        string
@@ -80,7 +96,7 @@ type Provisioning struct {
 	Route        Route
 	Session      Session
 	SessionToken credentials.SessionToken
-	Replayed     bool
+	ReusedResult bool
 	Restored     bool
 }
 
@@ -183,19 +199,19 @@ func NewStore(db *sql.DB, hostnameSuffix string, configs ...StoreConfig) (*Store
 	return store, nil
 }
 
-func (s *Store) seedReservedRouteNames(names []string) error {
+func (s *Store) seedReservedRouteNames(labels []string) error {
 	ctx := context.Background()
-	for _, name := range names {
-		canonical, err := naming.CanonicalizeHostname(name)
-		if err != nil || canonical != name || strings.Contains(name, ".") {
-			return fmt.Errorf("routes: invalid reserved route name %q", name)
+	for _, label := range labels {
+		canonical, err := naming.CanonicalizeHostname(label)
+		if err != nil || canonical != label || strings.Contains(label, ".") {
+			return fmt.Errorf("routes: invalid reserved route name %q", label)
 		}
-		if _, err := s.queries.GetHostnameByHostname(ctx, name+"."+s.hostnameSuffix); err == nil {
-			return fmt.Errorf("routes: reserved route name %q is already owned", name)
+		if _, err := s.queries.GetHostnameByHostname(ctx, label+"."+s.hostnameSuffix); err == nil {
+			return fmt.Errorf("routes: reserved route name %q is already owned", label)
 		} else if !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("routes: read route reservation %q: %w", name, err)
+			return fmt.Errorf("routes: read route reservation %q: %w", label, err)
 		}
-		s.reservedRouteNames[name] = struct{}{}
+		s.reservedRouteNames[label] = struct{}{}
 	}
 	return nil
 }
@@ -266,21 +282,18 @@ func (s *Store) Create(
 	if !authorized || depth > MaximumSubdomainDepth {
 		return Provisioning{}, ErrInvalidArgument
 	}
-	existingRoute, err := queries.GetActiveRouteByHostname(ctx, hostname)
+	existingRoute, err := queries.GetCurrentRouteByHostname(ctx, hostname)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return Provisioning{}, fmt.Errorf("routes: check existing route: %w", err)
 	}
 	if err == nil {
 		// Recreate in place, rotating credentials and fencing the old tlschallenge.
 		existing := routeFromDB(existingRoute)
-		if existing.IdentityID != identityID {
-			return Provisioning{}, ErrNameUnavailable
-		}
-		if existing.Status != "active" {
+		if existing.Status != RouteStatusEnabled {
 			return Provisioning{}, ErrInvalidStatus
 		}
-		version := existing.Version + 1
-		if err := s.recordLifecycle(ctx, queries, existing.ID, existing.Version, now, LifecycleDisconnected); err != nil {
+		routeVersion := existing.RouteVersion + 1
+		if err := s.recordLifecycle(ctx, queries, existing.ID, existing.RouteVersion, now, LifecycleDisconnected); err != nil {
 			return Provisioning{}, err
 		}
 		count, err := queries.RotateRouteCredential(ctx, statedb.RotateRouteCredentialParams{
@@ -298,29 +311,24 @@ func (s *Store) Create(
 		if err := queries.ExpireRouteSessions(ctx, existing.ID); err != nil {
 			return Provisioning{}, fmt.Errorf("routes: expire replaced session: %w", err)
 		}
-		dbVersion, err := versionToInt64(version)
+		dbRouteVersion, err := routeVersionToInt64(routeVersion)
 		if err != nil {
 			return Provisioning{}, fmt.Errorf("routes: advance replaced route: %w", err)
 		}
-		count, err = queries.ReplaceRoute(ctx, statedb.ReplaceRouteParams{
-			LocalTarget: localTarget,
-			Version:     dbVersion,
-			RouteID:     existing.ID,
-			IdentityID:  identityID,
-		})
-		if err != nil {
+		if err := queries.ReplaceRoute(ctx, statedb.ReplaceRouteParams{
+			LocalTarget:  localTarget,
+			RouteVersion: dbRouteVersion,
+			RouteID:      existing.ID,
+		}); err != nil {
 			return Provisioning{}, fmt.Errorf("routes: advance replaced route: %w", err)
 		}
-		if err := requireCount(count, ErrNameUnavailable); err != nil {
-			return Provisioning{}, err
-		}
-		if err := insertAllowedIPPrefixes(ctx, queries, existing.ID, version, allowedIPPrefixes); err != nil {
+		if err := insertAllowedIPPrefixes(ctx, queries, existing.ID, routeVersion, allowedIPPrefixes); err != nil {
 			return Provisioning{}, err
 		}
 		if err := queries.InsertRouteSession(ctx, statedb.InsertRouteSessionParams{
 			SessionID:        sessionID,
 			RouteID:          existing.ID,
-			Version:          dbVersion,
+			RouteVersion:     dbRouteVersion,
 			TokenID:          sessionTokenID.String(),
 			SecretHash:       sessionHash[:],
 			ServerInstanceID: serverInstanceID,
@@ -329,19 +337,19 @@ func (s *Store) Create(
 		}); err != nil {
 			return Provisioning{}, fmt.Errorf("routes: create replacement session: %w", err)
 		}
-		if err := s.recordLifecycle(ctx, queries, existing.ID, version, now, LifecycleVersionStarted); err != nil {
+		if err := s.recordLifecycle(ctx, queries, existing.ID, routeVersion, now, LifecycleRouteVersionStarted); err != nil {
 			return Provisioning{}, err
 		}
 		if err := tx.Commit(); err != nil {
 			return Provisioning{}, fmt.Errorf("routes: commit route replacement: %w", err)
 		}
 		existing.LocalTarget = localTarget
-		existing.Version = version
+		existing.RouteVersion = routeVersion
 		existing.AllowedIPPrefixes = slices.Clone(allowedIPPrefixes)
 		return Provisioning{
 			Route: existing,
 			Session: Session{
-				ID: sessionID, RouteID: existing.ID, Version: version, Status: "pending",
+				ID: sessionID, RouteID: existing.ID, RouteVersion: routeVersion, Status: SessionStatusPending,
 				ServerInstanceID: serverInstanceID, CreatedAt: now, LastHeartbeatAt: now, ExpiresAt: expiresAt,
 			},
 			SessionToken: sessionToken,
@@ -365,7 +373,7 @@ func (s *Store) Create(
 			ActivatedAt: now.UnixNano(), HostnameID: authorizingHostname.ID, IdentityID: identityID,
 		})
 		if err != nil {
-			return Provisioning{}, fmt.Errorf("routes: bind temporary name: %w", err)
+			return Provisioning{}, fmt.Errorf("routes: bind temporary hostname: %w", err)
 		}
 		if err := requireCount(count, ErrInvalidStatus); err != nil {
 			return Provisioning{}, err
@@ -390,7 +398,7 @@ func (s *Store) Create(
 	}); err != nil {
 		return Provisioning{}, fmt.Errorf("routes: create session: %w", err)
 	}
-	if err := s.recordLifecycle(ctx, queries, routeID, 1, now, LifecycleVersionStarted); err != nil {
+	if err := s.recordLifecycle(ctx, queries, routeID, 1, now, LifecycleRouteVersionStarted); err != nil {
 		return Provisioning{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -399,9 +407,9 @@ func (s *Store) Create(
 	return Provisioning{
 		Route: Route{
 			ID: routeID, IdentityID: identityID, Hostname: hostname, LocalTarget: localTarget,
-			Status: "active", Version: 1, AllowedIPPrefixes: slices.Clone(allowedIPPrefixes), CreatedAt: now,
+			Status: RouteStatusEnabled, RouteVersion: 1, AllowedIPPrefixes: slices.Clone(allowedIPPrefixes), CreatedAt: now,
 		},
-		Session:      Session{ID: sessionID, RouteID: routeID, Version: 1, Status: "pending", ServerInstanceID: serverInstanceID, CreatedAt: now, LastHeartbeatAt: now, ExpiresAt: expiresAt},
+		Session:      Session{ID: sessionID, RouteID: routeID, RouteVersion: 1, Status: SessionStatusPending, ServerInstanceID: serverInstanceID, CreatedAt: now, LastHeartbeatAt: now, ExpiresAt: expiresAt},
 		SessionToken: sessionToken,
 	}, nil
 }
@@ -446,33 +454,33 @@ func (s *Store) CreateSession(
 	if route.IdentityID != identityID || revoked || !credentials.SecretHashMatches(storedHash, candidate) {
 		return Provisioning{}, ErrUnauthenticated
 	}
-	if route.Status != "active" {
+	if route.Status != RouteStatusEnabled {
 		return Provisioning{}, ErrInvalidStatus
 	}
-	version := route.Version + 1
-	if err := s.recordLifecycle(ctx, queries, routeID, route.Version, now, LifecycleDisconnected); err != nil {
+	routeVersion := route.RouteVersion + 1
+	if err := s.recordLifecycle(ctx, queries, routeID, route.RouteVersion, now, LifecycleDisconnected); err != nil {
 		return Provisioning{}, err
 	}
 	if err := queries.ExpireRouteSessions(ctx, routeID); err != nil {
 		return Provisioning{}, fmt.Errorf("routes: expire previous session: %w", err)
 	}
-	dbVersion, err := versionToInt64(version)
+	dbRouteVersion, err := routeVersionToInt64(routeVersion)
 	if err != nil {
 		return Provisioning{}, fmt.Errorf("routes: advance version: %w", err)
 	}
 	if err := queries.AdvanceRouteVersion(ctx, statedb.AdvanceRouteVersionParams{
-		Version: dbVersion,
-		RouteID: routeID,
+		RouteVersion: dbRouteVersion,
+		RouteID:      routeID,
 	}); err != nil {
 		return Provisioning{}, fmt.Errorf("routes: advance version: %w", err)
 	}
-	if err := insertAllowedIPPrefixes(ctx, queries, routeID, version, allowedIPPrefixes); err != nil {
+	if err := insertAllowedIPPrefixes(ctx, queries, routeID, routeVersion, allowedIPPrefixes); err != nil {
 		return Provisioning{}, err
 	}
 	if err := queries.InsertRouteSession(ctx, statedb.InsertRouteSessionParams{
 		SessionID:        sessionID,
 		RouteID:          routeID,
-		Version:          dbVersion,
+		RouteVersion:     dbRouteVersion,
 		TokenID:          sessionTokenID.String(),
 		SecretHash:       sessionHash[:],
 		ServerInstanceID: serverInstanceID,
@@ -481,17 +489,17 @@ func (s *Store) CreateSession(
 	}); err != nil {
 		return Provisioning{}, fmt.Errorf("routes: create replacement session: %w", err)
 	}
-	if err := s.recordLifecycle(ctx, queries, routeID, version, now, LifecycleVersionStarted); err != nil {
+	if err := s.recordLifecycle(ctx, queries, routeID, routeVersion, now, LifecycleRouteVersionStarted); err != nil {
 		return Provisioning{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return Provisioning{}, fmt.Errorf("routes: commit session creation: %w", err)
 	}
-	route.Version = version
+	route.RouteVersion = routeVersion
 	route.AllowedIPPrefixes = slices.Clone(allowedIPPrefixes)
 	return Provisioning{
 		Route:        route,
-		Session:      Session{ID: sessionID, RouteID: routeID, Version: version, Status: "pending", ServerInstanceID: serverInstanceID, CreatedAt: now, LastHeartbeatAt: now, ExpiresAt: expiresAt},
+		Session:      Session{ID: sessionID, RouteID: routeID, RouteVersion: routeVersion, Status: SessionStatusPending, ServerInstanceID: serverInstanceID, CreatedAt: now, LastHeartbeatAt: now, ExpiresAt: expiresAt},
 		SessionToken: sessionToken,
 	}, nil
 }
@@ -512,14 +520,14 @@ func (s *Store) AuthorizeRoute(
 	if route.IdentityID != identityID || revoked || !credentials.SecretHashMatches(storedHash, candidate) {
 		return Route{}, ErrUnauthenticated
 	}
-	if route.Status != "active" {
+	if route.Status != RouteStatusEnabled {
 		return Route{}, ErrInvalidStatus
 	}
 	return route, nil
 }
 
 func (s *Store) AuthorizeIdentity(ctx context.Context, identityID, routeID string) error {
-	exists, err := s.queries.CountActiveRoutesByIdentity(ctx, statedb.CountActiveRoutesByIdentityParams{
+	exists, err := s.queries.CountEnabledRoutesByIdentity(ctx, statedb.CountEnabledRoutesByIdentityParams{
 		RouteID:    routeID,
 		IdentityID: identityID,
 	})
@@ -532,12 +540,12 @@ func (s *Store) AuthorizeIdentity(ctx context.Context, identityID, routeID strin
 	return nil
 }
 
-func (s *Store) ActiveRouteID(ctx context.Context, identityID, hostname string) (string, error) {
+func (s *Store) EnabledRouteID(ctx context.Context, identityID, hostname string) (string, error) {
 	hostname, err := s.canonicalHostname(hostname)
 	if err != nil {
 		return "", err
 	}
-	routeID, err := s.queries.GetActiveRouteIDByHostname(ctx, statedb.GetActiveRouteIDByHostnameParams{
+	routeID, err := s.queries.GetEnabledRouteIDByHostname(ctx, statedb.GetEnabledRouteIDByHostnameParams{
 		IdentityID: identityID,
 		Hostname:   hostname,
 	})
@@ -545,7 +553,7 @@ func (s *Store) ActiveRouteID(ctx context.Context, identityID, hostname string) 
 		return "", nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("routes: find active route: %w", err)
+		return "", fmt.Errorf("routes: find enabled route: %w", err)
 	}
 	return routeID, nil
 }
@@ -553,7 +561,7 @@ func (s *Store) ActiveRouteID(ctx context.Context, identityID, hostname string) 
 func (s *Store) AuthenticateSession(
 	ctx context.Context,
 	routeID string,
-	version uint64,
+	routeVersion uint64,
 	token credentials.SessionToken,
 	serverInstanceID string,
 ) (result Session, err error) {
@@ -563,15 +571,15 @@ func (s *Store) AuthenticateSession(
 	if err != nil {
 		return Session{}, ErrUnauthenticated
 	}
-	dbVersion, err := versionToInt64(version)
+	dbRouteVersion, err := routeVersionToInt64(routeVersion)
 	if err != nil {
 		return Session{}, fmt.Errorf("routes: read session: %w", err)
 	}
 	dbSession, err := s.queries.GetRouteSessionForAuthentication(ctx, statedb.GetRouteSessionForAuthenticationParams{
-		RouteID: routeID,
-		Version: dbVersion,
-		TokenID: tokenID.String(),
-		Now:     s.now().UnixNano(),
+		RouteID:      routeID,
+		RouteVersion: dbRouteVersion,
+		TokenID:      tokenID.String(),
+		Now:          s.now().UnixNano(),
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		// Known tokens are stale; unknown IDs remain unauthenticated.
@@ -599,13 +607,13 @@ func (s *Store) AuthenticateSession(
 func (s *Store) AuthenticateSessionForRenewal(
 	ctx context.Context,
 	routeID string,
-	version uint64,
+	routeVersion uint64,
 	token credentials.SessionToken,
 	serverInstanceID string,
 ) (session Session, err error) {
 	started := time.Now()
 	defer func() { s.observe(StoreOperationSessionAuthenticate, started, err) }()
-	dbVersion, err := versionToInt64(version)
+	dbRouteVersion, err := routeVersionToInt64(routeVersion)
 	if err != nil {
 		return Session{}, ErrUnauthenticated
 	}
@@ -614,7 +622,7 @@ func (s *Store) AuthenticateSessionForRenewal(
 		return Session{}, ErrUnauthenticated
 	}
 	dbSession, err := s.queries.GetRouteSessionByVersion(ctx, statedb.GetRouteSessionByVersionParams{
-		RouteID: routeID, Version: dbVersion,
+		RouteID: routeID, RouteVersion: dbRouteVersion,
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return Session{}, ErrUnauthenticated
@@ -622,14 +630,14 @@ func (s *Store) AuthenticateSessionForRenewal(
 	if err != nil {
 		return Session{}, fmt.Errorf("routes: authenticate renewal session: %w", err)
 	}
-	if dbSession.Status == "expired" || dbSession.ServerInstanceID != serverInstanceID ||
+	if SessionStatus(dbSession.Status) == SessionStatusExpired || dbSession.ServerInstanceID != serverInstanceID ||
 		dbSession.TokenID != tokenID.String() || !credentials.SecretHashMatches(dbSession.SecretHash, candidate) {
 		return Session{}, ErrUnauthenticated
 	}
 	return sessionFromDB(dbSession), nil
 }
 
-func (s *Store) RegisterTransport(
+func (s *Store) AttachRouteTransport(
 	ctx context.Context,
 	session Session,
 	publisherPublicKey, relayRegion string,
@@ -639,7 +647,7 @@ func (s *Store) RegisterTransport(
 	if strings.TrimSpace(publisherPublicKey) == "" || strings.TrimSpace(relayRegion) == "" {
 		return errors.New("routes: transport descriptor is incomplete")
 	}
-	dbVersion, err := versionToInt64(session.Version)
+	dbRouteVersion, err := routeVersionToInt64(session.RouteVersion)
 	if err != nil {
 		return fmt.Errorf("routes: register transport: %w", err)
 	}
@@ -648,7 +656,7 @@ func (s *Store) RegisterTransport(
 		RelayRegion:        sql.NullString{String: relayRegion, Valid: true},
 		SessionID:          session.ID,
 		RouteID:            session.RouteID,
-		Version:            dbVersion,
+		RouteVersion:       dbRouteVersion,
 		Now:                s.now().UnixNano(),
 	})
 	if err != nil {
@@ -660,7 +668,7 @@ func (s *Store) RegisterTransport(
 func (s *Store) Ready(ctx context.Context, session Session) (err error) {
 	started := time.Now()
 	defer func() { s.observe(StoreOperationRouteReady, started, err) }()
-	dbVersion, err := versionToInt64(session.Version)
+	dbRouteVersion, err := routeVersionToInt64(session.RouteVersion)
 	if err != nil {
 		return fmt.Errorf("routes: mark ready: %w", err)
 	}
@@ -672,7 +680,7 @@ func (s *Store) Ready(ctx context.Context, session Session) (err error) {
 	defer tx.Rollback()
 	queries := s.queries.WithTx(tx)
 	status, err := queries.GetRouteSessionStatus(ctx, statedb.GetRouteSessionStatusParams{
-		SessionID: session.ID, RouteID: session.RouteID, Version: dbVersion,
+		SessionID: session.ID, RouteID: session.RouteID, RouteVersion: dbRouteVersion,
 		Now: now.UnixNano(),
 	})
 	if errors.Is(err, sql.ErrNoRows) {
@@ -681,14 +689,14 @@ func (s *Store) Ready(ctx context.Context, session Session) (err error) {
 	if err != nil {
 		return fmt.Errorf("routes: read ready status: %w", err)
 	}
-	if status == "ready" {
+	if SessionStatus(status) == SessionStatusReady {
 		return nil
 	}
 	count, err := queries.ReadyRouteSession(ctx, statedb.ReadyRouteSessionParams{
-		SessionID: session.ID,
-		RouteID:   session.RouteID,
-		Version:   dbVersion,
-		Now:       now.UnixNano(),
+		SessionID:    session.ID,
+		RouteID:      session.RouteID,
+		RouteVersion: dbRouteVersion,
+		Now:          now.UnixNano(),
 	})
 	if err != nil {
 		return fmt.Errorf("routes: mark ready: %w", err)
@@ -696,7 +704,7 @@ func (s *Store) Ready(ctx context.Context, session Session) (err error) {
 	if err := requireCount(count, ErrInvalidStatus); err != nil {
 		return err
 	}
-	if err := s.recordLifecycle(ctx, queries, session.RouteID, session.Version, now, LifecycleReady); err != nil {
+	if err := s.recordLifecycle(ctx, queries, session.RouteID, session.RouteVersion, now, LifecycleReady); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -710,7 +718,7 @@ func (s *Store) Heartbeat(ctx context.Context, session Session) (expiresAt time.
 	defer func() { s.observe(StoreOperationSessionHeartbeat, started, err) }()
 	now := time.Unix(0, s.now().UnixNano()).UTC()
 	expiresAt = now.Add(s.sessionLifetime)
-	dbVersion, err := versionToInt64(session.Version)
+	dbRouteVersion, err := routeVersionToInt64(session.RouteVersion)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("routes: heartbeat: %w", err)
 	}
@@ -719,7 +727,7 @@ func (s *Store) Heartbeat(ctx context.Context, session Session) (expiresAt time.
 		ExpiresAt:       expiresAt.UnixNano(),
 		SessionID:       session.ID,
 		RouteID:         session.RouteID,
-		Version:         dbVersion,
+		RouteVersion:    dbRouteVersion,
 		Now:             now.UnixNano(),
 	})
 	if err != nil {
@@ -750,7 +758,7 @@ func (s *Store) InvalidateOtherServerInstances(ctx context.Context, serverInstan
 	}
 	now := s.now().UTC()
 	for _, session := range sessions {
-		if err := s.recordLifecycle(ctx, queries, session.RouteID, uint64(session.Version), now, LifecycleDisconnected); err != nil {
+		if err := s.recordLifecycle(ctx, queries, session.RouteID, uint64(session.RouteVersion), now, LifecycleDisconnected); err != nil {
 			return err
 		}
 	}
@@ -760,10 +768,10 @@ func (s *Store) InvalidateOtherServerInstances(ctx context.Context, serverInstan
 	return nil
 }
 
-func (s *Store) Expire(ctx context.Context, routeID string, version uint64) (err error) {
+func (s *Store) Expire(ctx context.Context, routeID string, routeVersion uint64) (err error) {
 	started := time.Now()
 	defer func() { s.observe(StoreOperationSessionExpire, started, err) }()
-	dbVersion, err := versionToInt64(version)
+	dbRouteVersion, err := routeVersionToInt64(routeVersion)
 	if err != nil {
 		return fmt.Errorf("routes: expire session: %w", err)
 	}
@@ -774,8 +782,8 @@ func (s *Store) Expire(ctx context.Context, routeID string, version uint64) (err
 	defer tx.Rollback()
 	queries := s.queries.WithTx(tx)
 	count, err := queries.ExpireRouteSession(ctx, statedb.ExpireRouteSessionParams{
-		RouteID: routeID,
-		Version: dbVersion,
+		RouteID:      routeID,
+		RouteVersion: dbRouteVersion,
 	})
 	if err != nil {
 		return fmt.Errorf("routes: expire session: %w", err)
@@ -783,7 +791,7 @@ func (s *Store) Expire(ctx context.Context, routeID string, version uint64) (err
 	if err := requireCount(count, ErrStaleSession); err != nil {
 		return err
 	}
-	if err := s.recordLifecycle(ctx, queries, routeID, version, s.now().UTC(), LifecycleDisconnected); err != nil {
+	if err := s.recordLifecycle(ctx, queries, routeID, routeVersion, s.now().UTC(), LifecycleDisconnected); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -793,7 +801,7 @@ func (s *Store) Expire(ctx context.Context, routeID string, version uint64) (err
 }
 
 func (s *Store) List(ctx context.Context, identityID string) ([]Route, error) {
-	routes, err := s.queries.ListActiveRoutes(ctx, identityID)
+	routes, err := s.queries.ListEnabledRoutes(ctx, identityID)
 	if err != nil {
 		return nil, fmt.Errorf("routes: list: %w", err)
 	}
@@ -812,14 +820,14 @@ func (s *Store) Delete(ctx context.Context, identityID, routeID string) error {
 	}
 	defer tx.Rollback()
 	queries := s.queries.WithTx(tx)
-	version, err := queries.GetRouteVersion(ctx, routeID)
+	routeVersion, err := queries.GetRouteVersion(ctx, routeID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
 	if err != nil {
 		return fmt.Errorf("routes: read deleted route: %w", err)
 	}
-	count, err := queries.DeleteActiveRoute(ctx, statedb.DeleteActiveRouteParams{
+	count, err := queries.DeleteEnabledRoute(ctx, statedb.DeleteEnabledRouteParams{
 		DeletedAt:  now.UnixNano(),
 		RouteID:    routeID,
 		IdentityID: identityID,
@@ -842,12 +850,12 @@ func (s *Store) Delete(ctx context.Context, identityID, routeID string) error {
 	if err := queries.RetireTemporaryHostnameByRoute(ctx, statedb.RetireTemporaryHostnameByRouteParams{
 		DeactivatedAt: now.UnixNano(), RouteID: routeID,
 	}); err != nil {
-		return fmt.Errorf("routes: burn temporary name: %w", err)
+		return fmt.Errorf("routes: retire temporary hostname: %w", err)
 	}
-	if err := s.recordLifecycle(ctx, queries, routeID, uint64(version), now, LifecycleDisconnected); err != nil {
+	if err := s.recordLifecycle(ctx, queries, routeID, uint64(routeVersion), now, LifecycleDisconnected); err != nil {
 		return err
 	}
-	if err := s.recordLifecycle(ctx, queries, routeID, uint64(version), now, LifecycleDeleted); err != nil {
+	if err := s.recordLifecycle(ctx, queries, routeID, uint64(routeVersion), now, LifecycleDeleted); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -882,7 +890,7 @@ func (s *Store) CleanupAbandonedTemporary(ctx context.Context, now time.Time) ([
 		if err := queries.RetireTemporaryHostnameByRoute(ctx, statedb.RetireTemporaryHostnameByRouteParams{
 			DeactivatedAt: now.UnixNano(), RouteID: route.RouteID,
 		}); err != nil {
-			return nil, fmt.Errorf("routes: burn abandoned temporary name: %w", err)
+			return nil, fmt.Errorf("routes: retire abandoned temporary hostname: %w", err)
 		}
 		removed = append(removed, routeIDs...)
 	}
@@ -933,8 +941,8 @@ func routeFromDB(route statedb.Route) Route {
 		IdentityID:         route.IdentityID.String,
 		Hostname:           route.Hostname,
 		LocalTarget:        route.LocalTarget,
-		Status:             route.Status,
-		Version:            uint64(route.Version),
+		Status:             RouteStatus(route.Status),
+		RouteVersion:       uint64(route.RouteVersion),
 		SuspensionRevision: uint64(route.SuspensionRevision),
 		SuspensionReason:   route.SuspensionReason.String,
 		CreatedAt:          time.Unix(0, route.CreatedAt).UTC(),
@@ -966,8 +974,8 @@ func sessionFromDB(session statedb.RouteSession) Session {
 	return Session{
 		ID:                 session.ID,
 		RouteID:            session.RouteID,
-		Version:            uint64(session.Version),
-		Status:             session.Status,
+		RouteVersion:       uint64(session.RouteVersion),
+		Status:             SessionStatus(session.Status),
 		ServerInstanceID:   session.ServerInstanceID,
 		PublisherPublicKey: session.PublisherPublicKey.String,
 		RelayRegion:        session.RelayRegion.String,
@@ -977,19 +985,19 @@ func sessionFromDB(session statedb.RouteSession) Session {
 	}
 }
 
-func versionToInt64(version uint64) (int64, error) {
-	if version > math.MaxInt64 {
-		return 0, errors.New("uint64 version exceeds database integer range")
+func routeVersionToInt64(routeVersion uint64) (int64, error) {
+	if routeVersion > math.MaxInt64 {
+		return 0, errors.New("uint64 route version exceeds database integer range")
 	}
-	return int64(version), nil
+	return int64(routeVersion), nil
 }
 
 func newID(prefix string) (string, error) {
-	var material [16]byte
-	if _, err := rand.Read(material[:]); err != nil {
+	id, err := opaqueid.New(prefix + "_")
+	if err != nil {
 		return "", fmt.Errorf("routes: generate %s ID: %w", prefix, err)
 	}
-	return prefix + "_" + hex.EncodeToString(material[:]), nil
+	return id, nil
 }
 
 func (s *Store) observe(operation StoreOperation, started time.Time, err error) {
@@ -1002,7 +1010,7 @@ func (s *Store) recordLifecycle(
 	ctx context.Context,
 	queries *statedb.Queries,
 	routeID string,
-	version uint64,
+	routeVersion uint64,
 	occurredAt time.Time,
 	transition LifecycleTransition,
 ) error {
@@ -1010,7 +1018,7 @@ func (s *Store) recordLifecycle(
 		return nil
 	}
 	if err := s.lifecycleRecorder.RecordLifecycle(ctx, queries, LifecycleChange{
-		RouteID: routeID, Version: version, OccurredAt: occurredAt, Transition: transition,
+		RouteID: routeID, RouteVersion: routeVersion, OccurredAt: occurredAt, Transition: transition,
 	}); err != nil {
 		return fmt.Errorf("routes: record lifecycle: %w", err)
 	}

@@ -36,6 +36,9 @@ func TestPublishOutputNDJSONLifecycle(t *testing.T) {
 	if err := output.stopped(); err != nil {
 		t.Fatal(err)
 	}
+	if encoded := stdout.String(); !strings.Contains(encoded, `"route_version":1`) || strings.Contains(encoded, `"version":`) {
+		t.Fatalf("NDJSON route version fields = %q", encoded)
+	}
 	if stderr.Len() != 0 {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
@@ -52,6 +55,9 @@ func TestPublishOutputNDJSONLifecycle(t *testing.T) {
 		}
 		if wantType == "current_ip" && event.IP != "192.0.2.1" {
 			t.Fatalf("current IP event = %#v", event)
+		}
+		if wantType == "ready" && event.RouteVersion != uint64(index-1) {
+			t.Fatalf("ready event = %#v", event)
 		}
 		if wantType == "error" && (event.Retryable == nil || !*event.Retryable || event.RetryAt == nil) {
 			t.Fatalf("error event = %#v", event)

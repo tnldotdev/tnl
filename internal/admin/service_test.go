@@ -13,7 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/state/statedb"
 )
 
-func TestOperationalSwitchIsDurableAndAudited(t *testing.T) {
+func TestMaintenanceControlIsDurableAndAudited(t *testing.T) {
 	db, err := state.Open(t.Context(), filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
@@ -22,29 +22,29 @@ func TestOperationalSwitchIsDurableAndAudited(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).UTC()
 	service := &Service{db: db, now: func() time.Time { return now }}
 
-	values, err := service.Switches(t.Context())
+	values, err := service.ListMaintenanceControls(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(values) != 3 {
-		t.Fatalf("switches = %#v", values)
+		t.Fatalf("maintenance controls = %#v", values)
 	}
 	for _, value := range values {
 		if !value.Enabled || value.Revision != 1 || value.UpdatedBy != "system" {
-			t.Fatalf("initial switch = %#v", value)
+			t.Fatalf("initial maintenance control = %#v", value)
 		}
 	}
-	updated, err := service.SetSwitch(
-		t.Context(), SwitchNewSessions, false, "identity_local", "req_disable_sessions",
+	updated, err := service.SetMaintenanceControl(
+		t.Context(), MaintenanceControlRouteSessionCreation, false, "identity_local", "req_disable_sessions",
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if updated.Enabled || updated.Revision != 2 || updated.UpdatedBy != "identity_local" || !updated.UpdatedAt.Equal(now) {
-		t.Fatalf("updated switch = %#v", updated)
+		t.Fatalf("updated maintenance control = %#v", updated)
 	}
-	if err := service.RequireEnabled(t.Context(), SwitchNewSessions); !errors.Is(err, ErrOperationallyDisabled) {
-		t.Fatalf("disabled switch error = %v", err)
+	if err := service.RequireEnabled(t.Context(), MaintenanceControlRouteSessionCreation); !errors.Is(err, ErrMaintenanceControlDisabled) {
+		t.Fatalf("disabled maintenance control error = %v", err)
 	}
 	if count, err := statedb.New(db).CountAdminAuditEvents(t.Context()); err != nil || count != 1 {
 		t.Fatalf("audit count = %d, %v", count, err)
@@ -76,7 +76,7 @@ func TestCredentialAndControlSessionRevocationAreImmediateAndAudited(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.AddManagedHostname(t.Context(), "identity_local", "route", "admin-revoke"); err != nil {
+	if _, err := store.ClaimManagedHostname(t.Context(), "identity_local", "route", "admin-revoke"); err != nil {
 		t.Fatal(err)
 	}
 	routeToken, _, _, err := credentials.NewRouteToken()

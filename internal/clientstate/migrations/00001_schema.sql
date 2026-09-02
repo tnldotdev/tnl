@@ -22,7 +22,7 @@ INSERT INTO client_settings (id, installation_id) VALUES (1, '');
 
 CREATE TABLE control_sessions (
     server_origin TEXT PRIMARY KEY REFERENCES server_profiles (origin) ON DELETE CASCADE,
-    kind TEXT NOT NULL CHECK (kind IN ('core', 'authorization_authority')),
+    kind TEXT NOT NULL CHECK (kind IN ('server', 'authorization_authority')),
     control_endpoint TEXT NOT NULL,
     session_id TEXT NOT NULL,
     issuer TEXT NOT NULL,
@@ -46,7 +46,7 @@ CREATE TABLE route_certificates (
     certificate_pem BLOB,
     renew_at INTEGER,
     issuance_id TEXT NOT NULL,
-    version INTEGER NOT NULL CHECK (version >= 0),
+    route_version INTEGER NOT NULL CHECK (route_version >= 0),
     installed INTEGER NOT NULL CHECK (installed IN (0, 1)),
     updated_at INTEGER NOT NULL,
     PRIMARY KEY (server_origin, route_id, phase)
@@ -61,7 +61,7 @@ CREATE TABLE local_tunnels (
     target TEXT NOT NULL,
     framework TEXT NOT NULL,
     route_id TEXT NOT NULL,
-    session_version INTEGER NOT NULL CHECK (session_version >= 0),
+    route_version INTEGER NOT NULL CHECK (route_version >= 0),
     state TEXT NOT NULL CHECK (state IN ('starting', 'provisioning', 'ready', 'draining', 'stopped', 'failed')),
     started_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,

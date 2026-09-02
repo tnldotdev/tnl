@@ -17,7 +17,7 @@ import (
 
 func TestMetricsScrape(t *testing.T) {
 	metrics := New("worker")
-	metrics.SetRoutes("active", 7)
+	metrics.SetRoutes("routable", 7)
 	metrics.SetWorkerRoutes(7)
 	metrics.SetWorkerCapacity(500)
 	metrics.SetWorkerDraining(true)
@@ -29,14 +29,14 @@ func TestMetricsScrape(t *testing.T) {
 	metrics.IncSourceLimiterRejection()
 	metrics.SetSourceLimiterEntries(17)
 	metrics.IncIPAllowlistDenial()
-	metrics.SetFriendlyNameCapacity(100, 90)
-	metrics.AddForwardedBytes("ingress", 1024)
+	metrics.SetGeneratedHostnameCapacity(100, 90)
+	metrics.AddForwardedBytes("visitor_to_publisher", 1024)
 	metrics.ObserveAPIRequest("routes.create", "success", 10*time.Second)
 	metrics.ObserveSQLiteOperation("route_create", 5*time.Second, nil)
 	metrics.ObserveRouteCoordinatorStage("heartbeat_route_lock_wait", 10*time.Second)
 	metrics.ObserveRouteSessionHeartbeat("success")
 	metrics.ObserveRouteRemoval("session_expired")
-	metrics.SetRouteSessionMinSecondsRemaining("active", 17.5)
+	metrics.SetRouteSessionMinSecondsRemaining("routable", 17.5)
 	metrics.SetWorkersConnected(4)
 	metrics.ObserveWorkerSessionEstablished("edge")
 	metrics.ObserveWorkerSessionEstablished("edge")
@@ -51,8 +51,8 @@ func TestMetricsScrape(t *testing.T) {
 	body := scrape(t, metrics)
 	for _, line := range []string{
 		`tnl_info{mode="worker"} 1`,
-		`tnl_routes{status="active"} 7`,
-		`tnl_worker_routes_active 7`,
+		`tnl_routes{status="routable"} 7`,
+		`tnl_worker_routes_routable 7`,
 		`tnl_worker_route_capacity 500`,
 		`tnl_worker_draining 1`,
 		`tnl_streams_active 3`,
@@ -63,9 +63,9 @@ func TestMetricsScrape(t *testing.T) {
 		`tnl_source_limiter_rejections_total 1`,
 		`tnl_source_limiter_entries 17`,
 		`tnl_ip_allowlist_denials_total 1`,
-		`tnl_friendly_name_namespace_capacity 100`,
-		`tnl_friendly_name_namespace_remaining_lower_bound 90`,
-		`tnl_forwarded_bytes_total{direction="ingress"} 1024`,
+		`tnl_generated_hostname_namespace_capacity 100`,
+		`tnl_generated_hostname_namespace_remaining_lower_bound 90`,
+		`tnl_forwarded_bytes_total{direction="visitor_to_publisher"} 1024`,
 		`tnl_api_requests_total{operation="routes.create",result="success"} 1`,
 		`tnl_api_request_duration_seconds_bucket{operation="routes.create",le="10"} 1`,
 		`tnl_api_request_duration_seconds_count{operation="routes.create"} 1`,
@@ -78,7 +78,7 @@ func TestMetricsScrape(t *testing.T) {
 		`tnl_route_coordinator_stage_duration_seconds_sum{stage="heartbeat_route_lock_wait"} 10`,
 		`tnl_route_session_heartbeats_total{result="success"} 1`,
 		`tnl_route_removals_total{reason="session_expired"} 1`,
-		`tnl_route_session_min_seconds_remaining{status="active"} 17.5`,
+		`tnl_route_session_min_seconds_remaining{status="routable"} 17.5`,
 		`tnl_workers_connected 4`,
 		`tnl_worker_sessions_active{role="edge"} 1`,
 		`tnl_worker_session_establishments_total{role="edge"} 2`,

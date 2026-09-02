@@ -67,7 +67,7 @@ func (q *Queries) GetAdminHostname(ctx context.Context, hostnameID string) (Host
 }
 
 const getAdminRoute = `-- name: GetAdminRoute :one
-SELECT id, hostname_id, identity_id, hostname, local_target, status, version, suspension_revision, suspension_reason, suspended_at, authorization_issuer, authorization_id, authorization_key_id, authorization_retry_id, authorization_revision, authorization_expires_at, authorization_request_hash, authorization_ip_policy_hash, lifecycle_sequence, created_at, deleted_at FROM routes WHERE id = ?1
+SELECT id, hostname_id, identity_id, hostname, local_target, status, route_version, suspension_revision, suspension_reason, suspended_at, authorization_issuer, authorization_id, authorization_key_id, authorization_retry_id, authorization_revision, authorization_expires_at, authorization_request_hash, authorization_ip_policy_hash, lifecycle_sequence, created_at, deleted_at FROM routes WHERE id = ?1
 `
 
 func (q *Queries) GetAdminRoute(ctx context.Context, routeID string) (Route, error) {
@@ -80,7 +80,7 @@ func (q *Queries) GetAdminRoute(ctx context.Context, routeID string) (Route, err
 		&i.Hostname,
 		&i.LocalTarget,
 		&i.Status,
-		&i.Version,
+		&i.RouteVersion,
 		&i.SuspensionRevision,
 		&i.SuspensionReason,
 		&i.SuspendedAt,
@@ -99,13 +99,13 @@ func (q *Queries) GetAdminRoute(ctx context.Context, routeID string) (Route, err
 	return i, err
 }
 
-const getOperationalSwitch = `-- name: GetOperationalSwitch :one
-SELECT name, enabled, revision, updated_at, updated_by FROM operational_switches WHERE name = ?1
+const getMaintenanceControl = `-- name: GetMaintenanceControl :one
+SELECT name, enabled, revision, updated_at, updated_by FROM maintenance_controls WHERE name = ?1
 `
 
-func (q *Queries) GetOperationalSwitch(ctx context.Context, name string) (OperationalSwitch, error) {
-	row := q.db.QueryRowContext(ctx, getOperationalSwitch, name)
-	var i OperationalSwitch
+func (q *Queries) GetMaintenanceControl(ctx context.Context, name string) (MaintenanceControl, error) {
+	row := q.db.QueryRowContext(ctx, getMaintenanceControl, name)
+	var i MaintenanceControl
 	err := row.Scan(
 		&i.Name,
 		&i.Enabled,
@@ -293,7 +293,7 @@ func (q *Queries) ListAdminHostnames(ctx context.Context, arg ListAdminHostnames
 }
 
 const listAdminRoutes = `-- name: ListAdminRoutes :many
-SELECT id, hostname_id, identity_id, hostname, local_target, status, version, suspension_revision, suspension_reason, suspended_at, authorization_issuer, authorization_id, authorization_key_id, authorization_retry_id, authorization_revision, authorization_expires_at, authorization_request_hash, authorization_ip_policy_hash, lifecycle_sequence, created_at, deleted_at FROM routes
+SELECT id, hostname_id, identity_id, hostname, local_target, status, route_version, suspension_revision, suspension_reason, suspended_at, authorization_issuer, authorization_id, authorization_key_id, authorization_retry_id, authorization_revision, authorization_expires_at, authorization_request_hash, authorization_ip_policy_hash, lifecycle_sequence, created_at, deleted_at FROM routes
 WHERE CAST(?1 AS TEXT) = '' OR id > CAST(?1 AS TEXT)
 ORDER BY id
 LIMIT ?2
@@ -320,7 +320,7 @@ func (q *Queries) ListAdminRoutes(ctx context.Context, arg ListAdminRoutesParams
 			&i.Hostname,
 			&i.LocalTarget,
 			&i.Status,
-			&i.Version,
+			&i.RouteVersion,
 			&i.SuspensionRevision,
 			&i.SuspensionReason,
 			&i.SuspendedAt,
@@ -350,15 +350,15 @@ func (q *Queries) ListAdminRoutes(ctx context.Context, arg ListAdminRoutesParams
 }
 
 const listCurrentRoutesForAdminHostname = `-- name: ListCurrentRoutesForAdminHostname :many
-SELECT id, version, status FROM routes
-WHERE hostname_id = ?1 AND status IN ('active', 'suspended')
+SELECT id, route_version, status FROM routes
+WHERE hostname_id = ?1 AND status IN ('enabled', 'suspended')
 ORDER BY id
 `
 
 type ListCurrentRoutesForAdminHostnameRow struct {
-	ID      string
-	Version int64
-	Status  string
+	ID           string
+	RouteVersion int64
+	Status       string
 }
 
 func (q *Queries) ListCurrentRoutesForAdminHostname(ctx context.Context, hostnameID sql.NullString) ([]ListCurrentRoutesForAdminHostnameRow, error) {
@@ -370,7 +370,7 @@ func (q *Queries) ListCurrentRoutesForAdminHostname(ctx context.Context, hostnam
 	var items []ListCurrentRoutesForAdminHostnameRow
 	for rows.Next() {
 		var i ListCurrentRoutesForAdminHostnameRow
-		if err := rows.Scan(&i.ID, &i.Version, &i.Status); err != nil {
+		if err := rows.Scan(&i.ID, &i.RouteVersion, &i.Status); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -384,19 +384,19 @@ func (q *Queries) ListCurrentRoutesForAdminHostname(ctx context.Context, hostnam
 	return items, nil
 }
 
-const listOperationalSwitches = `-- name: ListOperationalSwitches :many
-SELECT name, enabled, revision, updated_at, updated_by FROM operational_switches ORDER BY name
+const listMaintenanceControls = `-- name: ListMaintenanceControls :many
+SELECT name, enabled, revision, updated_at, updated_by FROM maintenance_controls ORDER BY name
 `
 
-func (q *Queries) ListOperationalSwitches(ctx context.Context) ([]OperationalSwitch, error) {
-	rows, err := q.db.QueryContext(ctx, listOperationalSwitches)
+func (q *Queries) ListMaintenanceControls(ctx context.Context) ([]MaintenanceControl, error) {
+	rows, err := q.db.QueryContext(ctx, listMaintenanceControls)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []OperationalSwitch
+	var items []MaintenanceControl
 	for rows.Next() {
-		var i OperationalSwitch
+		var i MaintenanceControl
 		if err := rows.Scan(
 			&i.Name,
 			&i.Enabled,
@@ -472,8 +472,8 @@ func (q *Queries) RemoveAdminHostname(ctx context.Context, arg RemoveAdminHostna
 
 const resumeAdminRoute = `-- name: ResumeAdminRoute :execrows
 UPDATE routes
-SET status = 'active',
-    version = version + 1,
+SET status = 'enabled',
+    route_version = route_version + 1,
     suspension_revision = ?1,
     suspended_at = NULL
 WHERE routes.id = ?2
@@ -540,8 +540,8 @@ func (q *Queries) RevokeAdminCredential(ctx context.Context, arg RevokeAdminCred
 	return result.RowsAffected()
 }
 
-const setOperationalSwitch = `-- name: SetOperationalSwitch :execrows
-UPDATE operational_switches
+const setMaintenanceControl = `-- name: SetMaintenanceControl :execrows
+UPDATE maintenance_controls
 SET enabled = ?1,
     revision = revision + 1,
     updated_at = ?2,
@@ -549,15 +549,15 @@ SET enabled = ?1,
 WHERE name = ?4
 `
 
-type SetOperationalSwitchParams struct {
+type SetMaintenanceControlParams struct {
 	Enabled   int64
 	UpdatedAt int64
 	UpdatedBy string
 	Name      string
 }
 
-func (q *Queries) SetOperationalSwitch(ctx context.Context, arg SetOperationalSwitchParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, setOperationalSwitch,
+func (q *Queries) SetMaintenanceControl(ctx context.Context, arg SetMaintenanceControlParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setMaintenanceControl,
 		arg.Enabled,
 		arg.UpdatedAt,
 		arg.UpdatedBy,
@@ -575,7 +575,7 @@ SET status = 'suspended',
     suspension_revision = suspension_revision + 1,
     suspension_reason = ?1,
     suspended_at = ?2
-WHERE hostname_id = ?3 AND status = 'active'
+WHERE hostname_id = ?3 AND status = 'enabled'
 `
 
 type SuspendAdminHostnameRoutesParams struct {
@@ -596,7 +596,7 @@ SET status = 'suspended',
     suspension_reason = ?2,
     suspended_at = ?3
 WHERE id = ?4
-    AND status = 'active'
+    AND status = 'enabled'
     AND suspension_revision < ?1
 `
 

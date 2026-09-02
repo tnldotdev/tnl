@@ -12,6 +12,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/clientstate/clientstatedb"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/opaqueid"
 )
 
 const (
@@ -22,7 +23,7 @@ const (
 type ControlSessionKind string
 
 const (
-	ControlSessionKindCore                   ControlSessionKind = "core"
+	ControlSessionKindServer                 ControlSessionKind = "server"
 	ControlSessionKindAuthorizationAuthority ControlSessionKind = "authorization_authority"
 )
 
@@ -123,7 +124,7 @@ func (s *Store) validateControlSession(session ControlSession) error {
 		return errors.New("clientstate: invalid control session")
 	}
 	switch session.Kind {
-	case ControlSessionKindCore:
+	case ControlSessionKindServer:
 		if endpoint != s.controlEndpoint || session.RefreshExpiresAt.IsZero() ||
 			session.AccessExpiresAt.After(session.RefreshExpiresAt) || len(session.Scopes) != 0 ||
 			!validControlSessionID(session.SessionID) || !validControlSessionGrants(session.Grants) {
@@ -185,16 +186,7 @@ func validScopes(scopes []string) bool {
 }
 
 func validControlSessionID(value string) bool {
-	const prefix = "control_session_"
-	if len(value) != len(prefix)+32 || !strings.HasPrefix(value, prefix) {
-		return false
-	}
-	for _, character := range value[len(prefix):] {
-		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
-			return false
-		}
-	}
-	return true
+	return opaqueid.Valid(value, "control_session_")
 }
 
 func validControlSessionGrants(grants []string) bool {

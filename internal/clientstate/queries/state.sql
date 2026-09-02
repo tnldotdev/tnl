@@ -94,7 +94,7 @@ INSERT INTO route_certificates (
     certificate_pem,
     renew_at,
     issuance_id,
-    version,
+    route_version,
     installed,
     updated_at
 ) VALUES (
@@ -107,7 +107,7 @@ INSERT INTO route_certificates (
     sqlc.narg(certificate_pem),
     sqlc.narg(renew_at),
     sqlc.arg(issuance_id),
-    sqlc.arg(version),
+    sqlc.arg(route_version),
     sqlc.arg(installed),
     sqlc.arg(updated_at)
 )
@@ -118,7 +118,7 @@ ON CONFLICT (server_origin, route_id, phase) DO UPDATE SET
     certificate_pem = excluded.certificate_pem,
     renew_at = excluded.renew_at,
     issuance_id = excluded.issuance_id,
-    version = excluded.version,
+    route_version = excluded.route_version,
     installed = excluded.installed,
     updated_at = excluded.updated_at;
 
@@ -138,7 +138,7 @@ INSERT INTO local_tunnels (
     target,
     framework,
     route_id,
-    session_version,
+    route_version,
     state,
     started_at,
     updated_at,
@@ -180,7 +180,7 @@ WHERE id = sqlc.arg(id) AND stopped_at IS NULL;
 
 -- name: SetTunnelProvisioning :execrows
 UPDATE local_tunnels
-SET session_version = sqlc.arg(session_version),
+SET route_version = sqlc.arg(route_version),
     state = 'provisioning',
     updated_at = sqlc.arg(now)
 WHERE id = sqlc.arg(id) AND stopped_at IS NULL;
@@ -188,7 +188,7 @@ WHERE id = sqlc.arg(id) AND stopped_at IS NULL;
 -- name: SetTunnelReady :execrows
 UPDATE local_tunnels
 SET hostname = sqlc.arg(hostname),
-    session_version = sqlc.arg(session_version),
+    route_version = sqlc.arg(route_version),
     state = 'ready',
     updated_at = sqlc.arg(now)
 WHERE id = sqlc.arg(id) AND stopped_at IS NULL;

@@ -1,21 +1,26 @@
 import {
   publicTunnelEnvironment,
   readDevEnvironment,
-  registerTarget,
+  registerLocalPort,
   requestTunnelAssignment,
 } from "@tnldotdev/dev";
-import type { TnlOptionsInput, TnlTunnelAssignment } from "@tnldotdev/dev";
+import type { TnlTunnelAssignment, TnlTunnelOptionsInput } from "@tnldotdev/dev";
 import type { Plugin } from "vite";
 
-export type { TnlOptions, TnlOptionsContext, TnlOptionsInput, TnlWorktree } from "@tnldotdev/dev";
+export type {
+  TnlTunnelOptions,
+  TnlTunnelOptionsContext,
+  TnlTunnelOptionsInput,
+  TnlWorktree,
+} from "@tnldotdev/dev";
 
 /**
  * Adds tnl support to the Vite development server. It does nothing during
  * builds, previews, or development started without `tnl dev`.
  */
-export default function tnl(options: TnlOptionsInput = {}): Plugin {
+export default function tnl(options: TnlTunnelOptionsInput = {}): Plugin {
   let assignment: TnlTunnelAssignment | null = null;
-  let targetRegistered = false;
+  let localPortRegistered = false;
   return {
     name: "tnl",
     enforce: "post",
@@ -31,8 +36,6 @@ export default function tnl(options: TnlOptionsInput = {}): Plugin {
       }
 
       const server = userConfig.server ?? {};
-      const allowedHosts = (server as typeof server & { allowedHosts?: true | string[] })
-        .allowedHosts;
       assignment = await requestTunnelAssignment({ framework: "vite", options });
       if (assignment === null) {
         return undefined;
@@ -46,7 +49,7 @@ export default function tnl(options: TnlOptionsInput = {}): Plugin {
         ),
         server: {
           host: "127.0.0.1",
-          allowedHosts: addAllowedHost(allowedHosts, assignment.hostname),
+          allowedHosts: addAllowedHost(server.allowedHosts, assignment.hostname),
         },
       };
       if (session.port !== undefined) {
@@ -68,7 +71,7 @@ export default function tnl(options: TnlOptionsInput = {}): Plugin {
       const originalListen = server.listen.bind(server);
       server.listen = async (port, isRestart) => {
         const listening = await originalListen(port, isRestart);
-        if (targetRegistered) {
+        if (localPortRegistered) {
           return listening;
         }
         const address = server.httpServer?.address();
@@ -77,8 +80,8 @@ export default function tnl(options: TnlOptionsInput = {}): Plugin {
           throw new Error("Vite did not report its listening port to tnl dev");
         }
         try {
-          await registerTarget(configured, address.port);
-          targetRegistered = true;
+          await registerLocalPort(configured, address.port);
+          localPortRegistered = true;
         } catch (error) {
           await server.close();
           throw error;

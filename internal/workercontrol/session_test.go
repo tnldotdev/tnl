@@ -63,8 +63,8 @@ func TestRemoteOwnerMatchesLocalSemantics(t *testing.T) {
 	}
 
 	assignment := worker.Assignment{
-		RouteRef: worker.RouteRef{RouteID: "route", Version: 1},
-		Endpoint: tailtransport.Endpoint{Version: 1, PublisherPublicKey: key.NewNode().Public().String(), RelayRegion: "test"},
+		RouteRef: worker.RouteRef{RouteID: "route", RouteVersion: 1},
+		Endpoint: tailtransport.TransportDescriptor{Version: 1, PublisherPublicKey: key.NewNode().Public().String(), RelayRegion: "test"},
 		Key:      key.NewNode(),
 	}
 	backend, err := remote.Attach(context.Background(), assignment)
@@ -102,38 +102,6 @@ func TestRemoteOwnerMatchesLocalSemantics(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("worker did not drain")
 	}
-}
-
-func TestHubBoundsWorkerCredentialsAndCapacity(t *testing.T) {
-	_, first, err := credentials.NewWorkerToken()
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, second, err := credentials.NewWorkerToken()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := NewHub(HubConfig{Tokens: []credentials.WorkerVerifier{first, first}, Registry: newTestRegistry()}); err == nil {
-		t.Fatal("duplicate worker credential accepted")
-	}
-	hub, err := NewHub(HubConfig{
-		Tokens: []credentials.WorkerVerifier{first, second}, Registry: newTestRegistry(),
-		MaxSessions: 1, MaxWorkerCapacity: 2, MaxTotalCapacity: 2,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !hub.reserve(first.ID()) || hub.reserve(first.ID()) || hub.reserve(second.ID()) {
-		t.Fatal("worker session reservation limits were not enforced")
-	}
-	if hub.claimCapacity(first.ID(), 3) || !hub.claimCapacity(first.ID(), 2) {
-		t.Fatal("worker capacity limits were not enforced")
-	}
-	hub.release(first.ID())
-	if !hub.reserve(second.ID()) || !hub.claimCapacity(second.ID(), 1) {
-		t.Fatal("worker reservation was not released")
-	}
-	hub.release(second.ID())
 }
 
 func TestSessionObservers(t *testing.T) {
@@ -205,8 +173,8 @@ func TestSessionObservers(t *testing.T) {
 			if test.abrupt {
 				hub.mu.Lock()
 				var connection *websocket.Conn
-				for _, reservation := range hub.sessions {
-					connection = reservation.connection
+				for current := range hub.connections {
+					connection = current
 					break
 				}
 				hub.mu.Unlock()
@@ -264,17 +232,17 @@ func validDisconnectReason(reason DisconnectReason) bool {
 
 func TestRemoteOwnerDetachesLateAttachResponse(t *testing.T) {
 	edge, remote := net.Pipe()
-	worker := newRemoteWorker(nil, edge, 1, 1)
+	worker := newRemoteWorker(nil, edge, 1)
 	loopDone := make(chan error, 1)
 	go func() { loopDone <- worker.readLoop() }()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	requestDone := make(chan error, 1)
-	ref := &workerv1.RouteRef{RouteID: "route", Version: 1}
+	ref := &workerv1.RouteRef{RouteID: "route", RouteVersion: 1}
 	go func() {
 		_, err := worker.request(ctx, workerv1.Message{
 			Type: workerv1.AttachRoute, Route: ref,
-			Endpoint: &tailtransport.Endpoint{}, WorkerPrivateKey: "private",
+			PublisherTransport: &tailtransport.TransportDescriptor{}, TailcatDialerPrivateKey: "private",
 		})
 		requestDone <- err
 	}()

@@ -120,7 +120,7 @@ func TestParseTNLDWorkerDoesNotRequireState(t *testing.T) {
 
 	config, err := ParseTNLD([]string{
 		"--mode", "worker",
-		"--worker-url", "wss://edge.example/internal/v1/worker",
+		"--edge-url", "wss://edge.example/internal/v1/worker",
 		"--worker-token", workerToken.String(),
 	})
 	if err != nil {
@@ -138,26 +138,42 @@ func TestParseTNLDWorkerDoesNotRequireState(t *testing.T) {
 	if config.RelayProvider != "" {
 		t.Fatalf("RelayProvider = %q, want explicit selection", config.RelayProvider)
 	}
+	if config.EdgeURL != "wss://edge.example/internal/v1/worker" {
+		t.Fatalf("EdgeURL = %q", config.EdgeURL)
+	}
 }
 
-func TestParseTNLDAcceptsDistinctWorkerTokens(t *testing.T) {
-	first := testWorkerToken(t)
-	second := testWorkerToken(t)
-	config, err := ParseTNLD([]string{
-		"--mode", "edge", "--state-dir", "/state", "--public-listen", "",
-		"--accepted-worker-token", first, "--accepted-worker-token", second,
-	})
+func TestParseTNLDEdgeURLEnvironmentAndHardCutover(t *testing.T) {
+	t.Setenv("TNLD_STATE_DIR", "")
+	t.Setenv("TNLD_METRICS_LISTEN", "")
+	t.Setenv("TNLD_EDGE_URL", "wss://edge.example/internal/v1/worker")
+	config, err := ParseTNLD([]string{"--mode", "worker", "--worker-token", testWorkerToken(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(config.AcceptedWorkerTokens) != 2 {
-		t.Fatalf("accepted worker tokens = %d", len(config.AcceptedWorkerTokens))
+	if config.EdgeURL != "wss://edge.example/internal/v1/worker" {
+		t.Fatalf("EdgeURL = %q", config.EdgeURL)
 	}
+
 	if _, err := ParseTNLD([]string{
-		"--mode", "edge", "--state-dir", "/state", "--public-listen", "",
-		"--accepted-worker-token", first, "--accepted-worker-token", first,
+		"--mode", "worker", "--worker-url", "wss://edge.example/internal/v1/worker", "--worker-token", testWorkerToken(t),
 	}); err == nil {
-		t.Fatal("duplicate worker tokens accepted")
+		t.Fatal("legacy --worker-url was accepted")
+	}
+	t.Setenv("TNLD_EDGE_URL", "")
+	t.Setenv("TNLD_WORKER_URL", "wss://edge.example/internal/v1/worker")
+	if _, err := ParseTNLD([]string{"--mode", "worker", "--worker-token", testWorkerToken(t)}); err == nil ||
+		err.Error() != "worker mode requires an edge URL" {
+		t.Fatalf("legacy TNLD_WORKER_URL error = %v", err)
+	}
+}
+
+func TestTNLDValidateEdgeURLMessage(t *testing.T) {
+	_, err := ParseTNLD([]string{
+		"--mode", "worker", "--edge-url", "https://edge.example/internal/v1/worker", "--worker-token", testWorkerToken(t),
+	})
+	if err == nil || err.Error() != "Worker endpoint must be a WSS URL with path /internal/v1/worker." {
+		t.Fatalf("edge URL validation error = %v", err)
 	}
 }
 
@@ -264,8 +280,7 @@ func TestTNLDValidateACME(t *testing.T) {
 	valid := TNLD{
 		Mode: TNLDModeStandalone, StateDir: "/state", Domain: "example.com",
 		PublicListen: "127.0.0.1:443", RelayMapFile: "/relay.json", RelayRegion: "default",
-		WorkerCapacity: 1, WorkerStreamLimit: 1, WorkerSessionLimit: 1, WorkerTotalCapacity: 1,
-		PublicConnLimit: 1, RouteConnLimit: 1, DrainTimeout: 30,
+		WorkerCapacity: 1, WorkerStreamLimit: 1, PublicConnLimit: 1, RouteConnLimit: 1, DrainTimeout: 30,
 		MaxActiveHostnames: 128, MaxHostnameRequests: 1024,
 		AccessTokenLifetime: time.Hour, RefreshTokenLifetime: 30 * 24 * time.Hour,
 		ACMEDirectoryURL: "https://acme.example/directory", ACMEEmail: "operator@example.com",

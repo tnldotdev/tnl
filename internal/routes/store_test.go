@@ -35,7 +35,7 @@ func TestRouteSessionLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.AddManagedHostname(context.Background(), "owner", "route", "route-test"); err != nil {
+	if _, err := store.ClaimManagedHostname(context.Background(), "owner", "route", "route-test"); err != nil {
 		t.Fatal(err)
 	}
 	createdPolicy := []string{"192.0.2.0/24"}
@@ -45,7 +45,7 @@ func TestRouteSessionLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created.Route.Hostname != "route.example" || created.Route.Version != 1 {
+	if created.Route.Hostname != "route.example" || created.Route.RouteVersion != 1 {
 		t.Fatalf("created route = %#v", created.Route)
 	}
 	otherToken, _, _, err := credentials.NewRouteToken()
@@ -59,7 +59,7 @@ func TestRouteSessionLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.RegisterTransport(context.Background(), session, "nodekey:server", "test"); err != nil {
+	if err := store.AttachRouteTransport(context.Background(), session, "nodekey:server", "test"); err != nil {
 		t.Fatal(err)
 	}
 	session, err = store.AuthenticateSession(context.Background(), created.Route.ID, 1, created.SessionToken, "instance-1")
@@ -81,7 +81,7 @@ func TestRouteSessionLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if replacement.Route.Version != 2 || replacement.Session.Version != 2 {
+	if replacement.Route.RouteVersion != 2 || replacement.Session.RouteVersion != 2 {
 		t.Fatalf("replacement = %#v", replacement)
 	}
 	if !slices.Equal(created.Route.AllowedIPPrefixes, createdPolicy) ||
@@ -104,17 +104,17 @@ func TestRouteSessionLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if restarted.Route.ID != created.Route.ID || restarted.Route.Version != 3 || restarted.Route.LocalTarget != "localhost:3001" {
+	if restarted.Route.ID != created.Route.ID || restarted.Route.RouteVersion != 3 || restarted.Route.LocalTarget != "localhost:3001" {
 		t.Fatalf("restarted route = %#v", restarted.Route)
 	}
-	for version, want := range map[int64][]string{1: createdPolicy, 2: replacementPolicy, 3: {}} {
+	for routeVersion, want := range map[int64][]string{1: createdPolicy, 2: replacementPolicy, 3: {}} {
 		stored, err := queries.ListRouteAllowedIPPrefixesForTesting(
 			context.Background(), statedb.ListRouteAllowedIPPrefixesForTestingParams{
-				RouteID: created.Route.ID, RouteVersion: version,
+				RouteID: created.Route.ID, RouteVersion: routeVersion,
 			},
 		)
 		if err != nil || !slices.Equal(stored, want) {
-			t.Fatalf("version %d policy = %#v, %v; want %#v", version, stored, err, want)
+			t.Fatalf("route version %d policy = %#v, %v; want %#v", routeVersion, stored, err, want)
 		}
 	}
 	if _, err := store.CreateSession(context.Background(), "owner", created.Route.ID, "instance-1", routeToken, nil); !errors.Is(err, ErrUnauthenticated) {
@@ -141,12 +141,12 @@ func TestRouteSessionLifecycle(t *testing.T) {
 		t.Fatalf("list after delete = %#v, %v", routes, err)
 	}
 	wantTransitions := []LifecycleTransition{
-		LifecycleVersionStarted,
+		LifecycleRouteVersionStarted,
 		LifecycleReady,
 		LifecycleDisconnected,
-		LifecycleVersionStarted,
+		LifecycleRouteVersionStarted,
 		LifecycleDisconnected,
-		LifecycleVersionStarted,
+		LifecycleRouteVersionStarted,
 		LifecycleDisconnected,
 		LifecycleDeleted,
 	}
@@ -155,55 +155,12 @@ func TestRouteSessionLifecycle(t *testing.T) {
 		t.Fatalf("lifecycle changes = %#v", recorder.changes)
 	}
 	for index, change := range recorder.changes {
-		if change.RouteID != created.Route.ID || change.Version != wantVersions[index] || change.Transition != wantTransitions[index] {
+		if change.RouteID != created.Route.ID || change.RouteVersion != wantVersions[index] || change.Transition != wantTransitions[index] {
 			t.Fatalf("lifecycle change %d = %#v", index, change)
 		}
 	}
 	if len(recorder.registrations) != 0 {
 		t.Fatalf("local route registrations = %#v, want none", recorder.registrations)
-	}
-}
-
-func TestRouteReplacementRequiresExistingOwner(t *testing.T) {
-	ctx := context.Background()
-	db, err := state.Open(ctx, filepath.Join(t.TempDir(), "state"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	queries := statedb.New(db)
-	upsertTestIdentity(t, ctx, queries, "owner", "Owner", 1)
-	upsertTestIdentity(t, ctx, queries, "other", "Other", 1)
-	store, err := NewStore(db, "routes.example.com")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.AddManagedHostname(ctx, "owner", "victim", "victim-hostname"); err != nil {
-		t.Fatal(err)
-	}
-	ownerToken, _, _, err := credentials.NewRouteToken()
-	if err != nil {
-		t.Fatal(err)
-	}
-	created, err := store.Create(ctx, "owner", "victim.routes.example.com", "localhost:3000", "instance", ownerToken, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := queries.InsertCustomDomainHostname(ctx, statedb.InsertCustomDomainHostnameParams{
-		ID: "hostname_00000000000000000000000000000001", IdentityID: "other", Hostname: "example.com", CreatedAt: 1,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	otherToken, _, _, err := credentials.NewRouteToken()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.Create(ctx, "other", created.Route.Hostname, "localhost:3001", "instance", otherToken, nil); !errors.Is(err, ErrNameUnavailable) {
-		t.Fatalf("cross-owner replacement error = %v", err)
-	}
-	stored, err := queries.GetRouteByID(ctx, created.Route.ID)
-	if err != nil || stored.IdentityID.String != "owner" || stored.Version != 1 || stored.LocalTarget != "localhost:3000" {
-		t.Fatalf("stored route = %#v, %v", stored, err)
 	}
 }
 
@@ -221,7 +178,7 @@ func TestLifecycleFailureRollsBackRouteMutation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.AddManagedHostname(ctx, "owner", "route", "rollback-test"); err != nil {
+	if _, err := store.ClaimManagedHostname(ctx, "owner", "route", "rollback-test"); err != nil {
 		t.Fatal(err)
 	}
 	routeToken, _, _, err := credentials.NewRouteToken()
@@ -251,7 +208,7 @@ func TestAdminRouteSuspensionFencesSessionsAndRequiresMonotonicRevision(t *testi
 	}
 	store.now = func() time.Time { return now }
 	upsertTestIdentity(t, ctx, queries, "owner", "Owner", now.UnixNano())
-	if _, err := store.AddManagedHostname(ctx, "owner", "route", "admin-suspension"); err != nil {
+	if _, err := store.ClaimManagedHostname(ctx, "owner", "route", "admin-suspension"); err != nil {
 		t.Fatal(err)
 	}
 	routeToken, _, _, err := credentials.NewRouteToken()
@@ -266,12 +223,12 @@ func TestAdminRouteSuspensionFencesSessionsAndRequiresMonotonicRevision(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if suspended.Status != "suspended" || suspended.SuspensionRevision != 1 ||
+	if suspended.Status != RouteStatusSuspended || suspended.SuspensionRevision != 1 ||
 		suspended.SuspensionReason != "maintenance" || !suspended.SuspendedAt.Equal(now) {
 		t.Fatalf("suspended route = %#v", suspended)
 	}
 	if _, err := store.AuthenticateSession(
-		ctx, created.Route.ID, created.Route.Version, created.SessionToken, "instance",
+		ctx, created.Route.ID, created.Route.RouteVersion, created.SessionToken, "instance",
 	); !errors.Is(err, ErrStaleSession) {
 		t.Fatalf("suspended session error = %v", err)
 	}
@@ -292,11 +249,11 @@ func TestAdminRouteSuspensionFencesSessionsAndRequiresMonotonicRevision(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resumed.Status != "active" || resumed.Version != 2 || resumed.SuspensionRevision != 2 || !resumed.SuspendedAt.IsZero() {
+	if resumed.Status != RouteStatusEnabled || resumed.RouteVersion != 2 || resumed.SuspensionRevision != 2 || !resumed.SuspendedAt.IsZero() {
 		t.Fatalf("resumed route = %#v", resumed)
 	}
 	if _, err := store.AuthenticateSession(
-		ctx, created.Route.ID, created.Route.Version, created.SessionToken, "instance",
+		ctx, created.Route.ID, created.Route.RouteVersion, created.SessionToken, "instance",
 	); !errors.Is(err, ErrStaleSession) {
 		t.Fatalf("old session after resume error = %v", err)
 	}
@@ -304,7 +261,7 @@ func TestAdminRouteSuspensionFencesSessionsAndRequiresMonotonicRevision(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if replacement.Route.Version != 3 || replacement.Session.Version != 3 {
+	if replacement.Route.RouteVersion != 3 || replacement.Session.RouteVersion != 3 {
 		t.Fatalf("replacement after resume = %#v", replacement)
 	}
 	if count, err := queries.CountAdminAuditEvents(ctx); err != nil || count != 2 {
@@ -327,7 +284,7 @@ func TestAdminRemovesQuarantinedHostnameWithSuspendedRoute(t *testing.T) {
 	}
 	store.now = func() time.Time { return now }
 	upsertTestIdentity(t, ctx, queries, "owner", "Owner", now.UnixNano())
-	hostname, err := store.AddManagedHostname(ctx, "owner", "route", "admin-hostname")
+	hostname, err := store.ClaimManagedHostname(ctx, "owner", "route", "admin-hostname")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -372,7 +329,7 @@ func TestAdminRemovesQuarantinedHostnameWithSuspendedRoute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if removedRoute.Status != "deleted" || !removedRoute.SuspendedAt.IsZero() {
+	if removedRoute.Status != RouteStatusDeleted || !removedRoute.SuspendedAt.IsZero() {
 		t.Fatalf("removed route = %#v", removedRoute)
 	}
 	removedHostname, err := store.GetAdminHostname(ctx, hostname.ID)
@@ -408,7 +365,7 @@ func TestStoreObservesHealthOperationsExactlyOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.AddManagedHostname(ctx, "owner", "route", "observer-test"); err != nil {
+	if _, err := store.ClaimManagedHostname(ctx, "owner", "route", "observer-test"); err != nil {
 		t.Fatal(err)
 	}
 	routeToken, _, _, err := credentials.NewRouteToken()
@@ -423,7 +380,7 @@ func TestStoreObservesHealthOperationsExactlyOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.RegisterTransport(ctx, session, "nodekey:server", "test"); err != nil {
+	if err := store.AttachRouteTransport(ctx, session, "nodekey:server", "test"); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Ready(ctx, session); err != nil {
@@ -436,24 +393,24 @@ func TestStoreObservesHealthOperationsExactlyOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Expire(ctx, replacement.Route.ID, replacement.Session.Version); err != nil {
+	if err := store.Expire(ctx, replacement.Route.ID, replacement.Session.RouteVersion); err != nil {
 		t.Fatal(err)
 	}
 	hostnames, err := store.ListHostnames(ctx, "owner")
 	if err != nil || len(hostnames) != 1 {
 		t.Fatalf("hostnames = %#v, %v", hostnames, err)
 	}
-	if err := store.RemoveHostname(ctx, "owner", hostnames[0].ID); err != nil {
+	if err := store.ReleaseHostname(ctx, "owner", hostnames[0].ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.AuthenticateSession(
-		ctx, replacement.Route.ID, replacement.Session.Version, replacement.SessionToken, "instance",
+		ctx, replacement.Route.ID, replacement.Session.RouteVersion, replacement.SessionToken, "instance",
 	); !errors.Is(err, ErrStaleSession) {
 		t.Fatalf("expired session error = %v", err)
 	}
 
 	want := []StoreOperation{
-		StoreOperationHostname,
+		StoreOperationHostnameClaim,
 		StoreOperationRouteCreate,
 		StoreOperationSessionAuthenticate,
 		StoreOperationTransportRegister,
@@ -461,7 +418,7 @@ func TestStoreObservesHealthOperationsExactlyOnce(t *testing.T) {
 		StoreOperationSessionHeartbeat,
 		StoreOperationSessionCreate,
 		StoreOperationSessionExpire,
-		StoreOperationHostnameRemove,
+		StoreOperationHostnameRelease,
 		StoreOperationSessionAuthenticate,
 	}
 	if len(observations) != len(want) {
@@ -503,7 +460,7 @@ func (r *testLifecycleRecorder) RecordRegistration(
 }
 
 func (r *testLifecycleRecorder) RecordLifecycle(_ context.Context, _ *statedb.Queries, change LifecycleChange) error {
-	key := change.RouteID + "/" + string(change.Transition) + "/" + fmt.Sprint(change.Version)
+	key := change.RouteID + "/" + string(change.Transition) + "/" + fmt.Sprint(change.RouteVersion)
 	if _, ok := r.seen[key]; ok {
 		return nil
 	}

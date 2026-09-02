@@ -13,7 +13,6 @@ import (
 	"mime"
 	"net"
 	"net/http"
-	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,13 +24,9 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/authorization"
-	"github.com/tnldotdev/tnl/internal/clientauth"
 	"github.com/tnldotdev/tnl/internal/clientstate"
-	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/publisher"
-	"github.com/tnldotdev/tnl/pkg/protocol/serverv1"
-	"tailscale.com/tailcfg"
 )
 
 const (
@@ -48,7 +43,7 @@ type devCommand struct {
 	StartupTimeout time.Duration `name:"startup-timeout" default:"2m" help:"Maximum time for target registration and startup."`
 	ServerURL      string        `name:"server" env:"TNL_SERVER" help:"tnl server HTTPS origin; defaults to the selected server or https://control.tnl.dev."`
 	AccessToken    string        `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Server access token; defaults to the saved login."`
-	Name           string        `name:"name" env:"TNL_NAME" help:"Requested public name; omit for a fresh temporary name."`
+	Host           string        `name:"host" env:"TNL_HOST" help:"Requested public hostname; omit for a fresh temporary hostname."`
 	StateDir       string        `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent route state."`
 }
 
@@ -76,9 +71,6 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	if flags.Port != 0 {
 		forcedTarget, err = localproxy.NormalizeTarget(strconv.Itoa(flags.Port))
 		if err != nil {
-			return err
-		}
-		if err := checkDevPortAvailable(flags.Port); err != nil {
 			return err
 		}
 	}
@@ -166,13 +158,13 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		options = configuration.Options
 		framework = configuration.Framework
 	}
-	serverValue := optionValue(options.Server)
+	serverValue := optionValue(options.ControlURL)
 	if flags.ServerURL != "" {
 		serverValue = flags.ServerURL
 	}
-	name := optionValue(options.Name)
-	if flags.Name != "" {
-		name = flags.Name
+	host := optionValue(options.Host)
+	if flags.Host != "" {
+		host = flags.Host
 	}
 	allowedIPPrefixes, err := authorization.CanonicalizeIPPrefixes(options.AllowIP)
 	if err != nil {
@@ -204,60 +196,23 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 			return err
 		}
 	}
-	authenticated, err := clientauth.Authenticate(ctx, clientauth.Config{
-		CoreEndpoint: serverURL, State: state, AccessToken: flags.AccessToken,
-		Diagnostics: stderr, LoginToken: loginTokenPrompt(stdin, stderr),
-	})
+	authenticated, err := authenticatePublisher(ctx, state, serverURL, flags.AccessToken, stdin, stderr)
 	if err != nil {
 		return err
 	}
-	currentIP := ""
-	if options.AllowCurrentIP {
-		current, err := authenticated.Core.ClientIP(ctx)
-		if err != nil {
-			return fmt.Errorf("read current IP: %w", err)
-		}
-		address, err := netip.ParseAddr(current.Ip)
-		if err != nil || address.Zone() != "" {
-			return errors.New("server returned an invalid current IP")
-		}
-		currentIP = address.Unmap().String()
-		allowedIPPrefixes, err = authorization.CanonicalizeIPPrefixes(append(allowedIPPrefixes, currentIP))
-		if err != nil {
-			return fmt.Errorf("combine allowed IP prefixes: %w", err)
-		}
-	}
-	publisherState, err := state.Server(ctx, serverURL)
+	allowedIPPrefixes, currentIP, err := allowCurrentIP(ctx, authenticated, allowedIPPrefixes, options.AllowCurrentIP)
 	if err != nil {
 		return err
 	}
-	capabilities := authenticated.CoreCapabilities
-	names, namingCapabilities, err := namingAPI(authenticated)
-	if err != nil {
-		return err
-	}
-	if capabilities.Transport.Type != serverv1.Tailcat || capabilities.Transport.Version != serverv1.TransportCapabilitiesVersionN1 {
-		return errors.New("server does not support tailcat transport version 1")
-	}
-	if capabilities.HostnameSuffix == "" || capabilities.MaximumSubdomainDepth != 8 {
-		return errors.New("server does not support the required naming contract")
-	}
-	if capabilities.Acme == nil || capabilities.Acme.AcmeProfile == "" {
-		return errors.New("server does not support automatic certificates")
-	}
-	hostname, err := addPublishHostname(ctx, names, name, namingCapabilities)
-	if err != nil {
-		return err
-	}
-	routes, err := routeAPI(authenticated)
+	services, err := preparePublisherServices(ctx, state, serverURL, host, authenticated)
 	if err != nil {
 		return err
 	}
 
 	if configuration != nil {
 		bootstrap.Resolve(devConfigurationResponse{
-			Protocol: 1, TunnelID: tunnel.ID(), Hostname: hostname,
-			PublicURL: "https://" + hostname,
+			Protocol: 1, TunnelID: tunnel.ID(), Hostname: services.hostname,
+			PublicURL: "https://" + services.hostname,
 		}, nil)
 		configurationResolved = true
 	}
@@ -324,35 +279,25 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	defer cancelPublish()
 	publishDone := make(chan error, 1)
 	go func() {
-		publishDone <- publisher.Run(publishCtx, publisher.Config{
-			Server: routes, Hostname: hostname, Target: target,
-			AllowedIPPrefixes: allowedIPPrefixes,
-			State:             publisherState, ACMEProfile: capabilities.Acme.AcmeProfile,
-			RelayRegion: capabilities.Transport.RelayRegion, Logf: logger.Printf,
-			LoadRegions: func(ctx context.Context) (map[string]*tailcfg.DERPRegion, error) {
-				relayMap, err := authenticated.Core.RelayMap(ctx)
-				if err != nil {
-					return nil, fmt.Errorf("read server relay map: %w", err)
+		publisherConfig := services.config(target, allowedIPPrefixes)
+		publisherConfig.Logf = logger.Printf
+		publisherConfig.Observe = withTelemetryObserver(telemetry, "dev", serverURL, telemetryFramework(framework), func(event publisher.Event) error {
+			switch event.Type {
+			case publisher.EventRouteAssigned:
+				return tunnel.SetRoute(publishCtx, event.RouteID, event.Hostname)
+			case publisher.EventProvisioning:
+				return tunnel.SetProvisioning(publishCtx, event.RouteVersion)
+			case publisher.EventReady:
+				if err := tunnel.SetReady(publishCtx, event.PublicURL, event.RouteVersion); err != nil {
+					return err
 				}
-				return config.DecodeRelayRegions(relayMap)
-			},
-			Observe: withTelemetryObserver(telemetry, "dev", serverURL, telemetryFramework(framework), func(event publisher.Event) error {
-				switch event.Type {
-				case publisher.EventRoute:
-					return tunnel.SetRoute(publishCtx, event.RouteID, event.Hostname)
-				case publisher.EventProvisioning:
-					return tunnel.SetProvisioning(publishCtx, event.Version)
-				case publisher.EventReady:
-					if err := tunnel.SetReady(publishCtx, event.PublicURL, event.Version); err != nil {
-						return err
-					}
-					return output.ready(event.PublicURL, event.Version)
-				case publisher.EventDraining:
-					return tunnel.SetDraining(context.WithoutCancel(publishCtx))
-				}
-				return nil
-			}),
+				return output.ready(event.PublicURL, event.RouteVersion)
+			case publisher.EventDraining:
+				return tunnel.SetDraining(context.WithoutCancel(publishCtx))
+			}
+			return nil
 		})
+		publishDone <- publisher.Run(publishCtx, publisherConfig)
 	}()
 
 	select {
@@ -376,17 +321,6 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		<-publishDone
 		return context.Cause(ctx)
 	}
-}
-
-func checkDevPortAvailable(port int) error {
-	listener, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
-	if err != nil {
-		return fmt.Errorf("development target port %d is already in use", port)
-	}
-	if err := listener.Close(); err != nil {
-		return fmt.Errorf("check development target port %d: %w", port, err)
-	}
-	return nil
 }
 
 type devConfigurationResult struct {
@@ -442,8 +376,8 @@ type devBootstrap struct {
 }
 
 type devTunnelOptions struct {
-	Server         *string  `json:"server,omitempty"`
-	Name           *string  `json:"name,omitempty"`
+	ControlURL     *string  `json:"controlURL,omitempty"`
+	Host           *string  `json:"host,omitempty"`
 	AllowIP        []string `json:"allowIP,omitempty"`
 	AllowCurrentIP bool     `json:"allowCurrentIP,omitempty"`
 }
@@ -751,11 +685,11 @@ func (b *devBootstrap) handleTarget(response http.ResponseWriter, request *http.
 }
 
 func validateDevTunnelOptions(options devTunnelOptions) error {
-	if options.Server != nil && (*options.Server == "" || len(*options.Server) > 2048) {
+	if options.ControlURL != nil && (*options.ControlURL == "" || len(*options.ControlURL) > 2048) {
 		return errors.New("tnl server must be a non-empty HTTPS origin")
 	}
-	if options.Name != nil && (*options.Name == "" || len(*options.Name) > 253) {
-		return errors.New("tnl name must be a non-empty hostname")
+	if options.Host != nil && (*options.Host == "" || len(*options.Host) > 253) {
+		return errors.New("tnl host must be a non-empty hostname")
 	}
 	if len(options.AllowIP) > 64 {
 		return errors.New("tnl allowIP accepts at most 64 entries")

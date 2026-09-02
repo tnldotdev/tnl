@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/state/statedb"
@@ -28,24 +27,31 @@ const (
 
 type Sender struct {
 	store    *Store
-	baseURL  *url.URL
-	token    string
-	client   *http.Client
+	api      *routeusagev1.Client
 	observer Observer
 }
 
 func NewSender(store *Store, rawURL, token string, observer Observer) (*Sender, error) {
-	baseURL, err := url.Parse(rawURL)
+	_, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("routeusage: parse route usage URL: %w", err)
 	}
-	return &Sender{
-		store: store, baseURL: baseURL, token: token, observer: observer,
-		client: &http.Client{
-			Timeout:       requestTimeout,
-			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-		},
-	}, nil
+	httpClient := &http.Client{
+		Timeout:       requestTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	apiClient, err := routeusagev1.NewClient(
+		rawURL,
+		routeusagev1.WithHTTPClient(httpClient),
+		routeusagev1.WithRequestEditorFn(func(_ context.Context, request *http.Request) error {
+			request.Header.Set("Authorization", "Bearer "+token)
+			return nil
+		}),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("routeusage: configure generated client: %w", err)
+	}
+	return &Sender{store: store, api: apiClient, observer: observer}, nil
 }
 
 func (p *Sender) Run(ctx context.Context, report func(error)) {
@@ -112,9 +118,9 @@ func (p *Sender) SendOne(ctx context.Context) (bool, error) {
 	case lifecycleSource:
 		kind = "lifecycle"
 		err = p.sendLifecycleBatch(ctx)
-	case usageSource:
+	case usageBucketReportSource:
 		kind = "usage"
-		err = p.sendUsageBatch(ctx)
+		err = p.sendUsageBucketReportBatch(ctx)
 	default:
 		return false, fmt.Errorf("routeusage: unknown outbox source %q", item.SourceKind)
 	}
@@ -168,7 +174,9 @@ func (p *Sender) sendRegistration(ctx context.Context, item statedb.RouteUsageOu
 		CreatedAt:       wireTimestamp(time.Unix(0, registration.CreatedAt)),
 		RetryId:         registration.RetryID,
 	}
-	if err := p.post(ctx, "/v1/routes", payload); err != nil {
+	if err := p.post(ctx, func(ctx context.Context) (*http.Response, error) {
+		return p.api.RegisterRoute(ctx, payload)
+	}); err != nil {
 		return err
 	}
 	acknowledged, err := p.store.acknowledgeRegistration(ctx, item.SourceID, item.SourceRevision)
@@ -189,7 +197,7 @@ func (p *Sender) sendLifecycleBatch(ctx context.Context) error {
 	items := make([]routeusagev1.RouteLifecycleEvent, len(rows))
 	for index, event := range rows {
 		items[index] = routeusagev1.RouteLifecycleEvent{
-			ItemId: event.EventID, RouteId: event.RouteID, Version: strconv.FormatInt(event.Version, 10),
+			ItemId: event.EventID, RouteId: event.RouteID, RouteVersion: strconv.FormatInt(event.RouteVersion, 10),
 			Sequence: strconv.FormatInt(event.Sequence, 10), OccurredAt: wireTimestamp(time.Unix(0, event.OccurredAt)),
 			Transition: routeusagev1.RouteLifecycleEventTransition(event.Transition),
 		}
@@ -210,7 +218,9 @@ func (p *Sender) sendLifecycleBatch(ctx context.Context) error {
 	if err != nil || !marked {
 		return err
 	}
-	accepted, rejected, err := p.postBatch(ctx, "/v1/routes/lifecycle-events", body, itemIDs)
+	accepted, rejected, err := p.postBatch(ctx, func(ctx context.Context) (*http.Response, error) {
+		return p.api.IngestRouteLifecycleEventsWithBody(ctx, "application/json", bytes.NewReader(body))
+	}, itemIDs)
 	if err != nil {
 		return err
 	}
@@ -227,12 +237,12 @@ func (p *Sender) sendLifecycleBatch(ctx context.Context) error {
 	return nil
 }
 
-func (p *Sender) sendUsageBatch(ctx context.Context) error {
+func (p *Sender) sendUsageBucketReportBatch(ctx context.Context) error {
 	rows, err := p.store.queries.ListRouteUsageOutboxBatch(ctx, maximumBatchItems)
 	if err != nil {
-		return fmt.Errorf("routeusage: read usage batch: %w", err)
+		return fmt.Errorf("routeusage: read usage bucket report batch: %w", err)
 	}
-	items := make([]routeusagev1.RouteUsageSnapshot, len(rows))
+	items := make([]routeusagev1.RouteUsageBucketReport, len(rows))
 	for index, bucket := range rows {
 		publisherOpenLatency, err := protocolHistogram(bucket.PublisherOpenLatency)
 		if err != nil {
@@ -246,9 +256,9 @@ func (p *Sender) sendUsageBatch(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		items[index] = routeusagev1.RouteUsageSnapshot{
+		items[index] = routeusagev1.RouteUsageBucketReport{
 			ItemId: bucket.ReportID, RouteId: bucket.RouteID,
-			Version: strconv.FormatInt(bucket.Version, 10), Resolution: routeusagev1.RouteUsageSnapshotResolution(bucket.Resolution),
+			RouteVersion: strconv.FormatInt(bucket.RouteVersion, 10), Resolution: routeusagev1.RouteUsageBucketReportResolution(bucket.Resolution),
 			BucketStart: wireTimestamp(time.Unix(0, bucket.BucketStart)), Revision: strconv.FormatInt(bucket.SourceRevision, 10),
 			ObservedThrough: wireTimestamp(time.Unix(0, bucket.ObservedThrough)), ConnectionAttempts: strconv.FormatInt(bucket.ConnectionAttempts, 10),
 			PolicyDenials: strconv.FormatInt(bucket.PolicyDenials, 10), CapacityDenials: strconv.FormatInt(bucket.CapacityDenials, 10),
@@ -269,14 +279,16 @@ func (p *Sender) sendUsageBatch(ctx context.Context) error {
 	itemIDs := make([]string, count)
 	byID := make(map[string]outboxRevision, count)
 	for index, row := range rows {
-		reference := outboxRevision{kind: usageSource, sourceID: row.SourceID, revision: row.SourceRevision}
+		reference := outboxRevision{kind: usageBucketReportSource, sourceID: row.SourceID, revision: row.SourceRevision}
 		references[index], itemIDs[index], byID[row.ReportID] = reference, row.ReportID, reference
 	}
 	marked, err := p.store.markAttempted(ctx, references)
 	if err != nil || !marked {
 		return err
 	}
-	accepted, rejected, err := p.postBatch(ctx, "/v1/routes/usage-snapshots", body, itemIDs)
+	accepted, rejected, err := p.postBatch(ctx, func(ctx context.Context) (*http.Response, error) {
+		return p.api.IngestRouteUsageBucketReportsWithBody(ctx, "application/json", bytes.NewReader(body))
+	}, itemIDs)
 	if err != nil {
 		return err
 	}
@@ -284,11 +296,11 @@ func (p *Sender) sendUsageBatch(ctx context.Context) error {
 	for _, itemID := range accepted {
 		acknowledged = append(acknowledged, byID[itemID])
 	}
-	if err := p.store.acknowledgeUsageBatch(ctx, acknowledged); err != nil {
+	if err := p.store.acknowledgeUsageBucketReportBatch(ctx, acknowledged); err != nil {
 		return err
 	}
 	if rejected {
-		return errors.New("routeusage: receiver rejected usage batch items")
+		return errors.New("routeusage: receiver rejected usage bucket report batch items")
 	}
 	return nil
 }
@@ -334,16 +346,10 @@ func encodeBatch[T any](items []T) (int, []byte, error) {
 	return 0, nil, errors.New("routeusage: batch item exceeds request size limit")
 }
 
-func (p *Sender) postBatch(ctx context.Context, path string, body []byte, itemIDs []string) ([]string, bool, error) {
-	target := *p.baseURL
-	target.Path = strings.TrimSuffix(target.Path, "/") + path
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, target.String(), bytes.NewReader(body))
-	if err != nil {
-		return nil, false, fmt.Errorf("routeusage: create batch request: %w", err)
-	}
-	request.Header.Set("Authorization", "Bearer "+p.token)
-	request.Header.Set("Content-Type", "application/json")
-	response, err := p.client.Do(request)
+type routeUsageRequest func(context.Context) (*http.Response, error)
+
+func (p *Sender) postBatch(ctx context.Context, request routeUsageRequest, itemIDs []string) ([]string, bool, error) {
+	response, err := request(ctx)
 	if err != nil {
 		return nil, false, fmt.Errorf("routeusage: deliver batch request: %w", err)
 	}
@@ -413,20 +419,8 @@ func requireJSONEnd(decoder *json.Decoder) error {
 	return nil
 }
 
-func (p *Sender) post(ctx context.Context, path string, payload any) error {
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("routeusage: encode request: %w", err)
-	}
-	target := *p.baseURL
-	target.Path = strings.TrimSuffix(target.Path, "/") + path
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, target.String(), bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("routeusage: create request: %w", err)
-	}
-	request.Header.Set("Authorization", "Bearer "+p.token)
-	request.Header.Set("Content-Type", "application/json")
-	response, err := p.client.Do(request)
+func (p *Sender) post(ctx context.Context, request routeUsageRequest) error {
+	response, err := request(ctx)
 	if err != nil {
 		return fmt.Errorf("routeusage: deliver request: %w", err)
 	}

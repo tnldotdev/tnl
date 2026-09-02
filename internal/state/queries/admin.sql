@@ -14,13 +14,13 @@ SET status = 'suspended',
     suspension_reason = sqlc.arg(reason),
     suspended_at = sqlc.arg(suspended_at)
 WHERE id = sqlc.arg(route_id)
-    AND status = 'active'
+    AND status = 'enabled'
     AND suspension_revision < sqlc.arg(revision);
 
 -- name: ResumeAdminRoute :execrows
 UPDATE routes
-SET status = 'active',
-    version = version + 1,
+SET status = 'enabled',
+    route_version = route_version + 1,
     suspension_revision = sqlc.arg(revision),
     suspended_at = NULL
 WHERE routes.id = sqlc.arg(route_id)
@@ -72,11 +72,11 @@ SET status = 'suspended',
     suspension_revision = suspension_revision + 1,
     suspension_reason = sqlc.arg(reason),
     suspended_at = sqlc.arg(suspended_at)
-WHERE hostname_id = sqlc.arg(hostname_id) AND status = 'active';
+WHERE hostname_id = sqlc.arg(hostname_id) AND status = 'enabled';
 
 -- name: ListCurrentRoutesForAdminHostname :many
-SELECT id, version, status FROM routes
-WHERE hostname_id = sqlc.arg(hostname_id) AND status IN ('active', 'suspended')
+SELECT id, route_version, status FROM routes
+WHERE hostname_id = sqlc.arg(hostname_id) AND status IN ('enabled', 'suspended')
 ORDER BY id;
 
 -- name: ListAdminCredentials :many
@@ -109,14 +109,14 @@ SET access_token_revoked_at = COALESCE(access_token_revoked_at, sqlc.arg(revoked
     revoked_at = COALESCE(revoked_at, sqlc.arg(revoked_at))
 WHERE id = sqlc.arg(session_id) AND revoked_at IS NULL;
 
--- name: ListOperationalSwitches :many
-SELECT * FROM operational_switches ORDER BY name;
+-- name: ListMaintenanceControls :many
+SELECT * FROM maintenance_controls ORDER BY name;
 
--- name: GetOperationalSwitch :one
-SELECT * FROM operational_switches WHERE name = sqlc.arg(name);
+-- name: GetMaintenanceControl :one
+SELECT * FROM maintenance_controls WHERE name = sqlc.arg(name);
 
--- name: SetOperationalSwitch :execrows
-UPDATE operational_switches
+-- name: SetMaintenanceControl :execrows
+UPDATE maintenance_controls
 SET enabled = sqlc.arg(enabled),
     revision = revision + 1,
     updated_at = sqlc.arg(updated_at),

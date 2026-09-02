@@ -10,13 +10,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/pkg/protocol/serverv1"
 	"github.com/tnldotdev/tnl/pkg/protocol/transportv1"
 )
@@ -40,8 +40,7 @@ var (
 )
 
 type Client struct {
-	base                   *url.URL
-	http                   *http.Client
+	api                    *serverv1.Client
 	access                 credentials.AccessToken
 	externalAuthentication bool
 	timeout                time.Duration
@@ -62,61 +61,69 @@ func New(server string, httpClient *http.Client, access credentials.AccessToken)
 	if err != nil {
 		return nil, errors.New("serverclient: server must be an HTTPS origin")
 	}
-	base, err := url.Parse(server)
-	if err != nil {
-		return nil, errors.New("serverclient: server must be an HTTPS origin")
-	}
 	if httpClient == nil {
 		httpClient = &http.Client{}
 	}
-	base.Path = ""
-	return &Client{base: base, http: httpClient, access: access, timeout: defaultRequestTimeout}, nil
+	apiClient, err := serverv1.NewClient(
+		server,
+		serverv1.WithHTTPClient(httpClient),
+		serverv1.WithRequestEditorFn(func(_ context.Context, request *http.Request) error {
+			request.Header.Set("Accept", "application/json, application/problem+json")
+			return nil
+		}),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("serverclient: configure generated client: %w", err)
+	}
+	return &Client{api: apiClient, access: access, timeout: defaultRequestTimeout}, nil
 }
 
 func (c *Client) Capabilities(ctx context.Context) (serverv1.Capabilities, error) {
-	return request[serverv1.Capabilities](ctx, c, http.MethodGet, "/v1/capabilities", "", nil)
+	return request[serverv1.Capabilities](ctx, c, "", c.api.GetCapabilities)
 }
 
 func (c *Client) ClientIP(ctx context.Context) (serverv1.ClientIPResponse, error) {
-	return request[serverv1.ClientIPResponse](ctx, c, http.MethodGet, "/v1/client-ip", "", nil)
+	return request[serverv1.ClientIPResponse](ctx, c, "", c.api.GetClientIP)
 }
 
 func (c *Client) RelayMap(ctx context.Context) ([]byte, error) {
-	data, err := request[json.RawMessage](ctx, c, http.MethodGet, "/v1/transport/relay-map", "", nil)
+	data, err := request[json.RawMessage](ctx, c, "", c.api.GetRelayMap)
 	return []byte(data), err
 }
 
 func (c *Client) Exchange(ctx context.Context, token credentials.LoginToken) (serverv1.ControlSessionResponse, error) {
-	return request[serverv1.ControlSessionResponse](ctx, c, http.MethodPost, "/v1/auth/token", "", serverv1.TokenExchangeRequest{
-		LoginToken: token.String(),
+	return request[serverv1.ControlSessionResponse](ctx, c, "", func(ctx context.Context, editors ...serverv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.ExchangeLoginToken(ctx, serverv1.TokenExchangeRequest{LoginToken: token.String()}, editors...)
 	})
 }
 
 func (c *Client) ExchangeOIDC(ctx context.Context, token string) (serverv1.ControlSessionResponse, error) {
-	return request[serverv1.ControlSessionResponse](ctx, c, http.MethodPost, "/v1/auth/oidc", "", serverv1.OIDCTokenExchangeRequest{
-		IdToken: token,
+	return request[serverv1.ControlSessionResponse](ctx, c, "", func(ctx context.Context, editors ...serverv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.ExchangeOIDCToken(ctx, serverv1.OIDCTokenExchangeRequest{IdToken: token}, editors...)
 	})
 }
 
 func (c *Client) Refresh(ctx context.Context, token credentials.RefreshToken) (serverv1.ControlSessionResponse, error) {
-	return request[serverv1.ControlSessionResponse](ctx, c, http.MethodPost, "/v1/auth/refresh", "", serverv1.RefreshControlSessionRequest{
-		RefreshToken: token.String(),
+	return request[serverv1.ControlSessionResponse](ctx, c, "", func(ctx context.Context, editors ...serverv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.RefreshControlSession(ctx, serverv1.RefreshControlSessionRequest{RefreshToken: token.String()}, editors...)
 	})
 }
 
 func (c *Client) Logout(ctx context.Context) error {
-	_, err := requestWithAccess[struct{}](ctx, c, http.MethodPost, "/v1/auth/logout", nil)
+	_, err := requestWithAccess[struct{}](ctx, c, c.api.LogoutControlSession)
 	return err
 }
 
 // LogoutWithAccessToken revokes the session represented by a specific saved access token.
 func (c *Client) LogoutWithAccessToken(ctx context.Context, token credentials.AccessToken) error {
-	_, err := request[struct{}](ctx, c, http.MethodPost, "/v1/auth/logout", token.String(), nil)
+	_, err := request[struct{}](ctx, c, token.String(), c.api.LogoutControlSession)
 	return err
 }
 
 func (c *Client) CreateRoute(ctx context.Context, requestBody serverv1.CreateRouteRequest) (serverv1.SessionSetup, error) {
-	return requestWithAccess[serverv1.SessionSetup](ctx, c, http.MethodPost, "/v1/routes", requestBody)
+	return requestWithAccess[serverv1.SessionSetup](ctx, c, func(ctx context.Context, editors ...serverv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.CreateRoute(ctx, requestBody, editors...)
+	})
 }
 
 func (c *Client) CreateRouteAuthorized(
@@ -125,21 +132,24 @@ func (c *Client) CreateRouteAuthorized(
 	authorization string,
 ) (serverv1.SessionSetup, error) {
 	requestBody.SignedAuthorization = &authorization
-	return request[serverv1.SessionSetup](ctx, c, http.MethodPost, "/v1/routes", "", requestBody)
+	return request[serverv1.SessionSetup](ctx, c, "", func(ctx context.Context, editors ...serverv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.CreateRoute(ctx, requestBody, editors...)
+	})
 }
 
 func (c *Client) ListRoutes(ctx context.Context) ([]serverv1.Route, error) {
-	return requestWithAccess[[]serverv1.Route](ctx, c, http.MethodGet, "/v1/routes", nil)
+	return requestWithAccess[[]serverv1.Route](ctx, c, c.api.ListRoutes)
 }
 
-func (c *Client) AddHostname(ctx context.Context, kind serverv1.AddHostnameRequestKind, name, requestKey string) (serverv1.Hostname, error) {
-	requestBody := serverv1.AddHostnameRequest{Kind: kind}
-	if name != "" {
-		requestBody.Name = &name
+func (c *Client) ClaimHostname(ctx context.Context, kind serverv1.ClaimHostnameRequestKind, label, idempotencyKey string) (serverv1.Hostname, error) {
+	requestBody := serverv1.ClaimHostnameRequest{Kind: kind}
+	if label != "" {
+		requestBody.Label = &label
 	}
-	headers := make(http.Header)
-	headers.Set("Idempotency-Key", requestKey)
-	return requestWithAccess[serverv1.Hostname](ctx, c, http.MethodPost, "/v1/hostnames", requestBody, headers)
+	params := &serverv1.ClaimHostnameParams{IdempotencyKey: idempotencyKey}
+	return requestWithAccess[serverv1.Hostname](ctx, c, func(ctx context.Context, editors ...serverv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.ClaimHostname(ctx, params, requestBody, editors...)
+	})
 }
 
 func (c *Client) ListHostnames(ctx context.Context) ([]serverv1.Hostname, error) {
@@ -162,11 +172,13 @@ func (c *Client) ListHostnamesPage(
 	ctx context.Context,
 	cursor string,
 ) ([]serverv1.Hostname, string, error) {
-	query := make(url.Values)
+	params := &serverv1.ListHostnamesParams{}
 	if cursor != "" {
-		query.Set("cursor", cursor)
+		params.Cursor = &cursor
 	}
-	page, err := requestWithAccessAndQuery[serverv1.HostnamePage](ctx, c, http.MethodGet, "/v1/hostnames", nil, query)
+	page, err := requestWithAccess[serverv1.HostnamePage](ctx, c, func(ctx context.Context, editors ...serverv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.ListHostnames(ctx, params, editors...)
+	})
 	if err != nil {
 		return nil, "", err
 	}
@@ -191,27 +203,33 @@ func (c *Client) ListHostnamesPage(
 	return page.Hostnames, next, nil
 }
 
-func (c *Client) RemoveHostname(ctx context.Context, hostnameID string) error {
-	_, err := requestWithAccess[struct{}](ctx, c, http.MethodDelete, hostnamePath(hostnameID), nil)
+func (c *Client) ReleaseHostname(ctx context.Context, hostnameID string) error {
+	_, err := requestWithAccess[struct{}](ctx, c, func(ctx context.Context, editors ...serverv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.ReleaseHostname(ctx, hostnameID, editors...)
+	})
 	return err
 }
 
 func (c *Client) CreateDomainVerification(
 	ctx context.Context,
-	domain, requestKey string,
+	domain, idempotencyKey string,
 ) (serverv1.DomainVerification, error) {
-	headers := make(http.Header)
-	headers.Set("Idempotency-Key", requestKey)
-	return requestWithAccess[serverv1.DomainVerification](ctx, c, http.MethodPost, "/v1/domain-verifications",
-		serverv1.CreateDomainVerificationRequest{Domain: domain}, headers)
+	params := &serverv1.CreateDomainVerificationParams{IdempotencyKey: idempotencyKey}
+	return requestWithAccess[serverv1.DomainVerification](ctx, c, func(ctx context.Context, editors ...serverv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.CreateDomainVerification(ctx, params, serverv1.CreateDomainVerificationRequest{Domain: domain}, editors...)
+	})
 }
 
 func (c *Client) DomainVerification(ctx context.Context, verificationID string) (serverv1.DomainVerification, error) {
-	return requestWithAccess[serverv1.DomainVerification](ctx, c, http.MethodGet, domainVerificationPath(verificationID, ""), nil)
+	return requestWithAccess[serverv1.DomainVerification](ctx, c, func(ctx context.Context, editors ...serverv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.GetDomainVerification(ctx, verificationID, editors...)
+	})
 }
 
 func (c *Client) CompleteDomainVerification(ctx context.Context, verificationID string) (serverv1.Hostname, error) {
-	return requestWithAccess[serverv1.Hostname](ctx, c, http.MethodPost, domainVerificationPath(verificationID, "complete"), nil)
+	return requestWithAccess[serverv1.Hostname](ctx, c, func(ctx context.Context, editors ...serverv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.CompleteDomainVerification(ctx, verificationID, editors...)
+	})
 }
 
 func (c *Client) CreateRouteSession(
@@ -225,7 +243,9 @@ func (c *Client) CreateRouteSession(
 		allowed := serverv1.AllowedIPPrefixes(allowedIPPrefixes)
 		requestBody.AllowedIpPrefixes = &allowed
 	}
-	return requestWithAccess[serverv1.SessionSetup](ctx, c, http.MethodPost, routePath(routeID, "sessions"), requestBody)
+	return requestWithAccess[serverv1.SessionSetup](ctx, c, func(ctx context.Context, editors ...serverv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.CreateRouteSession(ctx, routeID, requestBody, editors...)
+	})
 }
 
 func (c *Client) CreateRouteSessionAuthorized(
@@ -235,23 +255,26 @@ func (c *Client) CreateRouteSessionAuthorized(
 	authorization string,
 ) (serverv1.SessionSetup, error) {
 	requestBody.SignedAuthorization = &authorization
-	return request[serverv1.SessionSetup](ctx, c, http.MethodPost, routePath(routeID, "sessions"), "", requestBody)
+	return request[serverv1.SessionSetup](ctx, c, "", func(ctx context.Context, editors ...serverv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.CreateRouteSession(ctx, routeID, requestBody, editors...)
+	})
 }
 
-func (c *Client) RegisterTransport(
+func (c *Client) AttachRouteTransport(
 	ctx context.Context,
 	routeID string,
 	version uint64,
 	sessionToken credentials.SessionToken,
 	endpoint transportv1.TailcatDescriptor,
 ) error {
-	_, err := request[struct{}](ctx, c, http.MethodPost, routePath(routeID, "transport"), sessionToken.String(), serverv1.RegisterTransportRequest{
-		Version: int(version),
-		Endpoint: serverv1.TailcatDescriptor{
-			Version:            serverv1.TailcatDescriptorVersion(endpoint.Version),
-			PublisherPublicKey: endpoint.PublisherPublicKey,
-			RelayRegion:        endpoint.RelayRegion,
+	body := serverv1.RegisterTransportRequest{
+		RouteVersion: int(version), Endpoint: serverv1.TailcatDescriptor{
+			Version: serverv1.TailcatDescriptorVersion(endpoint.Version), PublisherPublicKey: endpoint.PublisherPublicKey,
+			RelayRegion: endpoint.RelayRegion,
 		},
+	}
+	_, err := request[struct{}](ctx, c, sessionToken.String(), func(ctx context.Context, editors ...serverv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.RegisterRouteTransport(ctx, routeID, body, editors...)
 	})
 	return err
 }
@@ -262,7 +285,9 @@ func (c *Client) Ready(
 	version uint64,
 	sessionToken credentials.SessionToken,
 ) error {
-	_, err := request[struct{}](ctx, c, http.MethodPost, routePath(routeID, "ready"), sessionToken.String(), serverv1.RouteVersionRequest{Version: int(version)})
+	_, err := request[struct{}](ctx, c, sessionToken.String(), func(ctx context.Context, editors ...serverv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.MarkRouteReady(ctx, routeID, serverv1.RouteVersionRequest{RouteVersion: int(version)}, editors...)
+	})
 	return err
 }
 
@@ -272,7 +297,9 @@ func (c *Client) Heartbeat(
 	version uint64,
 	sessionToken credentials.SessionToken,
 ) (serverv1.HeartbeatResponse, error) {
-	return request[serverv1.HeartbeatResponse](ctx, c, http.MethodPost, routePath(routeID, "heartbeat"), sessionToken.String(), serverv1.HeartbeatRouteSessionRequest{Version: int(version)})
+	return request[serverv1.HeartbeatResponse](ctx, c, sessionToken.String(), func(ctx context.Context, editors ...serverv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.HeartbeatRouteSession(ctx, routeID, serverv1.HeartbeatRouteSessionRequest{RouteVersion: int(version)}, editors...)
+	})
 }
 
 func (c *Client) HeartbeatAuthorized(
@@ -282,14 +309,16 @@ func (c *Client) HeartbeatAuthorized(
 	sessionToken credentials.SessionToken,
 	authorization string,
 ) (serverv1.HeartbeatResponse, error) {
-	return request[serverv1.HeartbeatResponse](
-		ctx, c, http.MethodPost, routePath(routeID, "heartbeat"), sessionToken.String(),
-		serverv1.HeartbeatRouteSessionRequest{Version: int(version), SignedAuthorization: &authorization},
-	)
+	body := serverv1.HeartbeatRouteSessionRequest{RouteVersion: int(version), SignedAuthorization: &authorization}
+	return request[serverv1.HeartbeatResponse](ctx, c, sessionToken.String(), func(ctx context.Context, editors ...serverv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.HeartbeatRouteSession(ctx, routeID, body, editors...)
+	})
 }
 
 func (c *Client) DeleteRoute(ctx context.Context, routeID string) error {
-	_, err := requestWithAccess[struct{}](ctx, c, http.MethodDelete, routePath(routeID, ""), nil)
+	_, err := requestWithAccess[struct{}](ctx, c, func(ctx context.Context, editors ...serverv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.DeleteRoute(ctx, routeID, editors...)
+	})
 	return err
 }
 
@@ -298,34 +327,21 @@ func (c *Client) DeleteRouteAuthorized(
 	routeID string,
 	routeToken credentials.RouteToken,
 ) error {
-	_, err := request[struct{}](ctx, c, http.MethodDelete, routePath(routeID, ""), routeToken.String(), nil)
+	_, err := request[struct{}](ctx, c, routeToken.String(), func(ctx context.Context, editors ...serverv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.DeleteRoute(ctx, routeID, editors...)
+	})
 	return err
 }
 
-func requestWithAccess[T any](
-	ctx context.Context,
-	client *Client,
-	method, path string,
-	requestBody any,
-	headers ...http.Header,
-) (T, error) {
-	return requestWithAccessAndQuery[T](ctx, client, method, path, requestBody, nil, headers...)
-}
+type serverRequest func(context.Context, ...serverv1.RequestEditorFn) (*http.Response, error)
 
-func requestWithAccessAndQuery[T any](
-	ctx context.Context,
-	client *Client,
-	method, path string,
-	requestBody any,
-	query url.Values,
-	headers ...http.Header,
-) (T, error) {
+func requestWithAccess[T any](ctx context.Context, client *Client, call serverRequest) (T, error) {
 	access, err := client.currentAccessToken(ctx)
 	if err != nil {
 		var zero T
 		return zero, err
 	}
-	return requestWithTimeoutAndQuery[T](ctx, client, client.timeout, method, path, access.String(), requestBody, query, headers...)
+	return requestWithTimeout[T](ctx, client, client.timeout, access.String(), call)
 }
 
 func (c *Client) currentAccessToken(ctx context.Context) (credentials.AccessToken, error) {
@@ -371,16 +387,7 @@ func ValidateControlSessionResponse(
 }
 
 func validControlSessionID(value string) bool {
-	const prefix = "control_session_"
-	if len(value) != len(prefix)+32 || !strings.HasPrefix(value, prefix) {
-		return false
-	}
-	for _, character := range value[len(prefix):] {
-		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
-			return false
-		}
-	}
-	return true
+	return opaqueid.Valid(value, "control_session_")
 }
 
 func validGrants(grants []string) bool {
@@ -412,9 +419,12 @@ func (c *Client) CreateCertificateIssuance(
 	profile string,
 	csrDER []byte,
 ) (serverv1.CertificateIssuance, error) {
-	return request[serverv1.CertificateIssuance](ctx, c, http.MethodPost, "/v1/certificate-issuances", sessionToken.String(), serverv1.CreateCertificateIssuanceRequest{
-		RouteId: routeID, Version: int(version), AcmeProfile: profile,
+	body := serverv1.CreateCertificateIssuanceRequest{
+		RouteId: routeID, RouteVersion: int(version), AcmeProfile: profile,
 		Csr: base64.RawURLEncoding.EncodeToString(csrDER),
+	}
+	return request[serverv1.CertificateIssuance](ctx, c, sessionToken.String(), func(ctx context.Context, editors ...serverv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.CreateCertificateIssuance(ctx, body, editors...)
 	})
 }
 
@@ -423,7 +433,9 @@ func (c *Client) CertificateIssuance(
 	issuanceID string,
 	sessionToken credentials.SessionToken,
 ) (serverv1.CertificateIssuance, error) {
-	return request[serverv1.CertificateIssuance](ctx, c, http.MethodGet, certificateIssuancePath(issuanceID, ""), sessionToken.String(), nil)
+	return request[serverv1.CertificateIssuance](ctx, c, sessionToken.String(), func(ctx context.Context, editors ...serverv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.GetCertificateIssuance(ctx, issuanceID, editors...)
+	})
 }
 
 func (c *Client) CertificateChallengeReady(
@@ -432,8 +444,10 @@ func (c *Client) CertificateChallengeReady(
 	sessionToken credentials.SessionToken,
 ) (serverv1.CertificateIssuance, error) {
 	return requestWithTimeout[serverv1.CertificateIssuance](
-		ctx, c, challengeRequestTimeout, http.MethodPost,
-		certificateIssuancePath(issuanceID, "challenge-ready"), sessionToken.String(), nil,
+		ctx, c, challengeRequestTimeout, sessionToken.String(),
+		func(ctx context.Context, editors ...serverv1.RequestEditorFn) (*http.Response, error) {
+			return c.api.MarkCertificateChallengeReady(ctx, issuanceID, editors...)
+		},
 	)
 }
 
@@ -442,7 +456,9 @@ func (c *Client) CertificateChallengeRemoved(
 	issuanceID string,
 	sessionToken credentials.SessionToken,
 ) error {
-	_, err := request[struct{}](ctx, c, http.MethodPost, certificateIssuancePath(issuanceID, "challenge-removed"), sessionToken.String(), nil)
+	_, err := request[struct{}](ctx, c, sessionToken.String(), func(ctx context.Context, editors ...serverv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.MarkCertificateChallengeRemoved(ctx, issuanceID, editors...)
+	})
 	return err
 }
 
@@ -453,73 +469,33 @@ func (c *Client) CertificateInstalled(
 	issuanceID string,
 	sessionToken credentials.SessionToken,
 ) error {
-	_, err := request[struct{}](ctx, c, http.MethodPost, routePath(routeID, "certificate-installed"), sessionToken.String(), serverv1.CertificateInstalledRequest{
-		Version: int(version), IssuanceId: issuanceID,
+	body := serverv1.CertificateInstalledRequest{RouteVersion: int(version), IssuanceId: issuanceID}
+	_, err := request[struct{}](ctx, c, sessionToken.String(), func(ctx context.Context, editors ...serverv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.MarkRouteCertificateInstalled(ctx, routeID, body, editors...)
 	})
 	return err
 }
 
-func request[T any](
-	ctx context.Context,
-	client *Client,
-	method, path, token string,
-	requestBody any,
-) (T, error) {
-	return requestWithTimeout[T](ctx, client, client.timeout, method, path, token, requestBody)
+func request[T any](ctx context.Context, client *Client, token string, call serverRequest) (T, error) {
+	return requestWithTimeout[T](ctx, client, client.timeout, token, call)
 }
 
 func requestWithTimeout[T any](
 	ctx context.Context,
 	client *Client,
 	timeout time.Duration,
-	method, path, token string,
-	requestBody any,
-	headers ...http.Header,
-) (T, error) {
-	return requestWithTimeoutAndQuery[T](
-		ctx, client, timeout, method, path, token, requestBody, nil, headers...,
-	)
-}
-
-func requestWithTimeoutAndQuery[T any](
-	ctx context.Context,
-	client *Client,
-	timeout time.Duration,
-	method, path, token string,
-	requestBody any,
-	query url.Values,
-	headers ...http.Header,
+	token string,
+	call serverRequest,
 ) (T, error) {
 	var zero T
 	requestCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	var body io.Reader
-	if requestBody != nil {
-		encoded, err := json.Marshal(requestBody)
-		if err != nil {
-			return zero, err
+	response, err := call(requestCtx, func(_ context.Context, request *http.Request) error {
+		if token != "" {
+			request.Header.Set("Authorization", "Bearer "+token)
 		}
-		body = bytes.NewReader(encoded)
-	}
-	endpoint := client.base.JoinPath(path)
-	endpoint.RawQuery = query.Encode()
-	request, err := http.NewRequestWithContext(requestCtx, method, endpoint.String(), body)
-	if err != nil {
-		return zero, err
-	}
-	if requestBody != nil {
-		request.Header.Set("Content-Type", "application/json")
-	}
-	if token != "" {
-		request.Header.Set("Authorization", "Bearer "+token)
-	}
-	if len(headers) != 0 {
-		for name, values := range headers[0] {
-			request.Header[name] = append([]string(nil), values...)
-		}
-	}
-	request.Header.Set("Accept", "application/json, application/problem+json")
-	response, err := client.http.Do(request)
+		return nil
+	})
 	if err != nil {
 		return zero, fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
@@ -596,42 +572,6 @@ func (e *ProblemError) Error() string {
 	return "serverclient: HTTP " + strconv.Itoa(e.Status) + ": " + e.Problem.Title
 }
 
-func routePath(routeID, operation string) string {
-	path := "/v1/routes/" + url.PathEscape(routeID)
-	if strings.TrimSpace(operation) != "" {
-		path += "/" + operation
-	}
-	return path
-}
-
-func hostnamePath(hostnameID string) string {
-	return "/v1/hostnames/" + url.PathEscape(hostnameID)
-}
-
-func domainVerificationPath(verificationID, operation string) string {
-	path := "/v1/domain-verifications/" + url.PathEscape(verificationID)
-	if operation != "" {
-		path += "/" + operation
-	}
-	return path
-}
-
 func validHostnameID(value string) bool {
-	if len(value) != len("hostname_")+32 || !strings.HasPrefix(value, "hostname_") {
-		return false
-	}
-	for _, char := range value[len("hostname_"):] {
-		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
-			return false
-		}
-	}
-	return true
-}
-
-func certificateIssuancePath(issuanceID, operation string) string {
-	path := "/v1/certificate-issuances/" + url.PathEscape(issuanceID)
-	if strings.TrimSpace(operation) != "" {
-		path += "/" + operation
-	}
-	return path
+	return opaqueid.Valid(value, "hostname_")
 }

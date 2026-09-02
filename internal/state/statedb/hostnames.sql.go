@@ -25,14 +25,14 @@ func (q *Queries) CountActivePersistentHostnames(ctx context.Context, identityID
 	return count, err
 }
 
-const countFriendlyNameCapacityConsumers = `-- name: CountFriendlyNameCapacityConsumers :one
+const countGeneratedHostnameCapacityConsumers = `-- name: CountGeneratedHostnameCapacityConsumers :one
 SELECT COUNT(*)
 FROM hostnames
 WHERE kind IN ('managed', 'temporary')
 `
 
-func (q *Queries) CountFriendlyNameCapacityConsumers(ctx context.Context) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countFriendlyNameCapacityConsumers)
+func (q *Queries) CountGeneratedHostnameCapacityConsumers(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countGeneratedHostnameCapacityConsumers)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -80,7 +80,7 @@ const deleteHostnameRoutes = `-- name: DeleteHostnameRoutes :exec
 UPDATE routes
 SET status = 'deleted', deleted_at = CAST(?1 AS INTEGER), suspended_at = NULL
 WHERE hostname_id = ?2
-    AND status IN ('active', 'suspended')
+    AND status IN ('enabled', 'suspended')
 `
 
 type DeleteHostnameRoutesParams struct {
@@ -341,11 +341,11 @@ func (q *Queries) InsertTemporaryHostname(ctx context.Context, arg InsertTempora
 	return result.RowsAffected()
 }
 
-const listActiveRoutesForHostname = `-- name: ListActiveRoutesForHostname :many
+const listEnabledRoutesForHostname = `-- name: ListEnabledRoutesForHostname :many
 SELECT routes.id
 FROM hostnames
 LEFT JOIN routes ON routes.hostname_id = hostnames.id
-    AND routes.status = 'active'
+    AND routes.status = 'enabled'
 WHERE hostnames.id = ?1
     AND hostnames.identity_id = CAST(?2 AS TEXT)
     AND hostnames.kind IN ('managed', 'custom_domain')
@@ -353,13 +353,13 @@ WHERE hostnames.id = ?1
 ORDER BY routes.id
 `
 
-type ListActiveRoutesForHostnameParams struct {
+type ListEnabledRoutesForHostnameParams struct {
 	HostnameID string
 	IdentityID string
 }
 
-func (q *Queries) ListActiveRoutesForHostname(ctx context.Context, arg ListActiveRoutesForHostnameParams) ([]sql.NullString, error) {
-	rows, err := q.db.QueryContext(ctx, listActiveRoutesForHostname, arg.HostnameID, arg.IdentityID)
+func (q *Queries) ListEnabledRoutesForHostname(ctx context.Context, arg ListEnabledRoutesForHostnameParams) ([]sql.NullString, error) {
+	rows, err := q.db.QueryContext(ctx, listEnabledRoutesForHostname, arg.HostnameID, arg.IdentityID)
 	if err != nil {
 		return nil, err
 	}

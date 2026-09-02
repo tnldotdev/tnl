@@ -2,7 +2,6 @@ package auth
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/state"
 )
 
@@ -252,9 +252,9 @@ func grantsFromStrings(grants []string) []Grant {
 }
 
 func newControlSessionID() (string, error) {
-	var material [16]byte
-	if _, err := rand.Read(material[:]); err != nil {
+	id, err := opaqueid.New("control_session_")
+	if err != nil {
 		return "", fmt.Errorf("auth: generate control session ID: %w", err)
 	}
-	return "control_session_" + hex.EncodeToString(material[:]), nil
+	return id, nil
 }

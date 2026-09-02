@@ -18,4 +18,8 @@ func TestCapabilitiesAdvertiseSignedAuthorizationMode(t *testing.T) {
 		result.LocalHostnames != nil {
 		t.Fatalf("capabilities = %#v", result)
 	}
+	if len(result.Administration.Operations) != 6 ||
+		result.Administration.Operations[5] != serverv1.MaintenanceControls {
+		t.Fatalf("administration capabilities = %#v", result.Administration)
+	}
 }
