@@ -24,7 +24,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/localproxy"
-	"github.com/tnldotdev/tnl/internal/publication"
+	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/pkg/protocol/serverv1"
 	"tailscale.com/tailcfg"
 )
@@ -42,7 +42,7 @@ type devCommand struct {
 	StartupTimeout time.Duration `name:"startup-timeout" default:"2m" help:"Maximum time for target registration and startup."`
 	ServerURL      string        `name:"server" env:"TNL_SERVER" help:"tnl server HTTPS origin; defaults to the selected server or https://control.tnl.dev."`
 	AccessToken    string        `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Server access token; defaults to the saved login."`
-	Name           string        `name:"name" env:"TNL_NAME" help:"Requested public name; omit for a fresh ephemeral name."`
+	Name           string        `name:"name" env:"TNL_NAME" help:"Requested public name; omit for a fresh temporary name."`
 	StateDir       string        `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent route state."`
 }
 
@@ -84,13 +84,13 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	if capabilities.Transport.Type != serverv1.Tailcat || capabilities.Transport.Version != serverv1.TransportCapabilitiesVersionN1 {
 		return errors.New("server does not support tailcat transport version 1")
 	}
-	if capabilities.RouteSuffix == "" || capabilities.MaximumChildDepth != 8 {
+	if capabilities.HostnameSuffix == "" || capabilities.MaximumSubdomainDepth != 8 {
 		return errors.New("server does not support the required naming contract")
 	}
-	if capabilities.Acme == nil || capabilities.Acme.Profile == "" {
+	if capabilities.Acme == nil || capabilities.Acme.AcmeProfile == "" {
 		return errors.New("server does not support automatic certificates")
 	}
-	hostname, err := claimPublicHostname(ctx, client, flags.Name, capabilities)
+	hostname, err := addPublishHostname(ctx, client, flags.Name, capabilities)
 	if err != nil {
 		return err
 	}
@@ -160,49 +160,49 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	}
 	cancelStartup()
 
-	output, err := newPublicOutput("human", stdout, stderr)
+	output, err := newPublishOutput("human", stdout, stderr)
 	if err != nil {
 		return err
 	}
 	logger := log.New(stderr, "tnl: ", 0)
-	publicationCtx, cancelPublication := context.WithCancel(ctx)
-	defer cancelPublication()
-	publicationDone := make(chan error, 1)
+	publishCtx, cancelPublish := context.WithCancel(ctx)
+	defer cancelPublish()
+	publishDone := make(chan error, 1)
 	go func() {
-		publicationDone <- publication.RunPublic(publicationCtx, publication.PublicConfig{
+		publishDone <- publisher.Run(publishCtx, publisher.Config{
 			Server: client, Hostname: hostname, Target: target,
-			State: state, ACMEProfile: capabilities.Acme.Profile,
-			RelayProfile: capabilities.Transport.RelayProfile, Logf: logger.Printf,
-			LoadProfiles: func(ctx context.Context) (map[string]*tailcfg.DERPRegion, error) {
+			State: state, ACMEProfile: capabilities.Acme.AcmeProfile,
+			RelayRegion: capabilities.Transport.RelayRegion, Logf: logger.Printf,
+			LoadRegions: func(ctx context.Context) (map[string]*tailcfg.DERPRegion, error) {
 				relayMap, err := client.RelayMap(ctx)
 				if err != nil {
 					return nil, fmt.Errorf("read server relay map: %w", err)
 				}
-				return config.DecodeRelayProfiles(relayMap)
+				return config.DecodeRelayRegions(relayMap)
 			},
-			OnLeaseReady: output.ready,
+			OnSessionReady: output.ready,
 		})
 	}()
 
 	select {
 	case <-child.Done():
-		cancelPublication()
-		publicationErr := <-publicationDone
+		cancelPublish()
+		publishErr := <-publishDone
 		if err := childResult(child.Err()); err != nil {
 			return err
 		}
-		if publicationErr != nil && !errors.Is(publicationErr, context.Canceled) {
-			return publicationErr
+		if publishErr != nil && !errors.Is(publishErr, context.Canceled) {
+			return publishErr
 		}
 		return nil
-	case err := <-publicationDone:
+	case err := <-publishDone:
 		if ctx.Err() != nil && errors.Is(err, context.Canceled) {
 			return ctx.Err()
 		}
 		return err
 	case <-ctx.Done():
-		cancelPublication()
-		<-publicationDone
+		cancelPublish()
+		<-publishDone
 		return ctx.Err()
 	}
 }

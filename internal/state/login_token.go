@@ -22,9 +22,9 @@ func EnsureLoginToken(ctx context.Context, db *sql.DB) (credentials.LoginToken, 
 	if err != nil {
 		return "", false, err
 	}
-	inserted, err := statedb.New(db).InsertServerState(ctx, statedb.InsertServerStateParams{
-		StateKey: loginTokenKey,
-		Value:    []byte(token),
+	inserted, err := statedb.New(db).InsertServerValue(ctx, statedb.InsertServerValueParams{
+		Key:   loginTokenKey,
+		Value: []byte(token),
 	})
 	if err != nil {
 		return "", false, err
@@ -35,7 +35,7 @@ func EnsureLoginToken(ctx context.Context, db *sql.DB) (credentials.LoginToken, 
 
 // ReadLoginToken reads the persisted login token.
 func ReadLoginToken(ctx context.Context, db *sql.DB) (credentials.LoginToken, error) {
-	data, err := statedb.New(db).GetServerState(ctx, loginTokenKey)
+	data, err := statedb.New(db).GetServerValue(ctx, loginTokenKey)
 	if err != nil {
 		return "", err
 	}
@@ -52,9 +52,9 @@ func RotateLoginToken(ctx context.Context, db *sql.DB) (credentials.LoginToken, 
 	if err != nil {
 		return "", err
 	}
-	if err := statedb.New(db).PutServerState(ctx, statedb.PutServerStateParams{
-		StateKey: loginTokenKey,
-		Value:    []byte(token),
+	if err := statedb.New(db).PutServerValue(ctx, statedb.PutServerValueParams{
+		Key:   loginTokenKey,
+		Value: []byte(token),
 	}); err != nil {
 		return "", err
 	}

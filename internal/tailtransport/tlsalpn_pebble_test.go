@@ -19,10 +19,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/agent"
 	"github.com/tnldotdev/tnl/internal/proxyproto"
 	"github.com/tnldotdev/tnl/internal/router"
 	"github.com/tnldotdev/tnl/internal/testutil/integrationtest"
+	"github.com/tnldotdev/tnl/internal/tlschallenge"
 	"golang.org/x/crypto/acme"
 	"tailscale.com/types/key"
 )
@@ -48,10 +48,10 @@ func TestIntegrationTLSALPNThroughTailcat(t *testing.T) {
 	ingressKey := key.NewNode()
 	proxyErrors := make(chan error, 1)
 
-	firstChallenges := new(agent.TLSALPNChallenges)
+	firstChallenges := new(tlschallenge.TLSALPNChallenges)
 	firstServer, firstEndpoint, err := startTestServer(ctx, region, ingressKey.Public(), tlsALPNHandler(firstChallenges, proxyErrors))
 	if err != nil {
-		t.Fatalf("start first agent: %v", err)
+		t.Fatalf("start first publisher: %v", err)
 	}
 	firstDialer, err := startTestDialer(ctx, region, firstEndpoint, ingressKey)
 	if err != nil {
@@ -97,7 +97,7 @@ func TestIntegrationTLSALPNThroughTailcat(t *testing.T) {
 	if !expiresAt.After(time.Now()) {
 		t.Fatalf("authorization expiry = %s; want future time", expiresAt)
 	}
-	command := agent.TLSALPNChallenge{
+	command := tlschallenge.TLSALPNChallenge{
 		ID:        challenge.URI,
 		Hostname:  hostname,
 		Digest:    sha256.Sum256([]byte(keyAuthorization)),
@@ -112,13 +112,13 @@ func TestIntegrationTLSALPNThroughTailcat(t *testing.T) {
 
 	// Prepare replacement endpoints while the order remains pending. The
 	// challenge command is replayed without sharing its private key.
-	secondChallenges := new(agent.TLSALPNChallenges)
+	secondChallenges := new(tlschallenge.TLSALPNChallenges)
 	if err := secondChallenges.Install(command); err != nil {
 		t.Fatalf("reinstall challenge: %v", err)
 	}
 	secondServer, secondEndpoint, err := startTestServer(ctx, region, ingressKey.Public(), tlsALPNHandler(secondChallenges, proxyErrors))
 	if err != nil {
-		t.Fatalf("restart agent: %v", err)
+		t.Fatalf("restart publisher: %v", err)
 	}
 	secondDialer, err := startTestDialer(ctx, region, secondEndpoint, ingressKey)
 	if err != nil {
@@ -190,7 +190,7 @@ func TestIntegrationTLSALPNThroughTailcat(t *testing.T) {
 	verifyIssuedCertificate(t, pebble, hostname, applicationKey, chain)
 	select {
 	case err := <-proxyErrors:
-		t.Fatalf("agent PROXY protocol: %v", err)
+		t.Fatalf("publisher PROXY protocol: %v", err)
 	default:
 	}
 	select {
@@ -231,7 +231,7 @@ func tlsALPNChallenge(t *testing.T, authorization *acme.Authorization) *acme.Cha
 	return nil
 }
 
-func tlsALPNHandler(challenges *agent.TLSALPNChallenges, proxyErrors chan<- error) func(net.Conn) {
+func tlsALPNHandler(challenges *tlschallenge.TLSALPNChallenges, proxyErrors chan<- error) func(net.Conn) {
 	return func(conn net.Conn) {
 		_ = conn.SetDeadline(time.Now().Add(15 * time.Second))
 		_, replay, err := proxyproto.Decode(conn)

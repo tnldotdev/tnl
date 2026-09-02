@@ -16,10 +16,10 @@
     "route": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["route_id", "generation"],
+      "required": ["route_id", "version"],
       "properties": {
         "route_id": {"type": "string", "minLength": 1, "pattern": "^\\S(?:.*\\S)?$"},
-        "generation": {"type": "integer", "minimum": 1}
+        "version": {"type": "integer", "minimum": 1}
       }
     },
     "hello": {
@@ -40,12 +40,12 @@
     "attachRoute": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["type", "route", "endpoint", "client_private_key"],
+      "required": ["type", "route", "endpoint", "worker_private_key"],
       "properties": {
         "type": {"const": "attach_route"},
         "route": {"$ref": "#/$defs/route"},
         "endpoint": {"$ref": "../../transport/v1/tailcat-descriptor.schema.json"},
-        "client_private_key": {"type": "string", "minLength": 1}
+        "worker_private_key": {"type": "string", "minLength": 1}
       }
     },
     "routeReady": {

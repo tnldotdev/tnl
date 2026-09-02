@@ -10,38 +10,38 @@ import (
 	"tailscale.com/tailcfg"
 )
 
-func TestSelectRelayProfile(t *testing.T) {
+func TestSelectRelayRegion(t *testing.T) {
 	region := &tailcfg.DERPRegion{
 		RegionID: 1, RegionCode: "first", Nodes: []*tailcfg.DERPNode{{
 			Name: "first", RegionID: 1, HostName: "relay.example", DERPPort: 443,
 		}},
 	}
-	profiles := map[string]*tailcfg.DERPRegion{"first": region}
-	profile, err := SelectRelayProfile(profiles, "")
+	regions := map[string]*tailcfg.DERPRegion{"first": region}
+	regionCode, err := SelectRelayRegion(regions, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if profile != "first" {
-		t.Fatalf("profile = %q, want first", profile)
+	if regionCode != "first" {
+		t.Fatalf("regionCode = %q, want first", regionCode)
 	}
 
-	profiles["second"] = region.Clone()
-	profiles["second"].RegionID = 2
-	profiles["second"].RegionCode = "second"
-	profiles["second"].Nodes[0].RegionID = 2
-	if _, err := SelectRelayProfile(profiles, ""); err == nil {
-		t.Fatal("multiple relay profiles selected without an explicit profile")
+	regions["second"] = region.Clone()
+	regions["second"].RegionID = 2
+	regions["second"].RegionCode = "second"
+	regions["second"].Nodes[0].RegionID = 2
+	if _, err := SelectRelayRegion(regions, ""); err == nil {
+		t.Fatal("multiple relay regions selected without an explicit regionCode")
 	}
-	if profile, err := SelectRelayProfile(profiles, "second"); err != nil || profile != "second" {
-		t.Fatalf("explicit profile = %q, %v", profile, err)
+	if regionCode, err := SelectRelayRegion(regions, "second"); err != nil || regionCode != "second" {
+		t.Fatalf("explicit regionCode = %q, %v", regionCode, err)
 	}
-	profiles["second"].Nodes[0].InsecureForTests = true
-	if _, err := SelectRelayProfile(profiles, "second"); err == nil {
-		t.Fatal("insecure relay profile accepted")
+	regions["second"].Nodes[0].InsecureForTests = true
+	if _, err := SelectRelayRegion(regions, "second"); err == nil {
+		t.Fatal("insecure relay regionCode accepted")
 	}
 }
 
-func TestLoadTailcatRelayProfilesUsesPinnedMap(t *testing.T) {
+func TestLoadTailcatRelayRegionsUsesPinnedMap(t *testing.T) {
 	directory := t.TempDir()
 	data := []byte(`{"Regions":{"1":{"RegionID":1,"RegionCode":"pinned","Nodes":[{"Name":"pinned","RegionID":1,"HostName":"relay.example","DERPPort":443}]}}}`)
 	db, err := state.Open(context.Background(), directory)
@@ -52,21 +52,21 @@ func TestLoadTailcatRelayProfilesUsesPinnedMap(t *testing.T) {
 	if err := state.WriteRelayMap(t.Context(), db, data); err != nil {
 		t.Fatal(err)
 	}
-	profiles, profile, err := LoadTailcatRelayProfiles(t.Context(), db, false)
+	regions, regionCode, err := LoadTailcatRelayRegions(t.Context(), db, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if profile != "pinned" || profiles[profile] == nil {
-		t.Fatalf("profiles = %#v, selected = %q", profiles, profile)
+	if regionCode != "pinned" || regions[regionCode] == nil {
+		t.Fatalf("regions = %#v, selected = %q", regions, regionCode)
 	}
 }
 
 func TestSelectedRelayMapContainsOnlyRequestedRegion(t *testing.T) {
-	profiles := map[string]*tailcfg.DERPRegion{
+	regions := map[string]*tailcfg.DERPRegion{
 		"first":  {RegionID: 1, RegionCode: "first"},
 		"second": {RegionID: 2, RegionCode: "second"},
 	}
-	data, err := SelectedRelayMap(profiles, "second")
+	data, err := SelectedRelayMap(regions, "second")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,12 +80,12 @@ func TestSelectedRelayMapContainsOnlyRequestedRegion(t *testing.T) {
 }
 
 func TestSelectedRelayMapRejectsClientIncompatibleSize(t *testing.T) {
-	profiles := map[string]*tailcfg.DERPRegion{"large": {
+	regions := map[string]*tailcfg.DERPRegion{"large": {
 		RegionID: 1, RegionCode: "large", Nodes: []*tailcfg.DERPNode{{
 			Name: "large", RegionID: 1, HostName: strings.Repeat("x", maxSelectedRelayMapBytes), DERPPort: 443,
 		}},
 	}}
-	if _, err := SelectedRelayMap(profiles, "large"); err == nil {
+	if _, err := SelectedRelayMap(regions, "large"); err == nil {
 		t.Fatal("oversized selected relay map accepted")
 	}
 }

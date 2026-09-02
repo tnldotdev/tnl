@@ -43,8 +43,8 @@ const (
 )
 
 type RouteRef struct {
-	RouteID    string `json:"route_id"`
-	Generation uint64 `json:"generation"`
+	RouteID string `json:"route_id"`
+	Version uint64 `json:"version"`
 }
 
 type Message struct {
@@ -52,13 +52,13 @@ type Message struct {
 	Capacity         int                            `json:"capacity,omitempty"`
 	Route            *RouteRef                      `json:"route,omitempty"`
 	Endpoint         *transportv1.TailcatDescriptor `json:"endpoint,omitempty"`
-	ClientPrivateKey string                         `json:"client_private_key,omitempty"`
+	WorkerPrivateKey string                         `json:"worker_private_key,omitempty"`
 	Code             ErrorCode                      `json:"code,omitempty"`
 }
 
 type DataHeader struct {
-	RouteID    string `json:"route_id"`
-	Generation uint64 `json:"generation"`
+	RouteID string `json:"route_id"`
+	Version uint64 `json:"version"`
 }
 
 func WriteControl(writer io.Writer, message Message) error {
@@ -109,26 +109,26 @@ func (m Message) Validate() error {
 	// Message is a closed tagged union; variants reject unrelated fields.
 	switch m.Type {
 	case Hello:
-		if m.Capacity <= 0 || m.Route != nil || m.Endpoint != nil || m.ClientPrivateKey != "" || m.Code != "" {
+		if m.Capacity <= 0 || m.Route != nil || m.Endpoint != nil || m.WorkerPrivateKey != "" || m.Code != "" {
 			return errors.New("workerv1: invalid hello")
 		}
 	case Accepted, WorkerDraining:
-		if m.Capacity != 0 || m.Route != nil || m.Endpoint != nil || m.ClientPrivateKey != "" || m.Code != "" {
+		if m.Capacity != 0 || m.Route != nil || m.Endpoint != nil || m.WorkerPrivateKey != "" || m.Code != "" {
 			return fmt.Errorf("workerv1: invalid %s", m.Type)
 		}
 	case AttachRoute:
-		if m.Route == nil || m.Endpoint == nil || m.ClientPrivateKey == "" || m.Capacity != 0 || m.Code != "" {
+		if m.Route == nil || m.Endpoint == nil || m.WorkerPrivateKey == "" || m.Capacity != 0 || m.Code != "" {
 			return errors.New("workerv1: invalid attach_route")
 		}
 	case RouteReady, DetachRoute, RouteDrained:
-		if m.Route == nil || m.Capacity != 0 || m.Endpoint != nil || m.ClientPrivateKey != "" || m.Code != "" {
+		if m.Route == nil || m.Capacity != 0 || m.Endpoint != nil || m.WorkerPrivateKey != "" || m.Code != "" {
 			return fmt.Errorf("workerv1: invalid %s", m.Type)
 		}
 	case Error:
 		if m.Code != InvalidMessage && m.Code != StaleAssignment && m.Code != AtCapacity && m.Code != Internal {
 			return errors.New("workerv1: invalid error code")
 		}
-		if m.Capacity != 0 || m.Endpoint != nil || m.ClientPrivateKey != "" {
+		if m.Capacity != 0 || m.Endpoint != nil || m.WorkerPrivateKey != "" {
 			return errors.New("workerv1: invalid error")
 		}
 	default:
@@ -138,11 +138,11 @@ func (m Message) Validate() error {
 }
 
 func (h DataHeader) Validate() error {
-	return (&RouteRef{RouteID: h.RouteID, Generation: h.Generation}).validate()
+	return (&RouteRef{RouteID: h.RouteID, Version: h.Version}).validate()
 }
 
 func (r *RouteRef) validate() error {
-	if r == nil || strings.TrimSpace(r.RouteID) == "" || r.RouteID != strings.TrimSpace(r.RouteID) || r.Generation == 0 {
+	if r == nil || strings.TrimSpace(r.RouteID) == "" || r.RouteID != strings.TrimSpace(r.RouteID) || r.Version == 0 {
 		return errors.New("workerv1: invalid route reference")
 	}
 	return nil

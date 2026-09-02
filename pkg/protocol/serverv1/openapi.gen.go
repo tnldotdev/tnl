@@ -7,18 +7,36 @@ import (
 	"time"
 )
 
+// Defines values for AddHostnameRequestKind.
+const (
+	AddHostnameRequestKindManaged   AddHostnameRequestKind = "managed"
+	AddHostnameRequestKindTemporary AddHostnameRequestKind = "temporary"
+)
+
+// Valid indicates whether the value is a known member of the AddHostnameRequestKind enum.
+func (e AddHostnameRequestKind) Valid() bool {
+	switch e {
+	case AddHostnameRequestKindManaged:
+		return true
+	case AddHostnameRequestKindTemporary:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CapabilitiesHostnameAuthorization.
 const (
-	ExternalAssertion CapabilitiesHostnameAuthorization = "external_assertion"
-	LocalClaim        CapabilitiesHostnameAuthorization = "local_claim"
+	LocalHostnames      CapabilitiesHostnameAuthorization = "local_hostnames"
+	SignedAuthorization CapabilitiesHostnameAuthorization = "signed_authorization"
 )
 
 // Valid indicates whether the value is a known member of the CapabilitiesHostnameAuthorization enum.
 func (e CapabilitiesHostnameAuthorization) Valid() bool {
 	switch e {
-	case ExternalAssertion:
+	case LocalHostnames:
 		return true
-	case LocalClaim:
+	case SignedAuthorization:
 		return true
 	default:
 		return false
@@ -58,66 +76,48 @@ func (e CapabilitiesProtocolVersions) Valid() bool {
 	}
 }
 
-// Defines values for CertificateOrderState.
+// Defines values for CertificateIssuanceStatus.
 const (
-	Authorizing         CertificateOrderState = "authorizing"
-	Blocked             CertificateOrderState = "blocked"
-	Canceled            CertificateOrderState = "canceled"
-	CreatingOrder       CertificateOrderState = "creating_order"
-	Downloading         CertificateOrderState = "downloading"
-	Finalizing          CertificateOrderState = "finalizing"
-	Invalid             CertificateOrderState = "invalid"
-	ReadyToFinalize     CertificateOrderState = "ready_to_finalize"
-	Succeeded           CertificateOrderState = "succeeded"
-	Validating          CertificateOrderState = "validating"
-	WaitingForChallenge CertificateOrderState = "waiting_for_challenge"
-	WaitingForInstall   CertificateOrderState = "waiting_for_install"
+	CertificateIssuanceStatusAuthorizing         CertificateIssuanceStatus = "authorizing"
+	CertificateIssuanceStatusBlocked             CertificateIssuanceStatus = "blocked"
+	CertificateIssuanceStatusCanceled            CertificateIssuanceStatus = "canceled"
+	CertificateIssuanceStatusCreatingOrder       CertificateIssuanceStatus = "creating_order"
+	CertificateIssuanceStatusDownloading         CertificateIssuanceStatus = "downloading"
+	CertificateIssuanceStatusFailed              CertificateIssuanceStatus = "failed"
+	CertificateIssuanceStatusFinalizing          CertificateIssuanceStatus = "finalizing"
+	CertificateIssuanceStatusInstalled           CertificateIssuanceStatus = "installed"
+	CertificateIssuanceStatusReadyToFinalize     CertificateIssuanceStatus = "ready_to_finalize"
+	CertificateIssuanceStatusValidating          CertificateIssuanceStatus = "validating"
+	CertificateIssuanceStatusWaitingForChallenge CertificateIssuanceStatus = "waiting_for_challenge"
+	CertificateIssuanceStatusWaitingForInstall   CertificateIssuanceStatus = "waiting_for_install"
 )
 
-// Valid indicates whether the value is a known member of the CertificateOrderState enum.
-func (e CertificateOrderState) Valid() bool {
+// Valid indicates whether the value is a known member of the CertificateIssuanceStatus enum.
+func (e CertificateIssuanceStatus) Valid() bool {
 	switch e {
-	case Authorizing:
+	case CertificateIssuanceStatusAuthorizing:
 		return true
-	case Blocked:
+	case CertificateIssuanceStatusBlocked:
 		return true
-	case Canceled:
+	case CertificateIssuanceStatusCanceled:
 		return true
-	case CreatingOrder:
+	case CertificateIssuanceStatusCreatingOrder:
 		return true
-	case Downloading:
+	case CertificateIssuanceStatusDownloading:
 		return true
-	case Finalizing:
+	case CertificateIssuanceStatusFailed:
 		return true
-	case Invalid:
+	case CertificateIssuanceStatusFinalizing:
 		return true
-	case ReadyToFinalize:
+	case CertificateIssuanceStatusInstalled:
 		return true
-	case Succeeded:
+	case CertificateIssuanceStatusReadyToFinalize:
 		return true
-	case Validating:
+	case CertificateIssuanceStatusValidating:
 		return true
-	case WaitingForChallenge:
+	case CertificateIssuanceStatusWaitingForChallenge:
 		return true
-	case WaitingForInstall:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for CreateHostnameClaimRequestKind.
-const (
-	CreateHostnameClaimRequestKindEphemeral         CreateHostnameClaimRequestKind = "ephemeral"
-	CreateHostnameClaimRequestKindPersistentManaged CreateHostnameClaimRequestKind = "persistent_managed"
-)
-
-// Valid indicates whether the value is a known member of the CreateHostnameClaimRequestKind enum.
-func (e CreateHostnameClaimRequestKind) Valid() bool {
-	switch e {
-	case CreateHostnameClaimRequestKindEphemeral:
-		return true
-	case CreateHostnameClaimRequestKindPersistentManaged:
+	case CertificateIssuanceStatusWaitingForInstall:
 		return true
 	default:
 		return false
@@ -145,21 +145,21 @@ func (e DNSRecordType) Valid() bool {
 	}
 }
 
-// Defines values for DomainChallengeState.
+// Defines values for DomainVerificationStatus.
 const (
-	Invalidated DomainChallengeState = "invalidated"
-	PendingDns  DomainChallengeState = "pending_dns"
-	Verified    DomainChallengeState = "verified"
+	DomainVerificationStatusInvalidated DomainVerificationStatus = "invalidated"
+	DomainVerificationStatusPending     DomainVerificationStatus = "pending"
+	DomainVerificationStatusVerified    DomainVerificationStatus = "verified"
 )
 
-// Valid indicates whether the value is a known member of the DomainChallengeState enum.
-func (e DomainChallengeState) Valid() bool {
+// Valid indicates whether the value is a known member of the DomainVerificationStatus enum.
+func (e DomainVerificationStatus) Valid() bool {
 	switch e {
-	case Invalidated:
+	case DomainVerificationStatusInvalidated:
 		return true
-	case PendingDns:
+	case DomainVerificationStatusPending:
 		return true
-	case Verified:
+	case DomainVerificationStatusVerified:
 		return true
 	default:
 		return false
@@ -181,66 +181,66 @@ func (e HealthResponseStatus) Valid() bool {
 	}
 }
 
-// Defines values for HostnameClaimKind.
+// Defines values for HostnameKind.
 const (
-	HostnameClaimKindEphemeral              HostnameClaimKind = "ephemeral"
-	HostnameClaimKindPersistentCustomDomain HostnameClaimKind = "persistent_custom_domain"
-	HostnameClaimKindPersistentManaged      HostnameClaimKind = "persistent_managed"
+	HostnameKindCustomDomain HostnameKind = "custom_domain"
+	HostnameKindManaged      HostnameKind = "managed"
+	HostnameKindTemporary    HostnameKind = "temporary"
 )
 
-// Valid indicates whether the value is a known member of the HostnameClaimKind enum.
-func (e HostnameClaimKind) Valid() bool {
+// Valid indicates whether the value is a known member of the HostnameKind enum.
+func (e HostnameKind) Valid() bool {
 	switch e {
-	case HostnameClaimKindEphemeral:
+	case HostnameKindCustomDomain:
 		return true
-	case HostnameClaimKindPersistentCustomDomain:
+	case HostnameKindManaged:
 		return true
-	case HostnameClaimKindPersistentManaged:
+	case HostnameKindTemporary:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for HostnameClaimSource.
+// Defines values for HostnameSource.
 const (
-	Custom    HostnameClaimSource = "custom"
-	Generated HostnameClaimSource = "generated"
+	Generated HostnameSource = "generated"
+	User      HostnameSource = "user"
 )
 
-// Valid indicates whether the value is a known member of the HostnameClaimSource enum.
-func (e HostnameClaimSource) Valid() bool {
+// Valid indicates whether the value is a known member of the HostnameSource enum.
+func (e HostnameSource) Valid() bool {
 	switch e {
-	case Custom:
-		return true
 	case Generated:
 		return true
+	case User:
+		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for HostnameClaimState.
+// Defines values for HostnameStatus.
 const (
-	HostnameClaimStateActive        HostnameClaimState = "active"
-	HostnameClaimStateBurned        HostnameClaimState = "burned"
-	HostnameClaimStateHeld          HostnameClaimState = "held"
-	HostnameClaimStateQuarantined   HostnameClaimState = "quarantined"
-	HostnameClaimStateReleasedOwned HostnameClaimState = "released_owned"
+	HostnameStatusActive       HostnameStatus = "active"
+	HostnameStatusAvailable    HostnameStatus = "available"
+	HostnameStatusInactive     HostnameStatus = "inactive"
+	HostnameStatusPendingRoute HostnameStatus = "pending_route"
+	HostnameStatusRetired      HostnameStatus = "retired"
 )
 
-// Valid indicates whether the value is a known member of the HostnameClaimState enum.
-func (e HostnameClaimState) Valid() bool {
+// Valid indicates whether the value is a known member of the HostnameStatus enum.
+func (e HostnameStatus) Valid() bool {
 	switch e {
-	case HostnameClaimStateActive:
+	case HostnameStatusActive:
 		return true
-	case HostnameClaimStateBurned:
+	case HostnameStatusAvailable:
 		return true
-	case HostnameClaimStateHeld:
+	case HostnameStatusInactive:
 		return true
-	case HostnameClaimStateQuarantined:
+	case HostnameStatusPendingRoute:
 		return true
-	case HostnameClaimStateReleasedOwned:
+	case HostnameStatusRetired:
 		return true
 	default:
 		return false
@@ -258,7 +258,7 @@ const (
 	PermissionDenied       ProblemCode = "permission_denied"
 	PreconditionFailed     ProblemCode = "precondition_failed"
 	RateLimited            ProblemCode = "rate_limited"
-	StateConflict          ProblemCode = "state_conflict"
+	StatusConflict         ProblemCode = "status_conflict"
 	TemporarilyUnavailable ProblemCode = "temporarily_unavailable"
 	Unauthenticated        ProblemCode = "unauthenticated"
 )
@@ -284,7 +284,7 @@ func (e ProblemCode) Valid() bool {
 		return true
 	case RateLimited:
 		return true
-	case StateConflict:
+	case StatusConflict:
 		return true
 	case TemporarilyUnavailable:
 		return true
@@ -295,18 +295,18 @@ func (e ProblemCode) Valid() bool {
 	}
 }
 
-// Defines values for ReadinessChecksState.
+// Defines values for ReadinessChecksStatus.
 const (
-	ReadinessChecksStateFailed ReadinessChecksState = "failed"
-	ReadinessChecksStateOk     ReadinessChecksState = "ok"
+	ReadinessChecksStatusFailed ReadinessChecksStatus = "failed"
+	ReadinessChecksStatusOk     ReadinessChecksStatus = "ok"
 )
 
-// Valid indicates whether the value is a known member of the ReadinessChecksState enum.
-func (e ReadinessChecksState) Valid() bool {
+// Valid indicates whether the value is a known member of the ReadinessChecksStatus enum.
+func (e ReadinessChecksStatus) Valid() bool {
 	switch e {
-	case ReadinessChecksStateFailed:
+	case ReadinessChecksStatusFailed:
 		return true
-	case ReadinessChecksStateOk:
+	case ReadinessChecksStatusOk:
 		return true
 	default:
 		return false
@@ -331,36 +331,39 @@ func (e ReadinessResponseStatus) Valid() bool {
 	}
 }
 
-// Defines values for RouteState.
+// Defines values for RouteStatus.
 const (
-	RouteStateActive RouteState = "active"
+	RouteStatusActive RouteStatus = "active"
 )
 
-// Valid indicates whether the value is a known member of the RouteState enum.
-func (e RouteState) Valid() bool {
+// Valid indicates whether the value is a known member of the RouteStatus enum.
+func (e RouteStatus) Valid() bool {
 	switch e {
-	case RouteStateActive:
+	case RouteStatusActive:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for RouteLeaseStatus.
+// Defines values for RouteSessionStatus.
 const (
-	RouteLeaseStatusPending  RouteLeaseStatus = "pending"
-	RouteLeaseStatusReady    RouteLeaseStatus = "ready"
-	RouteLeaseStatusStarting RouteLeaseStatus = "starting"
+	RouteSessionStatusExpired  RouteSessionStatus = "expired"
+	RouteSessionStatusPending  RouteSessionStatus = "pending"
+	RouteSessionStatusReady    RouteSessionStatus = "ready"
+	RouteSessionStatusStarting RouteSessionStatus = "starting"
 )
 
-// Valid indicates whether the value is a known member of the RouteLeaseStatus enum.
-func (e RouteLeaseStatus) Valid() bool {
+// Valid indicates whether the value is a known member of the RouteSessionStatus enum.
+func (e RouteSessionStatus) Valid() bool {
 	switch e {
-	case RouteLeaseStatusPending:
+	case RouteSessionStatusExpired:
 		return true
-	case RouteLeaseStatusReady:
+	case RouteSessionStatusPending:
 		return true
-	case RouteLeaseStatusStarting:
+	case RouteSessionStatusReady:
+		return true
+	case RouteSessionStatusStarting:
 		return true
 	default:
 		return false
@@ -429,13 +432,17 @@ func (e TransportCapabilitiesVersion) Valid() bool {
 
 // AcmeCapabilities defines model for AcmeCapabilities.
 type AcmeCapabilities struct {
-	Profile string `json:"profile"`
+	AcmeProfile string `json:"acme_profile"`
 }
 
-// AcquireLeaseRequest defines model for AcquireLeaseRequest.
-type AcquireLeaseRequest struct {
-	RouteToken string `json:"route_token"`
+// AddHostnameRequest defines model for AddHostnameRequest.
+type AddHostnameRequest struct {
+	Kind AddHostnameRequestKind `json:"kind"`
+	Name *string                `json:"name,omitempty"`
 }
+
+// AddHostnameRequestKind defines model for AddHostnameRequest.Kind.
+type AddHostnameRequestKind string
 
 // Capabilities defines model for Capabilities.
 type Capabilities struct {
@@ -443,18 +450,18 @@ type Capabilities struct {
 	AnonymousPublic         bool                                `json:"anonymous_public"`
 	CustomDomainSupport     bool                                `json:"custom_domain_support"`
 	DnsReady                bool                                `json:"dns_ready"`
-	EphemeralNameSupport    bool                                `json:"ephemeral_name_support"`
 	HostedAuthorityEndpoint *string                             `json:"hosted_authority_endpoint,omitempty"`
 	HostnameAuthorization   []CapabilitiesHostnameAuthorization `json:"hostname_authorization"`
+	HostnameSuffix          string                              `json:"hostname_suffix"`
 	IngressIpv4             []string                            `json:"ingress_ipv4"`
 	IngressIpv6             []string                            `json:"ingress_ipv6"`
-	LocalClaim              *LocalClaimCapabilities             `json:"local_claim,omitempty"`
-	MaximumChildDepth       int                                 `json:"maximum_child_depth"`
+	LocalHostnames          *LocalHostnameCapabilities          `json:"local_hostnames,omitempty"`
+	MaximumSubdomainDepth   int                                 `json:"maximum_subdomain_depth"`
 	NameAuthorityType       CapabilitiesNameAuthorityType       `json:"name_authority_type"`
 	Oidc                    *OIDCCapabilities                   `json:"oidc,omitempty"`
 	PersistentBaseSupport   bool                                `json:"persistent_base_support"`
 	ProtocolVersions        []CapabilitiesProtocolVersions      `json:"protocol_versions"`
-	RouteSuffix             string                              `json:"route_suffix"`
+	TemporaryNameSupport    bool                                `json:"temporary_name_support"`
 	Transport               TransportCapabilities               `json:"transport"`
 }
 
@@ -477,59 +484,55 @@ type CertificateChallenge struct {
 
 // CertificateInstalledRequest defines model for CertificateInstalledRequest.
 type CertificateInstalledRequest struct {
-	Generation int    `json:"generation"`
-	OrderId    string `json:"order_id"`
+	IssuanceId string `json:"issuance_id"`
+	Version    int    `json:"version"`
 }
 
-// CertificateOrder defines model for CertificateOrder.
-type CertificateOrder struct {
-	CertificatePem *string               `json:"certificate_pem,omitempty"`
-	Challenge      *CertificateChallenge `json:"challenge,omitempty"`
-	CreatedAt      time.Time             `json:"created_at"`
-	Error          *string               `json:"error,omitempty"`
-	Generation     int                   `json:"generation"`
-	Hostname       string                `json:"hostname"`
-	Id             string                `json:"id"`
-	NotAfter       *time.Time            `json:"not_after,omitempty"`
-	NotBefore      *time.Time            `json:"not_before,omitempty"`
-	Profile        string                `json:"profile"`
-	RenewAt        *time.Time            `json:"renew_at,omitempty"`
-	RetryAt        *time.Time            `json:"retry_at,omitempty"`
-	RouteId        string                `json:"route_id"`
-	State          CertificateOrderState `json:"state"`
-	UpdatedAt      time.Time             `json:"updated_at"`
+// CertificateIssuance defines model for CertificateIssuance.
+type CertificateIssuance struct {
+	AcmeProfile    string                    `json:"acme_profile"`
+	CertificatePem *string                   `json:"certificate_pem,omitempty"`
+	Challenge      *CertificateChallenge     `json:"challenge,omitempty"`
+	CreatedAt      time.Time                 `json:"created_at"`
+	Error          *string                   `json:"error,omitempty"`
+	Hostname       string                    `json:"hostname"`
+	Id             string                    `json:"id"`
+	NotAfter       *time.Time                `json:"not_after,omitempty"`
+	NotBefore      *time.Time                `json:"not_before,omitempty"`
+	RenewAt        *time.Time                `json:"renew_at,omitempty"`
+	RetryAt        *time.Time                `json:"retry_at,omitempty"`
+	RouteId        string                    `json:"route_id"`
+	Status         CertificateIssuanceStatus `json:"status"`
+	UpdatedAt      time.Time                 `json:"updated_at"`
+	Version        int                       `json:"version"`
 }
 
-// CertificateOrderState defines model for CertificateOrder.State.
-type CertificateOrderState string
+// CertificateIssuanceStatus defines model for CertificateIssuance.Status.
+type CertificateIssuanceStatus string
 
-// CreateCertificateOrderRequest defines model for CreateCertificateOrderRequest.
-type CreateCertificateOrderRequest struct {
-	Csr        string `json:"csr"`
-	Generation int    `json:"generation"`
-	Profile    string `json:"profile"`
-	RouteId    string `json:"route_id"`
+// CreateCertificateIssuanceRequest defines model for CreateCertificateIssuanceRequest.
+type CreateCertificateIssuanceRequest struct {
+	AcmeProfile string `json:"acme_profile"`
+	Csr         string `json:"csr"`
+	RouteId     string `json:"route_id"`
+	Version     int    `json:"version"`
 }
 
-// CreateDomainChallengeRequest defines model for CreateDomainChallengeRequest.
-type CreateDomainChallengeRequest struct {
+// CreateDomainVerificationRequest defines model for CreateDomainVerificationRequest.
+type CreateDomainVerificationRequest struct {
 	Domain string `json:"domain"`
 }
 
-// CreateHostnameClaimRequest defines model for CreateHostnameClaimRequest.
-type CreateHostnameClaimRequest struct {
-	Kind CreateHostnameClaimRequestKind `json:"kind"`
-	Name *string                        `json:"name,omitempty"`
-}
-
-// CreateHostnameClaimRequestKind defines model for CreateHostnameClaimRequest.Kind.
-type CreateHostnameClaimRequestKind string
-
 // CreateRouteRequest defines model for CreateRouteRequest.
 type CreateRouteRequest struct {
-	DisplayTarget string `json:"display_target"`
-	Hostname      string `json:"hostname"`
-	RouteToken    string `json:"route_token"`
+	Hostname    string `json:"hostname"`
+	LocalTarget string `json:"local_target"`
+	RouteToken  string `json:"route_token"`
+}
+
+// CreateRouteSessionRequest defines model for CreateRouteSessionRequest.
+type CreateRouteSessionRequest struct {
+	RouteToken string `json:"route_token"`
 }
 
 // CredentialID defines model for CredentialID.
@@ -545,22 +548,22 @@ type DNSRecord struct {
 // DNSRecordType defines model for DNSRecord.Type.
 type DNSRecordType string
 
-// DomainChallenge defines model for DomainChallenge.
-type DomainChallenge struct {
-	Apex               bool                 `json:"apex"`
-	ClaimId            *HostnameClaimID     `json:"claim_id,omitempty"`
-	CreatedAt          time.Time            `json:"created_at"`
-	Domain             string               `json:"domain"`
-	Id                 string               `json:"id"`
-	InvalidatedAt      *time.Time           `json:"invalidated_at,omitempty"`
-	Records            []DNSRecord          `json:"records"`
-	State              DomainChallengeState `json:"state"`
-	VerificationTarget string               `json:"verification_target"`
-	VerifiedAt         *time.Time           `json:"verified_at,omitempty"`
+// DomainVerification defines model for DomainVerification.
+type DomainVerification struct {
+	Apex               bool                     `json:"apex"`
+	CreatedAt          time.Time                `json:"created_at"`
+	Domain             string                   `json:"domain"`
+	HostnameId         *HostnameID              `json:"hostname_id,omitempty"`
+	Id                 string                   `json:"id"`
+	InvalidatedAt      *time.Time               `json:"invalidated_at,omitempty"`
+	Records            []DNSRecord              `json:"records"`
+	Status             DomainVerificationStatus `json:"status"`
+	VerificationTarget string                   `json:"verification_target"`
+	VerifiedAt         *time.Time               `json:"verified_at,omitempty"`
 }
 
-// DomainChallengeState defines model for DomainChallenge.State.
-type DomainChallengeState string
+// DomainVerificationStatus defines model for DomainVerification.Status.
+type DomainVerificationStatus string
 
 // HealthResponse defines model for HealthResponse.
 type HealthResponse struct {
@@ -575,51 +578,38 @@ type HeartbeatResponse struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
-// HostnameClaim defines model for HostnameClaim.
-type HostnameClaim struct {
-	ActivatedAt *time.Time          `json:"activated_at,omitempty"`
-	CreatedAt   time.Time           `json:"created_at"`
-	Hostname    string              `json:"hostname"`
-	Id          HostnameClaimID     `json:"id"`
-	Kind        HostnameClaimKind   `json:"kind"`
-	ReleasedAt  *time.Time          `json:"released_at,omitempty"`
-	Source      HostnameClaimSource `json:"source"`
-	State       HostnameClaimState  `json:"state"`
+// Hostname defines model for Hostname.
+type Hostname struct {
+	ActivatedAt   *time.Time     `json:"activated_at,omitempty"`
+	CreatedAt     time.Time      `json:"created_at"`
+	DeactivatedAt *time.Time     `json:"deactivated_at,omitempty"`
+	Hostname      string         `json:"hostname"`
+	Id            HostnameID     `json:"id"`
+	Kind          HostnameKind   `json:"kind"`
+	Source        HostnameSource `json:"source"`
+	Status        HostnameStatus `json:"status"`
 }
 
-// HostnameClaimKind defines model for HostnameClaim.Kind.
-type HostnameClaimKind string
+// HostnameKind defines model for Hostname.Kind.
+type HostnameKind string
 
-// HostnameClaimSource defines model for HostnameClaim.Source.
-type HostnameClaimSource string
+// HostnameSource defines model for Hostname.Source.
+type HostnameSource string
 
-// HostnameClaimState defines model for HostnameClaim.State.
-type HostnameClaimState string
+// HostnameStatus defines model for Hostname.Status.
+type HostnameStatus string
 
-// HostnameClaimID defines model for HostnameClaimID.
-type HostnameClaimID = string
+// HostnameID defines model for HostnameID.
+type HostnameID = string
 
-// HostnameClaimPage defines model for HostnameClaimPage.
-type HostnameClaimPage struct {
-	Claims     []HostnameClaim  `json:"claims"`
-	NextCursor *HostnameClaimID `json:"next_cursor,omitempty"`
+// HostnamePage defines model for HostnamePage.
+type HostnamePage struct {
+	Hostnames  []Hostname  `json:"hostnames"`
+	NextCursor *HostnameID `json:"next_cursor,omitempty"`
 }
 
-// LeaseGenerationRequest defines model for LeaseGenerationRequest.
-type LeaseGenerationRequest struct {
-	Generation int `json:"generation"`
-}
-
-// LeaseSetup defines model for LeaseSetup.
-type LeaseSetup struct {
-	IngressPublicKey string     `json:"ingress_public_key"`
-	Lease            RouteLease `json:"lease"`
-	LeaseToken       string     `json:"lease_token"`
-	Route            Route      `json:"route"`
-}
-
-// LocalClaimCapabilities defines model for LocalClaimCapabilities.
-type LocalClaimCapabilities struct {
+// LocalHostnameCapabilities defines model for LocalHostnameCapabilities.
+type LocalHostnameCapabilities struct {
 	Suffix string `json:"suffix"`
 }
 
@@ -649,11 +639,11 @@ type ProblemCode string
 
 // ReadinessChecks defines model for ReadinessChecks.
 type ReadinessChecks struct {
-	State ReadinessChecksState `json:"state"`
+	Status ReadinessChecksStatus `json:"status"`
 }
 
-// ReadinessChecksState defines model for ReadinessChecks.State.
-type ReadinessChecksState string
+// ReadinessChecksStatus defines model for ReadinessChecks.Status.
+type ReadinessChecksStatus string
 
 // ReadinessResponse defines model for ReadinessResponse.
 type ReadinessResponse struct {
@@ -666,41 +656,54 @@ type ReadinessResponseStatus string
 
 // RegisterTransportRequest defines model for RegisterTransportRequest.
 type RegisterTransportRequest struct {
-	Endpoint   TailcatDescriptor `json:"endpoint"`
-	Generation int               `json:"generation"`
+	Endpoint TailcatDescriptor `json:"endpoint"`
+	Version  int               `json:"version"`
 }
 
 // Route defines model for Route.
 type Route struct {
-	CreatedAt     time.Time  `json:"created_at"`
-	DisplayTarget string     `json:"display_target"`
-	Generation    int        `json:"generation"`
-	Hostname      string     `json:"hostname"`
-	Id            string     `json:"id"`
-	State         RouteState `json:"state"`
+	CreatedAt   time.Time   `json:"created_at"`
+	Hostname    string      `json:"hostname"`
+	Id          string      `json:"id"`
+	LocalTarget string      `json:"local_target"`
+	Status      RouteStatus `json:"status"`
+	Version     int         `json:"version"`
 }
 
-// RouteState defines model for Route.State.
-type RouteState string
+// RouteStatus defines model for Route.Status.
+type RouteStatus string
 
-// RouteLease defines model for RouteLease.
-type RouteLease struct {
-	CreatedAt  time.Time        `json:"created_at"`
-	ExpiresAt  time.Time        `json:"expires_at"`
-	Generation int              `json:"generation"`
-	Id         string           `json:"id"`
-	RouteId    string           `json:"route_id"`
-	Status     RouteLeaseStatus `json:"status"`
+// RouteSession defines model for RouteSession.
+type RouteSession struct {
+	CreatedAt time.Time          `json:"created_at"`
+	ExpiresAt time.Time          `json:"expires_at"`
+	Id        string             `json:"id"`
+	RouteId   string             `json:"route_id"`
+	Status    RouteSessionStatus `json:"status"`
+	Version   int                `json:"version"`
 }
 
-// RouteLeaseStatus defines model for RouteLease.Status.
-type RouteLeaseStatus string
+// RouteSessionStatus defines model for RouteSession.Status.
+type RouteSessionStatus string
+
+// RouteVersionRequest defines model for RouteVersionRequest.
+type RouteVersionRequest struct {
+	Version int `json:"version"`
+}
+
+// SessionSetup defines model for SessionSetup.
+type SessionSetup struct {
+	Route           Route        `json:"route"`
+	Session         RouteSession `json:"session"`
+	SessionToken    string       `json:"session_token"`
+	WorkerPublicKey string       `json:"worker_public_key"`
+}
 
 // TailcatDescriptor defines model for TailcatDescriptor.
 type TailcatDescriptor struct {
-	RelayProfile    string                   `json:"relay_profile"`
-	ServerPublicKey string                   `json:"server_public_key"`
-	Version         TailcatDescriptorVersion `json:"version"`
+	PublisherPublicKey string                   `json:"publisher_public_key"`
+	RelayRegion        string                   `json:"relay_region"`
+	Version            TailcatDescriptorVersion `json:"version"`
 }
 
 // TailcatDescriptorVersion defines model for TailcatDescriptor.Version.
@@ -724,9 +727,9 @@ type TokenExchangeResponseTokenType string
 
 // TransportCapabilities defines model for TransportCapabilities.
 type TransportCapabilities struct {
-	RelayProfile string                       `json:"relay_profile"`
-	Type         TransportCapabilitiesType    `json:"type"`
-	Version      TransportCapabilitiesVersion `json:"version"`
+	RelayRegion string                       `json:"relay_region"`
+	Type        TransportCapabilitiesType    `json:"type"`
+	Version     TransportCapabilitiesVersion `json:"version"`
 }
 
 // TransportCapabilitiesType defines model for TransportCapabilities.Type.
@@ -735,11 +738,11 @@ type TransportCapabilitiesType string
 // TransportCapabilitiesVersion defines model for TransportCapabilities.Version.
 type TransportCapabilitiesVersion int
 
-// CertificateOrderID defines model for CertificateOrderID.
-type CertificateOrderID = string
+// CertificateIssuanceID defines model for CertificateIssuanceID.
+type CertificateIssuanceID = string
 
-// DomainChallengeID defines model for DomainChallengeID.
-type DomainChallengeID = string
+// DomainVerificationID defines model for DomainVerificationID.
+type DomainVerificationID = string
 
 // RouteID defines model for RouteID.
 type RouteID = string
@@ -747,18 +750,18 @@ type RouteID = string
 // BearerProblem defines model for BearerProblem.
 type BearerProblem = Problem
 
-// CreateDomainChallengeParams defines parameters for CreateDomainChallenge.
-type CreateDomainChallengeParams struct {
+// CreateDomainVerificationParams defines parameters for CreateDomainVerification.
+type CreateDomainVerificationParams struct {
 	IdempotencyKey string `json:"Idempotency-Key"`
 }
 
-// ListHostnameClaimsParams defines parameters for ListHostnameClaims.
-type ListHostnameClaimsParams struct {
-	Cursor *HostnameClaimID `form:"cursor,omitempty" json:"cursor,omitempty"`
+// ListHostnamesParams defines parameters for ListHostnames.
+type ListHostnamesParams struct {
+	Cursor *HostnameID `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
-// CreateHostnameClaimParams defines parameters for CreateHostnameClaim.
-type CreateHostnameClaimParams struct {
+// AddHostnameParams defines parameters for AddHostname.
+type AddHostnameParams struct {
 	IdempotencyKey string `json:"Idempotency-Key"`
 }
 
@@ -768,14 +771,14 @@ type ExchangeOIDCTokenJSONRequestBody = OIDCTokenExchangeRequest
 // ExchangeLoginTokenJSONRequestBody defines body for ExchangeLoginToken for application/json ContentType.
 type ExchangeLoginTokenJSONRequestBody = TokenExchangeRequest
 
-// CreateCertificateOrderJSONRequestBody defines body for CreateCertificateOrder for application/json ContentType.
-type CreateCertificateOrderJSONRequestBody = CreateCertificateOrderRequest
+// CreateCertificateIssuanceJSONRequestBody defines body for CreateCertificateIssuance for application/json ContentType.
+type CreateCertificateIssuanceJSONRequestBody = CreateCertificateIssuanceRequest
 
-// CreateDomainChallengeJSONRequestBody defines body for CreateDomainChallenge for application/json ContentType.
-type CreateDomainChallengeJSONRequestBody = CreateDomainChallengeRequest
+// CreateDomainVerificationJSONRequestBody defines body for CreateDomainVerification for application/json ContentType.
+type CreateDomainVerificationJSONRequestBody = CreateDomainVerificationRequest
 
-// CreateHostnameClaimJSONRequestBody defines body for CreateHostnameClaim for application/json ContentType.
-type CreateHostnameClaimJSONRequestBody = CreateHostnameClaimRequest
+// AddHostnameJSONRequestBody defines body for AddHostname for application/json ContentType.
+type AddHostnameJSONRequestBody = AddHostnameRequest
 
 // CreateRouteJSONRequestBody defines body for CreateRoute for application/json ContentType.
 type CreateRouteJSONRequestBody = CreateRouteRequest
@@ -783,14 +786,14 @@ type CreateRouteJSONRequestBody = CreateRouteRequest
 // MarkRouteCertificateInstalledJSONRequestBody defines body for MarkRouteCertificateInstalled for application/json ContentType.
 type MarkRouteCertificateInstalledJSONRequestBody = CertificateInstalledRequest
 
-// HeartbeatRouteLeaseJSONRequestBody defines body for HeartbeatRouteLease for application/json ContentType.
-type HeartbeatRouteLeaseJSONRequestBody = LeaseGenerationRequest
-
-// AcquireRouteLeaseJSONRequestBody defines body for AcquireRouteLease for application/json ContentType.
-type AcquireRouteLeaseJSONRequestBody = AcquireLeaseRequest
+// HeartbeatRouteSessionJSONRequestBody defines body for HeartbeatRouteSession for application/json ContentType.
+type HeartbeatRouteSessionJSONRequestBody = RouteVersionRequest
 
 // MarkRouteReadyJSONRequestBody defines body for MarkRouteReady for application/json ContentType.
-type MarkRouteReadyJSONRequestBody = LeaseGenerationRequest
+type MarkRouteReadyJSONRequestBody = RouteVersionRequest
+
+// CreateRouteSessionJSONRequestBody defines body for CreateRouteSession for application/json ContentType.
+type CreateRouteSessionJSONRequestBody = CreateRouteSessionRequest
 
 // RegisterRouteTransportJSONRequestBody defines body for RegisterRouteTransport for application/json ContentType.
 type RegisterRouteTransportJSONRequestBody = RegisterTransportRequest

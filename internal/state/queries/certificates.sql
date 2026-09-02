@@ -20,14 +20,14 @@ UPDATE acme_accounts
 SET email = ?, kid = ?, accepted_terms_url = ?, updated_at = ?
 WHERE directory_url = ?;
 
--- name: InsertCertificateJob :exec
-INSERT INTO certificate_jobs (
+-- name: InsertCertificateIssuance :exec
+INSERT INTO certificate_issuances (
     id,
     route_id,
-    generation,
+    version,
     hostname,
-    profile,
-    state,
+    acme_profile,
+    status,
     csr_der,
     csr_hash,
     spki_hash,
@@ -35,65 +35,65 @@ INSERT INTO certificate_jobs (
     updated_at
 )
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT (route_id, generation, csr_hash) DO NOTHING;
+ON CONFLICT (route_id, version, csr_hash) DO NOTHING;
 
 -- name: GetActiveRouteHostname :one
 SELECT hostname
 FROM routes
-WHERE id = ? AND generation = ? AND state = 'active';
+WHERE id = ? AND version = ? AND status = 'active';
 
--- name: GetCertificateJob :one
-SELECT * FROM certificate_jobs
+-- name: GetCertificateIssuance :one
+SELECT * FROM certificate_issuances
 WHERE id = ?;
 
--- name: FindBoundCertificateJob :one
-SELECT * FROM certificate_jobs
-WHERE route_id = ? AND generation = ? AND csr_hash = ?;
+-- name: FindBoundCertificateIssuance :one
+SELECT * FROM certificate_issuances
+WHERE route_id = ? AND version = ? AND csr_hash = ?;
 
--- name: FindResumableCertificateJob :one
-SELECT * FROM certificate_jobs
+-- name: FindResumableCertificateIssuance :one
+SELECT * FROM certificate_issuances
 WHERE route_id = ? AND csr_hash = ? AND certificate_pem IS NULL
-    AND state NOT IN ('succeeded', 'invalid', 'blocked', 'canceled')
+    AND status NOT IN ('installed', 'failed', 'blocked', 'canceled')
     AND (order_expires_at IS NULL OR order_expires_at > CAST(sqlc.arg(now) AS INTEGER))
     AND (challenge_expires_at IS NULL OR challenge_expires_at > CAST(sqlc.arg(now) AS INTEGER))
 ORDER BY created_at DESC
 LIMIT 1;
 
--- name: RebindCertificateJob :execrows
-UPDATE certificate_jobs
-SET generation = ?, updated_at = ?
+-- name: RebindCertificateIssuance :execrows
+UPDATE certificate_issuances
+SET version = ?, updated_at = ?
 WHERE id = ?;
 
--- name: HasBlockingCertificateJob :one
+-- name: HasBlockingCertificateIssuance :one
 SELECT CAST(EXISTS (
     SELECT 1
-    FROM certificate_jobs
-    WHERE route_id = ? AND generation = ? AND csr_hash != ?
+    FROM certificate_issuances
+    WHERE route_id = ? AND version = ? AND csr_hash != ?
         AND (
-            state NOT IN ('succeeded', 'invalid', 'blocked', 'canceled')
-            OR (state = 'succeeded' AND renew_at > CAST(sqlc.arg(now) AS INTEGER))
+            status NOT IN ('installed', 'failed', 'blocked', 'canceled')
+            OR (status = 'installed' AND renew_at > CAST(sqlc.arg(now) AS INTEGER))
         )
 ) AS INTEGER);
 
 -- name: GetRecentCertificateAttempts :one
 SELECT COUNT(*), CAST(COALESCE(MIN(created_at), 0) AS INTEGER) AS earliest_created_at
-FROM certificate_jobs
+FROM certificate_issuances
 WHERE route_id = ? AND order_attempts > 0 AND created_at >= ?;
 
--- name: FindReusableCertificateJob :one
-SELECT * FROM certificate_jobs
+-- name: FindReusableCertificateIssuance :one
+SELECT * FROM certificate_issuances
 WHERE route_id = sqlc.arg(route_id)
     AND csr_hash = sqlc.arg(csr_hash)
     AND certificate_pem IS NOT NULL
     AND not_after > CAST(sqlc.arg(valid_after) AS INTEGER)
-    AND state IN ('waiting_for_install', 'succeeded')
+    AND status IN ('waiting_for_install', 'installed')
 ORDER BY not_after DESC
 LIMIT 1;
 
--- name: UpdateCertificateJob :execrows
-UPDATE certificate_jobs
+-- name: UpdateCertificateIssuance :execrows
+UPDATE certificate_issuances
 SET
-    state = sqlc.arg(state),
+    status = sqlc.arg(status),
     order_url = sqlc.arg(order_url),
     acme_status = sqlc.arg(acme_status),
     order_attempts = sqlc.arg(order_attempts),

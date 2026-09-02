@@ -77,7 +77,7 @@ func FuzzDomainPolicy(f *testing.F) {
 					t.Fatalf("ChildDepth(%q, %q) = %d, want %d", hostname, base, depth, wantDepth)
 				}
 				if _, _, err := CustomDomain(hostname, base); !errors.Is(err, ErrUnclaimableDomain) {
-					t.Fatalf("route-suffix descendant %q was claimable beneath %q: %v", hostname, base, err)
+					t.Fatalf("hostname-suffix descendant %q was claimable beneath %q: %v", hostname, base, err)
 				}
 			}
 		}

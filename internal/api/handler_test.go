@@ -73,7 +73,7 @@ func TestHealthAndReadiness(t *testing.T) {
 	request = httptest.NewRequest(http.MethodGet, readinessPath, nil)
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusOK || response.Body.String() != `{"checks":{"state":"ok"},"status":"ready"}` {
+	if response.Code != http.StatusOK || response.Body.String() != `{"checks":{"status":"ok"},"status":"ready"}` {
 		t.Fatalf("readiness status = %d, body = %q", response.Code, response.Body.String())
 	}
 
@@ -81,7 +81,7 @@ func TestHealthAndReadiness(t *testing.T) {
 	request = httptest.NewRequest(http.MethodGet, readinessPath, nil)
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusServiceUnavailable || response.Body.String() != `{"checks":{"state":"failed"},"status":"not_ready"}` {
+	if response.Code != http.StatusServiceUnavailable || response.Body.String() != `{"checks":{"status":"failed"},"status":"not_ready"}` {
 		t.Fatalf("failed readiness status = %d, body = %q", response.Code, response.Body.String())
 	}
 }
@@ -323,9 +323,9 @@ func TestCertificateRateLimitResponse(t *testing.T) {
 	}
 }
 
-func TestCertificateStateResponseIsNotALeaseConflict(t *testing.T) {
+func TestCertificateStateResponseIsNotASessionConflict(t *testing.T) {
 	response := httptest.NewRecorder()
-	writeCertificateError(response, "req_test", certificates.ErrInvalidState)
+	writeCertificateError(response, "req_test", certificates.ErrInvalidStatus)
 	if response.Code != http.StatusPreconditionFailed {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusPreconditionFailed)
 	}
@@ -338,7 +338,7 @@ func TestCertificateStateResponseIsNotALeaseConflict(t *testing.T) {
 	}
 }
 
-func TestRequestIDGeneration(t *testing.T) {
+func TestRequestIDVersion(t *testing.T) {
 	handler := NewHandler(fixtureCapabilities(t), nil)
 	pattern := regexp.MustCompile(`^req_[A-Za-z0-9]+$`)
 
@@ -431,7 +431,7 @@ func TestProblemResponses(t *testing.T) {
 
 func TestCapabilitiesResponseIsBounded(t *testing.T) {
 	capabilities := fixtureCapabilities(t)
-	capabilities.Transport.RelayProfile = strings.Repeat("x", maxJSONResponseBytes)
+	capabilities.Transport.RelayRegion = strings.Repeat("x", maxJSONResponseBytes)
 	request := httptest.NewRequest(http.MethodGet, capabilitiesPath, nil)
 	response := httptest.NewRecorder()
 
@@ -540,14 +540,14 @@ func TestTokenExchangePersistsUsableAccessToken(t *testing.T) {
 	if credentialID.String() != issued.CredentialId {
 		t.Fatalf("credential ID = %q, want %q", credentialID, issued.CredentialId)
 	}
-	principal, err := state.AuthenticateAccessCredential(
+	identity, err := state.AuthenticateAccessCredential(
 		context.Background(), db, credentialID, hash, time.Now(),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if principal.ID != "principal_local" {
-		t.Fatalf("principal ID = %q, want principal_local", principal.ID)
+	if identity.ID != "identity_local" {
+		t.Fatalf("identity ID = %q, want identity_local", identity.ID)
 	}
 }
 
@@ -660,13 +660,13 @@ func (s *oidcAuthServiceStub) ExchangeOIDC(_ context.Context, token string) (aut
 func (*oidcAuthServiceStub) Authenticate(
 	context.Context,
 	credentials.AccessToken,
-) (state.Principal, error) {
+) (state.Identity, error) {
 	panic("unexpected Authenticate call")
 }
 
 func (*oidcAuthServiceStub) Revoke(
 	context.Context,
-	state.Principal,
+	state.Identity,
 	credentials.CredentialID,
 ) error {
 	panic("unexpected Revoke call")
@@ -675,13 +675,13 @@ func (*oidcAuthServiceStub) Revoke(
 func (tokenExchangerFunc) Authenticate(
 	context.Context,
 	credentials.AccessToken,
-) (state.Principal, error) {
+) (state.Identity, error) {
 	panic("unexpected Authenticate call")
 }
 
 func (tokenExchangerFunc) Revoke(
 	context.Context,
-	state.Principal,
+	state.Identity,
 	credentials.CredentialID,
 ) error {
 	panic("unexpected Revoke call")
@@ -726,8 +726,8 @@ type authenticatingAuthService struct {
 func (authenticatingAuthService) Authenticate(
 	context.Context,
 	credentials.AccessToken,
-) (state.Principal, error) {
-	return state.Principal{ID: "principal_test"}, nil
+) (state.Identity, error) {
+	return state.Identity{ID: "identity_test"}, nil
 }
 
 type failingListRouteService struct {

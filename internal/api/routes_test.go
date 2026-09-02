@@ -44,35 +44,35 @@ func TestRouteAPILifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	coordinator, err := routes.NewCoordinator(context.Background(), store, "boot")
+	coordinator, err := routes.NewCoordinator(context.Background(), store, "instance")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := coordinator.AddOwner("local", apiRouteOwner{}); err != nil {
+	if err := coordinator.AddWorker("local", apiRouteWorker{}); err != nil {
 		t.Fatal(err)
 	}
 	handler := NewHandlerWithRoutes(fixtureCapabilities(t), authService, coordinator)
-	claimRequest(t, handler, issued.Token.String(), "route")
+	addHostnameRequest(t, handler, issued.Token.String(), "route")
 
 	routeToken, _, _, err := credentials.NewRouteToken()
 	if err != nil {
 		t.Fatal(err)
 	}
-	created := routeRequest[serverv1.LeaseSetup](t, handler, issued.Token.String(), http.MethodPost, routesPath, serverv1.CreateRouteRequest{
-		Hostname: "route.example", DisplayTarget: "localhost:3000", RouteToken: routeToken.String(),
+	created := routeRequest[serverv1.SessionSetup](t, handler, issued.Token.String(), http.MethodPost, routesPath, serverv1.CreateRouteRequest{
+		Hostname: "route.example", LocalTarget: "localhost:3000", RouteToken: routeToken.String(),
 	}, http.StatusCreated)
-	if created.Route.Generation != 1 || created.Lease.Generation != 1 {
+	if created.Route.Version != 1 || created.Session.Version != 1 {
 		t.Fatalf("created setup = %#v", created)
 	}
 	serverKey := key.NewNode().Public().String()
-	routeRequest[struct{}](t, handler, created.LeaseToken, http.MethodPost, routesPath+"/"+created.Route.Id+"/transport", serverv1.RegisterTransportRequest{
-		Generation: 1,
+	routeRequest[struct{}](t, handler, created.SessionToken, http.MethodPost, routesPath+"/"+created.Route.Id+"/transport", serverv1.RegisterTransportRequest{
+		Version: 1,
 		Endpoint: serverv1.TailcatDescriptor{
-			Version: serverv1.TailcatDescriptorVersionN1, ServerPublicKey: serverKey, RelayProfile: "default",
+			Version: serverv1.TailcatDescriptorVersionN1, PublisherPublicKey: serverKey, RelayRegion: "default",
 		},
 	}, http.StatusNoContent)
-	routeRequest[struct{}](t, handler, created.LeaseToken, http.MethodPost, routesPath+"/"+created.Route.Id+"/ready", serverv1.LeaseGenerationRequest{Generation: 1}, http.StatusNoContent)
-	heartbeat := routeRequest[serverv1.HeartbeatResponse](t, handler, created.LeaseToken, http.MethodPost, routesPath+"/"+created.Route.Id+"/heartbeat", serverv1.LeaseGenerationRequest{Generation: 1}, http.StatusOK)
+	routeRequest[struct{}](t, handler, created.SessionToken, http.MethodPost, routesPath+"/"+created.Route.Id+"/ready", serverv1.RouteVersionRequest{Version: 1}, http.StatusNoContent)
+	heartbeat := routeRequest[serverv1.HeartbeatResponse](t, handler, created.SessionToken, http.MethodPost, routesPath+"/"+created.Route.Id+"/heartbeat", serverv1.RouteVersionRequest{Version: 1}, http.StatusOK)
 	if heartbeat.ExpiresAt.IsZero() {
 		t.Fatal("heartbeat omitted expiry")
 	}
@@ -80,16 +80,16 @@ func TestRouteAPILifecycle(t *testing.T) {
 	if len(listed) != 1 || listed[0].Id != created.Route.Id {
 		t.Fatalf("listed routes = %#v", listed)
 	}
-	replacement := routeRequest[serverv1.LeaseSetup](t, handler, issued.Token.String(), http.MethodPost, routesPath+"/"+created.Route.Id+"/leases", serverv1.AcquireLeaseRequest{
+	replacement := routeRequest[serverv1.SessionSetup](t, handler, issued.Token.String(), http.MethodPost, routesPath+"/"+created.Route.Id+"/sessions", serverv1.CreateRouteSessionRequest{
 		RouteToken: routeToken.String(),
 	}, http.StatusCreated)
-	if replacement.Lease.Generation != 2 {
+	if replacement.Session.Version != 2 {
 		t.Fatalf("replacement setup = %#v", replacement)
 	}
 	routeRequest[struct{}](t, handler, issued.Token.String(), http.MethodDelete, routesPath+"/"+created.Route.Id, nil, http.StatusNoContent)
 }
 
-func TestDomainClaimListAndRelease(t *testing.T) {
+func TestHostnameListAndRemove(t *testing.T) {
 	ctx := context.Background()
 	db, err := state.Open(ctx, filepath.Join(t.TempDir(), "state"))
 	if err != nil {
@@ -108,51 +108,57 @@ func TestDomainClaimListAndRelease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal, err := authService.Authenticate(ctx, issued.Token)
+	identity, err := authService.Authenticate(ctx, issued.Token)
 	if err != nil {
 		t.Fatal(err)
 	}
-	const claimID = "claim_00000000000000000000000000000001"
-	const managedID = "claim_00000000000000000000000000000002"
-	if _, err := db.ExecContext(ctx, `INSERT INTO hostname_claims
-		(id, principal_id, hostname, created_at, kind, state, source, activated_at)
+	const customID = "hostname_00000000000000000000000000000001"
+	const managedID = "hostname_00000000000000000000000000000002"
+	if _, err := db.ExecContext(ctx, `INSERT INTO hostnames
+		(id, identity_id, hostname, created_at, kind, status, source, activated_at)
 		VALUES
-		(?, ?, 'docs.other.com', 1, 'persistent_custom_domain', 'active', 'custom', 1),
-		(?, ?, 'managed.example', 1, 'persistent_managed', 'active', 'custom', 1)`,
-		claimID, principal.ID, managedID, principal.ID); err != nil {
+		(?, ?, 'docs.other.com', 1, 'custom_domain', 'active', 'user', 1),
+		(?, ?, 'managed.example', 1, 'managed', 'active', 'user', 1)`,
+		customID, identity.ID, managedID, identity.ID); err != nil {
 		t.Fatal(err)
 	}
 	store, err := routes.NewStore(db, "example")
 	if err != nil {
 		t.Fatal(err)
 	}
-	coordinator, err := routes.NewCoordinator(ctx, store, "boot")
+	coordinator, err := routes.NewCoordinator(ctx, store, "instance")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = coordinator.Close() })
 	handler := NewHandlerWithRoutes(fixtureCapabilities(t), authService, coordinator)
-	listed := routeRequest[[]serverv1.HostnameClaim](
-		t, handler, issued.Token.String(), http.MethodGet, domainClaimsPath, nil, http.StatusOK,
+	listed := routeRequest[serverv1.HostnamePage](
+		t, handler, issued.Token.String(), http.MethodGet, hostnamesPath, nil, http.StatusOK,
 	)
-	if len(listed) != 1 || listed[0].Id != claimID {
-		t.Fatalf("domain claims = %#v", listed)
+	if len(listed.Hostnames) != 2 || listed.Hostnames[0].Id != customID || listed.Hostnames[1].Id != managedID {
+		t.Fatalf("hostnames = %#v", listed)
 	}
-	routeRequest[serverv1.Problem](
-		t, handler, issued.Token.String(), http.MethodDelete, domainClaimsPath+"/"+managedID, nil, http.StatusNotFound,
-	)
 	routeRequest[struct{}](
-		t, handler, issued.Token.String(), http.MethodDelete, domainClaimsPath+"/"+claimID, nil, http.StatusNoContent,
+		t, handler, issued.Token.String(), http.MethodDelete, hostnamesPath+"/"+customID, nil, http.StatusNoContent,
 	)
-	listed = routeRequest[[]serverv1.HostnameClaim](
-		t, handler, issued.Token.String(), http.MethodGet, domainClaimsPath, nil, http.StatusOK,
+	listed = routeRequest[serverv1.HostnamePage](
+		t, handler, issued.Token.String(), http.MethodGet, hostnamesPath, nil, http.StatusOK,
 	)
-	if len(listed) != 0 {
-		t.Fatalf("released domain claims = %#v", listed)
+	if len(listed.Hostnames) != 1 || listed.Hostnames[0].Id != managedID || listed.Hostnames[0].Status != serverv1.HostnameStatusActive {
+		t.Fatalf("hostnames after custom-domain removal = %#v", listed)
+	}
+	routeRequest[struct{}](
+		t, handler, issued.Token.String(), http.MethodDelete, hostnamesPath+"/"+managedID, nil, http.StatusNoContent,
+	)
+	listed = routeRequest[serverv1.HostnamePage](
+		t, handler, issued.Token.String(), http.MethodGet, hostnamesPath, nil, http.StatusOK,
+	)
+	if len(listed.Hostnames) != 1 || listed.Hostnames[0].Id != managedID || listed.Hostnames[0].Status != serverv1.HostnameStatusInactive {
+		t.Fatalf("hostnames after managed removal = %#v", listed)
 	}
 }
 
-func TestCertificateAPIRequiresBoundCurrentLease(t *testing.T) {
+func TestCertificateAPIRequiresBoundCurrentSession(t *testing.T) {
 	db, err := state.Open(context.Background(), filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
@@ -174,53 +180,53 @@ func TestCertificateAPIRequiresBoundCurrentLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	coordinator, err := routes.NewCoordinator(context.Background(), store, "boot")
+	coordinator, err := routes.NewCoordinator(context.Background(), store, "instance")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = coordinator.Close() })
 	certificates := &apiCertificateService{}
 	handler := NewHandlerWithServices(fixtureCapabilities(t), authService, coordinator, certificates)
-	claimRequest(t, handler, issued.Token.String(), "route")
+	addHostnameRequest(t, handler, issued.Token.String(), "route")
 	routeToken, _, _, err := credentials.NewRouteToken()
 	if err != nil {
 		t.Fatal(err)
 	}
-	created := routeRequest[serverv1.LeaseSetup](t, handler, issued.Token.String(), http.MethodPost, routesPath, serverv1.CreateRouteRequest{
-		Hostname: "route.example", DisplayTarget: "localhost:3000", RouteToken: routeToken.String(),
+	created := routeRequest[serverv1.SessionSetup](t, handler, issued.Token.String(), http.MethodPost, routesPath, serverv1.CreateRouteRequest{
+		Hostname: "route.example", LocalTarget: "localhost:3000", RouteToken: routeToken.String(),
 	}, http.StatusCreated)
-	request := serverv1.CreateCertificateOrderRequest{
-		RouteId: created.Route.Id, Generation: 1, Profile: "tlsserver",
+	request := serverv1.CreateCertificateIssuanceRequest{
+		RouteId: created.Route.Id, Version: 1, AcmeProfile: "tlsserver",
 		Csr: base64.RawURLEncoding.EncodeToString([]byte("csr")),
 	}
-	order := routeRequest[serverv1.CertificateOrder](
-		t, handler, created.LeaseToken, http.MethodPost, certificateOrdersPath, request, http.StatusCreated,
+	issuance := routeRequest[serverv1.CertificateIssuance](
+		t, handler, created.SessionToken, http.MethodPost, certificateIssuancesPath, request, http.StatusCreated,
 	)
-	if order.RouteId != created.Route.Id || order.State != serverv1.WaitingForChallenge || order.Challenge == nil {
-		t.Fatalf("certificate order = %#v", order)
+	if issuance.RouteId != created.Route.Id || issuance.Status != serverv1.CertificateIssuanceStatusWaitingForChallenge || issuance.Challenge == nil {
+		t.Fatalf("certificate issuance = %#v", issuance)
 	}
-	wrongToken, _, _, err := credentials.NewLeaseToken()
+	wrongToken, _, _, err := credentials.NewSessionToken()
 	if err != nil {
 		t.Fatal(err)
 	}
 	routeRequest[serverv1.Problem](
-		t, handler, wrongToken.String(), http.MethodGet, certificateOrdersPath+"/"+order.Id, nil, http.StatusUnauthorized,
+		t, handler, wrongToken.String(), http.MethodGet, certificateIssuancesPath+"/"+issuance.Id, nil, http.StatusUnauthorized,
 	)
-	advanced := routeRequest[serverv1.CertificateOrder](
-		t, handler, created.LeaseToken, http.MethodPost,
-		certificateOrdersPath+"/"+order.Id+"/challenge-ready", nil, http.StatusOK,
+	advanced := routeRequest[serverv1.CertificateIssuance](
+		t, handler, created.SessionToken, http.MethodPost,
+		certificateIssuancesPath+"/"+issuance.Id+"/challenge-ready", nil, http.StatusOK,
 	)
-	if advanced.State != serverv1.WaitingForInstall || advanced.CertificatePem == nil {
-		t.Fatalf("advanced order = %#v", advanced)
+	if advanced.Status != serverv1.CertificateIssuanceStatusWaitingForInstall || advanced.CertificatePem == nil {
+		t.Fatalf("advanced issuance = %#v", advanced)
 	}
 	routeRequest[struct{}](
-		t, handler, created.LeaseToken, http.MethodPost,
-		certificateOrdersPath+"/"+order.Id+"/challenge-removed", nil, http.StatusNoContent,
+		t, handler, created.SessionToken, http.MethodPost,
+		certificateIssuancesPath+"/"+issuance.Id+"/challenge-removed", nil, http.StatusNoContent,
 	)
 	routeRequest[struct{}](
-		t, handler, created.LeaseToken, http.MethodPost,
+		t, handler, created.SessionToken, http.MethodPost,
 		routesPath+"/"+created.Route.Id+"/certificate-installed",
-		serverv1.CertificateInstalledRequest{Generation: 1, OrderId: order.Id}, http.StatusNoContent,
+		serverv1.CertificateInstalledRequest{Version: 1, IssuanceId: issuance.Id}, http.StatusNoContent,
 	)
 }
 
@@ -257,91 +263,91 @@ func routeRequest[T any](
 	return result
 }
 
-func claimRequest(t *testing.T, handler http.Handler, token, label string) serverv1.HostnameClaim {
+func addHostnameRequest(t *testing.T, handler http.Handler, token, label string) serverv1.Hostname {
 	t.Helper()
 	var body bytes.Buffer
-	if err := json.NewEncoder(&body).Encode(serverv1.CreateHostnameClaimRequest{
-		Kind: serverv1.CreateHostnameClaimRequestKindPersistentManaged, Name: &label,
+	if err := json.NewEncoder(&body).Encode(serverv1.AddHostnameRequest{
+		Kind: serverv1.AddHostnameRequestKindManaged, Name: &label,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest(http.MethodPost, hostnameClaimsPath, &body)
+	request := httptest.NewRequest(http.MethodPost, hostnamesPath, &body)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set("Idempotency-Key", "api-route-test")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusCreated {
-		t.Fatalf("claim status = %d, body = %s", response.Code, response.Body.String())
+		t.Fatalf("hostname status = %d, body = %s", response.Code, response.Body.String())
 	}
-	var claim serverv1.HostnameClaim
-	if err := json.NewDecoder(response.Body).Decode(&claim); err != nil {
+	var hostname serverv1.Hostname
+	if err := json.NewDecoder(response.Body).Decode(&hostname); err != nil {
 		t.Fatal(err)
 	}
-	return claim
+	return hostname
 }
 
-type apiRouteOwner struct{}
+type apiRouteWorker struct{}
 
-func (apiRouteOwner) Attach(context.Context, worker.Assignment) (worker.OwnedRoute, error) {
-	return apiOwnedRoute{}, nil
+func (apiRouteWorker) Attach(context.Context, worker.Assignment) (worker.WorkerRoute, error) {
+	return apiWorkerRoute{}, nil
 }
 
-func (apiRouteOwner) Capacity() worker.Capacity   { return worker.Capacity{Limit: 10} }
-func (apiRouteOwner) Drain(context.Context) error { return nil }
-func (apiRouteOwner) Close() error                { return nil }
+func (apiRouteWorker) Capacity() worker.Capacity   { return worker.Capacity{Limit: 10} }
+func (apiRouteWorker) Drain(context.Context) error { return nil }
+func (apiRouteWorker) Close() error                { return nil }
 
-type apiOwnedRoute struct{}
+type apiWorkerRoute struct{}
 
-func (apiOwnedRoute) Open(context.Context) (net.Conn, error) {
+func (apiWorkerRoute) Open(context.Context) (net.Conn, error) {
 	local, peer := net.Pipe()
 	_ = peer.Close()
 	return local, nil
 }
-func (apiOwnedRoute) Drain(context.Context) error { return nil }
-func (apiOwnedRoute) Close() error                { return nil }
+func (apiWorkerRoute) Drain(context.Context) error { return nil }
+func (apiWorkerRoute) Close() error                { return nil }
 
-type apiCertificateService struct{ job certificates.Job }
+type apiCertificateService struct{ issuance certificates.Issuance }
 
 func (s *apiCertificateService) Create(
 	_ context.Context,
 	routeID string,
-	generation uint64,
+	version uint64,
 	profile string,
 	_ []byte,
-) (certificates.Job, error) {
+) (certificates.Issuance, error) {
 	now := time.Now().UTC()
-	s.job = certificates.Job{
-		ID: "cert_0123456789abcdef0123456789abcdef", RouteID: routeID, Generation: generation,
-		Hostname: "route.example", Profile: profile, State: certificates.StateWaitingChallenge,
+	s.issuance = certificates.Issuance{
+		ID: "issuance_0123456789abcdef0123456789abcdef", RouteID: routeID, Version: version,
+		Hostname: "route.example", ACMEProfile: profile, Status: certificates.StatusWaitingChallenge,
 		ChallengeURL: "challenge", ChallengeExpires: now.Add(time.Hour), CreatedAt: now, UpdatedAt: now,
 	}
-	return s.job, nil
+	return s.issuance, nil
 }
 
-func (s *apiCertificateService) Get(context.Context, string) (certificates.Job, error) {
-	return s.job, nil
+func (s *apiCertificateService) Get(context.Context, string) (certificates.Issuance, error) {
+	return s.issuance, nil
 }
 
-func (s *apiCertificateService) ChallengeReady(context.Context, string) (certificates.Job, error) {
-	s.job.State = certificates.StateWaitingForInstall
-	s.job.CertificatePEM = []byte("certificate")
-	return s.job, nil
+func (s *apiCertificateService) ChallengeReady(context.Context, string) (certificates.Issuance, error) {
+	s.issuance.Status = certificates.StatusWaitingForInstall
+	s.issuance.CertificatePEM = []byte("certificate")
+	return s.issuance, nil
 }
 
-func (s *apiCertificateService) ChallengeRemoved(context.Context, string) (certificates.Job, error) {
-	s.job.ChallengeRemoved = time.Now().UTC()
-	return s.job, nil
+func (s *apiCertificateService) ChallengeRemoved(context.Context, string) (certificates.Issuance, error) {
+	s.issuance.ChallengeRemoved = time.Now().UTC()
+	return s.issuance, nil
 }
 
 func (s *apiCertificateService) Installed(
 	_ context.Context,
 	_, routeID string,
-	generation uint64,
-) (certificates.Job, error) {
-	if routeID != s.job.RouteID || generation != s.job.Generation || s.job.ChallengeRemoved.IsZero() {
-		return certificates.Job{}, certificates.ErrInvalidState
+	version uint64,
+) (certificates.Issuance, error) {
+	if routeID != s.issuance.RouteID || version != s.issuance.Version || s.issuance.ChallengeRemoved.IsZero() {
+		return certificates.Issuance{}, certificates.ErrInvalidStatus
 	}
-	s.job.State = certificates.StateSucceeded
-	return s.job, nil
+	s.issuance.Status = certificates.StatusInstalled
+	return s.issuance, nil
 }

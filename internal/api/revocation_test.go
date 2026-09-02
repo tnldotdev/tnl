@@ -24,17 +24,17 @@ func TestCredentialRevocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantPrincipal := state.Principal{ID: "principal"}
+	wantIdentity := state.Identity{ID: "identity"}
 	var authenticated credentials.AccessToken
 	var revoked credentials.CredentialID
 	service := authServiceStub{
-		authenticate: func(_ context.Context, token credentials.AccessToken) (state.Principal, error) {
+		authenticate: func(_ context.Context, token credentials.AccessToken) (state.Identity, error) {
 			authenticated = token
-			return wantPrincipal, nil
+			return wantIdentity, nil
 		},
-		revoke: func(_ context.Context, principal state.Principal, credentialID credentials.CredentialID) error {
-			if principal != wantPrincipal {
-				t.Fatalf("principal = %#v, want %#v", principal, wantPrincipal)
+		revoke: func(_ context.Context, identity state.Identity, credentialID credentials.CredentialID) error {
+			if identity != wantIdentity {
+				t.Fatalf("identity = %#v, want %#v", identity, wantIdentity)
 			}
 			revoked = credentialID
 			return nil
@@ -80,8 +80,8 @@ func TestCredentialRevocationRejectsBearerCredentialsWithoutDisclosure(t *testin
 		t.Fatal(err)
 	}
 	service := authServiceStub{
-		authenticate: func(context.Context, credentials.AccessToken) (state.Principal, error) {
-			return state.Principal{}, auth.ErrUnauthenticated
+		authenticate: func(context.Context, credentials.AccessToken) (state.Identity, error) {
+			return state.Identity{}, auth.ErrUnauthenticated
 		},
 	}
 
@@ -119,7 +119,7 @@ func TestCredentialRevocationProblems(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal := state.Principal{ID: "principal"}
+	identity := state.Identity{ID: "identity"}
 
 	for name, test := range map[string]struct {
 		path            string
@@ -146,10 +146,10 @@ func TestCredentialRevocationProblems(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			service := authServiceStub{
-				authenticate: func(context.Context, credentials.AccessToken) (state.Principal, error) {
-					return principal, test.authenticateErr
+				authenticate: func(context.Context, credentials.AccessToken) (state.Identity, error) {
+					return identity, test.authenticateErr
 				},
-				revoke: func(context.Context, state.Principal, credentials.CredentialID) error {
+				revoke: func(context.Context, state.Identity, credentials.CredentialID) error {
 					return test.revokeErr
 				},
 			}
@@ -232,8 +232,8 @@ func TestCredentialRevocationMethodAndPathRouting(t *testing.T) {
 }
 
 type authServiceStub struct {
-	authenticate func(context.Context, credentials.AccessToken) (state.Principal, error)
-	revoke       func(context.Context, state.Principal, credentials.CredentialID) error
+	authenticate func(context.Context, credentials.AccessToken) (state.Identity, error)
+	revoke       func(context.Context, state.Identity, credentials.CredentialID) error
 }
 
 func (authServiceStub) Exchange(
@@ -246,7 +246,7 @@ func (authServiceStub) Exchange(
 func (s authServiceStub) Authenticate(
 	ctx context.Context,
 	token credentials.AccessToken,
-) (state.Principal, error) {
+) (state.Identity, error) {
 	if s.authenticate == nil {
 		panic("unexpected Authenticate call")
 	}
@@ -255,13 +255,13 @@ func (s authServiceStub) Authenticate(
 
 func (s authServiceStub) Revoke(
 	ctx context.Context,
-	principal state.Principal,
+	identity state.Identity,
 	credentialID credentials.CredentialID,
 ) error {
 	if s.revoke == nil {
 		panic("unexpected Revoke call")
 	}
-	return s.revoke(ctx, principal, credentialID)
+	return s.revoke(ctx, identity, credentialID)
 }
 
 func assertBearerProblem(

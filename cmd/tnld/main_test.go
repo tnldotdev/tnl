@@ -23,7 +23,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/state"
 	"github.com/tnldotdev/tnl/internal/testutil/integrationtest"
 	"github.com/tnldotdev/tnl/internal/worker"
-	"github.com/tnldotdev/tnl/internal/workersession"
+	"github.com/tnldotdev/tnl/internal/workercontrol"
 	"github.com/tnldotdev/tnl/pkg/protocol/serverv1"
 	"github.com/tnldotdev/tnl/pkg/protocol/workerv1"
 	"tailscale.com/tailcfg"
@@ -168,9 +168,9 @@ func TestIntegrationStandaloneControlLifecycle(t *testing.T) {
 		Mode: config.TNLDModeStandalone, StateDir: filepath.Join(directory, "state"),
 		PublicListen: publicAddress, Domain: "example",
 		ACMEDirectoryURL: pebble.DirectoryURL(), ACMEEmail: "operator@example.com", ACMEAcceptTerms: true,
-		ACMEProfile: "tlsserver", RelayMapFile: relayFile, RelayProfile: "test",
+		ACMEProfile: "tlsserver", RelayMapFile: relayFile, RelayRegion: "test",
 		WorkerCapacity: 10, WorkerStreamLimit: 10, PublicConnLimit: 10, RouteConnLimit: 5, DrainTimeout: time.Second,
-		MaxActiveHostnameClaims: 128, MaxHostnameClaimRequests: 1024,
+		MaxActiveHostnames: 128, MaxHostnameRequests: 1024,
 		AccessTokenLifetime: time.Hour,
 	}
 	if err := cfg.Validate(); err != nil {
@@ -226,7 +226,7 @@ func TestIntegrationStandaloneControlLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if capabilities.Transport.RelayProfile != "test" || capabilities.Transport.Type != serverv1.Tailcat {
+	if capabilities.Transport.RelayRegion != "test" || capabilities.Transport.Type != serverv1.Tailcat {
 		t.Fatalf("capabilities = %#v", capabilities)
 	}
 	deadline := time.Now().Add(5 * time.Second)
@@ -240,37 +240,37 @@ func TestIntegrationStandaloneControlLifecycle(t *testing.T) {
 	if !capabilities.DnsReady || len(capabilities.IngressIpv4) != 1 || capabilities.IngressIpv4[0] != "127.0.0.1" || len(capabilities.IngressIpv6) != 0 {
 		t.Fatalf("DNS capabilities = %#v", capabilities)
 	}
-	claim, err := client.ClaimName(
-		context.Background(), serverv1.CreateHostnameClaimRequestKindPersistentManaged, "route", "standalone-test",
+	hostname, err := client.AddHostname(
+		context.Background(), serverv1.AddHostnameRequestKindManaged, "route", "standalone-test",
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if claims, err := client.ListHostnameClaims(context.Background()); err != nil || len(claims) != 1 || claims[0].Id != claim.Id {
-		t.Fatalf("hostname claims = %#v, %v", claims, err)
+	if hostnames, err := client.ListHostnames(context.Background()); err != nil || len(hostnames) != 1 || hostnames[0].Id != hostname.Id {
+		t.Fatalf("hostnames = %#v, %v", hostnames, err)
 	}
 	routeToken, _, _, err := credentials.NewRouteToken()
 	if err != nil {
 		t.Fatal(err)
 	}
 	setup, err := client.CreateRoute(context.Background(), serverv1.CreateRouteRequest{
-		Hostname: "route.example", DisplayTarget: "http://127.0.0.1:3000", RouteToken: routeToken.String(),
+		Hostname: "route.example", LocalTarget: "http://127.0.0.1:3000", RouteToken: routeToken.String(),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if setup.Route.Generation != 1 || setup.LeaseToken == "" {
+	if setup.Route.Version != 1 || setup.SessionToken == "" {
 		t.Fatalf("setup = %#v", setup)
 	}
 	if err := client.DeleteRoute(context.Background(), setup.Route.Id); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.ReleaseHostnameClaim(context.Background(), claim.Id); err != nil {
+	if err := client.RemoveHostname(context.Background(), hostname.Id); err != nil {
 		t.Fatal(err)
 	}
-	if claims, err := client.ListHostnameClaims(context.Background()); err != nil || len(claims) != 1 ||
-		claims[0].Id != claim.Id || claims[0].State != serverv1.HostnameClaimStateReleasedOwned {
-		t.Fatalf("hostname claims after release = %#v, %v", claims, err)
+	if hostnames, err := client.ListHostnames(context.Background()); err != nil || len(hostnames) != 1 ||
+		hostnames[0].Id != hostname.Id || hostnames[0].Status != serverv1.HostnameStatusInactive {
+		t.Fatalf("hostnames after release = %#v, %v", hostnames, err)
 	}
 	if err := running.shutdown(time.Second); err != nil {
 		t.Fatal(err)
@@ -293,8 +293,8 @@ func TestWorkerReconnectsWithFreshOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	registry := &reconnectRegistry{added: make(chan struct{}, 2)}
-	hub, err := workersession.NewHub(workersession.HubConfig{
+	registry := &workerRegistry{added: make(chan struct{}, 2)}
+	hub, err := workercontrol.NewHub(workercontrol.HubConfig{
 		Tokens: []credentials.WorkerVerifier{verifier}, Registry: registry,
 	})
 	if err != nil {
@@ -358,20 +358,20 @@ func TestWorkerReconnectsWithFreshOwner(t *testing.T) {
 	}
 }
 
-type reconnectRegistry struct {
+type workerRegistry struct {
 	connections atomic.Int32
 	added       chan struct{}
 }
 
-func (r *reconnectRegistry) AddOwner(_ string, owner worker.RouteOwner) error {
+func (r *workerRegistry) AddWorker(_ string, worker worker.RouteWorker) error {
 	connection := r.connections.Add(1)
 	r.added <- struct{}{}
 	if connection == 1 {
-		go owner.Close()
+		go worker.Close()
 	}
 	return nil
 }
 
-func (*reconnectRegistry) DrainOwner(context.Context, string) error { return nil }
+func (*workerRegistry) DrainWorker(context.Context, string) error { return nil }
 
-func (*reconnectRegistry) RemoveOwner(string) {}
+func (*workerRegistry) RemoveWorker(string) {}

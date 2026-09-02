@@ -1,0 +1,53 @@
+name: tnl-core-dev
+
+services:
+  pebble:
+    image: ghcr.io/letsencrypt/pebble:2.10.1@sha256:ddf230642b1a584f519f32e347de1b05a6e4c1f6c35c1863b33effeab5f78199
+    command: -config /test/config/tnl-pebble-config.json -strict=false
+    environment:
+      PEBBLE_AUTHZREUSE: "0"
+      PEBBLE_VA_ALWAYS_VALID: "1"
+      PEBBLE_VA_NOSLEEP: "1"
+      PEBBLE_WFE_NONCEREJECT: "0"
+    ports:
+      - "127.0.0.1:14000:14000"
+      - "127.0.0.1:15000:15000"
+    volumes:
+      - ./pebble-config.json:/test/config/tnl-pebble-config.json:ro
+
+  tnld:
+    build:
+      context: ../..
+      args:
+        VERSION: dev
+    depends_on:
+      - pebble
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 45s
+    environment:
+      TNLD_ACCESS_TOKEN_LIFETIME: 24h
+      TNLD_ACME_ACCEPT_TERMS: "true"
+      TNLD_ACME_DIRECTORY_URL: https://pebble:14000/dir
+      TNLD_ACME_EMAIL: developer@localhost
+      TNLD_ACME_PROFILE: tlsserver
+      TNLD_DOMAIN: localhost
+      TNLD_METRICS_LISTEN: 0.0.0.0:9090
+      TNLD_MODE: standalone
+      TNLD_PUBLIC_LISTEN: :8443
+      TNLD_RELAY_PROVIDER: tailcat
+      TNLD_STATE_DIR: /var/lib/tnl
+    ports:
+      - "127.0.0.1:443:8443"
+      - "127.0.0.1:9090:9090"
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    volumes:
+      - tnld-state:/var/lib/tnl
+      - ./pebble.minica.crt:/etc/ssl/certs/pebble.minica.crt:ro
+
+volumes:
+  tnld-state:

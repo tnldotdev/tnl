@@ -14,20 +14,20 @@ import (
 const descriptorVersion = transportv1.TailcatDescriptorVersion
 
 // Endpoint is the trusted subset of Tailcat connection information exchanged
-// between the hosted service and an agent.
+// between a publisher and worker.
 type Endpoint = transportv1.TailcatDescriptor
 
-func connBlob(e Endpoint, profiles map[string]*tailcfg.DERPRegion) (tailcat.ConnBlob, error) {
+func connBlob(e Endpoint, regions map[string]*tailcfg.DERPRegion) (tailcat.ConnBlob, error) {
 	if e.Version != descriptorVersion {
 		return "", fmt.Errorf("unsupported tailcat descriptor version %d", e.Version)
 	}
 
 	var serverKey key.NodePublic
-	if err := serverKey.UnmarshalText([]byte(e.ServerPublicKey)); err != nil || serverKey.IsZero() {
+	if err := serverKey.UnmarshalText([]byte(e.PublisherPublicKey)); err != nil || serverKey.IsZero() {
 		return "", errors.New("invalid tailcat server public key")
 	}
 
-	region, err := relayRegion(e.RelayProfile, profiles)
+	region, err := relayRegion(e.RelayRegion, regions)
 	if err != nil {
 		return "", err
 	}
@@ -38,10 +38,10 @@ func connBlob(e Endpoint, profiles map[string]*tailcfg.DERPRegion) (tailcat.Conn
 	}).ConnBlob(), nil
 }
 
-func relayRegion(profile string, profiles map[string]*tailcfg.DERPRegion) (*tailcfg.DERPRegion, error) {
-	region := profiles[profile]
-	if profile == "" || !validRegion(region) {
-		return nil, fmt.Errorf("invalid tailcat relay profile %q", profile)
+func relayRegion(name string, regions map[string]*tailcfg.DERPRegion) (*tailcfg.DERPRegion, error) {
+	region := regions[name]
+	if name == "" || !validRegion(region) {
+		return nil, fmt.Errorf("invalid tailcat relay region %q", name)
 	}
 	return region.Clone(), nil
 }

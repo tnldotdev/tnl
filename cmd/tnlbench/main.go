@@ -27,7 +27,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/internal/publication"
+	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/serverclient"
 	"github.com/tnldotdev/tnl/pkg/protocol/serverv1"
 	"tailscale.com/tailcfg"
@@ -119,26 +119,26 @@ func (c cli) expectedRoutes() int {
 }
 
 type routeProcess struct {
-	hostname   string
-	routeID    string
-	claimID    string
-	claimOwner hostnameClaimOwner
-	cancel     context.CancelFunc
-	done       chan error
+	hostname      string
+	routeID       string
+	hostnameID    string
+	hostnameOwner hostnameOwner
+	cancel        context.CancelFunc
+	done          chan error
 }
 
 type routeCleaner interface {
 	DeleteRoute(context.Context, string) error
 }
 
-type hostnameClaimOwner interface {
-	ReleaseHostnameClaim(context.Context, string) error
+type hostnameOwner interface {
+	RemoveHostname(context.Context, string) error
 }
 
 type timingSummary struct {
-	P50 float64 `json:"p50_ms"`
-	P95 float64 `json:"p95_ms"`
-	Max float64 `json:"max_ms"`
+	P50Milliseconds float64 `json:"p50_milliseconds"`
+	P95Milliseconds float64 `json:"p95_milliseconds"`
+	MaxMilliseconds float64 `json:"max_milliseconds"`
 }
 
 type workerSample struct {
@@ -256,12 +256,12 @@ func run(ctx context.Context, flags cli) (result, error) {
 	if err != nil {
 		return result{}, fmt.Errorf("read server relay map: %w", err)
 	}
-	profiles, err := config.DecodeRelayProfiles(relayMap)
+	regions, err := config.DecodeRelayRegions(relayMap)
 	if err != nil {
 		return result{}, err
 	}
-	if profiles[capabilities.Transport.RelayProfile] == nil {
-		return result{}, fmt.Errorf("relay profile %q is absent from the relay map", capabilities.Transport.RelayProfile)
+	if regions[capabilities.Transport.RelayRegion] == nil {
+		return result{}, fmt.Errorf("relay region %q is absent from the relay map", capabilities.Transport.RelayRegion)
 	}
 	hostnames := make([]string, flags.Routes)
 	for index := range hostnames {
@@ -282,7 +282,7 @@ func run(ctx context.Context, flags cli) (result, error) {
 	defer origin.Close()
 
 	processes, activation, err := activateRoutes(
-		ctx, flags, server, profiles, capabilities.Transport.RelayProfile, origin.URL, hostnames, applicationCertificates,
+		ctx, flags, server, regions, capabilities.Transport.RelayRegion, origin.URL, hostnames, applicationCertificates,
 	)
 	if err != nil {
 		writeFailureEvidence(flags)
@@ -345,8 +345,8 @@ func activateRoutes(
 	ctx context.Context,
 	flags cli,
 	server *serverclient.Client,
-	profiles map[string]*tailcfg.DERPRegion,
-	relayProfile, target string,
+	regions map[string]*tailcfg.DERPRegion,
+	relayRegion, target string,
 	hostnames []string,
 	certificates []tls.Certificate,
 ) ([]*routeProcess, []time.Duration, error) {
@@ -356,7 +356,7 @@ func activateRoutes(
 		duration time.Duration
 		err      error
 	}, flags.Routes)
-	// Acquire before timing; the slot ends at readiness while publication continues.
+	// Create the session before timing; the slot ends at readiness while publishing continues.
 	semaphore := make(chan struct{}, flags.Parallel)
 	for index := 0; index < flags.Routes; index++ {
 		select {
@@ -366,7 +366,7 @@ func activateRoutes(
 		}
 		routeCtx, cancel := context.WithCancel(ctx)
 		process := &routeProcess{
-			hostname: hostnames[index], claimOwner: server, cancel: cancel, done: make(chan error, 1),
+			hostname: hostnames[index], hostnameOwner: server, cancel: cancel, done: make(chan error, 1),
 		}
 		processes[index] = process
 		go func(index int, process *routeProcess) {
@@ -382,23 +382,23 @@ func activateRoutes(
 					}{index: index, duration: time.Since(started), err: err}
 				})
 			}
-			claim, err := server.ClaimName(
-				routeCtx, serverv1.CreateHostnameClaimRequestKindPersistentManaged,
-				benchmarkRouteLabel(flags.DriverIndex, index), benchmarkClaimRequestKey(flags.DriverIndex, index),
+			hostname, err := server.AddHostname(
+				routeCtx, serverv1.AddHostnameRequestKindManaged,
+				benchmarkRouteLabel(flags.DriverIndex, index), benchmarkHostnameRequestKey(flags.DriverIndex, index),
 			)
 			if err != nil {
-				err = fmt.Errorf("claim hostname: %w", err)
+				err = fmt.Errorf("hostname: %w", err)
 			} else {
-				process.claimID = claim.Id
-				if claim.Id == "" || claim.Hostname != process.hostname {
-					err = errors.New("server returned an unexpected hostname claim")
+				process.hostnameID = hostname.Id
+				if hostname.Id == "" || hostname.Hostname != process.hostname {
+					err = errors.New("server returned an unexpected hostname")
 				}
 			}
 			ready := false
 			if err == nil {
-				err = publication.RunPublic(routeCtx, publication.PublicConfig{
+				err = publisher.Run(routeCtx, publisher.Config{
 					Server: server, Hostname: process.hostname, Target: target, Certificate: certificates[index],
-					RelayProfile: relayProfile, Profiles: profiles, Logf: logger.Discard,
+					RelayRegion: relayRegion, Regions: regions, Logf: logger.Discard,
 					OnRoute: func(routeID string) { process.routeID = routeID },
 					OnReady: func(string) {
 						ready = true
@@ -510,7 +510,7 @@ func loadRoutes(
 }
 
 func cleanupRoutes(ctx context.Context, flags cli, server routeCleaner, processes []*routeProcess) ([]time.Duration, error) {
-	// Stop all publishers before deleting routes and releasing their claims.
+	// Stop all publishers before deleting routes and removing their hostnames.
 	started := time.Now()
 	for _, process := range processes {
 		if process != nil {
@@ -567,11 +567,11 @@ func cleanupRoutes(ctx context.Context, flags cli, server routeCleaner, processe
 	completed := make([]time.Duration, len(processes))
 	count = 0
 	for index, process := range processes {
-		if process == nil || process.claimID == "" {
+		if process == nil || process.hostnameID == "" {
 			continue
 		}
-		if process.claimOwner == nil {
-			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("release hostname claim %d: missing owner", index))
+		if process.hostnameOwner == nil {
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("remove hostname %d: missing owner", index))
 			completed[index] = time.Since(started)
 			continue
 		}
@@ -580,8 +580,8 @@ func cleanupRoutes(ctx context.Context, flags cli, server routeCleaner, processe
 		go func(index int, process *routeProcess) {
 			defer func() { <-semaphore }()
 			var err error
-			if releaseErr := process.claimOwner.ReleaseHostnameClaim(ctx, process.claimID); releaseErr != nil {
-				err = fmt.Errorf("release hostname claim %d: %w", index, releaseErr)
+			if releaseErr := process.hostnameOwner.RemoveHostname(ctx, process.hostnameID); releaseErr != nil {
+				err = fmt.Errorf("remove hostname %d: %w", index, releaseErr)
 			}
 			completed[index] = time.Since(started)
 			results <- cleanupResult{index: index, err: err}
@@ -722,17 +722,17 @@ func writeFailureEvidence(flags cli) {
 func benchmarkHostnameSuffix(capabilities serverv1.Capabilities, configured string) (string, error) {
 	localClaim := false
 	for _, authorization := range capabilities.HostnameAuthorization {
-		localClaim = localClaim || authorization == serverv1.LocalClaim
+		localClaim = localClaim || authorization == serverv1.LocalHostnames
 	}
-	if !localClaim || capabilities.LocalClaim == nil || capabilities.LocalClaim.Suffix == "" {
-		return "", errors.New("server does not advertise local hostname claims")
+	if !localClaim || capabilities.LocalHostnames == nil || capabilities.LocalHostnames.Suffix == "" {
+		return "", errors.New("server does not advertise local hostnames")
 	}
-	suffix, err := naming.CanonicalizeHostname(capabilities.LocalClaim.Suffix)
-	if err != nil || suffix != capabilities.LocalClaim.Suffix {
-		return "", errors.New("server advertises an invalid local hostname claim suffix")
+	suffix, err := naming.CanonicalizeHostname(capabilities.LocalHostnames.Suffix)
+	if err != nil || suffix != capabilities.LocalHostnames.Suffix {
+		return "", errors.New("server advertises an invalid local hostname suffix")
 	}
 	if suffix != configured {
-		return "", fmt.Errorf("server local hostname claim suffix %q does not match configured suffix %q", suffix, configured)
+		return "", fmt.Errorf("server local hostname suffix %q does not match configured suffix %q", suffix, configured)
 	}
 	return suffix, nil
 }
@@ -745,8 +745,8 @@ func benchmarkHostname(driverIndex, routeIndex int, suffix string) string {
 	return benchmarkRouteLabel(driverIndex, routeIndex) + "." + suffix
 }
 
-func benchmarkClaimRequestKey(driverIndex, routeIndex int) string {
-	return "claim_" + benchmarkRouteLabel(driverIndex, routeIndex)
+func benchmarkHostnameRequestKey(driverIndex, routeIndex int) string {
+	return "hostname_" + benchmarkRouteLabel(driverIndex, routeIndex)
 }
 
 func parseMetrics(body string) map[string]float64 {
@@ -774,9 +774,9 @@ func summarize(samples []time.Duration) timingSummary {
 	ordered := append([]time.Duration(nil), samples...)
 	sort.Slice(ordered, func(i, j int) bool { return ordered[i] < ordered[j] })
 	return timingSummary{
-		P50: milliseconds(ordered[percentileIndex(len(ordered), 50)]),
-		P95: milliseconds(ordered[percentileIndex(len(ordered), 95)]),
-		Max: milliseconds(ordered[len(ordered)-1]),
+		P50Milliseconds: milliseconds(ordered[percentileIndex(len(ordered), 50)]),
+		P95Milliseconds: milliseconds(ordered[percentileIndex(len(ordered), 95)]),
+		MaxMilliseconds: milliseconds(ordered[len(ordered)-1]),
 	}
 }
 

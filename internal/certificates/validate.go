@@ -103,11 +103,11 @@ func validateCertificateChain(
 	return canonical.Bytes(), leaf, nil
 }
 
-func renewalTime(jobID string, notBefore, notAfter time.Time) time.Time {
+func renewalTime(issuanceID string, notBefore, notAfter time.Time) time.Time {
 	lifetime := notAfter.Sub(notBefore)
 	base := notBefore.Add(lifetime * 2 / 3)
 	// Stable +/-5% jitter spreads renewals without moving them across restarts.
-	digest := sha256.Sum256([]byte(jobID))
+	digest := sha256.Sum256([]byte(issuanceID))
 	fraction := int64(binary.BigEndian.Uint16(digest[:2])) - 32768
 	jitter := time.Duration(fraction) * (lifetime / 20) / 32768
 	return base.Add(jitter).UTC()

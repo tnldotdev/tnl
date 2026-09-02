@@ -30,47 +30,47 @@ func (q *Queries) CountAccessCredentials(ctx context.Context) (int64, error) {
 	return count, err
 }
 
-const countCertificateJobsByRoute = `-- name: CountCertificateJobsByRoute :one
-SELECT COUNT(*) FROM certificate_jobs WHERE route_id = ?1
+const countCertificateIssuancesByRoute = `-- name: CountCertificateIssuancesByRoute :one
+SELECT COUNT(*) FROM certificate_issuances WHERE route_id = ?1
 `
 
-func (q *Queries) CountCertificateJobsByRoute(ctx context.Context, routeID string) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countCertificateJobsByRoute, routeID)
+func (q *Queries) CountCertificateIssuancesByRoute(ctx context.Context, routeID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countCertificateIssuancesByRoute, routeID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
 }
 
-const countClaimRequestsByClaim = `-- name: CountClaimRequestsByClaim :one
-SELECT COUNT(*) FROM hostname_claim_requests WHERE claim_id = ?1
+const countHostnameRequestsByHostname = `-- name: CountHostnameRequestsByHostname :one
+SELECT COUNT(*) FROM hostname_requests WHERE hostname_id = ?1
 `
 
-func (q *Queries) CountClaimRequestsByClaim(ctx context.Context, claimID string) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countClaimRequestsByClaim, claimID)
+func (q *Queries) CountHostnameRequestsByHostname(ctx context.Context, hostnameID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countHostnameRequestsByHostname, hostnameID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
 }
 
-const countPrincipalByID = `-- name: CountPrincipalByID :one
-SELECT COUNT(*) FROM principals WHERE id = ?1
-`
+const countIdentities = `-- name: CountIdentities :one
 
-func (q *Queries) CountPrincipalByID(ctx context.Context, id string) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countPrincipalByID, id)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
-const countPrincipals = `-- name: CountPrincipals :one
-
-SELECT COUNT(*) FROM principals
+SELECT COUNT(*) FROM identities
 `
 
 // Test-only white-box queries shared by persistence tests.
-func (q *Queries) CountPrincipals(ctx context.Context) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countPrincipals)
+func (q *Queries) CountIdentities(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countIdentities)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countIdentityByID = `-- name: CountIdentityByID :one
+SELECT COUNT(*) FROM identities WHERE id = ?1
+`
+
+func (q *Queries) CountIdentityByID(ctx context.Context, id string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countIdentityByID, id)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -87,37 +87,37 @@ func (q *Queries) GetAnyACMEAccountKID(ctx context.Context) (string, error) {
 	return column_1, err
 }
 
-const getLatestCertificateJobState = `-- name: GetLatestCertificateJobState :one
-SELECT state, installed_at, challenge_removed_at
-FROM certificate_jobs
+const getLatestCertificateIssuanceStatus = `-- name: GetLatestCertificateIssuanceStatus :one
+SELECT status, installed_at, challenge_removed_at
+FROM certificate_issuances
 WHERE route_id = ?1
-ORDER BY generation DESC
+ORDER BY version DESC
 LIMIT 1
 `
 
-type GetLatestCertificateJobStateRow struct {
-	State              string
+type GetLatestCertificateIssuanceStatusRow struct {
+	Status             string
 	InstalledAt        sql.NullInt64
 	ChallengeRemovedAt sql.NullInt64
 }
 
-func (q *Queries) GetLatestCertificateJobState(ctx context.Context, routeID string) (GetLatestCertificateJobStateRow, error) {
-	row := q.db.QueryRowContext(ctx, getLatestCertificateJobState, routeID)
-	var i GetLatestCertificateJobStateRow
-	err := row.Scan(&i.State, &i.InstalledAt, &i.ChallengeRemovedAt)
+func (q *Queries) GetLatestCertificateIssuanceStatus(ctx context.Context, routeID string) (GetLatestCertificateIssuanceStatusRow, error) {
+	row := q.db.QueryRowContext(ctx, getLatestCertificateIssuanceStatus, routeID)
+	var i GetLatestCertificateIssuanceStatusRow
+	err := row.Scan(&i.Status, &i.InstalledAt, &i.ChallengeRemovedAt)
 	return i, err
 }
 
-const getLatestRouteLeaseStatus = `-- name: GetLatestRouteLeaseStatus :one
+const getLatestRouteSessionStatus = `-- name: GetLatestRouteSessionStatus :one
 SELECT status
-FROM route_leases
+FROM route_sessions
 WHERE route_id = ?1
-ORDER BY generation DESC
+ORDER BY version DESC
 LIMIT 1
 `
 
-func (q *Queries) GetLatestRouteLeaseStatus(ctx context.Context, routeID string) (string, error) {
-	row := q.db.QueryRowContext(ctx, getLatestRouteLeaseStatus, routeID)
+func (q *Queries) GetLatestRouteSessionStatus(ctx context.Context, routeID string) (string, error) {
+	row := q.db.QueryRowContext(ctx, getLatestRouteSessionStatus, routeID)
 	var status string
 	err := row.Scan(&status)
 	return status, err
@@ -144,7 +144,7 @@ func (q *Queries) SetACMEAccountEmail(ctx context.Context, email string) error {
 }
 
 const setCertificateRenewalDue = `-- name: SetCertificateRenewalDue :execrows
-UPDATE certificate_jobs
+UPDATE certificate_issuances
 SET renew_at = CAST(?1 AS INTEGER)
 WHERE id = ?2 AND route_id = ?3
 `

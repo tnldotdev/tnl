@@ -21,7 +21,7 @@ func TestClientMapsProblemsAndRejectsTrailingJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease, _, _, err := credentials.NewLeaseToken()
+	session, _, _, err := credentials.NewSessionToken()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,14 +30,14 @@ func TestClientMapsProblemsAndRejectsTrailingJSON(t *testing.T) {
 		case "/v1/capabilities":
 			_, _ = response.Write([]byte(`{} {}`))
 		case "/v1/routes/route/heartbeat":
-			if request.Header.Get("Authorization") != "Bearer "+lease.String() {
+			if request.Header.Get("Authorization") != "Bearer "+session.String() {
 				t.Errorf("Authorization = %q", request.Header.Get("Authorization"))
 			}
 			response.Header().Set("Content-Type", "application/problem+json")
 			response.WriteHeader(http.StatusConflict)
 			_ = json.NewEncoder(response).Encode(serverv1.Problem{
-				Type: "https://tnl.dev/problems/state-conflict", Title: "State conflict",
-				Status: http.StatusConflict, Code: serverv1.StateConflict, RequestId: "req_test", Details: map[string]interface{}{},
+				Type: "https://tnl.dev/problems/status-conflict", Title: "Status conflict",
+				Status: http.StatusConflict, Code: serverv1.StatusConflict, RequestId: "req_test", Details: map[string]interface{}{},
 			})
 		default:
 			http.NotFound(response, request)
@@ -51,8 +51,8 @@ func TestClientMapsProblemsAndRejectsTrailingJSON(t *testing.T) {
 	if _, err := client.Capabilities(context.Background()); err == nil {
 		t.Fatal("Capabilities accepted trailing JSON")
 	}
-	if _, err := client.Heartbeat(context.Background(), "route", 1, lease); !errors.Is(err, ErrStateConflict) {
-		t.Fatalf("Heartbeat error = %v, want state conflict", err)
+	if _, err := client.Heartbeat(context.Background(), "route", 1, session); !errors.Is(err, ErrStatusConflict) {
+		t.Fatalf("Heartbeat error = %v, want status conflict", err)
 	}
 }
 
@@ -70,7 +70,7 @@ func TestClientBoundsRequests(t *testing.T) {
 	}
 }
 
-func TestClientSeparatesCertificatePreconditionsFromStaleLeases(t *testing.T) {
+func TestClientSeparatesCertificatePreconditionsFromStaleSessions(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 		response.WriteHeader(http.StatusPreconditionFailed)
 		_ = json.NewEncoder(response).Encode(serverv1.Problem{Code: serverv1.PreconditionFailed})
@@ -80,8 +80,8 @@ func TestClientSeparatesCertificatePreconditionsFromStaleLeases(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.CertificateOrder(context.Background(), "cert_id", credentials.LeaseToken("lease"))
-	if !errors.Is(err, ErrCertificateState) || errors.Is(err, ErrStateConflict) {
+	_, err = client.CertificateIssuance(context.Background(), "issuance_id", credentials.SessionToken("session"))
+	if !errors.Is(err, ErrCertificateStatus) || errors.Is(err, ErrStatusConflict) {
 		t.Fatalf("error = %v", err)
 	}
 }
@@ -101,7 +101,7 @@ func TestChallengeReadyAllowsServerValidationWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 	client.timeout = time.Millisecond
-	if _, err := client.CertificateChallengeReady(context.Background(), "cert_id", "lease"); err != nil {
+	if _, err := client.CertificateChallengeReady(context.Background(), "issuance_id", "session"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -126,28 +126,28 @@ func TestClientMapsNotFound(t *testing.T) {
 	}
 }
 
-func TestClientPaginatesHostnameClaims(t *testing.T) {
+func TestClientPaginatesHostnames(t *testing.T) {
 	var requests int
 	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		requests++
 		response.Header().Set("Content-Type", "application/json")
 		cursor := request.URL.Query().Get("cursor")
 		if cursor == "" {
-			next := "claim_00000000000000000000000000000001"
-			_ = json.NewEncoder(response).Encode(serverv1.HostnameClaimPage{
-				Claims: []serverv1.HostnameClaim{
-					{Id: "claim_00000000000000000000000000000000"},
+			next := "hostname_00000000000000000000000000000001"
+			_ = json.NewEncoder(response).Encode(serverv1.HostnamePage{
+				Hostnames: []serverv1.Hostname{
+					{Id: "hostname_00000000000000000000000000000000"},
 					{Id: next},
 				},
 				NextCursor: &next,
 			})
 			return
 		}
-		if cursor != "claim_00000000000000000000000000000001" {
+		if cursor != "hostname_00000000000000000000000000000001" {
 			t.Errorf("cursor = %q", cursor)
 		}
-		_ = json.NewEncoder(response).Encode(serverv1.HostnameClaimPage{Claims: []serverv1.HostnameClaim{{
-			Id: "claim_00000000000000000000000000000002",
+		_ = json.NewEncoder(response).Encode(serverv1.HostnamePage{Hostnames: []serverv1.Hostname{{
+			Id: "hostname_00000000000000000000000000000002",
 		}}})
 	}))
 	defer server.Close()
@@ -155,42 +155,12 @@ func TestClientPaginatesHostnameClaims(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	claims, err := client.ListHostnameClaims(context.Background())
+	hostnames, err := client.ListHostnames(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(claims) != 3 || requests != 2 {
-		t.Fatalf("claims = %d, requests = %d", len(claims), requests)
-	}
-}
-
-func TestClientListsAndReleasesDomainClaims(t *testing.T) {
-	const claimID = "claim_00000000000000000000000000000001"
-	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		switch request.Method + " " + request.URL.Path {
-		case "GET /v1/domain-claims":
-			response.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(response).Encode([]serverv1.HostnameClaim{{
-				Id: claimID, Kind: serverv1.HostnameClaimKindPersistentCustomDomain,
-				State: serverv1.HostnameClaimStateActive,
-			}})
-		case "DELETE /v1/domain-claims/" + claimID:
-			response.WriteHeader(http.StatusNoContent)
-		default:
-			http.NotFound(response, request)
-		}
-	}))
-	defer server.Close()
-	client, err := New(server.URL, server.Client(), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	claims, err := client.ListDomainClaims(context.Background())
-	if err != nil || len(claims) != 1 || claims[0].Id != claimID {
-		t.Fatalf("claims = %#v, error = %v", claims, err)
-	}
-	if err := client.ReleaseDomainClaim(context.Background(), claimID); err != nil {
-		t.Fatal(err)
+	if len(hostnames) != 3 || requests != 2 {
+		t.Fatalf("hostnames = %d, requests = %d", len(hostnames), requests)
 	}
 }
 
@@ -244,28 +214,28 @@ func TestClientOIDCAndRelayRequests(t *testing.T) {
 }
 
 func TestClientCertificateLifecycleRequests(t *testing.T) {
-	lease, _, _, err := credentials.NewLeaseToken()
+	session, _, _, err := credentials.NewSessionToken()
 	if err != nil {
 		t.Fatal(err)
 	}
 	paths := make(chan string, 5)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.Header.Get("Authorization") != "Bearer "+lease.String() {
+		if request.Header.Get("Authorization") != "Bearer "+session.String() {
 			t.Errorf("Authorization = %q", request.Header.Get("Authorization"))
 		}
 		paths <- request.Method + " " + request.URL.Path
-		if request.URL.Path == "/v1/certs/orders" {
-			var body serverv1.CreateCertificateOrderRequest
+		if request.URL.Path == "/v1/certificate-issuances" {
+			var body serverv1.CreateCertificateIssuanceRequest
 			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
 				t.Error(err)
 			}
-			if body.Csr != base64.RawURLEncoding.EncodeToString([]byte("csr")) || body.Profile != "tlsserver" {
+			if body.Csr != base64.RawURLEncoding.EncodeToString([]byte("csr")) || body.AcmeProfile != "tlsserver" {
 				t.Errorf("create body = %#v", body)
 			}
 		}
-		if strings.Contains(request.URL.Path, "challenge-ready") || request.URL.Path == "/v1/certs/orders" ||
+		if strings.Contains(request.URL.Path, "challenge-ready") || request.URL.Path == "/v1/certificate-issuances" ||
 			request.Method == http.MethodGet {
-			_ = json.NewEncoder(response).Encode(serverv1.CertificateOrder{Id: "cert_id"})
+			_ = json.NewEncoder(response).Encode(serverv1.CertificateIssuance{Id: "issuance_id"})
 			return
 		}
 		response.WriteHeader(http.StatusNoContent)
@@ -275,24 +245,24 @@ func TestClientCertificateLifecycleRequests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.CreateCertificateOrder(context.Background(), "route", 1, lease, "tlsserver", []byte("csr")); err != nil {
+	if _, err := client.CreateCertificateIssuance(context.Background(), "route", 1, session, "tlsserver", []byte("csr")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.CertificateOrder(context.Background(), "cert_id", lease); err != nil {
+	if _, err := client.CertificateIssuance(context.Background(), "issuance_id", session); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.CertificateChallengeReady(context.Background(), "cert_id", lease); err != nil {
+	if _, err := client.CertificateChallengeReady(context.Background(), "issuance_id", session); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.CertificateChallengeRemoved(context.Background(), "cert_id", lease); err != nil {
+	if err := client.CertificateChallengeRemoved(context.Background(), "issuance_id", session); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.CertificateInstalled(context.Background(), "route", 1, "cert_id", lease); err != nil {
+	if err := client.CertificateInstalled(context.Background(), "route", 1, "issuance_id", session); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{
-		"POST /v1/certs/orders", "GET /v1/certs/orders/cert_id", "POST /v1/certs/orders/cert_id/challenge-ready",
-		"POST /v1/certs/orders/cert_id/challenge-removed", "POST /v1/routes/route/certificate-installed",
+		"POST /v1/certificate-issuances", "GET /v1/certificate-issuances/issuance_id", "POST /v1/certificate-issuances/issuance_id/challenge-ready",
+		"POST /v1/certificate-issuances/issuance_id/challenge-removed", "POST /v1/routes/route/certificate-installed",
 	}
 	for _, expected := range want {
 		if got := <-paths; got != expected {

@@ -13,104 +13,104 @@ import (
 	"github.com/tnldotdev/tnl/internal/state/statedb"
 )
 
-func TestRouteLeaseLifecycle(t *testing.T) {
+func TestRouteSessionLifecycle(t *testing.T) {
 	db, err := state.Open(context.Background(), filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	queries := statedb.New(db)
-	now := time.Unix(1_700_000_000, 0).UTC()
+	now := time.Unix(0, 1_700_000_000).UTC()
 	recorder := &testLifecycleRecorder{seen: make(map[string]struct{})}
 	store, err := NewStore(db, "example", StoreConfig{LifecycleRecorder: recorder})
 	if err != nil {
 		t.Fatal(err)
 	}
 	store.now = func() time.Time { return now }
-	upsertTestPrincipal(t, context.Background(), queries, "owner", "Owner", now.Unix())
-	upsertTestPrincipal(t, context.Background(), queries, "other", "Other", now.Unix())
+	upsertTestIdentity(t, context.Background(), queries, "owner", "Owner", now.UnixNano())
+	upsertTestIdentity(t, context.Background(), queries, "other", "Other", now.UnixNano())
 
 	routeToken, _, _, err := credentials.NewRouteToken()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ClaimHostname(context.Background(), "owner", "route", "route-test"); err != nil {
+	if _, err := store.AddManagedHostname(context.Background(), "owner", "route", "route-test"); err != nil {
 		t.Fatal(err)
 	}
-	created, err := store.Create(context.Background(), "owner", "Route.Example.", "localhost:3000", "boot-1", routeToken)
+	created, err := store.Create(context.Background(), "owner", "Route.Example.", "localhost:3000", "instance-1", routeToken)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created.Route.Hostname != "route.example" || created.Route.Generation != 1 {
+	if created.Route.Hostname != "route.example" || created.Route.Version != 1 {
 		t.Fatalf("created route = %#v", created.Route)
 	}
 	otherToken, _, _, err := credentials.NewRouteToken()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Create(context.Background(), "other", "route.example", "localhost:3001", "boot-1", otherToken); !errors.Is(err, ErrNameUnavailable) {
-		t.Fatalf("competing claim error = %v", err)
+	if _, err := store.Create(context.Background(), "other", "route.example", "localhost:3001", "instance-1", otherToken); !errors.Is(err, ErrNameUnavailable) {
+		t.Fatalf("competing hostname error = %v", err)
 	}
-	lease, err := store.AuthenticateLease(context.Background(), created.Route.ID, 1, created.LeaseToken, "boot-1")
+	session, err := store.AuthenticateSession(context.Background(), created.Route.ID, 1, created.SessionToken, "instance-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.RegisterTransport(context.Background(), lease, "nodekey:server", "test"); err != nil {
+	if err := store.RegisterTransport(context.Background(), session, "nodekey:server", "test"); err != nil {
 		t.Fatal(err)
 	}
-	lease, err = store.AuthenticateLease(context.Background(), created.Route.ID, 1, created.LeaseToken, "boot-1")
+	session, err = store.AuthenticateSession(context.Background(), created.Route.ID, 1, created.SessionToken, "instance-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Ready(context.Background(), lease); err != nil {
+	if err := store.Ready(context.Background(), session); err != nil {
 		t.Fatal(err)
 	}
 	now = now.Add(15 * time.Second)
-	if expiresAt, err := store.Heartbeat(context.Background(), lease); err != nil || !expiresAt.Equal(now.Add(LeaseLifetime)) {
+	if expiresAt, err := store.Heartbeat(context.Background(), session); err != nil || !expiresAt.Equal(now.Add(SessionLifetime)) {
 		t.Fatalf("heartbeat = %v, %v", expiresAt, err)
 	}
 
-	replacement, err := store.Acquire(context.Background(), "owner", created.Route.ID, "boot-1", routeToken)
+	replacement, err := store.CreateSession(context.Background(), "owner", created.Route.ID, "instance-1", routeToken)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if replacement.Route.Generation != 2 || replacement.Lease.Generation != 2 {
+	if replacement.Route.Version != 2 || replacement.Session.Version != 2 {
 		t.Fatalf("replacement = %#v", replacement)
 	}
-	if _, err := store.AuthenticateLease(context.Background(), created.Route.ID, 1, created.LeaseToken, "boot-1"); !errors.Is(err, ErrStaleLease) {
-		t.Fatalf("stale lease error = %v", err)
+	if _, err := store.AuthenticateSession(context.Background(), created.Route.ID, 1, created.SessionToken, "instance-1"); !errors.Is(err, ErrStaleSession) {
+		t.Fatalf("stale session error = %v", err)
 	}
-	if _, err := store.Acquire(context.Background(), "owner", created.Route.ID, "boot-1", credentials.RouteToken(replacement.LeaseToken)); !errors.Is(err, ErrUnauthenticated) {
-		t.Fatalf("wrong-class acquire error = %v", err)
+	if _, err := store.CreateSession(context.Background(), "owner", created.Route.ID, "instance-1", credentials.RouteToken(replacement.SessionToken)); !errors.Is(err, ErrUnauthenticated) {
+		t.Fatalf("wrong-class session error = %v", err)
 	}
 	restartedToken, _, _, err := credentials.NewRouteToken()
 	if err != nil {
 		t.Fatal(err)
 	}
 	restarted, err := store.Create(
-		context.Background(), "owner", "route.example", "localhost:3001", "boot-1", restartedToken,
+		context.Background(), "owner", "route.example", "localhost:3001", "instance-1", restartedToken,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if restarted.Route.ID != created.Route.ID || restarted.Route.Generation != 3 || restarted.Route.DisplayTarget != "localhost:3001" {
+	if restarted.Route.ID != created.Route.ID || restarted.Route.Version != 3 || restarted.Route.LocalTarget != "localhost:3001" {
 		t.Fatalf("restarted route = %#v", restarted.Route)
 	}
-	if _, err := store.Acquire(context.Background(), "owner", created.Route.ID, "boot-1", routeToken); !errors.Is(err, ErrUnauthenticated) {
+	if _, err := store.CreateSession(context.Background(), "owner", created.Route.ID, "instance-1", routeToken); !errors.Is(err, ErrUnauthenticated) {
 		t.Fatalf("rotated route token error = %v", err)
 	}
-	if _, err := store.AuthenticateLease(context.Background(), created.Route.ID, 2, replacement.LeaseToken, "boot-1"); !errors.Is(err, ErrStaleLease) {
-		t.Fatalf("replaced lease error = %v", err)
+	if _, err := store.AuthenticateSession(context.Background(), created.Route.ID, 2, replacement.SessionToken, "instance-1"); !errors.Is(err, ErrStaleSession) {
+		t.Fatalf("replaced session error = %v", err)
 	}
 
-	if err := store.InvalidateOtherBoots(context.Background(), "boot-2"); err != nil {
+	if err := store.InvalidateOtherServerInstances(context.Background(), "instance-2"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.AuthenticateLease(context.Background(), created.Route.ID, 3, restarted.LeaseToken, "boot-2"); !errors.Is(err, ErrStaleLease) {
-		t.Fatalf("old boot lease error = %v", err)
+	if _, err := store.AuthenticateSession(context.Background(), created.Route.ID, 3, restarted.SessionToken, "instance-2"); !errors.Is(err, ErrStaleSession) {
+		t.Fatalf("old server instance session error = %v", err)
 	}
 	routes, err := store.List(context.Background(), "owner")
-	if err != nil || len(routes) != 1 || routes[0].DisplayTarget != "localhost:3001" {
+	if err != nil || len(routes) != 1 || routes[0].LocalTarget != "localhost:3001" {
 		t.Fatalf("list = %#v, %v", routes, err)
 	}
 	if err := store.Delete(context.Background(), "owner", created.Route.ID); err != nil {
@@ -120,21 +120,21 @@ func TestRouteLeaseLifecycle(t *testing.T) {
 		t.Fatalf("list after delete = %#v, %v", routes, err)
 	}
 	wantTransitions := []LifecycleTransition{
-		LifecycleGenerationStarted,
+		LifecycleVersionStarted,
 		LifecycleReady,
 		LifecycleDisconnected,
-		LifecycleGenerationStarted,
+		LifecycleVersionStarted,
 		LifecycleDisconnected,
-		LifecycleGenerationStarted,
+		LifecycleVersionStarted,
 		LifecycleDisconnected,
 		LifecycleDeleted,
 	}
-	wantGenerations := []uint64{1, 1, 1, 2, 2, 3, 3, 3}
+	wantVersions := []uint64{1, 1, 1, 2, 2, 3, 3, 3}
 	if len(recorder.changes) != len(wantTransitions) {
 		t.Fatalf("lifecycle changes = %#v", recorder.changes)
 	}
 	for index, change := range recorder.changes {
-		if change.RouteID != created.Route.ID || change.Generation != wantGenerations[index] || change.Transition != wantTransitions[index] {
+		if change.RouteID != created.Route.ID || change.Version != wantVersions[index] || change.Transition != wantTransitions[index] {
 			t.Fatalf("lifecycle change %d = %#v", index, change)
 		}
 	}
@@ -148,20 +148,20 @@ func TestLifecycleFailureRollsBackRouteMutation(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	queries := statedb.New(db)
-	upsertTestPrincipal(t, ctx, queries, "owner", "Owner", 1)
+	upsertTestIdentity(t, ctx, queries, "owner", "Owner", 1)
 	recordErr := errors.New("record lifecycle")
 	store, err := NewStore(db, "example", StoreConfig{LifecycleRecorder: failingLifecycleRecorder{err: recordErr}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ClaimHostname(ctx, "owner", "route", "rollback-test"); err != nil {
+	if _, err := store.AddManagedHostname(ctx, "owner", "route", "rollback-test"); err != nil {
 		t.Fatal(err)
 	}
 	routeToken, _, _, err := credentials.NewRouteToken()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Create(ctx, "owner", "route.example", "localhost:3000", "boot", routeToken); !errors.Is(err, recordErr) {
+	if _, err := store.Create(ctx, "owner", "route.example", "localhost:3000", "instance", routeToken); !errors.Is(err, recordErr) {
 		t.Fatalf("Create error = %v", err)
 	}
 	if routes, err := store.List(ctx, "owner"); err != nil || len(routes) != 0 {
@@ -183,7 +183,7 @@ func TestStoreObservesHealthOperationsExactlyOnce(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	queries := statedb.New(db)
-	upsertTestPrincipal(t, ctx, queries, "owner", "Owner", 1)
+	upsertTestIdentity(t, ctx, queries, "owner", "Owner", 1)
 	store, err := NewStore(db, "example", StoreConfig{
 		ObserveOperation: func(operation StoreOperation, duration time.Duration, err error) {
 			observations = append(observations, observation{operation: operation, duration: duration, err: err})
@@ -192,61 +192,61 @@ func TestStoreObservesHealthOperationsExactlyOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ClaimHostname(ctx, "owner", "route", "observer-test"); err != nil {
+	if _, err := store.AddManagedHostname(ctx, "owner", "route", "observer-test"); err != nil {
 		t.Fatal(err)
 	}
 	routeToken, _, _, err := credentials.NewRouteToken()
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := store.Create(ctx, "owner", "route.example", "localhost:3000", "boot", routeToken)
+	created, err := store.Create(ctx, "owner", "route.example", "localhost:3000", "instance", routeToken)
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease, err := store.AuthenticateLease(ctx, created.Route.ID, 1, created.LeaseToken, "boot")
+	session, err := store.AuthenticateSession(ctx, created.Route.ID, 1, created.SessionToken, "instance")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.RegisterTransport(ctx, lease, "nodekey:server", "test"); err != nil {
+	if err := store.RegisterTransport(ctx, session, "nodekey:server", "test"); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Ready(ctx, lease); err != nil {
+	if err := store.Ready(ctx, session); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Heartbeat(ctx, lease); err != nil {
+	if _, err := store.Heartbeat(ctx, session); err != nil {
 		t.Fatal(err)
 	}
-	replacement, err := store.Acquire(ctx, "owner", created.Route.ID, "boot", routeToken)
+	replacement, err := store.CreateSession(ctx, "owner", created.Route.ID, "instance", routeToken)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Expire(ctx, replacement.Route.ID, replacement.Lease.Generation); err != nil {
+	if err := store.Expire(ctx, replacement.Route.ID, replacement.Session.Version); err != nil {
 		t.Fatal(err)
 	}
-	claims, err := store.ListHostnameClaims(ctx, "owner")
-	if err != nil || len(claims) != 1 {
-		t.Fatalf("claims = %#v, %v", claims, err)
+	hostnames, err := store.ListHostnames(ctx, "owner")
+	if err != nil || len(hostnames) != 1 {
+		t.Fatalf("hostnames = %#v, %v", hostnames, err)
 	}
-	if err := store.ReleaseHostnameClaim(ctx, "owner", claims[0].ID); err != nil {
+	if err := store.RemoveHostname(ctx, "owner", hostnames[0].ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.AuthenticateLease(
-		ctx, replacement.Route.ID, replacement.Lease.Generation, replacement.LeaseToken, "boot",
-	); !errors.Is(err, ErrStaleLease) {
-		t.Fatalf("expired lease error = %v", err)
+	if _, err := store.AuthenticateSession(
+		ctx, replacement.Route.ID, replacement.Session.Version, replacement.SessionToken, "instance",
+	); !errors.Is(err, ErrStaleSession) {
+		t.Fatalf("expired session error = %v", err)
 	}
 
 	want := []StoreOperation{
-		StoreOperationHostnameClaim,
+		StoreOperationHostname,
 		StoreOperationRouteCreate,
-		StoreOperationLeaseAuthenticate,
+		StoreOperationSessionAuthenticate,
 		StoreOperationTransportRegister,
 		StoreOperationRouteReady,
-		StoreOperationLeaseHeartbeat,
-		StoreOperationRouteAcquire,
-		StoreOperationLeaseExpire,
-		StoreOperationHostnameRelease,
-		StoreOperationLeaseAuthenticate,
+		StoreOperationSessionHeartbeat,
+		StoreOperationSessionCreate,
+		StoreOperationSessionExpire,
+		StoreOperationHostnameRemove,
+		StoreOperationSessionAuthenticate,
 	}
 	if len(observations) != len(want) {
 		t.Fatalf("observations = %#v, want %d", observations, len(want))
@@ -262,7 +262,7 @@ func TestStoreObservesHealthOperationsExactlyOnce(t *testing.T) {
 			t.Fatalf("observation %d error = %v", index, observations[index].err)
 		}
 	}
-	if !errors.Is(observations[len(observations)-1].err, ErrStaleLease) {
+	if !errors.Is(observations[len(observations)-1].err, ErrStaleSession) {
 		t.Fatalf("terminal observation error = %v", observations[len(observations)-1].err)
 	}
 }
@@ -273,7 +273,7 @@ type testLifecycleRecorder struct {
 }
 
 func (r *testLifecycleRecorder) RecordLifecycle(_ context.Context, _ *statedb.Queries, change LifecycleChange) error {
-	key := change.RouteID + "/" + string(change.Transition) + "/" + fmt.Sprint(change.Generation)
+	key := change.RouteID + "/" + string(change.Transition) + "/" + fmt.Sprint(change.Version)
 	if _, ok := r.seen[key]; ok {
 		return nil
 	}

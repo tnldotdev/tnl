@@ -10,103 +10,60 @@ import (
 	"database/sql"
 )
 
-const advanceRouteGeneration = `-- name: AdvanceRouteGeneration :exec
-UPDATE routes
-SET generation = ?1
+const activateTemporaryHostname = `-- name: ActivateTemporaryHostname :execrows
+UPDATE hostnames
+SET status = 'active', activated_at = CAST(?1 AS INTEGER)
 WHERE id = ?2
+    AND identity_id = CAST(?3 AS TEXT)
+    AND kind = 'temporary'
+    AND status = 'pending_route'
 `
 
-type AdvanceRouteGenerationParams struct {
-	Generation int64
-	RouteID    string
-}
-
-func (q *Queries) AdvanceRouteGeneration(ctx context.Context, arg AdvanceRouteGenerationParams) error {
-	_, err := q.db.ExecContext(ctx, advanceRouteGeneration, arg.Generation, arg.RouteID)
-	return err
-}
-
-const bindEphemeralClaim = `-- name: BindEphemeralClaim :execrows
-UPDATE hostname_claims
-SET state = 'active', activated_at = CAST(?1 AS INTEGER), route_binding = CAST(?2 AS TEXT)
-WHERE id = ?3
-    AND principal_id = ?4
-    AND kind = 'ephemeral'
-    AND state = 'held'
-    AND route_binding IS NULL
-`
-
-type BindEphemeralClaimParams struct {
+type ActivateTemporaryHostnameParams struct {
 	ActivatedAt int64
-	RouteID     string
-	ClaimID     string
-	PrincipalID string
+	HostnameID  string
+	IdentityID  string
 }
 
-func (q *Queries) BindEphemeralClaim(ctx context.Context, arg BindEphemeralClaimParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, bindEphemeralClaim,
-		arg.ActivatedAt,
-		arg.RouteID,
-		arg.ClaimID,
-		arg.PrincipalID,
-	)
+func (q *Queries) ActivateTemporaryHostname(ctx context.Context, arg ActivateTemporaryHostnameParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, activateTemporaryHostname, arg.ActivatedAt, arg.HostnameID, arg.IdentityID)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected()
 }
 
-const burnAbandonedEphemeralHolds = `-- name: BurnAbandonedEphemeralHolds :exec
-UPDATE hostname_claims
-SET state = 'burned', released_at = CAST(?1 AS INTEGER), reason = 'abandoned hold'
-WHERE kind = 'ephemeral'
-    AND state = 'held'
-    AND created_at <= ?2
+const advanceRouteVersion = `-- name: AdvanceRouteVersion :exec
+UPDATE routes
+SET version = ?1
+WHERE id = ?2
 `
 
-type BurnAbandonedEphemeralHoldsParams struct {
-	ReleasedAt    int64
-	CreatedBefore int64
+type AdvanceRouteVersionParams struct {
+	Version int64
+	RouteID string
 }
 
-func (q *Queries) BurnAbandonedEphemeralHolds(ctx context.Context, arg BurnAbandonedEphemeralHoldsParams) error {
-	_, err := q.db.ExecContext(ctx, burnAbandonedEphemeralHolds, arg.ReleasedAt, arg.CreatedBefore)
+func (q *Queries) AdvanceRouteVersion(ctx context.Context, arg AdvanceRouteVersionParams) error {
+	_, err := q.db.ExecContext(ctx, advanceRouteVersion, arg.Version, arg.RouteID)
 	return err
 }
 
-const burnEphemeralClaimByRoute = `-- name: BurnEphemeralClaimByRoute :exec
-UPDATE hostname_claims
-SET state = 'burned', released_at = CAST(?1 AS INTEGER), route_binding = NULL, reason = 'route ended'
-WHERE route_binding = CAST(?2 AS TEXT)
-    AND kind = 'ephemeral'
-    AND state IN ('held', 'active')
-`
-
-type BurnEphemeralClaimByRouteParams struct {
-	ReleasedAt int64
-	RouteID    string
-}
-
-func (q *Queries) BurnEphemeralClaimByRoute(ctx context.Context, arg BurnEphemeralClaimByRouteParams) error {
-	_, err := q.db.ExecContext(ctx, burnEphemeralClaimByRoute, arg.ReleasedAt, arg.RouteID)
-	return err
-}
-
-const countActiveRoutesByPrincipal = `-- name: CountActiveRoutesByPrincipal :one
+const countActiveRoutesByIdentity = `-- name: CountActiveRoutesByIdentity :one
 SELECT COUNT(*)
 FROM routes
 WHERE id = ?1
-    AND principal_id = ?2
-    AND state = 'active'
+    AND identity_id = CAST(?2 AS TEXT)
+    AND status = 'active'
 `
 
-type CountActiveRoutesByPrincipalParams struct {
-	RouteID     string
-	PrincipalID string
+type CountActiveRoutesByIdentityParams struct {
+	RouteID    string
+	IdentityID string
 }
 
-func (q *Queries) CountActiveRoutesByPrincipal(ctx context.Context, arg CountActiveRoutesByPrincipalParams) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countActiveRoutesByPrincipal, arg.RouteID, arg.PrincipalID)
+func (q *Queries) CountActiveRoutesByIdentity(ctx context.Context, arg CountActiveRoutesByIdentityParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countActiveRoutesByIdentity, arg.RouteID, arg.IdentityID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -115,63 +72,63 @@ func (q *Queries) CountActiveRoutesByPrincipal(ctx context.Context, arg CountAct
 const deleteActiveRoute = `-- name: DeleteActiveRoute :execrows
 UPDATE routes
 SET
-    state = 'deleted',
+    status = 'deleted',
     deleted_at = CAST(?1 AS INTEGER)
 WHERE id = ?2
-    AND principal_id = ?3
-    AND state = 'active'
+    AND identity_id = CAST(?3 AS TEXT)
+    AND status = 'active'
 `
 
 type DeleteActiveRouteParams struct {
-	DeletedAt   int64
-	RouteID     string
-	PrincipalID string
+	DeletedAt  int64
+	RouteID    string
+	IdentityID string
 }
 
 func (q *Queries) DeleteActiveRoute(ctx context.Context, arg DeleteActiveRouteParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, deleteActiveRoute, arg.DeletedAt, arg.RouteID, arg.PrincipalID)
+	result, err := q.db.ExecContext(ctx, deleteActiveRoute, arg.DeletedAt, arg.RouteID, arg.IdentityID)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected()
 }
 
-const expireRouteLease = `-- name: ExpireRouteLease :execrows
-UPDATE route_leases
+const expireRouteSession = `-- name: ExpireRouteSession :execrows
+UPDATE route_sessions
 SET status = 'expired'
 WHERE route_id = ?1
-    AND generation = ?2
+    AND version = ?2
     AND status != 'expired'
 `
 
-type ExpireRouteLeaseParams struct {
-	RouteID    string
-	Generation int64
+type ExpireRouteSessionParams struct {
+	RouteID string
+	Version int64
 }
 
-func (q *Queries) ExpireRouteLease(ctx context.Context, arg ExpireRouteLeaseParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, expireRouteLease, arg.RouteID, arg.Generation)
+func (q *Queries) ExpireRouteSession(ctx context.Context, arg ExpireRouteSessionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, expireRouteSession, arg.RouteID, arg.Version)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected()
 }
 
-const expireRouteLeases = `-- name: ExpireRouteLeases :exec
-UPDATE route_leases
+const expireRouteSessions = `-- name: ExpireRouteSessions :exec
+UPDATE route_sessions
 SET status = 'expired'
 WHERE route_id = ?1 AND status != 'expired'
 `
 
-func (q *Queries) ExpireRouteLeases(ctx context.Context, routeID string) error {
-	_, err := q.db.ExecContext(ctx, expireRouteLeases, routeID)
+func (q *Queries) ExpireRouteSessions(ctx context.Context, routeID string) error {
+	_, err := q.db.ExecContext(ctx, expireRouteSessions, routeID)
 	return err
 }
 
 const getActiveRouteByHostname = `-- name: GetActiveRouteByHostname :one
-SELECT routes.id, routes.claim_id, routes.principal_id, routes.hostname, routes.display_target, routes.state, routes.generation, routes.lifecycle_sequence, routes.created_at, routes.deleted_at
+SELECT routes.id, routes.hostname_id, routes.identity_id, routes.hostname, routes.local_target, routes.status, routes.version, routes.lifecycle_sequence, routes.created_at, routes.deleted_at
 FROM routes
-WHERE hostname = ?1 AND state = 'active'
+WHERE hostname = ?1 AND status = 'active'
 `
 
 func (q *Queries) GetActiveRouteByHostname(ctx context.Context, hostname string) (Route, error) {
@@ -179,12 +136,12 @@ func (q *Queries) GetActiveRouteByHostname(ctx context.Context, hostname string)
 	var i Route
 	err := row.Scan(
 		&i.ID,
-		&i.ClaimID,
-		&i.PrincipalID,
+		&i.HostnameID,
+		&i.IdentityID,
 		&i.Hostname,
-		&i.DisplayTarget,
-		&i.State,
-		&i.Generation,
+		&i.LocalTarget,
+		&i.Status,
+		&i.Version,
 		&i.LifecycleSequence,
 		&i.CreatedAt,
 		&i.DeletedAt,
@@ -195,73 +152,71 @@ func (q *Queries) GetActiveRouteByHostname(ctx context.Context, hostname string)
 const getActiveRouteIDByHostname = `-- name: GetActiveRouteIDByHostname :one
 SELECT id
 FROM routes
-WHERE principal_id = ?1
+WHERE identity_id = CAST(?1 AS TEXT)
     AND hostname = ?2
-    AND state = 'active'
+    AND status = 'active'
 `
 
 type GetActiveRouteIDByHostnameParams struct {
-	PrincipalID string
-	Hostname    string
+	IdentityID string
+	Hostname   string
 }
 
 func (q *Queries) GetActiveRouteIDByHostname(ctx context.Context, arg GetActiveRouteIDByHostnameParams) (string, error) {
-	row := q.db.QueryRowContext(ctx, getActiveRouteIDByHostname, arg.PrincipalID, arg.Hostname)
+	row := q.db.QueryRowContext(ctx, getActiveRouteIDByHostname, arg.IdentityID, arg.Hostname)
 	var id string
 	err := row.Scan(&id)
 	return id, err
 }
 
-const getAuthorizingRouteClaim = `-- name: GetAuthorizingRouteClaim :one
-SELECT id, principal_id, hostname, kind, state, route_binding
-FROM hostname_claims
-WHERE principal_id = ?1
-    AND state IN ('held', 'active')
-    AND kind IN ('persistent_managed', 'persistent_custom_domain', 'ephemeral')
+const getAuthorizingRouteHostname = `-- name: GetAuthorizingRouteHostname :one
+SELECT id, identity_id, hostname, kind, status
+FROM hostnames
+WHERE identity_id = CAST(?1 AS TEXT)
+    AND status IN ('pending_route', 'active')
+    AND kind IN ('managed', 'custom_domain', 'temporary')
     AND (
         hostname = ?2
-        OR kind != 'ephemeral' AND ?2 LIKE '%.' || hostname
+        OR kind != 'temporary' AND ?2 LIKE '%.' || hostname
     )
 ORDER BY length(hostname) DESC
 LIMIT 1
 `
 
-type GetAuthorizingRouteClaimParams struct {
-	PrincipalID string
-	Hostname    string
+type GetAuthorizingRouteHostnameParams struct {
+	IdentityID string
+	Hostname   string
 }
 
-type GetAuthorizingRouteClaimRow struct {
-	ID           string
-	PrincipalID  string
-	Hostname     string
-	Kind         string
-	State        string
-	RouteBinding sql.NullString
+type GetAuthorizingRouteHostnameRow struct {
+	ID         string
+	IdentityID sql.NullString
+	Hostname   string
+	Kind       string
+	Status     string
 }
 
-func (q *Queries) GetAuthorizingRouteClaim(ctx context.Context, arg GetAuthorizingRouteClaimParams) (GetAuthorizingRouteClaimRow, error) {
-	row := q.db.QueryRowContext(ctx, getAuthorizingRouteClaim, arg.PrincipalID, arg.Hostname)
-	var i GetAuthorizingRouteClaimRow
+func (q *Queries) GetAuthorizingRouteHostname(ctx context.Context, arg GetAuthorizingRouteHostnameParams) (GetAuthorizingRouteHostnameRow, error) {
+	row := q.db.QueryRowContext(ctx, getAuthorizingRouteHostname, arg.IdentityID, arg.Hostname)
+	var i GetAuthorizingRouteHostnameRow
 	err := row.Scan(
 		&i.ID,
-		&i.PrincipalID,
+		&i.IdentityID,
 		&i.Hostname,
 		&i.Kind,
-		&i.State,
-		&i.RouteBinding,
+		&i.Status,
 	)
 	return i, err
 }
 
-const getKnownRouteLeaseCredentialMarker = `-- name: GetKnownRouteLeaseCredentialMarker :one
+const getKnownRouteSessionTokenMarker = `-- name: GetKnownRouteSessionTokenMarker :one
 SELECT 1 AS known_credential
-FROM route_leases
-WHERE credential_id = ?1
+FROM route_sessions
+WHERE token_id = ?1
 `
 
-func (q *Queries) GetKnownRouteLeaseCredentialMarker(ctx context.Context, credentialID string) (int64, error) {
-	row := q.db.QueryRowContext(ctx, getKnownRouteLeaseCredentialMarker, credentialID)
+func (q *Queries) GetKnownRouteSessionTokenMarker(ctx context.Context, tokenID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getKnownRouteSessionTokenMarker, tokenID)
 	var known_credential int64
 	err := row.Scan(&known_credential)
 	return known_credential, err
@@ -269,7 +224,7 @@ func (q *Queries) GetKnownRouteLeaseCredentialMarker(ctx context.Context, creden
 
 const getRouteCredential = `-- name: GetRouteCredential :one
 SELECT
-    routes.id, routes.claim_id, routes.principal_id, routes.hostname, routes.display_target, routes.state, routes.generation, routes.lifecycle_sequence, routes.created_at, routes.deleted_at,
+    routes.id, routes.hostname_id, routes.identity_id, routes.hostname, routes.local_target, routes.status, routes.version, routes.lifecycle_sequence, routes.created_at, routes.deleted_at,
     route_credentials.secret_hash,
     route_credentials.revoked_at
 FROM routes
@@ -294,12 +249,12 @@ func (q *Queries) GetRouteCredential(ctx context.Context, arg GetRouteCredential
 	var i GetRouteCredentialRow
 	err := row.Scan(
 		&i.Route.ID,
-		&i.Route.ClaimID,
-		&i.Route.PrincipalID,
+		&i.Route.HostnameID,
+		&i.Route.IdentityID,
 		&i.Route.Hostname,
-		&i.Route.DisplayTarget,
-		&i.Route.State,
-		&i.Route.Generation,
+		&i.Route.LocalTarget,
+		&i.Route.Status,
+		&i.Route.Version,
 		&i.Route.LifecycleSequence,
 		&i.Route.CreatedAt,
 		&i.Route.DeletedAt,
@@ -309,103 +264,103 @@ func (q *Queries) GetRouteCredential(ctx context.Context, arg GetRouteCredential
 	return i, err
 }
 
-const getRouteGeneration = `-- name: GetRouteGeneration :one
-SELECT generation
-FROM routes
-WHERE id = ?1
+const getRouteSessionForAuthentication = `-- name: GetRouteSessionForAuthentication :one
+SELECT route_sessions.id, route_sessions.route_id, route_sessions.version, route_sessions.status, route_sessions.token_id, route_sessions.secret_hash, route_sessions.server_instance_id, route_sessions.publisher_public_key, route_sessions.relay_region, route_sessions.created_at, route_sessions.last_heartbeat_at, route_sessions.expires_at
+FROM route_sessions
+JOIN routes ON routes.id = route_sessions.route_id
+WHERE route_sessions.route_id = ?1
+    AND route_sessions.version = ?2
+    AND route_sessions.token_id = ?3
+    AND routes.status = 'active'
+    AND routes.version = route_sessions.version
 `
 
-func (q *Queries) GetRouteGeneration(ctx context.Context, routeID string) (int64, error) {
-	row := q.db.QueryRowContext(ctx, getRouteGeneration, routeID)
-	var generation int64
-	err := row.Scan(&generation)
-	return generation, err
+type GetRouteSessionForAuthenticationParams struct {
+	RouteID string
+	Version int64
+	TokenID string
 }
 
-const getRouteLeaseForAuthentication = `-- name: GetRouteLeaseForAuthentication :one
-SELECT route_leases.id, route_leases.route_id, route_leases.generation, route_leases.status, route_leases.credential_id, route_leases.secret_hash, route_leases.boot_epoch, route_leases.server_public_key, route_leases.relay_profile, route_leases.created_at, route_leases.last_heartbeat, route_leases.expires_at
-FROM route_leases
-JOIN routes ON routes.id = route_leases.route_id
-WHERE route_leases.route_id = ?1
-    AND route_leases.generation = ?2
-    AND route_leases.credential_id = ?3
-    AND routes.state = 'active'
-    AND routes.generation = route_leases.generation
-`
-
-type GetRouteLeaseForAuthenticationParams struct {
-	RouteID      string
-	Generation   int64
-	CredentialID string
-}
-
-func (q *Queries) GetRouteLeaseForAuthentication(ctx context.Context, arg GetRouteLeaseForAuthenticationParams) (RouteLease, error) {
-	row := q.db.QueryRowContext(ctx, getRouteLeaseForAuthentication, arg.RouteID, arg.Generation, arg.CredentialID)
-	var i RouteLease
+func (q *Queries) GetRouteSessionForAuthentication(ctx context.Context, arg GetRouteSessionForAuthenticationParams) (RouteSession, error) {
+	row := q.db.QueryRowContext(ctx, getRouteSessionForAuthentication, arg.RouteID, arg.Version, arg.TokenID)
+	var i RouteSession
 	err := row.Scan(
 		&i.ID,
 		&i.RouteID,
-		&i.Generation,
+		&i.Version,
 		&i.Status,
-		&i.CredentialID,
+		&i.TokenID,
 		&i.SecretHash,
-		&i.BootEpoch,
-		&i.ServerPublicKey,
-		&i.RelayProfile,
+		&i.ServerInstanceID,
+		&i.PublisherPublicKey,
+		&i.RelayRegion,
 		&i.CreatedAt,
-		&i.LastHeartbeat,
+		&i.LastHeartbeatAt,
 		&i.ExpiresAt,
 	)
 	return i, err
 }
 
-const getRouteLeaseStatus = `-- name: GetRouteLeaseStatus :one
+const getRouteSessionStatus = `-- name: GetRouteSessionStatus :one
 SELECT status
-FROM route_leases
+FROM route_sessions
 WHERE id = ?1
     AND route_id = ?2
-    AND generation = ?3
+    AND version = ?3
 `
 
-type GetRouteLeaseStatusParams struct {
-	LeaseID    string
-	RouteID    string
-	Generation int64
+type GetRouteSessionStatusParams struct {
+	SessionID string
+	RouteID   string
+	Version   int64
 }
 
-func (q *Queries) GetRouteLeaseStatus(ctx context.Context, arg GetRouteLeaseStatusParams) (string, error) {
-	row := q.db.QueryRowContext(ctx, getRouteLeaseStatus, arg.LeaseID, arg.RouteID, arg.Generation)
+func (q *Queries) GetRouteSessionStatus(ctx context.Context, arg GetRouteSessionStatusParams) (string, error) {
+	row := q.db.QueryRowContext(ctx, getRouteSessionStatus, arg.SessionID, arg.RouteID, arg.Version)
 	var status string
 	err := row.Scan(&status)
 	return status, err
 }
 
-const heartbeatRouteLease = `-- name: HeartbeatRouteLease :execrows
-UPDATE route_leases
+const getRouteVersion = `-- name: GetRouteVersion :one
+SELECT version
+FROM routes
+WHERE id = ?1
+`
+
+func (q *Queries) GetRouteVersion(ctx context.Context, routeID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getRouteVersion, routeID)
+	var version int64
+	err := row.Scan(&version)
+	return version, err
+}
+
+const heartbeatRouteSession = `-- name: HeartbeatRouteSession :execrows
+UPDATE route_sessions
 SET
-    last_heartbeat = ?1,
+    last_heartbeat_at = ?1,
     expires_at = ?2
 WHERE id = ?3
     AND route_id = ?4
-    AND generation = ?5
+    AND version = ?5
     AND status != 'expired'
 `
 
-type HeartbeatRouteLeaseParams struct {
-	LastHeartbeat int64
-	ExpiresAt     int64
-	LeaseID       string
-	RouteID       string
-	Generation    int64
+type HeartbeatRouteSessionParams struct {
+	LastHeartbeatAt int64
+	ExpiresAt       int64
+	SessionID       string
+	RouteID         string
+	Version         int64
 }
 
-func (q *Queries) HeartbeatRouteLease(ctx context.Context, arg HeartbeatRouteLeaseParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, heartbeatRouteLease,
-		arg.LastHeartbeat,
+func (q *Queries) HeartbeatRouteSession(ctx context.Context, arg HeartbeatRouteSessionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, heartbeatRouteSession,
+		arg.LastHeartbeatAt,
 		arg.ExpiresAt,
-		arg.LeaseID,
+		arg.SessionID,
 		arg.RouteID,
-		arg.Generation,
+		arg.Version,
 	)
 	if err != nil {
 		return 0, err
@@ -413,17 +368,17 @@ func (q *Queries) HeartbeatRouteLease(ctx context.Context, arg HeartbeatRouteLea
 	return result.RowsAffected()
 }
 
-const insertInitialRouteLease = `-- name: InsertInitialRouteLease :exec
-INSERT INTO route_leases (
+const insertInitialRouteSession = `-- name: InsertInitialRouteSession :exec
+INSERT INTO route_sessions (
     id,
     route_id,
-    generation,
+    version,
     status,
-    credential_id,
+    token_id,
     secret_hash,
-    boot_epoch,
+    server_instance_id,
     created_at,
-    last_heartbeat,
+    last_heartbeat_at,
     expires_at
 ) VALUES (
     ?1,
@@ -439,23 +394,23 @@ INSERT INTO route_leases (
 )
 `
 
-type InsertInitialRouteLeaseParams struct {
-	LeaseID      string
-	RouteID      string
-	CredentialID string
-	SecretHash   []byte
-	BootEpoch    string
-	CreatedAt    int64
-	ExpiresAt    int64
+type InsertInitialRouteSessionParams struct {
+	SessionID        string
+	RouteID          string
+	TokenID          string
+	SecretHash       []byte
+	ServerInstanceID string
+	CreatedAt        int64
+	ExpiresAt        int64
 }
 
-func (q *Queries) InsertInitialRouteLease(ctx context.Context, arg InsertInitialRouteLeaseParams) error {
-	_, err := q.db.ExecContext(ctx, insertInitialRouteLease,
-		arg.LeaseID,
+func (q *Queries) InsertInitialRouteSession(ctx context.Context, arg InsertInitialRouteSessionParams) error {
+	_, err := q.db.ExecContext(ctx, insertInitialRouteSession,
+		arg.SessionID,
 		arg.RouteID,
-		arg.CredentialID,
+		arg.TokenID,
 		arg.SecretHash,
-		arg.BootEpoch,
+		arg.ServerInstanceID,
 		arg.CreatedAt,
 		arg.ExpiresAt,
 	)
@@ -465,17 +420,17 @@ func (q *Queries) InsertInitialRouteLease(ctx context.Context, arg InsertInitial
 const insertRoute = `-- name: InsertRoute :exec
 INSERT INTO routes (
     id,
-    claim_id,
-    principal_id,
+    hostname_id,
+    identity_id,
     hostname,
-    display_target,
-    state,
-    generation,
+    local_target,
+    status,
+    version,
     created_at
 ) VALUES (
     ?1,
     ?2,
-    ?3,
+    CAST(?3 AS TEXT),
     ?4,
     ?5,
     'active',
@@ -485,21 +440,21 @@ INSERT INTO routes (
 `
 
 type InsertRouteParams struct {
-	RouteID       string
-	ClaimID       string
-	PrincipalID   string
-	Hostname      string
-	DisplayTarget string
-	CreatedAt     int64
+	RouteID     string
+	HostnameID  string
+	IdentityID  string
+	Hostname    string
+	LocalTarget string
+	CreatedAt   int64
 }
 
 func (q *Queries) InsertRoute(ctx context.Context, arg InsertRouteParams) error {
 	_, err := q.db.ExecContext(ctx, insertRoute,
 		arg.RouteID,
-		arg.ClaimID,
-		arg.PrincipalID,
+		arg.HostnameID,
+		arg.IdentityID,
 		arg.Hostname,
-		arg.DisplayTarget,
+		arg.LocalTarget,
 		arg.CreatedAt,
 	)
 	return err
@@ -536,17 +491,17 @@ func (q *Queries) InsertRouteCredential(ctx context.Context, arg InsertRouteCred
 	return err
 }
 
-const insertRouteLease = `-- name: InsertRouteLease :exec
-INSERT INTO route_leases (
+const insertRouteSession = `-- name: InsertRouteSession :exec
+INSERT INTO route_sessions (
     id,
     route_id,
-    generation,
+    version,
     status,
-    credential_id,
+    token_id,
     secret_hash,
-    boot_epoch,
+    server_instance_id,
     created_at,
-    last_heartbeat,
+    last_heartbeat_at,
     expires_at
 ) VALUES (
     ?1,
@@ -562,73 +517,73 @@ INSERT INTO route_leases (
 )
 `
 
-type InsertRouteLeaseParams struct {
-	LeaseID      string
-	RouteID      string
-	Generation   int64
-	CredentialID string
-	SecretHash   []byte
-	BootEpoch    string
-	CreatedAt    int64
-	ExpiresAt    int64
+type InsertRouteSessionParams struct {
+	SessionID        string
+	RouteID          string
+	Version          int64
+	TokenID          string
+	SecretHash       []byte
+	ServerInstanceID string
+	CreatedAt        int64
+	ExpiresAt        int64
 }
 
-func (q *Queries) InsertRouteLease(ctx context.Context, arg InsertRouteLeaseParams) error {
-	_, err := q.db.ExecContext(ctx, insertRouteLease,
-		arg.LeaseID,
+func (q *Queries) InsertRouteSession(ctx context.Context, arg InsertRouteSessionParams) error {
+	_, err := q.db.ExecContext(ctx, insertRouteSession,
+		arg.SessionID,
 		arg.RouteID,
-		arg.Generation,
-		arg.CredentialID,
+		arg.Version,
+		arg.TokenID,
 		arg.SecretHash,
-		arg.BootEpoch,
+		arg.ServerInstanceID,
 		arg.CreatedAt,
 		arg.ExpiresAt,
 	)
 	return err
 }
 
-const invalidateOtherBootRouteLeases = `-- name: InvalidateOtherBootRouteLeases :exec
-UPDATE route_leases
+const invalidateOtherServerInstanceRouteSessions = `-- name: InvalidateOtherServerInstanceRouteSessions :exec
+UPDATE route_sessions
 SET status = 'expired'
-WHERE boot_epoch != ?1 AND status != 'expired'
+WHERE server_instance_id != ?1 AND status != 'expired'
 `
 
-func (q *Queries) InvalidateOtherBootRouteLeases(ctx context.Context, bootEpoch string) error {
-	_, err := q.db.ExecContext(ctx, invalidateOtherBootRouteLeases, bootEpoch)
+func (q *Queries) InvalidateOtherServerInstanceRouteSessions(ctx context.Context, serverInstanceID string) error {
+	_, err := q.db.ExecContext(ctx, invalidateOtherServerInstanceRouteSessions, serverInstanceID)
 	return err
 }
 
-const listAbandonedEphemeralRoutes = `-- name: ListAbandonedEphemeralRoutes :many
-SELECT hostname_claims.id AS claim_id, routes.id AS route_id
-FROM hostname_claims
-JOIN routes ON routes.claim_id = hostname_claims.id
-WHERE hostname_claims.kind = 'ephemeral'
-    AND hostname_claims.state = 'active'
-    AND routes.state = 'active'
+const listAbandonedTemporaryRoutes = `-- name: ListAbandonedTemporaryRoutes :many
+SELECT hostnames.id AS hostname_id, routes.id AS route_id
+FROM hostnames
+JOIN routes ON routes.hostname_id = hostnames.id
+WHERE hostnames.kind = 'temporary'
+    AND hostnames.status = 'active'
+    AND routes.status = 'active'
     AND NOT EXISTS (
         SELECT 1
-        FROM route_leases
-        WHERE route_leases.route_id = routes.id
-            AND route_leases.expires_at > ?1
+        FROM route_sessions
+        WHERE route_sessions.route_id = routes.id
+            AND route_sessions.expires_at > ?1
     )
 ORDER BY routes.id
 `
 
-type ListAbandonedEphemeralRoutesRow struct {
-	ClaimID string
-	RouteID string
+type ListAbandonedTemporaryRoutesRow struct {
+	HostnameID string
+	RouteID    string
 }
 
-func (q *Queries) ListAbandonedEphemeralRoutes(ctx context.Context, expiredBefore int64) ([]ListAbandonedEphemeralRoutesRow, error) {
-	rows, err := q.db.QueryContext(ctx, listAbandonedEphemeralRoutes, expiredBefore)
+func (q *Queries) ListAbandonedTemporaryRoutes(ctx context.Context, expiredBefore int64) ([]ListAbandonedTemporaryRoutesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listAbandonedTemporaryRoutes, expiredBefore)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListAbandonedEphemeralRoutesRow
+	var items []ListAbandonedTemporaryRoutesRow
 	for rows.Next() {
-		var i ListAbandonedEphemeralRoutesRow
-		if err := rows.Scan(&i.ClaimID, &i.RouteID); err != nil {
+		var i ListAbandonedTemporaryRoutesRow
+		if err := rows.Scan(&i.HostnameID, &i.RouteID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -642,28 +597,28 @@ func (q *Queries) ListAbandonedEphemeralRoutes(ctx context.Context, expiredBefor
 	return items, nil
 }
 
-const listActiveClaimRouteGenerations = `-- name: ListActiveClaimRouteGenerations :many
-SELECT id, generation
+const listActiveHostnameRouteVersions = `-- name: ListActiveHostnameRouteVersions :many
+SELECT id, version
 FROM routes
-WHERE claim_id = ?1 AND state = 'active'
+WHERE hostname_id = ?1 AND status = 'active'
 ORDER BY id
 `
 
-type ListActiveClaimRouteGenerationsRow struct {
-	ID         string
-	Generation int64
+type ListActiveHostnameRouteVersionsRow struct {
+	ID      string
+	Version int64
 }
 
-func (q *Queries) ListActiveClaimRouteGenerations(ctx context.Context, claimID string) ([]ListActiveClaimRouteGenerationsRow, error) {
-	rows, err := q.db.QueryContext(ctx, listActiveClaimRouteGenerations, claimID)
+func (q *Queries) ListActiveHostnameRouteVersions(ctx context.Context, hostnameID string) ([]ListActiveHostnameRouteVersionsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listActiveHostnameRouteVersions, hostnameID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListActiveClaimRouteGenerationsRow
+	var items []ListActiveHostnameRouteVersionsRow
 	for rows.Next() {
-		var i ListActiveClaimRouteGenerationsRow
-		if err := rows.Scan(&i.ID, &i.Generation); err != nil {
+		var i ListActiveHostnameRouteVersionsRow
+		if err := rows.Scan(&i.ID, &i.Version); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -678,14 +633,14 @@ func (q *Queries) ListActiveClaimRouteGenerations(ctx context.Context, claimID s
 }
 
 const listActiveRoutes = `-- name: ListActiveRoutes :many
-SELECT routes.id, routes.claim_id, routes.principal_id, routes.hostname, routes.display_target, routes.state, routes.generation, routes.lifecycle_sequence, routes.created_at, routes.deleted_at
+SELECT routes.id, routes.hostname_id, routes.identity_id, routes.hostname, routes.local_target, routes.status, routes.version, routes.lifecycle_sequence, routes.created_at, routes.deleted_at
 FROM routes
-WHERE principal_id = ?1 AND state = 'active'
+WHERE identity_id = CAST(?1 AS TEXT) AND status = 'active'
 ORDER BY created_at, id
 `
 
-func (q *Queries) ListActiveRoutes(ctx context.Context, principalID string) ([]Route, error) {
-	rows, err := q.db.QueryContext(ctx, listActiveRoutes, principalID)
+func (q *Queries) ListActiveRoutes(ctx context.Context, identityID string) ([]Route, error) {
+	rows, err := q.db.QueryContext(ctx, listActiveRoutes, identityID)
 	if err != nil {
 		return nil, err
 	}
@@ -695,12 +650,12 @@ func (q *Queries) ListActiveRoutes(ctx context.Context, principalID string) ([]R
 		var i Route
 		if err := rows.Scan(
 			&i.ID,
-			&i.ClaimID,
-			&i.PrincipalID,
+			&i.HostnameID,
+			&i.IdentityID,
 			&i.Hostname,
-			&i.DisplayTarget,
-			&i.State,
-			&i.Generation,
+			&i.LocalTarget,
+			&i.Status,
+			&i.Version,
 			&i.LifecycleSequence,
 			&i.CreatedAt,
 			&i.DeletedAt,
@@ -718,28 +673,28 @@ func (q *Queries) ListActiveRoutes(ctx context.Context, principalID string) ([]R
 	return items, nil
 }
 
-const listOtherBootRouteLeases = `-- name: ListOtherBootRouteLeases :many
-SELECT route_id, generation
-FROM route_leases
-WHERE boot_epoch != ?1 AND status != 'expired'
-ORDER BY route_id, generation
+const listOtherServerInstanceRouteSessions = `-- name: ListOtherServerInstanceRouteSessions :many
+SELECT route_id, version
+FROM route_sessions
+WHERE server_instance_id != ?1 AND status != 'expired'
+ORDER BY route_id, version
 `
 
-type ListOtherBootRouteLeasesRow struct {
-	RouteID    string
-	Generation int64
+type ListOtherServerInstanceRouteSessionsRow struct {
+	RouteID string
+	Version int64
 }
 
-func (q *Queries) ListOtherBootRouteLeases(ctx context.Context, bootEpoch string) ([]ListOtherBootRouteLeasesRow, error) {
-	rows, err := q.db.QueryContext(ctx, listOtherBootRouteLeases, bootEpoch)
+func (q *Queries) ListOtherServerInstanceRouteSessions(ctx context.Context, serverInstanceID string) ([]ListOtherServerInstanceRouteSessionsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listOtherServerInstanceRouteSessions, serverInstanceID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListOtherBootRouteLeasesRow
+	var items []ListOtherServerInstanceRouteSessionsRow
 	for rows.Next() {
-		var i ListOtherBootRouteLeasesRow
-		if err := rows.Scan(&i.RouteID, &i.Generation); err != nil {
+		var i ListOtherServerInstanceRouteSessionsRow
+		if err := rows.Scan(&i.RouteID, &i.Version); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -753,56 +708,56 @@ func (q *Queries) ListOtherBootRouteLeases(ctx context.Context, bootEpoch string
 	return items, nil
 }
 
-const readyRouteLease = `-- name: ReadyRouteLease :execrows
-UPDATE route_leases
+const readyRouteSession = `-- name: ReadyRouteSession :execrows
+UPDATE route_sessions
 SET status = 'ready'
 WHERE id = ?1
     AND route_id = ?2
-    AND generation = ?3
+    AND version = ?3
     AND status = 'starting'
 `
 
-type ReadyRouteLeaseParams struct {
-	LeaseID    string
-	RouteID    string
-	Generation int64
+type ReadyRouteSessionParams struct {
+	SessionID string
+	RouteID   string
+	Version   int64
 }
 
-func (q *Queries) ReadyRouteLease(ctx context.Context, arg ReadyRouteLeaseParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, readyRouteLease, arg.LeaseID, arg.RouteID, arg.Generation)
+func (q *Queries) ReadyRouteSession(ctx context.Context, arg ReadyRouteSessionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, readyRouteSession, arg.SessionID, arg.RouteID, arg.Version)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected()
 }
 
-const registerRouteLeaseTransport = `-- name: RegisterRouteLeaseTransport :execrows
-UPDATE route_leases
+const registerRouteSessionTransport = `-- name: RegisterRouteSessionTransport :execrows
+UPDATE route_sessions
 SET
-    server_public_key = ?1,
-    relay_profile = ?2,
+    publisher_public_key = ?1,
+    relay_region = ?2,
     status = 'starting'
 WHERE id = ?3
     AND route_id = ?4
-    AND generation = ?5
+    AND version = ?5
     AND status IN ('pending', 'starting')
 `
 
-type RegisterRouteLeaseTransportParams struct {
-	ServerPublicKey sql.NullString
-	RelayProfile    sql.NullString
-	LeaseID         string
-	RouteID         string
-	Generation      int64
+type RegisterRouteSessionTransportParams struct {
+	PublisherPublicKey sql.NullString
+	RelayRegion        sql.NullString
+	SessionID          string
+	RouteID            string
+	Version            int64
 }
 
-func (q *Queries) RegisterRouteLeaseTransport(ctx context.Context, arg RegisterRouteLeaseTransportParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, registerRouteLeaseTransport,
-		arg.ServerPublicKey,
-		arg.RelayProfile,
-		arg.LeaseID,
+func (q *Queries) RegisterRouteSessionTransport(ctx context.Context, arg RegisterRouteSessionTransportParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, registerRouteSessionTransport,
+		arg.PublisherPublicKey,
+		arg.RelayRegion,
+		arg.SessionID,
 		arg.RouteID,
-		arg.Generation,
+		arg.Version,
 	)
 	if err != nil {
 		return 0, err
@@ -813,19 +768,55 @@ func (q *Queries) RegisterRouteLeaseTransport(ctx context.Context, arg RegisterR
 const replaceRoute = `-- name: ReplaceRoute :exec
 UPDATE routes
 SET
-    display_target = ?1,
-    generation = ?2
+    local_target = ?1,
+    version = ?2
 WHERE id = ?3
 `
 
 type ReplaceRouteParams struct {
-	DisplayTarget string
-	Generation    int64
-	RouteID       string
+	LocalTarget string
+	Version     int64
+	RouteID     string
 }
 
 func (q *Queries) ReplaceRoute(ctx context.Context, arg ReplaceRouteParams) error {
-	_, err := q.db.ExecContext(ctx, replaceRoute, arg.DisplayTarget, arg.Generation, arg.RouteID)
+	_, err := q.db.ExecContext(ctx, replaceRoute, arg.LocalTarget, arg.Version, arg.RouteID)
+	return err
+}
+
+const retireAbandonedTemporaryHostnames = `-- name: RetireAbandonedTemporaryHostnames :exec
+UPDATE hostnames
+SET status = 'retired', deactivated_at = CAST(?1 AS INTEGER)
+WHERE kind = 'temporary'
+    AND status = 'pending_route'
+    AND created_at <= ?2
+`
+
+type RetireAbandonedTemporaryHostnamesParams struct {
+	DeactivatedAt int64
+	CreatedBefore int64
+}
+
+func (q *Queries) RetireAbandonedTemporaryHostnames(ctx context.Context, arg RetireAbandonedTemporaryHostnamesParams) error {
+	_, err := q.db.ExecContext(ctx, retireAbandonedTemporaryHostnames, arg.DeactivatedAt, arg.CreatedBefore)
+	return err
+}
+
+const retireTemporaryHostnameByRoute = `-- name: RetireTemporaryHostnameByRoute :exec
+UPDATE hostnames
+SET status = 'retired', deactivated_at = CAST(?1 AS INTEGER)
+WHERE hostnames.id = (SELECT routes.hostname_id FROM routes WHERE routes.id = ?2)
+    AND kind = 'temporary'
+    AND status IN ('pending_route', 'active')
+`
+
+type RetireTemporaryHostnameByRouteParams struct {
+	DeactivatedAt int64
+	RouteID       string
+}
+
+func (q *Queries) RetireTemporaryHostnameByRoute(ctx context.Context, arg RetireTemporaryHostnameByRouteParams) error {
+	_, err := q.db.ExecContext(ctx, retireTemporaryHostnameByRoute, arg.DeactivatedAt, arg.RouteID)
 	return err
 }
 

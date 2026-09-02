@@ -1,11 +1,11 @@
--- name: UpsertPrincipal :exec
-INSERT INTO principals (
+-- name: UpsertIdentity :exec
+INSERT INTO identities (
     id,
     display_name,
     email,
     created_at
 ) VALUES (
-    sqlc.arg(principal_id),
+    sqlc.arg(identity_id),
     sqlc.arg(display_name),
     sqlc.arg(email),
     sqlc.arg(created_at)
@@ -33,13 +33,13 @@ ON CONFLICT (assertion_hash) DO NOTHING;
 -- name: InsertAccessCredential :exec
 INSERT INTO access_credentials (
     id,
-    principal_id,
+    identity_id,
     secret_hash,
     created_at,
     expires_at
 ) VALUES (
     sqlc.arg(credential_id),
-    sqlc.arg(principal_id),
+    sqlc.arg(identity_id),
     sqlc.arg(secret_hash),
     sqlc.arg(created_at),
     sqlc.arg(expires_at)
@@ -47,18 +47,18 @@ INSERT INTO access_credentials (
 
 -- name: GetAccessCredential :one
 SELECT
-    p.id AS principal_id,
+    p.id AS identity_id,
     p.display_name,
     p.email,
     c.secret_hash,
     c.expires_at,
     c.revoked_at
 FROM access_credentials AS c
-JOIN principals AS p ON p.id = c.principal_id
+JOIN identities AS p ON p.id = c.identity_id
 WHERE c.id = sqlc.arg(credential_id);
 
 -- name: RevokeAccessCredential :execrows
 UPDATE access_credentials
 SET revoked_at = COALESCE(revoked_at, CAST(sqlc.arg(revoked_at) AS INTEGER))
 WHERE id = sqlc.arg(credential_id)
-  AND principal_id = sqlc.arg(principal_id);
+  AND identity_id = sqlc.arg(identity_id);

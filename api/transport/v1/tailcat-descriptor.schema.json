@@ -4,16 +4,16 @@
   "title": "Tailcat descriptor v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version", "server_public_key", "relay_profile"],
+  "required": ["version", "publisher_public_key", "relay_region"],
   "properties": {
     "version": {
       "const": 1
     },
-    "server_public_key": {
+    "publisher_public_key": {
       "type": "string",
       "pattern": "^nodekey:[0-9a-f]{64}$"
     },
-    "relay_profile": {
+    "relay_region": {
       "type": "string",
       "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"
     }

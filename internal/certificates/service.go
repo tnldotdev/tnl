@@ -24,13 +24,13 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming"
 )
 
-type ProbeFunc func(context.Context, Job) error
+type ProbeFunc func(context.Context, Issuance) error
 
 type Config struct {
 	DirectoryURL  string
 	Email         string
 	AcceptTerms   bool
-	Profile       string
+	ACMEProfile   string
 	HTTPClient    *http.Client
 	Roots         *x509.CertPool
 	Probe         ProbeFunc
@@ -43,7 +43,7 @@ type Config struct {
 type Service struct {
 	store         *store
 	client        acmeClient
-	profile       string
+	acmeProfile   string
 	roots         *x509.CertPool
 	probe         ProbeFunc
 	hostnameReady func(context.Context, string) error
@@ -54,8 +54,8 @@ type Service struct {
 // New constructs the durable ACME service and reconciles its persisted account.
 func New(ctx context.Context, db *sql.DB, config Config) (*Service, error) {
 	if strings.TrimSpace(config.DirectoryURL) == "" || strings.TrimSpace(config.Email) == "" ||
-		strings.TrimSpace(config.Profile) == "" || config.Probe == nil {
-		return nil, errors.New("certificates: directory, email, profile, and probe are required")
+		strings.TrimSpace(config.ACMEProfile) == "" || config.Probe == nil {
+		return nil, errors.New("certificates: directory, email, acmeProfile, and probe are required")
 	}
 	directory, err := url.Parse(config.DirectoryURL)
 	if err != nil || directory.Scheme != "https" || directory.Host == "" || directory.User != nil {
@@ -88,8 +88,8 @@ func New(ctx context.Context, db *sql.DB, config Config) (*Service, error) {
 	if accountState.AcceptedTOS != terms && terms != "" && !config.AcceptTerms {
 		return nil, errors.New("certificates: ACME terms changed; explicit operator acceptance is required")
 	}
-	if _, ok := directoryMeta.Meta.Profiles[config.Profile]; !ok {
-		return nil, fmt.Errorf("certificates: ACME profile %q is not advertised", config.Profile)
+	if _, ok := directoryMeta.Meta.Profiles[config.ACMEProfile]; !ok {
+		return nil, fmt.Errorf("certificates: ACME profile %q is not advertised", config.ACMEProfile)
 	}
 	if accountState.KID == "" {
 		created, err := client.CreateAccount(ctx, legoacme.Account{
@@ -123,7 +123,7 @@ func New(ctx context.Context, db *sql.DB, config Config) (*Service, error) {
 		return nil, err
 	}
 	return &Service{
-		store: stored, client: client, profile: config.Profile, roots: config.Roots,
+		store: stored, client: client, acmeProfile: config.ACMEProfile, roots: config.Roots,
 		probe: config.Probe, hostnameReady: config.HostnameReady, now: config.Now,
 	}, nil
 }
@@ -131,425 +131,425 @@ func New(ctx context.Context, db *sql.DB, config Config) (*Service, error) {
 func (s *Service) Create(
 	ctx context.Context,
 	routeID string,
-	generation uint64,
-	profile string,
+	version uint64,
+	acmeProfile string,
 	csrDER []byte,
-) (Job, error) {
+) (Issuance, error) {
 	lock := s.routeLock(routeID)
 	lock.Lock()
 	defer lock.Unlock()
-	hostname, err := s.store.routeHostname(ctx, routeID, generation)
+	hostname, err := s.store.routeHostname(ctx, routeID, version)
 	if err != nil {
-		return Job{}, err
+		return Issuance{}, err
 	}
 	canonical, err := naming.CanonicalizeHostname(hostname)
-	if err != nil || canonical != hostname || strings.TrimSpace(routeID) == "" || generation == 0 || profile != s.profile {
-		return Job{}, ErrInvalidArgument
+	if err != nil || canonical != hostname || strings.TrimSpace(routeID) == "" || version == 0 || acmeProfile != s.acmeProfile {
+		return Issuance{}, ErrInvalidArgument
 	}
 	if s.hostnameReady != nil {
 		if err := s.hostnameReady(ctx, hostname); err != nil {
-			return Job{}, ErrUnavailable
+			return Issuance{}, ErrUnavailable
 		}
 	}
 	_, csrHash, spkiHash, err := validateCSR(csrDER, hostname)
 	if err != nil {
-		return Job{}, err
+		return Issuance{}, err
 	}
 	// Recover bound or resumable work before allocating another ACME order.
-	job, err := s.store.findBoundJob(ctx, routeID, generation, csrHash)
+	issuance, err := s.store.findBoundIssuance(ctx, routeID, version, csrHash)
 	created := false
 	if errors.Is(err, ErrNotFound) {
-		resumable, resumeErr := s.store.findResumableJob(ctx, routeID, csrHash, s.now())
+		resumable, resumeErr := s.store.findResumableIssuance(ctx, routeID, csrHash, s.now())
 		if resumeErr == nil {
-			job, err = s.store.rebindJob(ctx, resumable.ID, generation)
+			issuance, err = s.store.rebindIssuance(ctx, resumable.ID, version)
 			if err != nil {
-				return Job{}, err
+				return Issuance{}, err
 			}
-			return s.continueJob(ctx, job)
+			return s.continueIssuance(ctx, issuance)
 		}
 		if !errors.Is(resumeErr, ErrNotFound) {
-			return Job{}, resumeErr
+			return Issuance{}, resumeErr
 		}
-		if err := s.store.allowJobCreation(ctx, routeID, generation, csrHash, s.now()); err != nil {
-			return Job{}, err
+		if err := s.store.allowIssuanceCreation(ctx, routeID, version, csrHash, s.now()); err != nil {
+			return Issuance{}, err
 		}
-		job, created, err = s.store.createJob(
-			ctx, routeID, generation, hostname, profile, csrDER, csrHash, spkiHash,
+		issuance, created, err = s.store.createIssuance(
+			ctx, routeID, version, hostname, acmeProfile, csrDER, csrHash, spkiHash,
 		)
 	}
 	if err != nil {
-		return Job{}, err
+		return Issuance{}, err
 	}
 	if !created {
-		return s.continueJob(ctx, job)
+		return s.continueIssuance(ctx, issuance)
 	}
 	if created {
-		reusable, reuseErr := s.store.findReusableJob(ctx, routeID, csrHash, s.now().Add(24*time.Hour))
+		reusable, reuseErr := s.store.findReusableIssuance(ctx, routeID, csrHash, s.now().Add(24*time.Hour))
 		if reuseErr == nil && reusable.RenewAt.After(s.now()) {
-			job.State = StateWaitingForInstall
-			job.CertificateURL = reusable.CertificateURL
-			job.CertificatePEM = bytes.Clone(reusable.CertificatePEM)
-			job.NotBefore = reusable.NotBefore
-			job.NotAfter = reusable.NotAfter
-			job.RenewAt = reusable.RenewAt
-			job.ChallengeRemoved = s.now()
-			if err := s.store.saveJob(ctx, job); err != nil {
-				return Job{}, err
+			issuance.Status = StatusWaitingForInstall
+			issuance.CertificateURL = reusable.CertificateURL
+			issuance.CertificatePEM = bytes.Clone(reusable.CertificatePEM)
+			issuance.NotBefore = reusable.NotBefore
+			issuance.NotAfter = reusable.NotAfter
+			issuance.RenewAt = reusable.RenewAt
+			issuance.ChallengeRemoved = s.now()
+			if err := s.store.saveIssuance(ctx, issuance); err != nil {
+				return Issuance{}, err
 			}
-			return s.store.getJob(ctx, job.ID)
+			return s.store.getIssuance(ctx, issuance.ID)
 		}
 		if reuseErr != nil && !errors.Is(reuseErr, ErrNotFound) {
-			return Job{}, reuseErr
+			return Issuance{}, reuseErr
 		}
 	}
-	return s.createOrder(ctx, job)
+	return s.createOrder(ctx, issuance)
 }
 
-func (s *Service) continueJob(ctx context.Context, job Job) (Job, error) {
-	if job.RetryAt.After(s.now()) {
-		return job, nil
+func (s *Service) continueIssuance(ctx context.Context, issuance Issuance) (Issuance, error) {
+	if issuance.RetryAt.After(s.now()) {
+		return issuance, nil
 	}
-	switch job.State {
-	case StateCreatingOrder:
-		return s.createOrder(ctx, job)
-	case StateAuthorizing:
-		return s.prepareAuthorization(ctx, job)
-	case StateReadyToFinalize, StateFinalizing, StateDownloading:
-		return s.advance(ctx, job)
+	switch issuance.Status {
+	case StatusCreatingOrder:
+		return s.createOrder(ctx, issuance)
+	case StatusAuthorizing:
+		return s.prepareAuthorization(ctx, issuance)
+	case StatusReadyToFinalize, StatusFinalizing, StatusDownloading:
+		return s.advance(ctx, issuance)
 	default:
-		return job, nil
+		return issuance, nil
 	}
 }
 
-func (s *Service) Get(ctx context.Context, id string) (Job, error) {
-	return s.store.getJob(ctx, id)
+func (s *Service) Get(ctx context.Context, id string) (Issuance, error) {
+	return s.store.getIssuance(ctx, id)
 }
 
-func (s *Service) ChallengeReady(ctx context.Context, id string) (Job, error) {
-	job, err := s.store.getJob(ctx, id)
+func (s *Service) ChallengeReady(ctx context.Context, id string) (Issuance, error) {
+	issuance, err := s.store.getIssuance(ctx, id)
 	if err != nil {
-		return Job{}, err
+		return Issuance{}, err
 	}
-	lock := s.routeLock(job.RouteID)
+	lock := s.routeLock(issuance.RouteID)
 	lock.Lock()
 	defer lock.Unlock()
-	job, err = s.store.getJob(ctx, id)
+	issuance, err = s.store.getIssuance(ctx, id)
 	if err != nil {
-		return Job{}, err
+		return Issuance{}, err
 	}
-	if job.State == StateWaitingForInstall || job.State == StateSucceeded {
-		return job, nil
+	if issuance.Status == StatusWaitingForInstall || issuance.Status == StatusInstalled {
+		return issuance, nil
 	}
-	if job.RetryAt.After(s.now()) {
-		return Job{}, ErrUnavailable
+	if issuance.RetryAt.After(s.now()) {
+		return Issuance{}, ErrUnavailable
 	}
-	if err := s.ensureCurrent(ctx, job); err != nil {
-		return Job{}, err
+	if err := s.ensureCurrent(ctx, issuance); err != nil {
+		return Issuance{}, err
 	}
-	if job.ChallengeURL == "" || !job.ChallengeExpires.After(s.now()) {
-		return Job{}, ErrInvalidState
+	if issuance.ChallengeURL == "" || !issuance.ChallengeExpires.After(s.now()) {
+		return Issuance{}, ErrInvalidStatus
 	}
-	if err := s.probe(ctx, job); err != nil {
-		job.LastError = boundedError(err)
-		job.RetryAt = s.now().Add(5 * time.Second)
-		_ = s.store.saveJob(ctx, job)
-		return Job{}, fmt.Errorf("%w: routed TLS-ALPN probe: %v", ErrUnavailable, err)
+	if err := s.probe(ctx, issuance); err != nil {
+		issuance.LastError = boundedError(err)
+		issuance.RetryAt = s.now().Add(5 * time.Second)
+		_ = s.store.saveIssuance(ctx, issuance)
+		return Issuance{}, fmt.Errorf("%w: routed TLS-ALPN probe: %v", ErrUnavailable, err)
 	}
-	// The probe may outlive this route generation.
-	if err := s.ensureCurrent(ctx, job); err != nil {
-		return Job{}, err
+	// The probe may outlive this route version.
+	if err := s.ensureCurrent(ctx, issuance); err != nil {
+		return Issuance{}, err
 	}
-	return s.advance(ctx, job)
+	return s.advance(ctx, issuance)
 }
 
-func (s *Service) ChallengeRemoved(ctx context.Context, id string) (Job, error) {
-	job, err := s.store.getJob(ctx, id)
+func (s *Service) ChallengeRemoved(ctx context.Context, id string) (Issuance, error) {
+	issuance, err := s.store.getIssuance(ctx, id)
 	if err != nil {
-		return Job{}, err
+		return Issuance{}, err
 	}
-	lock := s.routeLock(job.RouteID)
+	lock := s.routeLock(issuance.RouteID)
 	lock.Lock()
 	defer lock.Unlock()
-	job, err = s.store.getJob(ctx, id)
+	issuance, err = s.store.getIssuance(ctx, id)
 	if err != nil {
-		return Job{}, err
+		return Issuance{}, err
 	}
-	if len(job.CertificatePEM) == 0 {
-		return Job{}, ErrInvalidState
+	if len(issuance.CertificatePEM) == 0 {
+		return Issuance{}, ErrInvalidStatus
 	}
-	job.ChallengeRemoved = s.now()
-	job.LastError = ""
-	if err := s.store.saveJob(ctx, job); err != nil {
-		return Job{}, err
+	issuance.ChallengeRemoved = s.now()
+	issuance.LastError = ""
+	if err := s.store.saveIssuance(ctx, issuance); err != nil {
+		return Issuance{}, err
 	}
-	return s.store.getJob(ctx, id)
+	return s.store.getIssuance(ctx, id)
 }
 
-func (s *Service) Installed(ctx context.Context, id, routeID string, generation uint64) (Job, error) {
-	job, err := s.store.getJob(ctx, id)
+func (s *Service) Installed(ctx context.Context, id, routeID string, version uint64) (Issuance, error) {
+	issuance, err := s.store.getIssuance(ctx, id)
 	if err != nil {
-		return Job{}, err
+		return Issuance{}, err
 	}
-	lock := s.routeLock(job.RouteID)
+	lock := s.routeLock(issuance.RouteID)
 	lock.Lock()
 	defer lock.Unlock()
-	job, err = s.store.getJob(ctx, id)
+	issuance, err = s.store.getIssuance(ctx, id)
 	if err != nil {
-		return Job{}, err
+		return Issuance{}, err
 	}
-	if job.RouteID != routeID || job.Generation != generation || len(job.CertificatePEM) == 0 ||
-		job.State != StateWaitingForInstall && job.State != StateSucceeded || job.ChallengeRemoved.IsZero() {
-		return Job{}, ErrInvalidState
+	if issuance.RouteID != routeID || issuance.Version != version || len(issuance.CertificatePEM) == 0 ||
+		issuance.Status != StatusWaitingForInstall && issuance.Status != StatusInstalled || issuance.ChallengeRemoved.IsZero() {
+		return Issuance{}, ErrInvalidStatus
 	}
-	if err := s.ensureCurrent(ctx, job); err != nil {
-		return Job{}, err
+	if err := s.ensureCurrent(ctx, issuance); err != nil {
+		return Issuance{}, err
 	}
-	job.State = StateSucceeded
-	job.InstalledAt = s.now()
-	job.LastError = ""
-	if err := s.store.saveJob(ctx, job); err != nil {
-		return Job{}, err
+	issuance.Status = StatusInstalled
+	issuance.InstalledAt = s.now()
+	issuance.LastError = ""
+	if err := s.store.saveIssuance(ctx, issuance); err != nil {
+		return Issuance{}, err
 	}
-	return s.store.getJob(ctx, id)
+	return s.store.getIssuance(ctx, id)
 }
 
-func (s *Service) createOrder(ctx context.Context, job Job) (Job, error) {
+func (s *Service) createOrder(ctx context.Context, issuance Issuance) (Issuance, error) {
 	// A missing response URL makes blind retries risk duplicate orders.
-	if job.OrderAttempts != 0 {
-		job.State = StateBlocked
-		job.LastError = "ACME order creation outcome is ambiguous; refusing to create a duplicate order"
-		if err := s.store.saveJob(ctx, job); err != nil {
-			return Job{}, err
+	if issuance.OrderAttempts != 0 {
+		issuance.Status = StatusBlocked
+		issuance.LastError = "ACME order creation outcome is ambiguous; refusing to create a duplicate order"
+		if err := s.store.saveIssuance(ctx, issuance); err != nil {
+			return Issuance{}, err
 		}
-		return Job{}, fmt.Errorf("%w: %s", ErrInvalidState, job.LastError)
+		return Issuance{}, fmt.Errorf("%w: %s", ErrInvalidStatus, issuance.LastError)
 	}
-	job.OrderAttempts++
-	job.RetryAt = time.Time{}
-	if err := s.store.saveJob(ctx, job); err != nil {
-		return Job{}, err
+	issuance.OrderAttempts++
+	issuance.RetryAt = time.Time{}
+	if err := s.store.saveIssuance(ctx, issuance); err != nil {
+		return Issuance{}, err
 	}
-	order, err := s.client.CreateOrder(ctx, []string{job.Hostname}, &legoapi.OrderOptions{Profile: job.Profile})
+	order, err := s.client.CreateOrder(ctx, []string{issuance.Hostname}, &legoapi.OrderOptions{Profile: issuance.ACMEProfile})
 	if err != nil {
-		return s.createOrderFailure(ctx, job, err)
+		return s.createOrderFailure(ctx, issuance, err)
 	}
-	if order.Location == "" || order.Finalize == "" || len(order.Authorizations) != 1 || order.Profile != job.Profile {
-		return s.terminalFailure(ctx, job, "ACME order response is incomplete")
+	if order.Location == "" || order.Finalize == "" || len(order.Authorizations) != 1 || order.Profile != issuance.ACMEProfile {
+		return s.terminalFailure(ctx, issuance, "ACME order response is incomplete")
 	}
-	job.OrderURL = order.Location
-	job.ACMEStatus = order.Status
-	job.FinalizeURL = order.Finalize
+	issuance.OrderURL = order.Location
+	issuance.ACMEStatus = order.Status
+	issuance.FinalizeURL = order.Finalize
 	if order.Expires != "" {
-		job.OrderExpires, err = time.Parse(time.RFC3339, order.Expires)
+		issuance.OrderExpires, err = time.Parse(time.RFC3339, order.Expires)
 		if err != nil {
-			return s.terminalFailure(ctx, job, "ACME order expiry is invalid")
+			return s.terminalFailure(ctx, issuance, "ACME order expiry is invalid")
 		}
 	}
-	job.AuthorizationURL = order.Authorizations[0]
-	job.State = StateAuthorizing
-	job.LastError = ""
-	job.RetryAt = time.Time{}
-	if err := s.store.saveJob(ctx, job); err != nil {
-		return Job{}, err
+	issuance.AuthorizationURL = order.Authorizations[0]
+	issuance.Status = StatusAuthorizing
+	issuance.LastError = ""
+	issuance.RetryAt = time.Time{}
+	if err := s.store.saveIssuance(ctx, issuance); err != nil {
+		return Issuance{}, err
 	}
-	return s.prepareAuthorization(ctx, job)
+	return s.prepareAuthorization(ctx, issuance)
 }
 
-func (s *Service) prepareAuthorization(ctx context.Context, job Job) (Job, error) {
-	authorization, err := s.client.GetAuthorization(ctx, job.AuthorizationURL)
+func (s *Service) prepareAuthorization(ctx context.Context, issuance Issuance) (Issuance, error) {
+	authorization, err := s.client.GetAuthorization(ctx, issuance.AuthorizationURL)
 	if err != nil {
-		return s.transientFailure(ctx, job, "read ACME authorization", err)
+		return s.transientFailure(ctx, issuance, "read ACME authorization", err)
 	}
-	if authorization.Identifier.Type != "dns" || authorization.Identifier.Value != job.Hostname || authorization.Wildcard {
-		return s.terminalFailure(ctx, job, "ACME authorization changed the identifier")
+	if authorization.Identifier.Type != "dns" || authorization.Identifier.Value != issuance.Hostname || authorization.Wildcard {
+		return s.terminalFailure(ctx, issuance, "ACME authorization changed the identifier")
 	}
 	if authorization.Status == legoacme.StatusValid {
-		job.ACMEStatus = authorization.Status
-		job.State = StateReadyToFinalize
-		if err := s.store.saveJob(ctx, job); err != nil {
-			return Job{}, err
+		issuance.ACMEStatus = authorization.Status
+		issuance.Status = StatusReadyToFinalize
+		if err := s.store.saveIssuance(ctx, issuance); err != nil {
+			return Issuance{}, err
 		}
-		return s.advance(ctx, job)
+		return s.advance(ctx, issuance)
 	}
 	if authorization.Status != legoacme.StatusPending {
-		return s.terminalFailure(ctx, job, "ACME authorization is not pending")
+		return s.terminalFailure(ctx, issuance, "ACME authorization is not pending")
 	}
 	challenge, err := tlsALPNChallenge(authorization)
 	if err != nil {
-		return s.terminalFailure(ctx, job, err.Error())
+		return s.terminalFailure(ctx, issuance, err.Error())
 	}
 	keyAuthorization, err := s.client.KeyAuthorization(challenge.Token)
 	if err != nil {
-		return s.terminalFailure(ctx, job, "derive ACME key authorization")
+		return s.terminalFailure(ctx, issuance, "derive ACME key authorization")
 	}
-	job.ChallengeURL = challenge.URL
-	job.ChallengeToken = challenge.Token
-	job.ChallengeDigest = sha256.Sum256([]byte(keyAuthorization))
-	job.ChallengeExpires = authorization.Expires
-	if job.ChallengeExpires.IsZero() {
-		job.ChallengeExpires = s.now().Add(defaultChallengeTimeout)
+	issuance.ChallengeURL = challenge.URL
+	issuance.ChallengeToken = challenge.Token
+	issuance.ChallengeDigest = sha256.Sum256([]byte(keyAuthorization))
+	issuance.ChallengeExpires = authorization.Expires
+	if issuance.ChallengeExpires.IsZero() {
+		issuance.ChallengeExpires = s.now().Add(defaultChallengeTimeout)
 	}
-	if !job.ChallengeExpires.After(s.now()) {
-		return s.terminalFailure(ctx, job, "ACME authorization is expired")
+	if !issuance.ChallengeExpires.After(s.now()) {
+		return s.terminalFailure(ctx, issuance, "ACME authorization is expired")
 	}
-	job.State = StateWaitingChallenge
-	job.ACMEStatus = authorization.Status
-	job.LastError = ""
-	job.RetryAt = time.Time{}
-	if err := s.store.saveJob(ctx, job); err != nil {
-		return Job{}, err
+	issuance.Status = StatusWaitingChallenge
+	issuance.ACMEStatus = authorization.Status
+	issuance.LastError = ""
+	issuance.RetryAt = time.Time{}
+	if err := s.store.saveIssuance(ctx, issuance); err != nil {
+		return Issuance{}, err
 	}
-	return s.store.getJob(ctx, job.ID)
+	return s.store.getIssuance(ctx, issuance.ID)
 }
 
-func (s *Service) advance(ctx context.Context, job Job) (Job, error) {
+func (s *Service) advance(ctx context.Context, issuance Issuance) (Issuance, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	if job.State == StateWaitingChallenge || job.State == StateValidating {
-		job.State = StateValidating
-		job.LastError = ""
-		if err := s.store.saveJob(ctx, job); err != nil {
-			return Job{}, err
+	if issuance.Status == StatusWaitingChallenge || issuance.Status == StatusValidating {
+		issuance.Status = StatusValidating
+		issuance.LastError = ""
+		if err := s.store.saveIssuance(ctx, issuance); err != nil {
+			return Issuance{}, err
 		}
-		authorization, err := s.client.GetAuthorization(ctx, job.AuthorizationURL)
+		authorization, err := s.client.GetAuthorization(ctx, issuance.AuthorizationURL)
 		if err != nil {
-			return s.transientFailure(ctx, job, "reconcile ACME authorization", err)
+			return s.transientFailure(ctx, issuance, "reconcile ACME authorization", err)
 		}
-		if authorization.Identifier.Type != "dns" || authorization.Identifier.Value != job.Hostname || authorization.Wildcard {
-			return s.terminalFailure(ctx, job, "ACME authorization changed the identifier")
+		if authorization.Identifier.Type != "dns" || authorization.Identifier.Value != issuance.Hostname || authorization.Wildcard {
+			return s.terminalFailure(ctx, issuance, "ACME authorization changed the identifier")
 		}
 		switch authorization.Status {
 		case legoacme.StatusPending:
 			challenge, challengeErr := tlsALPNChallenge(authorization)
 			if challengeErr != nil {
-				return s.terminalFailure(ctx, job, challengeErr.Error())
+				return s.terminalFailure(ctx, issuance, challengeErr.Error())
 			}
-			if challenge.URL != job.ChallengeURL || challenge.Token != job.ChallengeToken {
-				return s.terminalFailure(ctx, job, "ACME TLS-ALPN-01 challenge changed")
+			if challenge.URL != issuance.ChallengeURL || challenge.Token != issuance.ChallengeToken {
+				return s.terminalFailure(ctx, issuance, "ACME TLS-ALPN-01 challenge changed")
 			}
 			switch challenge.Status {
 			case legoacme.StatusPending:
-				if err := s.ensureCurrent(ctx, job); err != nil {
-					return Job{}, err
+				if err := s.ensureCurrent(ctx, issuance); err != nil {
+					return Issuance{}, err
 				}
-				if _, err := s.client.AcceptChallenge(ctx, job.ChallengeURL); err != nil {
-					return s.transientFailure(ctx, job, "accept ACME challenge", err)
+				if _, err := s.client.AcceptChallenge(ctx, issuance.ChallengeURL); err != nil {
+					return s.transientFailure(ctx, issuance, "accept ACME challenge", err)
 				}
 			case legoacme.StatusProcessing, legoacme.StatusValid:
 				// The previous acceptance reached the CA; reconcile instead of replaying it.
 			case legoacme.StatusInvalid:
-				return s.terminalFailure(ctx, job, "ACME TLS-ALPN-01 challenge became invalid")
+				return s.terminalFailure(ctx, issuance, "ACME TLS-ALPN-01 challenge became invalid")
 			default:
-				return s.terminalFailure(ctx, job, "ACME TLS-ALPN-01 challenge has an invalid status")
+				return s.terminalFailure(ctx, issuance, "ACME TLS-ALPN-01 challenge has an invalid status")
 			}
 		case legoacme.StatusProcessing, legoacme.StatusValid:
 		default:
-			return s.terminalFailure(ctx, job, "ACME authorization became invalid")
+			return s.terminalFailure(ctx, issuance, "ACME authorization became invalid")
 		}
 		if authorization.Status != legoacme.StatusValid {
-			authorization, err = s.waitAuthorization(ctx, job.AuthorizationURL)
+			authorization, err = s.waitAuthorization(ctx, issuance.AuthorizationURL)
 			if err != nil {
-				return s.transientFailure(ctx, job, "wait for ACME authorization", err)
+				return s.transientFailure(ctx, issuance, "wait for ACME authorization", err)
 			}
 		}
 		if authorization.Status != legoacme.StatusValid {
-			return s.terminalFailure(ctx, job, "ACME authorization became invalid")
+			return s.terminalFailure(ctx, issuance, "ACME authorization became invalid")
 		}
-		job.ACMEStatus = authorization.Status
-		job.State = StateReadyToFinalize
-		if err := s.store.saveJob(ctx, job); err != nil {
-			return Job{}, err
+		issuance.ACMEStatus = authorization.Status
+		issuance.Status = StatusReadyToFinalize
+		if err := s.store.saveIssuance(ctx, issuance); err != nil {
+			return Issuance{}, err
 		}
 	}
 
-	order, err := s.client.GetOrder(ctx, job.OrderURL)
+	order, err := s.client.GetOrder(ctx, issuance.OrderURL)
 	if err != nil {
-		return s.transientFailure(ctx, job, "reconcile ACME order", err)
+		return s.transientFailure(ctx, issuance, "reconcile ACME order", err)
 	}
 	if order.Status == legoacme.StatusPending {
-		order, err = s.waitOrder(ctx, job.OrderURL, legoacme.StatusReady, legoacme.StatusValid)
+		order, err = s.waitOrder(ctx, issuance.OrderURL, legoacme.StatusReady, legoacme.StatusValid)
 		if err != nil {
-			return s.transientFailure(ctx, job, "wait for ready ACME order", err)
+			return s.transientFailure(ctx, issuance, "wait for ready ACME order", err)
 		}
 	}
-	job.ACMEStatus = order.Status
+	issuance.ACMEStatus = order.Status
 	if order.Status == legoacme.StatusReady {
-		if err := s.ensureCurrent(ctx, job); err != nil {
-			return Job{}, err
+		if err := s.ensureCurrent(ctx, issuance); err != nil {
+			return Issuance{}, err
 		}
-		job.State = StateFinalizing
-		if err := s.store.saveJob(ctx, job); err != nil {
-			return Job{}, err
+		issuance.Status = StatusFinalizing
+		if err := s.store.saveIssuance(ctx, issuance); err != nil {
+			return Issuance{}, err
 		}
-		order, err = s.client.FinalizeOrder(ctx, job.FinalizeURL, job.CSRDER)
+		order, err = s.client.FinalizeOrder(ctx, issuance.FinalizeURL, issuance.CSRDER)
 		if err != nil {
-			return s.transientFailure(ctx, job, "finalize ACME order", err)
+			return s.transientFailure(ctx, issuance, "finalize ACME order", err)
 		}
 	}
 	if order.Status == legoacme.StatusProcessing || order.Status == legoacme.StatusReady {
-		order, err = s.waitOrder(ctx, job.OrderURL, legoacme.StatusValid)
+		order, err = s.waitOrder(ctx, issuance.OrderURL, legoacme.StatusValid)
 		if err != nil {
-			return s.transientFailure(ctx, job, "wait for finalized ACME order", err)
+			return s.transientFailure(ctx, issuance, "wait for finalized ACME order", err)
 		}
 	}
 	if order.Status != legoacme.StatusValid || order.Certificate == "" {
-		return s.terminalFailure(ctx, job, "ACME order did not become valid")
+		return s.terminalFailure(ctx, issuance, "ACME order did not become valid")
 	}
-	job.ACMEStatus = order.Status
-	job.State = StateDownloading
-	job.CertificateURL = order.Certificate
-	if err := s.store.saveJob(ctx, job); err != nil {
-		return Job{}, err
+	issuance.ACMEStatus = order.Status
+	issuance.Status = StatusDownloading
+	issuance.CertificateURL = order.Certificate
+	if err := s.store.saveIssuance(ctx, issuance); err != nil {
+		return Issuance{}, err
 	}
-	raw, err := s.client.GetCertificate(ctx, job.CertificateURL)
+	raw, err := s.client.GetCertificate(ctx, issuance.CertificateURL)
 	if err != nil {
-		return s.transientFailure(ctx, job, "download ACME certificate", err)
+		return s.transientFailure(ctx, issuance, "download ACME certificate", err)
 	}
 	certificatePEM := raw.Cert
 	if len(raw.Issuer) != 0 && !bytes.HasSuffix(certificatePEM, raw.Issuer) {
 		certificatePEM = append(bytes.Clone(certificatePEM), raw.Issuer...)
 	}
-	validated, leaf, err := validateCertificateChain(certificatePEM, job.Hostname, job.SPKIHash, s.now(), s.roots)
+	validated, leaf, err := validateCertificateChain(certificatePEM, issuance.Hostname, issuance.SPKIHash, s.now(), s.roots)
 	if err != nil {
-		return s.terminalFailure(ctx, job, err.Error())
+		return s.terminalFailure(ctx, issuance, err.Error())
 	}
-	job.State = StateWaitingForInstall
-	job.CertificatePEM = validated
-	job.NotBefore = leaf.NotBefore.UTC()
-	job.NotAfter = leaf.NotAfter.UTC()
-	job.RenewAt = renewalTime(job.ID, job.NotBefore, job.NotAfter)
-	job.LastError = ""
-	job.RetryAt = time.Time{}
-	if err := s.store.saveJob(ctx, job); err != nil {
-		return Job{}, err
+	issuance.Status = StatusWaitingForInstall
+	issuance.CertificatePEM = validated
+	issuance.NotBefore = leaf.NotBefore.UTC()
+	issuance.NotAfter = leaf.NotAfter.UTC()
+	issuance.RenewAt = renewalTime(issuance.ID, issuance.NotBefore, issuance.NotAfter)
+	issuance.LastError = ""
+	issuance.RetryAt = time.Time{}
+	if err := s.store.saveIssuance(ctx, issuance); err != nil {
+		return Issuance{}, err
 	}
-	return s.store.getJob(ctx, job.ID)
+	return s.store.getIssuance(ctx, issuance.ID)
 }
 
-func (s *Service) createOrderFailure(ctx context.Context, job Job, cause error) (Job, error) {
+func (s *Service) createOrderFailure(ctx context.Context, issuance Issuance, cause error) (Issuance, error) {
 	// Only explicit retryable rejections clear the duplicate-order fence.
 	var limited *legoacme.RateLimitedError
 	if errors.As(cause, &limited) {
-		job.OrderAttempts = 0
+		issuance.OrderAttempts = 0
 		delay := limited.RetryAfter
 		if delay <= 0 {
 			delay = 5 * time.Second
 		}
-		job.LastError = boundedError(fmt.Errorf("create ACME order: %w", cause))
-		job.RetryAt = s.now().Add(delay)
-		if err := s.store.saveJob(ctx, job); err != nil {
-			return Job{}, err
+		issuance.LastError = boundedError(fmt.Errorf("create ACME order: %w", cause))
+		issuance.RetryAt = s.now().Add(delay)
+		if err := s.store.saveIssuance(ctx, issuance); err != nil {
+			return Issuance{}, err
 		}
-		return Job{}, &RateLimitError{RetryAt: job.RetryAt}
+		return Issuance{}, &RateLimitError{RetryAt: issuance.RetryAt}
 	}
 	var problem *legoacme.ProblemDetails
 	if !errors.As(cause, &problem) || problem.HTTPStatus >= http.StatusInternalServerError {
-		return s.transientFailure(ctx, job, "create ACME order", cause)
+		return s.transientFailure(ctx, issuance, "create ACME order", cause)
 	}
 	if problem.Type == legoacme.BadNonceErrorType {
-		job.OrderAttempts = 0
-		return s.transientFailure(ctx, job, "create ACME order", cause)
+		issuance.OrderAttempts = 0
+		return s.transientFailure(ctx, issuance, "create ACME order", cause)
 	}
-	return s.terminalFailure(ctx, job, boundedError(fmt.Errorf("create ACME order: %w", cause)))
+	return s.terminalFailure(ctx, issuance, boundedError(fmt.Errorf("create ACME order: %w", cause)))
 }
 
 func tlsALPNChallenge(authorization legoacme.Authorization) (legoacme.Challenge, error) {
@@ -599,19 +599,19 @@ func (s *Service) waitOrder(ctx context.Context, orderURL string, wanted ...stri
 	}
 }
 
-func (s *Service) transientFailure(ctx context.Context, job Job, operation string, cause error) (Job, error) {
-	job.LastError = boundedError(fmt.Errorf("%s: %w", operation, cause))
-	job.RetryAt = s.now().Add(5 * time.Second)
-	_ = s.store.saveJob(ctx, job)
-	return Job{}, fmt.Errorf("%w: %s: %v", ErrUnavailable, operation, cause)
+func (s *Service) transientFailure(ctx context.Context, issuance Issuance, operation string, cause error) (Issuance, error) {
+	issuance.LastError = boundedError(fmt.Errorf("%s: %w", operation, cause))
+	issuance.RetryAt = s.now().Add(5 * time.Second)
+	_ = s.store.saveIssuance(ctx, issuance)
+	return Issuance{}, fmt.Errorf("%w: %s: %v", ErrUnavailable, operation, cause)
 }
 
-func (s *Service) terminalFailure(ctx context.Context, job Job, message string) (Job, error) {
-	job.State = StateInvalid
-	job.LastError = boundedError(errors.New(message))
-	job.RetryAt = time.Time{}
-	_ = s.store.saveJob(ctx, job)
-	return Job{}, fmt.Errorf("%w: %s", ErrInvalidState, message)
+func (s *Service) terminalFailure(ctx context.Context, issuance Issuance, message string) (Issuance, error) {
+	issuance.Status = StatusFailed
+	issuance.LastError = boundedError(errors.New(message))
+	issuance.RetryAt = time.Time{}
+	_ = s.store.saveIssuance(ctx, issuance)
+	return Issuance{}, fmt.Errorf("%w: %s", ErrInvalidStatus, message)
 }
 
 func loadOrCreateAccount(
@@ -681,13 +681,13 @@ func (s *Service) routeLock(routeID string) *sync.Mutex {
 	return &s.locks[hash%uint32(len(s.locks))]
 }
 
-func (s *Service) ensureCurrent(ctx context.Context, job Job) error {
-	hostname, err := s.store.routeHostname(ctx, job.RouteID, job.Generation)
+func (s *Service) ensureCurrent(ctx context.Context, issuance Issuance) error {
+	hostname, err := s.store.routeHostname(ctx, issuance.RouteID, issuance.Version)
 	if err != nil {
 		return err
 	}
-	if hostname != job.Hostname {
-		return ErrInvalidState
+	if hostname != issuance.Hostname {
+		return ErrInvalidStatus
 	}
 	return nil
 }

@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestFriendlyCorpusAndGeneration(t *testing.T) {
+func TestFriendlyCorpusAndVersion(t *testing.T) {
 	if err := ValidateFriendlyCorpus(); err != nil {
 		t.Fatal(err)
 	}

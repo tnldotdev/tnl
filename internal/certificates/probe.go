@@ -20,8 +20,8 @@ import (
 var acmeIdentifierOID = asn1.ObjectIdentifier{1, 3, 6, 1, 5, 5, 7, 1, 31}
 
 // ProbeTLSALPN verifies challenge material through the assigned route backend.
-func ProbeTLSALPN(ctx context.Context, backend worker.RouteBackend, job Job) error {
-	if backend == nil || job.Challenge() == nil {
+func ProbeTLSALPN(ctx context.Context, backend worker.RouteBackend, issuance Issuance) error {
+	if backend == nil || issuance.Challenge() == nil {
 		return errors.New("certificates: route challenge is unavailable")
 	}
 	stream, err := backend.Open(ctx)
@@ -47,10 +47,10 @@ func ProbeTLSALPN(ctx context.Context, backend worker.RouteBackend, job Job) err
 		return fmt.Errorf("certificates: write challenge PROXY header: %w", err)
 	}
 	connection := tls.Client(stream, &tls.Config{
-		ServerName: job.Hostname, NextProtos: []string{acme.ALPNProto}, MinVersion: tls.VersionTLS12,
+		ServerName: issuance.Hostname, NextProtos: []string{acme.ALPNProto}, MinVersion: tls.VersionTLS12,
 		InsecureSkipVerify: true, // The self-signed challenge is verified below by its ACME digest.
-		VerifyConnection: func(state tls.ConnectionState) error {
-			return verifyChallengeConnection(state, job)
+		VerifyConnection: func(status tls.ConnectionState) error {
+			return verifyChallengeConnection(status, issuance)
 		},
 	})
 	if err := connection.HandshakeContext(ctx); err != nil {
@@ -59,12 +59,12 @@ func ProbeTLSALPN(ctx context.Context, backend worker.RouteBackend, job Job) err
 	return nil
 }
 
-func verifyChallengeConnection(state tls.ConnectionState, job Job) error {
-	if state.NegotiatedProtocol != acme.ALPNProto || len(state.PeerCertificates) != 1 {
-		return errors.New("certificates: challenge negotiated unexpected TLS state")
+func verifyChallengeConnection(status tls.ConnectionState, issuance Issuance) error {
+	if status.NegotiatedProtocol != acme.ALPNProto || len(status.PeerCertificates) != 1 {
+		return errors.New("certificates: challenge negotiated unexpected TLS status")
 	}
-	certificate := state.PeerCertificates[0]
-	if len(certificate.DNSNames) != 1 || certificate.DNSNames[0] != job.Hostname ||
+	certificate := status.PeerCertificates[0]
+	if len(certificate.DNSNames) != 1 || certificate.DNSNames[0] != issuance.Hostname ||
 		len(certificate.EmailAddresses) != 0 || len(certificate.IPAddresses) != 0 || len(certificate.URIs) != 0 ||
 		certificate.IsCA || certificate.NotBefore.After(time.Now().Add(certificateSkew)) || !certificate.NotAfter.After(time.Now()) {
 		return errors.New("certificates: challenge certificate identity is invalid")
@@ -85,7 +85,7 @@ func verifyChallengeConnection(state tls.ConnectionState, job Job) error {
 		found = true
 		var digest []byte
 		rest, err := asn1.Unmarshal(extension.Value, &digest)
-		if err != nil || len(rest) != 0 || subtle.ConstantTimeCompare(digest, job.ChallengeDigest[:]) != 1 {
+		if err != nil || len(rest) != 0 || subtle.ConstantTimeCompare(digest, issuance.ChallengeDigest[:]) != 1 {
 			return errors.New("certificates: challenge digest does not match")
 		}
 	}

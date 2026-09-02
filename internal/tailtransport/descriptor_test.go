@@ -15,9 +15,9 @@ func TestEndpointConnBlob(t *testing.T) {
 		Nodes:    []*tailcfg.DERPNode{{RegionID: 1, HostName: "derp.example.com"}},
 	}
 	endpoint := Endpoint{
-		Version:         descriptorVersion,
-		ServerPublicKey: serverKey.String(),
-		RelayProfile:    "test",
+		Version:            descriptorVersion,
+		PublisherPublicKey: serverKey.String(),
+		RelayRegion:        "test",
 	}
 
 	blob, err := connBlob(endpoint, map[string]*tailcfg.DERPRegion{"test": region})
@@ -42,16 +42,16 @@ func TestEndpointConnBlobRejectsInvalidDescriptor(t *testing.T) {
 	tests := []struct {
 		name     string
 		endpoint Endpoint
-		profiles map[string]*tailcfg.DERPRegion
+		regions  map[string]*tailcfg.DERPRegion
 	}{
-		{"version", Endpoint{Version: 2, ServerPublicKey: validKey, RelayProfile: "test"}, map[string]*tailcfg.DERPRegion{"test": validRegion}},
-		{"key", Endpoint{Version: descriptorVersion, ServerPublicKey: "nodekey:bad", RelayProfile: "test"}, map[string]*tailcfg.DERPRegion{"test": validRegion}},
-		{"profile", Endpoint{Version: descriptorVersion, ServerPublicKey: validKey, RelayProfile: "missing"}, map[string]*tailcfg.DERPRegion{"test": validRegion}},
-		{"profile node", Endpoint{Version: descriptorVersion, ServerPublicKey: validKey, RelayProfile: "test"}, map[string]*tailcfg.DERPRegion{"test": {RegionID: 1, Nodes: []*tailcfg.DERPNode{nil}}}},
+		{"version", Endpoint{Version: 2, PublisherPublicKey: validKey, RelayRegion: "test"}, map[string]*tailcfg.DERPRegion{"test": validRegion}},
+		{"key", Endpoint{Version: descriptorVersion, PublisherPublicKey: "nodekey:bad", RelayRegion: "test"}, map[string]*tailcfg.DERPRegion{"test": validRegion}},
+		{"profile", Endpoint{Version: descriptorVersion, PublisherPublicKey: validKey, RelayRegion: "missing"}, map[string]*tailcfg.DERPRegion{"test": validRegion}},
+		{"profile node", Endpoint{Version: descriptorVersion, PublisherPublicKey: validKey, RelayRegion: "test"}, map[string]*tailcfg.DERPRegion{"test": {RegionID: 1, Nodes: []*tailcfg.DERPNode{nil}}}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := connBlob(test.endpoint, test.profiles); err == nil {
+			if _, err := connBlob(test.endpoint, test.regions); err == nil {
 				t.Fatal("connBlob unexpectedly succeeded")
 			}
 		})
@@ -69,9 +69,9 @@ func TestEndpointConnBlobRejectsUnusableRelay(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			endpoint := Endpoint{Version: descriptorVersion, ServerPublicKey: validKey, RelayProfile: "test"}
-			profiles := map[string]*tailcfg.DERPRegion{"test": {RegionID: 1, Nodes: []*tailcfg.DERPNode{test.node}}}
-			if _, err := connBlob(endpoint, profiles); err == nil {
+			endpoint := Endpoint{Version: descriptorVersion, PublisherPublicKey: validKey, RelayRegion: "test"}
+			regions := map[string]*tailcfg.DERPRegion{"test": {RegionID: 1, Nodes: []*tailcfg.DERPNode{test.node}}}
+			if _, err := connBlob(endpoint, regions); err == nil {
 				t.Fatal("connBlob unexpectedly succeeded")
 			}
 		})

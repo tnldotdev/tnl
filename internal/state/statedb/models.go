@@ -9,12 +9,12 @@ import (
 )
 
 type AccessCredential struct {
-	ID          string
-	PrincipalID string
-	SecretHash  []byte
-	CreatedAt   int64
-	ExpiresAt   int64
-	RevokedAt   sql.NullInt64
+	ID         string
+	IdentityID string
+	SecretHash []byte
+	CreatedAt  int64
+	ExpiresAt  int64
+	RevokedAt  sql.NullInt64
 }
 
 type AcmeAccount struct {
@@ -27,13 +27,13 @@ type AcmeAccount struct {
 	UpdatedAt        int64
 }
 
-type CertificateJob struct {
+type CertificateIssuance struct {
 	ID                 string
 	RouteID            string
-	Generation         int64
+	Version            int64
 	Hostname           string
-	Profile            string
-	State              string
+	AcmeProfile        string
+	Status             string
 	CsrDer             []byte
 	CsrHash            []byte
 	SpkiHash           []byte
@@ -60,44 +60,47 @@ type CertificateJob struct {
 	UpdatedAt          int64
 }
 
-type DomainClaimChallenge struct {
+type DomainVerification struct {
 	ID                 string
-	PrincipalID        string
+	IdentityID         string
 	RequestKey         string
 	Domain             string
 	Token              string
 	VerificationTarget string
 	IsApex             int64
-	State              string
-	ClaimID            sql.NullString
+	Status             string
+	HostnameID         sql.NullString
 	CreatedAt          int64
 	VerifiedAt         sql.NullInt64
 	InvalidatedAt      sql.NullInt64
 }
 
-type HostnameClaim struct {
-	ID           string
-	PrincipalID  string
-	Hostname     string
-	CreatedAt    int64
-	Irreversible int64
-	TombstonedAt sql.NullInt64
-	Kind         string
-	State        string
-	Source       string
-	ActivatedAt  sql.NullInt64
-	ReleasedAt   sql.NullInt64
-	RouteBinding sql.NullString
-	Reason       sql.NullString
+type Hostname struct {
+	ID            string
+	IdentityID    sql.NullString
+	Hostname      string
+	Kind          string
+	Status        string
+	Source        string
+	CreatedAt     int64
+	ActivatedAt   sql.NullInt64
+	DeactivatedAt sql.NullInt64
 }
 
-type HostnameClaimRequest struct {
-	PrincipalID    string
+type HostnameRequest struct {
+	IdentityID     string
 	RequestKey     string
 	RequestedLabel string
-	ClaimID        string
-	CreatedAt      int64
 	RequestedKind  string
+	HostnameID     string
+	CreatedAt      int64
+}
+
+type Identity struct {
+	ID          string
+	DisplayName string
+	Email       string
+	CreatedAt   int64
 }
 
 type OidcAssertionExchange struct {
@@ -106,21 +109,14 @@ type OidcAssertionExchange struct {
 	ExpiresAt     int64
 }
 
-type Principal struct {
-	ID          string
-	DisplayName string
-	Email       string
-	CreatedAt   int64
-}
-
 type Route struct {
 	ID                string
-	ClaimID           string
-	PrincipalID       string
+	HostnameID        string
+	IdentityID        string
 	Hostname          string
-	DisplayTarget     string
-	State             string
-	Generation        int64
+	LocalTarget       string
+	Status            string
+	Version           int64
 	LifecycleSequence int64
 	CreatedAt         int64
 	DeletedAt         sql.NullInt64
@@ -134,54 +130,54 @@ type RouteCredential struct {
 	RevokedAt  sql.NullInt64
 }
 
-type RouteExportOutbox struct {
+type RouteLifecycleEvent struct {
+	ID         int64
+	EventID    string
+	RouteID    string
+	Version    int64
+	Sequence   int64
+	OccurredAt int64
+	Transition string
+}
+
+type RouteSession struct {
+	ID                 string
+	RouteID            string
+	Version            int64
+	Status             string
+	TokenID            string
+	SecretHash         []byte
+	ServerInstanceID   string
+	PublisherPublicKey sql.NullString
+	RelayRegion        sql.NullString
+	CreatedAt          int64
+	LastHeartbeatAt    int64
+	ExpiresAt          int64
+}
+
+type RouteUsageOutboxItem struct {
 	SourceKind     string
 	SourceID       int64
 	SourceRevision int64
-	CreatedAtNs    int64
+	EnqueuedAt     int64
 }
 
-type RouteLease struct {
-	ID              string
-	RouteID         string
-	Generation      int64
-	Status          string
-	CredentialID    string
-	SecretHash      []byte
-	BootEpoch       string
-	ServerPublicKey sql.NullString
-	RelayProfile    sql.NullString
-	CreatedAt       int64
-	LastHeartbeat   int64
-	ExpiresAt       int64
+type RouteUsageSnapshot struct {
+	ID                    int64
+	RouteID               string
+	Version               int64
+	Resolution            string
+	BucketStart           int64
+	Revision              int64
+	ObservedThrough       int64
+	ConnectionsOpened     int64
+	ConnectionNanoseconds int64
+	IngressBytes          int64
+	EgressBytes           int64
+	Complete              int64
 }
 
-type RouteLifecycleEvent struct {
-	ID           int64
-	EventID      string
-	RouteID      string
-	Generation   int64
-	Sequence     int64
-	OccurredAtNs int64
-	Transition   string
-}
-
-type RouteUsageBucket struct {
-	ID                int64
-	RouteID           string
-	Generation        int64
-	Resolution        string
-	BucketStartNs     int64
-	Revision          int64
-	SourceThroughNs   int64
-	ConnectionsOpened int64
-	ConnectionNs      int64
-	IngressBytes      int64
-	EgressBytes       int64
-	Complete          int64
-}
-
-type ServerState struct {
-	StateKey string
-	Value    []byte
+type ServerValue struct {
+	Key   string
+	Value []byte
 }

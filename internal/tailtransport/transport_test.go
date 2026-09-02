@@ -15,7 +15,7 @@ import (
 	"tailscale.com/types/key"
 )
 
-func TestLeaseTransport(t *testing.T) {
+func TestSessionTransport(t *testing.T) {
 	region := runTestDERP(t)
 	clientKey := key.NewNode()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -82,7 +82,7 @@ func TestLeaseTransport(t *testing.T) {
 	}
 }
 
-func TestLeaseReplacementRejectsOldKey(t *testing.T) {
+func TestSessionReplacementRejectsOldKey(t *testing.T) {
 	region := runTestDERP(t)
 	oldKey := key.NewNode()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -218,8 +218,8 @@ func TestDialerCloseCancelsOpen(t *testing.T) {
 	if got := dialCalls.Load(); got != 1 {
 		t.Fatalf("dial calls = %d; want 1", got)
 	}
-	if got := dialPort.Load(); got != uint32(leaseTCPPort) {
-		t.Fatalf("DialTCPPort port = %d; want %d", got, leaseTCPPort)
+	if got := dialPort.Load(); got != uint32(sessionTCPPort) {
+		t.Fatalf("DialTCPPort port = %d; want %d", got, sessionTCPPort)
 	}
 }
 
@@ -277,8 +277,8 @@ func TestServerSnapshotsProfileAndDrainsTCP(t *testing.T) {
 	region := testRegion()
 	server, err := NewServer(ServerConfig{
 		AllowedClient: key.NewNode().Public(),
-		RelayProfile:  "test",
-		Profiles:      map[string]*tailcfg.DERPRegion{"test": region},
+		RelayRegion:   "test",
+		Regions:       map[string]*tailcfg.DERPRegion{"test": region},
 		Handler:       func(net.Conn) {},
 	})
 	if err != nil {
@@ -290,11 +290,11 @@ func TestServerSnapshotsProfileAndDrainsTCP(t *testing.T) {
 		if got := config.Region.Nodes[0].HostName; got != "derp.example.com" {
 			t.Fatalf("server region = %q; want immutable snapshot", got)
 		}
-		if len(config.ServedTCPPorts) != 1 || config.ServedTCPPorts[0].First != leaseTCPPort || config.ServedTCPPorts[0].Last != leaseTCPPort {
-			t.Fatalf("served ports = %+v; want only %d", config.ServedTCPPorts, leaseTCPPort)
+		if len(config.ServedTCPPorts) != 1 || config.ServedTCPPorts[0].First != sessionTCPPort || config.ServedTCPPorts[0].Last != sessionTCPPort {
+			t.Fatalf("served ports = %+v; want only %d", config.ServedTCPPorts, sessionTCPPort)
 		}
-		if config.OnTCP(leaseTCPPort) == nil || config.OnTCP(leaseTCPPort+1) != nil {
-			t.Fatal("OnTCP did not restrict traffic to the lease port")
+		if config.OnTCP(sessionTCPPort) == nil || config.OnTCP(sessionTCPPort+1) != nil {
+			t.Fatal("OnTCP did not restrict traffic to the session port")
 		}
 		return &fakeTailcatServer{drain: func(context.Context) error {
 			drained.Store(true)
@@ -365,8 +365,8 @@ func TestDialerSnapshotsProfile(t *testing.T) {
 	region := testRegion()
 	serverKey := key.NewNode().Public()
 	dialer, err := NewDialer(DialerConfig{
-		Endpoint: Endpoint{Version: descriptorVersion, ServerPublicKey: serverKey.String(), RelayProfile: "test"},
-		Profiles: map[string]*tailcfg.DERPRegion{"test": region},
+		Endpoint: Endpoint{Version: descriptorVersion, PublisherPublicKey: serverKey.String(), RelayRegion: "test"},
+		Regions:  map[string]*tailcfg.DERPRegion{"test": region},
 		Key:      key.NewNode(),
 	})
 	if err != nil {
@@ -434,8 +434,8 @@ func newTestDialer(t *testing.T) *Dialer {
 	t.Helper()
 	serverKey := key.NewNode().Public()
 	dialer, err := NewDialer(DialerConfig{
-		Endpoint: Endpoint{Version: descriptorVersion, ServerPublicKey: serverKey.String(), RelayProfile: "test"},
-		Profiles: map[string]*tailcfg.DERPRegion{"test": testRegion()},
+		Endpoint: Endpoint{Version: descriptorVersion, PublisherPublicKey: serverKey.String(), RelayRegion: "test"},
+		Regions:  map[string]*tailcfg.DERPRegion{"test": testRegion()},
 		Key:      key.NewNode(),
 	})
 	if err != nil {
@@ -448,8 +448,8 @@ func newTestServer(t *testing.T) *Server {
 	t.Helper()
 	server, err := NewServer(ServerConfig{
 		AllowedClient: key.NewNode().Public(),
-		RelayProfile:  "test",
-		Profiles:      map[string]*tailcfg.DERPRegion{"test": testRegion()},
+		RelayRegion:   "test",
+		Regions:       map[string]*tailcfg.DERPRegion{"test": testRegion()},
 		Handler:       func(net.Conn) {},
 	})
 	if err != nil {

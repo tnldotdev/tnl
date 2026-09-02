@@ -95,18 +95,18 @@ func TestDataPlaneTokenClasses(t *testing.T) {
 		t.Fatalf("route round trip = %q, %x, %v", gotID, gotHash, err)
 	}
 
-	lease, leaseID, leaseHash, err := NewLeaseToken()
+	session, sessionID, sessionHash, err := NewSessionToken()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotID, gotHash, err := ParseLeaseToken(lease); err != nil || gotID != leaseID || gotHash != leaseHash {
-		t.Fatalf("lease round trip = %q, %x, %v", gotID, gotHash, err)
+	if gotID, gotHash, err := ParseSessionToken(session); err != nil || gotID != sessionID || gotHash != sessionHash {
+		t.Fatalf("session round trip = %q, %x, %v", gotID, gotHash, err)
 	}
-	if _, _, err := ParseRouteToken(RouteToken(lease)); !errors.Is(err, ErrInvalidRouteToken) {
-		t.Fatalf("lease as route error = %v", err)
+	if _, _, err := ParseRouteToken(RouteToken(session)); !errors.Is(err, ErrInvalidRouteToken) {
+		t.Fatalf("session as route error = %v", err)
 	}
-	if _, _, err := ParseLeaseToken(LeaseToken(route)); !errors.Is(err, ErrInvalidLeaseToken) {
-		t.Fatalf("route as lease error = %v", err)
+	if _, _, err := ParseSessionToken(SessionToken(route)); !errors.Is(err, ErrInvalidSessionToken) {
+		t.Fatalf("route as session error = %v", err)
 	}
 
 	worker, verifier, err := NewWorkerToken()

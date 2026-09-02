@@ -31,11 +31,11 @@ func TestIngressRoutesTLSWithProxyMetadata(t *testing.T) {
 	}
 	server, err := New(listener, Config{
 		Lookup: func(hostname string) (Route, bool) {
-			return Route{ID: "route_test", Generation: 1, Backend: backend}, hostname == "route.example"
+			return Route{ID: "route_test", Version: 1, Backend: backend}, hostname == "route.example"
 		},
-		OpenUsage: func(routeID string, generation uint64, at time.Time) UsageConnection {
+		OpenUsage: func(routeID string, version uint64, at time.Time) UsageConnection {
 			usage.routeID = routeID
-			usage.generation = generation
+			usage.version = version
 			usage.openedAt = at
 			return usage
 		},
@@ -88,7 +88,7 @@ func TestIngressRoutesTLSWithProxyMetadata(t *testing.T) {
 	}
 	usage.mu.Lock()
 	defer usage.mu.Unlock()
-	if usage.routeID != "route_test" || usage.generation != 1 || usage.openedAt.IsZero() || usage.closedAt.IsZero() {
+	if usage.routeID != "route_test" || usage.version != 1 || usage.openedAt.IsZero() || usage.closedAt.IsZero() {
 		t.Fatalf("usage identity = %#v", usage)
 	}
 	if usage.ingressBytes <= 0 || usage.egressBytes <= 0 {
@@ -238,7 +238,7 @@ func TestDrainDeadlineForcesBackendClosed(t *testing.T) {
 	backend := &holdingBackend{opened: make(chan struct{}), closed: make(chan struct{})}
 	server, err := New(listener, Config{
 		Lookup: func(string) (Route, bool) {
-			return Route{ID: "route_test", Generation: 1, Backend: backend}, true
+			return Route{ID: "route_test", Version: 1, Backend: backend}, true
 		},
 		MaxConnections: 2, MaxRouteConnections: 2,
 	})
@@ -330,7 +330,7 @@ type holdingBackend struct {
 type testUsageConnection struct {
 	mu           sync.Mutex
 	routeID      string
-	generation   uint64
+	version      uint64
 	openedAt     time.Time
 	closedAt     time.Time
 	ingressBytes int64
@@ -380,15 +380,15 @@ type backendResult struct {
 }
 
 func (b *tlsBackend) Open(context.Context) (net.Conn, error) {
-	ingress, agent := net.Pipe()
+	ingress, publisher := net.Pipe()
 	go func() {
-		defer agent.Close()
-		header, replay, err := proxyproto.Decode(agent)
+		defer publisher.Close()
+		header, replay, err := proxyproto.Decode(publisher)
 		if err != nil {
 			b.result <- backendResult{err: err}
 			return
 		}
-		server := tls.Server(&testReaderConn{Conn: agent, reader: replay}, &tls.Config{
+		server := tls.Server(&testReaderConn{Conn: publisher, reader: replay}, &tls.Config{
 			Certificates: []tls.Certificate{b.certificate},
 			MinVersion:   tls.VersionTLS12,
 			NextProtos:   b.nextProtos,

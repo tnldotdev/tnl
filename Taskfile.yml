@@ -4,6 +4,76 @@ env:
   GOFLAGS: -tags=ts_omit_ssh
 
 tasks:
+  dev:
+    desc: Run the Core development stack
+    cmds:
+      - docker compose --file deploy/local/compose.yaml up --build
+
+  local:up:
+    desc: Start the local Core services in the background
+    cmds:
+      - docker compose --file deploy/local/compose.yaml up --build --detach
+      - install -d -m 0700 .local/certs
+      - curl --retry 30 --retry-all-errors --retry-delay 1 --fail --silent --show-error --cacert deploy/local/pebble.minica.crt --output .local/certs/pebble-root.pem https://127.0.0.1:15000/roots/0
+      - curl --retry 30 --retry-all-errors --retry-delay 1 --fail --silent --show-error --cacert .local/certs/pebble-root.pem https://tnl.localhost/v1/ready
+
+  local:trust:
+    desc: Trust the current local Pebble issuance root on macOS
+    preconditions:
+      - sh: test -s .local/certs/pebble-root.pem
+        msg: Run task local:up first
+      - sh: test "$(uname -s)" = Darwin
+        msg: Automatic local CA trust is currently supported only on macOS
+    cmds:
+      - |
+        set -eu
+        root=.local/certs/pebble-root.pem
+        keychain="$HOME/Library/Keychains/login.keychain-db"
+        fingerprint="$(openssl x509 -in "$root" -noout -fingerprint -sha1 | cut -d= -f2 | tr -d :)"
+        security delete-certificate -Z "$fingerprint" "$keychain" >/dev/null 2>&1 || true
+        security add-trusted-cert -r trustRoot -p ssl -k "$keychain" "$root"
+
+  local:untrust:
+    desc: Remove the current local Pebble issuance root from the macOS keychain
+    cmds:
+      - |
+        set -eu
+        root=.local/certs/pebble-root.pem
+        if [ "$(uname -s)" != Darwin ] || [ ! -s "$root" ]; then
+          exit 0
+        fi
+        keychain="$HOME/Library/Keychains/login.keychain-db"
+        fingerprint="$(openssl x509 -in "$root" -noout -fingerprint -sha1 | cut -d= -f2 | tr -d :)"
+        security delete-certificate -Z "$fingerprint" "$keychain" >/dev/null 2>&1 || true
+
+  local:login:
+    desc: Authenticate the isolated local client with the daemon login token
+    cmds:
+      - |
+        docker compose --file deploy/local/compose.yaml exec -T tnld \
+          tnld login-token --state-dir /var/lib/tnl |
+          TNL_SERVER=https://tnl.localhost TNL_STATE_DIR=.local/client-state \
+            go run ./cmd/tnl login --token
+
+  local:tnl:
+    desc: Run the isolated local client; pass arguments after --
+    requires:
+      vars: [CLI_ARGS]
+    cmds:
+      - TNL_SERVER=https://tnl.localhost TNL_STATE_DIR=.local/client-state go run ./cmd/tnl {{.CLI_ARGS}}
+
+  local:down:
+    desc: Stop the local Core services without removing state
+    cmds:
+      - docker compose --file deploy/local/compose.yaml stop
+
+  local:reset:
+    desc: Remove local Core services, trust, and persistent state
+    cmds:
+      - task: local:untrust
+      - docker compose --file deploy/local/compose.yaml down --volumes --remove-orphans
+      - rm -rf .local
+
   generate:
     desc: Regenerate all committed artifacts
     deps: [go:generate]
@@ -84,7 +154,7 @@ tasks:
     env:
       TNL_TEST_INTEGRATION: "1"
     cmds:
-      - go test -race -v ./cmd/tnld ./internal/controltls ./internal/tailtransport ./internal/publication -run='^TestIntegration' -count=1 -timeout=5m
+      - go test -race -v ./cmd/tnld ./internal/controltls ./internal/tailtransport ./internal/publisher -run='^TestIntegration' -count=1 -timeout=5m
 
   go:bench-fly:
     desc: Benchmark complete single-node and HA route paths on Fly

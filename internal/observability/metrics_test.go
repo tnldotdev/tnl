@@ -31,22 +31,22 @@ func TestMetricsScrape(t *testing.T) {
 	metrics.ObserveAPIRequest("routes.create", "success", 10*time.Second)
 	metrics.ObserveSQLiteOperation("route_create", 5*time.Second, nil)
 	metrics.ObserveRouteCoordinatorStage("heartbeat_route_lock_wait", 10*time.Second)
-	metrics.ObserveRouteLeaseHeartbeat("success")
-	metrics.ObserveRouteRemoval("lease_expired")
-	metrics.SetRouteLeaseMinSecondsRemaining("active", 17.5)
-	metrics.SetWorkerOwnersConnected(4)
+	metrics.ObserveRouteSessionHeartbeat("success")
+	metrics.ObserveRouteRemoval("session_expired")
+	metrics.SetRouteSessionMinSecondsRemaining("active", 17.5)
+	metrics.SetWorkersConnected(4)
 	metrics.ObserveWorkerSessionEstablished("edge")
 	metrics.ObserveWorkerSessionEstablished("edge")
 	metrics.ObserveWorkerSessionDisconnected("edge", "network")
-	metrics.SetRouteExportOutbox("usage", 3)
-	metrics.SetRouteExportOldestAge(12 * time.Second)
-	metrics.ObserveRouteExportCheckpoint("success")
-	metrics.ObserveRouteExportDelivery("usage", "error")
+	metrics.SetRouteUsageOutbox("usage", 3)
+	metrics.SetRouteUsageOldestAge(12 * time.Second)
+	metrics.ObserveRouteUsageCheckpoint("success")
+	metrics.ObserveRouteUsageDelivery("usage", "error")
 
 	body := scrape(t, metrics)
 	for _, line := range []string{
 		`tnl_info{mode="worker"} 1`,
-		`tnl_routes{state="active"} 7`,
+		`tnl_routes{status="active"} 7`,
 		`tnl_worker_routes_active 7`,
 		`tnl_worker_route_capacity 500`,
 		`tnl_worker_draining 1`,
@@ -68,17 +68,17 @@ func TestMetricsScrape(t *testing.T) {
 		`tnl_route_coordinator_stage_duration_seconds_bucket{stage="heartbeat_route_lock_wait",le="10"} 1`,
 		`tnl_route_coordinator_stage_duration_seconds_count{stage="heartbeat_route_lock_wait"} 1`,
 		`tnl_route_coordinator_stage_duration_seconds_sum{stage="heartbeat_route_lock_wait"} 10`,
-		`tnl_route_lease_heartbeats_total{result="success"} 1`,
-		`tnl_route_removals_total{reason="lease_expired"} 1`,
-		`tnl_route_lease_min_seconds_remaining{state="active"} 17.5`,
-		`tnl_worker_owners_connected 4`,
+		`tnl_route_session_heartbeats_total{result="success"} 1`,
+		`tnl_route_removals_total{reason="session_expired"} 1`,
+		`tnl_route_session_min_seconds_remaining{status="active"} 17.5`,
+		`tnl_workers_connected 4`,
 		`tnl_worker_sessions_active{role="edge"} 1`,
 		`tnl_worker_session_establishments_total{role="edge"} 2`,
 		`tnl_worker_session_disconnects_total{reason="network",role="edge"} 1`,
-		`tnl_route_export_outbox_items{kind="usage"} 3`,
-		`tnl_route_export_oldest_item_age_seconds 12`,
-		`tnl_route_export_checkpoints_total{result="success"} 1`,
-		`tnl_route_export_deliveries_total{kind="usage",result="error"} 1`,
+		`tnl_route_usage_outbox_items{kind="usage"} 3`,
+		`tnl_route_usage_oldest_item_age_seconds 12`,
+		`tnl_route_usage_checkpoints_total{result="success"} 1`,
+		`tnl_route_usage_deliveries_total{kind="usage",result="error"} 1`,
 	} {
 		if !strings.Contains(body, line) {
 			t.Errorf("scrape does not contain %q", line)

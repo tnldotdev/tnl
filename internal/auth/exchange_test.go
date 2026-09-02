@@ -60,7 +60,7 @@ func TestTokenExchangeUsesConfiguredLifetime(t *testing.T) {
 	}
 }
 
-func TestTokenExchangeReusesLocalPrincipal(t *testing.T) {
+func TestTokenExchangeReusesLocalIdentity(t *testing.T) {
 	db, login, exchange := newTestService(t)
 	now := time.Date(2026, time.August, 29, 12, 0, 0, 0, time.UTC)
 	exchange.now = func() time.Time { return now }
@@ -84,17 +84,17 @@ func TestTokenExchangeReusesLocalPrincipal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal, err := state.AuthenticateAccessCredential(context.Background(), db, credentialID, hash, now)
+	identity, err := state.AuthenticateAccessCredential(context.Background(), db, credentialID, hash, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if principal != localPrincipal {
-		t.Fatalf("principal = %#v, want %#v", principal, localPrincipal)
+	if identity != localIdentity {
+		t.Fatalf("identity = %#v, want %#v", identity, localIdentity)
 	}
 
-	principals, accessCredentials := stateCounts(t, db)
-	if principals != 1 || accessCredentials != 2 {
-		t.Fatalf("state counts = (%d, %d), want (1, 2)", principals, accessCredentials)
+	identities, accessCredentials := stateCounts(t, db)
+	if identities != 1 || accessCredentials != 2 {
+		t.Fatalf("state counts = (%d, %d), want (1, 2)", identities, accessCredentials)
 	}
 }
 
@@ -163,16 +163,16 @@ func TestTokenExchangeConcurrentFirstUse(t *testing.T) {
 		}
 	}
 
-	principals, accessCredentials := stateCounts(t, db)
-	if principals != 1 || accessCredentials != exchanges {
+	identities, accessCredentials := stateCounts(t, db)
+	if identities != 1 || accessCredentials != exchanges {
 		t.Fatalf(
 			"state counts = (%d, %d), want (1, %d)",
-			principals, accessCredentials, exchanges,
+			identities, accessCredentials, exchanges,
 		)
 	}
 }
 
-func TestOIDCExchangeUsesStablePrincipalAndBoundsExpiry(t *testing.T) {
+func TestOIDCExchangeUsesStableIdentityAndBoundsExpiry(t *testing.T) {
 	db, err := state.Open(context.Background(), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -202,15 +202,15 @@ func TestOIDCExchangeUsesStablePrincipalAndBoundsExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if assertionExpiresAt != identity.ExpiresAt.Unix() {
-		t.Fatalf("assertion expiry = %d, want %d", assertionExpiresAt, identity.ExpiresAt.Unix())
+	if assertionExpiresAt != identity.ExpiresAt.UnixNano() {
+		t.Fatalf("assertion expiry = %d, want %d", assertionExpiresAt, identity.ExpiresAt.UnixNano())
 	}
-	principal, err := service.Authenticate(context.Background(), issued.Token)
+	authenticatedIdentity, err := service.Authenticate(context.Background(), issued.Token)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(principal.ID, "principal_oidc_") || principal.DisplayName != "" || principal.Email != "" {
-		t.Fatalf("principal = %#v", principal)
+	if !strings.HasPrefix(authenticatedIdentity.ID, "identity_oidc_") || authenticatedIdentity.DisplayName != "" || authenticatedIdentity.Email != "" {
+		t.Fatalf("identity = %#v", authenticatedIdentity)
 	}
 	if repeated, err := service.ExchangeOIDC(context.Background(), "id-token"); !errors.Is(err, ErrUnauthenticated) || repeated != (IssuedAccessToken{}) {
 		t.Fatalf("repeated OIDC exchange = %#v, error = %v", repeated, err)
@@ -286,10 +286,10 @@ func newTestService(t *testing.T) (*sql.DB, credentials.LoginToken, *Service) {
 	return db, login, exchange
 }
 
-func stateCounts(t *testing.T, db *sql.DB) (principals, accessCredentials int) {
+func stateCounts(t *testing.T, db *sql.DB) (identities, accessCredentials int) {
 	t.Helper()
 	queries := statedb.New(db)
-	principalCount, err := queries.CountPrincipals(context.Background())
+	identityCount, err := queries.CountIdentities(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -297,5 +297,5 @@ func stateCounts(t *testing.T, db *sql.DB) (principals, accessCredentials int) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return int(principalCount), int(accessCredentialCount)
+	return int(identityCount), int(accessCredentialCount)
 }

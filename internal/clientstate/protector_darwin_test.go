@@ -156,7 +156,7 @@ func TestDarwinClientStateEncryptsAccessAndRouteKeys(t *testing.T) {
 	}
 	renewAt := time.Now().Add(time.Hour).UTC()
 	material, err := route.Commit(
-		"route.example", pending, signedCertificate(t, pending.Key, "route.example"), renewAt, "cert_current", 1,
+		"route.example", pending, signedCertificate(t, pending.Key, "route.example"), renewAt, "issuance_current", 1,
 	)
 	if err != nil {
 		t.Fatal(err)

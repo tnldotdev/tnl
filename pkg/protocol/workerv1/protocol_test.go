@@ -19,12 +19,12 @@ func TestControlFramesAreStrictAndBounded(t *testing.T) {
 	valid := []Message{
 		{Type: Hello, Capacity: 500},
 		{Type: Accepted},
-		{Type: AttachRoute, Route: &RouteRef{RouteID: "route", Generation: 2}, Endpoint: &transportv1.TailcatDescriptor{Version: 1, ServerPublicKey: "nodekey:key", RelayProfile: "test"}, ClientPrivateKey: "privkey:key"},
-		{Type: RouteReady, Route: &RouteRef{RouteID: "route", Generation: 2}},
-		{Type: DetachRoute, Route: &RouteRef{RouteID: "route", Generation: 2}},
-		{Type: RouteDrained, Route: &RouteRef{RouteID: "route", Generation: 2}},
+		{Type: AttachRoute, Route: &RouteRef{RouteID: "route", Version: 2}, Endpoint: &transportv1.TailcatDescriptor{Version: 1, PublisherPublicKey: "nodekey:key", RelayRegion: "test"}, WorkerPrivateKey: "privkey:key"},
+		{Type: RouteReady, Route: &RouteRef{RouteID: "route", Version: 2}},
+		{Type: DetachRoute, Route: &RouteRef{RouteID: "route", Version: 2}},
+		{Type: RouteDrained, Route: &RouteRef{RouteID: "route", Version: 2}},
 		{Type: WorkerDraining},
-		{Type: Error, Route: &RouteRef{RouteID: "route", Generation: 2}, Code: StaleAssignment},
+		{Type: Error, Route: &RouteRef{RouteID: "route", Version: 2}, Code: StaleAssignment},
 	}
 	for _, message := range valid {
 		var wire bytes.Buffer
@@ -40,7 +40,7 @@ func TestControlFramesAreStrictAndBounded(t *testing.T) {
 	for name, payload := range map[string]string{
 		"unknown field": `{"type":"accepted","extra":true}`,
 		"unknown type":  `{"type":"future"}`,
-		"invalid route": `{"type":"route_ready","route":{"route_id":"route","generation":0}}`,
+		"invalid route": `{"type":"route_ready","route":{"route_id":"route","version":0}}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			var wire bytes.Buffer
@@ -115,12 +115,12 @@ func FuzzReadFrames(f *testing.F) {
 	controls := []Message{
 		{Type: Hello, Capacity: 500},
 		{Type: Accepted},
-		{Type: AttachRoute, Route: &RouteRef{RouteID: "route", Generation: 2}, Endpoint: &transportv1.TailcatDescriptor{Version: 1, ServerPublicKey: "nodekey:key", RelayProfile: "test"}, ClientPrivateKey: "privkey:key"},
-		{Type: RouteReady, Route: &RouteRef{RouteID: "route", Generation: 2}},
-		{Type: DetachRoute, Route: &RouteRef{RouteID: "route", Generation: 2}},
-		{Type: RouteDrained, Route: &RouteRef{RouteID: "route", Generation: 2}},
+		{Type: AttachRoute, Route: &RouteRef{RouteID: "route", Version: 2}, Endpoint: &transportv1.TailcatDescriptor{Version: 1, PublisherPublicKey: "nodekey:key", RelayRegion: "test"}, WorkerPrivateKey: "privkey:key"},
+		{Type: RouteReady, Route: &RouteRef{RouteID: "route", Version: 2}},
+		{Type: DetachRoute, Route: &RouteRef{RouteID: "route", Version: 2}},
+		{Type: RouteDrained, Route: &RouteRef{RouteID: "route", Version: 2}},
 		{Type: WorkerDraining},
-		{Type: Error, Route: &RouteRef{RouteID: "route", Generation: 2}, Code: StaleAssignment},
+		{Type: Error, Route: &RouteRef{RouteID: "route", Version: 2}, Code: StaleAssignment},
 	}
 	for _, message := range controls {
 		var wire bytes.Buffer
@@ -130,7 +130,7 @@ func FuzzReadFrames(f *testing.F) {
 		f.Add(uint8(0), wire.Bytes(), uint8(1))
 	}
 	var dataWire bytes.Buffer
-	if err := WriteDataHeader(&dataWire, DataHeader{RouteID: "route", Generation: 2}); err != nil {
+	if err := WriteDataHeader(&dataWire, DataHeader{RouteID: "route", Version: 2}); err != nil {
 		f.Fatal(err)
 	}
 	f.Add(uint8(1), dataWire.Bytes(), uint8(1))
