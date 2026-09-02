@@ -42,6 +42,7 @@ const (
 )
 
 type devCommand struct {
+	openOptions    `embed:""`
 	Command        []string      `arg:"" name:"command" passthrough:"" help:"Development server command and arguments."`
 	Port           int           `name:"port" help:"Literal loopback target port; normally registered by a framework integration."`
 	StartupTimeout time.Duration `name:"startup-timeout" default:"2m" help:"Maximum time for target registration and startup."`
@@ -112,7 +113,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 			cancelConfiguration()
 			if configuredResult.err != nil {
 				if errors.Is(configuredResult.err, context.DeadlineExceeded) {
-					return errors.New("development server did not register a target; install its tnl integration or use --port")
+					return errors.New("development server did not connect to tnl; install and configure @tnldotdev/next or @tnldotdev/vite, or use --port")
 				}
 				return configuredResult.err
 			}
@@ -303,7 +304,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		return err
 	}
 
-	output, err := newPublishOutput("human", stdout, stderr)
+	output, err := newPublishOutput("human", stdout, stderr, browserOpener(flags.Open))
 	if err != nil {
 		return err
 	}

@@ -14,7 +14,7 @@ import (
 
 func TestPublishOutputNDJSONLifecycle(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	output, err := newPublishOutput("ndjson", &stdout, &stderr)
+	output, err := newPublishOutput("ndjson", &stdout, &stderr, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,11 @@ func TestPublishOutputNDJSONLifecycle(t *testing.T) {
 
 func TestPublishOutputHumanPrintsURLOnce(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	output, err := newPublishOutput("human", &stdout, &stderr)
+	var opened []string
+	output, err := newPublishOutput("human", &stdout, &stderr, func(target string) error {
+		opened = append(opened, target)
+		return nil
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,6 +87,44 @@ func TestPublishOutputHumanPrintsURLOnce(t *testing.T) {
 	}
 	if stdout.Len() != 0 || stderr.String() != "https://demo.example\nCurrent IP: 2001:db8::1\n" {
 		t.Fatalf("stdout = %q, stderr = %q", stdout.String(), stderr.String())
+	}
+	if len(opened) != 1 || opened[0] != "https://demo.example" {
+		t.Fatalf("opened = %#v", opened)
+	}
+}
+
+func TestPublishOutputNDJSONWarnsWhenBrowserCannotOpen(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	openCount := 0
+	output, err := newPublishOutput("ndjson", &stdout, &stderr, func(string) error {
+		openCount++
+		return errors.New("browser unavailable")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := output.ready("https://demo.example", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := output.ready("https://demo.example", 2); err != nil {
+		t.Fatal(err)
+	}
+	if openCount != 1 {
+		t.Fatalf("open count = %d", openCount)
+	}
+	if got := stderr.String(); got != "tnl: could not open https://demo.example: browser unavailable\n" {
+		t.Fatalf("stderr = %q", got)
+	}
+	var first, second publishEvent
+	decoder := json.NewDecoder(&stdout)
+	if err := decoder.Decode(&first); err != nil {
+		t.Fatal(err)
+	}
+	if err := decoder.Decode(&second); err != nil {
+		t.Fatal(err)
+	}
+	if first.Type != "ready" || second.Type != "ready" {
+		t.Fatalf("events = %#v, %#v", first, second)
 	}
 }
 

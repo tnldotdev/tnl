@@ -1,4 +1,9 @@
-import { readDevEnvironment, registerTarget, requestTunnelAssignment } from "@tnldotdev/dev";
+import {
+  publicTunnelEnvironment,
+  readDevEnvironment,
+  registerTarget,
+  requestTunnelAssignment,
+} from "@tnldotdev/dev";
 import type { TnlOptionsInput } from "@tnldotdev/dev";
 import type { NextConfig } from "next";
 
@@ -48,6 +53,10 @@ export function withTnl(
     return {
       ...nextConfig,
       allowedDevOrigins: unique([...allowedDevOrigins, assignment.hostname]),
+      env: {
+        ...nextConfig.env,
+        ...publicTunnelEnvironment(assignment, "NEXT_PUBLIC_"),
+      },
     };
   };
 }

@@ -41,6 +41,10 @@ describe("withTnl", () => {
           receivedContext = factoryContext;
           return {
             allowedDevOrigins: ["existing.example", "demo.tnl.dev"],
+            env: {
+              EXISTING_PUBLIC_VALUE: "existing",
+              NEXT_PUBLIC_TNL_URL: "https://stale.example",
+            },
             reactStrictMode: true,
           };
         },
@@ -53,6 +57,12 @@ describe("withTnl", () => {
 
       await expect(wrapped(developmentPhase, originalContext)).resolves.toMatchObject({
         allowedDevOrigins: ["existing.example", "demo.tnl.dev"],
+        env: {
+          EXISTING_PUBLIC_VALUE: "existing",
+          NEXT_PUBLIC_TNL_HOSTNAME: "demo.tnl.dev",
+          NEXT_PUBLIC_TNL_TUNNEL_ID: `tunnel_${"b".repeat(32)}`,
+          NEXT_PUBLIC_TNL_URL: "https://demo.tnl.dev",
+        },
         reactStrictMode: true,
       });
     });
@@ -170,6 +180,9 @@ test("runs Next.js with protected development assets and HMR", { timeout: 60_000
     const page = await requestTestServer(port);
     expect(page.status).toBe(200);
     expect(page.body).toContain("Next.js fixture");
+    expect(page.body).toContain("url:https://demo.tnl.dev");
+    expect(page.body).toContain("hostname:demo.tnl.dev");
+    expect(page.body).toContain(`tunnel-id:tunnel_${"b".repeat(32)}`);
     expect(page.headers["x-tnl-fixture"]).toBe("next");
 
     const assetPath = extractNextAssetPath(page.body);

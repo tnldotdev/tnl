@@ -1,4 +1,9 @@
-import { readDevEnvironment, registerTarget, requestTunnelAssignment } from "@tnldotdev/dev";
+import {
+  publicTunnelEnvironment,
+  readDevEnvironment,
+  registerTarget,
+  requestTunnelAssignment,
+} from "@tnldotdev/dev";
 import type { TnlOptionsInput, TnlTunnelAssignment } from "@tnldotdev/dev";
 import type { Plugin } from "vite";
 
@@ -13,6 +18,7 @@ export default function tnl(options: TnlOptionsInput = {}): Plugin {
   let targetRegistered = false;
   return {
     name: "tnl",
+    enforce: "post",
     apply: "serve",
     async config(userConfig = {}, configEnvironment) {
       const session = readDevEnvironment();
@@ -30,6 +36,12 @@ export default function tnl(options: TnlOptionsInput = {}): Plugin {
         return undefined;
       }
       const result = {
+        define: Object.fromEntries(
+          Object.entries(publicTunnelEnvironment(assignment, "VITE_")).map(([name, value]) => [
+            `import.meta.env.${name}`,
+            JSON.stringify(value),
+          ]),
+        ),
         server: {
           host: "127.0.0.1",
           allowedHosts: addAllowedHost(server.allowedHosts, assignment.hostname),
@@ -37,6 +49,7 @@ export default function tnl(options: TnlOptionsInput = {}): Plugin {
       };
       if (session.port !== undefined) {
         return {
+          ...result,
           server: { ...result.server, port: session.port, strictPort: true },
         };
       }

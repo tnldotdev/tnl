@@ -48,7 +48,12 @@ type cli struct {
 	Version     struct{}       `cmd:"" help:"Print release version information."`
 }
 
+type openOptions struct {
+	Open bool `name:"open" help:"Open the public URL in the default browser once ready."`
+}
+
 type publishCommand struct {
+	openOptions    `embed:""`
 	Target         string   `arg:"" name:"target" required:"" help:"Local port, localhost port, or literal-loopback HTTP origin."`
 	ServerURL      string   `name:"server" env:"TNL_SERVER" help:"tnl server HTTPS origin; defaults to the selected server or https://control.tnl.dev."`
 	AccessToken    string   `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Server access token; defaults to the saved login."`
@@ -284,7 +289,7 @@ func runLogout(ctx context.Context, flags logoutCommand, output io.Writer, diagn
 
 func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Writer, reporters ...telemetryReporter) (result error) {
 	telemetry := optionalTelemetryReporter(reporters)
-	output, err := newPublishOutput(flags.Output, stdout, stderr)
+	output, err := newPublishOutput(flags.Output, stdout, stderr, browserOpener(flags.Open))
 	if err != nil {
 		return err
 	}

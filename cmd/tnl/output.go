@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"sync"
 	"time"
@@ -33,13 +34,15 @@ type publishOutput struct {
 	cursor   uint64
 	tunnelID string
 	printed  bool
+	opened   bool
+	openURL  func(string) error
 }
 
-func newPublishOutput(mode string, stdout, stderr io.Writer) (*publishOutput, error) {
+func newPublishOutput(mode string, stdout, stderr io.Writer, openURL func(string) error) (*publishOutput, error) {
 	if mode != "human" && mode != "ndjson" {
 		return nil, errors.New("output must be human or ndjson")
 	}
-	return &publishOutput{mode: mode, stdout: stdout, stderr: stderr}, nil
+	return &publishOutput{mode: mode, stdout: stdout, stderr: stderr, openURL: openURL}, nil
 }
 
 func (o *publishOutput) starting(tunnelID, target string) error {
@@ -56,14 +59,22 @@ func (o *publishOutput) ready(url string, version uint64) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if o.mode == "human" {
-		if o.printed {
-			return nil
+		if !o.printed {
+			o.printed = true
+			if _, err := io.WriteString(o.stderr, url+"\n"); err != nil {
+				return err
+			}
 		}
-		o.printed = true
-		_, err := io.WriteString(o.stderr, url+"\n")
+	} else if err := o.emitLocked(publishEvent{Type: "ready", URL: url, Version: version}); err != nil {
 		return err
 	}
-	return o.emitLocked(publishEvent{Type: "ready", URL: url, Version: version})
+	if o.openURL != nil && !o.opened {
+		o.opened = true
+		if err := o.openURL(url); err != nil {
+			_, _ = fmt.Fprintf(o.stderr, "tnl: could not open %s: %v\n", url, err)
+		}
+	}
+	return nil
 }
 
 func (o *publishOutput) currentIP(ip string) error {

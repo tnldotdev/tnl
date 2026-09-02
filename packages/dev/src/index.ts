@@ -9,6 +9,19 @@ const maximumResponseBytes = 4096;
 const registrationTimeoutMilliseconds = 10 * 60 * 1000;
 const execFileAsync = promisify(execFile);
 
+declare const tnlHostnameBrand: unique symbol;
+declare const tnlPublicURLBrand: unique symbol;
+declare const tnlTunnelIDBrand: unique symbol;
+
+/** A lowercase DNS hostname validated by tnl. */
+export type TnlHostname = string & { readonly [tnlHostnameBrand]: true };
+
+/** A public HTTPS origin validated by tnl. */
+export type TnlPublicURL = `https://${string}` & { readonly [tnlPublicURLBrand]: true };
+
+/** A tunnel identifier validated by tnl. */
+export type TnlTunnelID = `tunnel_${string}` & { readonly [tnlTunnelIDBrand]: true };
+
 /** Environment variables visible to the framework. */
 export type TnlDevEnvironment = Readonly<Record<string, string | undefined>>;
 
@@ -27,12 +40,19 @@ export interface TnlTunnelAssignment extends TnlDevBootstrap {
   /** The framework using the tunnel. */
   readonly framework: string;
   /** The public hostname the framework should allow. */
-  readonly hostname: string;
+  readonly hostname: TnlHostname;
   /** The public HTTPS URL. */
-  readonly publicURL: string;
+  readonly publicURL: TnlPublicURL;
   /** The tunnel ID shown by `tnl status`. */
-  readonly tunnelID: string;
+  readonly tunnelID: TnlTunnelID;
 }
+
+/** Public tunnel values formatted for a framework's client environment. */
+export type TnlPublicEnvironment<Prefix extends string> = Readonly<
+  { [Key in `${Prefix}TNL_HOSTNAME`]: TnlHostname } & {
+    [Key in `${Prefix}TNL_TUNNEL_ID`]: TnlTunnelID;
+  } & { [Key in `${Prefix}TNL_URL`]: TnlPublicURL }
+>;
 
 /** Options for the public development tunnel. */
 export interface TnlOptions {
@@ -40,7 +60,7 @@ export interface TnlOptions {
   readonly server?: string;
   /**
    * Public name to use. This may be a managed name or a hostname under a name
-   * you own. `--name` or `TNL_NAME` overrides this value.
+   * you own. Command-line host selection overrides this value.
    */
   readonly name?: string;
   /** IP addresses or CIDR ranges allowed to access the tunnel. */
@@ -143,6 +163,18 @@ export async function requestTunnelAssignment(
     200,
   );
   return validateAssignment(response, bootstrap, configuration.framework);
+}
+
+/** Selects the tunnel values that are safe to expose to application code. */
+export function publicTunnelEnvironment<const Prefix extends string>(
+  assignment: TnlTunnelAssignment,
+  prefix: Prefix,
+): TnlPublicEnvironment<Prefix> {
+  return Object.freeze({
+    [`${prefix}TNL_HOSTNAME`]: assignment.hostname,
+    [`${prefix}TNL_TUNNEL_ID`]: assignment.tunnelID,
+    [`${prefix}TNL_URL`]: assignment.publicURL,
+  }) as TnlPublicEnvironment<Prefix>;
 }
 
 /** Tells `tnl dev` which port the framework is listening on. */
@@ -334,19 +366,13 @@ function validateAssignment(
   if (assignment.protocol !== 1) {
     throw new Error("tnl dev returned an inconsistent target assignment");
   }
-  if (
-    typeof assignment.tunnelID !== "string" ||
-    !/^tunnel_[a-f0-9]{32}$/.test(assignment.tunnelID)
-  ) {
+  if (!validTunnelID(assignment.tunnelID)) {
     throw new Error("tnl dev returned an invalid tunnel ID");
   }
-  if (typeof assignment.hostname !== "string" || !validHostname(assignment.hostname)) {
+  if (!validHostname(assignment.hostname)) {
     throw new Error("tnl dev returned an invalid public hostname");
   }
-  if (
-    typeof assignment.publicURL !== "string" ||
-    !validPublicURL(assignment.publicURL, assignment.hostname)
-  ) {
+  if (!validPublicURL(assignment.publicURL, assignment.hostname)) {
     throw new Error("tnl dev returned an invalid public URL");
   }
   return Object.freeze({
@@ -389,8 +415,17 @@ function optionalPort(value: string | undefined, name: string): number | undefin
   return port;
 }
 
-function validHostname(value: string): boolean {
-  if (value.length === 0 || value.length > 253 || value !== value.toLowerCase()) {
+function validTunnelID(value: unknown): value is TnlTunnelID {
+  return typeof value === "string" && /^tunnel_[a-f0-9]{32}$/.test(value);
+}
+
+function validHostname(value: unknown): value is TnlHostname {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > 253 ||
+    value !== value.toLowerCase()
+  ) {
     return false;
   }
   return value.split(".").every(validHostnameLabel);
@@ -400,7 +435,10 @@ function validHostnameLabel(value: string): boolean {
   return value.length > 0 && value.length <= 63 && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(value);
 }
 
-function validPublicURL(value: string, hostname: string): boolean {
+function validPublicURL(value: unknown, hostname: TnlHostname): value is TnlPublicURL {
+  if (typeof value !== "string") {
+    return false;
+  }
   let parsedURL: URL;
   try {
     parsedURL = new URL(value);
