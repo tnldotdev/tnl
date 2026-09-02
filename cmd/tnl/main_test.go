@@ -92,6 +92,54 @@ func TestCommandTelemetryIsSafeAndOptional(t *testing.T) {
 	}
 }
 
+func TestTelemetryStateRoot(t *testing.T) {
+	t.Setenv("TNL_NO_TELEMETRY", "false")
+	environmentRoot := filepath.Join(t.TempDir(), "environment")
+	t.Setenv("TNL_STATE_DIR", environmentRoot)
+
+	var roots []string
+	factory := func(root string) telemetryReporter {
+		roots = append(roots, root)
+		return telemetryReporterFunc(func(telemetryPayload) {})
+	}
+	var stdout, stderr bytes.Buffer
+	if err := run(t.Context(), []string{"version"}, &stdout, &stderr, factory); err != nil {
+		t.Fatal(err)
+	}
+	if len(roots) != 1 || roots[0] != environmentRoot {
+		t.Fatalf("version telemetry roots = %q, want [%q]", roots, environmentRoot)
+	}
+
+	explicitRoot := filepath.Join(t.TempDir(), "explicit")
+	if err := run(t.Context(), []string{
+		"publish", "invalid", "--state-dir", explicitRoot,
+	}, &stdout, &stderr, factory); err == nil {
+		t.Fatal("publish accepted an invalid target")
+	}
+	if len(roots) != 2 || roots[1] != explicitRoot {
+		t.Fatalf("publish telemetry roots = %q, want second root %q", roots, explicitRoot)
+	}
+
+	serverRoot := filepath.Join(t.TempDir(), "server")
+	t.Setenv("TNLD_STATE_DIR", serverRoot)
+	var flags cli
+	parser, err := kong.New(&flags)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := parser.Parse([]string{"admin", "server", "login-token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := telemetryStateRoot(parsed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if root != environmentRoot {
+		t.Fatalf("server command telemetry root = %q, want %q", root, environmentRoot)
+	}
+}
+
 func TestAdminCommandTree(t *testing.T) {
 	var flags cli
 	parser, err := kong.New(&flags)
