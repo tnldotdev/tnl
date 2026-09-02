@@ -18,7 +18,7 @@ func TestPublishOutputNDJSONLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := output.starting("http://127.0.0.1:3000"); err != nil {
+	if err := output.starting("tunnel_0123456789abcdef0123456789abcdef", "http://127.0.0.1:3000"); err != nil {
 		t.Fatal(err)
 	}
 	if err := output.currentIP("192.0.2.1"); err != nil {
@@ -46,7 +46,8 @@ func TestPublishOutputNDJSONLifecycle(t *testing.T) {
 		if err := decoder.Decode(&event); err != nil {
 			t.Fatal(err)
 		}
-		if event.SchemaVersion != 1 || event.Cursor != uint64(index+1) || event.Type != wantType {
+		if event.SchemaVersion != 1 || event.Cursor != uint64(index+1) || event.Type != wantType ||
+			event.TunnelID != "tunnel_0123456789abcdef0123456789abcdef" {
 			t.Fatalf("event %d = %#v", index, event)
 		}
 		if wantType == "current_ip" && event.IP != "192.0.2.1" {

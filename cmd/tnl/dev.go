@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientauth"
+	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/publisher"
@@ -53,7 +54,8 @@ type childExitError struct {
 
 func (e *childExitError) Error() string { return fmt.Sprintf("command exited with status %d", e.code) }
 
-func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stderr io.Writer) error {
+func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stderr io.Writer, reporters ...telemetryReporter) (result error) {
+	telemetry := optionalTelemetryReporter(reporters)
 	command, err := resolveDevCommand(flags.Command)
 	if err != nil {
 		return err
@@ -66,18 +68,41 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		return errors.New("startup timeout must be greater than zero and at most 10 minutes")
 	}
 
-	serverURL, stateRoot, err := resolveServer(flags.StateDir, flags.ServerURL)
+	target := ""
+	if flags.Port != 0 {
+		target, err = localproxy.NormalizeTarget(strconv.Itoa(flags.Port))
+		if err != nil {
+			return err
+		}
+	}
+	serverURL, state, err := resolveServer(ctx, flags.StateDir, flags.ServerURL)
 	if err != nil {
 		return err
 	}
+	defer state.Close()
+	tunnel, err := state.BeginTunnel(ctx, clientstate.BeginTunnelOptions{
+		Command: clientstate.TunnelCommandDev, Server: serverURL, Target: target,
+	})
+	if err != nil {
+		return err
+	}
+	ctx = tunnel.Context()
+	defer func() {
+		if cause := context.Cause(ctx); cause != nil && (result == nil || errors.Is(result, context.Canceled)) {
+			result = cause
+		}
+		finishCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		result = errors.Join(result, tunnel.Finish(finishCtx, result))
+	}()
 	authenticated, err := clientauth.Authenticate(ctx, clientauth.Config{
-		CoreEndpoint: serverURL, StateRoot: stateRoot, AccessToken: flags.AccessToken,
+		CoreEndpoint: serverURL, State: state, AccessToken: flags.AccessToken,
 		Diagnostics: stderr, LoginToken: loginTokenPrompt(stdin, stderr),
 	})
 	if err != nil {
 		return err
 	}
-	state, err := openClientState(flags.StateDir, serverURL)
+	publisherState, err := state.Server(ctx, serverURL)
 	if err != nil {
 		return err
 	}
@@ -104,20 +129,13 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		return err
 	}
 
-	target := ""
-	if flags.Port != 0 {
-		target, err = localproxy.NormalizeTarget(strconv.Itoa(flags.Port))
-		if err != nil {
-			return err
-		}
-	}
-	bootstrap, err := newDevBootstrap(target)
+	bootstrap, err := newDevBootstrap(target, tunnel.SetDevTarget)
 	if err != nil {
 		return err
 	}
 	defer bootstrap.Close()
 
-	child, err := startDevProcess(flags.Command, devEnvironment(bootstrap, hostname, flags.Port), stdin, stdout, stderr)
+	child, err := startDevProcess(flags.Command, devEnvironment(bootstrap, tunnel.ID(), hostname, flags.Port), stdin, stdout, stderr)
 	if err != nil {
 		return err
 	}
@@ -148,7 +166,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 			target = result.target
 		case <-ctx.Done():
 			cancelRegistration()
-			return ctx.Err()
+			return context.Cause(ctx)
 		}
 	}
 
@@ -165,12 +183,15 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 			return err
 		}
 	case <-ctx.Done():
-		return ctx.Err()
+		return context.Cause(ctx)
 	}
 	cancelStartup()
 
 	output, err := newPublishOutput("human", stdout, stderr)
 	if err != nil {
+		return err
+	}
+	if err := output.starting(tunnel.ID(), target); err != nil {
 		return err
 	}
 	logger := log.New(stderr, "tnl: ", 0)
@@ -180,7 +201,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	go func() {
 		publishDone <- publisher.Run(publishCtx, publisher.Config{
 			Server: routes, Hostname: hostname, Target: target,
-			State: state, ACMEProfile: capabilities.Acme.AcmeProfile,
+			State: publisherState, ACMEProfile: capabilities.Acme.AcmeProfile,
 			RelayRegion: capabilities.Transport.RelayRegion, Logf: logger.Printf,
 			LoadRegions: func(ctx context.Context) (map[string]*tailcfg.DERPRegion, error) {
 				relayMap, err := authenticated.Core.RelayMap(ctx)
@@ -189,7 +210,22 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 				}
 				return config.DecodeRelayRegions(relayMap)
 			},
-			OnSessionReady: output.ready,
+			Observe: withTelemetryObserver(telemetry, "dev", serverURL, func(event publisher.Event) error {
+				switch event.Type {
+				case publisher.EventRoute:
+					return tunnel.SetRoute(publishCtx, event.RouteID, event.Hostname)
+				case publisher.EventProvisioning:
+					return tunnel.SetProvisioning(publishCtx, event.Version)
+				case publisher.EventReady:
+					if err := tunnel.SetReady(publishCtx, event.PublicURL, event.Version); err != nil {
+						return err
+					}
+					return output.ready(event.PublicURL, event.Version)
+				case publisher.EventDraining:
+					return tunnel.SetDraining(context.WithoutCancel(publishCtx))
+				}
+				return nil
+			}),
 		})
 	}()
 
@@ -206,13 +242,13 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		return nil
 	case err := <-publishDone:
 		if ctx.Err() != nil && errors.Is(err, context.Canceled) {
-			return ctx.Err()
+			return context.Cause(ctx)
 		}
 		return err
 	case <-ctx.Done():
 		cancelPublish()
 		<-publishDone
-		return ctx.Err()
+		return context.Cause(ctx)
 	}
 }
 
@@ -222,12 +258,13 @@ type devTargetResult struct {
 }
 
 type devBootstrap struct {
-	dir     string
-	socket  string
-	token   string
-	server  *http.Server
-	done    chan struct{}
-	targets chan string
+	dir      string
+	socket   string
+	token    string
+	server   *http.Server
+	done     chan struct{}
+	targets  chan string
+	register func(context.Context, string, string) error
 
 	mu        sync.Mutex
 	target    string
@@ -242,7 +279,7 @@ type devTargetRequest struct {
 	Port      int    `json:"port"`
 }
 
-func newDevBootstrap(target string) (*devBootstrap, error) {
+func newDevBootstrap(target string, register func(context.Context, string, string) error) (*devBootstrap, error) {
 	// Unix socket paths are short on macOS, so avoid potentially deep custom state paths.
 	dir, err := os.MkdirTemp("", "tnl-dev-")
 	if err != nil {
@@ -262,6 +299,7 @@ func newDevBootstrap(target string) (*devBootstrap, error) {
 		dir: dir, socket: filepath.Join(dir, "control.sock"), token: hex.EncodeToString(material[:]),
 		done: make(chan struct{}), targets: make(chan string, 1), target: target,
 	}
+	bootstrap.register = register
 	listener, err := net.Listen("unix", bootstrap.socket)
 	if err != nil {
 		cleanup()
@@ -397,6 +435,13 @@ func (b *devBootstrap) handle(response http.ResponseWriter, request *http.Reques
 		return
 	}
 	first := b.target == ""
+	if first && b.register != nil {
+		if err := b.register(request.Context(), registration.Framework, target); err != nil {
+			b.mu.Unlock()
+			http.Error(response, "failed to register development target", http.StatusInternalServerError)
+			return
+		}
+	}
 	b.target = target
 	b.mu.Unlock()
 	if first {
@@ -420,11 +465,12 @@ func validFrameworkName(value string) bool {
 	return true
 }
 
-func devEnvironment(bootstrap *devBootstrap, hostname string, port int) []string {
+func devEnvironment(bootstrap *devBootstrap, tunnelID, hostname string, port int) []string {
 	replacements := map[string]string{
 		"TNL_DEV_PROTOCOL":    devProtocolVersion,
 		"TNL_DEV_SOCKET":      bootstrap.socket,
 		"TNL_DEV_TOKEN":       bootstrap.token,
+		"TNL_TUNNEL_ID":       tunnelID,
 		"TNL_PUBLIC_HOSTNAME": hostname,
 		"TNL_PUBLIC_URL":      "https://" + hostname,
 	}

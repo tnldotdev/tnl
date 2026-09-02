@@ -14,6 +14,7 @@ type publishEvent struct {
 	SchemaVersion int        `json:"schema_version"`
 	Type          string     `json:"type"`
 	Cursor        uint64     `json:"cursor"`
+	TunnelID      string     `json:"tunnel_id"`
 	Target        string     `json:"target,omitempty"`
 	URL           string     `json:"url,omitempty"`
 	Version       uint64     `json:"version,omitempty"`
@@ -25,12 +26,13 @@ type publishEvent struct {
 }
 
 type publishOutput struct {
-	mode    string
-	stdout  io.Writer
-	stderr  io.Writer
-	mu      sync.Mutex
-	cursor  uint64
-	printed bool
+	mode     string
+	stdout   io.Writer
+	stderr   io.Writer
+	mu       sync.Mutex
+	cursor   uint64
+	tunnelID string
+	printed  bool
 }
 
 func newPublishOutput(mode string, stdout, stderr io.Writer) (*publishOutput, error) {
@@ -40,11 +42,14 @@ func newPublishOutput(mode string, stdout, stderr io.Writer) (*publishOutput, er
 	return &publishOutput{mode: mode, stdout: stdout, stderr: stderr}, nil
 }
 
-func (o *publishOutput) starting(target string) error {
+func (o *publishOutput) starting(tunnelID, target string) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.tunnelID = tunnelID
 	if o.mode == "human" {
 		return nil
 	}
-	return o.emit(publishEvent{Type: "starting", Target: target})
+	return o.emitLocked(publishEvent{Type: "starting", Target: target})
 }
 
 func (o *publishOutput) ready(url string, version uint64) error {
@@ -101,6 +106,7 @@ func (o *publishOutput) emitLocked(event publishEvent) error {
 	o.cursor++
 	event.SchemaVersion = 1
 	event.Cursor = o.cursor
+	event.TunnelID = o.tunnelID
 	return json.NewEncoder(o.stdout).Encode(event)
 }
 

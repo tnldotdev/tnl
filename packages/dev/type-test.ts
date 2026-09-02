@@ -8,4 +8,8 @@ import {
 const session: TnlDevSession | null = readDevEnvironment({});
 const registered: Promise<RegisteredTnlDevSession | null> = registerTarget("vite", 5173, {});
 
+if (session !== null) {
+  session.tunnelID satisfies string;
+}
+
 export { registered, session };

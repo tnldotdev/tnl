@@ -7,13 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/pressly/goose/v3"
-	"modernc.org/sqlite"
+	tnlsqlite "github.com/tnldotdev/tnl/internal/sqlite"
 )
 
 const databaseName = "tnld.db"
@@ -30,24 +28,13 @@ func Open(ctx context.Context, dir string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	path := DatabasePath(dir)
-	db, err := sql.Open("sqlite", dataSourceName(path))
+	migrations, err := fs.Sub(migrationFiles, "migrations")
 	if err != nil {
-		return nil, fmt.Errorf("state: open database: %w", err)
+		return nil, fmt.Errorf("state: load migrations: %w", err)
 	}
-	db.SetMaxOpenConns(1)
-	if err := db.PingContext(ctx); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("state: connect database: %w", err)
-	}
-	if err := os.Chmod(path, 0o600); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("state: secure database: %w", err)
-	}
-	if err := migrate(ctx, db); err != nil {
-		db.Close()
-		return nil, err
+	db, err := tnlsqlite.Open(ctx, DatabasePath(dir), migrations)
+	if err != nil {
+		return nil, fmt.Errorf("state: %w", err)
 	}
 	return db, nil
 }
@@ -57,33 +44,9 @@ func OpenReadOnly(ctx context.Context, dir string) (*sql.DB, error) {
 	if err := RequireDirectoryOwner(dir); err != nil {
 		return nil, err
 	}
-	path := DatabasePath(dir)
-	if _, err := os.Stat(path); err != nil {
-		return nil, fmt.Errorf("state: stat database: %w", err)
-	}
-	u := &url.URL{Scheme: "file", Path: filepath.ToSlash(path)}
-	query := u.Query()
-	query.Set("mode", "ro")
-	query.Set("_busy_timeout", "5000")
-	query.Set("_foreign_keys", "on")
-	u.RawQuery = query.Encode()
-	db, err := sql.Open("sqlite", u.String())
+	db, err := tnlsqlite.OpenReadOnly(ctx, DatabasePath(dir), 1)
 	if err != nil {
-		return nil, fmt.Errorf("state: open database read-only: %w", err)
-	}
-	db.SetMaxOpenConns(1)
-	if err := db.PingContext(ctx); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("state: connect database read-only: %w", err)
-	}
-	var version int
-	if err := db.QueryRowContext(ctx, "SELECT COALESCE(MAX(version_id), 0) FROM goose_db_version WHERE is_applied = 1").Scan(&version); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("state: read schema version: %w", err)
-	}
-	if version != 1 {
-		db.Close()
-		return nil, fmt.Errorf("state: unsupported database schema version %d", version)
+		return nil, fmt.Errorf("state: %w", err)
 	}
 	return db, nil
 }
@@ -105,65 +68,7 @@ func prepareDirectory(dir string) (string, error) {
 	return dir, nil
 }
 
-func dataSourceName(path string) string {
-	u := &url.URL{Scheme: "file", Path: filepath.ToSlash(path)}
-	query := u.Query()
-	query.Set("_busy_timeout", "5000")
-	query.Set("_foreign_keys", "on")
-	query.Set("_journal_mode", "WAL")
-	query.Set("_txlock", "immediate")
-	u.RawQuery = query.Encode()
-	return u.String()
-}
-
-func migrate(ctx context.Context, db *sql.DB) error {
-	fsys, err := fs.Sub(migrationFiles, "migrations")
-	if err != nil {
-		return fmt.Errorf("state: load migrations: %w", err)
-	}
-	provider, err := goose.NewProvider(
-		goose.DialectSQLite3,
-		db,
-		fsys,
-		goose.WithDisableGlobalRegistry(true),
-	)
-	if err != nil {
-		return fmt.Errorf("state: configure migrations: %w", err)
-	}
-	current, target, err := provider.GetVersions(ctx)
-	if err != nil {
-		return fmt.Errorf("state: read schema version: %w", err)
-	}
-	if current > target {
-		return fmt.Errorf("state: database schema version %d is newer than supported version %d", current, target)
-	}
-	if _, err := provider.Up(ctx); err != nil {
-		return fmt.Errorf("state: migrate database: %w", err)
-	}
-	return checkForeignKeys(ctx, db)
-}
-
-func checkForeignKeys(ctx context.Context, db *sql.DB) error {
-	rows, err := db.QueryContext(ctx, "PRAGMA foreign_key_check")
-	if err != nil {
-		return fmt.Errorf("state: check foreign keys: %w", err)
-	}
-	defer rows.Close()
-	if rows.Next() {
-		return errors.New("state: foreign key check failed")
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("state: check foreign keys: %w", err)
-	}
-	return nil
-}
-
 // IsDatabaseContention reports whether err is a transient SQLite writer conflict.
 func IsDatabaseContention(err error) bool {
-	var sqliteErr *sqlite.Error
-	if !errors.As(err, &sqliteErr) {
-		return false
-	}
-	code := sqliteErr.Code() & 0xff
-	return code == 5 || code == 6
+	return tnlsqlite.IsContention(err)
 }

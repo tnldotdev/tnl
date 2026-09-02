@@ -30,6 +30,20 @@ import (
 	"tailscale.com/types/key"
 )
 
+func newPublisherState(t *testing.T, root, server string) *clientstate.Store {
+	t.Helper()
+	database, err := clientstate.Open(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	store, err := database.Server(t.Context(), server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store
+}
+
 func TestRunPublishChecksTargetBeforeCreatingRoute(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -216,10 +230,12 @@ func TestRunPublishCreatesSessionAfterHeartbeatFence(t *testing.T) {
 			}}, nil
 		},
 		DrainTime: time.Millisecond,
-		OnSessionReady: func(_ string, version uint64) error {
-			versions = append(versions, version)
-			if version == 2 {
-				cancel()
+		Observe: func(event Event) error {
+			if event.Type == EventReady {
+				versions = append(versions, event.Version)
+				if event.Version == 2 {
+					cancel()
+				}
 			}
 			return nil
 		},
@@ -235,10 +251,7 @@ func TestRunPublishCreatesSessionAfterHeartbeatFence(t *testing.T) {
 }
 
 func TestIssueCertificatePersistsAndRotatesApplicationKey(t *testing.T) {
-	store, err := clientstate.New(filepath.Join(t.TempDir(), "state"), "https://server.example")
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := newPublisherState(t, filepath.Join(t.TempDir(), "state"), "https://server.example")
 	state, err := store.OpenRoute("route_0123456789abcdef0123456789abcdef")
 	if err != nil {
 		t.Fatal(err)
@@ -265,7 +278,7 @@ func TestIssueCertificatePersistsAndRotatesApplicationKey(t *testing.T) {
 	if server.readyCalls != 1 || server.removedCalls != 1 || server.installedCalls != 1 {
 		t.Fatalf("certificate calls = ready %d, removed %d, installed %d", server.readyCalls, server.removedCalls, server.installedCalls)
 	}
-	loaded, found, err := state.Current("route.example")
+	loaded, found, err := state.Current(t.Context(), "route.example")
 	if err != nil || !found || loaded.Certificate.Leaf == nil {
 		t.Fatalf("loaded certificate = %+v, %v, %v", loaded, found, err)
 	}
@@ -283,10 +296,7 @@ func TestIssueCertificatePersistsAndRotatesApplicationKey(t *testing.T) {
 }
 
 func TestUnacknowledgedCertificateRebindsAfterRestart(t *testing.T) {
-	store, err := clientstate.New(filepath.Join(t.TempDir(), "state"), "https://server.example")
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := newPublisherState(t, filepath.Join(t.TempDir(), "state"), "https://server.example")
 	state, err := store.OpenRoute("route_0123456789abcdef0123456789abcdef")
 	if err != nil {
 		t.Fatal(err)
@@ -302,7 +312,7 @@ func TestUnacknowledgedCertificateRebindsAfterRestart(t *testing.T) {
 	if !errors.Is(err, serverclient.ErrCertificateStatus) || material.Installed {
 		t.Fatalf("issuance = %+v, %v", material, err)
 	}
-	loaded, found, err := state.Current("route.example")
+	loaded, found, err := state.Current(t.Context(), "route.example")
 	if err != nil || !found || loaded.Installed {
 		t.Fatalf("unacknowledged current = %+v, %v, %v", loaded, found, err)
 	}
@@ -317,16 +327,13 @@ func TestUnacknowledgedCertificateRebindsAfterRestart(t *testing.T) {
 }
 
 func TestTerminalIssuanceRotatesPendingApplicationKey(t *testing.T) {
-	store, err := clientstate.New(filepath.Join(t.TempDir(), "state"), "https://server.example")
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := newPublisherState(t, filepath.Join(t.TempDir(), "state"), "https://server.example")
 	state, err := store.OpenRoute("route_0123456789abcdef0123456789abcdef")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer state.Close()
-	pending, err := state.Pending("route.example")
+	pending, err := state.Pending(t.Context(), "route.example")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -350,21 +357,18 @@ func TestTerminalIssuanceRotatesPendingApplicationKey(t *testing.T) {
 }
 
 func TestUnacknowledgedCertificatePastRenewalFallsBackToReplacement(t *testing.T) {
-	store, err := clientstate.New(filepath.Join(t.TempDir(), "state"), "https://server.example")
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := newPublisherState(t, filepath.Join(t.TempDir(), "state"), "https://server.example")
 	state, err := store.OpenRoute("route_0123456789abcdef0123456789abcdef")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer state.Close()
-	pending, err := state.Pending("route.example")
+	pending, err := state.Pending(t.Context(), "route.example")
 	if err != nil {
 		t.Fatal(err)
 	}
 	current, err := state.Commit(
-		"route.example", pending, signCSR(t, mustParseCSR(t, pending.CSRDER), "route.example"),
+		t.Context(), "route.example", pending, signCSR(t, mustParseCSR(t, pending.CSRDER), "route.example"),
 		time.Now().Add(-time.Millisecond), "issuance_old", 1,
 	)
 	if err != nil {
@@ -391,21 +395,18 @@ func TestUnacknowledgedCertificatePastRenewalFallsBackToReplacement(t *testing.T
 }
 
 func TestUnacknowledgedCertificateCanCompleteFreshReboundIssuance(t *testing.T) {
-	store, err := clientstate.New(filepath.Join(t.TempDir(), "state"), "https://server.example")
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := newPublisherState(t, filepath.Join(t.TempDir(), "state"), "https://server.example")
 	state, err := store.OpenRoute("route_0123456789abcdef0123456789abcdef")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer state.Close()
-	pending, err := state.Pending("route.example")
+	pending, err := state.Pending(t.Context(), "route.example")
 	if err != nil {
 		t.Fatal(err)
 	}
 	current, err := state.Commit(
-		"route.example", pending, signCSR(t, mustParseCSR(t, pending.CSRDER), "route.example"),
+		t.Context(), "route.example", pending, signCSR(t, mustParseCSR(t, pending.CSRDER), "route.example"),
 		time.Now().Add(30*24*time.Hour), "issuance_old", 1,
 	)
 	if err != nil {
@@ -429,10 +430,7 @@ func TestUnacknowledgedCertificateCanCompleteFreshReboundIssuance(t *testing.T) 
 }
 
 func TestCertificateRetryPropagatesConsumedStaleSession(t *testing.T) {
-	store, err := clientstate.New(filepath.Join(t.TempDir(), "state"), "https://server.example")
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := newPublisherState(t, filepath.Join(t.TempDir(), "state"), "https://server.example")
 	state, err := store.OpenRoute("route_0123456789abcdef0123456789abcdef")
 	if err != nil {
 		t.Fatal(err)
@@ -473,30 +471,27 @@ func TestRenewalFailureKeepsCurrentCertificateServing(t *testing.T) {
 	previousRetry := renewalRetry
 	renewalRetry = 5 * time.Millisecond
 	t.Cleanup(func() { renewalRetry = previousRetry })
-	store, err := clientstate.New(filepath.Join(t.TempDir(), "state"), "https://server.example")
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := newPublisherState(t, filepath.Join(t.TempDir(), "state"), "https://server.example")
 	state, err := store.OpenRoute("route_0123456789abcdef0123456789abcdef")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer state.Close()
-	pending, err := state.Pending("route.example")
+	pending, err := state.Pending(t.Context(), "route.example")
 	if err != nil {
 		t.Fatal(err)
 	}
 	material, err := state.Commit(
-		"route.example", pending, signCSR(t, mustParseCSR(t, pending.CSRDER), "route.example"),
+		t.Context(), "route.example", pending, signCSR(t, mustParseCSR(t, pending.CSRDER), "route.example"),
 		time.Now().Add(-time.Millisecond), "issuance_current", 1,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := state.MarkInstalled("route.example", material.IssuanceID, material.Version); err != nil {
+	if _, err := state.MarkInstalled(t.Context(), "route.example", material.IssuanceID, material.Version); err != nil {
 		t.Fatal(err)
 	}
-	material, found, err := state.Current("route.example")
+	material, found, err := state.Current(t.Context(), "route.example")
 	if err != nil || !found || !material.Installed {
 		t.Fatalf("installed current = %+v, %v, %v", material, found, err)
 	}

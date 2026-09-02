@@ -87,6 +87,7 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
     TNL_DEV_PROTOCOL: "1",
     TNL_DEV_SOCKET: socket,
     TNL_DEV_TOKEN: "a".repeat(64),
+    TNL_TUNNEL_ID: `tunnel_${"b".repeat(32)}`,
     TNL_PUBLIC_HOSTNAME: "demo.tnl.dev",
     TNL_PUBLIC_URL: "https://demo.tnl.dev",
   };

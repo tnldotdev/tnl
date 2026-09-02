@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientauth"
+	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/serverclient"
@@ -161,6 +162,7 @@ func runAdminServerStatus(
 	if err != nil {
 		return err
 	}
+	defer client.Close()
 	value, err := client.AdminServerStatus(ctx)
 	if err != nil {
 		return adminClientError(err)
@@ -177,6 +179,7 @@ func runAdminRoutesList(ctx context.Context, command adminRoutesListCommand, std
 	if err != nil {
 		return err
 	}
+	defer client.Close()
 	table := newAdminTable(stdout)
 	fmt.Fprintln(table, "ID\tSTATUS\tHOSTNAME\tLOCAL TARGET\tVERSION\tSUSPENSION REVISION")
 	cursor := ""
@@ -204,6 +207,7 @@ func runAdminRouteShow(ctx context.Context, command adminRouteShowCommand, stdou
 	if err != nil {
 		return err
 	}
+	defer client.Close()
 	value, err := client.AdminRoute(ctx, command.RouteID)
 	if err != nil {
 		return adminClientError(err)
@@ -222,6 +226,7 @@ func runAdminRouteSuspend(ctx context.Context, command adminRouteSuspendCommand,
 	if err != nil {
 		return err
 	}
+	defer client.Close()
 	value, err := client.AdminSuspendRoute(ctx, command.RouteID, command.Revision, command.Reason)
 	if err != nil {
 		return adminClientError(err)
@@ -238,6 +243,7 @@ func runAdminRouteResume(ctx context.Context, command adminRouteResumeCommand, s
 	if err != nil {
 		return err
 	}
+	defer client.Close()
 	value, err := client.AdminResumeRoute(ctx, command.RouteID, command.Revision)
 	if err != nil {
 		return adminClientError(err)
@@ -251,6 +257,7 @@ func runAdminHostnamesList(ctx context.Context, command adminHostnamesListComman
 	if err != nil {
 		return err
 	}
+	defer client.Close()
 	table := newAdminTable(stdout)
 	fmt.Fprintln(table, "ID\tSTATUS\tKIND\tSOURCE\tHOSTNAME\tIDENTITY")
 	cursor := ""
@@ -278,6 +285,7 @@ func runAdminHostnameShow(ctx context.Context, command adminHostnameShowCommand,
 	if err != nil {
 		return err
 	}
+	defer client.Close()
 	value, err := client.AdminHostname(ctx, command.HostnameID)
 	if err != nil {
 		return adminClientError(err)
@@ -293,6 +301,7 @@ func runAdminHostnameRemove(ctx context.Context, command adminHostnameRemoveComm
 	if err != nil {
 		return err
 	}
+	defer client.Close()
 	if err := client.AdminRemoveHostname(ctx, command.HostnameID); err != nil {
 		return adminClientError(err)
 	}
@@ -308,6 +317,7 @@ func runAdminHostnameQuarantine(ctx context.Context, command adminHostnameQuaran
 	if err != nil {
 		return err
 	}
+	defer client.Close()
 	if err := client.AdminQuarantineHostname(ctx, command.HostnameID, command.Reason); err != nil {
 		return adminClientError(err)
 	}
@@ -320,6 +330,7 @@ func runAdminCredentialsList(ctx context.Context, command adminCredentialsListCo
 	if err != nil {
 		return err
 	}
+	defer client.Close()
 	table := newAdminTable(stdout)
 	fmt.Fprintln(table, "ID\tROUTE\tCREATED\tREVOKED")
 	cursor := ""
@@ -347,6 +358,7 @@ func runAdminCredentialRevoke(ctx context.Context, command adminCredentialRevoke
 	if err != nil {
 		return err
 	}
+	defer client.Close()
 	if err := client.AdminRevokeCredential(ctx, command.CredentialID); err != nil {
 		return adminClientError(err)
 	}
@@ -359,6 +371,7 @@ func runAdminControlSessionsList(ctx context.Context, command adminControlSessio
 	if err != nil {
 		return err
 	}
+	defer client.Close()
 	table := newAdminTable(stdout)
 	fmt.Fprintln(table, "ID\tIDENTITY\tAUTHENTICATION\tGRANTS\tACCESS EXPIRES\tREFRESH EXPIRES\tREVOKED")
 	cursor := ""
@@ -392,6 +405,7 @@ func runAdminControlSessionRevoke(ctx context.Context, command adminControlSessi
 	if err != nil {
 		return err
 	}
+	defer client.Close()
 	if err := client.AdminRevokeControlSession(ctx, command.ControlSessionID); err != nil {
 		return adminClientError(err)
 	}
@@ -404,6 +418,7 @@ func runAdminSwitchesList(ctx context.Context, command adminSwitchesListCommand,
 	if err != nil {
 		return err
 	}
+	defer client.Close()
 	values, err := client.AdminListSwitches(ctx)
 	if err != nil {
 		return adminClientError(err)
@@ -426,6 +441,7 @@ func runAdminSwitchSet(
 	if err != nil {
 		return err
 	}
+	defer client.Close()
 	value, err := client.AdminSetSwitch(ctx, serverv1.OperationalSwitchName(command.Name), enabled)
 	if err != nil {
 		return adminClientError(err)
@@ -511,22 +527,31 @@ func runAdminRelayRefresh(ctx context.Context, command adminRelayRefreshCommand,
 	return err
 }
 
-func remoteAdminClient(ctx context.Context, flags adminRemoteFlags, diagnostics io.Writer) (*serverclient.Client, error) {
-	serverURL, stateRoot, err := resolveServer(flags.StateDir, flags.ServerURL)
+type localAdminClient struct {
+	*serverclient.Client
+	state *clientstate.Database
+}
+
+func (c *localAdminClient) Close() error { return c.state.Close() }
+
+func remoteAdminClient(ctx context.Context, flags adminRemoteFlags, diagnostics io.Writer) (*localAdminClient, error) {
+	serverURL, state, err := resolveServer(ctx, flags.StateDir, flags.ServerURL)
 	if err != nil {
 		return nil, err
 	}
 	authenticated, err := clientauth.Authenticate(ctx, clientauth.Config{
-		CoreEndpoint: serverURL, StateRoot: stateRoot, AccessToken: flags.AccessToken,
+		CoreEndpoint: serverURL, State: state, AccessToken: flags.AccessToken,
 		Diagnostics: diagnostics, LoginToken: loginTokenPrompt(os.Stdin, diagnostics),
 	})
 	if err != nil {
+		state.Close()
 		return nil, err
 	}
 	if err := serverclient.RequireAdministrationCapability(authenticated.CoreCapabilities); err != nil {
+		state.Close()
 		return nil, adminClientError(err)
 	}
-	return authenticated.Core, nil
+	return &localAdminClient{Client: authenticated.Core, state: state}, nil
 }
 
 func adminClientError(err error) error {

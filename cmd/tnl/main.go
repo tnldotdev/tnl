@@ -37,13 +37,15 @@ import (
 const defaultServerURL = "https://control.tnl.dev"
 
 type cli struct {
-	Publish publishCommand `cmd:"" help:"Publish one local HTTP service."`
-	Dev     devCommand     `cmd:"" help:"Run and publish a development server."`
-	Host    hostCommand    `cmd:"" help:"Manage persistent public names."`
-	Login   loginCommand   `cmd:"" help:"Authenticate to a tnl server."`
-	Logout  logoutCommand  `cmd:"" help:"Revoke and remove the saved control session."`
-	Admin   adminCommand   `cmd:"" help:"Administer a self-hosted tnl server."`
-	Version struct{}       `cmd:"" help:"Print release version information."`
+	NoTelemetry bool           `name:"no-telemetry" env:"TNL_NO_TELEMETRY" help:"Disable pseudonymous usage telemetry."`
+	Publish     publishCommand `cmd:"" help:"Publish one local HTTP service."`
+	Dev         devCommand     `cmd:"" help:"Run and publish a development server."`
+	Status      statusCommand  `cmd:"" help:"Show local tunnel status."`
+	Host        hostCommand    `cmd:"" help:"Manage persistent public names."`
+	Login       loginCommand   `cmd:"" help:"Authenticate to a tnl server."`
+	Logout      logoutCommand  `cmd:"" help:"Revoke and remove the saved control session."`
+	Admin       adminCommand   `cmd:"" help:"Administer a self-hosted tnl server."`
+	Version     struct{}       `cmd:"" help:"Print release version information."`
 }
 
 type publishCommand struct {
@@ -102,7 +104,17 @@ func main() {
 		<-ctx.Done()
 		stop() // Restore default handling so a second signal terminates immediately.
 	}()
-	if err := run(ctx, os.Args[1:], os.Stdout, os.Stderr); err != nil && !errors.Is(err, context.Canceled) {
+	var telemetry *asyncTelemetryReporter
+	err := run(ctx, os.Args[1:], os.Stdout, os.Stderr, func(root string) telemetryReporter {
+		telemetry = newTelemetryReporter(root)
+		return telemetry
+	})
+	if telemetry != nil {
+		waitCtx, cancel := context.WithTimeout(context.Background(), telemetryRequestTimeout)
+		telemetry.Wait(waitCtx)
+		cancel()
+	}
+	if err != nil && !errors.Is(err, context.Canceled) {
 		var commandErr *childExitError
 		if errors.As(err, &commandErr) {
 			os.Exit(commandErr.code)
@@ -112,7 +124,7 @@ func main() {
 	}
 }
 
-func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterFactories ...telemetryReporterFactory) error {
 	var flags cli
 	parser, err := kong.New(&flags, kong.Name("tnl"), kong.Description("public urls for localhost."))
 	if err != nil {
@@ -121,6 +133,17 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	parsed, err := parser.Parse(args)
 	if err != nil {
 		return err
+	}
+	var telemetry telemetryReporter
+	if !flags.NoTelemetry && len(reporterFactories) != 0 && reporterFactories[0] != nil {
+		root, stateErr := telemetryStateRoot(parsed)
+		if stateErr == nil {
+			telemetry = reporterFactories[0](root)
+			command := canonicalTelemetryCommand(parsed)
+			if telemetry != nil && command != "" {
+				telemetry.Report(newTelemetryPayload("command", command, ""))
+			}
+		}
 	}
 	switch parsed.Command() {
 	case "login":
@@ -131,9 +154,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		_, err := fmt.Fprintln(stdout, buildinfo.Line("tnl"))
 		return err
 	case "publish <target>":
-		return runPublish(ctx, flags.Publish, stdout, stderr)
+		return runPublish(ctx, flags.Publish, stdout, stderr, telemetry)
 	case "dev <command>":
-		return runDev(ctx, flags.Dev, os.Stdin, stdout, stderr)
+		return runDev(ctx, flags.Dev, os.Stdin, stdout, stderr, telemetry)
+	case "status":
+		return runStatus(ctx, flags.Status, stdout)
 	case "host add", "host add [<name>]", "host add <name>":
 		return runHostAdd(ctx, flags.Host.Add, stdout, stderr)
 	case "host list":
@@ -190,12 +215,13 @@ func runLogin(ctx context.Context, flags loginCommand, input io.Reader, output, 
 	if serverValue == "" {
 		serverValue = flags.ServerURL
 	}
-	serverURL, stateRoot, err := resolveServer(flags.StateDir, serverValue)
+	serverURL, state, err := resolveServer(ctx, flags.StateDir, serverValue)
 	if err != nil {
 		return err
 	}
+	defer state.Close()
 	_, err = clientauth.Authenticate(ctx, clientauth.Config{
-		CoreEndpoint: serverURL, StateRoot: stateRoot, Diagnostics: errorOutput,
+		CoreEndpoint: serverURL, State: state, Diagnostics: errorOutput,
 		LoginToken: loginTokenPrompt(input, errorOutput), ForceLogin: true, ForceLoginToken: flags.Token,
 	})
 	if err != nil {
@@ -238,16 +264,17 @@ func parseLoginInput(data []byte) (credentials.LoginToken, error) {
 }
 
 func runLogout(ctx context.Context, flags logoutCommand, output io.Writer, diagnostics ...io.Writer) error {
-	serverURL, stateRoot, err := resolveServer(flags.StateDir, flags.ServerURL)
+	serverURL, state, err := resolveServer(ctx, flags.StateDir, flags.ServerURL)
 	if err != nil {
 		return err
 	}
+	defer state.Close()
 	diagnostic := io.Discard
 	if len(diagnostics) != 0 && diagnostics[0] != nil {
 		diagnostic = diagnostics[0]
 	}
 	if err := clientauth.Logout(ctx, clientauth.Config{
-		CoreEndpoint: serverURL, StateRoot: stateRoot, Diagnostics: diagnostic,
+		CoreEndpoint: serverURL, State: state, Diagnostics: diagnostic,
 	}); err != nil {
 		return err
 	}
@@ -255,14 +282,19 @@ func runLogout(ctx context.Context, flags logoutCommand, output io.Writer, diagn
 	return err
 }
 
-func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Writer) error {
+func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Writer, reporters ...telemetryReporter) (result error) {
+	telemetry := optionalTelemetryReporter(reporters)
 	output, err := newPublishOutput(flags.Output, stdout, stderr)
 	if err != nil {
 		return err
 	}
 	fail := func(err error) error {
-		if ctx.Err() != nil {
-			return errors.Join(ctx.Err(), output.stopped())
+		if cause := context.Cause(ctx); cause != nil {
+			if errors.Is(cause, context.Canceled) {
+				return errors.Join(cause, output.stopped())
+			}
+			_ = output.failed(cause)
+			return cause
 		}
 		_ = output.failed(err)
 		return err
@@ -271,26 +303,35 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if err != nil {
 		return fail(err)
 	}
-	if err := output.starting(target); err != nil {
+	allowedIPPrefixes, err := authorization.CanonicalizeIPPrefixes(flags.AllowIP)
+	if err != nil {
+		return fail(fmt.Errorf("invalid --allow-ip: %w", err))
+	}
+	serverURL, state, err := resolveServer(ctx, flags.StateDir, flags.ServerURL)
+	if err != nil {
+		return fail(err)
+	}
+	defer state.Close()
+	tunnel, err := state.BeginTunnel(ctx, clientstate.BeginTunnelOptions{
+		Command: clientstate.TunnelCommandPublish, Server: serverURL, Target: target,
+	})
+	if err != nil {
+		return fail(err)
+	}
+	ctx = tunnel.Context()
+	defer func() {
+		finishCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		result = errors.Join(result, tunnel.Finish(finishCtx, result))
+	}()
+	if err := output.starting(tunnel.ID(), target); err != nil {
 		return err
 	}
 	if err := localproxy.Preflight(ctx, target); err != nil {
 		return fail(err)
 	}
-	allowedIPPrefixes, err := authorization.CanonicalizeIPPrefixes(flags.AllowIP)
-	if err != nil {
-		return fail(fmt.Errorf("invalid --allow-ip: %w", err))
-	}
-	serverURL, _, err := resolveServer(flags.StateDir, flags.ServerURL)
-	if err != nil {
-		return fail(err)
-	}
-	stateRoot, err := clientStateRoot(flags.StateDir)
-	if err != nil {
-		return fail(err)
-	}
 	authenticated, err := clientauth.Authenticate(ctx, clientauth.Config{
-		CoreEndpoint: serverURL, StateRoot: stateRoot, AccessToken: flags.AccessToken,
+		CoreEndpoint: serverURL, State: state, AccessToken: flags.AccessToken,
 		Diagnostics: stderr, LoginToken: loginTokenPrompt(os.Stdin, stderr),
 	})
 	if err != nil {
@@ -315,7 +356,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		}
 	}
 	capabilities := authenticated.CoreCapabilities
-	state, err := openClientState(flags.StateDir, serverURL)
+	publisherState, err := state.Server(ctx, serverURL)
 	if err != nil {
 		return fail(err)
 	}
@@ -326,13 +367,9 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		return fail(errors.New("server does not support the required naming contract"))
 	}
 	profile := capabilities.Transport.RelayRegion
-	var publisherState *clientstate.Store
-	acmeProfile := ""
 	if capabilities.Acme == nil || capabilities.Acme.AcmeProfile == "" {
 		return fail(errors.New("server does not support automatic certificates"))
 	}
-	publisherState = state
-	acmeProfile = capabilities.Acme.AcmeProfile
 	names, namingCapabilities, err := namingAPI(authenticated)
 	if err != nil {
 		return fail(err)
@@ -349,7 +386,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	err = publisher.Run(ctx, publisher.Config{
 		Server: routes, Hostname: hostname, Target: target,
 		AllowedIPPrefixes: allowedIPPrefixes,
-		State:             publisherState, ACMEProfile: acmeProfile,
+		State:             publisherState, ACMEProfile: capabilities.Acme.AcmeProfile,
 		RelayRegion: profile, Logf: logger.Printf,
 		LoadRegions: func(ctx context.Context) (map[string]*tailcfg.DERPRegion, error) {
 			relayMap, err := authenticated.Core.RelayMap(ctx)
@@ -358,8 +395,26 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 			}
 			return config.DecodeRelayRegions(relayMap)
 		},
-		OnSessionReady: output.ready,
+		Observe: withTelemetryObserver(telemetry, "publish", serverURL, func(event publisher.Event) error {
+			switch event.Type {
+			case publisher.EventRoute:
+				return tunnel.SetRoute(ctx, event.RouteID, event.Hostname)
+			case publisher.EventProvisioning:
+				return tunnel.SetProvisioning(ctx, event.Version)
+			case publisher.EventReady:
+				if err := tunnel.SetReady(ctx, event.PublicURL, event.Version); err != nil {
+					return err
+				}
+				return output.ready(event.PublicURL, event.Version)
+			case publisher.EventDraining:
+				return tunnel.SetDraining(context.WithoutCancel(ctx))
+			}
+			return nil
+		}),
 	})
+	if cause := context.Cause(ctx); cause != nil {
+		return fail(cause)
+	}
 	if err != nil && !(ctx.Err() != nil && errors.Is(err, context.Canceled)) {
 		return fail(err)
 	}
@@ -367,10 +422,11 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 }
 
 func runHostAdd(ctx context.Context, flags hostAddCommand, output io.Writer, diagnostics ...io.Writer) error {
-	client, capabilities, err := namingClient(ctx, flags.StateDir, flags.ServerURL, flags.AccessToken, diagnosticOutput(diagnostics))
+	client, capabilities, state, err := namingClient(ctx, flags.StateDir, flags.ServerURL, flags.AccessToken, diagnosticOutput(diagnostics))
 	if err != nil {
 		return err
 	}
+	defer state.Close()
 	kind, name, err := classifyAddHostname(flags.Name, capabilities.HostnameSuffix)
 	if err != nil {
 		return err
@@ -431,10 +487,11 @@ func runHostAdd(ctx context.Context, flags hostAddCommand, output io.Writer, dia
 }
 
 func runHostList(ctx context.Context, flags hostListCommand, output io.Writer, diagnostics ...io.Writer) error {
-	client, _, err := namingClient(ctx, flags.StateDir, flags.ServerURL, flags.AccessToken, diagnosticOutput(diagnostics))
+	client, _, state, err := namingClient(ctx, flags.StateDir, flags.ServerURL, flags.AccessToken, diagnosticOutput(diagnostics))
 	if err != nil {
 		return err
 	}
+	defer state.Close()
 	if _, err := fmt.Fprintln(output, "NAME\tTYPE\tSTATE"); err != nil {
 		return err
 	}
@@ -464,10 +521,11 @@ func runHostList(ctx context.Context, flags hostListCommand, output io.Writer, d
 }
 
 func runHostRemove(ctx context.Context, flags hostRemoveCommand, output io.Writer, diagnostics ...io.Writer) error {
-	client, capabilities, err := namingClient(ctx, flags.StateDir, flags.ServerURL, flags.AccessToken, diagnosticOutput(diagnostics))
+	client, capabilities, state, err := namingClient(ctx, flags.StateDir, flags.ServerURL, flags.AccessToken, diagnosticOutput(diagnostics))
 	if err != nil {
 		return err
 	}
+	defer state.Close()
 	hostnames, err := client.ListHostnames(ctx)
 	if err != nil {
 		return err
@@ -545,26 +603,29 @@ func namingClient(
 	ctx context.Context,
 	stateDir, serverValue, accessToken string,
 	diagnostics io.Writer,
-) (hostnameAPI, serverv1.Capabilities, error) {
-	serverURL, stateRoot, err := resolveServer(stateDir, serverValue)
+) (hostnameAPI, serverv1.Capabilities, *clientstate.Database, error) {
+	serverURL, state, err := resolveServer(ctx, stateDir, serverValue)
 	if err != nil {
-		return nil, serverv1.Capabilities{}, err
+		return nil, serverv1.Capabilities{}, nil, err
 	}
 	authenticated, err := clientauth.Authenticate(ctx, clientauth.Config{
-		CoreEndpoint: serverURL, StateRoot: stateRoot, AccessToken: accessToken,
+		CoreEndpoint: serverURL, State: state, AccessToken: accessToken,
 		Diagnostics: diagnostics, LoginToken: loginTokenPrompt(os.Stdin, diagnostics),
 	})
 	if err != nil {
-		return nil, serverv1.Capabilities{}, err
+		state.Close()
+		return nil, serverv1.Capabilities{}, nil, err
 	}
 	client, capabilities, err := namingAPI(authenticated)
 	if err != nil {
-		return nil, serverv1.Capabilities{}, err
+		state.Close()
+		return nil, serverv1.Capabilities{}, nil, err
 	}
 	if capabilities.HostnameSuffix == "" || capabilities.MaximumSubdomainDepth != 8 {
-		return nil, serverv1.Capabilities{}, errors.New("server does not support the required naming contract")
+		state.Close()
+		return nil, serverv1.Capabilities{}, nil, errors.New("server does not support the required naming contract")
 	}
-	return client, capabilities, nil
+	return client, capabilities, state, nil
 }
 
 func classifyAddHostname(input, hostnameSuffix string) (serverv1.AddHostnameRequestKind, string, error) {
@@ -809,31 +870,32 @@ func diagnosticOutput(outputs []io.Writer) io.Writer {
 	return io.Discard
 }
 
-func resolveServer(root, value string) (string, string, error) {
+func resolveServer(ctx context.Context, root, value string) (string, *clientstate.Database, error) {
 	root, err := clientStateRoot(root)
 	if err != nil {
-		return "", "", err
+		return "", nil, err
+	}
+	state, err := clientstate.Open(ctx, root)
+	if err != nil {
+		return "", nil, err
 	}
 	if value != "" {
 		server, err := clientstate.CanonicalServer(value)
-		return server, root, err
+		if err != nil {
+			state.Close()
+			return "", nil, err
+		}
+		return server, state, nil
 	}
-	server, found, err := clientstate.SavedServer(root)
+	server, found, err := state.SavedServer(ctx)
 	if err != nil {
-		return "", "", err
+		state.Close()
+		return "", nil, err
 	}
 	if !found {
-		return defaultServerURL, root, nil
+		return defaultServerURL, state, nil
 	}
-	return server, root, nil
-}
-
-func openClientState(root, serverURL string) (*clientstate.Store, error) {
-	root, err := clientStateRoot(root)
-	if err != nil {
-		return nil, err
-	}
-	return clientstate.New(root, serverURL)
+	return server, state, nil
 }
 
 func clientStateRoot(root string) (string, error) {

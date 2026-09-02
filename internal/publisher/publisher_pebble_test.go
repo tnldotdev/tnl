@@ -3,18 +3,14 @@ package publisher
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"crypto/tls"
 	"database/sql"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -170,10 +166,7 @@ func TestIntegrationAutomaticCertificatePublishRestartAndRenewal(t *testing.T) {
 	if err := os.Chmod(stateRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	agentState, err := clientstate.New(stateRoot, controlServer.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
+	agentState := newPublisherState(t, stateRoot, controlServer.URL)
 	publishConfig := Config{
 		// Suppress graceful deletion to model abrupt process loss for the restart path.
 		Server: crashRestartServer{Server: client}, Hostname: hostname, Target: origin.URL, State: agentState, ACMEProfile: "tlsserver",
@@ -322,7 +315,18 @@ type integrationPublish struct {
 func startIntegrationPublish(ctx context.Context, config Config) *integrationPublish {
 	publishContext, cancel := context.WithCancel(ctx)
 	run := &integrationPublish{cancel: cancel, done: make(chan error, 1), ready: make(chan string, 1)}
-	config.OnReady = func(publicURL string) { run.ready <- publicURL }
+	previous := config.Observe
+	config.Observe = func(event Event) error {
+		if previous != nil {
+			if err := previous(event); err != nil {
+				return err
+			}
+		}
+		if event.Type == EventReady {
+			run.ready <- event.PublicURL
+		}
+		return nil
+	}
 	go func() { run.done <- Run(publishContext, config) }()
 	return run
 }
@@ -360,7 +364,7 @@ func readCurrentMaterial(t *testing.T, store *clientstate.Store, routeID, hostna
 	if err != nil {
 		t.Fatal(err)
 	}
-	material, found, currentErr := routeState.Current(hostname)
+	material, found, currentErr := routeState.Current(t.Context(), hostname)
 	closeErr := routeState.Close()
 	if currentErr != nil || closeErr != nil || !found || !material.Installed {
 		t.Fatalf("publisher certificate = %+v, found = %v, error = %v", material, found, errors.Join(currentErr, closeErr))
@@ -375,28 +379,23 @@ func forceRenewalDue(
 	due time.Time,
 ) {
 	t.Helper()
-	digest := sha256.Sum256([]byte(serverOrigin))
-	currentPath := filepath.Join(
-		stateRoot, "servers", hex.EncodeToString(digest[:]), "routes", routeID, "current.json",
+	clientDatabase, err := sql.Open("sqlite", clientstate.DatabasePath(stateRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientDatabase.Close()
+	result, err := clientDatabase.ExecContext(t.Context(), `
+		UPDATE route_certificates
+		SET renew_at = ?, updated_at = ?
+		WHERE server_origin = ? AND route_id = ? AND phase = 'current'`,
+		due.UnixNano(), time.Now().UnixNano(), serverOrigin, routeID,
 	)
-	contents, err := os.ReadFile(currentPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var current map[string]json.RawMessage
-	if err := json.Unmarshal(contents, &current); err != nil {
-		t.Fatal(err)
-	}
-	current["renew_at"], err = json.Marshal(due)
-	if err != nil {
-		t.Fatal(err)
-	}
-	contents, err = json.Marshal(current)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(currentPath, contents, 0o600); err != nil {
-		t.Fatal(err)
+	changedClient, err := result.RowsAffected()
+	if err != nil || changedClient != 1 {
+		t.Fatalf("force client renewal rows = %d, error = %v", changedClient, err)
 	}
 	changed, err := statedb.New(database).SetCertificateRenewalDue(context.Background(), statedb.SetCertificateRenewalDueParams{
 		RenewAt: due.UnixNano(),

@@ -73,7 +73,11 @@ func TestResolveDevCommandFindsProjectLocalExecutable(t *testing.T) {
 }
 
 func TestDevBootstrapRegistersOneTarget(t *testing.T) {
-	bootstrap, err := newDevBootstrap("")
+	var framework, registeredTarget string
+	bootstrap, err := newDevBootstrap("", func(_ context.Context, gotFramework, gotTarget string) error {
+		framework, registeredTarget = gotFramework, gotTarget
+		return nil
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,6 +95,9 @@ func TestDevBootstrapRegistersOneTarget(t *testing.T) {
 	target, err := bootstrap.Target(context.Background())
 	if err != nil || target != "http://127.0.0.1:5173" {
 		t.Fatalf("target = %q, err = %v", target, err)
+	}
+	if framework != "vite" || registeredTarget != target {
+		t.Fatalf("registered framework = %q, target = %q", framework, registeredTarget)
 	}
 	if status := registerDevTarget(t, bootstrap, bootstrap.token, devTargetRequest{
 		Protocol: 1, Framework: "vite", Port: 5173,
@@ -110,7 +117,7 @@ func TestDevBootstrapRegistersOneTarget(t *testing.T) {
 }
 
 func TestDevBootstrapTimesOutAndClosesIdempotently(t *testing.T) {
-	bootstrap, err := newDevBootstrap("")
+	bootstrap, err := newDevBootstrap("", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,9 +157,12 @@ func TestDevEnvironmentReplacesProtocolAndRemovesAccessToken(t *testing.T) {
 	t.Setenv("TNL_ACCESS_TOKEN", "secret")
 	t.Setenv("TNL_DEV_PROTOCOL", "old")
 	bootstrap := &devBootstrap{socket: "/private/control.sock", token: strings.Repeat("a", 64)}
-	environment := environmentMap(devEnvironment(bootstrap, "demo.example", 3000))
+	environment := environmentMap(devEnvironment(
+		bootstrap, "tunnel_0123456789abcdef0123456789abcdef", "demo.example", 3000,
+	))
 	if environment["PORT"] != "3000" || environment["TNL_DEV_PORT"] != "3000" ||
-		environment["TNL_DEV_PROTOCOL"] != "1" || environment["TNL_PUBLIC_URL"] != "https://demo.example" {
+		environment["TNL_DEV_PROTOCOL"] != "1" || environment["TNL_PUBLIC_URL"] != "https://demo.example" ||
+		environment["TNL_TUNNEL_ID"] != "tunnel_0123456789abcdef0123456789abcdef" {
 		t.Fatalf("environment = %#v", environment)
 	}
 	if _, found := environment["TNL_ACCESS_TOKEN"]; found {

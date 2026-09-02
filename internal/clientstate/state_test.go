@@ -6,7 +6,6 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"math/big"
@@ -23,10 +22,7 @@ import (
 const testRouteID = "route_0123456789abcdef0123456789abcdef"
 
 func TestRouteStatePersistsPendingAndCurrentMaterial(t *testing.T) {
-	store, err := New(filepath.Join(t.TempDir(), "state"), "https://server.example")
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := testStore(t, filepath.Join(t.TempDir(), "state"), "https://server.example")
 	route, err := store.OpenRoute(testRouteID)
 	if err != nil {
 		t.Fatal(err)
@@ -34,7 +30,7 @@ func TestRouteStatePersistsPendingAndCurrentMaterial(t *testing.T) {
 	if _, err := store.OpenRoute(testRouteID); !errors.Is(err, ErrLocked) {
 		t.Fatalf("second route lock error = %v", err)
 	}
-	pending, err := route.Pending("route.example")
+	pending, err := route.Pending(t.Context(), "route.example")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,20 +44,20 @@ func TestRouteStatePersistsPendingAndCurrentMaterial(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer route.Close()
-	pending, err = route.Pending("route.example")
+	pending, err = route.Pending(t.Context(), "route.example")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(pending.CSRDER, firstCSR) {
 		t.Fatal("pending CSR changed across restart")
 	}
-	pending, err = route.RecordIssuance("route.example", pending, "issuance_pending", 1)
+	pending, err = route.RecordIssuance(t.Context(), "route.example", pending, "issuance_pending", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	renewAt := time.Now().Add(30 * 24 * time.Hour).UTC().Truncate(time.Second)
 	material, err := route.Commit(
-		"route.example", pending, signedCertificate(t, pending.Key, "route.example"), renewAt, "issuance_current", 1,
+		t.Context(), "route.example", pending, signedCertificate(t, pending.Key, "route.example"), renewAt, "issuance_current", 1,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -69,28 +65,25 @@ func TestRouteStatePersistsPendingAndCurrentMaterial(t *testing.T) {
 	if material.Certificate.Leaf == nil || !material.RenewAt.Equal(renewAt) {
 		t.Fatalf("committed material = %+v", material)
 	}
-	loaded, found, err := route.Current("route.example")
+	loaded, found, err := route.Current(t.Context(), "route.example")
 	if err != nil || !found || loaded.Certificate.Leaf == nil || !loaded.RenewAt.Equal(renewAt) {
 		t.Fatalf("loaded material = %+v, %v, %v", loaded, found, err)
 	}
 	if loaded.Installed || loaded.IssuanceID != "issuance_current" || loaded.Version != 1 || !bytes.Equal(loaded.CSRDER, firstCSR) {
 		t.Fatalf("loaded durable phase = %+v", loaded)
 	}
-	loaded, err = route.MarkInstalled("route.example", "issuance_current", 1)
+	loaded, err = route.MarkInstalled(t.Context(), "route.example", "issuance_current", 1)
 	if err != nil || !loaded.Installed {
 		t.Fatalf("installed material = %+v, %v", loaded, err)
 	}
-	if _, err := os.Stat(filepath.Join(route.dir, "pending.json")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("pending state remains after commit: %v", err)
-	}
-	info, err := os.Stat(filepath.Join(route.dir, "current.json"))
+	info, err := os.Stat(DatabasePath(store.database.root))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("current state mode = %o", info.Mode().Perm())
+		t.Fatalf("database mode = %o", info.Mode().Perm())
 	}
-	replacement, err := route.NewPending("route.example")
+	replacement, err := route.NewPending(t.Context(), "route.example")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,42 +102,28 @@ func TestStateRejectsSymlinksAndPublicFiles(t *testing.T) {
 	if err := os.Symlink(real, link); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := New(link, "https://server.example"); err == nil {
+	if _, err := Open(t.Context(), link); err == nil {
 		t.Fatal("symlink state root accepted")
 	}
 
-	store, err := New(filepath.Join(parent, "private"), "https://server.example")
+	root := filepath.Join(parent, "private")
+	database, err := Open(t.Context(), root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	route, err := store.OpenRoute(testRouteID)
-	if err != nil {
+	if err := database.Close(); err != nil {
 		t.Fatal(err)
 	}
-	defer route.Close()
-	pending, err := route.Pending("route.example")
-	if err != nil {
+	if err := os.Chmod(DatabasePath(root), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := route.Commit(
-		"route.example", pending, signedCertificate(t, pending.Key, "route.example"), time.Now().Add(time.Hour),
-		"issuance_current", 1,
-	); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(filepath.Join(route.dir, "current.json"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := route.Current("route.example"); err == nil {
-		t.Fatal("publicly readable state file accepted")
+	if _, err := Open(t.Context(), root); err == nil {
+		t.Fatal("publicly readable database accepted")
 	}
 }
 
 func TestStateLocksHostnameBeforeRouteTakeover(t *testing.T) {
-	store, err := New(filepath.Join(t.TempDir(), "state"), "https://server.example")
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := testStore(t, filepath.Join(t.TempDir(), "state"), "https://server.example")
 	lock, err := store.LockHostname("route.example")
 	if err != nil {
 		t.Fatal(err)
@@ -169,7 +148,7 @@ func TestStateDoesNotChmodAnExistingPublicRoot(t *testing.T) {
 	if err := os.Mkdir(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := New(root, "https://server.example"); err == nil {
+	if _, err := Open(t.Context(), root); err == nil {
 		t.Fatal("public state root accepted")
 	}
 	info, err := os.Stat(root)
@@ -189,7 +168,7 @@ func TestStateRejectsWritableAncestor(t *testing.T) {
 	if err := os.Chmod(parent, 0o777); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := New(filepath.Join(parent, "state"), "https://server.example"); err == nil {
+	if _, err := Open(t.Context(), filepath.Join(parent, "state")); err == nil {
 		t.Fatal("state root beneath writable ancestor accepted")
 	}
 }
@@ -202,16 +181,15 @@ func TestStateAllowsStickyWritableAncestor(t *testing.T) {
 	if err := os.Chmod(parent, os.ModeSticky|0o777); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := New(filepath.Join(parent, "state"), "https://server.example"); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestControlSessionPersistsPrivatelyAndCanBeRemoved(t *testing.T) {
-	store, err := New(filepath.Join(t.TempDir(), "state"), "https://server.example")
+	database, err := Open(t.Context(), filepath.Join(parent, "state"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	database.Close()
+}
+
+func TestControlSessionPersistsPrivatelyAndCanBeRemoved(t *testing.T) {
+	store := testStore(t, filepath.Join(t.TempDir(), "state"), "https://server.example")
 	token, _, _, err := credentials.NewAccessToken()
 	if err != nil {
 		t.Fatal(err)
@@ -226,36 +204,17 @@ func TestControlSessionPersistsPrivatelyAndCanBeRemoved(t *testing.T) {
 		AccessToken: token.String(), AccessExpiresAt: time.Now().Add(time.Hour).UTC(),
 		RefreshToken: refresh.String(), RefreshExpiresAt: time.Now().Add(24 * time.Hour).UTC(), Grants: []string{"publish"},
 	}
-	if err := store.SaveControlSession(want); err != nil {
+	if err := store.SaveControlSession(t.Context(), want); err != nil {
 		t.Fatal(err)
 	}
-	info, err := os.Stat(store.controlSessionPath)
+	info, err := os.Stat(DatabasePath(store.database.root))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("control session mode = %o", info.Mode().Perm())
+		t.Fatalf("client database mode = %o", info.Mode().Perm())
 	}
-	encoded, err := os.ReadFile(store.controlSessionPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(encoded, &fields); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{
-		"schema_version", "kind", "control_endpoint", "session_id", "issuer", "client_id", "access_token",
-		"access_expires_at", "refresh_token", "refresh_expires_at", "grants",
-	} {
-		if _, found := fields[name]; !found {
-			t.Errorf("control session field %q is missing", name)
-		}
-	}
-	if len(fields) != 11 {
-		t.Fatalf("control session fields = %v", fields)
-	}
-	got, found, err := store.ControlSession()
+	got, found, err := store.ControlSession(t.Context())
 	if err != nil || !found || got.Kind != want.Kind || got.ControlEndpoint != want.ControlEndpoint ||
 		got.SessionID != want.SessionID || got.Issuer != want.Issuer || got.ClientID != want.ClientID ||
 		got.AccessToken != want.AccessToken || !got.AccessExpiresAt.Equal(want.AccessExpiresAt) ||
@@ -263,19 +222,16 @@ func TestControlSessionPersistsPrivatelyAndCanBeRemoved(t *testing.T) {
 		!reflect.DeepEqual(got.Grants, want.Grants) {
 		t.Fatalf("control session = %#v, found = %v, error = %v", got, found, err)
 	}
-	if err := store.RemoveControlSession(); err != nil {
+	if err := store.RemoveControlSession(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if _, found, err := store.ControlSession(); err != nil || found {
+	if _, found, err := store.ControlSession(t.Context()); err != nil || found {
 		t.Fatalf("control session found after removal = %v, error = %v", found, err)
 	}
 }
 
 func TestAuthorizationAuthoritySessionAllowsOpaqueTokensAndSeparateEndpoint(t *testing.T) {
-	store, err := New(filepath.Join(t.TempDir(), "state"), "https://core.example")
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := testStore(t, filepath.Join(t.TempDir(), "state"), "https://core.example")
 	want := ControlSession{
 		Kind: ControlSessionKindAuthorizationAuthority, ControlEndpoint: "https://accounts.example",
 		SessionID: "oauth_session_0123456789abcdef0123456789abcdef",
@@ -283,20 +239,17 @@ func TestAuthorizationAuthoritySessionAllowsOpaqueTokensAndSeparateEndpoint(t *t
 		AccessToken: "opaque-access", AccessExpiresAt: time.Now().Add(time.Hour).UTC(),
 		RefreshToken: "opaque-refresh", Scopes: []string{"openid", "offline_access", "product", "operations"},
 	}
-	if err := store.SaveControlSession(want); err != nil {
+	if err := store.SaveControlSession(t.Context(), want); err != nil {
 		t.Fatal(err)
 	}
-	got, found, err := store.ControlSession()
+	got, found, err := store.ControlSession(t.Context())
 	if err != nil || !found || !reflect.DeepEqual(got, want) {
 		t.Fatalf("session = %#v, found = %v, error = %v", got, found, err)
 	}
 }
 
 func TestControlSessionLockSerializesUpdates(t *testing.T) {
-	store, err := New(filepath.Join(t.TempDir(), "state"), "https://server.example")
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := testStore(t, filepath.Join(t.TempDir(), "state"), "https://server.example")
 	lock, err := store.LockControlSession()
 	if err != nil {
 		t.Fatal(err)
@@ -324,7 +277,11 @@ func TestConcurrentStoreInitialization(t *testing.T) {
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			_, err := New(root, "https://server.example")
+			database, err := Open(t.Context(), root)
+			if err == nil {
+				_, err = database.Server(t.Context(), "https://server.example")
+				err = errors.Join(err, database.Close())
+			}
 			errorsFound <- err
 		}()
 	}
@@ -335,6 +292,20 @@ func TestConcurrentStoreInitialization(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+}
+
+func testStore(t *testing.T, root, server string) *Store {
+	t.Helper()
+	database, err := Open(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	store, err := database.Server(t.Context(), server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store
 }
 
 func signedCertificate(t *testing.T, key *ecdsa.PrivateKey, hostname string) []byte {
