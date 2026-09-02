@@ -158,9 +158,9 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		options = configuration.Options
 		framework = configuration.Framework
 	}
-	serverValue := optionValue(options.ControlURL)
-	if flags.ServerURL != "" {
-		serverValue = flags.ServerURL
+	serverValue, err := devServerValue(flags.ServerURL, flags.AccessToken, options.ControlURL)
+	if err != nil {
+		return err
 	}
 	host := optionValue(options.Host)
 	if flags.Host != "" {
@@ -707,6 +707,16 @@ func optionValue(value *string) string {
 		return ""
 	}
 	return *value
+}
+
+func devServerValue(serverURL, accessToken string, projectServer *string) (string, error) {
+	if accessToken != "" && projectServer != nil && serverURL == "" {
+		return "", errors.New("an explicit access token with a project-provided server requires --server or TNL_SERVER")
+	}
+	if serverURL != "" {
+		return serverURL, nil
+	}
+	return optionValue(projectServer), nil
 }
 
 func validFrameworkName(value string) bool {

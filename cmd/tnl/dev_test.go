@@ -224,6 +224,47 @@ func TestDevEnvironmentReplacesProtocolAndRemovesAccessToken(t *testing.T) {
 	}
 }
 
+func TestDevServerValueBindsExplicitTokenToUserSelectedServer(t *testing.T) {
+	projectServer := "https://project.example"
+	tests := []struct {
+		name          string
+		serverURL     string
+		accessToken   string
+		projectServer *string
+		want          string
+		wantError     string
+	}{
+		{
+			name: "reject project server with explicit token", accessToken: "token", projectServer: &projectServer,
+			wantError: "an explicit access token with a project-provided server requires --server or TNL_SERVER",
+		},
+		{
+			name: "allow user server override", serverURL: "https://user.example", accessToken: "token",
+			projectServer: &projectServer, want: "https://user.example",
+		},
+		{
+			name: "allow project server without explicit token", projectServer: &projectServer,
+			want: "https://project.example",
+		},
+		{
+			name: "preserve fallback without project server", accessToken: "token",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := devServerValue(test.serverURL, test.accessToken, test.projectServer)
+			if err != nil && err.Error() != test.wantError {
+				t.Fatalf("error = %v, want %q", err, test.wantError)
+			}
+			if err == nil && test.wantError != "" {
+				t.Fatalf("error = nil, want %q", test.wantError)
+			}
+			if got != test.want {
+				t.Fatalf("server = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
 func TestChildResultPreservesExitStatus(t *testing.T) {
 	process, err := startDevProcess([]string{"sh", "-c", "exit 23"}, os.Environ(), nil, io.Discard, io.Discard)
 	if err != nil {

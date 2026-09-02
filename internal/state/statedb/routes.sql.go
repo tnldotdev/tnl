@@ -325,6 +325,25 @@ func (q *Queries) GetKnownRouteSessionTokenMarker(ctx context.Context, tokenID s
 	return known_credential, err
 }
 
+const getMaxSignedRouteAuthorizationRevision = `-- name: GetMaxSignedRouteAuthorizationRevision :one
+SELECT CAST(COALESCE(MAX(authorization_revision), 0) AS INTEGER)
+FROM routes
+WHERE authorization_issuer = CAST(?1 AS TEXT)
+    AND hostname = ?2
+`
+
+type GetMaxSignedRouteAuthorizationRevisionParams struct {
+	AuthorizationIssuer string
+	Hostname            string
+}
+
+func (q *Queries) GetMaxSignedRouteAuthorizationRevision(ctx context.Context, arg GetMaxSignedRouteAuthorizationRevisionParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getMaxSignedRouteAuthorizationRevision, arg.AuthorizationIssuer, arg.Hostname)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const getRouteAuthorizationUseByID = `-- name: GetRouteAuthorizationUseByID :one
 SELECT authorization_issuer, authorization_id, authorization_key_id, authorization_retry_id, authorization_revision, authorization_expires_at, operation, route_id, route_version, hostname, request_hash, ip_policy_hash, created_at
 FROM route_authorization_uses

@@ -284,6 +284,115 @@ func TestSignedRouteTransactionsReplayRenewalAndExpiry(t *testing.T) {
 	}
 }
 
+func TestCreateSignedAuthorizationRevisionFloor(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+	publicKey, privateKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifier, err := authorization.NewVerifier(authorization.Config{
+		Issuer: "https://authority.example", Receiver: "https://server.example", KeyID: "key-1",
+		PublicKey: publicKey, Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := state.Open(ctx, filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	store, err := NewStore(db, "example", StoreConfig{AuthorizationVerifier: verifier})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.now = func() time.Time { return now }
+	routeToken, _, _, err := credentials.NewRouteToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := signedStoreRequest(t, authorization.OperationRequest{
+		Operation: authorization.OperationRouteCreate, Hostname: "route.example",
+		LocalTarget: "http://127.0.0.1:3000", RouteToken: routeToken.String(),
+	})
+	claims := signedClaims{
+		Version: 1, KeyID: "key-1", Algorithm: authorization.Algorithm,
+		Operation: authorization.OperationRouteCreate, Issuer: "https://authority.example",
+		Receiver: "https://server.example", Hostname: "route.example",
+		IssuedAt: now.Add(-time.Minute), ExpiresAt: now.Add(10 * time.Minute),
+		CanonicalRequestHash: request.RequestHash.String(),
+	}
+	create := func(authorizationID, retryID string, revision uint64) (Provisioning, error) {
+		t.Helper()
+		claims.AuthorizationID = authorizationID
+		claims.RetryID = retryID
+		claims.Revision = revision
+		signedRequest := request
+		signedRequest.Token = signSignedClaims(t, privateKey, claims)
+		return store.CreateSigned(
+			ctx, "route.example", "http://127.0.0.1:3000", "instance", routeToken, signedRequest,
+		)
+	}
+
+	created, err := create(
+		"authorization_00000000000000000000000000000010",
+		"retry_00000000000000000000000000000010",
+		3,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := create(
+		"authorization_00000000000000000000000000000011",
+		"retry_00000000000000000000000000000011",
+		2,
+	); !errors.Is(err, ErrAuthorizationReplayed) {
+		t.Fatalf("lower revision active replacement error = %v", err)
+	}
+	equal, err := create(
+		"authorization_00000000000000000000000000000012",
+		"retry_00000000000000000000000000000012",
+		3,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if equal.Route.ID != created.Route.ID || equal.Route.RouteVersion != 2 || equal.Route.AuthorizationRevision != 3 {
+		t.Fatalf("equal revision replacement = %#v", equal.Route)
+	}
+	if err := store.DeleteSigned(ctx, equal.Route.ID, routeToken); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := create(
+		"authorization_00000000000000000000000000000013",
+		"retry_00000000000000000000000000000013",
+		2,
+	); !errors.Is(err, ErrAuthorizationReplayed) {
+		t.Fatalf("lower revision recreation error = %v", err)
+	}
+	routeToken, _, _, err = credentials.NewRouteToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	request = signedStoreRequest(t, authorization.OperationRequest{
+		Operation: authorization.OperationRouteCreate, Hostname: "route.example",
+		LocalTarget: "http://127.0.0.1:3000", RouteToken: routeToken.String(),
+	})
+	claims.CanonicalRequestHash = request.RequestHash.String()
+	newer, err := create(
+		"authorization_00000000000000000000000000000014",
+		"retry_00000000000000000000000000000014",
+		4,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newer.Route.ID == equal.Route.ID || newer.Route.RouteVersion != 1 || newer.Route.AuthorizationRevision != 4 {
+		t.Fatalf("newer revision recreation = %#v", newer.Route)
+	}
+}
+
 type signedClaims struct {
 	Version              uint64                  `json:"version"`
 	KeyID                string                  `json:"kid"`

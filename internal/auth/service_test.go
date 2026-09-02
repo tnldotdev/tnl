@@ -145,7 +145,10 @@ func TestOIDCExchangePreservesReplayProtectionAndPublishGrant(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	now := time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)
-	identity := OIDCIdentity{Issuer: "https://account.example", Subject: "user-123", ExpiresAt: now.Add(time.Hour)}
+	identity := OIDCIdentity{
+		Issuer: "https://account.example", Subject: "user-123",
+		AssertionIdentity: "https://account.example\x00verified-nonce-1", ExpiresAt: now.Add(time.Hour),
+	}
 	service, err := NewService(db, ServiceConfig{
 		OIDC:           oidcVerifierFunc(func(context.Context, string) (OIDCIdentity, error) { return identity, nil }),
 		AccessLifetime: time.Hour, RefreshLifetime: 30 * 24 * time.Hour,
@@ -154,7 +157,7 @@ func TestOIDCExchangePreservesReplayProtectionAndPublishGrant(t *testing.T) {
 		t.Fatal(err)
 	}
 	service.now = func() time.Time { return now }
-	issued, err := service.ExchangeOIDC(context.Background(), "id-token")
+	issued, err := service.ExchangeOIDC(context.Background(), "id-token-serialization-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,8 +168,16 @@ func TestOIDCExchangePreservesReplayProtectionAndPublishGrant(t *testing.T) {
 	if err != nil || !strings.HasPrefix(principal.Identity.ID, "identity_oidc_") || principal.HasGrant(GrantAdmin) {
 		t.Fatalf("OIDC principal = %#v, error = %v", principal, err)
 	}
-	if repeated, err := service.ExchangeOIDC(context.Background(), "id-token"); !errors.Is(err, ErrUnauthenticated) || repeated.SessionID != "" {
+	if repeated, err := service.ExchangeOIDC(context.Background(), "id-token-serialization-2"); !errors.Is(err, ErrUnauthenticated) || repeated.SessionID != "" {
 		t.Fatalf("repeated OIDC exchange = %#v, error = %v", repeated, err)
+	}
+	identity.AssertionIdentity = "https://account.example\x00verified-nonce-2"
+	if fresh, err := service.ExchangeOIDC(context.Background(), "id-token-serialization-3"); err != nil || fresh.SessionID == "" {
+		t.Fatalf("fresh OIDC exchange = %#v, error = %v", fresh, err)
+	}
+	identity.AssertionIdentity = ""
+	if empty, err := service.ExchangeOIDC(context.Background(), "id-token-serialization-4"); !errors.Is(err, ErrUnauthenticated) || empty.SessionID != "" {
+		t.Fatalf("empty OIDC assertion identity exchange = %#v, error = %v", empty, err)
 	}
 	expiry, err := statedb.New(db).GetOIDCAssertionExpiry(context.Background())
 	if err != nil || expiry != identity.ExpiresAt.UnixNano() {

@@ -490,7 +490,7 @@ func (o *remoteWorker) request(ctx context.Context, message workerv1.Message) (w
 func (o *remoteWorker) write(message workerv1.Message) error {
 	o.writeMu.Lock()
 	defer o.writeMu.Unlock()
-	return workerv1.WriteControl(o.control, message)
+	return writeControlMessage(o.control, message)
 }
 
 func (o *remoteWorker) removePending(ref worker.RouteRef, response chan pendingResponse) {

@@ -297,7 +297,7 @@ func (s *workerSession) startCommand() bool {
 func (s *workerSession) write(message workerv1.Message) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	return workerv1.WriteControl(s.control, message)
+	return writeControlMessage(s.control, message)
 }
 
 func (s *workerSession) sendError(ref worker.RouteRef, code workerv1.ErrorCode) {

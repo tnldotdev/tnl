@@ -23,6 +23,12 @@ WHERE hostname = sqlc.arg(hostname)
     AND status IN ('enabled', 'suspended')
     AND authorization_id IS NOT NULL;
 
+-- name: GetMaxSignedRouteAuthorizationRevision :one
+SELECT CAST(COALESCE(MAX(authorization_revision), 0) AS INTEGER)
+FROM routes
+WHERE authorization_issuer = CAST(sqlc.arg(authorization_issuer) AS TEXT)
+    AND hostname = sqlc.arg(hostname);
+
 -- name: GetRouteByID :one
 SELECT * FROM routes WHERE id = sqlc.arg(route_id);
 

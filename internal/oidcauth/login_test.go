@@ -20,12 +20,19 @@ import (
 
 func TestLoginDiscoversProviderAndValidatesNonce(t *testing.T) {
 	for _, test := range []struct {
-		name    string
-		nonce   string
-		subject string
-		valid   bool
+		name            string
+		nonce           string
+		subject         string
+		audience        any
+		authorizedParty string
+		valid           bool
 	}{
 		{name: "valid", subject: "user-123", valid: true},
+		{name: "multiple audiences missing azp", subject: "user-123", audience: []string{"tnl-cli", "other-client"}},
+		{name: "multiple audiences wrong azp", subject: "user-123", audience: []string{"tnl-cli", "other-client"}, authorizedParty: "other-client"},
+		{name: "multiple audiences correct azp", subject: "user-123", audience: []string{"tnl-cli", "other-client"}, authorizedParty: "tnl-cli", valid: true},
+		{name: "single audience wrong azp", subject: "user-123", authorizedParty: "other-client"},
+		{name: "single audience correct azp", subject: "user-123", authorizedParty: "tnl-cli", valid: true},
 		{name: "nonce mismatch", nonce: "wrong", subject: "user-123"},
 		{name: "missing subject"},
 	} {
@@ -74,10 +81,18 @@ func TestLoginDiscoversProviderAndValidatesNonce(t *testing.T) {
 						tokenNonce = test.nonce
 					}
 					now := time.Now()
-					idToken := signer.Token(t, "key-1", map[string]any{
-						"iss": provider.URL, "sub": test.subject, "aud": "tnl-cli", "nonce": tokenNonce,
+					audience := test.audience
+					if audience == nil {
+						audience = "tnl-cli"
+					}
+					claims := map[string]any{
+						"iss": provider.URL, "sub": test.subject, "aud": audience, "nonce": tokenNonce,
 						"iat": now.Unix(), "exp": now.Add(5 * time.Minute).Unix(),
-					})
+					}
+					if test.authorizedParty != "" {
+						claims["azp"] = test.authorizedParty
+					}
+					idToken := signer.Token(t, "key-1", claims)
 					w.Header().Set("Content-Type", "application/json")
 					_ = json.NewEncoder(w).Encode(map[string]any{
 						"access_token": "provider-access", "refresh_token": "provider-refresh",

@@ -16,9 +16,10 @@ import (
 var ErrOIDCUnavailable = errors.New("auth: OIDC provider unavailable")
 
 type OIDCIdentity struct {
-	Issuer    string
-	Subject   string
-	ExpiresAt time.Time
+	Issuer            string
+	Subject           string
+	AssertionIdentity string
+	ExpiresAt         time.Time
 }
 
 type OIDCVerifier interface {
@@ -78,7 +79,21 @@ func (v *oidcVerifier) Verify(ctx context.Context, raw string) (OIDCIdentity, er
 	if strings.TrimSpace(token.Subject) == "" || len(token.Subject) > 256 || !token.Expiry.After(time.Now()) {
 		return OIDCIdentity{}, ErrUnauthenticated
 	}
-	return OIDCIdentity{Issuer: token.Issuer, Subject: token.Subject, ExpiresAt: token.Expiry.UTC()}, nil
+	var claims struct {
+		Nonce           string `json:"nonce"`
+		AuthorizedParty string `json:"azp"`
+	}
+	if token.Claims(&claims) != nil || claims.Nonce == "" {
+		return OIDCIdentity{}, ErrUnauthenticated
+	}
+	if claims.AuthorizedParty != "" && claims.AuthorizedParty != v.clientID ||
+		len(token.Audience) > 1 && claims.AuthorizedParty != v.clientID {
+		return OIDCIdentity{}, ErrUnauthenticated
+	}
+	return OIDCIdentity{
+		Issuer: token.Issuer, Subject: token.Subject,
+		AssertionIdentity: token.Issuer + "\x00" + claims.Nonce, ExpiresAt: token.Expiry.UTC(),
+	}, nil
 }
 
 func (v *oidcVerifier) idTokenVerifier(ctx context.Context) (*oidc.IDTokenVerifier, error) {

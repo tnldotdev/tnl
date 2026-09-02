@@ -10,13 +10,31 @@ import (
 	"time"
 
 	yamux "github.com/libp2p/go-yamux/v5"
+	"github.com/tnldotdev/tnl/pkg/protocol/workerv1"
 )
 
 const (
-	defaultMaxStreams = 10_000
-	handshakeTimeout  = 10 * time.Second
-	requestTimeout    = 30 * time.Second
+	defaultMaxStreams   = 10_000
+	handshakeTimeout    = 10 * time.Second
+	controlWriteTimeout = 10 * time.Second
+	requestTimeout      = 30 * time.Second
 )
+
+func writeControlMessage(control net.Conn, message workerv1.Message) error {
+	if err := control.SetWriteDeadline(time.Now().Add(controlWriteTimeout)); err != nil {
+		_ = control.Close()
+		return err
+	}
+	if err := workerv1.WriteControl(control, message); err != nil {
+		_ = control.Close()
+		return err
+	}
+	if err := control.SetWriteDeadline(time.Time{}); err != nil {
+		_ = control.Close()
+		return err
+	}
+	return nil
+}
 
 // SessionRole is the stable endpoint role reported to session observers.
 type SessionRole string
