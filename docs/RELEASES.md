@@ -290,7 +290,11 @@ git push origin npm/vite/v0.1.0-rc.1
 
 The tag must use `npm/<package>/v<version>`, match the selected package's
 manifest version, and point directly to a commit reachable from `main`. The
-workflow verifies those conditions and publishes only that package. Push a
-`dev` tag before tags for adapters that depend on its new version. Prereleases
-receive the npm `next` dist-tag; stable versions receive `latest`. Never move or
-reuse a package tag.
+workflow verifies those conditions, publishes only that package, and creates a
+GitHub Release with the npm tarball attached. Framework prereleases are marked
+as prereleases, and framework releases never replace the combined product as
+the repository's latest release. Push a `dev` tag before tags for adapters that
+depend on its new version. Prereleases receive the npm `next` dist-tag; stable
+versions receive `latest`. Tags published before GitHub Releases were enabled
+must be backfilled without moving the tag or republishing the package. Never
+move or reuse a package tag.
