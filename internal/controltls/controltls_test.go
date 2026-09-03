@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -38,40 +39,54 @@ func TestAutomaticCertificate(t *testing.T) {
 }
 
 func TestACMEHTTPClientRestoresOrderLocation(t *testing.T) {
-	var origin string
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		switch request.URL.Path {
-		case "/order":
-			response.Header().Set("Location", origin+"/order/1")
-			response.WriteHeader(http.StatusCreated)
-			_, _ = io.WriteString(response, `{"finalize":"`+origin+`/finalize"}`)
-		case "/finalize":
-			_, _ = io.WriteString(response, `{"status":"processing"}`)
-		default:
-			http.NotFound(response, request)
-		}
-	}))
-	defer server.Close()
-	origin = server.URL
-	client := acmeHTTPClient(server.Client())
+	for _, supplied := range []bool{false, true} {
+		t.Run(fmt.Sprintf("server location %v", supplied), func(t *testing.T) {
+			var origin string
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				switch request.URL.Path {
+				case "/order":
+					response.Header().Set("Location", origin+"/order/1")
+					response.WriteHeader(http.StatusCreated)
+					_, _ = io.WriteString(response, `{"finalize":"`+origin+`/finalize"}`)
+				case "/finalize":
+					if supplied {
+						response.Header().Set("Location", origin+"/order/1")
+					}
+					_, _ = io.WriteString(response, `{"status":"processing"}`)
+				default:
+					http.NotFound(response, request)
+				}
+			}))
+			defer server.Close()
+			origin = server.URL
+			client := acmeHTTPClient(server.Client())
 
-	created, err := client.Post(origin+"/order", "application/json", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := io.Copy(io.Discard, created.Body); err != nil {
-		t.Fatal(err)
-	}
-	if err := created.Body.Close(); err != nil {
-		t.Fatal(err)
-	}
-	finalized, err := client.Post(origin+"/finalize", "application/json", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer finalized.Body.Close()
-	if location := finalized.Header.Get("Location"); location != origin+"/order/1" {
-		t.Fatalf("finalize Location = %q", location)
+			created, err := client.Post(origin+"/order", "application/json", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := io.Copy(io.Discard, created.Body); err != nil {
+				t.Fatal(err)
+			}
+			if err := created.Body.Close(); err != nil {
+				t.Fatal(err)
+			}
+			finalized, err := client.Post(origin+"/finalize", "application/json", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer finalized.Body.Close()
+			if location := finalized.Header.Get("Location"); location != origin+"/order/1" {
+				t.Fatalf("finalize Location = %q", location)
+			}
+			transport := client.Transport.(*orderLocationTransport)
+			transport.mu.Lock()
+			remaining := len(transport.orders)
+			transport.mu.Unlock()
+			if remaining != 0 {
+				t.Fatalf("remembered orders = %d, want 0", remaining)
+			}
+		})
 	}
 }
 

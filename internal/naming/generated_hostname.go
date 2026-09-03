@@ -103,17 +103,18 @@ func initializeGeneratedHostnameCorpus() error {
 		len(generatedHostnameManifest.UpstreamCommit) != 40 {
 		return errors.New("naming: invalid generated hostname corpus manifest")
 	}
-	for name, value := range map[string]struct {
+	for _, file := range []struct {
+		name string
 		data []byte
 		want string
 	}{
-		"word corpus":     {generatedHostnameWordsJSON, generatedHostnameManifest.FriendlyWordsSHA256},
-		"exclusions":      {generatedHostnameExclusions, generatedHostnameManifest.ExclusionListSHA256},
-		"pair quarantine": {generatedHostnamePairQuarantine, generatedHostnameManifest.PairQuarantineSHA256},
+		{name: "word corpus", data: generatedHostnameWordsJSON, want: generatedHostnameManifest.FriendlyWordsSHA256},
+		{name: "exclusions", data: generatedHostnameExclusions, want: generatedHostnameManifest.ExclusionListSHA256},
+		{name: "pair quarantine", data: generatedHostnamePairQuarantine, want: generatedHostnameManifest.PairQuarantineSHA256},
 	} {
-		digest := sha256.Sum256(value.data)
-		if hex.EncodeToString(digest[:]) != value.want {
-			return fmt.Errorf("naming: %s hash does not match manifest", name)
+		digest := sha256.Sum256(file.data)
+		if hex.EncodeToString(digest[:]) != file.want {
+			return fmt.Errorf("naming: %s hash does not match manifest", file.name)
 		}
 	}
 	if err := json.Unmarshal(generatedHostnameWordsJSON, &generatedHostnameCorpus); err != nil {

@@ -76,14 +76,14 @@ func (t *orderLocationTransport) RoundTrip(request *http.Request) (*http.Respons
 	if err != nil {
 		return nil, err
 	}
-	if response.Header.Get("Location") == "" {
-		t.mu.Lock()
-		location := t.orders[request.URL.String()]
+	t.mu.Lock()
+	location, finalization := t.orders[request.URL.String()]
+	if finalization {
 		delete(t.orders, request.URL.String())
-		t.mu.Unlock()
-		if location != "" {
-			response.Header.Set("Location", location)
-		}
+	}
+	t.mu.Unlock()
+	if finalization && response.Header.Get("Location") == "" {
+		response.Header.Set("Location", location)
 	}
 	if response.StatusCode != http.StatusCreated || response.Header.Get("Location") == "" {
 		return response, nil

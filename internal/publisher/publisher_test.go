@@ -175,6 +175,37 @@ func TestHeartbeatSessionStartsImmediately(t *testing.T) {
 	}
 }
 
+func TestRunSessionHeartbeatFailureInterruptsActivation(t *testing.T) {
+	previousHeartbeat, previousActivation := heartbeatInterval, activationRetry
+	heartbeatInterval, activationRetry = time.Millisecond, time.Hour
+	t.Cleanup(func() { heartbeatInterval, activationRetry = previousHeartbeat, previousActivation })
+	sessionToken, _, _, err := credentials.NewSessionToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &publisherServerStub{
+		attachErr:       serverclient.ErrUnavailable,
+		heartbeatErrors: []error{nil, serverclient.ErrStatusConflict},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err = runSession(ctx, Config{
+		Server: server, Target: "http://127.0.0.1:3000", Certificate: routeTestCertificate(t, "route.example"),
+		RelayRegion: "test", Regions: map[string]*tailcfg.DERPRegion{"test": {
+			RegionID: 1, Nodes: []*tailcfg.DERPNode{{RegionID: 1, HostName: "derp.example"}},
+		}},
+	}, serverv1.SessionSetup{
+		Route: serverv1.Route{Id: "route_0123456789abcdef0123456789abcdef", Hostname: "route.example"},
+		Session: serverv1.RouteSession{
+			RouteVersion: 1, ExpiresAt: time.Now().Add(time.Minute),
+		},
+		SessionToken: sessionToken.String(), WorkerPublicKey: key.NewNode().Public().String(),
+	}, nil, func() error { return nil })
+	if !errors.Is(err, serverclient.ErrStatusConflict) || server.heartbeatCalls != 2 {
+		t.Fatalf("runSession error = %v, heartbeat calls = %d", err, server.heartbeatCalls)
+	}
+}
+
 func TestRunPublishCreatesSessionAfterHeartbeatFence(t *testing.T) {
 	previousRelayCheck := relayCheckInterval
 	relayCheckInterval = time.Millisecond
@@ -270,7 +301,7 @@ func TestIssueCertificatePersistsAndRotatesApplicationKey(t *testing.T) {
 	server := &issuanceServer{publisherServerStub: new(publisherServerStub), t: t}
 	material, err := issueCertificate(
 		context.Background(), server, route, state, "route_0123456789abcdef0123456789abcdef", 1,
-		"session", "route.example", "tlsserver", make(chan error),
+		"session", "route.example", "tlsserver",
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -285,7 +316,7 @@ func TestIssueCertificatePersistsAndRotatesApplicationKey(t *testing.T) {
 	firstKey := material.Certificate.Leaf.RawSubjectPublicKeyInfo
 	second, err := issueCertificate(
 		context.Background(), server, route, state, "route_0123456789abcdef0123456789abcdef", 1,
-		"session", "route.example", "tlsserver", make(chan error),
+		"session", "route.example", "tlsserver",
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -307,7 +338,7 @@ func TestUnacknowledgedCertificateRebindsAfterRestart(t *testing.T) {
 	server := &issuanceServer{publisherServerStub: new(publisherServerStub), t: t, installErrors: []error{serverclient.ErrCertificateStatus}}
 	material, err := issueCertificate(
 		context.Background(), server, route, state, "route_0123456789abcdef0123456789abcdef", 1,
-		"session", "route.example", "tlsserver", make(chan error),
+		"session", "route.example", "tlsserver",
 	)
 	if !errors.Is(err, serverclient.ErrCertificateStatus) || material.Installed {
 		t.Fatalf("issuance = %+v, %v", material, err)
@@ -319,7 +350,7 @@ func TestUnacknowledgedCertificateRebindsAfterRestart(t *testing.T) {
 	server.reuseCurrent = true
 	material, err = reconcileCertificateInstallation(
 		context.Background(), server, route, state, "route_0123456789abcdef0123456789abcdef", 2,
-		"session", "route.example", "tlsserver", loaded, make(chan error),
+		"session", "route.example", "tlsserver", loaded,
 	)
 	if err != nil || !material.Installed || material.RouteVersion != 2 || server.issuances != 2 || server.installedCalls != 2 {
 		t.Fatalf("reconciled material = %+v, issuances = %d, installs = %d, error = %v", material, server.issuances, server.installedCalls, err)
@@ -346,7 +377,7 @@ func TestTerminalIssuanceRotatesPendingApplicationKey(t *testing.T) {
 	server := &issuanceServer{publisherServerStub: new(publisherServerStub), t: t, terminalFirst: true}
 	material, err := issueCertificate(
 		context.Background(), server, route, state, "route_0123456789abcdef0123456789abcdef", 1,
-		"session", "route.example", "tlsserver", make(chan error),
+		"session", "route.example", "tlsserver",
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -382,7 +413,7 @@ func TestUnacknowledgedCertificatePastRenewalFallsBackToReplacement(t *testing.T
 	server := &issuanceServer{publisherServerStub: new(publisherServerStub), t: t}
 	replacement, err := refreshCertificate(
 		context.Background(), server, route, state, "route_0123456789abcdef0123456789abcdef", 2,
-		"session", "route.example", "tlsserver", current, make(chan error),
+		"session", "route.example", "tlsserver", current,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -420,7 +451,7 @@ func TestUnacknowledgedCertificateCanCompleteFreshReboundIssuance(t *testing.T) 
 	server := &issuanceServer{publisherServerStub: new(publisherServerStub), t: t}
 	replacement, err := refreshCertificate(
 		context.Background(), server, route, state, "route_0123456789abcdef0123456789abcdef", 2,
-		"session", "route.example", "tlsserver", current, make(chan error),
+		"session", "route.example", "tlsserver", current,
 	)
 	if err != nil || !replacement.Installed || replacement.RouteVersion != 2 || !bytes.Equal(
 		current.Certificate.Leaf.RawSubjectPublicKeyInfo, replacement.Certificate.Leaf.RawSubjectPublicKeyInfo,
@@ -438,11 +469,11 @@ func TestCertificateRetryPropagatesConsumedStaleSession(t *testing.T) {
 	defer state.Close()
 	route := testCertificateRoute(t, true)
 	defer route.Close()
-	heartbeatErrors := make(chan error, 1)
-	heartbeatErrors <- serverclient.ErrStatusConflict
+	ctx, cancel := context.WithCancelCause(context.Background())
+	server := &unavailableCertificateServer{publisherServerStub: new(publisherServerStub), cancel: cancel}
 	_, err = issueCertificate(
-		context.Background(), &unavailableCertificateServer{publisherServerStub: new(publisherServerStub)}, route, state,
-		"route_0123456789abcdef0123456789abcdef", 1, "session", "route.example", "tlsserver", heartbeatErrors,
+		ctx, server, route, state,
+		"route_0123456789abcdef0123456789abcdef", 1, "session", "route.example", "tlsserver",
 	)
 	if !errors.Is(err, serverclient.ErrStatusConflict) {
 		t.Fatalf("issuance error = %v", err)
@@ -569,6 +600,7 @@ type publisherServerStub struct {
 	sessionAllowedIPPrefixes []string
 	sessionErr               error
 	sessionCalls             int
+	attachErr                error
 	heartbeatCalls           int
 	heartbeatErrors          []error
 	deleteCalls              int
@@ -599,9 +631,12 @@ type renewalFailureServer struct {
 	called        chan struct{}
 }
 
-type unavailableCertificateServer struct{ *publisherServerStub }
+type unavailableCertificateServer struct {
+	*publisherServerStub
+	cancel context.CancelCauseFunc
+}
 
-func (*unavailableCertificateServer) CreateCertificateIssuance(
+func (s *unavailableCertificateServer) CreateCertificateIssuance(
 	context.Context,
 	string,
 	uint64,
@@ -609,6 +644,7 @@ func (*unavailableCertificateServer) CreateCertificateIssuance(
 	string,
 	[]byte,
 ) (serverv1.CertificateIssuance, error) {
+	s.cancel(serverclient.ErrStatusConflict)
 	return serverv1.CertificateIssuance{}, serverclient.ErrUnavailable
 }
 
@@ -776,14 +812,14 @@ func (c *publisherServerStub) CreateRouteSession(
 	return c.sessionSetup, c.sessionErr
 }
 
-func (*publisherServerStub) AttachRouteTransport(
+func (c *publisherServerStub) AttachRouteTransport(
 	context.Context,
 	string,
 	uint64,
 	credentials.SessionToken,
 	transportv1.TailcatDescriptor,
 ) error {
-	return nil
+	return c.attachErr
 }
 
 func (*publisherServerStub) Ready(context.Context, string, uint64, credentials.SessionToken) error {

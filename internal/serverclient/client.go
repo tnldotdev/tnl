@@ -109,11 +109,6 @@ func (c *Client) Refresh(ctx context.Context, token credentials.RefreshToken) (s
 	})
 }
 
-func (c *Client) Logout(ctx context.Context) error {
-	_, err := requestWithAccess[struct{}](ctx, c, c.api.LogoutControlSession)
-	return err
-}
-
 // LogoutWithAccessToken revokes the session represented by a specific saved access token.
 func (c *Client) LogoutWithAccessToken(ctx context.Context, token credentials.AccessToken) error {
 	_, err := request[struct{}](ctx, c, token.String(), c.api.LogoutControlSession)
@@ -425,16 +420,6 @@ func (c *Client) CreateCertificateIssuance(
 	}
 	return request[serverv1.CertificateIssuance](ctx, c, sessionToken.String(), func(ctx context.Context, editors ...serverv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.CreateCertificateIssuance(ctx, body, editors...)
-	})
-}
-
-func (c *Client) CertificateIssuance(
-	ctx context.Context,
-	issuanceID string,
-	sessionToken credentials.SessionToken,
-) (serverv1.CertificateIssuance, error) {
-	return request[serverv1.CertificateIssuance](ctx, c, sessionToken.String(), func(ctx context.Context, editors ...serverv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.GetCertificateIssuance(ctx, issuanceID, editors...)
 	})
 }
 

@@ -70,26 +70,6 @@ func TestClientBoundsRequests(t *testing.T) {
 	}
 }
 
-func TestClientSeparatesCertificatePreconditionsFromStaleSessions(t *testing.T) {
-	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
-		response.WriteHeader(http.StatusPreconditionFailed)
-		_ = json.NewEncoder(response).Encode(serverv1.Problem{Code: serverv1.PreconditionFailed})
-	}))
-	defer server.Close()
-	access, _, _, err := credentials.NewAccessToken()
-	if err != nil {
-		t.Fatal(err)
-	}
-	client, err := New(server.URL, server.Client(), access)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = client.CertificateIssuance(context.Background(), "issuance_id", credentials.SessionToken("session"))
-	if !errors.Is(err, ErrCertificateStatus) || errors.Is(err, ErrStatusConflict) {
-		t.Fatalf("error = %v", err)
-	}
-}
-
 func TestChallengeReadyAllowsServerValidationWindow(t *testing.T) {
 	client, err := New("https://server.example", &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		deadline, ok := request.Context().Deadline()
@@ -363,11 +343,6 @@ func TestClientOIDCAndRelayRequests(t *testing.T) {
 				RefreshToken: refresh.String(), RefreshExpiresAt: refreshExpiresAt,
 				Grants: []serverv1.Grant{serverv1.Publish},
 			})
-		case "POST /v1/auth/logout":
-			if request.Header.Get("Authorization") != "Bearer "+access.String() {
-				t.Errorf("authorization = %q", request.Header.Get("Authorization"))
-			}
-			response.WriteHeader(http.StatusNoContent)
 		default:
 			http.NotFound(response, request)
 		}
@@ -385,9 +360,6 @@ func TestClientOIDCAndRelayRequests(t *testing.T) {
 	if err != nil || issued.AccessToken != access.String() || issued.SessionId != sessionID {
 		t.Fatalf("issued = %#v, error = %v", issued, err)
 	}
-	if err := client.Logout(context.Background()); err != nil {
-		t.Fatal(err)
-	}
 }
 
 func TestClientCertificateLifecycleRequests(t *testing.T) {
@@ -395,7 +367,7 @@ func TestClientCertificateLifecycleRequests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	paths := make(chan string, 5)
+	paths := make(chan string, 4)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.Header.Get("Authorization") != "Bearer "+session.String() {
 			t.Errorf("Authorization = %q", request.Header.Get("Authorization"))
@@ -410,8 +382,7 @@ func TestClientCertificateLifecycleRequests(t *testing.T) {
 				t.Errorf("create body = %#v", body)
 			}
 		}
-		if strings.Contains(request.URL.Path, "challenge-ready") || request.URL.Path == "/v1/certificate-issuances" ||
-			request.Method == http.MethodGet {
+		if strings.Contains(request.URL.Path, "challenge-ready") || request.URL.Path == "/v1/certificate-issuances" {
 			_ = json.NewEncoder(response).Encode(serverv1.CertificateIssuance{Id: "issuance_id"})
 			return
 		}
@@ -425,9 +396,6 @@ func TestClientCertificateLifecycleRequests(t *testing.T) {
 	if _, err := client.CreateCertificateIssuance(context.Background(), "route", 1, session, "tlsserver", []byte("csr")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.CertificateIssuance(context.Background(), "issuance_id", session); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := client.CertificateChallengeReady(context.Background(), "issuance_id", session); err != nil {
 		t.Fatal(err)
 	}
@@ -438,7 +406,7 @@ func TestClientCertificateLifecycleRequests(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
-		"POST /v1/certificate-issuances", "GET /v1/certificate-issuances/issuance_id", "POST /v1/certificate-issuances/issuance_id/challenge-ready",
+		"POST /v1/certificate-issuances", "POST /v1/certificate-issuances/issuance_id/challenge-ready",
 		"POST /v1/certificate-issuances/issuance_id/challenge-removed", "POST /v1/routes/route/certificate-installed",
 	}
 	for _, expected := range want {

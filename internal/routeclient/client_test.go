@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/authorityclient"
+	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/serverclient"
 	"github.com/tnldotdev/tnl/pkg/protocol/authorityv1"
@@ -222,16 +223,112 @@ func TestCanonicalPrefixesPreserveExplicitEmptyPolicy(t *testing.T) {
 	if cloned == nil || *cloned == nil || len(*cloned) != 0 {
 		t.Fatalf("cloned empty policy = %#v", cloned)
 	}
-	digest, err := ipPolicyHash(cloned)
+	digest, err := authorization.IPPolicyHash(prefixValues(cloned))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := authorityv1.SHA256Digest(hashLiteral("[]"))
+	want, err := authorization.ParseDigest(hashLiteral("[]"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if digest == nil || *digest != want {
 		t.Fatalf("empty policy hash = %v, want %q", digest, want)
 	}
 	if missing, err := canonicalizeIPPrefixes(nil); err != nil || missing != nil {
 		t.Fatalf("omitted policy = %#v, %v", missing, err)
+	}
+}
+
+func TestAuthorityRequestsDoNotHoldClientStateLock(t *testing.T) {
+	for _, operation := range []string{"create", "renew"} {
+		t.Run(operation, func(t *testing.T) {
+			started := make(chan struct{})
+			release := make(chan struct{})
+			var authority *httptest.Server
+			authority = httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				var body authorityv1.IssueAuthorizationRequest
+				if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+					t.Error(err)
+				}
+				close(started)
+				<-release
+				now := time.Now().UTC()
+				response.Header().Set("Content-Type", "application/json")
+				response.WriteHeader(http.StatusCreated)
+				_ = json.NewEncoder(response).Encode(authorityv1.AuthorizationEnvelope{
+					Authorization: "signed",
+					Claims: authorityv1.AuthorizationClaims{
+						Version: authorityv1.N1, Kid: "key-1", Alg: authorityv1.AuthorizationClaimsAlgEdDSA,
+						Operation: authorityv1.AuthorizationClaimsOperation(body.Operation), Issuer: authority.URL,
+						Receiver: "https://server.example", AuthorizationId: "authorization_11111111111111111111111111111111",
+						Hostname: body.Hostname, RouteId: body.RouteId, RouteVersion: body.RouteVersion,
+						Revision: 2, IssuedAt: now, ExpiresAt: now.Add(time.Hour),
+						RetryId: "retry_11111111111111111111111111111111", CanonicalRequestHash: body.CanonicalRequestHash,
+						IpPolicyHash: body.IpPolicyHash,
+					},
+				})
+			}))
+			defer authority.Close()
+			authorityClient, err := authorityclient.New(authority.URL, authority.Client())
+			if err != nil {
+				t.Fatal(err)
+			}
+			client := &Client{
+				authority: authorityClient, authorityCapabilities: &authorityv1.Capabilities{
+					AuthorizationIssuer: authority.URL,
+					AuthorizationKey:    authorityv1.AuthorizationKey{Kid: "key-1", Alg: authorityv1.AuthorizationKeyAlgEdDSA},
+				},
+				authorizationReceiver: "https://server.example",
+				routes:                make(map[string]routeAuthorization),
+				pending:               make(map[string]*pendingAuthorization),
+			}
+			result := make(chan error, 1)
+			if operation == "create" {
+				go func() {
+					_, err := client.authorization(t.Context(), "create", authorityv1.IssueAuthorizationRequest{
+						Operation: authorityv1.IssueAuthorizationRequestOperationRouteCreate,
+						Hostname:  "route.example", CanonicalRequestHash: hashLiteral("{}"),
+					})
+					result <- err
+				}()
+			} else {
+				client.routes["route_0123456789abcdef0123456789abcdef"] = routeAuthorization{
+					hostname: "route.example", version: 1, nextRenewal: time.Now().Add(-time.Second),
+					authorization: authorityv1.AuthorizationEnvelope{Claims: authorityv1.AuthorizationClaims{
+						Kid: "key-1", AuthorizationId: "authorization_00000000000000000000000000000000",
+						RetryId: "retry_00000000000000000000000000000000", Revision: 1,
+						IssuedAt: time.Now().Add(-time.Hour), ExpiresAt: time.Now().Add(time.Minute),
+					}},
+				}
+				go func() {
+					_, _, err := client.routeAuthorization(t.Context(), "route_0123456789abcdef0123456789abcdef", 1)
+					result <- err
+				}()
+			}
+			select {
+			case <-started:
+			case <-time.After(time.Second):
+				t.Fatal("authority request did not start")
+			}
+			listed := make(chan error, 1)
+			go func() {
+				_, err := client.ListRoutes(t.Context())
+				listed <- err
+			}()
+			select {
+			case err := <-listed:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(100 * time.Millisecond):
+				close(release)
+				t.Fatal("authority request blocked client state")
+			}
+			close(release)
+			if err := <-result; err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 

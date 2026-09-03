@@ -16,7 +16,6 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -159,12 +158,6 @@ type routeCleaner interface {
 
 type hostnameOwner interface {
 	ReleaseHostname(context.Context, string) error
-}
-
-type timingSummary struct {
-	P50Milliseconds float64 `json:"p50_milliseconds"`
-	P95Milliseconds float64 `json:"p95_milliseconds"`
-	MaxMilliseconds float64 `json:"max_milliseconds"`
 }
 
 type workerSample struct {
@@ -867,28 +860,6 @@ func parseMetrics(body string) map[string]float64 {
 		}
 	}
 	return values
-}
-
-func summarize(samples []time.Duration) timingSummary {
-	if len(samples) == 0 {
-		return timingSummary{}
-	}
-	ordered := append([]time.Duration(nil), samples...)
-	sort.Slice(ordered, func(i, j int) bool { return ordered[i] < ordered[j] })
-	return timingSummary{
-		P50Milliseconds: milliseconds(ordered[percentileIndex(len(ordered), 50)]),
-		P95Milliseconds: milliseconds(ordered[percentileIndex(len(ordered), 95)]),
-		MaxMilliseconds: milliseconds(ordered[len(ordered)-1]),
-	}
-}
-
-func percentileIndex(length, percentile int) int {
-	// Use nearest-rank percentiles so every result is an observed sample.
-	index := (length*percentile + 99) / 100
-	if index <= 0 {
-		return 0
-	}
-	return index - 1
 }
 
 func milliseconds(duration time.Duration) float64 {

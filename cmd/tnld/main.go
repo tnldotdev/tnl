@@ -117,10 +117,13 @@ var (
 	workerReconnectReset = time.Minute
 )
 
-func serve(ctx context.Context, cfg config.TNLD) error {
+func serve(ctx context.Context, cfg config.TNLD) (result error) {
 	lifetime, cancel := context.WithCancel(ctx)
-	defer cancel()
 	running := new(daemon)
+	defer func() {
+		cancel()
+		result = errors.Join(result, running.shutdown(cfg.DrainTimeout))
+	}()
 	metrics := observability.New(string(cfg.Mode))
 	done := make(chan error, 4)
 
@@ -133,11 +136,11 @@ func serve(ctx context.Context, cfg config.TNLD) error {
 		if cfg.BackupURL != "" {
 			running.backup, err = backup.New(state.DatabasePath(cfg.StateDir), cfg.BackupURL)
 			if err != nil {
-				return errors.Join(err, running.shutdown(cfg.DrainTimeout))
+				return err
 			}
 			restored, err := running.backup.Restore(ctx)
 			if err != nil {
-				return errors.Join(err, running.shutdown(cfg.DrainTimeout))
+				return err
 			}
 			if restored {
 				log.Print("restored state database from backup")
@@ -145,37 +148,37 @@ func serve(ctx context.Context, cfg config.TNLD) error {
 		}
 		db, err := state.Open(ctx, cfg.StateDir)
 		if err != nil {
-			return errors.Join(err, running.shutdown(cfg.DrainTimeout))
+			return err
 		}
 		running.db = db
 		login, generated, err := state.EnsureLoginToken(ctx, db)
 		if err != nil {
-			return errors.Join(err, running.shutdown(cfg.DrainTimeout))
+			return err
 		}
 		running.login = login
 		running.loginRevision, err = state.ReadLoginTokenRevision(ctx, db)
 		if err != nil {
-			return errors.Join(err, running.shutdown(cfg.DrainTimeout))
+			return err
 		}
 		if generated {
 			log.Print("generated login token; retrieve it with tnl admin server login-token")
 		}
 		if running.backup != nil {
 			if err := running.backup.Start(ctx); err != nil {
-				return errors.Join(err, running.shutdown(cfg.DrainTimeout))
+				return err
 			}
 			log.Print("state backup replication started")
 		}
 		if err := metrics.RegisterDatabase(db); err != nil {
-			return errors.Join(err, running.shutdown(cfg.DrainTimeout))
+			return err
 		}
 		if cfg.RouteUsageURL != "" {
 			running.routeUsageReporter, err = routeusage.New(db, cfg.RouteUsageURL, cfg.RouteUsageToken, metrics)
 			if err != nil {
-				return errors.Join(err, running.shutdown(cfg.DrainTimeout))
+				return err
 			}
 			if err := running.routeUsageReporter.Start(lifetime, report); err != nil {
-				return errors.Join(err, running.shutdown(cfg.DrainTimeout))
+				return err
 			}
 		}
 	}
@@ -184,21 +187,21 @@ func serve(ctx context.Context, cfg config.TNLD) error {
 		var err error
 		running.metricsServer, err = observability.Listen(cfg.MetricsListen, metrics.Handler())
 		if err != nil {
-			return errors.Join(fmt.Errorf("listen for metrics: %w", err), running.shutdown(cfg.DrainTimeout))
+			return fmt.Errorf("listen for metrics: %w", err)
 		}
 		go forward(done, "serve metrics", running.metricsServer.Done())
 	}
 	if cfg.Mode == config.TNLDModeWorker && cfg.EdgeURL != "" {
 		workerDone, err := startWorker(lifetime, cfg, metrics)
 		if err != nil {
-			return errors.Join(err, running.shutdown(cfg.DrainTimeout))
+			return err
 		}
 		running.workerDone = workerDone
 	}
 	if cfg.Mode.UsesState() && cfg.PublicListen != "" {
 		controlDone, ingressDone, err := running.startServer(lifetime, cfg, metrics)
 		if err != nil {
-			return errors.Join(err, running.shutdown(cfg.DrainTimeout))
+			return err
 		}
 		go forward(done, "serve control API", controlDone)
 		if ingressDone != nil {
@@ -216,8 +219,7 @@ func serve(ctx context.Context, cfg config.TNLD) error {
 		}
 		running.workerDone = nil
 	}
-	cancel()
-	return errors.Join(serveErr, running.shutdown(cfg.DrainTimeout))
+	return serveErr
 }
 
 func (d *daemon) startServer(
@@ -647,7 +649,8 @@ func (d *daemon) shutdown(timeout time.Duration) error {
 		result = errors.Join(result, d.ingress.Drain(ctx))
 	}
 	if d.workerHub != nil {
-		d.workerHub.Close()
+		result = errors.Join(result, d.workerHub.Shutdown(ctx))
+		d.workerHub = nil
 	}
 	if d.coordinator != nil {
 		result = errors.Join(result, d.coordinator.Close())

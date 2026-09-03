@@ -109,7 +109,6 @@ func RunWorker(ctx context.Context, config WorkerConfig) error {
 		reason = DisconnectShutdown
 		return running.shutdown()
 	case err := <-errC:
-		_ = config.Worker.Close()
 		shuttingDown := ctx.Err() != nil
 		if shuttingDown {
 			reason = DisconnectShutdown
@@ -279,9 +278,8 @@ func (s *workerSession) shutdown() error {
 		_ = s.write(workerv1.Message{Type: workerv1.RouteDrained, Route: protocolRef(ref)})
 	}
 	_ = s.session.GoAway()
-	closeErr := s.config.Worker.Close()
 	_ = s.session.Close()
-	return errors.Join(drainErr, closeErr)
+	return drainErr
 }
 
 func (s *workerSession) startCommand() bool {

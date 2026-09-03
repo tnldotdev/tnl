@@ -496,7 +496,7 @@ func runAdminTokenWorker(stdout io.Writer) error {
 }
 
 func runAdminTokenService(stdout io.Writer) error {
-	token, _, err := credentials.NewServiceToken()
+	token, err := credentials.NewServiceToken()
 	if err != nil {
 		return err
 	}

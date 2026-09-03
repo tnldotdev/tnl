@@ -241,7 +241,7 @@ func TestTNLDValidateRouteUsage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, _, err := credentials.NewServiceToken()
+	token, err := credentials.NewServiceToken()
 	if err != nil {
 		t.Fatal(err)
 	}

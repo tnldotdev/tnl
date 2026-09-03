@@ -2,10 +2,18 @@ package naming
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
 )
+
+func TestErrorCodeOfWrappedValidationError(t *testing.T) {
+	code, ok := ErrorCodeOf(fmt.Errorf("canonicalize hostname: %w", invalid(ErrorInvalidSyntax)))
+	if !ok || code != ErrorInvalidSyntax {
+		t.Fatalf("wrapped validation error = %q, %v", code, ok)
+	}
+}
 
 type conformanceFixture struct {
 	Version int               `json:"version"`

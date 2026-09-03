@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,6 +57,17 @@ func TestPlanHumanOutputLabelsAssumptions(t *testing.T) {
 		}
 	}
 }
+
+func TestPlanHumanOutputPropagatesWriterError(t *testing.T) {
+	want := errors.New("write failed")
+	if err := repositoryPlanCommand("smoke").run(errorWriter{err: want}); !errors.Is(err, want) {
+		t.Fatalf("plan error = %v, want %v", err, want)
+	}
+}
+
+type errorWriter struct{ err error }
+
+func (w errorWriter) Write([]byte) (int, error) { return 0, w.err }
 
 func TestDecodeProfileRejectsUnknownFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "profile.json")

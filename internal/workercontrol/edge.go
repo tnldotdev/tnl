@@ -38,6 +38,8 @@ type Hub struct {
 	config      HubConfig
 	mu          sync.Mutex
 	connections map[*websocket.Conn]struct{}
+	activities  int
+	changed     chan struct{}
 	closed      bool
 }
 
@@ -51,7 +53,7 @@ func NewHub(config HubConfig) (*Hub, error) {
 	if config.DrainTime <= 0 {
 		config.DrainTime = 30 * time.Second
 	}
-	return &Hub{config: config, connections: make(map[*websocket.Conn]struct{})}, nil
+	return &Hub{config: config, connections: make(map[*websocket.Conn]struct{}), changed: make(chan struct{})}, nil
 }
 
 func (h *Hub) ServeHTTP(response http.ResponseWriter, request *http.Request) {
@@ -131,6 +133,10 @@ func (h *Hub) ServeHTTP(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	worker.onDraining = func() {
+		if !h.beginActivity() {
+			return
+		}
+		defer h.endActivity()
 		ctx, cancel := context.WithTimeout(context.Background(), h.config.DrainTime)
 		defer cancel()
 		if err := h.config.Registry.DrainWorker(ctx, id); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
@@ -150,12 +156,9 @@ func (h *Hub) ServeHTTP(response http.ResponseWriter, request *http.Request) {
 	}
 }
 
-func (h *Hub) Close() {
+// Shutdown stops admission, closes active sessions, and waits for their callbacks.
+func (h *Hub) Shutdown(ctx context.Context) error {
 	h.mu.Lock()
-	if h.closed {
-		h.mu.Unlock()
-		return
-	}
 	h.closed = true
 	connections := make([]*websocket.Conn, 0, len(h.connections))
 	for connection := range h.connections {
@@ -164,6 +167,20 @@ func (h *Hub) Close() {
 	h.mu.Unlock()
 	for _, connection := range connections {
 		_ = connection.CloseNow()
+	}
+	for {
+		h.mu.Lock()
+		if len(h.connections) == 0 && h.activities == 0 {
+			h.mu.Unlock()
+			return nil
+		}
+		changed := h.changed
+		h.mu.Unlock()
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 }
 
@@ -174,13 +191,38 @@ func (h *Hub) track(connection *websocket.Conn) bool {
 		return false
 	}
 	h.connections[connection] = struct{}{}
+	h.notifyLocked()
 	return true
 }
 
 func (h *Hub) untrack(connection *websocket.Conn) {
 	h.mu.Lock()
 	delete(h.connections, connection)
+	h.notifyLocked()
 	h.mu.Unlock()
+}
+
+func (h *Hub) beginActivity() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closed {
+		return false
+	}
+	h.activities++
+	h.notifyLocked()
+	return true
+}
+
+func (h *Hub) endActivity() {
+	h.mu.Lock()
+	h.activities--
+	h.notifyLocked()
+	h.mu.Unlock()
+}
+
+func (h *Hub) notifyLocked() {
+	close(h.changed)
+	h.changed = make(chan struct{})
 }
 
 func (h *Hub) isClosed() bool {
