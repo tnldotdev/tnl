@@ -218,8 +218,8 @@ jobs:
             COMMIT=${{ github.sha }}
           provenance: mode=max
           sbom: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=tnl-release-image
+          cache-to: type=gha,mode=max,scope=tnl-release-image
 
       - name: Sign image
         env:

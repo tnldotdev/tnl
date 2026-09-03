@@ -107,10 +107,19 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+          cache-dependency-path: |
+            go.sum
+            mise.toml
+
+      - name: Install Task
+        uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.53.1
+          repo-token: ""
+          checksum: a54a408f6861ff921f6e87774180db31bacd8c1e7c944ca696db9fea49a82fc7
 
       - name: Install pinned tools
         run: |
-          go install github.com/go-task/task/v3/cmd/task@v3.53.1
           go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0
           go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
           go install golang.org/x/tools/cmd/goimports@v0.49.0
@@ -152,15 +161,70 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+          cache-dependency-path: |
+            go.sum
+            Taskfile.yml
 
-      - name: Install pinned tools
-        run: go install github.com/go-task/task/v3/cmd/task@v3.53.1
+      - name: Install Task
+        uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.53.1
+          repo-token: ""
+          checksum: a54a408f6861ff921f6e87774180db31bacd8c1e7c944ca696db9fea49a82fc7
 
       - name: Run race tests
         run: task go:test-race
 
-  release-snapshot:
-    name: Release snapshot
+  release-build:
+    name: Release build (${{ matrix.target }})
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - darwin_amd64_v1
+          - darwin_arm64_v8.0
+          - linux_amd64_v1
+          - linux_arm64_v8.0
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Install GoReleaser
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          version: v2.18.0
+          install-only: true
+
+      - name: Check release configuration
+        run: goreleaser check
+
+      - name: Build release target
+        env:
+          TARGET: ${{ matrix.target }}
+        run: goreleaser build --snapshot --clean --single-target
+
+      - name: Verify release target
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          test -x "dist/tnl_${TARGET}/tnl"
+          test -x "dist/tnld_${TARGET}/tnld"
+
+  release-snapshot-full:
+    name: Full release snapshot
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -214,6 +278,26 @@ jobs:
           node scripts/pack-tnl.mjs "$RUNNER_TEMP/tnl-npm-packages"
           node scripts/verify-tnl-install.mjs "$RUNNER_TEMP/tnl-npm-packages"
 
+  release-snapshot:
+    name: Release snapshot
+    if: always()
+    needs: [release-build, release-snapshot-full]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Verify release checks passed
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_RESULT: ${{ needs.release-build.result }}
+          PUSH_RESULT: ${{ needs.release-snapshot-full.result }}
+        run: |
+          case "$EVENT_NAME" in
+            pull_request) test "$PR_RESULT" = success ;;
+            push) test "$PUSH_RESULT" = success ;;
+            *) exit 1 ;;
+          esac
+
   container:
     name: Container
     runs-on: ubuntu-latest
@@ -227,6 +311,51 @@ jobs:
       - name: Set up Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
+      - name: Restore container Go build cache
+        if: github.event_name == 'pull_request'
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: .buildkit-go-cache
+          key: ${{ runner.os }}-${{ runner.arch }}-tnl-container-go-${{ hashFiles('go.sum', 'Dockerfile') }}
+
+      - name: Cache container Go builds
+        if: github.event_name == 'push'
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # zizmor: ignore[cache-poisoning] v5.1.0; writes run only on trusted pushes
+        with:
+          path: .buildkit-go-cache
+          key: ${{ runner.os }}-${{ runner.arch }}-tnl-container-go-${{ hashFiles('go.sum', 'Dockerfile') }}
+
+      - name: Inject container Go build cache
+        uses: reproducible-containers/buildkit-cache-dance@4b2444fec0c0fb9dbf175a96c094720a692ef810 # v2.1.4
+        with:
+          cache-source: .buildkit-go-cache
+          cache-target: /root/.cache/go-build
+          scratch-dir: .buildkit-cache-dance
+
+      - name: Build native image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: tnl:ci
+          provenance: false
+          sbom: false
+          build-args: |
+            VERSION=ci
+            COMMIT=ci
+          cache-from: type=gha,scope=tnl-container-check
+
+      - name: Smoke-test image
+        run: |
+          test "$(docker run --rm tnl:ci version)" = "tnld ci (ci)"
+          test "$(docker run --rm --entrypoint tnl tnl:ci version)" = "tnl ci (ci)"
+          test "$(docker image inspect tnl:ci --format '{{ index .Config.Labels "org.opencontainers.image.licenses" }}')" = MIT
+          container="$(docker create tnl:ci)"
+          trap 'docker rm "$container" >/dev/null' EXIT
+          docker cp "$container:/licenses/tnl/LICENSE" "$RUNNER_TEMP/LICENSE"
+          grep -q '^MIT License$' "$RUNNER_TEMP/LICENSE"
+
       - name: Build multi-platform image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
@@ -237,22 +366,9 @@ jobs:
           sbom: false
           build-args: |
             VERSION=ci
-            COMMIT=${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Smoke-test image
-        env:
-          COMMIT: ${{ github.sha }}
-        run: |
-          docker build --build-arg VERSION=ci --build-arg COMMIT="$COMMIT" --tag tnl:ci .
-          test "$(docker run --rm tnl:ci version)" = "tnld ci ($COMMIT)"
-          test "$(docker run --rm --entrypoint tnl tnl:ci version)" = "tnl ci ($COMMIT)"
-          test "$(docker image inspect tnl:ci --format '{{ index .Config.Labels "org.opencontainers.image.licenses" }}')" = MIT
-          container="$(docker create tnl:ci)"
-          trap 'docker rm "$container" >/dev/null' EXIT
-          docker cp "$container:/licenses/tnl/LICENSE" "$RUNNER_TEMP/LICENSE"
-          grep -q '^MIT License$' "$RUNNER_TEMP/LICENSE"
+            COMMIT=ci
+          cache-from: type=gha,scope=tnl-container-check
+          cache-to: type=gha,mode=max,scope=tnl-container-check
 
       - name: Validate Compose deployment
         env:
@@ -277,6 +393,9 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+          cache-dependency-path: |
+            go.sum
+            .github/workflows/checks.yml
 
       - name: Run actionlint
         run: |

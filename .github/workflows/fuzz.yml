@@ -55,6 +55,9 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+          cache-dependency-path: |
+            go.sum
+            ${{ matrix.package }}/**/*.go
 
       - name: Run fuzz tests
         env:

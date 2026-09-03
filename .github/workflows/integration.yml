@@ -28,6 +28,9 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+          cache-dependency-path: |
+            go.sum
+            .github/workflows/integration.yml
 
       - name: Set up pnpm and Node
         uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
@@ -41,10 +44,15 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm build
 
+      - name: Install Task
+        uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.53.1
+          repo-token: ""
+          checksum: a54a408f6861ff921f6e87774180db31bacd8c1e7c944ca696db9fea49a82fc7
+
       - name: Install pinned tools
-        run: |
-          go install github.com/go-task/task/v3/cmd/task@v3.53.1
-          go install github.com/letsencrypt/pebble/v2/cmd/pebble@v2.10.1
+        run: go install github.com/letsencrypt/pebble/v2/cmd/pebble@v2.10.1
 
       - name: Run integration tests
         run: task go:test-integration
