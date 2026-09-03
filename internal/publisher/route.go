@@ -73,7 +73,7 @@ func NewRoute(config RouteConfig) (*Route, error) {
 		queue:             queue,
 		tls: &tls.Config{
 			MinVersion:             tls.VersionTLS12,
-			NextProtos:             []string{"http/1.1", acme.ALPNProto},
+			NextProtos:             []string{"h2", "http/1.1", acme.ALPNProto},
 			SessionTicketsDisabled: true,
 		},
 		http: &http.Server{

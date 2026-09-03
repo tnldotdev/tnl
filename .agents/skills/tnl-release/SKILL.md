@@ -21,8 +21,7 @@ artifacts manually during a normal release.
   `origin/main`.
 - Never include unrelated changes, create an empty release commit, amend,
   force-push, move a tag, or reuse a published version.
-- Require separate user approval for the version plan, release commit, main
-  push, and each tag push. Earlier approval does not cover a later gate.
+- Require user approval before the release commit.
 - Stop on failed signing, verification, CI, push, workflow, or registry checks.
   Do not bypass branch protection or signing.
 

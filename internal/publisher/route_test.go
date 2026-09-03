@@ -35,47 +35,21 @@ func TestRouteTerminatesTLSAndProxiesLoopbackHTTP(t *testing.T) {
 		_, _ = response.Write([]byte("local response"))
 	}))
 	defer upstream.Close()
-	route, err := NewRoute(RouteConfig{
-		Hostname:      "route.example",
-		Target:        upstream.URL,
-		Certificate:   routeTestCertificate(t, "route.example"),
-		AllowedClient: key.NewNode().Public(),
-		RelayRegion:   "test",
-		Regions: map[string]*tailcfg.DERPRegion{"test": {
-			RegionID: 1, Nodes: []*tailcfg.DERPNode{{RegionID: 1, HostName: "derp.example"}},
-		}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	route.mu.Lock()
-	route.started = true
-	route.mu.Unlock()
-	route.startHTTP()
-	t.Cleanup(func() { _ = route.Close() })
-
-	ingress, agentConnection := net.Pipe()
+	route := startHTTPTestRoute(t, upstream.URL)
 	handled := make(chan struct{})
-	go func() {
-		route.handle(agentConnection)
-		close(handled)
-	}()
-	header, err := proxyproto.Encode(proxyproto.Header{
-		Source:      netip.MustParseAddrPort("192.0.2.10:1234"),
-		Destination: netip.MustParseAddrPort("127.0.0.1:443"),
-	})
+	ingress, err := openHTTPTestRoute(route, handled)
 	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ingress.Write(header); err != nil {
 		t.Fatal(err)
 	}
 	client := tls.Client(ingress, &tls.Config{
-		ServerName: "route.example", MinVersion: tls.VersionTLS12,
+		ServerName: "route.example", MinVersion: tls.VersionTLS12, MaxVersion: tls.VersionTLS12,
 		InsecureSkipVerify: true, // The test route certificate is self-signed.
 	})
 	if err := client.HandshakeContext(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+	if client.ConnectionState().Version != tls.VersionTLS12 {
+		t.Fatalf("TLS version = %x, want TLS 1.2", client.ConnectionState().Version)
 	}
 	if _, err := fmt.Fprint(client, "GET / HTTP/1.1\r\nHost: route.example\r\nConnection: close\r\n\r\n"); err != nil {
 		t.Fatal(err)
@@ -101,6 +75,98 @@ func TestRouteTerminatesTLSAndProxiesLoopbackHTTP(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("route handler did not close")
 	}
+}
+
+func TestRouteNegotiatesHTTP2AndProxiesLoopbackHTTP(t *testing.T) {
+	upstreamProtocol := make(chan int, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		upstreamProtocol <- request.ProtoMajor
+		_, _ = response.Write([]byte("local response"))
+	}))
+	defer upstream.Close()
+	route := startHTTPTestRoute(t, upstream.URL)
+	handled := make(chan struct{})
+	transport := &http.Transport{
+		ForceAttemptHTTP2: true,
+		TLSClientConfig: &tls.Config{
+			ServerName: "route.example", MinVersion: tls.VersionTLS13,
+			InsecureSkipVerify: true, // The test route certificate is self-signed.
+		},
+		DialContext: func(context.Context, string, string) (net.Conn, error) {
+			return openHTTPTestRoute(route, handled)
+		},
+	}
+	client := &http.Client{Transport: transport}
+	response, err := client.Get("https://route.example/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.ProtoMajor != 2 || response.TLS == nil {
+		t.Fatalf("public response protocol = %s, TLS = %#v", response.Proto, response.TLS)
+	}
+	if response.TLS.Version != tls.VersionTLS13 {
+		t.Fatalf("public TLS version = %#x, want TLS 1.3", response.TLS.Version)
+	}
+	if string(body) != "local response" {
+		t.Fatalf("response body = %q", body)
+	}
+	if protocol := <-upstreamProtocol; protocol != 1 {
+		t.Fatalf("local service HTTP version = %d, want 1", protocol)
+	}
+	transport.CloseIdleConnections()
+	select {
+	case <-handled:
+	case <-time.After(time.Second):
+		t.Fatal("route handler did not close")
+	}
+}
+
+func startHTTPTestRoute(t *testing.T, target string) *Route {
+	t.Helper()
+	route, err := NewRoute(RouteConfig{
+		Hostname:      "route.example",
+		Target:        target,
+		Certificate:   routeTestCertificate(t, "route.example"),
+		AllowedClient: key.NewNode().Public(),
+		RelayRegion:   "test",
+		Regions: map[string]*tailcfg.DERPRegion{"test": {
+			RegionID: 1, Nodes: []*tailcfg.DERPNode{{RegionID: 1, HostName: "derp.example"}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	route.mu.Lock()
+	route.started = true
+	route.mu.Unlock()
+	route.startHTTP()
+	t.Cleanup(func() { _ = route.Close() })
+	return route
+}
+
+func openHTTPTestRoute(route *Route, handled chan struct{}) (net.Conn, error) {
+	ingress, publisher := net.Pipe()
+	go func() {
+		route.handle(publisher)
+		close(handled)
+	}()
+	header, err := proxyproto.Encode(proxyproto.Header{
+		Source:      netip.MustParseAddrPort("192.0.2.10:1234"),
+		Destination: netip.MustParseAddrPort("127.0.0.1:443"),
+	})
+	if err == nil {
+		_, err = ingress.Write(header)
+	}
+	if err != nil {
+		_ = ingress.Close()
+		return nil, err
+	}
+	return ingress, nil
 }
 
 func TestRouteSelectsChallengeAndInstalledCertificate(t *testing.T) {

@@ -23,7 +23,6 @@ const (
 	clientHelloType = 1
 	serverNameExt   = 0
 	alpnExt         = 16
-	echExt          = 0xfe0d
 	acmeTLSALPN     = "acme-tls/1"
 )
 
@@ -35,7 +34,6 @@ const (
 	ErrorTooManyTLSRecords    ClientHelloErrorCode = "too_many_tls_records"
 	ErrorMissingSNI           ClientHelloErrorCode = "missing_sni"
 	ErrorDuplicateSNI         ClientHelloErrorCode = "duplicate_sni"
-	ErrorECHUnsupported       ClientHelloErrorCode = "ech_unsupported"
 	ErrorUnexpectedTLSRecord  ClientHelloErrorCode = "unexpected_tls_record"
 	ErrorClientHelloTimeout   ClientHelloErrorCode = "client_hello_timeout"
 )
@@ -165,8 +163,6 @@ func parseClientHello(body []byte) (string, bool, error) {
 				return "", false, err
 			}
 			acmeTLSALPN = parsedACMETLSALPN
-		case echExt:
-			return "", false, clientHelloError(ErrorECHUnsupported)
 		}
 	}
 

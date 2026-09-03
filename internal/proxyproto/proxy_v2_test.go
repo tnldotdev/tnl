@@ -2,6 +2,7 @@ package proxyproto
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"io"
 	"net"
@@ -60,6 +61,61 @@ func TestIPv6RoundTrip(t *testing.T) {
 	assertReplay(t, replay, nil)
 }
 
+func TestDecodeAllowsTLVsAndReplaysPayload(t *testing.T) {
+	tests := []Header{
+		{
+			Source:      netip.MustParseAddrPort("192.0.2.1:12345"),
+			Destination: netip.MustParseAddrPort("198.51.100.2:443"),
+		},
+		{
+			Source:      netip.MustParseAddrPort("[2001:db8::1]:12345"),
+			Destination: netip.MustParseAddrPort("[2001:db8::2]:443"),
+		},
+	}
+	// A registered ALPN TLV followed by an application-specific TLV.
+	tlvs := []byte{0x01, 0x00, 0x02, 'h', '2', 0xee, 0x00, 0x01, 0xff}
+	for _, want := range tests {
+		encoded, err := Encode(want)
+		if err != nil {
+			t.Fatal(err)
+		}
+		input := appendTLVs(encoded, tlvs)
+		payload := []byte("TLS bytes")
+		input = append(input, payload...)
+
+		got, replay, err := Decode(bytes.NewReader(input))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Fatalf("got %+v, want %+v", got, want)
+		}
+		assertReplay(t, replay, payload)
+	}
+}
+
+func TestDecodeRejectsMalformedAndOversizedTLVs(t *testing.T) {
+	valid, err := Encode(Header{
+		Source:      netip.MustParseAddrPort("192.0.2.1:12345"),
+		Destination: netip.MustParseAddrPort("198.51.100.2:443"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	malformed := appendTLVs(valid, []byte{0x01, 0x00, 0x02, 'h'})
+	oversized := bytes.Clone(valid)
+	binary.BigEndian.PutUint16(oversized[14:16], maxV2Length+1)
+	for name, input := range map[string][]byte{"malformed": malformed, "oversized": oversized} {
+		t.Run(name, func(t *testing.T) {
+			_, _, err := Decode(bytes.NewReader(input))
+			var protocolError *ProtocolError
+			if !errors.As(err, &protocolError) || protocolError.Code != ErrorInvalidLength {
+				t.Fatalf("got error %v, want %s", err, ErrorInvalidLength)
+			}
+		})
+	}
+}
+
 func TestDecodeRejectsUnsupportedHeaders(t *testing.T) {
 	valid, err := Encode(Header{
 		Source:      netip.MustParseAddrPort("192.0.2.1:12345"),
@@ -89,7 +145,7 @@ func TestDecodeRejectsUnsupportedHeaders(t *testing.T) {
 		{name: "LOCAL", input: changed(valid, 12, 0x20), code: ErrorUnsupportedCommand},
 		{name: "datagram", input: changed(valid, 13, 0x12), code: ErrorUnsupportedTransport},
 		{name: "unspecified family", input: changed(valid, 13, 0x01), code: ErrorUnsupportedTransport},
-		{name: "TLV", input: changed(valid, 15, 0x0d), code: ErrorInvalidLength},
+		{name: "truncated payload", input: changed(valid, 15, 0x0d), code: ErrorInvalidLength},
 		{name: "truncated", input: valid[:20], code: ErrorTruncatedHeader},
 		{name: "zero source port", input: changed(changed(valid, 24, 0), 25, 0), code: ErrorInvalidAddress},
 		{name: "mapped IPv6 address", input: mapped, code: ErrorInvalidAddress},
@@ -183,10 +239,12 @@ func FuzzDecode(f *testing.F) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !bytes.Equal(encoded, input[:len(encoded)]) {
-			t.Fatal("decoded header changed during encoding")
+		roundTrip, _, err := Decode(bytes.NewReader(encoded))
+		if err != nil || roundTrip != header {
+			t.Fatalf("decoded header changed during encoding: got %+v, %v", roundTrip, err)
 		}
-		payload := input[len(encoded):]
+		headerLength := 16 + int(binary.BigEndian.Uint16(input[14:16]))
+		payload := input[headerLength:]
 		duplicate := bytes.HasPrefix(payload, []byte(v1Signature)) || bytes.HasPrefix(payload, []byte(v2Signature))
 		remaining, err := io.ReadAll(replay)
 		if err != nil {
@@ -203,6 +261,13 @@ func FuzzDecode(f *testing.F) {
 			t.Fatal("replayed bytes differ from input")
 		}
 	})
+}
+
+func appendTLVs(header, tlvs []byte) []byte {
+	result := append(bytes.Clone(header), tlvs...)
+	length := int(binary.BigEndian.Uint16(result[14:16])) + len(tlvs)
+	binary.BigEndian.PutUint16(result[14:16], uint16(length))
+	return result
 }
 
 func changed(input []byte, index int, value byte) []byte {
