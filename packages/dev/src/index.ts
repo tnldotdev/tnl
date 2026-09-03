@@ -3,6 +3,28 @@ import { createHash } from "node:crypto";
 import * as http from "node:http";
 import path from "node:path";
 import { promisify } from "node:util";
+import {
+  array,
+  boolean,
+  gte,
+  hostname,
+  int,
+  literal,
+  lowercase,
+  lte,
+  maxLength,
+  minLength,
+  object,
+  optional,
+  readonly as readonlySchema,
+  refine,
+  regex,
+  string,
+  stringFormat,
+  url,
+  type output,
+  type ZodMiniType,
+} from "zod/mini";
 
 const protocolVersion = "1";
 const maximumResponseBytes = 4096;
@@ -12,6 +34,88 @@ const execFileAsync = promisify(execFile);
 declare const tnlHostnameBrand: unique symbol;
 declare const tnlPublicURLBrand: unique symbol;
 declare const tnlTunnelIDBrand: unique symbol;
+
+const frameworkError = "tnl framework name is invalid";
+const localPortError = "tnl local port must be between 1 and 65535";
+const publicURLError = "tnl dev returned an invalid public URL";
+const environmentPortError = "TNL_DEV_PORT must be a port between 1 and 65535";
+const socketRequiredError = `TNL_DEV_SOCKET is required by tnl dev protocol ${protocolVersion}`;
+const tokenRequiredError = `TNL_DEV_TOKEN is required by tnl dev protocol ${protocolVersion}`;
+
+const frameworkSchema = string(frameworkError).check(regex(/^[a-z]{1,32}$/, frameworkError));
+const localPortSchema = portSchema(localPortError);
+const devEnvironmentSchema = object({
+  TNL_DEV_SOCKET: string(socketRequiredError).check(minLength(1, socketRequiredError)),
+  TNL_DEV_TOKEN: string(tokenRequiredError).check(
+    minLength(1, tokenRequiredError),
+    regex(/^[a-f0-9]{64}$/, "TNL_DEV_TOKEN is invalid"),
+  ),
+  TNL_DEV_PORT: optional(
+    string(environmentPortError).check(
+      refine(
+        (value) =>
+          value === "" || (/^[0-9]+$/.test(value) && Number(value) >= 1 && Number(value) <= 65535),
+        environmentPortError,
+      ),
+    ),
+  ),
+});
+
+const optionStringSchema = (name: string, maximumLength: number) => {
+  const error = `tnl ${name} must be a non-empty string of at most ${maximumLength} characters`;
+  return string(error).check(
+    refine((value) => value.length > 0 && value.length <= maximumLength, error),
+  );
+};
+const allowIPError = "tnl allowIP must be an array of at most 64 entries";
+const tunnelOptionsSchema = readonlySchema(
+  object(
+    {
+      allowCurrentIP: optional(boolean("tnl allowCurrentIP must be a boolean")),
+      allowIP: optional(
+        readonlySchema(
+          array(optionStringSchema("allowIP entry", 128), allowIPError).check(
+            maxLength(64, allowIPError),
+          ),
+        ),
+      ),
+      controlURL: optional(optionStringSchema("controlURL", 2048)),
+      host: optional(optionStringSchema("host", 253)),
+    },
+    "tnl options must be an object",
+  ),
+);
+
+const hostnameError = "tnl dev returned an invalid public hostname";
+const hostnameSchema = hostname(hostnameError).check(
+  lowercase(hostnameError),
+  refine((value) => !value.endsWith("."), hostnameError),
+);
+const tunnelAssignmentSchema = object(
+  {
+    hostname: hostnameSchema,
+    protocol: literal(1, "tnl dev returned an inconsistent tunnel assignment"),
+    publicURL: url(publicURLError),
+    tunnelID: stringFormat(
+      "tnl-tunnel-id",
+      /^tunnel_[a-f0-9]{32}$/,
+      "tnl dev returned an invalid tunnel ID",
+    ),
+  },
+  "tnl dev returned an invalid tunnel assignment",
+).check(
+  refine(({ hostname, publicURL }) => {
+    const parsedURL = new URL(publicURL);
+    return (
+      parsedURL.origin === `https://${hostname}` &&
+      parsedURL.pathname === "/" &&
+      !parsedURL.search &&
+      !parsedURL.hash &&
+      !parsedURL.username &&
+      !parsedURL.password
+    );
+  }, publicURLError),
+);
 
 /** A lowercase DNS hostname validated by tnl. */
 export type TnlHostname = string & { readonly [tnlHostnameBrand]: true };
@@ -124,14 +228,9 @@ export function readDevEnvironment(
     );
   }
 
-  const socket = requiredEnvironment(environment, "TNL_DEV_SOCKET");
-  const token = requiredEnvironment(environment, "TNL_DEV_TOKEN");
-  if (!/^[a-f0-9]{64}$/.test(token)) {
-    throw new Error("TNL_DEV_TOKEN is invalid");
-  }
-
-  const port = optionalPort(environment.TNL_DEV_PORT, "TNL_DEV_PORT");
-  return Object.freeze({ port, socket, token });
+  const values = parseSchema(devEnvironmentSchema, environment);
+  const port = values.TNL_DEV_PORT ? Number(values.TNL_DEV_PORT) : undefined;
+  return Object.freeze({ port, socket: values.TNL_DEV_SOCKET, token: values.TNL_DEV_TOKEN });
 }
 
 /**
@@ -146,9 +245,7 @@ export async function requestTunnelAssignment(
   if (bootstrap === null) {
     return null;
   }
-  if (!/^[a-z]{1,32}$/.test(configuration.framework)) {
-    throw new Error("tnl framework name is invalid");
-  }
+  parseSchema(frameworkSchema, configuration.framework);
 
   const input = configuration.options ?? {};
   const resolved =
@@ -182,9 +279,7 @@ export async function registerLocalPort(
   assignment: TnlTunnelAssignment,
   port: number,
 ): Promise<void> {
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error("tnl local port must be between 1 and 65535");
-  }
+  parseSchema(localPortSchema, port);
   const body = JSON.stringify({ protocol: 1, framework: assignment.framework, port });
   await sendRequest(assignment, assignment.framework, "/v1/target", body, 204);
 }
@@ -310,44 +405,7 @@ function worktreeLabel(name: string, root: string): string {
 }
 
 function validateOptions(value: unknown): TnlTunnelOptions {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error("tnl options must be an object");
-  }
-  const record = value as Record<string, unknown>;
-  const allowedKeys = new Set(["allowCurrentIP", "allowIP", "controlURL", "host"]);
-  for (const key of Object.keys(record)) {
-    if (!allowedKeys.has(key)) {
-      throw new Error(`unknown tnl option ${JSON.stringify(key)}`);
-    }
-  }
-
-  const options: {
-    allowCurrentIP?: boolean;
-    allowIP?: readonly string[];
-    controlURL?: string;
-    host?: string;
-  } = {};
-  if (record.controlURL !== undefined) {
-    options.controlURL = boundedString(record.controlURL, "controlURL", 2048);
-  }
-  if (record.host !== undefined) {
-    options.host = boundedString(record.host, "host", 253);
-  }
-  if (record.allowIP !== undefined) {
-    if (!Array.isArray(record.allowIP) || record.allowIP.length > 64) {
-      throw new Error("tnl allowIP must be an array of at most 64 entries");
-    }
-    options.allowIP = Object.freeze(
-      record.allowIP.map((entry) => boundedString(entry, "allowIP entry", 128)),
-    );
-  }
-  if (record.allowCurrentIP !== undefined) {
-    if (typeof record.allowCurrentIP !== "boolean") {
-      throw new Error("tnl allowCurrentIP must be a boolean");
-    }
-    options.allowCurrentIP = record.allowCurrentIP;
-  }
-  return Object.freeze(options);
+  return parseSchema(tunnelOptionsSchema, value);
 }
 
 function validateAssignment(
@@ -355,107 +413,26 @@ function validateAssignment(
   bootstrap: TnlDevBootstrap,
   framework: string,
 ): TnlTunnelAssignment {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error("tnl dev returned an invalid tunnel assignment");
-  }
-  const assignment = value as Record<string, unknown>;
-  const expectedKeys = ["hostname", "protocol", "publicURL", "tunnelID"];
-  if (
-    Object.keys(assignment).length !== expectedKeys.length ||
-    expectedKeys.some((key) => !(key in assignment))
-  ) {
-    throw new Error("tnl dev returned an invalid tunnel assignment");
-  }
-  if (assignment.protocol !== 1) {
-    throw new Error("tnl dev returned an inconsistent tunnel assignment");
-  }
-  if (!validTunnelID(assignment.tunnelID)) {
-    throw new Error("tnl dev returned an invalid tunnel ID");
-  }
-  if (!validHostname(assignment.hostname)) {
-    throw new Error("tnl dev returned an invalid public hostname");
-  }
-  if (!validPublicURL(assignment.publicURL, assignment.hostname)) {
-    throw new Error("tnl dev returned an invalid public URL");
-  }
+  const assignment = parseSchema(tunnelAssignmentSchema, value);
   return Object.freeze({
     ...bootstrap,
     framework,
-    hostname: assignment.hostname,
-    publicURL: assignment.publicURL,
-    tunnelID: assignment.tunnelID,
+    hostname: assignment.hostname as TnlHostname,
+    publicURL: assignment.publicURL as TnlPublicURL,
+    tunnelID: assignment.tunnelID as TnlTunnelID,
   });
 }
 
-function boundedString(value: unknown, name: string, maximumLength: number): string {
-  if (typeof value !== "string" || value.length === 0 || value.length > maximumLength) {
-    throw new Error(
-      `tnl ${name} must be a non-empty string of at most ${maximumLength} characters`,
-    );
+function parseSchema<T extends ZodMiniType>(schema: T, value: unknown): output<T> {
+  const result = schema.safeParse(value);
+  if (!result.success) {
+    throw new Error(result.error.issues[0]?.message ?? "invalid tnl value", {
+      cause: result.error,
+    });
   }
-  return value;
+  return result.data;
 }
 
-function requiredEnvironment(environment: TnlDevEnvironment, name: string): string {
-  const value = environment[name];
-  if (typeof value !== "string" || value === "") {
-    throw new Error(`${name} is required by tnl dev protocol ${protocolVersion}`);
-  }
-  return value;
-}
-
-function optionalPort(value: string | undefined, name: string): number | undefined {
-  if (value === undefined || value === "") {
-    return undefined;
-  }
-  if (!/^[0-9]+$/.test(value)) {
-    throw new Error(`${name} must be a port between 1 and 65535`);
-  }
-  const port = Number(value);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error(`${name} must be a port between 1 and 65535`);
-  }
-  return port;
-}
-
-function validTunnelID(value: unknown): value is TnlTunnelID {
-  return typeof value === "string" && /^tunnel_[a-f0-9]{32}$/.test(value);
-}
-
-function validHostname(value: unknown): value is TnlHostname {
-  if (
-    typeof value !== "string" ||
-    value.length === 0 ||
-    value.length > 253 ||
-    value !== value.toLowerCase()
-  ) {
-    return false;
-  }
-  return value.split(".").every(validHostnameLabel);
-}
-
-function validHostnameLabel(value: string): boolean {
-  return value.length > 0 && value.length <= 63 && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(value);
-}
-
-function validPublicURL(value: unknown, hostname: TnlHostname): value is TnlPublicURL {
-  if (typeof value !== "string") {
-    return false;
-  }
-  let parsedURL: URL;
-  try {
-    parsedURL = new URL(value);
-  } catch {
-    return false;
-  }
-  return (
-    parsedURL.protocol === "https:" &&
-    parsedURL.hostname === hostname &&
-    parsedURL.port === "" &&
-    parsedURL.pathname === "/" &&
-    parsedURL.search === "" &&
-    parsedURL.hash === "" &&
-    parsedURL.username === "" &&
-    parsedURL.password === ""
-  );
+function portSchema(error: string) {
+  return int(error).check(gte(1, error), lte(65535, error));
 }

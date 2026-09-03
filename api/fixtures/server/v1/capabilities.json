@@ -6,7 +6,14 @@
   },
   "administration": {
     "version": 1,
-    "operations": ["server_status", "routes", "hostnames", "credentials", "control_sessions", "maintenance_controls"]
+    "operations": [
+      "server_status",
+      "routes",
+      "hostnames",
+      "credentials",
+      "control_sessions",
+      "maintenance_controls"
+    ]
   },
   "hostname_authorization": ["local_hostnames"],
   "hostname_suffix": "example",

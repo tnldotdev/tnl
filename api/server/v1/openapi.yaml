@@ -139,7 +139,7 @@ paths:
         content:
           application/json:
             schema:
-                $ref: "#/components/schemas/OIDCTokenExchangeRequest"
+              $ref: "#/components/schemas/OIDCTokenExchangeRequest"
       responses:
         "200":
           description: Control session issued
@@ -1241,7 +1241,15 @@ components:
           uniqueItems: true
           items:
             type: string
-            enum: [server_status, routes, hostnames, credentials, control_sessions, maintenance_controls]
+            enum:
+              [
+                server_status,
+                routes,
+                hostnames,
+                credentials,
+                control_sessions,
+                maintenance_controls,
+              ]
     OIDCCapabilities:
       type: object
       additionalProperties: false
@@ -1633,7 +1641,16 @@ components:
     AdminServerStatus:
       type: object
       additionalProperties: false
-      required: [mode, started_at, current_time, enabled_routes, suspended_routes, provisioning_routes, connected_workers]
+      required:
+        [
+          mode,
+          started_at,
+          current_time,
+          enabled_routes,
+          suspended_routes,
+          provisioning_routes,
+          connected_workers,
+        ]
       properties:
         mode:
           type: string
@@ -1821,7 +1838,16 @@ components:
     AdminControlSession:
       type: object
       additionalProperties: false
-      required: [id, identity_id, authentication_method, grants, created_at, access_expires_at, refresh_expires_at]
+      required:
+        [
+          id,
+          identity_id,
+          authentication_method,
+          grants,
+          created_at,
+          access_expires_at,
+          refresh_expires_at,
+        ]
       properties:
         id:
           $ref: "#/components/schemas/ControlSessionID"
@@ -1964,7 +1990,8 @@ components:
     CertificateIssuance:
       type: object
       additionalProperties: false
-      required: [id, route_id, route_version, hostname, acme_profile, status, created_at, updated_at]
+      required:
+        [id, route_id, route_version, hostname, acme_profile, status, created_at, updated_at]
       properties:
         id:
           type: string

@@ -3,14 +3,14 @@
   "$id": "https://tnl.dev/schemas/worker/v1/control.json",
   "title": "tnl worker control message v1",
   "oneOf": [
-    {"$ref": "#/$defs/hello"},
-    {"$ref": "#/$defs/helloAccepted"},
-    {"$ref": "#/$defs/attachRoute"},
-    {"$ref": "#/$defs/routeReady"},
-    {"$ref": "#/$defs/detachRoute"},
-    {"$ref": "#/$defs/routeDrained"},
-    {"$ref": "#/$defs/workerDraining"},
-    {"$ref": "#/$defs/error"}
+    { "$ref": "#/$defs/hello" },
+    { "$ref": "#/$defs/helloAccepted" },
+    { "$ref": "#/$defs/attachRoute" },
+    { "$ref": "#/$defs/routeReady" },
+    { "$ref": "#/$defs/detachRoute" },
+    { "$ref": "#/$defs/routeDrained" },
+    { "$ref": "#/$defs/workerDraining" },
+    { "$ref": "#/$defs/error" }
   ],
   "$defs": {
     "route": {
@@ -18,8 +18,12 @@
       "additionalProperties": false,
       "required": ["route_id", "route_version"],
       "properties": {
-        "route_id": {"type": "string", "minLength": 1, "pattern": "^\\S(?:.*\\S)?$"},
-        "route_version": {"type": "integer", "description": "Route version assigned to the worker.", "minimum": 1}
+        "route_id": { "type": "string", "minLength": 1, "pattern": "^\\S(?:.*\\S)?$" },
+        "route_version": {
+          "type": "integer",
+          "description": "Route version assigned to the worker.",
+          "minimum": 1
+        }
       }
     },
     "hello": {
@@ -27,25 +31,36 @@
       "additionalProperties": false,
       "required": ["type", "route_capacity"],
       "properties": {
-        "type": {"const": "hello"},
-        "route_capacity": {"type": "integer", "description": "Maximum number of routes the worker can serve concurrently.", "minimum": 1}
+        "type": { "const": "hello" },
+        "route_capacity": {
+          "type": "integer",
+          "description": "Maximum number of routes the worker can serve concurrently.",
+          "minimum": 1
+        }
       }
     },
     "helloAccepted": {
       "type": "object",
       "additionalProperties": false,
       "required": ["type"],
-      "properties": {"type": {"const": "hello_accepted"}}
+      "properties": { "type": { "const": "hello_accepted" } }
     },
     "attachRoute": {
       "type": "object",
       "additionalProperties": false,
       "required": ["type", "route", "publisher_transport", "tailcat_dialer_private_key"],
       "properties": {
-        "type": {"const": "attach_route"},
-        "route": {"$ref": "#/$defs/route"},
-        "publisher_transport": {"$ref": "../../transport/v1/tailcat-descriptor.schema.json", "description": "Tailcat transport advertised by the route publisher."},
-        "tailcat_dialer_private_key": {"type": "string", "description": "Private node key used by the worker to dial the publisher transport.", "minLength": 1}
+        "type": { "const": "attach_route" },
+        "route": { "$ref": "#/$defs/route" },
+        "publisher_transport": {
+          "$ref": "../../transport/v1/tailcat-descriptor.schema.json",
+          "description": "Tailcat transport advertised by the route publisher."
+        },
+        "tailcat_dialer_private_key": {
+          "type": "string",
+          "description": "Private node key used by the worker to dial the publisher transport.",
+          "minLength": 1
+        }
       }
     },
     "routeReady": {
@@ -53,8 +68,8 @@
       "additionalProperties": false,
       "required": ["type", "route"],
       "properties": {
-        "type": {"const": "route_ready"},
-        "route": {"$ref": "#/$defs/route"}
+        "type": { "const": "route_ready" },
+        "route": { "$ref": "#/$defs/route" }
       }
     },
     "detachRoute": {
@@ -62,8 +77,8 @@
       "additionalProperties": false,
       "required": ["type", "route"],
       "properties": {
-        "type": {"const": "detach_route"},
-        "route": {"$ref": "#/$defs/route"}
+        "type": { "const": "detach_route" },
+        "route": { "$ref": "#/$defs/route" }
       }
     },
     "routeDrained": {
@@ -71,24 +86,26 @@
       "additionalProperties": false,
       "required": ["type", "route"],
       "properties": {
-        "type": {"const": "route_drained"},
-        "route": {"$ref": "#/$defs/route"}
+        "type": { "const": "route_drained" },
+        "route": { "$ref": "#/$defs/route" }
       }
     },
     "workerDraining": {
       "type": "object",
       "additionalProperties": false,
       "required": ["type"],
-      "properties": {"type": {"const": "worker_draining"}}
+      "properties": { "type": { "const": "worker_draining" } }
     },
     "error": {
       "type": "object",
       "additionalProperties": false,
       "required": ["type", "code"],
       "properties": {
-        "type": {"const": "error"},
-        "route": {"$ref": "#/$defs/route"},
-        "code": {"enum": ["invalid_message", "stale_route_version", "route_capacity_exceeded", "internal"]}
+        "type": { "const": "error" },
+        "route": { "$ref": "#/$defs/route" },
+        "code": {
+          "enum": ["invalid_message", "stale_route_version", "route_capacity_exceeded", "internal"]
+        }
       }
     }
   }

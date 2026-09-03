@@ -121,18 +121,11 @@ tasks:
 
   go:format:
     cmds:
-      - |
-        files="$(git ls-files --cached --others --exclude-standard -- '*.go' | while IFS= read -r file; do test ! -f "$file" || printf '%s\n' "$file"; done)"
-        test -z "$files" || goimports -w $files
+      - goimports -w .
 
   go:format-check:
     cmds:
-      - |
-        files="$(git ls-files --cached --others --exclude-standard -- '*.go' | while IFS= read -r file; do test ! -f "$file" || printf '%s\n' "$file"; done)"
-        test -z "$files" || test -z "$(gofmt -l $files)"
-      - |
-        files="$(git ls-files --cached --others --exclude-standard -- '*.go' | while IFS= read -r file; do test ! -f "$file" || printf '%s\n' "$file"; done)"
-        test -z "$files" || test -z "$(goimports -l $files)"
+      - test -z "$(goimports -l .)"
 
   go:lint:
     cmds:
@@ -157,7 +150,7 @@ tasks:
     env:
       TNL_TEST_INTEGRATION: "1"
     cmds:
-      - go test -race -v ./cmd/tnld ./internal/controltls ./internal/tailtransport ./internal/publisher ./internal/integration -run='^TestIntegration' -count=1 -timeout=15m
+      - go test -race -v ./... -run='^TestIntegration' -count=1 -timeout=15m
 
   go:bench-fly:
     desc: Benchmark complete standalone and split route paths on Fly
@@ -176,7 +169,7 @@ tasks:
 
   go:build:
     cmds:
-      - go build ./cmd/...
+      - go build ./...
 
   js:format:
     cmds:

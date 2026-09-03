@@ -5,8 +5,8 @@
   "scripts": {
     "build": "pnpm --filter @tnldotdev/dev build && pnpm --filter @tnldotdev/next build:self && pnpm --filter @tnldotdev/vite build:self",
     "clean": "pnpm --recursive --if-present run clean",
-    "format": "oxfmt --write package.json pnpm-workspace.yaml tsconfig.base.json tsconfig.test.json vitest.config.ts 'packages/**/*.{json,md,mjs,ts,tsx}' 'scripts/*.mjs'",
-    "format:check": "oxfmt --check package.json pnpm-workspace.yaml tsconfig.base.json tsconfig.test.json vitest.config.ts 'packages/**/*.{json,md,mjs,ts,tsx}' 'scripts/*.mjs'",
+    "format": "oxfmt --write '**/*'",
+    "format:check": "oxfmt --check '**/*'",
     "lint": "oxlint --deny-warnings packages scripts vitest.config.ts",
     "pack": "node scripts/verify-packages.mjs",
     "pretest": "pnpm build",
