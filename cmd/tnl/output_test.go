@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/serverclient"
 )
 
@@ -96,6 +97,25 @@ func TestPublishOutputHumanPrintsURLOnce(t *testing.T) {
 	}
 	if len(opened) != 1 || opened[0] != "https://demo.example" {
 		t.Fatalf("opened = %#v", opened)
+	}
+}
+
+func TestPublishOutputNDJSONIncludesDiagnosticFields(t *testing.T) {
+	var stdout bytes.Buffer
+	output, err := newPublishOutput("ndjson", &stdout, io.Discard, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := output.failed(diagnostic.Wrap(diagnostic.TargetUnavailable, errors.New("connection refused"))); err != nil {
+		t.Fatal(err)
+	}
+	var event publishEvent
+	if err := json.NewDecoder(&stdout).Decode(&event); err != nil {
+		t.Fatal(err)
+	}
+	if event.Code != string(diagnostic.TargetUnavailable) || event.HelpURL != diagnostic.HelpURL(diagnostic.TargetUnavailable) ||
+		event.Message != "connection refused" {
+		t.Fatalf("event = %#v", event)
 	}
 }
 

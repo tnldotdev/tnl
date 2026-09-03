@@ -25,6 +25,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/clientstate"
+	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/publisher"
 )
@@ -61,7 +62,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	}
 	flags.Command = command
 	if flags.Port < 0 || flags.Port > 65535 {
-		return errors.New("port must be between 1 and 65535")
+		return diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("port must be between 1 and 65535"))
 	}
 	if flags.StartupTimeout <= 0 || flags.StartupTimeout > 10*time.Minute {
 		return errors.New("startup timeout must be greater than zero and at most 10 minutes")
@@ -135,7 +136,11 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 			cancelTargetReady()
 			if err != nil {
 				if errors.Is(err, context.DeadlineExceeded) {
-					return fmt.Errorf("development server did not listen on %s before the startup timeout", target)
+					return diagnostic.WrapMessage(
+						diagnostic.TargetUnavailable,
+						fmt.Sprintf("development server did not listen on %s before the startup timeout", target),
+						err,
+					)
 				}
 				return err
 			}
@@ -250,7 +255,11 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		case err := <-targetReady:
 			if err != nil {
 				if errors.Is(err, context.DeadlineExceeded) {
-					return fmt.Errorf("development server did not listen on %s before the startup timeout", target)
+					return diagnostic.WrapMessage(
+						diagnostic.TargetUnavailable,
+						fmt.Sprintf("development server did not listen on %s before the startup timeout", target),
+						err,
+					)
 				}
 				return err
 			}

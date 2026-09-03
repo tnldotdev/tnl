@@ -19,6 +19,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientauth"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
@@ -120,9 +121,17 @@ func main() {
 		if errors.As(err, &commandErr) {
 			os.Exit(commandErr.code)
 		}
-		fmt.Fprintf(os.Stderr, "tnl: %v\n", err)
+		writeCommandError(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+func writeCommandError(output io.Writer, err error) {
+	if text, ok := diagnostic.TextForError(err); ok {
+		_, _ = io.WriteString(output, text)
+		return
+	}
+	_, _ = fmt.Fprintf(output, "tnl: %v\n", err)
 }
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterFactories ...telemetryReporterFactory) error {

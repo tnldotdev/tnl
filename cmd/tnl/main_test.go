@@ -17,6 +17,7 @@ import (
 
 	"github.com/alecthomas/kong"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/serverclient"
 	"github.com/tnldotdev/tnl/internal/state"
 	"github.com/tnldotdev/tnl/pkg/protocol/serverv1"
@@ -25,6 +26,22 @@ import (
 type telemetryReporterFunc func(telemetryPayload)
 
 func (f telemetryReporterFunc) Report(payload telemetryPayload) { f(payload) }
+
+func TestWriteCommandErrorRendersDiagnostics(t *testing.T) {
+	var output bytes.Buffer
+	writeCommandError(&output, diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("invalid port 70000")))
+	text := output.String()
+	if !strings.HasPrefix(text, "[ tnl ]\n\ninvalid target\n") || !strings.Contains(text, "invalid port 70000") ||
+		!strings.HasSuffix(text, "https://tnl.dev/e/config\n") {
+		t.Fatalf("output = %q", text)
+	}
+
+	output.Reset()
+	writeCommandError(&output, errors.New("ordinary failure"))
+	if output.String() != "tnl: ordinary failure\n" {
+		t.Fatalf("ordinary output = %q", output.String())
+	}
+}
 
 func TestVersionCommand(t *testing.T) {
 	var output, errors bytes.Buffer

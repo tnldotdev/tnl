@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/tls"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -11,8 +12,11 @@ import (
 	"net/netip"
 	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/diagnostic"
 )
 
 func TestProxyForwardsOnlyExactTrustedRequests(t *testing.T) {
@@ -72,7 +76,66 @@ func TestProxyForwardsOnlyExactTrustedRequests(t *testing.T) {
 			if response.Code != http.StatusBadRequest {
 				t.Fatalf("status = %d", response.Code)
 			}
+			if response.Header().Get("Tnl-Error-Code") != "TNL_REQUEST_REJECTED" {
+				t.Fatalf("diagnostic code = %q", response.Header().Get("Tnl-Error-Code"))
+			}
 		})
+	}
+}
+
+func TestNewDiagnosesInvalidRouteHostname(t *testing.T) {
+	if _, err := New("3000", "INVALID.example"); err == nil {
+		t.Fatal("New accepted a noncanonical route hostname")
+	} else if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.RouteInvalid {
+		t.Fatalf("New diagnostic = %q, %t", code, ok)
+	}
+}
+
+func TestProxyDiagnosesUnavailableTarget(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := "http://" + listener.Addr().String()
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	handler, err := New(target, "route.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Host = "route.example"
+	request.TLS = &tls.ConnectionState{ServerName: "route.example"}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusBadGateway || response.Header().Get("Tnl-Error-Code") != "TNL_TARGET_UNAVAILABLE" {
+		t.Fatalf("response = %d, %#v", response.Code, response.Header())
+	}
+	body := response.Body.String()
+	if !strings.Contains(body, "+--------------------------+") || !strings.HasSuffix(body, "https://tnl.dev/e/target\n") {
+		t.Fatalf("body = %q", body)
+	}
+}
+
+func TestProxyPreservesLocalServiceErrors(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.Header().Set("X-Application-Error", "true")
+		http.Error(response, "application failure", http.StatusBadGateway)
+	}))
+	defer upstream.Close()
+	handler, err := New(upstream.URL, "route.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Host = "route.example"
+	request.TLS = &tls.ConnectionState{ServerName: "route.example"}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusBadGateway || response.Body.String() != "application failure\n" ||
+		response.Header().Get("X-Application-Error") != "true" || response.Header().Get("Tnl-Error-Code") != "" {
+		t.Fatalf("response = %d, %#v, %q", response.Code, response.Header(), response.Body.String())
 	}
 }
 
@@ -226,6 +289,8 @@ func TestNormalizeTarget(t *testing.T) {
 		t.Run(target, func(t *testing.T) {
 			if got, err := NormalizeTarget(target); err == nil {
 				t.Fatalf("NormalizeTarget(%q) = %q, want error", target, got)
+			} else if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.TargetInvalid {
+				t.Fatalf("NormalizeTarget(%q) diagnostic = %q, %t", target, code, ok)
 			}
 		})
 	}
@@ -239,6 +304,8 @@ func TestPreflightRequiresAvailableTarget(t *testing.T) {
 	upstream.Close()
 	if err := Preflight(context.Background(), upstream.URL); err == nil {
 		t.Fatal("Preflight accepted unavailable target")
+	} else if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.TargetUnavailable {
+		t.Fatalf("Preflight diagnostic = %q, %t", code, ok)
 	}
 }
 
@@ -267,6 +334,26 @@ func TestWaitForTargetAllowsDevelopmentServerStartup(t *testing.T) {
 	}()
 	if err := WaitForTarget(ctx, "http://"+address); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestWaitForTargetPreservesUnavailableDiagnosticOnTimeout(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := "http://" + listener.Addr().String()
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer cancel()
+	err = WaitForTarget(ctx, target)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("WaitForTarget error = %v", err)
+	}
+	if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.TargetUnavailable {
+		t.Fatalf("WaitForTarget diagnostic = %q, %t", code, ok)
 	}
 }
 

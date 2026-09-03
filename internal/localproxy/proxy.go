@@ -15,6 +15,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/naming"
 )
 
@@ -29,9 +30,12 @@ func Preflight(ctx context.Context, target string) error {
 	targetAddress := strings.TrimPrefix(canonicalTarget, "http://")
 	connection, err := (&net.Dialer{Timeout: 3 * time.Second}).DialContext(ctx, "tcp", targetAddress)
 	if err != nil {
-		return fmt.Errorf("localproxy: connect to target: %w", err)
+		return diagnostic.Wrap(diagnostic.TargetUnavailable, fmt.Errorf("localproxy: connect to target: %w", err))
 	}
-	return connection.Close()
+	if err := connection.Close(); err != nil {
+		return diagnostic.Wrap(diagnostic.TargetUnavailable, fmt.Errorf("localproxy: close target connection: %w", err))
+	}
+	return nil
 }
 
 // WaitForTarget waits until a valid target accepts a loopback TCP connection.
@@ -59,7 +63,7 @@ func WaitForTarget(ctx context.Context, target string) error {
 func New(target, hostname string) (http.Handler, error) {
 	canonical, err := naming.CanonicalizeHostname(hostname)
 	if err != nil || canonical != hostname {
-		return nil, errors.New("localproxy: hostname must be canonical")
+		return nil, diagnostic.Wrap(diagnostic.RouteInvalid, errors.New("localproxy: hostname must be canonical"))
 	}
 	canonicalTarget, err := NormalizeTarget(target)
 	if err != nil {
@@ -93,13 +97,13 @@ func New(target, hostname string) (http.Handler, error) {
 			request.Out.Host = host
 			request.SetXForwarded()
 		},
-		ErrorHandler: func(response http.ResponseWriter, _ *http.Request, _ error) {
-			http.Error(response, "bad gateway", http.StatusBadGateway)
+		ErrorHandler: func(response http.ResponseWriter, request *http.Request, _ error) {
+			diagnostic.WriteHTTP(response, request, http.StatusBadGateway, diagnostic.TargetUnavailable)
 		},
 	}
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if !validRequest(request, hostname) {
-			http.Error(response, "bad request", http.StatusBadRequest)
+			diagnostic.WriteHTTP(response, request, http.StatusBadRequest, diagnostic.RequestRejected)
 			return
 		}
 		proxy.ServeHTTP(response, request)
@@ -109,7 +113,7 @@ func New(target, hostname string) (http.Handler, error) {
 // NormalizeTarget validates a local proxy target and returns its canonical HTTP origin.
 func NormalizeTarget(target string) (string, error) {
 	if target == "" || strings.ContainsFunc(target, unicode.IsSpace) {
-		return "", errors.New("localproxy: target must be a bare port, localhost port, or loopback HTTP origin")
+		return "", diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("localproxy: target must be a bare port, localhost port, or loopback HTTP origin"))
 	}
 
 	barePort := true
@@ -127,7 +131,7 @@ func NormalizeTarget(target string) (string, error) {
 	} else if !barePort {
 		parsed, err := url.Parse(target)
 		if err != nil || !strings.EqualFold(parsed.Scheme, "http") || parsed.User != nil || parsed.Host == "" || parsed.Path != "" || parsed.ForceQuery || parsed.RawQuery != "" || strings.Contains(target, "#") {
-			return "", errors.New("localproxy: target must be a bare port, localhost port, or loopback HTTP origin")
+			return "", diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("localproxy: target must be a bare port, localhost port, or loopback HTTP origin"))
 		}
 		hostname, portText = parsed.Hostname(), parsed.Port()
 		if strings.EqualFold(hostname, "localhost") {
@@ -137,11 +141,11 @@ func NormalizeTarget(target string) (string, error) {
 
 	address, err := netip.ParseAddr(hostname)
 	if err != nil || !address.IsLoopback() || address.Zone() != "" {
-		return "", errors.New("localproxy: target host must be localhost or a literal loopback address")
+		return "", diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("localproxy: target host must be localhost or a literal loopback address"))
 	}
 	port, err := strconv.Atoi(portText)
 	if err != nil || port < 1 || port > 65535 {
-		return "", errors.New("localproxy: target requires a valid port")
+		return "", diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("localproxy: target requires a valid port"))
 	}
 	targetAddress := net.JoinHostPort(address.String(), strconv.Itoa(port))
 	return "http://" + targetAddress, nil
