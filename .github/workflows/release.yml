@@ -265,6 +265,7 @@ jobs:
 
       - name: Publish with npm OIDC
         env:
+          NPM_CONFIG_PROVENANCE: ${{ github.event.repository.visibility == 'public' }}
           VERSION: ${{ needs.validate.outputs.version }}
         run: node scripts/publish-tnl-packages.mjs "$RUNNER_TEMP/tnl-npm-packages" "$VERSION"
 
