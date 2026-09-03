@@ -45,12 +45,43 @@ authority mutations take a conflicting guard. These guards acquire a keyed
 transaction advisory lock before the team row so incoming readers cannot starve
 a waiting authority writer. Publisher-connection claims and
 readiness similarly share a keyed transaction advisory guard and a relay-service
-row guard, then exclusively lock the selected relay lease. Blocking service
+row guard. Claims use `NO KEY UPDATE` on the selected relay lease to serialize
+capacity checks; readiness uses compatible `KEY SHARE` because the connection
+already consumes capacity. Readiness retains the service guard through routing
+publication, excluding process registration while allowing claims and renewal.
+Drain may overlap readiness; lease validation and routing projection reads each
+use their current statement view. Blocking service
 writers queue exclusively before taking service and lease row locks. Maintenance
 using `SKIP LOCKED` remains opportunistic and must not wait for a service guard
 after acquiring its row.
 Concurrency tests must prove both that conflicting operations wait and that
 independent operations finish while a controlled blocker remains held.
+
+Relay-service reservation totals are maintained transactionally by PostgreSQL
+triggers. Counted assignments belong to open sessions and have state `assigned`,
+`connected`, `ready`, or `draining`; an eligibility foreign key propagates session
+closure to its assignments. Placement reads these totals while deriving current
+capacity from eligible relay leases. Reservation-changing transactions acquire
+the assignment-total advisory guard before service guards and lease locks, after
+locking their complete affected route set. Trigger updates use the same guard;
+zero-delta claim/readiness transitions avoid counter writes and that guard.
+Recovery can atomically replace a failed ready connection in its existing relay
+service without releasing its reservation. The statement checks failed lease
+identity and current eligible capacity; route/session guards protect the slot,
+and the zero-delta transition needs no reservation/service/lease locks. Concurrent
+lease changes can invalidate the returned assignment, so claims still check the
+exact current process identity, lease, and capacity. Unavailable or over-capacity
+services, closed/expired slots, and service changes use guarded placement.
+Routing publication remains the final transaction phase.
+For a single event, its insert acquires the routing clock before allocating the
+revision in the same SQL command. Multi-event publications acquire it before the
+first insert. Both retain the clock through commit, preserving revision visibility
+order without a separate round trip inside the common single-event clock window.
+
+Session operations use `NO KEY UPDATE` route guards: the route identity is
+immutable, and usage's `KEY SHARE` references must coexist with heartbeats.
+Route mutations still conflict, while overlapping usage pages cannot starve a
+heartbeat waiting for a stronger route-row lock.
 
 ## Connections And Trust
 

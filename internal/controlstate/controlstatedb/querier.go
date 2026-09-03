@@ -124,6 +124,9 @@ type Querier interface {
 	InsertAdminAuditEvent(ctx context.Context, arg InsertAdminAuditEventParams) error
 	InsertCertificateIssuanceAuditEvent(ctx context.Context, arg InsertCertificateIssuanceAuditEventParams) error
 	InsertExpiredEphemeralRouteDeleteAuditEvent(ctx context.Context, arg InsertExpiredEphemeralRouteDeleteAuditEventParams) error
+	// Acquire the clock before identity allocation in this same command. Single-event
+	// publishers avoid a separate round trip while holding the global clock; callers
+	// with earlier events already hold it. Keep the lock through transaction commit.
 	InsertFinalIngressRoutingTableEvent(ctx context.Context, arg InsertFinalIngressRoutingTableEventParams) (int64, error)
 	InsertIngressRoutingTableEvent(ctx context.Context, arg InsertIngressRoutingTableEventParams) (int64, error)
 	InsertIngressUsageReport(ctx context.Context, arg InsertIngressUsageReportParams) (ControlIngressUsageReport, error)

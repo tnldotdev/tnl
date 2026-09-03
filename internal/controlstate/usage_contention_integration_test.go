@@ -118,7 +118,7 @@ func TestIntegrationUsagePagesContainHeartbeatLockFootprint(t *testing.T) {
 			workers.Go(func() { clockDone <- heartbeat(pools[0], 6) })
 			waitForPostgresBlock(t, ctx, observer, int32(clock.Conn().PgConn().PID()), clockDone)
 			operations, _ := pools[0].activity.snapshot(time.Now())
-			if len(operations) != 1 || operations[0].Operation != "LockIngressRoutingTableClock" {
+			if len(operations) != 1 || operations[0].Operation != "InsertFinalIngressRoutingTableEvent" {
 				t.Fatalf("heartbeat clock wait = %+v", operations)
 			}
 			if err := clock.Commit(ctx); err != nil {

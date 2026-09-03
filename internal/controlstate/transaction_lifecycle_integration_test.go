@@ -314,8 +314,8 @@ func TestIntegrationTransactionExpiredReplacementFollowsHeartbeatPlacementLocks(
 		}
 	}
 	if _, err := database.pool.Exec(t.Context(), `UPDATE control.route_session_connections
-		SET connected_relay_run_id = 'stale-run'
-		WHERE route_session_id = $1 AND connection_slot = 0`, heartbeatAuthentication.RouteSessionID); err != nil {
+		SET state = 'closed', disconnected_at = $2, closed_at = $2
+		WHERE route_session_id = $1 AND connection_slot = 0`, heartbeatAuthentication.RouteSessionID, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.pool.Exec(t.Context(), `UPDATE control.route_sessions SET publisher_expires_at = $1 WHERE id = $2`, now.Add(time.Second), replacementAuthentication.RouteSessionID); err != nil {
@@ -348,7 +348,7 @@ func TestIntegrationTransactionExpiredReplacementFollowsHeartbeatPlacementLocks(
 	var heartbeatSetup RouteSessionSetup
 	workers.Go(func() {
 		var err error
-		heartbeatSetup, err = database.HeartbeatRouteSession(ctx, heartbeatAuthentication, now.Add(2*time.Second), time.Hour, time.Hour)
+		heartbeatSetup, err = database.HeartbeatRouteSession(ctx, heartbeatAuthentication, now.Add(2*time.Second), 48*time.Hour, time.Hour)
 		heartbeatDone <- err
 	})
 	heartbeatPID := waitForPostgresBlock(t, ctx, database, int32(gate.Conn().PgConn().PID()), heartbeatDone)
@@ -357,8 +357,10 @@ func TestIntegrationTransactionExpiredReplacementFollowsHeartbeatPlacementLocks(
 		_, err := database.CreateRouteSession(ctx, replacementRequest, now.Add(2*time.Second), time.Hour, time.Hour)
 		replacementDone <- err
 	})
-	// Replacement must reach placement behind the heartbeat. If closure acquired
-	// the routing clock immediately, it would wait on the gate instead.
+	// The closed slot needs a new reservation (a failed ready slot may reuse its
+	// reservation without placement). Replacement must queue behind that allocation.
+	// Extending the fixture's 48-hour lease also requires routing publication.
+	// If closure acquired the routing clock immediately, it would wait on the gate instead.
 	waitForPostgresBlock(t, ctx, database, heartbeatPID, replacementDone)
 	if err := gate.Commit(ctx); err != nil {
 		t.Fatal(err)
@@ -369,7 +371,7 @@ func TestIntegrationTransactionExpiredReplacementFollowsHeartbeatPlacementLocks(
 	if heartbeatSetup.PublisherConnections[0].State != PublisherConnectionAssigned ||
 		heartbeatSetup.PublisherConnections[0].ConnectionAssignmentRevision != 2 ||
 		heartbeatSetup.PublisherConnections[1].State != PublisherConnectionReady {
-		t.Fatalf("stale relay run replacement = %#v", heartbeatSetup.PublisherConnections)
+		t.Fatalf("closed connection replacement = %#v", heartbeatSetup.PublisherConnections)
 	}
 	if err := awaitIntegrationResult(t, ctx, replacementDone); err != nil {
 		t.Fatal(err)

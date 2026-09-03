@@ -12,7 +12,12 @@ import (
 )
 
 const insertFinalIngressRoutingTableEvent = `-- name: InsertFinalIngressRoutingTableEvent :one
-WITH inserted AS (
+WITH clock_guard AS MATERIALIZED (
+    SELECT current_revision
+    FROM control.ingress_routing_table_clock
+    WHERE singleton = true
+    FOR UPDATE
+), inserted AS (
     INSERT INTO control.ingress_routing_table_events (
         event_kind,
         route_id,
@@ -22,7 +27,7 @@ WITH inserted AS (
         projection,
         route_expires_at,
         created_at
-    ) VALUES (
+    ) SELECT
         $1,
         $2,
         $3,
@@ -31,7 +36,7 @@ WITH inserted AS (
         $6,
         $7,
         $8
-    )
+    FROM clock_guard
     RETURNING routing_table_revision
 ), advanced AS (
     UPDATE control.ingress_routing_table_clock
@@ -58,6 +63,9 @@ type InsertFinalIngressRoutingTableEventParams struct {
 	UpdatedAt         pgtype.Timestamptz
 }
 
+// Acquire the clock before identity allocation in this same command. Single-event
+// publishers avoid a separate round trip while holding the global clock; callers
+// with earlier events already hold it. Keep the lock through transaction commit.
 func (q *Queries) InsertFinalIngressRoutingTableEvent(ctx context.Context, arg InsertFinalIngressRoutingTableEventParams) (int64, error) {
 	row := q.db.QueryRow(ctx, insertFinalIngressRoutingTableEvent,
 		arg.EventKind,

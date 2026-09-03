@@ -300,7 +300,7 @@ func (d *Database) HeartbeatRouteSession(
 	removedReadyConnection := false
 	if len(connections) != routeSessionConnectionCount {
 		removedReadyConnection, err = replenishRouteSessionConnections(
-			ctx, queries, session, authentication.RouteSessionToken, now, connectionCredentialDuration,
+			ctx, queries, session, authentication.RouteSessionToken, connections, now, connectionCredentialDuration,
 		)
 		if err != nil {
 			return RouteSessionSetup{}, err
@@ -378,14 +378,14 @@ func (d *Database) markPublisherConnectionReady(
 		beforeState != PublisherConnectionConnected && beforeState != PublisherConnectionReady {
 		return ClaimedPublisherConnection{}, ErrConnectionAssignmentStale
 	}
-	lease, err := queries.GetRelayLeaseForClaim(ctx, request.RelayID)
+	lease, err := queries.GetRelayLeaseForReady(ctx, request.RelayID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ClaimedPublisherConnection{}, ErrRelayLeaseStale
 	}
 	if err != nil {
 		return ClaimedPublisherConnection{}, fmt.Errorf("controlstate: mark publisher connection ready: lock relay lease: %w", err)
 	}
-	if err := validateClaimRelayLease(lease, request.RelayLeaseIdentity, before.RelayServiceID, now); err != nil {
+	if err := validateClaimRelayLease(controlstatedb.GetRelayLeaseForClaimRow(lease), request.RelayLeaseIdentity, before.RelayServiceID, now); err != nil {
 		return ClaimedPublisherConnection{}, err
 	}
 	row, err := queries.MarkPublisherConnectionReady(ctx, publisherConnectionClaimParams(request, now))
@@ -769,8 +769,12 @@ func (pending *pendingIngressRoutingTableEvents) publish(ctx context.Context, qu
 	}
 	// This is the transaction's final phase. The clock remains held through
 	// commit, and callers must not perform further database work after it.
-	if _, err := queries.LockIngressRoutingTableClock(ctx); err != nil {
-		return fmt.Errorf("controlstate: lock ingress routing-table clock: %w", err)
+	// The final insert takes the clock before allocating its revision. Only a
+	// multi-event publication needs an earlier, separate clock acquisition.
+	if len(pending.events) > 1 {
+		if _, err := queries.LockIngressRoutingTableClock(ctx); err != nil {
+			return fmt.Errorf("controlstate: lock ingress routing-table clock: %w", err)
+		}
 	}
 	for index := range pending.events {
 		event := &pending.events[index]

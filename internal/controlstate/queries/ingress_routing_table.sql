@@ -67,7 +67,15 @@ INSERT INTO control.ingress_routing_table_events (
 RETURNING routing_table_revision;
 
 -- name: InsertFinalIngressRoutingTableEvent :one
-WITH inserted AS (
+-- Acquire the clock before identity allocation in this same command. Single-event
+-- publishers avoid a separate round trip while holding the global clock; callers
+-- with earlier events already hold it. Keep the lock through transaction commit.
+WITH clock_guard AS MATERIALIZED (
+    SELECT current_revision
+    FROM control.ingress_routing_table_clock
+    WHERE singleton = true
+    FOR UPDATE
+), inserted AS (
     INSERT INTO control.ingress_routing_table_events (
         event_kind,
         route_id,
@@ -77,7 +85,7 @@ WITH inserted AS (
         projection,
         route_expires_at,
         created_at
-    ) VALUES (
+    ) SELECT
         sqlc.arg(event_kind),
         sqlc.arg(route_id),
         sqlc.arg(route_version),
@@ -86,7 +94,7 @@ WITH inserted AS (
         sqlc.arg(projection),
         sqlc.narg(route_expires_at),
         sqlc.arg(created_at)
-    )
+    FROM clock_guard
     RETURNING routing_table_revision
 ), advanced AS (
     UPDATE control.ingress_routing_table_clock
