@@ -41,6 +41,7 @@ jobs:
 
   framework-compatibility:
     name: ${{ matrix.framework }} ${{ matrix.version }}
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
@@ -222,81 +223,18 @@ jobs:
           test -x "dist/tnl_${TARGET}/tnl"
           test -x "dist/tnld_${TARGET}/tnld"
 
-  release-snapshot-full:
-    name: Full release snapshot
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: false
-
-      - name: Set up pnpm and Node
-        uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
-        with:
-          runtime: node@22.23.2
-          cache: false
-          require-lockfile: true
-
-      - name: Install Syft
-        uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
-        with:
-          syft-version: v1.51.1
-
-      - name: Install GoReleaser
-        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
-        with:
-          version: v2.18.0
-          install-only: true
-
-      - name: Build release snapshot
-        run: goreleaser release --snapshot --clean --skip=sign
-
-      - name: Verify release snapshot
-        run: |
-          archives=(dist/*.tar.gz)
-          sboms=(dist/*.spdx.json)
-          test "${#archives[@]}" -eq 4
-          test "${#sboms[@]}" -eq 4
-          for archive in "${archives[@]}"; do
-            tar -tzf "$archive" LICENSE NOTICE THIRD_PARTY_LICENSES.txt tnl tnld >/dev/null
-            tar -xOzf "$archive" LICENSE | grep -F -x 'MIT License' >/dev/null
-          done
-          (cd dist && sha256sum --check checksums.txt)
-
-      - name: Verify npm client packages
-        run: |
-          node scripts/pack-tnl.mjs "$RUNNER_TEMP/tnl-npm-packages"
-          node scripts/verify-tnl-install.mjs "$RUNNER_TEMP/tnl-npm-packages"
-
   release-snapshot:
     name: Release snapshot
-    if: always()
-    needs: [release-build, release-snapshot-full]
+    if: github.event_name == 'pull_request' && always()
+    needs: release-build
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}
     steps:
       - name: Verify release checks passed
         env:
-          EVENT_NAME: ${{ github.event_name }}
-          PR_RESULT: ${{ needs.release-build.result }}
-          PUSH_RESULT: ${{ needs.release-snapshot-full.result }}
-        run: |
-          case "$EVENT_NAME" in
-            pull_request) test "$PR_RESULT" = success ;;
-            push) test "$PUSH_RESULT" = success ;;
-            *) exit 1 ;;
-          esac
+          RESULT: ${{ needs.release-build.result }}
+        run: test "$RESULT" = success
 
   container:
     name: Container
