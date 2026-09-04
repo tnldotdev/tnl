@@ -177,7 +177,7 @@ func (q *Queries) GetLatestAdminAuditEvent(ctx context.Context) (GetLatestAdminA
 }
 
 const getLatestCertificateIssuanceStatus = `-- name: GetLatestCertificateIssuanceStatus :one
-SELECT status, installed_at, challenge_removed_at
+SELECT status, challenge_url
 FROM certificate_issuances
 WHERE route_id = ?1
 ORDER BY route_version DESC
@@ -185,15 +185,14 @@ LIMIT 1
 `
 
 type GetLatestCertificateIssuanceStatusRow struct {
-	Status             string
-	InstalledAt        sql.NullInt64
-	ChallengeRemovedAt sql.NullInt64
+	Status       string
+	ChallengeUrl sql.NullString
 }
 
 func (q *Queries) GetLatestCertificateIssuanceStatus(ctx context.Context, routeID string) (GetLatestCertificateIssuanceStatusRow, error) {
 	row := q.db.QueryRowContext(ctx, getLatestCertificateIssuanceStatus, routeID)
 	var i GetLatestCertificateIssuanceStatusRow
-	err := row.Scan(&i.Status, &i.InstalledAt, &i.ChallengeRemovedAt)
+	err := row.Scan(&i.Status, &i.ChallengeUrl)
 	return i, err
 }
 

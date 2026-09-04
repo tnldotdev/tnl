@@ -79,6 +79,123 @@ func TestCommandTreeOnlyIncludesDaemonCommands(t *testing.T) {
 	}
 }
 
+func TestStatefulDaemonRunsRouteStateRetention(t *testing.T) {
+	directory := t.TempDir()
+	db, err := state.Open(t.Context(), directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	for _, statement := range []string{
+		`INSERT INTO routes (
+			id, hostname, local_target, status, route_version,
+			authorization_issuer, authorization_id, authorization_key_id, authorization_retry_id,
+			authorization_revision, authorization_expires_at, authorization_request_hash,
+			created_at, deleted_at
+		) VALUES (
+			'route_retention', 'retention.example', 'localhost:3000', 'deleted', 1,
+			'issuer', 'route_authorization', 'route_key', 'route_retry',
+			1, 2, zeroblob(32), 1, 1
+		)`,
+		`INSERT INTO route_authorization_uses (
+			authorization_issuer, authorization_id, authorization_key_id, authorization_retry_id,
+			authorization_revision, authorization_expires_at, operation, route_id, route_version,
+			hostname, request_hash, created_at
+		) VALUES (
+			'issuer', 'expired_use', 'use_key', 'use_retry',
+			1, 1, 'route_session.create', 'route_retention', 1,
+			'retention.example', zeroblob(32), 1
+		)`,
+	} {
+		if _, err := db.ExecContext(t.Context(), statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg, err := config.ParseTNLD([]string{
+		"--mode", "standalone", "--state-dir", directory, "--public-listen", "", "--metrics-listen", "",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		done <- serve(ctx, cfg)
+		close(done)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+		}
+	})
+
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	poll := time.NewTicker(10 * time.Millisecond)
+	defer poll.Stop()
+	for {
+		var count int
+		if err := db.QueryRowContext(t.Context(),
+			"SELECT COUNT(*) FROM route_authorization_uses WHERE authorization_id = 'expired_use'",
+		).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count == 0 {
+			break
+		}
+		select {
+		case err := <-done:
+			t.Fatalf("stateful daemon stopped before retention ran: %v", err)
+		case <-deadline.C:
+			t.Fatal("stateful daemon did not run route state retention")
+		case <-poll.C:
+		}
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("stateful daemon did not stop")
+	}
+}
+
+func TestDaemonShutdownWaitsForRetentionBeforeClosingState(t *testing.T) {
+	db, err := state.Open(t.Context(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	retentionCtx, cancelRetention := context.WithCancel(context.Background())
+	releaseRetention := make(chan struct{})
+	retentionDone := make(chan struct{})
+	go func() {
+		defer close(retentionDone)
+		<-retentionCtx.Done()
+		<-releaseRetention
+	}()
+	running := &daemon{db: db, retentionCancel: cancelRetention, retentionDone: retentionDone}
+	shutdownDone := make(chan error, 1)
+	go func() { shutdownDone <- running.shutdown(10 * time.Millisecond) }()
+	<-retentionCtx.Done()
+	select {
+	case err := <-shutdownDone:
+		t.Fatalf("shutdown completed before retention exited: %v", err)
+	case <-time.After(25 * time.Millisecond):
+	}
+	close(releaseRetention)
+	if err := <-shutdownDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.PingContext(t.Context()); err == nil {
+		t.Fatal("state database remained open after retention exited")
+	}
+}
+
 func TestIntegrationStandaloneControlLifecycle(t *testing.T) {
 	pebblePath := integrationtest.RequirePebble(t)
 	directory := t.TempDir()

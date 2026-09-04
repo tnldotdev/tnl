@@ -41,14 +41,16 @@ type RouteConfig struct {
 }
 
 type Route struct {
-	hostname          string
-	strictCertificate bool
-	tls               *tls.Config
-	certificate       atomic.Pointer[tls.Certificate]
-	challenges        tlschallenge.TLSALPNChallenges
-	queue             *routeListener
-	http              *http.Server
-	tailcat           *tailtransport.Server
+	hostname           string
+	strictCertificate  bool
+	tls                *tls.Config
+	certificate        atomic.Pointer[tls.Certificate]
+	certificateTimer   *time.Timer
+	certificateExpired chan struct{}
+	challenges         tlschallenge.TLSALPNChallenges
+	queue              *routeListener
+	http               *http.Server
+	tailcat            *tailtransport.Server
 
 	mu        sync.Mutex
 	started   bool
@@ -83,14 +85,10 @@ func NewRoute(config RouteConfig) (*Route, error) {
 			MaxHeaderBytes:    64 << 10,
 			ErrorLog:          log.New(io.Discard, "", 0),
 		},
-		httpDone: make(chan error, 1),
+		httpDone:           make(chan error, 1),
+		certificateExpired: make(chan struct{}),
 	}
 	route.tls.GetCertificate = route.getCertificate
-	if len(config.Certificate.Certificate) != 0 || config.Certificate.PrivateKey != nil {
-		if err := route.InstallCertificate(config.Certificate); err != nil {
-			return nil, err
-		}
-	}
 	tailcat, err := tailtransport.NewServer(tailtransport.ServerConfig{
 		AllowedClient: config.AllowedClient,
 		RelayRegion:   config.RelayRegion,
@@ -102,6 +100,12 @@ func NewRoute(config RouteConfig) (*Route, error) {
 		return nil, err
 	}
 	route.tailcat = tailcat
+	if len(config.Certificate.Certificate) != 0 || config.Certificate.PrivateKey != nil {
+		if err := route.InstallCertificate(config.Certificate); err != nil {
+			_ = tailcat.Close()
+			return nil, err
+		}
+	}
 	return route, nil
 }
 
@@ -119,38 +123,74 @@ func (r *Route) InstallCertificate(certificate tls.Certificate) error {
 		return err
 	}
 	copy := certificate
-	r.certificate.Store(&copy)
+	if copy.Leaf == nil {
+		var err error
+		copy.Leaf, err = x509.ParseCertificate(copy.Certificate[0])
+		if err != nil {
+			return fmt.Errorf("publisher: parse application certificate: %w", err)
+		}
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return net.ErrClosed
+	}
+	select {
+	case <-r.certificateExpired:
+		return errCertificateExpired
+	default:
+	}
+	if r.certificateTimer != nil {
+		r.certificateTimer.Stop()
+	}
+	installed := &copy
+	r.certificate.Store(installed)
+	r.certificateTimer = time.AfterFunc(max(time.Until(copy.Leaf.NotAfter), 0), func() {
+		r.mu.Lock()
+		r.expireCertificateLocked(installed)
+		r.mu.Unlock()
+	})
 	return nil
 }
 
-func (r *Route) VerifyCertificate(expected tls.Certificate) error {
-	if len(expected.Certificate) == 0 {
-		return errors.New("publisher: expected application certificate is empty")
+func (r *Route) certificateExpiration() <-chan struct{} { return r.certificateExpired }
+
+func (r *Route) withValidCertificate(call func() error) error {
+	r.mu.Lock()
+	certificate := r.certificate.Load()
+	if certificate == nil {
+		r.mu.Unlock()
+		return errors.New("publisher: application certificate is not installed")
 	}
-	serverConnection, clientConnection := net.Pipe()
-	defer serverConnection.Close()
-	defer clientConnection.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	serverResult := make(chan error, 1)
-	go func() {
-		server := tls.Server(serverConnection, r.tls.Clone())
-		serverResult <- server.HandshakeContext(ctx)
-	}()
-	client := tls.Client(clientConnection, &tls.Config{
-		ServerName: r.hostname, MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"},
-		InsecureSkipVerify: true, // This probes selection and key usability; the server validated the chain.
-	})
-	clientErr := client.HandshakeContext(ctx)
-	serverErr := <-serverResult
-	peers := client.ConnectionState().PeerCertificates
-	if clientErr != nil || serverErr != nil {
-		return fmt.Errorf("publisher: verify installed application certificate handshake: %w", errors.Join(clientErr, serverErr))
+	select {
+	case <-r.certificateExpired:
+		r.mu.Unlock()
+		return errCertificateExpired
+	default:
 	}
-	if len(peers) == 0 || !bytes.Equal(peers[0].Raw, expected.Certificate[0]) {
-		return errors.New("publisher: installed application certificate does not match expected leaf")
+	if !certificate.Leaf.NotAfter.After(time.Now()) {
+		if r.certificateTimer != nil {
+			r.certificateTimer.Stop()
+		}
+		r.expireCertificateLocked(certificate)
+		r.mu.Unlock()
+		return errCertificateExpired
 	}
-	return nil
+	r.mu.Unlock()
+	return call()
+}
+
+func (r *Route) expireCertificateLocked(certificate *tls.Certificate) {
+	if r.closed || r.certificate.Load() != certificate {
+		return
+	}
+	select {
+	case <-r.certificateExpired:
+		return
+	default:
+		r.certificateTimer = nil
+		close(r.certificateExpired)
+	}
 }
 
 func (r *Route) getCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
@@ -163,6 +203,9 @@ func (r *Route) getCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, er
 	certificate := r.certificate.Load()
 	if certificate == nil {
 		return nil, errors.New("publisher: application certificate is not installed")
+	}
+	if !certificate.Leaf.NotAfter.After(time.Now()) {
+		return nil, errCertificateExpired
 	}
 	return certificate, nil
 }
@@ -200,6 +243,10 @@ func (r *Route) Close() error {
 	r.closeOnce.Do(func() {
 		r.mu.Lock()
 		r.closed = true
+		if r.certificateTimer != nil {
+			r.certificateTimer.Stop()
+			r.certificateTimer = nil
+		}
 		started := r.started
 		r.mu.Unlock()
 		result = errors.Join(r.http.Close(), r.queue.Close(), r.tailcat.Close())

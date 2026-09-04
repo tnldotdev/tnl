@@ -221,15 +221,11 @@ func (e CapabilitiesProtocolVersions) Valid() bool {
 // Defines values for CertificateIssuanceStatus.
 const (
 	CertificateIssuanceStatusAuthorizing         CertificateIssuanceStatus = "authorizing"
-	CertificateIssuanceStatusBlocked             CertificateIssuanceStatus = "blocked"
-	CertificateIssuanceStatusCanceled            CertificateIssuanceStatus = "canceled"
 	CertificateIssuanceStatusCreatingOrder       CertificateIssuanceStatus = "creating_order"
-	CertificateIssuanceStatusDownloading         CertificateIssuanceStatus = "downloading"
 	CertificateIssuanceStatusFailed              CertificateIssuanceStatus = "failed"
 	CertificateIssuanceStatusFinalizing          CertificateIssuanceStatus = "finalizing"
 	CertificateIssuanceStatusInstalled           CertificateIssuanceStatus = "installed"
 	CertificateIssuanceStatusReadyToFinalize     CertificateIssuanceStatus = "ready_to_finalize"
-	CertificateIssuanceStatusValidating          CertificateIssuanceStatus = "validating"
 	CertificateIssuanceStatusWaitingForChallenge CertificateIssuanceStatus = "waiting_for_challenge"
 	CertificateIssuanceStatusWaitingForInstall   CertificateIssuanceStatus = "waiting_for_install"
 )
@@ -239,13 +235,7 @@ func (e CertificateIssuanceStatus) Valid() bool {
 	switch e {
 	case CertificateIssuanceStatusAuthorizing:
 		return true
-	case CertificateIssuanceStatusBlocked:
-		return true
-	case CertificateIssuanceStatusCanceled:
-		return true
 	case CertificateIssuanceStatusCreatingOrder:
-		return true
-	case CertificateIssuanceStatusDownloading:
 		return true
 	case CertificateIssuanceStatusFailed:
 		return true
@@ -254,8 +244,6 @@ func (e CertificateIssuanceStatus) Valid() bool {
 	case CertificateIssuanceStatusInstalled:
 		return true
 	case CertificateIssuanceStatusReadyToFinalize:
-		return true
-	case CertificateIssuanceStatusValidating:
 		return true
 	case CertificateIssuanceStatusWaitingForChallenge:
 		return true

@@ -2016,15 +2016,11 @@ components:
             - creating_order
             - authorizing
             - waiting_for_challenge
-            - validating
             - ready_to_finalize
             - finalizing
-            - downloading
             - waiting_for_install
             - installed
             - failed
-            - blocked
-            - canceled
         challenge:
           $ref: "#/components/schemas/CertificateChallenge"
         certificate_pem:

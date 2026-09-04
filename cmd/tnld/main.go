@@ -108,6 +108,8 @@ type daemon struct {
 	workerHub          *workercontrol.Hub
 	workerDone         <-chan error
 	routeUsageReporter *routeusage.Reporter
+	retentionCancel    context.CancelFunc
+	retentionDone      <-chan struct{}
 	dns                *dnsready.Checker
 }
 
@@ -181,6 +183,14 @@ func serve(ctx context.Context, cfg config.TNLD) (result error) {
 				return err
 			}
 		}
+		retentionCtx, cancelRetention := context.WithCancel(lifetime)
+		retentionDone := make(chan struct{})
+		running.retentionCancel = cancelRetention
+		running.retentionDone = retentionDone
+		go func() {
+			defer close(retentionDone)
+			routes.RunStateRetention(retentionCtx, db, report)
+		}()
 	}
 
 	if cfg.MetricsListen != "" {
@@ -634,6 +644,10 @@ func (d *daemon) shutdown(timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	var result error
+	if d.retentionCancel != nil {
+		d.retentionCancel()
+		d.retentionCancel = nil
+	}
 	// Stop control mutations before draining streams and closing their workers.
 	if d.controlServer != nil {
 		if err := d.controlServer.Shutdown(ctx); err != nil {
@@ -664,6 +678,10 @@ func (d *daemon) shutdown(timeout time.Duration) error {
 	}
 	if d.metricsServer != nil {
 		result = errors.Join(result, d.metricsServer.Shutdown(ctx))
+	}
+	if d.retentionDone != nil {
+		<-d.retentionDone
+		d.retentionDone = nil
 	}
 	if d.db != nil {
 		if err := d.db.Close(); err != nil {

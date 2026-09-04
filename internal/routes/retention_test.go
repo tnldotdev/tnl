@@ -1,12 +1,45 @@
 package routes
 
 import (
+	"context"
 	"database/sql"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/state"
 )
+
+func TestRunStateRetentionReportsErrorsAndStops(t *testing.T) {
+	db, err := state.Open(t.Context(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	reported := make(chan error, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		RunStateRetention(ctx, db, func(err error) { reported <- err })
+	}()
+	select {
+	case err := <-reported:
+		if !strings.Contains(err.Error(), "routes: begin state retention") {
+			t.Fatalf("reported error = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("state retention error was not reported")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("state retention did not stop after cancellation")
+	}
+}
 
 func TestPruneRouteStatePreservesCurrentAndProtectedState(t *testing.T) {
 	db, err := state.Open(t.Context(), t.TempDir())
@@ -84,24 +117,24 @@ func TestPruneRouteStatePreservesCurrentAndProtectedState(t *testing.T) {
 	}
 	certificateSQL := `
 		INSERT INTO certificate_issuances (
-			id, route_id, route_version, hostname, acme_profile, status, csr_der, csr_hash, spki_hash,
-			order_attempts, order_expires_at, certificate_pem, not_after, created_at, updated_at
-		) VALUES (?, 'route_current', 1, 'current.routes.test', 'tlsserver', ?, X'01', ?, X'02', ?, ?, ?, ?, ?, ?)
+			id, route_id, route_version, hostname, directory_url, acme_profile, status, csr_der, csr_hash, spki_hash,
+			order_started_at, order_expires_at, certificate_pem, not_after, created_at, updated_at
+		) VALUES (?, 'route_current', 1, 'current.routes.test', 'https://acme.test/directory', 'tlsserver', ?, X'01', ?, X'02', ?, ?, ?, ?, ?, ?)
 	`
 	for _, issuance := range []struct {
 		id, status             string
-		attempts               int
+		orderStarted           any
 		orderExpires, notAfter any
 		certificate            any
 		createdAt, updatedAt   int64
 	}{
-		{id: "certificate_failed", status: "failed", attempts: 1, createdAt: old, updatedAt: old},
+		{id: "certificate_failed", status: "failed", orderStarted: old, createdAt: old, updatedAt: old},
 		{id: "certificate_stale_ambiguous", status: "creating_order", createdAt: old, updatedAt: old},
-		{id: "certificate_ambiguous", status: "creating_order", createdAt: old, updatedAt: now.UnixNano()},
+		{id: "certificate_ambiguous", status: "creating_order", orderStarted: now.UnixNano(), createdAt: old, updatedAt: now.UnixNano()},
 		{id: "certificate_reusable", status: "installed", certificate: []byte("certificate"), notAfter: future, createdAt: old, updatedAt: old},
 	} {
 		if _, err := db.ExecContext(t.Context(), certificateSQL,
-			issuance.id, issuance.status, []byte(issuance.id), issuance.attempts, issuance.orderExpires,
+			issuance.id, issuance.status, []byte(issuance.id), issuance.orderStarted, issuance.orderExpires,
 			issuance.certificate, issuance.notAfter, issuance.createdAt, issuance.updatedAt,
 		); err != nil {
 			t.Fatal(err)

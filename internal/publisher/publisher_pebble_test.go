@@ -275,26 +275,26 @@ func assertPersistedPublish(t *testing.T, database *sql.DB, routeID string, want
 	if sessionStatus != "ready" {
 		t.Fatalf("session status = %q", sessionStatus)
 	}
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for {
 		issuance, err := queries.GetLatestCertificateIssuanceStatus(context.Background(), routeID)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if issuance.Status == certificates.StatusInstalled && issuance.InstalledAt.Valid && issuance.ChallengeRemovedAt.Valid {
+		issuances, err := queries.CountCertificateIssuancesByRoute(context.Background(), routeID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if issuance.Status == certificates.StatusInstalled && !issuance.ChallengeUrl.Valid && issuances == int64(wantIssuances) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("certificate issuance = %q, installed = %v, challenge removed = %v", issuance.Status, issuance.InstalledAt.Valid, issuance.ChallengeRemovedAt.Valid)
+			t.Fatalf(
+				"certificate issuance = %q, outstanding challenge = %v, issuances = %d, want %d",
+				issuance.Status, issuance.ChallengeUrl.Valid, issuances, wantIssuances,
+			)
 		}
 		time.Sleep(10 * time.Millisecond)
-	}
-	issuances, err := queries.CountCertificateIssuancesByRoute(context.Background(), routeID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if issuances != int64(wantIssuances) {
-		t.Fatalf("certificate issuances = %d, want %d", issuances, wantIssuances)
 	}
 	accountKID, err := queries.GetAnyACMEAccountKID(context.Background())
 	if err != nil {

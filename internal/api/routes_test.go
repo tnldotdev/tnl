@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	adminservice "github.com/tnldotdev/tnl/internal/admin"
 	"github.com/tnldotdev/tnl/internal/auth"
 	"github.com/tnldotdev/tnl/internal/certificates"
 	"github.com/tnldotdev/tnl/internal/credentials"
@@ -256,6 +257,46 @@ func TestCertificateAPIRequiresBoundCurrentSession(t *testing.T) {
 	)
 }
 
+func TestCertificateChallengeReadyRequiresMaintenanceControl(t *testing.T) {
+	sessionToken, _, _, err := credentials.NewSessionToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const issuanceID = "issuance_0123456789abcdef0123456789abcdef"
+	certificateService := &apiCertificateService{issuance: certificates.Issuance{
+		ID: issuanceID, RouteID: "route_0123456789abcdef0123456789abcdef", RouteVersion: 1,
+		Status: certificates.StatusWaitingChallenge,
+	}}
+	maintenance := &disabledCertificateIssuanceAdminService{}
+	handler := NewHandler(Config{
+		Routes: authorizedSessionRouteService{}, Certificates: certificateService, Admin: maintenance,
+	})
+	path := certificateIssuancesPath + "/" + issuanceID + "/challenge-ready"
+
+	request := httptest.NewRequest(http.MethodPost, path, nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if maintenance.name != "" {
+		t.Fatalf("maintenance control checked before authentication: %q", maintenance.name)
+	}
+
+	problem := routeRequest[serverv1.Problem](
+		t, handler, sessionToken.String(), http.MethodPost, path, nil, http.StatusServiceUnavailable,
+	)
+	if problem.Code != serverv1.TemporarilyUnavailable || problem.Type != "https://tnl.dev/problems/maintenance-control-disabled" {
+		t.Fatalf("problem = %#v", problem)
+	}
+	if maintenance.name != adminservice.MaintenanceControlCertificateIssuance {
+		t.Fatalf("maintenance control = %q", maintenance.name)
+	}
+	if certificateService.challengeReadyCalls != 0 || certificateService.issuance.Status != certificates.StatusWaitingChallenge {
+		t.Fatalf("certificate service advanced issuance: calls = %d, issuance = %#v", certificateService.challengeReadyCalls, certificateService.issuance)
+	}
+}
+
 func routeRequest[T any](
 	t *testing.T,
 	handler http.Handler,
@@ -333,7 +374,10 @@ func (apiWorkerRoute) Open(context.Context) (net.Conn, error) {
 func (apiWorkerRoute) Drain(context.Context) error { return nil }
 func (apiWorkerRoute) Close() error                { return nil }
 
-type apiCertificateService struct{ issuance certificates.Issuance }
+type apiCertificateService struct {
+	issuance            certificates.Issuance
+	challengeReadyCalls int
+}
 
 func (s *apiCertificateService) Create(
 	_ context.Context,
@@ -356,13 +400,16 @@ func (s *apiCertificateService) Get(context.Context, string) (certificates.Issua
 }
 
 func (s *apiCertificateService) ChallengeReady(context.Context, string) (certificates.Issuance, error) {
+	s.challengeReadyCalls++
 	s.issuance.Status = certificates.StatusWaitingForInstall
 	s.issuance.CertificatePEM = []byte("certificate")
 	return s.issuance, nil
 }
 
 func (s *apiCertificateService) ChallengeRemoved(context.Context, string) (certificates.Issuance, error) {
-	s.issuance.ChallengeRemoved = time.Now().UTC()
+	s.issuance.ChallengeURL = ""
+	s.issuance.ChallengeDigest = [32]byte{}
+	s.issuance.ChallengeExpires = time.Time{}
 	return s.issuance, nil
 }
 
@@ -371,9 +418,33 @@ func (s *apiCertificateService) Installed(
 	_, routeID string,
 	version uint64,
 ) (certificates.Issuance, error) {
-	if routeID != s.issuance.RouteID || version != s.issuance.RouteVersion || s.issuance.ChallengeRemoved.IsZero() {
+	if routeID != s.issuance.RouteID || version != s.issuance.RouteVersion || s.issuance.ChallengeURL != "" {
 		return certificates.Issuance{}, certificates.ErrInvalidStatus
 	}
 	s.issuance.Status = certificates.StatusInstalled
 	return s.issuance, nil
+}
+
+type authorizedSessionRouteService struct{ RouteService }
+
+func (authorizedSessionRouteService) AuthorizeSession(
+	context.Context,
+	string,
+	uint64,
+	credentials.SessionToken,
+) error {
+	return nil
+}
+
+type disabledCertificateIssuanceAdminService struct {
+	AdminService
+	name adminservice.MaintenanceControlName
+}
+
+func (s *disabledCertificateIssuanceAdminService) RequireEnabled(
+	_ context.Context,
+	name adminservice.MaintenanceControlName,
+) error {
+	s.name = name
+	return adminservice.ErrMaintenanceControlDisabled
 }
