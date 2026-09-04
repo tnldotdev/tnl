@@ -39,7 +39,7 @@ func TestControlSessionLogout(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, logoutPath, nil)
 	request.Header.Set(authorizationHeader, "bEaReR "+access.String())
 	response := httptest.NewRecorder()
-	NewHandler(fixtureCapabilities(t), service).ServeHTTP(response, request)
+	NewHandler(Config{Capabilities: fixtureCapabilities(t), Auth: service}).ServeHTTP(response, request)
 	if response.Code != http.StatusNoContent || response.Body.Len() != 0 {
 		t.Fatalf("status = %d, body = %q", response.Code, response.Body.String())
 	}
@@ -71,7 +71,7 @@ func TestControlSessionLogoutRejectsInvalidBearer(t *testing.T) {
 				request.Header.Add(authorizationHeader, value)
 			}
 			response := httptest.NewRecorder()
-			NewHandler(fixtureCapabilities(t), service).ServeHTTP(response, request)
+			NewHandler(Config{Capabilities: fixtureCapabilities(t), Auth: service}).ServeHTTP(response, request)
 			assertBearerProblem(t, response, http.StatusUnauthorized, serverv1.Unauthenticated)
 		})
 	}
@@ -102,7 +102,7 @@ func TestControlSessionLogoutProblems(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, logoutPath, nil)
 			request.Header.Set(authorizationHeader, "Bearer "+access.String())
 			response := httptest.NewRecorder()
-			NewHandler(fixtureCapabilities(t), service).ServeHTTP(response, request)
+			NewHandler(Config{Capabilities: fixtureCapabilities(t), Auth: service}).ServeHTTP(response, request)
 			if response.Code != test.status {
 				t.Fatalf("status = %d, want %d", response.Code, test.status)
 			}

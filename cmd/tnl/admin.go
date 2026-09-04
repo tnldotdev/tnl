@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientauth"
-	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/serverclient"
@@ -28,12 +27,6 @@ type adminCommand struct {
 	Maintenance     adminMaintenanceCommands    `cmd:"" help:"Manage maintenance controls."`
 }
 
-type adminRemoteFlags struct {
-	ServerURL   string `name:"server" env:"TNL_SERVER" help:"tnl server HTTPS origin; defaults to the selected server or https://control.tnl.dev."`
-	AccessToken string `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Server access token; defaults to the saved login."`
-	StateDir    string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent client state."`
-}
-
 type adminServerCommands struct {
 	Status     adminServerStatusCommand `cmd:"" help:"Show server process and route status."`
 	LoginToken adminLoginTokenCommand   `cmd:"" help:"Read or rotate the local server login token."`
@@ -42,7 +35,7 @@ type adminServerCommands struct {
 }
 
 type adminServerStatusCommand struct {
-	adminRemoteFlags `embed:""`
+	remoteFlags `embed:""`
 }
 
 type adminLoginTokenCommand struct {
@@ -71,22 +64,22 @@ type adminRouteCommands struct {
 }
 
 type adminRoutesListCommand struct {
-	adminRemoteFlags `embed:""`
+	remoteFlags `embed:""`
 }
 type adminRouteShowCommand struct {
-	adminRemoteFlags `embed:""`
-	RouteID          string `arg:"" name:"route-id" required:""`
+	remoteFlags `embed:""`
+	RouteID     string `arg:"" name:"route-id" required:""`
 }
 type adminRouteSuspendCommand struct {
-	adminRemoteFlags `embed:""`
-	RouteID          string `arg:"" name:"route-id" required:""`
-	Revision         uint64 `name:"revision" required:"" help:"Monotonically increasing suspension revision."`
-	Reason           string `name:"reason" required:"" help:"Audit reason, at most 256 bytes."`
+	remoteFlags `embed:""`
+	RouteID     string `arg:"" name:"route-id" required:""`
+	Revision    uint64 `name:"revision" required:"" help:"Monotonically increasing suspension revision."`
+	Reason      string `name:"reason" required:"" help:"Audit reason, at most 256 bytes."`
 }
 type adminRouteResumeCommand struct {
-	adminRemoteFlags `embed:""`
-	RouteID          string `arg:"" name:"route-id" required:""`
-	Revision         uint64 `name:"revision" required:"" help:"Monotonically increasing suspension revision."`
+	remoteFlags `embed:""`
+	RouteID     string `arg:"" name:"route-id" required:""`
+	Revision    uint64 `name:"revision" required:"" help:"Monotonically increasing suspension revision."`
 }
 
 type adminHostnameCommands struct {
@@ -97,20 +90,20 @@ type adminHostnameCommands struct {
 }
 
 type adminHostnamesListCommand struct {
-	adminRemoteFlags `embed:""`
+	remoteFlags `embed:""`
 }
 type adminHostnameShowCommand struct {
-	adminRemoteFlags `embed:""`
-	HostnameID       string `arg:"" name:"hostname-id" required:""`
+	remoteFlags `embed:""`
+	HostnameID  string `arg:"" name:"hostname-id" required:""`
 }
 type adminHostnameRemoveCommand struct {
-	adminRemoteFlags `embed:""`
-	HostnameID       string `arg:"" name:"hostname-id" required:""`
+	remoteFlags `embed:""`
+	HostnameID  string `arg:"" name:"hostname-id" required:""`
 }
 type adminHostnameQuarantineCommand struct {
-	adminRemoteFlags `embed:""`
-	HostnameID       string `arg:"" name:"hostname-id" required:""`
-	Reason           string `name:"reason" required:"" help:"Audit reason, at most 256 bytes."`
+	remoteFlags `embed:""`
+	HostnameID  string `arg:"" name:"hostname-id" required:""`
+	Reason      string `name:"reason" required:"" help:"Audit reason, at most 256 bytes."`
 }
 
 type adminCredentialCommands struct {
@@ -119,11 +112,11 @@ type adminCredentialCommands struct {
 }
 
 type adminCredentialsListCommand struct {
-	adminRemoteFlags `embed:""`
+	remoteFlags `embed:""`
 }
 type adminCredentialRevokeCommand struct {
-	adminRemoteFlags `embed:""`
-	CredentialID     string `arg:"" name:"credential-id" required:""`
+	remoteFlags  `embed:""`
+	CredentialID string `arg:"" name:"credential-id" required:""`
 }
 
 type adminControlSessionCommands struct {
@@ -132,10 +125,10 @@ type adminControlSessionCommands struct {
 }
 
 type adminControlSessionsListCommand struct {
-	adminRemoteFlags `embed:""`
+	remoteFlags `embed:""`
 }
 type adminControlSessionRevokeCommand struct {
-	adminRemoteFlags `embed:""`
+	remoteFlags      `embed:""`
 	ControlSessionID string `arg:"" name:"control-session-id" required:""`
 }
 
@@ -146,11 +139,11 @@ type adminMaintenanceCommands struct {
 }
 
 type adminMaintenanceListCommand struct {
-	adminRemoteFlags `embed:""`
+	remoteFlags `embed:""`
 }
 type adminMaintenanceSetCommand struct {
-	adminRemoteFlags `embed:""`
-	Name             string `arg:"" name:"name" required:"" enum:"route_creation,route_session_creation,certificate_issuance"`
+	remoteFlags `embed:""`
+	Name        string `arg:"" name:"name" required:"" enum:"route_creation,route_session_creation,certificate_issuance"`
 }
 
 func runAdminServerStatus(
@@ -158,277 +151,236 @@ func runAdminServerStatus(
 	command adminServerStatusCommand,
 	stdout, stderr io.Writer,
 ) error {
-	client, err := remoteAdminClient(ctx, command.adminRemoteFlags, stderr)
-	if err != nil {
-		return err
-	}
-	defer client.Close()
-	value, err := client.AdminServerStatus(ctx)
-	if err != nil {
-		return adminClientError(err)
-	}
-	table := newAdminTable(stdout)
-	fmt.Fprintln(table, "MODE\tSTARTED\tCURRENT\tENABLED\tSUSPENDED\tPROVISIONING\tWORKERS")
-	fmt.Fprintf(table, "%s\t%s\t%s\t%d\t%d\t%d\t%d\n", value.Mode, adminTime(value.StartedAt),
-		adminTime(value.CurrentTime), value.EnabledRoutes, value.SuspendedRoutes, value.ProvisioningRoutes, value.ConnectedWorkers)
-	return table.Flush()
-}
-
-func runAdminRoutesList(ctx context.Context, command adminRoutesListCommand, stdout, stderr io.Writer) error {
-	client, err := remoteAdminClient(ctx, command.adminRemoteFlags, stderr)
-	if err != nil {
-		return err
-	}
-	defer client.Close()
-	table := newAdminTable(stdout)
-	fmt.Fprintln(table, "ID\tSTATUS\tHOSTNAME\tLOCAL TARGET\tROUTE VERSION\tSUSPENSION REVISION")
-	cursor := ""
-	for {
-		page, err := client.AdminListRoutes(ctx, cursor)
+	return withRemoteAdminClient(ctx, command.remoteFlags, stderr, func(client *serverclient.Client) error {
+		value, err := client.AdminServerStatus(ctx)
 		if err != nil {
 			return adminClientError(err)
 		}
-		for _, value := range page.Routes {
-			writeAdminRoute(table, value)
+		table := newAdminTable(stdout)
+		fmt.Fprintln(table, "MODE\tSTARTED\tCURRENT\tENABLED\tSUSPENDED\tPROVISIONING\tWORKERS")
+		fmt.Fprintf(table, "%s\t%s\t%s\t%d\t%d\t%d\t%d\n", value.Mode, adminTime(value.StartedAt),
+			adminTime(value.CurrentTime), value.EnabledRoutes, value.SuspendedRoutes, value.ProvisioningRoutes, value.ConnectedWorkers)
+		return table.Flush()
+	})
+}
+
+func runAdminRoutesList(ctx context.Context, command adminRoutesListCommand, stdout, stderr io.Writer) error {
+	return withRemoteAdminClient(ctx, command.remoteFlags, stderr, func(client *serverclient.Client) error {
+		table := newAdminTable(stdout)
+		fmt.Fprintln(table, "ID\tSTATUS\tHOSTNAME\tLOCAL TARGET\tROUTE VERSION\tSUSPENSION REVISION")
+		if err := paginateAdmin(
+			func(cursor string) ([]serverv1.AdminRoute, *serverv1.RouteID, error) {
+				page, err := client.AdminListRoutes(ctx, cursor)
+				return page.Routes, page.NextCursor, err
+			},
+			func(value serverv1.AdminRoute) { writeAdminRoute(table, value) },
+			"route",
+		); err != nil {
+			return err
 		}
-		if page.NextCursor == nil {
-			return table.Flush()
-		}
-		next := string(*page.NextCursor)
-		if next <= cursor || len(page.Routes) == 0 {
-			return errors.New("server returned an invalid admin route cursor")
-		}
-		cursor = next
-	}
+		return table.Flush()
+	})
 }
 
 func runAdminRouteShow(ctx context.Context, command adminRouteShowCommand, stdout, stderr io.Writer) error {
-	client, err := remoteAdminClient(ctx, command.adminRemoteFlags, stderr)
-	if err != nil {
-		return err
-	}
-	defer client.Close()
-	value, err := client.AdminRoute(ctx, command.RouteID)
-	if err != nil {
-		return adminClientError(err)
-	}
-	table := newAdminTable(stdout)
-	fmt.Fprintln(table, "ID\tSTATUS\tHOSTNAME\tLOCAL TARGET\tROUTE VERSION\tSUSPENSION REVISION")
-	writeAdminRoute(table, value)
-	return table.Flush()
+	return withRemoteAdminClient(ctx, command.remoteFlags, stderr, func(client *serverclient.Client) error {
+		value, err := client.AdminRoute(ctx, command.RouteID)
+		if err != nil {
+			return adminClientError(err)
+		}
+		table := newAdminTable(stdout)
+		fmt.Fprintln(table, "ID\tSTATUS\tHOSTNAME\tLOCAL TARGET\tROUTE VERSION\tSUSPENSION REVISION")
+		writeAdminRoute(table, value)
+		return table.Flush()
+	})
 }
 
 func runAdminRouteSuspend(ctx context.Context, command adminRouteSuspendCommand, stdout, stderr io.Writer) error {
 	if !validAdminReason(command.Reason) || command.Revision == 0 {
 		return errors.New("reason must be 1-256 bytes without surrounding whitespace and revision must be positive")
 	}
-	client, err := remoteAdminClient(ctx, command.adminRemoteFlags, stderr)
-	if err != nil {
+	return withRemoteAdminClient(ctx, command.remoteFlags, stderr, func(client *serverclient.Client) error {
+		value, err := client.AdminSuspendRoute(ctx, command.RouteID, command.Revision, command.Reason)
+		if err != nil {
+			return adminClientError(err)
+		}
+		_, err = fmt.Fprintf(stdout, "Suspended %s at revision %d\n", value.Id, value.SuspensionRevision)
 		return err
-	}
-	defer client.Close()
-	value, err := client.AdminSuspendRoute(ctx, command.RouteID, command.Revision, command.Reason)
-	if err != nil {
-		return adminClientError(err)
-	}
-	_, err = fmt.Fprintf(stdout, "Suspended %s at revision %d\n", value.Id, value.SuspensionRevision)
-	return err
+	})
 }
 
 func runAdminRouteResume(ctx context.Context, command adminRouteResumeCommand, stdout, stderr io.Writer) error {
 	if command.Revision == 0 {
 		return errors.New("revision must be positive")
 	}
-	client, err := remoteAdminClient(ctx, command.adminRemoteFlags, stderr)
-	if err != nil {
-		return err
-	}
-	defer client.Close()
-	value, err := client.AdminResumeRoute(ctx, command.RouteID, command.Revision)
-	if err != nil {
-		return adminClientError(err)
-	}
-	_, err = fmt.Fprintf(stdout, "Resumed %s at route version %d\n", value.Id, value.RouteVersion)
-	return err
-}
-
-func runAdminHostnamesList(ctx context.Context, command adminHostnamesListCommand, stdout, stderr io.Writer) error {
-	client, err := remoteAdminClient(ctx, command.adminRemoteFlags, stderr)
-	if err != nil {
-		return err
-	}
-	defer client.Close()
-	table := newAdminTable(stdout)
-	fmt.Fprintln(table, "ID\tSTATUS\tKIND\tSOURCE\tHOSTNAME\tIDENTITY")
-	cursor := ""
-	for {
-		page, err := client.AdminListHostnames(ctx, cursor)
+	return withRemoteAdminClient(ctx, command.remoteFlags, stderr, func(client *serverclient.Client) error {
+		value, err := client.AdminResumeRoute(ctx, command.RouteID, command.Revision)
 		if err != nil {
 			return adminClientError(err)
 		}
-		for _, value := range page.Hostnames {
-			writeAdminHostname(table, value)
+		_, err = fmt.Fprintf(stdout, "Resumed %s at route version %d\n", value.Id, value.RouteVersion)
+		return err
+	})
+}
+
+func runAdminHostnamesList(ctx context.Context, command adminHostnamesListCommand, stdout, stderr io.Writer) error {
+	return withRemoteAdminClient(ctx, command.remoteFlags, stderr, func(client *serverclient.Client) error {
+		table := newAdminTable(stdout)
+		fmt.Fprintln(table, "ID\tSTATUS\tKIND\tSOURCE\tHOSTNAME\tIDENTITY")
+		if err := paginateAdmin(
+			func(cursor string) ([]serverv1.AdminHostname, *serverv1.HostnameID, error) {
+				page, err := client.AdminListHostnames(ctx, cursor)
+				return page.Hostnames, page.NextCursor, err
+			},
+			func(value serverv1.AdminHostname) { writeAdminHostname(table, value) },
+			"hostname",
+		); err != nil {
+			return err
 		}
-		if page.NextCursor == nil {
-			return table.Flush()
-		}
-		next := string(*page.NextCursor)
-		if next <= cursor || len(page.Hostnames) == 0 {
-			return errors.New("server returned an invalid admin hostname cursor")
-		}
-		cursor = next
-	}
+		return table.Flush()
+	})
 }
 
 func runAdminHostnameShow(ctx context.Context, command adminHostnameShowCommand, stdout, stderr io.Writer) error {
-	client, err := remoteAdminClient(ctx, command.adminRemoteFlags, stderr)
-	if err != nil {
-		return err
-	}
-	defer client.Close()
-	value, err := client.AdminHostname(ctx, command.HostnameID)
-	if err != nil {
-		return adminClientError(err)
-	}
-	table := newAdminTable(stdout)
-	fmt.Fprintln(table, "ID\tSTATUS\tKIND\tSOURCE\tHOSTNAME\tIDENTITY")
-	writeAdminHostname(table, value)
-	return table.Flush()
+	return withRemoteAdminClient(ctx, command.remoteFlags, stderr, func(client *serverclient.Client) error {
+		value, err := client.AdminHostname(ctx, command.HostnameID)
+		if err != nil {
+			return adminClientError(err)
+		}
+		table := newAdminTable(stdout)
+		fmt.Fprintln(table, "ID\tSTATUS\tKIND\tSOURCE\tHOSTNAME\tIDENTITY")
+		writeAdminHostname(table, value)
+		return table.Flush()
+	})
 }
 
 func runAdminHostnameRemove(ctx context.Context, command adminHostnameRemoveCommand, stdout, stderr io.Writer) error {
-	client, err := remoteAdminClient(ctx, command.adminRemoteFlags, stderr)
-	if err != nil {
+	return withRemoteAdminClient(ctx, command.remoteFlags, stderr, func(client *serverclient.Client) error {
+		if err := client.AdminRemoveHostname(ctx, command.HostnameID); err != nil {
+			return adminClientError(err)
+		}
+		_, err := fmt.Fprintf(stdout, "Removed %s\n", command.HostnameID)
 		return err
-	}
-	defer client.Close()
-	if err := client.AdminRemoveHostname(ctx, command.HostnameID); err != nil {
-		return adminClientError(err)
-	}
-	_, err = fmt.Fprintf(stdout, "Removed %s\n", command.HostnameID)
-	return err
+	})
 }
 
 func runAdminHostnameQuarantine(ctx context.Context, command adminHostnameQuarantineCommand, stdout, stderr io.Writer) error {
 	if !validAdminReason(command.Reason) {
 		return errors.New("reason must be 1-256 bytes without surrounding whitespace")
 	}
-	client, err := remoteAdminClient(ctx, command.adminRemoteFlags, stderr)
-	if err != nil {
+	return withRemoteAdminClient(ctx, command.remoteFlags, stderr, func(client *serverclient.Client) error {
+		if err := client.AdminQuarantineHostname(ctx, command.HostnameID, command.Reason); err != nil {
+			return adminClientError(err)
+		}
+		_, err := fmt.Fprintf(stdout, "Quarantined %s\n", command.HostnameID)
 		return err
-	}
-	defer client.Close()
-	if err := client.AdminQuarantineHostname(ctx, command.HostnameID, command.Reason); err != nil {
-		return adminClientError(err)
-	}
-	_, err = fmt.Fprintf(stdout, "Quarantined %s\n", command.HostnameID)
-	return err
+	})
 }
 
 func runAdminCredentialsList(ctx context.Context, command adminCredentialsListCommand, stdout, stderr io.Writer) error {
-	client, err := remoteAdminClient(ctx, command.adminRemoteFlags, stderr)
-	if err != nil {
-		return err
-	}
-	defer client.Close()
-	table := newAdminTable(stdout)
-	fmt.Fprintln(table, "ID\tROUTE\tCREATED\tREVOKED")
-	cursor := ""
-	for {
-		page, err := client.AdminListCredentials(ctx, cursor)
-		if err != nil {
-			return adminClientError(err)
+	return withRemoteAdminClient(ctx, command.remoteFlags, stderr, func(client *serverclient.Client) error {
+		table := newAdminTable(stdout)
+		fmt.Fprintln(table, "ID\tROUTE\tCREATED\tREVOKED")
+		if err := paginateAdmin(
+			func(cursor string) ([]serverv1.AdminCredential, *serverv1.CredentialID, error) {
+				page, err := client.AdminListCredentials(ctx, cursor)
+				return page.Credentials, page.NextCursor, err
+			},
+			func(value serverv1.AdminCredential) {
+				fmt.Fprintf(table, "%s\t%s\t%s\t%s\n", value.Id, value.RouteId, adminTime(value.CreatedAt), adminOptionalTime(value.RevokedAt))
+			},
+			"credential",
+		); err != nil {
+			return err
 		}
-		for _, value := range page.Credentials {
-			fmt.Fprintf(table, "%s\t%s\t%s\t%s\n", value.Id, value.RouteId, adminTime(value.CreatedAt), adminOptionalTime(value.RevokedAt))
-		}
-		if page.NextCursor == nil {
-			return table.Flush()
-		}
-		next := string(*page.NextCursor)
-		if next <= cursor || len(page.Credentials) == 0 {
-			return errors.New("server returned an invalid admin credential cursor")
-		}
-		cursor = next
-	}
+		return table.Flush()
+	})
 }
 
 func runAdminCredentialRevoke(ctx context.Context, command adminCredentialRevokeCommand, stdout, stderr io.Writer) error {
-	client, err := remoteAdminClient(ctx, command.adminRemoteFlags, stderr)
-	if err != nil {
+	return withRemoteAdminClient(ctx, command.remoteFlags, stderr, func(client *serverclient.Client) error {
+		if err := client.AdminRevokeCredential(ctx, command.CredentialID); err != nil {
+			return adminClientError(err)
+		}
+		_, err := fmt.Fprintf(stdout, "Revoked %s\n", command.CredentialID)
 		return err
-	}
-	defer client.Close()
-	if err := client.AdminRevokeCredential(ctx, command.CredentialID); err != nil {
-		return adminClientError(err)
-	}
-	_, err = fmt.Fprintf(stdout, "Revoked %s\n", command.CredentialID)
-	return err
+	})
 }
 
 func runAdminControlSessionsList(ctx context.Context, command adminControlSessionsListCommand, stdout, stderr io.Writer) error {
-	client, err := remoteAdminClient(ctx, command.adminRemoteFlags, stderr)
-	if err != nil {
-		return err
-	}
-	defer client.Close()
-	table := newAdminTable(stdout)
-	fmt.Fprintln(table, "ID\tIDENTITY\tAUTHENTICATION\tGRANTS\tACCESS EXPIRES\tREFRESH EXPIRES\tREVOKED")
+	return withRemoteAdminClient(ctx, command.remoteFlags, stderr, func(client *serverclient.Client) error {
+		table := newAdminTable(stdout)
+		fmt.Fprintln(table, "ID\tIDENTITY\tAUTHENTICATION\tGRANTS\tACCESS EXPIRES\tREFRESH EXPIRES\tREVOKED")
+		if err := paginateAdmin(
+			func(cursor string) ([]serverv1.AdminControlSession, *serverv1.ControlSessionID, error) {
+				page, err := client.AdminListControlSessions(ctx, cursor)
+				return page.ControlSessions, page.NextCursor, err
+			},
+			func(value serverv1.AdminControlSession) {
+				grants := make([]string, len(value.Grants))
+				for index, grant := range value.Grants {
+					grants[index] = string(grant)
+				}
+				fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", value.Id, value.IdentityId,
+					value.AuthenticationMethod, strings.Join(grants, ","), adminTime(value.AccessExpiresAt),
+					adminTime(value.RefreshExpiresAt), adminOptionalTime(value.RevokedAt))
+			},
+			"control-session",
+		); err != nil {
+			return err
+		}
+		return table.Flush()
+	})
+}
+
+func paginateAdmin[T any, C ~string](
+	fetch func(string) ([]T, *C, error),
+	write func(T),
+	resource string,
+) error {
 	cursor := ""
 	for {
-		page, err := client.AdminListControlSessions(ctx, cursor)
+		values, next, err := fetch(cursor)
 		if err != nil {
 			return adminClientError(err)
 		}
-		for _, value := range page.ControlSessions {
-			grants := make([]string, len(value.Grants))
-			for index, grant := range value.Grants {
-				grants[index] = string(grant)
-			}
-			fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", value.Id, value.IdentityId,
-				value.AuthenticationMethod, strings.Join(grants, ","), adminTime(value.AccessExpiresAt),
-				adminTime(value.RefreshExpiresAt), adminOptionalTime(value.RevokedAt))
+		for _, value := range values {
+			write(value)
 		}
-		if page.NextCursor == nil {
-			return table.Flush()
+		if next == nil {
+			return nil
 		}
-		next := string(*page.NextCursor)
-		if next <= cursor || len(page.ControlSessions) == 0 {
-			return errors.New("server returned an invalid admin control-session cursor")
+		nextCursor := string(*next)
+		if nextCursor <= cursor || len(values) == 0 {
+			return fmt.Errorf("server returned an invalid admin %s cursor", resource)
 		}
-		cursor = next
+		cursor = nextCursor
 	}
 }
 
 func runAdminControlSessionRevoke(ctx context.Context, command adminControlSessionRevokeCommand, stdout, stderr io.Writer) error {
-	client, err := remoteAdminClient(ctx, command.adminRemoteFlags, stderr)
-	if err != nil {
+	return withRemoteAdminClient(ctx, command.remoteFlags, stderr, func(client *serverclient.Client) error {
+		if err := client.AdminRevokeControlSession(ctx, command.ControlSessionID); err != nil {
+			return adminClientError(err)
+		}
+		_, err := fmt.Fprintf(stdout, "Revoked %s\n", command.ControlSessionID)
 		return err
-	}
-	defer client.Close()
-	if err := client.AdminRevokeControlSession(ctx, command.ControlSessionID); err != nil {
-		return adminClientError(err)
-	}
-	_, err = fmt.Fprintf(stdout, "Revoked %s\n", command.ControlSessionID)
-	return err
+	})
 }
 
 func runAdminMaintenanceList(ctx context.Context, command adminMaintenanceListCommand, stdout, stderr io.Writer) error {
-	client, err := remoteAdminClient(ctx, command.adminRemoteFlags, stderr)
-	if err != nil {
-		return err
-	}
-	defer client.Close()
-	values, err := client.AdminListMaintenanceControls(ctx)
-	if err != nil {
-		return adminClientError(err)
-	}
-	table := newAdminTable(stdout)
-	fmt.Fprintln(table, "NAME\tENABLED\tREVISION\tUPDATED\tUPDATED BY")
-	for _, value := range values {
-		fmt.Fprintf(table, "%s\t%t\t%d\t%s\t%s\n", value.Name, value.Enabled, value.Revision, adminTime(value.UpdatedAt), value.UpdatedBy)
-	}
-	return table.Flush()
+	return withRemoteAdminClient(ctx, command.remoteFlags, stderr, func(client *serverclient.Client) error {
+		values, err := client.AdminListMaintenanceControls(ctx)
+		if err != nil {
+			return adminClientError(err)
+		}
+		table := newAdminTable(stdout)
+		fmt.Fprintln(table, "NAME\tENABLED\tREVISION\tUPDATED\tUPDATED BY")
+		for _, value := range values {
+			fmt.Fprintf(table, "%s\t%t\t%d\t%s\t%s\n", value.Name, value.Enabled, value.Revision, adminTime(value.UpdatedAt), value.UpdatedBy)
+		}
+		return table.Flush()
+	})
 }
 
 func runAdminMaintenanceSet(
@@ -437,17 +389,14 @@ func runAdminMaintenanceSet(
 	enabled bool,
 	stdout, stderr io.Writer,
 ) error {
-	client, err := remoteAdminClient(ctx, command.adminRemoteFlags, stderr)
-	if err != nil {
+	return withRemoteAdminClient(ctx, command.remoteFlags, stderr, func(client *serverclient.Client) error {
+		value, err := client.AdminSetMaintenanceControl(ctx, serverv1.MaintenanceControlName(command.Name), enabled)
+		if err != nil {
+			return adminClientError(err)
+		}
+		_, err = fmt.Fprintf(stdout, "%s enabled=%t revision=%d\n", value.Name, value.Enabled, value.Revision)
 		return err
-	}
-	defer client.Close()
-	value, err := client.AdminSetMaintenanceControl(ctx, serverv1.MaintenanceControlName(command.Name), enabled)
-	if err != nil {
-		return adminClientError(err)
-	}
-	_, err = fmt.Fprintf(stdout, "%s enabled=%t revision=%d\n", value.Name, value.Enabled, value.Revision)
-	return err
+	})
 }
 
 func runAdminLoginToken(ctx context.Context, command adminLoginTokenCommand, stdout io.Writer) error {
@@ -527,31 +476,28 @@ func runAdminRelayRefresh(ctx context.Context, command adminRelayRefreshCommand,
 	return err
 }
 
-type localAdminClient struct {
-	*serverclient.Client
-	state *clientstate.Database
-}
-
-func (c *localAdminClient) Close() error { return c.state.Close() }
-
-func remoteAdminClient(ctx context.Context, flags adminRemoteFlags, diagnostics io.Writer) (*localAdminClient, error) {
+func withRemoteAdminClient(
+	ctx context.Context,
+	flags remoteFlags,
+	diagnostics io.Writer,
+	run func(*serverclient.Client) error,
+) error {
 	serverURL, state, err := resolveServer(ctx, flags.StateDir, flags.ServerURL)
 	if err != nil {
-		return nil, err
+		return err
 	}
+	defer state.Close()
 	authenticated, err := clientauth.Authenticate(ctx, clientauth.Config{
 		ServerEndpoint: serverURL, State: state, AccessToken: flags.AccessToken,
 		Diagnostics: diagnostics, LoginToken: loginTokenPrompt(os.Stdin, diagnostics),
 	})
 	if err != nil {
-		state.Close()
-		return nil, err
+		return err
 	}
 	if err := serverclient.RequireAdministrationCapability(authenticated.ServerCapabilities); err != nil {
-		state.Close()
-		return nil, adminClientError(err)
+		return adminClientError(err)
 	}
-	return &localAdminClient{Client: authenticated.Server, state: state}, nil
+	return run(authenticated.Server)
 }
 
 func adminClientError(err error) error {

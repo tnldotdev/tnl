@@ -54,7 +54,7 @@ func TestRouteAPILifecycle(t *testing.T) {
 	if err := coordinator.AddWorker("local", apiRouteWorker{}); err != nil {
 		t.Fatal(err)
 	}
-	handler := NewHandlerWithRoutes(fixtureCapabilities(t), authService, coordinator)
+	handler := NewHandler(Config{Capabilities: fixtureCapabilities(t), Auth: authService, Routes: coordinator})
 	claimHostnameRequest(t, handler, issued.AccessToken.String(), "route")
 
 	routeToken, _, _, err := credentials.NewRouteToken()
@@ -152,7 +152,7 @@ func TestHostnameListAndRelease(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = coordinator.Close() })
-	handler := NewHandlerWithRoutes(fixtureCapabilities(t), authService, coordinator)
+	handler := NewHandler(Config{Capabilities: fixtureCapabilities(t), Auth: authService, Routes: coordinator})
 	listed := routeRequest[serverv1.HostnamePage](
 		t, handler, issued.AccessToken.String(), http.MethodGet, hostnamesPath, nil, http.StatusOK,
 	)
@@ -210,7 +210,9 @@ func TestCertificateAPIRequiresBoundCurrentSession(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = coordinator.Close() })
 	certificates := &apiCertificateService{}
-	handler := NewHandlerWithServices(fixtureCapabilities(t), authService, coordinator, certificates)
+	handler := NewHandler(Config{
+		Capabilities: fixtureCapabilities(t), Auth: authService, Routes: coordinator, Certificates: certificates,
+	})
 	claimHostnameRequest(t, handler, issued.AccessToken.String(), "route")
 	routeToken, _, _, err := credentials.NewRouteToken()
 	if err != nil {

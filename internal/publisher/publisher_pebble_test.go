@@ -132,9 +132,9 @@ func TestIntegrationAutomaticCertificatePublishRestartAndRenewal(t *testing.T) {
 		},
 		Acme: &serverv1.AcmeCapabilities{AcmeProfile: "tlsserver"},
 	}
-	controlServer := httptest.NewTLSServer(api.NewHandlerWithServices(
-		capabilities, authService, coordinator, certificateService,
-	))
+	controlServer := httptest.NewTLSServer(api.NewHandler(api.Config{
+		Capabilities: capabilities, Auth: authService, Routes: coordinator, Certificates: certificateService,
+	}))
 	defer controlServer.Close()
 	anonymous, err := serverclient.New(controlServer.URL, controlServer.Client(), "")
 	if err != nil {

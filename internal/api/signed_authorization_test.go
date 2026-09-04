@@ -48,9 +48,9 @@ func TestSignedRouteAPIBypassesServerIdentityAndRetriesExactly(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = coordinator.Close() })
-	handler := NewHandlerWithServicesAndConfig(
-		fixtureCapabilities(t), nil, coordinator, nil, HandlerConfig{SignedAuthorization: true},
-	)
+	handler := NewHandler(Config{
+		Capabilities: fixtureCapabilities(t), Routes: coordinator, SignedAuthorization: true,
+	})
 	routeToken, _, _, err := credentials.NewRouteToken()
 	if err != nil {
 		t.Fatal(err)
@@ -98,7 +98,7 @@ func TestSignedRouteAPIBypassesServerIdentityAndRetriesExactly(t *testing.T) {
 }
 
 func TestClientIPUsesRemoteAddressAndDedicatedLimit(t *testing.T) {
-	handler := NewHandlerWithServicesAndConfig(fixtureCapabilities(t), nil, nil, nil, HandlerConfig{}).(*handler)
+	handler := NewHandler(Config{Capabilities: fixtureCapabilities(t)}).(*handler)
 	handler.clientIPLimit = rate.NewLimiter(0, 1)
 
 	request := httptest.NewRequest(http.MethodGet, clientIPPath, nil)
@@ -120,7 +120,7 @@ func TestClientIPUsesRemoteAddressAndDedicatedLimit(t *testing.T) {
 		t.Fatalf("limited status = %d, retry-after = %q", response.Code, response.Header().Get("Retry-After"))
 	}
 
-	malformed := NewHandlerWithServicesAndConfig(fixtureCapabilities(t), nil, nil, nil, HandlerConfig{})
+	malformed := NewHandler(Config{Capabilities: fixtureCapabilities(t)})
 	request = httptest.NewRequest(http.MethodGet, clientIPPath, nil)
 	request.RemoteAddr = "invalid"
 	response = httptest.NewRecorder()

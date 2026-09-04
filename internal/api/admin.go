@@ -64,7 +64,7 @@ func (h *handler) authenticateAdmin(
 	return principal, true
 }
 
-func (h *handler) serveAdminStatus(w http.ResponseWriter, r *http.Request, requestID string) {
+func (h *handler) serveAdminStatus(w http.ResponseWriter, r *http.Request, requestID string, _ auth.Principal) {
 	status, err := h.admin.Status(r.Context())
 	if err != nil {
 		writeAdminError(w, requestID, err)
@@ -78,89 +78,41 @@ func (h *handler) serveAdminStatus(w http.ResponseWriter, r *http.Request, reque
 	})
 }
 
-func (h *handler) serveAdminRoutes(
+func (h *handler) serveAdminRoutesList(
 	w http.ResponseWriter,
 	r *http.Request,
 	requestID string,
-	principal auth.Principal,
-	parts []string,
+	_ auth.Principal,
 ) {
-	if len(parts) == 0 {
-		if r.Method != http.MethodGet {
-			writeMethodNotAllowed(w, requestID, http.MethodGet)
-			return
-		}
-		cursor, ok := adminCursor(r, validRouteID)
-		if !ok {
-			writeInvalidRequest(w, requestID)
-			return
-		}
-		values, next, err := h.admin.ListRoutes(r.Context(), cursor)
-		if err != nil {
-			writeAdminError(w, requestID, err)
-			return
-		}
-		response := serverv1.AdminRoutePage{Routes: make([]serverv1.AdminRoute, 0, len(values))}
-		for _, value := range values {
-			response.Routes = append(response.Routes, adminRouteResponse(value))
-		}
-		if next != "" {
-			value := serverv1.RouteID(next)
-			response.NextCursor = &value
-		}
-		writeModel(w, requestID, http.StatusOK, response)
+	cursor, ok := adminCursor(r, validRouteID)
+	if !ok {
+		writeInvalidRequest(w, requestID)
 		return
 	}
-	if !validRouteID(parts[0]) {
-		writeNotFound(w, requestID)
+	values, next, err := h.admin.ListRoutes(r.Context(), cursor)
+	if err != nil {
+		writeAdminError(w, requestID, err)
 		return
 	}
-	if len(parts) == 1 {
-		if r.Method != http.MethodGet {
-			writeMethodNotAllowed(w, requestID, http.MethodGet)
-			return
-		}
-		value, err := h.admin.Route(r.Context(), parts[0])
-		if err != nil {
-			writeAdminError(w, requestID, err)
-			return
-		}
-		writeModel(w, requestID, http.StatusOK, adminRouteResponse(value))
-		return
+	response := serverv1.AdminRoutePage{Routes: make([]serverv1.AdminRoute, 0, len(values))}
+	for _, value := range values {
+		response.Routes = append(response.Routes, adminRouteResponse(value))
 	}
-	if len(parts) != 2 || (parts[1] != "suspend" && parts[1] != "resume") {
-		writeNotFound(w, requestID)
-		return
+	if next != "" {
+		value := serverv1.RouteID(next)
+		response.NextCursor = &value
 	}
-	if r.Method != http.MethodPost {
-		writeMethodNotAllowed(w, requestID, http.MethodPost)
-		return
-	}
-	var value routes.Route
-	var err error
-	if parts[1] == "suspend" {
-		var request serverv1.SuspendAdminRouteRequest
-		if !decodeRequest(w, r, requestID, &request) {
-			return
-		}
-		if request.Revision <= 0 || !validAdminReason(request.Reason) {
-			writeInvalidRequest(w, requestID)
-			return
-		}
-		value, err = h.admin.SuspendRoute(
-			r.Context(), parts[0], uint64(request.Revision), request.Reason, principal.Identity.ID, requestID,
-		)
-	} else {
-		var request serverv1.ResumeAdminRouteRequest
-		if !decodeRequest(w, r, requestID, &request) {
-			return
-		}
-		if request.Revision <= 0 {
-			writeInvalidRequest(w, requestID)
-			return
-		}
-		value, err = h.admin.ResumeRoute(r.Context(), parts[0], uint64(request.Revision), principal.Identity.ID, requestID)
-	}
+	writeModel(w, requestID, http.StatusOK, response)
+}
+
+func (h *handler) serveAdminRoute(
+	w http.ResponseWriter,
+	r *http.Request,
+	requestID string,
+	_ auth.Principal,
+	routeID string,
+) {
+	value, err := h.admin.Route(r.Context(), routeID)
 	if err != nil {
 		writeAdminError(w, requestID, err)
 		return
@@ -168,71 +120,119 @@ func (h *handler) serveAdminRoutes(
 	writeModel(w, requestID, http.StatusOK, adminRouteResponse(value))
 }
 
-func (h *handler) serveAdminHostnames(
+func (h *handler) serveAdminRouteSuspend(
 	w http.ResponseWriter,
 	r *http.Request,
 	requestID string,
 	principal auth.Principal,
-	parts []string,
+	routeID string,
 ) {
-	if len(parts) == 0 {
-		if r.Method != http.MethodGet {
-			writeMethodNotAllowed(w, requestID, http.MethodGet)
-			return
-		}
-		cursor, ok := adminCursor(r, validHostnameID)
-		if !ok {
-			writeInvalidRequest(w, requestID)
-			return
-		}
-		values, next, err := h.admin.ListHostnames(r.Context(), cursor)
-		if err != nil {
-			writeAdminError(w, requestID, err)
-			return
-		}
-		response := serverv1.AdminHostnamePage{Hostnames: make([]serverv1.AdminHostname, 0, len(values))}
-		for _, value := range values {
-			response.Hostnames = append(response.Hostnames, adminHostnameResponse(value))
-		}
-		if next != "" {
-			value := serverv1.HostnameID(next)
-			response.NextCursor = &value
-		}
-		writeModel(w, requestID, http.StatusOK, response)
+	var request serverv1.SuspendAdminRouteRequest
+	if !decodeRequest(w, r, requestID, &request) {
 		return
 	}
-	if !validHostnameID(parts[0]) {
-		writeNotFound(w, requestID)
+	if request.Revision <= 0 || !validAdminReason(request.Reason) {
+		writeInvalidRequest(w, requestID)
 		return
 	}
-	if len(parts) == 1 {
-		switch r.Method {
-		case http.MethodGet:
-			value, err := h.admin.Hostname(r.Context(), parts[0])
-			if err != nil {
-				writeAdminError(w, requestID, err)
-				return
-			}
-			writeModel(w, requestID, http.StatusOK, adminHostnameResponse(value))
-		case http.MethodDelete:
-			if err := h.admin.RemoveHostname(r.Context(), parts[0], principal.Identity.ID, requestID); err != nil {
-				writeAdminError(w, requestID, err)
-				return
-			}
-			writeNoContent(w)
-		default:
-			writeMethodNotAllowed(w, requestID, http.MethodGet+", "+http.MethodDelete)
-		}
+	value, err := h.admin.SuspendRoute(
+		r.Context(), routeID, uint64(request.Revision), request.Reason, principal.Identity.ID, requestID,
+	)
+	if err != nil {
+		writeAdminError(w, requestID, err)
 		return
 	}
-	if len(parts) != 2 || parts[1] != "quarantine" {
-		writeNotFound(w, requestID)
+	writeModel(w, requestID, http.StatusOK, adminRouteResponse(value))
+}
+
+func (h *handler) serveAdminRouteResume(
+	w http.ResponseWriter,
+	r *http.Request,
+	requestID string,
+	principal auth.Principal,
+	routeID string,
+) {
+	var request serverv1.ResumeAdminRouteRequest
+	if !decodeRequest(w, r, requestID, &request) {
 		return
 	}
-	if r.Method != http.MethodPost {
-		writeMethodNotAllowed(w, requestID, http.MethodPost)
+	if request.Revision <= 0 {
+		writeInvalidRequest(w, requestID)
 		return
 	}
+	value, err := h.admin.ResumeRoute(
+		r.Context(), routeID, uint64(request.Revision), principal.Identity.ID, requestID,
+	)
+	if err != nil {
+		writeAdminError(w, requestID, err)
+		return
+	}
+	writeModel(w, requestID, http.StatusOK, adminRouteResponse(value))
+}
+
+func (h *handler) serveAdminHostnamesList(
+	w http.ResponseWriter,
+	r *http.Request,
+	requestID string,
+	_ auth.Principal,
+) {
+	cursor, ok := adminCursor(r, validHostnameID)
+	if !ok {
+		writeInvalidRequest(w, requestID)
+		return
+	}
+	values, next, err := h.admin.ListHostnames(r.Context(), cursor)
+	if err != nil {
+		writeAdminError(w, requestID, err)
+		return
+	}
+	response := serverv1.AdminHostnamePage{Hostnames: make([]serverv1.AdminHostname, 0, len(values))}
+	for _, value := range values {
+		response.Hostnames = append(response.Hostnames, adminHostnameResponse(value))
+	}
+	if next != "" {
+		value := serverv1.HostnameID(next)
+		response.NextCursor = &value
+	}
+	writeModel(w, requestID, http.StatusOK, response)
+}
+
+func (h *handler) serveAdminHostname(
+	w http.ResponseWriter,
+	r *http.Request,
+	requestID string,
+	_ auth.Principal,
+	hostnameID string,
+) {
+	value, err := h.admin.Hostname(r.Context(), hostnameID)
+	if err != nil {
+		writeAdminError(w, requestID, err)
+		return
+	}
+	writeModel(w, requestID, http.StatusOK, adminHostnameResponse(value))
+}
+
+func (h *handler) serveAdminHostnameRemove(
+	w http.ResponseWriter,
+	r *http.Request,
+	requestID string,
+	principal auth.Principal,
+	hostnameID string,
+) {
+	if err := h.admin.RemoveHostname(r.Context(), hostnameID, principal.Identity.ID, requestID); err != nil {
+		writeAdminError(w, requestID, err)
+		return
+	}
+	writeNoContent(w)
+}
+
+func (h *handler) serveAdminHostnameQuarantine(
+	w http.ResponseWriter,
+	r *http.Request,
+	requestID string,
+	principal auth.Principal,
+	hostnameID string,
+) {
 	var request serverv1.AdminReasonRequest
 	if !decodeRequest(w, r, requestID, &request) {
 		return
@@ -242,7 +242,7 @@ func (h *handler) serveAdminHostnames(
 		return
 	}
 	if err := h.admin.QuarantineHostname(
-		r.Context(), parts[0], request.Reason, principal.Identity.ID, requestID,
+		r.Context(), hostnameID, request.Reason, principal.Identity.ID, requestID,
 	); err != nil {
 		writeAdminError(w, requestID, err)
 		return
@@ -250,158 +250,137 @@ func (h *handler) serveAdminHostnames(
 	writeNoContent(w)
 }
 
-func (h *handler) serveAdminCredentials(
+func (h *handler) serveAdminCredentialsList(
+	w http.ResponseWriter,
+	r *http.Request,
+	requestID string,
+	_ auth.Principal,
+) {
+	cursor, ok := adminCursor(r, validCredentialID)
+	if !ok {
+		writeInvalidRequest(w, requestID)
+		return
+	}
+	values, next, err := h.admin.ListCredentials(r.Context(), cursor)
+	if err != nil {
+		writeAdminError(w, requestID, err)
+		return
+	}
+	response := serverv1.AdminCredentialPage{Credentials: make([]serverv1.AdminCredential, 0, len(values))}
+	for _, value := range values {
+		item := serverv1.AdminCredential{
+			Id: serverv1.CredentialID(value.ID), RouteId: serverv1.RouteID(value.RouteID), CreatedAt: value.CreatedAt,
+		}
+		if !value.RevokedAt.IsZero() {
+			item.RevokedAt = &value.RevokedAt
+		}
+		response.Credentials = append(response.Credentials, item)
+	}
+	if next != "" {
+		value := serverv1.CredentialID(next)
+		response.NextCursor = &value
+	}
+	writeModel(w, requestID, http.StatusOK, response)
+}
+
+func (h *handler) serveAdminCredentialRevoke(
 	w http.ResponseWriter,
 	r *http.Request,
 	requestID string,
 	principal auth.Principal,
-	parts []string,
+	credentialID string,
 ) {
-	if len(parts) == 0 {
-		if r.Method != http.MethodGet {
-			writeMethodNotAllowed(w, requestID, http.MethodGet)
-			return
-		}
-		cursor, ok := adminCursor(r, validCredentialID)
-		if !ok {
-			writeInvalidRequest(w, requestID)
-			return
-		}
-		values, next, err := h.admin.ListCredentials(r.Context(), cursor)
-		if err != nil {
-			writeAdminError(w, requestID, err)
-			return
-		}
-		response := serverv1.AdminCredentialPage{Credentials: make([]serverv1.AdminCredential, 0, len(values))}
-		for _, value := range values {
-			item := serverv1.AdminCredential{
-				Id: serverv1.CredentialID(value.ID), RouteId: serverv1.RouteID(value.RouteID), CreatedAt: value.CreatedAt,
-			}
-			if !value.RevokedAt.IsZero() {
-				item.RevokedAt = &value.RevokedAt
-			}
-			response.Credentials = append(response.Credentials, item)
-		}
-		if next != "" {
-			value := serverv1.CredentialID(next)
-			response.NextCursor = &value
-		}
-		writeModel(w, requestID, http.StatusOK, response)
-		return
-	}
-	if len(parts) != 1 || !validCredentialID(parts[0]) {
-		writeNotFound(w, requestID)
-		return
-	}
-	if r.Method != http.MethodDelete {
-		writeMethodNotAllowed(w, requestID, http.MethodDelete)
-		return
-	}
-	if err := h.admin.RevokeCredential(r.Context(), parts[0], principal.Identity.ID, requestID); err != nil {
+	if err := h.admin.RevokeCredential(r.Context(), credentialID, principal.Identity.ID, requestID); err != nil {
 		writeAdminError(w, requestID, err)
 		return
 	}
 	writeNoContent(w)
 }
 
-func (h *handler) serveAdminControlSessions(
+func (h *handler) serveAdminControlSessionsList(
+	w http.ResponseWriter,
+	r *http.Request,
+	requestID string,
+	_ auth.Principal,
+) {
+	cursor, ok := adminCursor(r, validControlSessionID)
+	if !ok {
+		writeInvalidRequest(w, requestID)
+		return
+	}
+	values, next, err := h.admin.ListControlSessions(r.Context(), cursor)
+	if err != nil {
+		writeAdminError(w, requestID, err)
+		return
+	}
+	response := serverv1.AdminControlSessionPage{ControlSessions: make([]serverv1.AdminControlSession, 0, len(values))}
+	for _, value := range values {
+		grants := make([]serverv1.Grant, len(value.Grants))
+		for index, grant := range value.Grants {
+			grants[index] = serverv1.Grant(grant)
+		}
+		item := serverv1.AdminControlSession{
+			Id: serverv1.ControlSessionID(value.ID), IdentityId: value.IdentityID,
+			AuthenticationMethod: value.AuthenticationMethod, Grants: grants, CreatedAt: value.CreatedAt,
+			AccessExpiresAt: value.AccessExpiresAt, RefreshExpiresAt: value.RefreshExpiresAt,
+		}
+		if !value.RevokedAt.IsZero() {
+			item.RevokedAt = &value.RevokedAt
+		}
+		response.ControlSessions = append(response.ControlSessions, item)
+	}
+	if next != "" {
+		value := serverv1.ControlSessionID(next)
+		response.NextCursor = &value
+	}
+	writeModel(w, requestID, http.StatusOK, response)
+}
+
+func (h *handler) serveAdminControlSessionRevoke(
 	w http.ResponseWriter,
 	r *http.Request,
 	requestID string,
 	principal auth.Principal,
-	parts []string,
+	controlSessionID string,
 ) {
-	if len(parts) == 0 {
-		if r.Method != http.MethodGet {
-			writeMethodNotAllowed(w, requestID, http.MethodGet)
-			return
-		}
-		cursor, ok := adminCursor(r, validControlSessionID)
-		if !ok {
-			writeInvalidRequest(w, requestID)
-			return
-		}
-		values, next, err := h.admin.ListControlSessions(r.Context(), cursor)
-		if err != nil {
-			writeAdminError(w, requestID, err)
-			return
-		}
-		response := serverv1.AdminControlSessionPage{ControlSessions: make([]serverv1.AdminControlSession, 0, len(values))}
-		for _, value := range values {
-			grants := make([]serverv1.Grant, len(value.Grants))
-			for index, grant := range value.Grants {
-				grants[index] = serverv1.Grant(grant)
-			}
-			item := serverv1.AdminControlSession{
-				Id: serverv1.ControlSessionID(value.ID), IdentityId: value.IdentityID,
-				AuthenticationMethod: value.AuthenticationMethod, Grants: grants, CreatedAt: value.CreatedAt,
-				AccessExpiresAt: value.AccessExpiresAt, RefreshExpiresAt: value.RefreshExpiresAt,
-			}
-			if !value.RevokedAt.IsZero() {
-				item.RevokedAt = &value.RevokedAt
-			}
-			response.ControlSessions = append(response.ControlSessions, item)
-		}
-		if next != "" {
-			value := serverv1.ControlSessionID(next)
-			response.NextCursor = &value
-		}
-		writeModel(w, requestID, http.StatusOK, response)
-		return
-	}
-	if len(parts) != 1 || !validControlSessionID(parts[0]) {
-		writeNotFound(w, requestID)
-		return
-	}
-	if r.Method != http.MethodDelete {
-		writeMethodNotAllowed(w, requestID, http.MethodDelete)
-		return
-	}
-	if err := h.admin.RevokeControlSession(r.Context(), parts[0], principal.Identity.ID, requestID); err != nil {
+	if err := h.admin.RevokeControlSession(r.Context(), controlSessionID, principal.Identity.ID, requestID); err != nil {
 		writeAdminError(w, requestID, err)
 		return
 	}
 	writeNoContent(w)
 }
 
-func (h *handler) serveAdminMaintenanceControls(
+func (h *handler) serveAdminMaintenanceControlsList(
+	w http.ResponseWriter,
+	r *http.Request,
+	requestID string,
+	_ auth.Principal,
+) {
+	values, err := h.admin.ListMaintenanceControls(r.Context())
+	if err != nil {
+		writeAdminError(w, requestID, err)
+		return
+	}
+	response := make([]serverv1.AdminMaintenanceControl, 0, len(values))
+	for _, value := range values {
+		response = append(response, adminMaintenanceControlResponse(value))
+	}
+	writeModel(w, requestID, http.StatusOK, response)
+}
+
+func (h *handler) serveAdminMaintenanceControlSet(
 	w http.ResponseWriter,
 	r *http.Request,
 	requestID string,
 	principal auth.Principal,
-	parts []string,
+	name string,
 ) {
-	if len(parts) == 0 {
-		if r.Method != http.MethodGet {
-			writeMethodNotAllowed(w, requestID, http.MethodGet)
-			return
-		}
-		values, err := h.admin.ListMaintenanceControls(r.Context())
-		if err != nil {
-			writeAdminError(w, requestID, err)
-			return
-		}
-		response := make([]serverv1.AdminMaintenanceControl, 0, len(values))
-		for _, value := range values {
-			response = append(response, adminMaintenanceControlResponse(value))
-		}
-		writeModel(w, requestID, http.StatusOK, response)
-		return
-	}
-	if len(parts) != 1 || !validAdminMaintenanceControl(parts[0]) {
-		writeNotFound(w, requestID)
-		return
-	}
-	if r.Method != http.MethodPut {
-		writeMethodNotAllowed(w, requestID, http.MethodPut)
-		return
-	}
 	var request serverv1.SetAdminMaintenanceControlRequest
 	if !decodeRequest(w, r, requestID, &request) {
 		return
 	}
 	value, err := h.admin.SetMaintenanceControl(
-		r.Context(), adminservice.MaintenanceControlName(parts[0]), request.Enabled, principal.Identity.ID, requestID,
+		r.Context(), adminservice.MaintenanceControlName(name), request.Enabled, principal.Identity.ID, requestID,
 	)
 	if err != nil {
 		writeAdminError(w, requestID, err)
