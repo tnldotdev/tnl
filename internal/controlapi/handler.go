@@ -5,9 +5,9 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"slices"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
@@ -18,6 +18,24 @@ const (
 	publisherLeaseDuration                = 45 * time.Second
 	publisherConnectionCredentialDuration = 2 * time.Minute
 )
+
+// Config contains the public API settings derived from tnld configuration.
+type Config struct {
+	ManagedDeploymentDomain string
+	AuthorityEndpoint       string
+	LoginToken              string
+	AccessTokenLifetime     time.Duration
+	RefreshTokenLifetime    time.Duration
+	OIDCIssuer              string
+	OIDCClientID            string
+	OIDCLoginFlow           string
+	OIDCScopes              []string
+	CertificateIssuance     bool
+	ACMEDirectoryURL        string
+	ServerDomain            string
+	IngressControlEndpoint  string
+	RelayControlEndpoint    string
+}
 
 // Store is the durable control state consumed by the public APIs.
 type Store interface {
@@ -54,7 +72,7 @@ type handler struct {
 	unavailableControlServer
 	unavailableAuthorityServer
 
-	config              config.TNLD
+	config              Config
 	store               Store
 	readiness           func(context.Context) error
 	loginVerifier       credentials.LoginVerifier
@@ -66,7 +84,7 @@ var _ authorityv1.ServerInterface = (*handler)(nil)
 
 // NewHandler constructs the public APIs. Known but unavailable operations and
 // unknown paths retain the control-unavailable response used during rollout.
-func NewHandler(cfg config.TNLD, store Store, readiness func(context.Context) error) http.Handler {
+func NewHandler(cfg Config, store Store, readiness func(context.Context) error) http.Handler {
 	h := &handler{config: cfg, store: store, readiness: readiness}
 	if cfg.LoginToken != "" {
 		h.loginVerifier, _ = credentials.ParseLoginToken(credentials.LoginToken(cfg.LoginToken))
@@ -117,25 +135,22 @@ func (h *handler) GetClientIP(response http.ResponseWriter, request *http.Reques
 	writeJSON(response, http.StatusOK, controlv1.ClientIPResponse{Ip: host})
 }
 
-func controlDiscovery(cfg config.TNLD) controlv1.ControlDiscovery {
+func controlDiscovery(cfg Config) controlv1.ControlDiscovery {
 	result := controlv1.ControlDiscovery{
-		ManagedDeploymentDomain: cfg.ManagedDomain(),
+		ManagedDeploymentDomain: cfg.ManagedDeploymentDomain,
 		DnsAutomation:           false,
-		AuthorityEndpoint:       cfg.AuthorityOrigin(),
+		AuthorityEndpoint:       cfg.AuthorityEndpoint,
 		Authentication:          controlv1.AuthenticationFacts{Methods: []controlv1.AuthenticationFactsMethods{}},
 	}
 	if cfg.LoginToken != "" {
 		result.Authentication.Methods = append(result.Authentication.Methods, controlv1.LoginToken)
 	}
-	if cfg.SignedAuthorizationEnabled() {
-		result.AuthorityEndpoint = cfg.AuthorityEndpoint
-	}
-	if cfg.OIDCEnabled() {
+	if cfg.OIDCIssuer != "" {
 		result.Authentication.Methods = append(result.Authentication.Methods, controlv1.Oidc)
 		result.Authentication.Oidc = &controlv1.OIDCAuthenticationFacts{
 			Issuer: cfg.OIDCIssuer, ClientId: cfg.OIDCClientID,
 			LoginFlow: controlv1.OIDCAuthenticationFactsLoginFlow(cfg.OIDCLoginFlow),
-			Scopes:    cfg.EffectiveOIDCScopes(),
+			Scopes:    slices.Clone(cfg.OIDCScopes),
 		}
 	}
 	return result

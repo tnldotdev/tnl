@@ -149,7 +149,7 @@ func serveWithHTTPClients(
 				return err
 			}
 			d.forward("run certificate worker", runAsync(func() error { return worker.Run(lifetime) }))
-			d.controlTLS, d.controlTLSManager, err = controlTLSConfig(cfg, database, account, acmeHTTPClient)
+			d.controlTLS, d.controlTLSManager, err = controlTLSConfig(controlTLSSettingsFrom(cfg), database, account, acmeHTTPClient)
 			if err != nil {
 				return err
 			}
@@ -171,30 +171,30 @@ func serveWithHTTPClients(
 
 	controlHandler := http.Handler(nil)
 	if d.database != nil {
-		controlHandler = controlapi.NewHandler(cfg, d.database, d.database.Readiness)
+		controlHandler = controlapi.NewHandler(controlAPIConfigFrom(cfg), d.database, d.database.Readiness)
 	}
 
 	switch cfg.Mode {
 	case config.TNLDModeRelay:
-		if err := d.startRelay(lifetime, cfg, metrics); err != nil {
+		if err := d.startRelay(lifetime, relayProcessSettingsFrom(cfg), metrics); err != nil {
 			return err
 		}
 	case config.TNLDModeIngress:
-		if err := d.startIngress(lifetime, cfg, metrics); err != nil {
+		if err := d.startIngress(lifetime, ingressProcessSettingsFrom(cfg), metrics); err != nil {
 			return err
 		}
 	case config.TNLDModeStandalone:
-		if err := d.startPrivateControlAPIs(lifetime, cfg); err != nil {
+		if err := d.startPrivateControlAPIs(lifetime, privateControlSettingsFrom(cfg)); err != nil {
 			return err
 		}
-		if err := d.startStandalone(lifetime, cfg, metrics, controlHandler); err != nil {
+		if err := d.startStandalone(lifetime, standaloneSettingsFrom(cfg), metrics, controlHandler); err != nil {
 			return err
 		}
 	case config.TNLDModeControl:
-		if err := d.startControl(cfg, controlHandler); err != nil {
+		if err := d.startControl(cfg.ControlListen, controlHandler); err != nil {
 			return err
 		}
-		if err := d.startPrivateControlAPIs(lifetime, cfg); err != nil {
+		if err := d.startPrivateControlAPIs(lifetime, privateControlSettingsFrom(cfg)); err != nil {
 			return err
 		}
 	}
@@ -222,6 +222,25 @@ func serveWithHTTPClients(
 		return nil
 	case err := <-d.done:
 		return err
+	}
+}
+
+func controlAPIConfigFrom(cfg config.TNLD) controlapi.Config {
+	return controlapi.Config{
+		ManagedDeploymentDomain: cfg.ManagedDomain(),
+		AuthorityEndpoint:       cfg.AuthorityOrigin(),
+		LoginToken:              cfg.LoginToken,
+		AccessTokenLifetime:     cfg.AccessTokenLifetime,
+		RefreshTokenLifetime:    cfg.RefreshTokenLifetime,
+		OIDCIssuer:              cfg.OIDCIssuer,
+		OIDCClientID:            cfg.OIDCClientID,
+		OIDCLoginFlow:           string(cfg.OIDCLoginFlow),
+		OIDCScopes:              cfg.EffectiveOIDCScopes(),
+		CertificateIssuance:     cfg.ACMEEnabled(),
+		ACMEDirectoryURL:        cfg.ACMEDirectoryURL,
+		ServerDomain:            cfg.ServerDomain,
+		IngressControlEndpoint:  cfg.IngressControlEndpoint(),
+		RelayControlEndpoint:    cfg.RelayControlEndpoint(),
 	}
 }
 
@@ -271,9 +290,25 @@ func (d *daemon) ready(ctx context.Context, mode config.TNLDMode, now time.Time)
 	return nil
 }
 
-func (d *daemon) startIngress(ctx context.Context, cfg config.TNLD, metrics *observability.Metrics) error {
+type ingressProcessSettings struct {
+	enrollment serviceEnrollmentSettings
+	ingressID  string
+	listen     string
+	runtime    ingressSettings
+}
+
+func ingressProcessSettingsFrom(cfg config.TNLD) ingressProcessSettings {
+	return ingressProcessSettings{
+		enrollment: serviceEnrollmentSettingsFrom(cfg),
+		ingressID:  cfg.IngressID,
+		listen:     cfg.IngressListen,
+		runtime:    ingressSettingsFrom(cfg),
+	}
+}
+
+func (d *daemon) startIngress(ctx context.Context, settings ingressProcessSettings, metrics *observability.Metrics) error {
 	enrollment, err := newServiceEnrollmentState(
-		ctx, cfg, servicepki.RoleIngress, cfg.IngressID, d.serviceEnrollmentHTTP,
+		ctx, settings.enrollment, servicepki.RoleIngress, settings.ingressID, d.serviceEnrollmentHTTP,
 	)
 	if err != nil {
 		return err
@@ -282,12 +317,12 @@ func (d *daemon) startIngress(ctx context.Context, cfg config.TNLD, metrics *obs
 	if err != nil {
 		return err
 	}
-	listener, err := net.Listen("tcp", cfg.IngressListen)
+	listener, err := net.Listen("tcp", settings.listen)
 	if err != nil {
 		return fmt.Errorf("listen for public ingress: %w", err)
 	}
-	if err := d.startIngressRuntime(ctx, ingressSettingsFrom(cfg), metrics, ingressRuntimeConfig{
-		enrollment: enrollment, client: privateClient, ingressID: cfg.IngressID, listener: listener,
+	if err := d.startIngressRuntime(ctx, settings.runtime, metrics, ingressRuntimeConfig{
+		enrollment: enrollment, client: privateClient, ingressID: settings.ingressID, listener: listener,
 	}); err != nil {
 		_ = listener.Close()
 		return err
@@ -444,9 +479,35 @@ func (d *daemon) startIngressRuntime(
 	return nil
 }
 
-func (d *daemon) startRelay(ctx context.Context, cfg config.TNLD, metrics *observability.Metrics) error {
+type relayProcessSettings struct {
+	enrollment             serviceEnrollmentSettings
+	relayID                string
+	internalListen         string
+	internalAddress        string
+	tcpListen              string
+	udpListen              string
+	quicIdleTimeout        time.Duration
+	quicMaxIncomingStreams int64
+	runtime                relaySettings
+}
+
+func relayProcessSettingsFrom(cfg config.TNLD) relayProcessSettings {
+	return relayProcessSettings{
+		enrollment:             serviceEnrollmentSettingsFrom(cfg),
+		relayID:                cfg.RelayID,
+		internalListen:         cfg.InternalRelayListen,
+		internalAddress:        cfg.InternalRelayAddress,
+		tcpListen:              cfg.RelayTCPListen,
+		udpListen:              cfg.RelayUDPListen,
+		quicIdleTimeout:        cfg.QUICIdleTimeout,
+		quicMaxIncomingStreams: cfg.QUICMaxIncomingStreams,
+		runtime:                relaySettingsFrom(cfg),
+	}
+}
+
+func (d *daemon) startRelay(ctx context.Context, settings relayProcessSettings, metrics *observability.Metrics) error {
 	enrollment, err := newServiceEnrollmentState(
-		ctx, cfg, servicepki.RoleRelay, cfg.RelayID, d.serviceEnrollmentHTTP,
+		ctx, settings.enrollment, servicepki.RoleRelay, settings.relayID, d.serviceEnrollmentHTTP,
 	)
 	if err != nil {
 		return err
@@ -455,31 +516,31 @@ func (d *daemon) startRelay(ctx context.Context, cfg config.TNLD, metrics *obser
 	if err != nil {
 		return err
 	}
-	internalListener, err := net.Listen("tcp", cfg.InternalRelayListen)
+	internalListener, err := net.Listen("tcp", settings.internalListen)
 	if err != nil {
 		return fmt.Errorf("listen for internal forwarding: %w", err)
 	}
-	runtime, err := d.startRelayRuntime(ctx, relaySettingsFrom(cfg), relayRuntimeConfig{
-		enrollment: enrollment, client: privateClient, relayID: cfg.RelayID,
-		internalAddress: cfg.InternalRelayAddress, internalListener: internalListener, metrics: metrics,
+	runtime, err := d.startRelayRuntime(ctx, settings.runtime, relayRuntimeConfig{
+		enrollment: enrollment, client: privateClient, relayID: settings.relayID,
+		internalAddress: settings.internalAddress, internalListener: internalListener, metrics: metrics,
 	})
 	if err != nil {
 		_ = internalListener.Close()
 		return err
 	}
-	tcpListener, err := net.Listen("tcp", cfg.RelayTCPListen)
+	tcpListener, err := net.Listen("tcp", settings.tcpListen)
 	if err != nil {
 		return fmt.Errorf("listen for TLS/TCP publisher connections: %w", err)
 	}
 	runtime.tcpListener = tcpListener
-	udpListener, err := muxsession.ListenQUIC(cfg.RelayUDPListen, runtime.transportTLS, muxsession.QUICConfig{Config: &quic.Config{
-		MaxIdleTimeout: cfg.QUICIdleTimeout, MaxIncomingStreams: cfg.QUICMaxIncomingStreams,
+	udpListener, err := muxsession.ListenQUIC(settings.udpListen, runtime.transportTLS, muxsession.QUICConfig{Config: &quic.Config{
+		MaxIdleTimeout: settings.quicIdleTimeout, MaxIncomingStreams: settings.quicMaxIncomingStreams,
 	}})
 	if err != nil {
 		return fmt.Errorf("listen for QUIC publisher connections: %w", err)
 	}
 	runtime.udpListener = udpListener
-	maxStreams, err := runtimeCapacity("publisher connection stream", cfg.QUICMaxIncomingStreams)
+	maxStreams, err := runtimeCapacity("publisher connection stream", settings.quicMaxIncomingStreams)
 	if err != nil {
 		return err
 	}
@@ -610,21 +671,51 @@ func (d *daemon) startRelayRuntime(
 	return runtime, nil
 }
 
+type standaloneSettings struct {
+	ingressControlListen   string
+	relayControlListen     string
+	publicListen           string
+	relayUDPListen         string
+	quicIdleTimeout        time.Duration
+	quicMaxIncomingStreams int64
+	serverHostname         string
+	relayHostname          string
+	ingress                ingressSettings
+	relay                  relaySettings
+	enrollment             localEnrollmentSettings
+}
+
+func standaloneSettingsFrom(cfg config.TNLD) standaloneSettings {
+	return standaloneSettings{
+		ingressControlListen:   cfg.IngressControlListen,
+		relayControlListen:     cfg.RelayControlListen,
+		publicListen:           cfg.IngressListen,
+		relayUDPListen:         cfg.RelayUDPListen,
+		quicIdleTimeout:        cfg.QUICIdleTimeout,
+		quicMaxIncomingStreams: cfg.QUICMaxIncomingStreams,
+		serverHostname:         cfg.ServerHostname(),
+		relayHostname:          cfg.StandaloneRelayHostname(),
+		ingress:                ingressSettingsFrom(cfg),
+		relay:                  relaySettingsFrom(cfg),
+		enrollment:             localEnrollmentSettingsFrom(cfg),
+	}
+}
+
 func (d *daemon) startStandalone(
 	ctx context.Context,
-	cfg config.TNLD,
+	settings standaloneSettings,
 	metrics *observability.Metrics,
 	controlHandler http.Handler,
 ) error {
-	ingressControlAddress, err := localControlDialAddress(cfg.IngressControlListen)
+	ingressControlAddress, err := localControlDialAddress(settings.ingressControlListen)
 	if err != nil {
 		return err
 	}
-	relayControlAddress, err := localControlDialAddress(cfg.RelayControlListen)
+	relayControlAddress, err := localControlDialAddress(settings.relayControlListen)
 	if err != nil {
 		return err
 	}
-	publicListener, err := net.Listen("tcp", cfg.IngressListen)
+	publicListener, err := net.Listen("tcp", settings.publicListen)
 	if err != nil {
 		return fmt.Errorf("listen for standalone public traffic: %w", err)
 	}
@@ -644,7 +735,7 @@ func (d *daemon) startStandalone(
 	targets := make(map[string]*relayRuntime, len(standaloneRelays))
 	for _, identity := range standaloneRelays {
 		enrollment, err := newLocalServiceEnrollmentState(
-			ctx, cfg, d.database, servicepki.RoleRelay, identity.relayID, identity.serviceID,
+			ctx, settings.enrollment, d.database, servicepki.RoleRelay, identity.relayID, identity.serviceID,
 		)
 		if err != nil {
 			return err
@@ -657,7 +748,7 @@ func (d *daemon) startStandalone(
 		if err != nil {
 			return fmt.Errorf("listen for standalone internal forwarding: %w", err)
 		}
-		runtime, err := d.startRelayRuntime(ctx, relaySettingsFrom(cfg), relayRuntimeConfig{
+		runtime, err := d.startRelayRuntime(ctx, settings.relay, relayRuntimeConfig{
 			enrollment: enrollment, client: client, relayID: identity.relayID,
 			internalAddress: internalListener.Addr().String(), internalListener: internalListener, metrics: metrics,
 		})
@@ -681,13 +772,13 @@ func (d *daemon) startStandalone(
 	if err != nil {
 		return err
 	}
-	maxStreams, err := runtimeCapacity("publisher connection stream", cfg.QUICMaxIncomingStreams)
+	maxStreams, err := runtimeCapacity("publisher connection stream", settings.quicMaxIncomingStreams)
 	if err != nil {
 		return err
 	}
 	transportTLS := d.relays[0].transportTLS
-	udpListener, err := muxsession.ListenQUIC(cfg.RelayUDPListen, transportTLS, muxsession.QUICConfig{Config: &quic.Config{
-		MaxIdleTimeout: cfg.QUICIdleTimeout, MaxIncomingStreams: cfg.QUICMaxIncomingStreams,
+	udpListener, err := muxsession.ListenQUIC(settings.relayUDPListen, transportTLS, muxsession.QUICConfig{Config: &quic.Config{
+		MaxIdleTimeout: settings.quicIdleTimeout, MaxIncomingStreams: settings.quicMaxIncomingStreams,
 	}})
 	if err != nil {
 		return fmt.Errorf("listen for standalone QUIC publisher connections: %w", err)
@@ -701,7 +792,7 @@ func (d *daemon) startStandalone(
 	d.forward("serve QUIC publisher connections", serveQUICSessions(ctx, udpListener, publisher.Accept))
 
 	ingressEnrollment, err := newLocalServiceEnrollmentState(
-		ctx, cfg, d.database, servicepki.RoleIngress, standaloneIngressID, "",
+		ctx, settings.enrollment, d.database, servicepki.RoleIngress, standaloneIngressID, "",
 	)
 	if err != nil {
 		return err
@@ -710,21 +801,21 @@ func (d *daemon) startStandalone(
 	if err != nil {
 		return err
 	}
-	if err := d.startIngressRuntime(ctx, ingressSettingsFrom(cfg), metrics, ingressRuntimeConfig{
+	if err := d.startIngressRuntime(ctx, settings.ingress, metrics, ingressRuntimeConfig{
 		enrollment: ingressEnrollment, client: ingressClient, ingressID: standaloneIngressID,
 		listener: publicListener,
 		configure: func(ingressConfig *ingress.Config) {
-			ingressConfig.ServerHostname = cfg.ServerHostname()
+			ingressConfig.ServerHostname = settings.serverHostname
 			ingressConfig.HandleControl = controlListener.Enqueue
-			ingressConfig.RelayHostname = cfg.StandaloneRelayHostname()
+			ingressConfig.RelayHostname = settings.relayHostname
 			ingressConfig.HandleRelay = relayListener.Enqueue
 		},
 	}); err != nil {
 		return err
 	}
 	publicOwned = true
-	log.Printf("control API listening on %s for %s", publicListener.Addr(), cfg.ServerHostname())
-	log.Printf("relay publisher TCP listening on %s for %s", publicListener.Addr(), cfg.StandaloneRelayHostname())
+	log.Printf("control API listening on %s for %s", publicListener.Addr(), settings.serverHostname)
+	log.Printf("relay publisher TCP listening on %s for %s", publicListener.Addr(), settings.relayHostname)
 	log.Printf("relay publisher UDP listening on %s", udpListener.Addr())
 	return nil
 }
@@ -750,23 +841,35 @@ func localControlDialAddress(listenAddress string) (string, error) {
 	return net.JoinHostPort(host, port), nil
 }
 
+type serviceEnrollmentSettings struct {
+	controlHostname string
+	token           credentials.ServiceEnrollmentToken
+}
+
+func serviceEnrollmentSettingsFrom(cfg config.TNLD) serviceEnrollmentSettings {
+	return serviceEnrollmentSettings{
+		controlHostname: cfg.ControlHostname,
+		token:           credentials.ServiceEnrollmentToken(cfg.ServiceEnrollmentToken),
+	}
+}
+
 func newServiceEnrollmentState(
 	ctx context.Context,
-	cfg config.TNLD,
+	settings serviceEnrollmentSettings,
 	role servicepki.Role,
 	processID string,
 	httpClient *http.Client,
 ) (*serviceenrollment.State, error) {
 	publicClient, err := controlv1.NewClientWithResponses(
-		"https://"+cfg.ControlHostname,
+		"https://"+settings.controlHostname,
 		controlv1.WithHTTPClient(httpClient),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("configure service enrollment client: %w", err)
 	}
 	enroller, err := serviceenrollment.New(serviceenrollment.Config{
-		Client: publicClient, ControlHostname: cfg.ControlHostname,
-		ServiceEnrollmentToken: credentials.ServiceEnrollmentToken(cfg.ServiceEnrollmentToken),
+		Client: publicClient, ControlHostname: settings.controlHostname,
+		ServiceEnrollmentToken: settings.token,
 		Role:                   role, ProcessID: processID,
 	})
 	if err != nil {
@@ -775,19 +878,35 @@ func newServiceEnrollmentState(
 	return serviceenrollment.NewState(ctx, enroller)
 }
 
+type localEnrollmentSettings struct {
+	controlHostname        string
+	ingressControlEndpoint string
+	relayControlEndpoint   string
+	relayHostname          string
+}
+
+func localEnrollmentSettingsFrom(cfg config.TNLD) localEnrollmentSettings {
+	return localEnrollmentSettings{
+		controlHostname:        cfg.ServerHostname(),
+		ingressControlEndpoint: cfg.IngressControlEndpoint(),
+		relayControlEndpoint:   cfg.RelayControlEndpoint(),
+		relayHostname:          cfg.StandaloneRelayHostname(),
+	}
+}
+
 func newLocalServiceEnrollmentState(
 	ctx context.Context,
-	cfg config.TNLD,
+	settings localEnrollmentSettings,
 	database *controlstate.Database,
 	role servicepki.Role,
 	processID, relayServiceID string,
 ) (*serviceenrollment.State, error) {
 	enroller, err := serviceenrollment.NewLocal(serviceenrollment.Config{
 		Client: &localEnrollmentClient{
-			database: database, cfg: cfg, role: role, processID: processID,
+			database: database, settings: settings, role: role, processID: processID,
 			relayServiceID: relayServiceID,
 		},
-		ControlHostname: cfg.ServerHostname(), Role: role, ProcessID: processID,
+		ControlHostname: settings.controlHostname, Role: role, ProcessID: processID,
 	})
 	if err != nil {
 		return nil, err
@@ -797,7 +916,7 @@ func newLocalServiceEnrollmentState(
 
 type localEnrollmentClient struct {
 	database       *controlstate.Database
-	cfg            config.TNLD
+	settings       localEnrollmentSettings
 	role           servicepki.Role
 	processID      string
 	relayServiceID string
@@ -823,7 +942,7 @@ func (c *localEnrollmentClient) EnrollServiceWithResponse(
 	}
 	relayAddress, tlsServerName := "", ""
 	if c.role == servicepki.RoleRelay {
-		tlsServerName = c.cfg.StandaloneRelayHostname()
+		tlsServerName = c.settings.relayHostname
 		relayAddress = net.JoinHostPort(tlsServerName, "443")
 	}
 	enrollment, err := c.database.EnrollLocalService(ctx, controlstate.LocalServiceEnrollmentRequest{
@@ -834,7 +953,7 @@ func (c *localEnrollmentClient) EnrollServiceWithResponse(
 	if err != nil {
 		return nil, err
 	}
-	response := serviceEnrollmentResponse(c.cfg, enrollment)
+	response := serviceEnrollmentResponse(c.settings, enrollment)
 	return &controlv1.EnrollServiceResponse{
 		HTTPResponse: &http.Response{StatusCode: http.StatusOK}, JSON200: &response,
 	}, nil
@@ -959,8 +1078,8 @@ func serveQUICSessions(
 	})
 }
 
-func (d *daemon) startControl(cfg config.TNLD, handler http.Handler) error {
-	listener, err := net.Listen("tcp", cfg.ControlListen)
+func (d *daemon) startControl(listenAddress string, handler http.Handler) error {
+	listener, err := net.Listen("tcp", listenAddress)
 	if err != nil {
 		return fmt.Errorf("listen for control API: %w", err)
 	}
@@ -971,7 +1090,32 @@ func (d *daemon) startControl(cfg config.TNLD, handler http.Handler) error {
 	return nil
 }
 
-func (d *daemon) startPrivateControlAPIs(ctx context.Context, cfg config.TNLD) error {
+type privateControlSettings struct {
+	ingressLeaseDuration time.Duration
+	relayLeaseDuration   time.Duration
+	ingressListen        string
+	relayListen          string
+	tls                  privateControlTLSSettings
+}
+
+type privateControlTLSSettings struct {
+	hostname      string
+	retryInterval time.Duration
+}
+
+func privateControlSettingsFrom(cfg config.TNLD) privateControlSettings {
+	return privateControlSettings{
+		ingressLeaseDuration: cfg.IngressLeaseDuration,
+		relayLeaseDuration:   cfg.RelayLeaseDuration,
+		ingressListen:        cfg.IngressControlListen,
+		relayListen:          cfg.RelayControlListen,
+		tls: privateControlTLSSettings{
+			hostname: cfg.ServerHostname(), retryInterval: cfg.ControlRetryInterval,
+		},
+	}
+}
+
+func (d *daemon) startPrivateControlAPIs(ctx context.Context, settings privateControlSettings) error {
 	ingressHandler, err := ingressapi.NewHandler(ingressapi.Config{
 		Store: d.database,
 		IngressIdentity: func(certificate *x509.Certificate) (string, error) {
@@ -981,7 +1125,7 @@ func (d *daemon) startPrivateControlAPIs(ctx context.Context, cfg config.TNLD) e
 			}
 			return identity.ProcessID, nil
 		},
-		LeaseDuration: cfg.IngressLeaseDuration,
+		LeaseDuration: settings.ingressLeaseDuration,
 	})
 	if err != nil {
 		return err
@@ -995,20 +1139,20 @@ func (d *daemon) startPrivateControlAPIs(ctx context.Context, cfg config.TNLD) e
 			}
 			return relayapi.RelayIdentity{RelayServiceID: identity.RelayServiceID, RelayID: identity.ProcessID}, nil
 		},
-		LeaseDuration: cfg.RelayLeaseDuration,
+		LeaseDuration: settings.relayLeaseDuration,
 	})
 	if err != nil {
 		return err
 	}
-	ingressTLS, err := d.privateControlTLSConfig(ctx, cfg, servicepki.RoleIngress)
+	ingressTLS, err := d.privateControlTLSConfig(ctx, settings.tls, servicepki.RoleIngress)
 	if err != nil {
 		return err
 	}
-	relayTLS, err := d.privateControlTLSConfig(ctx, cfg, servicepki.RoleRelay)
+	relayTLS, err := d.privateControlTLSConfig(ctx, settings.tls, servicepki.RoleRelay)
 	if err != nil {
 		return err
 	}
-	ingressListener, err := net.Listen("tcp", cfg.IngressControlListen)
+	ingressListener, err := net.Listen("tcp", settings.ingressListen)
 	if err != nil {
 		return fmt.Errorf("listen for ingress API: %w", err)
 	}
@@ -1018,7 +1162,7 @@ func (d *daemon) startPrivateControlAPIs(ctx context.Context, cfg config.TNLD) e
 	d.forward("serve ingress API", serveTLS(ingressServer, ingressListener))
 	log.Printf("ingress API listening on %s", ingressListener.Addr())
 
-	relayListener, err := net.Listen("tcp", cfg.RelayControlListen)
+	relayListener, err := net.Listen("tcp", settings.relayListen)
 	if err != nil {
 		return fmt.Errorf("listen for relay API: %w", err)
 	}
@@ -1030,7 +1174,7 @@ func (d *daemon) startPrivateControlAPIs(ctx context.Context, cfg config.TNLD) e
 	return nil
 }
 
-func (d *daemon) privateControlTLSConfig(ctx context.Context, cfg config.TNLD, role servicepki.Role) (*tls.Config, error) {
+func (d *daemon) privateControlTLSConfig(ctx context.Context, settings privateControlTLSSettings, role servicepki.Role) (*tls.Config, error) {
 	authority, err := d.database.EnsureServiceAuthority(ctx, time.Now())
 	if err != nil {
 		return nil, err
@@ -1040,10 +1184,10 @@ func (d *daemon) privateControlTLSConfig(ctx context.Context, cfg config.TNLD, r
 		return nil, errors.New("parse service CA trust bundle")
 	}
 	source := new(privateControlCertificateSource)
-	if err := source.renew(ctx, d.database, role, cfg.ServerHostname()); err != nil {
+	if err := source.renew(ctx, d.database, role, settings.hostname); err != nil {
 		return nil, err
 	}
-	go source.run(ctx, d.database, role, cfg.ServerHostname(), cfg.ControlRetryInterval)
+	go source.run(ctx, d.database, role, settings.hostname, settings.retryInterval)
 	return &tls.Config{
 		MinVersion:     tls.VersionTLS13,
 		ClientAuth:     tls.RequireAndVerifyClientCert,
@@ -1136,23 +1280,43 @@ func (s *privateControlCertificateSource) getCertificate(*tls.ClientHelloInfo) (
 	return s.certificate, nil
 }
 
+type controlTLSSettings struct {
+	certificateFile string
+	privateKeyFile  string
+	directoryURL    string
+	hostname        string
+	email           string
+	acceptTerms     bool
+}
+
+func controlTLSSettingsFrom(cfg config.TNLD) controlTLSSettings {
+	return controlTLSSettings{
+		certificateFile: cfg.ControlTLSCertificateFile,
+		privateKeyFile:  cfg.ControlTLSPrivateKeyFile,
+		directoryURL:    cfg.ACMEDirectoryURL,
+		hostname:        cfg.ServerHostname(),
+		email:           cfg.ACMEEmail,
+		acceptTerms:     cfg.ACMEAcceptTerms,
+	}
+}
+
 func controlTLSConfig(
-	cfg config.TNLD,
+	settings controlTLSSettings,
 	database *controlstate.Database,
 	account controlstate.ACMEAccount,
 	acmeHTTPClient *http.Client,
 ) (*tls.Config, *controltls.Source, error) {
-	if cfg.ControlTLSCertificateFile != "" {
-		config, err := staticServerTLS(cfg.ControlTLSCertificateFile, cfg.ControlTLSPrivateKeyFile)
+	if settings.certificateFile != "" {
+		config, err := staticServerTLS(settings.certificateFile, settings.privateKeyFile)
 		return config, nil, err
 	}
-	cache, err := database.ControlTLSCache(cfg.ACMEDirectoryURL)
+	cache, err := database.ControlTLSCache(settings.directoryURL)
 	if err != nil {
 		return nil, nil, err
 	}
 	source, err := controltls.New(controltls.Config{
-		Hostname: cfg.ServerHostname(), Cache: cache, DirectoryURL: cfg.ACMEDirectoryURL,
-		Email: cfg.ACMEEmail, AcceptTerms: cfg.ACMEAcceptTerms, AccountKey: account.AccountKeyDER,
+		Hostname: settings.hostname, Cache: cache, DirectoryURL: settings.directoryURL,
+		Email: settings.email, AcceptTerms: settings.acceptTerms, AccountKey: account.AccountKeyDER,
 		HTTPClient: acmeHTTPClient, RunLeader: database.RunControlTLSLeader,
 		Report: func(err error) { log.Printf("public control certificate: %v", err) },
 	})
@@ -1188,7 +1352,7 @@ func serveTLS(server *http.Server, listener net.Listener) <-chan error {
 }
 
 func serviceEnrollmentResponse(
-	cfg config.TNLD,
+	settings localEnrollmentSettings,
 	enrollment controlstate.ServiceEnrollment,
 ) controlv1.ServiceEnrollmentResponse {
 	response := controlv1.ServiceEnrollmentResponse{
@@ -1196,10 +1360,10 @@ func serviceEnrollmentResponse(
 		TrustBundle: enrollment.TrustBundlePEM, CertificateExpiresAt: enrollment.CertificateExpiresAt,
 	}
 	if enrollment.Role == controlstate.ServiceEnrollmentRoleIngress {
-		response.InternalControlEndpoint = cfg.IngressControlEndpoint()
+		response.InternalControlEndpoint = settings.ingressControlEndpoint
 		return response
 	}
-	response.InternalControlEndpoint = cfg.RelayControlEndpoint()
+	response.InternalControlEndpoint = settings.relayControlEndpoint
 	response.RelayServiceId = &enrollment.RelayServiceID
 	response.RelayAddress = &enrollment.RelayAddress
 	response.TlsServerName = &enrollment.TLSServerName

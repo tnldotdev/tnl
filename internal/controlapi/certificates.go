@@ -15,7 +15,7 @@ func (h *handler) CreateCertificateIssuance(
 	routeSessionID controlv1.RouteSessionID,
 	_ controlv1.CreateCertificateIssuanceParams,
 ) {
-	if !h.config.ACMEEnabled() {
+	if !h.config.CertificateIssuance {
 		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "certificate issuance is unavailable")
 		return
 	}

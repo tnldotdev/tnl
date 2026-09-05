@@ -5,10 +5,12 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/servicepki"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -57,7 +59,7 @@ func (h *handler) CreateServiceEnrollmentToken(response http.ResponseWriter, req
 			return
 		}
 		creation.RelayServiceID = *body.RelayServiceId
-		creation.TLSServerName = h.config.RelayServiceHostname(creation.RelayServiceID)
+		creation.TLSServerName = h.relayServiceHostname(creation.RelayServiceID)
 		if creation.TLSServerName == "" {
 			writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "relay service ID must be one canonical DNS label")
 			return
@@ -88,6 +90,14 @@ func (h *handler) CreateServiceEnrollmentToken(response http.ResponseWriter, req
 		EnrollmentToken:        serviceEnrollmentTokenResponse(created.EnrollmentToken),
 		ServiceEnrollmentToken: created.Token.String(),
 	})
+}
+
+func (h *handler) relayServiceHostname(relayServiceID string) string {
+	canonical, err := naming.CanonicalizeHostname(relayServiceID)
+	if err != nil || canonical != relayServiceID || strings.Contains(relayServiceID, ".") || h.config.ServerDomain == "" {
+		return ""
+	}
+	return relayServiceID + "." + h.config.ServerDomain
 }
 
 func (h *handler) RevokeServiceEnrollmentToken(
