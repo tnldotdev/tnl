@@ -40,6 +40,7 @@ type ControllerConfig struct {
 	CertificateChanged func(relayv1.RelayTransportCertificate) error
 	Now                func() time.Time
 	Report             func(error)
+	Observer           OperationObserver
 }
 
 // Controller maintains one exact relay lease and applies it to publisher
@@ -54,6 +55,7 @@ type Controller struct {
 	certificateChanged func(relayv1.RelayTransportCertificate) error
 	now                func() time.Time
 	report             func(error)
+	observer           OperationObserver
 
 	mu                  sync.RWMutex
 	lease               relayv1.RelayLease
@@ -88,6 +90,7 @@ func NewController(config ControllerConfig) (*Controller, error) {
 		client: config.Client, registration: registration, renewalInterval: config.RenewalInterval,
 		retryInterval: config.RetryInterval, load: config.Load, leaseChanged: config.LeaseChanged,
 		certificateChanged: config.CertificateChanged, now: config.Now, report: config.Report,
+		observer: config.Observer,
 	}, nil
 }
 
@@ -131,15 +134,11 @@ func (c *Controller) runOnce(ctx context.Context) error {
 		<-ctx.Done()
 		return nil
 	}
-	lease, err := c.client.RegisterRelay(ctx, c.registration)
-	if err != nil {
-		return relayControlError("register relay", err)
-	}
-	if err := c.setLease(lease); err != nil {
+	if err := c.register(ctx); err != nil {
 		return err
 	}
 	if c.certificateChanged != nil {
-		if err := c.refreshCertificate(ctx, lease); err != nil {
+		if err := c.refreshCertificate(ctx, c.Lease()); err != nil {
 			return err
 		}
 	}
@@ -151,31 +150,47 @@ func (c *Controller) runOnce(ctx context.Context) error {
 			return nil
 		case <-ticker.C:
 		}
-		lease := c.Lease()
-		connections, streams := c.load()
-		if connections < 0 || streams < 0 {
-			return errors.New("relay: reported load cannot be negative")
-		}
-		lease, err := c.client.RenewRelay(ctx, c.registration.RelayId, relayv1.RelayRenewal{
-			RelayServiceId: c.registration.RelayServiceId, RelayId: c.registration.RelayId,
-			RelayRunId: c.registration.RelayRunId, RelayLeaseRevision: lease.RelayLeaseRevision,
-			ReportedConnections: connections, ReportedStreams: streams,
-		})
-		if err != nil {
+		if err := c.renew(ctx); err != nil {
 			if ctx.Err() != nil {
 				return nil
 			}
-			return c.responseError("renew relay", err)
-		}
-		if err := c.setLease(lease); err != nil {
 			return err
 		}
 		if c.certificateChanged != nil && !c.certificateCurrent(c.now().Add(24*time.Hour)) {
-			if err := c.refreshCertificate(ctx, lease); err != nil {
+			if err := c.refreshCertificate(ctx, c.Lease()); err != nil {
 				return err
 			}
 		}
 	}
+}
+
+func (c *Controller) register(ctx context.Context) (retErr error) {
+	finish := startOperation(ctx, c.observer, "RelayRegister")
+	defer func() { finish(retErr) }()
+	lease, err := c.client.RegisterRelay(ctx, c.registration)
+	if err != nil {
+		return relayControlError("register relay", err)
+	}
+	return c.setLease(lease)
+}
+
+func (c *Controller) renew(ctx context.Context) (retErr error) {
+	finish := startOperation(ctx, c.observer, "RelayRenewLease")
+	defer func() { finish(retErr) }()
+	lease := c.Lease()
+	connections, streams := c.load()
+	if connections < 0 || streams < 0 {
+		return errors.New("relay: reported load cannot be negative")
+	}
+	lease, err := c.client.RenewRelay(ctx, c.registration.RelayId, relayv1.RelayRenewal{
+		RelayServiceId: c.registration.RelayServiceId, RelayId: c.registration.RelayId,
+		RelayRunId: c.registration.RelayRunId, RelayLeaseRevision: lease.RelayLeaseRevision,
+		ReportedConnections: connections, ReportedStreams: streams,
+	})
+	if err != nil {
+		return c.responseError("renew relay", err)
+	}
+	return c.setLease(lease)
 }
 
 func (c *Controller) Ready(now time.Time) bool {
@@ -216,7 +231,9 @@ func (c *Controller) Lease() relayv1.RelayLease {
 	return cloneLease(c.lease)
 }
 
-func (c *Controller) Drain(ctx context.Context, deadline time.Time) error {
+func (c *Controller) Drain(ctx context.Context, deadline time.Time) (retErr error) {
+	finish := startOperation(ctx, c.observer, "RelayBeginDrain")
+	defer func() { finish(retErr) }()
 	lease := c.Lease()
 	if lease.RelayLeaseRevision <= 0 || !deadline.After(c.now()) {
 		return errors.New("relay: active lease and future drain deadline are required")

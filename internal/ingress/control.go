@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
 )
@@ -34,6 +35,10 @@ type ControlClient interface {
 
 type IngressLoadFunc func() int64
 
+type OperationObserver interface {
+	ObserveOperation(operation string, err error, elapsed time.Duration)
+}
+
 type ControllerConfig struct {
 	Client          ControlClient
 	RoutingTable    *RoutingTable
@@ -44,6 +49,7 @@ type ControllerConfig struct {
 	Load            IngressLoadFunc
 	Now             func() time.Time
 	Report          func(error)
+	Observer        OperationObserver
 }
 
 // Controller maintains one exact ingress lease and its routing table.
@@ -57,11 +63,13 @@ type Controller struct {
 	load            IngressLoadFunc
 	now             func() time.Time
 	report          func(error)
+	observer        OperationObserver
 
 	mu                  sync.RWMutex
 	lease               ingressv1.IngressLease
 	routingTableCurrent bool
 	leaseLost           bool
+	routingStatus       observability.IngressRoutingSnapshot
 }
 
 func NewController(config ControllerConfig) (*Controller, error) {
@@ -90,6 +98,7 @@ func NewController(config ControllerConfig) (*Controller, error) {
 		client: config.Client, routingTable: config.RoutingTable, registration: config.Registration,
 		renewalInterval: config.RenewalInterval, retryInterval: config.RetryInterval,
 		routingWait: config.RoutingWait.String(), load: config.Load, now: config.Now, report: config.Report,
+		observer: config.Observer,
 	}, nil
 }
 
@@ -207,11 +216,13 @@ func (c *Controller) renewLoop(ctx context.Context) error {
 		if connections < 0 {
 			return errors.New("ingress: reported connection count cannot be negative")
 		}
+		started := time.Now()
 		lease, err := c.client.RenewIngress(ctx, c.registration.IngressId, ingressv1.IngressRenewal{
 			IngressId: c.registration.IngressId, IngressRunId: c.registration.IngressRunId,
 			IngressLeaseRevision: lease.IngressLeaseRevision, ReportedConnections: connections,
 			RoutingTableRevision: revision,
 		})
+		c.observeOperation("IngressRenewLease", err, started)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil
@@ -232,6 +243,7 @@ func (c *Controller) routingLoop(ctx context.Context) error {
 		}
 		limit, wait := routingTablePageSize, c.routingWait
 		lease := c.Lease()
+		started := time.Now()
 		page, err := c.client.GetIngressRoutingTableEvents(
 			ctx,
 			c.registration.IngressId,
@@ -240,6 +252,7 @@ func (c *Controller) routingLoop(ctx context.Context) error {
 				After: revision, Limit: &limit, Wait: &wait,
 			},
 		)
+		c.observeOperation("IngressFetchEvents", err, started)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil
@@ -247,22 +260,33 @@ func (c *Controller) routingLoop(ctx context.Context) error {
 			var problem *serviceapi.ProblemError
 			if errors.As(err, &problem) && problem.Status == http.StatusConflict &&
 				problem.Type == "https://tnl.dev/problems/routing_table_resnapshot_required" {
+				c.mu.Lock()
+				c.routingStatus.Resnapshots++
+				c.routingStatus.CaughtUp = false
+				c.mu.Unlock()
 				c.markRoutingTableCurrent(false)
 				if err := c.loadSnapshot(ctx); err != nil {
 					return err
 				}
 				continue
 			}
+			c.routingUpdateFailed()
 			return c.responseError("read ingress routing table", err)
 		}
-		if err := c.routingTable.ApplyPage(revision, page); err != nil {
+		started = time.Now()
+		err = c.routingTable.ApplyPage(revision, page)
+		c.observeOperation("IngressApplyEvents", err, started)
+		if err != nil {
+			c.routingUpdateFailed()
 			return fmt.Errorf("ingress: apply routing-table page: %w", err)
 		}
+		c.routingChecked(page.ThroughRevision, page.NextRevision, !page.More)
 	}
 }
 
 func (c *Controller) loadSnapshot(ctx context.Context) error {
 	lease := c.Lease()
+	started := time.Now()
 	snapshot, err := c.client.GetIngressRoutingTableSnapshot(
 		ctx,
 		c.registration.IngressId,
@@ -270,14 +294,57 @@ func (c *Controller) loadSnapshot(ctx context.Context) error {
 			IngressRunId: c.registration.IngressRunId, IngressLeaseRevision: lease.IngressLeaseRevision,
 		},
 	)
+	c.observeOperation("IngressFetchSnapshot", err, started)
 	if err != nil {
+		if ctx.Err() == nil {
+			c.routingUpdateFailed()
+		}
 		return c.responseError("read ingress routing-table snapshot", err)
 	}
-	if err := c.routingTable.ApplySnapshot(snapshot); err != nil {
+	started = time.Now()
+	err = c.routingTable.ApplySnapshot(snapshot)
+	c.observeOperation("IngressApplySnapshot", err, started)
+	if err != nil {
+		c.routingUpdateFailed()
 		return fmt.Errorf("ingress: apply routing-table snapshot: %w", err)
 	}
+	c.routingChecked(snapshot.ThroughRevision, snapshot.ThroughRevision, false)
 	c.markRoutingTableCurrent(true)
 	return nil
+}
+
+func (c *Controller) observeOperation(operation string, err error, started time.Time) {
+	if c.observer != nil {
+		c.observer.ObserveOperation(operation, err, time.Since(started))
+	}
+}
+
+func (c *Controller) routingChecked(latest, applied int64, caughtUp bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.routingStatus.Initialized = true
+	c.routingStatus.LastSuccessfulCheck = c.now()
+	c.routingStatus.LatestRevision = max(c.routingStatus.LatestRevision, latest)
+	c.routingStatus.AppliedRevision = applied
+	c.routingStatus.CaughtUp = caughtUp && applied == c.routingStatus.LatestRevision
+	if c.routingStatus.CaughtUp {
+		c.routingStatus.LastCaughtUp = c.routingStatus.LastSuccessfulCheck
+	}
+}
+
+func (c *Controller) routingUpdateFailed() {
+	c.mu.Lock()
+	c.routingStatus.UpdateFailures++
+	c.routingStatus.CaughtUp = false
+	c.mu.Unlock()
+}
+
+// RoutingStatus reads only local controller state, even during a blocked fetch.
+// Lease renewal never advances routing freshness or the observed revision.
+func (c *Controller) RoutingStatus() observability.IngressRoutingSnapshot {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.routingStatus
 }
 
 func (c *Controller) Ready(now time.Time) bool {
@@ -415,6 +482,7 @@ func (c *Controller) clearLease() {
 	c.mu.Lock()
 	c.lease = ingressv1.IngressLease{}
 	c.routingTableCurrent = false
+	c.routingStatus.CaughtUp = false
 	c.mu.Unlock()
 }
 

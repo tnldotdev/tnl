@@ -100,7 +100,8 @@ func serveWithRelayClientTLS(
 			return err
 		}
 		d.database = database
-		metrics.RegisterDatabase(databaseMetricsSource(database))
+		database.Instrument(metrics)
+		metrics.RegisterDatabase(database.PrometheusMetrics)
 		d.forward("clean up ephemeral routes", runAsync(func() error {
 			return runEphemeralRouteCleanup(lifetime, database)
 		}))

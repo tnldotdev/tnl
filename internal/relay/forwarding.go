@@ -23,6 +23,7 @@ type ForwardingAcceptorConfig struct {
 	CapacityRejected func()
 	Now              func() time.Time
 	Report           func(error)
+	Observer         OperationObserver
 }
 
 // ForwardingAcceptor carries internal visitor streams from ingress to locally
@@ -35,6 +36,7 @@ type ForwardingAcceptor struct {
 	capacityRejected func()
 	now              func() time.Time
 	report           func(error)
+	observer         OperationObserver
 }
 
 func NewForwardingAcceptor(config ForwardingAcceptorConfig) (*ForwardingAcceptor, error) {
@@ -57,6 +59,7 @@ func NewForwardingAcceptor(config ForwardingAcceptorConfig) (*ForwardingAcceptor
 		registry: config.Registry, secrets: config.ClusterSecrets, streams: make(chan struct{}, config.StreamCapacity),
 		streamsDelta: config.StreamsDelta, capacityRejected: config.CapacityRejected,
 		now: config.Now, report: config.Report,
+		observer: config.Observer,
 	}, nil
 }
 
@@ -97,13 +100,23 @@ func (a *ForwardingAcceptor) Accept(ctx context.Context, transport muxsession.Se
 	}
 }
 
-func (a *ForwardingAcceptor) forward(ctx context.Context, incoming *tunnel.IncomingInternalForwardingStream) error {
+func (a *ForwardingAcceptor) forward(ctx context.Context, incoming *tunnel.IncomingInternalForwardingStream) (retErr error) {
+	finishOpen := startOperation(ctx, a.observer, "RelayOpenVisitorStream")
+	opened := false
+	var rejected error
+	defer func() {
+		if !opened {
+			finishOpen(errors.Join(retErr, rejected))
+		}
+	}()
 	if !a.acquireStream() {
+		rejected = &tunnel.ProtocolError{Code: tunnelv1.CapacityExceeded}
 		return incoming.Reject(tunnelv1.CapacityExceeded)
 	}
 	defer a.releaseStream()
 	connection, ok := a.registry.Candidate(incoming.Header, a.now())
 	if !ok {
+		rejected = &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
 		return incoming.Reject(tunnelv1.StaleConnectionAssignment)
 	}
 	publisher, err := connection.OpenVisitor(ctx, incoming.Header.VisitorConnectionID)
@@ -119,6 +132,8 @@ func (a *ForwardingAcceptor) forward(ctx context.Context, incoming *tunnel.Incom
 	if err := incoming.Accept(); err != nil {
 		return err
 	}
+	opened = true
+	finishOpen(nil)
 	defer incoming.Stream.Close()
 	if _, err := streamcopy.Copy(incoming.Stream, publisher); err != nil {
 		return fmt.Errorf("relay: forward visitor connection %s: %w", incoming.Header.VisitorConnectionID, err)

@@ -254,6 +254,7 @@ func (d *Database) HeartbeatRouteSession(
 	leaseDuration time.Duration,
 	connectionCredentialDuration time.Duration,
 ) (result RouteSessionSetup, retErr error) {
+	defer d.observeOperation("HeartbeatRouteSession", &retErr)()
 	if err := validateRouteSessionAuthentication(authentication); err != nil {
 		return RouteSessionSetup{}, err
 	}

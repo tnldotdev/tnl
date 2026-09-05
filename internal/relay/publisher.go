@@ -30,6 +30,7 @@ type PublisherAcceptorConfig struct {
 	ReadyConnectionsDelta func(int)
 	CapacityRejected      func()
 	Report                func(error)
+	Observer              OperationObserver
 }
 
 // PublisherAcceptor authenticates and owns publisher connections.
@@ -40,6 +41,7 @@ type PublisherAcceptor struct {
 	readyDelta   func(int)
 	capacity     func()
 	report       func(error)
+	observer     OperationObserver
 }
 
 func NewPublisherAcceptor(config PublisherAcceptorConfig) (*PublisherAcceptor, error) {
@@ -59,10 +61,12 @@ func NewPublisherAcceptor(config PublisherAcceptorConfig) (*PublisherAcceptor, e
 	return &PublisherAcceptor{
 		control: config.Control, registry: config.Registry, selectTarget: config.Select,
 		readyDelta: config.ReadyConnectionsDelta, capacity: config.CapacityRejected, report: config.Report,
+		observer: config.Observer,
 	}, nil
 }
 
 func (a *PublisherAcceptor) Accept(ctx context.Context, transport muxsession.Session) (retErr error) {
+	finishAdmission := startOperation(ctx, a.observer, "RelayAdmitPublisherConnection")
 	var claimed relayv1.ClaimedPublisherConnection
 	var connection *PublisherConnection
 	ready := false
@@ -92,6 +96,9 @@ func (a *PublisherAcceptor) Accept(ctx context.Context, transport muxsession.Ses
 	})
 	registered := false
 	defer func() {
+		if !ready {
+			finishAdmission(retErr)
+		}
 		if ready {
 			a.readyDelta(-1)
 		}
@@ -129,6 +136,8 @@ func (a *PublisherAcceptor) Accept(ctx context.Context, transport muxsession.Ses
 	claimed = readyClaim
 	ready = true
 	a.readyDelta(1)
+	// Admission ends here, before the long-lived connection and drain loop.
+	finishAdmission(nil)
 	retErr = session.HandlePublisherDrain(ctx, connection.Drain)
 	drained := retErr == nil
 	if retErr == nil {

@@ -111,7 +111,7 @@ func (d *daemon) startIngressRuntime(
 			ConnectionCapacity: settings.visitorConnectionLimit,
 		},
 		RenewalInterval: settings.leaseRenewalInterval, RetryInterval: settings.controlRetryInterval,
-		RoutingWait: settings.routingTableWait,
+		RoutingWait: settings.routingTableWait, Observer: metrics,
 		Load: func() int64 {
 			if publicServer == nil {
 				return 0
@@ -123,6 +123,7 @@ func (d *daemon) startIngressRuntime(
 		return err
 	}
 	runtime.controller = controller
+	metrics.RegisterIngressRouting(controller.RoutingStatus)
 	usage, err := ingress.NewUsageReporter(controller, 0, func(err error) { log.Printf("ingress usage: %v", err) })
 	if err != nil {
 		return err

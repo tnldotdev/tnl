@@ -7,22 +7,26 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	dto "github.com/prometheus/client_model/go"
 )
 
 // Metrics owns a process-local Prometheus registry.
 type Metrics struct {
-	registry             *prometheus.Registry
-	relayLeases          *prometheus.GaugeVec
-	publisherConnections *prometheus.GaugeVec
-	streams              *prometheus.GaugeVec
-	capacityRejections   *prometheus.CounterVec
-	sourceLimiterRejects prometheus.Counter
-	sourceLimiterEntries prometheus.Gauge
-	ipAllowlistDenials   prometheus.Counter
-	forwardedBytes       *prometheus.CounterVec
-	controlRequests      *prometheus.CounterVec
-	controlDuration      *prometheus.HistogramVec
-	controlInFlight      *prometheus.GaugeVec
+	registry              *prometheus.Registry
+	relayLeases           *prometheus.GaugeVec
+	publisherConnections  *prometheus.GaugeVec
+	streams               *prometheus.GaugeVec
+	capacityRejections    *prometheus.CounterVec
+	sourceLimiterRejects  prometheus.Counter
+	sourceLimiterEntries  prometheus.Gauge
+	ipAllowlistDenials    prometheus.Counter
+	forwardedBytes        *prometheus.CounterVec
+	controlRequests       *prometheus.CounterVec
+	controlDuration       *prometheus.HistogramVec
+	controlInFlight       *prometheus.GaugeVec
+	operationDuration     *prometheus.HistogramVec
+	databaseQueryDuration *prometheus.HistogramVec
+	databaseGuardDuration *prometheus.HistogramVec
 }
 
 // New constructs an isolated registry for one tnld role.
@@ -62,17 +66,29 @@ func New(role string) *Metrics {
 			Name: "tnl_control_requests_total", Help: "Control API requests by operation and outcome.",
 		}, []string{"operation", "outcome"}),
 		controlDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name: "tnl_control_request_duration_seconds", Help: "Control API request duration by operation.",
-		}, []string{"operation"}),
+			Name: "tnl_control_request_duration_seconds", Help: "Control API HTTP handler duration by operation and outcome, including long-poll waits.", Buckets: DurationBucketsSeconds(),
+		}, []string{"operation", "outcome"}),
 		controlInFlight: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "tnl_control_requests_in_flight", Help: "Control API requests currently executing by operation.",
 		}, []string{"operation"}),
+		operationDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name: "tnl_operation_duration_seconds", Help: "Completed application operation duration by fixed operation and outcome.", Buckets: DurationBucketsSeconds(),
+		}, []string{"operation", "outcome"}),
+		databaseQueryDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name: "tnl_database_query_duration_seconds", Help: "Completed request-pool SQL duration observed by the driver, excluding pool acquisition.", Buckets: DurationBucketsSeconds(),
+		}, []string{"operation", "outcome"}),
+		databaseGuardDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name: "tnl_database_guard_held_duration_seconds", Help: "Driver-observed interval from successful guard query completion through transaction completion; not exact PostgreSQL lock time.", Buckets: DurationBucketsSeconds(),
+		}, []string{"operation", "outcome"}),
 	}
 	registered := []prometheus.Collector{
 		info, collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 	}
 	if role == "control" || role == "standalone" {
-		registered = append(registered, metrics.controlRequests, metrics.controlDuration, metrics.controlInFlight)
+		registered = append(registered, metrics.controlRequests, metrics.controlDuration, metrics.controlInFlight, metrics.databaseQueryDuration, metrics.databaseGuardDuration)
+	}
+	if role == "control" || role == "ingress" || role == "relay" || role == "standalone" {
+		registered = append(registered, metrics.operationDuration)
 	}
 	if role == "ingress" || role == "standalone" {
 		registered = append(registered,
@@ -94,6 +110,11 @@ func New(role string) *Metrics {
 
 func (m *Metrics) Handler() http.Handler {
 	return promhttp.HandlerFor(m.registry, promhttp.HandlerOpts{})
+}
+
+// Gather captures this process's registry using only passive collectors.
+func (m *Metrics) Gather() ([]*dto.MetricFamily, error) {
+	return m.registry.Gather()
 }
 
 func (m *Metrics) SetRelayLeases(state string, count int) {
@@ -136,5 +157,5 @@ func (m *Metrics) AddForwardedBytes(direction string, count int64) {
 
 func (m *Metrics) ObserveControlRequest(operation, outcome string, duration time.Duration) {
 	m.controlRequests.WithLabelValues(operation, outcome).Inc()
-	m.controlDuration.WithLabelValues(operation).Observe(duration.Seconds())
+	m.controlDuration.WithLabelValues(operation, outcome).Observe(duration.Seconds())
 }

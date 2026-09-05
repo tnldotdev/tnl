@@ -1,6 +1,8 @@
 package observability
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"time"
 )
@@ -19,6 +21,8 @@ func (m *Metrics) ControlRequests(next http.Handler) http.Handler {
 			m.controlInFlight.WithLabelValues(operation).Dec()
 			outcome := "success"
 			switch {
+			case errors.Is(r.Context().Err(), context.DeadlineExceeded):
+				outcome = "deadline_exceeded"
 			case r.Context().Err() != nil:
 				outcome = "canceled"
 			case response.status >= 500:

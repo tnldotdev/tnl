@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/muxsession"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/tunnel"
 	"github.com/tnldotdev/tnl/pkg/api/relayv1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -188,6 +189,8 @@ func (c *waitingDrainContext) Done() <-chan struct{} {
 func TestPublisherConnectionDrainWaitsForStreamAndRejectsNewWork(t *testing.T) {
 	connection, publisher := publisherFixture(t, "connection_1", 3)
 	registry := NewRegistry()
+	metrics := observability.New("relay")
+	registry.Instrument(metrics)
 	t.Cleanup(func() { _ = registry.Close() })
 	if err := registry.Insert(connection); err != nil {
 		t.Fatal(err)
@@ -225,6 +228,7 @@ func TestPublisherConnectionDrainWaitsForStreamAndRejectsNewWork(t *testing.T) {
 	drainCtx := &waitingDrainContext{Context: ctx, waiting: make(chan struct{})}
 	drained := relayWorker(t, func() { cancel(); _ = connection.Close() }, func() error { return registry.Drain(drainCtx) })
 	relayAwait(t, drainCtx.waiting)
+	assertRelayOperation(t, metrics, "RelayDrain", "success", 0)
 	if _, err := connection.OpenVisitor(ctx, "visitor_2"); !errors.Is(err, ErrDraining) {
 		t.Fatalf("open during drain=%v", err)
 	}
@@ -252,6 +256,7 @@ func TestPublisherConnectionDrainWaitsForStreamAndRejectsNewWork(t *testing.T) {
 	if err := relayAwait(t, drained); err != nil {
 		t.Fatal(err)
 	}
+	assertRelayOperation(t, metrics, "RelayDrain", "success", 1)
 	if n, s := registry.Load(); n != 1 || s != 0 {
 		t.Fatalf("drained load=%d/%d", n, s)
 	}

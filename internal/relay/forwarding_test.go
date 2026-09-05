@@ -10,17 +10,29 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/muxsession"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func TestForwardingAcceptorCancellationClosesActiveStreams(t *testing.T) {
+	testForwardingRejectionMetrics(t, true)
+}
+
+func TestForwardingRejectionIsNotSuccessfulOpen(t *testing.T) {
+	testForwardingRejectionMetrics(t, false)
+}
+
+func testForwardingRejectionMetrics(t *testing.T, cancelRejection bool) {
+	t.Helper()
+	metrics := observability.New("relay")
+	observer := &forwardingMetricObserver{Metrics: metrics, done: make(chan struct{})}
 	secrets, err := serviceapi.NewBearerSecrets(strings.Repeat("s", 32), "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	acceptor, err := NewForwardingAcceptor(ForwardingAcceptorConfig{
-		Registry: NewRegistry(), ClusterSecrets: secrets, StreamCapacity: 1,
+		Registry: NewRegistry(), ClusterSecrets: secrets, StreamCapacity: 1, Observer: observer,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -81,6 +93,13 @@ func TestForwardingAcceptorCancellationClosesActiveStreams(t *testing.T) {
 		t.Fatal("forwarding rejection did not start")
 	}
 
+	if !cancelRejection {
+		response, err := tunnelv1.ReadStreamResponse(forwardClient)
+		if err != nil || response.Type != tunnelv1.StreamRejected || response.Code != tunnelv1.StaleConnectionAssignment {
+			t.Fatalf("rejection response=%+v err=%v", response, err)
+		}
+		relayAwait(t, observer.done)
+	}
 	cancel()
 	select {
 	case err := <-result:
@@ -90,6 +109,22 @@ func TestForwardingAcceptorCancellationClosesActiveStreams(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("forwarding acceptor did not close its session before waiting for active streams")
 	}
+	assertRelayOperation(t, metrics, "RelayOpenVisitorStream", "success", 0)
+	if cancelRejection {
+		assertRelayOperation(t, metrics, "RelayOpenVisitorStream", "canceled", 1)
+	} else {
+		assertRelayOperation(t, metrics, "RelayOpenVisitorStream", "error", 1)
+	}
+}
+
+type forwardingMetricObserver struct {
+	*observability.Metrics
+	done chan struct{}
+}
+
+func (o *forwardingMetricObserver) ObserveOperation(operation string, err error, elapsed time.Duration) {
+	o.Metrics.ObserveOperation(operation, err, elapsed)
+	close(o.done)
 }
 
 type forwardingTestSession struct {

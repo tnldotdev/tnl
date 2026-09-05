@@ -175,9 +175,11 @@ func (d *daemon) startRelayRuntime(
 		return nil, fmt.Errorf("create relay process run ID: %w", err)
 	}
 	registry := relay.NewRegistry()
+	registry.Instrument(runtimeConfig.metrics)
 	runtime.registry = registry
 	controller, err := relay.NewController(relay.ControllerConfig{
-		Client: runtimeConfig.client,
+		Observer: runtimeConfig.metrics,
+		Client:   runtimeConfig.client,
 		Registration: relayv1.RelayRegistration{
 			RelayServiceId: runtimeConfig.relayServiceID, RelayId: runtimeConfig.relayID, RelayRunId: runID,
 			ProtocolVersion: tunnelv1.Version, RelayAddress: runtimeConfig.relayAddress,
@@ -216,7 +218,8 @@ func (d *daemon) startRelayRuntime(
 	}
 	runtime.controller = controller
 	publisherAcceptor, err := relay.NewPublisherAcceptor(relay.PublisherAcceptorConfig{
-		Control: controller, Registry: registry,
+		Observer: runtimeConfig.metrics,
+		Control:  controller, Registry: registry,
 		ReadyConnectionsDelta: func(delta int) {
 			if runtimeConfig.metrics != nil {
 				runtimeConfig.metrics.AddPublisherConnections("ready", delta)
@@ -238,6 +241,7 @@ func (d *daemon) startRelayRuntime(
 		return nil, err
 	}
 	forwardingAcceptor, err := relay.NewForwardingAcceptor(relay.ForwardingAcceptorConfig{
+		Observer: runtimeConfig.metrics,
 		Registry: registry, ClusterSecrets: runtimeConfig.clusterSecrets, StreamCapacity: streamCapacity,
 		StreamsDelta: func(delta int) {
 			if runtimeConfig.metrics != nil {

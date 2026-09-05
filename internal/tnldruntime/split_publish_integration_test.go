@@ -35,6 +35,9 @@ func TestIntegrationSplitPublishAndVisit(t *testing.T) {
 		t.Fatalf("split visitor response = %s, headers %#v, body %q", response.Status, response.Header, body)
 	}
 	assertIntegrationRouteCertificate(t, response, fixture.identity.hostname)
+	assertRuntimeOperations(t, []*integrationProcess{fixture.relayA.process, fixture.relayB.process}, map[string]uint64{
+		"RelayRegister": 2, "RelayRenewLease": 1, "RelayAdmitPublisherConnection": 2, "RelayOpenVisitorStream": 1,
+	})
 }
 
 func TestIntegrationSplitRelayLossAndReplenishment(t *testing.T) {

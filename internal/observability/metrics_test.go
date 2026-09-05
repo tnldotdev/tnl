@@ -69,7 +69,7 @@ func TestMetricsExposeFinalRuntimeVocabulary(t *testing.T) {
 		"tnl_ip_allowlist_denials_total":       {kind: "COUNTER", value: 1},
 		"tnl_forwarded_bytes_total":            {"COUNTER", map[string]string{"direction": "visitor_to_publisher"}, 1024},
 		"tnl_control_requests_total":           {"COUNTER", map[string]string{"operation": "routes.create", "outcome": "success"}, 1},
-		"tnl_control_request_duration_seconds": {"HISTOGRAM", map[string]string{"operation": "routes.create"}, 0.01},
+		"tnl_control_request_duration_seconds": {"HISTOGRAM", map[string]string{"operation": "routes.create", "outcome": "success"}, 0.01},
 	}
 	for _, family := range families {
 		name := family.GetName()
@@ -129,14 +129,14 @@ func TestMetricsExposeFinalRuntimeVocabulary(t *testing.T) {
 		case "HISTOGRAM":
 			histogram := metric.GetHistogram()
 			value = histogram.GetSampleSum()
-			bounds := []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}
+			bounds := DurationBucketsSeconds()
 			if histogram.GetSampleCount() != 1 || len(histogram.Bucket) != len(bounds) {
 				t.Errorf("%s: histogram=%v", name, histogram)
 				continue
 			}
 			for index, bucket := range histogram.Bucket {
 				count := uint64(1)
-				if index == 0 {
+				if bucket.GetUpperBound() < expected.value {
 					count = 0
 				}
 				if bucket.GetUpperBound() != bounds[index] || bucket.GetCumulativeCount() != count {

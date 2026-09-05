@@ -92,6 +92,7 @@ func (d *Database) CreateRouteSession(
 	publisherLeaseDuration time.Duration,
 	connectionCredentialDuration time.Duration,
 ) (result RouteSessionSetup, retErr error) {
+	defer d.observeOperation("CreateRouteSession", &retErr)()
 	if err := validateRouteSessionRequest(request, publisherLeaseDuration, connectionCredentialDuration); err != nil {
 		return RouteSessionSetup{}, err
 	}

@@ -122,6 +122,7 @@ func (d *daemon) startStandalone(
 		targets[identity.serviceID] = runtime
 	}
 	publisher, err := relay.NewPublisherAcceptor(relay.PublisherAcceptorConfig{
+		Observer: metrics,
 		Select: func(relayServiceID string) (relay.PublisherConnectionController, *relay.Registry, bool) {
 			runtime, ok := targets[relayServiceID]
 			if !ok {

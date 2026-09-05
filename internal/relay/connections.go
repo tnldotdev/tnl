@@ -220,6 +220,7 @@ type slotKey struct {
 
 // Registry is a concurrency-safe registry of publisher connections held by one relay process.
 type Registry struct {
+	observer    OperationObserver
 	mu          sync.Mutex
 	connections map[string]*PublisherConnection
 	slots       map[slotKey]*PublisherConnection
@@ -230,6 +231,9 @@ type Registry struct {
 }
 
 func NewRegistry() *Registry { return new(Registry) }
+
+// Instrument configures observation before the registry begins serving work.
+func (r *Registry) Instrument(observer OperationObserver) { r.observer = observer }
 
 func (r *Registry) Insert(connection *PublisherConnection) error {
 	if connection == nil {
@@ -327,7 +331,9 @@ func (r *Registry) Load() (connections, streams int64) {
 	return connections, streams
 }
 
-func (r *Registry) Drain(ctx context.Context) error {
+func (r *Registry) Drain(ctx context.Context) (retErr error) {
+	finish := startOperation(ctx, r.observer, "RelayDrain")
+	defer func() { finish(retErr) }()
 	r.mu.Lock()
 	if r.closed {
 		r.mu.Unlock()

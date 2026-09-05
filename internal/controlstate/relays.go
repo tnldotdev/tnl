@@ -228,6 +228,7 @@ func (d *Database) ClaimPublisherConnection(
 	request PublisherConnectionClaimRequest,
 	now time.Time,
 ) (result ClaimedPublisherConnection, retErr error) {
+	defer d.observeOperation("ClaimPublisherConnection", &retErr)()
 	if err := validatePublisherConnectionClaim(request); err != nil {
 		return ClaimedPublisherConnection{}, err
 	}
@@ -318,7 +319,8 @@ func (d *Database) MarkPublisherConnectionReady(
 	ctx context.Context,
 	request PublisherConnectionClaimRequest,
 	now time.Time,
-) (ClaimedPublisherConnection, error) {
+) (result ClaimedPublisherConnection, retErr error) {
+	defer d.observeOperation("MarkPublisherConnectionReady", &retErr)()
 	return d.markPublisherConnectionReady(ctx, request, now)
 }
 

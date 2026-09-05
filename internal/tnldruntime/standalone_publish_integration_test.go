@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/muxsession"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/tunnel"
 	"golang.org/x/net/websocket"
@@ -58,6 +59,11 @@ func TestIntegrationStandalonePublishAndVisit(t *testing.T) {
 		t.Fatalf("visitor response = %s, headers %#v, body %q", response.Status, response.Header, body)
 	}
 	assertIntegrationRouteCertificate(t, response, fixture.identity.hostname)
+	// Publishers and the reusable visitor connection are still open: admission
+	// and stream-open metrics must already be complete, not lifetime timers.
+	assertRuntimeOperations(t, []*integrationProcess{fixture.process}, map[string]uint64{
+		"RelayRegister": 2, "RelayRenewLease": 1, "RelayAdmitPublisherConnection": 2, "RelayOpenVisitorStream": 1,
+	})
 
 	select {
 	case observed := <-targetRequests:
@@ -78,6 +84,36 @@ func TestIntegrationStandalonePublishAndVisit(t *testing.T) {
 	stopIntegrationPublisher(t, handle)
 	stopIntegrationProcess(t, fixture.process)
 	assertStandaloneUsage(t, fixture.databaseURL, fixture.inspect, ready.RouteID, ready.RouteVersion)
+}
+
+func assertRuntimeOperations(t *testing.T, processes []*integrationProcess, minimums map[string]uint64) {
+	t.Helper()
+	counts := make(map[string]uint64)
+	for _, process := range processes {
+		response, err := integrationGET(integrationOperationContext(t), &http.Client{Timeout: 5 * time.Second}, "http://"+process.metricsAddress+"/metrics")
+		if err != nil {
+			t.Fatal(err)
+		}
+		families, err := observability.ParseMetrics(response.Body)
+		closeErr := response.Body.Close()
+		if err != nil || closeErr != nil || response.StatusCode != http.StatusOK {
+			t.Fatalf("read operation metrics: status=%d parse=%v close=%v", response.StatusCode, err, closeErr)
+		}
+		summaries, err := observability.DurationSummaries(nil, families)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, summary := range summaries {
+			if summary.Name == "tnl_operation_duration_seconds" && summary.Labels["outcome"] == "success" {
+				counts[summary.Labels["operation"]] += summary.Count
+			}
+		}
+	}
+	for operation, minimum := range minimums {
+		if counts[operation] < minimum {
+			t.Errorf("%s observations=%d want at least %d", operation, counts[operation], minimum)
+		}
+	}
 }
 
 func TestIntegrationPublisherTransportMatrix(t *testing.T) {
