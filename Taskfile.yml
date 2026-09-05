@@ -200,16 +200,20 @@ tasks:
         '
 
   go:test-load:
-    desc: Run database load tests (DELAY=0ms/5ms/20ms, ROUTES=1000, RUN=^TestLoad)
+    desc: Run database load tests (DELAY=0ms/5ms/20ms, ROUTES=1000, HISTORY=1 event/route, RUN=^TestLoad)
     vars:
       DELAY: '{{default "0ms" .DELAY}}'
       ROUTES: '{{default "1000" .ROUTES}}'
+      HISTORY: '{{default "1" .HISTORY}}'
+      DURATION: '{{default "" .DURATION}}'
       RUN: '{{default "^TestLoad" .RUN}}'
     env:
       TNL_TEST_INTEGRATION: "1"
       TNL_TEST_LOAD: "1"
       TNL_TEST_LOAD_DELAY: "{{.DELAY}}"
       TNL_TEST_LOAD_ROUTES: "{{.ROUTES}}"
+      TNL_TEST_LOAD_HISTORY: "{{.HISTORY}}"
+      TNL_TEST_LOAD_CADENCE_DURATION: "{{.DURATION}}"
       TNL_TEST_LOAD_RUN: "{{.RUN}}"
     preconditions:
       - sh: test -n "${TNL_TEST_POSTGRES_URL:-}"

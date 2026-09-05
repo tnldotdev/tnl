@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -22,6 +23,7 @@ func TestLoadRelayRecovery(t *testing.T) {
 		t.Fatal("relay recovery requires at least two routes for affected and healthy work")
 	}
 	sessions := readySteadyLoadSessions(t, f)
+	historyRevision := seedLoadRoutingHistory(t, f, 1, f.history)
 	failed := sessions[0].leases[sessions[0].setup.PublisherConnections[0].RelayServiceID]
 	var affected, unaffected []int
 	byID := make(map[string]int, f.routes)
@@ -49,13 +51,13 @@ func TestLoadRelayRecovery(t *testing.T) {
 		ingresses[index] = lease
 	}
 	initial, err := f.database.ReadIngressRoutingTableSnapshot(t.Context(), ingresses[0].IngressLeaseIdentity, f.now)
-	if err != nil || len(initial.Routes) != f.routes {
+	if err != nil || len(initial.Routes) != f.routes || initial.RoutingTableRevision != uint64(historyRevision) {
 		t.Fatalf("initial snapshot: routes=%d want=%d: %v", len(initial.Routes), f.routes, err)
 	}
 	entries := make(map[string]uint64, f.routes)
 	for _, event := range initial.Routes {
 		index, ok := byID[event.RouteID]
-		if !ok || entries[event.RouteID] != 0 {
+		if !ok || entries[event.RouteID] != 0 || event.EntryRevision != uint64(f.history) {
 			t.Fatalf("unexpected initial route %s", event.RouteID)
 		}
 		if err := checkRecoveryLoadProjection(event, sessions[index], current[index], RelayLease{}, f.now, true); err != nil {
@@ -71,6 +73,7 @@ func TestLoadRelayRecovery(t *testing.T) {
 	var pages [2]atomic.Int64
 	var usageRevisions [2]uint64 // One writer per ingress; read only after joining.
 	recoveryTimes := make([]time.Duration, f.routes)
+	f.startMetrics(t)
 	started := time.Now()
 	defer func() {
 		var total, maximum time.Duration
@@ -99,10 +102,13 @@ func TestLoadRelayRecovery(t *testing.T) {
 	// Healthy heartbeats and the two serial usage writers finish their current
 	// sweep only after every affected slot has actually been marked ready.
 	restartReady := make(chan struct{})
-	backgroundReady := make(chan struct{}, 3)
+	backgroundReady := make(chan struct{}, 3+len(ingresses))
+	var work sync.WaitGroup
+	work.Add(64 + len(ingresses))
 	var restarted RelayLease // Published to recovery workflows by restartReady.
 	for worker := range 32 {
 		workers.Go(func() {
+			defer work.Done()
 			select {
 			case <-ctx.Done():
 				return
@@ -111,7 +117,7 @@ func TestLoadRelayRecovery(t *testing.T) {
 			for offset := worker; offset < len(affected) && ctx.Err() == nil; offset += 32 {
 				index := affected[offset]
 				began := time.Now()
-				setup, err := recoverLoadRelaySlot(ctx, f.controls[worker%2], f.trace, sessions[index], failed, restarted, now)
+				setup, err := recoverLoadRelaySlot(ctx, f.controls[worker%2], sessions[index], failed, restarted, now)
 				if err != nil {
 					fail(fmt.Errorf("recover route=%s: %w", sessions[index].setup.RouteID, err))
 					return
@@ -123,6 +129,7 @@ func TestLoadRelayRecovery(t *testing.T) {
 			}
 		})
 		workers.Go(func() {
+			defer work.Done()
 			if worker >= len(unaffected) {
 				return
 			}
@@ -131,14 +138,10 @@ func TestLoadRelayRecovery(t *testing.T) {
 					index := unaffected[offset]
 					session := sessions[index]
 					callCtx, stop := context.WithTimeout(ctx, 20*time.Second)
-					began := time.Now()
 					// One owner per route advances its logical heartbeats monotonically.
 					at := now.Add(time.Since(started))
 					setup, err := f.controls[worker%2].HeartbeatRouteSession(callCtx, session.authentication(), at, time.Hour, time.Hour)
 					stop()
-					f.trace.mu.Lock()
-					f.trace.add("heartbeat", time.Since(began))
-					f.trace.mu.Unlock()
 					if err != nil {
 						fail(fmt.Errorf("healthy heartbeat route=%s: %w", session.setup.RouteID, err))
 						return
@@ -172,6 +175,7 @@ func TestLoadRelayRecovery(t *testing.T) {
 	bucketStart := f.now.Truncate(time.Minute)
 	for index, ingress := range ingresses {
 		workers.Go(func() {
+			defer work.Done()
 			for revision := uint64(1); ctx.Err() == nil; revision++ {
 				for offset := 0; offset < len(sessions) && ctx.Err() == nil; offset += 16 {
 					var reports []IngressUsageReport
@@ -185,12 +189,8 @@ func TestLoadRelayRecovery(t *testing.T) {
 						})
 					}
 					callCtx, stop := context.WithTimeout(ctx, 20*time.Second)
-					began := time.Now()
 					err := f.controls[index].ReportIngressUsage(callCtx, ingress.IngressLeaseIdentity, IngressUsageBatch{Reports: reports}, now)
 					stop()
-					f.trace.mu.Lock()
-					f.trace.add("usage_page", time.Since(began))
-					f.trace.mu.Unlock()
 					if err != nil {
 						fail(fmt.Errorf("usage ingress=%d offset=%d revision=%d: %w", index, offset, revision, err))
 						return
@@ -210,9 +210,18 @@ func TestLoadRelayRecovery(t *testing.T) {
 			}
 		})
 	}
+	workDone := make(chan struct{})
+	workers.Go(func() { work.Wait(); close(workDone) })
+	for index, ingress := range ingresses {
+		workers.Go(func() {
+			if err := observeRecoveryLoad(t, ctx, f.controls[index], ingress.IngressLeaseIdentity, initial, failed.RelayID, now, workDone, backgroundReady); err != nil {
+				fail(fmt.Errorf("snapshot/renewal ingress=%d: %w", index, err))
+			}
+		})
+	}
 	// Require successful background work after the failure before releasing the
 	// recovery workflows, rather than counting goroutine starts as progress.
-	for range 3 {
+	for range 3 + len(ingresses) {
 		select {
 		case <-backgroundReady:
 		case <-ctx.Done():
@@ -347,16 +356,101 @@ func TestLoadRelayRecovery(t *testing.T) {
 	if err := rows.Err(); err != nil || len(byID) != 0 || ctx.Err() != nil {
 		t.Fatalf("recovery usage verification: missing=%d err=%v context=%v", len(byID), err, ctx.Err())
 	}
+	assertAssignmentTotals(t, f.database.pool, int64(f.routes)*2)
 }
 
-func recoverLoadRelaySlot(ctx context.Context, control *Database, trace *placementLoadTrace, session routeSessionFixture, failed, restarted RelayLease, now time.Time) (RouteSessionSetup, error) {
+// Readers use immutable initial projections while recovery workers change their
+// assignments. Check identity, monotonic revisions, and surviving connections
+// live; the post-join event walk verifies every final replacement and stale run.
+func observeRecoveryLoad(t *testing.T, ctx context.Context, control *Database, ingress IngressLeaseIdentity, initial IngressRoutingTableSnapshot, failedRelayID string, now time.Time, workDone <-chan struct{}, backgroundReady chan<- struct{}) error {
+	expected := make(map[string]IngressRoutingTableEvent, len(initial.Routes))
+	entries := make(map[string]uint64, len(initial.Routes))
+	for _, event := range initial.Routes {
+		expected[event.RouteID], entries[event.RouteID] = event, event.EntryRevision
+	}
+	cursor := initial.RoutingTableRevision
+	var snapshots, renewals int
+	started := time.Now()
+	defer func() {
+		t.Logf("ingress=%s snapshots=%d renewals=%d cursor=%d elapsed=%s", ingress.IngressID, snapshots, renewals, cursor, time.Since(started))
+	}()
+	for ctx.Err() == nil {
+		finished := false
+		select {
+		case <-workDone:
+			finished = true
+		default:
+		}
+		callCtx, stop := context.WithTimeout(ctx, 20*time.Second)
+		snapshot, err := control.ReadIngressRoutingTableSnapshot(callCtx, ingress, now)
+		stop()
+		if err != nil {
+			return fmt.Errorf("snapshot: %w", err)
+		}
+		if snapshot.RoutingTableRevision < cursor || len(snapshot.Routes) != len(expected) {
+			return fmt.Errorf("snapshot routes=%d want=%d revision=%d previous=%d", len(snapshot.Routes), len(expected), snapshot.RoutingTableRevision, cursor)
+		}
+		seen := make(map[string]bool, len(expected))
+		for _, event := range snapshot.Routes {
+			before, ok := expected[event.RouteID]
+			if !ok || seen[event.RouteID] || event.Kind != IngressRouteUpsert || event.RouteVersion != before.RouteVersion ||
+				event.CanonicalHostname != before.CanonicalHostname || event.Projection.RouteSessionID != before.Projection.RouteSessionID ||
+				event.EntryRevision < entries[event.RouteID] || event.RoutingTableRevision > snapshot.RoutingTableRevision ||
+				!event.Projection.RouteExpiresAt.After(now) {
+				return fmt.Errorf("snapshot lost current session or revision route=%s", event.RouteID)
+			}
+			connections := event.Projection.PublisherConnections
+			if len(connections) < 1 || len(connections) > 2 {
+				return fmt.Errorf("snapshot connection count=%d route=%s", len(connections), event.RouteID)
+			}
+			var slots [2]bool
+			for _, connection := range connections {
+				slot := connection.ConnectionSlot
+				if slot < 0 || slot >= len(slots) || slots[slot] {
+					return fmt.Errorf("snapshot invalid or duplicate slot=%d route=%s", slot, event.RouteID)
+				}
+				slots[slot] = true
+			}
+			for _, connection := range before.Projection.PublisherConnections {
+				if connection.RelayID != failedRelayID && !slices.Contains(connections, connection) {
+					return fmt.Errorf("snapshot lost surviving connection route=%s slot=%d", event.RouteID, connection.ConnectionSlot)
+				}
+			}
+			seen[event.RouteID], entries[event.RouteID] = true, event.EntryRevision
+		}
+		cursor = snapshot.RoutingTableRevision
+		snapshots++
+		callCtx, stop = context.WithTimeout(ctx, 20*time.Second)
+		lease, err := control.RenewIngress(callCtx, IngressRenewal{IngressLeaseIdentity: ingress, RoutingTableRevision: cursor}, now, time.Hour)
+		stop()
+		if err != nil {
+			return fmt.Errorf("renew: %w", err)
+		}
+		if lease.IngressLeaseIdentity != ingress || !lease.LeaseExpiresAt.After(now) {
+			return errors.New("renew changed ingress identity or expired its lease")
+		}
+		renewals++
+		if snapshots == 1 {
+			backgroundReady <- struct{}{}
+		}
+		if finished {
+			return nil
+		}
+		timer := time.NewTimer(time.Second)
+		select {
+		case <-ctx.Done():
+		case <-workDone:
+		case <-timer.C:
+		}
+		timer.Stop()
+	}
+	return ctx.Err()
+}
+
+func recoverLoadRelaySlot(ctx context.Context, control *Database, session routeSessionFixture, failed, restarted RelayLease, now time.Time) (RouteSessionSetup, error) {
 	callCtx, stop := context.WithTimeout(ctx, 20*time.Second)
-	began := time.Now()
 	setup, err := control.HeartbeatRouteSession(callCtx, session.authentication(), now, time.Hour, time.Hour)
 	stop()
-	trace.mu.Lock()
-	trace.add("heartbeat", time.Since(began))
-	trace.mu.Unlock()
 	if err != nil {
 		return setup, fmt.Errorf("replenish: %w", err)
 	}

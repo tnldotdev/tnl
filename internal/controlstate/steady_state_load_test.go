@@ -19,6 +19,7 @@ func TestLoadSteadyState(t *testing.T) {
 	setupStarted := time.Now()
 	f := newControlLoadFixture(t)
 	sessions := readySteadyLoadSessions(t, f)
+	historyRevision := seedLoadRoutingHistory(t, f, 1, f.history)
 	var ingresses [2]IngressLease
 	for index := range ingresses {
 		lease, err := f.database.RegisterIngress(t.Context(), IngressRegistration{
@@ -31,7 +32,7 @@ func TestLoadSteadyState(t *testing.T) {
 		ingresses[index] = lease
 	}
 	initial, err := f.database.ReadIngressRoutingTableSnapshot(t.Context(), ingresses[0].IngressLeaseIdentity, f.now)
-	if err != nil || len(initial.Routes) != f.routes {
+	if err != nil || len(initial.Routes) != f.routes || initial.RoutingTableRevision != uint64(historyRevision) {
 		t.Fatalf("initial snapshot: routes=%d want=%d: %v", len(initial.Routes), f.routes, err)
 	}
 	byID := make(map[string]RouteSessionSetup, f.routes)
@@ -40,7 +41,7 @@ func TestLoadSteadyState(t *testing.T) {
 	}
 	for _, event := range initial.Routes {
 		setup, ok := byID[event.RouteID]
-		if !ok || event.Kind != IngressRouteUpsert || event.RouteVersion != setup.RouteVersion ||
+		if !ok || event.Kind != IngressRouteUpsert || event.RouteVersion != setup.RouteVersion || event.EntryRevision != uint64(f.history) ||
 			event.Projection.RouteSessionID != setup.RouteSessionID || len(event.Projection.PublisherConnections) != 2 {
 			t.Fatalf("initial snapshot: unexpected route %s", event.RouteID)
 		}
@@ -52,6 +53,7 @@ func TestLoadSteadyState(t *testing.T) {
 	defer cancel()
 	workers := newIntegrationWorkers(t, cancel)
 	var heartbeats, pages atomic.Int64
+	f.startMetrics(t)
 	started := time.Now()
 	defer func() {
 		t.Logf("heartbeats=%d/%d usage_pages_including_replays=%d/%d workers=64 elapsed=%s", heartbeats.Load(), 3*f.routes, pages.Load(), 8*((f.routes+15)/16), time.Since(started))
@@ -77,12 +79,8 @@ func TestLoadSteadyState(t *testing.T) {
 				for index := worker; index < len(sessions) && ctx.Err() == nil; index += 64 {
 					session := sessions[index]
 					callCtx, stop := context.WithTimeout(ctx, 20*time.Second)
-					began := time.Now()
 					setup, err := control.HeartbeatRouteSession(callCtx, session.authentication(), f.now.Add(time.Duration(sweep+1)*time.Second), time.Hour, time.Hour)
 					stop()
-					f.trace.mu.Lock()
-					f.trace.add("heartbeat", time.Since(began))
-					f.trace.mu.Unlock()
 					if err != nil {
 						fail(fmt.Errorf("heartbeat route=%s sweep=%d: %w", session.setup.RouteID, sweep+1, err))
 						return
@@ -127,12 +125,8 @@ func TestLoadSteadyState(t *testing.T) {
 					}
 					for replay := range 2 {
 						callCtx, stop := context.WithTimeout(ctx, 20*time.Second)
-						began := time.Now()
 						err := f.controls[index].ReportIngressUsage(callCtx, ingress.IngressLeaseIdentity, IngressUsageBatch{Reports: reports}, now)
 						stop()
-						f.trace.mu.Lock()
-						f.trace.add("usage_page", time.Since(began))
-						f.trace.mu.Unlock()
 						if err != nil {
 							fail(fmt.Errorf("usage ingress=%d offset=%d revision=%d replay=%d: %w", index, offset, revision, replay, err))
 							return
@@ -148,7 +142,7 @@ func TestLoadSteadyState(t *testing.T) {
 	for index, ingress := range ingresses {
 		workers.Go(func() {
 			<-start
-			if err := observeSteadyLoad(t, ctx, f.controls[index], f.trace, ingress.IngressLeaseIdentity, initial, now, workDone); err != nil {
+			if err := observeSteadyLoad(t, ctx, f.controls[index], ingress.IngressLeaseIdentity, initial, now, workDone); err != nil {
 				fail(fmt.Errorf("routing/renewal ingress=%d: %w", index, err))
 			}
 		})
@@ -213,9 +207,15 @@ func TestLoadSteadyState(t *testing.T) {
 	if len(byID) != 0 {
 		t.Fatalf("missing usage buckets: verified=%d want=%d", verified, len(sessions))
 	}
+	assertAssignmentTotals(t, f.database.pool, int64(f.routes)*2)
 }
 
 func readySteadyLoadSessions(t *testing.T, f *controlLoadFixture) []routeSessionFixture {
+	t.Helper()
+	return readyLoadSessions(t, f, time.Hour, time.Hour)
+}
+
+func readyLoadSessions(t *testing.T, f *controlLoadFixture, publisherLease, credentialLifetime time.Duration) []routeSessionFixture {
 	t.Helper()
 	var sessions []routeSessionFixture
 	started := time.Now()
@@ -224,7 +224,7 @@ func readySteadyLoadSessions(t *testing.T, f *controlLoadFixture) []routeSession
 	// the oldest pending ACME order and expects it to be the one just created.
 	for index := range f.routes {
 		request := f.request(index)
-		setup, err := f.database.CreateRouteSession(t.Context(), request, f.now, time.Hour, time.Hour)
+		setup, err := f.database.CreateRouteSession(t.Context(), request, f.now, publisherLease, credentialLifetime)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -257,7 +257,7 @@ func readySteadyLoadSessions(t *testing.T, f *controlLoadFixture) []routeSession
 // One actor per ingress drains delta pages promptly, renewing and sampling a
 // live snapshot initially and once a second. A final observation after writes
 // finish verifies the fully drained history against the final snapshot.
-func observeSteadyLoad(t *testing.T, ctx context.Context, control *Database, trace *placementLoadTrace, ingress IngressLeaseIdentity, initial IngressRoutingTableSnapshot, now time.Time, workDone <-chan struct{}) error {
+func observeSteadyLoad(t *testing.T, ctx context.Context, control *Database, ingress IngressLeaseIdentity, initial IngressRoutingTableSnapshot, now time.Time, workDone <-chan struct{}) error {
 	expected := make(map[string]IngressRoutingTableEvent, len(initial.Routes))
 	entries := make(map[string]uint64, len(initial.Routes))
 	for _, event := range initial.Routes {
@@ -281,12 +281,8 @@ func observeSteadyLoad(t *testing.T, ctx context.Context, control *Database, tra
 		default:
 		}
 		callCtx, stop := context.WithTimeout(ctx, 20*time.Second)
-		began := time.Now()
 		page, err := control.ReadIngressRoutingTableEvents(callCtx, ingress, cursor, MaximumIngressRoutingTablePageSize, now)
 		stop()
-		trace.mu.Lock()
-		trace.add("routing_events", time.Since(began))
-		trace.mu.Unlock()
 		if err != nil {
 			return fmt.Errorf("events after=%d: %w", cursor, err)
 		}
@@ -309,12 +305,8 @@ func observeSteadyLoad(t *testing.T, ctx context.Context, control *Database, tra
 		}
 		if !time.Now().Before(nextObservation) || (finished && !page.More) {
 			callCtx, stop = context.WithTimeout(ctx, 20*time.Second)
-			began = time.Now()
 			lease, err := control.RenewIngress(callCtx, IngressRenewal{IngressLeaseIdentity: ingress, RoutingTableRevision: cursor}, now, time.Hour)
 			stop()
-			trace.mu.Lock()
-			trace.add("ingress_renewal", time.Since(began))
-			trace.mu.Unlock()
 			if err != nil {
 				return fmt.Errorf("renew: %w", err)
 			}
@@ -323,12 +315,8 @@ func observeSteadyLoad(t *testing.T, ctx context.Context, control *Database, tra
 			}
 			renewals++
 			callCtx, stop = context.WithTimeout(ctx, 20*time.Second)
-			began = time.Now()
 			snapshot, err := control.ReadIngressRoutingTableSnapshot(callCtx, ingress, now)
 			stop()
-			trace.mu.Lock()
-			trace.add("routing_snapshot", time.Since(began))
-			trace.mu.Unlock()
 			if err != nil {
 				return fmt.Errorf("snapshot: %w", err)
 			}

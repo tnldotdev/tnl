@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -26,11 +27,11 @@ func TestLoadPlacement(t *testing.T) {
 
 // RunPlacementLoad also lets the external test attach the real control API
 // without creating a controlstate -> controlapi import cycle.
-func RunPlacementLoad(t *testing.T, newHandler func(*Database, credentials.LoginToken) http.Handler) {
+func RunPlacementLoad(t *testing.T, newHandler func(*Database, credentials.LoginToken, *observability.Metrics) http.Handler) {
 	t.Helper()
 	f := newControlLoadFixture(t)
 	database, now, request := f.database, f.now, f.base
-	routes, controls, leases, trace := f.routes, f.controls, f.leases, f.trace
+	routes, controls, leases := f.routes, f.controls, f.leases
 	const parallel = 64
 	var accessToken credentials.AccessToken
 	var loginToken credentials.LoginToken
@@ -52,14 +53,16 @@ func RunPlacementLoad(t *testing.T, newHandler func(*Database, credentials.Login
 		accessToken = session.AccessToken
 	}
 	var handlers []http.Handler
-	for _, control := range controls {
+	for index, control := range controls {
 		if newHandler != nil {
-			handlers = append(handlers, newHandler(control, loginToken))
+			handlers = append(handlers, newHandler(control, loginToken, f.metrics[index]))
 		}
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
 	defer cancel()
 	workers := newIntegrationWorkers(t, cancel)
+	f.startMetrics(t)
+	defer f.logStats(t)
 	defer workers.stop()
 	var next, completed, claims atomic.Int64
 	var first sync.Once
@@ -76,12 +79,8 @@ func RunPlacementLoad(t *testing.T, newHandler func(*Database, credentials.Login
 				candidate := f.request(int(index))
 				if newHandler != nil {
 					lookupCtx, stop := context.WithTimeout(ctx, 20*time.Second)
-					began := time.Now()
 					err := placementLoadLookup(lookupCtx, handlers[(worker/16)%2], accessToken, candidate)
 					stop()
-					trace.mu.Lock()
-					trace.add("hostname_lookup", time.Since(began))
-					trace.mu.Unlock()
 					if err != nil {
 						first.Do(func() { firstErr = err; cancel() })
 						return
@@ -119,11 +118,11 @@ func RunPlacementLoad(t *testing.T, newHandler func(*Database, credentials.Login
 		})
 	}
 	workers.Wait()
-	t.Logf("completed=%d/%d claims=%d workers=%d pools=2x8 extra_query_delay=%s hostname_lookup=%t commands=%d elapsed=%s", completed.Load(), routes, claims.Load(), parallel, trace.delay, newHandler != nil, trace.commands, time.Since(started))
-	f.logStats(t)
+	t.Logf("completed=%d/%d claims=%d workers=%d pools=2x8 extra_query_delay=%s hostname_lookup=%t elapsed=%s", completed.Load(), routes, claims.Load(), parallel, f.delay, newHandler != nil, time.Since(started))
 	if firstErr != nil || completed.Load() != int64(routes) {
 		t.Fatalf("load failed: %v", firstErr)
 	}
+	assertAssignmentTotals(t, database.pool, int64(routes)*2)
 }
 
 func placementLoadLookup(ctx context.Context, handler http.Handler, token credentials.AccessToken, candidate RouteSessionRequest) error {
@@ -147,52 +146,13 @@ func placementLoadLookup(ctx context.Context, handler http.Handler, token creden
 	return nil
 }
 
-type placementLoadStat struct {
-	count          int
-	total, maximum time.Duration
-}
-type placementLoadTrace struct {
-	*queryActivity
-	delay    time.Duration
-	mu       sync.Mutex
-	stats    map[string]placementLoadStat
-	held     map[*pgx.Conn]map[string]time.Time
-	commands int
+type queryDelayTracer struct {
+	*connectionTracer
+	delay time.Duration
 }
 
-func (r *placementLoadTrace) add(name string, elapsed time.Duration) {
-	stat := r.stats[name]
-	stat.count++
-	stat.total += elapsed
-	stat.maximum = max(stat.maximum, elapsed)
-	r.stats[name] = stat
-}
-
-func (r *placementLoadTrace) TraceQueryEnd(ctx context.Context, conn *pgx.Conn, data pgx.TraceQueryEndData) {
-	defer r.queryActivity.TraceQueryEnd(ctx, conn, data)
-	query := ctx.Value(queryActivityKey{}).(*activeQuery)
-	now := time.Now()
-	r.mu.Lock()
-	r.commands++
-	r.add(query.operation, now.Sub(query.started))
-	switch query.operation {
-	case "LockLocalTeamForSession", "LockRelayServicesForPlacement", "GetRelayLeaseForClaim", "LockIngressRoutingTableClock", "LockRouteSessionForUsage", "LockIngressLease":
-		if data.Err == nil {
-			if r.held[conn] == nil {
-				r.held[conn] = make(map[string]time.Time)
-			}
-			if _, held := r.held[conn][query.operation]; !held {
-				r.held[conn][query.operation] = now
-			}
-		}
-	}
-	if query.operation == "commit" || query.operation == "rollback" || conn.IsClosed() {
-		for name, began := range r.held[conn] {
-			r.add("held:"+name, now.Sub(began))
-		}
-		delete(r.held, conn)
-	}
-	r.mu.Unlock()
+func (r *queryDelayTracer) TraceQueryEnd(ctx context.Context, conn *pgx.Conn, data pgx.TraceQueryEndData) {
+	r.connectionTracer.TraceQueryEnd(ctx, conn, data)
 	// Optional client-side round-trip model, not a network emulator. Query
 	// timings exclude their own delay; lock-held windows include earlier delays.
 	if r.delay > 0 && data.Err == nil {

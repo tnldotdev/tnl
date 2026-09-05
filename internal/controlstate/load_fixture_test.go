@@ -7,8 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	dto "github.com/prometheus/client_model/go"
+	"github.com/tnldotdev/tnl/internal/observability"
 )
 
 type controlLoadFixture struct {
@@ -16,9 +17,12 @@ type controlLoadFixture struct {
 	now      time.Time
 	base     RouteSessionRequest
 	routes   int
+	history  int
 	leases   map[string][]RelayLease
 	controls []*Database
-	trace    *placementLoadTrace
+	delay    time.Duration
+	metrics  []*observability.Metrics
+	before   [][]*dto.MetricFamily
 }
 
 func newControlLoadFixture(t *testing.T) *controlLoadFixture {
@@ -42,8 +46,16 @@ func newControlLoadFixture(t *testing.T) *controlLoadFixture {
 			t.Fatal("route count must be a positive PostgreSQL integer")
 		}
 	}
+	history := int64(1)
+	if raw := os.Getenv("TNL_TEST_LOAD_HISTORY"); raw != "" {
+		var err error
+		history, err = strconv.ParseInt(raw, 10, 32)
+		if err != nil || history < 1 {
+			t.Fatal("history events per route must be a positive PostgreSQL integer")
+		}
+	}
 	database, now, request, originalLeases := newRouteSessionPrerequisites(t)
-	f := &controlLoadFixture{database: database, now: now, base: request, routes: routes, leases: make(map[string][]RelayLease)}
+	f := &controlLoadFixture{database: database, now: now, base: request, routes: routes, history: int(history), leases: make(map[string][]RelayLease)}
 	_, err := database.pool.Exec(t.Context(), `
 		INSERT INTO control.routes (id, team_id, domain_id, created_by_identity_id, idempotency_key,
 			request_digest, canonical_hostname, target, route_scope, policy_revision, ip_policy,
@@ -68,18 +80,26 @@ func newControlLoadFixture(t *testing.T) *controlLoadFixture {
 		}
 		f.leases[service] = []RelayLease{first, second}
 	}
-	f.trace = &placementLoadTrace{queryActivity: new(queryActivity), delay: delay, stats: make(map[string]placementLoadStat), held: make(map[*pgx.Conn]map[string]time.Time)}
+	f.delay = delay
 	for range 2 {
+		metrics := observability.New("control")
+		activity, connections := new(queryActivity), new(connectionActivity)
+		activity.metrics.Store(metrics)
 		config := database.pool.Config()
 		config.MaxConns = 8
 		config.ConnConfig.RuntimeParams["application_name"] = "tnl-load-test"
-		config.ConnConfig.Tracer = f.trace
+		config.ConnConfig.Tracer = &queryDelayTracer{
+			connectionTracer: &connectionTracer{connections: connections, purpose: requestPoolConnection, queries: activity}, delay: delay,
+		}
 		pool, err := pgxpool.NewWithConfig(t.Context(), config)
 		if err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(pool.Close)
-		f.controls = append(f.controls, &Database{pool: pool, storageKey: database.storageKey})
+		control := &Database{pool: pool, storageKey: database.storageKey, activity: activity, connections: connections}
+		metrics.RegisterDatabase(control.PrometheusMetrics)
+		f.controls = append(f.controls, control)
+		f.metrics = append(f.metrics, metrics)
 		var warm []*pgxpool.Conn
 		for range 8 {
 			conn, err := pool.Acquire(t.Context())
@@ -104,19 +124,66 @@ func (f *controlLoadFixture) request(index int) RouteSessionRequest {
 	return request
 }
 
+// Capture after fixture setup, before starting actors. End collection happens
+// only after actors join, including failure paths, and before pools close.
+func (f *controlLoadFixture) startMetrics(t *testing.T) {
+	t.Helper()
+	f.before = nil
+	for _, metrics := range f.metrics {
+		before, err := metrics.Gather()
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.before = append(f.before, before)
+	}
+}
+
 func (f *controlLoadFixture) logStats(t *testing.T) {
 	t.Helper()
-	f.trace.mu.Lock()
-	defer f.trace.mu.Unlock()
-	t.Logf("routes=%d pools=2x8 extra_query_delay=%s commands_total=%d", f.routes, f.trace.delay, f.trace.commands)
-	for index, control := range f.controls {
-		stat := control.PoolStats()
-		t.Logf("pool=%d waited_total=%d canceled_total=%d wait_total=%s", index, stat.EmptyAcquireCount(), stat.CanceledAcquireCount(), stat.EmptyAcquireWaitTime())
-	}
-	for _, name := range []string{"LockLocalTeamForSession", "LockRelayServicesForPlacement", "GetRelayLeaseForClaim", "LockIngressRoutingTableClock", "LockRouteSessionForUsage", "LockIngressLease", "CountOpenRouteSessionAssignmentsByRelayService", "CountRelayActiveConnections", "held:LockLocalTeamForSession", "held:LockRelayServicesForPlacement", "held:GetRelayLeaseForClaim", "held:LockIngressRoutingTableClock", "held:LockRouteSessionForUsage", "held:LockIngressLease", "hostname_lookup", "heartbeat", "usage_page", "ingress_renewal", "routing_events", "routing_snapshot"} {
-		stat := f.trace.stats[name]
-		if stat.count > 0 {
-			t.Logf("%s calls=%d mean=%s max=%s total=%s", name, stat.count, stat.total/time.Duration(stat.count), stat.maximum, stat.total)
+	t.Logf("routes=%d pools=2x8 extra_query_delay=%s", f.routes, f.delay)
+	for index := range f.controls {
+		after, err := f.metrics[index].Gather()
+		if err != nil {
+			t.Error(err)
+			continue
+		}
+		for _, name := range []string{"tnl_database_pool_waited_acquires_total", "tnl_database_pool_canceled_acquires_total", "tnl_database_pool_acquire_wait_seconds_total"} {
+			delta := loadCounter(t, after, name) - loadCounter(t, f.before[index], name)
+			if delta < 0 {
+				t.Errorf("counter reset: control=%d %s", index, name)
+			}
+			t.Logf("control=%d %s delta=%g", index, name, delta)
+		}
+		summaries, err := observability.DurationSummaries(f.before[index], after)
+		if err != nil {
+			t.Error(err)
+			continue
+		}
+		for _, summary := range summaries {
+			if summary.Count == 0 {
+				continue
+			}
+			t.Logf("control=%d %s labels=%v calls=%d mean_seconds=%g p50_seconds=%s p95_seconds=%s p99_seconds=%s total_seconds=%g",
+				index, summary.Name, summary.Labels, summary.Count, summary.MeanSeconds,
+				loadPercentile(summary.P50Seconds), loadPercentile(summary.P95Seconds), loadPercentile(summary.P99Seconds), summary.SumSeconds)
 		}
 	}
+}
+
+func loadCounter(t *testing.T, families []*dto.MetricFamily, name string) float64 {
+	t.Helper()
+	for _, family := range families {
+		if family.GetName() == name && len(family.Metric) == 1 && family.Metric[0].Counter != nil {
+			return family.Metric[0].Counter.GetValue()
+		}
+	}
+	t.Fatalf("missing pool counter %s", name)
+	return 0
+}
+
+func loadPercentile(seconds *float64) string {
+	if seconds == nil {
+		return "unavailable"
+	}
+	return strconv.FormatFloat(*seconds, 'g', -1, 64)
 }

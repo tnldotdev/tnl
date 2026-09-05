@@ -89,26 +89,82 @@ TNL_TEST_POSTGRES_URL='postgres://postgres:postgres@127.0.0.1:5432/postgres?sslm
   per-route bucket totals, ordered and complete routing revisions, and final
   snapshots containing every live route.
 - `TestLoadRelayRecovery` restarts one relay process's database lease while 32
-  recovery workflows, 32 healthy workflows, and two serial usage writers share
-  the same pools. It verifies replacement assignments, stale-claim rejection,
-  surviving connections, complete recovery, and exact final usage. It needs at
-  least two routes and reports readiness time separately from final checks.
+  recovery workflows, 32 healthy workflows, two serial usage writers, and two
+  snapshot/ingress-renewal readers share the same pools. Readers sample initially,
+  wait one second between completed cycles, and sample after all writers finish.
+  Checks cover replacement assignments, stale-claim rejection, surviving
+  connections, complete recovery, and exact final usage. It needs at least two
+  routes and reports readiness time separately from final checks.
+
+`HISTORY=<positive count>` sets the initial routing events per route for steady
+state and recovery (default `1`). For example, `ROUTES=1000 HISTORY=1000` seeds
+one million events before the timed workload. The fixture copies genuine ready
+projections, advances their entry/global revisions, and analyzes the event table;
+it logs setup time and relation size separately. Readers begin at the seeded
+snapshot and validate subsequent live updates. This tests accumulated routing
+data rather than elapsed days of operation. Placement tests ignore `HISTORY`;
+the query profile retains its fixed 4/10/100-event-per-route stages.
+
+Select `RUN='^TestLoadCadence$' DURATION=10m` for the separate paced workload.
+`DURATION` opts it in and accepts whole minutes from 2m through 10m; routine load
+runs skip it. It keeps 64 heartbeat workers and two eight-connection pools, but
+schedules staggered heartbeats every 15 seconds with a ten-second deadline that
+includes scheduler waiting. Sessions use 45-second leases; ingress and relay
+leases last 30 seconds and renew every ten seconds. Setup holds its logical clock
+fixed, then time advances at wall-clock speed throughout the workload.
+
+The cadence case uses production ingress controllers and the standalone ingress
+API adapter for initial snapshots, incremental updates, renewal, and a forced
+resnapshot around a relay restart. It stops one relay's renewals halfway through,
+waits for its real lease duration to expire, and registers a new process run.
+Publisher connection replacement uses production state methods with 30-second
+control-call deadlines. Visitor traffic is modeled as one accounted connection
+per route per minute, split across two ingresses and six reporting checkpoints.
+Checkpoints use 16-report pages, replay the first nonempty page once, and must
+finish before the next ten-second checkpoint. This is an explicit baseline
+activity model, not a high-bandwidth or held-stream test.
+
+For example, with the disposable PostgreSQL URL configured:
+
+```console
+mise exec -- task go:test-load ROUTES=1000 DURATION=10m RUN='^TestLoadCadence$'
+mise exec -- task go:test-load ROUTES=10000 HISTORY=100 DURATION=10m RUN='^TestLoadCadence$'
+```
+
+Cadence output includes scheduled/completed work, overdue work, scheduler delay,
+periodic backlog/freshness observations, recovery time from lease expiration,
+production histograms, and final routing/usage/reservation verification. Database
+sizes are sampled before/after rather than queried by the Prometheus collector.
+Normal controller shutdown may record canceled long polls; those are separate
+from a workload failure. A ten-minute case uses a further minute to stop and
+verify actors, within the existing twenty-minute outer binary timeout.
 
 These scenarios exercise database state without real tunnels, visitor traffic,
 DNS resolution, or ACME network calls. The steady-state fixture signs test
-certificates locally. One-hour logical session and process leases keep fixture
-setup from expiring them; the accelerated repetitions are not a lease-cadence or
-soak benchmark.
+certificates locally. The accelerated placement, steady-state, and recovery
+cases use one-hour logical session and process leases; their repetitions are
+not a lease-cadence or soak benchmark.
 
 Use `DELAY=5ms` or `DELAY=20ms` to add client-side delay after successful SQL
 commands. This is a latency-sensitivity model, not measured network latency.
-Each timed operation has a twenty-second deadline and each workload, including
-its final checks, has five minutes. The test binary has a twenty-minute outer
+The accelerated cases give each operation twenty seconds and each workload,
+including final checks, five minutes. The test binary has a twenty-minute outer
 timeout for all cases plus setup and cleanup. Actors are stopped and joined
 on completion or failure; failures retain counts and timings in ordinary test
 output. CI runs 0ms on PRs/main and 5ms nightly or manually.
 Use 20ms for local experiments. Ordinary and integration test tasks skip these
 load tests.
+
+For isolated query-plan investigation, select `RUN='^TestProfile'` with
+`DELAY=0ms` and the same disposable PostgreSQL prerequisite. These opt-in tests
+log the actual generated queries' `EXPLAIN (ANALYZE, BUFFERS, SETTINGS)` plans:
+placement counts at up to 1,000, 2,500, and `ROUTES` sessions, and routing reads
+with 4, 10, and 100 events per live route. For example, `ROUTES=10000
+RUN='^TestProfileRoutingHistory$'` profiles 40,000 through one million events.
+History is bulk-copied from genuine ready-route projections; setup is untimed,
+and three serial snapshots/plans per size measure read amplification without
+concurrent writers. These profiles do not measure sustained heartbeat cadence,
+history ingestion throughput, or mixed-workload recovery.
 
 ### JavaScript Package
 
