@@ -1,6 +1,22 @@
 name: tnl-local-dev
 
 services:
+  postgres:
+    image: postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
+    environment:
+      POSTGRES_DB: tnl
+      POSTGRES_PASSWORD: tnl
+      POSTGRES_USER: tnl
+    healthcheck:
+      test: [CMD-SHELL, pg_isready --username tnl --dbname tnl]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "127.0.0.1:25432:5432"
+    volumes:
+      - postgres-state:/var/lib/postgresql/data
+
   pebble:
     image: ghcr.io/letsencrypt/pebble:2.10.1@sha256:ddf230642b1a584f519f32e347de1b05a6e4c1f6c35c1863b33effeab5f78199
     command: -config /test/config/tnl-pebble-config.json -strict=false
@@ -15,13 +31,30 @@ services:
     volumes:
       - ./pebble-config.json:/test/config/tnl-pebble-config.json:ro
 
+  migrate:
+    build:
+      context: ../..
+      args:
+        VERSION: dev
+    command: migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      TNLD_DATABASE_DIRECT_URL: postgresql://tnl:tnl@postgres/${TNL_LOCAL_DATABASE:-tnl}?sslmode=disable
+
   tnld:
     build:
       context: ../..
       args:
         VERSION: dev
     depends_on:
-      - pebble
+      migrate:
+        condition: service_completed_successfully
+      pebble:
+        condition: service_started
+      postgres:
+        condition: service_healthy
     read_only: true
     cap_drop:
       - ALL
@@ -30,25 +63,32 @@ services:
     stop_grace_period: 45s
     environment:
       TNLD_ACCESS_TOKEN_LIFETIME: 1h
-      TNLD_REFRESH_TOKEN_LIFETIME: 720h
       TNLD_ACME_ACCEPT_TERMS: "true"
       TNLD_ACME_DIRECTORY_URL: https://pebble:14000/dir
       TNLD_ACME_EMAIL: developer@localhost
       TNLD_ACME_PROFILE: tlsserver
-      TNLD_DOMAIN: localhost
+      TNLD_CONTROL_LISTEN: :8443
+      TNLD_CONTROL_TLS_CERTIFICATE_FILE: /etc/tnl/local.crt
+      TNLD_CONTROL_TLS_PRIVATE_KEY_FILE: /etc/tnl/local.key
+      TNLD_DATABASE_URL: postgresql://tnl:tnl@postgres/${TNL_LOCAL_DATABASE:-tnl}?sslmode=disable
+      TNLD_INGRESS_LISTEN: :8443
+      TNLD_LOGIN_TOKEN: ${TNLD_LOGIN_TOKEN:-tnl_login_AAECAwQFBgcICQoLDA0ODw.EBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8}
+      TNLD_MANAGED_DEPLOYMENT_DOMAIN: 127.0.0.1.nip.io
       TNLD_METRICS_LISTEN: 0.0.0.0:9090
       TNLD_MODE: standalone
-      TNLD_PUBLIC_LISTEN: :8443
-      TNLD_RELAY_PROVIDER: tailcat
-      TNLD_STATE_DIR: /var/lib/tnl
+      TNLD_RELAY_UDP_LISTEN: :8443
+      TNLD_REFRESH_TOKEN_LIFETIME: 720h
+      TNLD_SERVER_DOMAIN: 127.0.0.1.nip.io
     ports:
-      - "127.0.0.1:443:8443"
+      - "127.0.0.1:443:8443/tcp"
+      - "127.0.0.1:443:8443/udp"
       - "127.0.0.1:9090:9090"
     tmpfs:
       - /tmp:size=16m,mode=1777
     volumes:
-      - tnld-state:/var/lib/tnl
+      - ../../.local/certs/local.crt:/etc/tnl/local.crt:ro
+      - ../../.local/certs/local.key:/etc/tnl/local.key:ro
       - ./pebble.minica.crt:/etc/ssl/certs/pebble.minica.crt:ro
 
 volumes:
-  tnld-state:
+  postgres-state:

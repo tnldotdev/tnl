@@ -30,8 +30,8 @@ jobs:
           - name: proxy protocol
             package: ./internal/proxyproto
             target: FuzzDecode
-          - name: worker protocol
-            package: ./pkg/protocol/workerv1
+          - name: tunnel protocol
+            package: ./pkg/protocol/tunnelv1
             target: FuzzReadFrames
           - name: local target policy
             package: ./internal/localproxy

@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 3,
   "id": "agent-worktrees-assumed-v1",
   "updated_date": "2026-09-02",
   "classification": "assumed",
@@ -21,8 +21,8 @@
     "burst_response_bytes": 262144
   },
   "transport": {
-    "capacity_mode": "forced-derp",
-    "derp_share": 1
+    "mode": "auto",
+    "quic_share": 1
   },
   "phases": [
     { "name": "activation", "duration_seconds": 30, "timeout_seconds": 300 },
@@ -36,7 +36,7 @@
   ],
   "reference_notes": [
     "These values are assumptions, not observed customer measurements.",
-    "Held-open HTTP or TLS responses model HMR-like traffic because the edge forwards opaque route bytes and does not interpret application messages.",
+    "Held-open HTTP or TLS responses model HMR-like traffic because relays forward opaque route bytes and do not interpret application messages.",
     "Replace individual assumptions only with privacy-preserving aggregate observations that identify their sample window and completeness."
   ]
 }

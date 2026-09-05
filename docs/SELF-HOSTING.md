@@ -1,403 +1,268 @@
-# Self-Hosting tnl
+# Self-Hosting
 
-The default deployment runs the control API, public ingress, certificate
-coordinator, worker backends, and SQLite database in one `tnld` process. The
-split reference runs one stateful edge and a fixed pool of stateless workers.
+The tnl server runs `tnld` in one of four roles:
 
-## Deployment Roles
+| `TNLD_MODE`  | Responsibilities                                                                          |
+| ------------ | ----------------------------------------------------------------------------------------- |
+| `standalone` | Control, ingress, and two logical relay services in one process                           |
+| `control`    | Control and authority APIs, PostgreSQL state, placement, certificates, and administration |
+| `ingress`    | Public visitor acceptance, route policy, usage, and internal forwarding                   |
+| `relay`      | Publisher connections and internal forwarding to local publishers                         |
 
-| `TNLD_MODE`  | Responsibilities                                                                | SQLite ownership                       |
-| ------------ | ------------------------------------------------------------------------------- | -------------------------------------- |
-| `standalone` | Control API, public ingress, certificates, and in-process worker backends       | Opens and owns the deployment database |
-| `edge`       | Control API, public ingress, certificates, and coordination of external workers | Opens and owns the deployment database |
-| `worker`     | Outbound connection to an edge and worker backends for assigned route versions  | Does not open the deployment database  |
+Only standalone and control processes use PostgreSQL. Ingress and relay are
+stateless, receive no database credentials, and bootstrap through service
+enrollment. Run `tnld migrate` before starting control or standalone; serving
+processes never migrate the database.
 
-Exactly one standalone or edge `tnld` process may open a given SQLite database
-or state volume. A worker never opens it. Do not share a database or volume
-between processes, including two edges intended for high availability.
+## Required Configuration
 
-## Topology
+| Mode       | Required settings                                                                                                                                         |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Standalone | `TNLD_MODE`, `TNLD_DATABASE_URL`, `TNLD_SERVER_DOMAIN`, `TNLD_MANAGED_DEPLOYMENT_DOMAIN`, `TNLD_ACME_EMAIL`, `TNLD_ACME_ACCEPT_TERMS`, `TNLD_LOGIN_TOKEN` |
+| Control    | The same control-owned settings as standalone                                                                                                             |
+| Ingress    | `TNLD_MODE`, `TNLD_CONTROL_HOSTNAME`, `TNLD_SERVICE_ENROLLMENT_TOKEN`, `TNLD_INGRESS_ID`                                                                  |
+| Relay      | `TNLD_MODE`, `TNLD_CONTROL_HOSTNAME`, `TNLD_SERVICE_ENROLLMENT_TOKEN`, `TNLD_RELAY_ID`, `TNLD_INTERNAL_RELAY_ADDRESS`                                     |
 
-Choose one lowercase DNS domain, without a trailing dot.
-`TNLD_DOMAIN=example.com` derives both public hostnames:
+`TNLD_CONTROL_HOSTNAME` is a canonical hostname without a scheme, path, or
+port. HTTPS on port 443 is always implied. Process run IDs and service private
+keys are generated locally on each ingress or relay start.
 
-| Purpose                    | Name                                   | Listener |
-| -------------------------- | -------------------------------------- | -------- |
-| Control API hostname       | `tnl.example.com`                      | TCP 443  |
-| Deployment hostname suffix | `example.com` (`*.example.com` in DNS) | TCP 443  |
+Listen addresses, limits, timing, metrics, a non-default ACME directory, and
+static public certificate overrides are optional advanced settings. Static
+service-mTLS certificate, private-key, and trust-bundle files are not part of
+the final configuration.
 
-Create wildcard A and, when applicable, AAAA records that resolve directly to
-public ingress. The wildcard also covers `tnl.example.com`. If CAA records are
-present, authorize the configured ACME CA.
+The runtime URL belongs in `TNLD_DATABASE_URL`. The direct migration URL belongs
+in `TNLD_DATABASE_DIRECT_URL` and is read only by `tnld migrate`. Use a pooled
+runtime endpoint in replicated control deployments.
 
-The reference Compose files publish IPv4 because `TNL_PUBLIC_BIND` defaults to
-`0.0.0.0`. Publish AAAA records only after adding equivalent `[::]` mappings in
-a Compose override and confirming that the Docker host accepts IPv6 traffic.
+## Addresses And DNS
 
-Open inbound TCP 443. The daemon needs outbound HTTPS access to its ACME
-directory and configured relay nodes. For a route hostname, `tnld` reads the
-hostname from the TLS ClientHello and forwards the connection bytes unchanged
-to the publisher through a worker backend. The publisher owns the route
-certificate and private key, terminates TLS, and sends plain HTTP to the local
-service. This TLS passthrough requires the original ClientHello, so route
-ingress cannot sit behind a reverse proxy that terminates HTTPS. `tnld`
-terminates TLS itself only for the control API hostname.
+The server domain is an infrastructure suffix independent from the managed
+deployment domain. For:
 
-## Start Standalone
+```text
+TNLD_SERVER_DOMAIN=tnl.example.com
+TNLD_MANAGED_DEPLOYMENT_DOMAIN=tunnels.example.com
+```
 
-Prerequisites:
+configure DNS for:
 
-- A Linux host with Docker Engine and Docker Compose v2.
-- A verified tnl image selected by its digest.
-- DNS for `*.<domain>`.
-- An ACME service that supports TLS-ALPN-01 and the configured route
-  certificate profile.
+```text
+control.tnl.example.com       # public control and authority origin
+ingress.tnl.example.com       # public route DNS target
+relay.tnl.example.com         # standalone relay address
+relay-a.tnl.example.com       # split relay service A
+relay-b.tnl.example.com       # split relay service B
+```
 
-Work from the repository's `deploy` directory:
+Public route hostnames beneath `tunnels.example.com` point to the ingress
+address. Relay placement never changes public route DNS. Split relay service
+labels come from enrollment-token scope rather than relay environment variables.
+
+Control obtains and renews the public certificate for its control hostname
+through ACME. `TNLD_ACME_EMAIL` and `TNLD_ACME_ACCEPT_TERMS=true` are required;
+the ACME directory has a production default and may be overridden for private or
+test directories. Static public certificates are optional advanced overrides.
+
+Relay transport TLS uses private PKI. Control's durable service CA issues a
+one-hour server certificate for each relay service hostname. Publishers
+receive the service CA certificate from authenticated route-session setup and
+use it only for relay transport connections. Browser-facing route TLS remains
+publicly trusted and terminates at the publisher.
+
+## Bootstrap Management
+
+Generate one bootstrap management token and store it in the deployment secret
+store:
+
+```console
+tnld login-token
+```
+
+Provide it to every control replica as `TNLD_LOGIN_TOKEN`. Control and
+standalone refuse to start without it. The token authenticates the built-in
+administrator identity and that identity's permanent personal team; it is not a
+multi-user credential. Use OIDC for multiple users and retain the bootstrap
+token for operator recovery.
+
+## Service Enrollment
+
+After authenticating as an administrator, create one reusable ingress token and
+one token for each relay service:
+
+```console
+tnl admin enrollment-tokens create --role ingress
+tnl admin enrollment-tokens create --role relay --relay-service relay-a
+tnl admin enrollment-tokens create --role relay --relay-service relay-b
+```
+
+The raw `tnl_enrollment_...` token is returned exactly once. Control stores only
+its lookup ID, digest, role, relay-service scope, audit metadata, and revocation
+state. A token remains valid until revoked, so one ingress token supports all
+ingress replicas and one relay-service token supports all replicas in that
+service. Each replica still uses a unique ingress ID or relay ID.
+
+Each split process generates its service private key locally and sends a CSR,
+role, and process identity to `POST /v1/service-enrollments` on the public
+control HTTPS endpoint. Enrollment returns:
+
+- A one-hour service certificate.
+- The service CA trust bundle.
+- The role's internal control API endpoint.
+- Stable facts needed for lease registration.
+
+Relay enrollment also returns the relay service ID, derived relay address, TLS
+server name, and shared one-hour relay transport certificate/key. A process
+re-enrolls with the same token after approximately thirty minutes. Revoked or
+cross-role tokens cannot enroll. An expired service certificate makes the
+process unready and prevents lease renewal.
+
+The ingress control API uses `control.<server-domain>:9443`; the relay control
+API uses `control.<server-domain>:9444`. Keep both listeners private. Their
+contracts, certificates, permissions, and clients remain separate.
+
+Standalone does not enroll itself. Its control, ingress, and two logical relay
+services use the same authorization and stale-state boundaries through
+in-process calls.
+
+## Standalone Compose
+
+The reference [`compose.yaml`](../deploy/compose.yaml) runs migration and then a
+standalone `tnld` process. Copy the example configuration, replace every
+placeholder, and start the deployment:
 
 ```console
 cd deploy
 install -m 0600 .env.example .env
-```
-
-Set these values in `.env`:
-
-- `TNL_IMAGE`: the verified image digest, such as
-  `ghcr.io/tnldotdev/tnl@sha256:...`.
-- `TNLD_DOMAIN`: the lowercase DNS domain from which the control API hostname
-  and deployment hostname suffix are derived.
-- `TNLD_ACME_DIRECTORY_URL`, `TNLD_ACME_EMAIL`, and
-  `TNLD_ACME_ACCEPT_TERMS=true`: the ACME account configuration.
-- `TNLD_ACME_PROFILE`: the profile used for route certificates.
-- `TNLD_ACCESS_TOKEN_LIFETIME`: lifetime of each rotating access token; defaults
-  to one hour and accepts values from five minutes through 30 days.
-- `TNLD_REFRESH_TOKEN_LIFETIME`: fixed absolute control-session lifetime;
-  defaults to 30 days and accepts values through 365 days. It must be at least
-  the access-token lifetime.
-- `TNLD_RELAY_PROVIDER=tailcat`: explicit consent to use Tailcat's hosted public
-  relays.
-
-Tailcat is the encrypted, control-plane-free transport between a publisher and
-its worker backend. It uses Tailscale's DERP network to introduce the peers and
-as a fallback relay, while allowing a direct peer-to-peer path when networking
-permits. Provider mode fetches Tailcat's DERP map once, measures the available
-regions, and stores only the selected region in the deployment database.
-Restarts use that stored region without fetching the provider map again.
-Tailcat and its hosted DERP service are external network dependencies; review
-their service and privacy terms before opting in.
-
-Start the daemon and inspect the server endpoints:
-
-```console
 docker compose pull
 docker compose up -d
-docker compose logs --no-log-prefix tnld
-curl --fail --silent --show-error https://tnl.example.com/v1/health
-curl --fail --silent --show-error https://tnl.example.com/v1/ready
-curl --fail --silent --show-error https://tnl.example.com/v1/capabilities
+curl --fail https://control.tnl.example.com/v1/ready
 ```
 
-Health checks control TLS and HTTP serving. Readiness also checks SQLite.
-Capabilities reports DNS state; publish one test route to verify the full path.
+The image runs as a non-root user with a read-only root filesystem. No daemon
+state volume or certificate mount is required; PostgreSQL owns durable service
+CA, ACME, route, placement, and product state.
 
-Prometheus metrics listen on container port 9090 and are intentionally not
-published to the host. Attach a private scraper to the Compose network or add a
-loopback-only port mapping. Never expose metrics directly to the Internet.
-
-## Enroll A Client
-
-On first startup, `tnld` creates a login token in its state volume. Retrieve
-it without printing it in daemon logs or storing it in `.env`:
+Authenticate and publish from a local service:
 
 ```console
-docker compose exec tnld tnl admin server login-token --state-dir /var/lib/tnl
+tnl login https://control.tnl.example.com --token
+tnl publish 3000
 ```
 
-Install and verify a release archive or an exact-version `@tnldotdev/tnl`
-package as described in [Releases](RELEASES.md), then log in. The npm package
-contains the client only; keep deploying `tnld` from the verified container.
-Browser authorization is preferred when the server advertises it; otherwise
-`tnl login` prompts for the login token:
+The first successful login atomically creates the built-in identity, personal
+team, owner membership, generated member label, and managed deployment-domain
+default. The default publish hostname is that member namespace. The built-in
+personal team may also publish an exact route directly beneath the managed
+deployment domain.
+
+## Split Compose
+
+The reference [`compose.split.yaml`](../deploy/compose.split.yaml) runs control,
+ingress, and at least two independently addressable relay services. Replicas in
+one relay service share an enrollment token, relay address, and short-lived
+relay transport certificate, but have unique relay IDs and process run IDs.
+
+Expose public TCP 443 for control and ingress and public TCP and UDP 443 for each
+relay service. Restrict TCP 9443 and 9444 plus internal relay addresses to the
+deployment network. Ingress and relay containers need no PostgreSQL, ACME,
+authority, or administrator credentials and no certificate mounts.
+
+Each route session maintains exactly two connection slots assigned to distinct
+relay services. Initial routability requires the route certificate and both
+publisher connections ready. Afterward, one ready connection remains routable
+while the publisher replenishes toward two.
+
+## Teams And Domains
+
+The authority API is the sole owner of identities, authentication, teams,
+memberships, invitations, domains, and signed authorizations. Self-hosted
+control serves the authority and control APIs at the same origin. Hosted
+deployments advertise their external authority origin through control discovery.
+
+The bootstrap personal team starts with the managed deployment domain as its
+default. Organization teams and claimed domains use the regular CLI:
 
 ```console
-tnl login https://tnl.example.com
-tnl host claim demo
-tnl publish localhost:3000 --host=demo
+tnl team create resend --slug chase
+tnl team use resend
+tnl domain claim dev.resend.com --default
+tnl team invite create --slug alex --role member
 ```
 
-The publishing command stays in the foreground and obtains the route
-certificate automatically. It prints lifecycle messages to stderr; use
-`--output=ndjson` for newline-delimited JSON events on stdout. A second interrupt
-exits immediately. Diagnostic error events include additive `code` and
-`help_url` fields.
+## Maintenance And Drain
 
-The route becomes `https://demo.example.com`. Omit `--host` to have the server
-generate a temporary hostname for that invocation. A claimed managed hostname
-or custom domain authorizes its exact hostname and child hostnames up to eight
-labels below it. Manage claimed hostnames with:
+Maintenance controls independently gate route creation, route-session creation,
+and certificate issuance:
 
 ```console
-tnl host list
-tnl host release demo.example.com
-tnl logout
-```
-
-Releasing a managed hostname stops its routes and changes its status to
-inactive, but ownership remains with the same identity. That identity may claim
-it again, which restores active status. The client rotates access and refresh
-tokens automatically without extending the fixed `TNLD_REFRESH_TOKEN_LIFETIME`
-session expiry. Existing route-session heartbeats can continue after
-control-session expiry, but a later client restart or hostname command requires
-`tnl login` again.
-
-The daemon stores only credential hashes. If a refresh rotation commits but its
-response is lost, retrying the replaced refresh token is treated as reuse and
-revokes that control-session family; run `tnl login` again. Recovering the exact
-rotated credentials would require retaining recoverable credential material and
-would weaken replay protection.
-
-## Identities
-
-An identity is a server-local authorization principal. It owns hostnames,
-routes, route credentials, and control sessions on that server; it is not a
-team or account shared across servers.
-
-The login token always authenticates the server's built-in admin identity, and
-its control sessions receive `publish` and `admin` grants. Each distinct OIDC
-issuer and subject pair authenticates a distinct server-local identity whose
-control sessions are publish-only. The same subject from two issuers represents
-two identities, and an OIDC identity is distinct from the built-in admin
-identity.
-
-## Administer The Server
-
-The remote commands use the selected server and saved control session, or
-explicit `--server` and `--access-token` values:
-
-```console
-tnl admin server status
-tnl admin routes list
-tnl admin routes suspend route_... --revision=1 --reason='maintenance'
-tnl admin routes resume route_... --revision=2
-tnl admin hostnames list
-tnl admin credentials list
-tnl admin control-sessions list
 tnl admin maintenance list
-tnl admin maintenance disable route_session_creation
+tnl admin maintenance set route_session_create off
 ```
 
-Maintenance controls are stored in SQLite and audited. All three are enabled by
-default:
+Drain a relay process before planned removal:
 
-| Control                  | Effect when disabled                                                                                  |
-| ------------------------ | ----------------------------------------------------------------------------------------------------- |
-| `route_creation`         | Rejects creation of new durable routes; existing routes and sessions continue                         |
-| `route_session_creation` | Rejects new publisher sessions and route versions; current sessions continue                          |
-| `certificate_issuance`   | Rejects starting or resuming certificate issuance; installed certificates and current routes continue |
+```console
+tnl admin relays drain relay-a-1 --deadline 30s
+```
 
-Use `tnl admin maintenance enable CONTROL` to reopen a path. Disabling a
-maintenance control does not suspend existing routes.
+Draining rejects new work, removes the process from placement and ingress
+selection, and allows admitted streams to finish until the deadline. Live
+visitor streams are not replayed or migrated.
 
-Suspension revisions must increase monotonically. Suspending a route changes
-its durable state from enabled to suspended, expires its sessions, removes its
-runtime routing and certificate-challenge routing, and drains its worker
-backend. Resuming enables the route at a new route version, but the route is not
-routable until a publisher creates and readies a session for that version.
-Hostname quarantine suspends all current routes and prevents them from
-resuming; removing the quarantined hostname deletes those routes.
+Revoke an enrollment token to prevent future enrollment:
 
-List and show outputs exclude credential secrets. Commands that print or create
-secret material are limited to `tnl admin server login-token`, `tnl admin server
-token worker`, and `tnl admin server token service`.
+```console
+tnl admin enrollment-tokens list
+tnl admin enrollment-tokens revoke <token-id>
+```
 
-To use a custom domain, run `tnl host claim docs.other.com`. Supply it in
-lowercase DNS form without a trailing dot. The command prints the
-verification-specific CNAME records, or the verification CNAME and ingress
-addresses for the custom domain itself, then waits for DNS proof. Releasing the
-custom domain stops its routes and changes its status to available. An identity
-may claim it only after completing new DNS proof.
-
-## OIDC Login
-
-To enable browser login through an OpenID Connect provider, configure:
-
-- `TNLD_OIDC_ISSUER`: the provider's exact HTTPS issuer.
-- `TNLD_OIDC_CLIENT_ID`: a public client with the `openid` scope.
-- `TNLD_OIDC_LOGIN_FLOW`: `device_code` for the device authorization grant, or
-  `authorization_code_pkce` for a loopback callback and PKCE.
-
-The provider must publish standard discovery metadata and sign ID tokens with
-RS256. The server verifies tokens locally and derives the server-local identity
-from the token's exact issuer and subject. When OIDC login is available, the
-client uses it by default; pass `--token` to `tnl login` to use the server's
-login token for operator recovery.
+Already issued service certificates remain valid only until their one-hour
+expiration.
 
 ## Route Usage
 
-An edge or standalone daemon can send route registrations, ordered lifecycle
-events, and minute/hour usage bucket reports to a receiver implementing the
-route-usage API:
+Only ingress records route usage. Ingress processes report revisioned time
+buckets to control; controls aggregate and persist them by route and route
+version. Configure `TNLD_ROUTE_USAGE_URL` and `TNLD_ROUTE_USAGE_TOKEN` together
+to deliver durable reports to an external receiver. Leaving both empty disables
+external delivery.
 
-- `POST /v1/routes` accepts one route registration.
-- `POST /v1/routes/lifecycle-events` accepts batches of ordered lifecycle
-  events.
-- `POST /v1/routes/usage-bucket-reports` accepts batches of
-  `RouteUsageBucketReport` records.
+Source addresses and raw network identifiers must never be persisted or sent.
+Visitor-network estimates use route-specific daily keyed sketches and are not a
+count of people or devices.
 
-The registration records the route's hostname and authorization metadata.
-Lifecycle events use a per-route sequence number. Each lifecycle event and
-bucket report identifies its route version with the `route_version` field. A
-bucket report contains cumulative values for its minute or hour, a revision,
-the time through which it has observed traffic, and whether the bucket is
-complete. Its values include attempt outcomes, successful-stream duration and
-bytes, and fixed cumulative latency histograms.
+## Backups And Upgrades
 
-The `visitor_network_estimate` value is an approximate count of distinct
-visitor networks in the bucket, not a count of people or devices. Each IPv4
-address is counted as a /32 network and each IPv6 address as a /64 network.
-Route versions within the same route and time bucket share the count, so
-receivers must not add those values together. The accompanying
-`visitor_network_hll` value contains the precision-12 HyperLogLog sketch. Before
-entering the sketch, each network is HMACed with a route-specific daily key
-derived from a secret in the deployment database; source addresses and network
-identifiers are never stored or sent.
+Back up PostgreSQL with the platform's supported physical or logical backup
+tools. The backup contains the service CA and other certificate state, so apply
+the same access controls used for deployment secrets. Test restoration into an
+isolated database and verify `tnld migrate` before changing production.
 
-Generate a dedicated credential with `tnl admin server token service`, then
-configure both values:
+Upgrade in this order:
 
-- `TNLD_ROUTE_USAGE_URL`: the receiver's HTTPS base URL. Plain HTTP is accepted
-  only for a loopback URL used by the local development stack.
-- `TNLD_ROUTE_USAGE_TOKEN`: the generated service token.
+1. Verify release artifacts and review release notes.
+2. Back up and test restore of PostgreSQL.
+3. Stop writes or enable the relevant maintenance controls.
+4. Run the new image's `tnld migrate` with `TNLD_DATABASE_DIRECT_URL`.
+5. Roll controls, ingress, and then relay services while monitoring leases and ready publisher connections.
+6. Re-enable maintenance controls after readiness and route checks pass.
 
-Leaving both values empty disables reporting; configuring only one is invalid.
-Worker mode cannot report usage because it does not own the route database.
+Serving processes require the exact supported schema version and fail closed on
+older or newer schemas.
 
-The standalone or edge process checkpoints counters and visitor sketches in SQLite.
-It also writes each unsent registration, lifecycle event, and bucket-report
-revision to a SQLite outbox before delivery. Registrations are sent one at a
-time; lifecycle events and bucket reports are sent in batches of up to 32 items
-and 256 KiB. The receiver returns a result for each item ID. The sender removes
-only an accepted item at the exact revision it sent, so a response for an older
-bucket revision cannot remove a newer report. Rejected items and requests that
-fail remain queued and are retried, including after restart.
+## Operational Checks
 
-## Split Edge And Workers
+- Probe `/v1/health` for HTTP serving and `/v1/ready` for control readiness.
+- Scrape `TNLD_METRICS_LISTEN` only over a private network.
+- Alert on certificate renewal failure, expired ingress or relay leases,
+  insufficient ready publisher connections, capacity rejection, and control API
+  failure.
+- Keep the management token, enrollment tokens, database credentials, service
+  CA state, and optional DNS credentials in appropriately protected stores.
+- Preserve public TCP and UDP 443 through firewalls and load balancers.
+- Never give ingress or relay processes PostgreSQL credentials.
 
-`compose.split.yaml` runs one edge with the deployment's SQLite database and one
-or more stateless workers. Generate one worker credential with the verified
-`tnld` binary and add it to `.env` as `TNLD_WORKER_TOKEN`:
-
-```console
-tnl admin server token worker
-docker compose --file compose.split.yaml pull
-docker compose --file compose.split.yaml up -d --scale worker=2
-docker compose --file compose.split.yaml exec edge \
-  tnl admin server login-token --state-dir /var/lib/tnl
-```
-
-Each worker connects outbound to the edge, so no worker ingress port is
-required. Set `TNLD_EDGE_URL` or `--edge-url` in worker mode to
-`wss://tnl.<domain>/internal/v1/worker`. Keep at least one worker running and
-size `TNLD_WORKER_CAPACITY` for the intended fixed pool.
-
-This topology scales route work and tolerates an individual worker restart. It
-does not make the edge highly available: only that edge reads and writes its
-SQLite volume, and worker assignments exist only in its process. Do not share
-the volume or run multiple edges against it. Automated scale-in should wait for
-a documented drain policy and workload-specific qualification.
-
-## Custom Relays
-
-Custom DERP replaces Tailcat's hosted relay service, not the Tailcat transport.
-Publishers and worker backends still use Tailcat's encrypted WireGuard and NAT
-traversal layer. Leave `TNLD_RELAY_PROVIDER` unset, mount a reviewed Tailscale
-DERP map smaller than 1 MiB, and set `TNLD_RELAY_MAP_FILE`. Configuring both map
-sources is rejected. If the map contains multiple regions, also set
-`TNLD_RELAY_REGION` to the selected `RegionCode`; the server selects the only
-region automatically when the map contains one.
-
-Only install a reviewed map on the daemon. Clients and workers fetch the
-selected region from the control API. The endpoint is unauthenticated so
-workers can bootstrap; never include credentials or unnecessary private
-metadata in the map.
-
-To re-measure the Tailcat provider regions and replace the stored selection,
-stop the daemon and run the offline refresh command against its state volume:
-
-```console
-docker compose stop tnld
-docker compose run --rm --entrypoint tnl tnld admin server relay refresh --state-dir /var/lib/tnl
-docker compose start tnld
-```
-
-## State And Recovery
-
-`tnld.db` contains all durable server state, including ACME data, the login
-token, and the stored relay region. The default Compose project stores it in
-the `tnl_tnld-state` named volume.
-
-Set `TNLD_BACKUP_URL=s3://bucket/path` to continuously replicate the database
-with Litestream. AWS environment variables, shared credentials, instance roles,
-and web identity are supported. For S3-compatible storage, add `endpoint` and
-optional `region` query parameters to the URL. Protect the bucket with provider
-encryption and access controls because backups contain credentials and private
-keys.
-
-At startup, a standalone or edge `tnld` restores the newest backup only when
-`tnld.db` is absent. If the remote path is empty, it initializes a new
-database. On shutdown it stops mutations and performs a final backup sync before
-releasing the state lock.
-
-Shutdown stops new control requests and public connections, then gives active
-streams 30 seconds by default to finish before closing them. Long-lived
-WebSockets should reconnect after a rollout. If `TNLD_DRAIN_TIMEOUT` is raised,
-raise Compose `stop_grace_period` by the same amount; backup shutdown may use an
-additional 15 seconds.
-
-For a cold standby, keep its state volume empty and do not start it until the
-active edge is stopped or fenced. Start it with the same backup URL and external
-configuration, then verify the restored server endpoints before directing
-traffic to it. Only one process may access a given SQLite database and backup
-path. Test this
-promotion regularly; the recovery point is the latest successful Litestream
-sync.
-
-Without `TNLD_BACKUP_URL`, stop `tnld` before archiving its state volume. Do not
-copy a live SQLite file directly. See [Releases](RELEASES.md) for upgrade and
-rollback commands.
-
-To rotate the login token, stop the standalone or edge process and run:
-
-```console
-docker compose stop tnld
-docker compose run --rm --entrypoint tnl tnld admin server login-token --state-dir /var/lib/tnl --rotate
-docker compose start tnld
-```
-
-Rotation increments the login-token source revision and revokes every control
-session issued from an older revision.
-
-Each client stores its control session, private keys, and certificate state
-under `TNL_STATE_DIR`. Its default is the user configuration directory followed
-by `tnl` (`~/.config/tnl` on typical Linux systems and
-`~/Library/Application Support/tnl` on macOS). Linux protects secret state with
-user-owned directories and `0600` files. On macOS, a profile key in Keychain
-encrypts access and refresh tokens and route TLS private keys before they are
-written to the state directory.
-
-Stop every `tnl` process before backing up its complete state directory. A
-macOS state-directory backup is not independently usable: preserve the login
-Keychain through a platform-supported backup and restore to the same configured
-`TNL_STATE_DIR`. Without the matching Keychain item, reauthenticate and discard
-the affected local route state so `tnl` can create new certificate keys.
-
-## Operational Boundaries
-
-- Run exactly one standalone or edge `tnld` process against each SQLite volume;
-  worker processes never open it.
-- Keep `tnl` and `tnld` on the same release before 1.0.
-- Preserve `TNLD_DOMAIN` and the state volume across restarts.
-- Do not restore an old database over a running daemon.
-- Do not run an older daemon against state migrated by a newer release.
-- Keep outer PROXY v2 disabled unless the only path to ingress is a trusted
-  proxy configured to emit exactly one header.
+See [Observability](OBSERVABILITY.md) for metrics and alert guidance and
+[Releases](RELEASES.md) for artifact verification.

@@ -4,94 +4,88 @@
 `TNLD_METRICS_LISTEN`. The default is `127.0.0.1:9090`; an empty value disables
 the listener.
 
-The registry includes the standard Go and process collectors. In particular,
-monitor file-descriptor pressure with `process_open_fds` and
-`process_max_fds`; tnl does not duplicate those metrics under its own prefix.
+The registry includes the standard Go and process collectors. Monitor
+file-descriptor pressure with `process_open_fds` and `process_max_fds`; tnl does
+not duplicate those metrics under its own prefix.
 
 ## Service Health
 
-Probe the control API hostname over HTTPS:
+Probe the public control hostname over HTTPS:
 
 ```console
-curl --fail https://tnl.example.com/v1/health
-curl --fail https://tnl.example.com/v1/ready
+curl --fail https://control.tnl.example.com/v1/health
+curl --fail https://control.tnl.example.com/v1/ready
 ```
 
-`/v1/health` checks control TLS and HTTP serving. `/v1/ready` additionally
-checks that SQLite accepts a query. DNS state is reported by
-`/v1/capabilities`; only a test route checks DNS, ACME, relay, worker, and
-publisher behavior end to end.
+`/v1/health` reports whether the control API is serving. `/v1/ready` includes
+PostgreSQL schema readiness, public control certificate availability, service CA
+availability, and required background dependencies. `tnl_info{mode}` identifies
+the role of each `tnld` process.
 
-The main availability signals are:
+Ingress readiness requires an unexpired service certificate and ingress lease,
+a current ingress routing table, and a live public listener. Relay readiness
+requires an unexpired service certificate and relay lease, current relay
+transport material, and live publisher and internal-forwarding listeners.
 
-- `tnl_api_requests_total{operation,result}` and
-  `tnl_api_request_duration_seconds{operation}` for control-plane availability.
-- `tnl_sqlite_operation_duration_seconds{operation}` and
-  `tnl_sqlite_errors_total{operation,reason}` for state contention and failure.
-- `tnl_sqlite_pool_connections{state}`, `tnl_sqlite_pool_waits_total`, and
-  `tnl_sqlite_pool_wait_seconds_total` for database-pool pressure.
-- `tnl_worker_sessions_active{role}` and
-  `tnl_worker_session_disconnects_total{role,reason}` for edge/worker health.
-- `tnl_worker_routes_routable`, `tnl_worker_route_capacity`, and
-  `tnl_capacity_rejections_total{resource="worker_routes"}` for route capacity.
-- `tnl_source_limiter_rejections_total` and `tnl_source_limiter_entries` for
-  abusive connection starts and pressure on the source table, which is capped
-  at 8,192 entries.
-- `tnl_ip_allowlist_denials_total` for visitor connections rejected by route
-  IP policy. This counter intentionally has no route or source labels.
-- `tnl_tailcat_failures_total{operation,reason}` for Tailcat setup failures,
-  including `process_file_limit` and `system_file_limit`.
-- `tnl_route_session_heartbeats_total{result}`,
-  `tnl_route_session_min_seconds_remaining{status}`, and
-  `tnl_route_removals_total{reason}` for route-session continuity.
-- `tnl_route_coordinator_stage_duration_seconds{stage}` for distinguishing
-  per-route lock waits, worker attachment, publishing, and state updates.
+## Runtime Metrics
 
-Labels use fixed enumerated values. Route IDs, hostnames, identities, workers,
-request IDs, error text, and SQL text are deliberately excluded from metric
-labels. Unexpected API and Tailcat errors are instead written to logs with
-request or route correlation fields; client responses remain sanitized.
+- `tnl_control_requests_total{operation,outcome}` and
+  `tnl_control_request_duration_seconds{operation}` measure control API traffic.
+- `tnl_routes{state}` reports durable routes by lifecycle state.
+- `tnl_ingress_leases{state}` and `tnl_relay_leases{state}` report control-owned
+  process leases.
+- `tnl_publisher_connections{state}` reports publisher connections by durable
+  lifecycle state.
+- `tnl_streams_active{role}` reports active visitor streams in ingress and relay
+  processes.
+- `tnl_capacity_rejections_total{resource}` reports operations rejected by a
+  bounded resource.
+- `tnl_service_enrollments_total{role,outcome}` reports enrollment and renewal
+  outcomes without token or process identifiers.
+- `tnl_service_certificate_expiry_seconds{role}` reports the remaining lifetime
+  of the active service certificate.
+- `tnl_source_limiter_rejections_total` and `tnl_source_limiter_entries` report
+  abusive connection starts and pressure on the bounded source table.
+- `tnl_ip_allowlist_denials_total` reports visitor connections rejected by route
+  IP policy without route or source labels.
+- `tnl_forwarded_bytes_total{direction}` reports bytes forwarded through the
+  visitor path.
+
+Labels use fixed enumerated values. Route IDs, hostnames, team IDs, membership
+IDs, ingress IDs, relay IDs, enrollment-token IDs, request IDs, error text, and
+SQL text are deliberately excluded from metric labels. Correlation details
+belong in structured logs; client responses remain sanitized.
 
 ## Alert Queries
 
-File-descriptor utilization is the primary capacity signal:
+File-descriptor utilization is a primary ingress and relay capacity signal:
 
 ```promql
 process_open_fds / clamp_min(process_max_fds, 1)
 ```
 
 Warn above `0.80` for 15 minutes and treat above `0.90` for 5 minutes as
-critical. The forced-DERP capacity benchmark observed approximately four open
-FDs per route that was runtime routable. Use the measured utilization ratio for
-alerts rather than deriving utilization from that estimate.
-
-Other useful alert conditions are:
+critical. Other useful alert conditions include:
 
 ```promql
-increase(tnl_tailcat_failures_total{reason=~"process_file_limit|system_file_limit"}[5m]) > 0
-increase(tnl_sqlite_errors_total{reason=~"busy|locked"}[10m]) > 0
-tnl_worker_sessions_active{role="edge"} == 0
-increase(tnl_worker_session_disconnects_total{reason!="shutdown"}[10m]) > 3
-increase(tnl_route_removals_total{reason="session_expired"}[10m]) > 0
-tnl_route_session_min_seconds_remaining{status="routable"} < 15
-increase(tnl_capacity_rejections_total{resource="worker_routes"}[5m]) > 0
+increase(tnl_capacity_rejections_total[5m]) > 0
+increase(tnl_service_enrollments_total{outcome="error"}[10m]) > 0
+tnl_service_certificate_expiry_seconds < 600
 increase(tnl_source_limiter_rejections_total[5m]) > 0
-tnl_source_limiter_entries > 7372
 increase(tnl_ip_allowlist_denials_total[10m]) > 0
+sum(increase(tnl_control_requests_total{outcome="server_error"}[10m])) >= 5
 ```
 
-Gate the session-margin query on `tnl_worker_routes_routable > 0`, because the
-minimum is zero when no worker backend is routable. A durable enabled route is
-not necessarily runtime routable. API alerts should require both error volume
-and ratio to avoid paging on one failed request:
+Control API alerts should require both error volume and ratio to avoid paging on
+one failed request:
 
 ```promql
-sum(increase(tnl_api_requests_total{result="server_error"}[10m])) >= 5
+sum(increase(tnl_control_requests_total{outcome="server_error"}[10m])) >= 5
 and
-sum(rate(tnl_api_requests_total{result="server_error"}[5m]))
-  / clamp_min(sum(rate(tnl_api_requests_total[5m])), 0.001) > 0.02
+sum(rate(tnl_control_requests_total{outcome="server_error"}[5m]))
+  / clamp_min(sum(rate(tnl_control_requests_total[5m])), 0.001) > 0.02
 ```
 
-Deployment repositories should define recording and alert rules for their
-environment. This repository defines metric names, semantics, and the allowed
+Deployment repositories should define recording and alert rules appropriate for
+their environment. This repository defines metric names, semantics, and allowed
 label values.
