@@ -2,16 +2,27 @@ package controlstate
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/opaqueid"
 )
 
-var ErrTeamNotFound = errors.New("controlstate: team not found")
+var (
+	ErrAuthorityAccess      = errors.New("controlstate: authority access denied")
+	ErrAuthorityConflict    = errors.New("controlstate: authority state conflict")
+	ErrAuthorityIdempotency = errors.New("controlstate: authority idempotency conflict")
+	ErrAuthorityInvalid     = errors.New("controlstate: authority request is invalid")
+	ErrMembershipNotFound   = errors.New("controlstate: membership not found")
+	ErrTeamNotFound         = errors.New("controlstate: team not found")
+)
 
 type Team struct {
 	ID              string
@@ -25,15 +36,119 @@ type Team struct {
 }
 
 type Domain struct {
-	ID                string
-	Kind              string
-	TeamID            string
-	CanonicalDomain   string
-	State             string
-	AuthorityRevision int64
-	CreatedAt         time.Time
-	VerifiedAt        time.Time
-	UpdatedAt         time.Time
+	ID                    string
+	Kind                  string
+	TeamID                string
+	CanonicalDomain       string
+	DNSAuthorityReference string
+	State                 string
+	AuthorityRevision     int64
+	RequiredRecords       []DNSRecord
+	CreatedAt             time.Time
+	VerifiedAt            time.Time
+	UpdatedAt             time.Time
+}
+
+type DNSRecord struct {
+	Name  string
+	Type  string
+	Value string
+}
+
+type CreateTeamRequest struct {
+	IdentityID     string
+	IdempotencyKey string
+	RequestDigest  [32]byte
+	DisplayName    string
+	MemberSlug     string
+}
+
+func (d *Database) CreateTeam(ctx context.Context, request CreateTeamRequest, now time.Time) (result Team, retErr error) {
+	if !validStateText(request.IdentityID) || !validIdempotencyKey(request.IdempotencyKey) ||
+		!validDisplayName(request.DisplayName) || !validAuthorityLabel(request.MemberSlug) || now.IsZero() {
+		return Team{}, ErrAuthorityInvalid
+	}
+	if err := d.requireOpen(); err != nil {
+		return Team{}, err
+	}
+	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		return Team{}, fmt.Errorf("controlstate: create team: begin transaction: %w", err)
+	}
+	defer rollback(ctx, tx, "create team", &retErr)()
+	queries := controlstatedb.New(tx)
+	if _, err := queries.LockIdentityForTeamCreation(ctx, request.IdentityID); errors.Is(err, pgx.ErrNoRows) {
+		return Team{}, ErrAuthorityAccess
+	} else if err != nil {
+		return Team{}, fmt.Errorf("controlstate: create team: lock identity: %w", err)
+	}
+	existing, err := queries.GetOrganizationTeamByIdempotency(ctx, controlstatedb.GetOrganizationTeamByIdempotencyParams{
+		IdentityID: request.IdentityID, IdempotencyKey: text(request.IdempotencyKey),
+	})
+	if err == nil {
+		if subtle.ConstantTimeCompare(existing.CreationRequestDigest, request.RequestDigest[:]) != 1 {
+			return Team{}, ErrAuthorityIdempotency
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return Team{}, fmt.Errorf("controlstate: create team: commit retry: %w", err)
+		}
+		return teamFromRow(
+			existing.ID, existing.Kind, existing.DisplayName, existing.ManagedLabel, existing.DefaultDomainID,
+			existing.PolicyRevision, existing.CreatedAt, existing.UpdatedAt,
+		), nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return Team{}, fmt.Errorf("controlstate: create team: read idempotent team: %w", err)
+	}
+	managedDomain, err := queries.FindManagedDomain(ctx)
+	if err != nil {
+		return Team{}, fmt.Errorf("controlstate: create team: read managed deployment domain: %w", err)
+	}
+	managedLabel, err := availableManagedLabel(ctx, queries, now)
+	if err != nil {
+		return Team{}, err
+	}
+	teamID, err := opaqueid.New("team_")
+	if err != nil {
+		return Team{}, err
+	}
+	reservationID, err := opaqueid.New("slug_reservation_")
+	if err != nil {
+		return Team{}, err
+	}
+	membershipID, err := opaqueid.New("membership_")
+	if err != nil {
+		return Team{}, err
+	}
+	createdAt := timestamp(now)
+	row, err := queries.CreateOrganizationTeam(ctx, controlstatedb.CreateOrganizationTeamParams{
+		ID: teamID, DisplayName: request.DisplayName, ManagedLabel: managedLabel,
+		DefaultDomainID: text(managedDomain.ID), CreatedByIdentityID: request.IdentityID,
+		CreationIdempotencyKey: text(request.IdempotencyKey), CreationRequestDigest: request.RequestDigest[:],
+		CreatedAt: createdAt,
+	})
+	if err != nil {
+		return Team{}, fmt.Errorf("controlstate: create team: insert team: %w", err)
+	}
+	if err := queries.CreateActiveSlugReservation(ctx, controlstatedb.CreateActiveSlugReservationParams{
+		ID: reservationID, TeamID: teamID, MemberSlug: request.MemberSlug,
+		IdentityID: text(request.IdentityID), CreatedAt: createdAt,
+	}); err != nil {
+		return Team{}, fmt.Errorf("controlstate: create team: reserve creator slug: %w", err)
+	}
+	if err := queries.CreateOwnerMembership(ctx, controlstatedb.CreateOwnerMembershipParams{
+		ID: membershipID, TeamID: teamID, IdentityID: request.IdentityID,
+		SlugReservationID: reservationID, ManagedLabel: managedLabel, CreatedAt: createdAt,
+	}); err != nil {
+		return Team{}, fmt.Errorf("controlstate: create team: create owner membership: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Team{}, fmt.Errorf("controlstate: create team: commit: %w", err)
+	}
+	return teamFromRow(
+		row.ID, row.Kind, row.DisplayName, row.ManagedLabel, row.DefaultDomainID,
+		row.PolicyRevision, row.CreatedAt, row.UpdatedAt,
+	), nil
 }
 
 func (d *Database) ListTeams(ctx context.Context, identityID string) ([]Team, error) {
@@ -67,6 +182,181 @@ func (d *Database) GetTeam(ctx context.Context, identityID, teamID string) (Team
 	), nil
 }
 
+func (d *Database) ListTeamMemberships(ctx context.Context, identityID, teamID string) ([]Membership, error) {
+	if !validStateText(identityID) || !validStateText(teamID) {
+		return nil, ErrAuthorityInvalid
+	}
+	queries := controlstatedb.New(d.pool)
+	if _, err := queries.GetTeamActorContext(ctx, controlstatedb.GetTeamActorContextParams{
+		IdentityID: identityID, TeamID: teamID,
+	}); errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrTeamNotFound
+	} else if err != nil {
+		return nil, fmt.Errorf("controlstate: list team memberships: read actor: %w", err)
+	}
+	rows, err := queries.ListTeamMembershipContexts(ctx, teamID)
+	if err != nil {
+		return nil, fmt.Errorf("controlstate: list team memberships: %w", err)
+	}
+	result := make([]Membership, len(rows))
+	for index, row := range rows {
+		result[index] = membershipFromRow(
+			row.ID, row.TeamID, row.IdentityID, row.TeamDisplayName, row.TeamKind, row.Role,
+			row.MemberSlug, row.ManagedLabel, row.PolicyRevision, row.CreatedAt, row.UpdatedAt,
+		)
+	}
+	return result, nil
+}
+
+func (d *Database) SetMembershipRole(
+	ctx context.Context,
+	identityID, teamID, membershipID, role string,
+	now time.Time,
+) (result Membership, retErr error) {
+	if !validStateText(identityID) || !validStateText(teamID) || !validStateText(membershipID) ||
+		!validTeamRole(role) || now.IsZero() {
+		return Membership{}, ErrAuthorityInvalid
+	}
+	if err := d.requireOpen(); err != nil {
+		return Membership{}, err
+	}
+	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		return Membership{}, fmt.Errorf("controlstate: set membership role: begin transaction: %w", err)
+	}
+	defer rollback(ctx, tx, "set membership role", &retErr)()
+	queries := controlstatedb.New(tx)
+	actor, err := lockTeamActor(ctx, queries, identityID, teamID)
+	if err != nil {
+		return Membership{}, err
+	}
+	if actor.Kind != "organization" || actor.ActorRole != "owner" {
+		return Membership{}, ErrAuthorityAccess
+	}
+	target, err := queries.LockTeamMembership(ctx, controlstatedb.LockTeamMembershipParams{
+		MembershipID: membershipID, TeamID: teamID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Membership{}, ErrMembershipNotFound
+	}
+	if err != nil {
+		return Membership{}, fmt.Errorf("controlstate: set membership role: lock membership: %w", err)
+	}
+	if target.Role == role {
+		if err := tx.Commit(ctx); err != nil {
+			return Membership{}, fmt.Errorf("controlstate: set membership role: commit no-op: %w", err)
+		}
+		return d.getMembership(ctx, teamID, membershipID)
+	}
+	if target.Role == "owner" {
+		owners, err := queries.CountTeamOwners(ctx, teamID)
+		if err != nil {
+			return Membership{}, fmt.Errorf("controlstate: set membership role: count owners: %w", err)
+		}
+		if owners == 1 {
+			return Membership{}, ErrAuthorityConflict
+		}
+	}
+	revision, err := queries.AdvanceTeamPolicyRevision(ctx, controlstatedb.AdvanceTeamPolicyRevisionParams{
+		UpdatedAt: timestamp(now), TeamID: teamID,
+	})
+	if err != nil {
+		return Membership{}, fmt.Errorf("controlstate: set membership role: advance policy revision: %w", err)
+	}
+	if updated, err := queries.UpdateMembershipRole(ctx, controlstatedb.UpdateMembershipRoleParams{
+		Role: role, AuthorityRevision: revision, UpdatedAt: timestamp(now), MembershipID: membershipID, TeamID: teamID,
+	}); err != nil || updated != 1 {
+		return Membership{}, authorityRowsError("set membership role: update membership", updated, err)
+	}
+	if err := closeMembershipRouteSessions(ctx, queries, teamID, membershipID, false, now, "authority_policy_changed"); err != nil {
+		return Membership{}, err
+	}
+	row, err := queries.GetTeamMembershipContext(ctx, controlstatedb.GetTeamMembershipContextParams{
+		MembershipID: membershipID, TeamID: teamID,
+	})
+	if err != nil {
+		return Membership{}, fmt.Errorf("controlstate: set membership role: read result: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Membership{}, fmt.Errorf("controlstate: set membership role: commit: %w", err)
+	}
+	return membershipFromRow(
+		row.ID, row.TeamID, row.IdentityID, row.TeamDisplayName, row.TeamKind, row.Role,
+		row.MemberSlug, row.ManagedLabel, row.PolicyRevision, row.CreatedAt, row.UpdatedAt,
+	), nil
+}
+
+func (d *Database) RemoveMembership(
+	ctx context.Context,
+	identityID, teamID, membershipID string,
+	now time.Time,
+) (retErr error) {
+	if !validStateText(identityID) || !validStateText(teamID) || !validStateText(membershipID) || now.IsZero() {
+		return ErrAuthorityInvalid
+	}
+	if err := d.requireOpen(); err != nil {
+		return err
+	}
+	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		return fmt.Errorf("controlstate: remove membership: begin transaction: %w", err)
+	}
+	defer rollback(ctx, tx, "remove membership", &retErr)()
+	queries := controlstatedb.New(tx)
+	actor, err := lockTeamActor(ctx, queries, identityID, teamID)
+	if err != nil {
+		return err
+	}
+	if actor.Kind != "organization" || actor.ActorRole != "owner" && actor.ActorRole != "admin" {
+		return ErrAuthorityAccess
+	}
+	target, err := queries.LockTeamMembership(ctx, controlstatedb.LockTeamMembershipParams{
+		MembershipID: membershipID, TeamID: teamID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrMembershipNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("controlstate: remove membership: lock membership: %w", err)
+	}
+	if actor.ActorRole == "admin" && target.Role != "member" {
+		return ErrAuthorityAccess
+	}
+	if target.Role == "owner" {
+		owners, err := queries.CountTeamOwners(ctx, teamID)
+		if err != nil {
+			return fmt.Errorf("controlstate: remove membership: count owners: %w", err)
+		}
+		if owners == 1 {
+			return ErrAuthorityConflict
+		}
+	}
+	revision, err := queries.AdvanceTeamPolicyRevision(ctx, controlstatedb.AdvanceTeamPolicyRevisionParams{
+		UpdatedAt: timestamp(now), TeamID: teamID,
+	})
+	if err != nil {
+		return fmt.Errorf("controlstate: remove membership: advance policy revision: %w", err)
+	}
+	if updated, err := queries.RemoveTeamMembership(ctx, controlstatedb.RemoveTeamMembershipParams{
+		AuthorityRevision: revision, RemovedAt: timestamp(now), RemovedByIdentityID: text(identityID),
+		MembershipID: membershipID, TeamID: teamID,
+	}); err != nil || updated != 1 {
+		return authorityRowsError("remove membership: update membership", updated, err)
+	}
+	if updated, err := queries.QuarantineMemberSlug(ctx, controlstatedb.QuarantineMemberSlugParams{
+		QuarantinedAt: timestamp(now), SlugReservationID: target.SlugReservationID,
+	}); err != nil || updated != 1 {
+		return authorityRowsError("remove membership: quarantine slug", updated, err)
+	}
+	if err := closeMembershipRouteSessions(ctx, queries, teamID, membershipID, true, now, "membership_removed"); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("controlstate: remove membership: commit: %w", err)
+	}
+	return nil
+}
+
 func (d *Database) ListTeamDomains(ctx context.Context, identityID, teamID string) ([]Domain, error) {
 	rows, err := controlstatedb.New(d.pool).ListIdentityTeamDomains(ctx, controlstatedb.ListIdentityTeamDomainsParams{
 		TeamID: text(teamID), IdentityID: identityID,
@@ -83,12 +373,117 @@ func (d *Database) ListTeamDomains(ctx context.Context, identityID, teamID strin
 	for index, row := range rows {
 		result[index] = Domain{
 			ID: row.ID, Kind: row.Kind, TeamID: row.TeamID.String,
-			CanonicalDomain: row.CanonicalDomain, State: row.State,
-			AuthorityRevision: row.AuthorityRevision, CreatedAt: row.CreatedAt.Time,
+			CanonicalDomain: row.CanonicalDomain, DNSAuthorityReference: row.DnsAuthorityReference.String, State: row.State,
+			AuthorityRevision: row.AuthorityRevision, RequiredRecords: nameserverRecords(row.CanonicalDomain, row.Nameservers),
+			CreatedAt:  row.CreatedAt.Time,
 			VerifiedAt: row.VerifiedAt.Time, UpdatedAt: row.UpdatedAt.Time,
 		}
 	}
 	return result, nil
+}
+
+func (d *Database) getMembership(ctx context.Context, teamID, membershipID string) (Membership, error) {
+	row, err := controlstatedb.New(d.pool).GetTeamMembershipContext(ctx, controlstatedb.GetTeamMembershipContextParams{
+		MembershipID: membershipID, TeamID: teamID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Membership{}, ErrMembershipNotFound
+	}
+	if err != nil {
+		return Membership{}, fmt.Errorf("controlstate: get membership: %w", err)
+	}
+	return membershipFromRow(
+		row.ID, row.TeamID, row.IdentityID, row.TeamDisplayName, row.TeamKind, row.Role,
+		row.MemberSlug, row.ManagedLabel, row.PolicyRevision, row.CreatedAt, row.UpdatedAt,
+	), nil
+}
+
+func lockTeamActor(
+	ctx context.Context,
+	queries *controlstatedb.Queries,
+	identityID, teamID string,
+) (controlstatedb.LockTeamActorContextRow, error) {
+	row, err := queries.LockTeamActorContext(ctx, controlstatedb.LockTeamActorContextParams{
+		IdentityID: identityID, TeamID: teamID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return controlstatedb.LockTeamActorContextRow{}, ErrTeamNotFound
+	}
+	if err != nil {
+		return controlstatedb.LockTeamActorContextRow{}, fmt.Errorf("controlstate: lock team actor: %w", err)
+	}
+	return row, nil
+}
+
+func closeMembershipRouteSessions(
+	ctx context.Context,
+	queries *controlstatedb.Queries,
+	teamID, membershipID string,
+	suspendMemberRoutes bool,
+	now time.Time,
+	reason string,
+) error {
+	routes, err := queries.LockMembershipRoutes(ctx, controlstatedb.LockMembershipRoutesParams{
+		TeamID: teamID, MembershipID: text(membershipID),
+	})
+	if err != nil {
+		return fmt.Errorf("controlstate: update membership routes: lock routes: %w", err)
+	}
+	for _, route := range routes {
+		session, err := queries.GetOpenRouteSession(ctx, route.ID)
+		if err == nil && (route.MembershipID.String == membershipID || session.MembershipID.String == membershipID) {
+			if err := closeRouteSession(ctx, queries, route, session, now, reason); err != nil {
+				return err
+			}
+		} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("controlstate: update membership routes: read route session: %w", err)
+		}
+		if suspendMemberRoutes && route.MembershipID.Valid && route.MembershipID.String == membershipID {
+			if updated, err := queries.SuspendAuthorityRoute(ctx, controlstatedb.SuspendAuthorityRouteParams{
+				SuspensionReason: text(reason), SuspendedAt: timestamptz(now), RouteID: route.ID,
+			}); err != nil || updated != 1 {
+				return authorityRowsError("update membership routes: suspend route", updated, err)
+			}
+		}
+	}
+	return nil
+}
+
+func membershipFromRow(
+	id, teamID, identityID, teamDisplayName, teamKind, role, memberSlug, managedLabel string,
+	policyRevision int64,
+	createdAt, updatedAt pgtype.Timestamptz,
+) Membership {
+	return Membership{
+		ID: id, TeamID: teamID, IdentityID: identityID, TeamDisplayName: teamDisplayName,
+		TeamKind: teamKind, Role: role, MemberSlug: memberSlug, ManagedLabel: managedLabel,
+		PolicyRevision: policyRevision, CreatedAt: createdAt.Time, UpdatedAt: updatedAt.Time,
+	}
+}
+
+func nameserverRecords(domain string, nameservers []string) []DNSRecord {
+	records := make([]DNSRecord, len(nameservers))
+	for index, nameserver := range nameservers {
+		records[index] = DNSRecord{Name: domain, Type: "NS", Value: nameserver}
+	}
+	return records
+}
+
+func validDisplayName(value string) bool {
+	return value != "" && len(value) <= 128 && strings.TrimSpace(value) == value
+}
+
+func validAuthorityLabel(value string) bool {
+	canonical, err := naming.CanonicalizeHostname(value)
+	return err == nil && canonical == value && !strings.Contains(value, ".") && len(value) <= naming.MaxLabelBytes
+}
+
+func validIdempotencyKey(value string) bool {
+	return validStateText(value) && len(value) <= 128
+}
+
+func validTeamRole(value string) bool {
+	return value == "member" || value == "admin" || value == "owner"
 }
 
 func teamFromRow(

@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
+	"github.com/tnldotdev/tnl/internal/storagekey"
 )
 
 const (
@@ -32,7 +33,8 @@ var migrationFiles embed.FS
 // Database is a runtime connection pool for control state. Its PostgreSQL
 // implementation is intentionally kept private to this package.
 type Database struct {
-	pool *pgxpool.Pool
+	pool       *pgxpool.Pool
+	storageKey *storagekey.Keyring
 }
 
 // Migrate applies all embedded control-state migrations using a direct
@@ -120,7 +122,11 @@ func Migrate(ctx context.Context, directURL string) (retErr error) {
 
 // Open connects to already-migrated control state using a pooled PostgreSQL
 // URL. Open never creates or migrates schema objects.
-func Open(ctx context.Context, pooledURL string) (*Database, error) {
+func Open(ctx context.Context, pooledURL, currentStorageKey, previousStorageKey string) (*Database, error) {
+	keyring, err := storagekey.New(currentStorageKey, previousStorageKey)
+	if err != nil {
+		return nil, fmt.Errorf("controlstate: open: %w", err)
+	}
 	config, err := parsePoolConfig(pooledURL)
 	if err != nil {
 		return nil, fmt.Errorf("controlstate: open: %w", err)
@@ -143,7 +149,7 @@ func Open(ctx context.Context, pooledURL string) (*Database, error) {
 		pool.Close()
 		return nil, fmt.Errorf("controlstate: incompatible database schema version %d; supported version is %d", version, schemaVersion)
 	}
-	return &Database{pool: pool}, nil
+	return &Database{pool: pool, storageKey: keyring}, nil
 }
 
 // Close closes all runtime database connections. It is safe to call more than

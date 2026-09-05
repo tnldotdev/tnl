@@ -257,7 +257,7 @@ func newIntegrationDatabase(t *testing.T, directURL string) *controlstate.Databa
 	if err := controlstate.Migrate(t.Context(), testURL); err != nil {
 		t.Fatal(err)
 	}
-	database, err := controlstate.Open(t.Context(), testURL)
+	database, err := controlstate.Open(t.Context(), testURL, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "")
 	if err != nil {
 		t.Fatal(err)
 	}

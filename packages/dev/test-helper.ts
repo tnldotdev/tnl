@@ -101,7 +101,6 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
   const environment = {
     TNL_DEV_PROTOCOL: "1",
     TNL_DEV_SOCKET: socket,
-    TNL_DEV_TOKEN: "a".repeat(64),
   };
   return {
     environment,

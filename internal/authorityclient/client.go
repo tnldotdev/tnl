@@ -180,15 +180,21 @@ func (c *Client) ReleaseTeamDomain(ctx context.Context, teamID, domainID string)
 	return err
 }
 
-func (c *Client) IssueAuthorization(
+// AuthorizeServiceOperation asks the authority for a current authorization
+// decision using the hosted service secret instead of the user's access token.
+func (c *Client) AuthorizeServiceOperation(
 	ctx context.Context,
-	requestBody authorityv1.IssueAuthorizationRequest,
-	idempotencyKey string,
-) (authorityv1.AuthorizationEnvelope, error) {
-	params := &authorityv1.IssueAuthorizationParams{IdempotencyKey: idempotencyKey}
-	return request[authorityv1.AuthorizationEnvelope](ctx, c, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.IssueAuthorization(ctx, params, requestBody, editors...)
-	})
+	serviceSecret string,
+	body authorityv1.ServiceAuthorizationRequest,
+) (authorityv1.ServiceAuthorizationDecision, error) {
+	return requestWithToken[authorityv1.ServiceAuthorizationDecision](
+		ctx,
+		c,
+		serviceSecret,
+		func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
+			return c.api.AuthorizeServiceOperation(ctx, body, editors...)
+		},
+	)
 }
 
 type authorityRequest func(context.Context, ...authorityv1.RequestEditorFn) (*http.Response, error)

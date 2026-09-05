@@ -176,16 +176,18 @@ A `tnld` process has one role:
 | `relay`      | Publisher connections and internal forwarding to local publishers               |
 
 Only control and standalone use PostgreSQL. Split ingress and relay processes
-bootstrap through the public control API with role-scoped enrollment tokens and
-receive short-lived service certificates. Publishers prefer QUIC over UDP and
-race a raw TLS/TCP plus yamux fallback after a short delay.
+register through the private control API using the shared cluster secret and
+remain authorized only while their process run IDs and lease revisions are
+current. Publishers prefer QUIC over UDP and race a raw TLS/TCP plus yamux
+fallback after a short delay.
 
 Ingress creates exactly one PROXY v2 header and forwards each visitor connection
 to one concrete connected relay. The relay preserves the metadata and route TLS
 bytes unchanged to the publisher.
 
-See [Self-Hosting](docs/SELF-HOSTING.md) for PostgreSQL, DNS, TLS, enrollment,
-and backup configuration. See [Observability](docs/OBSERVABILITY.md) for metrics.
+See [Self-Hosting](docs/SELF-HOSTING.md) for PostgreSQL, DNS, TLS, cluster
+authentication, and backup configuration. See
+[Observability](docs/OBSERVABILITY.md) for metrics.
 
 ## Standalone Quick Start
 
@@ -205,8 +207,8 @@ TNLD_LOGIN_TOKEN=tnl_login_...
 `TNLD_SERVER_DOMAIN` derives `control.tnl.example.com`,
 `ingress.tnl.example.com`, and `relay.tnl.example.com`. It is independent from
 the managed deployment domain used for public route namespaces. Standalone
-obtains its public control certificate through ACME and requires no certificate
-files or service-enrollment token.
+obtains exact public control and relay certificates through ACME and requires no
+certificate files or cluster secret.
 
 `tnld serve --config /path/to/tnl.yml` loads the static file's `tnld` section;
 `TNLD_CONFIG` selects the same file through the environment. `tnld` accepts only
@@ -247,11 +249,10 @@ mise exec -- task local:login
 mise exec -- task local:tnl -- team current
 ```
 
-`local:trust` modifies the macOS login keychain to trust the local ACME root used
-for public control and route certificates. The private service CA is scoped to
-tnl service and relay transport connections and is not installed as a system
-root. Use `task local:down` to preserve PostgreSQL state or `task local:reset` to
-remove trust, containers, volumes, and `.local` state.
+`local:trust` modifies the macOS login keychain to trust the local certificate
+root used for control, relay, and route TLS. Use `task local:down` to preserve
+PostgreSQL state or `task local:reset` to remove trust, containers, volumes, and
+`.local` state.
 
 ## Development
 

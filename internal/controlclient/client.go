@@ -88,13 +88,6 @@ func (c *Client) CreateRoute(ctx context.Context, body controlv1.CreateRouteRequ
 	})
 }
 
-func (c *Client) CreateRouteAuthorized(ctx context.Context, body controlv1.CreateRouteRequest, idempotencyKey, authorization string) (controlv1.Route, error) {
-	params := &controlv1.CreateRouteParams{IdempotencyKey: idempotencyKey}
-	return request[controlv1.Route](ctx, c, authorization, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.CreateRoute(ctx, params, body, editors...)
-	})
-}
-
 func (c *Client) ListRoutes(ctx context.Context, teamID string) ([]controlv1.Route, error) {
 	var routes []controlv1.Route
 	cursor := ""
@@ -133,24 +126,10 @@ func (c *Client) DeleteRoute(ctx context.Context, routeID string) error {
 	return err
 }
 
-func (c *Client) DeleteRouteAuthorized(ctx context.Context, routeID, authorization string) error {
-	_, err := request[struct{}](ctx, c, authorization, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.DeleteRoute(ctx, routeID, editors...)
-	})
-	return err
-}
-
-func (c *Client) CreateRouteSession(ctx context.Context, routeID string, body controlv1.CreateRouteSessionRequest, idempotencyKey string) (controlv1.RouteSessionSetup, error) {
+func (c *Client) CreateRouteSession(ctx context.Context, routeID, idempotencyKey string) (controlv1.RouteSessionSetup, error) {
 	params := &controlv1.CreateRouteSessionParams{IdempotencyKey: idempotencyKey}
 	return requestWithAccess[controlv1.RouteSessionSetup](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.CreateRouteSession(ctx, routeID, params, body, editors...)
-	})
-}
-
-func (c *Client) CreateRouteSessionAuthorized(ctx context.Context, routeID string, body controlv1.CreateRouteSessionRequest, idempotencyKey, authorization string) (controlv1.RouteSessionSetup, error) {
-	params := &controlv1.CreateRouteSessionParams{IdempotencyKey: idempotencyKey}
-	return request[controlv1.RouteSessionSetup](ctx, c, authorization, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.CreateRouteSession(ctx, routeID, params, body, editors...)
+		return c.api.CreateRouteSession(ctx, routeID, params, editors...)
 	})
 }
 

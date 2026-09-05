@@ -1,9 +1,8 @@
-// Package relayapi serves the private mTLS-authenticated control API for relays.
+// Package relayapi serves the cluster-authenticated private control API for relays.
 package relayapi
 
 import (
 	"context"
-	"crypto/x509"
 	"errors"
 	"log"
 	"net/http"
@@ -20,41 +19,33 @@ type Store interface {
 	RegisterRelay(context.Context, controlstate.RelayRegistration, time.Time, time.Duration) (controlstate.RelayLease, error)
 	RenewRelay(context.Context, controlstate.RelayRenewal, time.Time, time.Duration) (controlstate.RelayLease, error)
 	BeginRelayDrain(context.Context, controlstate.RelayLeaseIdentity, time.Time, time.Time) (controlstate.RelayLease, error)
+	GetRelayServiceCertificate(context.Context, controlstate.RelayLeaseIdentity, time.Time) (controlstate.RelayServiceCertificate, error)
 	ClaimPublisherConnection(context.Context, controlstate.PublisherConnectionClaimRequest, time.Time) (controlstate.ClaimedPublisherConnection, error)
 	MarkPublisherConnectionReady(context.Context, controlstate.PublisherConnectionClaimRequest, time.Time) (controlstate.ClaimedPublisherConnection, error)
 	DisconnectPublisherConnection(context.Context, controlstate.PublisherConnectionClaimRequest, time.Time, bool) (controlstate.ClaimedPublisherConnection, error)
 }
 
-// RelayIdentity is the relay service and process identity authorized by a certificate.
-type RelayIdentity struct {
-	RelayServiceID string
-	RelayID        string
-}
-
-type RelayIdentityFunc func(*x509.Certificate) (RelayIdentity, error)
-
 type Config struct {
-	Store         Store
-	RelayIdentity RelayIdentityFunc
-	LeaseDuration time.Duration
-	Now           func() time.Time
-	Report        func(error)
+	Store          Store
+	ClusterSecrets serviceapi.BearerSecrets
+	LeaseDuration  time.Duration
+	Now            func() time.Time
+	Report         func(error)
 }
 
 type handler struct {
-	store         Store
-	relayIdentity RelayIdentityFunc
-	leaseDuration time.Duration
-	now           func() time.Time
-	report        func(error)
-	mux           *http.ServeMux
+	store          Store
+	clusterSecrets serviceapi.BearerSecrets
+	leaseDuration  time.Duration
+	now            func() time.Time
+	report         func(error)
+	mux            *http.ServeMux
 }
 
-// NewHandler constructs the private relay service. Its enclosing TLS server
-// must require and verify client certificates.
+// NewHandler constructs the private relay service.
 func NewHandler(config Config) (http.Handler, error) {
-	if config.Store == nil || config.RelayIdentity == nil {
-		return nil, errors.New("relayapi: store and relay certificate identity are required")
+	if config.Store == nil || !config.ClusterSecrets.Valid() {
+		return nil, errors.New("relayapi: store and cluster secrets are required")
 	}
 	if config.LeaseDuration <= 0 {
 		return nil, errors.New("relayapi: relay lease duration must be positive")
@@ -66,7 +57,7 @@ func NewHandler(config Config) (http.Handler, error) {
 		config.Report = func(err error) { log.Printf("relay service: %v", err) }
 	}
 	h := &handler{
-		store: config.Store, relayIdentity: config.RelayIdentity, leaseDuration: config.LeaseDuration,
+		store: config.Store, clusterSecrets: config.ClusterSecrets, leaseDuration: config.LeaseDuration,
 		now: config.Now, report: config.Report, mux: http.NewServeMux(),
 	}
 	relayv1.HandlerWithOptions(generatedServer{handler: h}, relayv1.StdHTTPServerOptions{
@@ -83,22 +74,17 @@ func NewHandler(config Config) (http.Handler, error) {
 
 func (h *handler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
 	response.Header().Set("Cache-Control", "no-store")
-	if request.TLS == nil || len(request.TLS.PeerCertificates) == 0 || len(request.TLS.VerifiedChains) == 0 {
-		serviceapi.WriteProblem(response, http.StatusUnauthorized, "unauthenticated", "A verified relay client certificate is required")
+	if !h.clusterSecrets.Authenticate(request.Header) {
+		response.Header().Set("WWW-Authenticate", "Bearer")
+		serviceapi.WriteProblem(response, http.StatusUnauthorized, "unauthenticated", "A valid cluster secret is required")
 		return
 	}
-	identity, err := h.relayIdentity(request.TLS.PeerCertificates[0])
-	if err != nil || !serviceapi.ValidIdentifiers(identity.RelayServiceID, identity.RelayID) {
-		serviceapi.WriteProblem(response, http.StatusUnauthorized, "unauthenticated", "A verified relay client certificate is required")
-		return
-	}
-	request = request.WithContext(context.WithValue(request.Context(), relayIdentityKey{}, identity))
 	h.mux.ServeHTTP(response, request)
 }
 
 func (h *handler) registerRelay(response http.ResponseWriter, request *http.Request) {
 	var body relayv1.RelayRegistration
-	if !serviceapi.DecodeJSON(response, request, &body) || !h.authorizeRelay(response, request, body.RelayServiceId, body.RelayId) {
+	if !serviceapi.DecodeJSON(response, request, &body) {
 		return
 	}
 	if !serviceapi.ValidIdentifiers(
@@ -136,8 +122,7 @@ func (h *handler) registerRelay(response http.ResponseWriter, request *http.Requ
 func (h *handler) renewRelay(response http.ResponseWriter, request *http.Request) {
 	var body relayv1.RelayRenewal
 	if !serviceapi.DecodeJSON(response, request, &body) ||
-		!serviceapi.MatchingPathValue(response, request, "relay_id", body.RelayId) ||
-		!h.authorizeRelay(response, request, body.RelayServiceId, body.RelayId) {
+		!serviceapi.MatchingPathValue(response, request, "relay_id", body.RelayId) {
 		return
 	}
 	identity, ok := relayLeaseIdentity(body.RelayServiceId, body.RelayId, body.RelayRunId, body.RelayLeaseRevision)
@@ -160,8 +145,7 @@ func (h *handler) renewRelay(response http.ResponseWriter, request *http.Request
 func (h *handler) drainRelay(response http.ResponseWriter, request *http.Request) {
 	var body relayv1.RelayDrainRequest
 	if !serviceapi.DecodeJSON(response, request, &body) ||
-		!serviceapi.MatchingPathValue(response, request, "relay_id", body.RelayId) ||
-		!h.authorizeRelay(response, request, body.RelayServiceId, body.RelayId) {
+		!serviceapi.MatchingPathValue(response, request, "relay_id", body.RelayId) {
 		return
 	}
 	identity, ok := relayLeaseIdentity(body.RelayServiceId, body.RelayId, body.RelayRunId, body.RelayLeaseRevision)
@@ -175,6 +159,29 @@ func (h *handler) drainRelay(response http.ResponseWriter, request *http.Request
 		return
 	}
 	serviceapi.WriteJSON(response, http.StatusOK, relayLease(lease))
+}
+
+func (h *handler) getRelayServiceCertificate(
+	response http.ResponseWriter,
+	request *http.Request,
+	relayServiceID string,
+	params relayv1.GetRelayServiceCertificateParams,
+) {
+	identity, ok := relayLeaseIdentity(relayServiceID, params.RelayId, params.RelayRunId, params.RelayLeaseRevision)
+	if !ok {
+		serviceapi.WriteProblem(response, http.StatusBadRequest, "invalid_request", "Relay certificate lease identity is invalid")
+		return
+	}
+	certificate, err := h.store.GetRelayServiceCertificate(request.Context(), identity, h.now())
+	if err != nil {
+		h.writeStoreError(response, err)
+		return
+	}
+	serviceapi.WriteJSON(response, http.StatusOK, relayv1.RelayServiceCertificate{
+		RelayServiceId: certificate.RelayServiceID, TlsServerName: certificate.TLSServerName,
+		CertificatePem: certificate.CertificatePEM, PrivateKeyPem: certificate.PrivateKeyPEM,
+		NotAfter: certificate.NotAfter,
+	})
 }
 
 func (h *handler) claimPublisherConnection(response http.ResponseWriter, request *http.Request) {
@@ -269,8 +276,7 @@ func (h *handler) publisherConnectionClaim(
 	request *http.Request,
 	fields publisherConnectionFields,
 ) (controlstate.PublisherConnectionClaimRequest, bool) {
-	if !serviceapi.MatchingPathValue(response, request, "publisher_connection_id", fields.publisherConnectionID) ||
-		!h.authorizeRelay(response, request, fields.relayServiceID, fields.relayID) {
+	if !serviceapi.MatchingPathValue(response, request, "publisher_connection_id", fields.publisherConnectionID) {
 		return controlstate.PublisherConnectionClaimRequest{}, false
 	}
 	if !serviceapi.ValidIdentifiers(
@@ -301,21 +307,16 @@ func (h *handler) publisherConnectionClaim(
 	}, true
 }
 
-func (h *handler) authorizeRelay(response http.ResponseWriter, request *http.Request, relayServiceID, relayID string) bool {
-	identity, _ := request.Context().Value(relayIdentityKey{}).(RelayIdentity)
-	if relayServiceID == identity.RelayServiceID && relayID == identity.RelayID {
-		return true
-	}
-	serviceapi.WriteProblem(response, http.StatusForbidden, "relay_identity_mismatch", "The client certificate does not authorize this relay service and relay ID")
-	return false
-}
-
 func (h *handler) writeStoreError(response http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, controlstate.ErrRelayRegistrationConflict):
 		serviceapi.WriteProblem(response, http.StatusConflict, "relay_registration_conflict", "The relay identity or service configuration conflicts with live state")
 	case errors.Is(err, controlstate.ErrRelayLeaseStale):
 		serviceapi.WriteProblem(response, http.StatusConflict, "relay_lease_stale", "The relay lease is no longer current")
+	case errors.Is(err, controlstate.ErrRelayServiceCertificateLeaseInvalid):
+		serviceapi.WriteProblem(response, http.StatusConflict, "relay_lease_stale", "The relay lease is no longer current")
+	case errors.Is(err, controlstate.ErrRelayServiceCertificateNotFound):
+		serviceapi.WriteProblem(response, http.StatusServiceUnavailable, "certificate_unavailable", "Relay service certificate is not ready")
 	case errors.Is(err, controlstate.ErrConnectionAssignmentStale), errors.Is(err, controlstate.ErrRouteSessionStale):
 		serviceapi.WriteProblem(response, http.StatusConflict, "stale_connection_assignment", "The publisher connection assignment is no longer current")
 	case errors.Is(err, controlstate.ErrPublisherConnectionAlreadyClaimed):
@@ -405,5 +406,3 @@ func claimedPublisherConnection(connection controlstate.ClaimedPublisherConnecti
 		ConnectedAt:                            connection.ConnectedAt, ReadyAt: connection.ReadyAt,
 	}
 }
-
-type relayIdentityKey struct{}

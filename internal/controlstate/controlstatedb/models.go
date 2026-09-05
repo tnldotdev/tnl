@@ -11,14 +11,15 @@ import (
 )
 
 type ControlAcmeAccount struct {
-	ID               string
-	DirectoryUrl     string
-	ContactEmail     string
-	AccountKeyDer    []byte
-	AccountUrl       pgtype.Text
-	AcceptedTermsUrl pgtype.Text
-	CreatedAt        pgtype.Timestamptz
-	UpdatedAt        pgtype.Timestamptz
+	ID                     string
+	DirectoryUrl           string
+	ContactEmail           string
+	AccountKeyCiphertext   []byte
+	AccountKeyStorageKeyID string
+	AccountUrl             pgtype.Text
+	AcceptedTermsUrl       pgtype.Text
+	CreatedAt              pgtype.Timestamptz
+	UpdatedAt              pgtype.Timestamptz
 }
 
 type ControlAcmeAuthorization struct {
@@ -93,22 +94,6 @@ type ControlAdminAuditEvent struct {
 	OccurredAt      pgtype.Timestamptz
 }
 
-type ControlAuthorityRequestUse struct {
-	Issuer         string
-	RequestID      string
-	RetryID        string
-	Operation      string
-	TeamID         string
-	IdentityID     string
-	MembershipID   pgtype.Text
-	PolicyRevision int64
-	RequestDigest  []byte
-	RouteID        pgtype.Text
-	RouteVersion   pgtype.Int8
-	ExpiresAt      pgtype.Timestamptz
-	UsedAt         pgtype.Timestamptz
-}
-
 type ControlAuthorityRevisionFloor struct {
 	Issuer         string
 	TeamID         string
@@ -127,7 +112,8 @@ type ControlControlSession struct {
 	AccessExpiresAt              pgtype.Timestamptz
 	RefreshTokenID               string
 	RefreshTokenDigest           []byte
-	RetrySecret                  []byte
+	RetrySecretCiphertext        []byte
+	RetrySecretStorageKeyID      string
 	RefreshExpiresAt             pgtype.Timestamptz
 	CreatedAt                    pgtype.Timestamptz
 	LastRefreshedAt              pgtype.Timestamptz
@@ -136,27 +122,34 @@ type ControlControlSession struct {
 }
 
 type ControlControlTlsCache struct {
-	DirectoryUrl string
-	CacheKey     string
-	CacheData    []byte
-	UpdatedAt    pgtype.Timestamptz
+	DirectoryUrl      string
+	CacheKey          string
+	CacheCiphertext   []byte
+	CacheStorageKeyID string
+	UpdatedAt         pgtype.Timestamptz
 }
 
 type ControlDnsAuthority struct {
-	AuthorityReference string
-	Provider           string
-	ProviderZoneID     pgtype.Text
-	State              string
-	Nameservers        []string
-	WorkRevision       int64
-	WorkOwner          pgtype.Text
-	WorkEpoch          int64
-	WorkExpiresAt      pgtype.Timestamptz
-	Attempts           int64
-	AvailableAt        pgtype.Timestamptz
-	LastError          pgtype.Text
-	CreatedAt          pgtype.Timestamptz
-	UpdatedAt          pgtype.Timestamptz
+	AuthorityReference    string
+	TeamID                string
+	DomainID              string
+	CanonicalDomain       string
+	CreateIdempotencyKey  string
+	CreateRequestDigest   []byte
+	ReleaseIdempotencyKey pgtype.Text
+	Provider              string
+	ProviderZoneID        pgtype.Text
+	State                 string
+	Nameservers           []string
+	WorkRevision          int64
+	WorkOwner             pgtype.Text
+	WorkEpoch             int64
+	WorkExpiresAt         pgtype.Timestamptz
+	Attempts              int64
+	AvailableAt           pgtype.Timestamptz
+	LastError             pgtype.Text
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
 }
 
 type ControlDomain struct {
@@ -169,6 +162,9 @@ type ControlDomain struct {
 	AuthorityRevision       int64
 	VerificationTokenDigest []byte
 	CreatedByIdentityID     pgtype.Text
+	ClaimIdempotencyKey     pgtype.Text
+	ClaimRequestDigest      []byte
+	MakeDefaultWhenReady    bool
 	CreatedAt               pgtype.Timestamptz
 	VerifiedAt              pgtype.Timestamptz
 	ReusableAfter           pgtype.Timestamptz
@@ -269,6 +265,11 @@ type ControlMaintenanceControl struct {
 	UpdatedBy   string
 }
 
+type ControlManagedLabelReservation struct {
+	Label     string
+	CreatedAt pgtype.Timestamptz
+}
+
 type ControlMemberSlugReservation struct {
 	ID                   string
 	TeamID               string
@@ -280,6 +281,39 @@ type ControlMemberSlugReservation struct {
 	QuarantinedAt        pgtype.Timestamptz
 	ReusableAfter        pgtype.Timestamptz
 	ReleasedAt           pgtype.Timestamptz
+}
+
+type ControlRelayCertificateOrder struct {
+	ID                     string
+	AccountID              string
+	RelayServiceID         string
+	TlsServerName          string
+	PrivateKeyCiphertext   []byte
+	PrivateKeyStorageKeyID string
+	CsrDer                 []byte
+	CsrDigest              []byte
+	State                  string
+	OrderRevision          int64
+	OrderUrl               pgtype.Text
+	FinalizeUrl            pgtype.Text
+	CertificateUrl         pgtype.Text
+	AuthorizationUrl       pgtype.Text
+	ChallengeUrl           pgtype.Text
+	ChallengeToken         pgtype.Text
+	ChallengeDigest        []byte
+	PresentationReference  pgtype.Text
+	CertificatePem         []byte
+	NotBefore              pgtype.Timestamptz
+	NotAfter               pgtype.Timestamptz
+	RenewAt                pgtype.Timestamptz
+	WorkOwner              pgtype.Text
+	WorkEpoch              int64
+	WorkExpiresAt          pgtype.Timestamptz
+	Attempts               int64
+	AvailableAt            pgtype.Timestamptz
+	LastError              pgtype.Text
+	CreatedAt              pgtype.Timestamptz
+	UpdatedAt              pgtype.Timestamptz
 }
 
 type ControlRelayLease struct {
@@ -303,42 +337,50 @@ type ControlRelayLease struct {
 }
 
 type ControlRelayService struct {
-	RelayServiceID                string
-	RelayAddress                  string
-	TlsServerName                 string
-	TransportCertificatePem       pgtype.Text
-	TransportPrivateKeyPem        pgtype.Text
-	TransportCertificateSerial    pgtype.Text
-	TransportCertificateExpiresAt pgtype.Timestamptz
-	Enabled                       bool
-	CreatedAt                     pgtype.Timestamptz
-	UpdatedAt                     pgtype.Timestamptz
+	RelayServiceID                  string
+	RelayAddress                    string
+	TlsServerName                   string
+	TransportCertificatePem         pgtype.Text
+	TransportPrivateKeyCiphertext   []byte
+	TransportPrivateKeyStorageKeyID pgtype.Text
+	TransportCertificateSerial      pgtype.Text
+	TransportCertificateExpiresAt   pgtype.Timestamptz
+	Enabled                         bool
+	CreatedAt                       pgtype.Timestamptz
+	UpdatedAt                       pgtype.Timestamptz
 }
 
 type ControlRoute struct {
-	ID                  string
-	TeamID              string
-	DomainID            string
-	MembershipID        pgtype.Text
-	CreatedByIdentityID string
-	IdempotencyKey      string
-	RequestDigest       []byte
-	CanonicalHostname   string
-	Target              string
-	RouteScope          string
-	PolicyRevision      int64
-	IpPolicy            string
-	AllowedIpPrefixes   []netip.Prefix
-	LifecycleState      string
-	DnsState            string
-	DnsRevision         int64
-	NextRouteVersion    int64
-	SuspensionRevision  int64
-	SuspensionReason    pgtype.Text
-	CreatedAt           pgtype.Timestamptz
-	UpdatedAt           pgtype.Timestamptz
-	SuspendedAt         pgtype.Timestamptz
-	DeletedAt           pgtype.Timestamptz
+	ID                    string
+	TeamID                string
+	DomainID              string
+	MembershipID          pgtype.Text
+	CreatedByIdentityID   string
+	IdempotencyKey        string
+	RequestDigest         []byte
+	CanonicalHostname     string
+	Target                string
+	RouteScope            string
+	PolicyRevision        int64
+	IpPolicy              string
+	AllowedIpPrefixes     []netip.Prefix
+	LifecycleState        string
+	DnsAuthorityReference pgtype.Text
+	DnsState              string
+	DnsRevision           int64
+	DnsWorkOwner          pgtype.Text
+	DnsWorkEpoch          int64
+	DnsWorkExpiresAt      pgtype.Timestamptz
+	DnsAttempts           int64
+	DnsAvailableAt        pgtype.Timestamptz
+	DnsLastError          pgtype.Text
+	NextRouteVersion      int64
+	SuspensionRevision    int64
+	SuspensionReason      pgtype.Text
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+	SuspendedAt           pgtype.Timestamptz
+	DeletedAt             pgtype.Timestamptz
 }
 
 type ControlRouteRecoveryEpisode struct {
@@ -427,7 +469,7 @@ type ControlRouteUsageBucket struct {
 	RouteID               string
 	RouteVersion          int64
 	TeamID                string
-	ActingIdentityID      pgtype.Text
+	ActingIdentityID      string
 	BucketStart           pgtype.Timestamptz
 	BucketEnd             pgtype.Timestamptz
 	BucketRevision        int64
@@ -471,57 +513,25 @@ type ControlRouteUsageDelivery struct {
 }
 
 type ControlRuntimeSecret struct {
-	Singleton              bool
-	ExternalRetryMasterKey []byte
-	CreatedAt              pgtype.Timestamptz
-}
-
-type ControlServiceAuthority struct {
-	Singleton         bool
-	CertificatePem    string
-	PrivateKeyDer     []byte
-	CertificateSerial string
-	CreatedAt         pgtype.Timestamptz
-	ExpiresAt         pgtype.Timestamptz
-}
-
-type ControlServiceEnrollmentEvent struct {
-	EventID                  int64
-	ServiceEnrollmentTokenID string
-	Role                     string
-	ProcessID                string
-	RelayServiceID           pgtype.Text
-	CertificateSerial        string
-	CertificateExpiresAt     pgtype.Timestamptz
-	OccurredAt               pgtype.Timestamptz
-}
-
-type ControlServiceEnrollmentToken struct {
-	ID                  string
-	LookupID            string
-	TokenDigest         []byte
-	Role                string
-	RelayServiceID      pgtype.Text
-	CreatedByIdentityID string
-	CreatedAt           pgtype.Timestamptz
-	LastUsedAt          pgtype.Timestamptz
-	LastUsedProcessID   pgtype.Text
-	UseCount            int64
-	RevokedAt           pgtype.Timestamptz
-	RevokedByIdentityID pgtype.Text
+	Singleton                          bool
+	ExternalRetryMasterKeyCiphertext   []byte
+	ExternalRetryMasterKeyStorageKeyID string
+	CreatedAt                          pgtype.Timestamptz
 }
 
 type ControlTeam struct {
-	ID                  string
-	Kind                string
-	DisplayName         string
-	ManagedLabel        string
-	DefaultDomainID     pgtype.Text
-	PolicyRevision      int64
-	CreatedByIdentityID string
-	CreatedAt           pgtype.Timestamptz
-	UpdatedAt           pgtype.Timestamptz
-	DeletedAt           pgtype.Timestamptz
+	ID                     string
+	Kind                   string
+	DisplayName            string
+	ManagedLabel           string
+	DefaultDomainID        pgtype.Text
+	PolicyRevision         int64
+	CreatedByIdentityID    string
+	CreationIdempotencyKey pgtype.Text
+	CreationRequestDigest  []byte
+	CreatedAt              pgtype.Timestamptz
+	UpdatedAt              pgtype.Timestamptz
+	DeletedAt              pgtype.Timestamptz
 }
 
 type ControlTeamInvitation struct {
@@ -530,6 +540,8 @@ type ControlTeamInvitation struct {
 	SlugReservationID          string
 	InitialRole                string
 	InvitedByIdentityID        string
+	IdempotencyKey             string
+	RequestDigest              []byte
 	TokenDigest                []byte
 	NormalizedEmailRestriction pgtype.Text
 	State                      string

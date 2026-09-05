@@ -94,7 +94,6 @@ paths:
       summary: Create one durable team route
       security:
         - bearerAuth: []
-        - signedAuthorization: []
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
@@ -134,7 +133,6 @@ paths:
       summary: Delete one durable route and close its route session
       security:
         - bearerAuth: []
-        - signedAuthorization: []
       parameters:
         - $ref: "#/components/parameters/RouteID"
       responses:
@@ -148,16 +146,9 @@ paths:
       summary: Create one publisher attachment and allocate its route version
       security:
         - bearerAuth: []
-        - signedAuthorization: []
       parameters:
         - $ref: "#/components/parameters/RouteID"
         - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateRouteSessionRequest"
       responses:
         "201":
           description: Route session and two publisher connection assignments
@@ -377,54 +368,6 @@ paths:
                 $ref: "#/components/schemas/AdminRelayLease"
         default:
           $ref: "#/components/responses/Problem"
-  /v1/admin/service-enrollment-tokens:
-    get:
-      operationId: listServiceEnrollmentTokens
-      summary: List service enrollment tokens without their secrets
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          description: Service enrollment token page
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ServiceEnrollmentTokenPage"
-        default:
-          $ref: "#/components/responses/Problem"
-    post:
-      operationId: createServiceEnrollmentToken
-      summary: Create one reusable role-scoped service enrollment token
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateServiceEnrollmentTokenRequest"
-      responses:
-        "201":
-          description: Service enrollment token and its one-time secret
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/CreatedServiceEnrollmentToken"
-        default:
-          $ref: "#/components/responses/Problem"
-  /v1/admin/service-enrollment-tokens/{service_enrollment_token_id}:
-    delete:
-      operationId: revokeServiceEnrollmentToken
-      summary: Revoke one service enrollment token
-      security:
-        - bearerAuth: []
-      parameters:
-        - $ref: "#/components/parameters/ServiceEnrollmentTokenID"
-      responses:
-        "204":
-          description: Service enrollment token revoked
-        default:
-          $ref: "#/components/responses/Problem"
   /v1/admin/maintenance-controls:
     get:
       operationId: listMaintenanceControls
@@ -465,24 +408,78 @@ paths:
                 $ref: "#/components/schemas/MaintenanceControl"
         default:
           $ref: "#/components/responses/Problem"
-  /v1/service-enrollments:
+  /v1/service/revoke:
     post:
-      operationId: enrollService
-      summary: Issue or renew a process-local service identity
-      security: []
+      operationId: revokeHostedPolicy
+      summary: Apply a hosted team policy revision and close affected route sessions
+      security:
+        - hostedServiceAuth: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ServiceEnrollmentRequest"
+              $ref: "#/components/schemas/HostedPolicyRevocation"
       responses:
-        "200":
-          description: Enrolled service identity and role facts
+        "204":
+          description: Policy revision committed or replayed
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/service/dns-authorities:
+    post:
+      operationId: createDNSAuthority
+      summary: Create DNS execution state for one claimed domain
+      security:
+        - hostedServiceAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDNSAuthorityRequest"
+      responses:
+        "201":
+          description: DNS authority created
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ServiceEnrollmentResponse"
+                $ref: "#/components/schemas/DNSAuthority"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/service/dns-authorities/{dns_authority_reference}:
+    get:
+      operationId: getDNSAuthority
+      summary: Read DNS execution state for one claimed domain
+      security:
+        - hostedServiceAuth: []
+      parameters:
+        - $ref: "#/components/parameters/DNSAuthorityReference"
+      responses:
+        "200":
+          description: DNS authority
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DNSAuthority"
+        default:
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: releaseDNSAuthority
+      summary: Begin releasing one claimed domain's DNS execution state
+      security:
+        - hostedServiceAuth: []
+      parameters:
+        - $ref: "#/components/parameters/DNSAuthorityReference"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "202":
+          description: DNS authority release accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DNSAuthority"
         default:
           $ref: "#/components/responses/Problem"
 components:
@@ -491,10 +488,10 @@ components:
       type: http
       scheme: bearer
       bearerFormat: tnl access token
-    signedAuthorization:
+    hostedServiceAuth:
       type: http
       scheme: bearer
-      bearerFormat: tnl signed authorization
+      bearerFormat: tnl hosted service secret
     routeSessionAuth:
       type: http
       scheme: bearer
@@ -548,12 +545,15 @@ components:
       required: true
       schema:
         $ref: "#/components/schemas/MaintenanceControlName"
-    ServiceEnrollmentTokenID:
-      name: service_enrollment_token_id
+    DNSAuthorityReference:
+      name: dns_authority_reference
       in: path
       required: true
       schema:
-        $ref: "#/components/schemas/ResourceID"
+        type: string
+        minLength: 1
+        maxLength: 256
+        pattern: "^[A-Za-z0-9_-]+$"
   responses:
     Problem:
       description: Request failed
@@ -682,112 +682,92 @@ components:
             type: string
             minLength: 1
             maxLength: 128
-    ServiceEnrollmentRole:
-      type: string
-      enum: [ingress, relay]
-    ServiceEnrollmentToken:
+    HostedPolicyRevocation:
       type: object
       additionalProperties: false
-      required: [id, role, created_at]
+      required: [team_id, policy_revision, all_sessions, membership_ids]
       properties:
-        id:
-          $ref: "#/components/schemas/ResourceID"
-        role:
-          $ref: "#/components/schemas/ServiceEnrollmentRole"
-        relay_service_id:
-          $ref: "#/components/schemas/RelayServiceID"
-        created_at:
-          type: string
-          format: date-time
-        last_used_at:
-          type: string
-          format: date-time
-        revoked_at:
-          type: string
-          format: date-time
-    CreateServiceEnrollmentTokenRequest:
-      type: object
-      additionalProperties: false
-      required: [role]
-      properties:
-        role:
-          $ref: "#/components/schemas/ServiceEnrollmentRole"
-        relay_service_id:
-          $ref: "#/components/schemas/RelayServiceID"
-    CreatedServiceEnrollmentToken:
-      type: object
-      additionalProperties: false
-      required: [enrollment_token, service_enrollment_token]
-      properties:
-        enrollment_token:
-          $ref: "#/components/schemas/ServiceEnrollmentToken"
-        service_enrollment_token:
-          type: string
-          minLength: 32
-          maxLength: 4096
-    ServiceEnrollmentTokenPage:
-      type: object
-      additionalProperties: false
-      required: [enrollment_tokens]
-      properties:
-        enrollment_tokens:
+        team_id:
+          $ref: "#/components/schemas/TeamID"
+        policy_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        all_sessions:
+          type: boolean
+        membership_ids:
           type: array
+          maxItems: 1000
+          uniqueItems: true
           items:
-            $ref: "#/components/schemas/ServiceEnrollmentToken"
-    ServiceEnrollmentRequest:
+            $ref: "#/components/schemas/MembershipID"
+    CreateDNSAuthorityRequest:
       type: object
       additionalProperties: false
-      required: [service_enrollment_token, role, certificate_signing_request]
+      required: [team_id, domain_id, canonical_domain]
       properties:
-        service_enrollment_token:
+        team_id:
+          $ref: "#/components/schemas/TeamID"
+        domain_id:
+          $ref: "#/components/schemas/DomainID"
+        canonical_domain:
+          $ref: "#/components/schemas/CanonicalHostname"
+    DNSAuthorityState:
+      type: string
+      enum: [pending, ready, releasing, released, failed]
+    DNSRecord:
+      type: object
+      additionalProperties: false
+      required: [name, type, value]
+      properties:
+        name:
+          $ref: "#/components/schemas/CanonicalHostname"
+        type:
           type: string
-          minLength: 32
-          maxLength: 4096
-        role:
-          $ref: "#/components/schemas/ServiceEnrollmentRole"
-        ingress_id:
-          $ref: "#/components/schemas/ResourceID"
-        relay_id:
-          $ref: "#/components/schemas/RelayID"
-        certificate_signing_request:
+          enum: [NS, SOA, TXT, A, AAAA]
+        value:
           type: string
           minLength: 1
-          maxLength: 65536
-    ServiceEnrollmentResponse:
+          maxLength: 2048
+    DNSAuthority:
       type: object
       additionalProperties: false
       required:
-        [role, service_certificate, trust_bundle, internal_control_endpoint, certificate_expires_at]
+        [
+          reference,
+          team_id,
+          domain_id,
+          canonical_domain,
+          state,
+          required_records,
+          created_at,
+          updated_at,
+        ]
       properties:
-        role:
-          $ref: "#/components/schemas/ServiceEnrollmentRole"
-        service_certificate:
-          type: string
-          minLength: 1
-        trust_bundle:
-          type: string
-          minLength: 1
-        internal_control_endpoint:
-          type: string
-          format: uri
-          pattern: "^https://"
-        certificate_expires_at:
-          type: string
-          format: date-time
-        relay_service_id:
-          $ref: "#/components/schemas/RelayServiceID"
-        relay_address:
+        reference:
           type: string
           minLength: 1
           maxLength: 256
-        tls_server_name:
+        team_id:
+          $ref: "#/components/schemas/TeamID"
+        domain_id:
+          $ref: "#/components/schemas/DomainID"
+        canonical_domain:
           $ref: "#/components/schemas/CanonicalHostname"
-        relay_transport_certificate:
+        state:
+          $ref: "#/components/schemas/DNSAuthorityState"
+        required_records:
+          type: array
+          items:
+            $ref: "#/components/schemas/DNSRecord"
+        last_error:
           type: string
-          minLength: 1
-        relay_transport_private_key:
+        created_at:
           type: string
-          minLength: 1
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
     RouteScope:
       type: string
       enum: [member, shared]
@@ -907,32 +887,15 @@ components:
         identifiers:
           type: array
           minItems: 1
-          uniqueItems: true
-          items:
-            $ref: "#/components/schemas/CanonicalHostname"
-        challenge_method:
-          $ref: "#/components/schemas/CertificateChallengeMethod"
-    CreateRouteSessionRequest:
-      type: object
-      additionalProperties: false
-      required: [team_id, policy_revision, certificate_plan, allowed_ip_prefixes]
-      properties:
-        team_id:
-          $ref: "#/components/schemas/TeamID"
-        membership_id:
-          $ref: "#/components/schemas/MembershipID"
-        policy_revision:
-          type: integer
-          format: int64
-          minimum: 1
-        certificate_plan:
-          $ref: "#/components/schemas/CertificatePlan"
-        allowed_ip_prefixes:
-          type: array
-          maxItems: 64
+          maxItems: 2
           uniqueItems: true
           items:
             type: string
+            minLength: 1
+            maxLength: 253
+            pattern: "^(?:\\*\\.)?[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+        challenge_method:
+          $ref: "#/components/schemas/CertificateChallengeMethod"
     RouteSessionState:
       type: string
       enum: [starting, ready, draining, closed, expired, canceled]
@@ -1025,15 +988,7 @@ components:
     RouteSessionSetup:
       type: object
       additionalProperties: false
-      required:
-        [
-          route,
-          route_session,
-          route_session_token,
-          certificate_plan,
-          publisher_connections,
-          relay_transport_trust_bundle,
-        ]
+      required: [route, route_session, route_session_token, certificate_plan, publisher_connections]
       properties:
         route:
           $ref: "#/components/schemas/Route"
@@ -1051,9 +1006,6 @@ components:
           maxItems: 2
           items:
             $ref: "#/components/schemas/PublisherConnectionPlan"
-        relay_transport_trust_bundle:
-          type: string
-          minLength: 1
     RouteSessionVersionRequest:
       type: object
       additionalProperties: false

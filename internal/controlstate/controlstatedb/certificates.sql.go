@@ -11,14 +11,74 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const cancelRouteSessionACMEAuthorizations = `-- name: CancelRouteSessionACMEAuthorizations :exec
+UPDATE control.acme_authorizations AS authorizations
+SET state = CASE
+        WHEN challenge_type = 'dns-01' THEN 'cleaning'
+        ELSE 'canceled'
+    END,
+    authorization_revision = authorization_revision + 1,
+    cleanup_completed_at = CASE
+        WHEN challenge_type = 'tls-alpn-01' THEN COALESCE(cleanup_completed_at, $1)
+        ELSE cleanup_completed_at
+    END,
+    available_at = $1,
+    updated_at = GREATEST(authorizations.updated_at, $1)
+FROM control.acme_orders AS orders
+WHERE orders.id = authorizations.order_id
+  AND orders.route_session_id = $2
+  AND authorizations.state NOT IN ('complete', 'canceled')
+`
+
+type CancelRouteSessionACMEAuthorizationsParams struct {
+	CanceledAt     pgtype.Timestamptz
+	RouteSessionID string
+}
+
+func (q *Queries) CancelRouteSessionACMEAuthorizations(ctx context.Context, arg CancelRouteSessionACMEAuthorizationsParams) error {
+	_, err := q.db.Exec(ctx, cancelRouteSessionACMEAuthorizations, arg.CanceledAt, arg.RouteSessionID)
+	return err
+}
+
+const cancelRouteSessionACMEOrders = `-- name: CancelRouteSessionACMEOrders :exec
+UPDATE control.acme_orders
+SET state = 'canceled',
+    order_revision = order_revision + 1,
+    work_owner = NULL,
+    work_expires_at = NULL,
+    available_at = $1,
+    updated_at = GREATEST(updated_at, $1)
+WHERE route_session_id = $2
+  AND state IN ('pending', 'authorizing', 'ready_to_finalize', 'finalizing', 'waiting_for_install', 'failed')
+`
+
+type CancelRouteSessionACMEOrdersParams struct {
+	CanceledAt     pgtype.Timestamptz
+	RouteSessionID string
+}
+
+func (q *Queries) CancelRouteSessionACMEOrders(ctx context.Context, arg CancelRouteSessionACMEOrdersParams) error {
+	_, err := q.db.Exec(ctx, cancelRouteSessionACMEOrders, arg.CanceledAt, arg.RouteSessionID)
+	return err
+}
+
 const claimACMEOrderWork = `-- name: ClaimACMEOrderWork :one
 WITH candidate AS (
-    SELECT id
-    FROM control.acme_orders
-    WHERE state IN ('pending', 'authorizing', 'ready_to_finalize', 'finalizing')
-      AND available_at <= $3
-      AND (work_owner IS NULL OR work_expires_at <= $3)
-    ORDER BY available_at, id
+    SELECT orders.id
+    FROM control.acme_orders AS orders
+    WHERE (
+          orders.state IN ('pending', 'authorizing', 'ready_to_finalize', 'finalizing')
+          OR orders.state IN ('failed', 'canceled') AND EXISTS (
+              SELECT 1
+              FROM control.acme_authorizations AS authorizations
+              WHERE authorizations.order_id = orders.id
+                AND authorizations.challenge_type = 'dns-01'
+                AND authorizations.state = 'cleaning'
+          )
+      )
+      AND orders.available_at <= $3
+      AND (orders.work_owner IS NULL OR orders.work_expires_at <= $3)
+    ORDER BY orders.available_at, orders.id
     FOR UPDATE SKIP LOCKED
     LIMIT 1
 )
@@ -123,7 +183,8 @@ INSERT INTO control.acme_accounts (
     id,
     directory_url,
     contact_email,
-    account_key_der,
+    account_key_ciphertext,
+    account_key_storage_key_id,
     created_at,
     updated_at
 ) VALUES (
@@ -132,20 +193,22 @@ INSERT INTO control.acme_accounts (
     $3,
     $4,
     $5,
-    $5
+    $6,
+    $6
 )
 ON CONFLICT (directory_url) DO UPDATE
 SET contact_email = excluded.contact_email,
     updated_at = GREATEST(control.acme_accounts.updated_at, excluded.updated_at)
-RETURNING id, directory_url, contact_email, account_key_der, account_url, accepted_terms_url, created_at, updated_at
+RETURNING id, directory_url, contact_email, account_key_ciphertext, account_key_storage_key_id, account_url, accepted_terms_url, created_at, updated_at
 `
 
 type EnsureACMEAccountParams struct {
-	ID            string
-	DirectoryUrl  string
-	ContactEmail  string
-	AccountKeyDer []byte
-	CreatedAt     pgtype.Timestamptz
+	ID                     string
+	DirectoryUrl           string
+	ContactEmail           string
+	AccountKeyCiphertext   []byte
+	AccountKeyStorageKeyID string
+	CreatedAt              pgtype.Timestamptz
 }
 
 func (q *Queries) EnsureACMEAccount(ctx context.Context, arg EnsureACMEAccountParams) (ControlAcmeAccount, error) {
@@ -153,7 +216,8 @@ func (q *Queries) EnsureACMEAccount(ctx context.Context, arg EnsureACMEAccountPa
 		arg.ID,
 		arg.DirectoryUrl,
 		arg.ContactEmail,
-		arg.AccountKeyDer,
+		arg.AccountKeyCiphertext,
+		arg.AccountKeyStorageKeyID,
 		arg.CreatedAt,
 	)
 	var i ControlAcmeAccount
@@ -161,7 +225,8 @@ func (q *Queries) EnsureACMEAccount(ctx context.Context, arg EnsureACMEAccountPa
 		&i.ID,
 		&i.DirectoryUrl,
 		&i.ContactEmail,
-		&i.AccountKeyDer,
+		&i.AccountKeyCiphertext,
+		&i.AccountKeyStorageKeyID,
 		&i.AccountUrl,
 		&i.AcceptedTermsUrl,
 		&i.CreatedAt,
@@ -171,7 +236,7 @@ func (q *Queries) EnsureACMEAccount(ctx context.Context, arg EnsureACMEAccountPa
 }
 
 const getACMEAccountByDirectory = `-- name: GetACMEAccountByDirectory :one
-SELECT id, directory_url, contact_email, account_key_der, account_url, accepted_terms_url, created_at, updated_at
+SELECT id, directory_url, contact_email, account_key_ciphertext, account_key_storage_key_id, account_url, accepted_terms_url, created_at, updated_at
 FROM control.acme_accounts
 WHERE directory_url = $1
 `
@@ -183,7 +248,8 @@ func (q *Queries) GetACMEAccountByDirectory(ctx context.Context, directoryUrl st
 		&i.ID,
 		&i.DirectoryUrl,
 		&i.ContactEmail,
-		&i.AccountKeyDer,
+		&i.AccountKeyCiphertext,
+		&i.AccountKeyStorageKeyID,
 		&i.AccountUrl,
 		&i.AcceptedTermsUrl,
 		&i.CreatedAt,
@@ -311,7 +377,7 @@ func (q *Queries) GetActiveRouteSessionChallengeExpiry(ctx context.Context, arg 
 }
 
 const getControlTLSCacheEntry = `-- name: GetControlTLSCacheEntry :one
-SELECT cache_data
+SELECT cache_ciphertext, cache_storage_key_id
 FROM control.control_tls_cache
 WHERE directory_url = $1
   AND cache_key = $2
@@ -322,11 +388,16 @@ type GetControlTLSCacheEntryParams struct {
 	CacheKey     string
 }
 
-func (q *Queries) GetControlTLSCacheEntry(ctx context.Context, arg GetControlTLSCacheEntryParams) ([]byte, error) {
+type GetControlTLSCacheEntryRow struct {
+	CacheCiphertext   []byte
+	CacheStorageKeyID string
+}
+
+func (q *Queries) GetControlTLSCacheEntry(ctx context.Context, arg GetControlTLSCacheEntryParams) (GetControlTLSCacheEntryRow, error) {
 	row := q.db.QueryRow(ctx, getControlTLSCacheEntry, arg.DirectoryUrl, arg.CacheKey)
-	var cache_data []byte
-	err := row.Scan(&cache_data)
-	return cache_data, err
+	var i GetControlTLSCacheEntryRow
+	err := row.Scan(&i.CacheCiphertext, &i.CacheStorageKeyID)
+	return i, err
 }
 
 const getRouteSessionByTokenID = `-- name: GetRouteSessionByTokenID :one
@@ -778,32 +849,102 @@ const putControlTLSCacheEntry = `-- name: PutControlTLSCacheEntry :exec
 INSERT INTO control.control_tls_cache (
     directory_url,
     cache_key,
-    cache_data,
+    cache_ciphertext,
+    cache_storage_key_id,
     updated_at
 ) VALUES (
     $1,
     $2,
     $3,
-    $4
+    $4,
+    $5
 )
 ON CONFLICT (directory_url, cache_key) DO UPDATE SET
-    cache_data = EXCLUDED.cache_data,
+    cache_ciphertext = EXCLUDED.cache_ciphertext,
+    cache_storage_key_id = EXCLUDED.cache_storage_key_id,
     updated_at = EXCLUDED.updated_at
 `
 
 type PutControlTLSCacheEntryParams struct {
-	DirectoryUrl string
-	CacheKey     string
-	CacheData    []byte
-	UpdatedAt    pgtype.Timestamptz
+	DirectoryUrl      string
+	CacheKey          string
+	CacheCiphertext   []byte
+	CacheStorageKeyID string
+	UpdatedAt         pgtype.Timestamptz
 }
 
 func (q *Queries) PutControlTLSCacheEntry(ctx context.Context, arg PutControlTLSCacheEntryParams) error {
 	_, err := q.db.Exec(ctx, putControlTLSCacheEntry,
 		arg.DirectoryUrl,
 		arg.CacheKey,
-		arg.CacheData,
+		arg.CacheCiphertext,
+		arg.CacheStorageKeyID,
 		arg.UpdatedAt,
+	)
+	return err
+}
+
+const rotateACMEAccountKey = `-- name: RotateACMEAccountKey :exec
+UPDATE control.acme_accounts
+SET account_key_ciphertext = $1,
+    account_key_storage_key_id = $2,
+    updated_at = GREATEST(updated_at, $3)
+WHERE id = $4
+  AND account_key_storage_key_id = $5
+  AND account_key_ciphertext = $6
+`
+
+type RotateACMEAccountKeyParams struct {
+	AccountKeyCiphertext   []byte
+	AccountKeyStorageKeyID string
+	UpdatedAt              pgtype.Timestamptz
+	AccountID              string
+	PreviousKeyID          string
+	PreviousCiphertext     []byte
+}
+
+func (q *Queries) RotateACMEAccountKey(ctx context.Context, arg RotateACMEAccountKeyParams) error {
+	_, err := q.db.Exec(ctx, rotateACMEAccountKey,
+		arg.AccountKeyCiphertext,
+		arg.AccountKeyStorageKeyID,
+		arg.UpdatedAt,
+		arg.AccountID,
+		arg.PreviousKeyID,
+		arg.PreviousCiphertext,
+	)
+	return err
+}
+
+const rotateControlTLSCacheEntry = `-- name: RotateControlTLSCacheEntry :exec
+UPDATE control.control_tls_cache
+SET cache_ciphertext = $1,
+    cache_storage_key_id = $2,
+    updated_at = $3
+WHERE directory_url = $4
+  AND cache_key = $5
+  AND cache_storage_key_id = $6
+  AND cache_ciphertext = $7
+`
+
+type RotateControlTLSCacheEntryParams struct {
+	CacheCiphertext    []byte
+	CacheStorageKeyID  string
+	UpdatedAt          pgtype.Timestamptz
+	DirectoryUrl       string
+	CacheKey           string
+	PreviousKeyID      string
+	PreviousCiphertext []byte
+}
+
+func (q *Queries) RotateControlTLSCacheEntry(ctx context.Context, arg RotateControlTLSCacheEntryParams) error {
+	_, err := q.db.Exec(ctx, rotateControlTLSCacheEntry,
+		arg.CacheCiphertext,
+		arg.CacheStorageKeyID,
+		arg.UpdatedAt,
+		arg.DirectoryUrl,
+		arg.CacheKey,
+		arg.PreviousKeyID,
+		arg.PreviousCiphertext,
 	)
 	return err
 }
@@ -818,6 +959,7 @@ INSERT INTO control.acme_authorizations (
     challenge_url,
     challenge_token,
     challenge_digest,
+    presentation_reference,
     state,
     authorization_revision,
     attempts,
@@ -848,7 +990,8 @@ INSERT INTO control.acme_authorizations (
     $16,
     $17,
     $18,
-    $19
+    $19,
+    $20
 )
 ON CONFLICT (order_id, identifier) DO UPDATE
 SET state = excluded.state,
@@ -866,7 +1009,8 @@ WHERE control.acme_authorizations.authorization_url = excluded.authorization_url
   AND control.acme_authorizations.challenge_url = excluded.challenge_url
   AND control.acme_authorizations.challenge_token = excluded.challenge_token
   AND control.acme_authorizations.challenge_digest = excluded.challenge_digest
-  AND control.acme_authorizations.authorization_revision = $20
+  AND control.acme_authorizations.presentation_reference IS NOT DISTINCT FROM excluded.presentation_reference
+  AND control.acme_authorizations.authorization_revision = $21
 RETURNING id, order_id, identifier, authorization_url, challenge_type, challenge_url, challenge_token, challenge_digest, presentation_reference, state, authorization_revision, work_owner, work_epoch, work_expires_at, attempts, available_at, presented_at, validated_at, cleanup_completed_at, expires_at, last_error, created_at, updated_at
 `
 
@@ -879,6 +1023,7 @@ type SaveACMEAuthorizationWorkParams struct {
 	ChallengeUrl                  string
 	ChallengeToken                string
 	ChallengeDigest               []byte
+	PresentationReference         pgtype.Text
 	State                         string
 	AuthorizationRevision         int64
 	Attempts                      int64
@@ -903,6 +1048,7 @@ func (q *Queries) SaveACMEAuthorizationWork(ctx context.Context, arg SaveACMEAut
 		arg.ChallengeUrl,
 		arg.ChallengeToken,
 		arg.ChallengeDigest,
+		arg.PresentationReference,
 		arg.State,
 		arg.AuthorizationRevision,
 		arg.Attempts,
@@ -1049,7 +1195,7 @@ SET contact_email = $1,
     accepted_terms_url = $3,
     updated_at = $4
 WHERE id = $5
-RETURNING id, directory_url, contact_email, account_key_der, account_url, accepted_terms_url, created_at, updated_at
+RETURNING id, directory_url, contact_email, account_key_ciphertext, account_key_storage_key_id, account_url, accepted_terms_url, created_at, updated_at
 `
 
 type UpdateACMEAccountRegistrationParams struct {
@@ -1073,7 +1219,8 @@ func (q *Queries) UpdateACMEAccountRegistration(ctx context.Context, arg UpdateA
 		&i.ID,
 		&i.DirectoryUrl,
 		&i.ContactEmail,
-		&i.AccountKeyDer,
+		&i.AccountKeyCiphertext,
+		&i.AccountKeyStorageKeyID,
 		&i.AccountUrl,
 		&i.AcceptedTermsUrl,
 		&i.CreatedAt,

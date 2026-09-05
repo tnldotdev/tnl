@@ -3,39 +3,36 @@ package ingressapi
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
-	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
 )
 
-func TestHandlerRequiresVerifiedIngressCertificate(t *testing.T) {
+const testIngressClusterSecret = "test-ingress-cluster-secret-0123456789"
+
+func TestHandlerRequiresClusterSecret(t *testing.T) {
 	h := testIngressHandler(t, &ingressStoreStub{}, time.Now(), nil)
 	tests := []struct {
-		name string
-		tls  *tls.ConnectionState
+		name          string
+		authorization string
 	}{
-		{name: "no TLS"},
-		{name: "unverified certificate", tls: &tls.ConnectionState{
-			PeerCertificates: []*x509.Certificate{{DNSNames: []string{"ingress-1"}}},
-		}},
-		{name: "wrong service role", tls: verifiedIngressCertificate("relay-1")},
+		{name: "missing"},
+		{name: "wrong", authorization: "Bearer wrong-ingress-cluster-secret-012345"},
+		{name: "malformed", authorization: "Basic " + testIngressClusterSecret},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, "/internal/v1/ingresses/register", nil)
-			request.TLS = test.tls
+			request.Header.Set("Authorization", test.authorization)
 			response := httptest.NewRecorder()
 			h.ServeHTTP(response, request)
 			if response.Code != http.StatusUnauthorized {
@@ -134,7 +131,7 @@ func TestIngressRoutingTableEventsUseExactLeaseAndLongPoll(t *testing.T) {
 		}, nil
 	}}
 	h, err := NewHandler(Config{
-		Store: store, IngressIdentity: ingressCertificateIdentity, LeaseDuration: 30 * time.Second,
+		Store: store, ClusterSecrets: testIngressSecrets(t), LeaseDuration: 30 * time.Second,
 		RoutingPollInterval: time.Millisecond,
 	})
 	if err != nil {
@@ -307,7 +304,7 @@ func TestIngressStoreErrorsHaveStableProblems(t *testing.T) {
 func testIngressHandler(t *testing.T, store Store, now time.Time, report func(error)) http.Handler {
 	t.Helper()
 	h, err := NewHandler(Config{
-		Store: store, IngressIdentity: ingressCertificateIdentity, LeaseDuration: 30 * time.Second,
+		Store: store, ClusterSecrets: testIngressSecrets(t), LeaseDuration: 30 * time.Second,
 		Now: func() time.Time { return now }, Report: report,
 	})
 	if err != nil {
@@ -316,11 +313,13 @@ func testIngressHandler(t *testing.T, store Store, now time.Time, report func(er
 	return h
 }
 
-func ingressCertificateIdentity(certificate *x509.Certificate) (string, error) {
-	if len(certificate.DNSNames) != 1 || !strings.HasPrefix(certificate.DNSNames[0], "ingress-") {
-		return "", errors.New("test certificate has no ingress identity")
+func testIngressSecrets(t *testing.T) serviceapi.BearerSecrets {
+	t.Helper()
+	secrets, err := serviceapi.NewBearerSecrets(testIngressClusterSecret, "")
+	if err != nil {
+		t.Fatal(err)
 	}
-	return certificate.DNSNames[0], nil
+	return secrets
 }
 
 func serveIngressJSON(
@@ -344,16 +343,8 @@ func serveIngressJSON(
 
 func authenticatedIngressRequest(method, target string, body io.Reader, ingressID string) *http.Request {
 	request := httptest.NewRequest(method, target, body)
-	request.TLS = verifiedIngressCertificate(ingressID)
+	request.Header.Set("Authorization", "Bearer "+testIngressClusterSecret)
 	return request
-}
-
-func verifiedIngressCertificate(identity string) *tls.ConnectionState {
-	certificate := &x509.Certificate{DNSNames: []string{identity}}
-	return &tls.ConnectionState{
-		PeerCertificates: []*x509.Certificate{certificate},
-		VerifiedChains:   [][]*x509.Certificate{{certificate}},
-	}
 }
 
 func decodeIngressResponse(t *testing.T, response *httptest.ResponseRecorder, destination any) {

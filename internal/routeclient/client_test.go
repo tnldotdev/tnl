@@ -3,7 +3,6 @@ package routeclient
 import (
 	"testing"
 
-	"github.com/tnldotdev/tnl/internal/authorityclient"
 	"github.com/tnldotdev/tnl/internal/controlclient"
 )
 
@@ -12,17 +11,10 @@ func TestNewRequiresDependencies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := New(nil, nil, false); err == nil {
+	if _, err := New(nil); err == nil {
 		t.Fatal("New accepted a nil control client")
 	}
-	if _, err := New(control, nil, false); err == nil {
-		t.Fatal("New accepted a nil authority")
-	}
-	authority, err := authorityclient.New("https://authority.example", nil, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := New(control, authority, true); err != nil {
+	if _, err := New(control); err != nil {
 		t.Fatal(err)
 	}
 }

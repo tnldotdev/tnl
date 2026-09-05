@@ -14,6 +14,21 @@ import (
 
 func writeControlStateProblem(response http.ResponseWriter, operation string, err error) {
 	switch {
+	case errors.Is(err, controlstate.ErrAuthorityInvalid):
+		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
+	case errors.Is(err, controlstate.ErrMembershipNotFound), errors.Is(err, controlstate.ErrInvitationNotFound),
+		errors.Is(err, controlstate.ErrDomainNotFound):
+		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "resource not found")
+	case errors.Is(err, controlstate.ErrAuthorityAccess):
+		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "operation is not authorized")
+	case errors.Is(err, controlstate.ErrAuthorityConflict), errors.Is(err, controlstate.ErrAuthorityIdempotency):
+		writeProblem(response, http.StatusConflict, controlv1.Conflict, "authority state conflict")
+	case errors.Is(err, controlstate.ErrDNSAuthorityInvalid):
+		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid DNS authority request")
+	case errors.Is(err, controlstate.ErrDNSAuthorityNotFound):
+		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "DNS authority not found")
+	case errors.Is(err, controlstate.ErrDNSAuthorityIdempotency), errors.Is(err, controlstate.ErrDNSAuthorityFenced):
+		writeProblem(response, http.StatusConflict, controlv1.Conflict, "DNS authority state conflict")
 	case errors.Is(err, controlstate.ErrRouteInvalid):
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
 	case errors.Is(err, controlstate.ErrRouteNotFound), errors.Is(err, controlstate.ErrTeamNotFound):

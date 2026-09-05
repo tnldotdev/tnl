@@ -94,7 +94,7 @@ func (d *Database) EnsureACMEAccount(
 	queries := controlstatedb.New(d.pool)
 	existing, err := queries.GetACMEAccountByDirectory(ctx, directoryURL)
 	if err == nil && existing.ContactEmail == contactEmail {
-		return acmeAccount(existing), nil
+		return d.acmeAccount(ctx, queries, existing)
 	}
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return ACMEAccount{}, fmt.Errorf("controlstate: read ACME account: %w", err)
@@ -113,16 +113,22 @@ func (d *Database) EnsureACMEAccount(
 	}
 	if existing.ID != "" {
 		accountID = existing.ID
-		keyDER = existing.AccountKeyDer
+	}
+	keyCiphertext, err := d.sealSecret(acmeAccountKeyContext(accountID), keyDER)
+	if err != nil {
+		return ACMEAccount{}, fmt.Errorf("controlstate: encrypt ACME account key: %w", err)
+	}
+	if existing.ID != "" {
+		keyCiphertext = existing.AccountKeyCiphertext
 	}
 	row, err := queries.EnsureACMEAccount(ctx, controlstatedb.EnsureACMEAccountParams{
 		ID: accountID, DirectoryUrl: directoryURL, ContactEmail: contactEmail,
-		AccountKeyDer: keyDER, CreatedAt: timestamptz(now),
+		AccountKeyCiphertext: keyCiphertext, AccountKeyStorageKeyID: d.storageKey.CurrentID(), CreatedAt: timestamptz(now),
 	})
 	if err != nil {
 		return ACMEAccount{}, fmt.Errorf("controlstate: ensure ACME account: %w", err)
 	}
-	return acmeAccount(row), nil
+	return d.acmeAccount(ctx, queries, row)
 }
 
 func (d *Database) CreateCertificateIssuance(
@@ -522,7 +528,8 @@ func loadCertificateIssuance(
 		result.NotAfter = &notAfter
 	}
 	for _, row := range rows {
-		if len(row.ChallengeDigest) != sha256.Size || !row.ExpiresAt.Valid || row.State == "complete" || row.State == "canceled" {
+		if row.ChallengeType != "tls-alpn-01" || len(row.ChallengeDigest) != sha256.Size || !row.ExpiresAt.Valid ||
+			row.State == "complete" || row.State == "canceled" {
 			continue
 		}
 		challenge := CertificateChallenge{
@@ -535,10 +542,30 @@ func loadCertificateIssuance(
 	return result, nil
 }
 
-func acmeAccount(row controlstatedb.ControlAcmeAccount) ACMEAccount {
+func (d *Database) acmeAccount(
+	ctx context.Context,
+	queries *controlstatedb.Queries,
+	row controlstatedb.ControlAcmeAccount,
+) (ACMEAccount, error) {
+	key, previous, err := d.openSecret(row.AccountKeyStorageKeyID, acmeAccountKeyContext(row.ID), row.AccountKeyCiphertext)
+	if err != nil {
+		return ACMEAccount{}, errors.New("controlstate: ACME account key ciphertext is invalid")
+	}
+	if previous {
+		rotated, err := d.sealSecret(acmeAccountKeyContext(row.ID), key)
+		if err != nil {
+			return ACMEAccount{}, fmt.Errorf("controlstate: re-encrypt ACME account key: %w", err)
+		}
+		if err := queries.RotateACMEAccountKey(ctx, controlstatedb.RotateACMEAccountKeyParams{
+			AccountKeyCiphertext: rotated, AccountKeyStorageKeyID: d.storageKey.CurrentID(), UpdatedAt: timestamptz(time.Now()),
+			AccountID: row.ID, PreviousKeyID: row.AccountKeyStorageKeyID, PreviousCiphertext: row.AccountKeyCiphertext,
+		}); err != nil {
+			return ACMEAccount{}, fmt.Errorf("controlstate: store re-encrypted ACME account key: %w", err)
+		}
+	}
 	return ACMEAccount{
 		ID: row.ID, DirectoryURL: row.DirectoryUrl, ContactEmail: row.ContactEmail,
-		AccountKeyDER: slices.Clone(row.AccountKeyDer), AccountURL: row.AccountUrl.String,
+		AccountKeyDER: key, AccountURL: row.AccountUrl.String,
 		AcceptedTerms: row.AcceptedTermsUrl.String,
-	}
+	}, nil
 }

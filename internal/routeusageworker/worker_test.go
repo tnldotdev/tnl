@@ -46,6 +46,7 @@ func TestWorkerDeliversAcceptedItemsAndRetriesRejections(t *testing.T) {
 	}
 	batch := <-received
 	if len(batch.Items) != 2 || batch.Items[0].Resolution != routeusagev1.Minute ||
+		batch.Items[0].TeamId != work[0].TeamID || batch.Items[0].ActingIdentityId != work[0].ActingIdentityID ||
 		batch.Items[0].VisitorNetworkEstimate != "0" || len(batch.Items[0].VisitorNetworkHll) == 0 {
 		t.Fatalf("usage batch = %#v", batch)
 	}
@@ -120,6 +121,7 @@ func testWorker(t *testing.T, store *routeUsageStoreStub, endpoint string, now t
 func testDeliveryWork(id uint64, key string, now time.Time) controlstate.RouteUsageDeliveryWork {
 	return controlstate.RouteUsageDeliveryWork{
 		DeliveryID: id, DeliveryKey: key, SourceRevision: 1, RouteID: "route_test", RouteVersion: 1,
+		TeamID: "team_test", ActingIdentityID: "identity_test",
 		BucketStart: now.Add(-time.Minute), BucketEnd: now, ObservedThrough: now,
 		WorkerID: "route_usage_worker_test", WorkEpoch: 1, WorkExpiresAt: now.Add(time.Minute), Attempts: 1,
 	}

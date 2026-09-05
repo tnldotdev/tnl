@@ -8,11 +8,13 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"math/big"
 	"net/netip"
 	"net/url"
 	"os"
@@ -26,9 +28,10 @@ import (
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/routeusage"
-	"github.com/tnldotdev/tnl/internal/servicepki"
 	"golang.org/x/crypto/acme/autocert"
 )
+
+const testStorageKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 
 func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 	directURL := os.Getenv("TNL_TEST_POSTGRES_URL")
@@ -87,7 +90,7 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 		t.Fatalf("repeat migration: %v", err)
 	}
 
-	database, err := Open(t.Context(), testURL)
+	database, err := Open(t.Context(), testURL, testStorageKey, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,19 +109,18 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 
 	for _, table := range []string{
 		"identities",
+		"managed_label_reservations",
 		"teams",
 		"domains",
 		"routes",
 		"route_sessions",
 		"route_session_connections",
 		"relay_services",
-		"service_authorities",
-		"service_enrollment_tokens",
-		"service_enrollment_events",
 		"relay_leases",
 		"ingress_leases",
 		"ingress_routing_table_events",
 		"control_tls_cache",
+		"relay_certificate_orders",
 		"acme_orders",
 		"route_usage_buckets",
 		"route_recovery_episodes",
@@ -141,11 +143,18 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 		}
 	}
 	testBuiltinAuthentication(t, database)
+	testAuthorityMutations(t, database)
+	testDNSAuthorities(t, database)
 	testControlTLSState(t, database)
+	testStorageKeyRotation(t, database, testURL)
+	testRelayCertificateOrderWork(t, database)
+	testExternalAuthoritySecret(t, database)
 	testRouteManagement(t, database)
+	testDNSRouteWork(t, database)
 	testRouteSessionCreation(t, database)
 	testIngressUsage(t, database)
 	testRelayControlState(t, database)
+	testHostedPolicyRevocation(t, database)
 
 	var version int64
 	if err := database.pool.QueryRow(t.Context(), `
@@ -172,9 +181,342 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 	}
 	database.Close()
 
-	if incompatible, err := Open(t.Context(), testURL); err == nil {
+	if incompatible, err := Open(t.Context(), testURL, testStorageKey, ""); err == nil {
 		incompatible.Close()
 		t.Fatal("Open succeeded with an incompatible schema version")
+	}
+}
+
+func testDNSAuthorities(t *testing.T, database *Database) {
+	t.Helper()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	request := CreateDNSAuthorityRequest{
+		TeamID: "team_hosted_dns", DomainID: "domain_hosted_dns", CanonicalDomain: "hosted-dns.example.test",
+		IdempotencyKey: "hosted-dns-create", RequestDigest: sha256.Sum256([]byte("hosted-dns-create")),
+	}
+	authority, err := database.CreateDNSAuthority(t.Context(), request, now)
+	if err != nil || authority.State != "pending" || authority.Reference == "" || len(authority.RequiredRecords) != 0 {
+		t.Fatalf("created DNS authority = %#v, %v", authority, err)
+	}
+	repeated, err := database.CreateDNSAuthority(t.Context(), request, now.Add(time.Second))
+	if err != nil || !reflect.DeepEqual(repeated, authority) {
+		t.Fatalf("repeated DNS authority = %#v, %v", repeated, err)
+	}
+	changed := request
+	changed.RequestDigest = sha256.Sum256([]byte("hosted-dns-create-changed"))
+	if _, err := database.CreateDNSAuthority(t.Context(), changed, now.Add(time.Second)); !errors.Is(err, ErrDNSAuthorityIdempotency) {
+		t.Fatalf("DNS authority idempotency error = %v", err)
+	}
+	work, found, err := database.ClaimDNSAuthorityWork(t.Context(), "dns_worker_test", now.Add(2*time.Second), time.Minute)
+	if err != nil || !found || work.Reference != authority.Reference || work.WorkEpoch != 1 || work.Attempts != 1 {
+		t.Fatalf("claimed DNS authority work = %#v, %v, found %v", work, err, found)
+	}
+	work.ProviderZoneID = "ZHOSTEDDNS"
+	work.Nameservers = []string{"ns-1.example.test", "ns-2.example.test"}
+	work.State = "ready"
+	work.AvailableAt = now.Add(3 * time.Second)
+	staleWork := work
+	saved, err := database.SaveDNSAuthorityWork(t.Context(), work, now.Add(3*time.Second))
+	if err != nil || saved.State != "ready" || saved.WorkRevision != 2 || len(saved.RequiredRecords) != 2 {
+		t.Fatalf("saved DNS authority work = %#v, %v", saved, err)
+	}
+	if _, err := database.SaveDNSAuthorityWork(t.Context(), staleWork, now.Add(4*time.Second)); !errors.Is(err, ErrDNSAuthorityFenced) {
+		t.Fatalf("stale DNS authority save error = %v", err)
+	}
+	released, err := database.ReleaseDNSAuthority(t.Context(), authority.Reference, "hosted-dns-release", now.Add(5*time.Second))
+	if err != nil || released.State != "releasing" {
+		t.Fatalf("released DNS authority = %#v, %v", released, err)
+	}
+	repeatedRelease, err := database.ReleaseDNSAuthority(t.Context(), authority.Reference, "hosted-dns-release", now.Add(6*time.Second))
+	if err != nil || !reflect.DeepEqual(repeatedRelease, released) {
+		t.Fatalf("repeated DNS authority release = %#v, %v", repeatedRelease, err)
+	}
+	ready, err := database.DNSAuthorityReleaseReady(t.Context(), authority.DomainID, now.Add(7*time.Second))
+	if err != nil || !ready {
+		t.Fatalf("DNS authority release ready = %v, %v", ready, err)
+	}
+}
+
+func testAuthorityMutations(t *testing.T, database *Database) {
+	t.Helper()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	session, err := database.CreateBuiltinControlSession(
+		t.Context(), "tunnels.example.test", 7, time.Hour, 24*time.Hour, now,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerIdentityID := session.Identity.Identity.ID
+	teamRequest := CreateTeamRequest{
+		IdentityID: ownerIdentityID, IdempotencyKey: "authority-create-team",
+		RequestDigest: sha256.Sum256([]byte("authority-create-team")),
+		DisplayName:   "Authority team", MemberSlug: "owner",
+	}
+	team, err := database.CreateTeam(t.Context(), teamRequest, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if team.Kind != "organization" || team.PolicyRevision != 1 || team.DefaultDomainID == "" {
+		t.Fatalf("created authority team = %#v", team)
+	}
+	repeatedTeam, err := database.CreateTeam(t.Context(), teamRequest, now.Add(time.Second))
+	if err != nil || !reflect.DeepEqual(repeatedTeam, team) {
+		t.Fatalf("idempotent authority team = %#v, %v", repeatedTeam, err)
+	}
+	changedTeam := teamRequest
+	changedTeam.RequestDigest = sha256.Sum256([]byte("changed-authority-create-team"))
+	if _, err := database.CreateTeam(t.Context(), changedTeam, now.Add(time.Second)); !errors.Is(err, ErrAuthorityIdempotency) {
+		t.Fatalf("team idempotency error = %v", err)
+	}
+	memberships, err := database.ListTeamMemberships(t.Context(), ownerIdentityID, team.ID)
+	if err != nil || len(memberships) != 1 || memberships[0].Role != "owner" || memberships[0].MemberSlug != "owner" {
+		t.Fatalf("initial authority memberships = %#v, %v", memberships, err)
+	}
+	ownerMembership := memberships[0]
+	if _, err := database.CreateTeamInvitation(t.Context(), CreateInvitationRequest{
+		IdentityID: ownerIdentityID, TeamID: session.Identity.PersonalTeamID, IdempotencyKey: "personal-invite",
+		RequestDigest: sha256.Sum256([]byte("personal-invite")), MemberSlug: "not-allowed",
+		InitialRole: "member", ExpiresAt: now.Add(time.Hour), RetrySecret: bytes.Repeat([]byte{9}, 32),
+	}, now); !errors.Is(err, ErrAuthorityAccess) {
+		t.Fatalf("personal-team invitation error = %v", err)
+	}
+
+	insertAuthorityIdentity(t, database, "identity_authority_member", "member@example.test", true, now)
+	insertAuthorityIdentity(t, database, "identity_authority_wrong_email", "other@example.test", true, now)
+	invitationRequest := CreateInvitationRequest{
+		IdentityID: ownerIdentityID, TeamID: team.ID, IdempotencyKey: "authority-invite-member",
+		RequestDigest: sha256.Sum256([]byte("authority-invite-member")), MemberSlug: "member",
+		InitialRole: "member", ExpiresAt: now.Add(time.Hour), EmailRestriction: "MEMBER@example.test",
+		RetrySecret: bytes.Repeat([]byte{1}, 32),
+	}
+	firstInvitation, err := database.CreateTeamInvitation(t.Context(), invitationRequest, now.Add(2*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	retriedInvitation, err := database.CreateTeamInvitation(t.Context(), invitationRequest, now.Add(3*time.Second))
+	if err != nil || retriedInvitation.Invitation.ID != firstInvitation.Invitation.ID ||
+		retriedInvitation.Secret != firstInvitation.Secret || retriedInvitation.Invitation.NormalizedEmailRestriction != "member@example.test" {
+		t.Fatalf("retried invitation = %#v, %v", retriedInvitation, err)
+	}
+	if _, err := database.AcceptInvitation(
+		t.Context(), "identity_authority_wrong_email", credentials.InvitationToken(retriedInvitation.Secret), now.Add(4*time.Second),
+	); !errors.Is(err, ErrAuthorityAccess) {
+		t.Fatalf("restricted invitation error = %v", err)
+	}
+	member, err := database.AcceptInvitation(
+		t.Context(), "identity_authority_member", credentials.InvitationToken(retriedInvitation.Secret), now.Add(5*time.Second),
+	)
+	if err != nil || member.Role != "member" || member.MemberSlug != "member" || member.PolicyRevision != 2 {
+		t.Fatalf("accepted membership = %#v, %v", member, err)
+	}
+	member, err = database.SetMembershipRole(
+		t.Context(), ownerIdentityID, team.ID, member.ID, "admin", now.Add(6*time.Second),
+	)
+	if err != nil || member.Role != "admin" || member.PolicyRevision != 3 {
+		t.Fatalf("promoted membership = %#v, %v", member, err)
+	}
+	if _, err := database.SetMembershipRole(
+		t.Context(), member.IdentityID, team.ID, ownerMembership.ID, "member", now.Add(7*time.Second),
+	); !errors.Is(err, ErrAuthorityAccess) {
+		t.Fatalf("admin owner-demotion error = %v", err)
+	}
+	if _, err := database.CreateTeamInvitation(t.Context(), CreateInvitationRequest{
+		IdentityID: member.IdentityID, TeamID: team.ID, IdempotencyKey: "authority-admin-invite-admin",
+		RequestDigest: sha256.Sum256([]byte("authority-admin-invite-admin")), MemberSlug: "another-admin",
+		InitialRole: "admin", ExpiresAt: now.Add(time.Hour), RetrySecret: bytes.Repeat([]byte{8}, 32),
+	}, now.Add(7*time.Second)); !errors.Is(err, ErrAuthorityAccess) {
+		t.Fatalf("admin role-grant invitation error = %v", err)
+	}
+	if _, err := database.SetMembershipRole(
+		t.Context(), ownerIdentityID, team.ID, ownerMembership.ID, "member", now.Add(7*time.Second),
+	); !errors.Is(err, ErrAuthorityConflict) {
+		t.Fatalf("last-owner demotion error = %v", err)
+	}
+
+	insertAuthorityIdentity(t, database, "identity_authority_second", "", false, now)
+	secondInvitation, err := database.CreateTeamInvitation(t.Context(), CreateInvitationRequest{
+		IdentityID: member.IdentityID, TeamID: team.ID, IdempotencyKey: "authority-invite-second",
+		RequestDigest: sha256.Sum256([]byte("authority-invite-second")), MemberSlug: "second",
+		InitialRole: "member", ExpiresAt: now.Add(time.Hour), RetrySecret: bytes.Repeat([]byte{2}, 32),
+	}, now.Add(8*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondMember, err := database.AcceptInvitation(
+		t.Context(), "identity_authority_second", credentials.InvitationToken(secondInvitation.Secret), now.Add(9*time.Second),
+	)
+	if err != nil || secondMember.PolicyRevision != 4 {
+		t.Fatalf("second membership = %#v, %v", secondMember, err)
+	}
+	if _, err := database.pool.Exec(t.Context(), `
+		INSERT INTO control.routes (
+			id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key,
+			request_digest, canonical_hostname, target, route_scope, policy_revision, ip_policy,
+			lifecycle_state, dns_state, created_at, updated_at
+		) VALUES (
+			'route_authority_member', $1, $2, $3, $4, 'authority-member-route',
+			decode(repeat('31', 32), 'hex'), 'second.authority-member.example.test',
+			'http://127.0.0.1:3000', 'member', 4, 'allow_all', 'enabled', 'unmanaged', $5, $5
+		)
+	`, team.ID, team.DefaultDomainID, secondMember.ID, secondMember.IdentityID, now.Add(9*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.pool.Exec(t.Context(), `
+		INSERT INTO control.route_sessions (
+			id, route_id, team_id, membership_id, acting_identity_id, route_version,
+			idempotency_key, request_digest, session_token_id, session_token_digest,
+			policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers,
+			certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at
+		) VALUES (
+			'session_authority_member', 'route_authority_member', $1, $2, $3, 1,
+			'authority-member-session', decode(repeat('32', 32), 'hex'), 'authority-member-token',
+			decode(repeat('33', 32), 'hex'), 4, 'authority-member-certificate', 'route',
+			ARRAY['second.authority-member.example.test'], 'tls-alpn-01', 'starting', $4, $4, $5
+		)
+	`, team.ID, secondMember.ID, secondMember.IdentityID, now.Add(9*time.Second), now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.RemoveMembership(
+		t.Context(), member.IdentityID, team.ID, secondMember.ID, now.Add(10*time.Second),
+	); err != nil {
+		t.Fatalf("admin removed ordinary member: %v", err)
+	}
+	if _, err := database.getMembership(t.Context(), team.ID, secondMember.ID); !errors.Is(err, ErrMembershipNotFound) {
+		t.Fatalf("removed membership error = %v", err)
+	}
+	var routeState, sessionState, closeReason, slugState string
+	if err := database.pool.QueryRow(t.Context(), `
+		SELECT routes.lifecycle_state, sessions.state, sessions.close_reason, slugs.state
+		FROM control.routes AS routes
+		JOIN control.route_sessions AS sessions ON sessions.route_id = routes.id
+		JOIN control.team_memberships AS memberships ON memberships.id = routes.membership_id
+		JOIN control.member_slug_reservations AS slugs ON slugs.id = memberships.slug_reservation_id
+		WHERE routes.id = 'route_authority_member'
+	`).Scan(&routeState, &sessionState, &closeReason, &slugState); err != nil {
+		t.Fatal(err)
+	}
+	if routeState != "suspended" || sessionState != "closed" || closeReason != "membership_removed" || slugState != "quarantined" {
+		t.Fatalf("removed membership runtime state = route %q, session %q/%q, slug %q", routeState, sessionState, closeReason, slugState)
+	}
+	if _, err := database.CreateTeamInvitation(t.Context(), CreateInvitationRequest{
+		IdentityID: ownerIdentityID, TeamID: team.ID, IdempotencyKey: "authority-reuse-accepted-slug",
+		RequestDigest: sha256.Sum256([]byte("authority-reuse-accepted-slug")), MemberSlug: "second",
+		InitialRole: "member", ExpiresAt: now.Add(time.Hour), RetrySecret: bytes.Repeat([]byte{3}, 32),
+	}, now.Add(11*time.Second)); !errors.Is(err, ErrAuthorityConflict) {
+		t.Fatalf("accepted slug reuse error = %v", err)
+	}
+
+	revoked, err := database.CreateTeamInvitation(t.Context(), CreateInvitationRequest{
+		IdentityID: ownerIdentityID, TeamID: team.ID, IdempotencyKey: "authority-revoked-invite",
+		RequestDigest: sha256.Sum256([]byte("authority-revoked-invite")), MemberSlug: "reusable",
+		InitialRole: "member", ExpiresAt: now.Add(time.Hour), RetrySecret: bytes.Repeat([]byte{4}, 32),
+	}, now.Add(12*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.RevokeTeamInvitation(
+		t.Context(), ownerIdentityID, team.ID, revoked.Invitation.ID, now.Add(13*time.Second),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.CreateTeamInvitation(t.Context(), CreateInvitationRequest{
+		IdentityID: ownerIdentityID, TeamID: team.ID, IdempotencyKey: "authority-reused-invite",
+		RequestDigest: sha256.Sum256([]byte("authority-reused-invite")), MemberSlug: "reusable",
+		InitialRole: "member", ExpiresAt: now.Add(time.Hour), RetrySecret: bytes.Repeat([]byte{5}, 32),
+	}, now.Add(14*time.Second)); err != nil {
+		t.Fatalf("released pending slug was not reusable: %v", err)
+	}
+
+	domainRequest := ClaimDomainRequest{
+		IdentityID: ownerIdentityID, TeamID: team.ID, IdempotencyKey: "authority-domain",
+		RequestDigest: sha256.Sum256([]byte("authority-domain")), Domain: "authority.example.test", MakeDefault: true,
+	}
+	domain, err := database.ClaimTeamDomain(t.Context(), domainRequest, now.Add(15*time.Second))
+	if err != nil || domain.State != "pending" || domain.DNSAuthorityReference == "" || domain.AuthorityRevision != 6 {
+		t.Fatalf("claimed domain = %#v, %v", domain, err)
+	}
+	repeatedDomain, err := database.ClaimTeamDomain(t.Context(), domainRequest, now.Add(16*time.Second))
+	if err != nil || !reflect.DeepEqual(repeatedDomain, domain) {
+		t.Fatalf("idempotent domain = %#v, %v", repeatedDomain, err)
+	}
+	overlap := domainRequest
+	overlap.IdempotencyKey = "authority-domain-overlap"
+	overlap.RequestDigest = sha256.Sum256([]byte("authority-domain-overlap"))
+	overlap.Domain = "child.authority.example.test"
+	if _, err := database.ClaimTeamDomain(t.Context(), overlap, now.Add(17*time.Second)); !errors.Is(err, ErrAuthorityConflict) {
+		t.Fatalf("overlapping domain error = %v", err)
+	}
+	if _, err := database.SetTeamDefaultDomain(
+		t.Context(), ownerIdentityID, team.ID, domain.ID, now.Add(18*time.Second),
+	); !errors.Is(err, ErrAuthorityConflict) {
+		t.Fatalf("pending default domain error = %v", err)
+	}
+	dnsWork, found, err := database.ClaimDNSAuthorityWork(
+		t.Context(), "dns_worker_authority", now.Add(19*time.Second), time.Minute,
+	)
+	if err != nil || !found || dnsWork.Reference != domain.DNSAuthorityReference {
+		t.Fatalf("claimed local DNS authority work = %#v, %v, found %v", dnsWork, err, found)
+	}
+	dnsWork.ProviderZoneID = "ZAUTHORITY"
+	dnsWork.Nameservers = []string{"ns-1.example.test", "ns-2.example.test"}
+	dnsWork.State = "ready"
+	dnsWork.AvailableAt = now.Add(19 * time.Second)
+	if _, err := database.SaveDNSAuthorityWork(t.Context(), dnsWork, now.Add(19*time.Second)); err != nil {
+		t.Fatalf("save local DNS authority work: %v", err)
+	}
+	team, err = database.SetTeamDefaultDomain(t.Context(), ownerIdentityID, team.ID, domain.ID, now.Add(20*time.Second))
+	if err != nil || team.DefaultDomainID != domain.ID || team.PolicyRevision != 7 {
+		t.Fatalf("claimed default domain team = %#v, %v", team, err)
+	}
+	if err := database.ReleaseTeamDomain(
+		t.Context(), ownerIdentityID, team.ID, domain.ID, now.Add(21*time.Second),
+	); !errors.Is(err, ErrAuthorityConflict) {
+		t.Fatalf("default domain release error = %v", err)
+	}
+	managedDomains, err := database.ListTeamDomains(t.Context(), ownerIdentityID, team.ID)
+	if err != nil || len(managedDomains) != 2 || managedDomains[0].Kind != "managed" {
+		t.Fatalf("organization domains before restoring default = %#v, %v", managedDomains, err)
+	}
+	team, err = database.SetTeamDefaultDomain(
+		t.Context(), ownerIdentityID, team.ID, managedDomains[0].ID, now.Add(22*time.Second),
+	)
+	if err != nil || team.PolicyRevision != 8 {
+		t.Fatalf("restored managed default domain team = %#v, %v", team, err)
+	}
+	if err := database.ReleaseTeamDomain(
+		t.Context(), ownerIdentityID, team.ID, domain.ID, now.Add(23*time.Second),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.ReleaseTeamDomain(
+		t.Context(), ownerIdentityID, team.ID, domain.ID, now.Add(24*time.Second),
+	); err != nil {
+		t.Fatalf("idempotent domain release: %v", err)
+	}
+	domains, err := database.ListTeamDomains(t.Context(), ownerIdentityID, team.ID)
+	if err != nil || len(domains) != 2 || domains[1].State != "releasing" || len(domains[1].RequiredRecords) != 2 {
+		t.Fatalf("authority domains after release = %#v, %v", domains, err)
+	}
+}
+
+func insertAuthorityIdentity(
+	t *testing.T,
+	database *Database,
+	identityID, normalizedEmail string,
+	emailVerified bool,
+	now time.Time,
+) {
+	t.Helper()
+	var email any
+	if normalizedEmail != "" {
+		email = normalizedEmail
+	}
+	if _, err := database.pool.Exec(t.Context(), `
+		INSERT INTO control.identities (
+			id, kind, display_name, normalized_email, email_verified, administrator, created_at, updated_at
+		) VALUES ($1, 'oidc', $1, $2, $3, false, $4, $4)
+	`, identityID, email, emailVerified, now); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -189,6 +531,17 @@ func testControlTLSState(t *testing.T, database *Database) {
 	}
 	if err := cache.Put(t.Context(), "control.example.test", []byte("certificate state")); err != nil {
 		t.Fatal(err)
+	}
+	var ciphertext []byte
+	if err := database.pool.QueryRow(t.Context(), `
+		SELECT cache_ciphertext
+		FROM control.control_tls_cache
+		WHERE directory_url = $1 AND cache_key = $2
+	`, "https://acme.example.test/directory", "control.example.test").Scan(&ciphertext); err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(ciphertext, []byte("certificate state")) || bytes.Contains(ciphertext, []byte("certificate state")) {
+		t.Fatal("control TLS cache persisted plaintext")
 	}
 	data, err := cache.Get(t.Context(), "control.example.test")
 	if err != nil || string(data) != "certificate state" {
@@ -244,6 +597,315 @@ func testControlTLSState(t *testing.T, database *Database) {
 	}
 }
 
+func testStorageKeyRotation(t *testing.T, database *Database, databaseURL string) {
+	t.Helper()
+	cache, err := database.ControlTLSCache("https://acme.example.test/rotation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.Put(t.Context(), "rotation.example.test", []byte("rotation state")); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	relayLease, err := database.RegisterRelay(t.Context(), RelayRegistration{
+		RelayServiceID: "relay-rotation", RelayID: "relay-rotation-1", RelayRunID: "relay-run-rotation",
+		ProtocolVersion: 1, RelayAddress: "relay-rotation.example.test:443", TLSServerName: "relay-rotation.example.test",
+		InternalRelayAddress: "relay-rotation.internal:9445", InternalNetworks: []netip.Prefix{},
+		ConnectionCapacity: 10, StreamCapacity: 100,
+	}, now, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certificatePEM, privateKeyPEM := testRelayCertificate(t, relayLease.TLSServerName, now)
+	if _, err := database.StoreRelayServiceCertificate(
+		t.Context(), relayLease.RelayServiceID, relayLease.TLSServerName, certificatePEM, privateKeyPEM, now,
+	); err != nil {
+		t.Fatal(err)
+	}
+	var relayPrivateKeyCiphertext []byte
+	if err := database.pool.QueryRow(t.Context(), `
+		SELECT transport_private_key_ciphertext
+		FROM control.relay_services
+		WHERE relay_service_id = $1
+	`, relayLease.RelayServiceID).Scan(&relayPrivateKeyCiphertext); err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(relayPrivateKeyCiphertext, privateKeyPEM) || bytes.Contains(relayPrivateKeyCiphertext, privateKeyPEM) {
+		t.Fatal("relay service private key persisted as plaintext")
+	}
+	var before []byte
+	var beforeKeyID string
+	if err := database.pool.QueryRow(t.Context(), `
+		SELECT cache_ciphertext, cache_storage_key_id
+		FROM control.control_tls_cache
+		WHERE directory_url = $1 AND cache_key = $2
+	`, "https://acme.example.test/rotation", "rotation.example.test").Scan(&before, &beforeKeyID); err != nil {
+		t.Fatal(err)
+	}
+	rotatedKey := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32))
+	rotatedDatabase, err := Open(t.Context(), databaseURL, rotatedKey, testStorageKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rotatedDatabase.Close()
+	rotated, err := rotatedDatabase.ReencryptStorageSecrets(t.Context(), 1)
+	if err != nil || rotated != 1 {
+		t.Fatalf("bounded storage-key rotation = %d, %v", rotated, err)
+	}
+	if err := rotatedDatabase.CompleteStorageKeyRotation(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	relayCertificate, err := rotatedDatabase.GetRelayServiceCertificate(t.Context(), relayLease.RelayLeaseIdentity, now)
+	if err != nil || relayCertificate.CertificatePEM != string(certificatePEM) || relayCertificate.PrivateKeyPEM != string(privateKeyPEM) {
+		t.Fatalf("rotated relay service certificate = %#v, %v", relayCertificate, err)
+	}
+	staleLease := relayLease.RelayLeaseIdentity
+	staleLease.RelayRunID = "relay-run-stale"
+	if _, err := rotatedDatabase.GetRelayServiceCertificate(t.Context(), staleLease, now); !errors.Is(err, ErrRelayServiceCertificateLeaseInvalid) {
+		t.Fatalf("stale relay certificate lease error = %v", err)
+	}
+	rotatedCache, err := rotatedDatabase.ControlTLSCache("https://acme.example.test/rotation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := rotatedCache.Get(t.Context(), "rotation.example.test")
+	if err != nil || string(data) != "rotation state" {
+		t.Fatalf("rotated control TLS cache data = %q, %v", data, err)
+	}
+	var after []byte
+	var afterKeyID string
+	if err := database.pool.QueryRow(t.Context(), `
+		SELECT cache_ciphertext, cache_storage_key_id
+		FROM control.control_tls_cache
+		WHERE directory_url = $1 AND cache_key = $2
+	`, "https://acme.example.test/rotation", "rotation.example.test").Scan(&after, &afterKeyID); err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(before, after) {
+		t.Fatal("previous-key ciphertext was not re-encrypted")
+	}
+	if afterKeyID == beforeKeyID {
+		t.Fatal("previous storage key ID was not replaced")
+	}
+	var remaining int
+	if err := database.pool.QueryRow(t.Context(), `
+		SELECT
+			(SELECT count(*) FROM control.control_sessions WHERE retry_secret_storage_key_id = $1) +
+			(SELECT count(*) FROM control.acme_accounts WHERE account_key_storage_key_id = $1) +
+			(SELECT count(*) FROM control.control_tls_cache WHERE cache_storage_key_id = $1) +
+			(SELECT count(*) FROM control.relay_services WHERE transport_private_key_storage_key_id = $1) +
+			(SELECT count(*) FROM control.relay_certificate_orders WHERE private_key_storage_key_id = $1) +
+			(SELECT count(*) FROM control.runtime_secrets WHERE external_retry_master_key_storage_key_id = $1)
+	`, beforeKeyID).Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 0 {
+		t.Fatalf("previous-key rows remaining = %d", remaining)
+	}
+	if _, err := database.pool.Exec(t.Context(), `
+		UPDATE control.relay_services SET enabled = false WHERE relay_service_id = $1
+	`, relayLease.RelayServiceID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func testRelayCertificateOrderWork(t *testing.T, database *Database) {
+	t.Helper()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	account, err := database.EnsureACMEAccount(
+		t.Context(), "https://relay-acme.example.test/directory", "relay-operator@example.test", now,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	account, err = database.UpdateACMEAccountRegistration(
+		t.Context(), account.ID, account.ContactEmail, "https://relay-acme.example.test/account/1", "", now,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, err := database.RegisterRelay(t.Context(), RelayRegistration{
+		RelayServiceID: "relay-certificate", RelayID: "relay-certificate-1", RelayRunID: "relay-run-certificate",
+		ProtocolVersion: 1, RelayAddress: "relay-certificate.example.test:443", TLSServerName: "relay-certificate.example.test",
+		InternalRelayAddress: "relay-certificate.internal:9445", ConnectionCapacity: 10, StreamCapacity: 100,
+	}, now, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := database.PrepareRelayCertificateOrder(t.Context(), account.ID, now, now.Add(30*24*time.Hour), time.Hour)
+	if err != nil || !created {
+		t.Fatalf("prepare relay certificate order = %v, %v", created, err)
+	}
+	if created, err := database.PrepareRelayCertificateOrder(t.Context(), account.ID, now, now.Add(30*24*time.Hour), time.Hour); err != nil || created {
+		t.Fatalf("duplicate relay certificate order = %v, %v", created, err)
+	}
+	work, found, err := database.ClaimRelayCertificateOrderWork(t.Context(), "relay-certificate-worker-1", now, 10*time.Millisecond)
+	if err != nil || !found || work.State != "pending" || work.Account.AccountURL != account.AccountURL ||
+		work.RelayServiceID != lease.RelayServiceID || work.TLSServerName != lease.TLSServerName {
+		t.Fatalf("claimed relay certificate order = %#v, %v, %v", work, found, err)
+	}
+	csr, err := x509.ParseCertificateRequest(work.CSRDER)
+	if err != nil || csr.CheckSignature() != nil || !reflect.DeepEqual(csr.DNSNames, []string{lease.TLSServerName}) {
+		t.Fatalf("relay certificate CSR = %#v, %v", csr, err)
+	}
+	var privateKeyCiphertext []byte
+	if err := database.pool.QueryRow(t.Context(), `
+		SELECT private_key_ciphertext FROM control.relay_certificate_orders WHERE id = $1
+	`, work.ID).Scan(&privateKeyCiphertext); err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(privateKeyCiphertext, work.PrivateKeyPEM) || bytes.Contains(privateKeyCiphertext, work.PrivateKeyPEM) {
+		t.Fatal("relay certificate order persisted its private key as plaintext")
+	}
+	if other, found, err := database.ClaimRelayCertificateOrderWork(t.Context(), "relay-certificate-worker-2", now, time.Minute); err != nil || found {
+		t.Fatalf("concurrent relay certificate claim = %#v, %v, %v", other, found, err)
+	}
+	recovered, found, err := database.ClaimRelayCertificateOrderWork(
+		t.Context(), "relay-certificate-worker-2", now.Add(10*time.Millisecond), time.Minute,
+	)
+	if err != nil || !found || recovered.ID != work.ID || recovered.WorkEpoch != work.WorkEpoch+1 {
+		t.Fatalf("recovered relay certificate order = %#v, %v, %v", recovered, found, err)
+	}
+	work.AvailableAt = now
+	if _, err := database.SaveRelayCertificateOrderWork(t.Context(), work, now.Add(time.Millisecond)); !errors.Is(err, ErrRelayCertificateWorkFenced) {
+		t.Fatalf("stale relay certificate work error = %v", err)
+	}
+	recovered.State = "presenting"
+	recovered.OrderURL = "https://relay-acme.example.test/order/1"
+	recovered.FinalizeURL = "https://relay-acme.example.test/finalize/1"
+	recovered.AuthorizationURL = "https://relay-acme.example.test/authorization/1"
+	recovered.ChallengeURL = "https://relay-acme.example.test/challenge/1"
+	recovered.ChallengeToken = "relay-challenge-token"
+	recovered.ChallengeDigest = sha256.Sum256([]byte("relay-challenge"))
+	recovered.PresentationReference = "relay_acme_presentation_integration"
+	recovered.AvailableAt = now
+	saved, err := database.SaveRelayCertificateOrderWork(t.Context(), recovered, now.Add(11*time.Millisecond))
+	if err != nil || saved.OrderRevision != recovered.OrderRevision+1 {
+		t.Fatalf("saved relay certificate order = %#v, %v", saved, err)
+	}
+	challenge, err := database.GetRelayDNSChallengeContext(t.Context(), saved.ID)
+	if err != nil || challenge.PresentationReference != recovered.PresentationReference || len(challenge.Presentations) != 1 ||
+		!challenge.Presentations[0].Active {
+		t.Fatalf("relay DNS challenge context = %#v, %v", challenge, err)
+	}
+	issued, found, err := database.ClaimRelayCertificateOrderWork(t.Context(), "relay-certificate-worker-3", now.Add(12*time.Millisecond), time.Minute)
+	if err != nil || !found || issued.ID != work.ID {
+		t.Fatalf("claimed relay certificate issuance = %#v, %v, %v", issued, found, err)
+	}
+	certificatePEM, notBefore, notAfter := issueRelayOrderCertificate(t, issued, now)
+	renewAt := notBefore.Add(notAfter.Sub(notBefore) * 2 / 3).UTC()
+	issued.State = "cleaning"
+	issued.CertificateURL = "https://relay-acme.example.test/certificate/1"
+	issued.CertificatePEM = certificatePEM
+	issued.NotBefore, issued.NotAfter, issued.RenewAt = &notBefore, &notAfter, &renewAt
+	issued.AvailableAt = now
+	issued, err = database.SaveRelayCertificateOrderWork(t.Context(), issued, now.Add(13*time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	challenge, err = database.GetRelayDNSChallengeContext(t.Context(), issued.ID)
+	if err != nil || challenge.Presentations[0].Active {
+		t.Fatalf("cleaning relay DNS challenge context = %#v, %v", challenge, err)
+	}
+	issued, found, err = database.ClaimRelayCertificateOrderWork(t.Context(), "relay-certificate-worker-4", now.Add(14*time.Millisecond), time.Minute)
+	if err != nil || !found {
+		t.Fatalf("claimed relay certificate cleanup = %#v, %v, %v", issued, found, err)
+	}
+	issued.State = "complete"
+	issued.AvailableAt = renewAt
+	completed, err := database.SaveRelayCertificateOrderWork(t.Context(), issued, now.Add(15*time.Millisecond))
+	if err != nil || completed.State != "complete" {
+		t.Fatalf("completed relay certificate order = %#v, %v", completed, err)
+	}
+	installed, err := database.GetRelayServiceCertificate(t.Context(), lease.RelayLeaseIdentity, now.Add(16*time.Millisecond))
+	if err != nil || installed.CertificatePEM != string(certificatePEM) || installed.PrivateKeyPEM != string(work.PrivateKeyPEM) {
+		t.Fatalf("installed relay service certificate = %#v, %v", installed, err)
+	}
+	if created, err := database.PrepareRelayCertificateOrder(t.Context(), account.ID, now, now.Add(30*24*time.Hour), time.Hour); err != nil || created {
+		t.Fatalf("early relay certificate renewal = %v, %v", created, err)
+	}
+	if created, err := database.PrepareRelayCertificateOrder(t.Context(), account.ID, now, notAfter.Add(time.Second), time.Hour); err != nil || !created {
+		t.Fatalf("due relay certificate renewal = %v, %v", created, err)
+	}
+	if _, err := database.pool.Exec(t.Context(), `
+		UPDATE control.relay_services SET enabled = false WHERE relay_service_id = $1
+	`, lease.RelayServiceID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func issueRelayOrderCertificate(t *testing.T, work RelayCertificateOrderWork, now time.Time) ([]byte, time.Time, time.Time) {
+	t.Helper()
+	block, remaining := pem.Decode(work.PrivateKeyPEM)
+	if block == nil || len(remaining) != 0 || block.Type != "PRIVATE KEY" {
+		t.Fatal("relay certificate order private key is invalid PEM")
+	}
+	value, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	privateKey, ok := value.(*ecdsa.PrivateKey)
+	if !ok {
+		t.Fatal("relay certificate order private key is not ECDSA")
+	}
+	now = now.Truncate(time.Second)
+	notBefore, notAfter := now.Add(-time.Minute), now.Add(90*24*time.Hour)
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(43), DNSNames: []string{work.TLSServerName}, NotBefore: notBefore, NotAfter: notAfter,
+		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	certificateDER, err := x509.CreateCertificate(rand.Reader, template, template, &privateKey.PublicKey, privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificateDER}), notBefore, notAfter
+}
+
+func testRelayCertificate(t *testing.T, hostname string, now time.Time) ([]byte, []byte) {
+	t.Helper()
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(42), DNSNames: []string{hostname},
+		NotBefore: now.Add(-time.Minute), NotAfter: now.Add(24 * time.Hour),
+		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	certificateDER, err := x509.CreateCertificate(rand.Reader, template, template, &privateKey.PublicKey, privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	privateKeyDER, err := x509.MarshalPKCS8PrivateKey(privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificateDER}),
+		pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privateKeyDER})
+}
+
+func testExternalAuthoritySecret(t *testing.T, database *Database) {
+	t.Helper()
+	const identityID = "identity_0123456789abcdef0123456789abcdef"
+	first, err := database.EnsureExternalAuthorityPrincipal(t.Context(), identityID, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := database.EnsureExternalAuthorityPrincipal(t.Context(), identityID, time.Now())
+	if err != nil || first != second || first == ([32]byte{}) {
+		t.Fatalf("external retry master key = %x, %v", second, err)
+	}
+	var ciphertext []byte
+	if err := database.pool.QueryRow(t.Context(), `
+		SELECT external_retry_master_key_ciphertext FROM control.runtime_secrets WHERE singleton = true
+	`).Scan(&ciphertext); err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(ciphertext, first[:]) || bytes.Contains(ciphertext, first[:]) {
+		t.Fatal("external retry master key persisted as plaintext")
+	}
+}
+
 func testBuiltinAuthentication(t *testing.T, database *Database) {
 	t.Helper()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -292,8 +954,16 @@ func testBuiltinAuthentication(t *testing.T, database *Database) {
 	if err != nil || principal.IdentityID != issued.Identity.Identity.ID || !principal.Administrator {
 		t.Fatalf("authenticated principal = %#v, %v", principal, err)
 	}
-	testServiceEnrollmentState(t, database, principal.IdentityID, now.Add(time.Second))
 	retrySecret := principal.RetrySecret
+	var retrySecretCiphertext []byte
+	if err := database.pool.QueryRow(t.Context(), `
+		SELECT retry_secret_ciphertext FROM control.control_sessions WHERE id = $1
+	`, principal.SessionID).Scan(&retrySecretCiphertext); err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(retrySecretCiphertext, retrySecret[:]) || bytes.Contains(retrySecretCiphertext, retrySecret[:]) {
+		t.Fatal("control-session retry secret persisted as plaintext")
+	}
 	if _, err := database.AuthenticateAccessToken(t.Context(), issued.AccessToken, 8, now); !errors.Is(err, ErrControlAuthentication) {
 		t.Fatalf("stale login source authentication error = %v", err)
 	}
@@ -340,175 +1010,6 @@ func testBuiltinAuthentication(t *testing.T, database *Database) {
 	if identities != 1 || teams != 1 || memberships != 1 || domains != 1 {
 		t.Fatalf("bootstrap row counts = identities %d, teams %d, memberships %d, domains %d", identities, teams, memberships, domains)
 	}
-}
-
-func testServiceEnrollmentState(t *testing.T, database *Database, administratorID string, now time.Time) {
-	t.Helper()
-
-	const initializationCount = 4
-	authorities := make(chan ServiceAuthority, initializationCount)
-	errorsByInitialization := make(chan error, initializationCount)
-	var initializations sync.WaitGroup
-	for range initializationCount {
-		initializations.Add(1)
-		go func() {
-			defer initializations.Done()
-			authority, err := database.EnsureServiceAuthority(t.Context(), now)
-			authorities <- authority
-			errorsByInitialization <- err
-		}()
-	}
-	initializations.Wait()
-	close(authorities)
-	close(errorsByInitialization)
-	for err := range errorsByInitialization {
-		if err != nil {
-			t.Fatalf("initialize service authority: %v", err)
-		}
-	}
-	var authorityPEM string
-	for authority := range authorities {
-		if authorityPEM == "" {
-			authorityPEM = authority.CertificatePEM
-		} else if authority.CertificatePEM != authorityPEM {
-			t.Fatal("concurrent service authority initialization returned different roots")
-		}
-	}
-
-	ingressToken, err := database.CreateServiceEnrollmentToken(t.Context(), CreateServiceEnrollmentTokenRequest{
-		Role: ServiceEnrollmentRoleIngress, ActorIdentityID: administratorID,
-		AuditRequestID: "request_enrollment_ingress", CreatedAt: now,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	relayToken, err := database.CreateServiceEnrollmentToken(t.Context(), CreateServiceEnrollmentTokenRequest{
-		Role: ServiceEnrollmentRoleRelay, RelayServiceID: "relay-a",
-		RelayAddress: "relay-a.example.test:443", TLSServerName: "relay-a.example.test",
-		ActorIdentityID: administratorID, AuditRequestID: "request_enrollment_relay", CreatedAt: now,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	csr := serviceEnrollmentCSR(t)
-	if _, err := database.EnrollService(t.Context(), ServiceEnrollmentRequest{
-		Token: ingressToken.Token, Role: ServiceEnrollmentRoleRelay, ProcessID: "relay-wrong-role",
-		CSRPEM: csr, EnrolledAt: now.Add(time.Minute),
-	}); !errors.Is(err, ErrServiceEnrollmentCredential) {
-		t.Fatalf("cross-role enrollment error = %v", err)
-	}
-	ingressEnrollment, err := database.EnrollService(t.Context(), ServiceEnrollmentRequest{
-		Token: ingressToken.Token, Role: ServiceEnrollmentRoleIngress, ProcessID: "ingress-a",
-		CSRPEM: csr, EnrolledAt: now.Add(time.Minute),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ingressEnrollment.TrustBundlePEM != authorityPEM || ingressEnrollment.RelayTransportMaterial != nil ||
-		!ingressEnrollment.CertificateExpiresAt.Equal(now.Add(time.Minute+time.Hour)) {
-		t.Fatalf("ingress enrollment = %#v", ingressEnrollment)
-	}
-	ingressCertificate := parsePEMCertificate(t, ingressEnrollment.ServiceCertificatePEM)
-	ingressIdentity, err := servicepki.CertificateIdentity(ingressCertificate)
-	if err != nil || ingressIdentity != (servicepki.Identity{Role: servicepki.RoleIngress, ProcessID: "ingress-a"}) {
-		t.Fatalf("ingress certificate identity = %#v, %v", ingressIdentity, err)
-	}
-
-	relayEnrollment, err := database.EnrollService(t.Context(), ServiceEnrollmentRequest{
-		Token: relayToken.Token, Role: ServiceEnrollmentRoleRelay, ProcessID: "relay-a-1",
-		CSRPEM: serviceEnrollmentCSR(t), EnrolledAt: now.Add(2 * time.Minute),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if relayEnrollment.RelayServiceID != "relay-a" || relayEnrollment.RelayAddress != "relay-a.example.test:443" ||
-		relayEnrollment.TLSServerName != "relay-a.example.test" || relayEnrollment.RelayTransportMaterial == nil {
-		t.Fatalf("relay enrollment = %#v", relayEnrollment)
-	}
-	repeatedRelayEnrollment, err := database.EnrollService(t.Context(), ServiceEnrollmentRequest{
-		Token: relayToken.Token, Role: ServiceEnrollmentRoleRelay, ProcessID: "relay-a-2",
-		CSRPEM: serviceEnrollmentCSR(t), EnrolledAt: now.Add(3 * time.Minute),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if repeatedRelayEnrollment.RelayTransportMaterial.CertificatePEM != relayEnrollment.RelayTransportMaterial.CertificatePEM ||
-		repeatedRelayEnrollment.RelayTransportMaterial.PrivateKeyPEM != relayEnrollment.RelayTransportMaterial.PrivateKeyPEM {
-		t.Fatal("relay processes in one service received different transport material")
-	}
-	for _, identity := range []struct{ serviceID, relayID string }{
-		{serviceID: "standalone-a", relayID: "standalone-relay-a"},
-		{serviceID: "standalone-b", relayID: "standalone-relay-b"},
-	} {
-		local, err := database.EnrollLocalService(t.Context(), LocalServiceEnrollmentRequest{
-			Role: ServiceEnrollmentRoleRelay, ProcessID: identity.relayID,
-			CSRPEM: serviceEnrollmentCSR(t), RelayServiceID: identity.serviceID,
-			RelayAddress: "relay.example.test:443", TLSServerName: "relay.example.test",
-			EnrolledAt: now.Add(3 * time.Minute),
-		})
-		if err != nil {
-			t.Fatalf("enroll local relay %q: %v", identity.serviceID, err)
-		}
-		certificate := parsePEMCertificate(t, local.ServiceCertificatePEM)
-		got, err := servicepki.CertificateIdentity(certificate)
-		want := servicepki.Identity{Role: servicepki.RoleRelay, ProcessID: identity.relayID, RelayServiceID: identity.serviceID}
-		if err != nil || got != want || local.RelayTransportMaterial == nil {
-			t.Fatalf("local relay enrollment = %#v, identity %#v, %v", local, got, err)
-		}
-	}
-
-	if _, err := database.RevokeServiceEnrollmentToken(
-		t.Context(), ingressToken.EnrollmentToken.ID, administratorID, "request_revoke_ingress", now.Add(4*time.Minute),
-	); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := database.EnrollService(t.Context(), ServiceEnrollmentRequest{
-		Token: ingressToken.Token, Role: ServiceEnrollmentRoleIngress, ProcessID: "ingress-b",
-		CSRPEM: serviceEnrollmentCSR(t), EnrolledAt: now.Add(5 * time.Minute),
-	}); !errors.Is(err, ErrServiceEnrollmentCredential) {
-		t.Fatalf("revoked token enrollment error = %v", err)
-	}
-	tokens, err := database.ListServiceEnrollmentTokens(t.Context())
-	if err != nil || len(tokens) != 2 {
-		t.Fatalf("service enrollment tokens = %#v, %v", tokens, err)
-	}
-	var authorityCount, enrollmentEventCount int
-	if err := database.pool.QueryRow(t.Context(), `
-		SELECT
-			(SELECT count(*) FROM control.service_authorities),
-			(SELECT count(*) FROM control.service_enrollment_events)
-	`).Scan(&authorityCount, &enrollmentEventCount); err != nil {
-		t.Fatal(err)
-	}
-	if authorityCount != 1 || enrollmentEventCount != 3 {
-		t.Fatalf("service PKI rows = authorities %d, enrollment events %d", authorityCount, enrollmentEventCount)
-	}
-}
-
-func serviceEnrollmentCSR(t *testing.T) string {
-	t.Helper()
-	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	csrDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, privateKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER}))
-}
-
-func parsePEMCertificate(t *testing.T, certificatePEM string) *x509.Certificate {
-	t.Helper()
-	block, rest := pem.Decode([]byte(certificatePEM))
-	if block == nil || len(rest) != 0 {
-		t.Fatal("certificate is not one PEM block")
-	}
-	certificate, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return certificate
 }
 
 func testRouteManagement(t *testing.T, database *Database) {
@@ -622,6 +1123,76 @@ func testRouteManagement(t *testing.T, database *Database) {
 	}
 }
 
+func testDNSRouteWork(t *testing.T, database *Database) {
+	t.Helper()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	session, err := database.CreateBuiltinControlSession(
+		t.Context(), "tunnels.example.test", 7, time.Hour, 24*time.Hour, now,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, err := database.AuthenticateAccessToken(t.Context(), session.AccessToken, 7, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	membership := session.Identity.Memberships[0]
+	domains, err := database.ListTeamDomains(t.Context(), principal.IdentityID, membership.TeamID)
+	if err != nil || len(domains) != 1 {
+		t.Fatalf("DNS route domains = %#v, %v", domains, err)
+	}
+	request := CreateRouteRequest{
+		TeamID: membership.TeamID, DomainID: domains[0].ID, MembershipID: membership.ID,
+		ActingIdentityID: principal.IdentityID, IdempotencyKey: "dns-route-work-create",
+		RequestDigest:     sha256.Sum256([]byte("dns-route-work-create")),
+		CanonicalHostname: "dns-work." + membership.ManagedLabel + ".tunnels.example.test",
+		Target:            "http://127.0.0.1:3000", RouteScope: RouteScopeMember, DNSState: RouteDNSPending,
+	}
+	route, err := database.CreateRoute(t.Context(), request, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if route.DNSState != RouteDNSPending || route.DNSAuthorityReference != "" {
+		t.Fatalf("created DNS route = %#v", route)
+	}
+	work, found, err := database.ClaimDNSRouteWork(t.Context(), "dns_worker_integration", now, time.Minute)
+	if err != nil || !found || work.RouteID != route.ID || work.Attempts != 1 || work.WorkEpoch != 1 {
+		t.Fatalf("claimed DNS route work = %#v, found %v, error %v", work, found, err)
+	}
+	if _, found, err := database.ClaimDNSRouteWork(t.Context(), "dns_worker_other", now, time.Minute); err != nil || found {
+		t.Fatalf("concurrent DNS route claim = found %v, error %v", found, err)
+	}
+	stale := work
+	work.State = RouteDNSPublished
+	work.AvailableAt = time.Time{}
+	saved, err := database.SaveDNSRouteWork(t.Context(), work, now.Add(time.Second))
+	if err != nil || saved.State != RouteDNSPublished || !saved.AvailableAt.IsZero() || saved.DNSRevision != 2 {
+		t.Fatalf("saved published DNS route work = %#v, %v", saved, err)
+	}
+	if _, err := database.SaveDNSRouteWork(t.Context(), stale, now.Add(2*time.Second)); !errors.Is(err, ErrDNSRouteFenced) {
+		t.Fatalf("stale DNS route save error = %v", err)
+	}
+	if err := database.DeleteRoute(t.Context(), principal.IdentityID, route.ID, now.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	removal, found, err := database.ClaimDNSRouteWork(t.Context(), "dns_worker_integration", now.Add(3*time.Second), time.Minute)
+	if err != nil || !found || removal.RouteID != route.ID || removal.State != RouteDNSRemoving || removal.Attempts != 2 {
+		t.Fatalf("claimed DNS route removal = %#v, found %v, error %v", removal, found, err)
+	}
+	removal.State = RouteDNSRemoved
+	removal.AvailableAt = time.Time{}
+	removed, err := database.SaveDNSRouteWork(t.Context(), removal, now.Add(4*time.Second))
+	if err != nil || removed.State != RouteDNSRemoved || !removed.AvailableAt.IsZero() {
+		t.Fatalf("saved removed DNS route work = %#v, %v", removed, err)
+	}
+	replacement := request
+	replacement.IdempotencyKey = "dns-route-work-replacement"
+	replacement.RequestDigest = sha256.Sum256([]byte("dns-route-work-replacement"))
+	if _, err := database.CreateRoute(t.Context(), replacement, now.Add(5*time.Second)); err != nil {
+		t.Fatalf("reuse removed DNS route hostname: %v", err)
+	}
+}
+
 func testRouteSessionCreation(t *testing.T, database *Database) {
 	t.Helper()
 	now := time.Now().UTC().Truncate(time.Microsecond)
@@ -641,6 +1212,7 @@ func testRouteSessionCreation(t *testing.T, database *Database) {
 	}
 	request := RouteSessionRequest{
 		RouteID: "route_session", TeamID: "team_session", ActingIdentityID: "identity_session",
+		MembershipID: "membership_session", RequireLocalAuthority: true,
 		RetrySecret: bytes.Repeat([]byte{7}, 32), IdempotencyKey: "request_session_1",
 		RequestDigest: sha256.Sum256([]byte("request-session-1")), PolicyRevision: 1,
 		CertificateCacheKey: "certificate_session", CertificateScope: "route",
@@ -810,6 +1382,15 @@ func testRouteSessionReadiness(
 	)
 	if err != nil {
 		t.Fatal(err)
+	}
+	var accountKeyCiphertext []byte
+	if err := database.pool.QueryRow(t.Context(), `
+		SELECT account_key_ciphertext FROM control.acme_accounts WHERE id = $1
+	`, account.ID).Scan(&accountKeyCiphertext); err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(accountKeyCiphertext, account.AccountKeyDER) || bytes.Contains(accountKeyCiphertext, account.AccountKeyDER) {
+		t.Fatal("ACME account key persisted as plaintext")
 	}
 	repeatedAccount, err := database.EnsureACMEAccount(
 		t.Context(), "https://acme.example.test/directory", "operator@example.test", now.Add(time.Millisecond),
@@ -1236,6 +1817,50 @@ func testRouteSessionReadiness(
 	if count != 1 || sum != wantObservedSeconds || bucketHalf != 0 || bucketOne != 0 || bucketTen != 1 || bucketInfinite != 1 {
 		t.Fatalf("recovery histogram = count %d, sum %f, buckets %d/%d/%d/%d", count, sum, bucketHalf, bucketOne, bucketTen, bucketInfinite)
 	}
+	dnsOrderID := "issuance_dns_cleanup"
+	dnsWorkAt := observedAt.Add(time.Second)
+	dnsRequestDigest := sha256.Sum256([]byte("dns-cleanup-request"))
+	dnsCSRDigest := sha256.Sum256([]byte("dns-cleanup-csr"))
+	if _, err := database.pool.Exec(t.Context(), `
+		UPDATE control.domains SET canonical_domain = $2, updated_at = $3 WHERE id = $1
+	`, "domain_session", request.CertificateIdentifiers[0], dnsWorkAt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.pool.Exec(t.Context(), `
+		INSERT INTO control.acme_orders (
+			id, account_id, route_session_id, route_id, route_version, idempotency_key, request_digest,
+			certificate_cache_key, certificate_scope, certificate_identifiers, challenge_method,
+			csr_der, csr_digest, state, available_at, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, 'dns-cleanup', $6, $7, $8, $9, 'dns-01', $10, $11, 'pending', $12, $12, $12)
+	`, dnsOrderID, registeredAccount.ID, setup.RouteSessionID, setup.RouteID, setup.RouteVersion,
+		dnsRequestDigest[:], request.CertificateCacheKey, request.CertificateScope, request.CertificateIdentifiers,
+		csrDER, dnsCSRDigest[:], dnsWorkAt); err != nil {
+		t.Fatal(err)
+	}
+	dnsWork, found, err := database.ClaimACMEOrderWork(t.Context(), "certificate-worker-dns", dnsWorkAt, time.Minute)
+	if err != nil || !found || dnsWork.ID != dnsOrderID {
+		t.Fatalf("claimed DNS certificate work = %#v, found %v, error %v", dnsWork, found, err)
+	}
+	dnsWork.State = "authorizing"
+	dnsWork.AvailableAt = dnsWorkAt
+	dnsAuthorizationExpiresAt := dnsWorkAt.Add(time.Hour)
+	dnsWork.Authorizations = []ACMEAuthorizationWork{{
+		Identifier: request.CertificateIdentifiers[0], AuthorizationURL: "https://acme.example.test/authz/dns-cleanup",
+		ChallengeType: "dns-01", ChallengeURL: "https://acme.example.test/challenge/dns-cleanup",
+		ChallengeToken: "dns-cleanup", ChallengeDigest: sha256.Sum256([]byte("dns-cleanup")),
+		State: "presenting", AvailableAt: dnsWorkAt, ExpiresAt: &dnsAuthorizationExpiresAt,
+		CreatedAt: dnsWorkAt, UpdatedAt: dnsWorkAt,
+	}}
+	dnsWork, err = database.SaveACMEOrderWork(t.Context(), dnsWork, dnsWorkAt.Add(time.Millisecond))
+	if err != nil || len(dnsWork.Authorizations) != 1 ||
+		!opaqueid.Valid(dnsWork.Authorizations[0].PresentationReference, "acme_presentation_") {
+		t.Fatalf("saved DNS certificate work = %#v, %v", dnsWork, err)
+	}
+	dnsContext, err := database.GetDNSChallengeContext(t.Context(), setup.RouteID, dnsWork.Authorizations[0].ID)
+	if err != nil || len(dnsContext.Presentations) != 1 || !dnsContext.Presentations[0].Active ||
+		dnsContext.PresentationReference != dnsWork.Authorizations[0].PresentationReference {
+		t.Fatalf("DNS challenge context = %#v, %v", dnsContext, err)
+	}
 	wrongToken, _, _, err := credentials.NewSessionToken()
 	if err != nil {
 		t.Fatal(err)
@@ -1246,8 +1871,32 @@ func testRouteSessionReadiness(
 	if err := database.CloseRouteSession(t.Context(), setup.RouteSessionID, setup.SessionToken, observedAt.Add(3*time.Second)); err != nil {
 		t.Fatal(err)
 	}
+	dnsCleanupWork, found, err := database.ClaimACMEOrderWork(
+		t.Context(), "certificate-worker-dns-cleanup", observedAt.Add(3*time.Second), time.Minute,
+	)
+	if err != nil || !found || dnsCleanupWork.ID != dnsOrderID || dnsCleanupWork.State != "canceled" ||
+		len(dnsCleanupWork.Authorizations) != 1 || dnsCleanupWork.Authorizations[0].State != "cleaning" {
+		t.Fatalf("claimed canceled DNS cleanup = %#v, found %v, error %v", dnsCleanupWork, found, err)
+	}
+	dnsContext, err = database.GetDNSChallengeContext(t.Context(), setup.RouteID, dnsCleanupWork.Authorizations[0].ID)
+	if err != nil || dnsContext.Presentations[0].Active {
+		t.Fatalf("cleaning DNS challenge context = %#v, %v", dnsContext, err)
+	}
+	dnsCleanupWork.Authorizations[0].State = "complete"
+	dnsCleanupCompletedAt := observedAt.Add(3500 * time.Millisecond)
+	dnsCleanupWork.Authorizations[0].CleanupCompletedAt = &dnsCleanupCompletedAt
+	dnsCleanupWork.Authorizations[0].AvailableAt = dnsCleanupCompletedAt
+	dnsCleanupWork.AvailableAt = dnsCleanupCompletedAt
+	if _, err := database.SaveACMEOrderWork(t.Context(), dnsCleanupWork, dnsCleanupCompletedAt); err != nil {
+		t.Fatalf("complete canceled DNS cleanup: %v", err)
+	}
 	if err := database.CloseRouteSession(t.Context(), setup.RouteSessionID, setup.SessionToken, observedAt.Add(4*time.Second)); err != nil {
 		t.Fatalf("idempotent route session close: %v", err)
+	}
+	if remaining, found, err := database.ClaimACMEOrderWork(
+		t.Context(), "certificate-worker-dns-complete", observedAt.Add(4500*time.Millisecond), time.Minute,
+	); err != nil || found {
+		t.Fatalf("completed canceled DNS cleanup = %#v, found %v, error %v", remaining, found, err)
 	}
 	usageCompleteAt := observedAt.Add(4 * time.Second)
 	if err := database.ReportIngressUsage(t.Context(), ingressLease.IngressLeaseIdentity, IngressUsageBatch{
@@ -1278,6 +1927,8 @@ func seedControlRoute(
 		{`INSERT INTO control.identities (
 			id, kind, display_name, administrator, created_at, updated_at
 		) VALUES ($2, 'authority', 'Test identity', true, $1, $1)`, []any{now, identityID}},
+		{`INSERT INTO control.managed_label_reservations (label, created_at)
+		VALUES ($2, $1), ($3, $1)`, []any{now, "team-" + suffix, "member-" + suffix}},
 		{`INSERT INTO control.teams (
 			id, kind, display_name, managed_label, created_by_identity_id, created_at, updated_at
 		) VALUES ($2, 'personal', 'Team', $3, $4, $1, $1)`, []any{now, teamID, "team-" + suffix, identityID}},
@@ -1445,6 +2096,7 @@ func testIngressUsage(t *testing.T, database *Database) {
 	}
 	firstWork := firstClaim[0]
 	if firstWork.DeliveryKey == "" || firstWork.Attempts != 1 || firstWork.WorkEpoch != 1 ||
+		firstWork.TeamID != "team_usage" || firstWork.ActingIdentityID != "identity_usage" ||
 		firstWork.ConnectionAttempts != 3 || firstWork.Complete || firstWork.Checkpoint.VisitorNetworks.Estimate() != 0 {
 		t.Fatalf("first usage delivery work = %#v", firstWork)
 	}
@@ -1483,6 +2135,7 @@ func testIngressUsage(t *testing.T, database *Database) {
 	replayedWork := replayed[0]
 	if replayedWork.DeliveryKey != firstWork.DeliveryKey || replayedWork.SourceRevision != firstWork.SourceRevision ||
 		replayedWork.RouteID != firstWork.RouteID || replayedWork.RouteVersion != firstWork.RouteVersion ||
+		replayedWork.TeamID != firstWork.TeamID || replayedWork.ActingIdentityID != firstWork.ActingIdentityID ||
 		!replayedWork.BucketStart.Equal(firstWork.BucketStart) || !replayedWork.BucketEnd.Equal(firstWork.BucketEnd) ||
 		!replayedWork.ObservedThrough.Equal(firstWork.ObservedThrough) ||
 		replayedWork.ConnectionAttempts != firstWork.ConnectionAttempts ||
@@ -1667,6 +2320,85 @@ func testRelayControlState(t *testing.T, database *Database) {
 	}
 }
 
+func testHostedPolicyRevocation(t *testing.T, database *Database) {
+	t.Helper()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	for _, statement := range []struct {
+		query string
+		args  []any
+	}{
+		{`INSERT INTO control.identities (id, kind, display_name, administrator, created_at, updated_at)
+		 VALUES ('identity_revocation', 'authority', 'Revocation identity', false, $1, $1)`, []any{now}},
+		{`INSERT INTO control.managed_label_reservations (label, created_at)
+		 VALUES ('revocation', $1)`, []any{now}},
+		{`INSERT INTO control.teams (id, kind, display_name, managed_label, created_by_identity_id, created_at, updated_at)
+		 VALUES ('team_revocation', 'organization', 'Revocation team', 'revocation', 'identity_revocation', $1, $1)`, []any{now}},
+		{`INSERT INTO control.domains (
+			id, kind, team_id, canonical_domain, state, authority_revision, created_by_identity_id,
+			created_at, verified_at, updated_at
+		 ) VALUES (
+			'domain_revocation', 'claimed', 'team_revocation', 'revocation.example.test', 'ready', 1,
+			'identity_revocation', $1, $1, $1
+		 )`, []any{now}},
+		{`INSERT INTO control.routes (
+			id, team_id, domain_id, created_by_identity_id, idempotency_key, request_digest,
+			canonical_hostname, target, route_scope, policy_revision, ip_policy, lifecycle_state,
+			dns_state, created_at, updated_at
+		 ) VALUES
+			('route_revocation_a', 'team_revocation', 'domain_revocation', 'identity_revocation', 'route-a', decode(repeat('01', 32), 'hex'), 'a.revocation.example.test', 'http://127.0.0.1:3000', 'shared', 5, 'allow_all', 'enabled', 'published', $1, $1),
+			('route_revocation_b', 'team_revocation', 'domain_revocation', 'identity_revocation', 'route-b', decode(repeat('02', 32), 'hex'), 'b.revocation.example.test', 'http://127.0.0.1:3000', 'shared', 5, 'allow_all', 'enabled', 'published', $1, $1)`, []any{now}},
+		{`INSERT INTO control.route_sessions (
+			id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key,
+			request_digest, session_token_id, session_token_digest, policy_revision, certificate_cache_key,
+			certificate_scope, certificate_identifiers, certificate_challenge, state, created_at,
+			last_heartbeat_at, publisher_expires_at
+		 ) VALUES
+			('session_revocation_a', 'route_revocation_a', 'team_revocation', 'membership_revocation_a', 'identity_revocation', 1, 'session-a', decode(repeat('03', 32), 'hex'), 'token_revocation_a', decode(repeat('04', 32), 'hex'), 5, 'certificate-a', 'route', ARRAY['a.revocation.example.test'], 'dns-01', 'starting', $1, $1, $2),
+			('session_revocation_b', 'route_revocation_b', 'team_revocation', 'membership_revocation_b', 'identity_revocation', 1, 'session-b', decode(repeat('05', 32), 'hex'), 'token_revocation_b', decode(repeat('06', 32), 'hex'), 5, 'certificate-b', 'route', ARRAY['b.revocation.example.test'], 'dns-01', 'starting', $1, $1, $2)`, []any{now, now.Add(time.Hour)}},
+	} {
+		if _, err := database.pool.Exec(t.Context(), statement.query, statement.args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	applied, closed, err := database.ApplyHostedPolicyRevocation(
+		t.Context(), "https://authority.example.test", "team_revocation", 6, false,
+		[]string{"membership_revocation_a"}, now.Add(time.Second),
+	)
+	if err != nil || !applied || closed != 1 {
+		t.Fatalf("membership revocation = %t, %d, %v", applied, closed, err)
+	}
+	var stateA, stateB string
+	if err := database.pool.QueryRow(t.Context(), `
+		SELECT
+			(SELECT state FROM control.route_sessions WHERE id = 'session_revocation_a'),
+			(SELECT state FROM control.route_sessions WHERE id = 'session_revocation_b')
+	`).Scan(&stateA, &stateB); err != nil {
+		t.Fatal(err)
+	}
+	if stateA != "closed" || stateB != "starting" {
+		t.Fatalf("selective revocation states = %q, %q", stateA, stateB)
+	}
+	if applied, closed, err := database.ApplyHostedPolicyRevocation(
+		t.Context(), "https://authority.example.test", "team_revocation", 6, true, nil, now.Add(2*time.Second),
+	); err != nil || applied || closed != 0 {
+		t.Fatalf("revocation replay = %t, %d, %v", applied, closed, err)
+	}
+	if applied, closed, err := database.ApplyHostedPolicyRevocation(
+		t.Context(), "https://authority.example.test", "team_revocation", 7, true, nil, now.Add(3*time.Second),
+	); err != nil || !applied || closed != 1 {
+		t.Fatalf("team revocation = %t, %d, %v", applied, closed, err)
+	}
+	if err := database.pool.QueryRow(t.Context(), `
+		SELECT state FROM control.route_sessions WHERE id = 'session_revocation_b'
+	`).Scan(&stateB); err != nil {
+		t.Fatal(err)
+	}
+	if stateB != "closed" {
+		t.Fatalf("team revocation state = %q", stateB)
+	}
+}
+
 func seedRelayRouteSession(
 	t *testing.T,
 	database *Database,
@@ -1681,6 +2413,8 @@ func seedRelayRouteSession(
 		{`INSERT INTO control.identities (
 			id, kind, display_name, administrator, created_at, updated_at
 		) VALUES ('identity_a', 'authority', 'Test identity', true, $1, $1)`, []any{now}},
+		{`INSERT INTO control.managed_label_reservations (label, created_at)
+		 VALUES ('team-a', $1)`, []any{now}},
 		{`INSERT INTO control.teams (
 			id, kind, display_name, managed_label, created_by_identity_id, created_at, updated_at
 		) VALUES ('team_a', 'personal', 'Team A', 'team-a', 'identity_a', $1, $1)`, []any{now}},

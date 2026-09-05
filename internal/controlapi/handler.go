@@ -8,8 +8,11 @@ import (
 	"slices"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/authorityclient"
+	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -33,29 +36,40 @@ type Config struct {
 	CertificateIssuance     bool
 	ACMEDirectoryURL        string
 	ServerDomain            string
-	IngressControlEndpoint  string
-	RelayControlEndpoint    string
+	HostedSecret            string
+	HostedSecretPrevious    string
+	HTTPClient              *http.Client
+	DNSAutomation           bool
 }
 
 // Store is the durable control state consumed by the public APIs.
 type Store interface {
-	ListServiceEnrollmentTokens(context.Context) ([]controlstate.ServiceEnrollmentToken, error)
-	CreateServiceEnrollmentToken(context.Context, controlstate.CreateServiceEnrollmentTokenRequest) (controlstate.CreatedServiceEnrollmentToken, error)
-	RevokeServiceEnrollmentToken(context.Context, string, string, string, time.Time) (controlstate.ServiceEnrollmentToken, error)
-	EnrollService(context.Context, controlstate.ServiceEnrollmentRequest) (controlstate.ServiceEnrollment, error)
 	CreateBuiltinControlSession(context.Context, string, int64, time.Duration, time.Duration, time.Time) (controlstate.ControlSession, error)
 	RefreshControlSession(context.Context, credentials.RefreshToken, int64, time.Duration, time.Time) (controlstate.ControlSession, error)
 	RevokeControlSession(context.Context, controlstate.ControlPrincipal, time.Time) error
 	AuthenticateAccessToken(context.Context, credentials.AccessToken, int64, time.Time) (controlstate.ControlPrincipal, error)
+	EnsureExternalAuthorityPrincipal(context.Context, string, time.Time) ([32]byte, error)
 	IdentityContext(context.Context, string) (controlstate.IdentityContext, error)
 	ListTeams(context.Context, string) ([]controlstate.Team, error)
+	CreateTeam(context.Context, controlstate.CreateTeamRequest, time.Time) (controlstate.Team, error)
 	GetTeam(context.Context, string, string) (controlstate.Team, error)
+	ListTeamMemberships(context.Context, string, string) ([]controlstate.Membership, error)
+	SetMembershipRole(context.Context, string, string, string, string, time.Time) (controlstate.Membership, error)
+	RemoveMembership(context.Context, string, string, string, time.Time) error
+	ListTeamInvitations(context.Context, string, string, time.Time) ([]controlstate.Invitation, error)
+	CreateTeamInvitation(context.Context, controlstate.CreateInvitationRequest, time.Time) (controlstate.InvitationSecret, error)
+	RevokeTeamInvitation(context.Context, string, string, string, time.Time) error
+	AcceptInvitation(context.Context, string, credentials.InvitationToken, time.Time) (controlstate.Membership, error)
 	ListTeamDomains(context.Context, string, string) ([]controlstate.Domain, error)
+	ClaimTeamDomain(context.Context, controlstate.ClaimDomainRequest, time.Time) (controlstate.Domain, error)
+	SetTeamDefaultDomain(context.Context, string, string, string, time.Time) (controlstate.Team, error)
+	ReleaseTeamDomain(context.Context, string, string, string, time.Time) error
 	ListRoutes(context.Context, string, string, string) (controlstate.RoutePage, error)
 	CreateRoute(context.Context, controlstate.CreateRouteRequest, time.Time) (controlstate.Route, error)
 	GetRoute(context.Context, string, string) (controlstate.Route, error)
+	GetRouteForAuthorization(context.Context, string) (controlstate.Route, error)
 	DeleteRoute(context.Context, string, string, time.Time) error
-	EnsureServiceAuthority(context.Context, time.Time) (controlstate.ServiceAuthority, error)
+	DeleteAuthorizedRoute(context.Context, controlstate.AuthorizedRouteDeleteRequest, time.Time) error
 	CreateRouteSession(context.Context, controlstate.RouteSessionRequest, time.Time, time.Duration, time.Duration) (controlstate.RouteSessionSetup, error)
 	RouteSessionAuthentication(context.Context, string, uint64, credentials.SessionToken) (controlstate.RouteSessionAuthentication, error)
 	HeartbeatRouteSession(context.Context, controlstate.RouteSessionAuthentication, time.Time, time.Duration, time.Duration) (controlstate.RouteSessionSetup, error)
@@ -66,6 +80,10 @@ type Store interface {
 	MarkCertificateChallengeRemoved(context.Context, string, credentials.SessionToken, time.Time) (controlstate.CertificateIssuance, error)
 	MarkRouteSessionReady(context.Context, controlstate.RouteSessionAuthentication, time.Time) (controlstate.RouteSessionLifecycle, error)
 	CloseRouteSession(context.Context, string, credentials.SessionToken, time.Time) error
+	ApplyHostedPolicyRevocation(context.Context, string, string, uint64, bool, []string, time.Time) (bool, int, error)
+	CreateDNSAuthority(context.Context, controlstate.CreateDNSAuthorityRequest, time.Time) (controlstate.DNSAuthority, error)
+	GetDNSAuthority(context.Context, string) (controlstate.DNSAuthority, error)
+	ReleaseDNSAuthority(context.Context, string, string, time.Time) (controlstate.DNSAuthority, error)
 }
 
 type handler struct {
@@ -77,6 +95,8 @@ type handler struct {
 	readiness           func(context.Context) error
 	loginVerifier       credentials.LoginVerifier
 	loginSourceRevision int64
+	authorizer          authorization.Authorizer
+	hostedSecrets       serviceapi.BearerSecrets
 }
 
 var _ controlv1.ServerInterface = (*handler)(nil)
@@ -89,6 +109,18 @@ func NewHandler(cfg Config, store Store, readiness func(context.Context) error) 
 	if cfg.LoginToken != "" {
 		h.loginVerifier, _ = credentials.ParseLoginToken(credentials.LoginToken(cfg.LoginToken))
 		h.loginSourceRevision = credentialSourceRevision(cfg.LoginToken)
+	}
+	if store != nil {
+		h.authorizer = localAuthorizer{store: store, sourceRevision: h.loginSourceRevision}
+	}
+	if store != nil && cfg.HostedSecret != "" {
+		client, err := authorityclient.New(cfg.AuthorityEndpoint, cfg.HTTPClient, "")
+		h.hostedSecrets, _ = serviceapi.NewBearerSecrets(cfg.HostedSecret, cfg.HostedSecretPrevious)
+		if err == nil && h.hostedSecrets.Valid() {
+			h.authorizer = hostedAuthorizer{client: client, secret: cfg.HostedSecret, store: store}
+		} else {
+			h.authorizer = nil
+		}
 	}
 	mux := http.NewServeMux()
 	parameterError := func(response http.ResponseWriter, _ *http.Request, _ error) {
@@ -138,7 +170,7 @@ func (h *handler) GetClientIP(response http.ResponseWriter, request *http.Reques
 func controlDiscovery(cfg Config) controlv1.ControlDiscovery {
 	result := controlv1.ControlDiscovery{
 		ManagedDeploymentDomain: cfg.ManagedDeploymentDomain,
-		DnsAutomation:           false,
+		DnsAutomation:           cfg.DNSAutomation,
 		AuthorityEndpoint:       cfg.AuthorityEndpoint,
 		Authentication:          controlv1.AuthenticationFacts{Methods: []controlv1.AuthenticationFactsMethods{}},
 	}

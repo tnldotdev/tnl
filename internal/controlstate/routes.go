@@ -31,34 +31,47 @@ var (
 )
 
 type Route struct {
-	ID                string
-	TeamID            string
-	DomainID          string
-	MembershipID      string
-	CanonicalHostname string
-	Target            string
-	RouteScope        RouteScope
-	PolicyRevision    int64
-	LifecycleState    RouteLifecycleState
-	AllowedIPPrefixes []netip.Prefix
-	NextRouteVersion  int64
-	AttachedSessionID string
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	ID                    string
+	TeamID                string
+	DomainID              string
+	MembershipID          string
+	CanonicalHostname     string
+	Target                string
+	RouteScope            RouteScope
+	PolicyRevision        int64
+	LifecycleState        RouteLifecycleState
+	DNSAuthorityReference string
+	DNSState              RouteDNSState
+	AllowedIPPrefixes     []netip.Prefix
+	NextRouteVersion      int64
+	AttachedSessionID     string
+	CreatedAt             time.Time
+	UpdatedAt             time.Time
 }
 
 type CreateRouteRequest struct {
-	TeamID            string
-	DomainID          string
-	MembershipID      string
-	ActingIdentityID  string
-	IdempotencyKey    string
-	RequestDigest     [32]byte
-	CanonicalHostname string
-	Target            string
-	RouteScope        RouteScope
-	AllowedIPPrefixes []string
-	DNSState          RouteDNSState
+	TeamID                string
+	DomainID              string
+	MembershipID          string
+	ActingIdentityID      string
+	IdempotencyKey        string
+	RequestDigest         [32]byte
+	CanonicalHostname     string
+	Target                string
+	RouteScope            RouteScope
+	AllowedIPPrefixes     []string
+	DNSState              RouteDNSState
+	DNSAuthorityReference string
+	AuthorityIssuer       string
+	PolicyRevision        uint64
+}
+
+type AuthorizedRouteDeleteRequest struct {
+	RouteID          string
+	TeamID           string
+	ActingIdentityID string
+	AuthorityIssuer  string
+	PolicyRevision   uint64
 }
 
 type RoutePage struct {
@@ -85,6 +98,18 @@ func (d *Database) CreateRoute(ctx context.Context, request CreateRouteRequest, 
 	} else if err != nil {
 		return Route{}, fmt.Errorf("controlstate: create route: lock creator: %w", err)
 	}
+	policyRevision := int64(0)
+	if request.AuthorityIssuer != "" {
+		policyRevision = positive(request.PolicyRevision)
+		if _, err := queries.ObserveAuthorityRevision(ctx, controlstatedb.ObserveAuthorityRevisionParams{
+			Issuer: request.AuthorityIssuer, TeamID: request.TeamID,
+			PolicyRevision: policyRevision, UpdatedAt: timestamptz(now),
+		}); errors.Is(err, pgx.ErrNoRows) {
+			return Route{}, ErrRouteAuthority
+		} else if err != nil {
+			return Route{}, fmt.Errorf("controlstate: create route: observe authority revision: %w", err)
+		}
+	}
 
 	existing, err := queries.GetRouteByCreatorIdempotency(ctx, controlstatedb.GetRouteByCreatorIdempotencyParams{
 		IdentityID: request.ActingIdentityID, IdempotencyKey: request.IdempotencyKey,
@@ -109,21 +134,24 @@ func (d *Database) CreateRoute(ctx context.Context, request CreateRouteRequest, 
 	if !enabled {
 		return Route{}, ErrRouteCreationGated
 	}
-	creation, err := queries.GetRouteCreationContext(ctx, controlstatedb.GetRouteCreationContextParams{
-		IdentityID: request.ActingIdentityID, DomainID: request.DomainID, TeamID: request.TeamID,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Route{}, ErrRouteAccess
-	}
-	if err != nil {
-		return Route{}, fmt.Errorf("controlstate: create route: read authority context: %w", err)
-	}
-	labels, err := queries.ListTeamMemberNamespaceLabels(ctx, request.TeamID)
-	if err != nil {
-		return Route{}, fmt.Errorf("controlstate: create route: read member namespaces: %w", err)
-	}
-	if err := authorizeRouteCreation(request, creation, labels); err != nil {
-		return Route{}, err
+	if request.AuthorityIssuer == "" {
+		creation, err := queries.GetRouteCreationContext(ctx, controlstatedb.GetRouteCreationContextParams{
+			IdentityID: request.ActingIdentityID, DomainID: request.DomainID, TeamID: request.TeamID,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Route{}, ErrRouteAccess
+		}
+		if err != nil {
+			return Route{}, fmt.Errorf("controlstate: create route: read authority context: %w", err)
+		}
+		labels, err := queries.ListTeamMemberNamespaceLabels(ctx, request.TeamID)
+		if err != nil {
+			return Route{}, fmt.Errorf("controlstate: create route: read member namespaces: %w", err)
+		}
+		if err := authorizeRouteCreation(request, creation, labels); err != nil {
+			return Route{}, err
+		}
+		policyRevision = creation.PolicyRevision
 	}
 
 	routeID, err := opaqueid.New("route_")
@@ -138,8 +166,9 @@ func (d *Database) CreateRoute(ctx context.Context, request CreateRouteRequest, 
 		ID: routeID, TeamID: request.TeamID, DomainID: request.DomainID, MembershipID: membershipID,
 		CreatedByIdentityID: request.ActingIdentityID, IdempotencyKey: request.IdempotencyKey,
 		RequestDigest: request.RequestDigest[:], CanonicalHostname: request.CanonicalHostname, Target: request.Target,
-		RouteScope: string(request.RouteScope), PolicyRevision: creation.PolicyRevision, IpPolicy: routeIPPolicy(prefixes),
-		AllowedIpPrefixes: prefixes, DnsState: string(request.DNSState), CreatedAt: timestamptz(now),
+		RouteScope: string(request.RouteScope), PolicyRevision: policyRevision, IpPolicy: routeIPPolicy(prefixes),
+		AllowedIpPrefixes: prefixes, DnsAuthorityReference: nullableText(request.DNSAuthorityReference),
+		DnsState: string(request.DNSState), CreatedAt: timestamptz(now),
 	})
 	if err != nil {
 		var postgresError *pgconn.PgError
@@ -213,7 +242,24 @@ func (d *Database) GetRoute(ctx context.Context, identityID, routeID string) (Ro
 }
 
 func (d *Database) DeleteRoute(ctx context.Context, identityID, routeID string, now time.Time) (retErr error) {
+	return d.deleteRoute(ctx, AuthorizedRouteDeleteRequest{RouteID: routeID, ActingIdentityID: identityID}, now)
+}
+
+func (d *Database) DeleteAuthorizedRoute(
+	ctx context.Context,
+	request AuthorizedRouteDeleteRequest,
+	now time.Time,
+) error {
+	return d.deleteRoute(ctx, request, now)
+}
+
+func (d *Database) deleteRoute(ctx context.Context, request AuthorizedRouteDeleteRequest, now time.Time) (retErr error) {
+	identityID := request.ActingIdentityID
+	routeID := request.RouteID
 	if !validStateText(identityID) || !validStateText(routeID) {
+		return ErrRouteInvalid
+	}
+	if request.AuthorityIssuer != "" && (!validStateText(request.AuthorityIssuer) || !validStateText(request.TeamID) || request.PolicyRevision == 0) {
 		return ErrRouteInvalid
 	}
 	if err := d.requireOpen(); err != nil {
@@ -225,19 +271,39 @@ func (d *Database) DeleteRoute(ctx context.Context, identityID, routeID string, 
 	}
 	defer rollback(ctx, tx, "delete route", &retErr)()
 	queries := controlstatedb.New(tx)
-	row, err := queries.LockIdentityRouteForDelete(ctx, controlstatedb.LockIdentityRouteForDeleteParams{
-		IdentityID: identityID, RouteID: routeID,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrRouteNotFound
+	var route controlstatedb.ControlRoute
+	if request.AuthorityIssuer == "" {
+		row, err := queries.LockIdentityRouteForDelete(ctx, controlstatedb.LockIdentityRouteForDeleteParams{
+			IdentityID: identityID, RouteID: routeID,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrRouteNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("controlstate: delete route: lock route: %w", err)
+		}
+		if row.ActorRole == "member" && (!row.MembershipID.Valid || row.MembershipID.String != row.ActorMembershipID) {
+			return ErrRouteAccess
+		}
+		route = routeModelFromDeleteRow(row)
+	} else {
+		var err error
+		route, err = queries.LockRouteForSession(ctx, routeID)
+		if errors.Is(err, pgx.ErrNoRows) || err == nil && route.TeamID != request.TeamID {
+			return ErrRouteNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("controlstate: delete route: lock route: %w", err)
+		}
+		if _, err := queries.ObserveAuthorityRevision(ctx, controlstatedb.ObserveAuthorityRevisionParams{
+			Issuer: request.AuthorityIssuer, TeamID: request.TeamID,
+			PolicyRevision: positive(request.PolicyRevision), UpdatedAt: timestamptz(now),
+		}); errors.Is(err, pgx.ErrNoRows) {
+			return ErrRouteAuthority
+		} else if err != nil {
+			return fmt.Errorf("controlstate: delete route: observe authority revision: %w", err)
+		}
 	}
-	if err != nil {
-		return fmt.Errorf("controlstate: delete route: lock route: %w", err)
-	}
-	if row.ActorRole == "member" && (!row.MembershipID.Valid || row.MembershipID.String != row.ActorMembershipID) {
-		return ErrRouteAccess
-	}
-	route := routeModelFromDeleteRow(row)
 	if err := closeOpenRouteSession(ctx, queries, route, now, "route_deleted"); err != nil {
 		return err
 	}
@@ -352,6 +418,16 @@ func closeRouteSession(
 			return err
 		}
 	}
+	if err := queries.CancelRouteSessionACMEOrders(ctx, controlstatedb.CancelRouteSessionACMEOrdersParams{
+		CanceledAt: timestamptz(now), RouteSessionID: session.ID,
+	}); err != nil {
+		return fmt.Errorf("controlstate: close route session: cancel certificate orders: %w", err)
+	}
+	if err := queries.CancelRouteSessionACMEAuthorizations(ctx, controlstatedb.CancelRouteSessionACMEAuthorizationsParams{
+		CanceledAt: timestamptz(now), RouteSessionID: session.ID,
+	}); err != nil {
+		return fmt.Errorf("controlstate: close route session: cancel certificate authorizations: %w", err)
+	}
 	if _, err := queries.CancelOpenRouteRecoveryEpisode(ctx, controlstatedb.CancelOpenRouteRecoveryEpisodeParams{
 		CanceledAt: timestamptz(now), RouteID: route.ID, RouteVersion: session.RouteVersion,
 	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
@@ -380,8 +456,13 @@ func validateCreateRouteRequest(request CreateRouteRequest) ([]netip.Prefix, err
 		}
 	}
 	if len(request.IdempotencyKey) > 128 || request.MembershipID != "" && !validStateText(request.MembershipID) ||
+		request.DNSAuthorityReference != "" && !validStateText(request.DNSAuthorityReference) ||
+		request.DNSState == RouteDNSUnmanaged && request.DNSAuthorityReference != "" ||
 		request.RouteScope != RouteScopeMember && request.RouteScope != RouteScopeShared ||
 		request.DNSState != RouteDNSUnmanaged && request.DNSState != RouteDNSPending {
+		return nil, ErrRouteInvalid
+	}
+	if request.AuthorityIssuer != "" && (!validStateText(request.AuthorityIssuer) || request.PolicyRevision == 0) {
 		return nil, ErrRouteInvalid
 	}
 	canonical, err := naming.CanonicalizeHostname(request.CanonicalHostname)
@@ -415,6 +496,9 @@ func authorizeRouteCreation(
 ) error {
 	if context.DomainState != "ready" || context.DomainKind == "claimed" && context.DomainTeamID.String != request.TeamID ||
 		context.DomainKind == "managed" && context.DomainTeamID.Valid || !hostnameWithin(request.CanonicalHostname, context.CanonicalDomain) {
+		return ErrRouteAccess
+	}
+	if request.DNSState == RouteDNSPending && request.DNSAuthorityReference != context.DnsAuthorityReference.String {
 		return ErrRouteAccess
 	}
 	actorLabel := context.ActorMemberSlug
@@ -479,7 +563,7 @@ func nullableText(value string) pgtype.Text {
 func routeFromModel(row controlstatedb.ControlRoute, attachedSessionID string) Route {
 	return routeFromValues(
 		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target,
-		row.RouteScope, row.PolicyRevision, row.LifecycleState, row.AllowedIpPrefixes,
+		row.RouteScope, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState, row.AllowedIpPrefixes,
 		row.NextRouteVersion, attachedSessionID, row.CreatedAt, row.UpdatedAt,
 	)
 }
@@ -487,7 +571,7 @@ func routeFromModel(row controlstatedb.ControlRoute, attachedSessionID string) R
 func routeFromIdempotencyRow(row controlstatedb.GetRouteByCreatorIdempotencyRow) Route {
 	return routeFromValues(
 		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target,
-		row.RouteScope, row.PolicyRevision, row.LifecycleState, row.AllowedIpPrefixes,
+		row.RouteScope, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState, row.AllowedIpPrefixes,
 		row.NextRouteVersion, row.AttachedSessionID, row.CreatedAt, row.UpdatedAt,
 	)
 }
@@ -495,7 +579,7 @@ func routeFromIdempotencyRow(row controlstatedb.GetRouteByCreatorIdempotencyRow)
 func routeFromIdentityRow(row controlstatedb.GetIdentityRouteRow) Route {
 	return routeFromValues(
 		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target,
-		row.RouteScope, row.PolicyRevision, row.LifecycleState, row.AllowedIpPrefixes,
+		row.RouteScope, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState, row.AllowedIpPrefixes,
 		row.NextRouteVersion, row.AttachedSessionID, row.CreatedAt, row.UpdatedAt,
 	)
 }
@@ -503,7 +587,7 @@ func routeFromIdentityRow(row controlstatedb.GetIdentityRouteRow) Route {
 func routeFromListRow(row controlstatedb.ListIdentityRoutesRow) Route {
 	return routeFromValues(
 		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target,
-		row.RouteScope, row.PolicyRevision, row.LifecycleState, row.AllowedIpPrefixes,
+		row.RouteScope, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState, row.AllowedIpPrefixes,
 		row.NextRouteVersion, row.AttachedSessionID, row.CreatedAt, row.UpdatedAt,
 	)
 }
@@ -514,6 +598,8 @@ func routeFromValues(
 	canonicalHostname, target, routeScope string,
 	policyRevision int64,
 	lifecycleState string,
+	dnsAuthorityReference pgtype.Text,
+	dnsState string,
 	allowedIPPrefixes []netip.Prefix,
 	nextRouteVersion int64,
 	attachedSessionID string,
@@ -523,6 +609,7 @@ func routeFromValues(
 		ID: id, TeamID: teamID, DomainID: domainID, MembershipID: membershipID.String,
 		CanonicalHostname: canonicalHostname, Target: target, RouteScope: RouteScope(routeScope),
 		PolicyRevision: policyRevision, LifecycleState: RouteLifecycleState(lifecycleState),
+		DNSAuthorityReference: dnsAuthorityReference.String, DNSState: RouteDNSState(dnsState),
 		AllowedIPPrefixes: append([]netip.Prefix(nil), allowedIPPrefixes...), NextRouteVersion: nextRouteVersion,
 		AttachedSessionID: attachedSessionID, CreatedAt: createdAt.Time, UpdatedAt: updatedAt.Time,
 	}
@@ -534,7 +621,8 @@ func routeModelFromDeleteRow(row controlstatedb.LockIdentityRouteForDeleteRow) c
 		CreatedByIdentityID: row.CreatedByIdentityID, IdempotencyKey: row.IdempotencyKey,
 		RequestDigest: row.RequestDigest, CanonicalHostname: row.CanonicalHostname, Target: row.Target,
 		RouteScope: row.RouteScope, PolicyRevision: row.PolicyRevision, IpPolicy: row.IpPolicy,
-		AllowedIpPrefixes: row.AllowedIpPrefixes, LifecycleState: row.LifecycleState, DnsState: row.DnsState,
+		AllowedIpPrefixes: row.AllowedIpPrefixes, LifecycleState: row.LifecycleState,
+		DnsAuthorityReference: row.DnsAuthorityReference, DnsState: row.DnsState,
 		DnsRevision: row.DnsRevision, NextRouteVersion: row.NextRouteVersion,
 		SuspensionRevision: row.SuspensionRevision, SuspensionReason: row.SuspensionReason,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, SuspendedAt: row.SuspendedAt, DeletedAt: row.DeletedAt,

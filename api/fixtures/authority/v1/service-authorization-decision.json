@@ -1,0 +1,18 @@
+{
+  "identity_id": "identity_0123456789abcdef0123456789abcdef",
+  "team_id": "team_0123456789abcdef0123456789abcdef",
+  "acting_membership_id": "membership_0123456789abcdef0123456789abcdef",
+  "acting_role": "owner",
+  "route_membership_id": "membership_0123456789abcdef0123456789abcdef",
+  "team_policy_revision": 3,
+  "domain_id": "domain_0123456789abcdef0123456789abcdef",
+  "canonical_hostname": "api.demo.tnl.dev",
+  "route_scope": "member",
+  "dns_authority_reference": "dns_authority_0123456789abcdef0123456789abcdef",
+  "certificate_plan": {
+    "cache_key": "demo.tnl.dev",
+    "scope": "demo.tnl.dev",
+    "identifiers": ["demo.tnl.dev", "*.demo.tnl.dev"],
+    "challenge_method": "dns-01"
+  }
+}

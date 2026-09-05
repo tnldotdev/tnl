@@ -137,13 +137,9 @@
           "type": "string",
           "description": "Public control HTTPS listen address."
         },
-        "ingress_control_listen": {
+        "private_control_listen": {
           "type": "string",
-          "description": "Private service-mTLS ingress API listen address."
-        },
-        "relay_control_listen": {
-          "type": "string",
-          "description": "Private service-mTLS relay API listen address."
+          "description": "Private cluster-authenticated ingress and relay API listen address."
         },
         "ingress_listen": {
           "type": "string",
@@ -159,11 +155,11 @@
         },
         "internal_relay_listen": {
           "type": "string",
-          "description": "Internal service-mTLS forwarding listen address."
+          "description": "Internal forwarding listen address."
         },
         "dns_server": {
           "type": "string",
-          "description": "DNS resolver used for readiness checks; defaults to the system resolver."
+          "description": "DNS resolver used for authoritative verification; defaults to the system resolver."
         },
         "server_domain": {
           "type": "string",
@@ -191,6 +187,14 @@
         "control_tls_private_key_file": {
           "type": "string",
           "description": "Optional static public control private key override."
+        },
+        "relay_tls_certificate_file": {
+          "type": "string",
+          "description": "Optional static public relay certificate chain override."
+        },
+        "relay_tls_private_key_file": {
+          "type": "string",
+          "description": "Optional static public relay private key override."
         },
         "acme_directory_url": {
           "type": "string",
@@ -236,22 +240,6 @@
           "type": "string",
           "description": "Exact external authority HTTPS origin; defaults to the control origin."
         },
-        "authorization_issuer": {
-          "type": "string",
-          "description": "Exact trusted signed-authorization issuer."
-        },
-        "authorization_receiver": {
-          "type": "string",
-          "description": "Expected signed-authorization receiver."
-        },
-        "authorization_key_id": {
-          "type": "string",
-          "description": "Trusted authorization Ed25519 key ID."
-        },
-        "authorization_public_key": {
-          "type": "string",
-          "description": "Trusted Ed25519 public key in unpadded base64url form."
-        },
         "access_token_lifetime": {
           "type": "string",
           "description": "Lifetime of newly issued access tokens.",
@@ -270,17 +258,72 @@
           "type": "string",
           "description": "Service token for the route usage receiver."
         },
-        "service_enrollment_token": {
+        "route53_region": {
           "type": "string",
-          "description": "Reusable role-scoped service enrollment token."
+          "description": "AWS region used to sign Route 53 requests.",
+          "default": "us-east-1"
+        },
+        "route53_managed_zone_id": {
+          "type": "string",
+          "description": "Existing Route 53 hosted zone ID for the managed deployment domain; enables DNS automation."
+        },
+        "route53_server_zone_id": {
+          "type": "string",
+          "description": "Existing Route 53 hosted zone ID for the server domain; enables relay certificate DNS-01."
+        },
+        "ingress_ipv4_address": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Stable ingress IPv4 address published in owned route records; repeat for each address."
+        },
+        "ingress_ipv6_address": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Stable ingress IPv6 address published in owned route records; repeat for each address."
+        },
+        "cluster_secret": {
+          "type": "string",
+          "description": "Current shared secret for private communication among control, ingress, and relays."
+        },
+        "cluster_secret_previous": {
+          "type": "string",
+          "description": "Previous cluster secret accepted only during rotation."
+        },
+        "hosted_secret": {
+          "type": "string",
+          "description": "Current secret shared by control and the hosted authority."
+        },
+        "hosted_secret_previous": {
+          "type": "string",
+          "description": "Previous hosted secret accepted only during rotation."
+        },
+        "storage_key": {
+          "type": "string",
+          "description": "Canonical base64url AES-256 key used to encrypt recoverable PostgreSQL secrets."
+        },
+        "storage_key_previous": {
+          "type": "string",
+          "description": "Previous storage key retained only during re-encryption."
         },
         "ingress_id": {
           "type": "string",
           "description": "Stable ingress process identity."
         },
+        "relay_service_id": {
+          "type": "string",
+          "description": "Stable relay service identity for this relay process."
+        },
         "relay_id": {
           "type": "string",
           "description": "Stable relay process identity."
+        },
+        "relay_address": {
+          "type": "string",
+          "description": "Stable public relay hostname and port advertised by this relay service."
         },
         "internal_relay_address": {
           "type": "string",

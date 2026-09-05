@@ -22,6 +22,7 @@ type ControlClient interface {
 	RegisterRelayWithResponse(context.Context, relayv1.RegisterRelayJSONRequestBody, ...relayv1.RequestEditorFn) (*relayv1.RegisterRelayResponse, error)
 	RenewRelayWithResponse(context.Context, relayv1.RelayID, relayv1.RenewRelayJSONRequestBody, ...relayv1.RequestEditorFn) (*relayv1.RenewRelayResponse, error)
 	DrainRelayWithResponse(context.Context, relayv1.RelayID, relayv1.DrainRelayJSONRequestBody, ...relayv1.RequestEditorFn) (*relayv1.DrainRelayResponse, error)
+	GetRelayServiceCertificateWithResponse(context.Context, relayv1.RelayServiceID, *relayv1.GetRelayServiceCertificateParams, ...relayv1.RequestEditorFn) (*relayv1.GetRelayServiceCertificateResponse, error)
 	ClaimPublisherConnectionWithResponse(context.Context, relayv1.PublisherConnectionID, relayv1.ClaimPublisherConnectionJSONRequestBody, ...relayv1.RequestEditorFn) (*relayv1.ClaimPublisherConnectionResponse, error)
 	MarkPublisherConnectionReadyWithResponse(context.Context, relayv1.PublisherConnectionID, relayv1.MarkPublisherConnectionReadyJSONRequestBody, ...relayv1.RequestEditorFn) (*relayv1.MarkPublisherConnectionReadyResponse, error)
 	DisconnectPublisherConnectionWithResponse(context.Context, relayv1.PublisherConnectionID, relayv1.DisconnectPublisherConnectionJSONRequestBody, ...relayv1.RequestEditorFn) (*relayv1.DisconnectPublisherConnectionResponse, error)
@@ -30,30 +31,33 @@ type ControlClient interface {
 type LoadFunc func() (reportedConnections, reportedStreams int64)
 
 type ControllerConfig struct {
-	Client          ControlClient
-	Registration    relayv1.RelayRegistration
-	RenewalInterval time.Duration
-	RetryInterval   time.Duration
-	Load            LoadFunc
-	LeaseChanged    func(relayv1.RelayLease, relayv1.RelayLease)
-	Now             func() time.Time
-	Report          func(error)
+	Client             ControlClient
+	Registration       relayv1.RelayRegistration
+	RenewalInterval    time.Duration
+	RetryInterval      time.Duration
+	Load               LoadFunc
+	LeaseChanged       func(relayv1.RelayLease, relayv1.RelayLease)
+	CertificateChanged func(relayv1.RelayServiceCertificate) error
+	Now                func() time.Time
+	Report             func(error)
 }
 
 // Controller maintains one exact relay lease and applies it to publisher
 // connection transitions.
 type Controller struct {
-	client          ControlClient
-	registration    relayv1.RelayRegistration
-	renewalInterval time.Duration
-	retryInterval   time.Duration
-	load            LoadFunc
-	leaseChanged    func(relayv1.RelayLease, relayv1.RelayLease)
-	now             func() time.Time
-	report          func(error)
+	client             ControlClient
+	registration       relayv1.RelayRegistration
+	renewalInterval    time.Duration
+	retryInterval      time.Duration
+	load               LoadFunc
+	leaseChanged       func(relayv1.RelayLease, relayv1.RelayLease)
+	certificateChanged func(relayv1.RelayServiceCertificate) error
+	now                func() time.Time
+	report             func(error)
 
-	mu    sync.RWMutex
-	lease relayv1.RelayLease
+	mu                  sync.RWMutex
+	lease               relayv1.RelayLease
+	certificateNotAfter time.Time
 }
 
 func NewController(config ControllerConfig) (*Controller, error) {
@@ -83,7 +87,7 @@ func NewController(config ControllerConfig) (*Controller, error) {
 	return &Controller{
 		client: config.Client, registration: registration, renewalInterval: config.RenewalInterval,
 		retryInterval: config.RetryInterval, load: config.Load, leaseChanged: config.LeaseChanged,
-		now: config.Now, report: config.Report,
+		certificateChanged: config.CertificateChanged, now: config.Now, report: config.Report,
 	}, nil
 }
 
@@ -129,6 +133,11 @@ func (c *Controller) runOnce(ctx context.Context) error {
 	if err := c.setLease(*response.JSON200); err != nil {
 		return err
 	}
+	if c.certificateChanged != nil {
+		if err := c.refreshCertificate(ctx, *response.JSON200); err != nil {
+			return err
+		}
+	}
 	ticker := time.NewTicker(c.renewalInterval)
 	defer ticker.Stop()
 	for {
@@ -159,12 +168,48 @@ func (c *Controller) runOnce(ctx context.Context) error {
 		if err := c.setLease(*response.JSON200); err != nil {
 			return err
 		}
+		if c.certificateChanged != nil && !c.certificateCurrent(c.now().Add(24*time.Hour)) {
+			if err := c.refreshCertificate(ctx, *response.JSON200); err != nil {
+				return err
+			}
+		}
 	}
 }
 
 func (c *Controller) Ready(now time.Time) bool {
 	lease := c.Lease()
-	return lease.RelayLeaseRevision > 0 && !lease.Draining && lease.LeaseExpiresAt.After(now)
+	return lease.RelayLeaseRevision > 0 && !lease.Draining && lease.LeaseExpiresAt.After(now) &&
+		(c.certificateChanged == nil || c.certificateCurrent(now))
+}
+
+func (c *Controller) refreshCertificate(ctx context.Context, lease relayv1.RelayLease) error {
+	response, err := c.client.GetRelayServiceCertificateWithResponse(ctx, lease.RelayServiceId, &relayv1.GetRelayServiceCertificateParams{
+		RelayId: lease.RelayId, RelayRunId: lease.RelayRunId, RelayLeaseRevision: lease.RelayLeaseRevision,
+	})
+	if err != nil {
+		return retryableControlError("get relay service certificate", err)
+	}
+	if response == nil || response.JSON200 == nil {
+		return c.responseError("get relay service certificate", response)
+	}
+	certificate := *response.JSON200
+	if certificate.RelayServiceId != lease.RelayServiceId || certificate.TlsServerName != lease.TlsServerName ||
+		!certificate.NotAfter.After(c.now()) {
+		return errors.New("relay: control returned invalid relay service certificate metadata")
+	}
+	if err := c.certificateChanged(certificate); err != nil {
+		return fmt.Errorf("relay: install relay service certificate: %w", err)
+	}
+	c.mu.Lock()
+	c.certificateNotAfter = certificate.NotAfter
+	c.mu.Unlock()
+	return nil
+}
+
+func (c *Controller) certificateCurrent(at time.Time) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.certificateNotAfter.After(at)
 }
 
 func (c *Controller) Lease() relayv1.RelayLease {

@@ -1,9 +1,7 @@
 package controlapi
 
 import (
-	"log"
 	"net/http"
-	"slices"
 	"strings"
 	"time"
 
@@ -36,10 +34,6 @@ func (h *handler) ListRoutes(response http.ResponseWriter, request *http.Request
 }
 
 func (h *handler) CreateRoute(response http.ResponseWriter, request *http.Request, _ controlv1.CreateRouteParams) {
-	principal, ok := h.authenticateControlRequest(response, request)
-	if !ok {
-		return
-	}
 	var body controlv1.CreateRouteRequest
 	if err := decodeJSON(request, &body); err != nil {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
@@ -58,20 +52,38 @@ func (h *handler) CreateRoute(response http.ResponseWriter, request *http.Reques
 	if body.MembershipId != nil {
 		membershipID = *body.MembershipId
 	}
+	decision, ok := h.authorizeMutation(response, request, authorization.Request{
+		Operation: authorization.OperationRouteCreate, TeamID: body.TeamId,
+		RouteMembershipID: membershipID, DomainID: body.DomainId,
+		CanonicalHostname: body.CanonicalHostname, RouteScope: string(body.RouteScope),
+		Target: body.Target, AllowedIPPrefixes: allowedIPPrefixes,
+	})
+	if !ok {
+		return
+	}
 	digest, err := authorization.CanonicalRequestHash(authorization.OperationRequest{
-		Operation: authorization.OperationRouteCreate, TeamID: body.TeamId, MembershipID: membershipID,
-		DomainID: body.DomainId, CanonicalHostname: body.CanonicalHostname, RouteScope: string(body.RouteScope),
+		Operation: authorization.OperationRouteCreate, TeamID: decision.TeamID, MembershipID: decision.RouteMembershipID,
+		DomainID: decision.DomainID, CanonicalHostname: decision.CanonicalHostname, RouteScope: decision.RouteScope,
 		Target: body.Target, AllowedIPPrefixes: allowedIPPrefixes,
 	})
 	if err != nil {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
 		return
 	}
+	dnsState := controlstate.RouteDNSUnmanaged
+	dnsAuthorityReference := ""
+	if h.config.DNSAutomation {
+		dnsState = controlstate.RouteDNSPending
+		dnsAuthorityReference = decision.DNSAuthorityReference
+	}
 	route, err := h.store.CreateRoute(request.Context(), controlstate.CreateRouteRequest{
-		TeamID: body.TeamId, DomainID: body.DomainId, MembershipID: membershipID,
-		ActingIdentityID: principal.IdentityID, IdempotencyKey: request.Header.Get("Idempotency-Key"),
-		RequestDigest: [32]byte(digest), CanonicalHostname: body.CanonicalHostname, Target: body.Target,
-		RouteScope: controlstate.RouteScope(body.RouteScope), AllowedIPPrefixes: allowedIPPrefixes, DNSState: controlstate.RouteDNSUnmanaged,
+		TeamID: decision.TeamID, DomainID: decision.DomainID, MembershipID: decision.RouteMembershipID,
+		ActingIdentityID: decision.IdentityID, IdempotencyKey: request.Header.Get("Idempotency-Key"),
+		RequestDigest: [32]byte(digest), CanonicalHostname: decision.CanonicalHostname, Target: body.Target,
+		RouteScope: controlstate.RouteScope(decision.RouteScope), AllowedIPPrefixes: allowedIPPrefixes,
+		DNSState: dnsState, DNSAuthorityReference: dnsAuthorityReference,
+		AuthorityIssuer: h.externalAuthorityIssuer(),
+		PolicyRevision:  decision.TeamPolicyRevision,
 	}, time.Now())
 	if err != nil {
 		writeControlStateProblem(response, "create route", err)
@@ -94,11 +106,28 @@ func (h *handler) GetRoute(response http.ResponseWriter, request *http.Request, 
 }
 
 func (h *handler) DeleteRoute(response http.ResponseWriter, request *http.Request, routeID controlv1.RouteID) {
-	principal, ok := h.authenticateControlRequest(response, request)
+	route, err := h.store.GetRouteForAuthorization(request.Context(), string(routeID))
+	if err != nil {
+		writeControlStateProblem(response, "read route for deletion", err)
+		return
+	}
+	allowedIPPrefixes := make([]string, len(route.AllowedIPPrefixes))
+	for index, prefix := range route.AllowedIPPrefixes {
+		allowedIPPrefixes[index] = prefix.String()
+	}
+	decision, ok := h.authorizeMutation(response, request, authorization.Request{
+		Operation: authorization.OperationRouteDelete, TeamID: route.TeamID,
+		RouteMembershipID: route.MembershipID, DomainID: route.DomainID,
+		CanonicalHostname: route.CanonicalHostname, RouteScope: string(route.RouteScope),
+		Target: route.Target, AllowedIPPrefixes: allowedIPPrefixes, RouteID: route.ID,
+	})
 	if !ok {
 		return
 	}
-	if err := h.store.DeleteRoute(request.Context(), principal.IdentityID, string(routeID), time.Now()); err != nil {
+	if err := h.store.DeleteAuthorizedRoute(request.Context(), controlstate.AuthorizedRouteDeleteRequest{
+		RouteID: route.ID, TeamID: decision.TeamID, ActingIdentityID: decision.IdentityID,
+		AuthorityIssuer: h.externalAuthorityIssuer(), PolicyRevision: decision.TeamPolicyRevision,
+	}, time.Now()); err != nil {
 		writeControlStateProblem(response, "delete route", err)
 		return
 	}
@@ -111,53 +140,34 @@ func (h *handler) CreateRouteSession(
 	routeID controlv1.RouteID,
 	_ controlv1.CreateRouteSessionParams,
 ) {
-	principal, ok := h.authenticateControlRequest(response, request)
-	if !ok {
-		return
-	}
-	var body controlv1.CreateRouteSessionRequest
-	if err := decodeJSON(request, &body); err != nil {
-		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
-		return
-	}
-	if body.AllowedIpPrefixes == nil {
-		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "IP policy is required")
-		return
-	}
-	allowedIPPrefixes, err := authorization.CanonicalizeIPPrefixes(body.AllowedIpPrefixes)
-	if err != nil {
-		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid IP policy")
-		return
-	}
-	body.AllowedIpPrefixes = allowedIPPrefixes
-	route, err := h.store.GetRoute(request.Context(), principal.IdentityID, string(routeID))
+	route, err := h.store.GetRouteForAuthorization(request.Context(), string(routeID))
 	if err != nil {
 		writeControlStateProblem(response, "read route for session", err)
 		return
 	}
-	membershipID := ""
-	if body.MembershipId != nil {
-		membershipID = *body.MembershipId
+	allowedIPPrefixes := make([]string, len(route.AllowedIPPrefixes))
+	for index, prefix := range route.AllowedIPPrefixes {
+		allowedIPPrefixes[index] = prefix.String()
 	}
-	if body.TeamId != route.TeamID || body.PolicyRevision <= 0 || body.PolicyRevision != route.PolicyRevision ||
-		!validLocalCertificatePlan(body.CertificatePlan, route.CanonicalHostname) {
-		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "route session is not authorized")
+	decision, ok := h.authorizeMutation(response, request, authorization.Request{
+		Operation: authorization.OperationRouteSessionCreate, TeamID: route.TeamID,
+		RouteMembershipID: route.MembershipID, DomainID: route.DomainID,
+		CanonicalHostname: route.CanonicalHostname, RouteScope: string(route.RouteScope),
+		Target: route.Target, AllowedIPPrefixes: allowedIPPrefixes,
+		RouteID: route.ID, RouteVersion: uint64(route.NextRouteVersion),
+	})
+	if !ok {
 		return
 	}
-	serviceAuthority, err := h.store.EnsureServiceAuthority(request.Context(), time.Now())
-	if err != nil {
-		log.Printf("read relay transport trust bundle: %v", err)
-		writeProblem(response, http.StatusInternalServerError, controlv1.Internal, "internal server error")
+	if decision.CertificatePlan == nil {
+		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "authorization is unavailable")
 		return
 	}
-	plan := authorization.CertificatePlan{
-		CacheKey: body.CertificatePlan.CacheKey, Scope: body.CertificatePlan.Scope,
-		Identifiers: slices.Clone(body.CertificatePlan.Identifiers), ChallengeMethod: string(body.CertificatePlan.ChallengeMethod),
-	}
+	plan := *decision.CertificatePlan
 	digest, err := authorization.CanonicalRequestHash(authorization.OperationRequest{
-		Operation: authorization.OperationRouteSessionCreate, TeamID: route.TeamID, MembershipID: membershipID,
-		DomainID: route.DomainID, CanonicalHostname: route.CanonicalHostname, RouteScope: string(route.RouteScope),
-		RouteID: route.ID, RouteVersion: uint64(route.NextRouteVersion), PolicyRevision: uint64(body.PolicyRevision),
+		Operation: authorization.OperationRouteSessionCreate, TeamID: decision.TeamID, MembershipID: decision.ActingMembershipID,
+		DomainID: decision.DomainID, CanonicalHostname: decision.CanonicalHostname, RouteScope: decision.RouteScope,
+		RouteID: route.ID, RouteVersion: uint64(route.NextRouteVersion), PolicyRevision: decision.TeamPolicyRevision,
 		CertificatePlan: &plan, AllowedIPPrefixes: allowedIPPrefixes,
 	})
 	if err != nil {
@@ -165,23 +175,35 @@ func (h *handler) CreateRouteSession(
 		return
 	}
 	setup, err := h.store.CreateRouteSession(request.Context(), controlstate.RouteSessionRequest{
-		RouteID: route.ID, TeamID: route.TeamID, MembershipID: membershipID,
-		ActingIdentityID: principal.IdentityID, RequireLocalAuthority: true, RetrySecret: principal.RetrySecret[:],
+		RouteID: route.ID, TeamID: decision.TeamID, MembershipID: decision.ActingMembershipID,
+		ActingIdentityID: decision.IdentityID, RequireLocalAuthority: h.externalAuthorityIssuer() == "",
+		RetrySecret:    decision.RetrySecret[:],
 		IdempotencyKey: request.Header.Get("Idempotency-Key"), RequestDigest: [32]byte(digest),
-		PolicyRevision: uint64(body.PolicyRevision), CertificateCacheKey: plan.CacheKey,
+		PolicyRevision: decision.TeamPolicyRevision, CertificateCacheKey: plan.CacheKey,
 		CertificateScope: plan.Scope, CertificateIdentifiers: plan.Identifiers,
 		CertificateChallenge: plan.ChallengeMethod, AllowedIPPrefixes: allowedIPPrefixes,
+		AuthorityIssuer: h.externalAuthorityIssuer(),
 	}, time.Now(), publisherLeaseDuration, publisherConnectionCredentialDuration)
 	if err != nil {
 		writeControlStateProblem(response, "create route session", err)
 		return
 	}
-	route, err = h.store.GetRoute(request.Context(), principal.IdentityID, route.ID)
+	route, err = h.store.GetRouteForAuthorization(request.Context(), route.ID)
 	if err != nil {
 		writeControlStateProblem(response, "read created route session", err)
 		return
 	}
-	writeJSON(response, http.StatusCreated, routeSessionSetupResponse(route, setup, body.CertificatePlan, serviceAuthority.CertificatePEM))
+	writeJSON(response, http.StatusCreated, routeSessionSetupResponse(route, setup, controlv1.CertificatePlan{
+		CacheKey: plan.CacheKey, Scope: plan.Scope, Identifiers: plan.Identifiers,
+		ChallengeMethod: controlv1.CertificateChallengeMethod(plan.ChallengeMethod),
+	}))
+}
+
+func (h *handler) externalAuthorityIssuer() string {
+	if h.config.HostedSecret == "" {
+		return ""
+	}
+	return h.config.AuthorityEndpoint
 }
 
 func (h *handler) HeartbeatRouteSession(response http.ResponseWriter, request *http.Request, routeSessionID controlv1.RouteSessionID) {

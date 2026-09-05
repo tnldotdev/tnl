@@ -7,9 +7,11 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
 	"io"
+	"math/big"
 	"net"
 	"strings"
 	"sync"
@@ -20,11 +22,13 @@ import (
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/relay"
 	"github.com/tnldotdev/tnl/internal/routebackend"
-	"github.com/tnldotdev/tnl/internal/servicepki"
+	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/internal/tunnel"
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
+
+const forwardingClusterSecret = "forwarding-cluster-secret-012345678901"
 
 func TestForwarderPoolsExactRelaySessionAndPreservesBytes(t *testing.T) {
 	material := newForwardingTestMaterial(t)
@@ -92,9 +96,7 @@ func TestForwarderPoolsExactRelaySessionAndPreservesBytes(t *testing.T) {
 
 func TestForwarderRejectsMismatchedRelayCertificate(t *testing.T) {
 	material := newForwardingTestMaterial(t)
-	wrongCertificate := issueForwardingTestCertificate(t, material.authority, servicepki.Identity{
-		Role: servicepki.RoleRelay, RelayServiceID: "relay_service_1", ProcessID: "relay_2",
-	})
+	wrongCertificate := issueForwardingTestCertificate(t, material.authority, material.authorityKey, "wrong.example")
 	server := startForwardingTestServerWithCertificate(t, material, wrongCertificate, func(ctx context.Context, transport muxsession.Session) error {
 		return captureForwardingRequests(ctx, transport, make(chan forwardingTestRequest, 1))
 	})
@@ -102,8 +104,8 @@ func TestForwarderRejectsMismatchedRelayCertificate(t *testing.T) {
 
 	backend := mustOnlyBackend(t, forwarder, forwardingTestEntry(time.Now(), server.address()))
 	_, err := backend.Open(t.Context(), "visitor_connection_1")
-	if err == nil || !strings.Contains(err.Error(), "certificate identity does not match") {
-		t.Fatalf("Open error = %v; want exact relay identity rejection", err)
+	if err == nil || !strings.Contains(err.Error(), "certificate") {
+		t.Fatalf("Open error = %v; want relay hostname rejection", err)
 	}
 	if got := server.accepted.Load(); got != 0 {
 		t.Fatalf("accepted sessions = %d; want no authenticated session", got)
@@ -114,7 +116,7 @@ func TestForwarderPreservesStaleAssignmentRejection(t *testing.T) {
 	material := newForwardingTestMaterial(t)
 	registry := relay.NewRegistry()
 	acceptor, err := relay.NewForwardingAcceptor(relay.ForwardingAcceptorConfig{
-		Registry: registry, StreamCapacity: 8,
+		Registry: registry, ClusterSecrets: forwardingTestSecrets(t), StreamCapacity: 8,
 	})
 	if err != nil {
 		t.Fatalf("NewForwardingAcceptor: %v", err)
@@ -162,81 +164,83 @@ func TestForwarderConvertsRoutingPolicyWithoutSharingMutableState(t *testing.T) 
 }
 
 type forwardingTestMaterial struct {
-	authority  servicepki.Authority
-	roots      *x509.CertPool
-	ingress    tls.Certificate
-	relay      tls.Certificate
-	serverName string
+	authority    *x509.Certificate
+	authorityKey *ecdsa.PrivateKey
+	roots        *x509.CertPool
+	relay        tls.Certificate
+	serverName   string
 }
 
 func newForwardingTestMaterial(t *testing.T) forwardingTestMaterial {
 	t.Helper()
 	now := time.Now().UTC().Truncate(time.Second)
-	authority, err := servicepki.GenerateAuthority(now)
+	authorityKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		t.Fatalf("GenerateAuthority: %v", err)
+		t.Fatalf("generate authority key: %v", err)
+	}
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "forwarding test authority"},
+		NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour), IsCA: true, BasicConstraintsValid: true,
+		KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+	}
+	authorityDER, err := x509.CreateCertificate(rand.Reader, template, template, &authorityKey.PublicKey, authorityKey)
+	if err != nil {
+		t.Fatalf("issue authority certificate: %v", err)
+	}
+	authority, err := x509.ParseCertificate(authorityDER)
+	if err != nil {
+		t.Fatalf("parse authority certificate: %v", err)
 	}
 	roots := x509.NewCertPool()
-	if !roots.AppendCertsFromPEM([]byte(authority.CertificatePEM)) {
-		t.Fatal("append service authority")
-	}
+	roots.AddCert(authority)
 	return forwardingTestMaterial{
-		authority: authority,
-		roots:     roots,
-		ingress: issueForwardingTestCertificate(t, authority, servicepki.Identity{
-			Role: servicepki.RoleIngress, ProcessID: "ingress_1",
-		}),
-		relay: issueForwardingTestCertificate(t, authority, servicepki.Identity{
-			Role: servicepki.RoleRelay, RelayServiceID: "relay_service_1", ProcessID: "relay_1",
-		}),
+		authority: authority, authorityKey: authorityKey, roots: roots,
+		relay:      issueForwardingTestCertificate(t, authority, authorityKey, "relay.example"),
 		serverName: "relay.example",
 	}
 }
 
 func issueForwardingTestCertificate(
 	t *testing.T,
-	authority servicepki.Authority,
-	identity servicepki.Identity,
+	authority *x509.Certificate,
+	authorityKey *ecdsa.PrivateKey,
+	hostname string,
 ) tls.Certificate {
 	t.Helper()
 	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		t.Fatalf("generate service key: %v", err)
+		t.Fatalf("generate relay key: %v", err)
 	}
-	requestDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, privateKey)
-	if err != nil {
-		t.Fatalf("create service CSR: %v", err)
+	now := time.Now().UTC()
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(now.UnixNano()), Subject: pkix.Name{CommonName: hostname}, DNSNames: []string{hostname},
+		NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour),
+		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
-	issued, err := servicepki.SignServiceCSR(
-		authority,
-		identity,
-		string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: requestDER})),
-		time.Now().UTC(),
-		time.Hour,
-	)
+	certificateDER, err := x509.CreateCertificate(rand.Reader, template, authority, &privateKey.PublicKey, authorityKey)
 	if err != nil {
-		t.Fatalf("SignServiceCSR: %v", err)
+		t.Fatalf("issue relay certificate: %v", err)
 	}
-	privateKeyDER, err := x509.MarshalPKCS8PrivateKey(privateKey)
+	privateKeyDER, err := x509.MarshalECPrivateKey(privateKey)
 	if err != nil {
-		t.Fatalf("encode service key: %v", err)
+		t.Fatalf("marshal relay key: %v", err)
 	}
 	certificate, err := tls.X509KeyPair(
-		[]byte(issued.CertificatePEM),
-		pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privateKeyDER}),
+		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificateDER}),
+		pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: privateKeyDER}),
 	)
 	if err != nil {
-		t.Fatalf("X509KeyPair: %v", err)
+		t.Fatalf("parse relay key pair: %v", err)
 	}
 	return certificate
 }
 
 func newTestForwarder(t *testing.T, material forwardingTestMaterial) *Forwarder {
 	t.Helper()
-	forwarder, err := NewForwarder(ForwarderConfig{TLSConfig: &tls.Config{
-		MinVersion: tls.VersionTLS13, RootCAs: material.roots,
-		Certificates: []tls.Certificate{material.ingress},
-	}})
+	forwarder, err := NewForwarder(ForwarderConfig{
+		TLSConfig:     &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: material.roots},
+		ClusterSecret: forwardingClusterSecret,
+	})
 	if err != nil {
 		t.Fatalf("NewForwarder: %v", err)
 	}
@@ -306,7 +310,7 @@ func captureForwardingRequests(
 	requests chan<- forwardingTestRequest,
 ) error {
 	session, hello, err := tunnel.Accept(ctx, transport, func(_ context.Context, message tunnelv1.Message) error {
-		if message.Role != tunnelv1.Ingress {
+		if message.Role != tunnelv1.Ingress || message.Credential != forwardingClusterSecret {
 			return &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
 		}
 		return nil
@@ -373,20 +377,7 @@ func startForwardingTestServerWithCertificate(
 	server := &forwardingTestServer{
 		listener: listener, cancel: cancel, errors: make(chan error, 16),
 	}
-	tlsConfig := &tls.Config{
-		MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{certificate},
-		ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: material.roots,
-		VerifyConnection: func(state tls.ConnectionState) error {
-			if len(state.PeerCertificates) == 0 {
-				return errors.New("test relay received no ingress certificate")
-			}
-			identity, err := servicepki.CertificateIdentity(state.PeerCertificates[0])
-			if err != nil || identity.Role != servicepki.RoleIngress || identity.ProcessID != "ingress_1" {
-				return errors.New("test relay received the wrong ingress identity")
-			}
-			return nil
-		},
-	}
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{certificate}}
 	server.active.Add(1)
 	go func() {
 		defer server.active.Done()
@@ -429,4 +420,13 @@ func startForwardingTestServerWithCertificate(
 
 func (s *forwardingTestServer) address() string {
 	return s.listener.Addr().String()
+}
+
+func forwardingTestSecrets(t *testing.T) serviceapi.BearerSecrets {
+	t.Helper()
+	secrets, err := serviceapi.NewBearerSecrets(forwardingClusterSecret, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return secrets
 }

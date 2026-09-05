@@ -62,7 +62,8 @@ INSERT INTO control.control_sessions (
     access_expires_at,
     refresh_token_id,
     refresh_token_digest,
-    retry_secret,
+    retry_secret_ciphertext,
+    retry_secret_storage_key_id,
     refresh_expires_at,
     created_at,
     last_refreshed_at
@@ -80,7 +81,8 @@ INSERT INTO control.control_sessions (
     $11,
     $12,
     $13,
-    $13
+    $14,
+    $14
 )
 `
 
@@ -95,7 +97,8 @@ type CreateControlSessionParams struct {
 	AccessExpiresAt              pgtype.Timestamptz
 	RefreshTokenID               string
 	RefreshTokenDigest           []byte
-	RetrySecret                  []byte
+	RetrySecretCiphertext        []byte
+	RetrySecretStorageKeyID      string
 	RefreshExpiresAt             pgtype.Timestamptz
 	CreatedAt                    pgtype.Timestamptz
 }
@@ -112,7 +115,8 @@ func (q *Queries) CreateControlSession(ctx context.Context, arg CreateControlSes
 		arg.AccessExpiresAt,
 		arg.RefreshTokenID,
 		arg.RefreshTokenDigest,
-		arg.RetrySecret,
+		arg.RetrySecretCiphertext,
+		arg.RetrySecretStorageKeyID,
 		arg.RefreshExpiresAt,
 		arg.CreatedAt,
 	)
@@ -310,7 +314,7 @@ func (q *Queries) FindBuiltinIdentity(ctx context.Context) (ControlIdentity, err
 }
 
 const findManagedDomain = `-- name: FindManagedDomain :one
-SELECT id, kind, team_id, canonical_domain, dns_authority_reference, state, authority_revision, verification_token_digest, created_by_identity_id, created_at, verified_at, reusable_after, released_at, updated_at
+SELECT id, kind, team_id, canonical_domain, dns_authority_reference, state, authority_revision, verification_token_digest, created_by_identity_id, claim_idempotency_key, claim_request_digest, make_default_when_ready, created_at, verified_at, reusable_after, released_at, updated_at
 FROM control.domains
 WHERE kind = 'managed'
   AND released_at IS NULL
@@ -329,6 +333,9 @@ func (q *Queries) FindManagedDomain(ctx context.Context) (ControlDomain, error) 
 		&i.AuthorityRevision,
 		&i.VerificationTokenDigest,
 		&i.CreatedByIdentityID,
+		&i.ClaimIdempotencyKey,
+		&i.ClaimRequestDigest,
+		&i.MakeDefaultWhenReady,
 		&i.CreatedAt,
 		&i.VerifiedAt,
 		&i.ReusableAfter,
@@ -346,7 +353,8 @@ SELECT
     s.authentication_source_revision,
     s.access_token_digest,
     s.access_expires_at,
-    s.retry_secret,
+    s.retry_secret_ciphertext,
+    s.retry_secret_storage_key_id,
     s.refresh_expires_at,
     i.administrator
 FROM control.control_sessions AS s
@@ -363,7 +371,8 @@ type GetControlSessionByAccessIDRow struct {
 	AuthenticationSourceRevision int64
 	AccessTokenDigest            []byte
 	AccessExpiresAt              pgtype.Timestamptz
-	RetrySecret                  []byte
+	RetrySecretCiphertext        []byte
+	RetrySecretStorageKeyID      string
 	RefreshExpiresAt             pgtype.Timestamptz
 	Administrator                bool
 }
@@ -378,7 +387,8 @@ func (q *Queries) GetControlSessionByAccessID(ctx context.Context, accessTokenID
 		&i.AuthenticationSourceRevision,
 		&i.AccessTokenDigest,
 		&i.AccessExpiresAt,
-		&i.RetrySecret,
+		&i.RetrySecretCiphertext,
+		&i.RetrySecretStorageKeyID,
 		&i.RefreshExpiresAt,
 		&i.Administrator,
 	)
@@ -549,25 +559,23 @@ func (q *Queries) LockIdentityBootstrap(ctx context.Context) error {
 	return err
 }
 
-const managedLabelExists = `-- name: ManagedLabelExists :one
-SELECT EXISTS (
-    SELECT 1
-    FROM control.teams AS t
-    WHERE t.managed_label = $1
-      AND t.deleted_at IS NULL
-    UNION ALL
-    SELECT 1
-    FROM control.team_memberships AS m
-    WHERE m.managed_label = $1
-      AND m.removed_at IS NULL
-)
+const reserveManagedLabel = `-- name: ReserveManagedLabel :one
+INSERT INTO control.managed_label_reservations (label, created_at)
+VALUES ($1, $2)
+ON CONFLICT (label) DO NOTHING
+RETURNING label
 `
 
-func (q *Queries) ManagedLabelExists(ctx context.Context, label string) (bool, error) {
-	row := q.db.QueryRow(ctx, managedLabelExists, label)
-	var exists bool
-	err := row.Scan(&exists)
-	return exists, err
+type ReserveManagedLabelParams struct {
+	Label     string
+	CreatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) ReserveManagedLabel(ctx context.Context, arg ReserveManagedLabelParams) (string, error) {
+	row := q.db.QueryRow(ctx, reserveManagedLabel, arg.Label, arg.CreatedAt)
+	var label string
+	err := row.Scan(&label)
+	return label, err
 }
 
 const revokeControlSession = `-- name: RevokeControlSession :execrows
@@ -629,6 +637,34 @@ func (q *Queries) RotateControlSessionCredentials(ctx context.Context, arg Rotat
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const rotateControlSessionRetrySecret = `-- name: RotateControlSessionRetrySecret :exec
+UPDATE control.control_sessions
+SET retry_secret_ciphertext = $1,
+    retry_secret_storage_key_id = $2
+WHERE id = $3
+  AND retry_secret_storage_key_id = $4
+  AND retry_secret_ciphertext = $5
+`
+
+type RotateControlSessionRetrySecretParams struct {
+	RetrySecretCiphertext   []byte
+	RetrySecretStorageKeyID string
+	ID                      string
+	PreviousKeyID           string
+	PreviousCiphertext      []byte
+}
+
+func (q *Queries) RotateControlSessionRetrySecret(ctx context.Context, arg RotateControlSessionRetrySecretParams) error {
+	_, err := q.db.Exec(ctx, rotateControlSessionRetrySecret,
+		arg.RetrySecretCiphertext,
+		arg.RetrySecretStorageKeyID,
+		arg.ID,
+		arg.PreviousKeyID,
+		arg.PreviousCiphertext,
+	)
+	return err
 }
 
 const setPersonalTeamDefaultDomain = `-- name: SetPersonalTeamDefaultDomain :exec

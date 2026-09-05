@@ -44,6 +44,15 @@ func (s generatedServer) DrainRelay(response http.ResponseWriter, request *http.
 	s.handler.drainRelay(response, request)
 }
 
+func (s generatedServer) GetRelayServiceCertificate(
+	response http.ResponseWriter,
+	request *http.Request,
+	relayServiceID relayv1.RelayServiceID,
+	params relayv1.GetRelayServiceCertificateParams,
+) {
+	s.handler.getRelayServiceCertificate(response, request, relayServiceID, params)
+}
+
 func (s generatedServer) RenewRelay(response http.ResponseWriter, request *http.Request, _ relayv1.RelayID) {
 	s.handler.renewRelay(response, request)
 }

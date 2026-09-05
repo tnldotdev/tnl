@@ -51,6 +51,7 @@ type RouteSessionRequest struct {
 	CertificateIdentifiers []string
 	CertificateChallenge   string
 	AllowedIPPrefixes      []string
+	AuthorityIssuer        string
 }
 
 // PublisherConnectionPlan is one of the two independently assigned publisher
@@ -113,6 +114,16 @@ func (d *Database) CreateRouteSession(
 	}
 	if err := authenticateRouteSessionRequest(route, request); err != nil {
 		return RouteSessionSetup{}, err
+	}
+	if request.AuthorityIssuer != "" {
+		if _, err := queries.ObserveAuthorityRevision(ctx, controlstatedb.ObserveAuthorityRevisionParams{
+			Issuer: request.AuthorityIssuer, TeamID: request.TeamID,
+			PolicyRevision: positive(request.PolicyRevision), UpdatedAt: timestamptz(now),
+		}); errors.Is(err, pgx.ErrNoRows) {
+			return RouteSessionSetup{}, ErrRouteAuthority
+		} else if err != nil {
+			return RouteSessionSetup{}, fmt.Errorf("controlstate: create route session: observe authority revision: %w", err)
+		}
 	}
 	if request.RequireLocalAuthority {
 		membership, err := queries.GetActiveRouteSessionMembership(ctx, controlstatedb.GetActiveRouteSessionMembershipParams{
@@ -327,7 +338,7 @@ func availableRelayServicePlacements(
 }
 
 func authenticateRouteSessionRequest(route controlstatedb.ControlRoute, request RouteSessionRequest) error {
-	if route.TeamID != request.TeamID || route.PolicyRevision != positive(request.PolicyRevision) {
+	if route.TeamID != request.TeamID || route.PolicyRevision > positive(request.PolicyRevision) {
 		return ErrRouteAuthority
 	}
 	return nil
@@ -441,6 +452,9 @@ func validateRouteSessionRequest(
 	}
 	if request.MembershipID != "" && !validStateText(request.MembershipID) {
 		return errors.New("controlstate: route-session membership ID is invalid")
+	}
+	if request.AuthorityIssuer != "" && !validStateText(request.AuthorityIssuer) {
+		return errors.New("controlstate: route-session authority issuer is invalid")
 	}
 	if len(request.RetrySecret) < 32 {
 		return ErrRouteCredential

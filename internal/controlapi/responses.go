@@ -31,17 +31,34 @@ func identityContextResponse(context controlstate.IdentityContext) authorityv1.I
 	}
 	memberships := make([]authorityv1.Membership, len(context.Memberships))
 	for index, membership := range context.Memberships {
-		memberships[index] = authorityv1.Membership{
-			Id: membership.ID, TeamId: membership.TeamID, IdentityId: membership.IdentityID,
-			TeamDisplayName: membership.TeamDisplayName, TeamKind: authorityv1.TeamKind(membership.TeamKind),
-			Role: authorityv1.TeamRole(membership.Role), MemberSlug: membership.MemberSlug,
-			ManagedLabel: membership.ManagedLabel, PolicyRevision: membership.PolicyRevision,
-			CreatedAt: membership.CreatedAt, UpdatedAt: membership.UpdatedAt,
-		}
+		memberships[index] = membershipResponse(membership)
 	}
 	return authorityv1.IdentityContext{
 		Identity: identity, PersonalTeamId: context.PersonalTeamID, Memberships: memberships,
 	}
+}
+
+func membershipResponse(membership controlstate.Membership) authorityv1.Membership {
+	return authorityv1.Membership{
+		Id: membership.ID, TeamId: membership.TeamID, IdentityId: membership.IdentityID,
+		TeamDisplayName: membership.TeamDisplayName, TeamKind: authorityv1.TeamKind(membership.TeamKind),
+		Role: authorityv1.TeamRole(membership.Role), MemberSlug: membership.MemberSlug,
+		ManagedLabel: membership.ManagedLabel, PolicyRevision: membership.PolicyRevision,
+		CreatedAt: membership.CreatedAt, UpdatedAt: membership.UpdatedAt,
+	}
+}
+
+func invitationResponse(invitation controlstate.Invitation) authorityv1.Invitation {
+	result := authorityv1.Invitation{
+		Id: invitation.ID, TeamId: invitation.TeamID, MemberSlug: invitation.MemberSlug,
+		InitialRole: authorityv1.TeamRole(invitation.InitialRole), State: authorityv1.InvitationState(invitation.State),
+		CreatedAt: invitation.CreatedAt, ExpiresAt: invitation.ExpiresAt,
+	}
+	if invitation.NormalizedEmailRestriction != "" {
+		email := openapi_types.Email(invitation.NormalizedEmailRestriction)
+		result.NormalizedEmailRestriction = &email
+	}
+	return result
 }
 
 func teamResponse(team controlstate.Team) authorityv1.Team {
@@ -56,7 +73,13 @@ func domainResponse(domain controlstate.Domain) authorityv1.Domain {
 	result := authorityv1.Domain{
 		Id: domain.ID, Kind: authorityv1.DomainKind(domain.Kind), CanonicalDomain: domain.CanonicalDomain,
 		State: authorityv1.DomainState(domain.State), AuthorityRevision: domain.AuthorityRevision,
-		RequiredRecords: []authorityv1.DNSRecord{}, CreatedAt: domain.CreatedAt, UpdatedAt: domain.UpdatedAt,
+		RequiredRecords: make([]authorityv1.DNSRecord, len(domain.RequiredRecords)),
+		CreatedAt:       domain.CreatedAt, UpdatedAt: domain.UpdatedAt,
+	}
+	for index, record := range domain.RequiredRecords {
+		result.RequiredRecords[index] = authorityv1.DNSRecord{
+			Name: record.Name, Type: authorityv1.DNSRecordType(record.Type), Value: record.Value,
+		}
 	}
 	if domain.TeamID != "" {
 		result.TeamId = &domain.TeamID
@@ -95,46 +118,12 @@ func routeSessionSetupResponse(
 	route controlstate.Route,
 	setup controlstate.RouteSessionSetup,
 	certificatePlan controlv1.CertificatePlan,
-	relayTransportTrustBundle string,
 ) controlv1.RouteSessionSetup {
 	return controlv1.RouteSessionSetup{
 		Route: routeResponse(route), RouteSession: routeSessionResponse(setup),
 		RouteSessionToken: setup.SessionToken.String(), CertificatePlan: certificatePlan,
-		PublisherConnections:      publisherConnectionResponses(setup.PublisherConnections),
-		RelayTransportTrustBundle: relayTransportTrustBundle,
+		PublisherConnections: publisherConnectionResponses(setup.PublisherConnections),
 	}
-}
-
-func serviceEnrollmentTokenResponse(token controlstate.ServiceEnrollmentToken) controlv1.ServiceEnrollmentToken {
-	result := controlv1.ServiceEnrollmentToken{
-		Id: token.ID, Role: controlv1.ServiceEnrollmentRole(token.Role), CreatedAt: token.CreatedAt,
-		LastUsedAt: token.LastUsedAt, RevokedAt: token.RevokedAt,
-	}
-	if token.RelayServiceID != "" {
-		result.RelayServiceId = &token.RelayServiceID
-	}
-	return result
-}
-
-func serviceEnrollmentResponse(
-	cfg Config,
-	enrollment controlstate.ServiceEnrollment,
-) controlv1.ServiceEnrollmentResponse {
-	response := controlv1.ServiceEnrollmentResponse{
-		Role: controlv1.ServiceEnrollmentRole(enrollment.Role), ServiceCertificate: enrollment.ServiceCertificatePEM,
-		TrustBundle: enrollment.TrustBundlePEM, CertificateExpiresAt: enrollment.CertificateExpiresAt,
-	}
-	if enrollment.Role == controlstate.ServiceEnrollmentRoleIngress {
-		response.InternalControlEndpoint = cfg.IngressControlEndpoint
-		return response
-	}
-	response.InternalControlEndpoint = cfg.RelayControlEndpoint
-	response.RelayServiceId = &enrollment.RelayServiceID
-	response.RelayAddress = &enrollment.RelayAddress
-	response.TlsServerName = &enrollment.TLSServerName
-	response.RelayTransportCertificate = &enrollment.RelayTransportMaterial.CertificatePEM
-	response.RelayTransportPrivateKey = &enrollment.RelayTransportMaterial.PrivateKeyPEM
-	return response
 }
 
 func routeSessionResponse(setup controlstate.RouteSessionSetup) controlv1.RouteSession {
@@ -228,9 +217,4 @@ func certificateIssuanceResponse(issuance controlstate.CertificateIssuance) cont
 		result.Challenges = &challenges
 	}
 	return result
-}
-
-func validLocalCertificatePlan(plan controlv1.CertificatePlan, hostname string) bool {
-	return plan.CacheKey == hostname && plan.Scope == hostname && plan.ChallengeMethod == controlv1.TlsAlpn01 &&
-		len(plan.Identifiers) == 1 && plan.Identifiers[0] == hostname
 }

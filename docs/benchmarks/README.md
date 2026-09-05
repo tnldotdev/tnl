@@ -42,9 +42,9 @@ can complete route and route-session lifecycles. It must provision and clean up:
 
 - PostgreSQL migration and pooled serving credentials.
 - A control service, an ingress service, and at least two relay services.
-- Automatic public control TLS and service enrollment.
-- One ingress enrollment token and one token per relay service.
-- Service-CA relay transport identities and publisher trust bundles.
+- Automatic public control TLS and exact-hostname relay WebPKI certificates.
+- One cluster secret shared by control, ingress, and relay processes.
+- A Route 53 server-domain zone for relay certificate DNS-01.
 - Explicit `TNLD_LOGIN_TOKEN` bootstrap configuration.
 - Public TCP ingress plus TCP and UDP for each relay service.
 

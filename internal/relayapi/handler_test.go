@@ -3,38 +3,35 @@ package relayapi
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/pkg/api/relayv1"
 )
 
-func TestHandlerRequiresVerifiedRelayCertificate(t *testing.T) {
+const testRelayClusterSecret = "test-relay-cluster-secret-012345678901"
+
+func TestHandlerRequiresClusterSecret(t *testing.T) {
 	h := testRelayHandler(t, &relayStoreStub{}, time.Now(), nil)
 	tests := []struct {
-		name string
-		tls  *tls.ConnectionState
+		name          string
+		authorization string
 	}{
-		{name: "no TLS"},
-		{name: "unverified certificate", tls: &tls.ConnectionState{
-			PeerCertificates: []*x509.Certificate{{DNSNames: []string{"relay-1"}}},
-		}},
-		{name: "wrong service role", tls: verifiedCertificate("ingress-1")},
+		{name: "missing"},
+		{name: "wrong", authorization: "Bearer wrong-relay-cluster-secret-01234567"},
+		{name: "malformed", authorization: "Basic " + testRelayClusterSecret},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, "/internal/v1/relays/register", nil)
-			request.TLS = test.tls
+			request.Header.Set("Authorization", test.authorization)
 			response := httptest.NewRecorder()
 			h.ServeHTTP(response, request)
 			if response.Code != http.StatusUnauthorized {
@@ -102,28 +99,43 @@ func TestRegisterRelayAuthorizesAndConvertsRequest(t *testing.T) {
 	}
 }
 
-func TestRegisterRelayRejectsCertificateIdentityMismatch(t *testing.T) {
-	called := false
-	store := &relayStoreStub{registerRelay: func(
-		context.Context, controlstate.RelayRegistration, time.Time, time.Duration,
-	) (controlstate.RelayLease, error) {
-		called = true
-		return controlstate.RelayLease{}, nil
+func TestGetRelayServiceCertificateRequiresExactLease(t *testing.T) {
+	now := time.Date(2026, time.September, 4, 12, 0, 0, 0, time.UTC)
+	var got controlstate.RelayLeaseIdentity
+	store := &relayStoreStub{getRelayServiceCertificate: func(
+		_ context.Context,
+		identity controlstate.RelayLeaseIdentity,
+		gotNow time.Time,
+	) (controlstate.RelayServiceCertificate, error) {
+		got = identity
+		if !gotNow.Equal(now) {
+			t.Fatalf("certificate lookup time = %v, want %v", gotNow, now)
+		}
+		return controlstate.RelayServiceCertificate{
+			RelayServiceID: identity.RelayServiceID, TLSServerName: "relay.example.test",
+			CertificatePEM: "certificate", PrivateKeyPEM: "private-key", Serial: "42",
+			NotAfter: now.Add(24 * time.Hour),
+		}, nil
 	}}
-	body := relayv1.RelayRegistration{
-		RelayServiceId: "relay-service-2", RelayId: "relay-2", RelayRunId: "run-1", ProtocolVersion: 1,
-		RelayAddress: "relay.example:443", TlsServerName: "relay.example",
-		InternalRelayAddress: "10.0.0.10:8443", InternalNetworks: []string{},
-		ConnectionCapacity: 100, StreamCapacity: 1000,
+	target := "/internal/v1/relay-services/relay-service-1/certificate?relay_id=relay-1&relay_run_id=run-1&relay_lease_revision=7"
+	response := serveRelayJSON(t, testRelayHandler(t, store, now, nil), http.MethodGet, target, nil, "relay-1")
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
 	}
-	response := serveRelayJSON(t, testRelayHandler(t, store, time.Now(), nil), http.MethodPost, "/internal/v1/relays/register", body, "relay-1")
-	if response.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusForbidden, response.Body.String())
+	if got != (controlstate.RelayLeaseIdentity{
+		RelayServiceID: "relay-service-1", RelayID: "relay-1", RelayRunID: "run-1", RelayLeaseRevision: 7,
+	}) {
+		t.Fatalf("certificate lease identity = %#v", got)
 	}
-	if called {
-		t.Fatal("registration reached the store")
+	if response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("Cache-Control = %q", response.Header().Get("Cache-Control"))
 	}
-	assertRelayProblemType(t, response, "https://tnl.dev/problems/relay_identity_mismatch")
+	var certificate relayv1.RelayServiceCertificate
+	decodeRelayResponse(t, response, &certificate)
+	if certificate.PrivateKeyPem != "private-key" || certificate.CertificatePem != "certificate" ||
+		certificate.RelayServiceId != "relay-service-1" {
+		t.Fatalf("certificate = %#v", certificate)
+	}
 }
 
 func TestClaimPublisherConnectionParsesCredentialAndExactIdentity(t *testing.T) {
@@ -217,7 +229,7 @@ func TestRelayStoreErrorsHaveStableProblems(t *testing.T) {
 func testRelayHandler(t *testing.T, store Store, now time.Time, report func(error)) http.Handler {
 	t.Helper()
 	h, err := NewHandler(Config{
-		Store: store, RelayIdentity: relayCertificateIdentity, LeaseDuration: 30 * time.Second,
+		Store: store, ClusterSecrets: testRelaySecrets(t), LeaseDuration: 30 * time.Second,
 		Now: func() time.Time { return now }, Report: report,
 	})
 	if err != nil {
@@ -226,11 +238,13 @@ func testRelayHandler(t *testing.T, store Store, now time.Time, report func(erro
 	return h
 }
 
-func relayCertificateIdentity(certificate *x509.Certificate) (RelayIdentity, error) {
-	if len(certificate.DNSNames) != 1 || !strings.HasPrefix(certificate.DNSNames[0], "relay-") {
-		return RelayIdentity{}, errors.New("test certificate has no relay identity")
+func testRelaySecrets(t *testing.T) serviceapi.BearerSecrets {
+	t.Helper()
+	secrets, err := serviceapi.NewBearerSecrets(testRelayClusterSecret, "")
+	if err != nil {
+		t.Fatal(err)
 	}
-	return RelayIdentity{RelayServiceID: "relay-service-1", RelayID: certificate.DNSNames[0]}, nil
+	return secrets
 }
 
 func serveRelayJSON(
@@ -247,18 +261,10 @@ func serveRelayJSON(
 	}
 	request := httptest.NewRequest(method, target, bytes.NewReader(encoded))
 	request.Header.Set("Content-Type", "application/json")
-	request.TLS = verifiedCertificate(relayID)
+	request.Header.Set("Authorization", "Bearer "+testRelayClusterSecret)
 	response := httptest.NewRecorder()
 	h.ServeHTTP(response, request)
 	return response
-}
-
-func verifiedCertificate(identity string) *tls.ConnectionState {
-	certificate := &x509.Certificate{DNSNames: []string{identity}}
-	return &tls.ConnectionState{
-		PeerCertificates: []*x509.Certificate{certificate},
-		VerifiedChains:   [][]*x509.Certificate{{certificate}},
-	}
 }
 
 func decodeRelayResponse(t *testing.T, response *httptest.ResponseRecorder, destination any) {
@@ -281,6 +287,7 @@ type relayStoreStub struct {
 	registerRelay                 func(context.Context, controlstate.RelayRegistration, time.Time, time.Duration) (controlstate.RelayLease, error)
 	renewRelay                    func(context.Context, controlstate.RelayRenewal, time.Time, time.Duration) (controlstate.RelayLease, error)
 	beginRelayDrain               func(context.Context, controlstate.RelayLeaseIdentity, time.Time, time.Time) (controlstate.RelayLease, error)
+	getRelayServiceCertificate    func(context.Context, controlstate.RelayLeaseIdentity, time.Time) (controlstate.RelayServiceCertificate, error)
 	claimPublisherConnection      func(context.Context, controlstate.PublisherConnectionClaimRequest, time.Time) (controlstate.ClaimedPublisherConnection, error)
 	markPublisherConnectionReady  func(context.Context, controlstate.PublisherConnectionClaimRequest, time.Time) (controlstate.ClaimedPublisherConnection, error)
 	disconnectPublisherConnection func(context.Context, controlstate.PublisherConnectionClaimRequest, time.Time, bool) (controlstate.ClaimedPublisherConnection, error)
@@ -302,6 +309,12 @@ func (s *relayStoreStub) BeginRelayDrain(
 	ctx context.Context, identity controlstate.RelayLeaseIdentity, now, deadline time.Time,
 ) (controlstate.RelayLease, error) {
 	return s.beginRelayDrain(ctx, identity, now, deadline)
+}
+
+func (s *relayStoreStub) GetRelayServiceCertificate(
+	ctx context.Context, identity controlstate.RelayLeaseIdentity, now time.Time,
+) (controlstate.RelayServiceCertificate, error) {
+	return s.getRelayServiceCertificate(ctx, identity, now)
 }
 
 func (s *relayStoreStub) ClaimPublisherConnection(

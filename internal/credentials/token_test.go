@@ -104,6 +104,32 @@ func TestRefreshTokenRoundTripAndClassIsolation(t *testing.T) {
 	}
 }
 
+func TestInvitationTokenRoundTrip(t *testing.T) {
+	token, hash, err := NewInvitationToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := ParseInvitationToken(token)
+	if err != nil || !SecretHashMatches(hash[:], parsed) {
+		t.Fatalf("parsed invitation token = %x, %v", parsed, err)
+	}
+	if _, err := ParseInvitationToken(InvitationToken("not-an-invitation")); !errors.Is(err, ErrInvalidInvitationToken) {
+		t.Fatalf("invalid invitation token error = %v", err)
+	}
+	derived, derivedHash, err := DeriveInvitationToken(make([]byte, 32), "team_1/invitation_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repeated, repeatedHash, err := DeriveInvitationToken(make([]byte, 32), "team_1/invitation_1")
+	if err != nil || repeated != derived || repeatedHash != derivedHash {
+		t.Fatalf("repeated derived invitation token = %q, %x, %v", repeated, repeatedHash, err)
+	}
+	other, _, err := DeriveInvitationToken(make([]byte, 32), "team_1/invitation_2")
+	if err != nil || other == derived {
+		t.Fatalf("other derived invitation token = %q, %v", other, err)
+	}
+}
+
 func TestDataPlaneTokenClasses(t *testing.T) {
 	session, sessionID, sessionHash, err := NewSessionToken()
 	if err != nil {
@@ -147,24 +173,6 @@ func TestDataPlaneTokenClasses(t *testing.T) {
 	}
 	if err := ParseServiceToken(ServiceToken(session)); !errors.Is(err, ErrInvalidServiceToken) {
 		t.Fatalf("session as service error = %v", err)
-	}
-}
-
-func TestServiceEnrollmentTokenRoundTripAndClassIsolation(t *testing.T) {
-	token, lookupID, hash, err := NewServiceEnrollmentToken()
-	if err != nil {
-		t.Fatal(err)
-	}
-	parsedID, parsedHash, err := ParseServiceEnrollmentToken(token)
-	if err != nil || parsedID != lookupID || parsedHash != hash || !strings.HasPrefix(token.String(), enrollmentPrefix) {
-		t.Fatalf("enrollment round trip = %q, %x, %v", parsedID, parsedHash, err)
-	}
-	service, err := NewServiceToken()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := ParseServiceEnrollmentToken(ServiceEnrollmentToken(service)); !errors.Is(err, ErrInvalidServiceEnrollmentToken) {
-		t.Fatalf("service token as enrollment token error = %v", err)
 	}
 }
 

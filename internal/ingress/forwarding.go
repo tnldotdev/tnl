@@ -3,7 +3,6 @@ package ingress
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"errors"
 	"fmt"
 	"net"
@@ -12,7 +11,6 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/routebackend"
-	"github.com/tnldotdev/tnl/internal/servicepki"
 	"github.com/tnldotdev/tnl/internal/tunnel"
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -20,6 +18,7 @@ import (
 
 type ForwarderConfig struct {
 	TLSConfig       *tls.Config
+	ClusterSecret   string
 	TransportConfig muxsession.TLSYamuxConfig
 }
 
@@ -36,7 +35,7 @@ type Forwarder struct {
 }
 
 func NewForwarder(config ForwarderConfig) (*Forwarder, error) {
-	connector, err := newTLSRelayConnector(config.TLSConfig, config.TransportConfig)
+	connector, err := newTLSRelayConnector(config.TLSConfig, config.ClusterSecret, config.TransportConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -241,6 +240,7 @@ func (f *Forwarder) session(ctx context.Context, target relayTarget) (*tunnel.Se
 		if err == nil {
 			session, err = tunnel.Dial(connectCtx, transport, tunnelv1.Message{
 				Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version, Role: tunnelv1.Ingress,
+				Credential: f.connector.Credential(),
 			})
 		}
 		cancel()
@@ -324,53 +324,30 @@ func closeRelaySessions(entries []*relaySession) error {
 
 type relayConnector interface {
 	Connect(context.Context, relayTarget) (muxsession.Session, error)
+	Credential() string
 }
 
 type tlsRelayConnector struct {
 	tlsConfig       *tls.Config
+	clusterSecret   string
 	transportConfig muxsession.TLSYamuxConfig
 }
 
-func newTLSRelayConnector(tlsConfig *tls.Config, transportConfig muxsession.TLSYamuxConfig) (relayConnector, error) {
-	if tlsConfig == nil || tlsConfig.RootCAs == nil ||
-		len(tlsConfig.Certificates) == 0 && tlsConfig.GetClientCertificate == nil {
-		return nil, errors.New("ingress: forwarding service-mTLS configuration is required")
+func newTLSRelayConnector(tlsConfig *tls.Config, clusterSecret string, transportConfig muxsession.TLSYamuxConfig) (relayConnector, error) {
+	if tlsConfig == nil || clusterSecret == "" {
+		return nil, errors.New("ingress: forwarding TLS and cluster secret are required")
 	}
 	if tlsConfig.InsecureSkipVerify || tlsConfig.VerifyPeerCertificate != nil || tlsConfig.VerifyConnection != nil {
 		return nil, errors.New("ingress: forwarding TLS verification must be configured by the forwarder")
 	}
-	return tlsRelayConnector{tlsConfig: tlsConfig.Clone(), transportConfig: transportConfig}, nil
+	return tlsRelayConnector{tlsConfig: tlsConfig.Clone(), clusterSecret: clusterSecret, transportConfig: transportConfig}, nil
 }
 
 func (c tlsRelayConnector) Connect(ctx context.Context, target relayTarget) (muxsession.Session, error) {
 	tlsConfig := c.tlsConfig.Clone()
-	tlsConfig.InsecureSkipVerify = true // Exact URI identity verification below replaces DNS SAN verification.
-	tlsConfig.VerifyConnection = func(state tls.ConnectionState) error {
-		if len(state.PeerCertificates) == 0 {
-			return errors.New("ingress: relay service certificate is missing")
-		}
-		intermediates := x509.NewCertPool()
-		for _, certificate := range state.PeerCertificates[1:] {
-			intermediates.AddCert(certificate)
-		}
-		verifyOptions := x509.VerifyOptions{
-			Roots: c.tlsConfig.RootCAs, Intermediates: intermediates,
-			KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		}
-		if c.tlsConfig.Time != nil {
-			verifyOptions.CurrentTime = c.tlsConfig.Time()
-		}
-		if _, err := state.PeerCertificates[0].Verify(verifyOptions); err != nil {
-			return fmt.Errorf("ingress: verify relay service certificate: %w", err)
-		}
-		identity, err := servicepki.CertificateIdentity(state.PeerCertificates[0])
-		if err != nil || identity.Role != servicepki.RoleRelay ||
-			identity.RelayServiceID != target.relayServiceID || identity.ProcessID != target.relayID {
-			return errors.New("ingress: relay service certificate identity does not match the connected relay")
-		}
-		return nil
-	}
 	return (muxsession.TLSYamuxConnector{
 		TLSConfig: tlsConfig, Config: c.transportConfig,
 	}).Connect(ctx, muxsession.Endpoint{Address: target.address, ServerName: target.serverName})
 }
+
+func (c tlsRelayConnector) Credential() string { return c.clusterSecret }

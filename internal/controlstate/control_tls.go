@@ -36,7 +36,7 @@ func (c *ControlTLSCache) Get(ctx context.Context, key string) ([]byte, error) {
 	if c == nil || c.database == nil || !validControlTLSCacheKey(key) {
 		return nil, autocert.ErrCacheMiss
 	}
-	data, err := controlstatedb.New(c.database.pool).GetControlTLSCacheEntry(ctx, controlstatedb.GetControlTLSCacheEntryParams{
+	stored, err := controlstatedb.New(c.database.pool).GetControlTLSCacheEntry(ctx, controlstatedb.GetControlTLSCacheEntryParams{
 		DirectoryUrl: c.directoryURL, CacheKey: key,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -45,15 +45,37 @@ func (c *ControlTLSCache) Get(ctx context.Context, key string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("controlstate: get control TLS cache entry: %w", err)
 	}
-	return append([]byte(nil), data...), nil
+	data, previous, err := c.database.openSecret(stored.CacheStorageKeyID, controlTLSCacheContext(c.directoryURL, key), stored.CacheCiphertext)
+	if err != nil {
+		return nil, fmt.Errorf("controlstate: decrypt control TLS cache entry: %w", err)
+	}
+	if previous {
+		rotated, err := c.database.sealSecret(controlTLSCacheContext(c.directoryURL, key), data)
+		if err != nil {
+			return nil, fmt.Errorf("controlstate: re-encrypt control TLS cache entry: %w", err)
+		}
+		if err := controlstatedb.New(c.database.pool).RotateControlTLSCacheEntry(ctx, controlstatedb.RotateControlTLSCacheEntryParams{
+			CacheCiphertext: rotated, UpdatedAt: timestamptz(time.Now()), DirectoryUrl: c.directoryURL,
+			CacheStorageKeyID: c.database.storageKey.CurrentID(), CacheKey: key,
+			PreviousKeyID: stored.CacheStorageKeyID, PreviousCiphertext: stored.CacheCiphertext,
+		}); err != nil {
+			return nil, fmt.Errorf("controlstate: store re-encrypted control TLS cache entry: %w", err)
+		}
+	}
+	return data, nil
 }
 
 func (c *ControlTLSCache) Put(ctx context.Context, key string, data []byte) error {
 	if c == nil || c.database == nil || !validControlTLSCacheKey(key) || len(data) == 0 || len(data) > maximumControlTLSCacheData {
 		return errors.New("controlstate: invalid control TLS cache entry")
 	}
+	ciphertext, err := c.database.sealSecret(controlTLSCacheContext(c.directoryURL, key), data)
+	if err != nil {
+		return fmt.Errorf("controlstate: encrypt control TLS cache entry: %w", err)
+	}
 	if err := controlstatedb.New(c.database.pool).PutControlTLSCacheEntry(ctx, controlstatedb.PutControlTLSCacheEntryParams{
-		DirectoryUrl: c.directoryURL, CacheKey: key, CacheData: append([]byte(nil), data...), UpdatedAt: timestamptz(time.Now()),
+		DirectoryUrl: c.directoryURL, CacheKey: key, CacheCiphertext: ciphertext,
+		CacheStorageKeyID: c.database.storageKey.CurrentID(), UpdatedAt: timestamptz(time.Now()),
 	}); err != nil {
 		return fmt.Errorf("controlstate: put control TLS cache entry: %w", err)
 	}

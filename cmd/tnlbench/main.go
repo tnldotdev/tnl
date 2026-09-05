@@ -307,7 +307,7 @@ func run(ctx context.Context, flags cli) (measurements, error) {
 	if err != nil {
 		return measurements{}, err
 	}
-	routes, err := routeclient.New(control, authority, discovery.AuthorityEndpoint != flags.ServerURL)
+	routes, err := routeclient.New(control)
 	if err != nil {
 		return measurements{}, err
 	}

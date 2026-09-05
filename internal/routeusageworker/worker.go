@@ -253,6 +253,7 @@ func usageBucketReport(work controlstate.RouteUsageDeliveryWork) routeusagev1.Ro
 	checkpoint := work.Checkpoint
 	return routeusagev1.RouteUsageBucketReport{
 		ItemId: work.DeliveryKey, RouteId: work.RouteID, RouteVersion: strconv.FormatUint(work.RouteVersion, 10),
+		TeamId: work.TeamID, ActingIdentityId: work.ActingIdentityID,
 		Resolution: routeusagev1.Minute, BucketStart: wireTimestamp(work.BucketStart),
 		Revision: strconv.FormatUint(work.SourceRevision, 10), ObservedThrough: wireTimestamp(work.ObservedThrough),
 		ConnectionAttempts: strconv.FormatUint(work.ConnectionAttempts, 10),

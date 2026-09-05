@@ -23,15 +23,69 @@ RETURNING *;
 -- name: EnsureExternalRetryMasterKey :one
 INSERT INTO control.runtime_secrets (
     singleton,
-    external_retry_master_key,
+    external_retry_master_key_ciphertext,
+    external_retry_master_key_storage_key_id,
     created_at
 ) VALUES (
     true,
-    sqlc.arg(external_retry_master_key),
+    sqlc.arg(external_retry_master_key_ciphertext),
+    sqlc.arg(external_retry_master_key_storage_key_id),
     sqlc.arg(created_at)
 )
 ON CONFLICT (singleton) DO UPDATE SET singleton = EXCLUDED.singleton
-RETURNING external_retry_master_key;
+RETURNING external_retry_master_key_ciphertext, external_retry_master_key_storage_key_id;
+
+-- name: RotateExternalRetryMasterKey :exec
+UPDATE control.runtime_secrets
+SET external_retry_master_key_ciphertext = sqlc.arg(external_retry_master_key_ciphertext),
+    external_retry_master_key_storage_key_id = sqlc.arg(external_retry_master_key_storage_key_id)
+WHERE singleton = true
+  AND external_retry_master_key_storage_key_id = sqlc.arg(previous_key_id)
+  AND external_retry_master_key_ciphertext = sqlc.arg(previous_ciphertext);
+
+-- name: ObserveAuthorityRevision :one
+INSERT INTO control.authority_revision_floors (
+    issuer,
+    team_id,
+    policy_revision,
+    updated_at
+) VALUES (
+    sqlc.arg(issuer),
+    sqlc.arg(team_id),
+    sqlc.arg(policy_revision),
+    sqlc.arg(updated_at)
+)
+ON CONFLICT (issuer, team_id) DO UPDATE SET
+    policy_revision = EXCLUDED.policy_revision,
+    updated_at = EXCLUDED.updated_at
+WHERE control.authority_revision_floors.policy_revision <= EXCLUDED.policy_revision
+RETURNING policy_revision;
+
+-- name: AdvanceAuthorityRevision :one
+INSERT INTO control.authority_revision_floors (
+    issuer,
+    team_id,
+    policy_revision,
+    updated_at
+) VALUES (
+    sqlc.arg(issuer),
+    sqlc.arg(team_id),
+    sqlc.arg(policy_revision),
+    sqlc.arg(updated_at)
+)
+ON CONFLICT (issuer, team_id) DO UPDATE SET
+    policy_revision = EXCLUDED.policy_revision,
+    updated_at = GREATEST(control.authority_revision_floors.updated_at, EXCLUDED.updated_at)
+WHERE control.authority_revision_floors.policy_revision < EXCLUDED.policy_revision
+RETURNING policy_revision;
+
+-- name: LockHostedTeamRoutes :many
+SELECT *
+FROM control.routes
+WHERE team_id = sqlc.arg(team_id)
+  AND deleted_at IS NULL
+ORDER BY id
+FOR UPDATE;
 
 -- name: ListExternalAuthorityRoutes :many
 SELECT routes.*,

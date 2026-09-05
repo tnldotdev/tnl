@@ -11,6 +11,544 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const acceptTeamInvitation = `-- name: AcceptTeamInvitation :execrows
+UPDATE control.team_invitations
+SET state = 'accepted',
+    accepted_at = $1,
+    accepted_by_identity_id = $2,
+    accepted_membership_id = $3
+WHERE id = $4
+  AND state = 'pending'
+`
+
+type AcceptTeamInvitationParams struct {
+	AcceptedAt   pgtype.Timestamptz
+	IdentityID   pgtype.Text
+	MembershipID pgtype.Text
+	InvitationID string
+}
+
+func (q *Queries) AcceptTeamInvitation(ctx context.Context, arg AcceptTeamInvitationParams) (int64, error) {
+	result, err := q.db.Exec(ctx, acceptTeamInvitation,
+		arg.AcceptedAt,
+		arg.IdentityID,
+		arg.MembershipID,
+		arg.InvitationID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const activateMemberSlug = `-- name: ActivateMemberSlug :execrows
+UPDATE control.member_slug_reservations
+SET state = 'active',
+    reserved_by_identity_id = $1,
+    activated_at = $2,
+    released_at = NULL
+WHERE id = $3
+  AND state = 'invited'
+`
+
+type ActivateMemberSlugParams struct {
+	IdentityID        pgtype.Text
+	ActivatedAt       pgtype.Timestamptz
+	SlugReservationID string
+}
+
+func (q *Queries) ActivateMemberSlug(ctx context.Context, arg ActivateMemberSlugParams) (int64, error) {
+	result, err := q.db.Exec(ctx, activateMemberSlug, arg.IdentityID, arg.ActivatedAt, arg.SlugReservationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const advanceTeamPolicyRevision = `-- name: AdvanceTeamPolicyRevision :one
+UPDATE control.teams
+SET policy_revision = policy_revision + 1,
+    updated_at = $1
+WHERE id = $2
+  AND deleted_at IS NULL
+RETURNING policy_revision
+`
+
+type AdvanceTeamPolicyRevisionParams struct {
+	UpdatedAt pgtype.Timestamptz
+	TeamID    string
+}
+
+func (q *Queries) AdvanceTeamPolicyRevision(ctx context.Context, arg AdvanceTeamPolicyRevisionParams) (int64, error) {
+	row := q.db.QueryRow(ctx, advanceTeamPolicyRevision, arg.UpdatedAt, arg.TeamID)
+	var policy_revision int64
+	err := row.Scan(&policy_revision)
+	return policy_revision, err
+}
+
+const countTeamOwners = `-- name: CountTeamOwners :one
+SELECT count(*)
+FROM control.team_memberships
+WHERE team_id = $1
+  AND role = 'owner'
+  AND removed_at IS NULL
+`
+
+func (q *Queries) CountTeamOwners(ctx context.Context, teamID string) (int64, error) {
+	row := q.db.QueryRow(ctx, countTeamOwners, teamID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const createClaimedDNSAuthority = `-- name: CreateClaimedDNSAuthority :exec
+INSERT INTO control.dns_authorities (
+    authority_reference,
+    team_id,
+    domain_id,
+    canonical_domain,
+    create_idempotency_key,
+    create_request_digest,
+    provider,
+    state,
+    available_at,
+    created_at,
+    updated_at
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    'route53',
+    'pending',
+    $7,
+    $7,
+    $7
+)
+`
+
+type CreateClaimedDNSAuthorityParams struct {
+	AuthorityReference   string
+	TeamID               string
+	DomainID             string
+	CanonicalDomain      string
+	CreateIdempotencyKey string
+	CreateRequestDigest  []byte
+	CreatedAt            pgtype.Timestamptz
+}
+
+func (q *Queries) CreateClaimedDNSAuthority(ctx context.Context, arg CreateClaimedDNSAuthorityParams) error {
+	_, err := q.db.Exec(ctx, createClaimedDNSAuthority,
+		arg.AuthorityReference,
+		arg.TeamID,
+		arg.DomainID,
+		arg.CanonicalDomain,
+		arg.CreateIdempotencyKey,
+		arg.CreateRequestDigest,
+		arg.CreatedAt,
+	)
+	return err
+}
+
+const createClaimedDomain = `-- name: CreateClaimedDomain :one
+INSERT INTO control.domains (
+    id,
+    kind,
+    team_id,
+    canonical_domain,
+    dns_authority_reference,
+    state,
+    authority_revision,
+    created_by_identity_id,
+    claim_idempotency_key,
+    claim_request_digest,
+    make_default_when_ready,
+    created_at,
+    updated_at
+) VALUES (
+    $1,
+    'claimed',
+    $2,
+    $3,
+    $4,
+    'pending',
+    $5,
+    $6,
+    $7,
+    $8,
+    $9,
+    $10,
+    $10
+)
+RETURNING id, kind, team_id, canonical_domain, dns_authority_reference, state, authority_revision, verification_token_digest, created_by_identity_id, claim_idempotency_key, claim_request_digest, make_default_when_ready, created_at, verified_at, reusable_after, released_at, updated_at
+`
+
+type CreateClaimedDomainParams struct {
+	ID                    string
+	TeamID                pgtype.Text
+	CanonicalDomain       string
+	DnsAuthorityReference pgtype.Text
+	AuthorityRevision     int64
+	CreatedByIdentityID   pgtype.Text
+	ClaimIdempotencyKey   pgtype.Text
+	ClaimRequestDigest    []byte
+	MakeDefaultWhenReady  bool
+	CreatedAt             pgtype.Timestamptz
+}
+
+func (q *Queries) CreateClaimedDomain(ctx context.Context, arg CreateClaimedDomainParams) (ControlDomain, error) {
+	row := q.db.QueryRow(ctx, createClaimedDomain,
+		arg.ID,
+		arg.TeamID,
+		arg.CanonicalDomain,
+		arg.DnsAuthorityReference,
+		arg.AuthorityRevision,
+		arg.CreatedByIdentityID,
+		arg.ClaimIdempotencyKey,
+		arg.ClaimRequestDigest,
+		arg.MakeDefaultWhenReady,
+		arg.CreatedAt,
+	)
+	var i ControlDomain
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.TeamID,
+		&i.CanonicalDomain,
+		&i.DnsAuthorityReference,
+		&i.State,
+		&i.AuthorityRevision,
+		&i.VerificationTokenDigest,
+		&i.CreatedByIdentityID,
+		&i.ClaimIdempotencyKey,
+		&i.ClaimRequestDigest,
+		&i.MakeDefaultWhenReady,
+		&i.CreatedAt,
+		&i.VerifiedAt,
+		&i.ReusableAfter,
+		&i.ReleasedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const createOrganizationTeam = `-- name: CreateOrganizationTeam :one
+INSERT INTO control.teams (
+    id,
+    kind,
+    display_name,
+    managed_label,
+    default_domain_id,
+    created_by_identity_id,
+    creation_idempotency_key,
+    creation_request_digest,
+    created_at,
+    updated_at
+) VALUES (
+    $1,
+    'organization',
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    $8
+)
+RETURNING id, kind, display_name, managed_label, default_domain_id, policy_revision, created_at, updated_at
+`
+
+type CreateOrganizationTeamParams struct {
+	ID                     string
+	DisplayName            string
+	ManagedLabel           string
+	DefaultDomainID        pgtype.Text
+	CreatedByIdentityID    string
+	CreationIdempotencyKey pgtype.Text
+	CreationRequestDigest  []byte
+	CreatedAt              pgtype.Timestamptz
+}
+
+type CreateOrganizationTeamRow struct {
+	ID              string
+	Kind            string
+	DisplayName     string
+	ManagedLabel    string
+	DefaultDomainID pgtype.Text
+	PolicyRevision  int64
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
+func (q *Queries) CreateOrganizationTeam(ctx context.Context, arg CreateOrganizationTeamParams) (CreateOrganizationTeamRow, error) {
+	row := q.db.QueryRow(ctx, createOrganizationTeam,
+		arg.ID,
+		arg.DisplayName,
+		arg.ManagedLabel,
+		arg.DefaultDomainID,
+		arg.CreatedByIdentityID,
+		arg.CreationIdempotencyKey,
+		arg.CreationRequestDigest,
+		arg.CreatedAt,
+	)
+	var i CreateOrganizationTeamRow
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.DisplayName,
+		&i.ManagedLabel,
+		&i.DefaultDomainID,
+		&i.PolicyRevision,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const createTeamInvitation = `-- name: CreateTeamInvitation :one
+INSERT INTO control.team_invitations (
+    id,
+    team_id,
+    slug_reservation_id,
+    initial_role,
+    invited_by_identity_id,
+    idempotency_key,
+    request_digest,
+    token_digest,
+    normalized_email_restriction,
+    state,
+    created_at,
+    expires_at
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    $9,
+    'pending',
+    $10,
+    $11
+)
+RETURNING id, team_id, slug_reservation_id, initial_role, invited_by_identity_id, idempotency_key, request_digest, token_digest, normalized_email_restriction, state, created_at, expires_at, accepted_at, accepted_by_identity_id, accepted_membership_id, revoked_at, revoked_by_identity_id
+`
+
+type CreateTeamInvitationParams struct {
+	ID                         string
+	TeamID                     string
+	SlugReservationID          string
+	InitialRole                string
+	InvitedByIdentityID        string
+	IdempotencyKey             string
+	RequestDigest              []byte
+	TokenDigest                []byte
+	NormalizedEmailRestriction pgtype.Text
+	CreatedAt                  pgtype.Timestamptz
+	ExpiresAt                  pgtype.Timestamptz
+}
+
+func (q *Queries) CreateTeamInvitation(ctx context.Context, arg CreateTeamInvitationParams) (ControlTeamInvitation, error) {
+	row := q.db.QueryRow(ctx, createTeamInvitation,
+		arg.ID,
+		arg.TeamID,
+		arg.SlugReservationID,
+		arg.InitialRole,
+		arg.InvitedByIdentityID,
+		arg.IdempotencyKey,
+		arg.RequestDigest,
+		arg.TokenDigest,
+		arg.NormalizedEmailRestriction,
+		arg.CreatedAt,
+		arg.ExpiresAt,
+	)
+	var i ControlTeamInvitation
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.SlugReservationID,
+		&i.InitialRole,
+		&i.InvitedByIdentityID,
+		&i.IdempotencyKey,
+		&i.RequestDigest,
+		&i.TokenDigest,
+		&i.NormalizedEmailRestriction,
+		&i.State,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.AcceptedAt,
+		&i.AcceptedByIdentityID,
+		&i.AcceptedMembershipID,
+		&i.RevokedAt,
+		&i.RevokedByIdentityID,
+	)
+	return i, err
+}
+
+const createTeamMembership = `-- name: CreateTeamMembership :exec
+INSERT INTO control.team_memberships (
+    id,
+    team_id,
+    identity_id,
+    slug_reservation_id,
+    managed_label,
+    role,
+    authority_revision,
+    created_at,
+    updated_at
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    $8
+)
+`
+
+type CreateTeamMembershipParams struct {
+	ID                string
+	TeamID            string
+	IdentityID        string
+	SlugReservationID string
+	ManagedLabel      string
+	Role              string
+	AuthorityRevision int64
+	CreatedAt         pgtype.Timestamptz
+}
+
+func (q *Queries) CreateTeamMembership(ctx context.Context, arg CreateTeamMembershipParams) error {
+	_, err := q.db.Exec(ctx, createTeamMembership,
+		arg.ID,
+		arg.TeamID,
+		arg.IdentityID,
+		arg.SlugReservationID,
+		arg.ManagedLabel,
+		arg.Role,
+		arg.AuthorityRevision,
+		arg.CreatedAt,
+	)
+	return err
+}
+
+const expireTeamInvitations = `-- name: ExpireTeamInvitations :many
+UPDATE control.team_invitations
+SET state = 'expired'
+WHERE team_id = $1
+  AND state = 'pending'
+  AND expires_at <= $2
+RETURNING slug_reservation_id
+`
+
+type ExpireTeamInvitationsParams struct {
+	TeamID string
+	Now    pgtype.Timestamptz
+}
+
+func (q *Queries) ExpireTeamInvitations(ctx context.Context, arg ExpireTeamInvitationsParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, expireTeamInvitations, arg.TeamID, arg.Now)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var slug_reservation_id string
+		if err := rows.Scan(&slug_reservation_id); err != nil {
+			return nil, err
+		}
+		items = append(items, slug_reservation_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const findInvitationTeamByTokenDigest = `-- name: FindInvitationTeamByTokenDigest :one
+SELECT team_id
+FROM control.team_invitations
+WHERE token_digest = $1
+`
+
+func (q *Queries) FindInvitationTeamByTokenDigest(ctx context.Context, tokenDigest []byte) (string, error) {
+	row := q.db.QueryRow(ctx, findInvitationTeamByTokenDigest, tokenDigest)
+	var team_id string
+	err := row.Scan(&team_id)
+	return team_id, err
+}
+
+const getClaimedDomainByIdempotency = `-- name: GetClaimedDomainByIdempotency :one
+SELECT d.id, d.kind, d.team_id, d.canonical_domain, d.dns_authority_reference, d.state, d.authority_revision, d.verification_token_digest, d.created_by_identity_id, d.claim_idempotency_key, d.claim_request_digest, d.make_default_when_ready, d.created_at, d.verified_at, d.reusable_after, d.released_at, d.updated_at, COALESCE(a.nameservers, '{}'::text[]) AS nameservers
+FROM control.domains AS d
+LEFT JOIN control.dns_authorities AS a ON a.authority_reference = d.dns_authority_reference
+WHERE d.created_by_identity_id = $1
+  AND d.team_id = $2
+  AND d.claim_idempotency_key = $3
+  AND d.kind = 'claimed'
+`
+
+type GetClaimedDomainByIdempotencyParams struct {
+	IdentityID     pgtype.Text
+	TeamID         pgtype.Text
+	IdempotencyKey pgtype.Text
+}
+
+type GetClaimedDomainByIdempotencyRow struct {
+	ID                      string
+	Kind                    string
+	TeamID                  pgtype.Text
+	CanonicalDomain         string
+	DnsAuthorityReference   pgtype.Text
+	State                   string
+	AuthorityRevision       int64
+	VerificationTokenDigest []byte
+	CreatedByIdentityID     pgtype.Text
+	ClaimIdempotencyKey     pgtype.Text
+	ClaimRequestDigest      []byte
+	MakeDefaultWhenReady    bool
+	CreatedAt               pgtype.Timestamptz
+	VerifiedAt              pgtype.Timestamptz
+	ReusableAfter           pgtype.Timestamptz
+	ReleasedAt              pgtype.Timestamptz
+	UpdatedAt               pgtype.Timestamptz
+	Nameservers             []string
+}
+
+func (q *Queries) GetClaimedDomainByIdempotency(ctx context.Context, arg GetClaimedDomainByIdempotencyParams) (GetClaimedDomainByIdempotencyRow, error) {
+	row := q.db.QueryRow(ctx, getClaimedDomainByIdempotency, arg.IdentityID, arg.TeamID, arg.IdempotencyKey)
+	var i GetClaimedDomainByIdempotencyRow
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.TeamID,
+		&i.CanonicalDomain,
+		&i.DnsAuthorityReference,
+		&i.State,
+		&i.AuthorityRevision,
+		&i.VerificationTokenDigest,
+		&i.CreatedByIdentityID,
+		&i.ClaimIdempotencyKey,
+		&i.ClaimRequestDigest,
+		&i.MakeDefaultWhenReady,
+		&i.CreatedAt,
+		&i.VerifiedAt,
+		&i.ReusableAfter,
+		&i.ReleasedAt,
+		&i.UpdatedAt,
+		&i.Nameservers,
+	)
+	return i, err
+}
+
 const getIdentityTeam = `-- name: GetIdentityTeam :one
 SELECT
     t.id,
@@ -62,18 +600,279 @@ func (q *Queries) GetIdentityTeam(ctx context.Context, arg GetIdentityTeamParams
 	return i, err
 }
 
+const getInvitationByIdempotency = `-- name: GetInvitationByIdempotency :one
+SELECT i.id, i.team_id, i.slug_reservation_id, i.initial_role, i.invited_by_identity_id, i.idempotency_key, i.request_digest, i.token_digest, i.normalized_email_restriction, i.state, i.created_at, i.expires_at, i.accepted_at, i.accepted_by_identity_id, i.accepted_membership_id, i.revoked_at, i.revoked_by_identity_id, s.member_slug
+FROM control.team_invitations AS i
+JOIN control.member_slug_reservations AS s ON s.id = i.slug_reservation_id
+WHERE i.invited_by_identity_id = $1
+  AND i.team_id = $2
+  AND i.idempotency_key = $3
+FOR UPDATE OF i, s
+`
+
+type GetInvitationByIdempotencyParams struct {
+	IdentityID     string
+	TeamID         string
+	IdempotencyKey string
+}
+
+type GetInvitationByIdempotencyRow struct {
+	ID                         string
+	TeamID                     string
+	SlugReservationID          string
+	InitialRole                string
+	InvitedByIdentityID        string
+	IdempotencyKey             string
+	RequestDigest              []byte
+	TokenDigest                []byte
+	NormalizedEmailRestriction pgtype.Text
+	State                      string
+	CreatedAt                  pgtype.Timestamptz
+	ExpiresAt                  pgtype.Timestamptz
+	AcceptedAt                 pgtype.Timestamptz
+	AcceptedByIdentityID       pgtype.Text
+	AcceptedMembershipID       pgtype.Text
+	RevokedAt                  pgtype.Timestamptz
+	RevokedByIdentityID        pgtype.Text
+	MemberSlug                 string
+}
+
+func (q *Queries) GetInvitationByIdempotency(ctx context.Context, arg GetInvitationByIdempotencyParams) (GetInvitationByIdempotencyRow, error) {
+	row := q.db.QueryRow(ctx, getInvitationByIdempotency, arg.IdentityID, arg.TeamID, arg.IdempotencyKey)
+	var i GetInvitationByIdempotencyRow
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.SlugReservationID,
+		&i.InitialRole,
+		&i.InvitedByIdentityID,
+		&i.IdempotencyKey,
+		&i.RequestDigest,
+		&i.TokenDigest,
+		&i.NormalizedEmailRestriction,
+		&i.State,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.AcceptedAt,
+		&i.AcceptedByIdentityID,
+		&i.AcceptedMembershipID,
+		&i.RevokedAt,
+		&i.RevokedByIdentityID,
+		&i.MemberSlug,
+	)
+	return i, err
+}
+
+const getOrganizationTeamByIdempotency = `-- name: GetOrganizationTeamByIdempotency :one
+SELECT
+    id,
+    kind,
+    display_name,
+    managed_label,
+    default_domain_id,
+    policy_revision,
+    creation_request_digest,
+    created_at,
+    updated_at
+FROM control.teams
+WHERE created_by_identity_id = $1
+  AND creation_idempotency_key = $2
+  AND kind = 'organization'
+`
+
+type GetOrganizationTeamByIdempotencyParams struct {
+	IdentityID     string
+	IdempotencyKey pgtype.Text
+}
+
+type GetOrganizationTeamByIdempotencyRow struct {
+	ID                    string
+	Kind                  string
+	DisplayName           string
+	ManagedLabel          string
+	DefaultDomainID       pgtype.Text
+	PolicyRevision        int64
+	CreationRequestDigest []byte
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+}
+
+func (q *Queries) GetOrganizationTeamByIdempotency(ctx context.Context, arg GetOrganizationTeamByIdempotencyParams) (GetOrganizationTeamByIdempotencyRow, error) {
+	row := q.db.QueryRow(ctx, getOrganizationTeamByIdempotency, arg.IdentityID, arg.IdempotencyKey)
+	var i GetOrganizationTeamByIdempotencyRow
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.DisplayName,
+		&i.ManagedLabel,
+		&i.DefaultDomainID,
+		&i.PolicyRevision,
+		&i.CreationRequestDigest,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getTeamActorContext = `-- name: GetTeamActorContext :one
+SELECT
+    t.id,
+    t.kind,
+    t.display_name,
+    t.managed_label,
+    t.default_domain_id,
+    t.policy_revision,
+    t.created_at,
+    t.updated_at,
+    actor.id AS actor_membership_id,
+    actor.role AS actor_role
+FROM control.teams AS t
+JOIN control.team_memberships AS actor
+  ON actor.team_id = t.id
+ AND actor.identity_id = $1
+ AND actor.removed_at IS NULL
+WHERE t.id = $2
+  AND t.deleted_at IS NULL
+`
+
+type GetTeamActorContextParams struct {
+	IdentityID string
+	TeamID     string
+}
+
+type GetTeamActorContextRow struct {
+	ID                string
+	Kind              string
+	DisplayName       string
+	ManagedLabel      string
+	DefaultDomainID   pgtype.Text
+	PolicyRevision    int64
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+	ActorMembershipID string
+	ActorRole         string
+}
+
+func (q *Queries) GetTeamActorContext(ctx context.Context, arg GetTeamActorContextParams) (GetTeamActorContextRow, error) {
+	row := q.db.QueryRow(ctx, getTeamActorContext, arg.IdentityID, arg.TeamID)
+	var i GetTeamActorContextRow
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.DisplayName,
+		&i.ManagedLabel,
+		&i.DefaultDomainID,
+		&i.PolicyRevision,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ActorMembershipID,
+		&i.ActorRole,
+	)
+	return i, err
+}
+
+const getTeamMembershipContext = `-- name: GetTeamMembershipContext :one
+SELECT
+    m.id,
+    m.team_id,
+    m.identity_id,
+    t.display_name AS team_display_name,
+    t.kind AS team_kind,
+    m.role,
+    s.member_slug,
+    m.managed_label,
+    t.policy_revision,
+    m.created_at,
+    m.updated_at
+FROM control.team_memberships AS m
+JOIN control.teams AS t ON t.id = m.team_id
+JOIN control.member_slug_reservations AS s ON s.id = m.slug_reservation_id
+WHERE m.id = $1
+  AND m.team_id = $2
+  AND m.removed_at IS NULL
+`
+
+type GetTeamMembershipContextParams struct {
+	MembershipID string
+	TeamID       string
+}
+
+type GetTeamMembershipContextRow struct {
+	ID              string
+	TeamID          string
+	IdentityID      string
+	TeamDisplayName string
+	TeamKind        string
+	Role            string
+	MemberSlug      string
+	ManagedLabel    string
+	PolicyRevision  int64
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
+func (q *Queries) GetTeamMembershipContext(ctx context.Context, arg GetTeamMembershipContextParams) (GetTeamMembershipContextRow, error) {
+	row := q.db.QueryRow(ctx, getTeamMembershipContext, arg.MembershipID, arg.TeamID)
+	var i GetTeamMembershipContextRow
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.IdentityID,
+		&i.TeamDisplayName,
+		&i.TeamKind,
+		&i.Role,
+		&i.MemberSlug,
+		&i.ManagedLabel,
+		&i.PolicyRevision,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const listCurrentDomainNames = `-- name: ListCurrentDomainNames :many
+SELECT canonical_domain
+FROM control.domains
+WHERE released_at IS NULL
+ORDER BY canonical_domain
+`
+
+func (q *Queries) ListCurrentDomainNames(ctx context.Context) ([]string, error) {
+	rows, err := q.db.Query(ctx, listCurrentDomainNames)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var canonical_domain string
+		if err := rows.Scan(&canonical_domain); err != nil {
+			return nil, err
+		}
+		items = append(items, canonical_domain)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listIdentityTeamDomains = `-- name: ListIdentityTeamDomains :many
 SELECT
     d.id,
     d.kind,
-    d.team_id,
-    d.canonical_domain,
-    d.state,
+	 d.team_id,
+	 d.canonical_domain,
+	 d.dns_authority_reference,
+	 d.state,
     d.authority_revision,
+    COALESCE(a.nameservers, '{}'::text[]) AS nameservers,
     d.created_at,
     d.verified_at,
     d.updated_at
 FROM control.domains AS d
+LEFT JOIN control.dns_authorities AS a
+  ON a.authority_reference = d.dns_authority_reference
 WHERE d.released_at IS NULL
   AND (
       d.kind = 'managed'
@@ -95,15 +894,17 @@ type ListIdentityTeamDomainsParams struct {
 }
 
 type ListIdentityTeamDomainsRow struct {
-	ID                string
-	Kind              string
-	TeamID            pgtype.Text
-	CanonicalDomain   string
-	State             string
-	AuthorityRevision int64
-	CreatedAt         pgtype.Timestamptz
-	VerifiedAt        pgtype.Timestamptz
-	UpdatedAt         pgtype.Timestamptz
+	ID                    string
+	Kind                  string
+	TeamID                pgtype.Text
+	CanonicalDomain       string
+	DnsAuthorityReference pgtype.Text
+	State                 string
+	AuthorityRevision     int64
+	Nameservers           []string
+	CreatedAt             pgtype.Timestamptz
+	VerifiedAt            pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
 }
 
 func (q *Queries) ListIdentityTeamDomains(ctx context.Context, arg ListIdentityTeamDomainsParams) ([]ListIdentityTeamDomainsRow, error) {
@@ -120,8 +921,10 @@ func (q *Queries) ListIdentityTeamDomains(ctx context.Context, arg ListIdentityT
 			&i.Kind,
 			&i.TeamID,
 			&i.CanonicalDomain,
+			&i.DnsAuthorityReference,
 			&i.State,
 			&i.AuthorityRevision,
+			&i.Nameservers,
 			&i.CreatedAt,
 			&i.VerifiedAt,
 			&i.UpdatedAt,
@@ -193,4 +996,988 @@ func (q *Queries) ListIdentityTeams(ctx context.Context, identityID string) ([]L
 		return nil, err
 	}
 	return items, nil
+}
+
+const listTeamInvitations = `-- name: ListTeamInvitations :many
+SELECT i.id, i.team_id, i.slug_reservation_id, i.initial_role, i.invited_by_identity_id, i.idempotency_key, i.request_digest, i.token_digest, i.normalized_email_restriction, i.state, i.created_at, i.expires_at, i.accepted_at, i.accepted_by_identity_id, i.accepted_membership_id, i.revoked_at, i.revoked_by_identity_id, s.member_slug
+FROM control.team_invitations AS i
+JOIN control.member_slug_reservations AS s ON s.id = i.slug_reservation_id
+WHERE i.team_id = $1
+ORDER BY i.created_at, i.id
+`
+
+type ListTeamInvitationsRow struct {
+	ID                         string
+	TeamID                     string
+	SlugReservationID          string
+	InitialRole                string
+	InvitedByIdentityID        string
+	IdempotencyKey             string
+	RequestDigest              []byte
+	TokenDigest                []byte
+	NormalizedEmailRestriction pgtype.Text
+	State                      string
+	CreatedAt                  pgtype.Timestamptz
+	ExpiresAt                  pgtype.Timestamptz
+	AcceptedAt                 pgtype.Timestamptz
+	AcceptedByIdentityID       pgtype.Text
+	AcceptedMembershipID       pgtype.Text
+	RevokedAt                  pgtype.Timestamptz
+	RevokedByIdentityID        pgtype.Text
+	MemberSlug                 string
+}
+
+func (q *Queries) ListTeamInvitations(ctx context.Context, teamID string) ([]ListTeamInvitationsRow, error) {
+	rows, err := q.db.Query(ctx, listTeamInvitations, teamID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTeamInvitationsRow
+	for rows.Next() {
+		var i ListTeamInvitationsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TeamID,
+			&i.SlugReservationID,
+			&i.InitialRole,
+			&i.InvitedByIdentityID,
+			&i.IdempotencyKey,
+			&i.RequestDigest,
+			&i.TokenDigest,
+			&i.NormalizedEmailRestriction,
+			&i.State,
+			&i.CreatedAt,
+			&i.ExpiresAt,
+			&i.AcceptedAt,
+			&i.AcceptedByIdentityID,
+			&i.AcceptedMembershipID,
+			&i.RevokedAt,
+			&i.RevokedByIdentityID,
+			&i.MemberSlug,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTeamMembershipContexts = `-- name: ListTeamMembershipContexts :many
+SELECT
+    m.id,
+    m.team_id,
+    m.identity_id,
+    t.display_name AS team_display_name,
+    t.kind AS team_kind,
+    m.role,
+    s.member_slug,
+    m.managed_label,
+    t.policy_revision,
+    m.created_at,
+    m.updated_at
+FROM control.team_memberships AS m
+JOIN control.teams AS t ON t.id = m.team_id
+JOIN control.member_slug_reservations AS s ON s.id = m.slug_reservation_id
+WHERE m.team_id = $1
+  AND m.removed_at IS NULL
+ORDER BY m.created_at, m.id
+`
+
+type ListTeamMembershipContextsRow struct {
+	ID              string
+	TeamID          string
+	IdentityID      string
+	TeamDisplayName string
+	TeamKind        string
+	Role            string
+	MemberSlug      string
+	ManagedLabel    string
+	PolicyRevision  int64
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
+func (q *Queries) ListTeamMembershipContexts(ctx context.Context, teamID string) ([]ListTeamMembershipContextsRow, error) {
+	rows, err := q.db.Query(ctx, listTeamMembershipContexts, teamID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTeamMembershipContextsRow
+	for rows.Next() {
+		var i ListTeamMembershipContextsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TeamID,
+			&i.IdentityID,
+			&i.TeamDisplayName,
+			&i.TeamKind,
+			&i.Role,
+			&i.MemberSlug,
+			&i.ManagedLabel,
+			&i.PolicyRevision,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockDomainRoutes = `-- name: LockDomainRoutes :many
+SELECT id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key, request_digest, canonical_hostname, target, route_scope, policy_revision, ip_policy, allowed_ip_prefixes, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_route_version, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at
+FROM control.routes
+WHERE team_id = $1
+  AND domain_id = $2
+  AND lifecycle_state <> 'deleted'
+ORDER BY id
+FOR UPDATE
+`
+
+type LockDomainRoutesParams struct {
+	TeamID   string
+	DomainID string
+}
+
+func (q *Queries) LockDomainRoutes(ctx context.Context, arg LockDomainRoutesParams) ([]ControlRoute, error) {
+	rows, err := q.db.Query(ctx, lockDomainRoutes, arg.TeamID, arg.DomainID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ControlRoute
+	for rows.Next() {
+		var i ControlRoute
+		if err := rows.Scan(
+			&i.ID,
+			&i.TeamID,
+			&i.DomainID,
+			&i.MembershipID,
+			&i.CreatedByIdentityID,
+			&i.IdempotencyKey,
+			&i.RequestDigest,
+			&i.CanonicalHostname,
+			&i.Target,
+			&i.RouteScope,
+			&i.PolicyRevision,
+			&i.IpPolicy,
+			&i.AllowedIpPrefixes,
+			&i.LifecycleState,
+			&i.DnsAuthorityReference,
+			&i.DnsState,
+			&i.DnsRevision,
+			&i.DnsWorkOwner,
+			&i.DnsWorkEpoch,
+			&i.DnsWorkExpiresAt,
+			&i.DnsAttempts,
+			&i.DnsAvailableAt,
+			&i.DnsLastError,
+			&i.NextRouteVersion,
+			&i.SuspensionRevision,
+			&i.SuspensionReason,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.SuspendedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockIdentityForTeamCreation = `-- name: LockIdentityForTeamCreation :one
+SELECT id
+FROM control.identities
+WHERE id = $1
+  AND disabled_at IS NULL
+FOR UPDATE
+`
+
+func (q *Queries) LockIdentityForTeamCreation(ctx context.Context, identityID string) (string, error) {
+	row := q.db.QueryRow(ctx, lockIdentityForTeamCreation, identityID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockInvitationByTokenDigest = `-- name: LockInvitationByTokenDigest :one
+SELECT
+    i.id, i.team_id, i.slug_reservation_id, i.initial_role, i.invited_by_identity_id, i.idempotency_key, i.request_digest, i.token_digest, i.normalized_email_restriction, i.state, i.created_at, i.expires_at, i.accepted_at, i.accepted_by_identity_id, i.accepted_membership_id, i.revoked_at, i.revoked_by_identity_id,
+    s.member_slug,
+    t.kind AS team_kind,
+    t.display_name AS team_display_name,
+    accepting.normalized_email AS accepting_normalized_email,
+    accepting.email_verified AS accepting_email_verified
+FROM control.team_invitations AS i
+JOIN control.member_slug_reservations AS s ON s.id = i.slug_reservation_id
+JOIN control.teams AS t ON t.id = i.team_id AND t.deleted_at IS NULL
+JOIN control.identities AS accepting
+  ON accepting.id = $1
+ AND accepting.disabled_at IS NULL
+WHERE i.token_digest = $2
+FOR UPDATE OF i, s, t, accepting
+`
+
+type LockInvitationByTokenDigestParams struct {
+	IdentityID  string
+	TokenDigest []byte
+}
+
+type LockInvitationByTokenDigestRow struct {
+	ID                         string
+	TeamID                     string
+	SlugReservationID          string
+	InitialRole                string
+	InvitedByIdentityID        string
+	IdempotencyKey             string
+	RequestDigest              []byte
+	TokenDigest                []byte
+	NormalizedEmailRestriction pgtype.Text
+	State                      string
+	CreatedAt                  pgtype.Timestamptz
+	ExpiresAt                  pgtype.Timestamptz
+	AcceptedAt                 pgtype.Timestamptz
+	AcceptedByIdentityID       pgtype.Text
+	AcceptedMembershipID       pgtype.Text
+	RevokedAt                  pgtype.Timestamptz
+	RevokedByIdentityID        pgtype.Text
+	MemberSlug                 string
+	TeamKind                   string
+	TeamDisplayName            string
+	AcceptingNormalizedEmail   pgtype.Text
+	AcceptingEmailVerified     bool
+}
+
+func (q *Queries) LockInvitationByTokenDigest(ctx context.Context, arg LockInvitationByTokenDigestParams) (LockInvitationByTokenDigestRow, error) {
+	row := q.db.QueryRow(ctx, lockInvitationByTokenDigest, arg.IdentityID, arg.TokenDigest)
+	var i LockInvitationByTokenDigestRow
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.SlugReservationID,
+		&i.InitialRole,
+		&i.InvitedByIdentityID,
+		&i.IdempotencyKey,
+		&i.RequestDigest,
+		&i.TokenDigest,
+		&i.NormalizedEmailRestriction,
+		&i.State,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.AcceptedAt,
+		&i.AcceptedByIdentityID,
+		&i.AcceptedMembershipID,
+		&i.RevokedAt,
+		&i.RevokedByIdentityID,
+		&i.MemberSlug,
+		&i.TeamKind,
+		&i.TeamDisplayName,
+		&i.AcceptingNormalizedEmail,
+		&i.AcceptingEmailVerified,
+	)
+	return i, err
+}
+
+const lockManagedDomainForClaim = `-- name: LockManagedDomainForClaim :one
+SELECT id, kind, team_id, canonical_domain, dns_authority_reference, state, authority_revision, verification_token_digest, created_by_identity_id, claim_idempotency_key, claim_request_digest, make_default_when_ready, created_at, verified_at, reusable_after, released_at, updated_at
+FROM control.domains
+WHERE kind = 'managed'
+  AND released_at IS NULL
+FOR UPDATE
+`
+
+func (q *Queries) LockManagedDomainForClaim(ctx context.Context) (ControlDomain, error) {
+	row := q.db.QueryRow(ctx, lockManagedDomainForClaim)
+	var i ControlDomain
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.TeamID,
+		&i.CanonicalDomain,
+		&i.DnsAuthorityReference,
+		&i.State,
+		&i.AuthorityRevision,
+		&i.VerificationTokenDigest,
+		&i.CreatedByIdentityID,
+		&i.ClaimIdempotencyKey,
+		&i.ClaimRequestDigest,
+		&i.MakeDefaultWhenReady,
+		&i.CreatedAt,
+		&i.VerifiedAt,
+		&i.ReusableAfter,
+		&i.ReleasedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const lockMembershipRoutes = `-- name: LockMembershipRoutes :many
+SELECT routes.id, routes.team_id, routes.domain_id, routes.membership_id, routes.created_by_identity_id, routes.idempotency_key, routes.request_digest, routes.canonical_hostname, routes.target, routes.route_scope, routes.policy_revision, routes.ip_policy, routes.allowed_ip_prefixes, routes.lifecycle_state, routes.dns_authority_reference, routes.dns_state, routes.dns_revision, routes.dns_work_owner, routes.dns_work_epoch, routes.dns_work_expires_at, routes.dns_attempts, routes.dns_available_at, routes.dns_last_error, routes.next_route_version, routes.suspension_revision, routes.suspension_reason, routes.created_at, routes.updated_at, routes.suspended_at, routes.deleted_at
+FROM control.routes AS routes
+WHERE routes.team_id = $1
+  AND (
+      routes.membership_id = $2
+      OR EXISTS (
+          SELECT 1
+          FROM control.route_sessions AS sessions
+          WHERE sessions.route_id = routes.id
+            AND sessions.membership_id = $2
+            AND sessions.closed_at IS NULL
+      )
+  )
+  AND routes.lifecycle_state <> 'deleted'
+ORDER BY routes.id
+FOR UPDATE
+`
+
+type LockMembershipRoutesParams struct {
+	TeamID       string
+	MembershipID pgtype.Text
+}
+
+func (q *Queries) LockMembershipRoutes(ctx context.Context, arg LockMembershipRoutesParams) ([]ControlRoute, error) {
+	rows, err := q.db.Query(ctx, lockMembershipRoutes, arg.TeamID, arg.MembershipID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ControlRoute
+	for rows.Next() {
+		var i ControlRoute
+		if err := rows.Scan(
+			&i.ID,
+			&i.TeamID,
+			&i.DomainID,
+			&i.MembershipID,
+			&i.CreatedByIdentityID,
+			&i.IdempotencyKey,
+			&i.RequestDigest,
+			&i.CanonicalHostname,
+			&i.Target,
+			&i.RouteScope,
+			&i.PolicyRevision,
+			&i.IpPolicy,
+			&i.AllowedIpPrefixes,
+			&i.LifecycleState,
+			&i.DnsAuthorityReference,
+			&i.DnsState,
+			&i.DnsRevision,
+			&i.DnsWorkOwner,
+			&i.DnsWorkEpoch,
+			&i.DnsWorkExpiresAt,
+			&i.DnsAttempts,
+			&i.DnsAvailableAt,
+			&i.DnsLastError,
+			&i.NextRouteVersion,
+			&i.SuspensionRevision,
+			&i.SuspensionReason,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.SuspendedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockTeamActorContext = `-- name: LockTeamActorContext :one
+SELECT
+    t.id,
+    t.kind,
+    t.display_name,
+    t.managed_label,
+    t.default_domain_id,
+    t.policy_revision,
+    t.created_at,
+    t.updated_at,
+    actor.id AS actor_membership_id,
+    actor.role AS actor_role
+FROM control.teams AS t
+JOIN control.team_memberships AS actor
+  ON actor.team_id = t.id
+ AND actor.identity_id = $1
+ AND actor.removed_at IS NULL
+WHERE t.id = $2
+  AND t.deleted_at IS NULL
+FOR UPDATE OF t, actor
+`
+
+type LockTeamActorContextParams struct {
+	IdentityID string
+	TeamID     string
+}
+
+type LockTeamActorContextRow struct {
+	ID                string
+	Kind              string
+	DisplayName       string
+	ManagedLabel      string
+	DefaultDomainID   pgtype.Text
+	PolicyRevision    int64
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+	ActorMembershipID string
+	ActorRole         string
+}
+
+func (q *Queries) LockTeamActorContext(ctx context.Context, arg LockTeamActorContextParams) (LockTeamActorContextRow, error) {
+	row := q.db.QueryRow(ctx, lockTeamActorContext, arg.IdentityID, arg.TeamID)
+	var i LockTeamActorContextRow
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.DisplayName,
+		&i.ManagedLabel,
+		&i.DefaultDomainID,
+		&i.PolicyRevision,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ActorMembershipID,
+		&i.ActorRole,
+	)
+	return i, err
+}
+
+const lockTeamDomain = `-- name: LockTeamDomain :one
+SELECT d.id, d.kind, d.team_id, d.canonical_domain, d.dns_authority_reference, d.state, d.authority_revision, d.verification_token_digest, d.created_by_identity_id, d.claim_idempotency_key, d.claim_request_digest, d.make_default_when_ready, d.created_at, d.verified_at, d.reusable_after, d.released_at, d.updated_at, COALESCE(a.nameservers, '{}'::text[]) AS nameservers
+FROM control.domains AS d
+LEFT JOIN control.dns_authorities AS a ON a.authority_reference = d.dns_authority_reference
+WHERE d.id = $1
+  AND (d.kind = 'managed' OR d.team_id = $2)
+  AND d.released_at IS NULL
+FOR UPDATE OF d
+`
+
+type LockTeamDomainParams struct {
+	DomainID string
+	TeamID   pgtype.Text
+}
+
+type LockTeamDomainRow struct {
+	ID                      string
+	Kind                    string
+	TeamID                  pgtype.Text
+	CanonicalDomain         string
+	DnsAuthorityReference   pgtype.Text
+	State                   string
+	AuthorityRevision       int64
+	VerificationTokenDigest []byte
+	CreatedByIdentityID     pgtype.Text
+	ClaimIdempotencyKey     pgtype.Text
+	ClaimRequestDigest      []byte
+	MakeDefaultWhenReady    bool
+	CreatedAt               pgtype.Timestamptz
+	VerifiedAt              pgtype.Timestamptz
+	ReusableAfter           pgtype.Timestamptz
+	ReleasedAt              pgtype.Timestamptz
+	UpdatedAt               pgtype.Timestamptz
+	Nameservers             []string
+}
+
+func (q *Queries) LockTeamDomain(ctx context.Context, arg LockTeamDomainParams) (LockTeamDomainRow, error) {
+	row := q.db.QueryRow(ctx, lockTeamDomain, arg.DomainID, arg.TeamID)
+	var i LockTeamDomainRow
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.TeamID,
+		&i.CanonicalDomain,
+		&i.DnsAuthorityReference,
+		&i.State,
+		&i.AuthorityRevision,
+		&i.VerificationTokenDigest,
+		&i.CreatedByIdentityID,
+		&i.ClaimIdempotencyKey,
+		&i.ClaimRequestDigest,
+		&i.MakeDefaultWhenReady,
+		&i.CreatedAt,
+		&i.VerifiedAt,
+		&i.ReusableAfter,
+		&i.ReleasedAt,
+		&i.UpdatedAt,
+		&i.Nameservers,
+	)
+	return i, err
+}
+
+const lockTeamForInvitationAcceptance = `-- name: LockTeamForInvitationAcceptance :one
+SELECT id
+FROM control.teams
+WHERE id = $1
+  AND kind = 'organization'
+  AND deleted_at IS NULL
+FOR UPDATE
+`
+
+func (q *Queries) LockTeamForInvitationAcceptance(ctx context.Context, teamID string) (string, error) {
+	row := q.db.QueryRow(ctx, lockTeamForInvitationAcceptance, teamID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockTeamInvitation = `-- name: LockTeamInvitation :one
+SELECT i.id, i.team_id, i.slug_reservation_id, i.initial_role, i.invited_by_identity_id, i.idempotency_key, i.request_digest, i.token_digest, i.normalized_email_restriction, i.state, i.created_at, i.expires_at, i.accepted_at, i.accepted_by_identity_id, i.accepted_membership_id, i.revoked_at, i.revoked_by_identity_id, s.member_slug
+FROM control.team_invitations AS i
+JOIN control.member_slug_reservations AS s ON s.id = i.slug_reservation_id
+WHERE i.id = $1
+  AND i.team_id = $2
+FOR UPDATE OF i, s
+`
+
+type LockTeamInvitationParams struct {
+	InvitationID string
+	TeamID       string
+}
+
+type LockTeamInvitationRow struct {
+	ID                         string
+	TeamID                     string
+	SlugReservationID          string
+	InitialRole                string
+	InvitedByIdentityID        string
+	IdempotencyKey             string
+	RequestDigest              []byte
+	TokenDigest                []byte
+	NormalizedEmailRestriction pgtype.Text
+	State                      string
+	CreatedAt                  pgtype.Timestamptz
+	ExpiresAt                  pgtype.Timestamptz
+	AcceptedAt                 pgtype.Timestamptz
+	AcceptedByIdentityID       pgtype.Text
+	AcceptedMembershipID       pgtype.Text
+	RevokedAt                  pgtype.Timestamptz
+	RevokedByIdentityID        pgtype.Text
+	MemberSlug                 string
+}
+
+func (q *Queries) LockTeamInvitation(ctx context.Context, arg LockTeamInvitationParams) (LockTeamInvitationRow, error) {
+	row := q.db.QueryRow(ctx, lockTeamInvitation, arg.InvitationID, arg.TeamID)
+	var i LockTeamInvitationRow
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.SlugReservationID,
+		&i.InitialRole,
+		&i.InvitedByIdentityID,
+		&i.IdempotencyKey,
+		&i.RequestDigest,
+		&i.TokenDigest,
+		&i.NormalizedEmailRestriction,
+		&i.State,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.AcceptedAt,
+		&i.AcceptedByIdentityID,
+		&i.AcceptedMembershipID,
+		&i.RevokedAt,
+		&i.RevokedByIdentityID,
+		&i.MemberSlug,
+	)
+	return i, err
+}
+
+const lockTeamMembership = `-- name: LockTeamMembership :one
+SELECT m.id, m.team_id, m.identity_id, m.slug_reservation_id, m.managed_label, m.role, m.authority_revision, m.created_at, m.updated_at, m.removed_at, m.removed_by_identity_id, s.member_slug
+FROM control.team_memberships AS m
+JOIN control.member_slug_reservations AS s ON s.id = m.slug_reservation_id
+WHERE m.id = $1
+  AND m.team_id = $2
+  AND m.removed_at IS NULL
+FOR UPDATE OF m, s
+`
+
+type LockTeamMembershipParams struct {
+	MembershipID string
+	TeamID       string
+}
+
+type LockTeamMembershipRow struct {
+	ID                  string
+	TeamID              string
+	IdentityID          string
+	SlugReservationID   string
+	ManagedLabel        string
+	Role                string
+	AuthorityRevision   int64
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+	RemovedAt           pgtype.Timestamptz
+	RemovedByIdentityID pgtype.Text
+	MemberSlug          string
+}
+
+func (q *Queries) LockTeamMembership(ctx context.Context, arg LockTeamMembershipParams) (LockTeamMembershipRow, error) {
+	row := q.db.QueryRow(ctx, lockTeamMembership, arg.MembershipID, arg.TeamID)
+	var i LockTeamMembershipRow
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.IdentityID,
+		&i.SlugReservationID,
+		&i.ManagedLabel,
+		&i.Role,
+		&i.AuthorityRevision,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RemovedAt,
+		&i.RemovedByIdentityID,
+		&i.MemberSlug,
+	)
+	return i, err
+}
+
+const markClaimedDomainReleasing = `-- name: MarkClaimedDomainReleasing :execrows
+UPDATE control.domains
+SET state = 'releasing',
+    authority_revision = $1,
+    updated_at = $2
+WHERE id = $3
+  AND team_id = $4
+  AND kind = 'claimed'
+  AND state IN ('pending', 'ready', 'failed')
+`
+
+type MarkClaimedDomainReleasingParams struct {
+	AuthorityRevision int64
+	UpdatedAt         pgtype.Timestamptz
+	DomainID          string
+	TeamID            pgtype.Text
+}
+
+func (q *Queries) MarkClaimedDomainReleasing(ctx context.Context, arg MarkClaimedDomainReleasingParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markClaimedDomainReleasing,
+		arg.AuthorityRevision,
+		arg.UpdatedAt,
+		arg.DomainID,
+		arg.TeamID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const markDNSAuthorityReleasing = `-- name: MarkDNSAuthorityReleasing :execrows
+UPDATE control.dns_authorities
+SET state = 'releasing',
+    work_revision = work_revision + 1,
+    available_at = $1,
+    updated_at = $1
+WHERE authority_reference = $2
+  AND state IN ('pending', 'ready', 'failed')
+`
+
+type MarkDNSAuthorityReleasingParams struct {
+	UpdatedAt          pgtype.Timestamptz
+	AuthorityReference string
+}
+
+func (q *Queries) MarkDNSAuthorityReleasing(ctx context.Context, arg MarkDNSAuthorityReleasingParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markDNSAuthorityReleasing, arg.UpdatedAt, arg.AuthorityReference)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const markInvitationExpired = `-- name: MarkInvitationExpired :execrows
+UPDATE control.team_invitations
+SET state = 'expired'
+WHERE id = $1
+  AND state = 'pending'
+`
+
+func (q *Queries) MarkInvitationExpired(ctx context.Context, invitationID string) (int64, error) {
+	result, err := q.db.Exec(ctx, markInvitationExpired, invitationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const quarantineMemberSlug = `-- name: QuarantineMemberSlug :execrows
+UPDATE control.member_slug_reservations
+SET state = 'quarantined',
+    quarantined_at = $1,
+    reusable_after = NULL,
+    released_at = NULL
+WHERE id = $2
+  AND state = 'active'
+`
+
+type QuarantineMemberSlugParams struct {
+	QuarantinedAt     pgtype.Timestamptz
+	SlugReservationID string
+}
+
+func (q *Queries) QuarantineMemberSlug(ctx context.Context, arg QuarantineMemberSlugParams) (int64, error) {
+	result, err := q.db.Exec(ctx, quarantineMemberSlug, arg.QuarantinedAt, arg.SlugReservationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const releaseInvitedMemberSlug = `-- name: ReleaseInvitedMemberSlug :execrows
+UPDATE control.member_slug_reservations
+SET state = 'released',
+    released_at = $1
+WHERE id = $2
+  AND state = 'invited'
+`
+
+type ReleaseInvitedMemberSlugParams struct {
+	ReleasedAt        pgtype.Timestamptz
+	SlugReservationID string
+}
+
+func (q *Queries) ReleaseInvitedMemberSlug(ctx context.Context, arg ReleaseInvitedMemberSlugParams) (int64, error) {
+	result, err := q.db.Exec(ctx, releaseInvitedMemberSlug, arg.ReleasedAt, arg.SlugReservationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const removeTeamMembership = `-- name: RemoveTeamMembership :execrows
+UPDATE control.team_memberships
+SET authority_revision = $1,
+    updated_at = $2,
+    removed_at = $2,
+    removed_by_identity_id = $3
+WHERE id = $4
+  AND team_id = $5
+  AND removed_at IS NULL
+`
+
+type RemoveTeamMembershipParams struct {
+	AuthorityRevision   int64
+	RemovedAt           pgtype.Timestamptz
+	RemovedByIdentityID pgtype.Text
+	MembershipID        string
+	TeamID              string
+}
+
+func (q *Queries) RemoveTeamMembership(ctx context.Context, arg RemoveTeamMembershipParams) (int64, error) {
+	result, err := q.db.Exec(ctx, removeTeamMembership,
+		arg.AuthorityRevision,
+		arg.RemovedAt,
+		arg.RemovedByIdentityID,
+		arg.MembershipID,
+		arg.TeamID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const reserveInvitedMemberSlug = `-- name: ReserveInvitedMemberSlug :one
+INSERT INTO control.member_slug_reservations (
+    id,
+    team_id,
+    member_slug,
+    state,
+    reserved_by_identity_id,
+    created_at
+) VALUES (
+    $1,
+    $2,
+    $3,
+    'invited',
+    $4,
+    $5
+)
+ON CONFLICT (team_id, member_slug) DO UPDATE SET
+    state = 'invited',
+    reserved_by_identity_id = EXCLUDED.reserved_by_identity_id,
+    created_at = EXCLUDED.created_at,
+    activated_at = NULL,
+    quarantined_at = NULL,
+    reusable_after = NULL,
+    released_at = NULL
+WHERE control.member_slug_reservations.state = 'released'
+RETURNING id
+`
+
+type ReserveInvitedMemberSlugParams struct {
+	ID                   string
+	TeamID               string
+	MemberSlug           string
+	ReservedByIdentityID pgtype.Text
+	CreatedAt            pgtype.Timestamptz
+}
+
+func (q *Queries) ReserveInvitedMemberSlug(ctx context.Context, arg ReserveInvitedMemberSlugParams) (string, error) {
+	row := q.db.QueryRow(ctx, reserveInvitedMemberSlug,
+		arg.ID,
+		arg.TeamID,
+		arg.MemberSlug,
+		arg.ReservedByIdentityID,
+		arg.CreatedAt,
+	)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
+const revokeTeamInvitation = `-- name: RevokeTeamInvitation :execrows
+UPDATE control.team_invitations
+SET state = 'revoked',
+    revoked_at = $1,
+    revoked_by_identity_id = $2
+WHERE id = $3
+  AND state = 'pending'
+`
+
+type RevokeTeamInvitationParams struct {
+	RevokedAt    pgtype.Timestamptz
+	IdentityID   pgtype.Text
+	InvitationID string
+}
+
+func (q *Queries) RevokeTeamInvitation(ctx context.Context, arg RevokeTeamInvitationParams) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeTeamInvitation, arg.RevokedAt, arg.IdentityID, arg.InvitationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const setTeamDefaultDomain = `-- name: SetTeamDefaultDomain :execrows
+UPDATE control.teams
+SET default_domain_id = $1,
+    policy_revision = policy_revision + 1,
+    updated_at = $2
+WHERE id = $3
+  AND deleted_at IS NULL
+`
+
+type SetTeamDefaultDomainParams struct {
+	DomainID  pgtype.Text
+	UpdatedAt pgtype.Timestamptz
+	TeamID    string
+}
+
+func (q *Queries) SetTeamDefaultDomain(ctx context.Context, arg SetTeamDefaultDomainParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setTeamDefaultDomain, arg.DomainID, arg.UpdatedAt, arg.TeamID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const suspendAuthorityRoute = `-- name: SuspendAuthorityRoute :execrows
+UPDATE control.routes
+SET lifecycle_state = 'suspended',
+    dns_state = CASE
+        WHEN dns_state NOT IN ('unmanaged', 'removed') THEN 'removing'
+        ELSE dns_state
+    END,
+    dns_revision = CASE
+        WHEN dns_state NOT IN ('unmanaged', 'removed') THEN dns_revision + 1
+        ELSE dns_revision
+    END,
+    dns_work_owner = NULL,
+    dns_work_expires_at = NULL,
+    dns_available_at = CASE
+        WHEN dns_state NOT IN ('unmanaged', 'removed') THEN $1
+        ELSE dns_available_at
+    END,
+    dns_last_error = NULL,
+    suspension_revision = suspension_revision + 1,
+    suspension_reason = $2,
+    suspended_at = $1,
+    updated_at = $1
+WHERE id = $3
+  AND lifecycle_state <> 'deleted'
+`
+
+type SuspendAuthorityRouteParams struct {
+	SuspendedAt      pgtype.Timestamptz
+	SuspensionReason pgtype.Text
+	RouteID          string
+}
+
+func (q *Queries) SuspendAuthorityRoute(ctx context.Context, arg SuspendAuthorityRouteParams) (int64, error) {
+	result, err := q.db.Exec(ctx, suspendAuthorityRoute, arg.SuspendedAt, arg.SuspensionReason, arg.RouteID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const teamMembershipIdentityExists = `-- name: TeamMembershipIdentityExists :one
+SELECT EXISTS (
+    SELECT 1
+    FROM control.team_memberships
+    WHERE team_id = $1
+      AND identity_id = $2
+      AND removed_at IS NULL
+)
+`
+
+type TeamMembershipIdentityExistsParams struct {
+	TeamID     string
+	IdentityID string
+}
+
+func (q *Queries) TeamMembershipIdentityExists(ctx context.Context, arg TeamMembershipIdentityExistsParams) (bool, error) {
+	row := q.db.QueryRow(ctx, teamMembershipIdentityExists, arg.TeamID, arg.IdentityID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const updateMembershipRole = `-- name: UpdateMembershipRole :execrows
+UPDATE control.team_memberships
+SET role = $1,
+    authority_revision = $2,
+    updated_at = $3
+WHERE id = $4
+  AND team_id = $5
+  AND removed_at IS NULL
+`
+
+type UpdateMembershipRoleParams struct {
+	Role              string
+	AuthorityRevision int64
+	UpdatedAt         pgtype.Timestamptz
+	MembershipID      string
+	TeamID            string
+}
+
+func (q *Queries) UpdateMembershipRole(ctx context.Context, arg UpdateMembershipRoleParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateMembershipRole,
+		arg.Role,
+		arg.AuthorityRevision,
+		arg.UpdatedAt,
+		arg.MembershipID,
+		arg.TeamID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

@@ -174,3 +174,36 @@ JOIN control.route_sessions AS sessions ON sessions.id = connections.route_sessi
 WHERE sessions.closed_at IS NULL
   AND connections.state IN ('assigned', 'connected', 'ready', 'draining')
 GROUP BY connections.relay_service_id;
+
+-- name: StoreRelayServiceCertificate :one
+UPDATE control.relay_services
+SET transport_certificate_pem = sqlc.arg(transport_certificate_pem),
+    transport_private_key_ciphertext = sqlc.arg(transport_private_key_ciphertext),
+    transport_private_key_storage_key_id = sqlc.arg(transport_private_key_storage_key_id),
+    transport_certificate_serial = sqlc.arg(transport_certificate_serial),
+    transport_certificate_expires_at = sqlc.arg(transport_certificate_expires_at),
+    updated_at = GREATEST(updated_at, sqlc.arg(updated_at))
+WHERE relay_service_id = sqlc.arg(relay_service_id)
+  AND tls_server_name = sqlc.arg(tls_server_name)
+  AND enabled
+RETURNING *;
+
+-- name: GetRelayServiceCertificate :one
+SELECT services.*
+FROM control.relay_services AS services
+JOIN control.relay_leases AS leases USING (relay_service_id)
+WHERE services.relay_service_id = sqlc.arg(relay_service_id)
+  AND services.enabled
+  AND leases.relay_id = sqlc.arg(relay_id)
+  AND leases.relay_run_id = sqlc.arg(relay_run_id)
+  AND leases.relay_lease_revision = sqlc.arg(relay_lease_revision)
+  AND leases.lease_expires_at > sqlc.arg(now);
+
+-- name: RotateRelayServicePrivateKey :exec
+UPDATE control.relay_services
+SET transport_private_key_ciphertext = sqlc.arg(transport_private_key_ciphertext),
+    transport_private_key_storage_key_id = sqlc.arg(transport_private_key_storage_key_id),
+    updated_at = GREATEST(updated_at, sqlc.arg(updated_at))
+WHERE relay_service_id = sqlc.arg(relay_service_id)
+  AND transport_private_key_storage_key_id = sqlc.arg(previous_key_id)
+  AND transport_private_key_ciphertext = sqlc.arg(previous_ciphertext);

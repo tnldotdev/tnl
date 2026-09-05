@@ -46,8 +46,10 @@ func TestRunConfigCheckIsSilentAndDoesNotStartServices(t *testing.T) {
 tnld:
   mode: relay
   control_hostname: control.example.com
-  service_enrollment_token: tnl_enrollment_0123456789abcdef0123456789abcdef
+  cluster_secret: 0123456789abcdef0123456789abcdef
+  relay_service_id: relay-test
   relay_id: relay-test
+  relay_address: relay.example.com:443
   internal_relay_address: relay.internal:9443
 `
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
@@ -71,8 +73,9 @@ func TestResolveTNLDFileRespectsEnvironmentAndFlags(t *testing.T) {
 	t.Setenv("TNLD_METRICS_LISTEN", "env:2")
 	base := config.TNLD{
 		Mode: config.TNLDModeRelay, MetricsListen: "env:2", RelayStreamCapacity: 99,
-		ControlHostname: "control.example.com", ServiceEnrollmentToken: "tnl_enrollment_0123456789abcdef0123456789abcdef",
-		RelayID: "relay-test", InternalRelayAddress: "relay.internal:9443", RelayTCPListen: ":443", RelayUDPListen: ":443",
+		ControlHostname: "control.example.com", ClusterSecret: "0123456789abcdef0123456789abcdef",
+		RelayServiceID: "relay-test", RelayID: "relay-test", RelayAddress: "relay.example.com:443",
+		InternalRelayAddress: "relay.internal:9443", RelayTCPListen: ":443", RelayUDPListen: ":443",
 		PublicConnectionLimit: 1, RouteConnectionLimit: 1, PublisherConnectionLimit: 1, QUICMaxIncomingStreams: 1,
 		QUICIdleTimeout: time.Second, TunnelFallbackDelay: time.Second, IngressLeaseDuration: 3 * time.Second,
 		RelayLeaseDuration: 3 * time.Second, LeaseRenewalInterval: time.Second, ControlRetryInterval: time.Second,

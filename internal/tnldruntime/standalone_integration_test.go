@@ -32,6 +32,8 @@ import (
 )
 
 const testLoginToken = "tnl_login_AAECAwQFBgcICQoLDA0ODw.EBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8"
+const testClusterSecret = "0123456789abcdef0123456789abcdef"
+const testStorageKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 
 func TestIntegrationStandaloneLifecycle(t *testing.T) {
 	directURL := os.Getenv("TNL_TEST_POSTGRES_URL")
@@ -41,17 +43,19 @@ func TestIntegrationStandaloneLifecycle(t *testing.T) {
 	databaseURL, inspect := standaloneTestDatabase(t, directURL)
 	acmeServer := standaloneTestACMEServer(t)
 	certificateFile, keyFile, roots := standaloneTestCertificate(t, "control.tnl.test")
+	relayCertificateFile, relayKeyFile, _ := standaloneTestCertificate(t, "relay.tnl.test")
 	publicAddress := unusedTCPAddress(t)
 	metricsAddress := unusedTCPAddress(t)
 	cfg := config.TNLD{
 		Mode: config.TNLDModeStandalone, DatabaseURL: databaseURL, MetricsListen: metricsAddress,
-		ControlListen: unusedTCPAddress(t), IngressControlListen: unusedTCPAddress(t),
-		RelayControlListen: unusedTCPAddress(t), IngressListen: publicAddress,
+		ControlListen: unusedTCPAddress(t), PrivateControlListen: unusedTCPAddress(t), IngressListen: publicAddress,
 		RelayTCPListen: unusedTCPAddress(t), RelayUDPListen: unusedUDPAddress(t), InternalRelayListen: unusedTCPAddress(t),
 		ServerDomain: "tnl.test", ManagedDeploymentDomain: "tunnels.test",
 		ControlTLSCertificateFile: certificateFile, ControlTLSPrivateKeyFile: keyFile,
+		RelayTLSCertificateFile: relayCertificateFile, RelayTLSPrivateKeyFile: relayKeyFile,
 		ACMEDirectoryURL: acmeServer.URL + "/directory", ACMEEmail: "operator@example.test",
 		ACMEAcceptTerms: true, ACMEProfile: "tlsserver", LoginToken: testLoginToken,
+		StorageKey:          testStorageKey,
 		AccessTokenLifetime: 5 * time.Minute, RefreshTokenLifetime: time.Hour,
 		PublicConnectionLimit: 100, RouteConnectionLimit: 10, PublisherConnectionLimit: 10,
 		RelayStreamCapacity: 100, QUICMaxIncomingStreams: 100, QUICIdleTimeout: time.Minute,
@@ -64,7 +68,8 @@ func TestIntegrationStandaloneLifecycle(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
-	go func() { done <- serveWithACMEHTTPClient(ctx, cfg, acmeServer.Client()) }()
+	serviceClient := splitTestServiceHTTPClient(t, roots, cfg.PrivateControlListen)
+	go func() { done <- serveWithHTTPClients(ctx, cfg, acmeServer.Client(), serviceClient) }()
 	waitForProcessReady(t, done, metricsAddress)
 
 	transport := &http.Transport{
@@ -119,15 +124,14 @@ func TestIntegrationSplitLifecycle(t *testing.T) {
 	controlHostname := "control." + serverDomain
 	certificateFile, keyFile, roots := standaloneTestCertificate(t, controlHostname)
 	acmeServer := standaloneTestACMEServer(t)
-	ingressToken, relayAToken, relayBToken := splitTestEnrollmentTokens(t, databaseURL, serverDomain)
-
 	controlAddress := unusedTCPAddress(t)
-	enrollmentClient := splitTestEnrollmentHTTPClient(t, roots, controlAddress)
+	privateControlAddress := unusedTCPAddress(t)
+	serviceClient := splitTestServiceHTTPClient(t, roots, privateControlAddress)
 	controlConfig := splitTestConfig(config.TNLDModeControl, unusedTCPAddress(t))
 	controlConfig.DatabaseURL = databaseURL
 	controlConfig.ControlListen = controlAddress
-	controlConfig.IngressControlListen = "127.0.0.1:9443"
-	controlConfig.RelayControlListen = "127.0.0.1:9444"
+	controlConfig.PrivateControlListen = privateControlAddress
+	controlConfig.ClusterSecret = testClusterSecret
 	controlConfig.ServerDomain = serverDomain
 	controlConfig.ManagedDeploymentDomain = "tunnels.test"
 	controlConfig.ControlTLSCertificateFile = certificateFile
@@ -137,29 +141,30 @@ func TestIntegrationSplitLifecycle(t *testing.T) {
 	controlConfig.ACMEAcceptTerms = true
 	controlConfig.ACMEProfile = "tlsserver"
 	controlConfig.LoginToken = testLoginToken
+	controlConfig.StorageKey = testStorageKey
 	controlConfig.AccessTokenLifetime = 5 * time.Minute
 	controlConfig.RefreshTokenLifetime = time.Hour
 	if err := controlConfig.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	control := startIntegrationProcess(t, controlConfig, acmeServer.Client(), enrollmentClient)
+	control := startIntegrationProcess(t, controlConfig, acmeServer.Client(), serviceClient)
 	waitForProcessReady(t, control.done, controlConfig.MetricsListen)
 
 	ingressConfig := splitTestConfig(config.TNLDModeIngress, unusedTCPAddress(t))
 	ingressConfig.ControlHostname = controlHostname
-	ingressConfig.ServiceEnrollmentToken = ingressToken
+	ingressConfig.ClusterSecret = testClusterSecret
 	ingressConfig.IngressID = "ingress-split"
 	ingressConfig.IngressListen = unusedTCPAddress(t)
-	relayAConfig := splitTestRelayConfig(t, controlHostname, relayAToken, "relay-a-1")
-	relayBConfig := splitTestRelayConfig(t, controlHostname, relayBToken, "relay-b-1")
+	relayAConfig := splitTestRelayConfig(t, controlHostname, "relay-a", "relay-a-1", certificateFile, keyFile)
+	relayBConfig := splitTestRelayConfig(t, controlHostname, "relay-b", "relay-b-1", certificateFile, keyFile)
 	for _, cfg := range []config.TNLD{ingressConfig, relayAConfig, relayBConfig} {
 		if err := cfg.Validate(); err != nil {
 			t.Fatal(err)
 		}
 	}
-	ingressProcess := startIntegrationProcess(t, ingressConfig, acmeServer.Client(), enrollmentClient)
-	relayAProcess := startIntegrationProcess(t, relayAConfig, acmeServer.Client(), enrollmentClient)
-	relayBProcess := startIntegrationProcess(t, relayBConfig, acmeServer.Client(), enrollmentClient)
+	ingressProcess := startIntegrationProcess(t, ingressConfig, acmeServer.Client(), serviceClient)
+	relayAProcess := startIntegrationProcess(t, relayAConfig, acmeServer.Client(), serviceClient)
+	relayBProcess := startIntegrationProcess(t, relayBConfig, acmeServer.Client(), serviceClient)
 	for _, process := range []*integrationProcess{ingressProcess, relayAProcess, relayBProcess} {
 		waitForProcessReady(t, process.done, process.metricsAddress)
 	}
@@ -179,8 +184,8 @@ func TestIntegrationSplitLifecycle(t *testing.T) {
 	if delay := time.Until(relayAExpiresAt.Add(100 * time.Millisecond)); delay > 0 {
 		time.Sleep(delay)
 	}
-	relayAReplacementConfig := splitTestRelayConfig(t, controlHostname, relayAToken, "relay-a-1")
-	relayAReplacement := startIntegrationProcess(t, relayAReplacementConfig, acmeServer.Client(), enrollmentClient)
+	relayAReplacementConfig := splitTestRelayConfig(t, controlHostname, "relay-a", "relay-a-1", certificateFile, keyFile)
+	relayAReplacement := startIntegrationProcess(t, relayAReplacementConfig, acmeServer.Client(), serviceClient)
 	waitForProcessReady(t, relayAReplacement.done, relayAReplacement.metricsAddress)
 	var replacementRunID string
 	var replacementRevision int64
@@ -206,6 +211,7 @@ func TestIntegrationSplitLifecycle(t *testing.T) {
 		waitForIntegrationProcess(t, process)
 	}
 	assertSplitLeases(t, inspect, 0, 0, 1, 2)
+	serviceClient.CloseIdleConnections()
 	stopIntegrationProcess(t, control)
 }
 
@@ -218,13 +224,13 @@ type integrationProcess struct {
 func startIntegrationProcess(
 	t *testing.T,
 	cfg config.TNLD,
-	acmeHTTPClient, enrollmentHTTPClient *http.Client,
+	acmeHTTPClient, serviceHTTPClient *http.Client,
 ) *integrationProcess {
 	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
 	process := &integrationProcess{cancel: cancel, done: make(chan error, 1), metricsAddress: cfg.MetricsListen}
 	go func() {
-		process.done <- serveWithHTTPClients(ctx, cfg, acmeHTTPClient, enrollmentHTTPClient)
+		process.done <- serveWithHTTPClients(ctx, cfg, acmeHTTPClient, serviceHTTPClient)
 	}()
 	t.Cleanup(cancel)
 	return process
@@ -259,12 +265,19 @@ func splitTestConfig(mode config.TNLDMode, metricsAddress string) config.TNLD {
 	}
 }
 
-func splitTestRelayConfig(t *testing.T, controlHostname, enrollmentToken, relayID string) config.TNLD {
+func splitTestRelayConfig(
+	t *testing.T,
+	controlHostname, relayServiceID, relayID, certificateFile, privateKeyFile string,
+) config.TNLD {
 	t.Helper()
 	cfg := splitTestConfig(config.TNLDModeRelay, unusedTCPAddress(t))
 	cfg.ControlHostname = controlHostname
-	cfg.ServiceEnrollmentToken = enrollmentToken
+	cfg.ClusterSecret = testClusterSecret
+	cfg.RelayServiceID = relayServiceID
 	cfg.RelayID = relayID
+	cfg.RelayAddress = relayServiceID + ".127.0.0.1.nip.io:443"
+	cfg.RelayTLSCertificateFile = certificateFile
+	cfg.RelayTLSPrivateKeyFile = privateKeyFile
 	cfg.RelayTCPListen = unusedTCPAddress(t)
 	cfg.RelayUDPListen = unusedUDPAddress(t)
 	cfg.InternalRelayListen = unusedTCPAddress(t)
@@ -272,45 +285,7 @@ func splitTestRelayConfig(t *testing.T, controlHostname, enrollmentToken, relayI
 	return cfg
 }
 
-func splitTestEnrollmentTokens(t *testing.T, databaseURL, serverDomain string) (string, string, string) {
-	t.Helper()
-	database, err := controlstate.Open(t.Context(), databaseURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer database.Close()
-	now := time.Now().UTC().Truncate(time.Second)
-	session, err := database.CreateBuiltinControlSession(t.Context(), "tunnels.test", 1, time.Hour, time.Hour, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	create := func(request controlstate.CreateServiceEnrollmentTokenRequest) string {
-		t.Helper()
-		request.ActorIdentityID = session.Identity.Identity.ID
-		request.CreatedAt = now
-		created, err := database.CreateServiceEnrollmentToken(t.Context(), request)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return string(created.Token)
-	}
-	ingressToken := create(controlstate.CreateServiceEnrollmentTokenRequest{
-		Role: controlstate.ServiceEnrollmentRoleIngress, AuditRequestID: "split-ingress-token",
-	})
-	relayAToken := create(controlstate.CreateServiceEnrollmentTokenRequest{
-		Role: controlstate.ServiceEnrollmentRoleRelay, RelayServiceID: "relay-a",
-		RelayAddress: "relay-a." + serverDomain + ":443", TLSServerName: "relay-a." + serverDomain,
-		AuditRequestID: "split-relay-a-token",
-	})
-	relayBToken := create(controlstate.CreateServiceEnrollmentTokenRequest{
-		Role: controlstate.ServiceEnrollmentRoleRelay, RelayServiceID: "relay-b",
-		RelayAddress: "relay-b." + serverDomain + ":443", TLSServerName: "relay-b." + serverDomain,
-		AuditRequestID: "split-relay-b-token",
-	})
-	return ingressToken, relayAToken, relayBToken
-}
-
-func splitTestEnrollmentHTTPClient(t *testing.T, roots *x509.CertPool, controlAddress string) *http.Client {
+func splitTestServiceHTTPClient(t *testing.T, roots *x509.CertPool, controlAddress string) *http.Client {
 	t.Helper()
 	dialer := new(net.Dialer)
 	transport := &http.Transport{

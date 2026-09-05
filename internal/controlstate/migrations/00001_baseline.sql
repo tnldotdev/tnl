@@ -27,17 +27,27 @@ CREATE UNIQUE INDEX identities_builtin_singleton
     ON control.identities (kind)
     WHERE kind = 'builtin';
 
+CREATE TABLE control.managed_label_reservations (
+    label text PRIMARY KEY CHECK (label <> ''),
+    created_at timestamptz NOT NULL
+);
+
 CREATE TABLE control.teams (
     id text PRIMARY KEY CHECK (id <> ''),
     kind text NOT NULL CHECK (kind IN ('personal', 'organization')),
     display_name text NOT NULL CHECK (display_name <> ''),
-    managed_label text NOT NULL UNIQUE CHECK (managed_label <> ''),
+    managed_label text NOT NULL UNIQUE REFERENCES control.managed_label_reservations(label) ON DELETE RESTRICT,
     default_domain_id text,
     policy_revision bigint NOT NULL DEFAULT 1 CHECK (policy_revision >= 1),
     created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
+    creation_idempotency_key text,
+    creation_request_digest bytea,
     created_at timestamptz NOT NULL,
     updated_at timestamptz NOT NULL,
     deleted_at timestamptz,
+    CHECK ((creation_idempotency_key IS NULL) = (creation_request_digest IS NULL)),
+    CHECK (creation_idempotency_key IS NULL OR creation_idempotency_key <> ''),
+    CHECK (creation_request_digest IS NULL OR octet_length(creation_request_digest) = 32),
     CHECK (updated_at >= created_at),
     CHECK (deleted_at IS NULL OR deleted_at >= created_at)
 );
@@ -63,13 +73,16 @@ CREATE TABLE control.member_slug_reservations (
 CREATE UNIQUE INDEX teams_personal_creator
     ON control.teams (created_by_identity_id)
     WHERE kind = 'personal' AND deleted_at IS NULL;
+CREATE UNIQUE INDEX teams_creator_idempotency
+    ON control.teams (created_by_identity_id, creation_idempotency_key)
+    WHERE creation_idempotency_key IS NOT NULL;
 
 CREATE TABLE control.team_memberships (
     id text PRIMARY KEY CHECK (id <> ''),
     team_id text NOT NULL REFERENCES control.teams(id) ON DELETE RESTRICT,
     identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
     slug_reservation_id text NOT NULL REFERENCES control.member_slug_reservations(id) ON DELETE RESTRICT,
-    managed_label text NOT NULL UNIQUE CHECK (managed_label <> ''),
+    managed_label text NOT NULL UNIQUE REFERENCES control.managed_label_reservations(label) ON DELETE RESTRICT,
     role text NOT NULL CHECK (role IN ('member', 'admin', 'owner')),
     authority_revision bigint NOT NULL CHECK (authority_revision >= 1),
     created_at timestamptz NOT NULL,
@@ -94,9 +107,11 @@ CREATE INDEX team_memberships_identity
 CREATE TABLE control.team_invitations (
     id text PRIMARY KEY CHECK (id <> ''),
     team_id text NOT NULL REFERENCES control.teams(id) ON DELETE RESTRICT,
-    slug_reservation_id text NOT NULL UNIQUE REFERENCES control.member_slug_reservations(id) ON DELETE RESTRICT,
+    slug_reservation_id text NOT NULL REFERENCES control.member_slug_reservations(id) ON DELETE RESTRICT,
     initial_role text NOT NULL CHECK (initial_role IN ('member', 'admin', 'owner')),
     invited_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
+    idempotency_key text NOT NULL CHECK (idempotency_key <> ''),
+    request_digest bytea NOT NULL CHECK (octet_length(request_digest) = 32),
     token_digest bytea NOT NULL UNIQUE CHECK (octet_length(token_digest) = 32),
     normalized_email_restriction text,
     state text NOT NULL CHECK (state IN ('pending', 'accepted', 'revoked', 'expired')),
@@ -112,7 +127,8 @@ CREATE TABLE control.team_invitations (
     CHECK ((accepted_at IS NULL) = (accepted_by_identity_id IS NULL)),
     CHECK ((accepted_at IS NULL) = (accepted_membership_id IS NULL)),
     CHECK ((state = 'revoked') = (revoked_at IS NOT NULL)),
-    CHECK ((revoked_at IS NULL) = (revoked_by_identity_id IS NULL))
+    CHECK ((revoked_at IS NULL) = (revoked_by_identity_id IS NULL)),
+    UNIQUE (team_id, invited_by_identity_id, idempotency_key)
 );
 
 CREATE INDEX team_invitations_pending
@@ -121,6 +137,12 @@ CREATE INDEX team_invitations_pending
 
 CREATE TABLE control.dns_authorities (
     authority_reference text PRIMARY KEY CHECK (authority_reference <> ''),
+    team_id text NOT NULL CHECK (team_id <> ''),
+    domain_id text NOT NULL UNIQUE CHECK (domain_id <> ''),
+    canonical_domain text NOT NULL CHECK (canonical_domain <> ''),
+    create_idempotency_key text NOT NULL UNIQUE CHECK (create_idempotency_key <> ''),
+    create_request_digest bytea NOT NULL CHECK (octet_length(create_request_digest) = 32),
+    release_idempotency_key text UNIQUE CHECK (release_idempotency_key IS NULL OR release_idempotency_key <> ''),
     provider text NOT NULL CHECK (provider <> ''),
     provider_zone_id text,
     state text NOT NULL CHECK (state IN ('pending', 'ready', 'releasing', 'released', 'failed')),
@@ -140,7 +162,7 @@ CREATE TABLE control.dns_authorities (
 
 CREATE INDEX dns_authorities_available_work
     ON control.dns_authorities (available_at, authority_reference)
-    WHERE state IN ('pending', 'releasing', 'failed');
+    WHERE state IN ('pending', 'releasing');
 
 CREATE TABLE control.domains (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -152,12 +174,18 @@ CREATE TABLE control.domains (
     authority_revision bigint NOT NULL CHECK (authority_revision >= 1),
     verification_token_digest bytea CHECK (verification_token_digest IS NULL OR octet_length(verification_token_digest) = 32),
     created_by_identity_id text REFERENCES control.identities(id) ON DELETE RESTRICT,
+    claim_idempotency_key text,
+    claim_request_digest bytea,
+    make_default_when_ready boolean NOT NULL DEFAULT false,
     created_at timestamptz NOT NULL,
     verified_at timestamptz,
     reusable_after timestamptz,
     released_at timestamptz,
     updated_at timestamptz NOT NULL,
     CHECK ((kind = 'managed' AND team_id IS NULL) OR (kind = 'claimed' AND team_id IS NOT NULL)),
+    CHECK ((claim_idempotency_key IS NULL) = (claim_request_digest IS NULL)),
+    CHECK (claim_idempotency_key IS NULL OR claim_idempotency_key <> ''),
+    CHECK (claim_request_digest IS NULL OR octet_length(claim_request_digest) = 32),
     CHECK (updated_at >= created_at),
     CHECK (verified_at IS NULL OR verified_at >= created_at),
     CHECK ((state = 'released') = (released_at IS NOT NULL))
@@ -172,6 +200,9 @@ CREATE UNIQUE INDEX domains_managed_deployment_domain
 CREATE INDEX domains_team
     ON control.domains (team_id, canonical_domain)
     WHERE released_at IS NULL;
+CREATE UNIQUE INDEX domains_creator_idempotency
+    ON control.domains (team_id, created_by_identity_id, claim_idempotency_key)
+    WHERE claim_idempotency_key IS NOT NULL;
 
 ALTER TABLE control.teams
     ADD CONSTRAINT teams_default_domain_id_fkey
@@ -188,7 +219,8 @@ CREATE TABLE control.control_sessions (
     access_expires_at timestamptz NOT NULL,
     refresh_token_id text NOT NULL UNIQUE CHECK (refresh_token_id <> ''),
     refresh_token_digest bytea NOT NULL UNIQUE CHECK (octet_length(refresh_token_digest) = 32),
-    retry_secret bytea NOT NULL CHECK (octet_length(retry_secret) = 32),
+    retry_secret_ciphertext bytea NOT NULL CHECK (octet_length(retry_secret_ciphertext) > 29),
+    retry_secret_storage_key_id text NOT NULL CHECK (retry_secret_storage_key_id <> ''),
     refresh_expires_at timestamptz NOT NULL,
     created_at timestamptz NOT NULL,
     last_refreshed_at timestamptz NOT NULL,
@@ -216,7 +248,8 @@ CREATE TABLE control.authority_revision_floors (
 
 CREATE TABLE control.runtime_secrets (
     singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
-    external_retry_master_key bytea NOT NULL CHECK (octet_length(external_retry_master_key) = 32),
+    external_retry_master_key_ciphertext bytea NOT NULL CHECK (octet_length(external_retry_master_key_ciphertext) > 29),
+    external_retry_master_key_storage_key_id text NOT NULL CHECK (external_retry_master_key_storage_key_id <> ''),
     created_at timestamptz NOT NULL
 );
 
@@ -235,8 +268,15 @@ CREATE TABLE control.routes (
     ip_policy text NOT NULL CHECK (ip_policy IN ('allow_all', 'allowlist')),
     allowed_ip_prefixes cidr[] NOT NULL DEFAULT '{}'::cidr[],
     lifecycle_state text NOT NULL CHECK (lifecycle_state IN ('enabled', 'suspended', 'deleted')),
+    dns_authority_reference text,
     dns_state text NOT NULL CHECK (dns_state IN ('unmanaged', 'pending', 'published', 'removing', 'removed', 'failed')),
     dns_revision bigint NOT NULL DEFAULT 1 CHECK (dns_revision >= 1),
+    dns_work_owner text,
+    dns_work_epoch bigint NOT NULL DEFAULT 0 CHECK (dns_work_epoch >= 0),
+    dns_work_expires_at timestamptz,
+    dns_attempts bigint NOT NULL DEFAULT 0 CHECK (dns_attempts >= 0),
+    dns_available_at timestamptz,
+    dns_last_error text,
     next_route_version bigint NOT NULL DEFAULT 1 CHECK (next_route_version >= 1),
     suspension_revision bigint NOT NULL DEFAULT 0 CHECK (suspension_revision >= 0),
     suspension_reason text,
@@ -247,6 +287,9 @@ CREATE TABLE control.routes (
     CHECK ((route_scope = 'member') = (membership_id IS NOT NULL)),
     CHECK ((ip_policy = 'allowlist') = (cardinality(allowed_ip_prefixes) > 0)),
     CHECK (array_position(allowed_ip_prefixes, NULL) IS NULL),
+    CHECK ((dns_work_owner IS NULL) = (dns_work_expires_at IS NULL)),
+    CHECK ((dns_state IN ('pending', 'removing')) = (dns_available_at IS NOT NULL)),
+    CHECK (dns_authority_reference IS NULL OR dns_authority_reference <> ''),
     CHECK (updated_at >= created_at),
     CHECK ((lifecycle_state = 'suspended') = (suspended_at IS NOT NULL)),
     CHECK ((lifecycle_state = 'deleted') = (deleted_at IS NOT NULL)),
@@ -255,7 +298,7 @@ CREATE TABLE control.routes (
 
 CREATE UNIQUE INDEX routes_current_hostname
     ON control.routes (canonical_hostname)
-    WHERE lifecycle_state <> 'deleted';
+    WHERE lifecycle_state <> 'deleted' OR dns_state NOT IN ('unmanaged', 'removed');
 CREATE UNIQUE INDEX routes_creator_idempotency
     ON control.routes (created_by_identity_id, idempotency_key);
 CREATE INDEX routes_team
@@ -264,26 +307,9 @@ CREATE INDEX routes_team
 CREATE INDEX routes_domain
     ON control.routes (domain_id)
     WHERE lifecycle_state <> 'deleted';
-
-CREATE TABLE control.authority_request_uses (
-    issuer text NOT NULL CHECK (issuer <> ''),
-    request_id text NOT NULL CHECK (request_id <> ''),
-    retry_id text NOT NULL CHECK (retry_id <> ''),
-    operation text NOT NULL CHECK (operation IN ('route.create', 'route_session.create', 'route.delete')),
-    team_id text NOT NULL CHECK (team_id <> ''),
-    identity_id text NOT NULL CHECK (identity_id <> ''),
-    membership_id text,
-    policy_revision bigint NOT NULL CHECK (policy_revision >= 1),
-    request_digest bytea NOT NULL CHECK (octet_length(request_digest) = 32),
-    route_id text REFERENCES control.routes(id) ON DELETE RESTRICT,
-    route_version bigint CHECK (route_version IS NULL OR route_version >= 1),
-    expires_at timestamptz NOT NULL,
-    used_at timestamptz NOT NULL,
-    PRIMARY KEY (issuer, request_id),
-    UNIQUE (issuer, retry_id),
-    CHECK (route_version IS NULL OR route_id IS NOT NULL),
-    CHECK (expires_at >= used_at)
-);
+CREATE INDEX routes_available_dns_work
+    ON control.routes (dns_available_at, id)
+    WHERE dns_state IN ('pending', 'removing');
 
 CREATE TABLE control.route_sessions (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -338,67 +364,19 @@ CREATE TABLE control.relay_services (
     relay_address text NOT NULL CHECK (relay_address <> ''),
     tls_server_name text NOT NULL CHECK (tls_server_name <> ''),
     transport_certificate_pem text,
-    transport_private_key_pem text,
+    transport_private_key_ciphertext bytea,
+    transport_private_key_storage_key_id text,
     transport_certificate_serial text,
     transport_certificate_expires_at timestamptz,
     enabled boolean NOT NULL DEFAULT true,
     created_at timestamptz NOT NULL,
     updated_at timestamptz NOT NULL,
 	CHECK (
-		(transport_certificate_pem IS NULL AND transport_private_key_pem IS NULL AND transport_certificate_serial IS NULL AND transport_certificate_expires_at IS NULL) OR
-		(transport_certificate_pem IS NOT NULL AND transport_private_key_pem IS NOT NULL AND transport_certificate_serial IS NOT NULL AND transport_certificate_expires_at IS NOT NULL)
+		(transport_certificate_pem IS NULL AND transport_private_key_ciphertext IS NULL AND transport_private_key_storage_key_id IS NULL AND transport_certificate_serial IS NULL AND transport_certificate_expires_at IS NULL) OR
+		(transport_certificate_pem IS NOT NULL AND transport_private_key_ciphertext IS NOT NULL AND transport_private_key_storage_key_id IS NOT NULL AND transport_certificate_serial IS NOT NULL AND transport_certificate_expires_at IS NOT NULL)
 	),
     CHECK (updated_at >= created_at)
 );
-
-CREATE TABLE control.service_authorities (
-    singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
-    certificate_pem text NOT NULL CHECK (certificate_pem <> ''),
-    private_key_der bytea NOT NULL CHECK (octet_length(private_key_der) > 0),
-    certificate_serial text NOT NULL CHECK (certificate_serial <> ''),
-    created_at timestamptz NOT NULL,
-    expires_at timestamptz NOT NULL,
-    CHECK (expires_at > created_at)
-);
-
-CREATE TABLE control.service_enrollment_tokens (
-    id text PRIMARY KEY CHECK (id <> ''),
-    lookup_id text NOT NULL UNIQUE CHECK (lookup_id <> ''),
-    token_digest bytea NOT NULL UNIQUE CHECK (octet_length(token_digest) = 32),
-    role text NOT NULL CHECK (role IN ('ingress', 'relay')),
-    relay_service_id text REFERENCES control.relay_services(relay_service_id) ON DELETE RESTRICT,
-    created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
-    created_at timestamptz NOT NULL,
-    last_used_at timestamptz,
-    last_used_process_id text,
-    use_count bigint NOT NULL DEFAULT 0 CHECK (use_count >= 0),
-    revoked_at timestamptz,
-    revoked_by_identity_id text REFERENCES control.identities(id) ON DELETE RESTRICT,
-    CHECK ((role = 'relay') = (relay_service_id IS NOT NULL)),
-    CHECK ((last_used_at IS NULL) = (last_used_process_id IS NULL)),
-    CHECK (last_used_at IS NULL OR last_used_at >= created_at),
-    CHECK ((revoked_at IS NULL) = (revoked_by_identity_id IS NULL)),
-    CHECK (revoked_at IS NULL OR revoked_at >= created_at)
-);
-
-CREATE INDEX service_enrollment_tokens_created
-    ON control.service_enrollment_tokens (created_at DESC, id DESC);
-
-CREATE TABLE control.service_enrollment_events (
-    event_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    service_enrollment_token_id text NOT NULL REFERENCES control.service_enrollment_tokens(id) ON DELETE RESTRICT,
-    role text NOT NULL CHECK (role IN ('ingress', 'relay')),
-    process_id text NOT NULL CHECK (process_id <> ''),
-    relay_service_id text REFERENCES control.relay_services(relay_service_id) ON DELETE RESTRICT,
-    certificate_serial text NOT NULL CHECK (certificate_serial <> ''),
-    certificate_expires_at timestamptz NOT NULL,
-    occurred_at timestamptz NOT NULL,
-    CHECK ((role = 'relay') = (relay_service_id IS NOT NULL)),
-    CHECK (certificate_expires_at > occurred_at)
-);
-
-CREATE INDEX service_enrollment_events_token
-    ON control.service_enrollment_events (service_enrollment_token_id, occurred_at DESC, event_id DESC);
 
 CREATE TABLE control.relay_leases (
     relay_id text PRIMARY KEY CHECK (relay_id <> ''),
@@ -533,7 +511,8 @@ CREATE TABLE control.acme_accounts (
     id text PRIMARY KEY CHECK (id <> ''),
     directory_url text NOT NULL UNIQUE CHECK (directory_url <> ''),
     contact_email text NOT NULL CHECK (contact_email <> ''),
-    account_key_der bytea NOT NULL CHECK (octet_length(account_key_der) > 0),
+    account_key_ciphertext bytea NOT NULL CHECK (octet_length(account_key_ciphertext) > 29),
+    account_key_storage_key_id text NOT NULL CHECK (account_key_storage_key_id <> ''),
     account_url text,
     accepted_terms_url text,
     created_at timestamptz NOT NULL,
@@ -544,10 +523,64 @@ CREATE TABLE control.acme_accounts (
 CREATE TABLE control.control_tls_cache (
     directory_url text NOT NULL CHECK (directory_url <> ''),
     cache_key text NOT NULL CHECK (cache_key <> ''),
-    cache_data bytea NOT NULL CHECK (octet_length(cache_data) > 0),
+    cache_ciphertext bytea NOT NULL CHECK (octet_length(cache_ciphertext) > 29),
+    cache_storage_key_id text NOT NULL CHECK (cache_storage_key_id <> ''),
     updated_at timestamptz NOT NULL,
     PRIMARY KEY (directory_url, cache_key)
 );
+
+CREATE TABLE control.relay_certificate_orders (
+    id text PRIMARY KEY CHECK (id <> ''),
+    account_id text NOT NULL REFERENCES control.acme_accounts(id) ON DELETE RESTRICT,
+    relay_service_id text NOT NULL REFERENCES control.relay_services(relay_service_id) ON DELETE RESTRICT,
+    tls_server_name text NOT NULL CHECK (tls_server_name <> ''),
+    private_key_ciphertext bytea NOT NULL CHECK (octet_length(private_key_ciphertext) > 29),
+    private_key_storage_key_id text NOT NULL CHECK (private_key_storage_key_id <> ''),
+    csr_der bytea NOT NULL CHECK (octet_length(csr_der) > 0),
+    csr_digest bytea NOT NULL CHECK (octet_length(csr_digest) = 32),
+    state text NOT NULL CHECK (state IN (
+        'pending', 'authorizing', 'presenting', 'presented', 'validating',
+        'ready_to_finalize', 'finalizing', 'cleaning', 'failed_cleaning', 'complete', 'failed'
+    )),
+    order_revision bigint NOT NULL DEFAULT 1 CHECK (order_revision >= 1),
+    order_url text,
+    finalize_url text,
+    certificate_url text,
+    authorization_url text,
+    challenge_url text,
+    challenge_token text,
+    challenge_digest bytea,
+    presentation_reference text UNIQUE,
+    certificate_pem bytea,
+    not_before timestamptz,
+    not_after timestamptz,
+    renew_at timestamptz,
+    work_owner text,
+    work_epoch bigint NOT NULL DEFAULT 0 CHECK (work_epoch >= 0),
+    work_expires_at timestamptz,
+    attempts bigint NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    available_at timestamptz NOT NULL,
+    last_error text,
+    created_at timestamptz NOT NULL,
+    updated_at timestamptz NOT NULL,
+    CHECK ((work_owner IS NULL) = (work_expires_at IS NULL)),
+    CHECK (
+        (challenge_url IS NULL AND challenge_token IS NULL AND challenge_digest IS NULL AND presentation_reference IS NULL) OR
+        (authorization_url IS NOT NULL AND challenge_url IS NOT NULL AND challenge_token IS NOT NULL AND octet_length(challenge_digest) = 32 AND presentation_reference IS NOT NULL)
+    ),
+    CHECK (
+        (certificate_pem IS NULL AND not_before IS NULL AND not_after IS NULL AND renew_at IS NULL) OR
+        (certificate_pem IS NOT NULL AND not_before IS NOT NULL AND not_after IS NOT NULL AND renew_at IS NOT NULL AND not_after > not_before)
+    ),
+    CHECK (updated_at >= created_at)
+);
+
+CREATE UNIQUE INDEX relay_certificate_orders_active_service
+    ON control.relay_certificate_orders (relay_service_id)
+    WHERE state NOT IN ('complete', 'failed');
+CREATE INDEX relay_certificate_orders_available_work
+    ON control.relay_certificate_orders (available_at, id)
+    WHERE state NOT IN ('complete', 'failed');
 
 CREATE TABLE control.acme_orders (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -593,7 +626,7 @@ CREATE TABLE control.acme_orders (
 
 CREATE INDEX acme_orders_available_work
     ON control.acme_orders (available_at, id)
-    WHERE state IN ('pending', 'authorizing', 'ready_to_finalize', 'finalizing', 'waiting_for_install', 'failed');
+    WHERE state IN ('pending', 'authorizing', 'ready_to_finalize', 'finalizing', 'waiting_for_install', 'failed', 'canceled');
 CREATE INDEX acme_orders_route
     ON control.acme_orders (route_id, route_version, created_at DESC);
 
@@ -606,7 +639,7 @@ CREATE TABLE control.acme_authorizations (
     challenge_url text NOT NULL UNIQUE CHECK (challenge_url <> ''),
     challenge_token text NOT NULL CHECK (challenge_token <> ''),
     challenge_digest bytea NOT NULL CHECK (octet_length(challenge_digest) = 32),
-    presentation_reference text,
+    presentation_reference text UNIQUE,
     state text NOT NULL CHECK (state IN ('pending', 'presenting', 'presented', 'validating', 'valid', 'cleaning', 'complete', 'failed', 'canceled')),
     authorization_revision bigint NOT NULL DEFAULT 1 CHECK (authorization_revision >= 1),
     work_owner text,
@@ -623,6 +656,8 @@ CREATE TABLE control.acme_authorizations (
     updated_at timestamptz NOT NULL,
     UNIQUE (order_id, identifier),
     CHECK ((work_owner IS NULL) = (work_expires_at IS NULL)),
+    CHECK ((challenge_type = 'dns-01') = (presentation_reference IS NOT NULL)),
+    CHECK (presentation_reference IS NULL OR presentation_reference <> ''),
     CHECK (updated_at >= created_at),
     CHECK (expires_at IS NULL OR expires_at > created_at)
 );
@@ -696,7 +731,7 @@ CREATE TABLE control.route_usage_buckets (
     route_id text NOT NULL REFERENCES control.routes(id) ON DELETE RESTRICT,
     route_version bigint NOT NULL CHECK (route_version >= 1),
     team_id text NOT NULL CHECK (team_id <> ''),
-    acting_identity_id text REFERENCES control.identities(id) ON DELETE RESTRICT,
+    acting_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
     bucket_start timestamptz NOT NULL,
     bucket_end timestamptz NOT NULL,
     bucket_revision bigint NOT NULL DEFAULT 1 CHECK (bucket_revision >= 1),

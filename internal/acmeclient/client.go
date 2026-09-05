@@ -63,6 +63,7 @@ type Authorization struct {
 	RetryAfter time.Time   `json:"-"`
 	Status     string      `json:"status"`
 	Identifier Identifier  `json:"identifier"`
+	Wildcard   bool        `json:"wildcard"`
 	Expires    *time.Time  `json:"expires"`
 	Challenges []Challenge `json:"challenges"`
 }

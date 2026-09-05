@@ -11,7 +11,6 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 func credentialSourceRevision(token string) int64 {
@@ -41,21 +40,6 @@ func (h *handler) authenticateControlRequest(
 			log.Printf("authenticate control request: %v", err)
 		}
 		writeBearerProblem(response)
-		return controlstate.ControlPrincipal{}, false
-	}
-	return principal, true
-}
-
-func (h *handler) authenticateAdminRequest(
-	response http.ResponseWriter,
-	request *http.Request,
-) (controlstate.ControlPrincipal, bool) {
-	principal, ok := h.authenticateControlRequest(response, request)
-	if !ok {
-		return controlstate.ControlPrincipal{}, false
-	}
-	if !principal.Administrator {
-		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "administrator access is required")
 		return controlstate.ControlPrincipal{}, false
 	}
 	return principal, true
