@@ -34,6 +34,13 @@ func TestTLSALPNChallengeCertificate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	mixedCase, err := challenges.GetCertificate(&tls.ClientHelloInfo{
+		ServerName:      "ROUTE.EXAMPLE",
+		SupportedProtos: []string{acme.ALPNProto},
+	})
+	if err != nil || mixedCase != certificate {
+		t.Fatalf("mixed-case certificate = %v, %v", mixedCase, err)
+	}
 	if len(certificate.Certificate) != 1 {
 		t.Fatalf("certificate chain length = %d; want 1", len(certificate.Certificate))
 	}
@@ -101,7 +108,6 @@ func TestTLSALPNChallengeSelection(t *testing.T) {
 		{name: "nil"},
 		{name: "missing SNI", hello: &tls.ClientHelloInfo{SupportedProtos: []string{acme.ALPNProto}}},
 		{name: "different SNI", hello: &tls.ClientHelloInfo{ServerName: "other.example", SupportedProtos: []string{acme.ALPNProto}}},
-		{name: "non-canonical SNI", hello: &tls.ClientHelloInfo{ServerName: "ROUTE.EXAMPLE", SupportedProtos: []string{acme.ALPNProto}}},
 		{name: "ordinary ALPN", hello: &tls.ClientHelloInfo{ServerName: "route.example", SupportedProtos: []string{"h2"}}},
 		{name: "mixed ALPN", hello: &tls.ClientHelloInfo{ServerName: "route.example", SupportedProtos: []string{acme.ALPNProto, "h2"}}},
 	}

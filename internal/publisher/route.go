@@ -177,7 +177,11 @@ func (r *Route) expireCertificateLocked(certificate *tls.Certificate) {
 }
 
 func (r *Route) getCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
-	if hello == nil || hello.ServerName != r.hostname {
+	if hello == nil {
+		return nil, errors.New("publisher: TLS SNI does not match route")
+	}
+	hostname, err := naming.CanonicalizeHostname(hello.ServerName)
+	if err != nil || hostname != r.hostname {
 		return nil, errors.New("publisher: TLS SNI does not match route")
 	}
 	if len(hello.SupportedProtos) == 1 && hello.SupportedProtos[0] == acme.ALPNProto {
@@ -303,6 +307,7 @@ func (r *Route) startHTTP() {
 }
 
 func (r *Route) handle(connection net.Conn) {
+	defer connection.Close()
 	_ = connection.SetDeadline(time.Now().Add(10 * time.Second))
 	header, replay, err := proxyproto.Decode(connection)
 	if err != nil {

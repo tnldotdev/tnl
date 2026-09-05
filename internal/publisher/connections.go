@@ -80,13 +80,20 @@ func (m *publisherConnectionManager) Update(plans []controlv1.PublisherConnectio
 	if m.closed {
 		return publisherConnectionManagerClosedError()
 	}
+	now := time.Now()
 	for slot, plan := range bySlot {
 		current := m.connections[slot]
 		if current != nil && samePublisherConnectionPlan(current.plan, plan) {
 			continue
 		}
-		if !plan.PublisherConnectionCredentialExpiresAt.After(time.Now()) {
+		if !plan.PublisherConnectionCredentialExpiresAt.After(now) {
 			return errors.New("publisher: server returned an expired publisher connection credential")
+		}
+	}
+	for slot, plan := range bySlot {
+		current := m.connections[slot]
+		if current != nil && samePublisherConnectionPlan(current.plan, plan) {
+			continue
 		}
 		if current != nil {
 			current.cancel()

@@ -17,7 +17,7 @@ import (
 
 func (h *handler) ExchangeLoginToken(response http.ResponseWriter, request *http.Request) {
 	var body authorityv1.LoginTokenExchangeRequest
-	if err := decodeJSON(request, &body); err != nil {
+	if err := decodeJSON(response, request, &body); err != nil {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
 		return
 	}
@@ -40,7 +40,7 @@ func (h *handler) ExchangeLoginToken(response http.ResponseWriter, request *http
 
 func (h *handler) RefreshControlSession(response http.ResponseWriter, request *http.Request) {
 	var body authorityv1.RefreshControlSessionRequest
-	if err := decodeJSON(request, &body); err != nil {
+	if err := decodeJSON(response, request, &body); err != nil {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
 		return
 	}
@@ -119,7 +119,7 @@ func (h *handler) CreateTeam(
 		return
 	}
 	var body authorityv1.CreateTeamRequest
-	if err := decodeJSON(request, &body); err != nil {
+	if err := decodeJSON(response, request, &body); err != nil {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
 		return
 	}
@@ -185,7 +185,7 @@ func (h *handler) SetMembershipRole(
 		return
 	}
 	var body authorityv1.SetMembershipRoleRequest
-	if err := decodeJSON(request, &body); err != nil {
+	if err := decodeJSON(response, request, &body); err != nil {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
 		return
 	}
@@ -246,7 +246,7 @@ func (h *handler) CreateTeamInvitation(
 		return
 	}
 	var body authorityv1.CreateInvitationRequest
-	if err := decodeJSON(request, &body); err != nil {
+	if err := decodeJSON(response, request, &body); err != nil {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
 		return
 	}
@@ -303,7 +303,7 @@ func (h *handler) AcceptInvitation(response http.ResponseWriter, request *http.R
 		return
 	}
 	var body authorityv1.AcceptInvitationRequest
-	if err := decodeJSON(request, &body); err != nil {
+	if err := decodeJSON(response, request, &body); err != nil {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
 		return
 	}
@@ -354,7 +354,7 @@ func (h *handler) ClaimTeamDomain(
 		return
 	}
 	var body authorityv1.ClaimDomainRequest
-	if err := decodeJSON(request, &body); err != nil {
+	if err := decodeJSON(response, request, &body); err != nil {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
 		return
 	}

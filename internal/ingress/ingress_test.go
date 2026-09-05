@@ -71,7 +71,7 @@ func TestIngressRoutesTLSWithProxyMetadata(t *testing.T) {
 	})
 
 	client, err := tls.Dial("tcp", listener.Addr().String(), &tls.Config{
-		ServerName:         "route.example",
+		ServerName:         "ROUTE.EXAMPLE",
 		MinVersion:         tls.VersionTLS12,
 		InsecureSkipVerify: true, // The test certificate is self-signed.
 	})
@@ -545,7 +545,7 @@ func TestIngressHandsControlTLSOffByExactSNI(t *testing.T) {
 	}()
 
 	client, err := tls.Dial("tcp", listener.Addr().String(), &tls.Config{
-		ServerName: "control.example", MinVersion: tls.VersionTLS12,
+		ServerName: "CONTROL.EXAMPLE", MinVersion: tls.VersionTLS12,
 		InsecureSkipVerify: true, // The test certificate is self-signed.
 	})
 	if err != nil {
@@ -621,7 +621,7 @@ func TestIngressHandsRelayTransportOffByExactSNI(t *testing.T) {
 	}()
 
 	client, err := tls.Dial("tcp", listener.Addr().String(), &tls.Config{
-		ServerName: "relay.example", MinVersion: tls.VersionTLS13,
+		ServerName: "RELAY.EXAMPLE", MinVersion: tls.VersionTLS13,
 		NextProtos:         []string{"tnl-tunnel/1"},
 		InsecureSkipVerify: true, // The test certificate is self-signed.
 	})
@@ -641,6 +641,70 @@ func TestIngressHandsRelayTransportOffByExactSNI(t *testing.T) {
 	}
 	if err := <-serverResult; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestIngressHandsRelayACMETLSALPNOffToChallengeHandler(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	relayConnections := make(chan net.Conn, 1)
+	challengeConnections := make(chan net.Conn)
+	server, err := New(listener, Config{
+		Lookup:        func(string) (Route, bool) { return Route{}, false },
+		RelayHostname: "relay.example",
+		HandleRelay: func(connection net.Conn) bool {
+			relayConnections <- connection
+			return true
+		},
+		HandleRelayChallenge: func(connection net.Conn) bool {
+			challengeConnections <- connection
+			return true
+		},
+		MaxConnections: 8, MaxRouteConnections: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	served := make(chan error, 1)
+	go func() { served <- server.Serve() }()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = server.Drain(ctx)
+		<-served
+	})
+
+	challengeCertificate := testCertificate(t, "relay.example")
+	serverResult := make(chan error, 1)
+	go func() {
+		connection := <-challengeConnections
+		defer connection.Close()
+		secured := tls.Server(connection, &tls.Config{
+			Certificates: []tls.Certificate{challengeCertificate}, MinVersion: tls.VersionTLS13,
+			NextProtos: []string{"acme-tls/1"},
+		})
+		serverResult <- secured.Handshake()
+	}()
+
+	client, err := tls.Dial("tcp", listener.Addr().String(), &tls.Config{
+		ServerName: "relay.example", MinVersion: tls.VersionTLS13,
+		NextProtos:         []string{"acme-tls/1"},
+		InsecureSkipVerify: true, // The test certificate is self-signed.
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = client.Close()
+	if err := <-serverResult; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case connection := <-relayConnections:
+		_ = connection.Close()
+		t.Fatal("relay ACME challenge reached the publisher transport handler")
+	default:
 	}
 }
 

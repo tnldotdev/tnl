@@ -78,6 +78,29 @@ WITH candidate AS (
       )
       AND orders.available_at <= $3
       AND (orders.work_owner IS NULL OR orders.work_expires_at <= $3)
+      -- ACME validation can begin only after every live ingress process has the challenge route.
+      AND (
+          NOT EXISTS (
+              SELECT 1
+              FROM control.acme_authorizations AS authorizations
+              WHERE authorizations.order_id = orders.id
+                AND authorizations.challenge_type = 'tls-alpn-01'
+                AND authorizations.state = 'presented'
+          )
+          OR EXISTS (
+              SELECT 1
+              FROM control.ingress_leases AS ingresses
+              WHERE ingresses.lease_expires_at > $3
+                AND NOT ingresses.draining
+          ) AND NOT EXISTS (
+              SELECT 1
+              FROM control.ingress_leases AS ingresses
+              CROSS JOIN control.ingress_routing_table_clock AS clock
+              WHERE ingresses.lease_expires_at > $3
+                AND NOT ingresses.draining
+                AND ingresses.routing_table_revision < clock.current_revision
+          )
+      )
     ORDER BY orders.available_at, orders.id
     FOR UPDATE SKIP LOCKED
     LIMIT 1

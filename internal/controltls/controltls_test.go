@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -61,6 +62,10 @@ func TestAutomaticCertificateConfiguration(t *testing.T) {
 	if _, err := source.GetCertificate(&tls.ClientHelloInfo{ServerName: "other.example"}); err == nil {
 		t.Fatal("unexpected SNI was accepted")
 	}
+	mixedCaseCertificate, err := source.GetCertificate(&tls.ClientHelloInfo{ServerName: "CONTROL.EXAMPLE"})
+	if err != nil || mixedCaseCertificate != certificate {
+		t.Fatalf("mixed-case certificate = %#v, %v", mixedCaseCertificate, err)
+	}
 	relayCertificate, err := source.GetCertificate(&tls.ClientHelloInfo{ServerName: "relay.example"})
 	if err != nil || relayCertificate.Leaf == nil || relayCertificate.Leaf.DNSNames[0] != "relay.example" {
 		t.Fatalf("relay certificate = %#v, %v", relayCertificate, err)
@@ -105,6 +110,23 @@ func TestACMEHTTPClientRestoresOrderLocation(t *testing.T) {
 				t.Fatalf("finalize Location = %q", location)
 			}
 		})
+	}
+}
+
+func TestACMEHTTPClientRejectsOversizedOrder(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.Header().Set("Location", "https://acme.example/order/1")
+		response.WriteHeader(http.StatusCreated)
+		_, _ = io.WriteString(response, strings.Repeat("x", maximumACMEOrderResponseBytes+1))
+	}))
+	defer server.Close()
+	client := acmeHTTPClient(server.Client())
+	response, err := client.Post(server.URL, "application/json", nil)
+	if response != nil {
+		_ = response.Body.Close()
+	}
+	if err == nil {
+		t.Fatal("oversized ACME order response was accepted")
 	}
 }
 

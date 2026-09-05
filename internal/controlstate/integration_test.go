@@ -595,6 +595,58 @@ func testControlTLSState(t *testing.T, database *Database) {
 	if !thirdRan {
 		t.Fatal("replacement control TLS leader did not run")
 	}
+
+	lostStarted := make(chan struct{})
+	lostCanceled := make(chan struct{})
+	lostDone := make(chan error, 1)
+	go func() {
+		lostDone <- database.RunControlTLSLeader(t.Context(), func(ctx context.Context) error {
+			close(lostStarted)
+			<-ctx.Done()
+			close(lostCanceled)
+			return nil
+		})
+	}()
+	select {
+	case <-lostStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("control TLS leader for connection-loss test did not start")
+	}
+	if _, err := database.pool.Exec(t.Context(), `
+		SELECT pg_terminate_backend(pid)
+		FROM pg_locks
+		WHERE locktype = 'advisory'
+		  AND classid::bigint = $1
+		  AND objid::bigint = $2
+		  AND objsubid = 1
+		  AND granted
+		  AND pid <> pg_backend_pid()
+	`, controlTLSLeadershipKey>>32, controlTLSLeadershipKey&0xffffffff); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-lostDone:
+		if err == nil {
+			t.Fatal("control TLS leadership connection loss returned no error")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("control TLS leader did not detect connection loss")
+	}
+	select {
+	case <-lostCanceled:
+	case <-time.After(time.Second):
+		t.Fatal("control TLS callback was not canceled after connection loss")
+	}
+	afterLossRan := false
+	if err := database.RunControlTLSLeader(t.Context(), func(context.Context) error {
+		afterLossRan = true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !afterLossRan {
+		t.Fatal("replacement control TLS leader did not run after connection loss")
+	}
 }
 
 func testStorageKeyRotation(t *testing.T, database *Database, databaseURL string) {
@@ -1552,6 +1604,34 @@ func testRouteSessionReadiness(
 	if _, err := database.MarkCertificateChallengeReady(t.Context(), issuanceID, setup.SessionToken, now.Add(time.Millisecond)); err != nil {
 		t.Fatalf("idempotent certificate challenge ready: %v", err)
 	}
+	if work, found, err := database.ClaimACMEOrderWork(
+		t.Context(), "certificate-worker-before-ingress", now.Add(2*time.Millisecond), time.Minute,
+	); err != nil || found {
+		t.Fatalf("ACME work before ingress applied challenge = %#v, %v, %v", work, found, err)
+	}
+	var routingTableRevision int64
+	if err := database.pool.QueryRow(t.Context(), `
+		SELECT current_revision FROM control.ingress_routing_table_clock WHERE singleton = true
+	`).Scan(&routingTableRevision); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.RenewIngress(t.Context(), IngressRenewal{
+		IngressLeaseIdentity: ingressLease.IngressLeaseIdentity,
+		RoutingTableRevision: uint64(routingTableRevision),
+	}, now.Add(3*time.Millisecond), time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	work, found, err := database.ClaimACMEOrderWork(
+		t.Context(), "certificate-worker-after-ingress", now.Add(4*time.Millisecond), time.Minute,
+	)
+	if err != nil || !found || work.ID != issuanceID {
+		t.Fatalf("ACME work after ingress applied challenge = %#v, %v, %v", work, found, err)
+	}
+	if _, err := database.pool.Exec(t.Context(), `
+		UPDATE control.acme_orders SET work_owner = NULL, work_expires_at = NULL WHERE id = $1
+	`, issuanceID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := database.pool.Exec(t.Context(), `
 		UPDATE control.acme_orders SET state = 'failed', last_error = 'terminal failure', updated_at = $2 WHERE id = $1
 	`, issuanceID, now); err != nil {
@@ -1620,12 +1700,26 @@ func testRouteSessionReadiness(
 	}
 
 	heartbeatAt := now.Add(3 * time.Second)
+	if _, err := database.pool.Exec(t.Context(), `
+		UPDATE control.route_session_connections
+		SET publisher_connection_credential_expires_at = $2
+		WHERE route_session_id = $1
+	`, setup.RouteSessionID, heartbeatAt.Add(-time.Second)); err != nil {
+		t.Fatal(err)
+	}
 	heartbeat, err := database.HeartbeatRouteSession(t.Context(), authentication, heartbeatAt, 30*time.Second, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !heartbeat.ExpiresAt.Equal(heartbeatAt.Add(30*time.Second)) || heartbeat.RouteVersion != setup.RouteVersion {
 		t.Fatalf("heartbeat setup = %#v", heartbeat)
+	}
+	for slot, connection := range heartbeat.PublisherConnections {
+		if connection.PublisherConnectionID != setup.PublisherConnections[slot].PublisherConnectionID ||
+			connection.ConnectionAssignmentRevision != setup.PublisherConnections[slot].ConnectionAssignmentRevision ||
+			connection.State != PublisherConnectionReady {
+			t.Fatalf("established publisher connection slot %d was replaced after credential expiry: %#v", slot, connection)
+		}
 	}
 	snapshot, err := database.ReadIngressRoutingTableSnapshot(
 		t.Context(), ingressLease.IngressLeaseIdentity, heartbeatAt,
