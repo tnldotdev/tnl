@@ -2,448 +2,115 @@ package main
 
 import (
 	"bytes"
-	"context"
-	"crypto/tls"
-	"encoding/json"
-	"net"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/credentials"
-	"github.com/tnldotdev/tnl/internal/dnsready"
-	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/serverclient"
-	"github.com/tnldotdev/tnl/internal/state"
-	"github.com/tnldotdev/tnl/internal/testutil/integrationtest"
-	"github.com/tnldotdev/tnl/internal/worker"
-	"github.com/tnldotdev/tnl/internal/workercontrol"
-	"github.com/tnldotdev/tnl/pkg/protocol/serverv1"
-	"github.com/tnldotdev/tnl/pkg/protocol/workerv1"
-	"tailscale.com/tailcfg"
 )
 
-func TestVersionCommand(t *testing.T) {
+func TestRunVersion(t *testing.T) {
 	var output bytes.Buffer
-	if err := run(context.Background(), []string{"version"}, &output); err != nil {
+	if err := run(t.Context(), []string{"version"}, &output); err != nil {
 		t.Fatal(err)
 	}
-	if output.String() != "tnld devel\n" {
+	if !strings.HasPrefix(output.String(), "tnld ") {
+		t.Fatalf("version output = %q", output.String())
+	}
+}
+
+func TestRunMigrateRequiresDirectURL(t *testing.T) {
+	t.Setenv("TNLD_DATABASE_DIRECT_URL", "")
+	err := run(t.Context(), []string{"migrate"}, new(bytes.Buffer))
+	if err == nil || err.Error() != "TNLD_DATABASE_DIRECT_URL is required" {
+		t.Fatalf("migrate error = %v", err)
+	}
+}
+
+func TestRunLoginToken(t *testing.T) {
+	var output bytes.Buffer
+	if err := run(t.Context(), []string{"login-token"}, &output); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := credentials.ParseLoginToken(credentials.LoginToken(strings.TrimSpace(output.String()))); err != nil {
+		t.Fatalf("generated login token: %v", err)
+	}
+}
+
+func TestRunConfigCheckIsSilentAndDoesNotStartServices(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tnl.yml")
+	contents := `version: 1
+tnld:
+  mode: relay
+  control_hostname: control.example.com
+  service_enrollment_token: tnl_enrollment_0123456789abcdef0123456789abcdef
+  relay_id: relay-test
+  internal_relay_address: relay.internal:9443
+`
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := run(t.Context(), []string{"config", "check", "--config", path}, &output); err != nil {
+		t.Fatal(err)
+	}
+	if output.Len() != 0 {
 		t.Fatalf("output = %q", output.String())
 	}
 }
 
-func TestCommandTreeOnlyIncludesDaemonCommands(t *testing.T) {
+func TestResolveTNLDFileRespectsEnvironmentAndFlags(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tnl.json")
+	contents := `{"version":1,"tnld":{"mode":"relay","metrics_listen":"file:1","relay_stream_capacity":12}}`
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TNLD_METRICS_LISTEN", "env:2")
+	base := config.TNLD{
+		Mode: config.TNLDModeRelay, MetricsListen: "env:2", RelayStreamCapacity: 99,
+		ControlHostname: "control.example.com", ServiceEnrollmentToken: "tnl_enrollment_0123456789abcdef0123456789abcdef",
+		RelayID: "relay-test", InternalRelayAddress: "relay.internal:9443", RelayTCPListen: ":443", RelayUDPListen: ":443",
+		PublicConnectionLimit: 1, RouteConnectionLimit: 1, PublisherConnectionLimit: 1, QUICMaxIncomingStreams: 1,
+		QUICIdleTimeout: time.Second, TunnelFallbackDelay: time.Second, IngressLeaseDuration: 3 * time.Second,
+		RelayLeaseDuration: 3 * time.Second, LeaseRenewalInterval: time.Second, ControlRetryInterval: time.Second,
+		RoutingTableWait: time.Second, DrainTimeout: time.Second,
+	}
+	resolved, err := resolveTNLDFile(path, base, map[string]bool{"relay_stream_capacity": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.MetricsListen != "env:2" || resolved.RelayStreamCapacity != 99 {
+		t.Fatalf("resolved config = %#v", resolved)
+	}
+}
+
+func TestParserRejectsRemovedServeFlags(t *testing.T) {
+	for _, flag := range []string{"--state-dir", "--backup-url", "--relay-map-file", "--edge-url", "--worker-token"} {
+		var flags tnldCLI
+		parser, err := newTNLDParser(&flags, new(bytes.Buffer))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := parser.Parse([]string{"serve", flag, "value"}); err == nil {
+			t.Fatalf("removed flag %q was accepted", flag)
+		}
+	}
+}
+
+func TestParserAcceptsServeValuesBeforeFileResolution(t *testing.T) {
 	var flags tnldCLI
-	parser, err := newTNLDParser(&flags, &bytes.Buffer{})
+	parser, err := newTNLDParser(&flags, new(bytes.Buffer))
 	if err != nil {
 		t.Fatal(err)
 	}
-	commands := map[string]bool{}
-	for _, command := range parser.Model.Leaves(true) {
-		commands[command.Path()] = true
+	parsed, err := parser.Parse([]string{"serve", "--mode", "relay", "--control-hostname", "control.example.com"})
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, command := range []string{"serve", "version"} {
-		if !commands[command] {
-			t.Fatalf("command %q missing from help model: %#v", command, commands)
-		}
-	}
-
-	for name, test := range map[string]struct {
-		args []string
-		want string
-	}{
-		"default serve":  {args: []string{"--public-listen", ""}, want: "serve"},
-		"explicit serve": {args: []string{"serve", "--public-listen", ""}, want: "serve"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			var flags tnldCLI
-			parser, err := newTNLDParser(&flags, &bytes.Buffer{})
-			if err != nil {
-				t.Fatal(err)
-			}
-			parsed, err := parser.Parse(test.args)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if parsed.Command() != test.want {
-				t.Fatalf("command = %q, want %q", parsed.Command(), test.want)
-			}
-		})
+	if parsed.Command() != "serve" || flags.Serve.Values.Mode != config.TNLDModeRelay || flags.Serve.Values.ControlHostname != "control.example.com" {
+		t.Fatalf("serve values = %#v", flags.Serve.Values)
 	}
 }
-
-func TestStatefulDaemonRunsRouteStateRetention(t *testing.T) {
-	directory := t.TempDir()
-	db, err := state.Open(t.Context(), directory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	for _, statement := range []string{
-		`INSERT INTO routes (
-			id, hostname, local_target, status, route_version,
-			authorization_issuer, authorization_id, authorization_key_id, authorization_retry_id,
-			authorization_revision, authorization_expires_at, authorization_request_hash,
-			created_at, deleted_at
-		) VALUES (
-			'route_retention', 'retention.example', 'localhost:3000', 'deleted', 1,
-			'issuer', 'route_authorization', 'route_key', 'route_retry',
-			1, 2, zeroblob(32), 1, 1
-		)`,
-		`INSERT INTO route_authorization_uses (
-			authorization_issuer, authorization_id, authorization_key_id, authorization_retry_id,
-			authorization_revision, authorization_expires_at, operation, route_id, route_version,
-			hostname, request_hash, created_at
-		) VALUES (
-			'issuer', 'expired_use', 'use_key', 'use_retry',
-			1, 1, 'route_session.create', 'route_retention', 1,
-			'retention.example', zeroblob(32), 1
-		)`,
-	} {
-		if _, err := db.ExecContext(t.Context(), statement); err != nil {
-			t.Fatal(err)
-		}
-	}
-	cfg, err := config.ParseTNLD([]string{
-		"--mode", "standalone", "--state-dir", directory, "--public-listen", "", "--metrics-listen", "",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan error, 1)
-	go func() {
-		done <- serve(ctx, cfg)
-		close(done)
-	}()
-	t.Cleanup(func() {
-		cancel()
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second):
-		}
-	})
-
-	deadline := time.NewTimer(5 * time.Second)
-	defer deadline.Stop()
-	poll := time.NewTicker(10 * time.Millisecond)
-	defer poll.Stop()
-	for {
-		var count int
-		if err := db.QueryRowContext(t.Context(),
-			"SELECT COUNT(*) FROM route_authorization_uses WHERE authorization_id = 'expired_use'",
-		).Scan(&count); err != nil {
-			t.Fatal(err)
-		}
-		if count == 0 {
-			break
-		}
-		select {
-		case err := <-done:
-			t.Fatalf("stateful daemon stopped before retention ran: %v", err)
-		case <-deadline.C:
-			t.Fatal("stateful daemon did not run route state retention")
-		case <-poll.C:
-		}
-	}
-	cancel()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("stateful daemon did not stop")
-	}
-}
-
-func TestDaemonShutdownWaitsForRetentionBeforeClosingState(t *testing.T) {
-	db, err := state.Open(t.Context(), t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	retentionCtx, cancelRetention := context.WithCancel(context.Background())
-	releaseRetention := make(chan struct{})
-	retentionDone := make(chan struct{})
-	go func() {
-		defer close(retentionDone)
-		<-retentionCtx.Done()
-		<-releaseRetention
-	}()
-	running := &daemon{db: db, retentionCancel: cancelRetention, retentionDone: retentionDone}
-	shutdownDone := make(chan error, 1)
-	go func() { shutdownDone <- running.shutdown(10 * time.Millisecond) }()
-	<-retentionCtx.Done()
-	select {
-	case err := <-shutdownDone:
-		t.Fatalf("shutdown completed before retention exited: %v", err)
-	case <-time.After(25 * time.Millisecond):
-	}
-	close(releaseRetention)
-	if err := <-shutdownDone; err != nil {
-		t.Fatal(err)
-	}
-	if err := db.PingContext(t.Context()); err == nil {
-		t.Fatal("state database remained open after retention exited")
-	}
-}
-
-func TestIntegrationStandaloneControlLifecycle(t *testing.T) {
-	pebblePath := integrationtest.RequirePebble(t)
-	directory := t.TempDir()
-	relayFile := filepath.Join(directory, "relay.json")
-	relayData, err := json.Marshal(tailcfg.DERPMap{Regions: map[int]*tailcfg.DERPRegion{1: {
-		RegionID: 1, RegionCode: "test", Nodes: []*tailcfg.DERPNode{{
-			Name: "test", RegionID: 1, HostName: "derp.invalid", DERPPort: 443,
-		}},
-	}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(relayFile, relayData, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	login, err := credentials.NewLoginToken()
-	if err != nil {
-		t.Fatal(err)
-	}
-	publicListener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	publicAddress := publicListener.Addr().String()
-	publicPort := publicListener.Addr().(*net.TCPAddr).Port
-	if err := publicListener.Close(); err != nil {
-		t.Fatal(err)
-	}
-	dnsAddress := integrationtest.StartChallengeDNS(t)
-	dnsDialer := new(net.Dialer)
-	testResolver := &net.Resolver{
-		PreferGo: true,
-		Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			return dnsDialer.DialContext(ctx, "udp", dnsAddress)
-		},
-	}
-	pebble := integrationtest.StartPebble(t, pebblePath, publicPort, dnsAddress)
-	previousTransport := http.DefaultTransport
-	http.DefaultTransport = pebble.HTTPClient().Transport
-	t.Cleanup(func() { http.DefaultTransport = previousTransport })
-	cfg := config.TNLD{
-		Mode: config.TNLDModeStandalone, StateDir: filepath.Join(directory, "state"),
-		PublicListen: publicAddress, Domain: "example",
-		ACMEDirectoryURL: pebble.DirectoryURL(), ACMEEmail: "operator@example.com", ACMEAcceptTerms: true,
-		ACMEProfile: "tlsserver", RelayMapFile: relayFile, RelayRegion: "test",
-		WorkerCapacity: 10, WorkerStreamLimit: 10, PublicConnLimit: 10, RouteConnLimit: 5, DrainTimeout: time.Second,
-		MaxActiveHostnames: 128, MaxHostnameRequests: 1024,
-		AccessTokenLifetime: time.Hour, RefreshTokenLifetime: 30 * 24 * time.Hour,
-	}
-	if err := cfg.Validate(); err != nil {
-		t.Fatal(err)
-	}
-	db, err := state.Open(context.Background(), cfg.StateDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	running := &daemon{db: db, login: login, loginRevision: 1, dns: dnsready.NewWithResolver("tnl.example", "example", testResolver)}
-	t.Cleanup(func() { _ = running.shutdown(time.Second) })
-	serverContext, cancelServer := context.WithCancel(context.Background())
-	t.Cleanup(cancelServer)
-	controlDone, ingressDone, err := running.startServer(serverContext, cfg, observability.New("standalone"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	httpClient := &http.Client{Transport: &http.Transport{
-		TLSClientConfig: &tls.Config{RootCAs: pebble.IssuerRoots(t), MinVersion: tls.VersionTLS13},
-		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
-			return new(net.Dialer).DialContext(ctx, network, running.controlListener.Addr().String())
-		},
-	}, Timeout: 5 * time.Second}
-	baseURL := "https://tnl.example"
-	for _, path := range []string{"/v1/health", "/v1/ready"} {
-		response, err := httpClient.Get(baseURL + path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var body map[string]any
-		decodeErr := json.NewDecoder(response.Body).Decode(&body)
-		closeErr := response.Body.Close()
-		if response.StatusCode != http.StatusOK || decodeErr != nil || closeErr != nil || body["status"] == nil {
-			t.Fatalf("probe %s: status = %d, body = %#v, decode = %v, close = %v", path, response.StatusCode, body, decodeErr, closeErr)
-		}
-	}
-	anonymous, err := serverclient.New(baseURL, httpClient, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	issued, err := anonymous.Exchange(context.Background(), login)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if lifetime := time.Until(issued.AccessExpiresAt); lifetime < 59*time.Minute || lifetime > time.Hour {
-		t.Fatalf("issued access token lifetime = %s, want 1h", lifetime)
-	}
-	client, err := serverclient.New(baseURL, httpClient, credentials.AccessToken(issued.AccessToken))
-	if err != nil {
-		t.Fatal(err)
-	}
-	capabilities, err := client.Capabilities(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if capabilities.Transport.RelayRegion != "test" || capabilities.Transport.Type != serverv1.Tailcat {
-		t.Fatalf("capabilities = %#v", capabilities)
-	}
-	deadline := time.Now().Add(5 * time.Second)
-	for !capabilities.DnsReady && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-		capabilities, err = client.Capabilities(context.Background())
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	if !capabilities.DnsReady || len(capabilities.IngressIpv4) != 1 || capabilities.IngressIpv4[0] != "127.0.0.1" || len(capabilities.IngressIpv6) != 0 {
-		t.Fatalf("DNS capabilities = %#v", capabilities)
-	}
-	hostname, err := client.ClaimHostname(
-		context.Background(), serverv1.ClaimHostnameRequestKindManaged, "route", "standalone-test",
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if hostnames, err := client.ListHostnames(context.Background()); err != nil || len(hostnames) != 1 || hostnames[0].Id != hostname.Id {
-		t.Fatalf("hostnames = %#v, %v", hostnames, err)
-	}
-	routeToken, _, _, err := credentials.NewRouteToken()
-	if err != nil {
-		t.Fatal(err)
-	}
-	setup, err := client.CreateRoute(context.Background(), serverv1.CreateRouteRequest{
-		Hostname: "route.example", LocalTarget: "http://127.0.0.1:3000", RouteToken: routeToken.String(),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if setup.Route.RouteVersion != 1 || setup.SessionToken == "" {
-		t.Fatalf("setup = %#v", setup)
-	}
-	if err := client.DeleteRoute(context.Background(), setup.Route.Id); err != nil {
-		t.Fatal(err)
-	}
-	if err := client.ReleaseHostname(context.Background(), hostname.Id); err != nil {
-		t.Fatal(err)
-	}
-	if hostnames, err := client.ListHostnames(context.Background()); err != nil || len(hostnames) != 1 ||
-		hostnames[0].Id != hostname.Id || hostnames[0].Status != serverv1.HostnameStatusInactive {
-		t.Fatalf("hostnames after release = %#v, %v", hostnames, err)
-	}
-	if err := running.shutdown(time.Second); err != nil {
-		t.Fatal(err)
-	}
-	if err := <-controlDone; err != nil {
-		t.Fatal(err)
-	}
-	if err := <-ingressDone; err != nil {
-		t.Fatal(err)
-	}
-	running = new(daemon)
-}
-
-func TestWorkerReconnectsWithFreshOwner(t *testing.T) {
-	previousMin, previousMax := workerReconnectMin, workerReconnectMax
-	workerReconnectMin, workerReconnectMax = time.Millisecond, 2*time.Millisecond
-	t.Cleanup(func() { workerReconnectMin, workerReconnectMax = previousMin, previousMax })
-
-	token, verifier, err := credentials.NewWorkerToken()
-	if err != nil {
-		t.Fatal(err)
-	}
-	registry := &workerRegistry{added: make(chan struct{}, 2)}
-	hub, err := workercontrol.NewHub(workercontrol.HubConfig{
-		Tokens: []credentials.WorkerVerifier{verifier}, Registry: registry,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	relayData, err := json.Marshal(tailcfg.DERPMap{Regions: map[int]*tailcfg.DERPRegion{1: {
-		RegionID: 1, RegionCode: "test", Nodes: []*tailcfg.DERPNode{{
-			Name: "test", RegionID: 1, HostName: "derp.invalid", DERPPort: 443,
-		}},
-	}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	mux := http.NewServeMux()
-	mux.Handle(workerv1.Endpoint, hub)
-	var relayRequests atomic.Int32
-	mux.HandleFunc("/v1/transport/relay-map", func(response http.ResponseWriter, _ *http.Request) {
-		if relayRequests.Add(1) == 1 {
-			response.WriteHeader(http.StatusServiceUnavailable)
-			return
-		}
-		response.Header().Set("Content-Type", "application/json")
-		_, _ = response.Write(relayData)
-	})
-	server := httptest.NewTLSServer(mux)
-	defer server.Close()
-	defer func() { _ = hub.Shutdown(context.Background()) }()
-	previousTransport := http.DefaultTransport
-	http.DefaultTransport = server.Client().Transport
-	t.Cleanup(func() { http.DefaultTransport = previousTransport })
-
-	ctx, cancel := context.WithCancel(context.Background())
-	done, err := startWorker(ctx, config.TNLD{
-		Mode: config.TNLDModeWorker, EdgeURL: "wss" + strings.TrimPrefix(server.URL, "https") + workerv1.Endpoint,
-		WorkerToken: token.String(), WorkerCapacity: 2, WorkerStreamLimit: 10,
-		DrainTimeout: time.Second,
-	}, observability.New("worker"))
-	if err != nil {
-		cancel()
-		t.Fatal(err)
-	}
-	for range 2 {
-		select {
-		case <-registry.added:
-		case <-time.After(5 * time.Second):
-			cancel()
-			t.Fatal("worker did not reconnect")
-		}
-	}
-	if relayRequests.Load() < 3 {
-		t.Fatalf("relay map requests = %d, want at least 3", relayRequests.Load())
-	}
-	cancel()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("worker did not stop")
-	}
-}
-
-type workerRegistry struct {
-	connections atomic.Int32
-	added       chan struct{}
-}
-
-func (r *workerRegistry) AddWorker(_ string, worker worker.RouteWorker) error {
-	connection := r.connections.Add(1)
-	r.added <- struct{}{}
-	if connection == 1 {
-		go worker.Close()
-	}
-	return nil
-}
-
-func (*workerRegistry) DrainWorker(context.Context, string) error { return nil }
-
-func (*workerRegistry) RemoveWorker(string) {}

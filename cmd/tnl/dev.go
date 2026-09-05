@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"mime"
 	"net"
 	"net/http"
@@ -23,7 +22,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/localproxy"
@@ -31,19 +29,23 @@ import (
 )
 
 const (
-	devProtocolVersion  = "1"
-	devRegistrationWait = 30 * time.Second
-	devShutdownWait     = 5 * time.Second
-	maxDevRequestBytes  = 16 << 10
+	devProtocolVersion       = "1"
+	devRegistrationWait      = 30 * time.Second
+	devShutdownWait          = 5 * time.Second
+	maxDevRequestBytes       = 16 << 10
+	defaultDevStartupTimeout = 2 * time.Minute
 )
 
 type devCommand struct {
 	openOptions    `embed:""`
 	remoteFlags    `embed:""`
+	tunnelFlags    `embed:""`
 	Command        []string      `arg:"" name:"command" passthrough:"" help:"Development server command and arguments."`
 	Port           int           `name:"port" help:"Literal loopback target port; normally registered by a framework integration."`
-	StartupTimeout time.Duration `name:"startup-timeout" default:"2m" help:"Maximum time for target registration and startup."`
-	Host           string        `name:"host" env:"TNL_HOST" help:"Requested public hostname; omit for a fresh temporary hostname."`
+	StartupTimeout time.Duration `name:"startup-timeout" help:"Maximum time for target registration and startup."`
+
+	commandDir       string
+	serverFromConfig bool
 }
 
 type childExitError struct {
@@ -54,7 +56,7 @@ func (e *childExitError) Error() string { return fmt.Sprintf("command exited wit
 
 func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stderr io.Writer, reporters ...telemetryReporter) (result error) {
 	telemetry := optionalTelemetryReporter(reporters)
-	command, err := resolveDevCommand(flags.Command)
+	command, err := resolveDevCommand(flags.Command, flags.commandDir)
 	if err != nil {
 		return err
 	}
@@ -80,7 +82,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	}
 	defer bootstrap.Close()
 
-	child, err := startDevProcess(flags.Command, devEnvironment(bootstrap, flags.Port), stdin, stdout, stderr)
+	child, err := startDevProcess(flags.Command, devEnvironment(bootstrap, flags.Port), stdin, stdout, stderr, flags.commandDir)
 	if err != nil {
 		return err
 	}
@@ -155,26 +157,11 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		}
 	}()
 
-	options := devTunnelOptions{}
 	framework := ""
 	if configuration != nil {
-		options = configuration.Options
 		framework = configuration.Framework
 	}
-	serverValue, err := devServerValue(flags.ServerURL, flags.AccessToken, options.ControlURL)
-	if err != nil {
-		return err
-	}
-	host := optionValue(options.Host)
-	if flags.Host != "" {
-		host = flags.Host
-	}
-	allowedIPPrefixes, err := authorization.CanonicalizeIPPrefixes(options.AllowIP)
-	if err != nil {
-		return fmt.Errorf("invalid tnl dev allowIP: %w", err)
-	}
-
-	serverURL, state, err := resolveServer(ctx, flags.StateDir, serverValue)
+	serverURL, state, err := resolveServer(ctx, flags.StateDir, flags.ServerURL)
 	if err != nil {
 		return err
 	}
@@ -199,15 +186,15 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 			return err
 		}
 	}
-	authenticated, err := authenticatePublisher(ctx, state, serverURL, flags.AccessToken, stdin, stderr)
+	authenticated, err := authenticatePublisher(ctx, state, serverURL, flags.AccessToken, "tnl dev", stdin, stderr)
 	if err != nil {
 		return err
 	}
-	allowedIPPrefixes, currentIP, err := allowCurrentIP(ctx, authenticated, allowedIPPrefixes, options.AllowCurrentIP)
+	allowedIPPrefixes, currentIP, err := resolveIPPolicy(ctx, authenticated.Control, flags.AllowIP, flags.Public)
 	if err != nil {
 		return err
 	}
-	services, err := preparePublisherServices(ctx, state, serverURL, host, authenticated)
+	services, err := preparePublisherServices(ctx, state, serverURL, flags.Host, flags.Subdomain, authenticated)
 	if err != nil {
 		return err
 	}
@@ -269,10 +256,11 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		return err
 	}
 
-	output, err := newPublishOutput("human", stdout, stderr, browserOpener(flags.Open))
+	output, err := newPublishOutput("human", "tnl dev", stdout, stderr, browserOpener(flags.Open))
 	if err != nil {
 		return err
 	}
+	output.setFramework(framework)
 	if err := output.starting(tunnel.ID(), target); err != nil {
 		return err
 	}
@@ -281,13 +269,12 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 			return err
 		}
 	}
-	logger := log.New(stderr, "tnl: ", 0)
 	publishCtx, cancelPublish := context.WithCancel(ctx)
 	defer cancelPublish()
 	publishDone := make(chan error, 1)
 	go func() {
 		publisherConfig := services.config(target, allowedIPPrefixes)
-		publisherConfig.Logf = logger.Printf
+		publisherConfig.Logf = output.logf
 		publisherConfig.Observe = withTelemetryObserver(telemetry, "dev", serverURL, telemetryFramework(framework), func(event publisher.Event) error {
 			switch event.Type {
 			case publisher.EventRouteAssigned:
@@ -382,17 +369,9 @@ type devBootstrap struct {
 	closeErr         error
 }
 
-type devTunnelOptions struct {
-	ControlURL     *string  `json:"controlURL,omitempty"`
-	Host           *string  `json:"host,omitempty"`
-	AllowIP        []string `json:"allowIP,omitempty"`
-	AllowCurrentIP bool     `json:"allowCurrentIP,omitempty"`
-}
-
 type devConfigurationRequest struct {
-	Protocol  int              `json:"protocol"`
-	Framework string           `json:"framework"`
-	Options   devTunnelOptions `json:"options"`
+	Protocol  int    `json:"protocol"`
+	Framework string `json:"framework"`
 }
 
 type devConfigurationResponse struct {
@@ -522,19 +501,27 @@ func (b *devBootstrap) Resolve(assignment devConfigurationResponse, err error) {
 	})
 }
 
-func resolveDevCommand(command []string) ([]string, error) {
+func resolveDevCommand(command []string, directories ...string) ([]string, error) {
 	if len(command) > 0 && command[0] == "--" {
 		command = command[1:]
 	}
 	if len(command) == 0 {
 		return nil, errors.New("development server command is required after --")
 	}
-	path, err := exec.LookPath(command[0])
-	if err != nil && filepath.Base(command[0]) == command[0] {
-		localPath, pathErr := filepath.Abs(filepath.Join("node_modules", ".bin", command[0]))
+	path := ""
+	var err error
+	if filepath.Base(command[0]) == command[0] {
+		directory := ""
+		if len(directories) != 0 {
+			directory = directories[0]
+		}
+		localPath, pathErr := filepath.Abs(filepath.Join(directory, "node_modules", ".bin", command[0]))
 		if pathErr == nil {
 			path, err = exec.LookPath(localPath)
 		}
+	}
+	if path == "" {
+		path, err = exec.LookPath(command[0])
 	}
 	if err != nil {
 		return nil, fmt.Errorf("find development server command %q: %w", command[0], err)
@@ -583,11 +570,6 @@ func (b *devBootstrap) handleConfiguration(response http.ResponseWriter, request
 		http.Error(response, "invalid development configuration", http.StatusBadRequest)
 		return
 	}
-	if err := validateDevTunnelOptions(configuration.Options); err != nil {
-		http.Error(response, err.Error(), http.StatusBadRequest)
-		return
-	}
-
 	b.mu.Lock()
 	first := b.configuration == nil
 	if !first && !reflect.DeepEqual(*b.configuration, configuration) {
@@ -597,7 +579,6 @@ func (b *devBootstrap) handleConfiguration(response http.ResponseWriter, request
 	}
 	if first {
 		configured := configuration
-		configured.Options.AllowIP = append([]string(nil), configuration.Options.AllowIP...)
 		b.configuration = &configured
 	}
 	b.mu.Unlock()
@@ -691,41 +672,6 @@ func (b *devBootstrap) handleTarget(response http.ResponseWriter, request *http.
 	response.WriteHeader(http.StatusNoContent)
 }
 
-func validateDevTunnelOptions(options devTunnelOptions) error {
-	if options.ControlURL != nil && (*options.ControlURL == "" || len(*options.ControlURL) > 2048) {
-		return errors.New("tnl server must be a non-empty HTTPS origin")
-	}
-	if options.Host != nil && (*options.Host == "" || len(*options.Host) > 253) {
-		return errors.New("tnl host must be a non-empty hostname")
-	}
-	if len(options.AllowIP) > 64 {
-		return errors.New("tnl allowIP accepts at most 64 entries")
-	}
-	for _, value := range options.AllowIP {
-		if value == "" || len(value) > 128 {
-			return errors.New("tnl allowIP entries must be non-empty IP addresses or prefixes")
-		}
-	}
-	return nil
-}
-
-func optionValue(value *string) string {
-	if value == nil {
-		return ""
-	}
-	return *value
-}
-
-func devServerValue(serverURL, accessToken string, projectServer *string) (string, error) {
-	if accessToken != "" && projectServer != nil && serverURL == "" {
-		return "", errors.New("an explicit access token with a project-provided server requires --server or TNL_SERVER")
-	}
-	if serverURL != "" {
-		return serverURL, nil
-	}
-	return optionValue(projectServer), nil
-}
-
 func validFrameworkName(value string) bool {
 	if len(value) == 0 || len(value) > 32 {
 		return false
@@ -774,9 +720,12 @@ type devProcess struct {
 	err     error
 }
 
-func startDevProcess(command, environment []string, stdin io.Reader, stdout, stderr io.Writer) (*devProcess, error) {
+func startDevProcess(command, environment []string, stdin io.Reader, stdout, stderr io.Writer, directories ...string) (*devProcess, error) {
 	process := &devProcess{done: make(chan struct{})}
 	process.command = exec.Command(command[0], command[1:]...)
+	if len(directories) != 0 {
+		process.command.Dir = directories[0]
+	}
 	process.command.Env = environment
 	process.command.Stdin = stdin
 	process.command.Stdout = stdout

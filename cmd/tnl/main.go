@@ -5,27 +5,31 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
 	"github.com/alecthomas/kong"
-	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/buildinfo"
 	"github.com/tnldotdev/tnl/internal/clientstate"
+	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/publisher"
 )
 
 type cli struct {
+	ConfigPath  string         `name:"config" help:"Use an explicit project configuration file." type:"path"`
+	NoConfig    bool           `name:"no-config" help:"Disable project configuration discovery."`
 	NoTelemetry bool           `name:"no-telemetry" env:"TNL_NO_TELEMETRY" help:"Disable pseudonymous usage telemetry."`
 	Publish     publishCommand `cmd:"" help:"Publish one local HTTP service."`
 	Dev         devCommand     `cmd:"" help:"Run and publish a development server."`
+	Config      configCommand  `cmd:"" help:"Inspect project configuration."`
 	Status      statusCommand  `cmd:"" help:"Show local tunnel status."`
-	Host        hostCommand    `cmd:"" help:"Manage persistent public hostnames."`
+	Team        teamCommand    `cmd:"" help:"Manage teams and memberships."`
+	Domain      domainCommand  `cmd:"" help:"Manage team domains."`
+	Route       routeCommand   `cmd:"" help:"Manage durable routes."`
 	Login       loginCommand   `cmd:"" help:"Authenticate to a tnl server."`
 	Logout      logoutCommand  `cmd:"" help:"Revoke and remove the saved control session."`
 	Admin       adminCommand   `cmd:"" help:"Administer a self-hosted tnl server."`
@@ -36,6 +40,13 @@ type openOptions struct {
 	Open bool `name:"open" help:"Open the public URL in the default browser once ready."`
 }
 
+type tunnelFlags struct {
+	Host      string   `name:"host" env:"TNL_HOST" help:"Exact hostname to publish; defaults to the current member namespace."`
+	Subdomain string   `name:"subdomain" env:"TNL_SUBDOMAIN" help:"One label beneath the current member namespace."`
+	AllowIP   []string `name:"allow-ip" help:"Allow a visitor IP address or prefix; repeat for each value."`
+	Public    bool     `name:"public" help:"Allow visitors from every IP address."`
+}
+
 type remoteFlags struct {
 	ServerURL   string `name:"server" env:"TNL_SERVER" help:"tnl server HTTPS origin; defaults to the selected server or https://control.tnl.dev."`
 	AccessToken string `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Server access token; defaults to the saved login."`
@@ -43,40 +54,26 @@ type remoteFlags struct {
 }
 
 type publishCommand struct {
-	openOptions    `embed:""`
-	remoteFlags    `embed:""`
-	Target         string   `arg:"" name:"target" required:"" help:"Local port or loopback-only HTTP URL."`
-	Host           string   `name:"host" env:"TNL_HOST" help:"Requested public hostname; omit to generate a temporary hostname for this invocation."`
-	AllowIP        []string `name:"allow-ip" help:"Allow a visitor IP address or prefix; repeat for each value."`
-	AllowCurrentIP bool     `name:"allow-current-ip" help:"Allow the public IP reported by the tnl server."`
-	Output         string   `name:"output" enum:"human,ndjson" default:"human" help:"Output format: ${enum}."`
-}
-
-type hostCommand struct {
-	Claim   hostClaimCommand   `cmd:"" help:"Claim a persistent managed hostname or custom domain."`
-	List    hostListCommand    `cmd:"" help:"List claimed hostnames."`
-	Release hostReleaseCommand `cmd:"" help:"Release a persistent managed hostname or custom domain."`
-}
-
-type hostClaimCommand struct {
+	openOptions `embed:""`
 	remoteFlags `embed:""`
-	Hostname    string `arg:"" name:"hostname" optional:"" help:"Managed hostname or absolute custom domain; omit to generate a managed hostname."`
+	tunnelFlags `embed:""`
+	Target      string `arg:"" name:"target" optional:"" help:"Local port or loopback-only HTTP URL."`
+	Output      string `name:"output" enum:"human,ndjson" default:"human" help:"Output format: ${enum}."`
+
+	serverFromConfig bool
 }
 
-type hostListCommand struct {
-	remoteFlags `embed:""`
-}
-
-type hostReleaseCommand struct {
-	remoteFlags `embed:""`
-	Hostname    string `arg:"" name:"hostname" required:"" help:"Exact hostname to release."`
+type configCommand struct {
+	Path  struct{} `cmd:"" help:"Show the selected project configuration path."`
+	Check struct{} `cmd:"" help:"Validate the selected project configuration."`
 }
 
 type loginCommand struct {
-	Server    string `arg:"" name:"server" optional:"" help:"tnl server HTTPS origin; defaults to the selected server or https://control.tnl.dev."`
-	ServerURL string `name:"server" env:"TNL_SERVER" help:"tnl server HTTPS origin; defaults to the selected server or https://control.tnl.dev."`
-	StateDir  string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent client state."`
-	Token     bool   `name:"token" help:"Use login-token authentication even when OIDC is available."`
+	Server     string `arg:"" name:"server" optional:"" help:"tnl server HTTPS origin; defaults to the selected server or https://control.tnl.dev."`
+	ServerURL  string `name:"server" env:"TNL_SERVER" help:"tnl server HTTPS origin; defaults to the selected server or https://control.tnl.dev."`
+	StateDir   string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent client state."`
+	Token      bool   `name:"token" help:"Use login-token authentication even when OIDC is available."`
+	LoginToken string `name:"login-token" env:"TNL_LOGIN_TOKEN" hidden:""`
 }
 
 type logoutCommand struct {
@@ -112,14 +109,28 @@ func main() {
 }
 
 func writeCommandError(output io.Writer, err error) {
-	if text, ok := diagnostic.TextForError(err); ok {
+	command := "tnl"
+	if contextual, ok := clioutput.CommandOf(err); ok {
+		command = contextual
+	}
+	if text, ok := diagnostic.TextForCommandError(command, err); ok {
 		_, _ = io.WriteString(output, text)
 		return
 	}
-	_, _ = fmt.Fprintf(output, "tnl: %v\n", err)
+	_ = clioutput.Write(output, clioutput.Frame{
+		Command: command,
+		State:   "command failed",
+		Blocks:  []clioutput.Block{clioutput.Text(err.Error())},
+	})
 }
 
-func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterFactories ...telemetryReporterFactory) error {
+func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterFactories ...telemetryReporterFactory) (result error) {
+	command := ""
+	defer func() {
+		if result != nil && command != "" {
+			result = clioutput.WrapCommand(command, result)
+		}
+	}()
 	var flags cli
 	parser, err := kong.New(&flags, kong.Name("tnl"), kong.Description("public urls for localhost."))
 	if err != nil {
@@ -128,6 +139,23 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	parsed, err := parser.Parse(args)
 	if err != nil {
 		return err
+	}
+	command = clioutput.CommandTitle("tnl", parsed.Command())
+	var project projectConfiguration
+	switch parsed.Command() {
+	case "publish <target>", "dev <command>":
+		project, err = loadProjectConfiguration(ctx, flags)
+		if err != nil {
+			return err
+		}
+		if parsed.Command() == "publish <target>" {
+			err = project.applyPublish(&flags.Publish)
+		} else {
+			err = project.applyDev(&flags.Dev)
+		}
+		if err != nil {
+			return err
+		}
 	}
 	var telemetry telemetryReporter
 	if !flags.NoTelemetry && len(reporterFactories) != 0 && reporterFactories[0] != nil {
@@ -141,6 +169,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		}
 	}
 	switch parsed.Command() {
+	case "config path":
+		return runConfigPath(flags, stdout)
+	case "config check":
+		return runConfigCheck(ctx, flags, stdout)
 	case "login":
 		return runLogin(ctx, flags.Login, os.Stdin, stdout, stderr)
 	case "logout":
@@ -154,46 +186,46 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runDev(ctx, flags.Dev, os.Stdin, stdout, stderr, telemetry)
 	case "status":
 		return runStatus(ctx, flags.Status, stdout)
-	case "host claim", "host claim [<hostname>]", "host claim <hostname>":
-		return runHostClaim(ctx, flags.Host.Claim, stdout, stderr)
-	case "host list":
-		return runHostList(ctx, flags.Host.List, stdout, stderr)
-	case "host release <hostname>":
-		return runHostRelease(ctx, flags.Host.Release, stdout, stderr)
+	case "team current":
+		return runTeamCurrent(ctx, flags.Team.Current, stdout, stderr)
+	case "team list":
+		return runTeamList(ctx, flags.Team.List, stdout, stderr)
+	case "team use <team>":
+		return runTeamUse(ctx, flags.Team.Use, stdout, stderr)
+	case "team create <display-name>":
+		return runTeamCreate(ctx, flags.Team.Create, stdout, stderr)
+	case "team members":
+		return runTeamMembers(ctx, flags.Team.Members, stdout, stderr)
+	case "team invite create":
+		return runTeamInviteCreate(ctx, flags.Team.Invite.Create, stdout, stderr)
+	case "team invite list":
+		return runTeamInviteList(ctx, flags.Team.Invite.List, stdout, stderr)
+	case "team invite revoke <invitation-id>":
+		return runTeamInviteRevoke(ctx, flags.Team.Invite.Revoke, stdout, stderr)
+	case "team join <secret>":
+		return runTeamJoin(ctx, flags.Team.Join, stdout, stderr)
+	case "team member set-role <membership-id>":
+		return runTeamMemberSetRole(ctx, flags.Team.Member.SetRole, stdout, stderr)
+	case "team member remove <membership-id>":
+		return runTeamMemberRemove(ctx, flags.Team.Member.Remove, stdout, stderr)
+	case "domain claim <domain>":
+		return runDomainClaim(ctx, flags.Domain.Claim, stdout, stderr)
+	case "domain default <domain>":
+		return runDomainDefault(ctx, flags.Domain.Default, stdout, stderr)
+	case "domain list":
+		return runDomainList(ctx, flags.Domain.List, stdout, stderr)
+	case "domain release <domain>":
+		return runDomainRelease(ctx, flags.Domain.Release, stdout, stderr)
+	case "route list":
+		return runRouteList(ctx, flags.Route.List, stdout, stderr)
+	case "route delete <route-id>":
+		return runRouteDelete(ctx, flags.Route.Delete, stdout, stderr)
 	case "admin server status":
 		return runAdminServerStatus(ctx, flags.Admin.Server.Status, stdout, stderr)
-	case "admin server login-token":
-		return runAdminLoginToken(ctx, flags.Admin.Server.LoginToken, stdout)
-	case "admin server token worker":
-		return runAdminTokenWorker(stdout)
-	case "admin server token service":
-		return runAdminTokenService(stdout)
-	case "admin server relay refresh":
-		return runAdminRelayRefresh(ctx, flags.Admin.Server.Relay.Refresh, stdout)
-	case "admin routes list":
-		return runAdminRoutesList(ctx, flags.Admin.Routes.List, stdout, stderr)
-	case "admin routes show <route-id>":
-		return runAdminRouteShow(ctx, flags.Admin.Routes.Show, stdout, stderr)
-	case "admin routes suspend <route-id>":
-		return runAdminRouteSuspend(ctx, flags.Admin.Routes.Suspend, stdout, stderr)
-	case "admin routes resume <route-id>":
-		return runAdminRouteResume(ctx, flags.Admin.Routes.Resume, stdout, stderr)
-	case "admin hostnames list":
-		return runAdminHostnamesList(ctx, flags.Admin.Hostnames.List, stdout, stderr)
-	case "admin hostnames show <hostname-id>":
-		return runAdminHostnameShow(ctx, flags.Admin.Hostnames.Show, stdout, stderr)
-	case "admin hostnames remove <hostname-id>":
-		return runAdminHostnameRemove(ctx, flags.Admin.Hostnames.Remove, stdout, stderr)
-	case "admin hostnames quarantine <hostname-id>":
-		return runAdminHostnameQuarantine(ctx, flags.Admin.Hostnames.Quarantine, stdout, stderr)
-	case "admin credentials list":
-		return runAdminCredentialsList(ctx, flags.Admin.Credentials.List, stdout, stderr)
-	case "admin credentials revoke <credential-id>":
-		return runAdminCredentialRevoke(ctx, flags.Admin.Credentials.Revoke, stdout, stderr)
-	case "admin control-sessions list":
-		return runAdminControlSessionsList(ctx, flags.Admin.ControlSessions.List, stdout, stderr)
-	case "admin control-sessions revoke <control-session-id>":
-		return runAdminControlSessionRevoke(ctx, flags.Admin.ControlSessions.Revoke, stdout, stderr)
+	case "admin relays list":
+		return runAdminRelaysList(ctx, flags.Admin.Relays.List, stdout, stderr)
+	case "admin relays drain <relay-id>":
+		return runAdminRelayDrain(ctx, flags.Admin.Relays.Drain, stdout, stderr)
 	case "admin maintenance list":
 		return runAdminMaintenanceList(ctx, flags.Admin.Maintenance.List, stdout, stderr)
 	case "admin maintenance enable <name>":
@@ -207,7 +239,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 
 func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Writer, reporters ...telemetryReporter) (result error) {
 	telemetry := optionalTelemetryReporter(reporters)
-	output, err := newPublishOutput(flags.Output, stdout, stderr, browserOpener(flags.Open))
+	output, err := newPublishOutput(flags.Output, "tnl publish", stdout, stderr, browserOpener(flags.Open))
 	if err != nil {
 		return err
 	}
@@ -225,10 +257,6 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	target, err := localproxy.NormalizeTarget(flags.Target)
 	if err != nil {
 		return fail(err)
-	}
-	allowedIPPrefixes, err := authorization.CanonicalizeIPPrefixes(flags.AllowIP)
-	if err != nil {
-		return fail(fmt.Errorf("invalid --allow-ip: %w", err))
 	}
 	serverURL, state, err := resolveServer(ctx, flags.StateDir, flags.ServerURL)
 	if err != nil {
@@ -253,11 +281,11 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if err := localproxy.Preflight(ctx, target); err != nil {
 		return fail(err)
 	}
-	authenticated, err := authenticatePublisher(ctx, state, serverURL, flags.AccessToken, os.Stdin, stderr)
+	authenticated, err := authenticatePublisher(ctx, state, serverURL, flags.AccessToken, "tnl publish", os.Stdin, stderr)
 	if err != nil {
 		return fail(err)
 	}
-	allowedIPPrefixes, currentIP, err := allowCurrentIP(ctx, authenticated, allowedIPPrefixes, flags.AllowCurrentIP)
+	allowedIPPrefixes, currentIP, err := resolveIPPolicy(ctx, authenticated.Control, flags.AllowIP, flags.Public)
 	if err != nil {
 		return fail(err)
 	}
@@ -266,13 +294,12 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 			return err
 		}
 	}
-	services, err := preparePublisherServices(ctx, state, serverURL, flags.Host, authenticated)
+	services, err := preparePublisherServices(ctx, state, serverURL, flags.Host, flags.Subdomain, authenticated)
 	if err != nil {
 		return fail(err)
 	}
-	logger := log.New(stderr, "tnl: ", 0)
 	publisherConfig := services.config(target, allowedIPPrefixes)
-	publisherConfig.Logf = logger.Printf
+	publisherConfig.Logf = output.logf
 	publisherConfig.Observe = withTelemetryObserver(telemetry, "publish", serverURL, "", func(event publisher.Event) error {
 		switch event.Type {
 		case publisher.EventRouteAssigned:

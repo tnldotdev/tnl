@@ -1,0 +1,10 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/oapi-codegen/oapi-codegen/v2.8.0/configuration-schema.json
+package: routeusagev1
+output: openapi.gen.go
+generate:
+  client: true
+  models: true
+  std-http-server: true
+  strict-server: true
+output-options:
+  skip-prune: true

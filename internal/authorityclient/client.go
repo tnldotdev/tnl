@@ -1,4 +1,4 @@
-// Package authorityclient is the bounded client for an authorization authority API.
+// Package authorityclient is the bounded client for the authority API.
 package authorityclient
 
 import (
@@ -9,19 +9,17 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
+	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
-	"github.com/tnldotdev/tnl/pkg/protocol/authorityv1"
+	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 )
 
 const (
 	maxResponseBytes      = 64 << 10
-	maxOAuthTokenBytes    = 16 << 10
 	defaultRequestTimeout = 20 * time.Second
 )
 
@@ -35,25 +33,11 @@ var (
 
 type Client struct {
 	api     *authorityv1.Client
-	http    *http.Client
+	access  credentials.AccessToken
 	timeout time.Duration
 }
 
-type OIDCMetadata struct {
-	Issuer             string
-	TokenEndpoint      string
-	RevocationEndpoint string
-}
-
-type OAuthTokens struct {
-	SessionID        string
-	AccessToken      string
-	AccessExpiresAt  time.Time
-	RefreshToken     string
-	RefreshExpiresAt time.Time
-}
-
-func New(endpoint string, httpClient *http.Client) (*Client, error) {
+func New(endpoint string, httpClient *http.Client, access credentials.AccessToken) (*Client, error) {
 	canonical, err := clientstate.CanonicalServer(endpoint)
 	if err != nil || canonical != endpoint {
 		return nil, errors.New("authorityclient: endpoint must be a canonical HTTPS origin")
@@ -72,103 +56,128 @@ func New(endpoint string, httpClient *http.Client) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("authorityclient: configure generated client: %w", err)
 	}
-	return &Client{api: apiClient, http: httpClient, timeout: defaultRequestTimeout}, nil
+	return &Client{api: apiClient, access: access, timeout: defaultRequestTimeout}, nil
 }
 
-func (c *Client) Capabilities(ctx context.Context) (authorityv1.Capabilities, error) {
-	return request[authorityv1.Capabilities](ctx, c, c.api.GetCapabilities)
-}
-
-func (c *Client) ClaimHostname(
-	ctx context.Context,
-	kind authorityv1.ClaimHostnameRequestKind,
-	label, idempotencyKey string,
-) (authorityv1.Hostname, error) {
-	body := authorityv1.ClaimHostnameRequest{Kind: kind}
-	if label != "" {
-		body.Label = &label
-	}
-	params := &authorityv1.ClaimHostnameParams{IdempotencyKey: idempotencyKey}
-	return request[authorityv1.Hostname](ctx, c, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.ClaimHostname(ctx, params, body, editors...)
+func (c *Client) Exchange(ctx context.Context, token credentials.LoginToken) (authorityv1.ControlSessionResponse, error) {
+	body := authorityv1.LoginTokenExchangeRequest{LoginToken: token.String()}
+	return request[authorityv1.ControlSessionResponse](ctx, c, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.ExchangeLoginToken(ctx, body, editors...)
 	})
 }
 
-func (c *Client) ListHostnames(ctx context.Context) ([]authorityv1.Hostname, error) {
-	var hostnames []authorityv1.Hostname
-	cursor := ""
-	for {
-		page, next, err := c.ListHostnamesPage(ctx, cursor)
-		if err != nil {
-			return nil, err
-		}
-		hostnames = append(hostnames, page...)
-		if next == "" {
-			return hostnames, nil
-		}
-		cursor = next
-	}
-}
-
-func (c *Client) ListHostnamesPage(ctx context.Context, cursor string) ([]authorityv1.Hostname, string, error) {
-	params := &authorityv1.ListHostnamesParams{}
-	if cursor != "" {
-		params.Cursor = &cursor
-	}
-	page, err := request[authorityv1.HostnamePage](ctx, c, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.ListHostnames(ctx, params, editors...)
+func (c *Client) ExchangeOIDC(ctx context.Context, token string) (authorityv1.ControlSessionResponse, error) {
+	body := authorityv1.OIDCTokenExchangeRequest{IdToken: token}
+	return request[authorityv1.ControlSessionResponse](ctx, c, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.ExchangeOIDCToken(ctx, body, editors...)
 	})
-	if err != nil {
-		return nil, "", err
-	}
-	if len(page.Hostnames) > 100 {
-		return nil, "", errors.New("authorityclient: oversized hostname page")
-	}
-	previous := cursor
-	for _, hostname := range page.Hostnames {
-		if !validID(hostname.Id, "hostname_") || hostname.Id <= previous {
-			return nil, "", errors.New("authorityclient: invalid hostname page")
-		}
-		previous = hostname.Id
-	}
-	next := ""
-	if page.NextCursor != nil {
-		next = *page.NextCursor
-		if len(page.Hostnames) == 0 || next <= cursor || page.Hostnames[len(page.Hostnames)-1].Id != next {
-			return nil, "", errors.New("authorityclient: invalid hostname cursor")
-		}
-	}
-	return page.Hostnames, next, nil
 }
 
-func (c *Client) ReleaseHostname(ctx context.Context, hostnameID string) error {
+func (c *Client) Refresh(ctx context.Context, token credentials.RefreshToken) (authorityv1.ControlSessionResponse, error) {
+	body := authorityv1.RefreshControlSessionRequest{RefreshToken: token.String()}
+	return request[authorityv1.ControlSessionResponse](ctx, c, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.RefreshControlSession(ctx, body, editors...)
+	})
+}
+
+func (c *Client) LogoutWithAccessToken(ctx context.Context, token credentials.AccessToken) error {
+	_, err := requestWithToken[struct{}](ctx, c, token.String(), c.api.LogoutControlSession)
+	return err
+}
+
+func (c *Client) IdentityContext(ctx context.Context) (authorityv1.IdentityContext, error) {
+	return request[authorityv1.IdentityContext](ctx, c, c.api.GetIdentityContext)
+}
+
+func (c *Client) ListTeams(ctx context.Context) (authorityv1.TeamPage, error) {
+	return request[authorityv1.TeamPage](ctx, c, c.api.ListTeams)
+}
+
+func (c *Client) CreateTeam(ctx context.Context, body authorityv1.CreateTeamRequest, idempotencyKey string) (authorityv1.Team, error) {
+	params := &authorityv1.CreateTeamParams{IdempotencyKey: idempotencyKey}
+	return request[authorityv1.Team](ctx, c, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.CreateTeam(ctx, params, body, editors...)
+	})
+}
+
+func (c *Client) GetTeam(ctx context.Context, teamID string) (authorityv1.Team, error) {
+	return request[authorityv1.Team](ctx, c, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.GetTeam(ctx, teamID, editors...)
+	})
+}
+
+func (c *Client) ListTeamMemberships(ctx context.Context, teamID string) (authorityv1.MembershipPage, error) {
+	return request[authorityv1.MembershipPage](ctx, c, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.ListTeamMemberships(ctx, teamID, editors...)
+	})
+}
+
+func (c *Client) SetMembershipRole(ctx context.Context, teamID, membershipID string, role authorityv1.TeamRole) (authorityv1.Membership, error) {
+	body := authorityv1.SetMembershipRoleRequest{Role: role}
+	return request[authorityv1.Membership](ctx, c, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.SetMembershipRole(ctx, teamID, membershipID, body, editors...)
+	})
+}
+
+func (c *Client) RemoveMembership(ctx context.Context, teamID, membershipID string) error {
 	_, err := request[struct{}](ctx, c, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.ReleaseHostname(ctx, hostnameID, editors...)
+		return c.api.RemoveMembership(ctx, teamID, membershipID, editors...)
 	})
 	return err
 }
 
-func (c *Client) CreateDomainVerification(
-	ctx context.Context,
-	domain, idempotencyKey string,
-) (authorityv1.DomainVerification, error) {
-	params := &authorityv1.CreateDomainVerificationParams{IdempotencyKey: idempotencyKey}
-	body := authorityv1.CreateDomainVerificationRequest{Domain: domain}
-	return request[authorityv1.DomainVerification](ctx, c, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.CreateDomainVerification(ctx, params, body, editors...)
+func (c *Client) ListTeamInvitations(ctx context.Context, teamID string) (authorityv1.InvitationPage, error) {
+	return request[authorityv1.InvitationPage](ctx, c, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.ListTeamInvitations(ctx, teamID, editors...)
 	})
 }
 
-func (c *Client) DomainVerification(ctx context.Context, verificationID string) (authorityv1.DomainVerification, error) {
-	return request[authorityv1.DomainVerification](ctx, c, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.GetDomainVerification(ctx, verificationID, editors...)
+func (c *Client) CreateTeamInvitation(ctx context.Context, teamID string, body authorityv1.CreateInvitationRequest, idempotencyKey string) (authorityv1.InvitationSecret, error) {
+	params := &authorityv1.CreateTeamInvitationParams{IdempotencyKey: idempotencyKey}
+	return request[authorityv1.InvitationSecret](ctx, c, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.CreateTeamInvitation(ctx, teamID, params, body, editors...)
 	})
 }
 
-func (c *Client) CompleteDomainVerification(ctx context.Context, verificationID string) (authorityv1.Hostname, error) {
-	return request[authorityv1.Hostname](ctx, c, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.CompleteDomainVerification(ctx, verificationID, editors...)
+func (c *Client) RevokeTeamInvitation(ctx context.Context, teamID, invitationID string) error {
+	_, err := request[struct{}](ctx, c, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.RevokeTeamInvitation(ctx, teamID, invitationID, editors...)
 	})
+	return err
+}
+
+func (c *Client) AcceptInvitation(ctx context.Context, secret string) (authorityv1.Membership, error) {
+	body := authorityv1.AcceptInvitationRequest{Secret: secret}
+	return request[authorityv1.Membership](ctx, c, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.AcceptInvitation(ctx, body, editors...)
+	})
+}
+
+func (c *Client) ListTeamDomains(ctx context.Context, teamID string) (authorityv1.DomainPage, error) {
+	return request[authorityv1.DomainPage](ctx, c, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.ListTeamDomains(ctx, teamID, editors...)
+	})
+}
+
+func (c *Client) ClaimTeamDomain(ctx context.Context, teamID, domain, idempotencyKey string, makeDefault bool) (authorityv1.Domain, error) {
+	params := &authorityv1.ClaimTeamDomainParams{IdempotencyKey: idempotencyKey}
+	body := authorityv1.ClaimDomainRequest{Domain: domain, MakeDefault: &makeDefault}
+	return request[authorityv1.Domain](ctx, c, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.ClaimTeamDomain(ctx, teamID, params, body, editors...)
+	})
+}
+
+func (c *Client) SetTeamDefaultDomain(ctx context.Context, teamID, domainID string) (authorityv1.Team, error) {
+	return request[authorityv1.Team](ctx, c, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.SetTeamDefaultDomain(ctx, teamID, domainID, editors...)
+	})
+}
+
+func (c *Client) ReleaseTeamDomain(ctx context.Context, teamID, domainID string) error {
+	_, err := request[struct{}](ctx, c, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.ReleaseTeamDomain(ctx, teamID, domainID, editors...)
+	})
+	return err
 }
 
 func (c *Client) IssueAuthorization(
@@ -182,135 +191,22 @@ func (c *Client) IssueAuthorization(
 	})
 }
 
-func (c *Client) DiscoverOIDC(ctx context.Context, issuer string) (OIDCMetadata, error) {
-	issuerURL, err := parseHTTPSURL(issuer)
-	if err != nil || issuerURL.RawQuery != "" || issuerURL.Fragment != "" {
-		return OIDCMetadata{}, errors.New("authorityclient: invalid OIDC issuer")
-	}
-	discovery := *issuerURL
-	discovery.Path = strings.TrimSuffix(discovery.Path, "/") + "/.well-known/openid-configuration"
-	discovery.RawPath = ""
-	var document struct {
-		Issuer             string `json:"issuer"`
-		TokenEndpoint      string `json:"token_endpoint"`
-		RevocationEndpoint string `json:"revocation_endpoint"`
-	}
-	if err := c.requestURL(ctx, http.MethodGet, discovery.String(), nil, nil, &document, false); err != nil {
-		return OIDCMetadata{}, fmt.Errorf("authorityclient: discover OIDC provider: %w", err)
-	}
-	if document.Issuer != issuer {
-		return OIDCMetadata{}, errors.New("authorityclient: OIDC discovery issuer mismatch")
-	}
-	if _, err := parseHTTPSURL(document.TokenEndpoint); err != nil {
-		return OIDCMetadata{}, errors.New("authorityclient: invalid OIDC token endpoint")
-	}
-	if document.RevocationEndpoint != "" {
-		if _, err := parseHTTPSURL(document.RevocationEndpoint); err != nil {
-			return OIDCMetadata{}, errors.New("authorityclient: invalid OIDC revocation endpoint")
-		}
-	}
-	return OIDCMetadata{
-		Issuer: document.Issuer, TokenEndpoint: document.TokenEndpoint,
-		RevocationEndpoint: document.RevocationEndpoint,
-	}, nil
-}
-
-func (c *Client) RefreshOAuth(
-	ctx context.Context,
-	issuer, clientID, refreshToken string,
-) (OAuthTokens, error) {
-	if !validOpaqueToken(refreshToken) || !validClientID(clientID) {
-		return OAuthTokens{}, errors.New("authorityclient: invalid OAuth refresh request")
-	}
-	metadata, err := c.DiscoverOIDC(ctx, issuer)
-	if err != nil {
-		return OAuthTokens{}, err
-	}
-	form := make(url.Values)
-	form.Set("grant_type", "refresh_token")
-	form.Set("refresh_token", refreshToken)
-	form.Set("client_id", clientID)
-	var response oauthTokenResponse
-	started := time.Now()
-	if err := c.requestURL(
-		ctx, http.MethodPost, metadata.TokenEndpoint, strings.NewReader(form.Encode()),
-		http.Header{"Content-Type": {"application/x-www-form-urlencoded"}}, &response, false,
-	); err != nil {
-		return OAuthTokens{}, fmt.Errorf("authorityclient: refresh OAuth token: %w", err)
-	}
-	return response.tokens(started, refreshToken)
-}
-
-func (c *Client) RevokeOAuth(ctx context.Context, issuer, clientID, refreshToken string) error {
-	if !validOpaqueToken(refreshToken) || !validClientID(clientID) {
-		return errors.New("authorityclient: invalid OAuth revocation request")
-	}
-	metadata, err := c.DiscoverOIDC(ctx, issuer)
-	if err != nil {
-		return err
-	}
-	if metadata.RevocationEndpoint == "" {
-		return errors.New("authorityclient: OIDC provider does not advertise token revocation")
-	}
-	form := make(url.Values)
-	form.Set("token", refreshToken)
-	form.Set("token_type_hint", "refresh_token")
-	form.Set("client_id", clientID)
-	return c.requestURL(
-		ctx, http.MethodPost, metadata.RevocationEndpoint, strings.NewReader(form.Encode()),
-		http.Header{"Content-Type": {"application/x-www-form-urlencoded"}}, nil, false,
-	)
-}
-
-type oauthTokenResponse struct {
-	AccessToken           string      `json:"access_token"`
-	ExpiresIn             json.Number `json:"expires_in"`
-	RefreshToken          string      `json:"refresh_token"`
-	RefreshExpiresIn      json.Number `json:"refresh_expires_in"`
-	RefreshTokenExpiresIn json.Number `json:"refresh_token_expires_in"`
-	SessionID             string      `json:"session_id"`
-	TokenType             string      `json:"token_type"`
-}
-
-func (r oauthTokenResponse) tokens(started time.Time, previousRefresh string) (OAuthTokens, error) {
-	seconds, err := positiveSeconds(r.ExpiresIn, 365*24*time.Hour)
-	if err != nil || !validOpaqueToken(r.AccessToken) || !strings.EqualFold(r.TokenType, "Bearer") {
-		return OAuthTokens{}, errors.New("authorityclient: provider returned invalid OAuth tokens")
-	}
-	if r.RefreshToken == "" {
-		r.RefreshToken = previousRefresh
-	}
-	if !validOpaqueToken(r.RefreshToken) || r.SessionID != "" && !validSessionID(r.SessionID) {
-		return OAuthTokens{}, errors.New("authorityclient: provider returned invalid OAuth tokens")
-	}
-	tokens := OAuthTokens{
-		SessionID: r.SessionID, AccessToken: r.AccessToken, AccessExpiresAt: started.Add(time.Duration(seconds) * time.Second).UTC(),
-		RefreshToken: r.RefreshToken,
-	}
-	refreshExpiry := r.RefreshExpiresIn
-	if refreshExpiry == "" {
-		refreshExpiry = r.RefreshTokenExpiresIn
-	}
-	if refreshExpiry != "" {
-		refreshSeconds, err := positiveSeconds(refreshExpiry, 10*365*24*time.Hour)
-		if err != nil {
-			return OAuthTokens{}, errors.New("authorityclient: provider returned invalid OAuth refresh expiry")
-		}
-		tokens.RefreshExpiresAt = started.Add(time.Duration(refreshSeconds) * time.Second).UTC()
-		if tokens.AccessExpiresAt.After(tokens.RefreshExpiresAt) {
-			return OAuthTokens{}, errors.New("authorityclient: provider returned invalid OAuth token expirations")
-		}
-	}
-	return tokens, nil
-}
-
 type authorityRequest func(context.Context, ...authorityv1.RequestEditorFn) (*http.Response, error)
 
 func request[T any](ctx context.Context, client *Client, call authorityRequest) (T, error) {
+	return requestWithToken[T](ctx, client, client.access.String(), call)
+}
+
+func requestWithToken[T any](ctx context.Context, client *Client, token string, call authorityRequest) (T, error) {
 	var zero T
 	requestCtx, cancel := context.WithTimeout(ctx, client.timeout)
 	defer cancel()
-	response, err := call(requestCtx)
+	response, err := call(requestCtx, func(_ context.Context, request *http.Request) error {
+		if token != "" {
+			request.Header.Set("Authorization", "Bearer "+token)
+		}
+		return nil
+	})
 	if err != nil {
 		return zero, fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
@@ -341,54 +237,25 @@ func request[T any](ctx context.Context, client *Client, call authorityRequest) 
 	return result, nil
 }
 
-func (c *Client) requestURL(
-	ctx context.Context,
-	method, endpoint string,
-	body io.Reader,
-	headers http.Header,
-	destination any,
-	strict bool,
-) error {
-	requestCtx, cancel := context.WithTimeout(ctx, c.timeout)
-	defer cancel()
-	request, err := http.NewRequestWithContext(requestCtx, method, endpoint, body)
-	if err != nil {
-		return err
+// ValidateControlSessionResponse validates credentials and fixed session metadata returned by authority.
+func ValidateControlSessionResponse(response authorityv1.ControlSessionResponse, expectedSessionID string, expectedRefreshExpiry time.Time) (clientstate.ControlSession, error) {
+	access := credentials.AccessToken(response.AccessToken)
+	refresh := credentials.RefreshToken(response.RefreshToken)
+	if _, _, err := credentials.ParseAccessToken(access); err != nil {
+		return clientstate.ControlSession{}, errors.New("authorityclient: authority returned an invalid access token")
 	}
-	for name, values := range headers {
-		request.Header[name] = append([]string(nil), values...)
+	if _, _, err := credentials.ParseRefreshToken(refresh); err != nil {
+		return clientstate.ControlSession{}, errors.New("authorityclient: authority returned an invalid refresh token")
 	}
-	request.Header.Set("Accept", "application/json, application/problem+json")
-	response, err := c.http.Do(request)
-	if err != nil {
-		return fmt.Errorf("%w: %w", ErrUnavailable, err)
+	if !opaqueid.Valid(response.SessionId, "control_session_") || expectedSessionID != "" && response.SessionId != expectedSessionID ||
+		!response.AccessExpiresAt.After(time.Now()) || response.RefreshExpiresAt.Before(response.AccessExpiresAt) ||
+		!expectedRefreshExpiry.IsZero() && !response.RefreshExpiresAt.Equal(expectedRefreshExpiry) {
+		return clientstate.ControlSession{}, errors.New("authorityclient: authority returned an invalid control session")
 	}
-	defer response.Body.Close()
-	payload, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
-	if err != nil {
-		return fmt.Errorf("%w: %w", ErrUnavailable, err)
-	}
-	if len(payload) > maxResponseBytes {
-		return errors.New("authorityclient: response exceeds limit")
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return responseError(response.StatusCode, response.Header, payload)
-	}
-	if destination == nil || len(payload) == 0 {
-		return nil
-	}
-	decoder := json.NewDecoder(bytes.NewReader(payload))
-	decoder.UseNumber()
-	if strict {
-		decoder.DisallowUnknownFields()
-	}
-	if err := decoder.Decode(destination); err != nil {
-		return fmt.Errorf("authorityclient: decode response: %w", err)
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return errors.New("authorityclient: response contains trailing JSON")
-	}
-	return nil
+	return clientstate.ControlSession{
+		SessionID: response.SessionId, AccessToken: access.String(), AccessExpiresAt: response.AccessExpiresAt,
+		RefreshToken: refresh.String(), RefreshExpiresAt: response.RefreshExpiresAt,
+	}, nil
 }
 
 func responseError(status int, header http.Header, payload []byte) error {
@@ -411,10 +278,10 @@ func responseError(status int, header http.Header, payload []byte) error {
 		return ErrUnauthenticated
 	case authorityv1.NotFound:
 		return ErrNotFound
-	case authorityv1.PreconditionFailed:
-		if strings.HasSuffix(problem.Type, "/dns-proof-pending") {
-			return ErrDNSProofPending
-		}
+	case authorityv1.DnsSetupPending:
+		return ErrDNSProofPending
+	case authorityv1.Unavailable:
+		return ErrUnavailable
 	}
 	return &ProblemError{Status: status, Problem: problem}
 }
@@ -431,44 +298,4 @@ type ProblemError struct {
 
 func (e *ProblemError) Error() string {
 	return "authorityclient: HTTP " + strconv.Itoa(e.Status) + ": " + e.Problem.Title
-}
-
-func validID(value, prefix string) bool {
-	return opaqueid.Valid(value, prefix)
-}
-
-func parseHTTPSURL(value string) (*url.URL, error) {
-	parsed, err := url.Parse(value)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
-		return nil, errors.New("invalid HTTPS URL")
-	}
-	return parsed, nil
-}
-
-func validClientID(value string) bool {
-	return len(value) > 0 && len(value) <= 128 && strings.TrimSpace(value) == value
-}
-
-func validOpaqueToken(value string) bool {
-	if len(value) == 0 || len(value) > maxOAuthTokenBytes || strings.TrimSpace(value) != value {
-		return false
-	}
-	for _, character := range value {
-		if character < 0x21 || character == 0x7f {
-			return false
-		}
-	}
-	return true
-}
-
-func validSessionID(value string) bool {
-	return len(value) > 0 && len(value) <= 256 && validOpaqueToken(value)
-}
-
-func positiveSeconds(value json.Number, maximum time.Duration) (int64, error) {
-	seconds, err := value.Int64()
-	if err != nil || seconds <= 0 || seconds > int64(maximum/time.Second) {
-		return 0, errors.New("invalid duration")
-	}
-	return seconds, nil
 }

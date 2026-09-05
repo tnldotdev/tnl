@@ -31,11 +31,11 @@ type resultShard struct {
 }
 
 type resultConfiguration struct {
-	Topology       string `json:"topology"`
-	Routes         int    `json:"routes"`
-	ExpectedRoutes int    `json:"expected_routes"`
-	Parallel       int    `json:"parallel"`
-	PayloadBytes   int    `json:"payload_bytes"`
+	Topology                     string `json:"topology"`
+	Routes                       int    `json:"routes"`
+	ExpectedPublisherConnections int    `json:"expected_publisher_connections"`
+	Parallel                     int    `json:"parallel"`
+	PayloadBytes                 int    `json:"payload_bytes"`
 }
 
 type phaseResult struct {
@@ -61,13 +61,13 @@ type durationHistogram struct {
 }
 
 type resultResources struct {
-	ReadyWorkers   []workerSample `json:"ready_workers"`
-	SettledWorkers []workerSample `json:"settled_workers"`
+	ReadyRelays   []relaySample `json:"ready_relays"`
+	SettledRelays []relaySample `json:"settled_relays"`
 }
 
 type resultCleanup struct {
-	ExpectedWorkerRoutes int  `json:"expected_worker_routes"`
-	Exact                bool `json:"exact"`
+	ExpectedPublisherConnections int  `json:"expected_publisher_connections"`
+	Exact                        bool `json:"exact"`
 }
 
 type resultFailure struct {
@@ -76,7 +76,7 @@ type resultFailure struct {
 
 func newBenchmarkResult(flags cli, started time.Time, measured measurements, runErr error) benchmarkResult {
 	result := benchmarkResult{
-		SchemaVersion: 2,
+		SchemaVersion: 4,
 		CellID:        flags.cellID(),
 		Status:        "passed",
 		Suite:         flags.Suite,
@@ -84,12 +84,13 @@ func newBenchmarkResult(flags cli, started time.Time, measured measurements, run
 		Repetition:    flags.Repetition,
 		Shard:         resultShard{Index: flags.DriverIndex, Count: flags.DriverCount},
 		Configuration: resultConfiguration{
-			Topology: flags.Topology, Routes: flags.Routes, ExpectedRoutes: flags.expectedRoutes(),
-			Parallel: flags.Parallel, PayloadBytes: flags.PayloadBytes,
+			Topology: flags.Topology, Routes: flags.Routes,
+			ExpectedPublisherConnections: flags.expectedPublisherConnections(),
+			Parallel:                     flags.Parallel, PayloadBytes: flags.PayloadBytes,
 		},
 		Phases: []phaseResult{}, ScaleIn: map[string]any{},
-		Resources: resultResources{ReadyWorkers: measured.ReadyWorkers, SettledWorkers: measured.SettledWorkers},
-		Cleanup:   resultCleanup{ExpectedWorkerRoutes: 0, Exact: runErr == nil},
+		Resources: resultResources{ReadyRelays: measured.ReadyRelays, SettledRelays: measured.SettledRelays},
+		Cleanup:   resultCleanup{ExpectedPublisherConnections: 0, Exact: runErr == nil},
 	}
 	if runErr != nil {
 		result.Status = "failed"

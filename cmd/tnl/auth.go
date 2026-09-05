@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/tnldotdev/tnl/internal/clientauth"
+	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"golang.org/x/term"
 )
@@ -23,15 +24,25 @@ func runLogin(ctx context.Context, flags loginCommand, input io.Reader, output, 
 		return err
 	}
 	defer state.Close()
-	_, err = clientauth.Authenticate(ctx, clientauth.Config{
+	prompt := loginTokenPrompt(input, errorOutput)
+	if flags.LoginToken != "" {
+		token, err := parseLoginInput([]byte(flags.LoginToken))
+		if err != nil {
+			return err
+		}
+		prompt = func() (credentials.LoginToken, error) { return token, nil }
+	}
+	authenticated, err := clientauth.Authenticate(ctx, clientauth.Config{
 		ServerEndpoint: serverURL, State: state, Diagnostics: errorOutput,
-		LoginToken: loginTokenPrompt(input, errorOutput), ForceLogin: true, ForceLoginToken: flags.Token,
+		LoginToken: prompt, AuthenticationPrompt: authenticationPrompt(errorOutput, "tnl login"),
+		ForceLogin: true, ForceLoginToken: flags.Token,
 	})
 	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintln(errorOutput, "Authenticated")
-	return err
+	return writeHumanFrame(output, "tnl login", "authenticated", "saved for future commands",
+		clioutput.Fields(clioutput.Field{Label: "control", Value: authenticated.ServerEndpoint}),
+	)
 }
 
 func readLoginToken(input io.Reader, output io.Writer) (credentials.LoginToken, error) {
@@ -81,6 +92,7 @@ func runLogout(ctx context.Context, flags logoutCommand, output io.Writer, diagn
 	}); err != nil {
 		return err
 	}
-	_, err = fmt.Fprintln(output, "Logged out")
-	return err
+	return writeHumanFrame(output, "tnl logout", "logged out", "local session removed",
+		clioutput.Fields(clioutput.Field{Label: "control", Value: serverURL}),
+	)
 }

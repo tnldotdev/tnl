@@ -22,11 +22,11 @@ func TestDefinitionsHaveStableBoundedASCIIOutput(t *testing.T) {
 		}
 		seenURLs[url] = true
 		text := Text(code)
-		if !strings.HasSuffix(text, url+"\n") {
-			t.Fatalf("diagnostic %q does not end with its help URL: %q", code, text)
+		if !strings.Contains(text, "help  "+url) {
+			t.Fatalf("diagnostic %q does not contain its help URL: %q", code, text)
 		}
-		if !strings.Contains(text, "\n+") || !strings.Contains(text, "+\n\n"+string(code)) {
-			t.Fatalf("diagnostic %q does not contain a boxed diagram: %q", code, text)
+		if !strings.HasPrefix(text, "+--[ tnl ]-- ") || !strings.Contains(text, "+-- "+string(code)+" ") {
+			t.Fatalf("diagnostic %q does not contain a framed diagram: %q", code, text)
 		}
 		for _, line := range strings.Split(text, "\n") {
 			if len(line) > 72 {
@@ -51,7 +51,8 @@ func TestErrorPreservesCauseAndRendersDetail(t *testing.T) {
 		t.Fatalf("CodeOf() = %q, %t", code, ok)
 	}
 	text, ok := TextForError(err)
-	if !ok || !strings.Contains(text, err.Error()) || !strings.HasSuffix(text, HelpURL(TargetUnavailable)+"\n") {
+	if !ok || !strings.Contains(text, err.Error()) || !strings.Contains(text, "help  "+HelpURL(TargetUnavailable)) ||
+		!strings.Contains(text, "+-- "+string(TargetUnavailable)+" ") {
 		t.Fatalf("TextForError() = %q, %t", text, ok)
 	}
 }

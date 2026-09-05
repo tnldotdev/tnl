@@ -61,6 +61,23 @@ func TestStatusJSONUsesSharedTunnelSnapshot(t *testing.T) {
 	if tunnels[0].(map[string]any)["route_version"] != float64(1) {
 		t.Fatalf("route version = %v", tunnels[0].(map[string]any)["route_version"])
 	}
+
+	output.Reset()
+	if err := runStatus(t.Context(), statusCommand{Output: "human", StateDir: root}, &output); err != nil {
+		t.Fatal(err)
+	}
+	human := output.String()
+	for _, fragment := range []string{
+		"+--[ tnl status ]-- 1 local tunnel ",
+		"|-- ready ",
+		"https://route.example",
+		tunnel.ID(),
+		"+-- 1 ready ",
+	} {
+		if !strings.Contains(human, fragment) {
+			t.Fatalf("human status does not contain %q:\n%s", fragment, human)
+		}
+	}
 }
 
 func assertJSONKeys(t *testing.T, value map[string]any, keys ...string) {
@@ -82,7 +99,8 @@ func TestStatusHumanHandlesEmptyState(t *testing.T) {
 	}, &output); err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(output.String()) != "No local tunnels." {
+	if !strings.HasPrefix(output.String(), "+--[ tnl status ]-- no local tunnels ") ||
+		!strings.Contains(output.String(), "tnl publish 3000") {
 		t.Fatalf("status output = %q", output.String())
 	}
 }

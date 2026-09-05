@@ -6,20 +6,36 @@ env:
 tasks:
   dev:
     desc: Run the local development stack
+    deps: [local:certificates]
     cmds:
       - docker compose --file deploy/local/compose.yaml up --build
 
+  local:certificates:
+    internal: true
+    status:
+      - test -s .local/certs/local.crt
+      - test -s .local/certs/local.key
+      - test -s .local/certs/local-root.pem
+    cmds:
+      - install -d -m 0700 .local/certs
+      - openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj /CN=tnl-local-root -keyout .local/certs/local-root.key -out .local/certs/local-root.pem
+      - openssl req -newkey rsa:2048 -nodes -subj /CN=localhost -keyout .local/certs/local.key -out .local/certs/local.csr
+      - printf 'subjectAltName=DNS:*.127.0.0.1.nip.io\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n' | openssl x509 -req -sha256 -days 825 -in .local/certs/local.csr -CA .local/certs/local-root.pem -CAkey .local/certs/local-root.key -CAcreateserial -extfile /dev/stdin -out .local/certs/local.crt
+      - chmod 0600 .local/certs/local-root.key .local/certs/local.key
+
   local:up:
     desc: Start the local services in the background
+    deps: [local:certificates]
     cmds:
       - docker compose --file deploy/local/compose.yaml up --build --detach
-      - install -d -m 0700 .local/certs
-      - curl --retry 30 --retry-all-errors --retry-delay 1 --fail --silent --show-error --cacert deploy/local/pebble.minica.crt --output .local/certs/pebble-root.pem https://127.0.0.1:15000/roots/0
-      - curl --retry 30 --retry-all-errors --retry-delay 1 --fail --silent --show-error --cacert .local/certs/pebble-root.pem https://tnl.localhost/v1/ready
+      - curl --noproxy '*' --retry 30 --retry-all-errors --retry-delay 1 --fail --silent --show-error --cacert deploy/local/pebble.minica.crt --output .local/certs/pebble-root.pem https://127.0.0.1:15000/roots/0
+      - curl --noproxy '*' --retry 30 --retry-all-errors --retry-delay 1 --fail --silent --show-error --cacert .local/certs/local-root.pem https://control.127.0.0.1.nip.io/v1/ready
 
   local:trust:
-    desc: Trust the current local Pebble issuance root on macOS
+    desc: Trust the local control and Pebble issuance roots on macOS
     preconditions:
+      - sh: test -s .local/certs/local-root.pem
+        msg: Run task local:up first
       - sh: test -s .local/certs/pebble-root.pem
         msg: Run task local:up first
       - sh: test "$(uname -s)" = Darwin
@@ -27,40 +43,43 @@ tasks:
     cmds:
       - |
         set -eu
-        root=.local/certs/pebble-root.pem
         keychain="$HOME/Library/Keychains/login.keychain-db"
-        fingerprint="$(openssl x509 -in "$root" -noout -fingerprint -sha1 | cut -d= -f2 | tr -d :)"
-        security delete-certificate -Z "$fingerprint" "$keychain" >/dev/null 2>&1 || true
-        security add-trusted-cert -r trustRoot -p ssl -k "$keychain" "$root"
+        for root in .local/certs/local-root.pem .local/certs/pebble-root.pem; do
+          fingerprint="$(openssl x509 -in "$root" -noout -fingerprint -sha1 | cut -d= -f2 | tr -d :)"
+          security delete-certificate -Z "$fingerprint" "$keychain" >/dev/null 2>&1 || true
+          security add-trusted-cert -r trustRoot -p ssl -k "$keychain" "$root"
+        done
 
   local:untrust:
-    desc: Remove the current local Pebble issuance root from the macOS keychain
+    desc: Remove the local control and Pebble issuance roots from the macOS keychain
     cmds:
       - |
         set -eu
-        root=.local/certs/pebble-root.pem
-        if [ "$(uname -s)" != Darwin ] || [ ! -s "$root" ]; then
+        if [ "$(uname -s)" != Darwin ]; then
           exit 0
         fi
         keychain="$HOME/Library/Keychains/login.keychain-db"
-        fingerprint="$(openssl x509 -in "$root" -noout -fingerprint -sha1 | cut -d= -f2 | tr -d :)"
-        security delete-certificate -Z "$fingerprint" "$keychain" >/dev/null 2>&1 || true
+        for root in .local/certs/local-root.pem .local/certs/pebble-root.pem; do
+          if [ -s "$root" ]; then
+            fingerprint="$(openssl x509 -in "$root" -noout -fingerprint -sha1 | cut -d= -f2 | tr -d :)"
+            security delete-certificate -Z "$fingerprint" "$keychain" >/dev/null 2>&1 || true
+          fi
+        done
 
   local:login:
     desc: Authenticate the isolated local client with the daemon login token
     cmds:
       - |
-        docker compose --file deploy/local/compose.yaml exec -T tnld \
-          tnl admin server login-token --state-dir /var/lib/tnl |
-          TNL_SERVER=https://tnl.localhost TNL_STATE_DIR=.local/client-state \
-            go run ./cmd/tnl login --token
+        TNL_LOGIN_TOKEN="${TNLD_LOGIN_TOKEN:-tnl_login_AAECAwQFBgcICQoLDA0ODw.EBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8}" \
+          TNL_SERVER=https://control.127.0.0.1.nip.io TNL_STATE_DIR=.local/client-state \
+          go run ./cmd/tnl login --token
 
   local:tnl:
     desc: Run the isolated local client; pass arguments after --
     requires:
       vars: [CLI_ARGS]
     cmds:
-      - TNL_SERVER=https://tnl.localhost TNL_STATE_DIR=.local/client-state go run ./cmd/tnl {{.CLI_ARGS}}
+      - TNL_SERVER=https://control.127.0.0.1.nip.io TNL_STATE_DIR=.local/client-state go run ./cmd/tnl {{.CLI_ARGS}}
 
   local:down:
     desc: Stop the local services without removing state
@@ -116,8 +135,7 @@ tasks:
   go:generate-check:
     cmds:
       - task: go:generate
-      - go test ./pkg/protocol/workerv1 -run='^TestControlSchemaTracksMessageTypes$'
-      - git diff --exit-code -- pkg/protocol internal/clientstate/clientstatedb internal/state/statedb
+      - git diff --exit-code -- pkg/api internal/clientstate/clientstatedb internal/controlstate/controlstatedb internal/tnlts/keys.gen.json packages/tnl/lib/config.d.ts schema/v1.json
 
   go:format:
     cmds:
@@ -151,11 +169,6 @@ tasks:
       TNL_TEST_INTEGRATION: "1"
     cmds:
       - go test -race -v ./... -run='^TestIntegration' -count=1 -timeout=15m
-
-  go:bench-fly:
-    desc: Benchmark complete standalone and split route paths on Fly
-    cmds:
-      - ./scripts/bench-fly.sh
 
   go:bench-fly:plan:
     desc: Expand and price a Fly benchmark without creating resources

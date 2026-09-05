@@ -49,7 +49,14 @@ func (e *ClientHelloError) Error() string {
 type ClientHello struct {
 	ServerName  string
 	ACMETLSALPN bool
-	Replay      io.Reader
+	Prefix      []byte
+	Remainder   io.Reader
+}
+
+// Replay returns the inspected prefix followed by the unread connection. The
+// prefix can be replayed independently until a visitor byte is committed.
+func (h ClientHello) Replay() io.Reader {
+	return io.MultiReader(bytes.NewReader(h.Prefix), h.Remainder)
 }
 
 func InspectClientHello(connection net.Conn) (ClientHello, error) {
@@ -107,7 +114,8 @@ func inspectClientHello(reader io.Reader) (ClientHello, error) {
 		return ClientHello{
 			ServerName:  serverName,
 			ACMETLSALPN: acmeTLSALPN,
-			Replay:      io.MultiReader(bytes.NewReader(buffered.Bytes()), reader),
+			Prefix:      bytes.Clone(buffered.Bytes()),
+			Remainder:   reader,
 		}, nil
 	}
 	return ClientHello{}, clientHelloError(ErrorTooManyTLSRecords)

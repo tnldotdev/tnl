@@ -9,12 +9,12 @@ import (
 
 func TestAuthorizationConfiguration(t *testing.T) {
 	valid := TNLD{
-		Mode:                           TNLDModeStandalone,
-		AuthorizationAuthorityEndpoint: "https://authority.example",
-		AuthorizationIssuer:            "https://authority.example/issuer",
-		AuthorizationReceiver:          "https://server.example",
-		AuthorizationKeyID:             "key-1",
-		AuthorizationPublicKey:         base64.RawURLEncoding.EncodeToString(make([]byte, ed25519.PublicKeySize)),
+		Mode:                   TNLDModeStandalone,
+		AuthorityEndpoint:      "https://authority.example",
+		AuthorizationIssuer:    "https://authority.example/issuer",
+		AuthorizationReceiver:  "https://server.example",
+		AuthorizationKeyID:     "key-1",
+		AuthorizationPublicKey: base64.RawURLEncoding.EncodeToString(make([]byte, ed25519.PublicKeySize)),
 	}
 	if err := valid.validateAuthorization(); err != nil {
 		t.Fatal(err)
@@ -25,11 +25,11 @@ func TestAuthorizationConfiguration(t *testing.T) {
 
 	for name, mutate := range map[string]func(*TNLD){
 		"incomplete":     func(config *TNLD) { config.AuthorizationKeyID = "" },
-		"endpoint path":  func(config *TNLD) { config.AuthorizationAuthorityEndpoint += "/v1" },
-		"endpoint slash": func(config *TNLD) { config.AuthorizationAuthorityEndpoint += "/" },
-		"default port":   func(config *TNLD) { config.AuthorizationAuthorityEndpoint = "https://authority.example:443" },
+		"endpoint path":  func(config *TNLD) { config.AuthorityEndpoint += "/v1" },
+		"endpoint slash": func(config *TNLD) { config.AuthorityEndpoint += "/" },
+		"default port":   func(config *TNLD) { config.AuthorityEndpoint = "https://authority.example:443" },
 		"padded key":     func(config *TNLD) { config.AuthorizationPublicKey += "=" },
-		"worker mode":    func(config *TNLD) { config.Mode = TNLDModeWorker },
+		"ingress mode":   func(config *TNLD) { config.Mode = TNLDModeIngress },
 	} {
 		t.Run(name, func(t *testing.T) {
 			config := valid

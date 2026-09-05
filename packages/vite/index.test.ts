@@ -32,6 +32,7 @@ describe("tnl", () => {
   test("takes no arguments and is inert outside tnl dev", async () => {
     expect(tnl).toHaveLength(0);
     expect(tnl()).toMatchObject({ apply: "serve", enforce: "post", name: "tnl" });
+    expect(() => tnl({} as never)).toThrow(/does not accept tunnel options/);
     await expect(runConfigHook(tnl(), { server: { port: 4173 } })).resolves.toBeUndefined();
   });
 
@@ -53,27 +54,14 @@ describe("tnl", () => {
 
     await withProcessEnvironment(bootstrap.environment, async () => {
       await expect(
-        runConfigHook(
-          tnl(async ({ cwd, env, worktree }) => {
-            expect(cwd).toBe(process.cwd());
-            expect(env.TNL_DEV_PROTOCOL).toBe("1");
-            expect(worktree.root).toBe(process.cwd());
-            expect(worktree.label).not.toHaveLength(0);
-            return {
-              controlURL: "https://tnl.example.com",
-              host: "agent.example.com",
-              allowCurrentIP: true,
-            };
-          }),
-          {
-            server: {
-              allowedHosts: ["existing.example", "demo.tnl.dev"],
-              host: "0.0.0.0",
-              port: 5200,
-              strictPort: false,
-            },
+        runConfigHook(tnl(), {
+          server: {
+            allowedHosts: ["existing.example", "demo.tnl.dev"],
+            host: "0.0.0.0",
+            port: 5200,
+            strictPort: false,
           },
-        ),
+        }),
       ).resolves.toEqual({
         define: expectedTnlDefine,
         server: {
@@ -85,11 +73,6 @@ describe("tnl", () => {
     expect(bootstrap.requests[0]?.body).toEqual({
       protocol: 1,
       framework: "vite",
-      options: {
-        controlURL: "https://tnl.example.com",
-        host: "agent.example.com",
-        allowCurrentIP: true,
-      },
     });
   });
 
@@ -106,7 +89,6 @@ describe("tnl", () => {
     expect(bootstrap.requests[0]?.body).toEqual({
       protocol: 1,
       framework: "vite",
-      options: {},
     });
   });
 });
@@ -124,7 +106,7 @@ test(
     try {
       const assignment = await waitForBootstrapRequest(bootstrap);
       expect(assignment).toMatchObject({
-        body: { protocol: 1, framework: "vite", options: {} },
+        body: { protocol: 1, framework: "vite" },
         path: "/v1/configure",
       });
       const target = await waitForBootstrapRequest(bootstrap, 1);
@@ -187,7 +169,7 @@ test("registers the next port selected by Vite when the preferred port is occupi
 
   const assignment = await waitForBootstrapRequest(bootstrap);
   expect(assignment).toMatchObject({
-    body: { protocol: 1, framework: "vite", options: {} },
+    body: { protocol: 1, framework: "vite" },
     path: "/v1/configure",
   });
   const target = await waitForBootstrapRequest(bootstrap, 1);

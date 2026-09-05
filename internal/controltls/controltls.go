@@ -1,19 +1,27 @@
-// Package controltls configures TLS for the control API.
+// Package controltls configures automatic public TLS for the control API.
 package controltls
 
 import (
 	"bytes"
+	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/naming"
 	"golang.org/x/crypto/acme"
 	"golang.org/x/crypto/acme/autocert"
 )
+
+const certificateRefreshInterval = 5 * time.Minute
 
 type Config struct {
 	Hostname     string
@@ -21,17 +29,36 @@ type Config struct {
 	DirectoryURL string
 	Email        string
 	AcceptTerms  bool
+	AccountKey   []byte
 	HTTPClient   *http.Client
+	RunLeader    func(context.Context, func(context.Context) error) error
+	Report       func(error)
 }
 
-// New returns control TLS configured with managed ACME.
-func New(config Config) (*tls.Config, error) {
+type Source struct {
+	hostname  string
+	cache     autocert.Cache
+	manager   *autocert.Manager
+	runLeader func(context.Context, func(context.Context) error) error
+	report    func(error)
+	tlsConfig *tls.Config
+
+	mu          sync.RWMutex
+	certificate *tls.Certificate
+	refreshAt   time.Time
+}
+
+func New(config Config) (*Source, error) {
 	hostname, err := naming.CanonicalizeHostname(config.Hostname)
 	if err != nil || hostname != config.Hostname {
 		return nil, errors.New("controltls: hostname must be canonical")
 	}
-	if config.Cache == nil || config.DirectoryURL == "" || config.Email == "" {
-		return nil, errors.New("controltls: state, ACME directory, and email are required")
+	if config.Cache == nil || config.DirectoryURL == "" || config.Email == "" || config.RunLeader == nil {
+		return nil, errors.New("controltls: cache, ACME directory, email, and leader coordination are required")
+	}
+	key, err := accountKey(config.AccountKey)
+	if err != nil {
+		return nil, err
 	}
 	manager := &autocert.Manager{
 		Prompt:     func(string) bool { return config.AcceptTerms },
@@ -41,12 +68,117 @@ func New(config Config) (*tls.Config, error) {
 		Client: &acme.Client{
 			DirectoryURL: config.DirectoryURL,
 			HTTPClient:   acmeHTTPClient(config.HTTPClient),
+			Key:          key,
 			UserAgent:    "tnld/1",
 		},
 	}
 	tlsConfig := manager.TLSConfig()
+	source := &Source{
+		hostname: hostname, cache: config.Cache, manager: manager,
+		runLeader: config.RunLeader, report: config.Report,
+	}
 	tlsConfig.MinVersion = tls.VersionTLS13
-	return tlsConfig, nil
+	tlsConfig.GetCertificate = source.GetCertificate
+	source.tlsConfig = tlsConfig
+	return source, nil
+}
+
+func (s *Source) TLSConfig() *tls.Config { return s.tlsConfig.Clone() }
+
+func (s *Source) Ready(now time.Time) bool {
+	s.mu.RLock()
+	ready := s.certificate != nil && s.certificate.Leaf != nil && !now.Before(s.certificate.Leaf.NotBefore) &&
+		s.certificate.Leaf.NotAfter.After(now)
+	s.mu.RUnlock()
+	if ready {
+		return true
+	}
+	_, err := s.loadCertificate(now)
+	return err == nil
+}
+
+func (s *Source) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+	if hello == nil || hello.ServerName != s.hostname {
+		return nil, errors.New("controltls: unexpected server name")
+	}
+	if len(hello.SupportedProtos) == 1 && hello.SupportedProtos[0] == acme.ALPNProto {
+		return s.manager.GetCertificate(hello)
+	}
+	now := time.Now()
+	s.mu.RLock()
+	certificate, refreshAt := s.certificate, s.refreshAt
+	s.mu.RUnlock()
+	if certificate != nil && certificate.Leaf != nil && !now.Before(certificate.Leaf.NotBefore) &&
+		certificate.Leaf.NotAfter.After(now) && refreshAt.After(now) {
+		return certificate, nil
+	}
+	return s.loadCertificate(now)
+}
+
+func (s *Source) Run(ctx context.Context) error {
+	return s.runLeader(ctx, func(ctx context.Context) error {
+		for {
+			_, err := s.manager.GetCertificate(&tls.ClientHelloInfo{
+				ServerName:       s.hostname,
+				SupportedCurves:  []tls.CurveID{tls.CurveP256},
+				SignatureSchemes: []tls.SignatureScheme{tls.ECDSAWithP256AndSHA256},
+				CipherSuites:     []uint16{tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256},
+			})
+			if err == nil {
+				<-ctx.Done()
+				return nil
+			}
+			if s.report != nil && ctx.Err() == nil {
+				s.report(err)
+			}
+			timer := time.NewTimer(time.Minute)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return nil
+			case <-timer.C:
+			}
+		}
+	})
+}
+
+func (s *Source) loadCertificate(now time.Time) (*tls.Certificate, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	data, err := s.cache.Get(ctx, s.hostname)
+	if err != nil {
+		return nil, fmt.Errorf("controltls: load certificate: %w", err)
+	}
+	certificate, err := tls.X509KeyPair(data, data)
+	if err != nil || len(certificate.Certificate) == 0 {
+		return nil, errors.New("controltls: cached certificate is invalid")
+	}
+	leaf, err := x509.ParseCertificate(certificate.Certificate[0])
+	if err != nil || leaf.VerifyHostname(s.hostname) != nil || now.Before(leaf.NotBefore) || !now.Before(leaf.NotAfter) {
+		return nil, errors.New("controltls: cached certificate is not valid for the control hostname")
+	}
+	certificate.Leaf = leaf
+	refreshAt := now.Add(certificateRefreshInterval)
+	if refreshAt.After(leaf.NotAfter) {
+		refreshAt = leaf.NotAfter
+	}
+	s.mu.Lock()
+	s.certificate = &certificate
+	s.refreshAt = refreshAt
+	s.mu.Unlock()
+	return &certificate, nil
+}
+
+func accountKey(data []byte) (*ecdsa.PrivateKey, error) {
+	key, err := x509.ParsePKCS8PrivateKey(data)
+	if err != nil {
+		return nil, errors.New("controltls: ACME account key is invalid")
+	}
+	privateKey, ok := key.(*ecdsa.PrivateKey)
+	if !ok || privateKey.Curve != elliptic.P256() {
+		return nil, errors.New("controltls: ACME account key is not ECDSA")
+	}
+	return privateKey, nil
 }
 
 func acmeHTTPClient(client *http.Client) *http.Client {

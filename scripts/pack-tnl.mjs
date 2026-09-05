@@ -170,7 +170,15 @@ try {
     await packAndVerify(launcherStage, {
       kind: "launcher",
       packageName: "@tnldotdev/tnl",
-      requiredFiles: ["LICENSE", "README.md", "bin/tnl.mjs", "lib/launcher.mjs", "package.json"],
+      requiredFiles: [
+        "LICENSE",
+        "README.md",
+        "bin/tnl.mjs",
+        "lib/config.d.ts",
+        "lib/config.mjs",
+        "lib/launcher.mjs",
+        "package.json",
+      ],
     }),
   );
 

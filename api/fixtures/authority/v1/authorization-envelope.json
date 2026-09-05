@@ -1,0 +1,6 @@
+{
+  "authorization_id": "authorization_0123456789abcdef0123456789abcdef",
+  "authorization": "eyJhbGciOiJFZERTQSIsImtpZCI6ImF1dGhvcml0eS0yMDI2LTA5IiwidHlwIjoidG5sLWF1dGhvcml6YXRpb24rand0In0.eyJ2ZXJzaW9uIjoxfQ.signature",
+  "team_policy_revision": 2,
+  "expires_at": "2026-09-01T13:00:00Z"
+}

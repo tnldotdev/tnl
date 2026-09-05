@@ -8,6 +8,23 @@ import (
 	"time"
 )
 
+// ProcessHandler serves private process health, readiness, and metrics.
+func ProcessHandler(metrics http.Handler, ready func() bool) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /health", func(response http.ResponseWriter, _ *http.Request) {
+		response.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("GET /ready", func(response http.ResponseWriter, _ *http.Request) {
+		if ready == nil || !ready() {
+			response.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		response.WriteHeader(http.StatusNoContent)
+	})
+	mux.Handle("GET /metrics", metrics)
+	return mux
+}
+
 // Server is a running metrics listener.
 type Server struct {
 	listener net.Listener

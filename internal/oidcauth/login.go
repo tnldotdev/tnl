@@ -29,6 +29,13 @@ type Config struct {
 	Scopes     []string
 	HTTPClient *http.Client
 	OpenURL    func(string) error
+	Prompt     func(Prompt) error
+}
+
+// Prompt contains the user action needed to continue authentication.
+type Prompt struct {
+	URL  string
+	Code string
 }
 
 type Result struct {
@@ -72,9 +79,9 @@ func Login(ctx context.Context, config Config, output io.Writer) (Result, error)
 	var token *oauth2.Token
 	switch config.LoginFlow {
 	case LoginFlowDeviceCode:
-		token, err = deviceLogin(ctx, oauthConfig, nonce, output)
+		token, err = deviceLogin(ctx, oauthConfig, nonce, output, config.Prompt)
 	case LoginFlowAuthorizationCodePKCE:
-		token, err = authorizationCodeLogin(ctx, oauthConfig, nonce, output, config.OpenURL)
+		token, err = authorizationCodeLogin(ctx, oauthConfig, nonce, output, config.OpenURL, config.Prompt)
 	}
 	if err != nil {
 		return Result{}, err
@@ -82,7 +89,13 @@ func Login(ctx context.Context, config Config, output io.Writer) (Result, error)
 	return verifiedResult(ctx, provider, config.ClientID, nonce, token)
 }
 
-func deviceLogin(ctx context.Context, oauthConfig oauth2.Config, nonce string, output io.Writer) (*oauth2.Token, error) {
+func deviceLogin(
+	ctx context.Context,
+	oauthConfig oauth2.Config,
+	nonce string,
+	output io.Writer,
+	prompt func(Prompt) error,
+) (*oauth2.Token, error) {
 	if oauthConfig.Endpoint.DeviceAuthURL == "" || oauthConfig.Endpoint.TokenURL == "" {
 		return nil, errors.New("oidcauth: provider does not support device login")
 	}
@@ -97,7 +110,7 @@ func deviceLogin(ctx context.Context, oauthConfig oauth2.Config, nonce string, o
 	if verificationURL == "" || authorization.UserCode == "" {
 		return nil, errors.New("oidcauth: invalid device authorization response")
 	}
-	if _, err := fmt.Fprintf(output, "Open %s\nCode: %s\n", verificationURL, authorization.UserCode); err != nil {
+	if err := writePrompt(output, prompt, Prompt{URL: verificationURL, Code: authorization.UserCode}); err != nil {
 		return nil, err
 	}
 	token, err := oauthConfig.DeviceAccessToken(ctx, authorization)
@@ -113,6 +126,7 @@ func authorizationCodeLogin(
 	nonce string,
 	output io.Writer,
 	openURL func(string) error,
+	prompt func(Prompt) error,
 ) (*oauth2.Token, error) {
 	if oauthConfig.Endpoint.AuthURL == "" || oauthConfig.Endpoint.TokenURL == "" {
 		return nil, errors.New("oidcauth: provider does not support authorization-code login")
@@ -165,7 +179,7 @@ func authorizationCodeLogin(
 		serveError <- err
 	}()
 	defer callbackServer.Close()
-	if _, err := fmt.Fprintf(output, "Open %s\n", authorizationURL); err != nil {
+	if err := writePrompt(output, prompt, Prompt{URL: authorizationURL}); err != nil {
 		return nil, err
 	}
 	if openURL != nil {
@@ -188,6 +202,18 @@ func authorizationCodeLogin(
 		return nil, fmt.Errorf("oidcauth: exchange authorization code: %w", err)
 	}
 	return token, nil
+}
+
+func writePrompt(output io.Writer, render func(Prompt) error, prompt Prompt) error {
+	if render != nil {
+		return render(prompt)
+	}
+	if prompt.Code == "" {
+		_, err := fmt.Fprintf(output, "Open %s\n", prompt.URL)
+		return err
+	}
+	_, err := fmt.Fprintf(output, "Open %s\nCode: %s\n", prompt.URL, prompt.Code)
+	return err
 }
 
 func verifiedResult(

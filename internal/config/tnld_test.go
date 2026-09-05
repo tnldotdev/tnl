@@ -4,385 +4,123 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/tnldotdev/tnl/internal/credentials"
 )
 
-func TestParseTNLD(t *testing.T) {
-	t.Setenv("TNLD_STATE_DIR", "/from-env")
-	t.Setenv("TNLD_BACKUP_URL", "s3://backup/tnld")
-	t.Setenv("TNLD_DOMAIN", "example.com")
-	t.Setenv("TNLD_DNS_SERVER", "127.0.0.1:5353")
-	t.Setenv("TNLD_ACME_EMAIL", "operator@example.com")
-	t.Setenv("TNLD_ACME_ACCEPT_TERMS", "true")
-	t.Setenv("TNLD_RELAY_PROVIDER", "tailcat")
+const testLoginToken = "tnl_login_AAECAwQFBgcICQoLDA0ODw.EBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8"
 
-	config, err := ParseTNLD(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if config.StateDir != "/from-env" {
-		t.Fatalf("StateDir = %q, want /from-env", config.StateDir)
-	}
-	if config.BackupURL != "s3://backup/tnld" {
-		t.Fatalf("BackupURL = %q", config.BackupURL)
-	}
-	if config.Mode != TNLDModeStandalone {
-		t.Fatalf("Mode = %q, want %q", config.Mode, TNLDModeStandalone)
-	}
-	if config.MetricsListen != "127.0.0.1:9090" {
-		t.Fatalf("MetricsListen = %q, want 127.0.0.1:9090", config.MetricsListen)
-	}
-	if config.DNSServer != "127.0.0.1:5353" {
-		t.Fatalf("DNSServer = %q, want 127.0.0.1:5353", config.DNSServer)
-	}
-	if config.PublicListen != ":443" || config.RelayProvider != "tailcat" {
-		t.Fatalf("public configuration = %q, %q, want :443, tailcat", config.PublicListen, config.RelayProvider)
-	}
-	if config.ACMEDirectoryURL != "https://acme-v02.api.letsencrypt.org/directory" {
-		t.Fatalf("ACMEDirectoryURL = %q", config.ACMEDirectoryURL)
-	}
-	if config.ServerHostname() != "tnl.example.com" || config.HostnameSuffix() != "example.com" {
-		t.Fatalf("derived hostnames = %q, %q", config.ServerHostname(), config.HostnameSuffix())
-	}
-	if config.MaxActiveHostnames != 128 {
-		t.Fatalf("MaxActiveHostnames = %d, want 128", config.MaxActiveHostnames)
-	}
-	if config.MaxHostnameRequests != 1024 {
-		t.Fatalf("MaxHostnameRequests = %d, want 1024", config.MaxHostnameRequests)
-	}
-	if config.AccessTokenLifetime != time.Hour || config.RefreshTokenLifetime != 30*24*time.Hour {
-		t.Fatalf("token lifetimes = %s, %s", config.AccessTokenLifetime, config.RefreshTokenLifetime)
-	}
-
-	config, err = ParseTNLD([]string{
-		"--mode", "edge",
-		"--state-dir", "/from-flag",
-		"--metrics-listen", "[::1]:9091",
-		"--max-active-hostnames", "16",
-		"--max-hostname-requests", "32",
-		"--worker-token", testWorkerToken(t),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if config.StateDir != "/from-flag" {
-		t.Fatalf("StateDir = %q, want /from-flag", config.StateDir)
-	}
-	if config.Mode != TNLDModeEdge {
-		t.Fatalf("Mode = %q, want %q", config.Mode, TNLDModeEdge)
-	}
-	if config.MetricsListen != "[::1]:9091" {
-		t.Fatalf("MetricsListen = %q, want [::1]:9091", config.MetricsListen)
-	}
-	if config.MaxActiveHostnames != 16 || config.MaxHostnameRequests != 32 {
-		t.Fatalf("hostname quotas = %d, %d, want 16, 32",
-			config.MaxActiveHostnames, config.MaxHostnameRequests)
-	}
-}
-
-func TestParseTNLDHostnameQuotaEnvironment(t *testing.T) {
-	t.Setenv("TNLD_STATE_DIR", "/state")
-	t.Setenv("TNLD_MAX_ACTIVE_HOSTNAMES", "24")
-	t.Setenv("TNLD_MAX_HOSTNAME_REQUESTS", "48")
-
-	config, err := ParseTNLD([]string{"--public-listen", ""})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if config.MaxActiveHostnames != 24 || config.MaxHostnameRequests != 48 {
-		t.Fatalf("hostname quotas = %d, %d, want 24, 48",
-			config.MaxActiveHostnames, config.MaxHostnameRequests)
-	}
-}
-
-func TestParseTNLDAccessTokenLifetimeEnvironment(t *testing.T) {
-	t.Setenv("TNLD_STATE_DIR", "/state")
-	t.Setenv("TNLD_ACCESS_TOKEN_LIFETIME", "24h")
-	t.Setenv("TNLD_REFRESH_TOKEN_LIFETIME", "240h")
-
-	config, err := ParseTNLD([]string{"--public-listen", ""})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if config.AccessTokenLifetime != 24*time.Hour || config.RefreshTokenLifetime != 240*time.Hour {
-		t.Fatalf("token lifetimes = %s, %s", config.AccessTokenLifetime, config.RefreshTokenLifetime)
-	}
-}
-
-func TestParseTNLDWorkerDoesNotRequireState(t *testing.T) {
-	t.Setenv("TNLD_STATE_DIR", "")
-	t.Setenv("TNLD_METRICS_LISTEN", "")
-	workerToken, _, err := credentials.NewWorkerToken()
-	if err != nil {
-		t.Fatal(err)
-	}
-
+func TestParseTNLDStandaloneDerivesAddresses(t *testing.T) {
 	config, err := ParseTNLD([]string{
-		"--mode", "worker",
-		"--edge-url", "wss://edge.example/internal/v1/worker",
-		"--worker-token", workerToken.String(),
+		"--mode", "standalone",
+		"--database-url", "postgres://tnl:secret@database.example/tnl",
+		"--server-domain", "tnl.example.com",
+		"--managed-deployment-domain", "tunnels.example.com",
+		"--acme-email", "operator@example.com",
+		"--acme-accept-terms",
+		"--login-token", testLoginToken,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.Mode != TNLDModeWorker {
-		t.Fatalf("Mode = %q, want %q", config.Mode, TNLDModeWorker)
+	if config.ServerHostname() != "control.tnl.example.com" || config.IngressHostname() != "ingress.tnl.example.com" ||
+		config.StandaloneRelayHostname() != "relay.tnl.example.com" || config.ManagedDomain() != "tunnels.example.com" {
+		t.Fatalf("derived hostnames = %q, %q, %q, %q", config.ServerHostname(), config.IngressHostname(), config.StandaloneRelayHostname(), config.ManagedDomain())
 	}
-	if config.StateDir != "" {
-		t.Fatalf("StateDir = %q, want empty", config.StateDir)
-	}
-	if config.MetricsListen != "" {
-		t.Fatalf("MetricsListen = %q, want empty", config.MetricsListen)
-	}
-	if config.RelayProvider != "" {
-		t.Fatalf("RelayProvider = %q, want explicit selection", config.RelayProvider)
-	}
-	if config.EdgeURL != "wss://edge.example/internal/v1/worker" {
-		t.Fatalf("EdgeURL = %q", config.EdgeURL)
+	if config.ControlListen != ":443" || config.IngressControlListen != ":9443" || config.RelayControlListen != ":9444" ||
+		config.IngressListen != ":443" || config.RelayTCPListen != ":443" || config.RelayUDPListen != ":443" {
+		t.Fatalf("standalone listeners = %#v", config)
 	}
 }
 
-func TestParseTNLDEdgeURLEnvironmentAndHardCutover(t *testing.T) {
-	t.Setenv("TNLD_STATE_DIR", "")
-	t.Setenv("TNLD_METRICS_LISTEN", "")
-	t.Setenv("TNLD_EDGE_URL", "wss://edge.example/internal/v1/worker")
-	config, err := ParseTNLD([]string{"--mode", "worker", "--worker-token", testWorkerToken(t)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if config.EdgeURL != "wss://edge.example/internal/v1/worker" {
-		t.Fatalf("EdgeURL = %q", config.EdgeURL)
-	}
-
-	if _, err := ParseTNLD([]string{
-		"--mode", "worker", "--worker-url", "wss://edge.example/internal/v1/worker", "--worker-token", testWorkerToken(t),
-	}); err == nil {
-		t.Fatal("legacy --worker-url was accepted")
-	}
-	t.Setenv("TNLD_EDGE_URL", "")
-	t.Setenv("TNLD_WORKER_URL", "wss://edge.example/internal/v1/worker")
-	if _, err := ParseTNLD([]string{"--mode", "worker", "--worker-token", testWorkerToken(t)}); err == nil ||
-		err.Error() != "worker mode requires an edge URL" {
-		t.Fatalf("legacy TNLD_WORKER_URL error = %v", err)
-	}
-}
-
-func TestTNLDValidateEdgeURLMessage(t *testing.T) {
-	_, err := ParseTNLD([]string{
-		"--mode", "worker", "--edge-url", "https://edge.example/internal/v1/worker", "--worker-token", testWorkerToken(t),
+func TestParseTNLDSplitRoles(t *testing.T) {
+	control, err := ParseTNLD([]string{
+		"--mode", "control", "--database-url", "postgres://tnl:secret@database.example/tnl",
+		"--server-domain", "tnl.example.com", "--managed-deployment-domain", "tunnels.example.com",
+		"--acme-email", "operator@example.com", "--acme-accept-terms", "--login-token", testLoginToken,
 	})
-	if err == nil || err.Error() != "worker endpoint must be a WSS URL with path /internal/v1/worker" {
-		t.Fatalf("edge URL validation error = %v", err)
-	}
-}
-
-func TestParseTNLDRejectsInvalidInput(t *testing.T) {
-	t.Setenv("TNLD_STATE_DIR", "")
-
-	for name, args := range map[string][]string{
-		"empty state directory":       {"--state-dir", "   "},
-		"invalid backup URL":          {"--state-dir", "/state", "--backup-url", "file:///backup"},
-		"unknown flag":                {"--state-dir", "/state", "--unknown"},
-		"unknown mode":                {"--state-dir", "/state", "--mode", "router"},
-		"missing metrics port":        {"--state-dir", "/state", "--metrics-listen", "127.0.0.1"},
-		"invalid metrics port":        {"--state-dir", "/state", "--metrics-listen", "127.0.0.1:nope"},
-		"metrics whitespace":          {"--state-dir", "/state", "--metrics-listen", " 127.0.0.1:9090"},
-		"invalid DNS server":          {"--state-dir", "/state", "--dns-server", "127.0.0.1"},
-		"zero active hostnames":       {"--state-dir", "/state", "--max-active-hostnames", "0"},
-		"negative hostname requests":  {"--state-dir", "/state", "--max-hostname-requests", "-1"},
-		"requests below active":       {"--state-dir", "/state", "--max-active-hostnames", "10", "--max-hostname-requests", "9"},
-		"active hostnames too large":  {"--state-dir", "/state", "--max-active-hostnames", "100001", "--max-hostname-requests", "100001"},
-		"hostname requests too large": {"--state-dir", "/state", "--max-hostname-requests", "100001"},
-		"short access lifetime":       {"--state-dir", "/state", "--public-listen", "", "--access-token-lifetime", "4m59s"},
-		"long access lifetime":        {"--state-dir", "/state", "--public-listen", "", "--access-token-lifetime", "720h1s"},
-		"refresh below access":        {"--state-dir", "/state", "--public-listen", "", "--access-token-lifetime", "2h", "--refresh-token-lifetime", "1h"},
-		"long refresh lifetime":       {"--state-dir", "/state", "--public-listen", "", "--refresh-token-lifetime", "8760h1s"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			if _, err := ParseTNLD(args); err == nil {
-				t.Fatal("ParseTNLD succeeded")
-			}
-		})
-	}
-}
-
-func TestTNLDValidateOIDC(t *testing.T) {
-	config, err := ParseTNLD([]string{"--state-dir", "/state", "--public-listen", ""})
 	if err != nil {
 		t.Fatal(err)
 	}
-	config.OIDCIssuer = "https://account.example"
-	config.OIDCClientID = "tnl-cli"
-	config.OIDCLoginFlow = OIDCLoginFlowDeviceCode
-	if err := config.Validate(); err != nil {
-		t.Fatalf("valid OIDC: %v", err)
+	if control.ControlListen != ":443" || control.IngressControlListen != ":9443" || control.RelayControlListen != ":9444" {
+		t.Fatalf("control listeners = %#v", control)
+	}
+	if control.RelayServiceHostname("relay-a") != "relay-a.tnl.example.com" ||
+		control.RelayServiceHostname("Relay-A") != "" ||
+		control.IngressControlEndpoint() != "https://control.tnl.example.com:9443" ||
+		control.RelayControlEndpoint() != "https://control.tnl.example.com:9444" {
+		t.Fatalf("derived service endpoints = %q, %q, %q", control.RelayServiceHostname("relay-a"), control.IngressControlEndpoint(), control.RelayControlEndpoint())
 	}
 
-	incomplete := config
-	incomplete.OIDCClientID = ""
-	if err := incomplete.Validate(); err == nil {
-		t.Fatal("incomplete OIDC configuration accepted")
-	}
-	invalidIssuer := config
-	invalidIssuer.OIDCIssuer = "http://account.example"
-	if err := invalidIssuer.Validate(); err == nil {
-		t.Fatal("insecure OIDC issuer accepted")
-	}
-	invalidFlow := config
-	invalidFlow.OIDCLoginFlow = "implicit"
-	if err := invalidFlow.Validate(); err == nil {
-		t.Fatal("invalid OIDC login flow accepted")
-	}
-}
-
-func TestTNLDValidateRouteUsage(t *testing.T) {
-	config, err := ParseTNLD([]string{"--state-dir", "/state", "--public-listen", ""})
+	ingress, err := ParseTNLD([]string{
+		"--mode", "ingress", "--control-hostname", "control.tnl.example.com",
+		"--service-enrollment-token", strings.Repeat("tnl_enrollment_a", 3), "--ingress-id", "ingress-1",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := credentials.NewServiceToken()
+	if ingress.IngressListen != ":443" || ingress.DatabaseURL != "" {
+		t.Fatalf("ingress configuration = %#v", ingress)
+	}
+
+	relay, err := ParseTNLD([]string{
+		"--mode", "relay", "--control-hostname", "control.tnl.example.com",
+		"--service-enrollment-token", strings.Repeat("tnl_enrollment_a", 3), "--relay-id", "relay-1",
+		"--internal-relay-address", "relay-1.internal:9445",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	config.RouteUsageURL = "https://account.example/reports"
-	config.RouteUsageToken = token.String()
-	if err := config.Validate(); err != nil {
-		t.Fatalf("valid HTTPS route usage configuration: %v", err)
-	}
-
-	loopback := config
-	loopback.RouteUsageURL = "http://127.0.0.1:8080"
-	if err := loopback.Validate(); err != nil {
-		t.Fatalf("valid loopback route usage configuration: %v", err)
-	}
-
-	for name, mutate := range map[string]func(*TNLD){
-		"missing token":   func(config *TNLD) { config.RouteUsageToken = "" },
-		"missing URL":     func(config *TNLD) { config.RouteUsageURL = "" },
-		"invalid token":   func(config *TNLD) { config.RouteUsageToken = "invalid" },
-		"insecure remote": func(config *TNLD) { config.RouteUsageURL = "http://account.example" },
-		"URL credentials": func(config *TNLD) { config.RouteUsageURL = "https://user@account.example" },
-		"URL query":       func(config *TNLD) { config.RouteUsageURL = "https://account.example?tenant=one" },
-		"worker mode":     func(config *TNLD) { config.Mode = TNLDModeWorker },
-	} {
-		t.Run(name, func(t *testing.T) {
-			invalid := config
-			mutate(&invalid)
-			if err := invalid.Validate(); err == nil {
-				t.Fatal("Validate succeeded")
-			}
-		})
+	if relay.RelayTCPListen != ":443" || relay.RelayUDPListen != ":443" || relay.InternalRelayListen != ":9445" {
+		t.Fatalf("relay configuration = %#v", relay)
 	}
 }
 
-func TestTNLDValidateACME(t *testing.T) {
-	valid := TNLD{
-		Mode: TNLDModeStandalone, StateDir: "/state", Domain: "example.com",
-		PublicListen: "127.0.0.1:443", RelayMapFile: "/relay.json", RelayRegion: "default",
-		WorkerCapacity: 1, WorkerStreamLimit: 1, PublicConnLimit: 1, RouteConnLimit: 1, DrainTimeout: 30,
-		MaxActiveHostnames: 128, MaxHostnameRequests: 1024,
-		AccessTokenLifetime: time.Hour, RefreshTokenLifetime: 30 * 24 * time.Hour,
-		ACMEDirectoryURL: "https://acme.example/directory", ACMEEmail: "operator@example.com",
-		ACMEAcceptTerms: true, ACMEProfile: "tlsserver",
+func TestTNLDControlHostnameRejectsURLAndPort(t *testing.T) {
+	base := TNLD{
+		Mode: TNLDModeIngress, ControlHostname: "control.tnl.example.com",
+		ServiceEnrollmentToken: strings.Repeat("tnl_enrollment_a", 3), IngressID: "ingress-1",
+		IngressListen: ":443", MetricsListen: "127.0.0.1:9090",
+		PublicConnectionLimit: 1, RouteConnectionLimit: 1, PublisherConnectionLimit: 1,
+		RelayStreamCapacity: 1, QUICMaxIncomingStreams: 1,
+		IngressLeaseDuration: 30 * time.Second, RelayLeaseDuration: 30 * time.Second,
+		LeaseRenewalInterval: 10 * time.Second, ControlRetryInterval: time.Second,
+		RoutingTableWait: time.Second, DrainTimeout: time.Second,
+		TunnelFallbackDelay: time.Second, QUICIdleTimeout: time.Second,
 	}
-	if err := valid.Validate(); err != nil {
-		t.Fatalf("valid ACME config: %v", err)
-	}
-	if got := valid.ServerHostname(); got != "tnl.example.com" {
-		t.Fatalf("ServerHostname = %q", got)
-	}
-	if got := valid.HostnameSuffix(); got != "example.com" {
-		t.Fatalf("HostnameSuffix = %q", got)
-	}
-	provider := valid
-	provider.RelayMapFile = ""
-	provider.RelayRegion = ""
-	provider.RelayProvider = "tailcat"
-	if err := provider.Validate(); err != nil {
-		t.Fatalf("valid relay provider config: %v", err)
-	}
-	conflictingRelaySource := provider
-	conflictingRelaySource.RelayMapFile = "/relay.json"
-	conflictingRelaySource.RelayRegion = "default"
-	if err := conflictingRelaySource.Validate(); err == nil {
-		t.Fatal("conflicting relay sources succeeded")
-	}
-	missingControlTLS := valid
-	missingControlTLS.ACMEDirectoryURL = ""
-	missingControlTLS.ACMEEmail = ""
-	if err := missingControlTLS.Validate(); err == nil {
-		t.Fatal("control config without ACME succeeded")
-	}
-	for name, mutate := range map[string]func(*TNLD){
-		"non-HTTPS directory": func(config *TNLD) { config.ACMEDirectoryURL = "http://acme.example/directory" },
-		"invalid email":       func(config *TNLD) { config.ACMEEmail = "Operator <operator@example.com>" },
-		"missing ingress":     func(config *TNLD) { config.PublicListen = "" },
-		"terms not accepted":  func(config *TNLD) { config.ACMEAcceptTerms = false },
-		"invalid domain":      func(config *TNLD) { config.Domain = "Example.com" },
-		"long domain":         func(config *TNLD) { config.Domain = strings.Repeat("a.", 95) + "a" },
-		"missing relay source": func(config *TNLD) {
-			config.RelayMapFile = ""
-			config.RelayRegion = ""
-		},
-		"unknown relay provider": func(config *TNLD) {
-			config.RelayMapFile = ""
-			config.RelayRegion = ""
-			config.RelayProvider = "other"
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			config := valid
-			mutate(&config)
-			if err := config.Validate(); err == nil {
-				t.Fatal("Validate succeeded")
-			}
-		})
+	for _, value := range []string{"https://control.tnl.example.com", "control.tnl.example.com:443", "control.tnl.example.com/path", "Control.tnl.example.com"} {
+		config := base
+		config.ControlHostname = value
+		if err := config.Validate(); err == nil {
+			t.Fatalf("control hostname %q was accepted", value)
+		}
 	}
 }
 
-func TestTNLDHostnameOverridesAndReservations(t *testing.T) {
+func TestTNLDRejectsGatewayConfiguration(t *testing.T) {
+	for _, args := range [][]string{{"--mode", "gateway"}, {"--gateway-id", "gateway-1"}, {"--domain", "example.com"}} {
+		if _, err := ParseTNLD(args); err == nil {
+			t.Fatalf("retired configuration %q was accepted", args)
+		}
+	}
+}
+
+func TestEffectiveReservedRouteNames(t *testing.T) {
 	config := TNLD{
-		Domain: "example.com", ControlHostname: "control.service.test", PublicHostnameSuffix: "routes.test",
-		ReservedRouteNames: []string{"account", "mail"},
+		Mode: TNLDModeStandalone, ServerDomain: "example.com", ManagedDeploymentDomain: "example.com",
+		ReservedRouteNames: []string{"custom"},
 	}
-	if err := config.validateHostnames(); err != nil {
-		t.Fatal(err)
-	}
-	if config.ServerHostname() != "control.service.test" || config.HostnameSuffix() != "routes.test" {
-		t.Fatalf("explicit hostnames = %q, %q", config.ServerHostname(), config.HostnameSuffix())
-	}
-	reserved := config.EffectiveReservedRouteNames()
-	if strings.Join(reserved, ",") != "account,mail,domains" {
-		t.Fatalf("reservations = %q", reserved)
-	}
-
-	config.ControlHostname = "control.routes.test"
-	reserved = config.EffectiveReservedRouteNames()
-	if strings.Join(reserved, ",") != "account,mail,domains,control" {
-		t.Fatalf("automatic control reservation = %q", reserved)
-	}
-
-	for name, names := range map[string][]string{
-		"noncanonical": {"Mail"},
-		"nested":       {"smtp.mail"},
-		"duplicate":    {"mail", "mail"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			invalid := config
-			invalid.ReservedRouteNames = names
-			if err := invalid.validateHostnames(); err == nil {
-				t.Fatal("invalid reservation accepted")
-			}
-		})
+	got := config.EffectiveReservedRouteNames()
+	for _, want := range []string{"custom", "domains", "control", "ingress", "relay"} {
+		if !contains(got, want) {
+			t.Fatalf("reserved route names %v do not contain %q", got, want)
+		}
 	}
 }
 
-func testWorkerToken(t *testing.T) string {
-	t.Helper()
-	token, _, err := credentials.NewWorkerToken()
-	if err != nil {
-		t.Fatal(err)
+func contains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
 	}
-	return token.String()
+	return false
 }

@@ -13,18 +13,8 @@ const asynchronousFactory = withTnl(async (_phase, { defaultConfig }) => ({
   ...defaultConfig,
   allowedDevOrigins: ["existing.example"],
 }));
-const staticOptions = withTnl(
-  { reactStrictMode: true },
-  {
-    controlURL: "https://tnl.example.com",
-    host: "agent.example.com",
-    allowIP: ["198.51.100.0/24"],
-    allowCurrentIP: true,
-  },
-);
-const dynamicOptions = withTnl({}, async ({ cwd, env, worktree }) => ({
-  host: `${env.USER ?? worktree.label}.${cwd.length}.example.com`,
-}));
+// @ts-expect-error tnl configuration belongs in the project config file.
+withTnl({}, { public: true });
 
 process.env.NEXT_PUBLIC_TNL_HOSTNAME satisfies TnlHostname | undefined;
 process.env.NEXT_PUBLIC_TNL_TUNNEL_ID satisfies TnlTunnelID | undefined;
@@ -33,11 +23,4 @@ process.env.NEXT_PUBLIC_TNL_URL satisfies TnlPublicURL | undefined;
 // @ts-expect-error The URL is absent outside tnl dev.
 process.env.NEXT_PUBLIC_TNL_URL satisfies TnlPublicURL;
 
-export {
-  asynchronousFactory,
-  dynamicOptions,
-  objectConfig,
-  promisedConfig,
-  staticOptions,
-  synchronousFactory,
-};
+export { asynchronousFactory, objectConfig, promisedConfig, synchronousFactory };

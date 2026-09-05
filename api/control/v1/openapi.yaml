@@ -1,0 +1,1397 @@
+openapi: 3.1.0
+info:
+  title: tnl control API
+  version: 1.0.0
+  license:
+    name: MIT
+    identifier: MIT
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+servers:
+  - url: https://control.tnl.dev
+paths:
+  /v1/health:
+    get:
+      operationId: getHealth
+      summary: Confirm that the control HTTP server is serving
+      security: []
+      responses:
+        "200":
+          description: Control HTTP server is serving
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/ready:
+    get:
+      operationId: getReadiness
+      summary: Confirm that control and durable state are ready
+      security: []
+      responses:
+        "200":
+          description: Control is ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+        "503":
+          description: Control is not ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/client-ip:
+    get:
+      operationId: getClientIP
+      summary: Return the requesting client's public IP address
+      security: []
+      responses:
+        "200":
+          description: Client IP address
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClientIPResponse"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/discovery:
+    get:
+      operationId: getControlDiscovery
+      summary: Describe control, authority, and authentication facts
+      security: []
+      responses:
+        "200":
+          description: Control discovery
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ControlDiscovery"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/routes:
+    get:
+      operationId: listRoutes
+      summary: List durable routes for one team
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TeamIDQuery"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Route page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoutePage"
+        default:
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: createRoute
+      summary: Create one durable team route
+      security:
+        - bearerAuth: []
+        - signedAuthorization: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRouteRequest"
+      responses:
+        "201":
+          description: Route created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Route"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/routes/{route_id}:
+    get:
+      operationId: getRoute
+      summary: Read one durable route
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RouteID"
+      responses:
+        "200":
+          description: Route
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Route"
+        default:
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: deleteRoute
+      summary: Delete one durable route and close its route session
+      security:
+        - bearerAuth: []
+        - signedAuthorization: []
+      parameters:
+        - $ref: "#/components/parameters/RouteID"
+      responses:
+        "204":
+          description: Route deleted
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/routes/{route_id}/sessions:
+    post:
+      operationId: createRouteSession
+      summary: Create one publisher attachment and allocate its route version
+      security:
+        - bearerAuth: []
+        - signedAuthorization: []
+      parameters:
+        - $ref: "#/components/parameters/RouteID"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRouteSessionRequest"
+      responses:
+        "201":
+          description: Route session and two publisher connection assignments
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RouteSessionSetup"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/route-sessions/{route_session_id}/heartbeat:
+    post:
+      operationId: heartbeatRouteSession
+      summary: Renew one publisher lease and replenish publisher connections
+      security:
+        - routeSessionAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RouteSessionID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RouteSessionVersionRequest"
+      responses:
+        "200":
+          description: Renewed route session plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RouteSessionHeartbeat"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/route-sessions/{route_session_id}/ready:
+    post:
+      operationId: markRouteSessionReady
+      summary: Complete publisher readiness after certificate installation and two ready publisher connections
+      security:
+        - routeSessionAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RouteSessionID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RouteSessionVersionRequest"
+      responses:
+        "200":
+          description: Ready route session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RouteSession"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/route-sessions/{route_session_id}/certificate-installed:
+    post:
+      operationId: markRouteSessionCertificateInstalled
+      summary: Record installation of the current route certificate
+      security:
+        - routeSessionAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RouteSessionID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CertificateInstalledRequest"
+      responses:
+        "200":
+          description: Updated route session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RouteSession"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/route-sessions/{route_session_id}:
+    delete:
+      operationId: closeRouteSession
+      summary: Close and drain one publisher attachment without deleting its route
+      security:
+        - routeSessionAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RouteSessionID"
+      responses:
+        "204":
+          description: Route session closed
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/route-sessions/{route_session_id}/certificate-issuances:
+    post:
+      operationId: createCertificateIssuance
+      summary: Begin issuance for the route session's certificate plan
+      security:
+        - routeSessionAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RouteSessionID"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCertificateIssuanceRequest"
+      responses:
+        "201":
+          description: Certificate issuance
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertificateIssuance"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/certificate-issuances/{issuance_id}:
+    get:
+      operationId: getCertificateIssuance
+      summary: Read one route-session certificate issuance
+      security:
+        - routeSessionAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IssuanceID"
+      responses:
+        "200":
+          description: Certificate issuance
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertificateIssuance"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/certificate-issuances/{issuance_id}/challenge-ready:
+    post:
+      operationId: markCertificateChallengeReady
+      summary: Confirm a TLS-ALPN-01 challenge is installed
+      security:
+        - routeSessionAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IssuanceID"
+      responses:
+        "200":
+          description: Certificate issuance
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertificateIssuance"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/certificate-issuances/{issuance_id}/challenge-removed:
+    post:
+      operationId: markCertificateChallengeRemoved
+      summary: Confirm a TLS-ALPN-01 challenge is removed
+      security:
+        - routeSessionAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IssuanceID"
+      responses:
+        "200":
+          description: Certificate issuance
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertificateIssuance"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/admin/status:
+    get:
+      operationId: getAdminServerStatus
+      summary: Read control, ingress, and relay status
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Server status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminServerStatus"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/admin/relays:
+    get:
+      operationId: listAdminRelays
+      summary: List relay leases
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Relay lease page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminRelayPage"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/admin/relays/{relay_id}/drain:
+    post:
+      operationId: drainAdminRelay
+      summary: Remove one exact relay lease from placement and begin draining
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RelayID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminDrainRelayRequest"
+      responses:
+        "200":
+          description: Draining relay lease
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminRelayLease"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/admin/service-enrollment-tokens:
+    get:
+      operationId: listServiceEnrollmentTokens
+      summary: List service enrollment tokens without their secrets
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Service enrollment token page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceEnrollmentTokenPage"
+        default:
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: createServiceEnrollmentToken
+      summary: Create one reusable role-scoped service enrollment token
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateServiceEnrollmentTokenRequest"
+      responses:
+        "201":
+          description: Service enrollment token and its one-time secret
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreatedServiceEnrollmentToken"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/admin/service-enrollment-tokens/{service_enrollment_token_id}:
+    delete:
+      operationId: revokeServiceEnrollmentToken
+      summary: Revoke one service enrollment token
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ServiceEnrollmentTokenID"
+      responses:
+        "204":
+          description: Service enrollment token revoked
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/admin/maintenance-controls:
+    get:
+      operationId: listMaintenanceControls
+      summary: List maintenance controls
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Maintenance controls
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MaintenanceControl"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/admin/maintenance-controls/{control_name}:
+    put:
+      operationId: setMaintenanceControl
+      summary: Set one maintenance control
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/MaintenanceControlName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetMaintenanceControlRequest"
+      responses:
+        "200":
+          description: Maintenance control
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaintenanceControl"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/service-enrollments:
+    post:
+      operationId: enrollService
+      summary: Issue or renew a process-local service identity
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ServiceEnrollmentRequest"
+      responses:
+        "200":
+          description: Enrolled service identity and role facts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceEnrollmentResponse"
+        default:
+          $ref: "#/components/responses/Problem"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: tnl access token
+    signedAuthorization:
+      type: http
+      scheme: bearer
+      bearerFormat: tnl signed authorization
+    routeSessionAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: tnl route-session token
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        $ref: "#/components/schemas/IdempotencyKey"
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      schema:
+        $ref: "#/components/schemas/ResourceID"
+    TeamIDQuery:
+      name: team_id
+      in: query
+      required: true
+      schema:
+        $ref: "#/components/schemas/TeamID"
+    RouteID:
+      name: route_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/RouteID"
+    RouteSessionID:
+      name: route_session_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/RouteSessionID"
+    IssuanceID:
+      name: issuance_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/IssuanceID"
+    RelayID:
+      name: relay_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/RelayID"
+    MaintenanceControlName:
+      name: control_name
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/MaintenanceControlName"
+    ServiceEnrollmentTokenID:
+      name: service_enrollment_token_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/ResourceID"
+  responses:
+    Problem:
+      description: Request failed
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+  schemas:
+    ResourceID:
+      type: string
+      minLength: 1
+      maxLength: 256
+      pattern: '^\S(?:.*\S)?$'
+    IdentityID:
+      $ref: "#/components/schemas/ResourceID"
+    TeamID:
+      $ref: "#/components/schemas/ResourceID"
+    MembershipID:
+      $ref: "#/components/schemas/ResourceID"
+    DomainID:
+      $ref: "#/components/schemas/ResourceID"
+    RouteID:
+      $ref: "#/components/schemas/ResourceID"
+    RouteSessionID:
+      $ref: "#/components/schemas/ResourceID"
+    PublisherConnectionID:
+      $ref: "#/components/schemas/ResourceID"
+    IssuanceID:
+      $ref: "#/components/schemas/ResourceID"
+    RelayServiceID:
+      $ref: "#/components/schemas/ResourceID"
+    RelayID:
+      $ref: "#/components/schemas/ResourceID"
+    IdempotencyKey:
+      type: string
+      minLength: 1
+      maxLength: 128
+      pattern: '^\S(?:.*\S)?$'
+    CanonicalHostname:
+      type: string
+      minLength: 1
+      maxLength: 253
+      pattern: "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          const: ok
+    ReadinessResponse:
+      type: object
+      additionalProperties: false
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          enum: [ready, not_ready]
+        checks:
+          type: object
+          additionalProperties: false
+          required: [database]
+          properties:
+            database:
+              type: string
+              enum: [ok, failed]
+    ClientIPResponse:
+      type: object
+      additionalProperties: false
+      required: [ip]
+      properties:
+        ip:
+          type: string
+          minLength: 2
+          maxLength: 45
+    ControlDiscovery:
+      type: object
+      additionalProperties: false
+      required: [managed_deployment_domain, dns_automation, authority_endpoint, authentication]
+      properties:
+        managed_deployment_domain:
+          $ref: "#/components/schemas/CanonicalHostname"
+        dns_automation:
+          type: boolean
+        authority_endpoint:
+          type: string
+          format: uri
+          pattern: "^https://"
+        authentication:
+          $ref: "#/components/schemas/AuthenticationFacts"
+    AuthenticationFacts:
+      type: object
+      additionalProperties: false
+      required: [methods]
+      properties:
+        methods:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+            enum: [login_token, oidc]
+        oidc:
+          $ref: "#/components/schemas/OIDCAuthenticationFacts"
+    OIDCAuthenticationFacts:
+      type: object
+      additionalProperties: false
+      required: [issuer, client_id, login_flow, scopes]
+      properties:
+        issuer:
+          type: string
+          format: uri
+        client_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        login_flow:
+          type: string
+          enum: [device_code, authorization_code_pkce]
+        scopes:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+    ServiceEnrollmentRole:
+      type: string
+      enum: [ingress, relay]
+    ServiceEnrollmentToken:
+      type: object
+      additionalProperties: false
+      required: [id, role, created_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/ResourceID"
+        role:
+          $ref: "#/components/schemas/ServiceEnrollmentRole"
+        relay_service_id:
+          $ref: "#/components/schemas/RelayServiceID"
+        created_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: string
+          format: date-time
+        revoked_at:
+          type: string
+          format: date-time
+    CreateServiceEnrollmentTokenRequest:
+      type: object
+      additionalProperties: false
+      required: [role]
+      properties:
+        role:
+          $ref: "#/components/schemas/ServiceEnrollmentRole"
+        relay_service_id:
+          $ref: "#/components/schemas/RelayServiceID"
+    CreatedServiceEnrollmentToken:
+      type: object
+      additionalProperties: false
+      required: [enrollment_token, service_enrollment_token]
+      properties:
+        enrollment_token:
+          $ref: "#/components/schemas/ServiceEnrollmentToken"
+        service_enrollment_token:
+          type: string
+          minLength: 32
+          maxLength: 4096
+    ServiceEnrollmentTokenPage:
+      type: object
+      additionalProperties: false
+      required: [enrollment_tokens]
+      properties:
+        enrollment_tokens:
+          type: array
+          items:
+            $ref: "#/components/schemas/ServiceEnrollmentToken"
+    ServiceEnrollmentRequest:
+      type: object
+      additionalProperties: false
+      required: [service_enrollment_token, role, certificate_signing_request]
+      properties:
+        service_enrollment_token:
+          type: string
+          minLength: 32
+          maxLength: 4096
+        role:
+          $ref: "#/components/schemas/ServiceEnrollmentRole"
+        ingress_id:
+          $ref: "#/components/schemas/ResourceID"
+        relay_id:
+          $ref: "#/components/schemas/RelayID"
+        certificate_signing_request:
+          type: string
+          minLength: 1
+          maxLength: 65536
+    ServiceEnrollmentResponse:
+      type: object
+      additionalProperties: false
+      required:
+        [role, service_certificate, trust_bundle, internal_control_endpoint, certificate_expires_at]
+      properties:
+        role:
+          $ref: "#/components/schemas/ServiceEnrollmentRole"
+        service_certificate:
+          type: string
+          minLength: 1
+        trust_bundle:
+          type: string
+          minLength: 1
+        internal_control_endpoint:
+          type: string
+          format: uri
+          pattern: "^https://"
+        certificate_expires_at:
+          type: string
+          format: date-time
+        relay_service_id:
+          $ref: "#/components/schemas/RelayServiceID"
+        relay_address:
+          type: string
+          minLength: 1
+          maxLength: 256
+        tls_server_name:
+          $ref: "#/components/schemas/CanonicalHostname"
+        relay_transport_certificate:
+          type: string
+          minLength: 1
+        relay_transport_private_key:
+          type: string
+          minLength: 1
+    RouteScope:
+      type: string
+      enum: [member, shared]
+    RouteLifecycleState:
+      type: string
+      enum: [enabled, suspended]
+    Route:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          id,
+          team_id,
+          domain_id,
+          canonical_hostname,
+          target,
+          route_scope,
+          policy_revision,
+          lifecycle_state,
+          next_route_version,
+          created_at,
+          updated_at,
+        ]
+      properties:
+        id:
+          $ref: "#/components/schemas/RouteID"
+        team_id:
+          $ref: "#/components/schemas/TeamID"
+        domain_id:
+          $ref: "#/components/schemas/DomainID"
+        membership_id:
+          $ref: "#/components/schemas/MembershipID"
+        canonical_hostname:
+          $ref: "#/components/schemas/CanonicalHostname"
+        target:
+          type: string
+          format: uri
+          pattern: "^http://"
+        route_scope:
+          $ref: "#/components/schemas/RouteScope"
+        policy_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        lifecycle_state:
+          $ref: "#/components/schemas/RouteLifecycleState"
+        allowed_ip_prefixes:
+          type: array
+          maxItems: 64
+          uniqueItems: true
+          items:
+            type: string
+        next_route_version:
+          type: integer
+          format: int64
+          minimum: 1
+        attached_session_id:
+          $ref: "#/components/schemas/RouteSessionID"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    RoutePage:
+      type: object
+      additionalProperties: false
+      required: [routes]
+      properties:
+        routes:
+          type: array
+          items:
+            $ref: "#/components/schemas/Route"
+        next_cursor:
+          $ref: "#/components/schemas/RouteID"
+    CreateRouteRequest:
+      type: object
+      additionalProperties: false
+      required: [team_id, domain_id, canonical_hostname, target, route_scope]
+      properties:
+        team_id:
+          $ref: "#/components/schemas/TeamID"
+        domain_id:
+          $ref: "#/components/schemas/DomainID"
+        membership_id:
+          $ref: "#/components/schemas/MembershipID"
+        canonical_hostname:
+          $ref: "#/components/schemas/CanonicalHostname"
+        target:
+          type: string
+          format: uri
+          pattern: "^http://"
+        route_scope:
+          $ref: "#/components/schemas/RouteScope"
+        allowed_ip_prefixes:
+          type: array
+          maxItems: 64
+          uniqueItems: true
+          items:
+            type: string
+    CertificateChallengeMethod:
+      type: string
+      enum: [dns-01, tls-alpn-01]
+    CertificatePlan:
+      type: object
+      additionalProperties: false
+      required: [cache_key, scope, identifiers, challenge_method]
+      properties:
+        cache_key:
+          type: string
+          minLength: 1
+          maxLength: 256
+        scope:
+          type: string
+          minLength: 1
+          maxLength: 256
+        identifiers:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/CanonicalHostname"
+        challenge_method:
+          $ref: "#/components/schemas/CertificateChallengeMethod"
+    CreateRouteSessionRequest:
+      type: object
+      additionalProperties: false
+      required: [team_id, policy_revision, certificate_plan, allowed_ip_prefixes]
+      properties:
+        team_id:
+          $ref: "#/components/schemas/TeamID"
+        membership_id:
+          $ref: "#/components/schemas/MembershipID"
+        policy_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        certificate_plan:
+          $ref: "#/components/schemas/CertificatePlan"
+        allowed_ip_prefixes:
+          type: array
+          maxItems: 64
+          uniqueItems: true
+          items:
+            type: string
+    RouteSessionState:
+      type: string
+      enum: [starting, ready, draining, closed, expired, canceled]
+    RouteSession:
+      type: object
+      additionalProperties: false
+      required:
+        [id, route_id, team_id, route_version, policy_revision, state, created_at, expires_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/RouteSessionID"
+        route_id:
+          $ref: "#/components/schemas/RouteID"
+        team_id:
+          $ref: "#/components/schemas/TeamID"
+        membership_id:
+          $ref: "#/components/schemas/MembershipID"
+        route_version:
+          type: integer
+          format: int64
+          minimum: 1
+        policy_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        state:
+          $ref: "#/components/schemas/RouteSessionState"
+        ready_publisher_connections:
+          type: integer
+          minimum: 0
+          maximum: 2
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        ready_at:
+          type: string
+          format: date-time
+        closed_at:
+          type: string
+          format: date-time
+    PublisherConnectionState:
+      type: string
+      enum: [assigned, connected, ready, replacing]
+    PublisherConnectionPlan:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          connection_slot,
+          publisher_connection_id,
+          connection_assignment_revision,
+          relay_service_id,
+          relay_address,
+          tls_server_name,
+          publisher_connection_credential,
+          publisher_connection_credential_expires_at,
+          state,
+        ]
+      properties:
+        connection_slot:
+          type: integer
+          minimum: 0
+          maximum: 1
+        publisher_connection_id:
+          $ref: "#/components/schemas/PublisherConnectionID"
+        connection_assignment_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        relay_service_id:
+          $ref: "#/components/schemas/RelayServiceID"
+        relay_address:
+          type: string
+          minLength: 1
+          maxLength: 256
+        tls_server_name:
+          $ref: "#/components/schemas/CanonicalHostname"
+        publisher_connection_credential:
+          type: string
+          minLength: 1
+          maxLength: 4096
+        publisher_connection_credential_expires_at:
+          type: string
+          format: date-time
+        state:
+          $ref: "#/components/schemas/PublisherConnectionState"
+    RouteSessionSetup:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          route,
+          route_session,
+          route_session_token,
+          certificate_plan,
+          publisher_connections,
+          relay_transport_trust_bundle,
+        ]
+      properties:
+        route:
+          $ref: "#/components/schemas/Route"
+        route_session:
+          $ref: "#/components/schemas/RouteSession"
+        route_session_token:
+          type: string
+          minLength: 1
+          maxLength: 4096
+        certificate_plan:
+          $ref: "#/components/schemas/CertificatePlan"
+        publisher_connections:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items:
+            $ref: "#/components/schemas/PublisherConnectionPlan"
+        relay_transport_trust_bundle:
+          type: string
+          minLength: 1
+    RouteSessionVersionRequest:
+      type: object
+      additionalProperties: false
+      required: [route_version]
+      properties:
+        route_version:
+          type: integer
+          format: int64
+          minimum: 1
+    RouteSessionHeartbeat:
+      type: object
+      additionalProperties: false
+      required: [route_session, publisher_connections]
+      properties:
+        route_session:
+          $ref: "#/components/schemas/RouteSession"
+        publisher_connections:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items:
+            $ref: "#/components/schemas/PublisherConnectionPlan"
+    CertificateInstalledRequest:
+      type: object
+      additionalProperties: false
+      required: [route_version, issuance_id, not_after]
+      properties:
+        route_version:
+          type: integer
+          format: int64
+          minimum: 1
+        issuance_id:
+          $ref: "#/components/schemas/IssuanceID"
+        not_after:
+          type: string
+          format: date-time
+    CreateCertificateIssuanceRequest:
+      type: object
+      additionalProperties: false
+      required: [route_version, csr]
+      properties:
+        route_version:
+          type: integer
+          format: int64
+          minimum: 1
+        csr:
+          type: string
+          format: byte
+          minLength: 1
+          maxLength: 65536
+    CertificateIssuanceState:
+      type: string
+      enum:
+        [
+          pending,
+          authorizing,
+          ready_to_finalize,
+          finalizing,
+          waiting_for_install,
+          installed,
+          failed,
+          canceled,
+        ]
+    CertificateChallenge:
+      type: object
+      additionalProperties: false
+      required: [identifier, method, token, digest, expires_at]
+      properties:
+        identifier:
+          $ref: "#/components/schemas/CanonicalHostname"
+        method:
+          $ref: "#/components/schemas/CertificateChallengeMethod"
+        token:
+          type: string
+        digest:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+    CertificateIssuance:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          id,
+          route_session_id,
+          route_id,
+          route_version,
+          certificate_plan,
+          state,
+          created_at,
+          updated_at,
+        ]
+      properties:
+        id:
+          $ref: "#/components/schemas/IssuanceID"
+        route_session_id:
+          $ref: "#/components/schemas/RouteSessionID"
+        route_id:
+          $ref: "#/components/schemas/RouteID"
+        route_version:
+          type: integer
+          format: int64
+          minimum: 1
+        certificate_plan:
+          $ref: "#/components/schemas/CertificatePlan"
+        state:
+          $ref: "#/components/schemas/CertificateIssuanceState"
+        challenges:
+          type: array
+          items:
+            $ref: "#/components/schemas/CertificateChallenge"
+        certificate_pem:
+          type: string
+        retry_at:
+          type: string
+          format: date-time
+        not_before:
+          type: string
+          format: date-time
+        not_after:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    AdminServerStatus:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          mode,
+          started_at,
+          current_time,
+          enabled_routes,
+          suspended_routes,
+          starting_route_sessions,
+          ready_route_sessions,
+          ingress_leases,
+          relay_leases,
+        ]
+      properties:
+        mode:
+          type: string
+          enum: [standalone, control]
+        started_at:
+          type: string
+          format: date-time
+        current_time:
+          type: string
+          format: date-time
+        enabled_routes:
+          type: integer
+          minimum: 0
+        suspended_routes:
+          type: integer
+          minimum: 0
+        starting_route_sessions:
+          type: integer
+          minimum: 0
+        ready_route_sessions:
+          type: integer
+          minimum: 0
+        ingress_leases:
+          type: integer
+          minimum: 0
+        relay_leases:
+          type: integer
+          minimum: 0
+    AdminRelayLease:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          relay_service_id,
+          relay_id,
+          relay_run_id,
+          relay_lease_revision,
+          protocol_version,
+          relay_address,
+          tls_server_name,
+          internal_relay_address,
+          connection_capacity,
+          stream_capacity,
+          reported_connections,
+          reported_streams,
+          draining,
+          renewed_at,
+          expires_at,
+        ]
+      properties:
+        relay_service_id:
+          $ref: "#/components/schemas/RelayServiceID"
+        relay_id:
+          $ref: "#/components/schemas/RelayID"
+        relay_run_id:
+          $ref: "#/components/schemas/ResourceID"
+        relay_lease_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        protocol_version:
+          type: integer
+          format: int64
+          minimum: 1
+        relay_address:
+          type: string
+        tls_server_name:
+          $ref: "#/components/schemas/CanonicalHostname"
+        internal_relay_address:
+          type: string
+        connection_capacity:
+          type: integer
+          format: int64
+          minimum: 1
+        stream_capacity:
+          type: integer
+          format: int64
+          minimum: 1
+        reported_connections:
+          type: integer
+          format: int64
+          minimum: 0
+        reported_streams:
+          type: integer
+          format: int64
+          minimum: 0
+        draining:
+          type: boolean
+        drain_deadline:
+          type: string
+          format: date-time
+        renewed_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+    AdminRelayPage:
+      type: object
+      additionalProperties: false
+      required: [relays]
+      properties:
+        relays:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminRelayLease"
+        next_cursor:
+          $ref: "#/components/schemas/RelayID"
+    AdminDrainRelayRequest:
+      type: object
+      additionalProperties: false
+      required: [relay_run_id, relay_lease_revision, deadline]
+      properties:
+        relay_run_id:
+          $ref: "#/components/schemas/ResourceID"
+        relay_lease_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        deadline:
+          type: string
+          format: date-time
+    MaintenanceControlName:
+      type: string
+      enum: [route_creation, route_session_creation, certificate_issuance]
+    MaintenanceControl:
+      type: object
+      additionalProperties: false
+      required: [name, enabled, revision, updated_at, updated_by]
+      properties:
+        name:
+          $ref: "#/components/schemas/MaintenanceControlName"
+        enabled:
+          type: boolean
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+        updated_at:
+          type: string
+          format: date-time
+        updated_by:
+          $ref: "#/components/schemas/IdentityID"
+    SetMaintenanceControlRequest:
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
+    ProblemCode:
+      type: string
+      enum:
+        [
+          invalid_request,
+          unauthenticated,
+          forbidden,
+          not_found,
+          conflict,
+          rate_limited,
+          unavailable,
+          internal,
+          name_unavailable,
+          route_attached,
+          policy_revision_stale,
+          dns_setup_pending,
+          placement_unavailable,
+          issuance_retry,
+        ]
+    Problem:
+      type: object
+      additionalProperties: false
+      required: [type, title, status, code, request_id]
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+          minLength: 1
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        code:
+          $ref: "#/components/schemas/ProblemCode"
+        request_id:
+          type: string
+          minLength: 1
+        detail:
+          type: string
+        retry_at:
+          type: string
+          format: date-time
+        details:
+          type: object
+          additionalProperties: true

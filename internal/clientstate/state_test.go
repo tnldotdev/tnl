@@ -11,7 +11,6 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
-	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -234,10 +233,10 @@ func TestControlSessionPersistsPrivatelyAndCanBeRemoved(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := ControlSession{
-		Kind: ControlSessionKindServer, ControlEndpoint: "https://server.example",
-		SessionID: "control_session_0123456789abcdef0123456789abcdef", Issuer: "https://issuer.example", ClientID: "tnl-cli",
-		AccessToken: token.String(), AccessExpiresAt: time.Now().Add(time.Hour).UTC(),
-		RefreshToken: refresh.String(), RefreshExpiresAt: time.Now().Add(24 * time.Hour).UTC(), Grants: []string{"publish"},
+		AuthorityEndpoint: "https://accounts.example",
+		SessionID:         "control_session_0123456789abcdef0123456789abcdef",
+		AccessToken:       token.String(), AccessExpiresAt: time.Now().Add(time.Hour).UTC(),
+		RefreshToken: refresh.String(), RefreshExpiresAt: time.Now().Add(24 * time.Hour).UTC(),
 	}
 	if err := store.SaveControlSession(t.Context(), want); err != nil {
 		t.Fatal(err)
@@ -250,11 +249,9 @@ func TestControlSessionPersistsPrivatelyAndCanBeRemoved(t *testing.T) {
 		t.Fatalf("client database mode = %o", info.Mode().Perm())
 	}
 	got, found, err := store.ControlSession(t.Context())
-	if err != nil || !found || got.Kind != want.Kind || got.ControlEndpoint != want.ControlEndpoint ||
-		got.SessionID != want.SessionID || got.Issuer != want.Issuer || got.ClientID != want.ClientID ||
+	if err != nil || !found || got.AuthorityEndpoint != want.AuthorityEndpoint || got.SessionID != want.SessionID ||
 		got.AccessToken != want.AccessToken || !got.AccessExpiresAt.Equal(want.AccessExpiresAt) ||
-		got.RefreshToken != want.RefreshToken || !got.RefreshExpiresAt.Equal(want.RefreshExpiresAt) ||
-		!reflect.DeepEqual(got.Grants, want.Grants) {
+		got.RefreshToken != want.RefreshToken || !got.RefreshExpiresAt.Equal(want.RefreshExpiresAt) {
 		t.Fatalf("control session = %#v, found = %v, error = %v", got, found, err)
 	}
 	if err := store.RemoveControlSession(t.Context()); err != nil {
@@ -262,24 +259,6 @@ func TestControlSessionPersistsPrivatelyAndCanBeRemoved(t *testing.T) {
 	}
 	if _, found, err := store.ControlSession(t.Context()); err != nil || found {
 		t.Fatalf("control session found after removal = %v, error = %v", found, err)
-	}
-}
-
-func TestAuthorizationAuthoritySessionAllowsOpaqueTokensAndSeparateEndpoint(t *testing.T) {
-	store := testStore(t, filepath.Join(t.TempDir(), "state"), "https://server.example")
-	want := ControlSession{
-		Kind: ControlSessionKindAuthorizationAuthority, ControlEndpoint: "https://accounts.example",
-		SessionID: "oauth_session_0123456789abcdef0123456789abcdef",
-		Issuer:    "https://issuer.example/tenant", ClientID: "tnl-cli",
-		AccessToken: "opaque-access", AccessExpiresAt: time.Now().Add(time.Hour).UTC(),
-		RefreshToken: "opaque-refresh", Scopes: []string{"openid", "offline_access", "product", "operations"},
-	}
-	if err := store.SaveControlSession(t.Context(), want); err != nil {
-		t.Fatal(err)
-	}
-	got, found, err := store.ControlSession(t.Context())
-	if err != nil || !found || !reflect.DeepEqual(got, want) {
-		t.Fatalf("session = %#v, found = %v, error = %v", got, found, err)
 	}
 }
 

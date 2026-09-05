@@ -1,21 +1,21 @@
 package credentials
 
-import "testing"
+import (
+	"bytes"
+	"testing"
+)
 
 func TestDeterministicSessionDerivation(t *testing.T) {
-	routeToken, _, _, err := NewRouteToken()
+	retrySecret := bytes.Repeat([]byte{7}, 32)
+	first, firstID, firstHash, err := DeriveSessionToken(retrySecret, "retry-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, firstID, firstHash, err := DeriveSessionToken(routeToken, "retry-1")
+	retry, retryID, retryHash, err := DeriveSessionToken(retrySecret, "retry-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	retry, retryID, retryHash, err := DeriveSessionToken(routeToken, "retry-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	other, _, _, err := DeriveSessionToken(routeToken, "retry-2")
+	other, _, _, err := DeriveSessionToken(retrySecret, "retry-2")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -23,41 +23,42 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
-	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/authorityclient"
+	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/publisher"
-	"github.com/tnldotdev/tnl/internal/serverclient"
-	"github.com/tnldotdev/tnl/pkg/protocol/serverv1"
-	"tailscale.com/tailcfg"
-	"tailscale.com/types/logger"
+	"github.com/tnldotdev/tnl/internal/routeclient"
+	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 type cli struct {
-	CellID             string        `name:"cell-id" env:"TNL_BENCH_CELL_ID" help:"Stable expanded benchmark cell ID."`
-	Suite              string        `name:"suite" env:"TNL_BENCH_SUITE" default:"legacy" help:"Benchmark suite name."`
-	Workload           string        `name:"workload" env:"TNL_BENCH_WORKLOAD" default:"agent-worktrees-assumed-v1" help:"Benchmark workload ID."`
-	Repetition         int           `name:"repetition" env:"TNL_BENCH_REPETITION" default:"1" help:"One-based cell repetition."`
-	Topology           string        `name:"topology" env:"TNL_BENCH_TOPOLOGY" enum:"standalone,split" required:"" help:"Deployment topology under test: ${enum}."`
-	ServerURL          string        `name:"server" env:"TNL_BENCH_SERVER" required:"" help:"Server HTTPS origin."`
-	LoginToken         string        `name:"login-token" env:"TNL_BENCH_LOGIN_TOKEN" required:"" help:"Server login token."`
-	ControlCAFile      string        `name:"control-ca-file" env:"TNL_BENCH_CONTROL_CA_FILE" type:"path" help:"Optional PEM CA for the server endpoint; system roots are used when omitted."`
-	CertificateFile    string        `name:"certificate-file" env:"TNL_BENCH_CERTIFICATE_FILE" type:"path" help:"Optional PEM certificate chain shared by benchmark routes."`
-	CertificateKeyFile string        `name:"certificate-key-file" env:"TNL_BENCH_CERTIFICATE_KEY_FILE" type:"path" help:"Private key for --certificate-file."`
-	PublicAddress      string        `name:"public-address" env:"TNL_BENCH_PUBLIC_ADDRESS" required:"" help:"Public ingress host:port to dial."`
-	HostnameSuffix     string        `name:"hostname-suffix" env:"TNL_BENCH_HOSTNAME_SUFFIX" required:"" help:"Suffix below which benchmark routes are created."`
-	MetricsURLs        []string      `name:"metrics-url" env:"TNL_BENCH_METRICS_URLS" help:"Private worker metrics URL; repeat for each worker."`
-	EdgeMetricsURL     string        `name:"edge-metrics-url" env:"TNL_BENCH_EDGE_METRICS_URL" help:"Private edge metrics URL used for failure evidence."`
-	Routes             int           `name:"routes" env:"TNL_BENCH_ROUTES" default:"1" help:"Routes to activate."`
-	ExpectedRoutes     int           `name:"expected-routes" env:"TNL_BENCH_EXPECTED_ROUTES" help:"Aggregate worker route count used to coordinate driver shards; defaults to routes."`
-	DriverIndex        int           `name:"driver-index" env:"TNL_BENCH_DRIVER_INDEX" help:"Zero-based index of this driver shard."`
-	DriverCount        int           `name:"driver-count" env:"TNL_BENCH_DRIVER_COUNT" default:"1" help:"Number of coordinated driver shards."`
-	BarrierURL         string        `name:"barrier-url" env:"TNL_BENCH_BARRIER_URL" help:"Driver coordinator URL."`
-	BarrierListen      string        `name:"barrier-listen" env:"TNL_BENCH_BARRIER_LISTEN" help:"Driver coordinator listen address; set on driver zero."`
-	BarrierToken       string        `name:"barrier-token" env:"TNL_BENCH_BARRIER_TOKEN" help:"Driver coordinator bearer token."`
-	Parallel           int           `name:"parallel" env:"TNL_BENCH_PARALLEL" default:"8" help:"Maximum concurrent setup, load, and cleanup operations."`
-	PayloadBytes       int           `name:"payload-bytes" env:"TNL_BENCH_PAYLOAD_BYTES" default:"65536" help:"Response bytes transferred per route."`
-	Timeout            time.Duration `name:"timeout" env:"TNL_BENCH_TIMEOUT" default:"30m" help:"Overall benchmark deadline."`
+	CellID              string        `name:"cell-id" env:"TNL_BENCH_CELL_ID" help:"Stable expanded benchmark cell ID."`
+	Suite               string        `name:"suite" env:"TNL_BENCH_SUITE" default:"legacy" help:"Benchmark suite name."`
+	Workload            string        `name:"workload" env:"TNL_BENCH_WORKLOAD" default:"agent-worktrees-assumed-v1" help:"Benchmark workload ID."`
+	Repetition          int           `name:"repetition" env:"TNL_BENCH_REPETITION" default:"1" help:"One-based cell repetition."`
+	Topology            string        `name:"topology" env:"TNL_BENCH_TOPOLOGY" enum:"standalone,split" required:"" help:"Deployment topology under test: ${enum}."`
+	ServerURL           string        `name:"server" env:"TNL_BENCH_SERVER" required:"" help:"Server HTTPS origin."`
+	LoginToken          string        `name:"login-token" env:"TNL_BENCH_LOGIN_TOKEN" required:"" help:"Server login token."`
+	ControlCAFile       string        `name:"control-ca-file" env:"TNL_BENCH_CONTROL_CA_FILE" type:"path" help:"Optional PEM CA for the server endpoint; system roots are used when omitted."`
+	CertificateFile     string        `name:"certificate-file" env:"TNL_BENCH_CERTIFICATE_FILE" type:"path" help:"Optional PEM certificate chain shared by benchmark routes."`
+	CertificateKeyFile  string        `name:"certificate-key-file" env:"TNL_BENCH_CERTIFICATE_KEY_FILE" type:"path" help:"Private key for --certificate-file."`
+	PublicAddress       string        `name:"public-address" env:"TNL_BENCH_PUBLIC_ADDRESS" required:"" help:"Public ingress host:port to dial."`
+	HostnameSuffix      string        `name:"hostname-suffix" env:"TNL_BENCH_HOSTNAME_SUFFIX" required:"" help:"Suffix below which benchmark routes are created."`
+	RelayMetricsURLs    []string      `name:"relay-metrics-url" env:"TNL_BENCH_RELAY_METRICS_URLS" help:"Private relay metrics URL; repeat for each relay process."`
+	ControlMetricsURL   string        `name:"control-metrics-url" env:"TNL_BENCH_CONTROL_METRICS_URL" help:"Private control metrics URL used for failure evidence."`
+	Routes              int           `name:"routes" env:"TNL_BENCH_ROUTES" default:"1" help:"Routes to activate."`
+	ExpectedConnections int           `name:"expected-publisher-connections" env:"TNL_BENCH_EXPECTED_PUBLISHER_CONNECTIONS" help:"Aggregate ready publisher connections used to coordinate driver shards; defaults to two per route."`
+	DriverIndex         int           `name:"driver-index" env:"TNL_BENCH_DRIVER_INDEX" help:"Zero-based index of this driver shard."`
+	DriverCount         int           `name:"driver-count" env:"TNL_BENCH_DRIVER_COUNT" default:"1" help:"Number of coordinated driver shards."`
+	BarrierURL          string        `name:"barrier-url" env:"TNL_BENCH_BARRIER_URL" help:"Driver coordinator URL."`
+	BarrierListen       string        `name:"barrier-listen" env:"TNL_BENCH_BARRIER_LISTEN" help:"Driver coordinator listen address; set on driver zero."`
+	BarrierToken        string        `name:"barrier-token" env:"TNL_BENCH_BARRIER_TOKEN" help:"Driver coordinator bearer token."`
+	Parallel            int           `name:"parallel" env:"TNL_BENCH_PARALLEL" default:"8" help:"Maximum concurrent setup, load, and cleanup operations."`
+	PayloadBytes        int           `name:"payload-bytes" env:"TNL_BENCH_PAYLOAD_BYTES" default:"65536" help:"Response bytes transferred per route."`
+	Timeout             time.Duration `name:"timeout" env:"TNL_BENCH_TIMEOUT" default:"30m" help:"Overall benchmark deadline."`
 }
 
 type benchmarkCLI struct {
@@ -76,8 +77,8 @@ func (c cli) Validate() error {
 	if c.Routes <= 0 || c.Routes > 5000 {
 		return errors.New("routes must be between 1 and 5000")
 	}
-	if expected := c.expectedRoutes(); expected < c.Routes || expected > 100000 {
-		return errors.New("expected routes must be between routes and 100000")
+	if expected := c.expectedPublisherConnections(); expected < c.Routes*2 || expected > 300000 {
+		return errors.New("expected publisher connections must be between two per route and 300000")
 	}
 	if c.DriverCount <= 0 || c.DriverIndex < 0 || c.DriverIndex >= c.DriverCount {
 		return errors.New("driver index must identify one configured driver")
@@ -107,14 +108,14 @@ func (c cli) Validate() error {
 	if err != nil || hostname != c.HostnameSuffix {
 		return errors.New("hostname suffix must be canonical")
 	}
-	for _, rawURL := range c.MetricsURLs {
+	for _, rawURL := range c.RelayMetricsURLs {
 		if err := validateMetricsURL(rawURL); err != nil {
 			return fmt.Errorf("invalid metrics URL %q", rawURL)
 		}
 	}
-	if c.EdgeMetricsURL != "" {
-		if err := validateMetricsURL(c.EdgeMetricsURL); err != nil {
-			return fmt.Errorf("invalid edge metrics URL %q", c.EdgeMetricsURL)
+	if c.ControlMetricsURL != "" {
+		if err := validateMetricsURL(c.ControlMetricsURL); err != nil {
+			return fmt.Errorf("invalid control metrics URL %q", c.ControlMetricsURL)
 		}
 	}
 	return nil
@@ -128,57 +129,57 @@ func validateMetricsURL(rawURL string) error {
 	return nil
 }
 
-func (c cli) expectedRoutes() int {
-	if c.ExpectedRoutes == 0 {
-		return c.Routes
+func (c cli) expectedPublisherConnections() int {
+	if c.ExpectedConnections == 0 {
+		return c.Routes * 2
 	}
-	return c.ExpectedRoutes
+	return c.ExpectedConnections
 }
 
 func (c cli) cellID() string {
 	if c.CellID != "" {
 		return c.CellID
 	}
-	return fmt.Sprintf("%s-r%d-rep%d", c.Topology, c.expectedRoutes(), c.Repetition)
+	return fmt.Sprintf("%s-r%d-rep%d", c.Topology, c.expectedPublisherConnections()/2, c.Repetition)
 }
 
 type routeProcess struct {
-	hostname      string
-	routeID       string
-	hostnameID    string
-	hostnameOwner hostnameOwner
-	cancel        context.CancelFunc
-	done          chan error
+	hostname string
+	teamID   string
+	routeID  string
+	cancel   context.CancelFunc
+	done     chan error
 }
 
 type routeCleaner interface {
-	DeleteRoute(context.Context, string) error
-	ListRoutes(context.Context) ([]serverv1.Route, error)
+	DeleteRoute(context.Context, controlv1.Route) error
+	ListRoutes(context.Context, string) ([]controlv1.Route, error)
 }
 
-type hostnameOwner interface {
-	ReleaseHostname(context.Context, string) error
+type benchmarkRouteContext struct {
+	teamID         string
+	membershipID   string
+	domainID       string
+	routeScope     controlv1.RouteScope
+	policyRevision uint64
 }
 
-type workerSample struct {
-	Worker                               int     `json:"worker"`
-	Routes                               int     `json:"routes"`
-	Capacity                             int     `json:"capacity"`
-	RSSBytes                             float64 `json:"rss_bytes"`
-	Goroutines                           int     `json:"goroutines"`
-	OpenFDs                              int     `json:"open_fds"`
-	MaxFDs                               int     `json:"max_fds"`
-	TailcatProcessFileLimitStartFailures int     `json:"tailcat_process_file_limit_start_failures,omitempty"`
-	TailcatSystemFileLimitStartFailures  int     `json:"tailcat_system_file_limit_start_failures,omitempty"`
+type relaySample struct {
+	Relay                int     `json:"relay"`
+	PublisherConnections int     `json:"publisher_connections"`
+	RSSBytes             float64 `json:"rss_bytes"`
+	Goroutines           int     `json:"goroutines"`
+	OpenFDs              int     `json:"open_fds"`
+	MaxFDs               int     `json:"max_fds"`
 }
 
 type failureEvidence struct {
 	EvidenceSchemaVersion int                `json:"evidence_schema_version"`
 	Kind                  string             `json:"kind"`
-	Workers               []workerSample     `json:"workers,omitempty"`
-	WorkerError           string             `json:"worker_error,omitempty"`
-	Edge                  map[string]float64 `json:"edge,omitempty"`
-	EdgeError             string             `json:"edge_error,omitempty"`
+	Relays                []relaySample      `json:"relays,omitempty"`
+	RelayError            string             `json:"relay_error,omitempty"`
+	Control               map[string]float64 `json:"control,omitempty"`
+	ControlError          string             `json:"control_error,omitempty"`
 }
 
 type measurements struct {
@@ -192,8 +193,8 @@ type measurements struct {
 	CleanupStarted    time.Time
 	CleanupElapsed    time.Duration
 	Teardown          []time.Duration
-	ReadyWorkers      []workerSample
-	SettledWorkers    []workerSample
+	ReadyRelays       []relaySample
+	SettledRelays     []relaySample
 }
 
 func main() {
@@ -252,8 +253,8 @@ func runDriver(flags cli) {
 
 func run(ctx context.Context, flags cli) (measurements, error) {
 	fmt.Fprintf(
-		os.Stderr, "tnlbench: starting %s shard with %d of %d routes\n",
-		flags.Topology, flags.Routes, flags.expectedRoutes(),
+		os.Stderr, "tnlbench: starting %s shard with %d routes and %d expected publisher connections\n",
+		flags.Topology, flags.Routes, flags.expectedPublisherConnections(),
 	)
 	controlRoots, err := loadCertPool(flags.ControlCAFile)
 	if err != nil {
@@ -262,7 +263,7 @@ func run(ctx context.Context, flags cli) (measurements, error) {
 	controlHTTP := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{
 		RootCAs: controlRoots, MinVersion: tls.VersionTLS13,
 	}}, Timeout: 30 * time.Second}
-	anonymous, err := serverclient.New(flags.ServerURL, controlHTTP, "")
+	anonymous, err := controlclient.New(flags.ServerURL, controlHTTP, "")
 	if err != nil {
 		return measurements{}, err
 	}
@@ -270,43 +271,45 @@ func run(ctx context.Context, flags cli) (measurements, error) {
 	if _, err := credentials.ParseLoginToken(login); err != nil {
 		return measurements{}, errors.New("invalid login token")
 	}
-	issued, err := anonymous.Exchange(ctx, login)
+	discovery, err := anonymous.Discovery(ctx)
+	if err != nil {
+		return measurements{}, fmt.Errorf("read control discovery: %w", err)
+	}
+	authority, err := authorityclient.New(discovery.AuthorityEndpoint, controlHTTP, "")
+	if err != nil {
+		return measurements{}, err
+	}
+	issued, err := authority.Exchange(ctx, login)
 	if err != nil {
 		return measurements{}, fmt.Errorf("exchange login token: %w", err)
 	}
 	access := credentials.AccessToken(issued.AccessToken)
 	if _, _, err := credentials.ParseAccessToken(access); err != nil {
-		return measurements{}, errors.New("server returned invalid access token")
+		return measurements{}, errors.New("authority returned an invalid access token")
 	}
-	server, err := serverclient.New(flags.ServerURL, controlHTTP, access)
+	control, err := controlclient.New(flags.ServerURL, controlHTTP, access)
 	if err != nil {
 		return measurements{}, err
 	}
-	capabilities, err := server.Capabilities(ctx)
-	if err != nil {
-		return measurements{}, fmt.Errorf("read capabilities: %w", err)
-	}
-	if capabilities.Transport.Type != serverv1.Tailcat || capabilities.Transport.Version != serverv1.TransportCapabilitiesVersionN1 {
-		return measurements{}, errors.New("server does not advertise Tailcat transport version 1")
-	}
-	hostnameSuffix, err := benchmarkHostnameSuffix(capabilities, flags.HostnameSuffix)
+	authority, err = authorityclient.New(discovery.AuthorityEndpoint, controlHTTP, access)
 	if err != nil {
 		return measurements{}, err
 	}
-	relayMap, err := server.RelayMap(ctx)
-	if err != nil {
-		return measurements{}, fmt.Errorf("read server relay map: %w", err)
-	}
-	regions, err := config.DecodeRelayRegions(relayMap)
+	hostnameSuffix, err := benchmarkHostnameSuffix(discovery, flags.HostnameSuffix)
 	if err != nil {
 		return measurements{}, err
-	}
-	if regions[capabilities.Transport.RelayRegion] == nil {
-		return measurements{}, fmt.Errorf("relay region %q is absent from the relay map", capabilities.Transport.RelayRegion)
 	}
 	hostnames := make([]string, flags.Routes)
 	for index := range hostnames {
 		hostnames[index] = benchmarkHostname(flags.DriverIndex, index, hostnameSuffix)
+	}
+	routeContext, err := resolveBenchmarkRouteContext(ctx, authority, hostnames[0])
+	if err != nil {
+		return measurements{}, err
+	}
+	routes, err := routeclient.New(control, authority, discovery.AuthorityEndpoint != flags.ServerURL)
+	if err != nil {
+		return measurements{}, err
 	}
 	applicationCertificates, applicationRoots, err := benchmarkCertificates(
 		hostnames, flags.CertificateFile, flags.CertificateKeyFile,
@@ -326,13 +329,14 @@ func run(ctx context.Context, flags cli) (measurements, error) {
 
 	activationStarted := time.Now().UTC()
 	processes, activation, err := activateRoutes(
-		ctx, flags, server, regions, capabilities.Transport.RelayRegion, origin.URL, hostnames, applicationCertificates,
+		ctx, flags, routes, routeContext, &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: controlRoots},
+		origin.URL, hostnames, applicationCertificates,
 	)
 	if err != nil {
 		writeFailureEvidence(flags)
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
-		_, _ = cleanupRoutes(cleanupCtx, flags, server, processes)
+		_, _ = cleanupRoutes(cleanupCtx, flags, routes, processes)
 		return measurements{}, err
 	}
 	activationElapsed := time.Since(activationStarted)
@@ -342,19 +346,19 @@ func run(ctx context.Context, flags cli) (measurements, error) {
 		if !cleaned {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
-			_, _ = cleanupRoutes(cleanupCtx, flags, server, processes)
+			_, _ = cleanupRoutes(cleanupCtx, flags, routes, processes)
 		}
 	}()
 	// Barriers keep faster shards from entering the next phase early.
 	if err := waitDriverBarrier(ctx, flags, "activated"); err != nil {
 		return measurements{}, err
 	}
-	readyWorkers, err := waitWorkerRoutes(ctx, flags.MetricsURLs, flags.expectedRoutes())
+	readyRelays, err := waitPublisherConnections(ctx, flags.RelayMetricsURLs, flags.expectedPublisherConnections())
 	if err != nil {
 		writeFailureEvidence(flags)
 		return measurements{}, err
 	}
-	fmt.Fprintln(os.Stderr, "tnlbench: worker route count ready")
+	fmt.Fprintln(os.Stderr, "tnlbench: publisher connection count ready")
 	if err := waitDriverBarrier(ctx, flags, "ready"); err != nil {
 		return measurements{}, err
 	}
@@ -368,32 +372,88 @@ func run(ctx context.Context, flags cli) (measurements, error) {
 		return measurements{}, err
 	}
 	cleanupStarted := time.Now().UTC()
-	teardown, err := cleanupRoutes(ctx, flags, server, processes)
+	teardown, err := cleanupRoutes(ctx, flags, routes, processes)
 	if err != nil {
 		return measurements{}, err
 	}
 	cleanupElapsed := time.Since(cleanupStarted)
 	fmt.Fprintln(os.Stderr, "tnlbench: route cleanup complete")
 	cleaned = true
-	settledWorkers, err := waitWorkerRoutes(ctx, flags.MetricsURLs, 0)
+	settledRelays, err := waitPublisherConnections(ctx, flags.RelayMetricsURLs, 0)
 	if err != nil {
 		return measurements{}, err
 	}
-	fmt.Fprintln(os.Stderr, "tnlbench: worker route count settled")
+	fmt.Fprintln(os.Stderr, "tnlbench: publisher connection count settled")
 	return measurements{
 		ActivationStarted: activationStarted, ActivationElapsed: activationElapsed, Activation: activation,
 		RequestStarted: requestStarted, RequestElapsed: elapsed, FirstByte: firstByte, Request: requests,
 		CleanupStarted: cleanupStarted, CleanupElapsed: cleanupElapsed, Teardown: teardown,
-		ReadyWorkers: readyWorkers, SettledWorkers: settledWorkers,
+		ReadyRelays: readyRelays, SettledRelays: settledRelays,
+	}, nil
+}
+
+func resolveBenchmarkRouteContext(ctx context.Context, authority *authorityclient.Client, hostname string) (benchmarkRouteContext, error) {
+	identity, err := authority.IdentityContext(ctx)
+	if err != nil {
+		return benchmarkRouteContext{}, fmt.Errorf("read identity context: %w", err)
+	}
+	var membership authorityv1.Membership
+	for _, candidate := range identity.Memberships {
+		if candidate.TeamId == identity.PersonalTeamId {
+			membership = candidate
+			break
+		}
+	}
+	if membership.Id == "" {
+		return benchmarkRouteContext{}, errors.New("benchmark identity has no personal-team membership")
+	}
+	team, err := authority.GetTeam(ctx, membership.TeamId)
+	if err != nil {
+		return benchmarkRouteContext{}, fmt.Errorf("read benchmark team: %w", err)
+	}
+	domains, err := authority.ListTeamDomains(ctx, team.Id)
+	if err != nil {
+		return benchmarkRouteContext{}, fmt.Errorf("list benchmark domains: %w", err)
+	}
+	var domain authorityv1.Domain
+	for _, candidate := range domains.Domains {
+		if candidate.State != authorityv1.DomainStateReady || hostname != candidate.CanonicalDomain && !strings.HasSuffix(hostname, "."+candidate.CanonicalDomain) {
+			continue
+		}
+		if len(candidate.CanonicalDomain) > len(domain.CanonicalDomain) {
+			domain = candidate
+		}
+	}
+	if domain.Id == "" {
+		return benchmarkRouteContext{}, fmt.Errorf("benchmark hostname %s is outside the personal team's ready domains", hostname)
+	}
+	label := membership.MemberSlug
+	if domain.Kind == authorityv1.Managed {
+		label = membership.ManagedLabel
+	}
+	namespace := label + "." + domain.CanonicalDomain
+	routeScope := controlv1.Shared
+	if hostname == namespace || strings.HasSuffix(hostname, "."+namespace) && strings.Count(strings.TrimSuffix(hostname, "."+namespace), ".") == 0 {
+		routeScope = controlv1.Member
+	} else if membership.Role == authorityv1.TeamRoleMember {
+		return benchmarkRouteContext{}, errors.New("benchmark hostname requires a shared route but the personal-team membership is not an administrator")
+	}
+	if team.PolicyRevision < 0 {
+		return benchmarkRouteContext{}, errors.New("authority returned an invalid team policy revision")
+	}
+	return benchmarkRouteContext{
+		teamID: team.Id, membershipID: membership.Id, domainID: domain.Id,
+		routeScope: routeScope, policyRevision: uint64(team.PolicyRevision),
 	}, nil
 }
 
 func activateRoutes(
 	ctx context.Context,
 	flags cli,
-	server *serverclient.Client,
-	regions map[string]*tailcfg.DERPRegion,
-	relayRegion, target string,
+	routes *routeclient.Client,
+	routeContext benchmarkRouteContext,
+	transportTLS *tls.Config,
+	target string,
 	hostnames []string,
 	certificates []tls.Certificate,
 ) ([]*routeProcess, []time.Duration, error) {
@@ -413,7 +473,7 @@ func activateRoutes(
 		}
 		routeCtx, cancel := context.WithCancel(ctx)
 		process := &routeProcess{
-			hostname: hostnames[index], hostnameOwner: server, cancel: cancel, done: make(chan error, 1),
+			hostname: hostnames[index], teamID: routeContext.teamID, cancel: cancel, done: make(chan error, 1),
 		}
 		processes[index] = process
 		go func(index int, process *routeProcess) {
@@ -429,37 +489,30 @@ func activateRoutes(
 					}{index: index, duration: time.Since(started), err: err}
 				})
 			}
-			hostname, err := server.ClaimHostname(
-				routeCtx, serverv1.ClaimHostnameRequestKindManaged,
-				benchmarkRouteLabel(flags.DriverIndex, index), benchmarkHostnameRequestKey(flags.DriverIndex, index),
-			)
-			if err != nil {
-				err = fmt.Errorf("hostname: %w", err)
-			} else {
-				process.hostnameID = hostname.Id
-				if hostname.Id == "" || hostname.Hostname != process.hostname {
-					err = errors.New("server returned an unexpected hostname")
-				}
-			}
 			ready := false
-			if err == nil {
-				err = publisher.Run(routeCtx, publisher.Config{
-					Server: server, Hostname: process.hostname, Target: target, Certificate: certificates[index],
-					RelayRegion: relayRegion, Regions: regions, Logf: logger.Discard,
-					Observe: func(event publisher.Event) error {
-						switch event.Type {
-						case publisher.EventRouteAssigned:
-							process.routeID = event.RouteID
-						case publisher.EventReady:
-							ready = true
-							signalResult(nil)
-						}
-						return nil
-					},
-				})
-				if ready && routeCtx.Err() == nil {
-					fmt.Fprintf(os.Stderr, "tnlbench: route %d publisher exited after readiness: %v\n", index, err)
-				}
+			err := publisher.Run(routeCtx, publisher.Config{
+				Control: routes, TeamID: routeContext.teamID, MembershipID: routeContext.membershipID,
+				DomainID: routeContext.domainID, Hostname: process.hostname, RouteScope: routeContext.routeScope,
+				PolicyRevision: routeContext.policyRevision, Target: target, Certificate: certificates[index],
+				CertificatePlan: controlv1.CertificatePlan{
+					CacheKey: process.hostname, Scope: process.hostname, Identifiers: []string{process.hostname},
+					ChallengeMethod: controlv1.TlsAlpn01,
+				},
+				QUICConnector: muxsession.QUICConnector{TLSConfig: transportTLS},
+				TCPConnector:  muxsession.TLSYamuxConnector{TLSConfig: transportTLS},
+				Observe: func(event publisher.Event) error {
+					switch event.Type {
+					case publisher.EventRouteAssigned:
+						process.routeID = event.RouteID
+					case publisher.EventReady:
+						ready = true
+						signalResult(nil)
+					}
+					return nil
+				},
+			})
+			if ready && routeCtx.Err() == nil {
+				fmt.Fprintf(os.Stderr, "tnlbench: route %d publisher exited after readiness: %v\n", index, err)
 			}
 			signalResult(err)
 			process.done <- err
@@ -562,10 +615,14 @@ func loadRoutes(
 }
 
 func cleanupRoutes(ctx context.Context, flags cli, server routeCleaner, processes []*routeProcess) ([]time.Duration, error) {
-	// Publishers own route deletion. Hostnames are released only after that deletion is verified.
+	// Publisher shutdown closes route sessions; benchmark routes are then deleted explicitly.
 	started := time.Now()
+	teamID := ""
 	for _, process := range processes {
 		if process != nil {
+			if teamID == "" {
+				teamID = process.teamID
+			}
 			process.cancel()
 		}
 	}
@@ -600,83 +657,53 @@ func cleanupRoutes(ctx context.Context, flags cli, server routeCleaner, processe
 	}
 	defer cancelCleanup()
 
-	remaining, verifyErr := remainingRoutes(cleanupCtx, server, routeIDs)
+	remaining, verifyErr := remainingRoutes(cleanupCtx, server, teamID, routeIDs)
 	if verifyErr != nil {
-		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("verify publisher route cleanup: %w", verifyErr))
+		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("list benchmark routes for cleanup: %w", verifyErr))
 	} else if len(remaining) != 0 {
-		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("publisher cleanup left %d routes", len(remaining)))
-		fmt.Fprintf(os.Stderr, "tnlbench: publisher cleanup left %d routes; using explicit deletion fallback\n", len(remaining))
+		fmt.Fprintf(os.Stderr, "tnlbench: deleting %d durable benchmark routes\n", len(remaining))
 		count := 0
 		for index, routeID := range routeIDs {
-			if _, found := remaining[routeID]; routeID == "" || !found {
+			route, found := remaining[routeID]
+			if routeID == "" || !found {
 				continue
 			}
 			count++
 			semaphore <- struct{}{}
-			go func(index int, routeID string) {
+			go func(index int, route controlv1.Route) {
 				defer func() { <-semaphore }()
-				err := server.DeleteRoute(cleanupCtx, routeID)
-				if errors.Is(err, serverclient.ErrNotFound) {
+				err := server.DeleteRoute(cleanupCtx, route)
+				if errors.Is(err, controlclient.ErrNotFound) {
 					err = nil
 				}
 				if err != nil {
 					err = fmt.Errorf("fallback delete route %d: %w", index, err)
 				}
 				results <- cleanupResult{index: index, err: err}
-			}(index, routeID)
+			}(index, route)
 		}
 		for range count {
 			result := <-results
 			cleanupErr = errors.Join(cleanupErr, result.err)
 		}
-		if stillRemaining, err := remainingRoutes(cleanupCtx, server, routeIDs); err != nil {
-			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("verify fallback route cleanup: %w", err))
+		if stillRemaining, err := remainingRoutes(cleanupCtx, server, teamID, routeIDs); err != nil {
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("verify benchmark route cleanup: %w", err))
 		} else if len(stillRemaining) != 0 {
-			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("fallback cleanup left %d routes", len(stillRemaining)))
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("benchmark cleanup left %d routes", len(stillRemaining)))
 		}
 	}
 
-	completed := make([]time.Duration, len(processes))
-	count := 0
-	for index, process := range processes {
-		if process == nil || process.hostnameID == "" {
-			continue
-		}
-		if process.hostnameOwner == nil {
-			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("release hostname %d: missing owner", index))
-			completed[index] = time.Since(started)
-			continue
-		}
-		count++
-		semaphore <- struct{}{}
-		go func(index int, process *routeProcess) {
-			defer func() { <-semaphore }()
-			var err error
-			if releaseErr := process.hostnameOwner.ReleaseHostname(cleanupCtx, process.hostnameID); releaseErr != nil {
-				err = fmt.Errorf("release hostname %d: %w", index, releaseErr)
-			}
-			completed[index] = time.Since(started)
-			results <- cleanupResult{index: index, err: err}
-		}(index, process)
-	}
-	for range count {
-		result := <-results
-		cleanupErr = errors.Join(cleanupErr, result.err)
-	}
 	timings := make([]time.Duration, 0, len(processes))
-	for index, process := range processes {
+	for _, process := range processes {
 		if process == nil {
 			continue
 		}
-		if completed[index] == 0 {
-			completed[index] = time.Since(started)
-		}
-		timings = append(timings, completed[index])
+		timings = append(timings, time.Since(started))
 	}
 	return timings, cleanupErr
 }
 
-func remainingRoutes(ctx context.Context, server routeCleaner, routeIDs []string) (map[string]struct{}, error) {
+func remainingRoutes(ctx context.Context, server routeCleaner, teamID string, routeIDs []string) (map[string]controlv1.Route, error) {
 	wanted := make(map[string]struct{}, len(routeIDs))
 	for _, routeID := range routeIDs {
 		if routeID != "" {
@@ -686,44 +713,42 @@ func remainingRoutes(ctx context.Context, server routeCleaner, routeIDs []string
 	if len(wanted) == 0 {
 		return nil, nil
 	}
-	routes, err := server.ListRoutes(ctx)
+	routes, err := server.ListRoutes(ctx, teamID)
 	if err != nil {
 		return nil, err
 	}
-	remaining := make(map[string]struct{})
+	remaining := make(map[string]controlv1.Route)
 	for _, route := range routes {
 		if _, found := wanted[route.Id]; found {
-			remaining[route.Id] = struct{}{}
+			remaining[route.Id] = route
 		}
 	}
 	return remaining, nil
 }
 
-func waitWorkerRoutes(ctx context.Context, metricsURLs []string, want int) ([]workerSample, error) {
+func waitPublisherConnections(ctx context.Context, metricsURLs []string, want int) ([]relaySample, error) {
 	if len(metricsURLs) == 0 {
 		return nil, nil
 	}
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
-	var lastSamples []workerSample
+	var lastSamples []relaySample
 	lastTotal := -1
 	maxTotal := -1
 	var lastErr error
 	for {
-		samples, err := sampleWorkers(ctx, metricsURLs)
+		samples, err := sampleRelays(ctx, metricsURLs)
 		if err == nil {
 			total := 0
-			valid := true
 			for _, sample := range samples {
-				total += sample.Routes
-				valid = valid && sample.Routes <= sample.Capacity
+				total += sample.PublisherConnections
 			}
 			lastSamples = samples
 			lastTotal = total
 			maxTotal = max(maxTotal, total)
 			lastErr = nil
 			// Allow activation overshoot across shards, but require exact zero after teardown.
-			if valid && (total == want || want > 0 && total > want) {
+			if total == want || want > 0 && total > want {
 				return samples, nil
 			}
 		} else {
@@ -734,33 +759,31 @@ func waitWorkerRoutes(ctx context.Context, metricsURLs []string, want int) ([]wo
 			if lastTotal >= 0 {
 				counts := make([]int, len(lastSamples))
 				for index, sample := range lastSamples {
-					counts[index] = sample.Routes
+					counts[index] = sample.PublisherConnections
 				}
 				return nil, fmt.Errorf(
-					"worker routes did not reach %d (last=%d max=%d workers=%v): %w",
+					"publisher connections did not reach %d (last=%d max=%d relays=%v): %w",
 					want, lastTotal, maxTotal, counts, ctx.Err(),
 				)
 			}
-			return nil, errors.Join(errors.New("sample worker routes"), lastErr, ctx.Err())
+			return nil, errors.Join(errors.New("sample relay publisher connections"), lastErr, ctx.Err())
 		case <-ticker.C:
 		}
 	}
 }
 
-func sampleWorkers(ctx context.Context, metricsURLs []string) ([]workerSample, error) {
-	samples := make([]workerSample, len(metricsURLs))
+func sampleRelays(ctx context.Context, metricsURLs []string) ([]relaySample, error) {
+	samples := make([]relaySample, len(metricsURLs))
 	for index, metricsURL := range metricsURLs {
 		values, err := sampleMetrics(ctx, metricsURL)
 		if err != nil {
-			return nil, fmt.Errorf("metrics worker %d: %w", index, err)
+			return nil, fmt.Errorf("metrics relay %d: %w", index, err)
 		}
-		samples[index] = workerSample{
-			Worker: index, Routes: int(values["tnl_worker_routes_routable"]),
-			Capacity: int(values["tnl_worker_route_capacity"]), RSSBytes: values["process_resident_memory_bytes"],
+		samples[index] = relaySample{
+			Relay: index, PublisherConnections: int(values[`tnl_publisher_connections{state="ready"}`]),
+			RSSBytes:   values["process_resident_memory_bytes"],
 			Goroutines: int(values["go_goroutines"]), OpenFDs: int(values["process_open_fds"]),
-			MaxFDs:                               int(values["process_max_fds"]),
-			TailcatProcessFileLimitStartFailures: int(values[`tnl_tailcat_failures_total{operation="start",reason="process_file_limit"}`]),
-			TailcatSystemFileLimitStartFailures:  int(values[`tnl_tailcat_failures_total{operation="start",reason="system_file_limit"}`]),
+			MaxFDs: int(values["process_max_fds"]),
 		}
 	}
 	return samples, nil
@@ -790,21 +813,21 @@ func writeFailureEvidence(flags cli) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	evidence := failureEvidence{EvidenceSchemaVersion: 1, Kind: "server_metrics"}
-	workers, err := sampleWorkers(ctx, flags.MetricsURLs)
+	relays, err := sampleRelays(ctx, flags.RelayMetricsURLs)
 	if err != nil {
-		evidence.WorkerError = err.Error()
+		evidence.RelayError = err.Error()
 	} else {
-		evidence.Workers = workers
+		evidence.Relays = relays
 	}
-	if flags.EdgeMetricsURL != "" {
-		values, err := sampleMetrics(ctx, flags.EdgeMetricsURL)
+	if flags.ControlMetricsURL != "" {
+		values, err := sampleMetrics(ctx, flags.ControlMetricsURL)
 		if err != nil {
-			evidence.EdgeError = err.Error()
+			evidence.ControlError = err.Error()
 		} else {
-			evidence.Edge = make(map[string]float64)
+			evidence.Control = make(map[string]float64)
 			for name, value := range values {
 				if strings.HasPrefix(name, "tnl_") || name == "process_open_fds" || name == "process_max_fds" {
-					evidence.Edge[name] = value
+					evidence.Control[name] = value
 				}
 			}
 		}
@@ -814,22 +837,12 @@ func writeFailureEvidence(flags cli) {
 	}
 }
 
-func benchmarkHostnameSuffix(capabilities serverv1.Capabilities, configured string) (string, error) {
-	localClaim := false
-	for _, authorization := range capabilities.HostnameAuthorization {
-		localClaim = localClaim || authorization == serverv1.LocalHostnames
+func benchmarkHostnameSuffix(discovery controlv1.ControlDiscovery, configured string) (string, error) {
+	managed, err := naming.CanonicalizeHostname(discovery.ManagedDeploymentDomain)
+	if err != nil || managed != discovery.ManagedDeploymentDomain {
+		return "", errors.New("server advertises an invalid managed deployment domain")
 	}
-	if !localClaim || capabilities.LocalHostnames == nil || capabilities.LocalHostnames.Suffix == "" {
-		return "", errors.New("server does not advertise local hostnames")
-	}
-	suffix, err := naming.CanonicalizeHostname(capabilities.LocalHostnames.Suffix)
-	if err != nil || suffix != capabilities.LocalHostnames.Suffix {
-		return "", errors.New("server advertises an invalid local hostname suffix")
-	}
-	if suffix != configured {
-		return "", fmt.Errorf("server local hostname suffix %q does not match configured suffix %q", suffix, configured)
-	}
-	return suffix, nil
+	return configured, nil
 }
 
 func benchmarkRouteLabel(driverIndex, routeIndex int) string {
@@ -838,10 +851,6 @@ func benchmarkRouteLabel(driverIndex, routeIndex int) string {
 
 func benchmarkHostname(driverIndex, routeIndex int, suffix string) string {
 	return benchmarkRouteLabel(driverIndex, routeIndex) + "." + suffix
-}
-
-func benchmarkHostnameRequestKey(driverIndex, routeIndex int) string {
-	return "hostname_" + benchmarkRouteLabel(driverIndex, routeIndex)
 }
 
 func parseMetrics(body string) map[string]float64 {

@@ -61,7 +61,7 @@ func TestInspectClientHelloFragmentsAndReplays(t *testing.T) {
 	if result.ACMETLSALPN {
 		t.Fatal("mixed ALPN was accepted as ACME TLS-ALPN-01")
 	}
-	replayed, err := io.ReadAll(result.Replay)
+	replayed, err := io.ReadAll(result.Replay())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func TestInspectClientHelloAllowsECHGreaseAndReplays(t *testing.T) {
 	if result.ServerName != "demo.example" {
 		t.Fatalf("got SNI %q", result.ServerName)
 	}
-	replayed, err := io.ReadAll(result.Replay)
+	replayed, err := io.ReadAll(result.Replay())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func TestInspectCapturedBrowserClientHellos(t *testing.T) {
 			if result.ServerName != "route.example" || result.ACMETLSALPN {
 				t.Fatalf("captured ClientHello = %#v", result)
 			}
-			replayed, err := io.ReadAll(result.Replay)
+			replayed, err := io.ReadAll(result.Replay())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -214,7 +214,7 @@ func FuzzInspectClientHello(f *testing.F) {
 		if err != nil {
 			return
 		}
-		replayed, err := io.ReadAll(result.Replay)
+		replayed, err := io.ReadAll(result.Replay())
 		if err != nil {
 			t.Fatal(err)
 		}

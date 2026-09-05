@@ -2,19 +2,11 @@ package main
 
 import (
 	"context"
-	"io"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
 )
 
 const defaultServerURL = "https://control.tnl.dev"
-
-func diagnosticOutput(outputs []io.Writer) io.Writer {
-	if len(outputs) != 0 && outputs[0] != nil {
-		return outputs[0]
-	}
-	return io.Discard
-}
 
 func resolveServer(ctx context.Context, root, value string) (string, *clientstate.Database, error) {
 	root, err := clientStateRoot(root)
