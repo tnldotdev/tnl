@@ -92,7 +92,9 @@ func (c loadCommand) run(parent context.Context) error {
 		WarmupSeconds: int(c.Warmup.Seconds()), DurationSeconds: int(c.Duration.Seconds()), PayloadBytes: c.PayloadBytes,
 	}
 	failureMetricsURLs := c.MetricsURLs
-	c.MetricsURLs = nil // The publisher owns routine metrics sampling.
+	if c.WorkerIndex != 0 {
+		c.MetricsURLs = nil
+	}
 	failure := &failureCapture{ctx: ctx, metricsURLs: failureMetricsURLs, diagnosticURLs: c.DiagnosticURLs}
 	c.onFailure = failure.capture
 	result, runErr := c.execute(ctx, worker, configuration)
@@ -103,6 +105,7 @@ func (c loadCommand) run(parent context.Context) error {
 		partial := result
 		result = failedResult(c.CellID, c.Suite, c.Repetition, worker, configuration, started, runErr)
 		result.Phases = append(partial.Phases, result.Phases...)
+		result.Resources = partial.Resources
 	}
 	result.DatabaseDiagnostics = failure.diagnostics
 	result.Resources = append(result.Resources, failure.resources...)
@@ -114,7 +117,9 @@ func (c loadCommand) run(parent context.Context) error {
 	return runErr
 }
 
-func (c loadCommand) execute(ctx context.Context, worker resultWorker, configuration resultConfiguration) (benchmarkResult, error) {
+func (c loadCommand) execute(ctx context.Context, worker resultWorker, configuration resultConfiguration) (result benchmarkResult, retErr error) {
+	var resources []resourceSample
+	defer func() { result.Resources = append(resources, result.Resources...) }()
 	coordinator, _ := newCoordinatorClient(c.CoordinatorURL, c.CoordinatorToken)
 	if err := coordinator.waitPublishers(ctx); err != nil {
 		return benchmarkResult{}, err
@@ -126,7 +131,6 @@ func (c loadCommand) execute(ctx context.Context, worker resultWorker, configura
 	if len(hostnames) != c.Routes {
 		return benchmarkResult{}, fmt.Errorf("coordinator returned %d routes, want %d", len(hostnames), c.Routes)
 	}
-	resources := sampleResources(ctx, c.MetricsURLs, "ready")
 	var setupPhases []phaseResult
 	if c.PublicAddress == "" {
 		var assignedHostnames []string
@@ -160,7 +164,6 @@ func (c loadCommand) execute(ctx context.Context, worker resultWorker, configura
 		closeHeldStreams(held)
 		heldPhase := phaseFromVisitorResults("held", heldStarted, time.Since(heldStarted), heldResults, len(held))
 		recovery, recoveryErr := c.runRecovery(ctx, hostnames)
-		resources = append(resources, sampleResources(ctx, c.MetricsURLs, "loaded")...)
 		message := err.Error()
 		if recoveryErr != nil {
 			message += "; " + recoveryErr.Error()
@@ -168,7 +171,7 @@ func (c loadCommand) execute(ctx context.Context, worker resultWorker, configura
 		result := benchmarkResult{
 			SchemaVersion: benchmarkResultSchemaVersion, CellID: c.CellID, Status: "failed", Suite: c.Suite,
 			Repetition: c.Repetition, Worker: worker, Configuration: configuration,
-			Phases: append(setupPhases, correctnessPhase, heldPhase, recovery), Resources: resources,
+			Phases:  append(setupPhases, correctnessPhase, heldPhase, recovery),
 			Cleanup: resultCleanup{Exact: true}, Failure: &resultFailure{Message: message, Stage: "measurement"},
 		}
 		return result, errors.New(message)
@@ -183,11 +186,41 @@ func (c loadCommand) execute(ctx context.Context, worker resultWorker, configura
 	if err := sleepContext(ctx, c.Warmup); err != nil {
 		return benchmarkResult{Phases: append(setupPhases, correctnessPhase, heldPhase)}, err
 	}
+	if err := coordinator.loadPhase(ctx, "prepared", c.WorkerIndex); err != nil {
+		return benchmarkResult{Phases: append(setupPhases, correctnessPhase, heldPhase)}, err
+	}
+	if c.WorkerIndex == 0 {
+		if err := coordinator.waitLoadPhase(ctx, "prepared"); err != nil {
+			return benchmarkResult{Phases: append(setupPhases, correctnessPhase, heldPhase)}, err
+		}
+		resources = sampleBoundaryResources(ctx, c.MetricsURLs, "ready")
+		if err := coordinator.loadPhase(ctx, "started", c.WorkerIndex); err != nil {
+			return benchmarkResult{Phases: append(setupPhases, correctnessPhase, heldPhase)}, err
+		}
+	}
+	if err := coordinator.waitLoadPhase(ctx, "started"); err != nil {
+		return benchmarkResult{Phases: append(setupPhases, correctnessPhase, heldPhase)}, err
+	}
 	freshStarted := time.Now().UTC()
 	fresh := c.runFreshConnections(ctx, hostnames)
 	freshElapsed := time.Since(freshStarted)
 	freshPhase := phaseFromVisitorResults("fresh", freshStarted, freshElapsed, fresh, c.HeldStreams)
 	freshPhase.AchievedRate = float64(freshPhase.Successes) / freshElapsed.Seconds()
+	if err := coordinator.loadPhase(ctx, "finished", c.WorkerIndex); err != nil {
+		return benchmarkResult{Phases: append(setupPhases, correctnessPhase, heldPhase, freshPhase)}, err
+	}
+	if c.WorkerIndex == 0 {
+		if err := coordinator.waitLoadPhase(ctx, "finished"); err != nil {
+			return benchmarkResult{Phases: append(setupPhases, correctnessPhase, heldPhase, freshPhase)}, err
+		}
+		resources = append(resources, sampleBoundaryResources(ctx, c.MetricsURLs, "loaded")...)
+		if err := coordinator.loadPhase(ctx, "collected", c.WorkerIndex); err != nil {
+			return benchmarkResult{Phases: append(setupPhases, correctnessPhase, heldPhase, freshPhase)}, err
+		}
+	}
+	if err := coordinator.waitLoadPhase(ctx, "collected"); err != nil {
+		return benchmarkResult{Phases: append(setupPhases, correctnessPhase, heldPhase, freshPhase)}, err
+	}
 	closeHeldStreams(held)
 	heldClosed = true
 	saturated := freshPhase.Errors != 0 || (c.FreshRate > 0 && freshPhase.AchievedRate < 0.95*float64(c.FreshRate))
@@ -197,15 +230,14 @@ func (c loadCommand) execute(ctx context.Context, worker resultWorker, configura
 		recovery, err := c.runRecovery(ctx, hostnames)
 		recoveryPhase, recoveryErr = &recovery, err
 	}
-	resources = append(resources, sampleResources(ctx, c.MetricsURLs, "loaded")...)
 	phases := append(setupPhases, correctnessPhase, heldPhase, freshPhase)
 	if recoveryPhase != nil {
 		phases = append(phases, *recoveryPhase)
 	}
-	result := benchmarkResult{
+	result = benchmarkResult{
 		SchemaVersion: benchmarkResultSchemaVersion, CellID: c.CellID, Status: "passed", Suite: c.Suite,
 		Repetition: c.Repetition, Worker: worker, Configuration: configuration,
-		Phases: phases, Resources: resources,
+		Phases:  phases,
 		Cleanup: resultCleanup{Exact: true},
 	}
 	if freshPhase.Errors != 0 {

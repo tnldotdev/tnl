@@ -3,13 +3,15 @@ package main
 import (
 	"errors"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
+	"google.golang.org/protobuf/proto"
+
+	"github.com/tnldotdev/tnl/internal/observability"
 )
 
-const benchmarkResultSchemaVersion = 6
-
-var durationBucketBoundsMilliseconds = []float64{
-	1, 2, 5, 10, 20, 50, 100, 200, 500, 1_000, 2_000, 5_000, 10_000, 30_000, 60_000, 120_000,
-}
+const benchmarkResultSchemaVersion = 7
 
 type benchmarkResult struct {
 	SchemaVersion          int                  `json:"schema_version"`
@@ -76,12 +78,12 @@ type durationHistogram struct {
 }
 
 type resourceSample struct {
-	Role      string             `json:"role"`
-	Identity  string             `json:"identity"`
-	Moment    string             `json:"moment"`
-	Metrics   map[string]float64 `json:"metrics,omitempty"`
-	Error     string             `json:"error,omitempty"`
-	Timestamp time.Time          `json:"timestamp"`
+	Role      string              `json:"role"`
+	Identity  string              `json:"identity"`
+	Moment    string              `json:"moment"`
+	Metrics   []*dto.MetricFamily `json:"metrics,omitempty"`
+	Error     string              `json:"error,omitempty"`
+	Timestamp time.Time           `json:"timestamp"`
 }
 
 type resultCleanup struct {
@@ -127,20 +129,23 @@ func newDurationHistogram(samples []time.Duration) *durationHistogram {
 		return nil
 	}
 	histogram := &durationHistogram{
-		BoundsMilliseconds: append([]float64(nil), durationBucketBoundsMilliseconds...),
-		Counts:             make([]uint64, len(durationBucketBoundsMilliseconds)), Count: uint64(len(samples)),
 		MinimumMilliseconds: milliseconds(samples[0]), MaximumMilliseconds: milliseconds(samples[0]),
 	}
+	collector := prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name: "tnl_benchmark_duration_seconds", Buckets: observability.DurationBucketsSeconds(),
+	})
 	for _, sample := range samples {
 		value := milliseconds(sample)
-		histogram.SumMilliseconds += value
+		collector.Observe(sample.Seconds())
 		histogram.MinimumMilliseconds = min(histogram.MinimumMilliseconds, value)
 		histogram.MaximumMilliseconds = max(histogram.MaximumMilliseconds, value)
-		for index, bound := range histogram.BoundsMilliseconds {
-			if value <= bound {
-				histogram.Counts[index]++
-			}
-		}
+	}
+	var metric dto.Metric
+	_ = collector.Write(&metric)
+	histogram.Count, histogram.SumMilliseconds = metric.Histogram.GetSampleCount(), metric.Histogram.GetSampleSum()*1000
+	for _, bucket := range metric.Histogram.Bucket {
+		histogram.BoundsMilliseconds = append(histogram.BoundsMilliseconds, bucket.GetUpperBound()*1000)
+		histogram.Counts = append(histogram.Counts, bucket.GetCumulativeCount())
 	}
 	return histogram
 }
@@ -148,6 +153,9 @@ func newDurationHistogram(samples []time.Duration) *durationHistogram {
 func mergeDurationHistogram(destination **durationHistogram, source *durationHistogram) error {
 	if source == nil {
 		return nil
+	}
+	if _, err := visitorDurationSummary(source); err != nil {
+		return err
 	}
 	if *destination == nil {
 		copy := *source
@@ -173,17 +181,37 @@ func mergeDurationHistogram(destination **durationHistogram, source *durationHis
 	return nil
 }
 
-func histogramPercentile(histogram *durationHistogram, percentile int) float64 {
+func visitorDurationSummary(histogram *durationHistogram) (observability.DurationSummary, error) {
+	if len(histogram.BoundsMilliseconds) != len(histogram.Counts) {
+		return observability.DurationSummary{}, errors.New("histogram bounds and counts differ")
+	}
+	value := &dto.Histogram{SampleCount: proto.Uint64(histogram.Count), SampleSum: proto.Float64(histogram.SumMilliseconds / 1000)}
+	for index, bound := range histogram.BoundsMilliseconds {
+		value.Bucket = append(value.Bucket, &dto.Bucket{UpperBound: proto.Float64(bound / 1000), CumulativeCount: proto.Uint64(histogram.Counts[index])})
+	}
+	result, err := observability.DurationSummaries(nil, []*dto.MetricFamily{{
+		Name: proto.String("tnl_benchmark_duration_seconds"), Type: dto.MetricType_HISTOGRAM.Enum(), Metric: []*dto.Metric{{Histogram: value}},
+	}})
+	if err != nil {
+		return observability.DurationSummary{}, err
+	}
+	return result[0], nil
+}
+
+func histogramPercentile(histogram *durationHistogram, percentile int) *float64 {
 	if histogram == nil || histogram.Count == 0 {
-		return 0
+		return nil
 	}
-	rank := (histogram.Count*uint64(percentile) + 99) / 100
-	for index, count := range histogram.Counts {
-		if count >= rank {
-			return histogram.BoundsMilliseconds[index]
-		}
+	summary, err := visitorDurationSummary(histogram)
+	if err != nil {
+		return nil
 	}
-	return histogram.MaximumMilliseconds
+	value := map[int]*float64{50: summary.P50Seconds, 95: summary.P95Seconds, 99: summary.P99Seconds}[percentile]
+	if value == nil {
+		return nil
+	}
+	milliseconds := *value * 1000
+	return &milliseconds
 }
 
 func milliseconds(duration time.Duration) float64 {

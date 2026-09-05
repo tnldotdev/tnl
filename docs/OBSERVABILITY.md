@@ -45,9 +45,11 @@ the process role.
 ## Runtime Metrics
 
 - `tnl_control_requests_total{operation,outcome}` and
-  `tnl_control_request_duration_seconds{operation}` measure control API traffic.
+  `tnl_control_request_duration_seconds{operation,outcome}` measure control API traffic.
   Operations are matched method/path patterns, such as `POST /v1/routes`, and
-  outcomes are `success`, `client_error`, `server_error`, or `canceled`.
+  outcomes are `success`, `client_error`, `server_error`, `canceled`, or
+  `deadline_exceeded`. HTTP duration covers the handler, including authentication,
+  serialization, and any long-poll wait; it is not state-operation or SQL time.
 - `tnl_control_requests_in_flight{operation}` reports control requests still
   executing, including requests waiting on the database.
 - Control and standalone export `tnl_database_pool_max_connections`,
@@ -71,6 +73,57 @@ the process role.
   restricted to compiled sqlc names, transaction commands, or `unknown`.
   `tnl_database_operations_omitted` reports active operations beyond the
   bounded 64-operation tracker.
+- `tnl_database_query_duration_seconds{operation,outcome}` records completed
+  request-pool queries from driver start through completion, including row
+  consumption. It includes driver, network, pooler, and PostgreSQL work, but
+  excludes acquiring a local pool connection. Names use the same compiled sqlc,
+  transaction-command, or `unknown` labels as active operations.
+- `tnl_database_guard_held_duration_seconds{operation,outcome}` records the
+  driver-observed interval from the first successful guard-query completion in
+  a transaction through its commit, rollback, or observed connection failure.
+  Guards are `LockLocalTeamForSession`, `LockRelayServicesForPlacement`,
+  `GetRelayLeaseForClaim`, `GetRelayLeaseForReady`, `LockIngressRoutingTableClock`,
+  `InsertFinalIngressRoutingTableEvent`,
+  `LockRouteSessionForUsage`, and `LockIngressLease`. This excludes the acquiring
+  query's own wait and is **not exact PostgreSQL lock-held time**: acquisition
+  precedes the driver's response, and release precedes the transaction-ending
+  response. Outcome describes the ending command; a successful rollback is
+  `success` even when the enclosing application operation failed. Unfinished
+  windows whose sockets close without a final driver callback are discarded.
+  Single-event publication acquires the routing clock inside
+  `InsertFinalIngressRoutingTableEvent`, so that guard interval covers only the
+  remainder through commit; the query duration includes acquisition and insertion.
+  Multi-event publication also has an explicit `LockIngressRoutingTableClock`
+  interval. These windows can overlap and must not be summed as exclusive time.
+- `tnl_operation_duration_seconds{operation,outcome}` measures completed
+  application operations. Control operations are `CreateRouteSession`,
+  `HeartbeatRouteSession`, `ReadIngressRoutingTableSnapshot`,
+  `ReadIngressRoutingTableEvents`, `ReportIngressUsage`, `RenewIngress`,
+  `ClaimPublisherConnection`, and `MarkPublisherConnectionReady`. These span
+  validation, pool acquisition, SQL, and transaction cleanup; they exclude HTTP
+  handling and long-poll idle waits outside the state method. Ingress operations
+  are `IngressFetchSnapshot`, `IngressFetchEvents`, `IngressRenewLease`,
+  `IngressApplySnapshot`, and `IngressApplyEvents`. Fetch timings are client
+  request spans, so event fetches include normal long-poll idle time; apply
+  timings measure local routing-table work separately. Application and SQL
+  outcomes are `success`, `error`, `canceled`, or `deadline_exceeded`.
+- Relay and standalone also record application durations for `RelayRegister`
+  and `RelayRenewLease` (control call plus lease validation), `RelayBeginDrain`
+  (control's drain acknowledgement), and `RelayDrain` (one local registry drain
+  call through completion or cancellation). Registration excludes certificate
+  fetching and retry backoff; local drain timing excludes the control request.
+- `RelayAdmitPublisherConnection` starts with an established multiplexed
+  transport and ends when authentication, claiming, local registration, and
+  readiness complete or fail. It excludes the transport's TLS/QUIC handshake,
+  failure cleanup, and the long-lived publisher connection's lifetime.
+- `RelayOpenVisitorStream` starts after parsing an authenticated internal
+  forwarding header and ends on rejection/error or acknowledgement back to
+  ingress after the publisher accepts its stream. It includes local capacity and
+  assignment checks and publisher-stream opening; it excludes route TLS,
+  application response time, and subsequent byte copying. A successfully sent
+  rejection is recorded as `error`, with capacity rejections also counted by the
+  existing resource counter. Completed open/admission metrics are observable
+  while their streams/connections remain active.
 - `tnl_relay_leases{state}` reports active and draining local relay leases. A
   standalone process reports both of its logical relay services.
 - `tnl_publisher_connections{state}` reports publisher connections by state.
@@ -94,6 +147,65 @@ internal details.
 Prometheus collection uses only process-local memory and never opens a database
 connection. This keeps `/metrics` available during pool exhaustion and avoids
 adding PostgreSQL or PgBouncer pressure during a failure.
+
+### Duration Distributions
+
+All duration histograms use seconds with finite boundaries at `0.001`, `0.0025`,
+`0.005`, `0.01`, `0.025`, `0.05`, `0.1`, `0.25`, `0.5`, `1`, `2.5`, `5`, `10`,
+`20`, `30`, `60`, and `120`, plus the standard `+Inf` bucket. Completed failures
+are included under their own outcome, including timeouts waiting for a pool slot.
+Still-running requests appear in in-flight or active-query metrics, not completed
+duration histograms.
+
+Local controlstate load tests and benchmark reporting consume these production
+histograms. Before/after cumulative count, sum, and bucket differences give the
+interval's count, total, mean, and estimated p50/p95/p99. Quantiles interpolate
+within buckets; they are unavailable for empty samples or the unbounded bucket.
+No exact maximum is inferred from buckets. Reports retain each control process's
+registry separately; percentiles must never be averaged across controls.
+
+Local load capture excludes fixture setup and cleanup, joins actors before the
+final capture, and retains failed operations in ordinary test logs. Workload
+counts, correctness checks, setup time, and recovery workflow wall time stay
+test-local. The optional artificial SQL delay composes with the production
+tracer: each query excludes its own injected delay, while guard intervals include
+earlier delays in the transaction. Hostname lookup uses the production HTTP
+handler histogram.
+
+Benchmarks use the standard Prometheus text parser and the same histogram
+summary helper as local load tests. All load workers finish setup before the
+baseline metrics scrape and wait for that scrape before starting fresh traffic.
+They all finish fresh traffic before the final scrape, and wait for collection
+before recovery or cleanup. Activation intervals currently bracket the
+metrics-owning publisher worker's activation, rather than a synchronized fleet
+activation barrier. Reports retain before/final samples outside the bounded
+periodic window and mark missing data, counter resets, or restart intervals as
+incomplete. Visitor-side DNS, connection, TLS, first-byte, and total durations
+retain their distinct observation points, sharing histogram buckets/reporting;
+their directly observed maxima are not inferred from histogram buckets.
+
+### Ingress Routing Freshness
+
+Ingress and standalone expose passive routing-controller metrics:
+
+- `tnl_ingress_routing_initialized` indicates an applied snapshot.
+- `tnl_ingress_routing_caught_up` indicates that the last successful event response
+  confirmed catch-up; failures or a resnapshot requirement clear it.
+- `tnl_ingress_routing_last_successful_check_timestamp_seconds` records the last
+  successfully applied snapshot or event response, including empty responses.
+- `tnl_ingress_routing_last_caught_up_timestamp_seconds` records the last event
+  response confirming catch-up. Both timestamps are zero before their first event.
+- `tnl_ingress_routing_latest_observed_revision`,
+  `tnl_ingress_routing_applied_revision`, and
+  `tnl_ingress_routing_known_revision_backlog` report observed progress.
+- `tnl_ingress_routing_update_failures_total` counts fetch/apply failures, excluding
+  controller shutdown cancellation and resnapshot-required responses.
+  `tnl_ingress_routing_resnapshots_total` counts resnapshot-required responses.
+
+These describe successful responses, not control's live revision while a request
+is pending. Zero known backlog or a previous catch-up confirmation does not prove
+current freshness. Monitor the check timestamp's age alongside failures and
+backlog; lease readiness alone does not establish routing freshness.
 
 ## Database Failure Snapshots
 

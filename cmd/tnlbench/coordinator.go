@@ -56,6 +56,8 @@ type coordinatorState struct {
 	loadDoneOnce        sync.Once
 	abortedOnce         sync.Once
 	failure             string
+	loadPhases          map[string]map[int]struct{}
+	loadPhaseWait       map[string]chan struct{}
 }
 
 type coordinatorStatus struct {
@@ -77,11 +79,18 @@ type benchmarkRouteRegistration struct {
 }
 
 func newCoordinatorState(cellID string, publishers, load, routes int) *coordinatorState {
-	return &coordinatorState{
+	state := &coordinatorState{
 		cellID: cellID, publisherWorkers: publishers, loadWorkers: load, routeCount: routes,
 		publishersReady: make(map[int]struct{}), routes: make(map[int]string), results: make(map[string]benchmarkResult),
 		publishersReadyWait: make(chan struct{}), loadDoneWait: make(chan struct{}), abortedWait: make(chan struct{}),
 	}
+	state.loadPhases = make(map[string]map[int]struct{})
+	state.loadPhaseWait = make(map[string]chan struct{})
+	for _, phase := range []string{"prepared", "started", "finished", "collected"} {
+		state.loadPhases[phase] = make(map[int]struct{})
+		state.loadPhaseWait[phase] = make(chan struct{})
+	}
+	return state
 }
 
 func (c coordinatorCommand) run(ctx context.Context) error {
@@ -108,6 +117,8 @@ func coordinatorHandler(token string, state *coordinatorState) http.Handler {
 	mux.HandleFunc("GET /v1/wait/publishers", state.handleWaitPublishers)
 	mux.HandleFunc("GET /v1/routes", state.handleRoutes)
 	mux.HandleFunc("GET /v1/wait/load", state.handleWaitLoad)
+	mux.HandleFunc("POST /v1/load/{phase}", state.handleLoadPhase)
+	mux.HandleFunc("GET /v1/wait/load/{phase}", state.handleWaitLoadPhase)
 	mux.HandleFunc("POST /v1/results", state.handleResult)
 	mux.HandleFunc("GET /v1/results", state.handleResults)
 	mux.HandleFunc("GET /v1/status", state.handleStatus)
@@ -214,6 +225,59 @@ func (s *coordinatorState) handleWaitPublishers(response http.ResponseWriter, re
 
 func (s *coordinatorState) handleWaitLoad(response http.ResponseWriter, request *http.Request) {
 	s.wait(response, request, s.loadDoneWait)
+}
+
+// All workers finish setup before the baseline scrape. None starts recovery or
+// teardown until every fresh workload has finished and the final scrape is done.
+func (s *coordinatorState) handleLoadPhase(response http.ResponseWriter, request *http.Request) {
+	index, ok := workerIndex(response, request, s.loadWorkers)
+	if !ok {
+		return
+	}
+	phase := request.PathValue("phase")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	arrived, ok := s.loadPhases[phase]
+	if !ok {
+		http.Error(response, "invalid load phase", http.StatusBadRequest)
+		return
+	}
+	if s.failure != "" {
+		http.Error(response, boundedCoordinatorFailure(s.failure), http.StatusConflict)
+		return
+	}
+	if _, duplicate := arrived[index]; duplicate {
+		response.WriteHeader(http.StatusNoContent)
+		return
+	}
+	valid, required := true, s.loadWorkers
+	switch phase {
+	case "started":
+		valid, required = index == 0 && len(s.loadPhases["prepared"]) == s.loadWorkers, 1
+	case "finished":
+		valid = len(s.loadPhases["started"]) == 1
+	case "collected":
+		valid, required = index == 0 && len(s.loadPhases["finished"]) == s.loadWorkers, 1
+	}
+	if !valid {
+		http.Error(response, "load phase is not ready or worker is not its owner", http.StatusConflict)
+		return
+	}
+	arrived[index] = struct{}{}
+	if len(arrived) == required {
+		close(s.loadPhaseWait[phase])
+	}
+	response.WriteHeader(http.StatusNoContent)
+}
+
+func (s *coordinatorState) handleWaitLoadPhase(response http.ResponseWriter, request *http.Request) {
+	// Channels are installed at construction and never replaced.
+	ready, ok := s.loadPhaseWait[request.PathValue("phase")]
+	if !ok {
+		http.Error(response, "invalid load phase", http.StatusBadRequest)
+		return
+	}
+	s.wait(response, request, ready)
 }
 
 func (s *coordinatorState) wait(response http.ResponseWriter, request *http.Request, ready <-chan struct{}) {
@@ -402,6 +466,14 @@ func (c *coordinatorClient) waitPublishers(ctx context.Context) error {
 
 func (c *coordinatorClient) waitLoad(ctx context.Context) error {
 	return c.do(ctx, http.MethodGet, "/v1/wait/load", nil, http.StatusNoContent)
+}
+
+func (c *coordinatorClient) loadPhase(ctx context.Context, phase string, index int) error {
+	return c.do(ctx, http.MethodPost, "/v1/load/"+phase+"?index="+strconv.Itoa(index), nil, http.StatusNoContent)
+}
+
+func (c *coordinatorClient) waitLoadPhase(ctx context.Context, phase string) error {
+	return c.do(ctx, http.MethodGet, "/v1/wait/load/"+phase, nil, http.StatusNoContent)
 }
 
 func (c *coordinatorClient) routes(ctx context.Context) ([]string, error) {

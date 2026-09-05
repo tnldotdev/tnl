@@ -124,7 +124,6 @@ func (c publisherCommand) run(parent context.Context) error {
 	if c.WorkerIndex != 0 {
 		c.MetricsURLs = nil
 	}
-	resources := sampleResources(ctx, c.MetricsURLs, "before_activation")
 	sampler := startResourceSampler(context.WithoutCancel(ctx), c.MetricsURLs, 5*time.Second)
 	defer sampler.Stop()
 	failure := &failureCapture{ctx: ctx, metricsURLs: failureMetricsURLs, diagnosticURLs: c.DiagnosticURLs}
@@ -137,9 +136,9 @@ func (c publisherCommand) run(parent context.Context) error {
 		partial := result
 		result = failedResult(c.CellID, c.Suite, c.Repetition, worker, configuration, started, runErr)
 		result.Phases = append(partial.Phases, result.Phases...)
+		result.Resources = partial.Resources
 	}
-	resources = append(resources, sampler.Stop()...)
-	result.Resources = append(resources, result.Resources...)
+	result.Resources = append(result.Resources, sampler.Stop()...)
 	result.Resources = append(result.Resources, failure.resources...)
 	result.DroppedResourceSamples = sampler.dropped
 	result.DatabaseDiagnostics = failure.diagnostics
@@ -194,7 +193,6 @@ func (c publisherCommand) execute(ctx context.Context, worker resultWorker, conf
 	}))
 	defer origin.Close()
 
-	activationStarted := time.Now().UTC()
 	routeSpecs, stateDatabases, err := prepareBenchmarkRoutes(
 		ctx, c, controlHTTP, anonymousAuthority, discovery.AuthorityEndpoint,
 		benchmarkRouteIndexes(c.Routes, c.RoutesPerPublisher, c.WorkerCount, c.WorkerIndex),
@@ -207,18 +205,21 @@ func (c publisherCommand) execute(ctx context.Context, worker resultWorker, conf
 			_ = database.Close()
 		}
 	}()
+	resources := sampleBoundaryResources(ctx, c.MetricsURLs, "before_activation")
+	defer func() { result.Resources = append(resources, result.Resources...) }()
+	activationStarted := time.Now().UTC()
 	processes, activation, err := activateRoutes(
 		ctx, c, &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: controlRoots}, origin.URL, routeSpecs,
 	)
+	activationElapsed := time.Since(activationStarted)
+	activationPhase := activationResult("activation", activationStarted, processes, activation, err)
+	resources = append(resources, sampleBoundaryResources(ctx, c.MetricsURLs, "activated")...)
 	if err != nil {
-		phase := activationResult("activation", activationStarted, processes, activation, err)
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cleanupCancel()
 		shutdown, stopErr := stopRoutes(cleanupCtx, processes, c.Parallel, c.onFailure)
-		return benchmarkResult{Phases: []phaseResult{phase, shutdown}}, errors.Join(err, stopErr)
+		return benchmarkResult{Phases: []phaseResult{activationPhase, shutdown}}, errors.Join(err, stopErr)
 	}
-	activationElapsed := time.Since(activationStarted)
-	activationPhase := activationResult("activation", activationStarted, processes, activation, nil)
 	cleaned := false
 	defer func() {
 		if !cleaned {
@@ -264,7 +265,6 @@ func (c publisherCommand) execute(ctx context.Context, worker resultWorker, conf
 			Attempts:             len(warmup), Successes: len(warmup), Total: newDurationHistogram(warmup),
 		}
 	}
-	resources := sampleResources(ctx, c.MetricsURLs, "ready")
 	registrations := make([]benchmarkRouteRegistration, 0, len(processes))
 	for _, process := range processes {
 		if process != nil {
@@ -291,7 +291,6 @@ func (c publisherCommand) execute(ctx context.Context, worker resultWorker, conf
 	if workloadErr != nil && c.onFailure != nil {
 		c.onFailure()
 	}
-	resources = append(resources, sampleResources(ctx, c.MetricsURLs, "loaded")...)
 	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	teardown, cleanupErr := stopRoutes(cleanupCtx, processes, c.Parallel, c.onFailure)
 	cleanupCancel()
@@ -316,7 +315,7 @@ func (c publisherCommand) execute(ctx context.Context, worker resultWorker, conf
 	}
 	result = benchmarkResult{
 		SchemaVersion: benchmarkResultSchemaVersion, CellID: c.CellID, Status: "passed", Suite: c.Suite,
-		Repetition: c.Repetition, Worker: worker, Configuration: configuration, Resources: resources,
+		Repetition: c.Repetition, Worker: worker, Configuration: configuration,
 		Phases:  phases,
 		Cleanup: resultCleanup{RoutesRetained: retainedRoutes, Exact: cleanupErr == nil},
 	}

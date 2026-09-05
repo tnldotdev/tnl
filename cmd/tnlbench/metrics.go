@@ -6,14 +6,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	dto "github.com/prometheus/client_model/go"
+
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/observability"
 )
 
 func sampleResources(ctx context.Context, rawURLs []string, moment string) []resourceSample {
@@ -26,7 +29,7 @@ func sampleResources(ctx context.Context, rawURLs []string, moment string) []res
 			identity := rawURL
 			role := "unknown"
 			if parsed, err := url.Parse(rawURL); err == nil {
-				identity = parsed.Hostname()
+				identity = parsed.Host
 				role = metricRole(parsed.Fragment)
 			}
 			if role == "unknown" {
@@ -37,11 +40,15 @@ func sampleResources(ctx context.Context, rawURLs []string, moment string) []res
 			if err != nil {
 				sample.Error = err.Error()
 			} else {
-				sample.Metrics = make(map[string]float64)
-				for name, value := range values {
+				for _, family := range values {
+					name := family.GetName()
 					if strings.HasPrefix(name, "tnl_") || strings.HasPrefix(name, "process_") || name == "go_goroutines" {
-						sample.Metrics[name] = value
+						sample.Metrics = append(sample.Metrics, family)
 					}
+				}
+				if _, err := json.Marshal(sample.Metrics); err != nil {
+					sample.Metrics = nil
+					sample.Error = "metrics contain nonfinite values"
 				}
 			}
 			result[index] = sample
@@ -61,16 +68,28 @@ type resourceSampler struct {
 
 // Failure snapshots fit beside the bounded periodic window in one result body.
 func sampleFailureResources(ctx context.Context, endpoints []string) []resourceSample {
-	samples := sampleResources(context.WithoutCancel(ctx), endpoints[:min(len(endpoints), 16)], "failure")
-	remaining := 512 << 10
+	return sampleBoundaryResources(ctx, endpoints, "failure")
+}
+
+// Boundary samples live outside the evictable periodic window. Oversized or
+// failed scrapes retain an explicit error in place of an apparent zero baseline.
+func sampleBoundaryResources(ctx context.Context, endpoints []string, moment string) []resourceSample {
+	samples := sampleResources(context.WithoutCancel(ctx), endpoints[:min(len(endpoints), 16)], moment)
+	remaining := 192 << 10
 	for index := range samples {
 		data, err := json.Marshal(samples[index])
 		if err != nil || len(data) > remaining {
 			samples[index].Metrics = nil
-			samples[index].Error = "failure metrics payload limit exceeded"
+			samples[index].Error = "boundary metrics payload limit exceeded"
 		} else {
 			remaining -= len(data)
 		}
+	}
+	if len(endpoints) > 16 {
+		samples = append(samples, resourceSample{
+			Role: "unknown", Identity: "omitted", Moment: moment, Timestamp: time.Now().UTC(),
+			Error: fmt.Sprintf("%d metrics endpoints exceed the 16-process snapshot limit", len(endpoints)-16),
+		})
 	}
 	return samples
 }
@@ -81,7 +100,7 @@ func startResourceSampler(parent context.Context, rawURLs []string, interval tim
 	go func() {
 		var samples []resourceSample
 		var sizes []int
-		bytes := 0
+		bytes := 2 // JSON array brackets; sample sizes also reserve separators.
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		sequence := 0
@@ -97,11 +116,11 @@ func startResourceSampler(parent context.Context, rawURLs []string, interval tim
 				sequence++
 				for _, sample := range sampleResources(parent, rawURLs, fmt.Sprintf("sample-%06d", sequence)) {
 					data, _ := json.Marshal(sample)
-					samples, sizes = append(samples, sample), append(sizes, len(data))
-					bytes += len(data)
+					samples, sizes = append(samples, sample), append(sizes, len(data)+1)
+					bytes += len(data) + 1
 					// Keep the most recent window within the coordinator's result-body
 					// limit, leaving room for boundary samples and diagnostics.
-					for bytes > 1<<20 && len(samples) > 0 {
+					for bytes > 512<<10 && len(samples) > 0 {
 						bytes -= sizes[0]
 						samples, sizes = samples[1:], sizes[1:]
 						sampler.dropped++
@@ -133,16 +152,18 @@ func metricRole(identity string) string {
 	return "unknown"
 }
 
-func sampleMetrics(ctx context.Context, metricsURL string) (map[string]float64, error) {
+func sampleMetrics(ctx context.Context, metricsURL string) ([]*dto.MetricFamily, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, metricsURL, nil)
 	if err != nil {
 		return nil, err
 	}
+	request.Header.Set("Accept", "text/plain; version=0.0.4")
 	response, err := (&http.Client{Timeout: 5 * time.Second}).Do(request)
 	if err != nil {
 		return nil, err
 	}
-	body, readErr := io.ReadAll(io.LimitReader(response.Body, 2<<20))
+	const limit = 2 << 20
+	body, readErr := io.ReadAll(io.LimitReader(response.Body, limit+1))
 	closeErr := response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("HTTP %d", response.StatusCode)
@@ -150,26 +171,28 @@ func sampleMetrics(ctx context.Context, metricsURL string) (map[string]float64, 
 	if readErr != nil || closeErr != nil {
 		return nil, errors.Join(readErr, closeErr)
 	}
-	return parseMetrics(string(body)), nil
-}
-
-func parseMetrics(body string) map[string]float64 {
-	values := make(map[string]float64)
-	for line := range strings.SplitSeq(body, "\n") {
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		// Labels can contain spaces (for example a matched HTTP route pattern).
-		separator := strings.LastIndexByte(line, ' ')
-		if separator < 0 {
-			continue
-		}
-		value, err := strconv.ParseFloat(line[separator+1:], 64)
-		if err == nil {
-			values[line[:separator]] = value
+	if len(body) > limit {
+		return nil, errors.New("metrics response exceeds 2 MiB")
+	}
+	families, err := observability.ParseMetrics(strings.NewReader(string(body)))
+	if err != nil {
+		return nil, err
+	}
+	// Gather represents +Inf with sample_count. Use that same JSON-safe form.
+	for _, family := range families {
+		for _, metric := range family.Metric {
+			if histogram := metric.Histogram; histogram != nil {
+				buckets := histogram.Bucket
+				if len(buckets) > 0 && math.IsInf(buckets[len(buckets)-1].GetUpperBound(), 1) {
+					if buckets[len(buckets)-1].GetCumulativeCount() != histogram.GetSampleCount() {
+						return nil, errors.New("infinite histogram bucket differs from sample count")
+					}
+					histogram.Bucket = buckets[:len(buckets)-1]
+				}
+			}
 		}
 	}
-	return values
+	return families, nil
 }
 
 type databaseDiagnostic struct {

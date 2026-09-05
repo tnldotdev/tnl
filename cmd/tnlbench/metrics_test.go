@@ -3,15 +3,21 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	dto "github.com/prometheus/client_model/go"
+
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/observability"
 )
 
 func TestSampleResourcesUsesRoleMetadataWithoutSendingFragment(t *testing.T) {
@@ -24,7 +30,7 @@ func TestSampleResourcesUsesRoleMetadataWithoutSendingFragment(t *testing.T) {
 
 	samples := sampleResources(t.Context(), []string{server.URL + "/metrics#relay-a"}, "loaded")
 	if len(samples) != 1 || samples[0].Role != "relay" || samples[0].Identity == "" ||
-		samples[0].Metrics["process_resident_memory_bytes"] != 1024 || len(samples[0].Metrics) != 1 {
+		metricValueForTest(samples[0], "process_resident_memory_bytes") != 1024 || len(samples[0].Metrics) != 1 {
 		t.Fatalf("resource samples = %#v", samples)
 	}
 	if requestedFragment != "" {
@@ -34,8 +40,9 @@ func TestSampleResourcesUsesRoleMetadataWithoutSendingFragment(t *testing.T) {
 
 func TestMetricsParserKeepsLabelsContainingSpaces(t *testing.T) {
 	name := `tnl_control_requests_total{operation="POST /v1/routes",outcome="success"}`
-	values := parseMetrics(name + " 3\n")
-	if values[name] != 3 {
+	values := metricsForTest(name + " 3 12345\n")
+	if len(values) != 1 || values[0].Metric[0].GetUntyped().GetValue() != 3 ||
+		values[0].Metric[0].Label[0].GetValue() != "POST /v1/routes" || values[0].Metric[0].GetTimestampMs() != 12345 {
 		t.Fatalf("metrics=%v", values)
 	}
 }
@@ -69,7 +76,7 @@ func TestNonzeroFailedPublisherCollectsFailureMetricsWithoutRoutineMetrics(t *te
 		t.Fatal(err)
 	}
 	if result.Failure.Stage != "setup" || len(result.Resources) != 1 || result.Resources[0].Moment != "failure" ||
-		result.Resources[0].Metrics["tnl_database_pool_acquired_connections"] != 4 || len(result.DatabaseDiagnostics) != 1 ||
+		metricValueForTest(result.Resources[0], "tnl_database_pool_acquired_connections") != 4 || len(result.DatabaseDiagnostics) != 1 ||
 		result.DatabaseDiagnostics[0].Snapshot.Sessions[0].WaitType != "Lock" ||
 		result.DatabaseDiagnostics[0].Snapshot.Sessions[0].TransactionAgeSeconds != nil {
 		t.Fatalf("result=%+v", result)
@@ -126,7 +133,7 @@ func TestResourceSamplerBoundsPayload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(data) > 1<<20 {
+	if len(data) > 512<<10 {
 		t.Fatalf("retained %d telemetry bytes", len(data))
 	}
 }
@@ -148,7 +155,136 @@ func TestStoppingResourceSamplerDoesNotCancelInFlightSample(t *testing.T) {
 	go func() { done <- sampler.Stop() }()
 	close(release)
 	samples := <-done
-	if len(samples) != 1 || samples[0].Error != "" || samples[0].Metrics["process_cpu_seconds_total"] != 1 {
+	if len(samples) != 1 || samples[0].Error != "" || metricValueForTest(samples[0], "process_cpu_seconds_total") != 1 {
 		t.Fatalf("samples = %#v", samples)
+	}
+}
+
+func metricsForTest(text string) []*dto.MetricFamily {
+	metrics, err := observability.ParseMetrics(strings.NewReader(text))
+	if err != nil {
+		panic(err)
+	}
+	return metrics
+}
+
+func metricValueForTest(sample resourceSample, name string) float64 {
+	value, _ := scalarMetric(sample.Metrics, name)
+	return value
+}
+
+func TestProductionMetricsRoundTripSummarizesWorkloadOnly(t *testing.T) {
+	metrics := observability.New("control")
+	server := httptest.NewServer(metrics.Handler())
+	defer server.Close()
+	endpoints := []string{server.URL + "/metrics#control"}
+	metrics.ObserveOperation("HeartbeatRouteSession", nil, time.Second) // Setup.
+	resources := sampleBoundaryResources(t.Context(), endpoints, "ready")
+	for range 3 {
+		metrics.ObserveOperation("HeartbeatRouteSession", nil, 10*time.Millisecond)
+	}
+	metrics.ObserveOperation("HeartbeatRouteSession", errors.New("failed"), 3*time.Minute)
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	resources = append(resources, sampleBoundaryResources(canceled, endpoints, "loaded")...)
+	metrics.ObserveOperation("HeartbeatRouteSession", nil, time.Hour) // Cleanup.
+	encoded, err := json.Marshal(resources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded []resourceSample
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	reports := serverDurationReports(decoded)
+	if len(reports) != 1 || !reports[0].Complete || reports[0].Error != "" || len(reports[0].Durations) != 2 {
+		t.Fatalf("intervals = %+v; samples = %+v", reports, decoded)
+	}
+	for _, summary := range reports[0].Durations {
+		if summary.Labels["outcome"] == "success" {
+			if summary.Count != 3 || math.Abs(summary.SumSeconds-0.03) > 1e-9 || summary.P95Seconds == nil ||
+				math.Abs(*summary.P95Seconds-0.00975) > 1e-9 {
+				t.Fatalf("setup or cleanup contaminated summary: %+v", summary)
+			}
+		} else if summary.Count != 1 || summary.SumSeconds != 180 || summary.P95Seconds != nil {
+			t.Fatalf("overflow error observations = %+v", summary)
+		}
+	}
+	text := formatReportMarkdown(benchmarkReport{Cells: []cellReport{{ServerDurations: reports}}})
+	for _, want := range []string{"approximate histogram", "HeartbeatRouteSession", "complete: true", "n/a"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("markdown missing %q: %s", want, text)
+		}
+	}
+}
+
+func TestMetricsScrapeRejectsMalformedAndOversizedPayloads(t *testing.T) {
+	for name, body := range map[string]string{
+		"invalid":                 "tnl_broken{label=broken} 1\n",
+		"oversized":               "# " + strings.Repeat("x", 2<<20) + "\n",
+		"nonfinite":               "tnl_broken NaN\n",
+		"invalid infinite bucket": "# TYPE tnl_duration_seconds histogram\ntnl_duration_seconds_bucket{le=\"+Inf\"} 1\ntnl_duration_seconds_count 2\ntnl_duration_seconds_sum 3\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(body)) }))
+			defer server.Close()
+			samples := sampleResources(t.Context(), []string{server.URL}, "ready")
+			if len(samples) != 1 || samples[0].Error == "" || len(samples[0].Metrics) != 0 {
+				t.Fatalf("invalid scrape reported as data: %+v", samples)
+			}
+		})
+	}
+}
+
+func TestPeriodicEvictionPreservesProductionMeasurementBoundaries(t *testing.T) {
+	metrics := observability.New("control")
+	metrics.ObserveOperation("CreateRouteSession", nil, time.Millisecond)
+	var large atomic.Bool
+	requests := make(chan struct{}, 8)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if large.Load() {
+			_, _ = w.Write([]byte("tnl_sample{label=\"" + strings.Repeat("x", 600<<10) + "\"} 1\n"))
+			select {
+			case requests <- struct{}{}:
+			default:
+			}
+			return
+		}
+		metrics.Handler().ServeHTTP(w, r)
+	}))
+	defer server.Close()
+	endpoints := []string{server.URL + "#control"}
+	samples := sampleBoundaryResources(t.Context(), endpoints, "before_activation")
+	large.Store(true)
+	sampler := startResourceSampler(t.Context(), endpoints, time.Millisecond)
+	defer sampler.Stop()
+	for range 3 {
+		select {
+		case <-requests:
+		case <-time.After(time.Second):
+			t.Fatal("sampler stalled")
+		}
+	}
+	samples = append(samples, sampler.Stop()...)
+	large.Store(false)
+	metrics.ObserveOperation("CreateRouteSession", nil, 2*time.Millisecond)
+	samples = append(samples, sampleBoundaryResources(t.Context(), endpoints, "activated")...)
+	if sampler.dropped == 0 {
+		t.Fatal("test did not evict periodic samples")
+	}
+	reports := serverDurationReports(samples)
+	if len(reports) != 1 || !reports[0].Complete || len(reports[0].Durations) != 1 || reports[0].Durations[0].Count != 1 {
+		t.Fatalf("eviction affected boundaries: %+v", reports)
+	}
+}
+
+func TestBoundaryPayloadLimitIsExplicit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("tnl_sample{label=\"" + strings.Repeat("x", 200<<10) + "\"} 1\n"))
+	}))
+	defer server.Close()
+	samples := sampleBoundaryResources(t.Context(), []string{server.URL}, "ready")
+	if len(samples) != 1 || samples[0].Error != "boundary metrics payload limit exceeded" || samples[0].Metrics != nil {
+		t.Fatalf("oversized boundary disappeared: %+v", samples)
 	}
 }

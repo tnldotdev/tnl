@@ -74,12 +74,12 @@ func TestDatabaseDiagnosticMaximumShapeRoundTrip(t *testing.T) {
 		}
 	}
 	// Keep the existing 2 MiB coordinator budget: eight maximum-shaped snapshots
-	// fit alongside nearly full 1 MiB periodic and 512 KiB failure metric windows.
+	// fit alongside the periodic window, both boundaries, and a failure snapshot.
 	result := passedTestResult(resultWorker{Kind: "load", Index: 0, Count: 1})
 	result.DatabaseDiagnostics = diagnostics
-	for _, budget := range []int{1 << 20, 512 << 10} {
+	for _, budget := range []int{512 << 10, 192 << 10, 192 << 10, 192 << 10} {
 		sample := resourceSample{Role: "control", Identity: "control.internal", Moment: "failure", Timestamp: now,
-			Metrics: map[string]float64{"tnl_" + strings.Repeat("x", budget-1024): 1},
+			Metrics: metricsForTest("tnl_" + strings.Repeat("x", budget-1024) + " 1\n"),
 		}
 		encodedSample, err := json.Marshal(sample)
 		if err != nil || len(encodedSample) > budget {
