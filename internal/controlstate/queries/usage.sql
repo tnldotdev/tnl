@@ -62,6 +62,12 @@ WHERE route_id = sqlc.arg(route_id)
   AND route_version = sqlc.arg(route_version)
 FOR UPDATE;
 
+-- name: LockRouteForUsage :one
+SELECT id
+FROM control.routes
+WHERE id = sqlc.arg(route_id)
+FOR KEY SHARE;
+
 -- name: GetRouteUsageBucketForUpdate :one
 SELECT *
 FROM control.route_usage_buckets

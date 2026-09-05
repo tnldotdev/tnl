@@ -154,6 +154,11 @@ func applyIngressUsageReport(
 ) error {
 	routeVersion, _ := positiveInt64(report.RouteVersion)
 	reportRevision, _ := positiveInt64(report.ReportRevision)
+	if _, err := queries.LockRouteForUsage(ctx, report.RouteID); errors.Is(err, pgx.ErrNoRows) {
+		return ErrIngressUsageRouteNotFound
+	} else if err != nil {
+		return fmt.Errorf("controlstate: report ingress usage: lock route: %w", err)
+	}
 	if _, err := queries.LockRouteSessionForUsage(ctx, controlstatedb.LockRouteSessionForUsageParams{
 		RouteID: report.RouteID, RouteVersion: routeVersion,
 	}); errors.Is(err, pgx.ErrNoRows) {
