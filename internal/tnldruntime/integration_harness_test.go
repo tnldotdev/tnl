@@ -47,6 +47,11 @@ const testLoginToken = "tnl_login_AAECAwQFBgcICQoLDA0ODw.EBESExQVFhcYGRobHB0eHyA
 const testClusterSecret = "0123456789abcdef0123456789abcdef"
 const testStorageKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 
+var issuedIntegrationTCPAddresses = struct {
+	sync.Mutex
+	addresses map[string]struct{}
+}{addresses: make(map[string]struct{})}
+
 type integrationProcessOptions struct {
 	acmeHTTPClient    *http.Client
 	serviceHTTPClient *http.Client
@@ -563,15 +568,25 @@ func integrationPort(t *testing.T, address string) int {
 
 func unusedTCPAddress(t *testing.T) string {
 	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	for {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		address := listener.Addr().String()
+		issuedIntegrationTCPAddresses.Lock()
+		_, issued := issuedIntegrationTCPAddresses.addresses[address]
+		if !issued {
+			issuedIntegrationTCPAddresses.addresses[address] = struct{}{}
+		}
+		issuedIntegrationTCPAddresses.Unlock()
+		if err := listener.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if !issued {
+			return address
+		}
 	}
-	address := listener.Addr().String()
-	if err := listener.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return address
 }
 
 func unusedUDPAddress(t *testing.T) string {
