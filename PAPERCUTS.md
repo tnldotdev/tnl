@@ -1,5 +1,28 @@
 # Papercuts
 
+- Recovery validation's runtime integration retry hit the existing ACME work-lease-stale startup failure in `TestIntegrationSplitPublishAndVisit`, leaving its order authorizing until the readiness deadline. Preserve that log and check isolated retries separately from recovery measurements.
+
+- The short delayed recovery trial passed after narrowing assignment/readiness locks, but the ten-minute trial exposed a later usage deadline behind the routing clock. Single-event publication now acquires that clock inside the final insert; the contention fixture's expected active query was updated to that command while retaining its controlled clock blocker.
+
+- A manually assembled race-load command had a malformed disposable PostgreSQL URL and used `TNL_TEST_LOAD_QUERY_DELAY` instead of `TNL_TEST_LOAD_DELAY`. The first run stopped at authentication; the corrected command supplies the same delay variable as the load task.
+
+- Paced recovery queued behind two unnecessary exclusive boundaries: releasing/reallocating a same-service reservation, then retaining the claim-capacity lease lock through readiness publication. Controlled blockers reproduced both; atomic reservation reuse and compatible claim/readiness lease locks remove those queues without increasing pools or deadlines.
+
+- The expiry/placement lock-order regression used a stale ready slot to force placement; reservation reuse now legitimately bypasses that path. Its fixture now uses a closed slot needing a new reservation and extends its 48-hour lease to require publication, preserving the original allocation-order check.
+
+- Full race validation intermittently saw EOF while closing the forwarding test fixture after its server's test context had already been canceled. The cleanup helper now treats that normal peer-close outcome like a closed multiplexed session.
+
+- Paced failure tests exposed recovery backlog that the fixed-workload tests could hide: work waited almost ten seconds before short database calls exhausted the remaining heartbeat budget. Keep scheduler waiting separate from production operation latency, and distinguish the test's ten-second usage-checkpoint budget from the production per-request timeout.
+
+- The first paced usage check replayed real nanosecond timestamps and hit false report conflicts because PostgreSQL had stored only microseconds. Replay comparison now uses PostgreSQL timestamp precision; the regression still rejects changes of one stored microsecond and checks that totals are not doubled.
+
+- Final integration review found two stale fixtures: the usage replay test relied on the session guard remaining `FOR UPDATE`, and the upgrade test compared whole-row JSON after adding a derived eligibility column. The fixtures now request the intended blocking lock explicitly and separately validate the new derived field while preserving the original material comparison.
+
+- Review found that server workload metrics initially bracketed only load worker zero, allowing other workers' setup or cleanup to overlap. The coordinator now gates the baseline and final scrapes around all workers' fresh phases; publisher-activation intervals retain explicitly documented per-owner scope.
+- A successfully transmitted relay rejection returns no transport error; timing it from that return alone would misreport it as a successful stream open. Relay opening metrics now retain the semantic rejection separately and finish before long-lived byte copying.
+
+- Combined recovery review reproduced a 20-second heartbeat timeout three times while overlapping usage pages kept acquiring route `KEY SHARE` locks. Session operations now use `NO KEY UPDATE` on the immutable route identity, preserving mutation exclusion while allowing usage references to coexist; a focused regression failed before the change.
+
 - `task go:test-integration` intermittently failed while starting `TestIntegrationRelayDrainPreservesActiveVisitorStream` because the certificate worker lost its ACME work lease; three immediate isolated race-detector reruns passed, suggesting a startup timing flake.
 - A rolling standalone deployment can delay the new ingress lease past its first usage tick; rejected idle watermarks must be regenerated or the process retries a pre-registration timestamp forever.
 - The Linux binary split-publish check intermittently outlived QUIC's 30-second default idle timeout during certificate provisioning because publisher connections sent no keepalives, closing both sessions before readiness.
@@ -58,3 +81,7 @@
 - Sustained claim/readiness retries also starved relay registration and replenishment under shared service row locks. Transaction-scoped service admission guards restored bounded writer progress while retaining exclusive per-process capacity checks.
 - The first load-test runner provisioned PostgreSQL differently from integration CI and duplicated health checks, cleanup, and image pins. Keep ordinary database prerequisites in CI services; reserve Compose orchestration for the Linux port-53 topology.
 - Task's embedded command interpreter rejected both named and numeric multi-signal `trap` operands while moving the DNS test to Compose. Invoke Bash explicitly for the lifecycle cleanup hook.
+- At 2,500 routes with 5ms injected SQL delay, recovery restored every affected slot before the five-minute workload budget, but finishing the background usage sweep exhausted that budget. Classify the parent deadline separately from individual request timeouts, and retain the failed result because final accounting verification did not run.
+- sqlc reported an ambiguous routing revision when the narrowed snapshot CTE joined the event table again. Explicit `history`/`events` aliases and a qualified join condition let it resolve the query correctly.
+- The first narrowed snapshot query reduced million-event latency but regressed smaller histories because parallel merge-join workers each repeated the CTE's history sort. Inspect plan loop counts as well as sort width when evaluating the rewrite.
+- The recovery load test only read snapshots before and after the workload, so preloading history alone would miss contention from live snapshot reads. Its new snapshot/renewal readers use the request pools and must complete an observation before recovery starts.
