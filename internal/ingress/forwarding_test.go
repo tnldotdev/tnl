@@ -255,7 +255,9 @@ func newTestForwarder(t *testing.T, material forwardingTestMaterial) *Forwarder 
 		t.Fatalf("NewForwarder: %v", err)
 	}
 	t.Cleanup(func() {
-		if err := forwarder.Close(); err != nil && !errors.Is(err, muxsession.ErrClosed) {
+		// t.Context is canceled before cleanup, so the peer may already have
+		// closed its transport. EOF is a normal close outcome at this point.
+		if err := forwarder.Close(); err != nil && !errors.Is(err, muxsession.ErrClosed) && !errors.Is(err, io.EOF) {
 			t.Errorf("Forwarder.Close: %v", err)
 		}
 	})
