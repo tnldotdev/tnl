@@ -16,14 +16,14 @@ client.$defs = {
 };
 renameProperties(client, keys);
 
-const generated = await compile(client, "TnlConfig", {
+const generated = await compile(client, "TNL", {
   bannerComment: "",
   format: false,
   style: { singleQuote: false },
 });
 const declarations = `${generated.trim()}
 
-/** Details about the Git worktree or project directory containing tnl.ts. */
+/** Details about the Git worktree or project directory containing tnl.config.ts. */
 export interface TnlWorktree {
   readonly isGit: boolean;
   readonly label: string;
@@ -31,7 +31,7 @@ export interface TnlWorktree {
   readonly root: string;
 }
 
-/** Values available to a tnl.ts configuration factory. */
+/** Values available to a tnl.config.ts configuration factory. */
 export interface TnlConfigContext {
   readonly cwd: string;
   readonly env: Readonly<Record<string, string>>;
@@ -40,12 +40,12 @@ export interface TnlConfigContext {
 
 export type TnlConfigFactory = (
   context: TnlConfigContext,
-) => TnlConfig | Promise<TnlConfig>;
+) => TNL | Promise<TNL>;
 
-export type TnlConfigInput = TnlConfig | TnlConfigFactory;
+export type TnlConfigInput = TNL | TnlConfigFactory;
 
-/** Provides type checking for an implicit-version-1 tnl.ts configuration. */
-export declare function defineConfig(config: TnlConfigInput): TnlConfigInput;
+/** Provides type checking for an implicit-version-1 tnl.config.ts configuration. */
+export declare function defineConfig<const Config extends TnlConfigInput>(config: Config): Config;
 `;
 await writeFile(path.join(root, "packages", "tnl", "lib", "config.d.ts"), declarations);
 

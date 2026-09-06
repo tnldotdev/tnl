@@ -228,7 +228,7 @@ Frames follow this general form:
 - The Taskfile injects `GOFLAGS=-tags=ts_omit_ssh`. Preserve it for direct Go commands, for example `mise exec -- env GOFLAGS=-tags=ts_omit_ssh go test ./internal/admin -run '^TestMaintenanceControlIsDurableAndAudited$'`.
 - The full local sequence is `task generate`, `task format`, `task generate-check`, `task format-check`, `task lint`, `task test`, `task go:test-race`, `task go:test-integration`, then `task build`, each through `mise exec --`.
 - `task generate-check` runs generation before checking the generated-directory diff; it is not read-only. `task format-check` applies Oxfmt to supported files across the repository.
-- `pnpm test` and `pnpm typecheck` build through lifecycle hooks. Their `:ci` variants and direct Vitest runs do not; build first. For example, run `mise exec -- pnpm --filter @tnldotdev/vite build`, then `mise exec -- pnpm exec vitest run packages/vite/index.test.ts -t 'test name'`.
+- `pnpm test` and `pnpm typecheck` build through lifecycle hooks. Their `:ci` variants and direct Vitest runs do not; build first. For example, run `mise exec -- pnpm --filter @tnldotdev/tnl build`, then `mise exec -- pnpm exec vitest run packages/tnl/vite.test.ts -t 'test name'`.
 - Integration tests are opt-in and excluded from routine Go test tasks. `task go:test-integration` requires Pebble from `mise install`, installed JavaScript dependencies, and built package output.
 
 # Architecture
@@ -245,7 +245,7 @@ Frames follow this general form:
 - Route TLS terminates in the publisher. Ingress creates exactly one PROXY v2 metadata header, and relays preserve it unchanged to the publisher.
 - A route version first becomes routable after its certificate is installed and both publisher connections are ready on distinct relay services. After that first transition it remains routable with one ready publisher connection and replenishes toward two.
 - Ingress and relays never connect to PostgreSQL or own durable product state. Only ingress receives the ingress routing table; relays know only their own lease and locally connected publishers.
-- `packages/dev` owns the private socket protocol between `tnl dev` and framework integrations. `packages/next` and `packages/vite` configure the tunnel, register the actual loopback port, and remain inert outside `tnl dev`; do not expose server access tokens to child development processes.
+- `packages/tnl` owns the browser-safe project runtime, private socket protocol, and framework integrations. Next.js and Vite inject generated metadata during plain development, configure the tunnel only under `tnl dev`, and remain inert during builds and previews; do not expose server access tokens to child development processes.
 - The hosted TypeScript application is maintained outside this repository.
 
 # Contracts and State

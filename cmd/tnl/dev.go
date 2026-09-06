@@ -25,6 +25,7 @@ import (
 	tnlconfig "github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/localproxy"
+	"github.com/tnldotdev/tnl/internal/projectmeta"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"golang.org/x/sys/unix"
 )
@@ -41,12 +42,17 @@ type devCommand struct {
 	openOptions    `embed:""`
 	remoteFlags    `embed:""`
 	tunnelFlags    `embed:""`
-	Command        []string      `arg:"" name:"command" passthrough:"" help:"Development server command and arguments."`
+	Service        string        `arg:"" name:"service" optional:"" help:"Configured service name."`
+	Command        []string      `kong:"-"`
 	Port           int           `name:"port" help:"Literal loopback target port; normally registered by a framework integration."`
 	StartupTimeout time.Duration `name:"startup-timeout" help:"Maximum time for target registration and startup."`
 
-	commandDir       string
-	serverFromConfig bool
+	commandDir          string
+	serverFromConfig    bool
+	selectedTeam        string
+	projectRoot         string
+	project             projectConfiguration
+	useMetadataHostname bool
 }
 
 type childExitError struct {
@@ -76,8 +82,86 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 			return err
 		}
 	}
+	if flags.projectRoot == "" {
+		flags.projectRoot, err = currentProjectRoot(ctx)
+		if err != nil {
+			return err
+		}
+	}
+	if flags.project.root == "" {
+		worktree, resolveErr := tnlconfig.ResolveWorktree(ctx, flags.projectRoot)
+		if resolveErr != nil {
+			return fmt.Errorf("resolve development worktree: %w", resolveErr)
+		}
+		flags.project = projectConfiguration{
+			root: flags.projectRoot, worktree: worktree,
+			directories: map[string]string{}, relativeDirectories: map[string]string{},
+		}
+	}
 
-	bootstrap, err := newDevBootstrap(ctx, forcedTarget, flags.commandDir)
+	serverURL, state, err := resolveServer(ctx, flags.StateDir, flags.ServerURL)
+	if err != nil {
+		return err
+	}
+	defer state.Close()
+	metadataResolver := newProjectMetadataResolver(state, flags.project, stdin, stderr, "tnl dev")
+	if err := metadataResolver.LoadFallbackServer(ctx); err != nil {
+		return err
+	}
+	if !flags.project.found {
+		flags.project.tnl.Server = &serverURL
+		if flags.selectedTeam != "" {
+			flags.project.tnl.Team = &flags.selectedTeam
+		}
+		metadataResolver.project = flags.project
+	}
+	authenticated, err := authenticatePublisher(ctx, state, serverURL, flags.AccessToken, "tnl dev", stdin, stderr)
+	if err != nil {
+		return err
+	}
+	metadataResolver.Seed(serverURL, authenticated)
+	metadata, err := metadataResolver.Generate(ctx)
+	if err != nil {
+		return err
+	}
+	if flags.project.found {
+		if err := projectmeta.Write(flags.project.root, metadata); err != nil {
+			return err
+		}
+	}
+	if flags.useMetadataHostname {
+		if service, found := metadata.Services[flags.Service]; found {
+			flags.Host = service.Hostname
+		}
+	}
+	allowedIPPrefixes, currentIP, err := resolveIPPolicy(ctx, authenticated.Control, flags.AllowIP, flags.Public)
+	if err != nil {
+		return err
+	}
+	services, err := preparePublisherServices(
+		ctx, state, serverURL, flags.Host, flags.Subdomain, flags.selectedTeam, flags.Ephemeral, authenticated,
+	)
+	if err != nil {
+		return err
+	}
+	tunnel, err := state.BeginTunnel(ctx, clientstate.BeginTunnelOptions{
+		Command: clientstate.TunnelCommandDev, Server: serverURL, Target: forcedTarget,
+		Project: flags.projectRoot, Service: flags.Service,
+	})
+	if err != nil {
+		return err
+	}
+	ctx = tunnel.Context()
+	defer func() {
+		if cause := context.Cause(ctx); cause != nil && (result == nil || errors.Is(result, context.Canceled)) {
+			result = cause
+		}
+		finishCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		result = errors.Join(result, tunnel.Finish(finishCtx, result))
+	}()
+
+	bootstrap, err := newDevBootstrap(ctx, forcedTarget, flags.projectRoot, flags.Service)
 	if err != nil {
 		return err
 	}
@@ -89,11 +173,18 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	}
 	defer child.Stop(devShutdownWait)
 
+	assignment := devConfigurationResponse{
+		Protocol: 1, TunnelID: tunnel.ID(), Service: nullableService(flags.Service),
+		MemberNamespace: services.memberNamespace, Hostname: services.hostname,
+		PublicURL: "https://" + services.hostname,
+		Project:   runtimeProjectMetadata(metadata, flags.Service, services.memberNamespace, services.hostname),
+	}
 	var configuration *devConfigurationRequest
 	target := forcedTarget
 	targetIsReady := false
 	var targetReady <-chan error
 	var cancelTargetReady context.CancelFunc
+	var lateConfiguration <-chan devConfigurationResult
 	if target == "" {
 		registrationTimeout := min(flags.StartupTimeout, devRegistrationWait)
 		configurationCtx, cancelConfiguration := context.WithTimeout(ctx, registrationTimeout)
@@ -110,7 +201,11 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 			cancelConfiguration()
 			if configuredResult.err != nil {
 				if errors.Is(configuredResult.err, context.DeadlineExceeded) {
-					return errors.New("development server did not connect to tnl; install and configure @tnldotdev/next or @tnldotdev/vite, or use --port")
+					return diagnostic.WrapMessage(
+						diagnostic.FrameworkRegistrationTimeout,
+						"development server did not connect to tnl; configure @tnldotdev/tnl/next or @tnldotdev/tnl/vite, or use --port",
+						configuredResult.err,
+					)
 				}
 				return configuredResult.err
 			}
@@ -120,6 +215,11 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 			return context.Cause(ctx)
 		}
 	} else {
+		configured := make(chan devConfigurationResult, 1)
+		go func() {
+			configuration, err := bootstrap.Configuration(ctx)
+			configured <- devConfigurationResult{configuration: configuration, err: err}
+		}()
 		startupCtx, cancelStartup := context.WithTimeout(ctx, flags.StartupTimeout)
 		cancelTargetReady = cancelStartup
 		defer cancelTargetReady()
@@ -129,10 +229,13 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		select {
 		case <-child.Done():
 			return childResult(child.Err())
-		case configured := <-bootstrap.configurations:
+		case configuredResult := <-configured:
 			cancelTargetReady()
 			targetReady = nil
-			configuration = &configured
+			if configuredResult.err != nil {
+				return configuredResult.err
+			}
+			configuration = &configuredResult.configuration
 		case err := <-targetReady:
 			cancelTargetReady()
 			if err != nil {
@@ -146,85 +249,58 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 				return err
 			}
 			targetIsReady = true
+			lateConfiguration = configured
 		case <-ctx.Done():
 			return context.Cause(ctx)
 		}
 	}
 
-	configurationResolved := configuration == nil
-	defer func() {
-		if !configurationResolved {
-			bootstrap.Resolve(devConfigurationResponse{}, errors.New("tnl dev could not configure the tunnel"))
-		}
-	}()
-
 	framework := ""
-	if configuration != nil {
-		framework = configuration.Framework
-	}
-	serverURL, state, err := resolveServer(ctx, flags.StateDir, flags.ServerURL)
-	if err != nil {
-		return err
-	}
-	defer state.Close()
-	tunnel, err := state.BeginTunnel(ctx, clientstate.BeginTunnelOptions{
-		Command: clientstate.TunnelCommandDev, Server: serverURL, Target: target,
-	})
-	if err != nil {
-		return err
-	}
-	ctx = tunnel.Context()
-	defer func() {
-		if cause := context.Cause(ctx); cause != nil && (result == nil || errors.Is(result, context.Canceled)) {
-			result = cause
-		}
-		finishCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		result = errors.Join(result, tunnel.Finish(finishCtx, result))
-	}()
-	if framework != "" && target != "" {
-		if err := tunnel.SetDevTarget(ctx, framework, target); err != nil {
-			return err
-		}
-	}
-	authenticated, err := authenticatePublisher(ctx, state, serverURL, flags.AccessToken, "tnl dev", stdin, stderr)
-	if err != nil {
-		return err
-	}
-	allowedIPPrefixes, currentIP, err := resolveIPPolicy(ctx, authenticated.Control, flags.AllowIP, flags.Public)
-	if err != nil {
-		return err
-	}
-	services, err := preparePublisherServices(ctx, state, serverURL, flags.Host, flags.Subdomain, authenticated)
-	if err != nil {
-		return err
-	}
-
-	if configuration != nil {
-		bootstrap.Resolve(devConfigurationResponse{
-			Protocol: 1, TunnelID: tunnel.ID(), Hostname: services.hostname,
-			PublicURL: "https://" + services.hostname,
-		}, nil)
-		configurationResolved = true
-	}
-
-	if target == "" {
+	completeConfiguration := func(configuration devConfigurationRequest) (string, error) {
+		bootstrap.Resolve(assignment, nil)
 		targetCtx, cancelTarget := context.WithTimeout(ctx, flags.StartupTimeout)
 		reported, err := waitForDevTarget(targetCtx, bootstrap, child)
 		cancelTarget()
 		if err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
-				return errors.New("development server did not report its listening port before the startup timeout")
+				return "", diagnostic.WrapMessage(
+					diagnostic.FrameworkRegistrationTimeout,
+					"development server did not report its listening target before the startup timeout",
+					err,
+				)
 			}
-			return err
+			return "", err
 		}
-		target, err = localproxy.NormalizeTarget(strconv.Itoa(reported.Port))
+		if err := tunnel.SetDevTarget(ctx, configuration.Framework, reported.Target); err != nil {
+			return "", err
+		}
+		return reported.Target, nil
+	}
+	if configuration != nil {
+		framework = configuration.Framework
+		target, err = completeConfiguration(*configuration)
 		if err != nil {
 			return err
 		}
-		if err := tunnel.SetDevTarget(ctx, framework, target); err != nil {
-			return err
-		}
+	}
+
+	var frameworkDone <-chan devFrameworkResult
+	if lateConfiguration != nil {
+		done := make(chan devFrameworkResult, 1)
+		frameworkDone = done
+		go func() {
+			configuredResult := <-lateConfiguration
+			if configuredResult.err != nil {
+				done <- devFrameworkResult{err: configuredResult.err}
+				return
+			}
+			reportedTarget, err := completeConfiguration(configuredResult.configuration)
+			done <- devFrameworkResult{
+				framework: configuredResult.configuration.Framework,
+				target:    reportedTarget,
+				err:       err,
+			}
+		}()
 	}
 
 	if !targetIsReady {
@@ -253,8 +329,10 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 			return context.Cause(ctx)
 		}
 	}
-	if err := bootstrap.Close(); err != nil {
-		return err
+	if frameworkDone == nil {
+		if err := bootstrap.Close(); err != nil {
+			return err
+		}
 	}
 
 	output, err := newPublishOutput("human", "tnl dev", stdout, stderr, browserOpener(flags.Open))
@@ -277,50 +355,67 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 		publisherConfig := services.config(target, allowedIPPrefixes)
 		publisherConfig.Logf = output.logf
 		publisherConfig.Observe = withTelemetryObserver(telemetry, "dev", serverURL, telemetryFramework(framework), func(event publisher.Event) error {
-			switch event.Type {
-			case publisher.EventRouteAssigned:
-				return tunnel.SetRoute(publishCtx, event.RouteID, event.Hostname)
-			case publisher.EventProvisioning:
-				return tunnel.SetProvisioning(publishCtx, event.RouteVersion)
-			case publisher.EventReady:
-				if err := tunnel.SetReady(publishCtx, event.PublicURL, event.RouteVersion); err != nil {
-					return err
-				}
-				return output.ready(event.PublicURL, event.RouteVersion)
-			case publisher.EventDraining:
-				return tunnel.SetDraining(context.WithoutCancel(publishCtx))
-			}
-			return nil
+			return handlePublisherEvent(publishCtx, tunnel, output, event)
 		})
 		publishDone <- publisher.Run(publishCtx, publisherConfig)
 	}()
 
-	select {
-	case <-child.Done():
-		cancelPublish()
-		publishErr := <-publishDone
-		if err := childResult(child.Err()); err != nil {
+	for {
+		select {
+		case configuredResult := <-frameworkDone:
+			frameworkDone = nil
+			if configuredResult.err != nil {
+				cancelPublish()
+				<-publishDone
+				return configuredResult.err
+			}
+			if configuredResult.target != target {
+				cancelPublish()
+				<-publishDone
+				return diagnostic.Wrap(
+					diagnostic.TargetMismatch,
+					errors.New("development target changed after publishing started"),
+				)
+			}
+			framework = configuredResult.framework
+			output.setFramework(framework)
+			if err := bootstrap.Close(); err != nil {
+				cancelPublish()
+				<-publishDone
+				return err
+			}
+		case <-child.Done():
+			cancelPublish()
+			publishErr := <-publishDone
+			if err := childResult(child.Err()); err != nil {
+				return err
+			}
+			if publishErr != nil && !errors.Is(publishErr, context.Canceled) {
+				return publishErr
+			}
+			return nil
+		case err := <-publishDone:
+			if ctx.Err() != nil && errors.Is(err, context.Canceled) {
+				return context.Cause(ctx)
+			}
 			return err
-		}
-		if publishErr != nil && !errors.Is(publishErr, context.Canceled) {
-			return publishErr
-		}
-		return nil
-	case err := <-publishDone:
-		if ctx.Err() != nil && errors.Is(err, context.Canceled) {
+		case <-ctx.Done():
+			cancelPublish()
+			<-publishDone
 			return context.Cause(ctx)
 		}
-		return err
-	case <-ctx.Done():
-		cancelPublish()
-		<-publishDone
-		return context.Cause(ctx)
 	}
 }
 
 type devConfigurationResult struct {
 	configuration devConfigurationRequest
 	err           error
+}
+
+type devFrameworkResult struct {
+	framework string
+	target    string
+	err       error
 }
 
 type devTargetResult struct {
@@ -350,17 +445,18 @@ func waitForDevTarget(ctx context.Context, bootstrap *devBootstrap, child *devPr
 type devBootstrap struct {
 	socket         string
 	lock           *os.File
-	forcedTarget   string
+	forcedPort     string
 	server         *http.Server
 	done           chan struct{}
 	closing        chan struct{}
 	configurations chan devConfigurationRequest
-	targets        chan devTargetRequest
+	targets        chan devTargetResult
 	resolved       chan struct{}
 
 	mu               sync.Mutex
 	configuration    *devConfigurationRequest
 	target           *devTargetRequest
+	targetErr        error
 	assignment       devConfigurationResponse
 	configurationErr error
 	serveErr         error
@@ -375,36 +471,78 @@ type devConfigurationRequest struct {
 }
 
 type devConfigurationResponse struct {
-	Protocol  int    `json:"protocol"`
-	TunnelID  string `json:"tunnelID"`
-	Hostname  string `json:"hostname"`
-	PublicURL string `json:"publicURL"`
+	Protocol        int                        `json:"protocol"`
+	TunnelID        string                     `json:"tunnelID"`
+	Service         *string                    `json:"service"`
+	MemberNamespace string                     `json:"memberNamespace"`
+	Hostname        string                     `json:"hostname"`
+	PublicURL       string                     `json:"publicURL"`
+	Project         projectmeta.PublicMetadata `json:"project"`
+}
+
+func nullableService(service string) *string {
+	if service == "" {
+		return nil
+	}
+	return &service
+}
+
+func runtimeProjectMetadata(
+	metadata projectmeta.Metadata,
+	service, memberNamespace, hostname string,
+) projectmeta.PublicMetadata {
+	project := metadata.Public(true)
+	if service == "" {
+		project.MemberNamespace = memberNamespace
+		return project
+	}
+	project.Services[service] = projectmeta.Service{
+		MemberNamespace: memberNamespace,
+		Hostname:        hostname,
+		URL:             "https://" + hostname,
+	}
+	return project
 }
 
 type devTargetRequest struct {
 	Protocol  int    `json:"protocol"`
 	Framework string `json:"framework"`
-	Port      int    `json:"port"`
+	Target    string `json:"target"`
 }
 
-func newDevBootstrap(ctx context.Context, forcedTarget, cwd string) (*devBootstrap, error) {
-	if cwd == "" {
+func newDevBootstrap(ctx context.Context, forcedTarget, projectRoot string, services ...string) (*devBootstrap, error) {
+	forcedPort := ""
+	if forcedTarget != "" {
 		var err error
-		cwd, err = os.Getwd()
+		forcedTarget, err = localproxy.NormalizeTarget(forcedTarget)
+		if err != nil {
+			return nil, err
+		}
+		_, forcedPort, err = net.SplitHostPort(strings.TrimPrefix(forcedTarget, "http://"))
+		if err != nil {
+			return nil, fmt.Errorf("read forced development target port: %w", err)
+		}
+	}
+	if projectRoot == "" {
+		cwd, err := os.Getwd()
 		if err != nil {
 			return nil, fmt.Errorf("resolve development worktree: %w", err)
 		}
+		worktree, err := tnlconfig.ResolveWorktree(ctx, cwd)
+		if err != nil {
+			return nil, fmt.Errorf("resolve development worktree: %w", err)
+		}
+		projectRoot = worktree.Root
 	}
-	worktree, err := tnlconfig.ResolveWorktree(ctx, cwd)
-	if err != nil {
-		return nil, fmt.Errorf("resolve development worktree: %w", err)
+	service := ""
+	if len(services) != 0 {
+		service = services[0]
 	}
 	dir, err := devRuntimeDirectory()
 	if err != nil {
 		return nil, err
 	}
-	digest := sha256.Sum256([]byte(worktree.Root))
-	stem := "dev-" + hex.EncodeToString(digest[:8])
+	stem := "dev-" + devSocketDigest(projectRoot, service)
 	lock, err := acquireDevLock(filepath.Join(dir, stem+".lock"))
 	if err != nil {
 		return nil, err
@@ -415,9 +553,9 @@ func newDevBootstrap(ctx context.Context, forcedTarget, cwd string) (*devBootstr
 	}
 	bootstrap := &devBootstrap{
 		socket: filepath.Join(dir, stem+".sock"), lock: lock,
-		forcedTarget: forcedTarget,
-		done:         make(chan struct{}), closing: make(chan struct{}),
-		configurations: make(chan devConfigurationRequest, 1), targets: make(chan devTargetRequest, 1),
+		forcedPort: forcedPort,
+		done:       make(chan struct{}), closing: make(chan struct{}),
+		configurations: make(chan devConfigurationRequest, 1), targets: make(chan devTargetResult, 1),
 		resolved: make(chan struct{}),
 	}
 	if info, statErr := os.Lstat(bootstrap.socket); statErr == nil {
@@ -465,6 +603,11 @@ func newDevBootstrap(ctx context.Context, forcedTarget, cwd string) (*devBootstr
 	return bootstrap, nil
 }
 
+func devSocketDigest(projectRoot, service string) string {
+	digest := sha256.Sum256([]byte(projectRoot + "\x00" + service))
+	return hex.EncodeToString(digest[:8])
+}
+
 func devRuntimeDirectory() (string, error) {
 	base := os.Getenv("XDG_RUNTIME_DIR")
 	if base == "" {
@@ -488,7 +631,7 @@ func devRuntimeDirectory() (string, error) {
 func acquireDevLock(path string) (*os.File, error) {
 	descriptor, err := unix.Open(path, unix.O_CREAT|unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0o600)
 	if err != nil {
-		return nil, fmt.Errorf("open development worktree lock: %w", err)
+		return nil, fmt.Errorf("open development session lock: %w", err)
 	}
 	file := os.NewFile(uintptr(descriptor), path)
 	closeWithError := func(err error) (*os.File, error) {
@@ -497,16 +640,16 @@ func acquireDevLock(path string) (*os.File, error) {
 	}
 	var stat unix.Stat_t
 	if err := unix.Fstat(descriptor, &stat); err != nil {
-		return closeWithError(fmt.Errorf("inspect development worktree lock: %w", err))
+		return closeWithError(fmt.Errorf("inspect development session lock: %w", err))
 	}
 	if stat.Uid != uint32(os.Getuid()) || stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Mode&0o777 != 0o600 {
-		return closeWithError(errors.New("development worktree lock must be a user-owned regular file with mode 0600"))
+		return closeWithError(errors.New("development session lock must be a user-owned regular file with mode 0600"))
 	}
 	if err := unix.Flock(descriptor, unix.LOCK_EX|unix.LOCK_NB); err != nil {
 		if errors.Is(err, unix.EWOULDBLOCK) {
-			return closeWithError(errors.New("another tnl dev is already running for this worktree"))
+			return closeWithError(errors.New("another tnl dev is already running for this project service"))
 		}
-		return closeWithError(fmt.Errorf("lock development worktree: %w", err))
+		return closeWithError(fmt.Errorf("lock development session: %w", err))
 	}
 	return file, nil
 }
@@ -557,8 +700,8 @@ func (b *devBootstrap) Configuration(ctx context.Context) (devConfigurationReque
 
 func (b *devBootstrap) Target(ctx context.Context) (devTargetRequest, error) {
 	select {
-	case target := <-b.targets:
-		return target, nil
+	case result := <-b.targets:
+		return result.target, result.err
 	case <-b.done:
 		b.mu.Lock()
 		err := b.serveErr
@@ -699,20 +842,16 @@ func (b *devBootstrap) handleTarget(response http.ResponseWriter, request *http.
 		http.Error(response, "invalid target registration", http.StatusBadRequest)
 		return
 	}
-	if targetRequest.Protocol != 1 || !validFrameworkName(targetRequest.Framework) ||
-		targetRequest.Port < 1 || targetRequest.Port > 65535 {
+	if targetRequest.Protocol != 1 || !validFrameworkName(targetRequest.Framework) {
 		http.Error(response, "invalid target registration", http.StatusBadRequest)
 		return
 	}
-	target, err := localproxy.NormalizeTarget(strconv.Itoa(targetRequest.Port))
+	target, err := localproxy.NormalizeTarget(targetRequest.Target)
 	if err != nil {
 		http.Error(response, "invalid target registration", http.StatusBadRequest)
 		return
 	}
-	if b.forcedTarget != "" && b.forcedTarget != target {
-		http.Error(response, "target port does not match tnl dev --port", http.StatusConflict)
-		return
-	}
+	targetRequest.Target = target
 
 	b.mu.Lock()
 	if b.configuration == nil {
@@ -725,11 +864,35 @@ func (b *devBootstrap) handleTarget(response http.ResponseWriter, request *http.
 		http.Error(response, "target framework does not match development configuration", http.StatusConflict)
 		return
 	}
+	if b.targetErr != nil {
+		b.mu.Unlock()
+		http.Error(response, "development target registration already failed", http.StatusConflict)
+		return
+	}
 	first := b.target == nil
 	if !first && !reflect.DeepEqual(*b.target, targetRequest) {
 		b.mu.Unlock()
 		http.Error(response, "a different development target is already registered", http.StatusConflict)
 		return
+	}
+	if first && b.forcedPort != "" {
+		_, registeredPort, splitErr := net.SplitHostPort(strings.TrimPrefix(target, "http://"))
+		if splitErr != nil || registeredPort != b.forcedPort {
+			mismatch := diagnostic.Wrap(
+				diagnostic.TargetMismatch,
+				fmt.Errorf("development server registered port %s instead of port %s required by tnl dev", registeredPort, b.forcedPort),
+			)
+			b.targetErr = mismatch
+			b.mu.Unlock()
+			select {
+			case b.targets <- devTargetResult{err: mismatch}:
+			case <-b.closing:
+				http.Error(response, "development session is closing", http.StatusServiceUnavailable)
+				return
+			}
+			http.Error(response, "registered target does not use the port forced by tnl dev --port", http.StatusConflict)
+			return
+		}
 	}
 	if first {
 		registered := targetRequest
@@ -738,7 +901,7 @@ func (b *devBootstrap) handleTarget(response http.ResponseWriter, request *http.
 	b.mu.Unlock()
 	if first {
 		select {
-		case b.targets <- targetRequest:
+		case b.targets <- devTargetResult{target: targetRequest}:
 		case <-b.closing:
 			http.Error(response, "development session is closing", http.StatusServiceUnavailable)
 			return
@@ -769,7 +932,7 @@ func devEnvironment(bootstrap *devBootstrap, port int) []string {
 		replacements["PORT"] = strconv.Itoa(port)
 	}
 	blocked := map[string]struct{}{
-		"TNL_ACCESS_TOKEN": {}, "TNL_TUNNEL_ID": {},
+		"TNL_ACCESS_TOKEN": {}, "TNL_PROJECT_RUNTIME": {}, "TNL_TUNNEL_ID": {},
 		"TNL_PUBLIC_HOSTNAME": {}, "TNL_PUBLIC_URL": {},
 	}
 	for key := range replacements {

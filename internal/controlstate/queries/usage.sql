@@ -186,6 +186,14 @@ ON CONFLICT (route_id, route_version, bucket_start) DO UPDATE SET
 WHERE NOT control.route_usage_buckets.finalized
 RETURNING *;
 
+-- name: ApplyRouteSessionPolicyDenials :one
+UPDATE control.route_sessions
+SET policy_denials = policy_denials + sqlc.arg(policy_denials)::bigint
+WHERE route_id = sqlc.arg(route_id)
+  AND route_version = sqlc.arg(route_version)
+  AND policy_denials <= 9223372036854775807 - sqlc.arg(policy_denials)::bigint
+RETURNING policy_denials;
+
 -- name: MarkIngressUsageRunReported :one
 UPDATE control.ingress_usage_runs AS runs
 SET last_reported_at = GREATEST(COALESCE(runs.last_reported_at, sqlc.arg(reported_at)), sqlc.arg(reported_at)),

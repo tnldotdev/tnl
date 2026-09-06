@@ -74,13 +74,33 @@ func schemaForType(valueType reflect.Type) *jsonschema.Schema {
 			{Type: "integer", Minimum: "1", Maximum: "65535"},
 		}}
 	case reflect.TypeOf(config.Duration(0)):
-		return &jsonschema.Schema{Type: "string", Pattern: `^[0-9]+(ns|us|\u00b5s|ms|s|m|h)([0-9]+(ns|us|\u00b5s|ms|s|m|h))*$`}
+		return &jsonschema.Schema{Type: "string", Pattern: config.DurationPattern}
 	case reflect.TypeOf(config.Tunnel{}):
 		return tunnelSchema()
+	case reflect.TypeOf(config.Services{}):
+		return servicesSchema()
 	case reflect.TypeOf(config.TNLDSection{}):
 		return tnldSchema()
 	default:
 		return nil
+	}
+}
+
+func servicesSchema() *jsonschema.Schema {
+	properties := jsonschema.NewProperties()
+	properties.Set("directory", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1)})
+	properties.Set("server", &jsonschema.Schema{Type: "string"})
+	properties.Set("team", &jsonschema.Schema{Type: "string"})
+	properties.Set("tunnel", tunnelSchema())
+	properties.Set("publish", &jsonschema.Schema{Ref: "#/$defs/Publish"})
+	properties.Set("dev", &jsonschema.Schema{Ref: "#/$defs/Dev"})
+	service := &jsonschema.Schema{
+		Type: "object", Properties: properties, AdditionalProperties: jsonschema.FalseSchema,
+	}
+	return &jsonschema.Schema{
+		Type: "object", MaxProperties: integerPointer(32),
+		PropertyNames:        &jsonschema.Schema{Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`},
+		AdditionalProperties: service,
 	}
 }
 
@@ -92,6 +112,7 @@ func tunnelSchema() *jsonschema.Schema {
 		Type: "array", Items: &jsonschema.Schema{Type: "string"}, MaxItems: integerPointer(63), UniqueItems: true,
 	})
 	properties.Set("public", &jsonschema.Schema{Type: "boolean"})
+	properties.Set("ephemeral", &jsonschema.Schema{Type: "boolean"})
 	publicProperties := jsonschema.NewProperties()
 	publicProperties.Set("public", &jsonschema.Schema{Const: true})
 	return &jsonschema.Schema{
@@ -186,6 +207,14 @@ func collectTypeScriptKeys(valueType reflect.Type, result map[string]string) {
 		}
 		if fieldType.Kind() == reflect.Struct && fieldType != reflect.TypeOf(config.Target("")) && fieldType != reflect.TypeOf(config.Duration(0)) {
 			collectTypeScriptKeys(fieldType, result)
+		} else if fieldType.Kind() == reflect.Map {
+			elementType := fieldType.Elem()
+			if elementType.Kind() == reflect.Pointer {
+				elementType = elementType.Elem()
+			}
+			if elementType.Kind() == reflect.Struct {
+				collectTypeScriptKeys(elementType, result)
+			}
 		}
 	}
 }

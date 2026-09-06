@@ -42,11 +42,13 @@ FOR UPDATE;
 -- name: AllocateRouteVersion :one
 UPDATE control.routes
 SET next_route_version = next_route_version + 1,
-	    ip_policy = sqlc.arg(ip_policy),
-	    allowed_ip_prefixes = sqlc.arg(allowed_ip_prefixes),
+    mutation_revision = mutation_revision + 1,
     updated_at = sqlc.arg(updated_at)
 WHERE id = sqlc.arg(route_id)
   AND next_route_version < 9223372036854775807
+  AND mutation_revision = sqlc.arg(expected_mutation_revision)
+  AND mutation_revision < 9223372036854775807
+  AND lifecycle_state = 'enabled'
 RETURNING (next_route_version - 1)::bigint;
 
 -- name: InsertRouteSession :one

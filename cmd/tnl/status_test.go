@@ -19,6 +19,7 @@ func TestStatusJSONUsesSharedTunnelSnapshot(t *testing.T) {
 	}
 	tunnel, err := state.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{
 		Command: clientstate.TunnelCommandPublish, Server: "https://server.example", Target: "3000",
+		Project: t.TempDir(), Service: "web",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -35,7 +36,7 @@ func TestStatusJSONUsesSharedTunnelSnapshot(t *testing.T) {
 	}()
 
 	var output bytes.Buffer
-	if err := runStatus(t.Context(), statusCommand{Output: "json", StateDir: root}, &output); err != nil {
+	if err := runStatus(t.Context(), statusCommand{Output: "json", StateDir: root, All: true}, &output); err != nil {
 		t.Fatal(err)
 	}
 	var snapshot clientstate.TunnelSnapshot
@@ -56,14 +57,14 @@ func TestStatusJSONUsesSharedTunnelSnapshot(t *testing.T) {
 		"total", "starting", "provisioning", "ready", "draining", "stale")
 	tunnels := payload["tunnels"].([]any)
 	assertJSONKeys(t, tunnels[0].(map[string]any),
-		"tunnel_id", "command", "state", "process_id", "server", "route_id", "route_version",
+		"tunnel_id", "command", "state", "process_id", "server", "project", "service", "route_id", "route_version",
 		"hostname", "public_url", "target", "started_at", "updated_at", "heartbeat_at", "lease_expires_at")
-	if tunnels[0].(map[string]any)["route_version"] != float64(1) {
-		t.Fatalf("route version = %v", tunnels[0].(map[string]any)["route_version"])
+	if tunnels[0].(map[string]any)["route_version"] != float64(1) || tunnels[0].(map[string]any)["service"] != "web" {
+		t.Fatalf("tunnel = %v", tunnels[0])
 	}
 
 	output.Reset()
-	if err := runStatus(t.Context(), statusCommand{Output: "human", StateDir: root}, &output); err != nil {
+	if err := runStatus(t.Context(), statusCommand{Output: "human", StateDir: root, All: true}, &output); err != nil {
 		t.Fatal(err)
 	}
 	human := output.String()
@@ -102,5 +103,48 @@ func TestStatusHumanHandlesEmptyState(t *testing.T) {
 	if !strings.HasPrefix(output.String(), "+--[ tnl status ]-- no local tunnels ") ||
 		!strings.Contains(output.String(), "tnl publish 3000") {
 		t.Fatalf("status output = %q", output.String())
+	}
+}
+
+func TestStatusDefaultsToCurrentProjectAndAllIsExplicit(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "state")
+	state, err := clientstate.Open(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	currentProject, otherProject := t.TempDir(), t.TempDir()
+	for _, project := range []string{currentProject, otherProject} {
+		tunnel, err := state.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{
+			Command: clientstate.TunnelCommandDev, Server: "https://server.example", Project: project,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tunnel.Finish(context.Background(), nil)
+	}
+	var output bytes.Buffer
+	if err := runStatus(t.Context(), statusCommand{
+		Output: "json", StateDir: root, Project: currentProject,
+	}, &output); err != nil {
+		t.Fatal(err)
+	}
+	var contextual clientstate.TunnelSnapshot
+	if err := json.Unmarshal(output.Bytes(), &contextual); err != nil {
+		t.Fatal(err)
+	}
+	if len(contextual.Tunnels) != 1 || contextual.Tunnels[0].Project != currentProject {
+		t.Fatalf("contextual snapshot = %#v", contextual)
+	}
+	output.Reset()
+	if err := runStatus(t.Context(), statusCommand{Output: "json", StateDir: root, All: true}, &output); err != nil {
+		t.Fatal(err)
+	}
+	var all clientstate.TunnelSnapshot
+	if err := json.Unmarshal(output.Bytes(), &all); err != nil {
+		t.Fatal(err)
+	}
+	if len(all.Tunnels) != 2 {
+		t.Fatalf("all snapshot = %#v", all)
 	}
 }

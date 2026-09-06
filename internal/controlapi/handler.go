@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/authorityclient"
-	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
@@ -65,9 +64,12 @@ type Store interface {
 	SetTeamDefaultDomain(context.Context, string, string, string, time.Time) (controlstate.Team, error)
 	ReleaseTeamDomain(context.Context, string, string, string, time.Time) error
 	ListRoutes(context.Context, string, string, string) (controlstate.RoutePage, error)
+	ListAuthorizedRoutes(context.Context, string, string) (controlstate.RoutePage, error)
 	CreateRoute(context.Context, controlstate.CreateRouteRequest, time.Time) (controlstate.Route, error)
+	UpdateAuthorizedRoute(context.Context, controlstate.AuthorizedRouteUpdateRequest, time.Time) (controlstate.Route, error)
 	GetRoute(context.Context, string, string) (controlstate.Route, error)
 	GetRouteForAuthorization(context.Context, string) (controlstate.Route, error)
+	GetRouteForSessionAuthorization(context.Context, string, string) (controlstate.Route, error)
 	DeleteRoute(context.Context, string, string, time.Time) error
 	DeleteAuthorizedRoute(context.Context, controlstate.AuthorizedRouteDeleteRequest, time.Time) error
 	CreateRouteSession(context.Context, controlstate.RouteSessionRequest, time.Time, time.Duration, time.Duration) (controlstate.RouteSessionSetup, error)
@@ -80,7 +82,7 @@ type Store interface {
 	MarkCertificateChallengeRemoved(context.Context, string, credentials.SessionToken, time.Time) (controlstate.CertificateIssuance, error)
 	MarkRouteSessionReady(context.Context, controlstate.RouteSessionAuthentication, time.Time) (controlstate.RouteSessionLifecycle, error)
 	CloseRouteSession(context.Context, string, credentials.SessionToken, time.Time) error
-	ApplyHostedPolicyRevocation(context.Context, string, string, uint64, bool, []string, time.Time) (bool, int, error)
+	ApplyHostedPolicyRevocation(context.Context, string, string, uint64, bool, []string, []string, time.Time) (bool, int, error)
 	CreateDNSAuthority(context.Context, controlstate.CreateDNSAuthorityRequest, time.Time) (controlstate.DNSAuthority, error)
 	GetDNSAuthority(context.Context, string) (controlstate.DNSAuthority, error)
 	ReleaseDNSAuthority(context.Context, string, string, time.Time) (controlstate.DNSAuthority, error)
@@ -95,7 +97,7 @@ type handler struct {
 	readiness           func(context.Context) error
 	loginVerifier       credentials.LoginVerifier
 	loginSourceRevision int64
-	authorizer          authorization.Authorizer
+	authorizer          routeAuthorizer
 	hostedSecrets       serviceapi.BearerSecrets
 }
 

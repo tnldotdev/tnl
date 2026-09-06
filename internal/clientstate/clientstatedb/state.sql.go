@@ -206,6 +206,8 @@ INSERT INTO local_tunnels (
     command,
     process_id,
     server_origin,
+    project_root,
+    service,
     hostname,
     target,
     framework,
@@ -222,16 +224,18 @@ INSERT INTO local_tunnels (
     ?2,
     ?3,
     ?4,
-    '',
     ?5,
+    ?6,
+    '',
+    ?7,
     '',
     '',
     0,
     'starting',
-    ?6,
-    ?6,
-    ?6,
-    ?7,
+    ?8,
+    ?8,
+    ?8,
+    ?9,
     ''
 )
 `
@@ -241,6 +245,8 @@ type InsertTunnelParams struct {
 	Command        string
 	ProcessID      int64
 	ServerOrigin   string
+	ProjectRoot    string
+	Service        string
 	Target         string
 	Now            int64
 	LeaseExpiresAt int64
@@ -252,6 +258,8 @@ func (q *Queries) InsertTunnel(ctx context.Context, arg InsertTunnelParams) erro
 		arg.Command,
 		arg.ProcessID,
 		arg.ServerOrigin,
+		arg.ProjectRoot,
+		arg.Service,
 		arg.Target,
 		arg.Now,
 		arg.LeaseExpiresAt,
@@ -260,7 +268,7 @@ func (q *Queries) InsertTunnel(ctx context.Context, arg InsertTunnelParams) erro
 }
 
 const listOpenTunnels = `-- name: ListOpenTunnels :many
-SELECT id, command, process_id, server_origin, hostname, target, framework, route_id, route_version, state, started_at, updated_at, heartbeat_at, lease_expires_at, stopped_at, last_error
+SELECT id, command, process_id, server_origin, project_root, service, hostname, target, framework, route_id, route_version, state, started_at, updated_at, heartbeat_at, lease_expires_at, stopped_at, last_error
 FROM local_tunnels
 WHERE stopped_at IS NULL
 ORDER BY started_at, id
@@ -280,6 +288,57 @@ func (q *Queries) ListOpenTunnels(ctx context.Context) ([]LocalTunnel, error) {
 			&i.Command,
 			&i.ProcessID,
 			&i.ServerOrigin,
+			&i.ProjectRoot,
+			&i.Service,
+			&i.Hostname,
+			&i.Target,
+			&i.Framework,
+			&i.RouteID,
+			&i.RouteVersion,
+			&i.State,
+			&i.StartedAt,
+			&i.UpdatedAt,
+			&i.HeartbeatAt,
+			&i.LeaseExpiresAt,
+			&i.StoppedAt,
+			&i.LastError,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOpenTunnelsForProject = `-- name: ListOpenTunnelsForProject :many
+SELECT id, command, process_id, server_origin, project_root, service, hostname, target, framework, route_id, route_version, state, started_at, updated_at, heartbeat_at, lease_expires_at, stopped_at, last_error
+FROM local_tunnels
+WHERE stopped_at IS NULL AND project_root = ?1
+ORDER BY started_at, id
+`
+
+func (q *Queries) ListOpenTunnelsForProject(ctx context.Context, projectRoot string) ([]LocalTunnel, error) {
+	rows, err := q.db.QueryContext(ctx, listOpenTunnelsForProject, projectRoot)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LocalTunnel
+	for rows.Next() {
+		var i LocalTunnel
+		if err := rows.Scan(
+			&i.ID,
+			&i.Command,
+			&i.ProcessID,
+			&i.ServerOrigin,
+			&i.ProjectRoot,
+			&i.Service,
 			&i.Hostname,
 			&i.Target,
 			&i.Framework,

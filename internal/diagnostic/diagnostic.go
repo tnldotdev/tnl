@@ -4,6 +4,7 @@ package diagnostic
 import (
 	"errors"
 	"html"
+	"io"
 	"mime"
 	"net/http"
 	"strconv"
@@ -15,10 +16,16 @@ import (
 type Code string
 
 const (
-	TargetUnavailable Code = "TNL_TARGET_UNAVAILABLE"
-	TargetInvalid     Code = "TNL_TARGET_INVALID"
-	RouteInvalid      Code = "TNL_ROUTE_INVALID"
-	RequestRejected   Code = "TNL_REQUEST_REJECTED"
+	TargetUnavailable            Code = "TNL_TARGET_UNAVAILABLE"
+	TargetInvalid                Code = "TNL_TARGET_INVALID"
+	RouteInvalid                 Code = "TNL_ROUTE_INVALID"
+	RequestRejected              Code = "TNL_REQUEST_REJECTED"
+	FrameworkRegistrationTimeout Code = "TNL_FRAMEWORK_REGISTRATION_TIMEOUT"
+	TargetMismatch               Code = "TNL_TARGET_MISMATCH"
+	AuthenticationTimeout        Code = "TNL_AUTHENTICATION_TIMEOUT"
+	ServiceAmbiguous             Code = "TNL_SERVICE_AMBIGUOUS"
+	RouteConflict                Code = "TNL_ROUTE_CONFLICT"
+	ProvisioningStalled          Code = "TNL_PROVISIONING_STALLED"
 )
 
 const helpOrigin = "https://tnl.dev"
@@ -77,6 +84,72 @@ var definitions = []definition{
 			{Label: "local service (not contacted)"},
 		},
 	},
+	{
+		code:    FrameworkRegistrationTimeout,
+		title:   "framework registration timed out",
+		summary: "tnl dev did not receive the framework's target registration before the startup timeout.",
+		path:    "/e/framework-registration-timeout",
+		flow: []clioutput.FlowNode{
+			{Label: "tnl dev"},
+			{Label: "framework integration", Detail: "target not registered", Failure: true},
+			{Label: "publisher (not started)"},
+		},
+	},
+	{
+		code:    TargetMismatch,
+		title:   "target mismatch",
+		summary: "the development service listened on a different target than the port required by tnl dev.",
+		path:    "/e/target-mismatch",
+		flow: []clioutput.FlowNode{
+			{Label: "port required by tnl dev"},
+			{Label: "framework target", Detail: "different port", Failure: true},
+			{Label: "publisher (not started)"},
+		},
+	},
+	{
+		code:    AuthenticationTimeout,
+		title:   "authentication timed out",
+		summary: "interactive authentication did not finish before the login expired. start the command again and complete sign-in promptly.",
+		path:    "/e/authentication-timeout",
+		flow: []clioutput.FlowNode{
+			{Label: "tnl command"},
+			{Label: "identity provider", Detail: "login expired", Failure: true},
+			{Label: "control API (not authenticated)"},
+		},
+	},
+	{
+		code:    ServiceAmbiguous,
+		title:   "service selection ambiguous",
+		summary: "the project configures multiple services. select one by name and run the command again.",
+		path:    "/e/ambiguous-service",
+		flow: []clioutput.FlowNode{
+			{Label: "project configuration"},
+			{Label: "service selection", Detail: "multiple matches", Failure: true},
+			{Label: "local service (not started)"},
+		},
+	},
+	{
+		code:    RouteConflict,
+		title:   "route conflict",
+		summary: "tnl could not create or reconcile the route because its hostname, identity, or lifecycle conflicts with the requested route.",
+		path:    "/e/route-conflict",
+		flow: []clioutput.FlowNode{
+			{Label: "requested route"},
+			{Label: "control API", Detail: "route conflict", Failure: true},
+			{Label: "publisher (not started)"},
+		},
+	},
+	{
+		code:    ProvisioningStalled,
+		title:   "provisioning stalled",
+		summary: "route provisioning has not completed. tnl is still retrying certificate or publisher connection work.",
+		path:    "/e/provisioning-stalled",
+		flow: []clioutput.FlowNode{
+			{Label: "publisher"},
+			{Label: "route provisioning", Detail: "still waiting", Failure: true},
+			{Label: "route (not yet routable)"},
+		},
+	},
 }
 
 type Error struct {
@@ -112,6 +185,8 @@ func HelpURL(code Code) string {
 	return helpOrigin + definitionFor(code).path
 }
 
+func Summary(code Code) string { return definitionFor(code).summary }
+
 func Codes() []Code {
 	codes := make([]Code, 0, len(definitions))
 	for _, definition := range definitions {
@@ -144,6 +219,12 @@ func TextForCommandError(command string, err error) (string, bool) {
 		details = append(details, detail)
 	}
 	return renderText(command, code, details...), true
+}
+
+// WriteWarning renders a non-terminal diagnostic through the shared diagram renderer.
+func WriteWarning(output io.Writer, command string, code Code) error {
+	_, err := io.WriteString(output, renderText(command, code, definitionFor(code).summary))
+	return err
 }
 
 func WriteHTTP(response http.ResponseWriter, request *http.Request, status int, code Code) {

@@ -292,7 +292,7 @@ func isConcurrentBootstrapError(err error) bool {
 		return false
 	}
 	switch pgErr.Code {
-	case "23505", "40P01", "40001", "42P06", "42P07":
+	case "23505", "40P01", "40001", "42710", "42P06", "42P07":
 		return true
 	default:
 		return false

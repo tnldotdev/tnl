@@ -432,7 +432,7 @@ func closeMembershipRouteSessions(
 	for _, route := range routes {
 		session, err := queries.GetOpenRouteSession(ctx, route.ID)
 		if err == nil && (route.MembershipID.String == membershipID || session.MembershipID.String == membershipID) {
-			if err := closeRouteSession(ctx, queries, route, session, now, reason); err != nil {
+			if err := closeRouteSession(ctx, queries, route, session, RouteSessionClosed, now, reason); err != nil {
 				return err
 			}
 		} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {

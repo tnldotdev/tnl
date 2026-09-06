@@ -89,6 +89,13 @@ func (c *Client) IdentityContext(ctx context.Context) (authorityv1.IdentityConte
 	return request[authorityv1.IdentityContext](ctx, c, c.api.GetIdentityContext)
 }
 
+func (c *Client) IdentityContextWithAccessToken(
+	ctx context.Context,
+	token credentials.AccessToken,
+) (authorityv1.IdentityContext, error) {
+	return requestWithToken[authorityv1.IdentityContext](ctx, c, token.String(), c.api.GetIdentityContext)
+}
+
 func (c *Client) ListTeams(ctx context.Context) (authorityv1.TeamPage, error) {
 	return request[authorityv1.TeamPage](ctx, c, c.api.ListTeams)
 }

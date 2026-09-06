@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "pnpm --filter @tnldotdev/dev build && pnpm --filter @tnldotdev/next build:self && pnpm --filter @tnldotdev/vite build:self",
+    "build": "pnpm --filter @tnldotdev/tnl build",
     "clean": "pnpm --recursive --if-present run clean",
     "format": "oxfmt --write '**/*'",
     "format:check": "oxfmt --check '**/*'",
@@ -13,8 +13,8 @@
     "pretypecheck": "pnpm build",
     "test": "vitest run && node --test packages/tnl/launcher.test.mjs",
     "test:ci": "vitest run && node --test packages/tnl/launcher.test.mjs",
-    "typecheck": "tsc --project packages/dev/type-test.tsconfig.json && tsc --project packages/next/type-test.tsconfig.json && tsc --project packages/vite/type-test.tsconfig.json && tsc --project tsconfig.test.json",
-    "typecheck:ci": "tsc --project packages/dev/type-test.tsconfig.json && tsc --project packages/next/type-test.tsconfig.json && tsc --project packages/vite/type-test.tsconfig.json && tsc --project tsconfig.test.json"
+    "typecheck": "tsc --project packages/tnl/type-test.tsconfig.json && tsc --project packages/tnl/augmented-type-test.tsconfig.json && tsc --project tsconfig.test.json",
+    "typecheck:ci": "tsc --project packages/tnl/type-test.tsconfig.json && tsc --project packages/tnl/augmented-type-test.tsconfig.json && tsc --project tsconfig.test.json"
   },
   "devDependencies": {
     "@types/node": "26.3.0",

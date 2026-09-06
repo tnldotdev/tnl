@@ -53,6 +53,8 @@ CREATE TABLE local_tunnels (
     command TEXT NOT NULL CHECK (command IN ('publish', 'dev')),
     process_id INTEGER NOT NULL CHECK (process_id > 0),
     server_origin TEXT NOT NULL REFERENCES server_profiles (origin) ON DELETE RESTRICT,
+    project_root TEXT NOT NULL,
+    service TEXT NOT NULL DEFAULT '',
     hostname TEXT NOT NULL,
     target TEXT NOT NULL,
     framework TEXT NOT NULL,
@@ -69,6 +71,10 @@ CREATE TABLE local_tunnels (
 
 CREATE INDEX local_tunnels_open_idx
     ON local_tunnels (started_at, id)
+    WHERE stopped_at IS NULL;
+
+CREATE INDEX local_tunnels_project_open_idx
+    ON local_tunnels (project_root, started_at, id)
     WHERE stopped_at IS NULL;
 
 CREATE INDEX local_tunnels_cleanup_idx

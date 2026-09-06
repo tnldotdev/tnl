@@ -15,7 +15,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
@@ -37,21 +36,21 @@ var (
 // RouteSessionRequest contains authority already established by the control
 // API plus the authenticated request secret used for retry-stable credentials.
 type RouteSessionRequest struct {
-	RouteID                string
-	TeamID                 string
-	MembershipID           string
-	ActingIdentityID       string
-	RequireLocalAuthority  bool
-	RetrySecret            []byte
-	IdempotencyKey         string
-	RequestDigest          [32]byte
-	PolicyRevision         uint64
-	CertificateCacheKey    string
-	CertificateScope       string
-	CertificateIdentifiers []string
-	CertificateChallenge   string
-	AllowedIPPrefixes      []string
-	AuthorityIssuer        string
+	RouteID                  string
+	TeamID                   string
+	MembershipID             string
+	ActingIdentityID         string
+	RequireLocalAuthority    bool
+	RetrySecret              []byte
+	IdempotencyKey           string
+	RequestDigest            [32]byte
+	PolicyRevision           uint64
+	CertificateCacheKey      string
+	CertificateScope         string
+	CertificateIdentifiers   []string
+	CertificateChallenge     string
+	AuthorityIssuer          string
+	ExpectedMutationRevision uint64
 }
 
 // PublisherConnectionPlan is one of the two independently assigned publisher
@@ -79,6 +78,7 @@ type RouteSessionSetup struct {
 	ExpiresAt            time.Time
 	ReadyAt              *time.Time
 	ClosedAt             *time.Time
+	PolicyDenials        uint64
 	PublisherConnections [routeSessionConnectionCount]PublisherConnectionPlan
 }
 
@@ -141,6 +141,9 @@ func (d *Database) CreateRouteSession(
 			return RouteSessionSetup{}, ErrRouteAuthority
 		}
 	}
+	if err := expireStaleOpenRouteSession(ctx, queries, route, now); err != nil {
+		return RouteSessionSetup{}, err
+	}
 
 	existing, err := queries.GetRouteSessionByIdempotency(ctx, controlstatedb.GetRouteSessionByIdempotencyParams{
 		RouteID: request.RouteID, IdempotencyKey: request.IdempotencyKey,
@@ -164,6 +167,9 @@ func (d *Database) CreateRouteSession(
 	if RouteLifecycleState(route.LifecycleState) != RouteLifecycleEnabled {
 		return RouteSessionSetup{}, ErrRouteNotEnabled
 	}
+	if !matchesPositiveInt64(route.MutationRevision, request.ExpectedMutationRevision) {
+		return RouteSessionSetup{}, ErrRouteMutationStale
+	}
 	enabled, err := queries.LockRouteSessionCreationControl(ctx)
 	if err != nil {
 		return RouteSessionSetup{}, fmt.Errorf("controlstate: create route session: read maintenance control: %w", err)
@@ -176,18 +182,27 @@ func (d *Database) CreateRouteSession(
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return RouteSessionSetup{}, fmt.Errorf("controlstate: create route session: read live session: %w", err)
 	}
+	if route.Ephemeral {
+		if _, err := queries.RenewEphemeralRouteExpiry(ctx, controlstatedb.RenewEphemeralRouteExpiryParams{
+			ExpiresAt: timestamptz(now.Add(ephemeralRouteGracePeriod)), RouteID: route.ID,
+		}); err != nil {
+			return RouteSessionSetup{}, fmt.Errorf("controlstate: create route session: renew ephemeral route: %w", err)
+		}
+	}
 
 	placements, err := selectRelayServicePlacements(ctx, queries, now)
 	if err != nil {
 		return RouteSessionSetup{}, err
 	}
-	allowedIPPrefixes := prefixValues(request.AllowedIPPrefixes)
 	routeVersion, err := queries.AllocateRouteVersion(ctx, controlstatedb.AllocateRouteVersionParams{
 		UpdatedAt: timestamptz(now), RouteID: request.RouteID,
-		IpPolicy: routeIPPolicy(allowedIPPrefixes), AllowedIpPrefixes: allowedIPPrefixes,
+		ExpectedMutationRevision: positive(request.ExpectedMutationRevision),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return RouteSessionSetup{}, errors.New("controlstate: route version is exhausted")
+		if route.NextRouteVersion == math.MaxInt64 || route.MutationRevision == math.MaxInt64 {
+			return RouteSessionSetup{}, errors.New("controlstate: route version or mutation revision is exhausted")
+		}
+		return RouteSessionSetup{}, ErrRouteMutationStale
 	}
 	if err != nil {
 		return RouteSessionSetup{}, fmt.Errorf("controlstate: create route session: allocate route version: %w", err)
@@ -386,6 +401,7 @@ func routeSessionSetup(
 		MembershipID: session.MembershipID.String, RouteVersion: uint64(session.RouteVersion),
 		PolicyRevision: uint64(session.PolicyRevision), SessionToken: token, State: RouteSessionState(session.State),
 		CreatedAt: session.CreatedAt.Time, ExpiresAt: session.PublisherExpiresAt.Time,
+		PolicyDenials: uint64(session.PolicyDenials),
 	}
 	if session.ReadyAt.Valid {
 		value := session.ReadyAt.Time
@@ -474,9 +490,8 @@ func validateRouteSessionRequest(
 	}) {
 		return errors.New("controlstate: TLS-ALPN-01 does not support wildcard identifiers")
 	}
-	canonicalPrefixes, err := authorization.CanonicalizeIPPrefixes(request.AllowedIPPrefixes)
-	if err != nil || request.AllowedIPPrefixes == nil || !slices.Equal(canonicalPrefixes, request.AllowedIPPrefixes) {
-		return errors.New("controlstate: route-session IP policy must be a canonical sorted set")
+	if request.ExpectedMutationRevision == 0 || request.ExpectedMutationRevision > math.MaxInt64 {
+		return errors.New("controlstate: route-session mutation revision must be positive")
 	}
 	if publisherLeaseDuration <= 0 || connectionCredentialDuration <= 0 {
 		return errors.New("controlstate: route-session durations must be positive")

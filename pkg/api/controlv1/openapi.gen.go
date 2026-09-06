@@ -537,6 +537,7 @@ type CreateRouteRequest struct {
 	AllowedIpPrefixes *[]string         `json:"allowed_ip_prefixes,omitempty"`
 	CanonicalHostname CanonicalHostname `json:"canonical_hostname"`
 	DomainId          DomainID          `json:"domain_id"`
+	Ephemeral         *bool             `json:"ephemeral,omitempty"`
 	MembershipId      *MembershipID     `json:"membership_id,omitempty"`
 	RouteScope        RouteScope        `json:"route_scope"`
 	Target            string            `json:"target"`
@@ -583,6 +584,7 @@ type HealthResponseStatus string
 // HostedPolicyRevocation defines model for HostedPolicyRevocation.
 type HostedPolicyRevocation struct {
 	AllSessions    bool           `json:"all_sessions"`
+	DomainIds      []DomainID     `json:"domain_ids"`
 	MembershipIds  []MembershipID `json:"membership_ids"`
 	PolicyRevision int64          `json:"policy_revision"`
 	TeamId         TeamID         `json:"team_id"`
@@ -687,6 +689,8 @@ type Route struct {
 	CanonicalHostname CanonicalHostname   `json:"canonical_hostname"`
 	CreatedAt         time.Time           `json:"created_at"`
 	DomainId          DomainID            `json:"domain_id"`
+	Ephemeral         bool                `json:"ephemeral"`
+	ExpiresAt         *time.Time          `json:"expires_at,omitempty"`
 	Id                RouteID             `json:"id"`
 	LifecycleState    RouteLifecycleState `json:"lifecycle_state"`
 	MembershipId      *MembershipID       `json:"membership_id,omitempty"`
@@ -731,6 +735,8 @@ type RouteSession struct {
 
 // RouteSessionHeartbeat defines model for RouteSessionHeartbeat.
 type RouteSessionHeartbeat struct {
+	// PolicyDenials Cumulative, eventually consistent IP policy denials for this route version.
+	PolicyDenials        int64                     `json:"policy_denials"`
 	PublisherConnections []PublisherConnectionPlan `json:"publisher_connections"`
 	RouteSession         RouteSession              `json:"route_session"`
 }
@@ -762,6 +768,12 @@ type SetMaintenanceControlRequest struct {
 
 // TeamID defines model for TeamID.
 type TeamID = ResourceID
+
+// UpdateRouteRequest defines model for UpdateRouteRequest.
+type UpdateRouteRequest struct {
+	AllowedIpPrefixes []string `json:"allowed_ip_prefixes"`
+	Target            string   `json:"target"`
+}
 
 // Cursor defines model for Cursor.
 type Cursor = ResourceID
@@ -823,6 +835,9 @@ type MarkRouteSessionReadyJSONRequestBody = RouteSessionVersionRequest
 
 // CreateRouteJSONRequestBody defines body for CreateRoute for application/json ContentType.
 type CreateRouteJSONRequestBody = CreateRouteRequest
+
+// UpdateRouteJSONRequestBody defines body for UpdateRoute for application/json ContentType.
+type UpdateRouteJSONRequestBody = UpdateRouteRequest
 
 // CreateDNSAuthorityJSONRequestBody defines body for CreateDNSAuthority for application/json ContentType.
 type CreateDNSAuthorityJSONRequestBody = CreateDNSAuthorityRequest
@@ -1071,6 +1086,20 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/routes/{route_id} (the `GetRoute` operationId).
 	GetRoute(ctx context.Context, routeId RouteID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateRouteWithBody Reconcile one route's mutable publisher state
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /v1/routes/{route_id} (the `UpdateRoute` operationId).
+	UpdateRouteWithBody(ctx context.Context, routeId RouteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateRoute Reconcile one route's mutable publisher state
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /v1/routes/{route_id} (the `UpdateRoute` operationId).
+	UpdateRoute(ctx context.Context, routeId RouteID, body UpdateRouteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateRouteSession Create one publisher attachment and allocate its route version
 	//
@@ -1554,6 +1583,40 @@ func (c *Client) DeleteRoute(ctx context.Context, routeId RouteID, reqEditors ..
 // Corresponds with GET /v1/routes/{route_id} (the `GetRoute` operationId).
 func (c *Client) GetRoute(ctx context.Context, routeId RouteID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetRouteRequest(c.Server, routeId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateRouteWithBody Reconcile one route's mutable publisher state
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /v1/routes/{route_id} (the `UpdateRoute` operationId).
+func (c *Client) UpdateRouteWithBody(ctx context.Context, routeId RouteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateRouteRequestWithBody(c.Server, routeId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateRoute Reconcile one route's mutable publisher state
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /v1/routes/{route_id} (the `UpdateRoute` operationId).
+func (c *Client) UpdateRoute(ctx context.Context, routeId RouteID, body UpdateRouteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateRouteRequest(c.Server, routeId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -2480,6 +2543,53 @@ func NewGetRouteRequest(server string, routeId RouteID) (*http.Request, error) {
 	return req, nil
 }
 
+// NewUpdateRouteRequest calls the generic UpdateRoute builder with application/json body
+func NewUpdateRouteRequest(server string, routeId RouteID, body UpdateRouteJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateRouteRequestWithBody(server, routeId, "application/json", bodyReader)
+}
+
+// NewUpdateRouteRequestWithBody constructs an http.Request for the UpdateRoute method, with any body, and a specified content type
+func NewUpdateRouteRequestWithBody(server string, routeId RouteID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "route_id", routeId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/routes/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewCreateRouteSessionRequest constructs an http.Request for the CreateRouteSession method
 func NewCreateRouteSessionRequest(server string, routeId RouteID, params *CreateRouteSessionParams) (*http.Request, error) {
 	var err error
@@ -2940,6 +3050,20 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/routes/{route_id} (the `GetRoute` operationId).
 	GetRouteWithResponse(ctx context.Context, routeId RouteID, reqEditors ...RequestEditorFn) (*GetRouteResponse, error)
+
+	// UpdateRouteWithBodyWithResponse Reconcile one route's mutable publisher state
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /v1/routes/{route_id} (the `UpdateRoute` operationId).
+	UpdateRouteWithBodyWithResponse(ctx context.Context, routeId RouteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateRouteResponse, error)
+
+	// UpdateRouteWithResponse Reconcile one route's mutable publisher state
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /v1/routes/{route_id} (the `UpdateRoute` operationId).
+	UpdateRouteWithResponse(ctx context.Context, routeId RouteID, body UpdateRouteJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateRouteResponse, error)
 
 	// CreateRouteSessionWithResponse Create one publisher attachment and allocate its route version
 	//
@@ -3992,6 +4116,54 @@ func (r GetRouteResponse) ContentType() string {
 	return ""
 }
 
+type UpdateRouteResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Route
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdateRouteResponse) GetJSON200() *Route {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r UpdateRouteResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateRouteResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateRouteResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateRouteResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateRouteResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type CreateRouteSessionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -4587,6 +4759,32 @@ func (c *ClientWithResponses) GetRouteWithResponse(ctx context.Context, routeId 
 		return nil, err
 	}
 	return ParseGetRouteResponse(rsp)
+}
+
+// UpdateRouteWithBodyWithResponse Reconcile one route's mutable publisher state
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /v1/routes/{route_id} (the `UpdateRoute` operationId).
+func (c *ClientWithResponses) UpdateRouteWithBodyWithResponse(ctx context.Context, routeId RouteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateRouteResponse, error) {
+	rsp, err := c.UpdateRouteWithBody(ctx, routeId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateRouteResponse(rsp)
+}
+
+// UpdateRouteWithResponse Reconcile one route's mutable publisher state
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /v1/routes/{route_id} (the `UpdateRoute` operationId).
+func (c *ClientWithResponses) UpdateRouteWithResponse(ctx context.Context, routeId RouteID, body UpdateRouteJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateRouteResponse, error) {
+	rsp, err := c.UpdateRoute(ctx, routeId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateRouteResponse(rsp)
 }
 
 // CreateRouteSessionWithResponse Create one publisher attachment and allocate its route version
@@ -5372,6 +5570,39 @@ func ParseGetRouteResponse(rsp *http.Response) (*GetRouteResponse, error) {
 	return response, nil
 }
 
+// ParseUpdateRouteResponse parses an HTTP response from a UpdateRouteWithResponse call
+func ParseUpdateRouteResponse(rsp *http.Response) (*UpdateRouteResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateRouteResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Route
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseCreateRouteSessionResponse parses an HTTP response from a CreateRouteSessionWithResponse call
 func ParseCreateRouteSessionResponse(rsp *http.Response) (*CreateRouteSessionResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -5598,6 +5829,9 @@ type ServerInterface interface {
 	// GetRoute Read one durable route
 	// (GET /v1/routes/{route_id})
 	GetRoute(w http.ResponseWriter, r *http.Request, routeId RouteID)
+	// UpdateRoute Reconcile one route's mutable publisher state
+	// (PATCH /v1/routes/{route_id})
+	UpdateRoute(w http.ResponseWriter, r *http.Request, routeId RouteID)
 	// CreateRouteSession Create one publisher attachment and allocate its route version
 	// (POST /v1/routes/{route_id}/sessions)
 	CreateRouteSession(w http.ResponseWriter, r *http.Request, routeId RouteID, params CreateRouteSessionParams)
@@ -6153,6 +6387,32 @@ func (siw *ServerInterfaceWrapper) GetRoute(w http.ResponseWriter, r *http.Reque
 	handler.ServeHTTP(w, r)
 }
 
+// UpdateRoute operation middleware
+func (siw *ServerInterfaceWrapper) UpdateRoute(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "route_id" -------------
+	var routeId RouteID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "route_id", r.PathValue("route_id"), &routeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "route_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateRoute(w, r, routeId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // CreateRouteSession operation middleware
 func (siw *ServerInterfaceWrapper) CreateRouteSession(w http.ResponseWriter, r *http.Request) {
 
@@ -6474,6 +6734,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/routes", wrapper.CreateRoute)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/routes/{route_id}", wrapper.DeleteRoute)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/routes/{route_id}", wrapper.GetRoute)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/v1/routes/{route_id}", wrapper.UpdateRoute)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/routes/{route_id}/sessions", wrapper.CreateRouteSession)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/route-sessions/{route_session_id}/heartbeat", wrapper.HeartbeatRouteSession)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/route-sessions/{route_session_id}/ready", wrapper.MarkRouteSessionReady)
@@ -7320,6 +7581,46 @@ func (response GetRoutedefaultApplicationProblemPlusJSONResponse) VisitGetRouteR
 	return err
 }
 
+type UpdateRouteRequestObject struct {
+	RouteId RouteID `json:"route_id"`
+	Body    *UpdateRouteJSONRequestBody
+}
+
+type UpdateRouteResponseObject interface {
+	VisitUpdateRouteResponse(w http.ResponseWriter) error
+}
+
+type UpdateRoute200JSONResponse Route
+
+func (response UpdateRoute200JSONResponse) VisitUpdateRouteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateRoutedefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response UpdateRoutedefaultApplicationProblemPlusJSONResponse) VisitUpdateRouteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type CreateRouteSessionRequestObject struct {
 	RouteId RouteID `json:"route_id"`
 	Params  CreateRouteSessionParams
@@ -7577,6 +7878,9 @@ type StrictServerInterface interface {
 	// GetRoute Read one durable route
 	// (GET /v1/routes/{route_id})
 	GetRoute(ctx context.Context, request GetRouteRequestObject) (GetRouteResponseObject, error)
+	// UpdateRoute Reconcile one route's mutable publisher state
+	// (PATCH /v1/routes/{route_id})
+	UpdateRoute(ctx context.Context, request UpdateRouteRequestObject) (UpdateRouteResponseObject, error)
 	// CreateRouteSession Create one publisher attachment and allocate its route version
 	// (POST /v1/routes/{route_id}/sessions)
 	CreateRouteSession(ctx context.Context, request CreateRouteSessionRequestObject) (CreateRouteSessionResponseObject, error)
@@ -8208,6 +8512,39 @@ func (sh *strictHandler) GetRoute(w http.ResponseWriter, r *http.Request, routeI
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetRouteResponseObject); ok {
 		if err := validResponse.VisitGetRouteResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateRoute operation middleware
+func (sh *strictHandler) UpdateRoute(w http.ResponseWriter, r *http.Request, routeId RouteID) {
+	var request UpdateRouteRequestObject
+
+	request.RouteId = routeId
+
+	var body UpdateRouteJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateRoute(ctx, request.(UpdateRouteRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateRoute")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateRouteResponseObject); ok {
+		if err := validResponse.VisitUpdateRouteResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

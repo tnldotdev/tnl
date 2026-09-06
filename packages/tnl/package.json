@@ -1,7 +1,7 @@
 {
   "name": "@tnldotdev/tnl",
   "version": "0.0.0-development",
-  "description": "The tnl client for project-local development workflows.",
+  "description": "The tnl client and framework integrations for project-local development.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -13,17 +13,59 @@
   },
   "files": [
     "bin",
-    "lib"
+    "dist",
+    "lib",
+    "NOTICE",
+    "THIRD_PARTY_LICENSES.txt"
   ],
   "type": "module",
+  "sideEffects": false,
   "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
     "./config": {
       "types": "./lib/config.d.ts",
       "import": "./lib/config.mjs"
+    },
+    "./next": {
+      "types": "./dist/next.d.ts",
+      "import": "./dist/next.js",
+      "default": "./dist/next.js"
+    },
+    "./vite": {
+      "types": "./dist/vite.d.ts",
+      "import": "./dist/vite.js",
+      "default": "./dist/vite.js"
     }
   },
   "publishConfig": {
     "access": "public"
+  },
+  "scripts": {
+    "build": "pnpm run clean && tsc --project tsconfig.json",
+    "clean": "node ../../scripts/clean-package.mjs",
+    "prepack": "pnpm run build"
+  },
+  "devDependencies": {
+    "next": "16.3.4",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "vite": "8.2.2"
+  },
+  "peerDependencies": {
+    "next": ">=16.3.4",
+    "vite": ">=6.0.9"
+  },
+  "peerDependenciesMeta": {
+    "next": {
+      "optional": true
+    },
+    "vite": {
+      "optional": true
+    }
   },
   "engines": {
     "node": ">=22.18"

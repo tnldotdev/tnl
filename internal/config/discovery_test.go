@@ -33,7 +33,7 @@ func TestSelectProjectConfigUsesNearestFile(t *testing.T) {
 
 func TestSelectProjectConfigRejectsAmbiguity(t *testing.T) {
 	directory := t.TempDir()
-	for _, name := range []string{"tnl.yml", "tnl.ts"} {
+	for _, name := range []string{"tnl.yml", "tnl.config.ts"} {
 		if err := os.WriteFile(filepath.Join(directory, name), []byte(""), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -43,5 +43,16 @@ func TestSelectProjectConfigRejectsAmbiguity(t *testing.T) {
 	}
 	if selection, err := SelectProjectConfig(directory, "", "ignored", true); err != nil || selection.Path != "" {
 		t.Fatalf("disabled selection = %#v, %v", selection, err)
+	}
+}
+
+func TestSelectProjectConfigRejectsOtherTypeScriptNames(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "project.ts")
+	if err := os.WriteFile(path, []byte("export default {};"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SelectProjectConfig(directory, path, "", false); err == nil {
+		t.Fatal("noncanonical TypeScript configuration name was accepted")
 	}
 }

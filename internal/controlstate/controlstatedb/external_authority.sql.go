@@ -13,22 +13,31 @@ import (
 )
 
 const advanceAuthorityRevision = `-- name: AdvanceAuthorityRevision :one
-INSERT INTO control.authority_revision_floors (
+INSERT INTO control.authority_revision_state (
     issuer,
     team_id,
-    policy_revision,
-    updated_at
+    observed_policy_revision,
+    applied_policy_revision,
+    observed_at,
+    applied_at
 ) VALUES (
     $1,
     $2,
     $3,
+    $3,
+    $4,
     $4
 )
 ON CONFLICT (issuer, team_id) DO UPDATE SET
-    policy_revision = EXCLUDED.policy_revision,
-    updated_at = GREATEST(control.authority_revision_floors.updated_at, EXCLUDED.updated_at)
-WHERE control.authority_revision_floors.policy_revision < EXCLUDED.policy_revision
-RETURNING policy_revision
+    observed_policy_revision = GREATEST(
+        control.authority_revision_state.observed_policy_revision,
+        EXCLUDED.observed_policy_revision
+    ),
+    applied_policy_revision = EXCLUDED.applied_policy_revision,
+    observed_at = GREATEST(control.authority_revision_state.observed_at, EXCLUDED.observed_at),
+    applied_at = GREATEST(control.authority_revision_state.applied_at, EXCLUDED.applied_at)
+WHERE control.authority_revision_state.applied_policy_revision < EXCLUDED.applied_policy_revision
+RETURNING applied_policy_revision
 `
 
 type AdvanceAuthorityRevisionParams struct {
@@ -45,9 +54,9 @@ func (q *Queries) AdvanceAuthorityRevision(ctx context.Context, arg AdvanceAutho
 		arg.PolicyRevision,
 		arg.UpdatedAt,
 	)
-	var policy_revision int64
-	err := row.Scan(&policy_revision)
-	return policy_revision, err
+	var applied_policy_revision int64
+	err := row.Scan(&applied_policy_revision)
+	return applied_policy_revision, err
 }
 
 const ensureExternalAuthorityPrincipal = `-- name: EnsureExternalAuthorityPrincipal :one
@@ -132,54 +141,69 @@ func (q *Queries) EnsureExternalRetryMasterKey(ctx context.Context, arg EnsureEx
 }
 
 const getExternalAuthorityRoute = `-- name: GetExternalAuthorityRoute :one
-SELECT routes.id, routes.team_id, routes.domain_id, routes.membership_id, routes.created_by_identity_id, routes.idempotency_key, routes.request_digest, routes.canonical_hostname, routes.target, routes.route_scope, routes.policy_revision, routes.ip_policy, routes.allowed_ip_prefixes, routes.lifecycle_state, routes.dns_authority_reference, routes.dns_state, routes.dns_revision, routes.dns_work_owner, routes.dns_work_epoch, routes.dns_work_expires_at, routes.dns_attempts, routes.dns_available_at, routes.dns_last_error, routes.next_route_version, routes.suspension_revision, routes.suspension_reason, routes.created_at, routes.updated_at, routes.suspended_at, routes.deleted_at,
+SELECT routes.id, routes.team_id, routes.domain_id, routes.membership_id, routes.created_by_identity_id, routes.idempotency_key, routes.request_digest, routes.canonical_hostname, routes.target, routes.route_scope, routes.policy_revision, routes.ip_policy, routes.allowed_ip_prefixes, routes.lifecycle_state, routes.dns_authority_reference, routes.dns_state, routes.dns_revision, routes.dns_work_owner, routes.dns_work_epoch, routes.dns_work_expires_at, routes.dns_attempts, routes.dns_available_at, routes.dns_last_error, routes.next_route_version, routes.mutation_revision, routes.ephemeral, routes.expires_at, routes.suspension_revision, routes.suspension_reason, routes.created_at, routes.updated_at, routes.suspended_at, routes.deleted_at,
     COALESCE((
         SELECT sessions.id
         FROM control.route_sessions AS sessions
         WHERE sessions.route_id = routes.id
           AND sessions.closed_at IS NULL
-    ), '')::text AS attached_session_id
+    ), '')::text AS attached_session_id,
+    COALESCE((
+        SELECT sessions.route_version
+        FROM control.route_sessions AS sessions
+        WHERE sessions.route_id = routes.id
+          AND sessions.idempotency_key = $1
+    ), routes.next_route_version)::bigint AS authorization_route_version
 FROM control.routes AS routes
-WHERE routes.id = $1
+WHERE routes.id = $2
   AND routes.lifecycle_state <> 'deleted'
 `
 
-type GetExternalAuthorityRouteRow struct {
-	ID                    string
-	TeamID                string
-	DomainID              string
-	MembershipID          pgtype.Text
-	CreatedByIdentityID   string
-	IdempotencyKey        string
-	RequestDigest         []byte
-	CanonicalHostname     string
-	Target                string
-	RouteScope            string
-	PolicyRevision        int64
-	IpPolicy              string
-	AllowedIpPrefixes     []netip.Prefix
-	LifecycleState        string
-	DnsAuthorityReference pgtype.Text
-	DnsState              string
-	DnsRevision           int64
-	DnsWorkOwner          pgtype.Text
-	DnsWorkEpoch          int64
-	DnsWorkExpiresAt      pgtype.Timestamptz
-	DnsAttempts           int64
-	DnsAvailableAt        pgtype.Timestamptz
-	DnsLastError          pgtype.Text
-	NextRouteVersion      int64
-	SuspensionRevision    int64
-	SuspensionReason      pgtype.Text
-	CreatedAt             pgtype.Timestamptz
-	UpdatedAt             pgtype.Timestamptz
-	SuspendedAt           pgtype.Timestamptz
-	DeletedAt             pgtype.Timestamptz
-	AttachedSessionID     string
+type GetExternalAuthorityRouteParams struct {
+	RouteSessionIdempotencyKey string
+	RouteID                    string
 }
 
-func (q *Queries) GetExternalAuthorityRoute(ctx context.Context, routeID string) (GetExternalAuthorityRouteRow, error) {
-	row := q.db.QueryRow(ctx, getExternalAuthorityRoute, routeID)
+type GetExternalAuthorityRouteRow struct {
+	ID                        string
+	TeamID                    string
+	DomainID                  string
+	MembershipID              pgtype.Text
+	CreatedByIdentityID       string
+	IdempotencyKey            string
+	RequestDigest             []byte
+	CanonicalHostname         string
+	Target                    string
+	RouteScope                string
+	PolicyRevision            int64
+	IpPolicy                  string
+	AllowedIpPrefixes         []netip.Prefix
+	LifecycleState            string
+	DnsAuthorityReference     pgtype.Text
+	DnsState                  string
+	DnsRevision               int64
+	DnsWorkOwner              pgtype.Text
+	DnsWorkEpoch              int64
+	DnsWorkExpiresAt          pgtype.Timestamptz
+	DnsAttempts               int64
+	DnsAvailableAt            pgtype.Timestamptz
+	DnsLastError              pgtype.Text
+	NextRouteVersion          int64
+	MutationRevision          int64
+	Ephemeral                 bool
+	ExpiresAt                 pgtype.Timestamptz
+	SuspensionRevision        int64
+	SuspensionReason          pgtype.Text
+	CreatedAt                 pgtype.Timestamptz
+	UpdatedAt                 pgtype.Timestamptz
+	SuspendedAt               pgtype.Timestamptz
+	DeletedAt                 pgtype.Timestamptz
+	AttachedSessionID         string
+	AuthorizationRouteVersion int64
+}
+
+func (q *Queries) GetExternalAuthorityRoute(ctx context.Context, arg GetExternalAuthorityRouteParams) (GetExternalAuthorityRouteRow, error) {
+	row := q.db.QueryRow(ctx, getExternalAuthorityRoute, arg.RouteSessionIdempotencyKey, arg.RouteID)
 	var i GetExternalAuthorityRouteRow
 	err := row.Scan(
 		&i.ID,
@@ -206,6 +230,9 @@ func (q *Queries) GetExternalAuthorityRoute(ctx context.Context, routeID string)
 		&i.DnsAvailableAt,
 		&i.DnsLastError,
 		&i.NextRouteVersion,
+		&i.MutationRevision,
+		&i.Ephemeral,
+		&i.ExpiresAt,
 		&i.SuspensionRevision,
 		&i.SuspensionReason,
 		&i.CreatedAt,
@@ -213,12 +240,13 @@ func (q *Queries) GetExternalAuthorityRoute(ctx context.Context, routeID string)
 		&i.SuspendedAt,
 		&i.DeletedAt,
 		&i.AttachedSessionID,
+		&i.AuthorizationRouteVersion,
 	)
 	return i, err
 }
 
 const listExternalAuthorityRoutes = `-- name: ListExternalAuthorityRoutes :many
-SELECT routes.id, routes.team_id, routes.domain_id, routes.membership_id, routes.created_by_identity_id, routes.idempotency_key, routes.request_digest, routes.canonical_hostname, routes.target, routes.route_scope, routes.policy_revision, routes.ip_policy, routes.allowed_ip_prefixes, routes.lifecycle_state, routes.dns_authority_reference, routes.dns_state, routes.dns_revision, routes.dns_work_owner, routes.dns_work_epoch, routes.dns_work_expires_at, routes.dns_attempts, routes.dns_available_at, routes.dns_last_error, routes.next_route_version, routes.suspension_revision, routes.suspension_reason, routes.created_at, routes.updated_at, routes.suspended_at, routes.deleted_at,
+SELECT routes.id, routes.team_id, routes.domain_id, routes.membership_id, routes.created_by_identity_id, routes.idempotency_key, routes.request_digest, routes.canonical_hostname, routes.target, routes.route_scope, routes.policy_revision, routes.ip_policy, routes.allowed_ip_prefixes, routes.lifecycle_state, routes.dns_authority_reference, routes.dns_state, routes.dns_revision, routes.dns_work_owner, routes.dns_work_epoch, routes.dns_work_expires_at, routes.dns_attempts, routes.dns_available_at, routes.dns_last_error, routes.next_route_version, routes.mutation_revision, routes.ephemeral, routes.expires_at, routes.suspension_revision, routes.suspension_reason, routes.created_at, routes.updated_at, routes.suspended_at, routes.deleted_at,
     COALESCE((
         SELECT sessions.id
         FROM control.route_sessions AS sessions
@@ -263,6 +291,9 @@ type ListExternalAuthorityRoutesRow struct {
 	DnsAvailableAt        pgtype.Timestamptz
 	DnsLastError          pgtype.Text
 	NextRouteVersion      int64
+	MutationRevision      int64
+	Ephemeral             bool
+	ExpiresAt             pgtype.Timestamptz
 	SuspensionRevision    int64
 	SuspensionReason      pgtype.Text
 	CreatedAt             pgtype.Timestamptz
@@ -306,6 +337,9 @@ func (q *Queries) ListExternalAuthorityRoutes(ctx context.Context, arg ListExter
 			&i.DnsAvailableAt,
 			&i.DnsLastError,
 			&i.NextRouteVersion,
+			&i.MutationRevision,
+			&i.Ephemeral,
+			&i.ExpiresAt,
 			&i.SuspensionRevision,
 			&i.SuspensionReason,
 			&i.CreatedAt,
@@ -325,7 +359,7 @@ func (q *Queries) ListExternalAuthorityRoutes(ctx context.Context, arg ListExter
 }
 
 const lockHostedTeamRoutes = `-- name: LockHostedTeamRoutes :many
-SELECT id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key, request_digest, canonical_hostname, target, route_scope, policy_revision, ip_policy, allowed_ip_prefixes, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_route_version, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at
+SELECT id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key, request_digest, canonical_hostname, target, route_scope, policy_revision, ip_policy, allowed_ip_prefixes, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_route_version, mutation_revision, ephemeral, expires_at, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at
 FROM control.routes
 WHERE team_id = $1
   AND deleted_at IS NULL
@@ -367,6 +401,9 @@ func (q *Queries) LockHostedTeamRoutes(ctx context.Context, teamID string) ([]Co
 			&i.DnsAvailableAt,
 			&i.DnsLastError,
 			&i.NextRouteVersion,
+			&i.MutationRevision,
+			&i.Ephemeral,
+			&i.ExpiresAt,
 			&i.SuspensionRevision,
 			&i.SuspensionReason,
 			&i.CreatedAt,
@@ -385,11 +422,11 @@ func (q *Queries) LockHostedTeamRoutes(ctx context.Context, teamID string) ([]Co
 }
 
 const observeAuthorityRevision = `-- name: ObserveAuthorityRevision :one
-INSERT INTO control.authority_revision_floors (
+INSERT INTO control.authority_revision_state (
     issuer,
     team_id,
-    policy_revision,
-    updated_at
+    observed_policy_revision,
+    observed_at
 ) VALUES (
     $1,
     $2,
@@ -397,10 +434,13 @@ INSERT INTO control.authority_revision_floors (
     $4
 )
 ON CONFLICT (issuer, team_id) DO UPDATE SET
-    policy_revision = EXCLUDED.policy_revision,
-    updated_at = EXCLUDED.updated_at
-WHERE control.authority_revision_floors.policy_revision <= EXCLUDED.policy_revision
-RETURNING policy_revision
+    observed_policy_revision = EXCLUDED.observed_policy_revision,
+    observed_at = GREATEST(control.authority_revision_state.observed_at, EXCLUDED.observed_at)
+WHERE GREATEST(
+    control.authority_revision_state.observed_policy_revision,
+    control.authority_revision_state.applied_policy_revision
+) <= EXCLUDED.observed_policy_revision
+RETURNING observed_policy_revision
 `
 
 type ObserveAuthorityRevisionParams struct {
@@ -417,9 +457,9 @@ func (q *Queries) ObserveAuthorityRevision(ctx context.Context, arg ObserveAutho
 		arg.PolicyRevision,
 		arg.UpdatedAt,
 	)
-	var policy_revision int64
-	err := row.Scan(&policy_revision)
-	return policy_revision, err
+	var observed_policy_revision int64
+	err := row.Scan(&observed_policy_revision)
+	return observed_policy_revision, err
 }
 
 const rotateExternalRetryMasterKey = `-- name: RotateExternalRetryMasterKey :exec

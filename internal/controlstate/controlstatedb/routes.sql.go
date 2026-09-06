@@ -14,22 +14,28 @@ import (
 
 const closeRouteSession = `-- name: CloseRouteSession :one
 UPDATE control.route_sessions
-SET state = 'closed',
-    closed_at = $1,
-    close_reason = $2
-WHERE id = $3
+SET state = $1,
+    closed_at = $2,
+    close_reason = $3
+WHERE id = $4
   AND closed_at IS NULL
-RETURNING id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason
+RETURNING id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason
 `
 
 type CloseRouteSessionParams struct {
+	State          string
 	ClosedAt       pgtype.Timestamptz
 	CloseReason    pgtype.Text
 	RouteSessionID string
 }
 
 func (q *Queries) CloseRouteSession(ctx context.Context, arg CloseRouteSessionParams) (ControlRouteSession, error) {
-	row := q.db.QueryRow(ctx, closeRouteSession, arg.ClosedAt, arg.CloseReason, arg.RouteSessionID)
+	row := q.db.QueryRow(ctx, closeRouteSession,
+		arg.State,
+		arg.ClosedAt,
+		arg.CloseReason,
+		arg.RouteSessionID,
+	)
 	var i ControlRouteSession
 	err := row.Scan(
 		&i.ID,
@@ -43,6 +49,7 @@ func (q *Queries) CloseRouteSession(ctx context.Context, arg CloseRouteSessionPa
 		&i.SessionTokenID,
 		&i.SessionTokenDigest,
 		&i.PolicyRevision,
+		&i.PolicyDenials,
 		&i.CertificateCacheKey,
 		&i.CertificateScope,
 		&i.CertificateIdentifiers,
@@ -97,19 +104,23 @@ SET lifecycle_state = 'deleted',
         ELSE dns_available_at
     END,
     dns_last_error = NULL,
+    mutation_revision = mutation_revision + 1,
     deleted_at = $1,
     updated_at = $1
 WHERE id = $2
   AND lifecycle_state <> 'deleted'
+  AND mutation_revision = $3
+  AND mutation_revision < 9223372036854775807
 `
 
 type DeleteRouteParams struct {
-	DeletedAt pgtype.Timestamptz
-	RouteID   string
+	DeletedAt                pgtype.Timestamptz
+	RouteID                  string
+	ExpectedMutationRevision int64
 }
 
 func (q *Queries) DeleteRoute(ctx context.Context, arg DeleteRouteParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteRoute, arg.DeletedAt, arg.RouteID)
+	result, err := q.db.Exec(ctx, deleteRoute, arg.DeletedAt, arg.RouteID, arg.ExpectedMutationRevision)
 	if err != nil {
 		return 0, err
 	}
@@ -117,7 +128,7 @@ func (q *Queries) DeleteRoute(ctx context.Context, arg DeleteRouteParams) (int64
 }
 
 const getIdentityRoute = `-- name: GetIdentityRoute :one
-SELECT r.id, r.team_id, r.domain_id, r.membership_id, r.created_by_identity_id, r.idempotency_key, r.request_digest, r.canonical_hostname, r.target, r.route_scope, r.policy_revision, r.ip_policy, r.allowed_ip_prefixes, r.lifecycle_state, r.dns_authority_reference, r.dns_state, r.dns_revision, r.dns_work_owner, r.dns_work_epoch, r.dns_work_expires_at, r.dns_attempts, r.dns_available_at, r.dns_last_error, r.next_route_version, r.suspension_revision, r.suspension_reason, r.created_at, r.updated_at, r.suspended_at, r.deleted_at,
+SELECT r.id, r.team_id, r.domain_id, r.membership_id, r.created_by_identity_id, r.idempotency_key, r.request_digest, r.canonical_hostname, r.target, r.route_scope, r.policy_revision, r.ip_policy, r.allowed_ip_prefixes, r.lifecycle_state, r.dns_authority_reference, r.dns_state, r.dns_revision, r.dns_work_owner, r.dns_work_epoch, r.dns_work_expires_at, r.dns_attempts, r.dns_available_at, r.dns_last_error, r.next_route_version, r.mutation_revision, r.ephemeral, r.expires_at, r.suspension_revision, r.suspension_reason, r.created_at, r.updated_at, r.suspended_at, r.deleted_at,
     COALESCE((
         SELECT s.id
         FROM control.route_sessions AS s
@@ -166,6 +177,9 @@ type GetIdentityRouteRow struct {
 	DnsAvailableAt        pgtype.Timestamptz
 	DnsLastError          pgtype.Text
 	NextRouteVersion      int64
+	MutationRevision      int64
+	Ephemeral             bool
+	ExpiresAt             pgtype.Timestamptz
 	SuspensionRevision    int64
 	SuspensionReason      pgtype.Text
 	CreatedAt             pgtype.Timestamptz
@@ -203,6 +217,9 @@ func (q *Queries) GetIdentityRoute(ctx context.Context, arg GetIdentityRoutePara
 		&i.DnsAvailableAt,
 		&i.DnsLastError,
 		&i.NextRouteVersion,
+		&i.MutationRevision,
+		&i.Ephemeral,
+		&i.ExpiresAt,
 		&i.SuspensionRevision,
 		&i.SuspensionReason,
 		&i.CreatedAt,
@@ -215,7 +232,7 @@ func (q *Queries) GetIdentityRoute(ctx context.Context, arg GetIdentityRoutePara
 }
 
 const getRouteByCreatorIdempotency = `-- name: GetRouteByCreatorIdempotency :one
-SELECT r.id, r.team_id, r.domain_id, r.membership_id, r.created_by_identity_id, r.idempotency_key, r.request_digest, r.canonical_hostname, r.target, r.route_scope, r.policy_revision, r.ip_policy, r.allowed_ip_prefixes, r.lifecycle_state, r.dns_authority_reference, r.dns_state, r.dns_revision, r.dns_work_owner, r.dns_work_epoch, r.dns_work_expires_at, r.dns_attempts, r.dns_available_at, r.dns_last_error, r.next_route_version, r.suspension_revision, r.suspension_reason, r.created_at, r.updated_at, r.suspended_at, r.deleted_at,
+SELECT r.id, r.team_id, r.domain_id, r.membership_id, r.created_by_identity_id, r.idempotency_key, r.request_digest, r.canonical_hostname, r.target, r.route_scope, r.policy_revision, r.ip_policy, r.allowed_ip_prefixes, r.lifecycle_state, r.dns_authority_reference, r.dns_state, r.dns_revision, r.dns_work_owner, r.dns_work_epoch, r.dns_work_expires_at, r.dns_attempts, r.dns_available_at, r.dns_last_error, r.next_route_version, r.mutation_revision, r.ephemeral, r.expires_at, r.suspension_revision, r.suspension_reason, r.created_at, r.updated_at, r.suspended_at, r.deleted_at,
     COALESCE((
         SELECT s.id
         FROM control.route_sessions AS s
@@ -257,6 +274,9 @@ type GetRouteByCreatorIdempotencyRow struct {
 	DnsAvailableAt        pgtype.Timestamptz
 	DnsLastError          pgtype.Text
 	NextRouteVersion      int64
+	MutationRevision      int64
+	Ephemeral             bool
+	ExpiresAt             pgtype.Timestamptz
 	SuspensionRevision    int64
 	SuspensionReason      pgtype.Text
 	CreatedAt             pgtype.Timestamptz
@@ -294,6 +314,9 @@ func (q *Queries) GetRouteByCreatorIdempotency(ctx context.Context, arg GetRoute
 		&i.DnsAvailableAt,
 		&i.DnsLastError,
 		&i.NextRouteVersion,
+		&i.MutationRevision,
+		&i.Ephemeral,
+		&i.ExpiresAt,
 		&i.SuspensionRevision,
 		&i.SuspensionReason,
 		&i.CreatedAt,
@@ -381,6 +404,35 @@ func (q *Queries) GetRouteCreationContext(ctx context.Context, arg GetRouteCreat
 	return i, err
 }
 
+const insertExpiredEphemeralRouteDeleteAuditEvent = `-- name: InsertExpiredEphemeralRouteDeleteAuditEvent :exec
+INSERT INTO control.admin_audit_events (
+    actor,
+    request_id,
+    operation,
+    target_kind,
+    target_id,
+    occurred_at
+) VALUES (
+    'system',
+    $1,
+    'route.delete',
+    'route',
+    $2,
+    $3
+)
+`
+
+type InsertExpiredEphemeralRouteDeleteAuditEventParams struct {
+	RequestID  string
+	RouteID    string
+	OccurredAt pgtype.Timestamptz
+}
+
+func (q *Queries) InsertExpiredEphemeralRouteDeleteAuditEvent(ctx context.Context, arg InsertExpiredEphemeralRouteDeleteAuditEventParams) error {
+	_, err := q.db.Exec(ctx, insertExpiredEphemeralRouteDeleteAuditEvent, arg.RequestID, arg.RouteID, arg.OccurredAt)
+	return err
+}
+
 const insertRoute = `-- name: InsertRoute :one
 INSERT INTO control.routes (
     id,
@@ -400,6 +452,8 @@ INSERT INTO control.routes (
     dns_authority_reference,
     dns_state,
     dns_available_at,
+    ephemeral,
+    expires_at,
     created_at,
     updated_at
 ) VALUES (
@@ -420,10 +474,12 @@ INSERT INTO control.routes (
     $14,
     $15,
     CASE WHEN $15::text = 'pending' THEN $16::timestamptz END,
+    $17,
+    $18,
     $16,
     $16
 )
-RETURNING id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key, request_digest, canonical_hostname, target, route_scope, policy_revision, ip_policy, allowed_ip_prefixes, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_route_version, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at
+RETURNING id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key, request_digest, canonical_hostname, target, route_scope, policy_revision, ip_policy, allowed_ip_prefixes, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_route_version, mutation_revision, ephemeral, expires_at, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at
 `
 
 type InsertRouteParams struct {
@@ -443,6 +499,8 @@ type InsertRouteParams struct {
 	DnsAuthorityReference pgtype.Text
 	DnsState              string
 	CreatedAt             pgtype.Timestamptz
+	Ephemeral             bool
+	ExpiresAt             pgtype.Timestamptz
 }
 
 func (q *Queries) InsertRoute(ctx context.Context, arg InsertRouteParams) (ControlRoute, error) {
@@ -463,6 +521,8 @@ func (q *Queries) InsertRoute(ctx context.Context, arg InsertRouteParams) (Contr
 		arg.DnsAuthorityReference,
 		arg.DnsState,
 		arg.CreatedAt,
+		arg.Ephemeral,
+		arg.ExpiresAt,
 	)
 	var i ControlRoute
 	err := row.Scan(
@@ -490,6 +550,9 @@ func (q *Queries) InsertRoute(ctx context.Context, arg InsertRouteParams) (Contr
 		&i.DnsAvailableAt,
 		&i.DnsLastError,
 		&i.NextRouteVersion,
+		&i.MutationRevision,
+		&i.Ephemeral,
+		&i.ExpiresAt,
 		&i.SuspensionRevision,
 		&i.SuspensionReason,
 		&i.CreatedAt,
@@ -574,8 +637,45 @@ func (q *Queries) InsertRouteDeleteAuditEvent(ctx context.Context, arg InsertRou
 	return err
 }
 
+const insertRouteUpdateAuditEvent = `-- name: InsertRouteUpdateAuditEvent :exec
+INSERT INTO control.admin_audit_events (
+    actor_identity_id,
+    actor,
+    request_id,
+    operation,
+    target_kind,
+    target_id,
+    occurred_at
+) VALUES (
+    $1,
+    $1,
+    $2,
+    'route.update',
+    'route',
+    $3,
+    $4
+)
+`
+
+type InsertRouteUpdateAuditEventParams struct {
+	ActorIdentityID pgtype.Text
+	RequestID       string
+	RouteID         string
+	OccurredAt      pgtype.Timestamptz
+}
+
+func (q *Queries) InsertRouteUpdateAuditEvent(ctx context.Context, arg InsertRouteUpdateAuditEventParams) error {
+	_, err := q.db.Exec(ctx, insertRouteUpdateAuditEvent,
+		arg.ActorIdentityID,
+		arg.RequestID,
+		arg.RouteID,
+		arg.OccurredAt,
+	)
+	return err
+}
+
 const listIdentityRoutes = `-- name: ListIdentityRoutes :many
-SELECT r.id, r.team_id, r.domain_id, r.membership_id, r.created_by_identity_id, r.idempotency_key, r.request_digest, r.canonical_hostname, r.target, r.route_scope, r.policy_revision, r.ip_policy, r.allowed_ip_prefixes, r.lifecycle_state, r.dns_authority_reference, r.dns_state, r.dns_revision, r.dns_work_owner, r.dns_work_epoch, r.dns_work_expires_at, r.dns_attempts, r.dns_available_at, r.dns_last_error, r.next_route_version, r.suspension_revision, r.suspension_reason, r.created_at, r.updated_at, r.suspended_at, r.deleted_at,
+SELECT r.id, r.team_id, r.domain_id, r.membership_id, r.created_by_identity_id, r.idempotency_key, r.request_digest, r.canonical_hostname, r.target, r.route_scope, r.policy_revision, r.ip_policy, r.allowed_ip_prefixes, r.lifecycle_state, r.dns_authority_reference, r.dns_state, r.dns_revision, r.dns_work_owner, r.dns_work_epoch, r.dns_work_expires_at, r.dns_attempts, r.dns_available_at, r.dns_last_error, r.next_route_version, r.mutation_revision, r.ephemeral, r.expires_at, r.suspension_revision, r.suspension_reason, r.created_at, r.updated_at, r.suspended_at, r.deleted_at,
     COALESCE((
         SELECT s.id
         FROM control.route_sessions AS s
@@ -628,6 +728,9 @@ type ListIdentityRoutesRow struct {
 	DnsAvailableAt        pgtype.Timestamptz
 	DnsLastError          pgtype.Text
 	NextRouteVersion      int64
+	MutationRevision      int64
+	Ephemeral             bool
+	ExpiresAt             pgtype.Timestamptz
 	SuspensionRevision    int64
 	SuspensionReason      pgtype.Text
 	CreatedAt             pgtype.Timestamptz
@@ -671,6 +774,9 @@ func (q *Queries) ListIdentityRoutes(ctx context.Context, arg ListIdentityRoutes
 			&i.DnsAvailableAt,
 			&i.DnsLastError,
 			&i.NextRouteVersion,
+			&i.MutationRevision,
+			&i.Ephemeral,
+			&i.ExpiresAt,
 			&i.SuspensionRevision,
 			&i.SuspensionReason,
 			&i.CreatedAt,
@@ -722,8 +828,85 @@ func (q *Queries) ListTeamMemberNamespaceLabels(ctx context.Context, teamID stri
 	return items, nil
 }
 
+const lockExpiredEphemeralRoutes = `-- name: LockExpiredEphemeralRoutes :many
+SELECT id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key, request_digest, canonical_hostname, target, route_scope, policy_revision, ip_policy, allowed_ip_prefixes, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_route_version, mutation_revision, ephemeral, expires_at, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at
+FROM control.routes
+WHERE ephemeral
+  AND lifecycle_state <> 'deleted'
+  AND expires_at <= $1
+  AND NOT EXISTS (
+      SELECT 1
+      FROM control.route_sessions AS sessions
+      WHERE sessions.route_id = control.routes.id
+        AND sessions.closed_at IS NULL
+        AND sessions.publisher_expires_at > $1
+  )
+ORDER BY expires_at, id
+LIMIT $2
+FOR UPDATE SKIP LOCKED
+`
+
+type LockExpiredEphemeralRoutesParams struct {
+	Now       pgtype.Timestamptz
+	BatchSize int32
+}
+
+func (q *Queries) LockExpiredEphemeralRoutes(ctx context.Context, arg LockExpiredEphemeralRoutesParams) ([]ControlRoute, error) {
+	rows, err := q.db.Query(ctx, lockExpiredEphemeralRoutes, arg.Now, arg.BatchSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ControlRoute
+	for rows.Next() {
+		var i ControlRoute
+		if err := rows.Scan(
+			&i.ID,
+			&i.TeamID,
+			&i.DomainID,
+			&i.MembershipID,
+			&i.CreatedByIdentityID,
+			&i.IdempotencyKey,
+			&i.RequestDigest,
+			&i.CanonicalHostname,
+			&i.Target,
+			&i.RouteScope,
+			&i.PolicyRevision,
+			&i.IpPolicy,
+			&i.AllowedIpPrefixes,
+			&i.LifecycleState,
+			&i.DnsAuthorityReference,
+			&i.DnsState,
+			&i.DnsRevision,
+			&i.DnsWorkOwner,
+			&i.DnsWorkEpoch,
+			&i.DnsWorkExpiresAt,
+			&i.DnsAttempts,
+			&i.DnsAvailableAt,
+			&i.DnsLastError,
+			&i.NextRouteVersion,
+			&i.MutationRevision,
+			&i.Ephemeral,
+			&i.ExpiresAt,
+			&i.SuspensionRevision,
+			&i.SuspensionReason,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.SuspendedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockIdentityRouteForDelete = `-- name: LockIdentityRouteForDelete :one
-SELECT r.id, r.team_id, r.domain_id, r.membership_id, r.created_by_identity_id, r.idempotency_key, r.request_digest, r.canonical_hostname, r.target, r.route_scope, r.policy_revision, r.ip_policy, r.allowed_ip_prefixes, r.lifecycle_state, r.dns_authority_reference, r.dns_state, r.dns_revision, r.dns_work_owner, r.dns_work_epoch, r.dns_work_expires_at, r.dns_attempts, r.dns_available_at, r.dns_last_error, r.next_route_version, r.suspension_revision, r.suspension_reason, r.created_at, r.updated_at, r.suspended_at, r.deleted_at, m.id AS actor_membership_id, m.role AS actor_role
+SELECT r.id, r.team_id, r.domain_id, r.membership_id, r.created_by_identity_id, r.idempotency_key, r.request_digest, r.canonical_hostname, r.target, r.route_scope, r.policy_revision, r.ip_policy, r.allowed_ip_prefixes, r.lifecycle_state, r.dns_authority_reference, r.dns_state, r.dns_revision, r.dns_work_owner, r.dns_work_epoch, r.dns_work_expires_at, r.dns_attempts, r.dns_available_at, r.dns_last_error, r.next_route_version, r.mutation_revision, r.ephemeral, r.expires_at, r.suspension_revision, r.suspension_reason, r.created_at, r.updated_at, r.suspended_at, r.deleted_at, m.id AS actor_membership_id, m.role AS actor_role
 FROM control.routes AS r
 JOIN control.team_memberships AS m
   ON m.team_id = r.team_id
@@ -764,6 +947,9 @@ type LockIdentityRouteForDeleteRow struct {
 	DnsAvailableAt        pgtype.Timestamptz
 	DnsLastError          pgtype.Text
 	NextRouteVersion      int64
+	MutationRevision      int64
+	Ephemeral             bool
+	ExpiresAt             pgtype.Timestamptz
 	SuspensionRevision    int64
 	SuspensionReason      pgtype.Text
 	CreatedAt             pgtype.Timestamptz
@@ -802,6 +988,9 @@ func (q *Queries) LockIdentityRouteForDelete(ctx context.Context, arg LockIdenti
 		&i.DnsAvailableAt,
 		&i.DnsLastError,
 		&i.NextRouteVersion,
+		&i.MutationRevision,
+		&i.Ephemeral,
+		&i.ExpiresAt,
 		&i.SuspensionRevision,
 		&i.SuspensionReason,
 		&i.CreatedAt,
@@ -841,4 +1030,99 @@ func (q *Queries) LockRouteCreator(ctx context.Context, identityID string) (stri
 	var id string
 	err := row.Scan(&id)
 	return id, err
+}
+
+const renewEphemeralRouteExpiry = `-- name: RenewEphemeralRouteExpiry :one
+UPDATE control.routes
+SET expires_at = GREATEST(expires_at, $1)
+WHERE id = $2
+  AND ephemeral
+  AND lifecycle_state <> 'deleted'
+RETURNING expires_at
+`
+
+type RenewEphemeralRouteExpiryParams struct {
+	ExpiresAt pgtype.Timestamptz
+	RouteID   string
+}
+
+func (q *Queries) RenewEphemeralRouteExpiry(ctx context.Context, arg RenewEphemeralRouteExpiryParams) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, renewEphemeralRouteExpiry, arg.ExpiresAt, arg.RouteID)
+	var expires_at pgtype.Timestamptz
+	err := row.Scan(&expires_at)
+	return expires_at, err
+}
+
+const updateRoute = `-- name: UpdateRoute :one
+UPDATE control.routes
+SET target = $1,
+    policy_revision = $2,
+    ip_policy = $3,
+    allowed_ip_prefixes = $4,
+    mutation_revision = mutation_revision + 1,
+    updated_at = $5
+WHERE id = $6
+  AND lifecycle_state = 'enabled'
+  AND mutation_revision = $7
+  AND mutation_revision < 9223372036854775807
+RETURNING id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key, request_digest, canonical_hostname, target, route_scope, policy_revision, ip_policy, allowed_ip_prefixes, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_route_version, mutation_revision, ephemeral, expires_at, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at
+`
+
+type UpdateRouteParams struct {
+	Target                   string
+	PolicyRevision           int64
+	IpPolicy                 string
+	AllowedIpPrefixes        []netip.Prefix
+	UpdatedAt                pgtype.Timestamptz
+	RouteID                  string
+	ExpectedMutationRevision int64
+}
+
+func (q *Queries) UpdateRoute(ctx context.Context, arg UpdateRouteParams) (ControlRoute, error) {
+	row := q.db.QueryRow(ctx, updateRoute,
+		arg.Target,
+		arg.PolicyRevision,
+		arg.IpPolicy,
+		arg.AllowedIpPrefixes,
+		arg.UpdatedAt,
+		arg.RouteID,
+		arg.ExpectedMutationRevision,
+	)
+	var i ControlRoute
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.DomainID,
+		&i.MembershipID,
+		&i.CreatedByIdentityID,
+		&i.IdempotencyKey,
+		&i.RequestDigest,
+		&i.CanonicalHostname,
+		&i.Target,
+		&i.RouteScope,
+		&i.PolicyRevision,
+		&i.IpPolicy,
+		&i.AllowedIpPrefixes,
+		&i.LifecycleState,
+		&i.DnsAuthorityReference,
+		&i.DnsState,
+		&i.DnsRevision,
+		&i.DnsWorkOwner,
+		&i.DnsWorkEpoch,
+		&i.DnsWorkExpiresAt,
+		&i.DnsAttempts,
+		&i.DnsAvailableAt,
+		&i.DnsLastError,
+		&i.NextRouteVersion,
+		&i.MutationRevision,
+		&i.Ephemeral,
+		&i.ExpiresAt,
+		&i.SuspensionRevision,
+		&i.SuspensionReason,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SuspendedAt,
+		&i.DeletedAt,
+	)
+	return i, err
 }

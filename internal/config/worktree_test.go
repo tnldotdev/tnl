@@ -11,3 +11,12 @@ func TestWorktreeLabelIsCanonicalAndStable(t *testing.T) {
 		t.Fatalf("label = %q", label)
 	}
 }
+
+func TestServiceWorktreeLabelIsOneStableDNSLabel(t *testing.T) {
+	worktree := WorktreeLabel(strings.Repeat("long-project-", 10), "/tmp/project")
+	label := ServiceWorktreeLabel("frontend", worktree)
+	if !strings.HasPrefix(label, "frontend-") || !strings.HasSuffix(label, worktree[len(worktree)-7:]) ||
+		len(label) > 63 || strings.Contains(label, ".") {
+		t.Fatalf("service worktree label = %q", label)
+	}
+}

@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
-	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -20,7 +20,11 @@ import (
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 )
 
-const routePageSize = 100
+const (
+	routePageSize                     = 100
+	ephemeralRouteGracePeriod         = 2 * time.Minute
+	maximumExpiredEphemeralRouteBatch = 100
+)
 
 var (
 	ErrRouteAccess        = errors.New("controlstate: route access denied")
@@ -28,25 +32,31 @@ var (
 	ErrRouteCreationGated = errors.New("controlstate: route creation is disabled")
 	ErrRouteIdempotency   = errors.New("controlstate: route idempotency conflict")
 	ErrRouteInvalid       = errors.New("controlstate: route request is invalid")
+	ErrRouteAttached      = errors.New("controlstate: route has an open route session")
+	ErrRouteMutationStale = errors.New("controlstate: authorized route state changed")
 )
 
 type Route struct {
-	ID                    string
-	TeamID                string
-	DomainID              string
-	MembershipID          string
-	CanonicalHostname     string
-	Target                string
-	RouteScope            RouteScope
-	PolicyRevision        int64
-	LifecycleState        RouteLifecycleState
-	DNSAuthorityReference string
-	DNSState              RouteDNSState
-	AllowedIPPrefixes     []netip.Prefix
-	NextRouteVersion      int64
-	AttachedSessionID     string
-	CreatedAt             time.Time
-	UpdatedAt             time.Time
+	ID                        string
+	TeamID                    string
+	DomainID                  string
+	MembershipID              string
+	CanonicalHostname         string
+	Target                    string
+	RouteScope                RouteScope
+	PolicyRevision            int64
+	LifecycleState            RouteLifecycleState
+	DNSAuthorityReference     string
+	DNSState                  RouteDNSState
+	AllowedIPPrefixes         []netip.Prefix
+	NextRouteVersion          int64
+	MutationRevision          uint64
+	AuthorizationRouteVersion uint64
+	Ephemeral                 bool
+	ExpiresAt                 *time.Time
+	AttachedSessionID         string
+	CreatedAt                 time.Time
+	UpdatedAt                 time.Time
 }
 
 type CreateRouteRequest struct {
@@ -64,14 +74,27 @@ type CreateRouteRequest struct {
 	DNSAuthorityReference string
 	AuthorityIssuer       string
 	PolicyRevision        uint64
+	Ephemeral             bool
+}
+
+type AuthorizedRouteUpdateRequest struct {
+	RouteID                  string
+	TeamID                   string
+	ActingIdentityID         string
+	Target                   string
+	AllowedIPPrefixes        []string
+	AuthorityIssuer          string
+	PolicyRevision           uint64
+	ExpectedMutationRevision uint64
 }
 
 type AuthorizedRouteDeleteRequest struct {
-	RouteID          string
-	TeamID           string
-	ActingIdentityID string
-	AuthorityIssuer  string
-	PolicyRevision   uint64
+	RouteID                  string
+	TeamID                   string
+	ActingIdentityID         string
+	AuthorityIssuer          string
+	PolicyRevision           uint64
+	ExpectedMutationRevision uint64
 }
 
 type RoutePage struct {
@@ -168,7 +191,8 @@ func (d *Database) CreateRoute(ctx context.Context, request CreateRouteRequest, 
 		RequestDigest: request.RequestDigest[:], CanonicalHostname: request.CanonicalHostname, Target: request.Target,
 		RouteScope: string(request.RouteScope), PolicyRevision: policyRevision, IpPolicy: routeIPPolicy(prefixes),
 		AllowedIpPrefixes: prefixes, DnsAuthorityReference: nullableText(request.DNSAuthorityReference),
-		DnsState: string(request.DNSState), CreatedAt: timestamptz(now),
+		DnsState: string(request.DNSState), Ephemeral: request.Ephemeral,
+		ExpiresAt: ephemeralRouteExpiry(request.Ephemeral, now), CreatedAt: timestamptz(now),
 	})
 	if err != nil {
 		var postgresError *pgconn.PgError
@@ -194,6 +218,152 @@ func (d *Database) CreateRoute(ctx context.Context, request CreateRouteRequest, 
 	return routeFromModel(row, ""), nil
 }
 
+func (d *Database) UpdateAuthorizedRoute(
+	ctx context.Context,
+	request AuthorizedRouteUpdateRequest,
+	now time.Time,
+) (result Route, retErr error) {
+	prefixes, err := validateAuthorizedRouteUpdateRequest(request)
+	if err != nil {
+		return Route{}, err
+	}
+	if err := d.requireOpen(); err != nil {
+		return Route{}, err
+	}
+	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		return Route{}, fmt.Errorf("controlstate: update route: begin transaction: %w", err)
+	}
+	defer rollback(ctx, tx, "update route", &retErr)()
+	queries := controlstatedb.New(tx)
+	route, err := queries.LockRouteForSession(ctx, request.RouteID)
+	if errors.Is(err, pgx.ErrNoRows) || err == nil &&
+		(route.TeamID != request.TeamID || RouteLifecycleState(route.LifecycleState) == RouteLifecycleDeleted) {
+		return Route{}, ErrRouteNotFound
+	}
+	if err != nil {
+		return Route{}, fmt.Errorf("controlstate: update route: lock route: %w", err)
+	}
+	if RouteLifecycleState(route.LifecycleState) != RouteLifecycleEnabled {
+		return Route{}, ErrRouteNotEnabled
+	}
+	if !matchesPositiveInt64(route.MutationRevision, request.ExpectedMutationRevision) {
+		return Route{}, ErrRouteMutationStale
+	}
+	policyRevision := positive(request.PolicyRevision)
+	if route.PolicyRevision > policyRevision {
+		return Route{}, ErrRouteAuthority
+	}
+	if err := expireStaleOpenRouteSession(ctx, queries, route, now); err != nil {
+		return Route{}, err
+	}
+	if _, err := queries.GetOpenRouteSession(ctx, request.RouteID); err == nil {
+		return Route{}, ErrRouteAttached
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return Route{}, fmt.Errorf("controlstate: update route: read open route session: %w", err)
+	}
+	if request.AuthorityIssuer == "" {
+		membership, err := queries.GetActiveRouteSessionMembership(ctx, controlstatedb.GetActiveRouteSessionMembershipParams{
+			TeamID: request.TeamID, IdentityID: request.ActingIdentityID,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Route{}, ErrRouteAccess
+		}
+		if err != nil {
+			return Route{}, fmt.Errorf("controlstate: update route: read membership: %w", err)
+		}
+		if membership.PolicyRevision != policyRevision ||
+			route.RouteScope == string(RouteScopeMember) && (!route.MembershipID.Valid || route.MembershipID.String != membership.ID) ||
+			route.RouteScope == string(RouteScopeShared) && membership.Role != "admin" && membership.Role != "owner" {
+			return Route{}, ErrRouteAccess
+		}
+	} else if _, err := queries.ObserveAuthorityRevision(ctx, controlstatedb.ObserveAuthorityRevisionParams{
+		Issuer: request.AuthorityIssuer, TeamID: request.TeamID,
+		PolicyRevision: policyRevision, UpdatedAt: timestamptz(now),
+	}); errors.Is(err, pgx.ErrNoRows) {
+		return Route{}, ErrRouteAuthority
+	} else if err != nil {
+		return Route{}, fmt.Errorf("controlstate: update route: observe authority revision: %w", err)
+	}
+	updated, err := queries.UpdateRoute(ctx, controlstatedb.UpdateRouteParams{
+		Target: request.Target, PolicyRevision: policyRevision, IpPolicy: routeIPPolicy(prefixes),
+		AllowedIpPrefixes: prefixes, UpdatedAt: timestamptz(now), RouteID: request.RouteID,
+		ExpectedMutationRevision: positive(request.ExpectedMutationRevision),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Route{}, ErrRouteMutationStale
+	}
+	if err != nil {
+		return Route{}, fmt.Errorf("controlstate: update route: update route: %w", err)
+	}
+	requestID, err := opaqueid.New("request_")
+	if err != nil {
+		return Route{}, fmt.Errorf("controlstate: update route: generate request ID: %w", err)
+	}
+	if err := queries.InsertRouteUpdateAuditEvent(ctx, controlstatedb.InsertRouteUpdateAuditEventParams{
+		ActorIdentityID: text(request.ActingIdentityID), RequestID: requestID,
+		RouteID: request.RouteID, OccurredAt: timestamptz(now),
+	}); err != nil {
+		return Route{}, fmt.Errorf("controlstate: update route: insert audit event: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Route{}, fmt.Errorf("controlstate: update route: commit: %w", err)
+	}
+	return routeFromModel(updated, ""), nil
+}
+
+// DeleteExpiredEphemeralRoutes removes an expiry-bounded batch through the
+// same route-session, routing-table, and DNS cleanup used by explicit deletion.
+func (d *Database) DeleteExpiredEphemeralRoutes(ctx context.Context, now time.Time) (count int, retErr error) {
+	if err := d.requireOpen(); err != nil {
+		return 0, err
+	}
+	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		return 0, fmt.Errorf("controlstate: delete expired ephemeral routes: begin transaction: %w", err)
+	}
+	defer rollback(ctx, tx, "delete expired ephemeral routes", &retErr)()
+	queries := controlstatedb.New(tx)
+	routes, err := queries.LockExpiredEphemeralRoutes(ctx, controlstatedb.LockExpiredEphemeralRoutesParams{
+		Now: timestamptz(now), BatchSize: maximumExpiredEphemeralRouteBatch,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("controlstate: delete expired ephemeral routes: lock routes: %w", err)
+	}
+	for _, route := range routes {
+		if err := expireStaleOpenRouteSession(ctx, queries, route, now); err != nil {
+			return 0, err
+		}
+		if _, err := queries.GetOpenRouteSession(ctx, route.ID); err == nil {
+			continue
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return 0, fmt.Errorf("controlstate: delete expired ephemeral routes: read route session: %w", err)
+		}
+		updated, err := queries.DeleteRoute(ctx, controlstatedb.DeleteRouteParams{
+			DeletedAt: timestamptz(now), RouteID: route.ID, ExpectedMutationRevision: route.MutationRevision,
+		})
+		if err != nil {
+			return 0, fmt.Errorf("controlstate: delete expired ephemeral routes: update route: %w", err)
+		}
+		if updated != 1 {
+			return 0, ErrRouteNotFound
+		}
+		if err := queries.InsertExpiredEphemeralRouteDeleteAuditEvent(
+			ctx,
+			controlstatedb.InsertExpiredEphemeralRouteDeleteAuditEventParams{
+				RequestID: "ephemeral_expiry/" + route.ID, RouteID: route.ID, OccurredAt: timestamptz(now),
+			},
+		); err != nil {
+			return 0, fmt.Errorf("controlstate: delete expired ephemeral routes: insert audit event: %w", err)
+		}
+		count++
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("controlstate: delete expired ephemeral routes: commit: %w", err)
+	}
+	return count, nil
+}
+
 func (d *Database) ListRoutes(ctx context.Context, identityID, teamID, cursor string) (RoutePage, error) {
 	if !validStateText(identityID) || !validStateText(teamID) || cursor != "" && !validStateText(cursor) {
 		return RoutePage{}, ErrRouteInvalid
@@ -215,6 +385,32 @@ func (d *Database) ListRoutes(ctx context.Context, identityID, teamID, cursor st
 	page := RoutePage{Routes: make([]Route, min(len(rows), routePageSize))}
 	for index := range page.Routes {
 		page.Routes[index] = routeFromListRow(rows[index])
+	}
+	if len(rows) > routePageSize {
+		page.NextCursor = rows[routePageSize-1].ID
+	}
+	return page, nil
+}
+
+// ListAuthorizedRoutes returns one team page after the caller has obtained a
+// current authorization decision. It deliberately does not consult local memberships.
+func (d *Database) ListAuthorizedRoutes(ctx context.Context, teamID, cursor string) (RoutePage, error) {
+	if !validStateText(teamID) || cursor != "" && !validStateText(cursor) {
+		return RoutePage{}, ErrRouteInvalid
+	}
+	if err := d.requireOpen(); err != nil {
+		return RoutePage{}, err
+	}
+	rows, err := controlstatedb.New(d.pool).ListExternalAuthorityRoutes(
+		ctx,
+		controlstatedb.ListExternalAuthorityRoutesParams{TeamID: teamID, Cursor: nullableText(cursor)},
+	)
+	if err != nil {
+		return RoutePage{}, fmt.Errorf("controlstate: list authorized routes: %w", err)
+	}
+	page := RoutePage{Routes: make([]Route, min(len(rows), routePageSize))}
+	for index := range page.Routes {
+		page.Routes[index] = routeFromExternalAuthorityListRow(rows[index])
 	}
 	if len(rows) > routePageSize {
 		page.NextCursor = rows[routePageSize-1].ID
@@ -259,7 +455,8 @@ func (d *Database) deleteRoute(ctx context.Context, request AuthorizedRouteDelet
 	if !validStateText(identityID) || !validStateText(routeID) {
 		return ErrRouteInvalid
 	}
-	if request.AuthorityIssuer != "" && (!validStateText(request.AuthorityIssuer) || !validStateText(request.TeamID) || request.PolicyRevision == 0) {
+	if request.AuthorityIssuer != "" && (!validStateText(request.AuthorityIssuer) || !validStateText(request.TeamID) ||
+		request.PolicyRevision == 0 || request.ExpectedMutationRevision == 0) {
 		return ErrRouteInvalid
 	}
 	if err := d.requireOpen(); err != nil {
@@ -295,6 +492,9 @@ func (d *Database) deleteRoute(ctx context.Context, request AuthorizedRouteDelet
 		if err != nil {
 			return fmt.Errorf("controlstate: delete route: lock route: %w", err)
 		}
+		if !matchesPositiveInt64(route.MutationRevision, request.ExpectedMutationRevision) {
+			return ErrRouteMutationStale
+		}
 		if _, err := queries.ObserveAuthorityRevision(ctx, controlstatedb.ObserveAuthorityRevisionParams{
 			Issuer: request.AuthorityIssuer, TeamID: request.TeamID,
 			PolicyRevision: positive(request.PolicyRevision), UpdatedAt: timestamptz(now),
@@ -304,10 +504,19 @@ func (d *Database) deleteRoute(ctx context.Context, request AuthorizedRouteDelet
 			return fmt.Errorf("controlstate: delete route: observe authority revision: %w", err)
 		}
 	}
+	expectedMutationRevision := route.MutationRevision
+	if request.ExpectedMutationRevision != 0 {
+		if !matchesPositiveInt64(route.MutationRevision, request.ExpectedMutationRevision) {
+			return ErrRouteMutationStale
+		}
+		expectedMutationRevision = positive(request.ExpectedMutationRevision)
+	}
 	if err := closeOpenRouteSession(ctx, queries, route, now, "route_deleted"); err != nil {
 		return err
 	}
-	updated, err := queries.DeleteRoute(ctx, controlstatedb.DeleteRouteParams{DeletedAt: timestamptz(now), RouteID: routeID})
+	updated, err := queries.DeleteRoute(ctx, controlstatedb.DeleteRouteParams{
+		DeletedAt: timestamptz(now), RouteID: routeID, ExpectedMutationRevision: expectedMutationRevision,
+	})
 	if err != nil {
 		return fmt.Errorf("controlstate: delete route: update route: %w", err)
 	}
@@ -370,7 +579,7 @@ func (d *Database) CloseRouteSession(ctx context.Context, routeSessionID string,
 		}
 		return nil
 	}
-	if err := closeRouteSession(ctx, queries, route, session, now, "publisher_closed"); err != nil {
+	if err := closeRouteSession(ctx, queries, route, session, RouteSessionClosed, now, "publisher_closed"); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -393,7 +602,30 @@ func closeOpenRouteSession(
 	if err != nil {
 		return fmt.Errorf("controlstate: close route session: read open session: %w", err)
 	}
-	return closeRouteSession(ctx, queries, route, session, now, reason)
+	return closeRouteSession(ctx, queries, route, session, RouteSessionClosed, now, reason)
+}
+
+func expireStaleOpenRouteSession(
+	ctx context.Context,
+	queries *controlstatedb.Queries,
+	route controlstatedb.ControlRoute,
+	now time.Time,
+) error {
+	session, err := queries.GetOpenRouteSession(ctx, route.ID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("controlstate: expire route session: read open session: %w", err)
+	}
+	closedAt := now
+	if session.PublisherExpiresAt.Valid {
+		if session.PublisherExpiresAt.Time.After(now) {
+			return nil
+		}
+		closedAt = session.PublisherExpiresAt.Time
+	}
+	return closeRouteSession(ctx, queries, route, session, RouteSessionExpired, closedAt, "publisher_expired")
 }
 
 func closeRouteSession(
@@ -401,16 +633,25 @@ func closeRouteSession(
 	queries *controlstatedb.Queries,
 	route controlstatedb.ControlRoute,
 	session controlstatedb.ControlRouteSession,
+	state RouteSessionState,
 	now time.Time,
 	reason string,
 ) error {
 	if challengeExpiresAt, active, err := activeRouteSessionChallengeExpiry(ctx, queries, session.ID, now); err != nil {
 		return err
 	} else if active {
-		if _, _, err := emitChallengeRoutingTableEvent(
-			ctx, queries, route, session, nil, "challenge_tombstone", challengeExpiresAt, now,
-		); err != nil {
-			return err
+		entryRevision, err := queries.LatestIngressRoutingEntryRevision(ctx, controlstatedb.LatestIngressRoutingEntryRevisionParams{
+			RouteID: route.ID, RouteVersion: session.RouteVersion,
+		})
+		if err != nil {
+			return fmt.Errorf("controlstate: close route session: read ingress routing-table entry revision: %w", err)
+		}
+		if entryRevision > 0 {
+			if _, _, err := emitChallengeRoutingTableEvent(
+				ctx, queries, route, session, nil, "challenge_tombstone", challengeExpiresAt, now,
+			); err != nil {
+				return err
+			}
 		}
 	}
 	if session.ReadyAt.Valid {
@@ -439,7 +680,7 @@ func closeRouteSession(
 		return fmt.Errorf("controlstate: close route session: close publisher connections: %w", err)
 	}
 	if _, err := queries.CloseRouteSession(ctx, controlstatedb.CloseRouteSessionParams{
-		ClosedAt: timestamptz(now), CloseReason: text(reason), RouteSessionID: session.ID,
+		State: string(state), ClosedAt: timestamptz(now), CloseReason: text(reason), RouteSessionID: session.ID,
 	}); err != nil {
 		return fmt.Errorf("controlstate: close route session: update session: %w", err)
 	}
@@ -469,17 +710,11 @@ func validateCreateRouteRequest(request CreateRouteRequest) ([]netip.Prefix, err
 	if err != nil || canonical != request.CanonicalHostname {
 		return nil, ErrRouteInvalid
 	}
-	parsedTarget, err := url.Parse(request.Target)
-	if err != nil || parsedTarget.Scheme != "http" || parsedTarget.User != nil || parsedTarget.RawQuery != "" ||
-		parsedTarget.Fragment != "" || parsedTarget.Path != "" || parsedTarget.Port() == "" {
-		return nil, ErrRouteInvalid
-	}
-	targetAddress, err := netip.ParseAddr(parsedTarget.Hostname())
-	if err != nil || !targetAddress.IsLoopback() || targetAddress.Zone() != "" {
+	if err := authorization.ValidateRouteTarget(request.Target); err != nil {
 		return nil, ErrRouteInvalid
 	}
 	canonicalPrefixes, err := authorization.CanonicalizeIPPrefixes(request.AllowedIPPrefixes)
-	if err != nil {
+	if err != nil || !slices.Equal(canonicalPrefixes, request.AllowedIPPrefixes) {
 		return nil, ErrRouteInvalid
 	}
 	prefixes := make([]netip.Prefix, len(canonicalPrefixes))
@@ -487,6 +722,31 @@ func validateCreateRouteRequest(request CreateRouteRequest) ([]netip.Prefix, err
 		prefixes[index], _ = netip.ParsePrefix(value)
 	}
 	return prefixes, nil
+}
+
+func validateAuthorizedRouteUpdateRequest(request AuthorizedRouteUpdateRequest) ([]netip.Prefix, error) {
+	for _, value := range []string{request.RouteID, request.TeamID, request.ActingIdentityID, request.Target} {
+		if !validStateText(value) {
+			return nil, ErrRouteInvalid
+		}
+	}
+	if request.PolicyRevision == 0 || request.ExpectedMutationRevision == 0 ||
+		request.AuthorityIssuer != "" && !validStateText(request.AuthorityIssuer) ||
+		authorization.ValidateRouteTarget(request.Target) != nil {
+		return nil, ErrRouteInvalid
+	}
+	canonicalPrefixes, err := authorization.CanonicalizeIPPrefixes(request.AllowedIPPrefixes)
+	if err != nil || request.AllowedIPPrefixes == nil || !slices.Equal(canonicalPrefixes, request.AllowedIPPrefixes) {
+		return nil, ErrRouteInvalid
+	}
+	return prefixValues(canonicalPrefixes), nil
+}
+
+func ephemeralRouteExpiry(ephemeral bool, now time.Time) pgtype.Timestamptz {
+	if !ephemeral {
+		return pgtype.Timestamptz{}
+	}
+	return timestamptz(now.Add(ephemeralRouteGracePeriod))
 }
 
 func authorizeRouteCreation(
@@ -564,7 +824,7 @@ func routeFromModel(row controlstatedb.ControlRoute, attachedSessionID string) R
 	return routeFromValues(
 		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target,
 		row.RouteScope, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState, row.AllowedIpPrefixes,
-		row.NextRouteVersion, attachedSessionID, row.CreatedAt, row.UpdatedAt,
+		row.NextRouteVersion, row.MutationRevision, row.Ephemeral, row.ExpiresAt, attachedSessionID, row.CreatedAt, row.UpdatedAt,
 	)
 }
 
@@ -572,7 +832,7 @@ func routeFromIdempotencyRow(row controlstatedb.GetRouteByCreatorIdempotencyRow)
 	return routeFromValues(
 		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target,
 		row.RouteScope, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState, row.AllowedIpPrefixes,
-		row.NextRouteVersion, row.AttachedSessionID, row.CreatedAt, row.UpdatedAt,
+		row.NextRouteVersion, row.MutationRevision, row.Ephemeral, row.ExpiresAt, row.AttachedSessionID, row.CreatedAt, row.UpdatedAt,
 	)
 }
 
@@ -580,7 +840,7 @@ func routeFromIdentityRow(row controlstatedb.GetIdentityRouteRow) Route {
 	return routeFromValues(
 		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target,
 		row.RouteScope, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState, row.AllowedIpPrefixes,
-		row.NextRouteVersion, row.AttachedSessionID, row.CreatedAt, row.UpdatedAt,
+		row.NextRouteVersion, row.MutationRevision, row.Ephemeral, row.ExpiresAt, row.AttachedSessionID, row.CreatedAt, row.UpdatedAt,
 	)
 }
 
@@ -588,7 +848,15 @@ func routeFromListRow(row controlstatedb.ListIdentityRoutesRow) Route {
 	return routeFromValues(
 		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target,
 		row.RouteScope, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState, row.AllowedIpPrefixes,
-		row.NextRouteVersion, row.AttachedSessionID, row.CreatedAt, row.UpdatedAt,
+		row.NextRouteVersion, row.MutationRevision, row.Ephemeral, row.ExpiresAt, row.AttachedSessionID, row.CreatedAt, row.UpdatedAt,
+	)
+}
+
+func routeFromExternalAuthorityListRow(row controlstatedb.ListExternalAuthorityRoutesRow) Route {
+	return routeFromValues(
+		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target,
+		row.RouteScope, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState, row.AllowedIpPrefixes,
+		row.NextRouteVersion, row.MutationRevision, row.Ephemeral, row.ExpiresAt, row.AttachedSessionID, row.CreatedAt, row.UpdatedAt,
 	)
 }
 
@@ -602,17 +870,27 @@ func routeFromValues(
 	dnsState string,
 	allowedIPPrefixes []netip.Prefix,
 	nextRouteVersion int64,
+	mutationRevision int64,
+	ephemeral bool,
+	expiresAt pgtype.Timestamptz,
 	attachedSessionID string,
 	createdAt, updatedAt pgtype.Timestamptz,
 ) Route {
-	return Route{
+	result := Route{
 		ID: id, TeamID: teamID, DomainID: domainID, MembershipID: membershipID.String,
 		CanonicalHostname: canonicalHostname, Target: target, RouteScope: RouteScope(routeScope),
 		PolicyRevision: policyRevision, LifecycleState: RouteLifecycleState(lifecycleState),
 		DNSAuthorityReference: dnsAuthorityReference.String, DNSState: RouteDNSState(dnsState),
 		AllowedIPPrefixes: append([]netip.Prefix(nil), allowedIPPrefixes...), NextRouteVersion: nextRouteVersion,
+		MutationRevision: uint64(mutationRevision), AuthorizationRouteVersion: uint64(nextRouteVersion),
+		Ephemeral:         ephemeral,
 		AttachedSessionID: attachedSessionID, CreatedAt: createdAt.Time, UpdatedAt: updatedAt.Time,
 	}
+	if expiresAt.Valid {
+		value := expiresAt.Time
+		result.ExpiresAt = &value
+	}
+	return result
 }
 
 func routeModelFromDeleteRow(row controlstatedb.LockIdentityRouteForDeleteRow) controlstatedb.ControlRoute {
@@ -622,8 +900,9 @@ func routeModelFromDeleteRow(row controlstatedb.LockIdentityRouteForDeleteRow) c
 		RequestDigest: row.RequestDigest, CanonicalHostname: row.CanonicalHostname, Target: row.Target,
 		RouteScope: row.RouteScope, PolicyRevision: row.PolicyRevision, IpPolicy: row.IpPolicy,
 		AllowedIpPrefixes: row.AllowedIpPrefixes, LifecycleState: row.LifecycleState,
+		Ephemeral: row.Ephemeral, ExpiresAt: row.ExpiresAt,
 		DnsAuthorityReference: row.DnsAuthorityReference, DnsState: row.DnsState,
-		DnsRevision: row.DnsRevision, NextRouteVersion: row.NextRouteVersion,
+		DnsRevision: row.DnsRevision, NextRouteVersion: row.NextRouteVersion, MutationRevision: row.MutationRevision,
 		SuspensionRevision: row.SuspensionRevision, SuspensionReason: row.SuspensionReason,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, SuspendedAt: row.SuspendedAt, DeletedAt: row.DeletedAt,
 	}

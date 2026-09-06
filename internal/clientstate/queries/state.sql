@@ -130,6 +130,8 @@ INSERT INTO local_tunnels (
     command,
     process_id,
     server_origin,
+    project_root,
+    service,
     hostname,
     target,
     framework,
@@ -146,6 +148,8 @@ INSERT INTO local_tunnels (
     sqlc.arg(command),
     sqlc.arg(process_id),
     sqlc.arg(server_origin),
+    sqlc.arg(project_root),
+    sqlc.arg(service),
     '',
     sqlc.arg(target),
     '',
@@ -213,6 +217,12 @@ WHERE id = sqlc.arg(id) AND stopped_at IS NULL;
 SELECT *
 FROM local_tunnels
 WHERE stopped_at IS NULL
+ORDER BY started_at, id;
+
+-- name: ListOpenTunnelsForProject :many
+SELECT *
+FROM local_tunnels
+WHERE stopped_at IS NULL AND project_root = sqlc.arg(project_root)
 ORDER BY started_at, id;
 
 -- name: DeleteOldTunnels :exec

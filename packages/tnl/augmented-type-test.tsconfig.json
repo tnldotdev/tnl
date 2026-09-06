@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "declaration": false,
+    "lib": ["DOM", "DOM.Iterable", "ESNext"],
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": []
+  },
+  "files": ["runtime-augmented-type-test.ts"]
+}

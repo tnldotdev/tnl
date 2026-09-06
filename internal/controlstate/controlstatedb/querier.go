@@ -18,6 +18,7 @@ type Querier interface {
 	AdvanceTeamPolicyRevision(ctx context.Context, arg AdvanceTeamPolicyRevisionParams) (int64, error)
 	AllocateRouteVersion(ctx context.Context, arg AllocateRouteVersionParams) (int64, error)
 	ApplyIngressUsageDelta(ctx context.Context, arg ApplyIngressUsageDeltaParams) (ControlRouteUsageBucket, error)
+	ApplyRouteSessionPolicyDenials(ctx context.Context, arg ApplyRouteSessionPolicyDenialsParams) (int64, error)
 	BeginDNSAuthorityRelease(ctx context.Context, arg BeginDNSAuthorityReleaseParams) (ControlDnsAuthority, error)
 	BeginIngressDrain(ctx context.Context, arg BeginIngressDrainParams) (ControlIngressLease, error)
 	BeginRelayDrain(ctx context.Context, arg BeginRelayDrainParams) (BeginRelayDrainRow, error)
@@ -76,7 +77,7 @@ type Querier interface {
 	GetDNSAuthority(ctx context.Context, authorityReference string) (ControlDnsAuthority, error)
 	GetDNSAuthorityByReleaseIdempotency(ctx context.Context, releaseIdempotencyKey pgtype.Text) (ControlDnsAuthority, error)
 	GetDNSChallengeContext(ctx context.Context, arg GetDNSChallengeContextParams) (GetDNSChallengeContextRow, error)
-	GetExternalAuthorityRoute(ctx context.Context, routeID string) (GetExternalAuthorityRouteRow, error)
+	GetExternalAuthorityRoute(ctx context.Context, arg GetExternalAuthorityRouteParams) (GetExternalAuthorityRouteRow, error)
 	GetIdentityContextIdentity(ctx context.Context, identityID string) (GetIdentityContextIdentityRow, error)
 	GetIdentityRoute(ctx context.Context, arg GetIdentityRouteParams) (GetIdentityRouteRow, error)
 	GetIdentityTeam(ctx context.Context, arg GetIdentityTeamParams) (GetIdentityTeamRow, error)
@@ -103,6 +104,7 @@ type Querier interface {
 	HeartbeatRouteSession(ctx context.Context, arg HeartbeatRouteSessionParams) (ControlRouteSession, error)
 	InsertACMEOrder(ctx context.Context, arg InsertACMEOrderParams) (ControlAcmeOrder, error)
 	InsertCertificateIssuanceAuditEvent(ctx context.Context, arg InsertCertificateIssuanceAuditEventParams) error
+	InsertExpiredEphemeralRouteDeleteAuditEvent(ctx context.Context, arg InsertExpiredEphemeralRouteDeleteAuditEventParams) error
 	InsertIngressRoutingTableEvent(ctx context.Context, arg InsertIngressRoutingTableEventParams) (int64, error)
 	InsertIngressUsageReport(ctx context.Context, arg InsertIngressUsageReportParams) (ControlIngressUsageReport, error)
 	InsertRelayCertificateOrder(ctx context.Context, arg InsertRelayCertificateOrderParams) (ControlRelayCertificateOrder, error)
@@ -112,6 +114,7 @@ type Querier interface {
 	InsertRouteSession(ctx context.Context, arg InsertRouteSessionParams) (ControlRouteSession, error)
 	InsertRouteSessionAuditEvent(ctx context.Context, arg InsertRouteSessionAuditEventParams) error
 	InsertRouteSessionConnection(ctx context.Context, arg InsertRouteSessionConnectionParams) (ControlRouteSessionConnection, error)
+	InsertRouteUpdateAuditEvent(ctx context.Context, arg InsertRouteUpdateAuditEventParams) error
 	InsertRouteUsageDelivery(ctx context.Context, arg InsertRouteUsageDeliveryParams) (ControlRouteUsageDelivery, error)
 	LatestIngressRoutingEntryRevision(ctx context.Context, arg LatestIngressRoutingEntryRevisionParams) (int64, error)
 	ListACMEOrderAuthorizations(ctx context.Context, issuanceID string) ([]ControlAcmeAuthorization, error)
@@ -137,6 +140,7 @@ type Querier interface {
 	LockDNSAuthority(ctx context.Context, authorityReference string) (ControlDnsAuthority, error)
 	LockDomainRoutes(ctx context.Context, arg LockDomainRoutesParams) ([]ControlRoute, error)
 	LockEligibleRelayLeases(ctx context.Context, arg LockEligibleRelayLeasesParams) ([]LockEligibleRelayLeasesRow, error)
+	LockExpiredEphemeralRoutes(ctx context.Context, arg LockExpiredEphemeralRoutesParams) ([]ControlRoute, error)
 	LockHostedTeamRoutes(ctx context.Context, teamID string) ([]ControlRoute, error)
 	LockIdentityBootstrap(ctx context.Context) error
 	LockIdentityForTeamCreation(ctx context.Context, identityID string) (string, error)
@@ -180,6 +184,7 @@ type Querier interface {
 	RegisterRelay(ctx context.Context, arg RegisterRelayParams) (RegisterRelayRow, error)
 	ReleaseInvitedMemberSlug(ctx context.Context, arg ReleaseInvitedMemberSlugParams) (int64, error)
 	RemoveTeamMembership(ctx context.Context, arg RemoveTeamMembershipParams) (int64, error)
+	RenewEphemeralRouteExpiry(ctx context.Context, arg RenewEphemeralRouteExpiryParams) (pgtype.Timestamptz, error)
 	RenewIngress(ctx context.Context, arg RenewIngressParams) (ControlIngressLease, error)
 	RenewRelay(ctx context.Context, arg RenewRelayParams) (RenewRelayRow, error)
 	ReplaceRouteSessionConnection(ctx context.Context, arg ReplaceRouteSessionConnectionParams) (ControlRouteSessionConnection, error)
@@ -210,6 +215,7 @@ type Querier interface {
 	UpdateACMEAccountRegistration(ctx context.Context, arg UpdateACMEAccountRegistrationParams) (ControlAcmeAccount, error)
 	UpdateLocalDomainForDNSAuthority(ctx context.Context, arg UpdateLocalDomainForDNSAuthorityParams) (UpdateLocalDomainForDNSAuthorityRow, error)
 	UpdateMembershipRole(ctx context.Context, arg UpdateMembershipRoleParams) (int64, error)
+	UpdateRoute(ctx context.Context, arg UpdateRouteParams) (ControlRoute, error)
 	UpdateRouteRecoveryHistogram(ctx context.Context, arg UpdateRouteRecoveryHistogramParams) (ControlRouteRecoveryHistogram, error)
 	WakeACMEOrder(ctx context.Context, arg WakeACMEOrderParams) error
 }

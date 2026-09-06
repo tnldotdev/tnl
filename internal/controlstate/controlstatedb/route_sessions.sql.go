@@ -7,7 +7,6 @@ package controlstatedb
 
 import (
 	"context"
-	"net/netip"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -15,28 +14,24 @@ import (
 const allocateRouteVersion = `-- name: AllocateRouteVersion :one
 UPDATE control.routes
 SET next_route_version = next_route_version + 1,
-	    ip_policy = $1,
-	    allowed_ip_prefixes = $2,
-    updated_at = $3
-WHERE id = $4
+    mutation_revision = mutation_revision + 1,
+    updated_at = $1
+WHERE id = $2
   AND next_route_version < 9223372036854775807
+  AND mutation_revision = $3
+  AND mutation_revision < 9223372036854775807
+  AND lifecycle_state = 'enabled'
 RETURNING (next_route_version - 1)::bigint
 `
 
 type AllocateRouteVersionParams struct {
-	IpPolicy          string
-	AllowedIpPrefixes []netip.Prefix
-	UpdatedAt         pgtype.Timestamptz
-	RouteID           string
+	UpdatedAt                pgtype.Timestamptz
+	RouteID                  string
+	ExpectedMutationRevision int64
 }
 
 func (q *Queries) AllocateRouteVersion(ctx context.Context, arg AllocateRouteVersionParams) (int64, error) {
-	row := q.db.QueryRow(ctx, allocateRouteVersion,
-		arg.IpPolicy,
-		arg.AllowedIpPrefixes,
-		arg.UpdatedAt,
-		arg.RouteID,
-	)
+	row := q.db.QueryRow(ctx, allocateRouteVersion, arg.UpdatedAt, arg.RouteID, arg.ExpectedMutationRevision)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -73,7 +68,7 @@ func (q *Queries) GetActiveRouteSessionMembership(ctx context.Context, arg GetAc
 }
 
 const getOpenRouteSession = `-- name: GetOpenRouteSession :one
-SELECT id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason
+SELECT id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason
 FROM control.route_sessions
 WHERE route_id = $1
   AND closed_at IS NULL
@@ -94,6 +89,7 @@ func (q *Queries) GetOpenRouteSession(ctx context.Context, routeID string) (Cont
 		&i.SessionTokenID,
 		&i.SessionTokenDigest,
 		&i.PolicyRevision,
+		&i.PolicyDenials,
 		&i.CertificateCacheKey,
 		&i.CertificateScope,
 		&i.CertificateIdentifiers,
@@ -113,7 +109,7 @@ func (q *Queries) GetOpenRouteSession(ctx context.Context, routeID string) (Cont
 }
 
 const getRouteSessionByIdempotency = `-- name: GetRouteSessionByIdempotency :one
-SELECT id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason
+SELECT id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason
 FROM control.route_sessions
 WHERE route_id = $1
   AND idempotency_key = $2
@@ -139,6 +135,7 @@ func (q *Queries) GetRouteSessionByIdempotency(ctx context.Context, arg GetRoute
 		&i.SessionTokenID,
 		&i.SessionTokenDigest,
 		&i.PolicyRevision,
+		&i.PolicyDenials,
 		&i.CertificateCacheKey,
 		&i.CertificateScope,
 		&i.CertificateIdentifiers,
@@ -199,7 +196,7 @@ INSERT INTO control.route_sessions (
     $17,
     $18
 )
-RETURNING id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason
+RETURNING id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason
 `
 
 type InsertRouteSessionParams struct {
@@ -257,6 +254,7 @@ func (q *Queries) InsertRouteSession(ctx context.Context, arg InsertRouteSession
 		&i.SessionTokenID,
 		&i.SessionTokenDigest,
 		&i.PolicyRevision,
+		&i.PolicyDenials,
 		&i.CertificateCacheKey,
 		&i.CertificateScope,
 		&i.CertificateIdentifiers,
@@ -452,7 +450,7 @@ func (q *Queries) ListRouteSessionConnections(ctx context.Context, routeSessionI
 }
 
 const lockRouteForSession = `-- name: LockRouteForSession :one
-SELECT id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key, request_digest, canonical_hostname, target, route_scope, policy_revision, ip_policy, allowed_ip_prefixes, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_route_version, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at
+SELECT id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key, request_digest, canonical_hostname, target, route_scope, policy_revision, ip_policy, allowed_ip_prefixes, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_route_version, mutation_revision, ephemeral, expires_at, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at
 FROM control.routes
 WHERE id = $1
 FOR UPDATE
@@ -486,6 +484,9 @@ func (q *Queries) LockRouteForSession(ctx context.Context, routeID string) (Cont
 		&i.DnsAvailableAt,
 		&i.DnsLastError,
 		&i.NextRouteVersion,
+		&i.MutationRevision,
+		&i.Ephemeral,
+		&i.ExpiresAt,
 		&i.SuspensionRevision,
 		&i.SuspensionReason,
 		&i.CreatedAt,

@@ -128,6 +128,28 @@ paths:
                 $ref: "#/components/schemas/Route"
         default:
           $ref: "#/components/responses/Problem"
+    patch:
+      operationId: updateRoute
+      summary: Reconcile one route's mutable publisher state
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RouteID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateRouteRequest"
+      responses:
+        "200":
+          description: Updated route
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Route"
+        default:
+          $ref: "#/components/responses/Problem"
     delete:
       operationId: deleteRoute
       summary: Delete one durable route and close its route session
@@ -685,7 +707,7 @@ components:
     HostedPolicyRevocation:
       type: object
       additionalProperties: false
-      required: [team_id, policy_revision, all_sessions, membership_ids]
+      required: [team_id, policy_revision, all_sessions, membership_ids, domain_ids]
       properties:
         team_id:
           $ref: "#/components/schemas/TeamID"
@@ -701,6 +723,12 @@ components:
           uniqueItems: true
           items:
             $ref: "#/components/schemas/MembershipID"
+        domain_ids:
+          type: array
+          maxItems: 1000
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/DomainID"
     CreateDNSAuthorityRequest:
       type: object
       additionalProperties: false
@@ -788,6 +816,7 @@ components:
           policy_revision,
           lifecycle_state,
           next_route_version,
+          ephemeral,
           created_at,
           updated_at,
         ]
@@ -820,10 +849,18 @@ components:
           uniqueItems: true
           items:
             type: string
+            minLength: 1
+            maxLength: 64
+            pattern: "^\\S+$"
         next_route_version:
           type: integer
           format: int64
           minimum: 1
+        ephemeral:
+          type: boolean
+        expires_at:
+          type: string
+          format: date-time
         attached_session_id:
           $ref: "#/components/schemas/RouteSessionID"
         created_at:
@@ -868,6 +905,30 @@ components:
           uniqueItems: true
           items:
             type: string
+            minLength: 1
+            maxLength: 64
+            pattern: "^\\S+$"
+        ephemeral:
+          type: boolean
+          default: false
+    UpdateRouteRequest:
+      type: object
+      additionalProperties: false
+      required: [target, allowed_ip_prefixes]
+      properties:
+        target:
+          type: string
+          format: uri
+          pattern: "^http://"
+        allowed_ip_prefixes:
+          type: array
+          maxItems: 64
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 64
+            pattern: "^\\S+$"
     CertificateChallengeMethod:
       type: string
       enum: [dns-01, tls-alpn-01]
@@ -1018,7 +1079,7 @@ components:
     RouteSessionHeartbeat:
       type: object
       additionalProperties: false
-      required: [route_session, publisher_connections]
+      required: [route_session, publisher_connections, policy_denials]
       properties:
         route_session:
           $ref: "#/components/schemas/RouteSession"
@@ -1028,6 +1089,11 @@ components:
           maxItems: 2
           items:
             $ref: "#/components/schemas/PublisherConnectionPlan"
+        policy_denials:
+          description: Cumulative, eventually consistent IP policy denials for this route version.
+          type: integer
+          format: int64
+          minimum: 0
     CertificateInstalledRequest:
       type: object
       additionalProperties: false

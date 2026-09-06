@@ -9,6 +9,8 @@ import (
 	"errors"
 	"net/netip"
 	"slices"
+
+	"github.com/tnldotdev/tnl/internal/localproxy"
 )
 
 const MaxIPPrefixes = 64
@@ -17,6 +19,7 @@ type Operation string
 
 const (
 	OperationRouteCreate        Operation = "route.create"
+	OperationRouteUpdate        Operation = "route.update"
 	OperationRouteSessionCreate Operation = "route_session.create"
 	OperationRouteDelete        Operation = "route.delete"
 )
@@ -42,18 +45,20 @@ type CertificatePlan struct {
 // Request contains the user credential and exact operation facts control asks
 // the authority to authorize.
 type Request struct {
-	AccessToken        string
-	Operation          Operation
-	TeamID             string
-	ActingMembershipID string
-	RouteMembershipID  string
-	DomainID           string
-	CanonicalHostname  string
-	RouteScope         string
-	Target             string
-	AllowedIPPrefixes  []string
-	RouteID            string
-	RouteVersion       uint64
+	AccessToken           string
+	Operation             Operation
+	TeamID                string
+	ActingMembershipID    string
+	RouteMembershipID     string
+	DomainID              string
+	CanonicalHostname     string
+	RouteScope            string
+	Target                string
+	AllowedIPPrefixes     []string
+	Ephemeral             bool
+	RouteID               string
+	RouteVersion          uint64
+	RouteMutationRevision uint64
 }
 
 // Decision contains current authority state accepted by control. RetrySecret is
@@ -79,18 +84,20 @@ type Authorizer interface {
 
 // OperationRequest contains every value covered by a canonical mutation digest.
 type OperationRequest struct {
-	Operation         Operation
-	TeamID            string
-	MembershipID      string
-	DomainID          string
-	CanonicalHostname string
-	RouteScope        string
-	RouteID           string
-	RouteVersion      uint64
-	PolicyRevision    uint64
-	Target            string
-	AllowedIPPrefixes []string
-	CertificatePlan   *CertificatePlan
+	Operation             Operation
+	TeamID                string
+	MembershipID          string
+	DomainID              string
+	CanonicalHostname     string
+	RouteScope            string
+	RouteID               string
+	RouteVersion          uint64
+	RouteMutationRevision uint64
+	PolicyRevision        uint64
+	Target                string
+	AllowedIPPrefixes     []string
+	Ephemeral             bool
+	CertificatePlan       *CertificatePlan
 }
 
 func invalid(message string) error { return errors.New("authorization: " + message) }
@@ -104,24 +111,59 @@ func CanonicalRequestHash(request OperationRequest) (Digest, error) {
 			AllowedIPPrefixes []string `json:"allowed_ip_prefixes,omitempty"`
 			CanonicalHostname string   `json:"canonical_hostname"`
 			DomainID          string   `json:"domain_id"`
+			Ephemeral         bool     `json:"ephemeral,omitempty"`
 			MembershipID      string   `json:"membership_id,omitempty"`
 			RouteScope        string   `json:"route_scope"`
 			Target            string   `json:"target"`
 			TeamID            string   `json:"team_id"`
-		}{request.AllowedIPPrefixes, request.CanonicalHostname, request.DomainID, request.MembershipID, request.RouteScope, request.Target, request.TeamID}
+		}{request.AllowedIPPrefixes, request.CanonicalHostname, request.DomainID, request.Ephemeral, request.MembershipID, request.RouteScope, request.Target, request.TeamID}
+	case OperationRouteUpdate:
+		if request.TeamID == "" || request.DomainID == "" || request.CanonicalHostname == "" || request.RouteScope == "" ||
+			request.RouteID == "" || request.RouteMutationRevision == 0 || request.PolicyRevision == 0 ||
+			request.Target == "" || request.AllowedIPPrefixes == nil {
+			return Digest{}, invalid("route update bindings are required")
+		}
+		value = struct {
+			AllowedIPPrefixes     []string `json:"allowed_ip_prefixes"`
+			CanonicalHostname     string   `json:"canonical_hostname"`
+			DomainID              string   `json:"domain_id"`
+			Ephemeral             bool     `json:"ephemeral"`
+			MembershipID          string   `json:"membership_id,omitempty"`
+			PolicyRevision        uint64   `json:"policy_revision"`
+			RouteID               string   `json:"route_id"`
+			RouteMutationRevision uint64   `json:"route_mutation_revision"`
+			RouteScope            string   `json:"route_scope"`
+			Target                string   `json:"target"`
+			TeamID                string   `json:"team_id"`
+		}{
+			request.AllowedIPPrefixes, request.CanonicalHostname, request.DomainID, request.Ephemeral,
+			request.MembershipID, request.PolicyRevision, request.RouteID, request.RouteMutationRevision,
+			request.RouteScope, request.Target, request.TeamID,
+		}
 	case OperationRouteSessionCreate:
-		if request.RouteID == "" || request.RouteVersion == 0 || request.CertificatePlan == nil || request.AllowedIPPrefixes == nil {
+		if request.TeamID == "" || request.DomainID == "" || request.CanonicalHostname == "" || request.RouteScope == "" ||
+			request.RouteID == "" || request.RouteVersion == 0 || request.PolicyRevision == 0 ||
+			request.Target == "" || request.CertificatePlan == nil || request.AllowedIPPrefixes == nil {
 			return Digest{}, invalid("route session bindings are required")
 		}
 		value = struct {
 			AllowedIPPrefixes []string        `json:"allowed_ip_prefixes"`
+			CanonicalHostname string          `json:"canonical_hostname"`
 			CertificatePlan   CertificatePlan `json:"certificate_plan"`
+			DomainID          string          `json:"domain_id"`
+			Ephemeral         bool            `json:"ephemeral"`
 			MembershipID      string          `json:"membership_id,omitempty"`
 			PolicyRevision    uint64          `json:"policy_revision"`
 			RouteID           string          `json:"route_id"`
+			RouteScope        string          `json:"route_scope"`
 			RouteVersion      uint64          `json:"route_version"`
+			Target            string          `json:"target"`
 			TeamID            string          `json:"team_id"`
-		}{request.AllowedIPPrefixes, *request.CertificatePlan, request.MembershipID, request.PolicyRevision, request.RouteID, request.RouteVersion, request.TeamID}
+		}{
+			request.AllowedIPPrefixes, request.CanonicalHostname, *request.CertificatePlan, request.DomainID,
+			request.Ephemeral, request.MembershipID, request.PolicyRevision, request.RouteID, request.RouteScope,
+			request.RouteVersion, request.Target, request.TeamID,
+		}
 	case OperationRouteDelete:
 		if request.RouteID == "" {
 			return Digest{}, invalid("route ID is required")
@@ -145,6 +187,9 @@ func CanonicalizeIPPrefixes(values []string) ([]string, error) {
 	if values == nil {
 		return nil, nil
 	}
+	if len(values) > MaxIPPrefixes {
+		return nil, invalid("too many IP prefixes")
+	}
 	result := make([]string, 0, min(len(values), MaxIPPrefixes))
 	seen := make(map[string]struct{}, min(len(values), MaxIPPrefixes))
 	for _, value := range values {
@@ -154,13 +199,10 @@ func CanonicalizeIPPrefixes(values []string) ([]string, error) {
 		}
 		canonical := prefix.String()
 		if _, exists := seen[canonical]; exists {
-			continue
+			return nil, invalid("duplicate IP prefix")
 		}
 		seen[canonical] = struct{}{}
 		result = append(result, canonical)
-		if len(result) > MaxIPPrefixes {
-			return nil, invalid("too many IP prefixes")
-		}
 	}
 	slices.Sort(result)
 	return result, nil
@@ -188,6 +230,16 @@ func canonicalIPPrefix(value string) (netip.Prefix, error) {
 		bits -= 96
 	}
 	return netip.PrefixFrom(address, bits).Masked(), nil
+}
+
+// ValidateRouteTarget requires the exact loopback HTTP target shape accepted
+// by route mutations.
+func ValidateRouteTarget(target string) error {
+	canonical, err := localproxy.NormalizeTarget(target)
+	if err != nil || canonical != target {
+		return invalid("invalid route target")
+	}
+	return nil
 }
 
 // IPPolicyHash hashes the canonical prefix array. A nil policy has no digest.

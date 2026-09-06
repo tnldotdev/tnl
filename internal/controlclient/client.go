@@ -26,6 +26,7 @@ const (
 var (
 	ErrUnauthenticated   = errors.New("controlclient: unauthenticated")
 	ErrNotFound          = errors.New("controlclient: not found")
+	ErrNameUnavailable   = errors.New("controlclient: route hostname unavailable")
 	ErrStatusConflict    = errors.New("controlclient: status conflict")
 	ErrCertificateStatus = errors.New("controlclient: certificate status conflict")
 	ErrDNSProofPending   = errors.New("controlclient: DNS setup pending")
@@ -116,6 +117,12 @@ func (c *Client) ListRoutes(ctx context.Context, teamID string) ([]controlv1.Rou
 func (c *Client) GetRoute(ctx context.Context, routeID string) (controlv1.Route, error) {
 	return requestWithAccess[controlv1.Route](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.GetRoute(ctx, routeID, editors...)
+	})
+}
+
+func (c *Client) UpdateRoute(ctx context.Context, routeID string, body controlv1.UpdateRouteRequest) (controlv1.Route, error) {
+	return requestWithAccess[controlv1.Route](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.UpdateRoute(ctx, routeID, body, editors...)
 	})
 }
 
@@ -264,6 +271,8 @@ func responseError(status int, header http.Header, payload []byte) error {
 		return ErrUnauthenticated
 	case controlv1.NotFound:
 		return ErrNotFound
+	case controlv1.NameUnavailable:
+		return ErrNameUnavailable
 	case controlv1.Conflict, controlv1.RouteAttached, controlv1.PolicyRevisionStale:
 		return ErrStatusConflict
 	case controlv1.DnsSetupPending:

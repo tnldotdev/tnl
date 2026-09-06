@@ -1,0 +1,118 @@
+import {
+  canonicalLoopbackTarget,
+  readDevelopmentContext,
+  registerLocalTarget,
+  requestTunnelAssignment,
+  runtimePayload,
+} from "./internal/dev.js";
+import type { NextConfig } from "next";
+
+const developmentServerPhase = "phase-development-server";
+const runtimeEnvironmentName = "TNL_PROJECT_RUNTIME";
+
+export interface NextConfigContext {
+  /** The default Next.js configuration. */
+  readonly defaultConfig: NextConfig;
+}
+
+/** A function that returns Next.js configuration. */
+export type NextConfigFactory = (
+  phase: string,
+  context: NextConfigContext,
+) => NextConfig | Promise<NextConfig>;
+
+export type NextConfigInput = NextConfig | Promise<NextConfig> | NextConfigFactory;
+
+/** Adds tnl project metadata and safe `tnl dev` routing to a Next.js development server. */
+export function withTnl(config: NextConfigInput = {}, ...extra: never[]): NextConfigFactory {
+  if (extra.length !== 0) {
+    throw new Error("withTnl() does not accept tunnel options; use project configuration");
+  }
+  return async function tnlNextConfig(phase, context) {
+    const resolved = typeof config === "function" ? await config(phase, context) : await config;
+    const nextConfig = resolved ?? {};
+    if (phase !== developmentServerPhase) {
+      return nextConfig;
+    }
+
+    const development = readDevelopmentContext();
+    if (development.bootstrap === null) {
+      if (development.localProject === null) {
+        return nextConfig;
+      }
+      return injectRuntime(nextConfig, runtimePayload(development.localProject, false));
+    }
+
+    const allowedDevOrigins = nextConfig.allowedDevOrigins ?? [];
+    if (!Array.isArray(allowedDevOrigins)) {
+      throw new Error("Next.js allowedDevOrigins must be an array when used with tnl");
+    }
+    const target = nextTarget(process.env);
+    const assignment = await requestTunnelAssignment("next", development.bootstrap);
+    await registerLocalTarget(assignment, target);
+
+    return injectRuntime(
+      {
+        ...nextConfig,
+        allowedDevOrigins: unique([...allowedDevOrigins, assignment.hostname]),
+      },
+      runtimePayload(assignment.project, true),
+    );
+  };
+}
+
+function injectRuntime(config: NextConfig, payload: string): NextConfig {
+  return {
+    ...config,
+    env: {
+      ...config.env,
+      [runtimeEnvironmentName]: payload,
+    },
+  };
+}
+
+function nextTarget(environment: NodeJS.ProcessEnv): `http://${string}` {
+  // Next 16.3.4 binds and sets this origin before loading next.config, so it is authoritative.
+  const value = environment.__NEXT_PRIVATE_ORIGIN;
+  if (value === undefined) {
+    throw new Error("Next.js did not report its bound development listener to tnl dev");
+  }
+  let origin: URL;
+  try {
+    origin = new URL(value);
+    if (
+      origin.protocol !== "http:" ||
+      origin.username !== "" ||
+      origin.password !== "" ||
+      origin.pathname !== "/" ||
+      origin.search !== "" ||
+      origin.hash !== "" ||
+      origin.port === ""
+    ) {
+      throw new Error("invalid origin");
+    }
+  } catch (error) {
+    throw new Error("Next.js reported an invalid development listener", { cause: error });
+  }
+  const port = parsePort(origin.port, "Next.js listener");
+  const reportedPort = environment.PORT;
+  if (reportedPort !== undefined && parsePort(reportedPort, "PORT") !== port) {
+    throw new Error("Next.js reported inconsistent development listener ports");
+  }
+  return canonicalLoopbackTarget(origin.hostname, port);
+}
+
+function parsePort(value: string, source: string): number {
+  if (!/^[0-9]+$/.test(value)) {
+    throw new Error(`${source} must be a port between 1 and 65535`);
+  }
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`${source} must be a port between 1 and 65535`);
+  }
+  return port;
+}
+
+function unique(values: readonly string[]): string[] {
+  return [...new Set(values)];
+}

@@ -86,6 +86,19 @@ assert.equal(defineConfig(config), config);
 `,
     );
     await run(process.execPath, ["verify-config.mjs"], consumer);
+    await writeFile(
+      path.join(consumer, "verify-integrations.mjs"),
+      `const [{ tnl: runtime }, { withTnl }, { default: tnl }] = await Promise.all([
+  import("@tnldotdev/tnl"),
+  import("@tnldotdev/tnl/next"),
+  import("@tnldotdev/tnl/vite"),
+]);
+if (runtime !== undefined) throw new Error("runtime must be absent outside development");
+if (typeof withTnl !== "function") throw new Error("missing Next.js integration");
+if (typeof tnl !== "function") throw new Error("missing Vite integration");
+`,
+    );
+    await run(process.execPath, ["verify-integrations.mjs"], consumer);
     await assert.rejects(
       () => readFile(path.join(consumer, "node_modules", ".bin", "tnld")),
       /ENOENT/,
@@ -124,8 +137,13 @@ async function startRegistry() {
       const packageName = decodeURIComponent(url.pathname.slice(1));
       const package_ = packages.get(packageName);
       if (package_ === undefined) {
-        response.statusCode = 404;
-        response.end(JSON.stringify({ error: "not found" }));
+        const upstream = await fetch(new URL(request.url ?? "/", "https://registry.npmjs.org"));
+        response.statusCode = upstream.status;
+        const contentType = upstream.headers.get("content-type");
+        if (contentType !== null) {
+          response.setHeader("Content-Type", contentType);
+        }
+        response.end(Buffer.from(await upstream.arrayBuffer()));
         return;
       }
       const address = server.address();

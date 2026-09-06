@@ -14,6 +14,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -22,7 +23,10 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
-const heartbeatCallTimeout = 10 * time.Second
+const (
+	heartbeatCallTimeout            = 10 * time.Second
+	defaultProvisioningStalledDelay = 2 * time.Minute
+)
 
 var (
 	errCertificateExpired = errors.New("publisher: application certificate expired")
@@ -34,6 +38,8 @@ var (
 type RouteControlClient interface {
 	CreateRoute(context.Context, controlv1.CreateRouteRequest, string) (controlv1.Route, error)
 	ListRoutes(context.Context, string) ([]controlv1.Route, error)
+	UpdateRoute(context.Context, string, controlv1.UpdateRouteRequest) (controlv1.Route, error)
+	DeleteRoute(context.Context, controlv1.Route) error
 	CreateRouteSession(context.Context, string, string) (controlv1.RouteSessionSetup, error)
 	CloseRouteSession(context.Context, string, credentials.SessionToken) error
 	Ready(context.Context, string, uint64, credentials.SessionToken) error
@@ -46,41 +52,46 @@ type RouteControlClient interface {
 }
 
 type Config struct {
-	Control           RouteControlClient
-	TeamID            string
-	DomainID          string
-	MembershipID      string
-	PolicyRevision    uint64
-	RouteScope        controlv1.RouteScope
-	CertificatePlan   controlv1.CertificatePlan
-	Hostname          string
-	Target            string
-	AllowedIPPrefixes []string
-	Certificate       tls.Certificate
-	State             *clientstate.Store
-	QUICConnector     muxsession.Connector
-	TCPConnector      muxsession.Connector
-	FallbackDelay     time.Duration
-	DrainTime         time.Duration
-	Logf              func(string, ...any)
-	Observe           func(Event) error
+	Control                  RouteControlClient
+	TeamID                   string
+	DomainID                 string
+	MembershipID             string
+	PolicyRevision           uint64
+	RouteScope               controlv1.RouteScope
+	CertificatePlan          controlv1.CertificatePlan
+	Hostname                 string
+	Target                   string
+	AllowedIPPrefixes        []string
+	Ephemeral                bool
+	Certificate              tls.Certificate
+	State                    *clientstate.Store
+	QUICConnector            muxsession.Connector
+	TCPConnector             muxsession.Connector
+	FallbackDelay            time.Duration
+	DrainTime                time.Duration
+	ProvisioningStalledDelay time.Duration
+	Logf                     func(string, ...any)
+	Observe                  func(Event) error
 }
 
 type EventType string
 
 const (
-	EventRouteAssigned EventType = "route"
-	EventProvisioning  EventType = "provisioning"
-	EventReady         EventType = "ready"
-	EventDraining      EventType = "draining"
+	EventRouteAssigned       EventType = "route"
+	EventProvisioning        EventType = "provisioning"
+	EventProvisioningStalled EventType = "provisioning_stalled"
+	EventReady               EventType = "ready"
+	EventDraining            EventType = "draining"
+	EventIPPolicyDenials     EventType = "ip_policy_denials"
 )
 
 type Event struct {
-	Type         EventType
-	RouteID      string
-	Hostname     string
-	PublicURL    string
-	RouteVersion uint64
+	Type          EventType
+	RouteID       string
+	Hostname      string
+	PublicURL     string
+	RouteVersion  uint64
+	PolicyDenials uint64
 }
 
 func Run(ctx context.Context, config Config) (result error) {
@@ -90,11 +101,17 @@ func Run(ctx context.Context, config Config) (result error) {
 	if config.DrainTime < 0 || config.FallbackDelay < 0 {
 		return errors.New("publisher: drain time and fallback delay cannot be negative")
 	}
+	if config.ProvisioningStalledDelay < 0 {
+		return errors.New("publisher: provisioning stalled delay cannot be negative")
+	}
 	if config.DrainTime == 0 {
 		config.DrainTime = 30 * time.Second
 	}
 	if config.FallbackDelay == 0 {
 		config.FallbackDelay = 250 * time.Millisecond
+	}
+	if config.ProvisioningStalledDelay == 0 {
+		config.ProvisioningStalledDelay = defaultProvisioningStalledDelay
 	}
 	if config.QUICConnector == nil || config.TCPConnector == nil {
 		return errors.New("publisher: QUIC and TLS/yamux connectors are required")
@@ -133,11 +150,21 @@ func Run(ctx context.Context, config Config) (result error) {
 		}
 		defer hostLock.Close()
 	}
-	route, err := createOrLoadRoute(ctx, config)
+	route, createdRoute, err := createOrLoadRoute(ctx, config)
 	if err != nil {
 		return err
 	}
 	routeID := route.Id
+	if config.Ephemeral && createdRoute {
+		defer func() {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			deleteErr := config.Control.DeleteRoute(cleanupCtx, route)
+			cancel()
+			if deleteErr != nil && !errors.Is(deleteErr, controlclient.ErrNotFound) {
+				result = errors.Join(result, fmt.Errorf("publisher: delete ephemeral route: %w", deleteErr))
+			}
+		}()
+	}
 	if err := observe(config, Event{Type: EventRouteAssigned, RouteID: routeID, Hostname: route.CanonicalHostname}); err != nil {
 		return err
 	}
@@ -182,19 +209,25 @@ func Run(ctx context.Context, config Config) (result error) {
 	}
 }
 
-func createOrLoadRoute(ctx context.Context, config Config) (controlv1.Route, error) {
-	routes, err := config.Control.ListRoutes(ctx, config.TeamID)
-	if err != nil {
-		return controlv1.Route{}, err
-	}
-	for _, route := range routes {
-		if route.CanonicalHostname == config.Hostname {
-			return route, nil
+func createOrLoadRoute(ctx context.Context, config Config) (controlv1.Route, bool, error) {
+	if !config.Ephemeral {
+		routes, err := config.Control.ListRoutes(ctx, config.TeamID)
+		if err != nil {
+			return controlv1.Route{}, false, err
+		}
+		for _, route := range routes {
+			if route.CanonicalHostname == config.Hostname {
+				if err := validateRouteIdentity(route, config); err != nil {
+					return controlv1.Route{}, false, err
+				}
+				reconciled, err := reconcileRoute(ctx, config, route)
+				return reconciled, false, err
+			}
 		}
 	}
 	idempotencyKey, err := opaqueID("route_")
 	if err != nil {
-		return controlv1.Route{}, err
+		return controlv1.Route{}, false, err
 	}
 	body := controlv1.CreateRouteRequest{
 		TeamId: config.TeamID, DomainId: config.DomainID, CanonicalHostname: config.Hostname,
@@ -207,7 +240,63 @@ func createOrLoadRoute(ctx context.Context, config Config) (controlv1.Route, err
 		allowed := slices.Clone(config.AllowedIPPrefixes)
 		body.AllowedIpPrefixes = &allowed
 	}
-	return config.Control.CreateRoute(ctx, body, idempotencyKey)
+	if config.Ephemeral {
+		body.Ephemeral = &config.Ephemeral
+	}
+	route, err := config.Control.CreateRoute(ctx, body, idempotencyKey)
+	return route, err == nil, classifyRouteConflict(err)
+}
+
+func validateRouteIdentity(route controlv1.Route, config Config) error {
+	if route.TeamId != config.TeamID || route.DomainId != config.DomainID || route.RouteScope != config.RouteScope ||
+		route.Ephemeral != config.Ephemeral {
+		return diagnostic.Wrap(diagnostic.RouteConflict, errors.New("publisher: existing route identity does not match the requested route"))
+	}
+	if config.RouteScope == controlv1.Member {
+		if route.MembershipId == nil || *route.MembershipId != config.MembershipID {
+			return diagnostic.Wrap(diagnostic.RouteConflict, errors.New("publisher: existing route identity does not match the requested route"))
+		}
+	} else if route.MembershipId != nil {
+		return diagnostic.Wrap(diagnostic.RouteConflict, errors.New("publisher: existing route identity does not match the requested route"))
+	}
+	return nil
+}
+
+func reconcileRoute(ctx context.Context, config Config, route controlv1.Route) (controlv1.Route, error) {
+	if route.LifecycleState != controlv1.Enabled {
+		return controlv1.Route{}, diagnostic.Wrap(
+			diagnostic.RouteConflict,
+			fmt.Errorf("publisher: route %s is not enabled", route.Id),
+		)
+	}
+	currentPolicy := []string{}
+	if route.AllowedIpPrefixes != nil {
+		currentPolicy = *route.AllowedIpPrefixes
+	}
+	desiredPolicy := config.AllowedIPPrefixes
+	if desiredPolicy == nil {
+		desiredPolicy = []string{}
+	}
+	if !slices.Equal(currentPolicy, desiredPolicy) {
+		updated, err := config.Control.UpdateRoute(ctx, route.Id, controlv1.UpdateRouteRequest{
+			Target: config.Target, AllowedIpPrefixes: slices.Clone(desiredPolicy),
+		})
+		return updated, classifyRouteConflict(err)
+	}
+	if route.Target == config.Target {
+		return route, nil
+	}
+	updated, err := config.Control.UpdateRoute(ctx, route.Id, controlv1.UpdateRouteRequest{
+		Target: config.Target, AllowedIpPrefixes: slices.Clone(desiredPolicy),
+	})
+	return updated, classifyRouteConflict(err)
+}
+
+func classifyRouteConflict(err error) error {
+	if errors.Is(err, controlclient.ErrNameUnavailable) || errors.Is(err, controlclient.ErrStatusConflict) {
+		return diagnostic.Wrap(diagnostic.RouteConflict, err)
+	}
+	return err
 }
 
 func createRouteSession(ctx context.Context, config Config, route controlv1.Route) (controlv1.RouteSessionSetup, error) {
@@ -217,8 +306,11 @@ func createRouteSession(ctx context.Context, config Config, route controlv1.Rout
 	}
 	for {
 		setup, err := config.Control.CreateRouteSession(ctx, route.Id, idempotencyKey)
-		if err == nil || !errors.Is(err, controlclient.ErrUnavailable) {
-			return setup, err
+		if err == nil {
+			return setup, nil
+		}
+		if !errors.Is(err, controlclient.ErrUnavailable) {
+			return setup, classifyRouteConflict(err)
 		}
 		select {
 		case <-ctx.Done():
@@ -246,8 +338,20 @@ func runSession(
 	parentCtx := ctx
 	sessionCtx, cancelSession := context.WithCancelCause(ctx)
 	defer cancelSession(nil)
+	provisioningCtx, cancelProvisioning := context.WithCancel(sessionCtx)
+	provisioningDone := make(chan struct{})
+	go func() {
+		defer close(provisioningDone)
+		if err := observeProvisioningStall(provisioningCtx, config, setup); err != nil {
+			cancelSession(fmt.Errorf("publisher: observe provisioning warning: %w", err))
+		}
+	}()
+	defer func() {
+		cancelProvisioning()
+		<-provisioningDone
+	}()
 	// Refresh before setup consumes the session, then continue heartbeats in the background.
-	heartbeat, err := heartbeatResponseOnce(
+	heartbeat, observedHeartbeat, err := heartbeatResponseOnce(
 		sessionCtx, config.Control, setup.RouteSession.Id, version, sessionToken, setup.RouteSession.ExpiresAt,
 	)
 	if err != nil {
@@ -256,10 +360,22 @@ func runSession(
 	}
 	if sessionCtx.Err() != nil {
 		cancelSession(nil)
+		if parentCtx.Err() == nil {
+			return context.Cause(sessionCtx)
+		}
 		return nil
 	}
 	if len(heartbeat.PublisherConnections) != 0 {
 		setup.PublisherConnections = heartbeat.PublisherConnections
+	}
+	var observedPolicyDenials uint64
+	observePolicyDenials := func(value int64) error {
+		return observeHeartbeatPolicyDenials(config, setup, value, &observedPolicyDenials)
+	}
+	if observedHeartbeat {
+		if err := observePolicyDenials(heartbeat.PolicyDenials); err != nil {
+			return err
+		}
 	}
 	ctx = sessionCtx
 	certificate := config.Certificate
@@ -321,7 +437,7 @@ func runSession(
 		defer close(heartbeatDone)
 		if err := heartbeatSessionAfterUpdate(
 			sessionCtx, config.Control, setup.RouteSession.Id, version, sessionToken, heartbeat.RouteSession.ExpiresAt,
-			connections.Update,
+			connections.Update, observePolicyDenials,
 		); err != nil {
 			cancelSession(fmt.Errorf("publisher: heartbeat: %w", err))
 		}
@@ -376,6 +492,7 @@ func runSession(
 			return ready()
 		})
 		if err == nil {
+			cancelProvisioning()
 			break
 		}
 		if serverReady || !errors.Is(err, controlclient.ErrUnavailable) {
@@ -449,6 +566,20 @@ func observe(config Config, event Event) error {
 		return nil
 	}
 	return config.Observe(event)
+}
+
+func observeProvisioningStall(ctx context.Context, config Config, setup controlv1.RouteSessionSetup) error {
+	timer := time.NewTimer(config.ProvisioningStalledDelay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return nil
+	case <-timer.C:
+		return observe(config, Event{
+			Type: EventProvisioningStalled, RouteID: setup.Route.Id, Hostname: setup.Route.CanonicalHostname,
+			RouteVersion: uint64(setup.RouteSession.RouteVersion),
+		})
+	}
 }
 
 func logRenewalFailure(logf func(string, ...any), err error) {
@@ -792,6 +923,7 @@ func heartbeatSessionAfterUpdate(
 	sessionToken credentials.SessionToken,
 	expiresAt time.Time,
 	update func([]controlv1.PublisherConnectionPlan) error,
+	observePolicyDenials func(int64) error,
 ) error {
 	ticker := time.NewTicker(heartbeatInterval)
 	defer ticker.Stop()
@@ -801,7 +933,7 @@ func heartbeatSessionAfterUpdate(
 			return nil
 		case <-ticker.C:
 		}
-		response, err := heartbeatResponseOnce(ctx, server, routeID, version, sessionToken, expiresAt)
+		response, observedHeartbeat, err := heartbeatResponseOnce(ctx, server, routeID, version, sessionToken, expiresAt)
 		if err != nil || ctx.Err() != nil {
 			return err
 		}
@@ -811,7 +943,32 @@ func heartbeatSessionAfterUpdate(
 				return err
 			}
 		}
+		if observedHeartbeat && observePolicyDenials != nil {
+			if err := observePolicyDenials(response.PolicyDenials); err != nil {
+				return err
+			}
+		}
 	}
+}
+
+func observeHeartbeatPolicyDenials(
+	config Config,
+	setup controlv1.RouteSessionSetup,
+	value int64,
+	previous *uint64,
+) error {
+	if value < 0 || uint64(value) < *previous {
+		return errors.New("publisher: server returned an invalid policy denial count")
+	}
+	current := uint64(value)
+	if current == *previous {
+		return nil
+	}
+	*previous = current
+	return observe(config, Event{
+		Type: EventIPPolicyDenials, RouteID: setup.Route.Id, Hostname: setup.Route.CanonicalHostname,
+		RouteVersion: uint64(setup.RouteSession.RouteVersion), PolicyDenials: current,
+	})
 }
 
 func heartbeatResponseOnce(
@@ -821,24 +978,24 @@ func heartbeatResponseOnce(
 	version uint64,
 	sessionToken credentials.SessionToken,
 	expiresAt time.Time,
-) (controlv1.RouteSessionHeartbeat, error) {
+) (controlv1.RouteSessionHeartbeat, bool, error) {
 	callCtx, cancel := context.WithTimeout(ctx, heartbeatCallTimeout)
 	response, err := server.Heartbeat(callCtx, routeID, version, sessionToken)
 	cancel()
 	if err == nil {
-		return response, nil
+		return response, true, nil
 	}
 	if ctx.Err() != nil {
-		return heartbeatFallback(expiresAt), nil
+		return heartbeatFallback(expiresAt), false, nil
 	}
 	// A missed heartbeat is safe only while the last confirmed session remains valid.
 	if errors.Is(err, controlclient.ErrUnavailable) && time.Now().Before(expiresAt) {
-		return heartbeatFallback(expiresAt), nil
+		return heartbeatFallback(expiresAt), false, nil
 	}
 	if errors.Is(err, controlclient.ErrUnavailable) {
-		return heartbeatFallback(expiresAt), controlclient.ErrStatusConflict
+		return heartbeatFallback(expiresAt), false, controlclient.ErrStatusConflict
 	}
-	return heartbeatFallback(expiresAt), err
+	return heartbeatFallback(expiresAt), false, err
 }
 
 func heartbeatFallback(expiresAt time.Time) controlv1.RouteSessionHeartbeat {

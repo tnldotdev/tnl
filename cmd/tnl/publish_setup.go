@@ -24,11 +24,13 @@ type publisherServices struct {
 	authenticated   *clientauth.Client
 	state           *clientstate.Store
 	hostname        string
+	memberNamespace string
 	teamID          string
 	membershipID    string
 	domainID        string
 	routeScope      controlv1.RouteScope
 	policyRevision  uint64
+	ephemeral       bool
 	certificatePlan controlv1.CertificatePlan
 	routes          *routeclient.Client
 }
@@ -50,6 +52,7 @@ func authenticatePublisher(
 		State:                state,
 		AccessToken:          accessToken,
 		Diagnostics:          diagnostics,
+		OpenURL:              interactiveBrowserOpener(stdin),
 		LoginToken:           loginTokenPrompt(stdin, diagnostics),
 		AuthenticationPrompt: authenticationPrompt(diagnostics, command),
 	})
@@ -90,7 +93,8 @@ func resolveIPPolicy(
 func preparePublisherServices(
 	ctx context.Context,
 	state *clientstate.Database,
-	serverURL, hostname, subdomain string,
+	serverURL, hostname, subdomain, selectedTeam string,
+	ephemeral bool,
 	authenticated *clientauth.Client,
 ) (publisherServices, error) {
 	publisherState, err := state.Server(ctx, serverURL)
@@ -106,7 +110,10 @@ func preparePublisherServices(
 	if err != nil {
 		return publisherServices{}, err
 	}
-	teamSession := teamSession{store: publisherState, authenticated: authenticated, api: api, identity: identity}
+	teamSession := teamSession{
+		store: publisherState, authenticated: authenticated, api: api, identity: identity,
+		projectTeam: selectedTeam,
+	}
 	current, err := teamSession.current(ctx)
 	if err != nil {
 		return publisherServices{}, err
@@ -126,11 +133,13 @@ func preparePublisherServices(
 		authenticated:   authenticated,
 		state:           publisherState,
 		hostname:        hostname,
+		memberNamespace: memberNamespace(current.membership, domain),
 		teamID:          current.team.Id,
 		membershipID:    current.membership.Id,
 		domainID:        domain.Id,
 		routeScope:      routeScope,
 		policyRevision:  uint64(current.team.PolicyRevision),
+		ephemeral:       ephemeral,
 		certificatePlan: certificatePlan,
 		routes:          routes,
 	}, nil
@@ -243,6 +252,7 @@ func (p publisherServices) config(target string, allowedIPPrefixes []string) pub
 		CertificatePlan:   p.certificatePlan,
 		Target:            target,
 		AllowedIPPrefixes: allowedIPPrefixes,
+		Ephemeral:         p.ephemeral,
 		State:             p.state,
 		QUICConnector:     muxsession.QUICConnector{TLSConfig: relayTransportTLS},
 		TCPConnector:      muxsession.TLSYamuxConnector{TLSConfig: relayTransportTLS},

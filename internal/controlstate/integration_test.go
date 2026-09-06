@@ -904,7 +904,7 @@ func testRelayCertificate(t *testing.T, hostname string, now time.Time) ([]byte,
 
 func testExternalAuthoritySecret(t *testing.T, database *Database) {
 	t.Helper()
-	const identityID = "identity_0123456789abcdef0123456789abcdef"
+	const identityID = "10000000-0000-4000-8000-000000000001"
 	first, err := database.EnsureExternalAuthorityPrincipal(t.Context(), identityID, time.Now())
 	if err != nil {
 		t.Fatal(err)
@@ -1127,6 +1127,130 @@ func testRouteManagement(t *testing.T, database *Database) {
 	if err != nil || !reflect.DeepEqual(loaded, route) {
 		t.Fatalf("loaded route = %#v, %v", loaded, err)
 	}
+	if _, err := database.pool.Exec(t.Context(), `
+		UPDATE control.teams SET policy_revision = 2, updated_at = $2 WHERE id = $1
+	`, membership.TeamID, now.Add(6*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := database.UpdateAuthorizedRoute(t.Context(), AuthorizedRouteUpdateRequest{
+		RouteID: route.ID, TeamID: route.TeamID, ActingIdentityID: principal.IdentityID,
+		Target: "http://127.0.0.1:4000", AllowedIPPrefixes: []string{"192.0.2.0/24"}, PolicyRevision: 2,
+		ExpectedMutationRevision: route.MutationRevision,
+	}, now.Add(6*time.Second))
+	if err != nil || updated.Target != "http://127.0.0.1:4000" || updated.PolicyRevision != 2 ||
+		!reflect.DeepEqual(updated.AllowedIPPrefixes, []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}) ||
+		updated.TeamID != route.TeamID || updated.DomainID != route.DomainID || updated.MembershipID != route.MembershipID ||
+		updated.CanonicalHostname != route.CanonicalHostname || updated.RouteScope != route.RouteScope {
+		t.Fatalf("updated route = %#v, %v", updated, err)
+	}
+	if _, err := database.UpdateAuthorizedRoute(t.Context(), AuthorizedRouteUpdateRequest{
+		RouteID: route.ID, TeamID: route.TeamID, ActingIdentityID: principal.IdentityID,
+		Target: "http://127.0.0.1:5000", AllowedIPPrefixes: []string{}, PolicyRevision: 2,
+		ExpectedMutationRevision: route.MutationRevision,
+	}, now.Add(6*time.Second)); !errors.Is(err, ErrRouteMutationStale) {
+		t.Fatalf("stale route mutation error = %v", err)
+	}
+	invalidUpdate := AuthorizedRouteUpdateRequest{
+		RouteID: route.ID, TeamID: route.TeamID, ActingIdentityID: principal.IdentityID,
+		Target: "http://127.0.0.1:5000", AllowedIPPrefixes: []string{"192.0.2.9/24"}, PolicyRevision: 2,
+		ExpectedMutationRevision: updated.MutationRevision,
+	}
+	if _, err := database.UpdateAuthorizedRoute(t.Context(), invalidUpdate, now.Add(6*time.Second)); !errors.Is(err, ErrRouteInvalid) {
+		t.Fatalf("noncanonical route update error = %v", err)
+	}
+	if _, err := database.pool.Exec(t.Context(), `
+		INSERT INTO control.route_sessions (
+			id, route_id, team_id, membership_id, acting_identity_id, route_version,
+			idempotency_key, request_digest, session_token_id, session_token_digest,
+			policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers,
+			certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at
+		) VALUES (
+			'session_stale_update', $1, $2, $3, $4, 1,
+			'stale-update', decode(repeat('08', 32), 'hex'), 'token_stale_update', decode(repeat('09', 32), 'hex'),
+			2, 'stale-update', 'stale-update', ARRAY[$5], 'tls-alpn-01', 'starting', $6, $6, $7
+		)
+	`, route.ID, route.TeamID, route.MembershipID, principal.IdentityID, route.CanonicalHostname,
+		now, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	updated, err = database.UpdateAuthorizedRoute(t.Context(), AuthorizedRouteUpdateRequest{
+		RouteID: route.ID, TeamID: route.TeamID, ActingIdentityID: principal.IdentityID,
+		Target: "http://127.0.0.1:5000", AllowedIPPrefixes: []string{}, PolicyRevision: 2,
+		ExpectedMutationRevision: updated.MutationRevision,
+	}, now.Add(2*time.Second))
+	if err != nil || updated.Target != "http://127.0.0.1:5000" {
+		t.Fatalf("update after stale route session = %#v, %v", updated, err)
+	}
+	var staleSessionState string
+	if err := database.pool.QueryRow(t.Context(), `
+		SELECT state FROM control.route_sessions WHERE id = 'session_stale_update'
+	`).Scan(&staleSessionState); err != nil || staleSessionState != "expired" {
+		t.Fatalf("stale update route session state = %q, %v", staleSessionState, err)
+	}
+	route = updated
+	ephemeralRequest := request
+	ephemeralRequest.IdempotencyKey = "route-management-ephemeral"
+	ephemeralRequest.RequestDigest = sha256.Sum256([]byte("route-management-ephemeral"))
+	ephemeralRequest.CanonicalHostname = "ephemeral." + membership.ManagedLabel + ".tunnels.example.test"
+	ephemeralRequest.Ephemeral = true
+	ephemeral, err := database.CreateRoute(t.Context(), ephemeralRequest, now.Add(6*time.Second))
+	if err != nil || !ephemeral.Ephemeral || ephemeral.ExpiresAt == nil ||
+		!ephemeral.ExpiresAt.Equal(now.Add(6*time.Second).Add(ephemeralRouteGracePeriod)) {
+		t.Fatalf("ephemeral route = %#v, %v", ephemeral, err)
+	}
+	if count, err := database.DeleteExpiredEphemeralRoutes(t.Context(), ephemeral.ExpiresAt.Add(-time.Millisecond)); err != nil || count != 0 {
+		t.Fatalf("early ephemeral cleanup = %d, %v", count, err)
+	}
+	if count, err := database.DeleteExpiredEphemeralRoutes(t.Context(), *ephemeral.ExpiresAt); err != nil || count != 1 {
+		t.Fatalf("expired ephemeral cleanup = %d, %v", count, err)
+	}
+	if _, err := database.GetRoute(t.Context(), principal.IdentityID, ephemeral.ID); !errors.Is(err, ErrRouteNotFound) {
+		t.Fatalf("expired ephemeral route read error = %v", err)
+	}
+	contended := ephemeralRequest
+	contended.CanonicalHostname = "contended." + membership.ManagedLabel + ".tunnels.example.test"
+	const ephemeralContenders = 4
+	contentionResults := make(chan Route, ephemeralContenders)
+	contentionErrors := make(chan error, ephemeralContenders)
+	var contention sync.WaitGroup
+	for index := range ephemeralContenders {
+		contention.Add(1)
+		go func() {
+			defer contention.Done()
+			candidate := contended
+			candidate.IdempotencyKey = fmt.Sprintf("route-management-ephemeral-contention-%d", index)
+			candidate.RequestDigest = sha256.Sum256([]byte(candidate.IdempotencyKey))
+			createdRoute, err := database.CreateRoute(t.Context(), candidate, now.Add(7*time.Second))
+			contentionResults <- createdRoute
+			contentionErrors <- err
+		}()
+	}
+	contention.Wait()
+	close(contentionResults)
+	close(contentionErrors)
+	createdCount, conflictCount := 0, 0
+	var contendedRoute Route
+	for createdRoute := range contentionResults {
+		if createdRoute.ID != "" {
+			createdCount++
+			contendedRoute = createdRoute
+		}
+	}
+	for err := range contentionErrors {
+		switch {
+		case err == nil:
+		case errors.Is(err, ErrRouteConflict):
+			conflictCount++
+		default:
+			t.Fatalf("ephemeral route contention error = %v", err)
+		}
+	}
+	if createdCount != 1 || conflictCount != ephemeralContenders-1 {
+		t.Fatalf("ephemeral route contention = %d created, %d conflicts", createdCount, conflictCount)
+	}
+	if count, err := database.DeleteExpiredEphemeralRoutes(t.Context(), *contendedRoute.ExpiresAt); err != nil || count != 1 {
+		t.Fatalf("contended ephemeral route cleanup = %d, %v", count, err)
+	}
 	if err := database.DeleteRoute(t.Context(), principal.IdentityID, route.ID, now.Add(6*time.Second)); err != nil {
 		t.Fatal(err)
 	}
@@ -1206,8 +1330,25 @@ func testDNSRouteWork(t *testing.T, database *Database) {
 	replacement := request
 	replacement.IdempotencyKey = "dns-route-work-replacement"
 	replacement.RequestDigest = sha256.Sum256([]byte("dns-route-work-replacement"))
-	if _, err := database.CreateRoute(t.Context(), replacement, now.Add(5*time.Second)); err != nil {
+	replacement.Ephemeral = true
+	ephemeral, err := database.CreateRoute(t.Context(), replacement, now.Add(5*time.Second))
+	if err != nil {
 		t.Fatalf("reuse removed DNS route hostname: %v", err)
+	}
+	if count, err := database.DeleteExpiredEphemeralRoutes(t.Context(), *ephemeral.ExpiresAt); err != nil || count != 1 {
+		t.Fatalf("expired DNS-managed ephemeral route cleanup = %d, %v", count, err)
+	}
+	var lifecycleState, dnsState string
+	if err := database.pool.QueryRow(t.Context(), `
+		SELECT lifecycle_state, dns_state FROM control.routes WHERE id = $1
+	`, ephemeral.ID).Scan(&lifecycleState, &dnsState); err != nil || lifecycleState != "deleted" || dnsState != "removing" {
+		t.Fatalf("expired DNS-managed route state = %q, %q, %v", lifecycleState, dnsState, err)
+	}
+	removal, found, err = database.ClaimDNSRouteWork(
+		t.Context(), "dns_worker_ephemeral", *ephemeral.ExpiresAt, time.Minute,
+	)
+	if err != nil || !found || removal.RouteID != ephemeral.ID || removal.State != RouteDNSRemoving {
+		t.Fatalf("expired ephemeral DNS removal = %#v, found %v, error %v", removal, found, err)
 	}
 }
 
@@ -1215,6 +1356,11 @@ func testRouteSessionCreation(t *testing.T, database *Database) {
 	t.Helper()
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	seedControlRoute(t, database, now, "session")
+	if _, err := database.pool.Exec(t.Context(), `
+		UPDATE control.routes SET ephemeral = true, expires_at = $2 WHERE id = $1
+	`, "route_session", now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
 	placementLeases := make(map[string]RelayLease, routeSessionConnectionCount)
 	for index := range routeSessionConnectionCount {
 		name := fmt.Sprintf("placement_%d", index)
@@ -1235,7 +1381,7 @@ func testRouteSessionCreation(t *testing.T, database *Database) {
 		RequestDigest: sha256.Sum256([]byte("request-session-1")), PolicyRevision: 1,
 		CertificateCacheKey: "certificate_session", CertificateScope: "route",
 		CertificateIdentifiers: []string{"route-session.example.test"}, CertificateChallenge: "tls-alpn-01",
-		AllowedIPPrefixes: []string{"192.0.2.0/24"},
+		ExpectedMutationRevision: 1,
 	}
 	setup, err := database.CreateRouteSession(t.Context(), request, now, 30*time.Second, time.Minute)
 	if err != nil {
@@ -1244,8 +1390,23 @@ func testRouteSessionCreation(t *testing.T, database *Database) {
 	if setup.RouteID != request.RouteID || setup.RouteVersion != 1 || setup.State != "starting" || setup.SessionToken == "" {
 		t.Fatalf("route session setup = %#v", setup)
 	}
+	if _, err := database.pool.Exec(t.Context(), `
+		UPDATE control.routes SET expires_at = $2 WHERE id = $1
+	`, request.RouteID, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if count, err := database.DeleteExpiredEphemeralRoutes(t.Context(), now.Add(2*time.Second)); err != nil || count != 0 {
+		t.Fatalf("active ephemeral route cleanup = %d, %v", count, err)
+	}
+	if _, err := database.UpdateAuthorizedRoute(t.Context(), AuthorizedRouteUpdateRequest{
+		RouteID: request.RouteID, TeamID: request.TeamID, ActingIdentityID: request.ActingIdentityID,
+		Target: "http://127.0.0.1:4000", AllowedIPPrefixes: []string{"192.0.2.0/24"}, PolicyRevision: 1,
+		ExpectedMutationRevision: 2,
+	}, now.Add(time.Second)); !errors.Is(err, ErrRouteAttached) {
+		t.Fatalf("attached route update error = %v", err)
+	}
 	route, err := database.GetRoute(t.Context(), "identity_session", request.RouteID)
-	if err != nil || !reflect.DeepEqual(route.AllowedIPPrefixes, []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}) {
+	if err != nil || len(route.AllowedIPPrefixes) != 0 {
 		t.Fatalf("route policy = %#v, %v", route.AllowedIPPrefixes, err)
 	}
 	services := make(map[string]bool)
@@ -1275,12 +1436,12 @@ func testRouteSessionCreation(t *testing.T, database *Database) {
 	changed = request
 	changed.IdempotencyKey = "request_session_2"
 	changed.RequestDigest = sha256.Sum256([]byte("request-session-2"))
-	changed.AllowedIPPrefixes = []string{}
+	changed.ExpectedMutationRevision = 2
 	if _, err := database.CreateRouteSession(t.Context(), changed, now.Add(3*time.Second), 30*time.Second, time.Minute); !errors.Is(err, ErrRouteSessionConflict) {
 		t.Fatalf("live route session conflict error = %v", err)
 	}
 	route, err = database.GetRoute(t.Context(), "identity_session", request.RouteID)
-	if err != nil || !reflect.DeepEqual(route.AllowedIPPrefixes, []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}) {
+	if err != nil || len(route.AllowedIPPrefixes) != 0 {
 		t.Fatalf("failed session changed route policy = %#v, %v", route.AllowedIPPrefixes, err)
 	}
 	staleAuthority := changed
@@ -1291,9 +1452,7 @@ func testRouteSessionCreation(t *testing.T, database *Database) {
 
 	closedAt := now.Add(5 * time.Second)
 	if _, err := database.pool.Exec(t.Context(), `
-		UPDATE control.route_sessions
-		SET state = 'closed', closed_at = $2, close_reason = 'test'
-		WHERE id = $1
+		UPDATE control.route_sessions SET publisher_expires_at = $2 WHERE id = $1
 	`, setup.RouteSessionID, closedAt); err != nil {
 		t.Fatal(err)
 	}
@@ -1305,14 +1464,28 @@ func testRouteSessionCreation(t *testing.T, database *Database) {
 		t.Fatal(err)
 	}
 	closedSetup := setup
-	closedSetup.State = "closed"
+	closedSetup.State = "expired"
+	closedSetup.ExpiresAt = closedAt
+	for index := range closedSetup.PublisherConnections {
+		closedSetup.PublisherConnections[index].State = PublisherConnectionClosed
+	}
 	retry, err := database.CreateRouteSession(t.Context(), request, now.Add(7*time.Second), 30*time.Second, time.Minute)
 	if retry.ClosedAt == nil || !retry.ClosedAt.Equal(closedAt) {
 		t.Fatalf("idempotent route session close time = %v, want %v", retry.ClosedAt, closedAt)
 	}
+	if !retry.ExpiresAt.Equal(closedAt) {
+		t.Fatalf("idempotent route session expiry = %v, want %v", retry.ExpiresAt, closedAt)
+	}
 	retry.ClosedAt = nil
+	closedSetup.ExpiresAt = retry.ExpiresAt
 	if err != nil || !reflect.DeepEqual(retry, closedSetup) {
 		t.Fatalf("gated idempotent retry = %#v, %v", retry, err)
+	}
+	var closeReason string
+	if err := database.pool.QueryRow(t.Context(), `
+		SELECT close_reason FROM control.route_sessions WHERE id = $1
+	`, setup.RouteSessionID).Scan(&closeReason); err != nil || closeReason != "publisher_expired" {
+		t.Fatalf("expired route session close reason = %q, %v", closeReason, err)
 	}
 	if _, err := database.CreateRouteSession(t.Context(), changed, now.Add(8*time.Second), 30*time.Second, time.Minute); !errors.Is(err, ErrRouteSessionCreationGated) {
 		t.Fatalf("gated route session error = %v", err)
@@ -1666,6 +1839,14 @@ func testRouteSessionReadiness(
 	}
 
 	heartbeatAt := now.Add(3 * time.Second)
+	bucketStart := heartbeatAt.Truncate(time.Minute)
+	if err := database.ReportIngressUsage(t.Context(), ingressLease.IngressLeaseIdentity, IngressUsageBatch{Reports: []IngressUsageReport{{
+		RouteID: setup.RouteID, RouteVersion: setup.RouteVersion, BucketStart: bucketStart,
+		BucketEnd: bucketStart.Add(time.Minute), ObservedThrough: heartbeatAt, ReportRevision: 1,
+		ConnectionAttempts: 3, PolicyDenials: 3, HistogramData: (routeusage.Checkpoint{}).MarshalBinary(),
+	}}}, heartbeatAt); err != nil {
+		t.Fatalf("report route policy denials: %v", err)
+	}
 	if _, err := database.pool.Exec(t.Context(), `
 		UPDATE control.route_session_connections
 		SET publisher_connection_credential_expires_at = $2
@@ -1677,8 +1858,24 @@ func testRouteSessionReadiness(
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !heartbeat.ExpiresAt.Equal(heartbeatAt.Add(30*time.Second)) || heartbeat.RouteVersion != setup.RouteVersion {
+	if !heartbeat.ExpiresAt.Equal(heartbeatAt.Add(30*time.Second)) || heartbeat.RouteVersion != setup.RouteVersion ||
+		heartbeat.PolicyDenials != 3 {
 		t.Fatalf("heartbeat setup = %#v", heartbeat)
+	}
+	renewedRoute, err := database.GetRoute(t.Context(), request.ActingIdentityID, request.RouteID)
+	if err != nil || renewedRoute.ExpiresAt == nil ||
+		!renewedRoute.ExpiresAt.Equal(heartbeatAt.Add(ephemeralRouteGracePeriod)) {
+		t.Fatalf("renewed ephemeral route = %#v, %v", renewedRoute, err)
+	}
+	earlierHeartbeat, err := database.HeartbeatRouteSession(
+		t.Context(), authentication, heartbeatAt.Add(-time.Second), 10*time.Second, time.Minute,
+	)
+	if err != nil || !earlierHeartbeat.ExpiresAt.Equal(heartbeat.ExpiresAt) {
+		t.Fatalf("monotonic route-session heartbeat = %#v, %v", earlierHeartbeat, err)
+	}
+	monotonicRoute, err := database.GetRoute(t.Context(), request.ActingIdentityID, request.RouteID)
+	if err != nil || monotonicRoute.ExpiresAt == nil || !monotonicRoute.ExpiresAt.Equal(*renewedRoute.ExpiresAt) {
+		t.Fatalf("monotonic ephemeral expiry = %#v, %v", monotonicRoute, err)
 	}
 	for slot, connection := range heartbeat.PublisherConnections {
 		if connection.PublisherConnectionID != setup.PublisherConnections[slot].PublisherConnectionID ||
@@ -1964,6 +2161,12 @@ func testRouteSessionReadiness(
 	}, usageCompleteAt); err != nil {
 		t.Fatalf("complete readiness ingress usage: %v", err)
 	}
+	if _, err := database.pool.Exec(t.Context(), `
+		DELETE FROM control.route_usage_buckets
+		WHERE route_id = $1 AND route_version = $2
+	`, setup.RouteID, setup.RouteVersion); err != nil {
+		t.Fatalf("clean readiness usage bucket: %v", err)
+	}
 }
 
 func seedControlRoute(
@@ -2082,6 +2285,7 @@ func testIngressUsage(t *testing.T, database *Database) {
 	report.ReportRevision = 2
 	report.Final = true
 	report.ConnectionAttempts = 3
+	report.PolicyDenials = 3
 	completeAt := base.Add(30 * time.Second)
 	report.ObservedThrough = completeAt
 	complete := IngressUsageBatch{
@@ -2094,6 +2298,12 @@ func testIngressUsage(t *testing.T, database *Database) {
 		t.Fatalf("exact completed usage replay: %v", err)
 	}
 	assertUsageRun("ingress_usage", "run_usage", completeAt, base.Add(time.Minute), true)
+	var policyDenials int64
+	if err := database.pool.QueryRow(t.Context(), `
+		SELECT policy_denials FROM control.route_sessions WHERE id = 'session_usage'
+	`).Scan(&policyDenials); err != nil || policyDenials != 3 {
+		t.Fatalf("route-session policy denials = %d, %v", policyDenials, err)
+	}
 	if err := database.ReportIngressUsage(t.Context(), lease.IngressLeaseIdentity, IngressUsageBatch{
 		ObservedThrough: &completeAt,
 	}, base.Add(33*time.Second)); !errors.Is(err, ErrIngressUsageReportStale) {
@@ -2396,8 +2606,13 @@ func testHostedPolicyRevocation(t *testing.T, database *Database) {
 		{`INSERT INTO control.domains (
 			id, kind, team_id, canonical_domain, state, authority_revision, created_by_identity_id,
 			created_at, verified_at, updated_at
-		 ) VALUES (
+		 ) VALUES
+		 (
 			'domain_revocation', 'claimed', 'team_revocation', 'revocation.example.test', 'ready', 1,
+			'identity_revocation', $1, $1, $1
+		 ),
+		 (
+			'domain_revocation_other', 'claimed', 'team_revocation', 'other.example.test', 'ready', 1,
 			'identity_revocation', $1, $1, $1
 		 )`, []any{now}},
 		{`INSERT INTO control.routes (
@@ -2406,7 +2621,9 @@ func testHostedPolicyRevocation(t *testing.T, database *Database) {
 			dns_state, created_at, updated_at
 		 ) VALUES
 			('route_revocation_a', 'team_revocation', 'domain_revocation', 'identity_revocation', 'route-a', decode(repeat('01', 32), 'hex'), 'a.revocation.example.test', 'http://127.0.0.1:3000', 'shared', 5, 'allow_all', 'enabled', 'published', $1, $1),
-			('route_revocation_b', 'team_revocation', 'domain_revocation', 'identity_revocation', 'route-b', decode(repeat('02', 32), 'hex'), 'b.revocation.example.test', 'http://127.0.0.1:3000', 'shared', 5, 'allow_all', 'enabled', 'published', $1, $1)`, []any{now}},
+			('route_revocation_b', 'team_revocation', 'domain_revocation', 'identity_revocation', 'route-b', decode(repeat('02', 32), 'hex'), 'b.revocation.example.test', 'http://127.0.0.1:3000', 'shared', 5, 'allow_all', 'enabled', 'published', $1, $1),
+			('route_revocation_c', 'team_revocation', 'domain_revocation_other', 'identity_revocation', 'route-c', decode(repeat('07', 32), 'hex'), 'c.other.example.test', 'http://127.0.0.1:3000', 'shared', 5, 'allow_all', 'enabled', 'published', $1, $1),
+			('route_revocation_d', 'team_revocation', 'domain_revocation_other', 'identity_revocation', 'route-d', decode(repeat('08', 32), 'hex'), 'd.other.example.test', 'http://127.0.0.1:3000', 'shared', 5, 'allow_all', 'enabled', 'published', $1, $1)`, []any{now}},
 		{`INSERT INTO control.route_sessions (
 			id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key,
 			request_digest, session_token_id, session_token_digest, policy_revision, certificate_cache_key,
@@ -2414,19 +2631,56 @@ func testHostedPolicyRevocation(t *testing.T, database *Database) {
 			last_heartbeat_at, publisher_expires_at
 		 ) VALUES
 			('session_revocation_a', 'route_revocation_a', 'team_revocation', 'membership_revocation_a', 'identity_revocation', 1, 'session-a', decode(repeat('03', 32), 'hex'), 'token_revocation_a', decode(repeat('04', 32), 'hex'), 5, 'certificate-a', 'route', ARRAY['a.revocation.example.test'], 'dns-01', 'starting', $1, $1, $2),
-			('session_revocation_b', 'route_revocation_b', 'team_revocation', 'membership_revocation_b', 'identity_revocation', 1, 'session-b', decode(repeat('05', 32), 'hex'), 'token_revocation_b', decode(repeat('06', 32), 'hex'), 5, 'certificate-b', 'route', ARRAY['b.revocation.example.test'], 'dns-01', 'starting', $1, $1, $2)`, []any{now, now.Add(time.Hour)}},
+			('session_revocation_b', 'route_revocation_b', 'team_revocation', 'membership_revocation_b', 'identity_revocation', 1, 'session-b', decode(repeat('05', 32), 'hex'), 'token_revocation_b', decode(repeat('06', 32), 'hex'), 5, 'certificate-b', 'route', ARRAY['b.revocation.example.test'], 'dns-01', 'starting', $1, $1, $2),
+			('session_revocation_d', 'route_revocation_d', 'team_revocation', 'membership_revocation_d', 'identity_revocation', 1, 'session-d', decode(repeat('09', 32), 'hex'), 'token_revocation_d', decode(repeat('0a', 32), 'hex'), 5, 'certificate-d', 'route', ARRAY['d.other.example.test'], 'dns-01', 'starting', $1, $1, $2)`, []any{now, now.Add(time.Hour)}},
 	} {
 		if _, err := database.pool.Exec(t.Context(), statement.query, statement.args...); err != nil {
 			t.Fatal(err)
 		}
 	}
+	routeC, err := database.GetRouteForAuthorization(t.Context(), "route_revocation_c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	routeC, err = database.UpdateAuthorizedRoute(t.Context(), AuthorizedRouteUpdateRequest{
+		RouteID: routeC.ID, TeamID: routeC.TeamID, ActingIdentityID: "identity_revocation",
+		Target: routeC.Target, AllowedIPPrefixes: []string{}, AuthorityIssuer: "https://authority.example.test",
+		PolicyRevision: 6, ExpectedMutationRevision: routeC.MutationRevision,
+	}, now.Add(time.Second))
+	if err != nil {
+		t.Fatalf("observe hosted policy revision: %v", err)
+	}
+	var observedRevision, appliedRevision int64
+	if err := database.pool.QueryRow(t.Context(), `
+		SELECT observed_policy_revision, applied_policy_revision
+		FROM control.authority_revision_state
+		WHERE issuer = 'https://authority.example.test' AND team_id = 'team_revocation'
+	`).Scan(&observedRevision, &appliedRevision); err != nil || observedRevision != 6 || appliedRevision != 0 {
+		t.Fatalf("authority revision state = observed %d, applied %d, %v", observedRevision, appliedRevision, err)
+	}
+	if _, err := database.CreateRoute(t.Context(), CreateRouteRequest{
+		TeamID: "team_revocation", DomainID: "domain_revocation", ActingIdentityID: "identity_revocation",
+		IdempotencyKey: "stale-authority-route", RequestDigest: sha256.Sum256([]byte("stale-authority-route")),
+		CanonicalHostname: "stale.revocation.example.test", Target: "http://127.0.0.1:3000",
+		RouteScope: RouteScopeShared, DNSState: RouteDNSUnmanaged,
+		AuthorityIssuer: "https://authority.example.test", PolicyRevision: 5,
+	}, now.Add(time.Second)); !errors.Is(err, ErrRouteAuthority) {
+		t.Fatalf("stale observed authority decision error = %v", err)
+	}
 
 	applied, closed, err := database.ApplyHostedPolicyRevocation(
 		t.Context(), "https://authority.example.test", "team_revocation", 6, false,
-		[]string{"membership_revocation_a"}, now.Add(time.Second),
+		[]string{"membership_revocation_a"}, nil, now.Add(time.Second),
 	)
 	if err != nil || !applied || closed != 1 {
 		t.Fatalf("membership revocation = %t, %d, %v", applied, closed, err)
+	}
+	if err := database.pool.QueryRow(t.Context(), `
+		SELECT observed_policy_revision, applied_policy_revision
+		FROM control.authority_revision_state
+		WHERE issuer = 'https://authority.example.test' AND team_id = 'team_revocation'
+	`).Scan(&observedRevision, &appliedRevision); err != nil || observedRevision != 6 || appliedRevision != 6 {
+		t.Fatalf("applied authority revision state = observed %d, applied %d, %v", observedRevision, appliedRevision, err)
 	}
 	var stateA, stateB string
 	if err := database.pool.QueryRow(t.Context(), `
@@ -2440,22 +2694,61 @@ func testHostedPolicyRevocation(t *testing.T, database *Database) {
 		t.Fatalf("selective revocation states = %q, %q", stateA, stateB)
 	}
 	if applied, closed, err := database.ApplyHostedPolicyRevocation(
-		t.Context(), "https://authority.example.test", "team_revocation", 6, true, nil, now.Add(2*time.Second),
+		t.Context(), "https://authority.example.test", "team_revocation", 6, true, nil, nil, now.Add(2*time.Second),
 	); err != nil || applied || closed != 0 {
 		t.Fatalf("revocation replay = %t, %d, %v", applied, closed, err)
 	}
 	if applied, closed, err := database.ApplyHostedPolicyRevocation(
-		t.Context(), "https://authority.example.test", "team_revocation", 7, true, nil, now.Add(3*time.Second),
+		t.Context(), "https://authority.example.test", "team_revocation", 7, false, nil,
+		[]string{"domain_revocation"}, now.Add(3*time.Second),
 	); err != nil || !applied || closed != 1 {
-		t.Fatalf("team revocation = %t, %d, %v", applied, closed, err)
+		t.Fatalf("domain revocation = %t, %d, %v", applied, closed, err)
 	}
+	var stateD, lifecycleA, lifecycleB, lifecycleD string
 	if err := database.pool.QueryRow(t.Context(), `
-		SELECT state FROM control.route_sessions WHERE id = 'session_revocation_b'
-	`).Scan(&stateB); err != nil {
+		SELECT
+			(SELECT state FROM control.route_sessions WHERE id = 'session_revocation_b'),
+			(SELECT state FROM control.route_sessions WHERE id = 'session_revocation_d'),
+			(SELECT lifecycle_state FROM control.routes WHERE id = 'route_revocation_a'),
+			(SELECT lifecycle_state FROM control.routes WHERE id = 'route_revocation_b'),
+			(SELECT lifecycle_state FROM control.routes WHERE id = 'route_revocation_d')
+	`).Scan(&stateB, &stateD, &lifecycleA, &lifecycleB, &lifecycleD); err != nil {
 		t.Fatal(err)
 	}
-	if stateB != "closed" {
-		t.Fatalf("team revocation state = %q", stateB)
+	if stateB != "closed" || stateD != "starting" || lifecycleA != "suspended" ||
+		lifecycleB != "suspended" || lifecycleD != "enabled" {
+		t.Fatalf("domain revocation state = %q, %q; lifecycle = %q, %q, %q", stateB, stateD, lifecycleA, lifecycleB, lifecycleD)
+	}
+	updateResult := make(chan error, 1)
+	revocationResult := make(chan error, 1)
+	go func() {
+		_, updateErr := database.UpdateAuthorizedRoute(t.Context(), AuthorizedRouteUpdateRequest{
+			RouteID: routeC.ID, TeamID: routeC.TeamID, ActingIdentityID: "identity_revocation",
+			Target: "http://127.0.0.1:4000", AllowedIPPrefixes: []string{},
+			AuthorityIssuer: "https://authority.example.test", PolicyRevision: 8,
+			ExpectedMutationRevision: routeC.MutationRevision,
+		}, now.Add(4*time.Second))
+		updateResult <- updateErr
+	}()
+	go func() {
+		applied, _, applyErr := database.ApplyHostedPolicyRevocation(
+			t.Context(), "https://authority.example.test", "team_revocation", 8, true, nil, nil, now.Add(4*time.Second),
+		)
+		if applyErr == nil && !applied {
+			applyErr = errors.New("revision 8 was not applied")
+		}
+		revocationResult <- applyErr
+	}()
+	if err := <-updateResult; err != nil {
+		t.Fatalf("authorization/revocation update race: %v", err)
+	}
+	if err := <-revocationResult; err != nil {
+		t.Fatalf("authorization/revocation apply race: %v", err)
+	}
+	if err := database.pool.QueryRow(t.Context(), `
+		SELECT state FROM control.route_sessions WHERE id = 'session_revocation_d'
+	`).Scan(&stateD); err != nil || stateD != "closed" {
+		t.Fatalf("team revocation state = %q, %v", stateD, err)
 	}
 }
 

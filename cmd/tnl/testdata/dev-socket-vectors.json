@@ -1,0 +1,17 @@
+[
+  {
+    "projectRoot": "/Users/example/git/tnl",
+    "service": "web",
+    "digest": "158d55b180b82a81"
+  },
+  {
+    "projectRoot": "/workspace/tnl",
+    "service": "",
+    "digest": "6023276ee2e6fd99"
+  },
+  {
+    "projectRoot": "/workspace/tnl",
+    "service": "api",
+    "digest": "cbcbe3abbaef0d27"
+  }
+]

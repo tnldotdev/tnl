@@ -154,7 +154,7 @@ try {
   }
 
   const launcherStage = path.join(stagingRoot, "tnl");
-  await copyTemplate("tnl", launcherStage, ["package.json", "README.md", "bin", "lib"]);
+  await copyTemplate("tnl", launcherStage, ["package.json", "README.md", "bin", "dist", "lib"]);
   await copyLegalFiles(launcherStage);
   const launcherManifestPath = path.join(launcherStage, "package.json");
   const launcherManifest = await readJson(launcherManifestPath);
@@ -172,8 +172,20 @@ try {
       packageName: "@tnldotdev/tnl",
       requiredFiles: [
         "LICENSE",
+        "NOTICE",
         "README.md",
+        "THIRD_PARTY_LICENSES.txt",
         "bin/tnl.mjs",
+        "dist/internal/dev.d.ts",
+        "dist/internal/dev.js",
+        "dist/internal/runtime.d.ts",
+        "dist/internal/runtime.js",
+        "dist/index.d.ts",
+        "dist/index.js",
+        "dist/next.d.ts",
+        "dist/next.js",
+        "dist/vite.d.ts",
+        "dist/vite.js",
         "lib/config.d.ts",
         "lib/config.mjs",
         "lib/launcher.mjs",
@@ -252,6 +264,12 @@ async function packAndVerify(stage, options) {
     );
     assert.equal(sha256(await readFile(packedBinary)), options.binarySha256);
   } else {
+    assert.deepEqual(Object.keys(packedManifest.exports).sort(), [
+      ".",
+      "./config",
+      "./next",
+      "./vite",
+    ]);
     assert.deepEqual(
       packedManifest.optionalDependencies,
       Object.fromEntries(targets.map((target) => [target.packageName, metadata.version])),
