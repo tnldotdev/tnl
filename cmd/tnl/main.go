@@ -45,7 +45,7 @@ type openOptions struct {
 
 type tunnelFlags struct {
 	Team      string   `name:"team" env:"TNL_TEAM" help:"Team ID or unambiguous display name."`
-	Host      string   `name:"host" env:"TNL_HOST" help:"Exact hostname to publish; defaults to the current member namespace."`
+	Host      string   `name:"host" env:"TNL_HOST" help:"Exact hostname to publish; defaults to a worktree-derived hostname in the current member namespace."`
 	Subdomain string   `name:"subdomain" env:"TNL_SUBDOMAIN" help:"One label beneath the current member namespace."`
 	AllowIP   []string `name:"allow-ip" help:"Allow a visitor IP address or prefix; repeat for each value."`
 	Public    bool     `name:"public" env:"TNL_PUBLIC" help:"Allow visitors from every IP address."`
@@ -77,8 +77,12 @@ type publishCommand struct {
 
 type configCommand struct {
 	Path     struct{}              `cmd:"" help:"Show the selected project configuration path."`
-	Check    struct{}              `cmd:"" help:"Validate the selected project configuration."`
+	Check    configCheckCommand    `cmd:"" help:"Validate the selected project configuration."`
 	Generate configGenerateCommand `cmd:"" help:"Generate project metadata and literal TypeScript declarations."`
+}
+
+type configCheckCommand struct {
+	StateDir string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent client state."`
 }
 
 type configGenerateCommand struct {
@@ -190,15 +194,20 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	applyTunnelCLIUnits(parseArgs, parsed.Command(), &flags)
 	command = clioutput.CommandTitle("tnl", parsed.Command())
 	var project projectConfiguration
+	projectStateRoot := ""
 	switch parsed.Command() {
-	case "publish <service-or-target>", "dev <service>":
-		project, err = loadProjectConfiguration(ctx, flags)
+	case "publish <service-or-target>", "dev <service>", "config check", "config generate":
+		projectStateRoot, err = commandStateRoot(parsed)
+		if err != nil {
+			return err
+		}
+		project, err = loadProjectConfiguration(ctx, flags, projectStateRoot)
 		if err != nil {
 			return err
 		}
 		if parsed.Command() == "publish <service-or-target>" {
 			err = project.applyPublish(&flags.Publish)
-		} else {
+		} else if parsed.Command() == "dev <service>" {
 			err = project.applyDev(&flags.Dev)
 		}
 		if err != nil {
@@ -206,7 +215,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		}
 	default:
 		if projectSensitiveCommand(parsed.Command()) {
-			project, err = loadProjectConfiguration(ctx, flags)
+			projectStateRoot, err = commandStateRoot(parsed)
+			if err != nil {
+				return err
+			}
+			project, err = loadProjectConfiguration(ctx, flags, projectStateRoot)
 			if err != nil {
 				return err
 			}
@@ -217,7 +230,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	}
 	var telemetry telemetryReporter
 	if !flags.NoTelemetry && len(reporterFactories) != 0 && reporterFactories[0] != nil {
-		root, stateErr := telemetryStateRoot(parsed)
+		root, stateErr := commandStateRoot(parsed)
 		if stateErr == nil {
 			telemetry = reporterFactories[0](root)
 			command := canonicalTelemetryCommand(parsed)
@@ -232,9 +245,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	case "config path":
 		return runConfigPath(flags, stdout)
 	case "config check":
-		return runConfigCheck(ctx, flags, stdout)
+		return runConfigCheck(project, stdout)
 	case "config generate":
-		return runConfigGenerate(ctx, flags, flags.Config.Generate, stdout, stderr)
+		return runConfigGenerate(ctx, projectStateRoot, project, stdout, stderr)
 	case "login":
 		return runLogin(ctx, flags.Login, os.Stdin, stdout, stderr)
 	case "logout":

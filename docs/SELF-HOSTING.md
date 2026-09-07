@@ -158,9 +158,9 @@ tnl publish 3000
 
 The first successful login atomically creates the built-in identity, personal
 team, owner membership, generated member label, and managed deployment-domain
-default. The default publish hostname is that member namespace. The built-in
-personal team may also publish an exact route directly beneath the managed
-deployment domain.
+default. The default publish hostname combines the local worktree beneath that
+member namespace. The built-in personal team may also publish an exact route
+directly beneath the managed deployment domain.
 
 ## Split Compose
 

@@ -9,8 +9,13 @@ import (
 	"testing"
 )
 
-func TestInitConfiguresRecognizedNextFixture(t *testing.T) {
+func TestInitReportsManualActionForExistingNextConfig(t *testing.T) {
 	root := copyInitFixture(t, "next")
+	nextPath := filepath.Join(root, "next.config.ts")
+	nextBefore, err := os.ReadFile(nextPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	plan, err := planInit(t.Context(), root)
 	if err != nil {
 		t.Fatal(err)
@@ -21,8 +26,8 @@ func TestInitConfiguresRecognizedNextFixture(t *testing.T) {
 		!strings.Contains(string(plan.configData), `directory: "."`) ||
 		!strings.Contains(string(plan.configData), `["pnpm","dev"]`) ||
 		!strings.Contains(string(plan.configData), "defineConfig") ||
-		!strings.Contains(string(plan.frameworkAfter), "export default withTnl(config)") ||
-		len(plan.frameworkBefore) == 0 || len(plan.actions) != 0 {
+		len(plan.frameworkAfter) != 0 ||
+		!slices.Equal(plan.actions, []string{frameworkConfigAction("next", nextPath)}) {
 		t.Fatalf("plan = %#v", plan)
 	}
 
@@ -40,11 +45,11 @@ func TestInitConfiguresRecognizedNextFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	nextConfig, err := os.ReadFile(filepath.Join(root, "next.config.ts"))
+	nextConfig, err := os.ReadFile(nextPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(config, plan.configData) || !bytes.Equal(nextConfig, plan.frameworkAfter) {
+	if !bytes.Equal(config, plan.configData) || !bytes.Equal(nextConfig, nextBefore) {
 		t.Fatalf("config = %q, next = %q", config, nextConfig)
 	}
 	gitignore, err := os.ReadFile(filepath.Join(root, ".gitignore"))
@@ -52,18 +57,18 @@ func TestInitConfiguresRecognizedNextFixture(t *testing.T) {
 		t.Fatalf("gitignore = %q, %v", gitignore, err)
 	}
 
-	before := slices.Clone(nextConfig)
 	stdout.Reset()
 	stderr.Reset()
 	if err := runInit(t.Context(), initCommand{NoInstall: true}, &stdout, &stderr); err != nil {
 		t.Fatal(err)
 	}
-	after, err := os.ReadFile(filepath.Join(root, "next.config.ts"))
+	after, err := os.ReadFile(nextPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(before, after) {
-		t.Fatalf("idempotent init changed Next.js config:\n%s", after)
+	if !bytes.Equal(nextBefore, after) || !strings.Contains(stdout.String(), "needs action") ||
+		!strings.Contains(stdout.String(), "withTnl") {
+		t.Fatalf("Next.js config = %q, stdout = %q", after, stdout.String())
 	}
 }
 
@@ -93,9 +98,13 @@ func TestInitInstallsMissingPackageWithDetectedManager(t *testing.T) {
 	}
 }
 
-func TestInitConfiguresRecognizedViteFactoryFixture(t *testing.T) {
+func TestInitReportsManualActionForExistingViteConfig(t *testing.T) {
 	root := copyInitFixture(t, "vite")
 	path := filepath.Join(root, "vite.config.ts")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Chdir(root)
 	var stdout, stderr bytes.Buffer
 	if err := runInit(t.Context(), initCommand{NoInstall: true}, &stdout, &stderr); err != nil {
@@ -105,11 +114,11 @@ func TestInitConfiguresRecognizedViteFactoryFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "import tnl from \"@tnldotdev/tnl/vite\";\nimport { defineConfig } from \"vite\";\n\nexport default defineConfig(() => ({ plugins: [tnl()] }));\n"
-	if string(after) != want {
-		t.Fatalf("Vite config = %q, want %q", after, want)
+	if !bytes.Equal(after, before) {
+		t.Fatalf("Vite config = %q, want unchanged %q", after, before)
 	}
 	if !strings.Contains(stdout.String(), "needs action") ||
+		!strings.Contains(stdout.String(), "tnl() to plugins.") ||
 		!strings.Contains(stdout.String(), "complete the actions above, then run tnl dev") || stderr.Len() != 0 {
 		t.Fatalf("stdout = %q, stderr = %q", stdout.String(), stderr.String())
 	}
@@ -121,16 +130,17 @@ func TestInitConfiguresRecognizedViteFactoryFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(after, second) || !strings.Contains(stdout.String(), "needs action") ||
+	if !bytes.Equal(before, second) || !strings.Contains(stdout.String(), "needs action") ||
 		!strings.Contains(stdout.String(), `.tnl/project.d.ts`) {
 		t.Fatalf("second config = %q, stdout = %q", second, stdout.String())
 	}
 }
 
-func TestInitReportsUpdatedProjectTypeConfig(t *testing.T) {
+func TestInitReportsManualProjectTypeAction(t *testing.T) {
 	root := copyInitFixture(t, "vite")
 	path := filepath.Join(root, "tsconfig.json")
-	if err := os.WriteFile(path, []byte("{\n  \"include\": [\"src/**/*.ts\"]\n}\n"), 0o600); err != nil {
+	source := []byte("{\n  \"include\": [\"src/**/*.ts\"]\n}\n")
+	if err := os.WriteFile(path, source, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Chdir(root)
@@ -138,15 +148,17 @@ func TestInitReportsUpdatedProjectTypeConfig(t *testing.T) {
 	if err := runInit(t.Context(), initCommand{NoInstall: true}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(stdout.String(), "updated") != 3 {
-		t.Fatalf("stdout = %q", stdout.String())
+	after, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(after, source) || !strings.Contains(stdout.String(), "needs action") ||
+		!strings.Contains(stdout.String(), `.tnl/project.d.ts`) {
+		t.Fatalf("tsconfig = %q, err = %v, stdout = %q", after, err, stdout.String())
 	}
 
 	stdout.Reset()
 	if err := runInit(t.Context(), initCommand{NoInstall: true}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(stdout.String(), "updated") || !strings.Contains(stdout.String(), "already configured") {
+	if !strings.Contains(stdout.String(), "needs action") || !strings.Contains(stdout.String(), `.tnl/project.d.ts`) {
 		t.Fatalf("second stdout = %q", stdout.String())
 	}
 }
@@ -198,187 +210,24 @@ func TestInitDevCommandPrefersPackageScript(t *testing.T) {
 	}
 }
 
-func TestUpdateNextConfigRecognizesOnlyIdentifierDefaultExport(t *testing.T) {
-	recognized := []struct {
-		name, source, want string
-	}{
-		{
-			name:   "one line",
-			source: "const config = { reactStrictMode: true }; export default config;\n",
-			want:   "import { withTnl } from \"@tnldotdev/tnl/next\";\nconst config = { reactStrictMode: true }; export default withTnl(config);\n",
-		},
-		{
-			name:   "multiline with misleading comment and string",
-			source: "// export default fake;\nconst note = \"export default fake\";\nconst config = { reactStrictMode: true };\n\nexport default config;\n",
-			want:   "import { withTnl } from \"@tnldotdev/tnl/next\";\n// export default fake;\nconst note = \"export default fake\";\nconst config = { reactStrictMode: true };\n\nexport default withTnl(config);\n",
-		},
-	}
-	for _, test := range recognized {
-		t.Run(test.name, func(t *testing.T) {
-			updated := updateNextConfig([]byte(test.source))
-			if string(updated) != test.want {
-				t.Fatalf("updated = %q, want %q", updated, test.want)
-			}
-			if second := updateNextConfig(updated); !bytes.Equal(second, updated) {
-				t.Fatalf("second update = %q", second)
-			}
-		})
-	}
-
-	ambiguous := []struct {
-		name, source string
-	}{
-		{name: "object export", source: "export default {};\n"},
-		{name: "call export", source: "const config = {}; export default defineConfig(config);\n"},
-		{name: "multiple default exports", source: "const a = {}; export default a; export default a;\n"},
-		{name: "commonjs", source: "const config = {}; module.exports = config; export default config;\n"},
-		{name: "binding collision", source: "const withTnl = value; const config = {}; export default config;\n"},
-	}
-	for _, test := range ambiguous {
-		t.Run(test.name, func(t *testing.T) {
-			if updated := updateNextConfig([]byte(test.source)); updated != nil {
-				t.Fatalf("ambiguous source was updated: %q", updated)
-			}
-		})
-	}
-}
-
-func TestUpdateViteConfigRecognizedShapes(t *testing.T) {
-	tests := []struct {
-		name, source, want string
-	}{
-		{
-			name:   "one-line static",
-			source: "import { defineConfig } from \"vite\";\nexport default defineConfig({ plugins: [react()] });\n",
-			want:   "import tnl from \"@tnldotdev/tnl/vite\";\nimport { defineConfig } from \"vite\";\nexport default defineConfig({ plugins: [tnl(), react()] });\n",
-		},
-		{
-			name:   "direct object",
-			source: "export default { plugins: [] };\n",
-			want:   "import tnl from \"@tnldotdev/tnl/vite\";\nexport default { plugins: [tnl()] };\n",
-		},
-		{
-			name:   "aliased defineConfig",
-			source: "import { defineConfig as config } from \"vite\";\nexport default config({ plugins: [] });\n",
-			want:   "import tnl from \"@tnldotdev/tnl/vite\";\nimport { defineConfig as config } from \"vite\";\nexport default config({ plugins: [tnl()] });\n",
-		},
-		{
-			name:   "multiline static preserves settings",
-			source: "import { defineConfig } from \"vite\";\n\nexport default defineConfig({\n  resolve: { alias: { \"@\": \"/src\" } },\n  plugins: [\n    react(),\n  ],\n  server: { port: 4173 },\n});\n",
-			want:   "import tnl from \"@tnldotdev/tnl/vite\";\nimport { defineConfig } from \"vite\";\n\nexport default defineConfig({\n  resolve: { alias: { \"@\": \"/src\" } },\n  plugins: [\n    tnl(),\n    react(),\n  ],\n  server: { port: 4173 },\n});\n",
-		},
-		{
-			name:   "expression factory",
-			source: "import { defineConfig } from \"vite\";\nexport default defineConfig(() => ({ plugins: [] }));\n",
-			want:   "import tnl from \"@tnldotdev/tnl/vite\";\nimport { defineConfig } from \"vite\";\nexport default defineConfig(() => ({ plugins: [tnl()] }));\n",
-		},
-		{
-			name:   "return-object factory",
-			source: "import { defineConfig } from \"vite\";\nexport default defineConfig((env) => { return { plugins: [] }; });\n",
-			want:   "import tnl from \"@tnldotdev/tnl/vite\";\nimport { defineConfig } from \"vite\";\nexport default defineConfig((env) => { return { plugins: [tnl()] }; });\n",
-		},
-		{
-			name:   "comments and strings do not add properties",
-			source: "import { defineConfig } from \"vite\";\n// plugins: []\nconst label = \"plugins: []\";\nexport default defineConfig({ plugins: [] });\n",
-			want:   "import tnl from \"@tnldotdev/tnl/vite\";\nimport { defineConfig } from \"vite\";\n// plugins: []\nconst label = \"plugins: []\";\nexport default defineConfig({ plugins: [tnl()] });\n",
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if got := updateViteConfig([]byte(test.source)); string(got) != test.want {
-				t.Fatalf("updated = %q, want %q", got, test.want)
-			}
-		})
-	}
-}
-
-func TestUpdateViteConfigPreservesIntegratedAndAmbiguousSource(t *testing.T) {
-	integrated := []byte("import tunnel from \"@tnldotdev/tnl/vite\";\nimport { defineConfig } from \"vite\";\nexport default defineConfig({ plugins: [react(), tunnel()] });\n")
-	if got := updateViteConfig(integrated); !bytes.Equal(got, integrated) {
-		t.Fatalf("integrated config changed: %q", got)
-	}
-
-	ambiguous := []struct {
-		name, source string
-	}{
-		{name: "missing plugins", source: "import { defineConfig } from \"vite\"; export default defineConfig({});"},
-		{name: "non-array plugins", source: "import { defineConfig } from \"vite\"; export default defineConfig({ plugins });"},
-		{name: "multiple plugin properties", source: "import { defineConfig } from \"vite\"; export default defineConfig({ plugins: [], nested: { plugins: [] } });"},
-		{name: "computed plugins", source: "import { defineConfig } from \"vite\"; export default defineConfig({ [\"plugins\"]: [] });"},
-		{name: "spread config", source: "import { defineConfig } from \"vite\"; export default defineConfig({ ...base, plugins: [] });"},
-		{name: "spread plugins", source: "import { defineConfig } from \"vite\"; export default defineConfig({ plugins: [...base] });"},
-		{name: "binding collision", source: "import { defineConfig } from \"vite\"; const tnl = other; export default defineConfig({ plugins: [] });"},
-		{name: "commonjs", source: "const { defineConfig } = require(\"vite\"); module.exports = defineConfig({ plugins: [] });"},
-	}
-	for _, test := range ambiguous {
-		t.Run(test.name, func(t *testing.T) {
-			if got := updateViteConfig([]byte(test.source)); got != nil {
-				t.Fatalf("ambiguous source was updated: %q", got)
-			}
-		})
-	}
-}
-
-func TestPlanFrameworkConfigUsesPackageTypeAndPreservesAmbiguity(t *testing.T) {
-	for _, extension := range []string{".ts", ".mts", ".mjs"} {
-		t.Run(extension, func(t *testing.T) {
-			root := t.TempDir()
-			path := filepath.Join(root, "next.config"+extension)
-			source := []byte("const config = {};\nexport default config;\n")
-			if err := os.WriteFile(path, source, 0o600); err != nil {
-				t.Fatal(err)
-			}
-			plan := initPlan{framework: "next"}
-			if err := planFrameworkConfig(&plan, root, ""); err != nil {
-				t.Fatal(err)
-			}
-			if !bytes.Equal(plan.frameworkBefore, source) || len(plan.frameworkAfter) == 0 || len(plan.actions) != 0 {
-				t.Fatalf("plan = %#v", plan)
-			}
-		})
-	}
-
+func TestPlanFrameworkConfigPreservesExistingConfig(t *testing.T) {
 	root := t.TempDir()
-	path := filepath.Join(root, "next.config.js")
+	path := filepath.Join(root, "next.config.ts")
 	source := []byte("const config = {};\nexport default config;\n")
 	if err := os.WriteFile(path, source, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	packagePath := filepath.Join(root, "package.json")
-	if err := os.WriteFile(packagePath, []byte(`{"dependencies":{"next":"1","@tnldotdev/tnl":"1"}}`), 0o600); err != nil {
+	plan := initPlan{framework: "next"}
+	if err := planFrameworkConfig(&plan, root); err != nil {
 		t.Fatal(err)
 	}
-	plan, err := planInit(t.Context(), root)
+	after, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.frameworkAfter != nil || !slices.Equal(plan.actions, []string{frameworkConfigAction("next", path)}) {
-		t.Fatalf("non-module plan = %#v", plan)
-	}
-	if err := os.WriteFile(packagePath, []byte(`{"type":"module","dependencies":{"next":"1","@tnldotdev/tnl":"1"}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	modulePlan, err := planInit(t.Context(), root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(modulePlan.frameworkAfter) == 0 || len(modulePlan.actions) != 0 {
-		t.Fatalf("module plan = %#v", modulePlan)
-	}
-
-	if err := os.Remove(path); err != nil {
-		t.Fatal(err)
-	}
-	cjsPath := filepath.Join(root, "next.config.cjs")
-	if err := os.WriteFile(cjsPath, []byte("module.exports = {};\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cjsPlan := initPlan{framework: "next"}
-	if err := planFrameworkConfig(&cjsPlan, root, "module"); err != nil {
-		t.Fatal(err)
-	}
-	if cjsPlan.frameworkAfter != nil || !slices.Equal(cjsPlan.actions, []string{frameworkConfigAction("next", cjsPath)}) {
-		t.Fatalf("CommonJS plan = %#v", cjsPlan)
+	if !bytes.Equal(after, source) || len(plan.frameworkAfter) != 0 ||
+		!slices.Equal(plan.actions, []string{frameworkConfigAction("next", path)}) {
+		t.Fatalf("config = %q, plan = %#v", after, plan)
 	}
 }
 
@@ -390,29 +239,12 @@ func TestPlanFrameworkConfigPreservesMultipleConfigs(t *testing.T) {
 		}
 	}
 	plan := initPlan{framework: "vite"}
-	if err := planFrameworkConfig(&plan, root, "module"); err != nil {
+	if err := planFrameworkConfig(&plan, root); err != nil {
 		t.Fatal(err)
 	}
 	want := "Configure @tnldotdev/tnl/vite in the intended framework config; multiple files were found."
 	if plan.frameworkAfter != nil || !slices.Equal(plan.actions, []string{want}) {
 		t.Fatalf("plan = %#v", plan)
-	}
-}
-
-func TestInitFrameworkConfigRefusesChangedPlannedFile(t *testing.T) {
-	root := copyInitFixture(t, "next")
-	plan, err := planInit(t.Context(), root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	changed := []byte("const config = { changed: true };\nexport default config;\n")
-	if err := os.WriteFile(plan.frameworkPath, changed, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	err = replaceRecognizedInitFile(plan.frameworkPath, plan.frameworkBefore, plan.frameworkAfter)
-	after, readErr := os.ReadFile(plan.frameworkPath)
-	if err == nil || !strings.Contains(err.Error(), "changed during initialization") || readErr != nil || !bytes.Equal(after, changed) {
-		t.Fatalf("err = %v, readErr = %v, config = %q", err, readErr, after)
 	}
 }
 
@@ -507,7 +339,7 @@ func TestInitDetectsPackageManagerFromWorkspaceAncestor(t *testing.T) {
 	}
 }
 
-func TestProjectTypeIncludeIsUpdatedOnlyForStrictJSON(t *testing.T) {
+func TestProjectTypeIncludeActionsPreserveConfiguration(t *testing.T) {
 	root := t.TempDir()
 	service := filepath.Join(root, "apps", "api")
 	if err := os.MkdirAll(service, 0o700); err != nil {
@@ -518,26 +350,34 @@ func TestProjectTypeIncludeIsUpdatedOnlyForStrictJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	project := projectConfiguration{root: root, directories: map[string]string{"api": service}}
-	actions, updated, err := ensureProjectTypeIncludes(project)
+	actions, err := projectTypeIncludeActions(project)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(actions) != 0 || !slices.Equal(updated, []string{path}) {
-		t.Fatalf("actions = %v, updated = %v", actions, updated)
+	if len(actions) != 1 || !strings.Contains(actions[0], "../../.tnl/project.d.ts") {
+		t.Fatalf("actions = %v", actions)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), `"../../.tnl/project.d.ts"`) {
-		t.Fatalf("tsconfig = %s", data)
+	if string(data) != "{\n  \"include\": [\"src/**/*.ts\"]\n}\n" {
+		t.Fatalf("tsconfig changed: %s", data)
+	}
+	integrated := []byte("{\n  \"include\": [\"src/**/*.ts\", \"../../.tnl/project.d.ts\"]\n}\n")
+	if err := os.WriteFile(path, integrated, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	actions, err = projectTypeIncludeActions(project)
+	if err != nil || len(actions) != 0 {
+		t.Fatalf("integrated actions = %v, err = %v", actions, err)
 	}
 
 	ambiguous := []byte("{\n  // preserve this JSONC file\n  \"include\": [\"src\"]\n}\n")
 	if err := os.WriteFile(path, ambiguous, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	actions, updated, err = ensureProjectTypeIncludes(project)
+	actions, err = projectTypeIncludeActions(project)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -545,15 +385,15 @@ func TestProjectTypeIncludeIsUpdatedOnlyForStrictJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(actions) != 1 || len(updated) != 0 || !bytes.Equal(after, ambiguous) || !strings.Contains(actions[0], "../../.tnl/project.d.ts") {
-		t.Fatalf("actions = %v, updated = %v, tsconfig = %s", actions, updated, after)
+	if len(actions) != 1 || !bytes.Equal(after, ambiguous) || !strings.Contains(actions[0], "../../.tnl/project.d.ts") {
+		t.Fatalf("actions = %v, tsconfig = %s", actions, after)
 	}
 
 	ambiguous = []byte("{\n  \"include\": [\"src\"],\n  \"include\": [\"generated\"]\n}\n")
 	if err := os.WriteFile(path, ambiguous, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	actions, updated, err = ensureProjectTypeIncludes(project)
+	actions, err = projectTypeIncludeActions(project)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -561,30 +401,30 @@ func TestProjectTypeIncludeIsUpdatedOnlyForStrictJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(actions) != 1 || len(updated) != 0 || !bytes.Equal(after, ambiguous) {
-		t.Fatalf("duplicate-key actions = %v, updated = %v, tsconfig = %s", actions, updated, after)
+	if len(actions) != 1 || !bytes.Equal(after, ambiguous) {
+		t.Fatalf("duplicate-key actions = %v, tsconfig = %s", actions, after)
 	}
 }
 
-func TestProjectTypeIncludeUsesRootWithoutNamedServices(t *testing.T) {
+func TestProjectTypeIncludeActionUsesRootWithoutNamedServices(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "tsconfig.json")
 	if err := os.WriteFile(path, []byte("{\n  \"include\": [\"src/**/*.ts\"]\n}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	actions, updated, err := ensureProjectTypeIncludes(projectConfiguration{root: root})
+	actions, err := projectTypeIncludeActions(projectConfiguration{root: root})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(actions) != 0 || !slices.Equal(updated, []string{path}) {
-		t.Fatalf("actions = %v, updated = %v", actions, updated)
+	if len(actions) != 1 || !strings.Contains(actions[0], `".tnl/project.d.ts"`) {
+		t.Fatalf("actions = %v", actions)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), `".tnl/project.d.ts"`) {
-		t.Fatalf("tsconfig = %s", data)
+	if string(data) != "{\n  \"include\": [\"src/**/*.ts\"]\n}\n" {
+		t.Fatalf("tsconfig changed: %s", data)
 	}
 }
 
@@ -598,7 +438,7 @@ func TestInitCreatesAbsentKnownNextConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	if plan.frameworkPath != filepath.Join(root, "next.config.ts") ||
-		string(plan.frameworkAfter) != "import { withTnl } from \"@tnldotdev/tnl/next\";\n\nexport default withTnl({});\n" {
+		!bytes.Equal(plan.frameworkAfter, frameworkConfigSource("next")) {
 		t.Fatalf("plan = %#v", plan)
 	}
 }

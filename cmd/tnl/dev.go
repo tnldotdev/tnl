@@ -88,22 +88,25 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 			return err
 		}
 	}
-	if flags.project.root == "" {
-		worktree, resolveErr := tnlconfig.ResolveWorktree(ctx, flags.projectRoot)
-		if resolveErr != nil {
-			return fmt.Errorf("resolve development worktree: %w", resolveErr)
-		}
-		flags.project = projectConfiguration{
-			root: flags.projectRoot, worktree: worktree,
-			directories: map[string]string{}, relativeDirectories: map[string]string{},
-		}
-	}
-
 	serverURL, state, err := resolveServer(ctx, flags.StateDir, flags.ServerURL)
 	if err != nil {
 		return err
 	}
 	defer state.Close()
+	if flags.project.root == "" {
+		worktree, resolveErr := tnlconfig.ResolveWorktree(ctx, flags.projectRoot)
+		if resolveErr != nil {
+			return fmt.Errorf("resolve development worktree: %w", resolveErr)
+		}
+		salt, saltErr := state.WorktreeHashSalt(ctx)
+		if saltErr != nil {
+			return saltErr
+		}
+		flags.project = projectConfiguration{
+			root: flags.projectRoot, worktree: tnlconfig.ApplyWorktreeHashSalt(worktree, salt),
+			directories: map[string]string{}, relativeDirectories: map[string]string{},
+		}
+	}
 	metadataResolver := newProjectMetadataResolver(state, flags.project, stdin, stderr, "tnl dev")
 	if err := metadataResolver.LoadFallbackServer(ctx); err != nil {
 		return err

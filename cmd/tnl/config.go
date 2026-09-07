@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	projectconfig "github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
@@ -35,7 +36,23 @@ func selectProjectConfiguration(flags cli) (projectconfig.Selection, string, err
 	return selection, cwd, err
 }
 
-func loadProjectConfiguration(ctx context.Context, flags cli) (projectConfiguration, error) {
+func loadProjectConfiguration(ctx context.Context, flags cli, stateRoot string) (projectConfiguration, error) {
+	state, err := clientstate.Open(ctx, stateRoot)
+	if err != nil {
+		return projectConfiguration{}, err
+	}
+	salt, err := state.WorktreeHashSalt(ctx)
+	closeErr := state.Close()
+	if err != nil {
+		return projectConfiguration{}, err
+	}
+	if closeErr != nil {
+		return projectConfiguration{}, closeErr
+	}
+	return loadProjectConfigurationWithSalt(ctx, flags, salt)
+}
+
+func loadProjectConfigurationWithSalt(ctx context.Context, flags cli, salt [32]byte) (projectConfiguration, error) {
 	selection, cwd, err := selectProjectConfiguration(flags)
 	if err != nil {
 		return projectConfiguration{}, err
@@ -44,6 +61,7 @@ func loadProjectConfiguration(ctx context.Context, flags cli) (projectConfigurat
 	if err != nil {
 		return projectConfiguration{}, fmt.Errorf("resolve project worktree: %w", err)
 	}
+	worktree = projectconfig.ApplyWorktreeHashSalt(worktree, salt)
 	result := projectConfiguration{selection: selection, worktree: worktree, root: worktree.Root}
 	if selection.Path == "" {
 		return result, nil
@@ -54,8 +72,9 @@ func loadProjectConfiguration(ctx context.Context, flags cli) (projectConfigurat
 	if err != nil {
 		return projectConfiguration{}, fmt.Errorf("resolve project worktree: %w", err)
 	}
+	result.worktree = projectconfig.ApplyWorktreeHashSalt(result.worktree, salt)
 	if strings.EqualFold(filepath.Ext(selection.Path), ".ts") {
-		result.tnl, err = tnlts.Load(ctx, selection.Path, cwd)
+		result.tnl, err = tnlts.Load(ctx, selection.Path, cwd, result.worktree)
 		if err != nil {
 			return projectConfiguration{}, err
 		}
@@ -292,11 +311,7 @@ func runConfigPath(flags cli, stdout io.Writer) error {
 	})
 }
 
-func runConfigCheck(ctx context.Context, flags cli, stdout io.Writer) error {
-	loaded, err := loadProjectConfiguration(ctx, flags)
-	if err != nil {
-		return err
-	}
+func runConfigCheck(loaded projectConfiguration, stdout io.Writer) error {
 	if !loaded.found {
 		return errors.New("no project configuration file found")
 	}

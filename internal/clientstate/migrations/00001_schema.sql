@@ -16,10 +16,14 @@ CREATE TABLE client_settings (
             AND substr(installation_id, 1, 13) = 'installation_'
             AND substr(installation_id, 14) NOT GLOB '*[^0-9a-f]*'
         )
+    ),
+    worktree_hash_salt BLOB NOT NULL CHECK (
+        length(worktree_hash_salt) IN (0, 32)
     )
 ) STRICT;
 
-INSERT INTO client_settings (id, installation_id) VALUES (1, '');
+INSERT INTO client_settings (id, installation_id, worktree_hash_salt)
+VALUES (1, '', x'');
 
 CREATE TABLE control_sessions (
     server_origin TEXT PRIMARY KEY REFERENCES server_profiles (origin) ON DELETE CASCADE,

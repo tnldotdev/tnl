@@ -28,7 +28,7 @@ var loaderSource string
 
 // Load evaluates trusted project-local TypeScript configuration. The returned
 // object is implicitly configuration version 1 and contains only tnl fields.
-func Load(ctx context.Context, path, cwd string) (config.TNL, error) {
+func Load(ctx context.Context, path, cwd string, worktree config.Worktree) (config.TNL, error) {
 	node, err := exec.LookPath("node")
 	if err != nil {
 		return config.TNL{}, errors.New("load TypeScript config: Node.js 22.18 or newer is required")
@@ -58,12 +58,6 @@ func Load(ctx context.Context, path, cwd string) (config.TNL, error) {
 		return config.TNL{}, fmt.Errorf("load TypeScript config: create context pipe: %w", err)
 	}
 	defer contextWriter.Close()
-	worktree, err := config.ResolveWorktree(loadCtx, absoluteCWD)
-	if err != nil {
-		writer.Close()
-		contextReader.Close()
-		return config.TNL{}, fmt.Errorf("load TypeScript config: resolve worktree: %w", err)
-	}
 	contextData, err := json.Marshal(loaderContext{CWD: absoluteCWD, Env: contextEnvironment, Worktree: worktree})
 	if err != nil {
 		writer.Close()

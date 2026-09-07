@@ -61,14 +61,19 @@ export default defineConfig(({ worktree }) => ({
 }));
 ```
 
+`worktree.label` combines a readable worktree name with an eight-character hash.
+It is stable for one client state directory and differs across worktrees and
+installations. Its private random input is not exposed to the configuration
+factory.
+
 `tnl.config.ts` is implicitly configuration version 1. Static `tnl.yml`,
 `tnl.yaml`, and `tnl.json` files require `version: 1`; the JSON Schema is
 available at `https://tnl.dev/schema/v1.json`.
 
-`tnl init` adds this package and automatically edits recognized Next.js, Vite,
-and TypeScript configuration shapes. When multiple files or an ambiguous shape
-make an edit unsafe, it preserves the files and reports the exact action still
-needed.
+`tnl init` adds this package, creates project and framework configuration when
+it is absent, and ignores generated `.tnl` state. It preserves existing Next.js,
+Vite, and TypeScript configuration and reports the exact integration actions
+still needed.
 
 ## Next.js
 

@@ -180,6 +180,19 @@ func (q *Queries) GetSelectedTeam(ctx context.Context, origin string) (string, e
 	return selected_team_id, err
 }
 
+const getWorktreeHashSalt = `-- name: GetWorktreeHashSalt :one
+SELECT worktree_hash_salt
+FROM client_settings
+WHERE id = 1
+`
+
+func (q *Queries) GetWorktreeHashSalt(ctx context.Context) ([]byte, error) {
+	row := q.db.QueryRowContext(ctx, getWorktreeHashSalt)
+	var worktree_hash_salt []byte
+	err := row.Scan(&worktree_hash_salt)
+	return worktree_hash_salt, err
+}
+
 const heartbeatTunnel = `-- name: HeartbeatTunnel :execrows
 UPDATE local_tunnels
 SET heartbeat_at = ?1, lease_expires_at = ?2
@@ -530,6 +543,17 @@ func (q *Queries) SetTunnelRoute(ctx context.Context, arg SetTunnelRouteParams) 
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const setWorktreeHashSalt = `-- name: SetWorktreeHashSalt :exec
+UPDATE client_settings
+SET worktree_hash_salt = ?1
+WHERE id = 1 AND length(worktree_hash_salt) = 0
+`
+
+func (q *Queries) SetWorktreeHashSalt(ctx context.Context, worktreeHashSalt []byte) error {
+	_, err := q.db.ExecContext(ctx, setWorktreeHashSalt, worktreeHashSalt)
+	return err
 }
 
 const upsertControlSession = `-- name: UpsertControlSession :exec

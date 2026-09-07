@@ -234,7 +234,7 @@ Frames follow this general form:
 # Architecture
 
 - `cmd/tnl` is the client CLI, `cmd/tnld` is the server process, and `cmd/tnlbench` is the benchmark driver. Product releases contain `tnl` and `tnld`.
-- The runtime architecture and implementation sequence in [QUIC.md](https://md.cormo-turtle.ts.net/git/personal/tnl/QUIC.md) are authoritative when another document conflicts with them.
+- The runtime architecture and implementation sequence in [QUIC.md](https://md-roci.cormo-turtle.ts.net/git/personal/tnl/QUIC.md) are authoritative when another document conflicts with them.
 - A standalone `tnld` process composes control, ingress, and two logical relay services against PostgreSQL. Split deployments run a control service, an ingress service, and at least two independently addressable relay services.
 - Control serves the control API and separate cluster-authenticated APIs for ingress and relay processes. Ingress accepts public route TLS. Relay processes accept publisher connections over QUIC or TLS/TCP with yamux and accept internal forwarding from ingress.
 - `TNLD_SERVER_DOMAIN` is an infrastructure suffix independent from `TNLD_MANAGED_DEPLOYMENT_DOMAIN`. It derives `control.<server-domain>`, `ingress.<server-domain>`, and standalone or relay-service hostnames.

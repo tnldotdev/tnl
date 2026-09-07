@@ -12,6 +12,7 @@ type ClientSetting struct {
 	ID                   int64
 	SelectedServerOrigin sql.NullString
 	InstallationID       string
+	WorktreeHashSalt     []byte
 }
 
 type ControlSession struct {

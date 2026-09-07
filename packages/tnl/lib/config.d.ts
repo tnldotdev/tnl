@@ -48,6 +48,7 @@ export interface Dev {
 /** Details about the Git worktree or project directory containing tnl.config.ts. */
 export interface TnlWorktree {
   readonly isGit: boolean;
+  /** DNS-safe name keyed to this worktree and client state directory. */
   readonly label: string;
   readonly name: string;
   readonly root: string;

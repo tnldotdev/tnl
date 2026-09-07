@@ -34,6 +34,16 @@ UPDATE client_settings
 SET installation_id = sqlc.arg(installation_id)
 WHERE id = 1 AND installation_id = '';
 
+-- name: GetWorktreeHashSalt :one
+SELECT worktree_hash_salt
+FROM client_settings
+WHERE id = 1;
+
+-- name: SetWorktreeHashSalt :exec
+UPDATE client_settings
+SET worktree_hash_salt = sqlc.arg(worktree_hash_salt)
+WHERE id = 1 AND length(worktree_hash_salt) = 0;
+
 -- name: GetControlSession :one
 SELECT *
 FROM control_sessions

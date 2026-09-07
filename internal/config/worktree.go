@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"os/exec"
@@ -18,8 +19,9 @@ type Worktree struct {
 	IsGit bool   `json:"isGit"`
 }
 
-// ResolveWorktree returns stable project facts and falls back to cwd when Git
-// is unavailable or cwd is not inside a worktree.
+// ResolveWorktree returns project facts and falls back to cwd when Git is
+// unavailable or cwd is not inside a worktree. ApplyWorktreeHashSalt adds the
+// client-state-specific label used in public hostnames.
 func ResolveWorktree(ctx context.Context, cwd string) (Worktree, error) {
 	absolute, err := filepath.Abs(cwd)
 	if err != nil {
@@ -40,10 +42,15 @@ func ResolveWorktree(ctx context.Context, cwd string) (Worktree, error) {
 	if name == "" || name == string(filepath.Separator) || name == "." {
 		name = "worktree"
 	}
-	return Worktree{Root: root, Name: name, Label: WorktreeLabel(name, root), IsGit: isGit}, nil
+	return Worktree{Root: root, Name: name, IsGit: isGit}, nil
 }
 
-func WorktreeLabel(name, root string) string {
+func ApplyWorktreeHashSalt(worktree Worktree, salt [32]byte) Worktree {
+	worktree.Label = WorktreeLabel(worktree.Name, worktree.Root, salt)
+	return worktree
+}
+
+func WorktreeLabel(name, root string, salt [32]byte) string {
 	var normalized strings.Builder
 	separator := false
 	for _, character := range norm.NFKD.String(strings.ToLower(name)) {
@@ -58,14 +65,16 @@ func WorktreeLabel(name, root string) string {
 		}
 	}
 	stem := strings.Trim(normalized.String(), "-")
-	if len(stem) > 56 {
-		stem = strings.TrimRight(stem[:56], "-")
+	if len(stem) > 54 {
+		stem = strings.TrimRight(stem[:54], "-")
 	}
 	if stem == "" {
 		stem = "worktree"
 	}
-	digest := sha256.Sum256([]byte(root))
-	return stem + "-" + hex.EncodeToString(digest[:3])
+	hash := hmac.New(sha256.New, salt[:])
+	_, _ = hash.Write([]byte("tnl-worktree-label-v1\x00"))
+	_, _ = hash.Write([]byte(root))
+	return stem + "-" + hex.EncodeToString(hash.Sum(nil)[:4])
 }
 
 // ValidServiceName reports whether value is a canonical service DNS label.
@@ -92,8 +101,8 @@ func ServiceWorktreeLabel(service, worktreeLabel string) string {
 	}
 	maximumWorktreeLength := 63 - len(service) - 1
 	if len(worktreeLabel) > maximumWorktreeLength {
-		digest := worktreeLabel[len(worktreeLabel)-7:]
-		stem := strings.TrimRight(worktreeLabel[:maximumWorktreeLength-7], "-")
+		digest := worktreeLabel[len(worktreeLabel)-9:]
+		stem := strings.TrimRight(worktreeLabel[:maximumWorktreeLength-9], "-")
 		worktreeLabel = stem + digest
 	}
 	return service + "-" + worktreeLabel
