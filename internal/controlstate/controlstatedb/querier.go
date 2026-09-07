@@ -283,6 +283,8 @@ type Querier interface {
 	UpdateOIDCIdentity(ctx context.Context, arg UpdateOIDCIdentityParams) (ControlIdentity, error)
 	UpdateRoute(ctx context.Context, arg UpdateRouteParams) (ControlRoute, error)
 	UpdateRouteRecoveryHistogram(ctx context.Context, arg UpdateRouteRecoveryHistogramParams) (ControlRouteRecoveryHistogram, error)
+	// A publisher transition invalidates the worker's authorization snapshot.
+	// Call only after changing authorizations while holding the order lock.
 	WakeACMEOrder(ctx context.Context, arg WakeACMEOrderParams) error
 }
 

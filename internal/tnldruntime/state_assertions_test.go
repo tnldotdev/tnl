@@ -69,12 +69,25 @@ func waitForReadyPublisherConnections(t *testing.T, database *sql.DB, routeID st
 func integrationPublisherDiagnostics(database *sql.DB, pebbleLogPath string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	var state, message string
+	var order string
 	queryErr := database.QueryRowContext(ctx, `
-		SELECT state, coalesce(last_error, '') FROM control.acme_orders ORDER BY created_at DESC LIMIT 1
-	`).Scan(&state, &message)
+		SELECT jsonb_build_object(
+			'id', orders.id, 'state', orders.state, 'order_revision', orders.order_revision,
+			'work_owner', orders.work_owner, 'work_epoch', orders.work_epoch,
+			'work_expires_at', orders.work_expires_at, 'available_at', orders.available_at,
+			'last_error', orders.last_error,
+			'authorizations', COALESCE((
+				SELECT jsonb_agg(jsonb_build_object(
+					'id', id, 'state', state, 'authorization_revision', authorization_revision,
+					'available_at', available_at, 'presented_at', presented_at, 'expires_at', expires_at
+				) ORDER BY identifier)
+				FROM control.acme_authorizations WHERE order_id = orders.id
+			), '[]'::jsonb)
+		)::text
+		FROM control.acme_orders AS orders ORDER BY created_at DESC, id LIMIT 1
+	`).Scan(&order)
 	pebbleLog, _ := os.ReadFile(pebbleLogPath)
-	return fmt.Sprintf("; latest certificate order = %q, %q, %v\n%s", state, message, queryErr, pebbleLog)
+	return fmt.Sprintf("; latest certificate order = %s, query error = %v\n%s", order, queryErr, pebbleLog)
 }
 
 type splitConnectionState struct {

@@ -363,15 +363,20 @@ func (d *Database) updateCertificateChallenge(
 		}
 	}
 	if ready {
-		if _, err := queries.MarkACMEAuthorizationsPresented(ctx, controlstatedb.MarkACMEAuthorizationsPresentedParams{
+		presented, err := queries.MarkACMEAuthorizationsPresented(ctx, controlstatedb.MarkACMEAuthorizationsPresentedParams{
 			PresentedAt: timestamptz(now), IssuanceID: issuanceID,
-		}); err != nil {
+		})
+		if err != nil {
 			return CertificateIssuance{}, fmt.Errorf("controlstate: mark certificate challenge presented: %w", err)
 		}
-		if err := queries.WakeACMEOrder(ctx, controlstatedb.WakeACMEOrderParams{
-			AvailableAt: timestamptz(now), IssuanceID: issuanceID,
-		}); err != nil {
-			return CertificateIssuance{}, fmt.Errorf("controlstate: wake certificate order: %w", err)
+		// A real transition supersedes a claimed authorization snapshot. Replayed
+		// acknowledgements must preserve a newer claim and its next poll time.
+		if presented > 0 {
+			if err := queries.WakeACMEOrder(ctx, controlstatedb.WakeACMEOrderParams{
+				AvailableAt: timestamptz(now), IssuanceID: issuanceID,
+			}); err != nil {
+				return CertificateIssuance{}, fmt.Errorf("controlstate: wake certificate order: %w", err)
+			}
 		}
 	} else if _, err := queries.CompleteACMEAuthorizationCleanup(ctx, controlstatedb.CompleteACMEAuthorizationCleanupParams{
 		CompletedAt: timestamptz(now), IssuanceID: issuanceID,

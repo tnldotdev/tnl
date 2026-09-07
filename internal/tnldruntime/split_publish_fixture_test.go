@@ -33,7 +33,10 @@ type splitPublishFixture struct {
 	visitor                  *integrationVisitor
 }
 
-type splitPublishOptions struct{ dns *integrationRoute53 }
+type splitPublishOptions struct {
+	dns                  *integrationRoute53
+	configureControlHTTP func(*http.Client)
+}
 
 func newSplitPublishFixture(t *testing.T, hostnameLabel string) *splitPublishFixture {
 	t.Helper()
@@ -134,6 +137,9 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 	}
 	assertSplitLeases(t, inspect, 1, 2, 0, 0)
 	controlHTTP, _ := newIntegrationHTTPSClient(t, certificateAuthority.roots, controlAddress, false, owner)
+	if options.configureControlHTTP != nil {
+		options.configureControlHTTP(controlHTTP)
+	}
 	f.identity = newIntegrationPublishingIdentity(t, "https://"+controlHostname, controlHTTP, hostnameLabel, owner)
 	f.controlHTTP = controlHTTP
 	f.visitor = newIntegrationVisitor(t, pebble.roots, ingressAddress, owner)

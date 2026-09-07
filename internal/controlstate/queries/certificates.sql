@@ -170,8 +170,12 @@ WHERE order_id = sqlc.arg(issuance_id)
   AND state = 'presenting';
 
 -- name: WakeACMEOrder :exec
+-- A publisher transition invalidates the worker's authorization snapshot.
+-- Call only after changing authorizations while holding the order lock.
 UPDATE control.acme_orders
 SET available_at = LEAST(available_at, sqlc.arg(available_at)),
+    work_owner = NULL,
+    work_expires_at = NULL,
     updated_at = GREATEST(updated_at, sqlc.arg(available_at))
 WHERE id = sqlc.arg(issuance_id)
   AND state IN ('authorizing', 'ready_to_finalize', 'finalizing');

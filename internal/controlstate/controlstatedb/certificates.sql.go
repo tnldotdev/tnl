@@ -1272,6 +1272,8 @@ func (q *Queries) UpdateACMEAccountRegistration(ctx context.Context, arg UpdateA
 const wakeACMEOrder = `-- name: WakeACMEOrder :exec
 UPDATE control.acme_orders
 SET available_at = LEAST(available_at, $1),
+    work_owner = NULL,
+    work_expires_at = NULL,
     updated_at = GREATEST(updated_at, $1)
 WHERE id = $2
   AND state IN ('authorizing', 'ready_to_finalize', 'finalizing')
@@ -1282,6 +1284,8 @@ type WakeACMEOrderParams struct {
 	IssuanceID  string
 }
 
+// A publisher transition invalidates the worker's authorization snapshot.
+// Call only after changing authorizations while holding the order lock.
 func (q *Queries) WakeACMEOrder(ctx context.Context, arg WakeACMEOrderParams) error {
 	_, err := q.db.Exec(ctx, wakeACMEOrder, arg.AvailableAt, arg.IssuanceID)
 	return err
