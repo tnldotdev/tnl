@@ -48,6 +48,9 @@ func TestMetricsExposeFinalRuntimeVocabulary(t *testing.T) {
 	metrics.IncIPAllowlistDenial()
 	metrics.AddForwardedBytes("visitor_to_publisher", 1024)
 	metrics.ObserveControlRequest("routes.create", "success", 10*time.Millisecond)
+	metrics.ObserveRoutingHistoryFloor(100)
+	metrics.ObserveRoutingHistoryFloor(50)
+	metrics.ObserveRoutingHistoryBatch(0, 0, true)
 
 	families, err := metrics.registry.Gather()
 	if err != nil {
@@ -59,6 +62,8 @@ func TestMetricsExposeFinalRuntimeVocabulary(t *testing.T) {
 		value  float64
 	}
 	want := map[string]sample{
+		"tnl_routing_history_cleanup_skipped_total":   {kind: "COUNTER", value: 1},
+		"tnl_routing_history_retained_after_revision": {kind: "GAUGE", value: 100},
 		"tnl_info":                             {"GAUGE", map[string]string{"role": "standalone"}, 1},
 		"tnl_relay_leases":                     {"GAUGE", map[string]string{"state": "active"}, 2},
 		"tnl_publisher_connections":            {"GAUGE", map[string]string{"state": "ready"}, 3},
@@ -159,6 +164,7 @@ func TestMetricsExposeOnlyApplicableRoleFamilies(t *testing.T) {
 		want []string
 	}{
 		{role: "control", want: []string{
+			"tnl_routing_history_cleanup_rows_total", "tnl_routing_history_cleanup_skipped_total", "tnl_routing_history_retained_after_revision",
 			"tnl_info", "tnl_control_requests_total", "tnl_control_request_duration_seconds",
 		}},
 		{role: "ingress", want: []string{
@@ -171,6 +177,7 @@ func TestMetricsExposeOnlyApplicableRoleFamilies(t *testing.T) {
 			"tnl_streams_active", "tnl_capacity_rejections_total",
 		}},
 		{role: "standalone", want: []string{
+			"tnl_routing_history_cleanup_rows_total", "tnl_routing_history_cleanup_skipped_total", "tnl_routing_history_retained_after_revision",
 			"tnl_info", "tnl_control_requests_total", "tnl_control_request_duration_seconds",
 			"tnl_relay_leases", "tnl_publisher_connections", "tnl_streams_active",
 			"tnl_capacity_rejections_total", "tnl_source_limiter_rejections_total",
@@ -189,6 +196,7 @@ func TestMetricsExposeOnlyApplicableRoleFamilies(t *testing.T) {
 			metrics.IncIPAllowlistDenial()
 			metrics.AddForwardedBytes("visitor_to_publisher", 1)
 			metrics.ObserveControlRequest("test", "success", time.Millisecond)
+			metrics.ObserveRoutingHistoryBatch(2, 1, false)
 			families, err := metrics.registry.Gather()
 			if err != nil {
 				t.Fatal(err)

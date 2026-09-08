@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 )
 
@@ -19,7 +18,7 @@ func TestProfilePlacementQueries(t *testing.T) {
 	if f.delay != 0 {
 		t.Fatal("query profiles require DELAY=0ms")
 	}
-	p := &loadQueryPlan{Pool: f.database.pool}
+	p := &loadQueryPlan{DBTX: f.database.pool}
 	queries := controlstatedb.New(p)
 	for index := range f.routes {
 		if _, err := f.database.CreateRouteSession(t.Context(), f.request(index), f.now, time.Hour, time.Hour); err != nil {
@@ -61,7 +60,7 @@ func TestProfileRoutingHistory(t *testing.T) {
 	}
 	// Measure read amplification with a fixed set of genuine ready routes.
 	// No concurrent writers run during these profiles.
-	p := &loadQueryPlan{Pool: f.database.pool}
+	p := &loadQueryPlan{DBTX: f.database.pool}
 	queries := controlstatedb.New(p)
 	previous := 1
 	for _, perRoute := range []int{4, 10, 100} {
@@ -114,21 +113,26 @@ func TestProfileRoutingHistory(t *testing.T) {
 // Record the actual sqlc query and its parameters instead of maintaining a
 // second copy of production SQL in a profiling fixture. Calls are serial.
 type loadQueryPlan struct {
-	*pgxpool.Pool
+	controlstatedb.DBTX
 	sql  string
 	args []any
 }
 
 func (p *loadQueryPlan) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
 	p.sql, p.args = sql, args
-	return p.Pool.Query(ctx, sql, args...)
+	return p.DBTX.Query(ctx, sql, args...)
+}
+
+func (p *loadQueryPlan) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	p.sql, p.args = sql, args
+	return p.DBTX.QueryRow(ctx, sql, args...)
 }
 
 func (p *loadQueryPlan) explain(t *testing.T) {
 	t.Helper()
 	for trial := range 3 {
 		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
-		rows, err := p.Pool.Query(ctx, "EXPLAIN (ANALYZE, BUFFERS, SETTINGS) "+p.sql, p.args...)
+		rows, err := p.DBTX.Query(ctx, "EXPLAIN (ANALYZE, BUFFERS, SETTINGS) "+p.sql, p.args...)
 		if err != nil {
 			cancel()
 			t.Fatal(err)
@@ -150,5 +154,46 @@ func (p *loadQueryPlan) explain(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Logf("query=%s trial=%d\n%s", strings.SplitN(p.sql, "\n", 2)[0], trial+1, plan.String())
+	}
+}
+
+func TestProfileRoutingRetention(t *testing.T) {
+	f := newControlLoadFixture(t)
+	if f.delay != 0 {
+		t.Fatal("query profiles require DELAY=0ms")
+	}
+	readySteadyLoadSessions(t, f)
+	total := seedLoadRoutingHistory(t, f, 1, f.history)
+	tx, err := f.database.pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rollbackTestTransaction(t, tx)
+	queries := controlstatedb.New(tx)
+	p := &loadQueryPlan{DBTX: tx}
+	empty, err := controlstatedb.New(p).PruneIngressRoutingHistoryBatch(t.Context(), 0)
+	if err != nil || empty.Scanned != 0 {
+		t.Fatalf("zero-floor batch=%+v: %v", empty, err)
+	}
+	t.Log("retention_profile zero floor must stop at the revision index boundary")
+	p.explain(t)
+	if _, err := queries.AdvanceIngressRoutingRetentionFloor(t.Context(), total); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.TryLockIngressRoutingHistoryCleanup(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	batch, err := controlstatedb.New(p).PruneIngressRoutingHistoryBatch(t.Context(), 0)
+	if err != nil || batch.Scanned > 1000 || batch.Deleted == 0 {
+		t.Fatalf("profile batch=%+v: %v", batch, err)
+	}
+	t.Logf("retention_profile routes=%d initial_events=%d first_batch=%+v; all profile writes roll back", f.routes, total, batch)
+	p.explain(t)
+	if err := tx.Rollback(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	var remaining int64
+	if err := f.database.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.ingress_routing_table_events`).Scan(&remaining); err != nil || remaining != total {
+		t.Fatalf("profile did not roll back: %d %v", remaining, err)
 	}
 }

@@ -3,6 +3,7 @@ package controlstate_test
 import (
 	"context"
 	"net/http"
+	"os"
 	"testing"
 	"time"
 
@@ -38,6 +39,12 @@ func (c *cadenceIngressClient) GetIngressRoutingTableEvents(ctx context.Context,
 		select {
 		case <-c.resnapshot:
 			c.requested = true
+			if os.Getenv("TNL_TEST_LOAD_RETENTION") != "" {
+				// Restore an old consumer cursor against the real published floor.
+				// The production API, not this wrapper, must require a resnapshot.
+				params.After = 0
+				return c.ControlClient.GetIngressRoutingTableEvents(ctx, id, params)
+			}
 			return ingressv1.IngressRoutingTablePage{}, serviceapi.NewProblemError(http.StatusConflict, "routing_table_resnapshot_required", "cadence recovery resnapshot")
 		default:
 		}

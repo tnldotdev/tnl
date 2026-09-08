@@ -43,6 +43,13 @@ func RunCadenceLoad(t *testing.T, newClient func(*Database, func() time.Time, <-
 	if err != nil || duration < 2*time.Minute || duration > 10*time.Minute || duration%time.Minute != 0 {
 		t.Fatal("cadence duration must be whole minutes between 2m and 10m")
 	}
+	var retention time.Duration
+	if raw := os.Getenv("TNL_TEST_LOAD_RETENTION"); raw != "" {
+		retention, err = time.ParseDuration(raw)
+		if err != nil || retention < 30*time.Second || retention >= duration/2 {
+			t.Fatal("test retention must be at least 30s and shorter than half the cadence duration")
+		}
+	}
 	f := newControlLoadFixture(t)
 	if f.routes < 2 {
 		t.Fatal("cadence recovery requires at least two routes")
@@ -138,13 +145,16 @@ func RunCadenceLoad(t *testing.T, newClient func(*Database, func() time.Time, <-
 		}
 	}
 	var databaseBytesBefore int64
-	if err := f.database.pool.QueryRow(ctx, `SELECT pg_database_size(current_database())`).Scan(&databaseBytesBefore); err != nil {
+	var walStart string
+	if err := f.database.pool.QueryRow(ctx, `SELECT pg_database_size(current_database()), pg_current_wal_lsn()::text`).Scan(&databaseBytesBefore, &walStart); err != nil {
 		t.Fatal(err)
 	}
 	t.Logf("cadence_setup_elapsed=%s routes=%d heartbeat_interval=%s publisher_lease=%s process_lease=%s renewal_interval=%s duration=%s usage=one_connection_per_route_per_minute", time.Since(setupStarted), f.routes, cadenceHeartbeatInterval, cadencePublisherLease, cadenceProcessLease, cadenceRenewalInterval, duration)
 	started := time.Now()
 	var scheduled, completed, renewed, pages, replays, late, repaired atomic.Int64
 	var maximumQueueDelay atomic.Int64
+	var pruned, scanned atomic.Int64
+	var retentionFloor atomic.Uint64
 	var expiredAt atomic.Int64
 	pending := make([]atomic.Bool, f.routes)
 	wasRepaired := make([]bool, f.routes) // One pending heartbeat per route.
@@ -155,6 +165,9 @@ func RunCadenceLoad(t *testing.T, newClient func(*Database, func() time.Time, <-
 		}
 	}
 	defer func() {
+		if retention > 0 {
+			t.Logf("retention=%s floor=%d scanned=%d deleted=%d", retention, retentionFloor.Load(), scanned.Load(), pruned.Load())
+		}
 		t.Logf("cadence_elapsed=%s scheduled=%d completed=%d expected=%d pending=%d late=%d max_scheduler_queue_delay=%s lease_renewals=%d usage_pages=%d replays=%d recovered=%d/%d", time.Since(started), scheduled.Load(), completed.Load(), int64(f.routes)*int64(duration/cadenceHeartbeatInterval), scheduled.Load()-completed.Load(), late.Load(), time.Duration(maximumQueueDelay.Load()), renewed.Load(), pages.Load(), replays.Load(), repaired.Load(), affected)
 		f.logStats(t)
 		for index, metrics := range ingressMetrics {
@@ -194,6 +207,59 @@ func RunCadenceLoad(t *testing.T, newClient func(*Database, func() time.Time, <-
 	jobs := make(chan job, f.routes)
 	var work sync.WaitGroup
 	work.Add(64 + 1 + len(leases) + len(controllers))
+	if retention > 0 {
+		work.Add(len(f.controls))
+		for _, control := range f.controls {
+			actors.Go(func() {
+				defer work.Done()
+				var cursor uint64
+				var nextFloorCheck time.Time
+				for time.Since(started) < duration && ctx.Err() == nil {
+					at := now()
+					if !at.Before(nextFloorCheck) {
+						callCtx, stop := context.WithTimeout(ctx, 2*time.Second)
+						floor, err := control.AdvanceIngressRoutingRetention(callCtx, at.Add(-retention))
+						stop()
+						if err != nil {
+							if ctx.Err() == nil {
+								fail(err)
+							}
+							return
+						}
+						for previous := retentionFloor.Load(); floor > previous; previous = retentionFloor.Load() {
+							if retentionFloor.CompareAndSwap(previous, floor) {
+								break
+							}
+						}
+						nextFloorCheck = at.Add(30 * time.Second)
+					}
+					callCtx, stop := context.WithTimeout(ctx, 2*time.Second)
+					batch, err := control.PruneIngressRoutingHistory(callCtx, cursor)
+					stop()
+					if err != nil {
+						if ctx.Err() == nil {
+							fail(err)
+						}
+						return
+					}
+					scanned.Add(batch.Scanned)
+					pruned.Add(batch.Deleted)
+					delay := 30 * time.Second
+					if !batch.Busy {
+						cursor = batch.NextRevision
+						if batch.More {
+							delay = 100 * time.Millisecond
+						} else {
+							cursor = 0
+						}
+					}
+					if waitCadence(ctx, minTime(started.Add(duration), time.Now().Add(delay))) != nil {
+						return
+					}
+				}
+			})
+		}
+	}
 	for worker := range 64 {
 		actors.Go(func() {
 			defer work.Done()
@@ -444,6 +510,14 @@ waiting:
 				status := controller.RoutingStatus()
 				t.Logf("ingress=%d applied=%d known_backlog=%d last_check_age=%s", index, status.AppliedRevision, status.LatestRevision-status.AppliedRevision, now().Sub(status.LastSuccessfulCheck))
 			}
+			if retention > 0 {
+				var relationBytes, deadTuples, vacuums int64
+				if err := f.database.pool.QueryRow(ctx, `SELECT pg_total_relation_size('control.ingress_routing_table_events'), n_dead_tup, autovacuum_count FROM pg_stat_user_tables WHERE schemaname = 'control' AND relname = 'ingress_routing_table_events'`).Scan(&relationBytes, &deadTuples, &vacuums); err != nil {
+					fail(err)
+				} else {
+					t.Logf("retention_progress floor=%d deleted=%d approximate_rows=%d relation_bytes=%d estimated_dead_tuples=%d autovacuums=%d", retentionFloor.Load(), pruned.Load(), int64(f.routes)*int64(f.history)+completed.Load()+repaired.Load()-pruned.Load(), relationBytes, deadTuples, vacuums)
+				}
+			}
 		}
 	}
 	if ctx.Err() != nil {
@@ -465,6 +539,13 @@ waiting:
 	wantRevision := uint64(f.routes)*uint64(f.history) + uint64(completed.Load()) + uint64(repaired.Load())
 	if final.RoutingTableRevision != wantRevision {
 		t.Fatalf("final revision=%d want=%d", final.RoutingTableRevision, wantRevision)
+	}
+	if retention > 0 {
+		var rows int64
+		if err := f.database.pool.QueryRow(verifyCtx, `SELECT count(*) FROM control.ingress_routing_table_events`).Scan(&rows); err != nil || rows != int64(wantRevision)-pruned.Load() || pruned.Load() == 0 || final.RetainedAfterRevision == 0 {
+			t.Fatalf("retention rows=%d deleted=%d floor=%d: %v", rows, pruned.Load(), final.RetainedAfterRevision, err)
+		}
+		t.Logf("retention_verified_rows=%d deleted=%d floor=%d", rows, pruned.Load(), final.RetainedAfterRevision)
 	}
 	for ingressIndex, controller := range controllers {
 		for controller.RoutingStatus().AppliedRevision != int64(final.RoutingTableRevision) {
@@ -527,11 +608,12 @@ waiting:
 		t.Fatalf("missing usage routes=%d: %v", len(expectedUsage), err)
 	}
 	assertAssignmentTotals(t, f.database.pool, int64(f.routes)*2)
-	var databaseBytesAfter, historyBytesAfter int64
-	if err := f.database.pool.QueryRow(verifyCtx, `SELECT pg_database_size(current_database()), pg_total_relation_size('control.ingress_routing_table_events')`).Scan(&databaseBytesAfter, &historyBytesAfter); err != nil {
+	var databaseBytesAfter, historyBytesAfter, walBytes int64
+	if err := f.database.pool.QueryRow(verifyCtx, `SELECT pg_database_size(current_database()), pg_total_relation_size('control.ingress_routing_table_events'), pg_wal_lsn_diff(pg_current_wal_lsn(), $1::pg_lsn)::bigint`, walStart).Scan(&databaseBytesAfter, &historyBytesAfter, &walBytes); err != nil {
 		t.Fatal(err)
 	}
 	t.Logf("database_bytes_before=%d database_bytes_after=%d routing_history_bytes_after=%d", databaseBytesBefore, databaseBytesAfter, historyBytesAfter)
+	t.Logf("postgres_cluster_wal_bytes=%d (includes all concurrent database activity and vacuum)", walBytes)
 	t.Logf("cadence_verified_routes=%d usage_buckets=%d final_revision=%d", f.routes, f.routes*int(duration/time.Minute), final.RoutingTableRevision)
 	cancel()
 	actors.Wait()
@@ -565,4 +647,11 @@ func waitCadence(ctx context.Context, at time.Time) error {
 	case <-timer.C:
 		return ctx.Err()
 	}
+}
+
+func minTime(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
 }

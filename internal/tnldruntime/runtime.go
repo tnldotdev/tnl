@@ -105,6 +105,9 @@ func serveWithRelayClientTLS(
 		d.forward("clean up ephemeral routes", runAsync(func() error {
 			return runEphemeralRouteCleanup(lifetime, database)
 		}))
+		d.forward("clean up routing history", runAsync(func() error {
+			return runRoutingHistoryCleanup(lifetime, database)
+		}))
 		if err := database.CompleteStorageKeyRotation(ctx); err != nil {
 			return fmt.Errorf("rotate stored secrets: %w", err)
 		}

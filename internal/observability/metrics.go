@@ -2,6 +2,7 @@ package observability
 
 import (
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -27,6 +28,9 @@ type Metrics struct {
 	operationDuration     *prometheus.HistogramVec
 	databaseQueryDuration *prometheus.HistogramVec
 	databaseGuardDuration *prometheus.HistogramVec
+	routingHistoryFloor   atomic.Uint64
+	routingHistoryRows    *prometheus.CounterVec
+	routingHistorySkipped prometheus.Counter
 }
 
 // New constructs an isolated registry for one tnld role.
@@ -37,7 +41,9 @@ func New(role string) *Metrics {
 	})
 	info.Set(1)
 	metrics := &Metrics{
-		registry: registry,
+		registry:              registry,
+		routingHistoryRows:    prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_routing_history_cleanup_rows_total", Help: "Committed routing-history cleanup rows by action."}, []string{"action"}),
+		routingHistorySkipped: prometheus.NewCounter(prometheus.CounterOpts{Name: "tnl_routing_history_cleanup_skipped_total", Help: "Cleanup batches skipped because another control holds the cleanup guard."}),
 		relayLeases: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "tnl_relay_leases", Help: "Current relay leases by state.",
 		}, []string{"state"}),
@@ -85,6 +91,8 @@ func New(role string) *Metrics {
 		info, collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 	}
 	if role == "control" || role == "standalone" {
+		registered = append(registered, metrics.routingHistoryRows, metrics.routingHistorySkipped,
+			prometheus.NewGaugeFunc(prometheus.GaugeOpts{Name: "tnl_routing_history_retained_after_revision", Help: "Highest committed routing-history retention floor observed by this process."}, func() float64 { return float64(metrics.routingHistoryFloor.Load()) }))
 		registered = append(registered, metrics.controlRequests, metrics.controlDuration, metrics.controlInFlight, metrics.databaseQueryDuration, metrics.databaseGuardDuration)
 	}
 	if role == "control" || role == "ingress" || role == "relay" || role == "standalone" {

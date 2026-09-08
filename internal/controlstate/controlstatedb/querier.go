@@ -14,6 +14,9 @@ type Querier interface {
 	AcceptTeamInvitation(ctx context.Context, arg AcceptTeamInvitationParams) (int64, error)
 	ActivateMemberSlug(ctx context.Context, arg ActivateMemberSlugParams) (int64, error)
 	AdvanceAuthorityRevision(ctx context.Context, arg AdvanceAuthorityRevisionParams) (int64, error)
+	// Commit this short clock update BEFORE pruning in a different transaction.
+	// A crash in between retains excess data, never an advertised but missing suffix.
+	AdvanceIngressRoutingRetentionFloor(ctx context.Context, revision int64) (int64, error)
 	AdvanceTeamPolicyRevision(ctx context.Context, arg AdvanceTeamPolicyRevisionParams) (int64, error)
 	ApplyIngressUsageDelta(ctx context.Context, arg ApplyIngressUsageDeltaParams) (ControlRouteUsageBucket, error)
 	ApplyRouteSessionPolicyDenials(ctx context.Context, arg ApplyRouteSessionPolicyDenialsParams) (int64, error)
@@ -227,6 +230,12 @@ type Querier interface {
 	ObserveAuthorityRevision(ctx context.Context, arg ObserveAuthorityRevisionParams) (int64, error)
 	ObserveRouteRecoveryEpisode(ctx context.Context, arg ObserveRouteRecoveryEpisodeParams) (ControlRouteRecoveryEpisode, error)
 	OpenRouteRecoveryEpisode(ctx context.Context, arg OpenRouteRecoveryEpisodeParams) error
+	// Bound candidates visited as well as rows deleted. Advance past anchors even
+	// when no row can be removed. Keep the newest hostname/category projection
+	// (including tombstones/expired entries) AND each route-version's latest revision.
+	// All checks use this statement's snapshot. Concurrent publications can only
+	// make an old anchor redundant; they cannot make a superseded event current.
+	PruneIngressRoutingHistoryBatch(ctx context.Context, afterRevision int64) (PruneIngressRoutingHistoryBatchRow, error)
 	PutControlTLSCacheEntry(ctx context.Context, arg PutControlTLSCacheEntryParams) error
 	QuarantineMemberSlug(ctx context.Context, arg QuarantineMemberSlugParams) (int64, error)
 	ReadIngressRoutingTableClock(ctx context.Context) (ControlIngressRoutingTableClock, error)
@@ -269,6 +278,10 @@ type Querier interface {
 	SaveDNSAuthorityWork(ctx context.Context, arg SaveDNSAuthorityWorkParams) (ControlDnsAuthority, error)
 	SaveDNSRouteWork(ctx context.Context, arg SaveDNSRouteWorkParams) (ControlRoute, error)
 	SaveRelayCertificateOrderWork(ctx context.Context, arg SaveRelayCertificateOrderWorkParams) (ControlRelayCertificateOrder, error)
+	// Find an old committed PREFIX, not the largest old timestamp. Request-start
+	// timestamps can be out of revision order; preserve every still-recent event.
+	// This scan happens before acquiring the publication clock.
+	SelectIngressRoutingRetentionFloor(ctx context.Context, cutoff pgtype.Timestamptz) (int64, error)
 	SetDNSReadyDomainDefault(ctx context.Context, arg SetDNSReadyDomainDefaultParams) (int64, error)
 	SetDomainAuthorityRevision(ctx context.Context, arg SetDomainAuthorityRevisionParams) error
 	SetMaintenanceControl(ctx context.Context, arg SetMaintenanceControlParams) (ControlMaintenanceControl, error)
@@ -277,6 +290,8 @@ type Querier interface {
 	StoreRelayTransportCertificate(ctx context.Context, arg StoreRelayTransportCertificateParams) (ControlRelayService, error)
 	SuspendAuthorityRoute(ctx context.Context, arg SuspendAuthorityRouteParams) (int64, error)
 	TeamMembershipIdentityExists(ctx context.Context, arg TeamMembershipIdentityExistsParams) (bool, error)
+	// Cleanup-only coordination; no route, reservation, service, lease, or clock locks.
+	TryLockIngressRoutingHistoryCleanup(ctx context.Context) (bool, error)
 	UpdateACMEAccountRegistration(ctx context.Context, arg UpdateACMEAccountRegistrationParams) (ControlAcmeAccount, error)
 	UpdateLocalDomainForDNSAuthority(ctx context.Context, arg UpdateLocalDomainForDNSAuthorityParams) (UpdateLocalDomainForDNSAuthorityRow, error)
 	UpdateMembershipRole(ctx context.Context, arg UpdateMembershipRoleParams) (int64, error)
