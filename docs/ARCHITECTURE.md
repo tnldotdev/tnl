@@ -83,6 +83,26 @@ immutable, and usage's `KEY SHARE` references must coexist with heartbeats.
 Route mutations still conflict, while overlapping usage pages cannot starve a
 heartbeat waiting for a stronger route-row lock.
 
+## Routing History
+
+Control publishes a monotonic retained-after revision before removing routing
+history. Incremental readers below this boundary must resnapshot; a reader at
+the boundary can consume the complete later suffix. Floor selection preserves
+every recent committed event even when event timestamps are out of revision
+order. Repeatable-read snapshots pair the clock with the same view of events.
+
+Cleanup preserves the latest event for each hostname and route/challenge category,
+including tombstones and expired entries, plus each route version's latest event
+for entry-revision continuity. Choosing the latest event before filtering its
+expiry or kind prevents an older route or challenge from reappearing.
+
+The floor update commits separately from bounded deletion batches. Each batch
+visits at most 1,000 candidates and takes only a cleanup-specific, nonblocking
+advisory lock; it does not take the publication clock or route/placement guards.
+Concurrent publications can make an anchor redundant but cannot make an already
+superseded event current. Failed batches retain their scan cursor for retry,
+and sweeps advance past anchors even when no rows can be deleted.
+
 ## Connections And Trust
 
 Publishers maintain two connections through different relay services. A route

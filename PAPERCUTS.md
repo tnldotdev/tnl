@@ -1,5 +1,15 @@
 # Papercuts
 
+- The post-retention republishing regression reused a stale authorized route revision, then collided with the certificate fixture's fixed challenge URLs. Reload the route mutation revision for the next session and reuse the earlier installed certificate through the production API.
+
+- Retention closeout documentation patches initially used context from the wrong documentation section and were rejected without changing files. Anchor each update to the current target file rather than adjacent observability notes.
+
+- An ACME worker can claim a presenting TLS challenge just before the publisher acknowledges it; the resulting stale authorization save rolls back and leaves the two-minute work lease occupied. A real acknowledgement now invalidates that claim atomically, while replayed acknowledgements preserve newer work.
+
+- The acknowledgement-race fixture initially wrapped the control HTTP client after authentication had copied its transport, so the gate never ran. Install the test transport before creating the authenticated clients and assert that the intended interleaving actually occurred.
+
+- The first retention plan joined the clock inside the ordered candidate scan, letting PostgreSQL treat the upper revision boundary as a join filter. A scalar clock subquery makes that boundary an index condition, including when the floor is zero and no history is eligible.
+
 - Recovery validation's runtime integration retry hit the existing ACME work-lease-stale startup failure in `TestIntegrationSplitPublishAndVisit`, leaving its order authorizing until the readiness deadline. Preserve that log and check isolated retries separately from recovery measurements.
 
 - The short delayed recovery trial passed after narrowing assignment/readiness locks, but the ten-minute trial exposed a later usage deadline behind the routing clock. Single-event publication now acquires that clock inside the final insert; the contention fixture's expected active query was updated to that command while retaining its controlled clock blocker.

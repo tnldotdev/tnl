@@ -371,6 +371,27 @@ For a schema-changing upgrade, plan an interruption:
 6. Check [per-process readiness](OBSERVABILITY.md#service-health), certificates, leases, and routing-table progress. Publish a test route before resuming normal use.
 7. Update `tnl` clients as required by the release's compatibility notes.
 
+Schema version 5 adds an index for routing-history cleanup using transactional
+`CREATE INDEX`. Its build scans the existing event table and blocks writes to
+that table. Allow maintenance time and disk headroom proportional to accumulated
+history; its build cost must be measured on a representative database before a
+large upgrade.
+
+### Routing History Maintenance
+
+Control and standalone automatically retain a ten-minute incremental routing
+history window plus snapshot and route-version anchors. They check the floor
+every 30 seconds, scan at most 1,000 candidates per deletion batch, and yield
+100ms between batches. Calls have two-second deadlines; errors or competing
+cleaners cause a 30-second pause. Ingress with an older cursor resnapshots.
+
+This bounds repeated updates for existing route versions, not all database
+storage. Anchors can grow with historical hostnames and route versions; session,
+usage, and audit history have separate lifecycles. Deletion creates dead tuples
+and WAL. PostgreSQL autovacuum and free-space reuse determine physical storage
+behavior; provision headroom while an initial backlog is being removed and
+monitor [cleanup metrics](OBSERVABILITY.md#routing-history-cleanup).
+
 ### Rollback
 
 Never start an older control/standalone binary against a newer schema. After a

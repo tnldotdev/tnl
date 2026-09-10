@@ -99,7 +99,8 @@ the process role.
   application operations. Control operations are `CreateRouteSession`,
   `HeartbeatRouteSession`, `ReadIngressRoutingTableSnapshot`,
   `ReadIngressRoutingTableEvents`, `ReportIngressUsage`, `RenewIngress`,
-  `ClaimPublisherConnection`, and `MarkPublisherConnectionReady`. These span
+  `ClaimPublisherConnection`, `MarkPublisherConnectionReady`,
+  `AdvanceIngressRoutingRetention`, and `PruneIngressRoutingHistory`. These span
   validation, pool acquisition, SQL, and transaction cleanup; they exclude HTTP
   handling and long-poll idle waits outside the state method. Ingress operations
   are `IngressFetchSnapshot`, `IngressFetchEvents`, `IngressRenewLease`,
@@ -206,6 +207,23 @@ These describe successful responses, not control's live revision while a request
 is pending. Zero known backlog or a previous catch-up confirmation does not prove
 current freshness. Monitor the check timestamp's age alongside failures and
 backlog; lease readiness alone does not establish routing freshness.
+
+### Routing History Cleanup
+
+Control and standalone export passive cleanup progress:
+
+- `tnl_routing_history_retained_after_revision`: the greatest retention floor
+  this process has observed, initially zero until its first successful update.
+- `tnl_routing_history_cleanup_rows_total{action="scanned"|"deleted"}`: committed
+  cleanup candidate and deletion counts. Scanned anchors can recur in later sweeps.
+- `tnl_routing_history_cleanup_skipped_total`: batches skipped because another
+  control held the cleanup lock.
+
+The floor is a shared database revision, not a sum across controls. Counters are
+process-local and reset on restart. Pair progress with the cleanup application/SQL
+duration histograms and operational error logs. Check PostgreSQL relation sizes,
+dead tuples, and autovacuum separately; deleting history does not guarantee an
+immediate reduction in physical disk usage. Prometheus collection performs no SQL.
 
 ## Database Failure Snapshots
 

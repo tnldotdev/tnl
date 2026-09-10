@@ -155,6 +155,21 @@ output. CI runs 0ms on PRs/main and 5ms nightly or manually.
 Use 20ms for local experiments. Ordinary and integration test tasks skip these
 load tests.
 
+For cadence runs, `RETENTION=1m` enables two cleanup actors, one per control,
+using the runtime's 1,000-candidate batches, 100ms inter-batch yield, 30-second
+floor checks, and two-second call deadlines. The test window must be at least
+30 seconds and less than half `DURATION`; production uses ten minutes. For example:
+
+```console
+mise exec -- task go:test-load ROUTES=1000 DELAY=5ms DURATION=10m RETENTION=1m RUN='^TestLoadCadence$'
+```
+
+This forces ingress to replay an old cursor through the real resnapshot boundary,
+checks exact final event counts and routing state, and logs relation size,
+estimated dead tuples, autovacuum counts, and cluster-wide WAL deltas. WAL includes
+all concurrent database activity. Short test windows exercise repeated cleanup;
+they do not establish production-window or multi-day storage requirements.
+
 For isolated query-plan investigation, select `RUN='^TestProfile'` with
 `DELAY=0ms` and the same disposable PostgreSQL prerequisite. These opt-in tests
 log the actual generated queries' `EXPLAIN (ANALYZE, BUFFERS, SETTINGS)` plans:
@@ -165,6 +180,11 @@ History is bulk-copied from genuine ready-route projections; setup is untimed,
 and three serial snapshots/plans per size measure read amplification without
 concurrent writers. These profiles do not measure sustained heartbeat cadence,
 history ingestion throughput, or mixed-workload recovery.
+
+`RUN='^TestProfileRoutingRetention$'` profiles the actual retention SQL against
+the same accumulated-history fixture, including an empty eligible range and a
+full retention floor. Destructive EXPLAIN statements run inside rolled-back
+transactions, and the test verifies the event count afterward.
 
 ### JavaScript Package
 
