@@ -591,6 +591,7 @@ func (d *Database) deleteRoute(ctx context.Context, request AuthorizedRouteDelet
 }
 
 func (d *Database) CloseRouteSession(ctx context.Context, routeSessionID string, token credentials.RouteSessionToken, now time.Time) (retErr error) {
+	defer d.observeOperation("CloseRouteSession", &retErr)()
 	if !validStateText(routeSessionID) {
 		return ErrRouteSessionCredential
 	}

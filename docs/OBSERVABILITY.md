@@ -97,7 +97,7 @@ the process role.
   interval. These windows can overlap and must not be summed as exclusive time.
 - `tnl_operation_duration_seconds{operation,outcome}` measures completed
   application operations. Control operations are `CreateRouteSession`,
-  `HeartbeatRouteSession`, `ReadIngressRoutingTableSnapshot`,
+  `HeartbeatRouteSession`, `CloseRouteSession`, `ReadIngressRoutingTableSnapshot`,
   `ReadIngressRoutingTableEvents`, `ReportIngressUsage`, `RenewIngress`,
   `ClaimPublisherConnection`, `MarkPublisherConnectionReady`,
   `AdvanceIngressRoutingRetention`, and `PruneIngressRoutingHistory`. These span
