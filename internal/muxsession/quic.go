@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sync"
 	"time"
 
 	quic "github.com/quic-go/quic-go"
@@ -52,7 +53,10 @@ func (c QUICConnector) Connect(ctx context.Context, endpoint Endpoint) (Session,
 // QUICListener accepts QUIC multiplexed sessions.
 type QUICListener struct {
 	listener   *quic.Listener
+	transport  *quic.Transport
 	packetConn net.PacketConn
+	closeOnce  sync.Once
+	closeErr   error
 }
 
 // ListenQUIC starts a QUIC listener. The returned listener never accepts 0-RTT.
@@ -61,17 +65,16 @@ func ListenQUIC(address string, tlsConfig *tls.Config, config QUICConfig) (*QUIC
 	if err != nil {
 		return nil, err
 	}
-	listener, packetConn, err := listenQUIC(address, serverConfig, quicConfig(config.Config))
+	listener, transport, packetConn, err := listenQUIC(address, serverConfig, quicConfig(config.Config))
 	if err != nil {
 		return nil, fmt.Errorf("muxsession: listen QUIC: %w", err)
 	}
-	return &QUICListener{listener: listener, packetConn: packetConn}, nil
+	return &QUICListener{listener: listener, transport: transport, packetConn: packetConn}, nil
 }
 
-func listenQUIC(address string, tlsConfig *tls.Config, config *quic.Config) (*quic.Listener, net.PacketConn, error) {
+func listenQUIC(address string, tlsConfig *tls.Config, config *quic.Config) (*quic.Listener, *quic.Transport, net.PacketConn, error) {
 	if !requiresBasicQUICPacketConn(address) {
-		listener, err := quic.ListenAddr(address, tlsConfig, config)
-		return listener, nil, err
+		return listenQUICPacket("udp", address, tlsConfig, config, false)
 	}
 	// Fly UDP replies must follow the socket route; quic-go's IP_PKTINFO
 	// interface pinning and larger datagrams fail on its forwarding path.
@@ -93,21 +96,31 @@ func quicConnectorConfig(config *quic.Config) *quic.Config {
 	return config
 }
 
-func listenBasicQUIC(address string, tlsConfig *tls.Config, config *quic.Config) (*quic.Listener, net.PacketConn, error) {
-	udpAddress, err := net.ResolveUDPAddr("udp4", address)
+func listenBasicQUIC(address string, tlsConfig *tls.Config, config *quic.Config) (*quic.Listener, *quic.Transport, net.PacketConn, error) {
+	return listenQUICPacket("udp4", address, tlsConfig, config, true)
+}
+
+func listenQUICPacket(network, address string, tlsConfig *tls.Config, config *quic.Config, basic bool) (*quic.Listener, *quic.Transport, net.PacketConn, error) {
+	udpAddress, err := net.ResolveUDPAddr(network, address)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	packetConn, err := net.ListenUDP("udp4", udpAddress)
+	packetConn, err := net.ListenUDP(network, udpAddress)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	listener, err := quic.Listen(struct{ net.PacketConn }{packetConn}, tlsConfig, config)
+	var connection net.PacketConn = packetConn
+	if basic {
+		connection = struct{ net.PacketConn }{packetConn}
+	}
+	transport := &quic.Transport{Conn: connection}
+	listener, err := transport.Listen(tlsConfig, config)
 	if err != nil {
+		_ = transport.Close()
 		_ = packetConn.Close()
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return listener, packetConn, nil
+	return listener, transport, packetConn, nil
 }
 
 func requiresBasicQUICPacketConn(address string) bool {
@@ -129,12 +142,19 @@ func (l *QUICListener) Accept(ctx context.Context) (Session, error) {
 
 func (l *QUICListener) Addr() net.Addr { return l.listener.Addr() }
 
+// StopAccepting leaves accepted connections alive while the relay drains them.
+func (l *QUICListener) StopAccepting() error {
+	return normalizeQUICError(l.listener.Close())
+}
+
+// Close completes ownership of the transport and socket after draining. Closing
+// only quic.Listener leaves accepted connections and connection-ID retirement
+// timers alive, so the same UDP address may not be immediately reusable.
 func (l *QUICListener) Close() error {
-	listenerErr := normalizeQUICError(l.listener.Close())
-	if l.packetConn == nil {
-		return listenerErr
-	}
-	return errors.Join(listenerErr, l.packetConn.Close())
+	l.closeOnce.Do(func() {
+		l.closeErr = errors.Join(l.StopAccepting(), normalizeQUICError(l.transport.Close()), l.packetConn.Close())
+	})
+	return l.closeErr
 }
 
 func quicConfig(config *quic.Config) *quic.Config {

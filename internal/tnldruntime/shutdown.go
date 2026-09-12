@@ -42,7 +42,7 @@ func (d *daemon) shutdown(timeout time.Duration) error {
 			}
 		}
 		if runtime.udpListener != nil {
-			if err := closeNetworkListener(runtime.udpListener); err != nil {
+			if err := runtime.udpListener.StopAccepting(); err != nil {
 				result = errors.Join(result, fmt.Errorf("close relay QUIC listener: %w", err))
 			}
 		}
@@ -66,6 +66,11 @@ func (d *daemon) shutdown(timeout time.Duration) error {
 		if runtime.registry != nil {
 			if err := runtime.registry.Close(); err != nil {
 				result = errors.Join(result, fmt.Errorf("close relay publisher connections: %w", err))
+			}
+		}
+		if runtime.udpListener != nil {
+			if err := closeNetworkListener(runtime.udpListener); err != nil {
+				result = errors.Join(result, fmt.Errorf("close relay QUIC transport: %w", err))
 			}
 		}
 	}

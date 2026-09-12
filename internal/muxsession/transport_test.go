@@ -83,12 +83,12 @@ func TestBasicQUICPacketConn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("configure server TLS: %v", err)
 	}
-	listener, packetConn, err := listenBasicQUIC("127.0.0.1:0", serverTLS, quicConfig(nil))
+	listener, transport, packetConn, err := listenBasicQUIC("127.0.0.1:0", serverTLS, quicConfig(nil))
 	if err != nil {
 		t.Fatalf("listen basic QUIC: %v", err)
 	}
 	address := packetConn.LocalAddr().String()
-	wrapped := &QUICListener{listener: listener, packetConn: packetConn}
+	wrapped := &QUICListener{listener: listener, transport: transport, packetConn: packetConn}
 	t.Cleanup(func() { _ = wrapped.Close() })
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	t.Cleanup(cancel)
@@ -123,6 +123,10 @@ func TestBasicQUICPacketConn(t *testing.T) {
 	if server.err != nil {
 		t.Fatalf("accept basic QUIC: %v", server.err)
 	}
+	if err := wrapped.StopAccepting(); err != nil {
+		t.Fatal(err)
+	}
+	assertRoundTrip(t, client, server.session, "drain basic QUIC")
 	if err := client.Close(); err != nil {
 		t.Fatalf("close client: %v", err)
 	}
