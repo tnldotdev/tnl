@@ -11,7 +11,53 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const applyIngressUsageDelta = `-- name: ApplyIngressUsageDelta :one
+const applyIngressUsageReport = `-- name: ApplyIngressUsageReport :one
+WITH report AS (
+INSERT INTO control.ingress_usage_reports (
+    ingress_id,
+    ingress_run_id,
+    route_id,
+    route_version,
+    bucket_start,
+    bucket_end,
+    observed_through,
+    report_revision,
+    connection_attempts,
+    policy_denials,
+    capacity_denials,
+    visitor_stream_open_failures,
+    successful_streams,
+    connection_nanoseconds,
+    ingress_bytes,
+    egress_bytes,
+    histogram_data,
+    final,
+    received_at
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    $9,
+    $10,
+    $11,
+    $12,
+    $13,
+    $14,
+    $15,
+    $16,
+    $17,
+    $18,
+    $19
+)
+ON CONFLICT (ingress_id, ingress_run_id, route_id, route_version, bucket_start, report_revision)
+DO NOTHING
+RETURNING route_id, route_version
+), bucket AS (
 INSERT INTO control.route_usage_buckets (
     route_id,
     route_version,
@@ -39,25 +85,24 @@ SELECT
     sessions.route_version,
     sessions.team_id,
     sessions.acting_identity_id,
-    $1,
-    $2,
-    $3,
-    $4,
     $5,
     $6,
     $7,
-    $8,
-    $9,
-    $10,
-    $11,
-    $12,
+    $20::bigint,
+    $21::bigint,
+    $22::bigint,
+    $23::bigint,
+    $24::bigint,
+    $25::bigint,
+    $26::bigint,
+    $27::bigint,
+    $28::bytea,
     false,
     false,
     NULL,
-    $13
+    $19
 FROM control.route_sessions AS sessions
-WHERE sessions.route_id = $14
-  AND sessions.route_version = $15
+JOIN report ON report.route_id = sessions.route_id AND report.route_version = sessions.route_version
 ON CONFLICT (route_id, route_version, bucket_start) DO UPDATE SET
     bucket_end = GREATEST(control.route_usage_buckets.bucket_end, EXCLUDED.bucket_end),
     bucket_revision = control.route_usage_buckets.bucket_revision + 1,
@@ -73,32 +118,73 @@ ON CONFLICT (route_id, route_version, bucket_start) DO UPDATE SET
     histogram_data = EXCLUDED.histogram_data,
     updated_at = EXCLUDED.updated_at
 WHERE NOT control.route_usage_buckets.finalized
-RETURNING bucket_id, route_id, route_version, team_id, acting_identity_id, bucket_start, bucket_end, bucket_revision, observed_through, connection_attempts, policy_denials, capacity_denials, visitor_stream_open_failures, successful_streams, connection_nanoseconds, ingress_bytes, egress_bytes, histogram_data, finalized, complete, finalized_at, updated_at
+RETURNING route_id, route_version
+), denials AS (
+UPDATE control.route_sessions AS sessions
+SET policy_denials = sessions.policy_denials + $21::bigint
+FROM bucket
+WHERE sessions.route_id = bucket.route_id
+  AND sessions.route_version = bucket.route_version
+  AND $21::bigint > 0
+  AND sessions.policy_denials <= 9223372036854775807 - $21::bigint
+RETURNING sessions.id
+)
+SELECT EXISTS (SELECT 1 FROM report) AS report_inserted,
+       EXISTS (SELECT 1 FROM bucket) AS bucket_updated,
+       EXISTS (SELECT 1 FROM denials) AS policy_denials_updated
 `
 
-type ApplyIngressUsageDeltaParams struct {
-	BucketStart               pgtype.Timestamptz
-	BucketEnd                 pgtype.Timestamptz
-	ObservedThrough           pgtype.Timestamptz
-	ConnectionAttempts        int64
-	PolicyDenials             int64
-	CapacityDenials           int64
-	VisitorStreamOpenFailures int64
-	SuccessfulStreams         int64
-	ConnectionNanoseconds     int64
-	IngressBytes              int64
-	EgressBytes               int64
-	HistogramData             []byte
-	UpdatedAt                 pgtype.Timestamptz
-	RouteID                   string
-	RouteVersion              int64
+type ApplyIngressUsageReportParams struct {
+	IngressID                      string
+	IngressRunID                   string
+	RouteID                        string
+	RouteVersion                   int64
+	BucketStart                    pgtype.Timestamptz
+	BucketEnd                      pgtype.Timestamptz
+	ObservedThrough                pgtype.Timestamptz
+	ReportRevision                 int64
+	ConnectionAttempts             int64
+	PolicyDenials                  int64
+	CapacityDenials                int64
+	VisitorStreamOpenFailures      int64
+	SuccessfulStreams              int64
+	ConnectionNanoseconds          int64
+	IngressBytes                   int64
+	EgressBytes                    int64
+	HistogramData                  []byte
+	Final                          bool
+	ReceivedAt                     pgtype.Timestamptz
+	DeltaConnectionAttempts        int64
+	DeltaPolicyDenials             int64
+	DeltaCapacityDenials           int64
+	DeltaVisitorStreamOpenFailures int64
+	DeltaSuccessfulStreams         int64
+	DeltaConnectionNanoseconds     int64
+	DeltaIngressBytes              int64
+	DeltaEgressBytes               int64
+	MergedHistogramData            []byte
 }
 
-func (q *Queries) ApplyIngressUsageDelta(ctx context.Context, arg ApplyIngressUsageDeltaParams) (ControlRouteUsageBucket, error) {
-	row := q.db.QueryRow(ctx, applyIngressUsageDelta,
+type ApplyIngressUsageReportRow struct {
+	ReportInserted       bool
+	BucketUpdated        bool
+	PolicyDenialsUpdated bool
+}
+
+// The caller holds the ingress/run, route/session and existing bucket guards.
+// Dependencies make the immutable report, aggregate delta and denial update
+// one ordered write command. The caller checks insertion/aggregation and any
+// nonzero denial delta, rolling back all writes if a required step was rejected.
+func (q *Queries) ApplyIngressUsageReport(ctx context.Context, arg ApplyIngressUsageReportParams) (ApplyIngressUsageReportRow, error) {
+	row := q.db.QueryRow(ctx, applyIngressUsageReport,
+		arg.IngressID,
+		arg.IngressRunID,
+		arg.RouteID,
+		arg.RouteVersion,
 		arg.BucketStart,
 		arg.BucketEnd,
 		arg.ObservedThrough,
+		arg.ReportRevision,
 		arg.ConnectionAttempts,
 		arg.PolicyDenials,
 		arg.CapacityDenials,
@@ -108,58 +194,21 @@ func (q *Queries) ApplyIngressUsageDelta(ctx context.Context, arg ApplyIngressUs
 		arg.IngressBytes,
 		arg.EgressBytes,
 		arg.HistogramData,
-		arg.UpdatedAt,
-		arg.RouteID,
-		arg.RouteVersion,
+		arg.Final,
+		arg.ReceivedAt,
+		arg.DeltaConnectionAttempts,
+		arg.DeltaPolicyDenials,
+		arg.DeltaCapacityDenials,
+		arg.DeltaVisitorStreamOpenFailures,
+		arg.DeltaSuccessfulStreams,
+		arg.DeltaConnectionNanoseconds,
+		arg.DeltaIngressBytes,
+		arg.DeltaEgressBytes,
+		arg.MergedHistogramData,
 	)
-	var i ControlRouteUsageBucket
-	err := row.Scan(
-		&i.BucketID,
-		&i.RouteID,
-		&i.RouteVersion,
-		&i.TeamID,
-		&i.ActingIdentityID,
-		&i.BucketStart,
-		&i.BucketEnd,
-		&i.BucketRevision,
-		&i.ObservedThrough,
-		&i.ConnectionAttempts,
-		&i.PolicyDenials,
-		&i.CapacityDenials,
-		&i.VisitorStreamOpenFailures,
-		&i.SuccessfulStreams,
-		&i.ConnectionNanoseconds,
-		&i.IngressBytes,
-		&i.EgressBytes,
-		&i.HistogramData,
-		&i.Finalized,
-		&i.Complete,
-		&i.FinalizedAt,
-		&i.UpdatedAt,
-	)
+	var i ApplyIngressUsageReportRow
+	err := row.Scan(&i.ReportInserted, &i.BucketUpdated, &i.PolicyDenialsUpdated)
 	return i, err
-}
-
-const applyRouteSessionPolicyDenials = `-- name: ApplyRouteSessionPolicyDenials :one
-UPDATE control.route_sessions
-SET policy_denials = policy_denials + $1::bigint
-WHERE route_id = $2
-  AND route_version = $3
-  AND policy_denials <= 9223372036854775807 - $1::bigint
-RETURNING policy_denials
-`
-
-type ApplyRouteSessionPolicyDenialsParams struct {
-	PolicyDenials int64
-	RouteID       string
-	RouteVersion  int64
-}
-
-func (q *Queries) ApplyRouteSessionPolicyDenials(ctx context.Context, arg ApplyRouteSessionPolicyDenialsParams) (int64, error) {
-	row := q.db.QueryRow(ctx, applyRouteSessionPolicyDenials, arg.PolicyDenials, arg.RouteID, arg.RouteVersion)
-	var policy_denials int64
-	err := row.Scan(&policy_denials)
-	return policy_denials, err
 }
 
 const claimRouteUsageDeliveries = `-- name: ClaimRouteUsageDeliveries :many
@@ -509,60 +558,6 @@ func (q *Queries) GetIngressUsageReport(ctx context.Context, arg GetIngressUsage
 	return i, err
 }
 
-const getLatestIngressUsageReport = `-- name: GetLatestIngressUsageReport :one
-SELECT report_id, ingress_id, ingress_run_id, route_id, route_version, bucket_start, bucket_end, observed_through, report_revision, connection_attempts, policy_denials, capacity_denials, visitor_stream_open_failures, successful_streams, connection_nanoseconds, ingress_bytes, egress_bytes, histogram_data, final, received_at
-FROM control.ingress_usage_reports
-WHERE ingress_id = $1
-  AND ingress_run_id = $2
-  AND route_id = $3
-  AND route_version = $4
-  AND bucket_start = $5
-ORDER BY report_revision DESC
-LIMIT 1
-`
-
-type GetLatestIngressUsageReportParams struct {
-	IngressID    string
-	IngressRunID string
-	RouteID      string
-	RouteVersion int64
-	BucketStart  pgtype.Timestamptz
-}
-
-func (q *Queries) GetLatestIngressUsageReport(ctx context.Context, arg GetLatestIngressUsageReportParams) (ControlIngressUsageReport, error) {
-	row := q.db.QueryRow(ctx, getLatestIngressUsageReport,
-		arg.IngressID,
-		arg.IngressRunID,
-		arg.RouteID,
-		arg.RouteVersion,
-		arg.BucketStart,
-	)
-	var i ControlIngressUsageReport
-	err := row.Scan(
-		&i.ReportID,
-		&i.IngressID,
-		&i.IngressRunID,
-		&i.RouteID,
-		&i.RouteVersion,
-		&i.BucketStart,
-		&i.BucketEnd,
-		&i.ObservedThrough,
-		&i.ReportRevision,
-		&i.ConnectionAttempts,
-		&i.PolicyDenials,
-		&i.CapacityDenials,
-		&i.VisitorStreamOpenFailures,
-		&i.SuccessfulStreams,
-		&i.ConnectionNanoseconds,
-		&i.IngressBytes,
-		&i.EgressBytes,
-		&i.HistogramData,
-		&i.Final,
-		&i.ReceivedAt,
-	)
-	return i, err
-}
-
 const getRouteUsageBucketByID = `-- name: GetRouteUsageBucketByID :one
 SELECT bucket_id, route_id, route_version, team_id, acting_identity_id, bucket_start, bucket_end, bucket_revision, observed_through, connection_attempts, policy_denials, capacity_denials, visitor_stream_open_failures, successful_streams, connection_nanoseconds, ingress_bytes, egress_bytes, histogram_data, finalized, complete, finalized_at, updated_at
 FROM control.route_usage_buckets
@@ -645,123 +640,6 @@ func (q *Queries) GetRouteUsageBucketForUpdate(ctx context.Context, arg GetRoute
 	return i, err
 }
 
-const insertIngressUsageReport = `-- name: InsertIngressUsageReport :one
-INSERT INTO control.ingress_usage_reports (
-    ingress_id,
-    ingress_run_id,
-    route_id,
-    route_version,
-    bucket_start,
-    bucket_end,
-    observed_through,
-    report_revision,
-    connection_attempts,
-    policy_denials,
-    capacity_denials,
-    visitor_stream_open_failures,
-    successful_streams,
-    connection_nanoseconds,
-    ingress_bytes,
-    egress_bytes,
-    histogram_data,
-    final,
-    received_at
-) VALUES (
-    $1,
-    $2,
-    $3,
-    $4,
-    $5,
-    $6,
-    $7,
-    $8,
-    $9,
-    $10,
-    $11,
-    $12,
-    $13,
-    $14,
-    $15,
-    $16,
-    $17,
-    $18,
-    $19
-)
-ON CONFLICT (ingress_id, ingress_run_id, route_id, route_version, bucket_start, report_revision)
-DO NOTHING
-RETURNING report_id, ingress_id, ingress_run_id, route_id, route_version, bucket_start, bucket_end, observed_through, report_revision, connection_attempts, policy_denials, capacity_denials, visitor_stream_open_failures, successful_streams, connection_nanoseconds, ingress_bytes, egress_bytes, histogram_data, final, received_at
-`
-
-type InsertIngressUsageReportParams struct {
-	IngressID                 string
-	IngressRunID              string
-	RouteID                   string
-	RouteVersion              int64
-	BucketStart               pgtype.Timestamptz
-	BucketEnd                 pgtype.Timestamptz
-	ObservedThrough           pgtype.Timestamptz
-	ReportRevision            int64
-	ConnectionAttempts        int64
-	PolicyDenials             int64
-	CapacityDenials           int64
-	VisitorStreamOpenFailures int64
-	SuccessfulStreams         int64
-	ConnectionNanoseconds     int64
-	IngressBytes              int64
-	EgressBytes               int64
-	HistogramData             []byte
-	Final                     bool
-	ReceivedAt                pgtype.Timestamptz
-}
-
-func (q *Queries) InsertIngressUsageReport(ctx context.Context, arg InsertIngressUsageReportParams) (ControlIngressUsageReport, error) {
-	row := q.db.QueryRow(ctx, insertIngressUsageReport,
-		arg.IngressID,
-		arg.IngressRunID,
-		arg.RouteID,
-		arg.RouteVersion,
-		arg.BucketStart,
-		arg.BucketEnd,
-		arg.ObservedThrough,
-		arg.ReportRevision,
-		arg.ConnectionAttempts,
-		arg.PolicyDenials,
-		arg.CapacityDenials,
-		arg.VisitorStreamOpenFailures,
-		arg.SuccessfulStreams,
-		arg.ConnectionNanoseconds,
-		arg.IngressBytes,
-		arg.EgressBytes,
-		arg.HistogramData,
-		arg.Final,
-		arg.ReceivedAt,
-	)
-	var i ControlIngressUsageReport
-	err := row.Scan(
-		&i.ReportID,
-		&i.IngressID,
-		&i.IngressRunID,
-		&i.RouteID,
-		&i.RouteVersion,
-		&i.BucketStart,
-		&i.BucketEnd,
-		&i.ObservedThrough,
-		&i.ReportRevision,
-		&i.ConnectionAttempts,
-		&i.PolicyDenials,
-		&i.CapacityDenials,
-		&i.VisitorStreamOpenFailures,
-		&i.SuccessfulStreams,
-		&i.ConnectionNanoseconds,
-		&i.IngressBytes,
-		&i.EgressBytes,
-		&i.HistogramData,
-		&i.Final,
-		&i.ReceivedAt,
-	)
-	return i, err
-}
-
 const insertRouteUsageDelivery = `-- name: InsertRouteUsageDelivery :one
 INSERT INTO control.route_usage_deliveries (
     bucket_id,
@@ -819,6 +697,100 @@ func (q *Queries) InsertRouteUsageDelivery(ctx context.Context, arg InsertRouteU
 	return i, err
 }
 
+const listLatestIngressUsageReports = `-- name: ListLatestIngressUsageReports :many
+WITH requested AS (
+    SELECT DISTINCT unnest($3::text[]) AS route_id,
+                    unnest($4::bigint[]) AS route_version,
+                    unnest($5::timestamptz[]) AS bucket_start
+)
+SELECT reports.route_id, reports.route_version, reports.bucket_start, reports.bucket_end,
+       reports.observed_through, reports.report_revision, reports.connection_attempts,
+       reports.policy_denials, reports.capacity_denials, reports.visitor_stream_open_failures,
+       reports.successful_streams, reports.connection_nanoseconds, reports.ingress_bytes,
+       reports.egress_bytes, reports.final
+FROM requested
+CROSS JOIN LATERAL (
+    SELECT history.report_id, history.ingress_id, history.ingress_run_id, history.route_id, history.route_version, history.bucket_start, history.bucket_end, history.observed_through, history.report_revision, history.connection_attempts, history.policy_denials, history.capacity_denials, history.visitor_stream_open_failures, history.successful_streams, history.connection_nanoseconds, history.ingress_bytes, history.egress_bytes, history.histogram_data, history.final, history.received_at FROM control.ingress_usage_reports AS history
+    WHERE history.ingress_id = $1
+      AND history.ingress_run_id = $2
+      AND history.route_id = requested.route_id
+      AND history.route_version = requested.route_version
+      AND history.bucket_start = requested.bucket_start
+    ORDER BY history.report_revision DESC
+    LIMIT 1
+) AS reports
+`
+
+type ListLatestIngressUsageReportsParams struct {
+	IngressID     string
+	IngressRunID  string
+	RouteIds      []string
+	RouteVersions []int64
+	BucketStarts  []pgtype.Timestamptz
+}
+
+type ListLatestIngressUsageReportsRow struct {
+	RouteID                   string
+	RouteVersion              int64
+	BucketStart               pgtype.Timestamptz
+	BucketEnd                 pgtype.Timestamptz
+	ObservedThrough           pgtype.Timestamptz
+	ReportRevision            int64
+	ConnectionAttempts        int64
+	PolicyDenials             int64
+	CapacityDenials           int64
+	VisitorStreamOpenFailures int64
+	SuccessfulStreams         int64
+	ConnectionNanoseconds     int64
+	IngressBytes              int64
+	EgressBytes               int64
+	Final                     bool
+}
+
+// The ingress/run guards serialize this source's append-only history. Fetch only
+// bounded metadata, not histogram blobs; exact replays still load their payload.
+func (q *Queries) ListLatestIngressUsageReports(ctx context.Context, arg ListLatestIngressUsageReportsParams) ([]ListLatestIngressUsageReportsRow, error) {
+	rows, err := q.db.Query(ctx, listLatestIngressUsageReports,
+		arg.IngressID,
+		arg.IngressRunID,
+		arg.RouteIds,
+		arg.RouteVersions,
+		arg.BucketStarts,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListLatestIngressUsageReportsRow
+	for rows.Next() {
+		var i ListLatestIngressUsageReportsRow
+		if err := rows.Scan(
+			&i.RouteID,
+			&i.RouteVersion,
+			&i.BucketStart,
+			&i.BucketEnd,
+			&i.ObservedThrough,
+			&i.ReportRevision,
+			&i.ConnectionAttempts,
+			&i.PolicyDenials,
+			&i.CapacityDenials,
+			&i.VisitorStreamOpenFailures,
+			&i.SuccessfulStreams,
+			&i.ConnectionNanoseconds,
+			&i.IngressBytes,
+			&i.EgressBytes,
+			&i.Final,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockRouteForUsage = `-- name: LockRouteForUsage :one
 SELECT id
 FROM control.routes
@@ -834,20 +806,28 @@ func (q *Queries) LockRouteForUsage(ctx context.Context, routeID string) (string
 }
 
 const lockRouteSessionForUsage = `-- name: LockRouteSessionForUsage :one
-SELECT id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
-FROM control.route_sessions
-WHERE route_id = $1
-  AND route_version = $2
-FOR UPDATE
+WITH route_guard AS MATERIALIZED (
+    SELECT routes.id FROM control.routes AS routes
+    WHERE routes.id = $2
+    FOR KEY SHARE
+)
+SELECT sessions.id, sessions.route_id, sessions.team_id, sessions.membership_id, sessions.acting_identity_id, sessions.route_version, sessions.idempotency_key, sessions.request_digest, sessions.session_token_id, sessions.session_token_digest, sessions.policy_revision, sessions.policy_denials, sessions.certificate_cache_key, sessions.certificate_scope, sessions.certificate_identifiers, sessions.certificate_challenge, sessions.state, sessions.created_at, sessions.last_heartbeat_at, sessions.publisher_expires_at, sessions.certificate_installed_at, sessions.certificate_issuance_id, sessions.certificate_not_after, sessions.ready_at, sessions.closed_at, sessions.close_reason, sessions.assignments_open
+FROM control.route_sessions AS sessions
+JOIN route_guard ON route_guard.id = sessions.route_id
+WHERE sessions.route_version = $1
+FOR UPDATE OF sessions
 `
 
 type LockRouteSessionForUsageParams struct {
-	RouteID      string
 	RouteVersion int64
+	RouteID      string
 }
 
+// Acquire the immutable route reference before the session, in one round trip.
+// Read the bucket in a LATER statement: a competing ingress may create it while
+// this statement waits for the session lock, after this statement's snapshot.
 func (q *Queries) LockRouteSessionForUsage(ctx context.Context, arg LockRouteSessionForUsageParams) (ControlRouteSession, error) {
-	row := q.db.QueryRow(ctx, lockRouteSessionForUsage, arg.RouteID, arg.RouteVersion)
+	row := q.db.QueryRow(ctx, lockRouteSessionForUsage, arg.RouteVersion, arg.RouteID)
 	var i ControlRouteSession
 	err := row.Scan(
 		&i.ID,

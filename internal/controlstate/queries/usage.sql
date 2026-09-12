@@ -33,16 +33,30 @@ ON CONFLICT (ingress_id, ingress_run_id) DO UPDATE SET
 WHERE control.ingress_usage_runs.ingress_lease_revision = EXCLUDED.ingress_lease_revision
 RETURNING *;
 
--- name: GetLatestIngressUsageReport :one
-SELECT *
-FROM control.ingress_usage_reports
-WHERE ingress_id = sqlc.arg(ingress_id)
-  AND ingress_run_id = sqlc.arg(ingress_run_id)
-  AND route_id = sqlc.arg(route_id)
-  AND route_version = sqlc.arg(route_version)
-  AND bucket_start = sqlc.arg(bucket_start)
-ORDER BY report_revision DESC
-LIMIT 1;
+-- name: ListLatestIngressUsageReports :many
+-- The ingress/run guards serialize this source's append-only history. Fetch only
+-- bounded metadata, not histogram blobs; exact replays still load their payload.
+WITH requested AS (
+    SELECT DISTINCT unnest(sqlc.arg(route_ids)::text[]) AS route_id,
+                    unnest(sqlc.arg(route_versions)::bigint[]) AS route_version,
+                    unnest(sqlc.arg(bucket_starts)::timestamptz[]) AS bucket_start
+)
+SELECT reports.route_id, reports.route_version, reports.bucket_start, reports.bucket_end,
+       reports.observed_through, reports.report_revision, reports.connection_attempts,
+       reports.policy_denials, reports.capacity_denials, reports.visitor_stream_open_failures,
+       reports.successful_streams, reports.connection_nanoseconds, reports.ingress_bytes,
+       reports.egress_bytes, reports.final
+FROM requested
+CROSS JOIN LATERAL (
+    SELECT history.* FROM control.ingress_usage_reports AS history
+    WHERE history.ingress_id = sqlc.arg(ingress_id)
+      AND history.ingress_run_id = sqlc.arg(ingress_run_id)
+      AND history.route_id = requested.route_id
+      AND history.route_version = requested.route_version
+      AND history.bucket_start = requested.bucket_start
+    ORDER BY history.report_revision DESC
+    LIMIT 1
+) AS reports;
 
 -- name: GetIngressUsageReport :one
 SELECT *
@@ -55,11 +69,19 @@ WHERE ingress_id = sqlc.arg(ingress_id)
   AND report_revision = sqlc.arg(report_revision);
 
 -- name: LockRouteSessionForUsage :one
-SELECT *
-FROM control.route_sessions
-WHERE route_id = sqlc.arg(route_id)
-  AND route_version = sqlc.arg(route_version)
-FOR UPDATE;
+-- Acquire the immutable route reference before the session, in one round trip.
+-- Read the bucket in a LATER statement: a competing ingress may create it while
+-- this statement waits for the session lock, after this statement's snapshot.
+WITH route_guard AS MATERIALIZED (
+    SELECT routes.id FROM control.routes AS routes
+    WHERE routes.id = sqlc.arg(route_id)
+    FOR KEY SHARE
+)
+SELECT sessions.*
+FROM control.route_sessions AS sessions
+JOIN route_guard ON route_guard.id = sessions.route_id
+WHERE sessions.route_version = sqlc.arg(route_version)
+FOR UPDATE OF sessions;
 
 -- name: LockRouteForUsage :one
 SELECT id
@@ -75,7 +97,12 @@ WHERE route_id = sqlc.arg(route_id)
   AND bucket_start = sqlc.arg(bucket_start)
 FOR UPDATE;
 
--- name: InsertIngressUsageReport :one
+-- name: ApplyIngressUsageReport :one
+-- The caller holds the ingress/run, route/session and existing bucket guards.
+-- Dependencies make the immutable report, aggregate delta and denial update
+-- one ordered write command. The caller checks insertion/aggregation and any
+-- nonzero denial delta, rolling back all writes if a required step was rejected.
+WITH report AS (
 INSERT INTO control.ingress_usage_reports (
     ingress_id,
     ingress_run_id,
@@ -119,9 +146,8 @@ INSERT INTO control.ingress_usage_reports (
 )
 ON CONFLICT (ingress_id, ingress_run_id, route_id, route_version, bucket_start, report_revision)
 DO NOTHING
-RETURNING *;
-
--- name: ApplyIngressUsageDelta :one
+RETURNING route_id, route_version
+), bucket AS (
 INSERT INTO control.route_usage_buckets (
     route_id,
     route_version,
@@ -152,22 +178,21 @@ SELECT
     sqlc.arg(bucket_start),
     sqlc.arg(bucket_end),
     sqlc.arg(observed_through),
-    sqlc.arg(connection_attempts),
-    sqlc.arg(policy_denials),
-    sqlc.arg(capacity_denials),
-    sqlc.arg(visitor_stream_open_failures),
-    sqlc.arg(successful_streams),
-    sqlc.arg(connection_nanoseconds),
-    sqlc.arg(ingress_bytes),
-    sqlc.arg(egress_bytes),
-    sqlc.arg(histogram_data),
+    sqlc.arg(delta_connection_attempts)::bigint,
+    sqlc.arg(delta_policy_denials)::bigint,
+    sqlc.arg(delta_capacity_denials)::bigint,
+    sqlc.arg(delta_visitor_stream_open_failures)::bigint,
+    sqlc.arg(delta_successful_streams)::bigint,
+    sqlc.arg(delta_connection_nanoseconds)::bigint,
+    sqlc.arg(delta_ingress_bytes)::bigint,
+    sqlc.arg(delta_egress_bytes)::bigint,
+    sqlc.arg(merged_histogram_data)::bytea,
     false,
     false,
     NULL,
-    sqlc.arg(updated_at)
+    sqlc.arg(received_at)
 FROM control.route_sessions AS sessions
-WHERE sessions.route_id = sqlc.arg(route_id)
-  AND sessions.route_version = sqlc.arg(route_version)
+JOIN report ON report.route_id = sessions.route_id AND report.route_version = sessions.route_version
 ON CONFLICT (route_id, route_version, bucket_start) DO UPDATE SET
     bucket_end = GREATEST(control.route_usage_buckets.bucket_end, EXCLUDED.bucket_end),
     bucket_revision = control.route_usage_buckets.bucket_revision + 1,
@@ -183,15 +208,20 @@ ON CONFLICT (route_id, route_version, bucket_start) DO UPDATE SET
     histogram_data = EXCLUDED.histogram_data,
     updated_at = EXCLUDED.updated_at
 WHERE NOT control.route_usage_buckets.finalized
-RETURNING *;
-
--- name: ApplyRouteSessionPolicyDenials :one
-UPDATE control.route_sessions
-SET policy_denials = policy_denials + sqlc.arg(policy_denials)::bigint
-WHERE route_id = sqlc.arg(route_id)
-  AND route_version = sqlc.arg(route_version)
-  AND policy_denials <= 9223372036854775807 - sqlc.arg(policy_denials)::bigint
-RETURNING policy_denials;
+RETURNING route_id, route_version
+), denials AS (
+UPDATE control.route_sessions AS sessions
+SET policy_denials = sessions.policy_denials + sqlc.arg(delta_policy_denials)::bigint
+FROM bucket
+WHERE sessions.route_id = bucket.route_id
+  AND sessions.route_version = bucket.route_version
+  AND sqlc.arg(delta_policy_denials)::bigint > 0
+  AND sessions.policy_denials <= 9223372036854775807 - sqlc.arg(delta_policy_denials)::bigint
+RETURNING sessions.id
+)
+SELECT EXISTS (SELECT 1 FROM report) AS report_inserted,
+       EXISTS (SELECT 1 FROM bucket) AS bucket_updated,
+       EXISTS (SELECT 1 FROM denials) AS policy_denials_updated;
 
 -- name: MarkIngressUsageRunReported :one
 UPDATE control.ingress_usage_runs AS runs

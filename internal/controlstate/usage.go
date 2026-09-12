@@ -113,6 +113,10 @@ func (d *Database) ReportIngressUsage(
 	sort.Slice(ordered, func(left, right int) bool {
 		return compareIngressUsageReports(ordered[left], ordered[right]) < 0
 	})
+	latest, err := loadIngressUsageHistory(ctx, queries, identity, ordered)
+	if err != nil {
+		return err
+	}
 	for _, report := range ordered {
 		if run.CoverageComplete && !batch.Complete {
 			return ErrIngressUsageReportStale
@@ -123,7 +127,7 @@ func (d *Database) ReportIngressUsage(
 		if report.ObservedThrough.After(lease.LeaseExpiresAt.Time) {
 			return ErrIngressUsageReportInvalid
 		}
-		if err := applyIngressUsageReport(ctx, queries, identity, report, receivedAt); err != nil {
+		if err := applyIngressUsageReport(ctx, queries, identity, report, receivedAt, latest); err != nil {
 			return err
 		}
 	}
@@ -146,6 +150,39 @@ func (d *Database) ReportIngressUsage(
 	return nil
 }
 
+type ingressUsageKey struct {
+	routeID      string
+	routeVersion int64
+	bucketStart  time.Time
+}
+
+type ingressUsageHistory map[ingressUsageKey]controlstatedb.ListLatestIngressUsageReportsRow
+
+func usageHistoryKey(routeID string, version int64, bucketStart time.Time) ingressUsageKey {
+	return ingressUsageKey{routeID, version, bucketStart.UTC().Truncate(time.Microsecond)}
+}
+
+func loadIngressUsageHistory(ctx context.Context, queries *controlstatedb.Queries, identity IngressLeaseIdentity, reports []IngressUsageReport) (ingressUsageHistory, error) {
+	latest := make(ingressUsageHistory, len(reports))
+	if len(reports) == 0 {
+		return latest, nil
+	}
+	params := controlstatedb.ListLatestIngressUsageReportsParams{IngressID: identity.IngressID, IngressRunID: identity.IngressRunID}
+	for _, report := range reports {
+		params.RouteIds = append(params.RouteIds, report.RouteID)
+		params.RouteVersions = append(params.RouteVersions, positive(report.RouteVersion))
+		params.BucketStarts = append(params.BucketStarts, timestamptz(report.BucketStart))
+	}
+	rows, err := queries.ListLatestIngressUsageReports(ctx, params)
+	if err != nil {
+		return nil, fmt.Errorf("controlstate: report ingress usage: read latest reports: %w", err)
+	}
+	for _, row := range rows {
+		latest[usageHistoryKey(row.RouteID, row.RouteVersion, row.BucketStart.Time)] = row
+	}
+	return latest, nil
+}
+
 // The caller holds the current ingress lease and usage-run guards, serializing
 // this run's append-only report history. Routes and runs are FK-protected and
 // sessions are retained, so replays need no route/session locks.
@@ -155,21 +192,16 @@ func applyIngressUsageReport(
 	identity IngressLeaseIdentity,
 	report IngressUsageReport,
 	receivedAt time.Time,
+	latest ingressUsageHistory,
 ) error {
 	routeVersion, _ := positiveInt64(report.RouteVersion)
 	reportRevision, _ := positiveInt64(report.ReportRevision)
-	key := controlstatedb.GetLatestIngressUsageReportParams{
-		IngressID: identity.IngressID, IngressRunID: identity.IngressRunID,
-		RouteID: report.RouteID, RouteVersion: routeVersion, BucketStart: timestamptz(report.BucketStart),
-	}
-	previous, err := queries.GetLatestIngressUsageReport(ctx, key)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return fmt.Errorf("controlstate: report ingress usage: read latest report: %w", err)
-	}
-	if err == nil && reportRevision <= previous.ReportRevision {
+	key := usageHistoryKey(report.RouteID, routeVersion, report.BucketStart)
+	previous, exists := latest[key]
+	if exists && reportRevision <= previous.ReportRevision {
 		stored, err := queries.GetIngressUsageReport(ctx, controlstatedb.GetIngressUsageReportParams{
-			IngressID: key.IngressID, IngressRunID: key.IngressRunID, RouteID: key.RouteID,
-			RouteVersion: key.RouteVersion, BucketStart: key.BucketStart, ReportRevision: reportRevision,
+			IngressID: identity.IngressID, IngressRunID: identity.IngressRunID, RouteID: report.RouteID,
+			RouteVersion: routeVersion, BucketStart: timestamptz(report.BucketStart), ReportRevision: reportRevision,
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrIngressUsageReportStale
@@ -182,18 +214,13 @@ func applyIngressUsageReport(
 		}
 		return nil
 	}
-	if err == nil && (previous.Final || !previous.BucketEnd.Valid || !previous.BucketEnd.Time.Equal(report.BucketEnd)) {
+	if exists && (previous.Final || !previous.BucketEnd.Valid || !previous.BucketEnd.Time.Equal(report.BucketEnd)) {
 		return ErrIngressUsageReportConflict
 	}
 
-	delta, err := ingressUsageDelta(previous, report, errors.Is(err, pgx.ErrNoRows))
+	delta, err := ingressUsageDelta(previous, report, !exists)
 	if err != nil {
 		return err
-	}
-	if _, err := queries.LockRouteForUsage(ctx, report.RouteID); errors.Is(err, pgx.ErrNoRows) {
-		return ErrIngressUsageRouteNotFound
-	} else if err != nil {
-		return fmt.Errorf("controlstate: report ingress usage: lock route: %w", err)
 	}
 	if _, err := queries.LockRouteSessionForUsage(ctx, controlstatedb.LockRouteSessionForUsageParams{
 		RouteID: report.RouteID, RouteVersion: routeVersion,
@@ -217,32 +244,34 @@ func applyIngressUsageReport(
 	if err != nil {
 		return err
 	}
-	if _, err := queries.InsertIngressUsageReport(ctx, ingressUsageReportParams(identity, report, receivedAt)); errors.Is(err, pgx.ErrNoRows) {
+	params := ingressUsageReportParams(identity, report, receivedAt)
+	params.DeltaConnectionAttempts, params.DeltaPolicyDenials = delta.connectionAttempts, delta.policyDenials
+	params.DeltaCapacityDenials, params.DeltaVisitorStreamOpenFailures = delta.capacityDenials, delta.visitorStreamOpenFailures
+	params.DeltaSuccessfulStreams, params.DeltaConnectionNanoseconds = delta.successfulStreams, delta.connectionNanoseconds
+	params.DeltaIngressBytes, params.DeltaEgressBytes = delta.ingressBytes, delta.egressBytes
+	params.MergedHistogramData = mergedHistogramData
+	applied, err := queries.ApplyIngressUsageReport(ctx, params)
+	if err != nil {
+		return fmt.Errorf("controlstate: report ingress usage: apply report: %w", err)
+	}
+	if !applied.ReportInserted {
 		return ErrIngressUsageReportConflict
-	} else if err != nil {
-		return fmt.Errorf("controlstate: report ingress usage: insert report: %w", err)
 	}
-	if _, err := queries.ApplyIngressUsageDelta(ctx, controlstatedb.ApplyIngressUsageDeltaParams{
-		BucketStart: timestamptz(report.BucketStart), BucketEnd: timestamptz(report.BucketEnd),
-		ObservedThrough: timestamptz(report.ObservedThrough), ConnectionAttempts: delta.connectionAttempts,
-		PolicyDenials: delta.policyDenials, CapacityDenials: delta.capacityDenials,
-		VisitorStreamOpenFailures: delta.visitorStreamOpenFailures, SuccessfulStreams: delta.successfulStreams,
-		ConnectionNanoseconds: delta.connectionNanoseconds, IngressBytes: delta.ingressBytes,
-		EgressBytes: delta.egressBytes, HistogramData: mergedHistogramData, UpdatedAt: timestamptz(receivedAt),
-		RouteID: report.RouteID, RouteVersion: routeVersion,
-	}); errors.Is(err, pgx.ErrNoRows) {
+	if !applied.BucketUpdated {
 		return ErrRouteUsageBucketFinalized
-	} else if err != nil {
-		return fmt.Errorf("controlstate: report ingress usage: apply aggregate delta: %w", err)
 	}
-	if delta.policyDenials != 0 {
-		if _, err := queries.ApplyRouteSessionPolicyDenials(ctx, controlstatedb.ApplyRouteSessionPolicyDenialsParams{
-			PolicyDenials: delta.policyDenials, RouteID: report.RouteID, RouteVersion: routeVersion,
-		}); errors.Is(err, pgx.ErrNoRows) {
-			return errors.New("controlstate: route-session policy denial counter is exhausted")
-		} else if err != nil {
-			return fmt.Errorf("controlstate: report ingress usage: apply route-session policy denials: %w", err)
-		}
+	if delta.policyDenials != 0 && !applied.PolicyDenialsUpdated {
+		return errors.New("controlstate: route-session policy denial counter is exhausted")
+	}
+	// Later entries in the same page may advance or replay this key again.
+	// Match PostgreSQL timestamp precision, just as a fresh read would.
+	latest[key] = controlstatedb.ListLatestIngressUsageReportsRow{
+		RouteID: report.RouteID, RouteVersion: routeVersion, BucketStart: timestamptz(key.bucketStart),
+		BucketEnd: timestamptz(report.BucketEnd.Truncate(time.Microsecond)), ObservedThrough: timestamptz(report.ObservedThrough.Truncate(time.Microsecond)),
+		ReportRevision: reportRevision, ConnectionAttempts: params.ConnectionAttempts, PolicyDenials: params.PolicyDenials,
+		CapacityDenials: params.CapacityDenials, VisitorStreamOpenFailures: params.VisitorStreamOpenFailures,
+		SuccessfulStreams: params.SuccessfulStreams, ConnectionNanoseconds: params.ConnectionNanoseconds,
+		IngressBytes: params.IngressBytes, EgressBytes: params.EgressBytes, Final: report.Final,
 	}
 	return nil
 }
@@ -253,7 +282,7 @@ type ingressUsageCounters struct {
 }
 
 func ingressUsageDelta(
-	previous controlstatedb.ControlIngressUsageReport,
+	previous controlstatedb.ListLatestIngressUsageReportsRow,
 	report IngressUsageReport,
 	first bool,
 ) (ingressUsageCounters, error) {
@@ -393,9 +422,9 @@ func ingressUsageReportParams(
 	identity IngressLeaseIdentity,
 	report IngressUsageReport,
 	receivedAt time.Time,
-) controlstatedb.InsertIngressUsageReportParams {
+) controlstatedb.ApplyIngressUsageReportParams {
 	counters, _ := ingressUsageCountersFromReport(report)
-	return controlstatedb.InsertIngressUsageReportParams{
+	return controlstatedb.ApplyIngressUsageReportParams{
 		IngressID: identity.IngressID, IngressRunID: identity.IngressRunID,
 		RouteID: report.RouteID, RouteVersion: positive(report.RouteVersion),
 		BucketStart: timestamptz(report.BucketStart), BucketEnd: timestamptz(report.BucketEnd),

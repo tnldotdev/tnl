@@ -18,8 +18,11 @@ type Querier interface {
 	// A crash in between retains excess data, never an advertised but missing suffix.
 	AdvanceIngressRoutingRetentionFloor(ctx context.Context, revision int64) (int64, error)
 	AdvanceTeamPolicyRevision(ctx context.Context, arg AdvanceTeamPolicyRevisionParams) (int64, error)
-	ApplyIngressUsageDelta(ctx context.Context, arg ApplyIngressUsageDeltaParams) (ControlRouteUsageBucket, error)
-	ApplyRouteSessionPolicyDenials(ctx context.Context, arg ApplyRouteSessionPolicyDenialsParams) (int64, error)
+	// The caller holds the ingress/run, route/session and existing bucket guards.
+	// Dependencies make the immutable report, aggregate delta and denial update
+	// one ordered write command. The caller checks insertion/aggregation and any
+	// nonzero denial delta, rolling back all writes if a required step was rejected.
+	ApplyIngressUsageReport(ctx context.Context, arg ApplyIngressUsageReportParams) (ApplyIngressUsageReportRow, error)
 	BeginAdminRelayDrain(ctx context.Context, arg BeginAdminRelayDrainParams) (BeginAdminRelayDrainRow, error)
 	BeginDNSAuthorityRelease(ctx context.Context, arg BeginDNSAuthorityReleaseParams) (ControlDnsAuthority, error)
 	BeginIngressDrain(ctx context.Context, arg BeginIngressDrainParams) (ControlIngressLease, error)
@@ -93,7 +96,6 @@ type Querier interface {
 	GetIngressLease(ctx context.Context, arg GetIngressLeaseParams) (ControlIngressLease, error)
 	GetIngressUsageReport(ctx context.Context, arg GetIngressUsageReportParams) (ControlIngressUsageReport, error)
 	GetInvitationByIdempotency(ctx context.Context, arg GetInvitationByIdempotencyParams) (GetInvitationByIdempotencyRow, error)
-	GetLatestIngressUsageReport(ctx context.Context, arg GetLatestIngressUsageReportParams) (ControlIngressUsageReport, error)
 	GetOpenRouteRecoveryEpisode(ctx context.Context, arg GetOpenRouteRecoveryEpisodeParams) (ControlRouteRecoveryEpisode, error)
 	GetOpenRouteSession(ctx context.Context, routeID string) (ControlRouteSession, error)
 	GetOrganizationTeamByIdempotency(ctx context.Context, arg GetOrganizationTeamByIdempotencyParams) (GetOrganizationTeamByIdempotencyRow, error)
@@ -132,7 +134,6 @@ type Querier interface {
 	// with earlier events already hold it. Keep the lock through transaction commit.
 	InsertFinalIngressRoutingTableEvent(ctx context.Context, arg InsertFinalIngressRoutingTableEventParams) (int64, error)
 	InsertIngressRoutingTableEvent(ctx context.Context, arg InsertIngressRoutingTableEventParams) (int64, error)
-	InsertIngressUsageReport(ctx context.Context, arg InsertIngressUsageReportParams) (ControlIngressUsageReport, error)
 	InsertRelayCertificateOrder(ctx context.Context, arg InsertRelayCertificateOrderParams) (ControlRelayCertificateOrder, error)
 	InsertRoute(ctx context.Context, arg InsertRouteParams) (ControlRoute, error)
 	InsertRouteCreateAuditEvent(ctx context.Context, arg InsertRouteCreateAuditEventParams) error
@@ -156,6 +157,9 @@ type Querier interface {
 	// Group only entry keys and revisions across history, then fetch the selected
 	// payloads. Filter after selection so tombstones/expiry cannot revive old rows.
 	ListIngressRoutingTableSnapshot(ctx context.Context, arg ListIngressRoutingTableSnapshotParams) ([]ControlIngressRoutingTableEvent, error)
+	// The ingress/run guards serialize this source's append-only history. Fetch only
+	// bounded metadata, not histogram blobs; exact replays still load their payload.
+	ListLatestIngressUsageReports(ctx context.Context, arg ListLatestIngressUsageReportsParams) ([]ListLatestIngressUsageReportsRow, error)
 	ListMaintenanceControls(ctx context.Context) ([]ControlMaintenanceControl, error)
 	ListRelayDNSChallengePresentations(ctx context.Context, tlsServerName string) ([]ListRelayDNSChallengePresentationsRow, error)
 	ListRelayServiceAssignmentTotals(ctx context.Context) ([]ControlRelayServiceAssignmentTotal, error)
@@ -210,6 +214,9 @@ type Querier interface {
 	LockRouteRecoveryEpisode(ctx context.Context, recoveryEpisodeID int64) (ControlRouteRecoveryEpisode, error)
 	LockRouteSession(ctx context.Context, routeSessionID string) (ControlRouteSession, error)
 	LockRouteSessionCreationControl(ctx context.Context) (bool, error)
+	// Acquire the immutable route reference before the session, in one round trip.
+	// Read the bucket in a LATER statement: a competing ingress may create it while
+	// this statement waits for the session lock, after this statement's snapshot.
 	LockRouteSessionForUsage(ctx context.Context, arg LockRouteSessionForUsageParams) (ControlRouteSession, error)
 	LockTeamActorContext(ctx context.Context, arg LockTeamActorContextParams) (LockTeamActorContextRow, error)
 	LockTeamDomain(ctx context.Context, arg LockTeamDomainParams) (LockTeamDomainRow, error)
