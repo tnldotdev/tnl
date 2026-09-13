@@ -36,6 +36,7 @@ type splitPublishFixture struct {
 type splitPublishOptions struct {
 	dns                  *integrationRoute53
 	configureControlHTTP func(*http.Client)
+	configureProcess     func(*tnldconfig.Config)
 }
 
 func newSplitPublishFixture(t *testing.T, hostnameLabel string) *splitPublishFixture {
@@ -92,6 +93,9 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 		controlConfig.Route53ServerZoneID = options.dns.zoneID
 		controlConfig.IngressIPv4Addresses = []string{"127.0.0.1"}
 	}
+	if options.configureProcess != nil {
+		options.configureProcess(&controlConfig)
+	}
 	if err := controlConfig.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +115,10 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 		relayAConfig.ControlRetryInterval = 100 * time.Millisecond
 		relayBConfig.ControlRetryInterval = 100 * time.Millisecond
 	}
-	for _, cfg := range []tnldconfig.Config{ingressConfig, relayAConfig, relayBConfig} {
+	for _, cfg := range []*tnldconfig.Config{&ingressConfig, &relayAConfig, &relayBConfig} {
+		if options.configureProcess != nil {
+			options.configureProcess(cfg)
+		}
 		if err := cfg.Validate(); err != nil {
 			t.Fatal(err)
 		}

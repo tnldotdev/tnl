@@ -223,6 +223,43 @@ tasks:
     cmds:
       - go test -v ./internal/controlstate -run="$TNL_TEST_LOAD_RUN" -count=1 -timeout=20m
 
+  go:test-runtime-load:
+    desc: Run real local visitor/shutdown load (2 CPU/1GiB test, 1 CPU/512MiB PostgreSQL)
+    vars:
+      ROUTES: '{{default "16" .ROUTES}}'
+      RPS: '{{default "20" .RPS}}'
+      SOURCES: '{{default "1" .SOURCES}}'
+      TRACE: '{{default "0" .TRACE}}'
+      RUNTIME_CPUS: '{{default "2" .RUNTIME_CPUS}}'
+      RUNTIME_MEMORY: '{{default "1g" .RUNTIME_MEMORY}}'
+      DATABASE_CPUS: '{{default "1" .DATABASE_CPUS}}'
+      DATABASE_MEMORY: '{{default "512m" .DATABASE_MEMORY}}'
+      DURATION: '{{default "30s" .DURATION}}'
+    env:
+      TNL_TEST_RUNTIME_ROUTES: "{{.ROUTES}}"
+      TNL_TEST_RUNTIME_RPS: "{{.RPS}}"
+      TNL_TEST_RUNTIME_SOURCES: "{{.SOURCES}}"
+      TNL_TEST_RUNTIME_TRACE: "{{.TRACE}}"
+      TNL_TEST_RUNTIME_CPUS: "{{.RUNTIME_CPUS}}"
+      TNL_TEST_RUNTIME_MEMORY: "{{.RUNTIME_MEMORY}}"
+      TNL_TEST_DATABASE_CPUS: "{{.DATABASE_CPUS}}"
+      TNL_TEST_DATABASE_MEMORY: "{{.DATABASE_MEMORY}}"
+      TNL_TEST_RUNTIME_DURATION: "{{.DURATION}}"
+    cmds:
+      - |
+        bash -euo pipefail -c '
+          compose() {
+            docker compose --ansi never --progress plain --file internal/tnldruntime/testdata/runtime-load.compose.yaml "$@"
+          }
+          cleanup() {
+            compose down --volumes --remove-orphans >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT HUP INT TERM
+          cleanup
+          compose run --rm build
+          compose up --abort-on-container-exit --exit-code-from test postgres test
+        '
+
   go:bench-fly:plan:
     desc: Expand and price a Fly benchmark without creating resources
     dotenv: [.env.bench]
