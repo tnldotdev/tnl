@@ -264,7 +264,9 @@ WITH candidate AS (
       )
       AND orders.available_at <= sqlc.arg(claimed_at)
       AND (orders.work_owner IS NULL OR orders.work_expires_at <= sqlc.arg(claimed_at))
-      -- ACME validation can begin only after every live ingress process has the challenge route.
+      -- Wait for this challenge's current forwarding projection, not unrelated
+      -- publications at the global head. Select the latest event before testing
+      -- kind/expiry so an older upsert cannot bypass a tombstone or expiration.
       AND (
           NOT EXISTS (
               SELECT 1
@@ -275,16 +277,29 @@ WITH candidate AS (
           )
           OR EXISTS (
               SELECT 1
-              FROM control.ingress_leases AS ingresses
-              WHERE ingresses.lease_expires_at > sqlc.arg(claimed_at)
-                AND NOT ingresses.draining
-          ) AND NOT EXISTS (
-              SELECT 1
-              FROM control.ingress_leases AS ingresses
-              CROSS JOIN control.ingress_routing_table_clock AS clock
-              WHERE ingresses.lease_expires_at > sqlc.arg(claimed_at)
-                AND NOT ingresses.draining
-                AND ingresses.routing_table_revision < clock.current_revision
+              FROM (
+                  SELECT events.routing_table_revision, events.event_kind, events.route_expires_at
+                  FROM control.ingress_routing_table_events AS events
+                  WHERE events.route_id = orders.route_id
+                    AND events.route_version = orders.route_version
+                    AND events.event_kind IN ('challenge_upsert', 'challenge_tombstone')
+                  ORDER BY events.routing_table_revision DESC
+                  LIMIT 1
+              ) AS challenge
+              WHERE challenge.event_kind = 'challenge_upsert'
+                AND challenge.route_expires_at > sqlc.arg(claimed_at)
+                AND EXISTS (
+                    SELECT 1
+                    FROM control.ingress_leases AS ingresses
+                    WHERE ingresses.lease_expires_at > sqlc.arg(claimed_at)
+                      AND NOT ingresses.draining
+                ) AND NOT EXISTS (
+                    SELECT 1
+                    FROM control.ingress_leases AS ingresses
+                    WHERE ingresses.lease_expires_at > sqlc.arg(claimed_at)
+                      AND NOT ingresses.draining
+                      AND ingresses.routing_table_revision < challenge.routing_table_revision
+                )
           )
       )
     ORDER BY orders.available_at, orders.id

@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 )
 
 func TestIntegrationACMEWorkWaitsForEveryLiveIngress(t *testing.T) {
@@ -18,6 +20,8 @@ func TestIntegrationACMEWorkWaitsForEveryLiveIngress(t *testing.T) {
 	t.Cleanup(database.Close)
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	seedACMERoutingBarrierOrder(t, database, now)
+	setACMERoutingBarrierRevision(t, database, 1, now)
+	assertACMEWorkAvailable(t, database, "no-ingress", now, false)
 
 	ingressA, err := database.RegisterIngress(t.Context(), IngressRegistration{
 		IngressID: "ingress_acme_a", IngressRunID: "run_acme_a", ProtocolVersion: 1, ConnectionCapacity: 10,
@@ -31,7 +35,6 @@ func TestIntegrationACMEWorkWaitsForEveryLiveIngress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	setACMERoutingBarrierRevision(t, database, 1, now)
 	assertACMEWorkAvailable(t, database, "before-ingress", now.Add(time.Millisecond), false)
 
 	ingressA = renewACMEBarrierIngress(t, database, ingressA, 1, now.Add(2*time.Millisecond), time.Minute)
@@ -127,12 +130,60 @@ func seedACMERoutingBarrierOrder(t *testing.T, database *Database, now time.Time
 
 func setACMERoutingBarrierRevision(t *testing.T, database *Database, revision int64, now time.Time) {
 	t.Helper()
-	if _, err := database.pool.Exec(t.Context(), `
-		UPDATE control.ingress_routing_table_clock
-		SET current_revision = $1, updated_at = $2
-		WHERE singleton = true
-	`, revision, now); err != nil {
-		t.Fatal(err)
+	// Each barrier advance represents an actual change to this challenge.
+	got, err := controlstatedb.New(database.pool).InsertFinalIngressRoutingTableEvent(t.Context(), controlstatedb.InsertFinalIngressRoutingTableEventParams{
+		EventKind: "challenge_upsert", RouteID: "route_acmebarrier", RouteVersion: 1,
+		CanonicalHostname: "route-acmebarrier.example.test", EntryRevision: revision,
+		Projection: []byte(`{}`), RouteExpiresAt: timestamptz(now.Add(time.Hour)),
+		CreatedAt: timestamptz(now), UpdatedAt: timestamptz(now),
+	})
+	if err != nil || got != revision {
+		t.Fatalf("publish challenge revision %d: got=%d error=%v", revision, got, err)
+	}
+}
+
+func TestIntegrationACMEWorkRequiresCurrentChallengeProjection(t *testing.T) {
+	for _, kind := range []string{"missing", "tombstone", "expired", "different_version", "retained"} {
+		t.Run(kind, func(t *testing.T) {
+			database, now := newControlStateIntegrationDatabase(t, "acme_projection")
+			seedACMERoutingBarrierOrder(t, database, now)
+			ingress := registerTestIngress(t, database, now)
+			setACMERoutingBarrierRevision(t, database, 1, now.Add(-time.Minute))
+			setACMERoutingBarrierRevision(t, database, 2, now)
+			renewACMEBarrierIngress(t, database, ingress, 2, now, time.Hour)
+			switch kind {
+			case "missing":
+				_, err := database.pool.Exec(t.Context(), `DELETE FROM control.ingress_routing_table_events`)
+				if err != nil {
+					t.Fatal(err)
+				}
+			case "different_version":
+				_, err := database.pool.Exec(t.Context(), `UPDATE control.ingress_routing_table_events SET route_version = 2`)
+				if err != nil {
+					t.Fatal(err)
+				}
+			case "tombstone":
+				_, err := database.pool.Exec(t.Context(), `UPDATE control.ingress_routing_table_events
+					SET event_kind = 'challenge_tombstone', route_expires_at = NULL WHERE routing_table_revision = 2`)
+				if err != nil {
+					t.Fatal(err)
+				}
+			case "expired":
+				_, err := database.pool.Exec(t.Context(), `UPDATE control.ingress_routing_table_events
+					SET route_expires_at = $1 WHERE routing_table_revision = 2`, now)
+				if err != nil {
+					t.Fatal(err)
+				}
+			case "retained":
+				if _, err := database.AdvanceIngressRoutingRetention(t.Context(), now.Add(time.Second)); err != nil {
+					t.Fatal(err)
+				}
+				if batch, err := database.PruneIngressRoutingHistory(t.Context(), 0); err != nil || batch.Deleted != 1 {
+					t.Fatalf("prune prior challenge: %+v error=%v", batch, err)
+				}
+			}
+			assertACMEWorkAvailable(t, database, kind, now, kind == "retained")
+		})
 	}
 }
 
@@ -158,10 +209,10 @@ func assertACMEWorkAvailable(t *testing.T, database *Database, worker string, no
 	t.Helper()
 	work, found, err := database.ClaimACMEOrderWork(t.Context(), worker, now, time.Minute)
 	if err != nil || found != want {
-		t.Fatalf("ACME work for %q = %#v, found %v, error %v; want found %v", worker, work, found, err, want)
+		t.Fatalf("ACME work for %q: issuance=%s found=%t error=%v; want found=%t", worker, work.ID, found, err, want)
 	}
 	if found && work.ID != "issuance_acme_barrier" {
-		t.Fatalf("ACME work for %q = %#v", worker, work)
+		t.Fatalf("ACME work for %q: unexpected issuance=%s", worker, work.ID)
 	}
 }
 

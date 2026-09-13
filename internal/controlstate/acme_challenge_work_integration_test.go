@@ -10,6 +10,69 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 )
 
+func TestIntegrationACMEChallengeIgnoresUnrelatedHeartbeats(t *testing.T) {
+	f := newRouteSessionFixture(t)
+	database, now := f.database, f.now
+	ingress := registerTestIngress(t, database, now)
+	// A second, fully ready route publishes genuine heartbeat projections.
+	seedControlRoute(t, database, now, "unrelated")
+	healthy := f
+	healthy.request.RouteID, healthy.request.TeamID = "route_unrelated", "team_unrelated"
+	healthy.request.ActingIdentityID, healthy.request.MembershipID = "identity_unrelated", "membership_unrelated"
+	healthy.request.CertificateCacheKey = "certificate_unrelated"
+	healthy.request.CertificateIdentifiers = []string{"route-unrelated.example.test"}
+	var err error
+	healthy.setup, err = database.CreateRouteSession(t.Context(), healthy.request, now, time.Minute, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readyTestSession(t, healthy)
+	claimTestConnection(t, f, 0, now)
+	prepared := createPlanIssuanceWork(t, database, now, f.authentication(), f.certificatePlan(), false, func(work *ACMEOrderWork) {
+		work.Authorizations[0].AuthorizationURL = "https://acme.example.test/authz/pending"
+		work.Authorizations[0].ChallengeURL = "https://acme.example.test/challenge/pending"
+	})
+	if _, err := database.MarkCertificateChallengeReady(t.Context(), prepared.ID, f.setup.RouteSessionToken, now); err != nil {
+		t.Fatal(err)
+	}
+	page, err := database.ReadIngressRoutingTableEvents(t.Context(), ingress.IngressLeaseIdentity, 0, 100, now)
+	if err != nil || len(page.Events) == 0 || page.Events[len(page.Events)-1].Kind != IngressChallengeUpsert {
+		t.Fatalf("challenge publication: %v", err)
+	}
+	renewACMEBarrierIngress(t, database, ingress, page.ThroughRevision, now, time.Hour)
+	for step := 1; step <= 3; step++ {
+		at := now.Add(time.Duration(step) * time.Second)
+		if _, err := database.HeartbeatRouteSession(t.Context(), healthy.authentication(), at, time.Minute, time.Minute); err != nil {
+			t.Fatal(err)
+		}
+		work, found, err := database.ClaimACMEOrderWork(t.Context(), "challenge-worker", at, time.Minute)
+		if err != nil || !found || work.ID != prepared.ID {
+			t.Fatalf("unrelated heartbeat %d blocked an acknowledged challenge: found=%t error=%v", step, found, err)
+		}
+		// Keep the authorization presented to exercise the next publication too.
+		if _, err := database.SaveACMEOrderWork(t.Context(), work, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Changes to the challenge's own forwarding projection still need acknowledgement.
+	at := now.Add(4 * time.Second)
+	if _, err := database.HeartbeatRouteSession(t.Context(), f.authentication(), at, time.Minute, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := database.ClaimACMEOrderWork(t.Context(), "before-new-projection", at, time.Minute); err != nil || found {
+		t.Fatalf("claimed before updated challenge was applied: found=%t error=%v", found, err)
+	}
+	page, err = database.ReadIngressRoutingTableEvents(t.Context(), ingress.IngressLeaseIdentity, page.ThroughRevision, 100, at)
+	if err != nil || len(page.Events) != 4 || page.Events[3].Kind != IngressChallengeUpsert {
+		t.Fatalf("heartbeat publications: events=%d error=%v", len(page.Events), err)
+	}
+	renewACMEBarrierIngress(t, database, ingress, page.ThroughRevision, at, time.Hour)
+	work, found, err := database.ClaimACMEOrderWork(t.Context(), "after-new-projection", at, time.Minute)
+	if err != nil || !found || work.ID != prepared.ID {
+		t.Fatalf("updated challenge was not claimable: found=%t error=%v", found, err)
+	}
+}
+
 func TestIntegrationACMEChallengeReadyRequeuesClaimedWork(t *testing.T) {
 	for _, nextWorker := range []string{"original", "replacement"} {
 		t.Run(nextWorker, func(t *testing.T) {
