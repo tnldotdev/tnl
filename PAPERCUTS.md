@@ -1,5 +1,21 @@
 # Papercuts
 
+- The provisioning regression's second certificate collided with the helper's fixed challenge URL. Give the pending order distinct authorization/challenge URLs; the original fixture failure and corrected pre-fix regression are both retained.
+
+- Runtime activation could wait an extra ingress renewal cycle because unrelated heartbeats advanced the global ACME acknowledgement barrier. Compare acknowledgements to the current challenge projection instead; the reproduced failure also shows publisher polling consuming the remaining readiness margin.
+
+- The local capacity test inherited ten-publisher relay limits, and its single-source 80/sec stream exhausted the normal 50/sec plus 200-burst limiter. Final trials use the documented production connection capacities and explicitly configured visitor sources without disabling source limiting; earlier failures remain recorded.
+
+- Real relay restart under active QUIC traffic reproduced a retained UDP socket after runtime shutdown. Own the QUIC transport/socket explicitly, stop accepting before drain, and close the transport/socket after drain so the same address can be rebound immediately.
+
+- Sustained runtime visitors hit EOF after the focused fixture's five-second relay expiry, before the normal fifteen-second publisher heartbeat refreshed its routing projection. Runtime load uses the production 30-second process leases and ten-second renewals; the failing accelerated-fixture run is retained.
+
+- The first runtime load probe assumed publisher transport was stored on route-session connections and used the wrong reservation-total column name. Ready events also omit transport, so the test now forces explicit QUIC/TLS-TCP cohorts; the stored reservation counter is `assignment_count`.
+
+- sqlc rejected the usage metadata query's multi-argument `unnest` despite PostgreSQL supporting it. Use parallel single-array `unnest` expressions with equal-length parameter arrays, and qualify the route ID in the materialized guard to avoid ambiguous-column inference.
+
+- The first fresh-usage cadence command duplicated the local PostgreSQL password segment and failed before setup. The corrected baseline keeps that failed invocation in a separate log and uses the standard disposable-server URL.
+
 - The post-retention republishing regression reused a stale authorized route revision, then collided with the certificate fixture's fixed challenge URLs. Reload the route mutation revision for the next session and reuse the earlier installed certificate through the production API.
 
 - Retention closeout documentation patches initially used context from the wrong documentation section and were rejected without changing files. Anchor each update to the current target file rather than adjacent observability notes.

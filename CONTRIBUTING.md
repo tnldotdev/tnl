@@ -186,6 +186,83 @@ the same accumulated-history fixture, including an empty eligible range and a
 full retention floor. Destructive EXPLAIN statements run inside rolled-back
 transactions, and the test verifies the event count afterward.
 
+`ROUTES=16 DELAY=10ms RUN='^TestProfileIngressUsage$'` isolates a 16-report usage
+page, its replay, and a cumulative update with the same two eight-connection
+pools. It logs production query/guard/operation histograms and verifies final
+accounting. Use it to separate sequential round-trip cost from the competing
+pool users and recovery burst in the cadence workload.
+
+### Bounded Shutdown Load
+
+`RUN='^TestLoadShutdown$'` closes half the ready sessions with 16 workers while
+48 workers heartbeat the other half, two ingress sources send cumulative usage
+pages and exact replays, and two readers consume routing events and renew leases.
+It uses the same two eight-connection pools. Each close has ten seconds starting
+when its worker takes the route; queued routes do not share an already-running
+close deadline. It then finishes accounting and closes the remaining sessions.
+
+Checks cover healthy-route survival, ordered tombstones, exact per-route usage,
+zero remaining active sessions/connections/reservations, and idempotent closure.
+Logs distinguish the overlapping shutdown phase, individual close duration, and
+the full workload including accounting completion and verification. This is an
+accelerated finite database workload with one-hour logical leases, not a soak or
+an end-to-end publisher test. For example:
+
+```console
+mise exec -- task go:test-load ROUTES=1000 DELAY=5ms RUN='^TestLoadShutdown$'
+```
+
+### Constrained Runtime Load
+
+`task go:test-runtime-load` runs local control, ingress, two relays, real publishers,
+Pebble, a local service, and fresh HTTPS visitor requests. Half the publishers use
+QUIC and half TLS/TCP. It measures steady traffic, relay runtime restart, and
+bounded publisher shutdown while visitors continue using the surviving routes.
+It also keeps up to eight HTTP streaming responses open during the relay restart.
+
+```console
+mise exec -- task go:test-runtime-load ROUTES=16 RPS=80 SOURCES=4 DURATION=30s
+mise exec -- task go:test-runtime-load ROUTES=16 RPS=80 SOURCES=4 DURATION=30s RUNTIME_CPUS=0.5 RUNTIME_MEMORY=128m DATABASE_CPUS=0.5 DATABASE_MEMORY=256m
+```
+
+`DURATION` is the minimum duration of each traffic phase (10s–2m), not the whole
+test; setup and repair can extend the total. Eight visitor workers offer the
+configured rate through a bounded queue. Missed scheduled requests fail the test,
+as do failed steady/post-repair/healthy-shutdown requests. Transient failures
+during relay restart are counted and reported. Each request verifies a 32KiB body
+and route TLS; successful-request latency samples are reported separately from
+failures. Visitor requests have five seconds and publisher stops ten seconds.
+
+The default limits are two CPUs/1GiB for the runtime container and one CPU/512MiB
+for PostgreSQL, with swap disabled. The build runs separately before measurement.
+All role instances, publishers, visitors, and the local service share one Go test
+process; Pebble is another process in that same runtime container. These are
+aggregate limits, not per-role production capacity. `RUNTIME_CPUS`,
+`RUNTIME_MEMORY`, `DATABASE_CPUS`, and `DATABASE_MEMORY` select other explicit caps.
+The task cleans its Compose containers, network, and volumes on exit.
+
+The load fixture uses normal 30-second process leases, ten-second renewals, and
+production connection/stream capacities. It retains a five-second relay drain,
+one-second publisher drain, one-second routing long poll, and 50ms control retry
+from the integration fixture. Relay restart is cancellation/drain, not an OS kill.
+Measurements distinguish stop initiation, runtime exit, and restoration of both
+publisher connections. Source limiting is active: `SOURCES` selects 1–8 distinct
+Linux loopback source addresses explicitly permitted by route IP policy. One
+source cannot sustain more than the normal 50 new connections/second after its
+200-connection burst is exhausted.
+
+This does not exercise public DNS, a public CA, external authority, separate role
+machines, WAN latency/loss, or production bandwidth pricing. Provisioning is real
+against Pebble and retains the existing 30-second readiness check; a larger trial
+can fail during activation before any visitor-capacity phase starts.
+
+Use `TRACE=1` when investigating provisioning. It logs explicit certificate HTTP
+response metadata and samples persisted order/challenge states every 250ms during
+activation, without credentials or challenge material. The sampler adds database
+work, so repeat capacity measurements with tracing disabled (the default).
+All runs check one CA order and one installed certificate issuance per route;
+activation timings distinguish total setup from each publisher's observed wait.
+
 ### JavaScript Package
 
 `pnpm test` and `pnpm typecheck` build through lifecycle hooks. Their `:ci`

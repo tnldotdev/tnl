@@ -83,6 +83,18 @@ immutable, and usage's `KEY SHARE` references must coexist with heartbeats.
 Route mutations still conflict, while overlapping usage pages cannot starve a
 heartbeat waiting for a stronger route-row lock.
 
+Usage pages hold the ingress/run guards while prefetching bounded latest-report
+metadata, then process reports in route/version/bucket/revision order. The
+page-local history advances after each successful fresh report, so multiple
+revisions of one key retain cumulative and replay semantics. Histogram payloads
+are fetched only for exact replay or the aggregate being updated.
+
+Fresh usage combines its route reference and session guards in one statement,
+with the route guard materialized first. The bucket read remains a later statement
+so it sees a bucket created by another ingress while the session lock was awaited.
+The immutable report insert, aggregate delta, and optional session denial update
+use one dependent write statement; rejected writes roll back the whole page.
+
 ## Routing History
 
 Control publishes a monotonic retained-after revision before removing routing
@@ -109,6 +121,14 @@ Publishers maintain two connections through different relay services. A route
 version becomes routable after its certificate is installed and both connections
 are ready. It can then remain routable with one connection while the publisher
 replaces the other.
+
+Before starting TLS-ALPN validation, control requires at least one live,
+non-draining ingress and acknowledgement from every such ingress of the latest
+challenge projection for the order's route version. Unrelated routing publications
+do not move that barrier. The latest challenge event is selected before checking
+its kind and expiration, so a tombstone or expired projection cannot expose an
+older upsert. Changes to the challenge's own forwarding projection require fresh
+acknowledgement; routing retention preserves the current challenge event.
 
 Publishers try QUIC first. After a short delay, they also try TLS/TCP with yamux
 and use the first transport accepted by the relay. Control manages the relay
