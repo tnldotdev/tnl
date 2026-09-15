@@ -65,24 +65,8 @@ func runDomainClaim(ctx context.Context, command domainClaimCommand, output, dia
 		clioutput.Field{Label: "state", Value: string(claimed.State)},
 		clioutput.Field{Label: "id", Value: claimed.Id},
 	)}
-	for _, record := range claimed.RequiredRecords {
-		blocks = append(blocks, clioutput.Section("DNS record", clioutput.Fields(
-			clioutput.Field{Label: "name", Value: record.Name},
-			clioutput.Field{Label: "type", Value: string(record.Type)},
-			clioutput.Field{Label: "value", Value: record.Value},
-		)))
-	}
-	state, footer := "claimed", ""
-	if len(claimed.RequiredRecords) != 0 {
-		state, footer = "verification required", "add the DNS records to continue"
-	}
-	if command.Default {
-		if footer == "" {
-			footer = "selected as the default domain"
-		} else {
-			footer = "add the DNS records; this domain will become the default"
-		}
-	}
+	blocks = append(blocks, domainDNSRecordBlocks(claimed.RequiredRecords)...)
+	state, footer := domainClaimPresentation(claimed, command.Default)
 	return writeHumanFrame(output, "tnl domain claim", state, footer, blocks...)
 }
 
@@ -102,13 +86,49 @@ func runDomainList(ctx context.Context, command domainListCommand, output, diagn
 		if domain.Id == current.team.DefaultDomainId {
 			title = "* " + title
 		}
-		blocks = append(blocks, clioutput.Section(title, clioutput.Fields(
+		details := []clioutput.Block{clioutput.Fields(
 			clioutput.Field{Label: "kind", Value: string(domain.Kind)},
 			clioutput.Field{Label: "state", Value: string(domain.State)},
 			clioutput.Field{Label: "id", Value: domain.Id},
-		)))
+		)}
+		details = append(details, domainDNSRecordBlocks(domain.RequiredRecords)...)
+		blocks = append(blocks, clioutput.Section(title, details...))
 	}
 	return writeHumanFrame(output, "tnl domain list", countState(len(blocks), "domain", "domains"), "* default", blocks...)
+}
+
+func domainDNSRecordBlocks(records []authorityv1.DNSRecord) []clioutput.Block {
+	blocks := make([]clioutput.Block, 0, len(records))
+	for _, record := range records {
+		blocks = append(blocks, clioutput.Section("DNS record", clioutput.Fields(
+			clioutput.Field{Label: "name", Value: record.Name},
+			clioutput.Field{Label: "type", Value: string(record.Type)},
+			clioutput.Field{Label: "value", Value: record.Value},
+		)))
+	}
+	return blocks
+}
+
+func domainClaimPresentation(domain authorityv1.Domain, makeDefault bool) (string, string) {
+	state, footer := string(domain.State), ""
+	if domain.State == authorityv1.DomainStatePending {
+		if len(domain.RequiredRecords) == 0 {
+			state, footer = "provisioning", "run tnl domain list to check DNS setup"
+			if makeDefault {
+				footer = "run tnl domain list; this domain will become the default"
+			}
+			return state, footer
+		}
+		state, footer = "verification required", "add the DNS records to continue"
+		if makeDefault {
+			footer = "add the DNS records; this domain will become the default"
+		}
+		return state, footer
+	}
+	if domain.State == authorityv1.DomainStateReady && makeDefault {
+		footer = "selected as the default domain"
+	}
+	return state, footer
 }
 
 func runDomainDefault(ctx context.Context, command domainDefaultCommand, output, diagnostics io.Writer) error {
