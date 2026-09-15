@@ -5,11 +5,11 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/alecthomas/kong"
+	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
@@ -33,8 +33,14 @@ export default {};`
 	if err := run(t.Context(), []string{"config", "path"}, &stdout, &stderr); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stdout.String(), "-- selected ") || !strings.Contains(stdout.String(), "tnl.config.ts") {
-		t.Fatalf("config path output = %q", stdout.String())
+	want, err := clioutput.Render(clioutput.Frame{
+		Command: "tnl config path", State: "selected", Blocks: []clioutput.Block{clioutput.Text(configPath)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stdout.String(); got != want {
+		t.Fatalf("config path output = %q, want %q", got, want)
 	}
 	if _, err := os.Stat(markerPath); !os.IsNotExist(err) {
 		t.Fatalf("config path evaluated tnl.config.ts: %v", err)
