@@ -130,108 +130,26 @@ files are available under `/licenses/tnl` in the image filesystem.
 
 ## Server Configuration
 
-`TNLD_SERVER_DOMAIN` is the infrastructure DNS suffix used to derive control,
-ingress, and relay hostnames. `TNLD_MANAGED_DEPLOYMENT_DOMAIN` independently
-defines public route namespaces. Both must be lowercase canonical DNS names
-without trailing dots.
-
-Set `TNLD_MODE` to `standalone`, `control`, `ingress`, or `relay`. Standalone and
-control require the pooled runtime `TNLD_DATABASE_URL`. Ingress and relay are
-stateless, register through the cluster-authenticated private control API, and
-must not receive database credentials. Run `tnld migrate` separately with the direct
-`TNLD_DATABASE_DIRECT_URL`; serving processes never apply migrations.
-
-Generate the bootstrap credential with `tnld login-token`, provide it as
-`TNLD_LOGIN_TOKEN` to control and standalone processes, and use `tnl login` to
-save a revocable control session. Rotating the configured token invalidates
-control sessions issued from the previous token.
-
-`TNLD_ACCESS_TOKEN_LIFETIME` controls rotating access tokens from five minutes
-through 30 days and defaults to one hour. `TNLD_REFRESH_TOKEN_LIFETIME` controls
-the fixed absolute session lifetime through 365 days and defaults to 30 days.
-Existing control sessions retain their stored absolute expiry.
-
-Control and standalone obtain public control certificates through ACME and do
-not require certificate files. Standalone also obtains its exact physical relay
-certificate automatically. Split ingress and relay processes use the control
-hostname, cluster secret, and process identity; relay additionally requires its
-relay service, public relay address, and internal relay address. Control issues
-exact WebPKI relay certificates through DNS-01 when
-`TNLD_ROUTE53_SERVER_ZONE_ID` is configured. Review the matching release's
-[self-hosting guide](SELF-HOSTING.md) before recreating containers.
+Use the matching release's [self-hosting guide](SELF-HOSTING.md) for required
+settings, secret ownership, deployment, and current capability limitations.
+Keep production images digest-pinned. CI publishes artifacts but does not
+deploy production.
 
 ## PostgreSQL Backup
 
-Use the PostgreSQL platform's supported physical or logical backup tooling. The
-following logical-backup example requires a direct URL whose role can read all
-tnl schemas:
-
-```console
-umask 077
-mkdir -p backups
-pg_dump --format=custom \
-  --file="backups/tnl-$(date -u +%Y%m%d%H%M%S).dump" \
-  "$TNLD_DATABASE_DIRECT_URL"
-```
-
-Retain the matching `tnld` version and schema version with the backup. Encrypt
-backups and restrict access because PostgreSQL contains identity, route,
-certificate, session, encrypted ACME, and relay transport key state. Back up the
-deployment secret store separately; it owns database credentials, the bootstrap
-management token, storage and cluster secrets, and optional DNS or static public
-TLS credentials.
-
-Test restoration into a new disposable database, never over the live database:
-
-```console
-createdb tnl_restore_test
-pg_restore --exit-on-error --no-owner \
-  --dbname=tnl_restore_test \
-  backups/tnl-YYYYMMDDHHMMSS.dump
-```
-
-Start only an isolated test deployment against the restored database. Verify
-that its schema is accepted by the matching `tnld` version and exercise login,
-team/domain reads, route creation, and route-session establishment.
+Follow the [backup and restore procedure](SELF-HOSTING.md#backups). Preserve the
+matching binary/schema versions and deployment secrets alongside each backup.
 
 ## Upgrade
 
-1. Verify the new archives, image digest, signatures, SBOMs, and provenance.
-2. Record the running `tnld` version and take a tested PostgreSQL backup.
-3. Gate route creation, route-session creation, and certificate issuance when
-   the running version supports those maintenance controls.
-4. Pull the new digest and stop control and standalone processes. Ingress and
-   relay processes must not be given the migration URL.
-5. Run the new image's `tnld migrate` once with
-   `TNLD_DATABASE_DIRECT_URL`.
-6. Start controls or standalone processes, then roll ingress and relay services.
-   Inspect logs, public certificate expiry, leases, routing-table progress, and
-   ready publisher connections.
-7. Query `/v1/ready`, inspect control discovery, and publish a test route.
-8. Re-enable maintenance controls and upgrade `tnl` clients before normal use
-   resumes.
-
-Serving controls and standalone processes require the exact PostgreSQL schema
-version supported by the binary. They fail closed on an older or newer schema.
+After artifact verification, follow the [upgrade procedure](SELF-HOSTING.md#upgrade).
+Schema-changing upgrades require stopping control-side writers; serving processes
+require the exact supported schema.
 
 ## Rollback
 
-Never start an older control or standalone process against a database migrated
-for a newer release.
-To roll back after an upgrade:
-
-1. Stop the new controls, standalone processes, ingress, and relays.
-2. Preserve a diagnostic backup of the failed database.
-3. Restore the complete pre-upgrade PostgreSQL backup into a new database.
-4. Set `TNL_IMAGE` to the previous verified digest.
-5. Point the old control or standalone configuration at the restored database.
-6. Run `docker compose pull` and recreate the deployment without running the
-   newer migration image.
-7. Confirm `/v1/ready`, inspect control discovery and logs, and publish a test route.
-8. Restore matching previous `tnl` clients.
-
-If no pre-upgrade backup exists, stop rather than attempting an in-place schema
-downgrade.
+Follow the [rollback procedure](SELF-HOSTING.md#rollback). Do not run an older
+binary against a newer schema or attempt an in-place schema downgrade.
 
 ## Maintainer Runbook
 

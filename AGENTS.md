@@ -225,28 +225,15 @@ Frames follow this general form:
 # Development Workflow
 
 - Use the versions in `mise.toml`. Bootstrap with `mise trust`, `mise install`, then `mise exec -- pnpm install --frozen-lockfile`; run repository commands from the root through `mise exec --`.
-- The Taskfile injects `GOFLAGS=-tags=ts_omit_ssh`. Preserve it for direct Go commands, for example `mise exec -- env GOFLAGS=-tags=ts_omit_ssh go test ./internal/admin -run '^TestMaintenanceControlIsDurableAndAudited$'`.
-- The full local sequence is `task generate`, `task format`, `task generate-check`, `task format-check`, `task lint`, `task test`, `task go:test-race`, `task go:test-integration`, then `task build`, each through `mise exec --`.
-- `task generate-check` runs generation before checking the generated-directory diff; it is not read-only. `task format-check` applies Oxfmt to supported files across the repository.
-- `pnpm test` and `pnpm typecheck` build through lifecycle hooks. Their `:ci` variants and direct Vitest runs do not; build first. For example, run `mise exec -- pnpm --filter @tnldotdev/tnl build`, then `mise exec -- pnpm exec vitest run packages/tnl/vite.test.ts -t 'test name'`.
-- Integration tests are opt-in and excluded from routine Go test tasks. `task go:test-integration` requires Pebble from `mise install`, installed JavaScript dependencies, and built package output.
+- The Taskfile injects `GOFLAGS=-tags=ts_omit_ssh`. Preserve it for direct Go commands.
+- Follow [CONTRIBUTING.md](CONTRIBUTING.md) for the validation sequence, generated-source ownership, local stack, and test-tier prerequisites.
+- `task generate-check` regenerates files before comparing generated paths to `HEAD`; it is not read-only. `task format-check` is read-only.
+- `pnpm test` and `pnpm typecheck` build through lifecycle hooks. Their `:ci` variants and direct Vitest runs require an explicit build first.
 
 # Architecture
 
 - `cmd/tnl` is the client CLI, `cmd/tnld` is the server process, and `cmd/tnlbench` is the benchmark driver. Product releases contain `tnl` and `tnld`.
-- The runtime architecture and implementation sequence in [QUIC.md](https://md-roci.cormo-turtle.ts.net/git/personal/tnl/QUIC.md) are authoritative when another document conflicts with them.
-- A standalone `tnld` process composes control, ingress, and two logical relay services against PostgreSQL. Split deployments run a control service, an ingress service, and at least two independently addressable relay services.
-- Control serves the control API and separate cluster-authenticated APIs for ingress and relay processes. Ingress accepts public route TLS. Relay processes accept publisher connections over QUIC or TLS/TCP with yamux and accept internal forwarding from ingress.
-- `TNLD_SERVER_DOMAIN` is an infrastructure suffix independent from `TNLD_MANAGED_DEPLOYMENT_DOMAIN`. It derives `control.<server-domain>`, `ingress.<server-domain>`, and standalone or relay-service hostnames.
-- Split ingress and relay processes start with `TNLD_CLUSTER_SECRET`, register with their role-specific private control API, and remain authorized only while their exact process run ID and lease revision are current. Standalone uses direct in-process calls and does not require a cluster secret.
-- Control manages exact-hostname WebPKI certificates for relay services. Publishers verify them with system trust roots, while relays authenticate publishers using short-lived publisher connection credentials.
-- Control and standalone require a bootstrap management token and obtain their public control certificate automatically through ACME. Static public certificates are optional advanced overrides.
-- Control and standalone require `TNLD_STORAGE_KEY` for recoverable secrets in PostgreSQL. Ingress and relays never receive the storage key, hosted secret, PostgreSQL credentials, DNS credentials, or ACME account keys.
-- Route TLS terminates in the publisher. Ingress creates exactly one PROXY v2 metadata header, and relays preserve it unchanged to the publisher.
-- A route version first becomes routable after its certificate is installed and both publisher connections are ready on distinct relay services. After that first transition it remains routable with one ready publisher connection and replenishes toward two.
-- Ingress and relays never connect to PostgreSQL or own durable product state. Only ingress receives the ingress routing table; relays know only their own lease and locally connected publishers.
-- `packages/tnl` owns the browser-safe project runtime, private socket protocol, and framework integrations. Next.js and Vite inject generated metadata during plain development, configure the tunnel only under `tnl dev`, and remain inert during builds and previews; do not expose server access tokens to child development processes.
-- The hosted TypeScript application is maintained outside this repository.
+- Follow [Architecture](docs/ARCHITECTURE.md) for runtime invariants, trust boundaries, and package/API ownership. Operational procedures and current capability limitations belong in [Self-Hosting](docs/SELF-HOSTING.md).
 
 # Contracts and State
 

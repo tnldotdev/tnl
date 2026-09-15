@@ -1,8 +1,9 @@
 # Observability
 
-`tnld` exposes Prometheus metrics on the private address configured by
+`tnld` exposes process probes and Prometheus metrics on the private address configured by
 `TNLD_METRICS_LISTEN`. The default is `127.0.0.1:9090`; an empty value disables
-the listener.
+the entire listener, including its health and readiness endpoints. It serves
+plain HTTP and must remain private.
 
 The registry includes the standard Go and process collectors. Monitor
 file-descriptor pressure with `process_open_fds` and `process_max_fds`; tnl does
@@ -10,21 +11,31 @@ not duplicate those metrics under its own prefix.
 
 ## Service Health
 
-Probe the public control hostname over HTTPS:
+Choose the probe for the process being monitored:
+
+| Listener             | Path         | Success / failure   | Guarantee                                            |
+| -------------------- | ------------ | ------------------- | ---------------------------------------------------- |
+| Public control HTTPS | `/v1/health` | 200 JSON            | Control API is serving HTTP                          |
+| Public control HTTPS | `/v1/ready`  | 200 / 503 JSON      | PostgreSQL connection and supported schema are ready |
+| Private process HTTP | `/health`    | 204, empty          | This process's probe listener is serving             |
+| Private process HTTP | `/ready`     | 204 / 503, empty    | Role-specific runtime readiness below                |
+| Private process HTTP | `/metrics`   | Prometheus response | Metrics, not a readiness decision                    |
+
+For example, from the process host using the default private address:
 
 ```console
 curl --fail https://control.tnl.example.com/v1/health
 curl --fail https://control.tnl.example.com/v1/ready
+curl --fail http://127.0.0.1:9090/ready
 ```
 
-`/v1/health` reports whether the control API is serving. `/v1/ready` includes
-PostgreSQL schema readiness, public certificate availability, and required
-background dependencies. `tnl_info{mode}` identifies the role of each `tnld`
-process.
-
-Ingress readiness requires a current ingress lease and routing table plus a live
-public listener. Relay readiness requires a current relay lease, current relay
-transport certificate, and live publisher and internal-forwarding listeners.
+Private readiness checks the role's current state: control checks its listeners,
+PostgreSQL/schema, and managed public control certificate; ingress checks its
+lease, routing table, certificate readiness, and listener; relay checks its lease,
+certificate, and publisher/internal-forwarding listeners. Standalone checks all
+composed roles. These checks do not prove that every background operation or
+individual route/local service is healthy; publish a test route for an end-to-end
+check. `tnl_info{mode}` identifies each process's role.
 
 ## Runtime Metrics
 

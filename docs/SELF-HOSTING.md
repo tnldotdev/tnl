@@ -1,13 +1,8 @@
 # Self-Hosting
 
-The tnl server runs `tnld` in one of four roles:
-
-| `TNLD_MODE`  | Responsibilities                                                                          |
-| ------------ | ----------------------------------------------------------------------------------------- |
-| `standalone` | Control, ingress, and two logical relay services in one process                           |
-| `control`    | Control and authority APIs, PostgreSQL state, placement, certificates, and administration |
-| `ingress`    | Public visitor acceptance, route policy, usage, and internal forwarding                   |
-| `relay`      | Publisher connections and internal forwarding to local publishers                         |
+Use standalone for a single-process deployment, or split control, ingress, and
+relay roles for independent replication. See [Architecture](ARCHITECTURE.md) for
+role and API ownership. This guide owns deployment and recovery procedures.
 
 Only standalone and control processes use PostgreSQL. Ingress and relay are
 stateless, receive no database credentials, and register through the private
@@ -18,7 +13,7 @@ standalone; serving processes never migrate the database.
 
 | Mode       | Required settings                                                                                                                                                             |
 | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Standalone | `TNLD_MODE`, `TNLD_DATABASE_URL`, `TNLD_SERVER_DOMAIN`, `TNLD_MANAGED_DEPLOYMENT_DOMAIN`, `TNLD_ACME_EMAIL`, `TNLD_ACME_ACCEPT_TERMS`, `TNLD_LOGIN_TOKEN`, `TNLD_STORAGE_KEY` |
+| Standalone | `TNLD_MODE`, `TNLD_DATABASE_URL`, `TNLD_SERVER_DOMAIN`, `TNLD_MANAGED_DEPLOYMENT_DOMAIN`, `TNLD_ACME_EMAIL`, `TNLD_ACME_ACCEPT_TERMS`, one authority mode, `TNLD_STORAGE_KEY` |
 | Control    | The same control-owned settings as standalone, plus `TNLD_CLUSTER_SECRET`                                                                                                     |
 | Ingress    | `TNLD_MODE`, `TNLD_CONTROL_HOSTNAME`, `TNLD_CLUSTER_SECRET`, `TNLD_INGRESS_ID`                                                                                                |
 | Relay      | `TNLD_MODE`, `TNLD_CONTROL_HOSTNAME`, `TNLD_CLUSTER_SECRET`, `TNLD_RELAY_SERVICE_ID`, `TNLD_RELAY_ID`, `TNLD_RELAY_ADDRESS`, `TNLD_INTERNAL_RELAY_ADDRESS`                    |
@@ -31,9 +26,21 @@ Listen addresses, limits, timing, metrics, a non-default ACME directory, and
 static public certificate overrides are optional advanced settings. Private
 internal PKI and custom trust-root settings are not part of the configuration.
 
+Control and standalone require exactly one authority mode. The built-in mode
+leaves `TNLD_AUTHORITY_ENDPOINT` unset and requires `TNLD_LOGIN_TOKEN`. The
+external mode sets `TNLD_AUTHORITY_ENDPOINT`, `TNLD_HOSTED_SECRET`, and the
+`TNLD_OIDC_*` discovery settings, and rejects `TNLD_LOGIN_TOKEN`. The hosted
+secret is shared only by control and the external authority.
+
 The runtime URL belongs in `TNLD_DATABASE_URL`. The direct migration URL belongs
 in `TNLD_DATABASE_DIRECT_URL` and is read only by `tnld migrate`. Use a pooled
 runtime endpoint in replicated control deployments.
+
+`tnld serve --config /path/to/tnl.yml` loads the static file's `tnld` section;
+`TNLD_CONFIG` selects the same file through the environment. `tnld` accepts only
+versioned YAML or JSON, performs no discovery, and resolves relative control TLS
+certificate and private-key paths from the configuration directory. Use
+`tnld config check --config /path/to/tnl.yml` to validate without serving.
 
 ## Storage Encryption And Recovery
 
@@ -109,10 +116,51 @@ tnld login-token
 ```
 
 Provide it to every control replica as `TNLD_LOGIN_TOKEN`. Control and
-standalone refuse to start without it. The token authenticates the built-in
-administrator identity and that identity's permanent personal team; it is not a
-multi-user credential. Use OIDC for multiple users and retain the bootstrap
-token for operator recovery.
+standalone using the built-in authority refuse to start without it. The token
+authenticates the built-in administrator identity and that identity's permanent
+personal team; it is not a multi-user credential. Retain it for operator
+recovery.
+
+`tnl login` saves a revocable control session. Rotating `TNLD_LOGIN_TOKEN`
+invalidates sessions issued from the previous token. `TNLD_ACCESS_TOKEN_LIFETIME`
+defaults to one hour and accepts five minutes through 30 days.
+`TNLD_REFRESH_TOKEN_LIFETIME` defaults to 30 days and allows up to 365 days;
+existing sessions retain their stored absolute expiry.
+
+## Interactive OIDC
+
+The built-in authority can additionally exchange ID tokens from one OIDC issuer
+for local control sessions. Configure all three settings together:
+
+```text
+TNLD_OIDC_ISSUER=https://example.us.auth0.com/
+TNLD_OIDC_CLIENT_ID=your-public-client-id
+TNLD_OIDC_LOGIN_FLOW=device_code
+TNLD_OIDC_SCOPES=openid,profile,email
+```
+
+`TNLD_OIDC_LOGIN_FLOW` accepts `device_code` or
+`authorization_code_pkce`. For Auth0, use a native application, enable the
+selected grant, and configure loopback callbacks when using authorization-code
+PKCE. The client is public: do not configure or distribute an OIDC client
+secret. `openid` is required; `profile` and `email` provide useful local
+identity details but are not required. `TNLD_OIDC_ISSUER` is the provider's
+exact discovery issuer and may include a tenant- or realm-specific path.
+
+The ID token must use RS256, name the configured client in its audience, and
+have the configured issuer. Multiple audiences require `azp` equal to the
+client ID. Device-code tokens may omit `nonce`; authorization-code PKCE tokens
+must return the exact login nonce. Each raw ID token can be exchanged only once.
+
+The first exchange for an exact issuer and subject atomically creates a local,
+non-administrator identity with a permanent personal team. Later exchanges
+update its bounded display name and verified email. Local access and refresh
+tokens remain valid independently of `TNLD_LOGIN_TOKEN` rotation. Use the
+bootstrap administrator for administrative operations.
+
+External authority mode advertises the same OIDC settings to clients but does
+not register the built-in authority routes. The external authority owns token
+exchange and authorization decisions in that mode.
 
 ## Cluster Authentication
 
@@ -134,12 +182,19 @@ authorized only while the exact process run ID and lease revision are current.
 ## Standalone Compose
 
 The reference [`compose.yaml`](../deploy/compose.yaml) runs migration and then a
-standalone `tnld` process. Copy the example configuration, replace every
-placeholder, and start the deployment:
+standalone `tnld` process. Prepare the configuration:
 
 ```console
 cd deploy
 install -m 0600 .env.example .env
+```
+
+Replace every placeholder, including `TNLD_STORAGE_KEY`. Generate the bootstrap
+token with `tnld login-token` and keep `TNL_IMAGE` pinned to a
+[verified image digest](RELEASES.md#verify-the-container). Configure public DNS
+and TCP/UDP 443, then start:
+
+```console
 docker compose pull
 docker compose up -d
 curl --fail https://control.tnl.example.com/v1/ready
@@ -174,10 +229,47 @@ relay service. Restrict TCP 9443 plus internal relay addresses to the
 deployment network. Ingress and relay containers need no PostgreSQL, ACME,
 authority, or administrator credentials and no certificate mounts.
 
-Each route session maintains exactly two connection slots assigned to distinct
-relay services. Initial routability requires the route certificate and both
-publisher connections ready. Afterward, one ready connection remains routable
-while the publisher replenishes toward two.
+## Administration
+
+Only identities whose current authority context marks them as administrators
+may use `tnl admin`. Inspect the server and its current relay leases with:
+
+```console
+tnl admin server status
+tnl admin relays list
+tnl admin maintenance list
+```
+
+Relay listing reads every cursor page. To drain one process, copy its relay ID,
+process run ID, and lease revision from the listing:
+
+```console
+tnl admin relays drain relay-a \
+  --relay-run-id relay-run-id \
+  --relay-lease-revision 3 \
+  --deadline 30s
+```
+
+Control immediately removes that exact lease from placement. After the relay's
+next lease renewal, the process rejects new publisher connections and visitor
+streams. Admitted visitor streams may finish until the deadline; any remaining
+streams are closed at the deadline. The acknowledged process run remains
+draining and does not register again. Restart the relay to create a new process
+run ID after the drain completes.
+
+Maintenance controls gate only new work and do not stop existing routes or
+sessions:
+
+```console
+tnl admin maintenance disable route_creation
+tnl admin maintenance disable route_session_creation
+tnl admin maintenance disable certificate_issuance
+tnl admin maintenance enable route_creation
+```
+
+Relay-drain and maintenance-control mutations are committed with durable audit
+events in PostgreSQL. Their exact process revisions and generated request IDs
+make stale or repeated mutations fail closed.
 
 ## Teams And Domains
 
@@ -191,31 +283,24 @@ The bootstrap personal team starts with the managed deployment domain as its
 default. Organization teams and claimed domains use the regular CLI:
 
 ```console
-tnl team create resend --slug chase
+tnl team create resend --member-slug chase
 tnl team use resend
 tnl domain claim dev.resend.com --default
-tnl team invite create --slug alex --role member
+tnl team invite create --member-slug alex --role member
 ```
 
-## Maintenance And Drain
+## Current Capabilities
 
-Maintenance controls independently gate route creation, route-session creation,
-and certificate issuance:
+The built-in authority implements bootstrap and OIDC login, local sessions,
+teams, memberships, invitations, and domains. Hosted service authorization
+belongs only to an external authority; the built-in
+`/v1/service/authorize` path returns HTTP 404. Unknown public API paths also
+return structured HTTP 404 problems.
 
-```console
-tnl admin maintenance list
-tnl admin maintenance set route_session_create off
-```
-
-Drain a relay process before planned removal:
-
-```console
-tnl admin relays drain relay-a-1 --deadline 30s
-```
-
-Draining rejects new work, removes the process from placement and ingress
-selection, and allows admitted streams to finish until the deadline. Live
-visitor streams are not replayed or migrated.
+Public server status, maintenance controls, relay listing, and exact relay drain
+are available through `tnl admin`. Drain rejects new work and allows admitted
+streams to finish until its deadline; live visitor streams are not replayed or
+migrated.
 
 ## Route Usage
 
@@ -229,29 +314,79 @@ Source addresses and raw network identifiers must never be persisted or sent.
 Visitor-network estimates use route-specific daily keyed sketches and are not a
 count of people or devices.
 
+The [receiver contract](../api/route-usage/v1/openapi.yaml) requires one result
+per submitted item ID, without duplicate or unknown IDs. Accepted results omit
+`code`; rejected results supply a valid rejection code. Control retries rejected
+items and retries the batch after an invalid response or ambiguous delivery, so
+receivers must handle redelivery idempotently. This is separate from
+[CLI telemetry](../README.md#telemetry).
+
 ## Backups And Upgrades
 
-Back up PostgreSQL with the platform's supported physical or logical backup
-tools. The backup contains encrypted certificate keys, identities, sessions,
-routes, and authority state, so apply the same access controls used for
-deployment secrets. Back up `TNLD_STORAGE_KEY` independently. Test restoration
-into an isolated database and verify `tnld migrate` before changing production.
+### Backups
 
-Upgrade in this order:
+Use the PostgreSQL platform's supported backup tools. A logical backup requires
+a direct URL whose role can read all tnl schemas:
 
-1. Verify release artifacts and review release notes.
-2. Back up and test restore of PostgreSQL.
-3. Stop writes or enable the relevant maintenance controls.
-4. Run the new image's `tnld migrate` with `TNLD_DATABASE_DIRECT_URL`.
-5. Roll controls, ingress, and then relay services while monitoring leases and ready publisher connections.
-6. Re-enable maintenance controls after readiness and route checks pass.
+```console
+umask 077
+mkdir -p backups
+pg_dump --format=custom \
+  --file="backups/tnl-$(date -u +%Y%m%d%H%M%S).dump" \
+  "$TNLD_DATABASE_DIRECT_URL"
+```
 
-Serving processes require the exact supported schema version and fail closed on
-older or newer schemas.
+Record the matching binary and schema versions. Encrypt and restrict backups:
+they contain identities, sessions, routes, authority state, and encrypted
+certificate/ACME keys. Back up deployment secrets separately, especially
+`TNLD_STORAGE_KEY` and any previous storage key still in use.
+
+Test restoration into a new disposable database, never over the live database:
+
+```console
+createdb tnl_restore_test
+pg_restore --exit-on-error --no-owner \
+  --dbname=tnl_restore_test \
+  backups/tnl-YYYYMMDDHHMMSS.dump
+```
+
+Use only an isolated deployment with the matching `tnld` version to exercise
+login, team/domain reads, route creation, and route-session establishment.
+
+### Upgrade
+
+Serving processes require the exact supported schema and fail closed on older
+or newer schemas. A same-schema binary update does not require a migration;
+check release notes for protocol compatibility before mixing versions. No
+general mixed-version or zero-downtime upgrade guarantee is provided.
+
+For a schema-changing upgrade, plan an interruption:
+
+1. [Verify release artifacts](RELEASES.md), review compatibility notes, and record the running versions.
+2. Stop every control/standalone process, including background writers. Maintenance gates are not a substitute.
+3. Take the final PostgreSQL backup and verify restoration before migrating. Preserve the matching deployment secrets.
+4. Run the new image's `tnld migrate` once with `TNLD_DATABASE_DIRECT_URL`. Never give this URL to ingress or relay.
+5. Start the new controls or standalone processes, then update ingress and relay services to the matching release.
+6. Check [per-process readiness](OBSERVABILITY.md#service-health), certificates, leases, and routing-table progress. Publish a test route before resuming normal use.
+7. Update `tnl` clients as required by the release's compatibility notes.
+
+### Rollback
+
+Never start an older control/standalone binary against a newer schema. After a
+schema-changing upgrade:
+
+1. Stop the new deployment and preserve a diagnostic database backup.
+2. Restore the complete pre-upgrade backup into a new database, with its matching secrets.
+3. Select the previous verified image digest and point control/standalone at the restored database.
+4. Recreate the previous deployment without running the newer migration image.
+5. Check process readiness, discovery, and logs; publish a test route and restore matching clients.
+
+Rollback discards writes made after the backup. Without a pre-upgrade backup,
+stop rather than attempting an in-place schema downgrade.
 
 ## Operational Checks
 
-- Probe `/v1/health` for HTTP serving and `/v1/ready` for control readiness.
+- Use the [probe matrix](OBSERVABILITY.md#service-health) for each role; public control readiness does not establish whole-server readiness.
 - Scrape `TNLD_METRICS_LISTEN` only over a private network.
 - Alert on certificate renewal failure, expired ingress or relay leases,
   insufficient ready publisher connections, capacity rejection, and control API
