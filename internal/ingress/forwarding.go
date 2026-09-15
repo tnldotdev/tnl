@@ -160,7 +160,7 @@ func (b forwardingBackend) Open(ctx context.Context, visitorConnectionID string)
 	if err := header.Validate(); err != nil {
 		return nil, fmt.Errorf("ingress: internal forwarding header: %w", err)
 	}
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := 0; ; attempt++ {
 		session, reused, err := b.forwarder.session(ctx, b.target)
 		if err != nil {
 			return nil, err
@@ -174,11 +174,12 @@ func (b forwardingBackend) Open(ctx context.Context, visitorConnectionID string)
 			return nil, err
 		}
 		b.forwarder.invalidate(b.target.key(), session)
-		if !reused {
+		// Another visitor may populate the pool before our retry, so even the
+		// second attempt can reuse a session. Exhaustion is an ordinary error.
+		if !reused || attempt == 1 {
 			return nil, fmt.Errorf("ingress: open internal forwarding stream: %w", err)
 		}
 	}
-	panic("unreachable")
 }
 
 type relayTarget struct {
