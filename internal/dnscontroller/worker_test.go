@@ -94,6 +94,37 @@ func TestWorkerPublishesManagedRouteRecords(t *testing.T) {
 	}
 }
 
+func TestWorkerUnavailableDNSPreservesPendingAndReleasingState(t *testing.T) {
+	for _, phase := range []string{"fresh", "persisted", "releasing"} {
+		t.Run(phase, func(t *testing.T) {
+			now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
+			work := testDNSWork(now)
+			if phase != "fresh" {
+				work.ProviderZoneID, work.Nameservers = "Z123", []string{"ns-1.example.test", "ns-2.example.test"}
+			}
+			if phase == "releasing" {
+				work.State = "releasing"
+			}
+			store := &dnsStoreStub{work: work, releaseReady: true}
+			failure := errors.New("DNS unavailable")
+			provider, verifier := &providerStub{err: failure}, &verifierStub{err: failure}
+			worker := testDNSWorker(t, store, provider, verifier, now)
+			if found, err := worker.processOne(t.Context()); err != nil || !found {
+				t.Fatalf("iteration: found %v, error %v", found, err)
+			}
+			if store.saved.State != work.State || store.saved.ProviderZoneID != work.ProviderZoneID || store.saved.LastError == "" || !store.saved.AvailableAt.After(now) {
+				t.Fatalf("unavailable DNS changed lifecycle: %#v", store.saved)
+			}
+			if phase == "persisted" && (provider.ensureCalls != 0 || verifier.calls != 1) {
+				t.Fatalf("persisted zone was recreated: provider %#v, verifier %#v", provider, verifier)
+			}
+			if phase == "releasing" && provider.releaseCalls != 1 {
+				t.Fatalf("release calls %d", provider.releaseCalls)
+			}
+		})
+	}
+}
+
 func testDNSWorker(
 	t *testing.T,
 	store *dnsStoreStub,

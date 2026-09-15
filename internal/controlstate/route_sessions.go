@@ -53,9 +53,9 @@ type RouteSessionRequest struct {
 	ExpectedMutationRevision uint64
 }
 
-// PublisherConnectionPlan is one of the two independently assigned publisher
+// ConnectionAssignment is one of the two independently assigned publisher
 // connections returned by route-session setup and heartbeat replenishment.
-type PublisherConnectionPlan struct {
+type ConnectionAssignment struct {
 	ConnectionAssignmentIdentity
 	RelayAddress                           string
 	TLSServerName                          string
@@ -72,14 +72,14 @@ type RouteSessionSetup struct {
 	MembershipID         string
 	RouteVersion         uint64
 	PolicyRevision       uint64
-	SessionToken         credentials.SessionToken
+	RouteSessionToken    credentials.RouteSessionToken
 	State                RouteSessionState
 	CreatedAt            time.Time
 	ExpiresAt            time.Time
 	ReadyAt              *time.Time
 	ClosedAt             *time.Time
 	PolicyDenials        uint64
-	PublisherConnections [routeSessionConnectionCount]PublisherConnectionPlan
+	PublisherConnections [routeSessionConnectionCount]ConnectionAssignment
 }
 
 // CreateRouteSession creates one route version and exactly two connection
@@ -105,15 +105,12 @@ func (d *Database) CreateRouteSession(
 	defer rollback(ctx, tx, "create route session", &retErr)()
 	queries := controlstatedb.New(tx)
 
-	route, err := queries.LockRouteForSession(ctx, request.RouteID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return RouteSessionSetup{}, ErrRouteNotFound
-	}
-	if err != nil {
-		return RouteSessionSetup{}, fmt.Errorf("controlstate: create route session: lock route: %w", err)
-	}
-	if err := authenticateRouteSessionRequest(route, request); err != nil {
-		return RouteSessionSetup{}, err
+	if request.RequireLocalAuthority {
+		if _, err := queries.LockLocalTeamForMutation(ctx, request.TeamID); errors.Is(err, pgx.ErrNoRows) {
+			return RouteSessionSetup{}, ErrRouteAuthority
+		} else if err != nil {
+			return RouteSessionSetup{}, fmt.Errorf("controlstate: create route session: lock team: %w", err)
+		}
 	}
 	if request.AuthorityIssuer != "" {
 		if _, err := queries.ObserveAuthorityRevision(ctx, controlstatedb.ObserveAuthorityRevisionParams{
@@ -124,6 +121,16 @@ func (d *Database) CreateRouteSession(
 		} else if err != nil {
 			return RouteSessionSetup{}, fmt.Errorf("controlstate: create route session: observe authority revision: %w", err)
 		}
+	}
+	route, err := queries.LockRouteForSession(ctx, request.RouteID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return RouteSessionSetup{}, ErrRouteNotFound
+	}
+	if err != nil {
+		return RouteSessionSetup{}, fmt.Errorf("controlstate: create route session: lock route: %w", err)
+	}
+	if err := authenticateRouteSessionRequest(route, request); err != nil {
+		return RouteSessionSetup{}, err
 	}
 	if request.RequireLocalAuthority {
 		membership, err := queries.GetActiveRouteSessionMembership(ctx, controlstatedb.GetActiveRouteSessionMembershipParams{
@@ -211,7 +218,7 @@ func (d *Database) CreateRouteSession(
 	if err != nil {
 		return RouteSessionSetup{}, fmt.Errorf("controlstate: create route session: generate session ID: %w", err)
 	}
-	sessionToken, sessionTokenID, sessionTokenHash, err := credentials.DeriveSessionToken(
+	routeSessionToken, routeSessionTokenID, routeSessionTokenHash, err := credentials.DeriveRouteSessionToken(
 		request.RetrySecret, request.RouteID+"\x00"+request.IdempotencyKey,
 	)
 	if err != nil {
@@ -225,7 +232,7 @@ func (d *Database) CreateRouteSession(
 		ID: routeSessionID, RouteID: request.RouteID, TeamID: request.TeamID, MembershipID: membershipID,
 		ActingIdentityID: request.ActingIdentityID, RouteVersion: routeVersion,
 		IdempotencyKey: request.IdempotencyKey, RequestDigest: request.RequestDigest[:],
-		SessionTokenID: sessionTokenID.String(), SessionTokenDigest: sessionTokenHash[:],
+		SessionTokenID: routeSessionTokenID.String(), SessionTokenDigest: routeSessionTokenHash[:],
 		PolicyRevision: positive(request.PolicyRevision), CertificateCacheKey: request.CertificateCacheKey,
 		CertificateScope: request.CertificateScope, CertificateIdentifiers: request.CertificateIdentifiers,
 		CertificateChallenge: request.CertificateChallenge, CreatedAt: timestamptz(now),
@@ -242,7 +249,7 @@ func (d *Database) CreateRouteSession(
 			return RouteSessionSetup{}, fmt.Errorf("controlstate: create route session: generate publisher connection ID: %w", err)
 		}
 		credential, credentialHash, err := credentials.DerivePublisherConnectionCredential(
-			sessionToken, publisherConnectionCredentialContext(publisherConnectionID, 1),
+			routeSessionToken, publisherConnectionCredentialContext(publisherConnectionID, 1),
 		)
 		if err != nil {
 			return RouteSessionSetup{}, fmt.Errorf("controlstate: create route session: derive publisher connection credential: %w", err)
@@ -258,7 +265,7 @@ func (d *Database) CreateRouteSession(
 		if err != nil {
 			return RouteSessionSetup{}, fmt.Errorf("controlstate: create route session: insert connection slot %d: %w", slot, err)
 		}
-		if _, err := publisherConnectionPlan(row, credential); err != nil {
+		if _, err := connectionAssignment(row, credential); err != nil {
 			return RouteSessionSetup{}, err
 		}
 		connectionRows = append(connectionRows, row)
@@ -272,7 +279,7 @@ func (d *Database) CreateRouteSession(
 	if err := tx.Commit(ctx); err != nil {
 		return RouteSessionSetup{}, fmt.Errorf("controlstate: create route session: commit: %w", err)
 	}
-	return routeSessionSetup(session, sessionToken, connectionRows)
+	return routeSessionSetup(session, routeSessionToken, connectionRows)
 }
 
 type relayServicePlacement struct {
@@ -293,11 +300,18 @@ func selectRelayServicePlacements(
 		return [routeSessionConnectionCount]relayServicePlacement{}, fmt.Errorf("controlstate: create route session: %w", err)
 	}
 	var result [routeSessionConnectionCount]relayServicePlacement
-	if len(services) < routeSessionConnectionCount {
-		return result, ErrInsufficientRelayServices
+	index := 0
+	for _, service := range services {
+		if service.assignments >= service.capacity {
+			continue
+		}
+		result[index] = service
+		index++
+		if index == len(result) {
+			return result, nil
+		}
 	}
-	copy(result[:], services[:routeSessionConnectionCount])
-	return result, nil
+	return result, ErrInsufficientRelayServices
 }
 
 func availableRelayServicePlacements(
@@ -305,8 +319,14 @@ func availableRelayServicePlacements(
 	queries *controlstatedb.Queries,
 	now time.Time,
 ) ([]relayServicePlacement, []controlstatedb.LockEligibleRelayLeasesRow, error) {
+	// Registration also locks the service before its lease. Hold all service
+	// locks before taking any lease locks or counting capacity reservations.
+	serviceIDs, err := queries.LockRelayServicesForPlacement(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("lock relay services: %w", err)
+	}
 	leases, err := queries.LockEligibleRelayLeases(ctx, controlstatedb.LockEligibleRelayLeasesParams{
-		Now: timestamptz(now), ProtocolVersion: 1,
+		Now: timestamptz(now), ProtocolVersion: 1, RelayServiceIds: serviceIDs,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("lock relay leases: %w", err)
@@ -337,9 +357,7 @@ func availableRelayServicePlacements(
 	}
 	services := make([]relayServicePlacement, 0, len(servicesByID))
 	for _, service := range servicesByID {
-		if service.assignments < service.capacity {
-			services = append(services, *service)
-		}
+		services = append(services, *service)
 	}
 	sort.Slice(services, func(left, right int) bool {
 		leftLoad := float64(services[left].assignments) / float64(services[left].capacity)
@@ -366,7 +384,7 @@ func loadRouteSessionSetup(
 	retryContext string,
 	session controlstatedb.ControlRouteSession,
 ) (RouteSessionSetup, error) {
-	token, tokenID, tokenHash, err := credentials.DeriveSessionToken(retrySecret, retryContext)
+	token, tokenID, tokenHash, err := credentials.DeriveRouteSessionToken(retrySecret, retryContext)
 	if err != nil || tokenID.String() != session.SessionTokenID ||
 		!credentials.SecretHashMatches(session.SessionTokenDigest, tokenHash) {
 		return RouteSessionSetup{}, ErrRouteCredential
@@ -377,7 +395,7 @@ func loadRouteSessionSetup(
 func loadRouteSessionSetupWithToken(
 	ctx context.Context,
 	queries *controlstatedb.Queries,
-	token credentials.SessionToken,
+	token credentials.RouteSessionToken,
 	session controlstatedb.ControlRouteSession,
 ) (RouteSessionSetup, error) {
 	connections, err := queries.ListRouteSessionConnections(ctx, session.ID)
@@ -389,7 +407,7 @@ func loadRouteSessionSetupWithToken(
 
 func routeSessionSetup(
 	session controlstatedb.ControlRouteSession,
-	token credentials.SessionToken,
+	token credentials.RouteSessionToken,
 	connections []controlstatedb.ControlRouteSessionConnection,
 ) (RouteSessionSetup, error) {
 	if session.RouteVersion <= 0 || !session.CreatedAt.Valid || !session.PublisherExpiresAt.Valid ||
@@ -399,7 +417,7 @@ func routeSessionSetup(
 	setup := RouteSessionSetup{
 		RouteSessionID: session.ID, RouteID: session.RouteID, TeamID: session.TeamID,
 		MembershipID: session.MembershipID.String, RouteVersion: uint64(session.RouteVersion),
-		PolicyRevision: uint64(session.PolicyRevision), SessionToken: token, State: RouteSessionState(session.State),
+		PolicyRevision: uint64(session.PolicyRevision), RouteSessionToken: token, State: RouteSessionState(session.State),
 		CreatedAt: session.CreatedAt.Time, ExpiresAt: session.PublisherExpiresAt.Time,
 		PolicyDenials: uint64(session.PolicyDenials),
 	}
@@ -422,25 +440,25 @@ func routeSessionSetup(
 		if err != nil || !credentials.SecretHashMatches(row.PublisherConnectionCredentialDigest, hash) {
 			return RouteSessionSetup{}, errors.New("controlstate: invalid publisher connection credential")
 		}
-		plan, err := publisherConnectionPlan(row, credential)
+		assignment, err := connectionAssignment(row, credential)
 		if err != nil {
 			return RouteSessionSetup{}, err
 		}
-		setup.PublisherConnections[row.ConnectionSlot] = plan
+		setup.PublisherConnections[row.ConnectionSlot] = assignment
 		seen[row.ConnectionSlot] = true
 	}
 	return setup, nil
 }
 
-func publisherConnectionPlan(
+func connectionAssignment(
 	row controlstatedb.ControlRouteSessionConnection,
 	credential credentials.PublisherConnectionCredential,
-) (PublisherConnectionPlan, error) {
+) (ConnectionAssignment, error) {
 	if row.RouteVersion <= 0 || row.ConnectionAssignmentRevision <= 0 || row.ConnectionSlot < 0 ||
 		row.ConnectionSlot >= routeSessionConnectionCount || !row.PublisherConnectionCredentialExpiresAt.Valid {
-		return PublisherConnectionPlan{}, errors.New("controlstate: invalid route-session connection row")
+		return ConnectionAssignment{}, errors.New("controlstate: invalid route-session connection row")
 	}
-	return PublisherConnectionPlan{
+	return ConnectionAssignment{
 		ConnectionAssignmentIdentity: ConnectionAssignmentIdentity{
 			RouteSessionID: row.RouteSessionID, RouteID: row.RouteID, RouteVersion: uint64(row.RouteVersion),
 			ConnectionSlot: int(row.ConnectionSlot), PublisherConnectionID: row.PublisherConnectionID,

@@ -10,7 +10,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
-	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -154,7 +153,7 @@ func TestCreateOrLoadRouteCreatesTeamScopedRoute(t *testing.T) {
 }
 
 func TestHeartbeatFallbackSkipsPolicyDenialObservation(t *testing.T) {
-	control := &publisherControlStub{heartbeat: func(context.Context, string, uint64, credentials.SessionToken) (controlv1.RouteSessionHeartbeat, error) {
+	control := &publisherControlStub{heartbeat: func(context.Context, string, uint64, credentials.RouteSessionToken) (controlv1.RouteSessionHeartbeat, error) {
 		return controlv1.RouteSessionHeartbeat{}, controlclient.ErrUnavailable
 	}}
 	response, observed, err := heartbeatResponseOnce(
@@ -166,7 +165,7 @@ func TestHeartbeatFallbackSkipsPolicyDenialObservation(t *testing.T) {
 }
 
 func TestExpiredHeartbeatLeavesStaleSessionConflictUnclassified(t *testing.T) {
-	control := &publisherControlStub{heartbeat: func(context.Context, string, uint64, credentials.SessionToken) (controlv1.RouteSessionHeartbeat, error) {
+	control := &publisherControlStub{heartbeat: func(context.Context, string, uint64, credentials.RouteSessionToken) (controlv1.RouteSessionHeartbeat, error) {
 		return controlv1.RouteSessionHeartbeat{}, controlclient.ErrUnavailable
 	}}
 	_, _, err := heartbeatResponseOnce(
@@ -180,15 +179,49 @@ func TestExpiredHeartbeatLeavesStaleSessionConflictUnclassified(t *testing.T) {
 	}
 }
 
-func TestRunRequiresCertificatePlan(t *testing.T) {
-	connector := muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
-		return nil, errors.New("unexpected connection")
-	})
-	err := Run(t.Context(), Config{
-		Control: &publisherControlStub{}, Hostname: "demo.example", Target: "http://127.0.0.1:3000",
-		QUICConnector: connector, TCPConnector: connector,
-	})
-	if err == nil || err.Error() != "publisher: certificate plan is required" {
+func TestHeartbeatIgnoresUpdateFailureAfterCancellation(t *testing.T) {
+	previous := heartbeatInterval
+	heartbeatInterval = time.Millisecond
+	defer func() { heartbeatInterval = previous }()
+
+	control := &publisherControlStub{heartbeat: func(context.Context, string, uint64, credentials.RouteSessionToken) (controlv1.RouteSessionHeartbeat, error) {
+		return controlv1.RouteSessionHeartbeat{
+			RouteSession:         controlv1.RouteSession{ExpiresAt: time.Now().Add(time.Minute)},
+			PublisherConnections: []controlv1.ConnectionAssignment{{PublisherConnectionId: "publisher_connection_1"}},
+		}, nil
+	}}
+	ctx, cancel := context.WithCancel(t.Context())
+	updateStarted := make(chan struct{})
+	releaseUpdate := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- heartbeatSessionAfterUpdate(
+			ctx, control, "route_session_1", 1, "route-session-token", time.Now().Add(time.Minute),
+			func([]controlv1.ConnectionAssignment) error {
+				close(updateStarted)
+				<-releaseUpdate
+				return errors.New("connection manager is draining")
+			}, nil,
+		)
+	}()
+	select {
+	case <-updateStarted:
+	case <-time.After(time.Second):
+		t.Fatal("heartbeat did not begin the connection update")
+	}
+	cancel()
+	close(releaseUpdate)
+	if err := <-done; err != nil {
+		t.Fatalf("heartbeat returned a shutdown race: %v", err)
+	}
+}
+
+func TestRunRequiresAuthoritativeSessionCertificatePlan(t *testing.T) {
+	control, _, _ := newCertificateTransactionTest(t)
+	config := certificateSessionTestConfig(t, control)
+	control.setup.CertificatePlan = controlv1.CertificatePlan{}
+	err := Run(t.Context(), config)
+	if err == nil || err.Error() != "publisher: server returned an invalid certificate plan" {
 		t.Fatalf("Run error = %v", err)
 	}
 }
@@ -274,7 +307,7 @@ type publisherControlStub struct {
 	updated         *controlv1.UpdateRouteRequest
 	deleted         *controlv1.Route
 	listCalls       int
-	heartbeat       func(context.Context, string, uint64, credentials.SessionToken) (controlv1.RouteSessionHeartbeat, error)
+	heartbeat       func(context.Context, string, uint64, credentials.RouteSessionToken) (controlv1.RouteSessionHeartbeat, error)
 	createErr       error
 	updateErr       error
 	routeSessionErr error
@@ -320,38 +353,38 @@ func (s *publisherControlStub) CreateRouteSession(context.Context, string, strin
 	return controlv1.RouteSessionSetup{}, errors.New("not implemented")
 }
 
-func (*publisherControlStub) CloseRouteSession(context.Context, string, credentials.SessionToken) error {
+func (*publisherControlStub) CloseRouteSession(context.Context, string, credentials.RouteSessionToken) error {
 	return nil
 }
 
-func (*publisherControlStub) Ready(context.Context, string, uint64, credentials.SessionToken) error {
+func (*publisherControlStub) MarkRouteSessionReady(context.Context, string, uint64, credentials.RouteSessionToken) error {
 	return nil
 }
 
-func (s *publisherControlStub) Heartbeat(ctx context.Context, routeID string, version uint64, token credentials.SessionToken) (controlv1.RouteSessionHeartbeat, error) {
+func (s *publisherControlStub) HeartbeatRouteSession(ctx context.Context, routeID string, version uint64, token credentials.RouteSessionToken) (controlv1.RouteSessionHeartbeat, error) {
 	if s.heartbeat != nil {
 		return s.heartbeat(ctx, routeID, version, token)
 	}
 	return controlv1.RouteSessionHeartbeat{}, errors.New("not implemented")
 }
 
-func (*publisherControlStub) CreateCertificateIssuance(context.Context, string, uint64, credentials.SessionToken, []byte, string) (controlv1.CertificateIssuance, error) {
+func (*publisherControlStub) CreateCertificateIssuance(context.Context, string, uint64, credentials.RouteSessionToken, []byte, string) (controlv1.CertificateIssuance, error) {
 	return controlv1.CertificateIssuance{}, errors.New("not implemented")
 }
 
-func (*publisherControlStub) CertificateIssuance(context.Context, string, credentials.SessionToken) (controlv1.CertificateIssuance, error) {
+func (*publisherControlStub) GetCertificateIssuance(context.Context, string, credentials.RouteSessionToken) (controlv1.CertificateIssuance, error) {
 	return controlv1.CertificateIssuance{}, errors.New("not implemented")
 }
 
-func (*publisherControlStub) CertificateChallengeReady(context.Context, string, credentials.SessionToken) (controlv1.CertificateIssuance, error) {
+func (*publisherControlStub) MarkCertificateChallengeReady(context.Context, string, credentials.RouteSessionToken) (controlv1.CertificateIssuance, error) {
 	return controlv1.CertificateIssuance{}, errors.New("not implemented")
 }
 
-func (*publisherControlStub) CertificateChallengeRemoved(context.Context, string, credentials.SessionToken) error {
+func (*publisherControlStub) MarkCertificateChallengeRemoved(context.Context, string, credentials.RouteSessionToken) error {
 	return nil
 }
 
-func (*publisherControlStub) CertificateInstalled(context.Context, string, uint64, string, time.Time, credentials.SessionToken) error {
+func (*publisherControlStub) MarkRouteSessionCertificateInstalled(context.Context, string, uint64, string, time.Time, credentials.RouteSessionToken) error {
 	return nil
 }
 

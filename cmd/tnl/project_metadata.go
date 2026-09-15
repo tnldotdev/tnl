@@ -12,7 +12,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientauth"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/clioutput"
-	projectconfig "github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/projectmeta"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 )
@@ -23,7 +24,7 @@ func runConfigGenerate(
 	project projectConfiguration,
 	stdout, stderr io.Writer,
 ) error {
-	if !project.found {
+	if !project.Found() {
 		return errors.New("no project configuration file found")
 	}
 	state, err := clientstate.Open(ctx, stateRoot)
@@ -36,7 +37,7 @@ func runConfigGenerate(
 	if err != nil {
 		return err
 	}
-	if err := projectmeta.Write(project.root, metadata); err != nil {
+	if err := projectmeta.Write(project.Root, metadata); err != nil {
 		return err
 	}
 	actions, err := projectTypeIncludeActions(project)
@@ -44,8 +45,8 @@ func runConfigGenerate(
 		return err
 	}
 	fields := []clioutput.Field{
-		clioutput.Field{Label: "metadata", Value: filepath.Join(project.root, projectmeta.DirectoryName, projectmeta.JSONName)},
-		clioutput.Field{Label: "declarations", Value: filepath.Join(project.root, projectmeta.DirectoryName, projectmeta.DeclarationsName)},
+		clioutput.Field{Label: "metadata", Value: filepath.Join(project.Root, projectmeta.DirectoryName, projectmeta.JSONName)},
+		clioutput.Field{Label: "declarations", Value: filepath.Join(project.Root, projectmeta.DirectoryName, projectmeta.DeclarationsName)},
 	}
 	blocks := []clioutput.Block{clioutput.Fields(fields...)}
 	for _, action := range actions {
@@ -94,7 +95,7 @@ func (r *projectMetadataResolver) LoadFallbackServer(ctx context.Context) error 
 }
 
 func (r *projectMetadataResolver) Generate(ctx context.Context) (projectmeta.Metadata, error) {
-	root, err := r.project.tnl.EffectiveService("")
+	root, err := r.project.EffectiveService("")
 	if err != nil {
 		return projectmeta.Metadata{}, err
 	}
@@ -108,31 +109,31 @@ func (r *projectMetadataResolver) Generate(ctx context.Context) (projectmeta.Met
 	}
 	metadata := projectmeta.Metadata{
 		Version: projectmeta.Version, MemberNamespace: memberNamespace(current.membership, domain),
-		Services:           make(map[string]projectmeta.Service, len(r.project.tnl.Services)),
-		ServiceDirectories: make(map[string]string, len(r.project.tnl.Services)),
+		Services:           make(map[string]projectmeta.Service, len(r.project.Config.Services)),
+		ServiceDirectories: make(map[string]string, len(r.project.Config.Services)),
 	}
-	names := make([]string, 0, len(r.project.tnl.Services))
-	for name := range r.project.tnl.Services {
+	names := make([]string, 0, len(r.project.Config.Services))
+	for name := range r.project.Config.Services {
 		names = append(names, name)
 	}
 	slices.Sort(names)
 	for _, name := range names {
-		effective, err := r.project.tnl.EffectiveService(name)
+		effective, err := r.project.EffectiveService(name)
 		if err != nil {
 			return projectmeta.Metadata{}, err
 		}
-		client, serviceContext, err := r.resolveContext(ctx, effective)
+		_, serviceContext, err := r.resolveContext(ctx, effective)
 		if err != nil {
 			return projectmeta.Metadata{}, fmt.Errorf("service %q: %w", name, err)
 		}
-		serviceMetadata, err := configuredProjectService(name, r.project.worktree, effective, serviceContext, client)
+		serviceMetadata, err := configuredProjectService(name, r.project.Worktree, effective, serviceContext)
 		if err != nil {
 			return projectmeta.Metadata{}, fmt.Errorf("service %q: %w", name, err)
 		}
 		metadata.Services[name] = serviceMetadata
-		relative := r.project.relativeDirectories[name]
+		relative := r.project.RelativeServiceDirectories[name]
 		if relative == "" {
-			_, relative, err = r.project.tnl.ServiceDirectory(r.project.root, name)
+			_, relative, err = r.project.ServiceDirectory(name)
 			if err != nil {
 				return projectmeta.Metadata{}, fmt.Errorf("service %q: %w", name, err)
 			}
@@ -148,9 +149,8 @@ func (r *projectMetadataResolver) Generate(ctx context.Context) (projectmeta.Met
 func configuredProjectService(
 	service string,
 	worktree projectconfig.Worktree,
-	effective projectconfig.TNL,
+	effective config.TNL,
 	current teamContext,
-	client *clientauth.Client,
 ) (projectmeta.Service, error) {
 	hostname, subdomain := "", ""
 	ephemeral := false
@@ -166,7 +166,7 @@ func configuredProjectService(
 	if hostname == "" && subdomain == "" && !ephemeral {
 		subdomain = projectconfig.ServiceWorktreeLabel(service, worktree.Label)
 	}
-	hostname, domain, _, _, err := resolvePublishHostname(hostname, subdomain, current, client.Discovery)
+	hostname, domain, _, err := resolvePublishHostname(hostname, subdomain, current)
 	if err != nil {
 		return projectmeta.Service{}, err
 	}
@@ -179,7 +179,7 @@ func configuredProjectService(
 
 func (r *projectMetadataResolver) resolveContext(
 	ctx context.Context,
-	effective projectconfig.TNL,
+	effective config.TNL,
 ) (*clientauth.Client, teamContext, error) {
 	server, err := r.server(ctx, effective.Server)
 	if err != nil {

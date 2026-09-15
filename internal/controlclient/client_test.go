@@ -18,7 +18,7 @@ func TestClientMapsProblemsAndRejectsTrailingJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	session, _, _, err := credentials.NewSessionToken()
+	session, _, _, err := credentials.NewRouteSessionToken()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,8 +49,8 @@ func TestClientMapsProblemsAndRejectsTrailingJSON(t *testing.T) {
 	if _, err := client.Discovery(t.Context()); err == nil {
 		t.Fatal("Discovery accepted trailing JSON")
 	}
-	if _, err := client.Heartbeat(t.Context(), "session", 1, session); !errors.Is(err, ErrStatusConflict) {
-		t.Fatalf("Heartbeat error = %v, want status conflict", err)
+	if _, err := client.HeartbeatRouteSession(t.Context(), "session", 1, session); !errors.Is(err, ErrStatusConflict) {
+		t.Fatalf("HeartbeatRouteSession error = %v, want status conflict", err)
 	}
 }
 

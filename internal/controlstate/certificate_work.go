@@ -13,7 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 )
 
-var ErrACMEWorkFenced = errors.New("controlstate: ACME work lease is fenced")
+var ErrACMEWorkStale = errors.New("controlstate: ACME work lease is stale")
 
 type ACMEAuthorizationWork struct {
 	ID                    string
@@ -181,7 +181,7 @@ func (d *Database) SaveACMEOrderWork(
 		WorkEpoch: positive(work.WorkEpoch), ExpectedOrderRevision: positive(work.OrderRevision),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return ACMEOrderWork{}, ErrACMEWorkFenced
+		return ACMEOrderWork{}, ErrACMEWorkStale
 	}
 	if err != nil {
 		return ACMEOrderWork{}, fmt.Errorf("controlstate: save ACME order work: update order: %w", err)
@@ -198,11 +198,15 @@ func (d *Database) SaveACMEOrderWork(
 		if createdAt.IsZero() {
 			createdAt = now
 		}
+		var challengeDigest []byte
+		if authorization.ChallengeType != "" {
+			challengeDigest = authorization.ChallengeDigest[:]
+		}
 		if _, err := queries.SaveACMEAuthorizationWork(ctx, controlstatedb.SaveACMEAuthorizationWorkParams{
 			ID: authorization.ID, OrderID: work.ID, Identifier: authorization.Identifier,
-			AuthorizationUrl: authorization.AuthorizationURL, ChallengeType: authorization.ChallengeType,
-			ChallengeUrl: authorization.ChallengeURL, ChallengeToken: authorization.ChallengeToken,
-			ChallengeDigest: authorization.ChallengeDigest[:], PresentationReference: nullableText(authorization.PresentationReference),
+			AuthorizationUrl: authorization.AuthorizationURL, ChallengeType: nullableText(authorization.ChallengeType),
+			ChallengeUrl: nullableText(authorization.ChallengeURL), ChallengeToken: nullableText(authorization.ChallengeToken),
+			ChallengeDigest: challengeDigest, PresentationReference: nullableText(authorization.PresentationReference),
 			State:                 authorization.State,
 			AuthorizationRevision: positive(max(authorization.Revision, 1)), Attempts: nonnegative(authorization.Attempts),
 			AvailableAt: timestamptz(authorization.AvailableAt), PresentedAt: nullableTime(authorization.PresentedAt),
@@ -211,7 +215,7 @@ func (d *Database) SaveACMEOrderWork(
 			CreatedAt: timestamptz(createdAt), UpdatedAt: timestamptz(now),
 			ExpectedAuthorizationRevision: nonnegative(authorization.Revision),
 		}); errors.Is(err, pgx.ErrNoRows) {
-			return ACMEOrderWork{}, ErrACMEWorkFenced
+			return ACMEOrderWork{}, ErrACMEWorkStale
 		} else if err != nil {
 			return ACMEOrderWork{}, fmt.Errorf("controlstate: save ACME order work: update authorization: %w", err)
 		}
@@ -283,14 +287,16 @@ func acmeOrderWork(
 	work.NotAfter = optionalTime(order.NotAfter)
 	work.RenewAt = optionalTime(order.RenewAt)
 	for index, authorization := range authorizations {
-		if len(authorization.ChallengeDigest) != 32 || authorization.AuthorizationRevision <= 0 || authorization.Attempts < 0 ||
+		if authorization.ChallengeType.Valid && len(authorization.ChallengeDigest) != 32 ||
+			!authorization.ChallengeType.Valid && len(authorization.ChallengeDigest) != 0 ||
+			authorization.AuthorizationRevision <= 0 || authorization.Attempts < 0 ||
 			!authorization.AvailableAt.Valid || !authorization.CreatedAt.Valid || !authorization.UpdatedAt.Valid {
 			return ACMEOrderWork{}, errors.New("controlstate: invalid ACME authorization work row")
 		}
 		value := ACMEAuthorizationWork{
 			ID: authorization.ID, Identifier: authorization.Identifier, AuthorizationURL: authorization.AuthorizationUrl,
-			ChallengeType: authorization.ChallengeType, ChallengeURL: authorization.ChallengeUrl,
-			ChallengeToken: authorization.ChallengeToken, PresentationReference: authorization.PresentationReference.String,
+			ChallengeType: authorization.ChallengeType.String, ChallengeURL: authorization.ChallengeUrl.String,
+			ChallengeToken: authorization.ChallengeToken.String, PresentationReference: authorization.PresentationReference.String,
 			State:    authorization.State,
 			Revision: uint64(authorization.AuthorizationRevision), Attempts: uint64(authorization.Attempts),
 			AvailableAt: authorization.AvailableAt.Time, PresentedAt: optionalTime(authorization.PresentedAt),
@@ -299,6 +305,9 @@ func acmeOrderWork(
 			CreatedAt: authorization.CreatedAt.Time, UpdatedAt: authorization.UpdatedAt.Time,
 		}
 		copy(value.ChallengeDigest[:], authorization.ChallengeDigest)
+		if err := validateACMEAuthorizationWork(value); err != nil {
+			return ACMEOrderWork{}, err
+		}
 		work.Authorizations[index] = value
 	}
 	return work, nil
@@ -315,17 +324,43 @@ func validateACMEOrderWork(work ACMEOrderWork) error {
 		work.AvailableAt.IsZero() || len(work.LastError) > 1024 {
 		return ErrCertificateIssuanceInvalid
 	}
+	identifiers := make(map[string]bool, len(work.Authorizations))
+	urls := make(map[string]bool, len(work.Authorizations))
 	for _, authorization := range work.Authorizations {
-		_, revisionOK := nonnegativeInt64(authorization.Revision)
-		_, authorizationAttemptsOK := nonnegativeInt64(authorization.Attempts)
-		if !validStateText(authorization.Identifier) || !validStateText(authorization.AuthorizationURL) ||
-			!validStateText(authorization.ChallengeURL) || !validStateText(authorization.ChallengeToken) ||
-			authorization.ChallengeType != "tls-alpn-01" && authorization.ChallengeType != "dns-01" ||
-			(authorization.ChallengeType == "dns-01") != validStateText(authorization.PresentationReference) ||
-			!revisionOK || !authorizationAttemptsOK || authorization.State == "" || authorization.AvailableAt.IsZero() ||
-			len(authorization.LastError) > 1024 {
+		if err := validateACMEAuthorizationWork(authorization); err != nil {
+			return err
+		}
+		if !slices.Contains(work.CertificateIdentifiers, authorization.Identifier) ||
+			identifiers[authorization.Identifier] || urls[authorization.AuthorizationURL] {
 			return ErrCertificateIssuanceInvalid
 		}
+		identifiers[authorization.Identifier], urls[authorization.AuthorizationURL] = true, true
+	}
+	if len(work.Authorizations) != 0 && len(work.Authorizations) != len(work.CertificateIdentifiers) {
+		return ErrCertificateIssuanceInvalid
+	}
+	return nil
+}
+
+func validateACMEAuthorizationWork(authorization ACMEAuthorizationWork) error {
+	_, revisionOK := nonnegativeInt64(authorization.Revision)
+	_, attemptsOK := nonnegativeInt64(authorization.Attempts)
+	if !validStateText(authorization.Identifier) || !validStateText(authorization.AuthorizationURL) ||
+		!revisionOK || !attemptsOK || authorization.State == "" || authorization.AvailableAt.IsZero() ||
+		len(authorization.LastError) > 1024 {
+		return ErrCertificateIssuanceInvalid
+	}
+	if authorization.ChallengeType == "" {
+		if authorization.State != "complete" || authorization.ValidatedAt == nil || authorization.CleanupCompletedAt == nil ||
+			authorization.PresentedAt != nil || authorization.Attempts != 0 || authorization.ExpiresAt == nil ||
+			!authorization.ExpiresAt.After(*authorization.ValidatedAt) || authorization.ChallengeURL != "" ||
+			authorization.ChallengeToken != "" || authorization.ChallengeDigest != ([32]byte{}) || authorization.PresentationReference != "" {
+			return ErrCertificateIssuanceInvalid
+		}
+	} else if !validStateText(authorization.ChallengeURL) || !validStateText(authorization.ChallengeToken) ||
+		authorization.ChallengeType != "tls-alpn-01" && authorization.ChallengeType != "dns-01" ||
+		(authorization.ChallengeType == "dns-01") != validStateText(authorization.PresentationReference) {
+		return ErrCertificateIssuanceInvalid
 	}
 	return nil
 }

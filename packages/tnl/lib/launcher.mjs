@@ -2,16 +2,17 @@ import { constants, accessSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import process from "node:process";
+import { nativeTargets } from "./native-targets.mjs";
 
 const require = createRequire(import.meta.url);
 const launcherManifest = new URL("../package.json", import.meta.url);
 
-const nativePackages = new Map([
-  ["darwin-arm64", "@tnldotdev/tnl-darwin-arm64"],
-  ["darwin-x64", "@tnldotdev/tnl-darwin-x64"],
-  ["linux-arm64", "@tnldotdev/tnl-linux-arm64"],
-  ["linux-x64", "@tnldotdev/tnl-linux-x64"],
-]);
+const nativePackages = new Map(
+  nativeTargets.map(({ platform, architecture, packageName }) => [
+    `${platform}-${architecture}`,
+    packageName,
+  ]),
+);
 
 export function nativePackageName(platform, architecture) {
   const packageName = nativePackages.get(`${platform}-${architecture}`);

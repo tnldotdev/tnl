@@ -1,10 +1,9 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import * as os from "node:os";
-import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { runInNewContext } from "node:vm";
 import type { ConfigEnv, Plugin, UserConfig } from "vite";
 import { describe, expect, onTestFinished, test } from "vitest";
 import {
+  createProjectFixture,
   errorMessage,
   occupyLoopbackPort,
   openTestWebSocketWithMessage,
@@ -12,7 +11,7 @@ import {
   reserveLoopbackPort,
   startTestBootstrap,
   startTestProcess,
-  testProjectDocument,
+  temporaryDirectory,
   testPublicProject,
   waitForBootstrapRequest,
   withCurrentDirectory,
@@ -57,7 +56,7 @@ describe("tnl", () => {
   });
 
   test("injects generated metadata without networking during plain development", async () => {
-    const project = await createProjectFixture();
+    const project = await createProjectFixture("tnl-vite-project-");
     await withCurrentDirectory(project.serviceDirectory, async () => {
       const result = await runConfigHook(tnl(), { server: { host: "0.0.0.0", port: 5200 } });
       expect(result).toEqual(runtimeDefine(false));
@@ -156,6 +155,22 @@ test(
 
       const client = await requestTestServer(port, { path: "/@vite/client" });
       expect(client.status).toBe(200);
+      const environmentImport = client.body.match(
+        /\bimport\s*(["'])(\/[^"']*\/env\.mjs(?:\?[^"']*)?)\1/,
+      );
+      if (environmentImport?.[2] === undefined) {
+        throw new Error("Vite client did not import its environment module");
+      }
+      const environment = await requestTestServer(port, { path: environmentImport[2] });
+      expect(environment.status).toBe(200);
+      // Execute the browser defines without depending on Vite's serialization or host globals.
+      const payload = runInNewContext(
+        `${environment.body}\nprocess.env.TNL_PROJECT_RUNTIME`,
+        {},
+        { timeout: 1000 },
+      );
+      expect(JSON.parse(payload)).toEqual(testPublicProject(true));
+
       const token = extractViteWebSocketToken(client.body);
       const { message: socketMessage, socket } = await openTestWebSocketWithMessage(
         port,
@@ -289,24 +304,6 @@ function startViteFixture(port: number, environment: Record<string, string>, hos
       TNL_FIXTURE_PORT: String(port),
     },
   });
-}
-
-async function createProjectFixture() {
-  const root = await temporaryDirectory("tnl-vite-project-");
-  const serviceDirectory = path.join(root, "apps", "api");
-  await mkdir(path.join(root, ".tnl"), { recursive: true });
-  await mkdir(serviceDirectory, { recursive: true });
-  await writeFile(
-    path.join(root, ".tnl", "project.json"),
-    `${JSON.stringify(testProjectDocument())}\n`,
-  );
-  return { root, serviceDirectory };
-}
-
-async function temporaryDirectory(prefix: string): Promise<string> {
-  const directory = await mkdtemp(path.join(os.tmpdir(), prefix));
-  onTestFinished(() => rm(directory, { force: true, recursive: true }));
-  return directory;
 }
 
 function extractViteWebSocketToken(client: string): string {

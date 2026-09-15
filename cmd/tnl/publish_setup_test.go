@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -63,5 +64,40 @@ func TestPublisherConfigPreservesEphemeralRouteChoice(t *testing.T) {
 	configured := (publisherServices{ephemeral: true}).config("http://127.0.0.1:3000", nil)
 	if !configured.Ephemeral {
 		t.Fatal("ephemeral route choice was not passed to the publisher")
+	}
+}
+
+func TestPublishHostnameScopeMatrix(t *testing.T) {
+	for _, test := range []struct {
+		name, kind, host string
+	}{
+		{"managed", "managed", ""},
+		{"claimed", "claimed", ""},
+		{"shared", "claimed", "shared.routes.example.test"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			current := teamContext{
+				team: authorityv1.Team{Id: "team_1", DefaultDomainId: "domain_1", PolicyRevision: 1},
+				membership: authorityv1.Membership{Id: "membership_1", TeamId: "team_1", Role: authorityv1.TeamRoleOwner,
+					MemberSlug: "member", ManagedLabel: "member-unique"},
+				domains: []authorityv1.Domain{{Id: "domain_1", Kind: authorityv1.DomainKind(test.kind),
+					CanonicalDomain: "routes.example.test", State: authorityv1.DomainStateReady}},
+			}
+			namespace := "member.routes.example.test"
+			if test.kind == "managed" {
+				namespace = "member-unique.routes.example.test"
+			}
+			subdomain, wantHost, wantScope := "api", "api."+namespace, controlv1.Member
+			if test.host != "" {
+				subdomain, wantHost, wantScope = "", test.host, controlv1.Shared
+			}
+			hostname, domain, scope, err := resolvePublishHostname(test.host, subdomain, current)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if hostname != wantHost || domain.Id != "domain_1" || scope != wantScope {
+				t.Fatalf("resolution = %q, %q, %q; want %q, %q", hostname, domain.Id, scope, wantHost, wantScope)
+			}
+		})
 	}
 }

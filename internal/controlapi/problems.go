@@ -3,31 +3,22 @@ package controlapi
 import (
 	"encoding/json"
 	"errors"
-	"io"
 	"log"
 	"net/http"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/httpjson"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 func writeControlStateProblem(response http.ResponseWriter, operation string, err error) {
 	switch {
-	case errors.Is(err, controlstate.ErrAuthorityInvalid):
-		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
-	case errors.Is(err, controlstate.ErrMembershipNotFound), errors.Is(err, controlstate.ErrInvitationNotFound),
-		errors.Is(err, controlstate.ErrDomainNotFound):
-		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "resource not found")
-	case errors.Is(err, controlstate.ErrAuthorityAccess):
-		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "operation is not authorized")
-	case errors.Is(err, controlstate.ErrAuthorityConflict), errors.Is(err, controlstate.ErrAuthorityIdempotency):
-		writeProblem(response, http.StatusConflict, controlv1.Conflict, "authority state conflict")
 	case errors.Is(err, controlstate.ErrDNSAuthorityInvalid):
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid DNS authority request")
 	case errors.Is(err, controlstate.ErrDNSAuthorityNotFound):
 		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "DNS authority not found")
-	case errors.Is(err, controlstate.ErrDNSAuthorityIdempotency), errors.Is(err, controlstate.ErrDNSAuthorityFenced):
+	case errors.Is(err, controlstate.ErrDNSAuthorityIdempotency), errors.Is(err, controlstate.ErrDNSAuthorityWorkStale):
 		writeProblem(response, http.StatusConflict, controlv1.Conflict, "DNS authority state conflict")
 	case errors.Is(err, controlstate.ErrRouteInvalid):
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
@@ -69,16 +60,7 @@ func writeControlStateProblem(response http.ResponseWriter, operation string, er
 
 func decodeJSON(response http.ResponseWriter, request *http.Request, target any) error {
 	request.Body = http.MaxBytesReader(response, request.Body, 64<<10)
-	decoder := json.NewDecoder(request.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		return err
-	}
-	var extra any
-	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		return errors.New("request body contains trailing content")
-	}
-	return nil
+	return httpjson.Decode(json.NewDecoder(request.Body), target)
 }
 
 func writeBearerProblem(response http.ResponseWriter) {
@@ -86,11 +68,12 @@ func writeBearerProblem(response http.ResponseWriter) {
 	writeProblem(response, http.StatusUnauthorized, controlv1.Unauthenticated, "authentication required")
 }
 
+func notFound(response http.ResponseWriter, _ *http.Request) {
+	writeProblem(response, http.StatusNotFound, controlv1.NotFound, "resource not found")
+}
+
 func writeProblem(response http.ResponseWriter, status int, code controlv1.ProblemCode, title string) {
-	requestID, err := opaqueid.New("request_")
-	if err != nil {
-		requestID = "request_unavailable"
-	}
+	requestID := newRequestID()
 	details := map[string]any{}
 	writeJSON(response, status, controlv1.Problem{
 		Type: "https://tnl.dev/problems/" + string(code), Title: title,
@@ -98,10 +81,14 @@ func writeProblem(response http.ResponseWriter, status int, code controlv1.Probl
 	})
 }
 
-func writeJSON(response http.ResponseWriter, status int, value any) {
-	response.Header().Set("Content-Type", "application/json")
-	response.WriteHeader(status)
-	if err := json.NewEncoder(response).Encode(value); err != nil {
-		panic(http.ErrAbortHandler)
+func newRequestID() string {
+	requestID, err := opaqueid.New("request_")
+	if err != nil {
+		return "request_unavailable"
 	}
+	return requestID
+}
+
+func writeJSON(response http.ResponseWriter, status int, value any) {
+	httpjson.Write(response, status, value)
 }

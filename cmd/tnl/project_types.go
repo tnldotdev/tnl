@@ -9,9 +9,9 @@ import (
 )
 
 func projectTypeIncludeActions(project projectConfiguration) ([]string, error) {
-	directories := project.directories
+	directories := project.ServiceDirectories
 	if len(directories) == 0 {
-		directories = map[string]string{"": project.root}
+		directories = map[string]string{"": project.Root}
 	}
 	names := make([]string, 0, len(directories))
 	for name := range directories {
@@ -27,7 +27,7 @@ func projectTypeIncludeActions(project projectConfiguration) ([]string, error) {
 		}
 		seen[directory] = struct{}{}
 		path := filepath.Join(directory, "tsconfig.json")
-		declarations := filepath.Join(project.root, ".tnl", "project.d.ts")
+		declarations := filepath.Join(project.Root, ".tnl", "project.d.ts")
 		relative, err := filepath.Rel(directory, declarations)
 		if err != nil {
 			return nil, fmt.Errorf("resolve generated declaration path for service %q: %w", name, err)

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/tnldconfig"
 )
 
 func TestRunVersion(t *testing.T) {
@@ -64,15 +64,15 @@ tnld:
 	}
 }
 
-func TestResolveTNLDFileRespectsEnvironmentAndFlags(t *testing.T) {
+func TestResolveConfigFileRespectsEnvironmentAndFlags(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "tnl.json")
 	contents := `{"version":1,"tnld":{"mode":"relay","metrics_listen":"file:1","relay_stream_capacity":12}}`
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("TNLD_METRICS_LISTEN", "env:2")
-	base := config.TNLD{
-		Mode: config.TNLDModeRelay, MetricsListen: "env:2", RelayStreamCapacity: 99,
+	base := tnldconfig.Config{
+		Mode: tnldconfig.RoleRelay, MetricsListen: "env:2", RelayStreamCapacity: 99,
 		ControlHostname: "control.example.com", ClusterSecret: "0123456789abcdef0123456789abcdef",
 		RelayServiceID: "relay-test", RelayID: "relay-test", RelayAddress: "relay.example.com:443",
 		InternalRelayAddress: "relay.internal:9443", RelayTCPListen: ":443", RelayUDPListen: ":443",
@@ -81,7 +81,7 @@ func TestResolveTNLDFileRespectsEnvironmentAndFlags(t *testing.T) {
 		RelayLeaseDuration: 3 * time.Second, LeaseRenewalInterval: time.Second, ControlRetryInterval: time.Second,
 		RoutingTableWait: time.Second, DrainTimeout: time.Second,
 	}
-	resolved, err := resolveTNLDFile(path, base, map[string]bool{"relay_stream_capacity": true})
+	resolved, err := resolveConfigFile(path, base, map[string]bool{"relay_stream_capacity": true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestParserAcceptsServeValuesBeforeFileResolution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parsed.Command() != "serve" || flags.Serve.Values.Mode != config.TNLDModeRelay || flags.Serve.Values.ControlHostname != "control.example.com" {
+	if parsed.Command() != "serve" || flags.Serve.Values.Mode != tnldconfig.RoleRelay || flags.Serve.Values.ControlHostname != "control.example.com" {
 		t.Fatalf("serve values = %#v", flags.Serve.Values)
 	}
 }

@@ -308,30 +308,37 @@ func (h *handler) publisherConnectionClaim(
 }
 
 func (h *handler) writeStoreError(response http.ResponseWriter, err error) {
+	status, kind, detail := storeProblem(err, h.report)
+	serviceapi.WriteProblem(response, status, kind, detail)
+}
+
+// storeProblem is shared by HTTP and standalone adapters. Role controllers see
+// API problems, never controlstate error identities.
+func storeProblem(err error, report func(error)) (status int, kind, detail string) {
 	switch {
 	case errors.Is(err, controlstate.ErrRelayRegistrationConflict):
-		serviceapi.WriteProblem(response, http.StatusConflict, "relay_registration_conflict", "The relay identity or service configuration conflicts with live state")
+		return http.StatusConflict, "relay_registration_conflict", "The relay identity or service configuration conflicts with live state"
 	case errors.Is(err, controlstate.ErrRelayLeaseStale):
-		serviceapi.WriteProblem(response, http.StatusConflict, "relay_lease_stale", "The relay lease is no longer current")
-	case errors.Is(err, controlstate.ErrRelayServiceCertificateLeaseInvalid):
-		serviceapi.WriteProblem(response, http.StatusConflict, "relay_lease_stale", "The relay lease is no longer current")
+		return http.StatusConflict, "relay_lease_stale", "The relay lease is no longer current"
+	case errors.Is(err, controlstate.ErrRelayServiceCertificateLeaseStale):
+		return http.StatusConflict, "relay_lease_stale", "The relay lease is no longer current"
 	case errors.Is(err, controlstate.ErrRelayServiceCertificateNotFound):
-		serviceapi.WriteProblem(response, http.StatusServiceUnavailable, "certificate_unavailable", "Relay service certificate is not ready")
+		return http.StatusServiceUnavailable, "certificate_unavailable", "Relay service certificate is not ready"
 	case errors.Is(err, controlstate.ErrConnectionAssignmentStale), errors.Is(err, controlstate.ErrRouteSessionStale):
-		serviceapi.WriteProblem(response, http.StatusConflict, "stale_connection_assignment", "The publisher connection assignment is no longer current")
+		return http.StatusConflict, "stale_connection_assignment", "The publisher connection assignment is no longer current"
 	case errors.Is(err, controlstate.ErrPublisherConnectionAlreadyClaimed):
-		serviceapi.WriteProblem(response, http.StatusConflict, "publisher_connection_already_claimed", "The publisher connection is already claimed")
-	case errors.Is(err, controlstate.ErrPublisherConnectionCredential):
-		serviceapi.WriteProblem(response, http.StatusUnauthorized, "invalid_publisher_connection_credential", "Publisher connection credential is invalid")
+		return http.StatusConflict, "publisher_connection_already_claimed", "The publisher connection is already claimed"
+	case errors.Is(err, controlstate.ErrPublisherConnectionCredential), errors.Is(err, credentials.ErrInvalidPublisherConnectionCredential):
+		return http.StatusUnauthorized, "invalid_publisher_connection_credential", "Publisher connection credential is invalid"
 	case errors.Is(err, controlstate.ErrRelayDraining):
-		serviceapi.WriteProblem(response, http.StatusServiceUnavailable, "relay_draining", "The relay is draining")
+		return http.StatusServiceUnavailable, "relay_draining", "The relay is draining"
 	case errors.Is(err, controlstate.ErrRelayConnectionCapacity):
-		serviceapi.WriteProblem(response, http.StatusServiceUnavailable, "relay_connection_capacity_exhausted", "The relay connection capacity is exhausted")
+		return http.StatusServiceUnavailable, "relay_connection_capacity_exhausted", "The relay connection capacity is exhausted"
 	case errors.Is(err, controlstate.ErrPublisherConnectionRelayService), errors.Is(err, controlstate.ErrPublisherConnectionUnavailable):
-		serviceapi.WriteProblem(response, http.StatusConflict, "publisher_connection_unavailable", "The publisher connection assignment is unavailable to this relay")
+		return http.StatusConflict, "publisher_connection_unavailable", "The publisher connection assignment is unavailable to this relay"
 	default:
-		h.report(err)
-		serviceapi.WriteProblem(response, http.StatusInternalServerError, "internal", "The relay service request failed")
+		report(err)
+		return http.StatusInternalServerError, "internal", "The relay service request failed"
 	}
 }
 

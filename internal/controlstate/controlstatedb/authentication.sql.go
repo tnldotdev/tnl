@@ -11,6 +11,33 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const consumeOIDCAssertion = `-- name: ConsumeOIDCAssertion :execrows
+INSERT INTO control.oidc_assertion_exchanges (
+    assertion_digest,
+    consumed_at,
+    expires_at
+) VALUES (
+    $1,
+    $2,
+    $3
+)
+ON CONFLICT (assertion_digest) DO NOTHING
+`
+
+type ConsumeOIDCAssertionParams struct {
+	AssertionDigest []byte
+	ConsumedAt      pgtype.Timestamptz
+	ExpiresAt       pgtype.Timestamptz
+}
+
+func (q *Queries) ConsumeOIDCAssertion(ctx context.Context, arg ConsumeOIDCAssertionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, consumeOIDCAssertion, arg.AssertionDigest, arg.ConsumedAt, arg.ExpiresAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const createActiveSlugReservation = `-- name: CreateActiveSlugReservation :exec
 INSERT INTO control.member_slug_reservations (
     id,
@@ -203,6 +230,70 @@ func (q *Queries) CreateManagedDomain(ctx context.Context, arg CreateManagedDoma
 	return err
 }
 
+const createOIDCIdentity = `-- name: CreateOIDCIdentity :one
+INSERT INTO control.identities (
+    id,
+    kind,
+    issuer,
+    subject,
+    display_name,
+    normalized_email,
+    email_verified,
+    administrator,
+    created_at,
+    updated_at
+) VALUES (
+    $1,
+    'oidc',
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    false,
+    $7,
+    $7
+)
+RETURNING id, kind, issuer, subject, display_name, normalized_email, email_verified, administrator, created_at, updated_at, disabled_at
+`
+
+type CreateOIDCIdentityParams struct {
+	ID              string
+	Issuer          pgtype.Text
+	Subject         pgtype.Text
+	DisplayName     string
+	NormalizedEmail pgtype.Text
+	EmailVerified   bool
+	CreatedAt       pgtype.Timestamptz
+}
+
+func (q *Queries) CreateOIDCIdentity(ctx context.Context, arg CreateOIDCIdentityParams) (ControlIdentity, error) {
+	row := q.db.QueryRow(ctx, createOIDCIdentity,
+		arg.ID,
+		arg.Issuer,
+		arg.Subject,
+		arg.DisplayName,
+		arg.NormalizedEmail,
+		arg.EmailVerified,
+		arg.CreatedAt,
+	)
+	var i ControlIdentity
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.Issuer,
+		&i.Subject,
+		&i.DisplayName,
+		&i.NormalizedEmail,
+		&i.EmailVerified,
+		&i.Administrator,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DisabledAt,
+	)
+	return i, err
+}
+
 const createOwnerMembership = `-- name: CreateOwnerMembership :exec
 INSERT INTO control.team_memberships (
     id,
@@ -287,6 +378,16 @@ func (q *Queries) CreatePersonalTeam(ctx context.Context, arg CreatePersonalTeam
 	return err
 }
 
+const deleteExpiredOIDCAssertionExchanges = `-- name: DeleteExpiredOIDCAssertionExchanges :exec
+DELETE FROM control.oidc_assertion_exchanges
+WHERE expires_at <= $1
+`
+
+func (q *Queries) DeleteExpiredOIDCAssertionExchanges(ctx context.Context, now pgtype.Timestamptz) error {
+	_, err := q.db.Exec(ctx, deleteExpiredOIDCAssertionExchanges, now)
+	return err
+}
+
 const findBuiltinIdentity = `-- name: FindBuiltinIdentity :one
 SELECT id, kind, issuer, subject, display_name, normalized_email, email_verified, administrator, created_at, updated_at, disabled_at
 FROM control.identities
@@ -341,6 +442,38 @@ func (q *Queries) FindManagedDomain(ctx context.Context) (ControlDomain, error) 
 		&i.ReusableAfter,
 		&i.ReleasedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const findOIDCIdentity = `-- name: FindOIDCIdentity :one
+SELECT id, kind, issuer, subject, display_name, normalized_email, email_verified, administrator, created_at, updated_at, disabled_at
+FROM control.identities
+WHERE kind = 'oidc'
+  AND issuer = $1
+  AND subject = $2
+`
+
+type FindOIDCIdentityParams struct {
+	Issuer  pgtype.Text
+	Subject pgtype.Text
+}
+
+func (q *Queries) FindOIDCIdentity(ctx context.Context, arg FindOIDCIdentityParams) (ControlIdentity, error) {
+	row := q.db.QueryRow(ctx, findOIDCIdentity, arg.Issuer, arg.Subject)
+	var i ControlIdentity
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.Issuer,
+		&i.Subject,
+		&i.DisplayName,
+		&i.NormalizedEmail,
+		&i.EmailVerified,
+		&i.Administrator,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DisabledAt,
 	)
 	return i, err
 }
@@ -685,4 +818,49 @@ type SetPersonalTeamDefaultDomainParams struct {
 func (q *Queries) SetPersonalTeamDefaultDomain(ctx context.Context, arg SetPersonalTeamDefaultDomainParams) error {
 	_, err := q.db.Exec(ctx, setPersonalTeamDefaultDomain, arg.DomainID, arg.UpdatedAt, arg.TeamID)
 	return err
+}
+
+const updateOIDCIdentity = `-- name: UpdateOIDCIdentity :one
+UPDATE control.identities
+SET display_name = $1,
+    normalized_email = $2,
+    email_verified = $3,
+    updated_at = GREATEST(updated_at, $4)
+WHERE id = $5
+  AND kind = 'oidc'
+  AND disabled_at IS NULL
+RETURNING id, kind, issuer, subject, display_name, normalized_email, email_verified, administrator, created_at, updated_at, disabled_at
+`
+
+type UpdateOIDCIdentityParams struct {
+	DisplayName     string
+	NormalizedEmail pgtype.Text
+	EmailVerified   bool
+	UpdatedAt       pgtype.Timestamptz
+	ID              string
+}
+
+func (q *Queries) UpdateOIDCIdentity(ctx context.Context, arg UpdateOIDCIdentityParams) (ControlIdentity, error) {
+	row := q.db.QueryRow(ctx, updateOIDCIdentity,
+		arg.DisplayName,
+		arg.NormalizedEmail,
+		arg.EmailVerified,
+		arg.UpdatedAt,
+		arg.ID,
+	)
+	var i ControlIdentity
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.Issuer,
+		&i.Subject,
+		&i.DisplayName,
+		&i.NormalizedEmail,
+		&i.EmailVerified,
+		&i.Administrator,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DisabledAt,
+	)
+	return i, err
 }

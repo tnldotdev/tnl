@@ -218,6 +218,20 @@ func (q *Queries) ListIngressRoutingTableSnapshot(ctx context.Context, arg ListI
 	return items, nil
 }
 
+const lockIngressRoutingTableClock = `-- name: LockIngressRoutingTableClock :one
+SELECT current_revision
+FROM control.ingress_routing_table_clock
+WHERE singleton = true
+FOR UPDATE
+`
+
+func (q *Queries) LockIngressRoutingTableClock(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, lockIngressRoutingTableClock)
+	var current_revision int64
+	err := row.Scan(&current_revision)
+	return current_revision, err
+}
+
 const readIngressRoutingTableClock = `-- name: ReadIngressRoutingTableClock :one
 SELECT singleton, current_revision, retained_after_revision, updated_at
 FROM control.ingress_routing_table_clock

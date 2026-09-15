@@ -57,36 +57,36 @@ func (c *Client) DeleteRoute(ctx context.Context, route controlv1.Route) error {
 	return c.control.DeleteRoute(ctx, route.Id)
 }
 
-func (c *Client) Ready(ctx context.Context, routeSessionID string, version uint64, token credentials.SessionToken) error {
-	return c.control.Ready(ctx, routeSessionID, version, token)
+func (c *Client) MarkRouteSessionReady(ctx context.Context, routeSessionID string, version uint64, token credentials.RouteSessionToken) error {
+	return c.control.MarkRouteSessionReady(ctx, routeSessionID, version, token)
 }
 
-func (c *Client) Heartbeat(ctx context.Context, routeSessionID string, version uint64, token credentials.SessionToken) (controlv1.RouteSessionHeartbeat, error) {
-	return c.control.Heartbeat(ctx, routeSessionID, version, token)
+func (c *Client) HeartbeatRouteSession(ctx context.Context, routeSessionID string, version uint64, token credentials.RouteSessionToken) (controlv1.RouteSessionHeartbeat, error) {
+	return c.control.HeartbeatRouteSession(ctx, routeSessionID, version, token)
 }
 
-func (c *Client) CloseRouteSession(ctx context.Context, routeSessionID string, token credentials.SessionToken) error {
+func (c *Client) CloseRouteSession(ctx context.Context, routeSessionID string, token credentials.RouteSessionToken) error {
 	return c.control.CloseRouteSession(ctx, routeSessionID, token)
 }
 
-func (c *Client) CreateCertificateIssuance(ctx context.Context, routeSessionID string, version uint64, token credentials.SessionToken, csr []byte, idempotencyKey string) (controlv1.CertificateIssuance, error) {
+func (c *Client) CreateCertificateIssuance(ctx context.Context, routeSessionID string, version uint64, token credentials.RouteSessionToken, csr []byte, idempotencyKey string) (controlv1.CertificateIssuance, error) {
 	return c.control.CreateCertificateIssuance(ctx, routeSessionID, version, token, csr, idempotencyKey)
 }
 
-func (c *Client) CertificateIssuance(ctx context.Context, issuanceID string, token credentials.SessionToken) (controlv1.CertificateIssuance, error) {
-	return c.control.CertificateIssuance(ctx, issuanceID, token)
+func (c *Client) GetCertificateIssuance(ctx context.Context, issuanceID string, token credentials.RouteSessionToken) (controlv1.CertificateIssuance, error) {
+	return c.control.GetCertificateIssuance(ctx, issuanceID, token)
 }
 
-func (c *Client) CertificateChallengeReady(ctx context.Context, issuanceID string, token credentials.SessionToken) (controlv1.CertificateIssuance, error) {
-	return c.control.CertificateChallengeReady(ctx, issuanceID, token)
+func (c *Client) MarkCertificateChallengeReady(ctx context.Context, issuanceID string, token credentials.RouteSessionToken) (controlv1.CertificateIssuance, error) {
+	return c.control.MarkCertificateChallengeReady(ctx, issuanceID, token)
 }
 
-func (c *Client) CertificateChallengeRemoved(ctx context.Context, issuanceID string, token credentials.SessionToken) error {
-	return c.control.CertificateChallengeRemoved(ctx, issuanceID, token)
+func (c *Client) MarkCertificateChallengeRemoved(ctx context.Context, issuanceID string, token credentials.RouteSessionToken) error {
+	return c.control.MarkCertificateChallengeRemoved(ctx, issuanceID, token)
 }
 
-func (c *Client) CertificateInstalled(ctx context.Context, routeSessionID string, version uint64, issuanceID string, notAfter time.Time, token credentials.SessionToken) error {
-	return c.control.CertificateInstalled(ctx, routeSessionID, version, issuanceID, notAfter, token)
+func (c *Client) MarkRouteSessionCertificateInstalled(ctx context.Context, routeSessionID string, version uint64, issuanceID string, notAfter time.Time, token credentials.RouteSessionToken) error {
+	return c.control.MarkRouteSessionCertificateInstalled(ctx, routeSessionID, version, issuanceID, notAfter, token)
 }
 
 func canonicalizeIPPrefixes(prefixes *[]string) (*[]string, error) {

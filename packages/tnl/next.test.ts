@@ -1,9 +1,8 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import * as os from "node:os";
-import * as path from "node:path";
+import { rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { describe, expect, onTestFinished, test } from "vitest";
 import {
+  createProjectFixture,
   errorMessage,
   occupyPort,
   openTestWebSocket,
@@ -12,7 +11,7 @@ import {
   reserveLoopbackPort,
   startTestBootstrap,
   startTestProcess,
-  testProjectDocument,
+  temporaryDirectory,
   testPublicProject,
   waitForBootstrapRequest,
   withCurrentDirectory,
@@ -38,7 +37,7 @@ describe("withTnl", () => {
   });
 
   test("injects generated project metadata only during plain development", async () => {
-    const project = await createProjectFixture();
+    const project = await createProjectFixture("tnl-next-project-");
     const config = { reactStrictMode: true };
     await withCurrentDirectory(project.serviceDirectory, async () => {
       const local = await withTnl(config)(developmentPhase, context);
@@ -364,24 +363,6 @@ test("registers the actual fallback port selected by Next.js", { timeout: 60_000
     throw new Error(`${errorMessage(error)}\n${process_.output()}`, { cause: error });
   }
 });
-
-async function createProjectFixture() {
-  const root = await temporaryDirectory("tnl-next-project-");
-  const serviceDirectory = path.join(root, "apps", "api");
-  await mkdir(path.join(root, ".tnl"), { recursive: true });
-  await mkdir(serviceDirectory, { recursive: true });
-  await writeFile(
-    path.join(root, ".tnl", "project.json"),
-    `${JSON.stringify(testProjectDocument())}\n`,
-  );
-  return { root, serviceDirectory };
-}
-
-async function temporaryDirectory(prefix: string): Promise<string> {
-  const directory = await mkdtemp(path.join(os.tmpdir(), prefix));
-  onTestFinished(() => rm(directory, { force: true, recursive: true }));
-  return directory;
-}
 
 function extractNextAssetPath(html: string): string {
   const match = html.match(/src="([^"]*\/_next\/static\/[^"]+\.js[^"]*)"/);

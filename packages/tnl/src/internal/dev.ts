@@ -11,6 +11,7 @@ import {
   record,
   requiredHostname,
   serializeRuntimePayload,
+  validServiceName,
   type ProjectMetadata,
   type ProjectRuntime,
 } from "./runtime.js";
@@ -18,9 +19,7 @@ import {
 const protocolVersion = "1";
 const maximumDocumentBytes = 64 * 1024;
 const maximumResponseBytes = 64 * 1024;
-const maximumServices = 32;
 const registrationTimeoutMilliseconds = 10 * 60 * 1000;
-const serviceNamePattern = /^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
 
 export type TnlDevEnvironment = Readonly<Record<string, string | undefined>>;
 
@@ -29,18 +28,10 @@ export interface TnlDevBootstrap {
   readonly socket: string;
 }
 
-export interface ProjectDocumentService {
-  readonly memberNamespace: string;
-  readonly hostname: string;
-  readonly url: `https://${string}`;
-}
-
-export interface ProjectDocument {
-  readonly memberNamespace: string;
+export interface ProjectDocument extends ProjectMetadata {
   readonly projectRoot: string;
   readonly runningUnderTnlDev: boolean;
   readonly serviceDirectories: Readonly<Record<string, string>>;
-  readonly services: Readonly<Record<string, ProjectDocumentService>>;
   readonly version: 1;
 }
 
@@ -190,7 +181,7 @@ function parseBootstrapEnvironment(environment: TnlDevEnvironment): TnlDevBootst
     throw new Error(`TNL_DEV_SOCKET is required by tnl dev protocol ${protocolVersion}`);
   }
   const rawPort = environment.TNL_DEV_PORT;
-  const port = rawPort === undefined ? undefined : parsePort(rawPort, "TNL_DEV_PORT");
+  const port = rawPort === undefined ? undefined : parseListenerPort(rawPort, "TNL_DEV_PORT");
   return Object.freeze({ port, socket });
 }
 
@@ -324,88 +315,36 @@ function parseProjectDocumentValue(
   if (object.runningUnderTnlDev) {
     throw new Error(`${description} cannot be marked as running under tnl dev`);
   }
-  const memberNamespace = requiredHostname(
-    object.memberNamespace,
-    `${description} member namespace`,
+  const project = parseProjectMetadata(
+    { memberNamespace: object.memberNamespace, services: object.services },
+    description,
   );
-  const serviceValues = record(object.services, `${description} services`);
   const directoryValues = record(object.serviceDirectories, `${description} service directories`);
-  const entries = Object.entries(serviceValues);
-  if (entries.length > maximumServices) {
-    throw new Error(`${description} may contain at most ${maximumServices} services`);
-  }
+  const names = Object.keys(project.services);
   if (
-    Object.keys(directoryValues).length !== entries.length ||
-    entries.some(([name]) => !Object.hasOwn(directoryValues, name))
+    Object.keys(directoryValues).length !== names.length ||
+    names.some((name) => !Object.hasOwn(directoryValues, name))
   ) {
     throw new Error(`${description} requires one directory for every service`);
   }
-  const services: Record<string, ProjectDocumentService> = {};
   const serviceDirectories: Record<string, string> = {};
-  const hostnames = new Set<string>();
-  for (const [name, value] of entries) {
-    if (!validServiceName(name)) {
-      throw new Error(`${description} contains an invalid service name ${JSON.stringify(name)}`);
-    }
-    const service = record(value, `${description} service ${JSON.stringify(name)}`);
-    exactKeys(
-      service,
-      ["hostname", "memberNamespace", "url"],
-      `${description} service ${JSON.stringify(name)}`,
-    );
-    const directory = relativeDirectory(
+  for (const name of names) {
+    serviceDirectories[name] = relativeDirectory(
       directoryValues[name],
       `${description} service ${JSON.stringify(name)} directory`,
     );
-    const serviceMemberNamespace = requiredHostname(
-      service.memberNamespace,
-      `${description} service ${JSON.stringify(name)} member namespace`,
-    );
-    const hostname = requiredHostname(
-      service.hostname,
-      `${description} service ${JSON.stringify(name)} hostname`,
-    );
-    if (service.url !== `https://${hostname}`) {
-      throw new Error(`${description} service ${JSON.stringify(name)} has an invalid URL`);
-    }
-    if (hostnames.has(hostname)) {
-      throw new Error(`${description} contains duplicate service hostname ${hostname}`);
-    }
-    hostnames.add(hostname);
-    services[name] = Object.freeze({
-      memberNamespace: serviceMemberNamespace,
-      hostname,
-      url: service.url as `https://${string}`,
-    });
-    serviceDirectories[name] = directory;
   }
   return Object.freeze({
-    memberNamespace,
+    ...project,
     projectRoot,
     runningUnderTnlDev: object.runningUnderTnlDev,
     serviceDirectories: Object.freeze(serviceDirectories),
-    services: Object.freeze(services),
     version: 1,
   });
 }
 
 function projectMetadata(document: ProjectDocument): ProjectMetadata {
-  return parseProjectMetadata(
-    {
-      memberNamespace: document.memberNamespace,
-      services: Object.fromEntries(
-        Object.entries(document.services).map(([name, service]) => [
-          name,
-          {
-            hostname: service.hostname,
-            memberNamespace: service.memberNamespace,
-            url: service.url,
-          },
-        ]),
-      ),
-    },
-    "tnl project metadata",
-  );
+  return Object.freeze({ memberNamespace: document.memberNamespace, services: document.services });
 }
 
 function selectService(document: ProjectDocument, cwd: string): string | null {
@@ -558,7 +497,8 @@ function absoluteNormalizedPath(value: unknown, description: string): string {
   return value;
 }
 
-function parsePort(value: string, source: string): number {
+/** Parses digit-only listener ports in [1, 65535], preserving source-specific diagnostics. */
+export function parseListenerPort(value: string, source: string): number {
   if (!/^[0-9]+$/.test(value)) {
     throw new Error(`${source} must be a port between 1 and 65535`);
   }
@@ -567,10 +507,6 @@ function parsePort(value: string, source: string): number {
     throw new Error(`${source} must be a port between 1 and 65535`);
   }
   return port;
-}
-
-function validServiceName(value: unknown): value is string {
-  return typeof value === "string" && serviceNamePattern.test(value);
 }
 
 function pathWithin(value: string, root: string): boolean {

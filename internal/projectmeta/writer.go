@@ -9,9 +9,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"syscall"
 
-	"golang.org/x/sys/unix"
+	"github.com/tnldotdev/tnl/internal/filelock"
 )
 
 const (
@@ -21,8 +20,9 @@ const (
 	MaxFileBytes     = 64 << 10
 )
 
-// Write validates and atomically replaces both generated metadata files while
-// holding the project's metadata lock.
+// Write validates and replaces each generated file atomically while holding the
+// metadata writer lock. The pair is not atomically visible; failure replacing the
+// second file attempts to restore the first.
 func Write(projectRoot string, metadata Metadata) error {
 	if !filepath.IsAbs(projectRoot) {
 		return errors.New("project metadata root must be absolute")
@@ -35,14 +35,11 @@ func Write(projectRoot string, metadata Metadata) error {
 	if err := prepareDirectory(directory); err != nil {
 		return err
 	}
-	lock, err := openLock(filepath.Join(directory, "project.lock"))
+	lock, err := filelock.Acquire(filepath.Join(directory, "project.lock"), filelock.Blocking, os.Geteuid())
 	if err != nil {
-		return err
+		return fmt.Errorf("lock project metadata: %w", err)
 	}
-	defer func() {
-		_ = unix.Flock(int(lock.Fd()), unix.LOCK_UN)
-		_ = lock.Close()
-	}()
+	defer lock.Close()
 	declarationsPath := filepath.Join(directory, DeclarationsName)
 	jsonPath := filepath.Join(directory, JSONName)
 	if err := validateOutputPath(declarationsPath); err != nil {
@@ -169,29 +166,6 @@ func prepareDirectory(path string) error {
 		return fmt.Errorf("create project metadata directory: %w", err)
 	}
 	return nil
-}
-
-func openLock(path string) (*os.File, error) {
-	descriptor, err := unix.Open(path, unix.O_CREAT|unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0o600)
-	if err != nil {
-		return nil, fmt.Errorf("open project metadata lock: %w", err)
-	}
-	file := os.NewFile(uintptr(descriptor), path)
-	info, err := file.Stat()
-	if err != nil {
-		file.Close()
-		return nil, fmt.Errorf("inspect project metadata lock: %w", err)
-	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || stat.Uid != uint32(os.Geteuid()) {
-		file.Close()
-		return nil, errors.New("project metadata lock must be a user-owned regular file with mode 0600")
-	}
-	if err := unix.Flock(descriptor, unix.LOCK_EX); err != nil {
-		file.Close()
-		return nil, fmt.Errorf("lock project metadata: %w", err)
-	}
-	return file, nil
 }
 
 type stagedWrite struct {

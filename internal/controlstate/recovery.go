@@ -11,7 +11,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 )
 
-var ErrRouteRecoveryEpisodeFenced = errors.New("controlstate: route recovery episode is fenced")
+var ErrRouteRecoveryEpisodeStale = errors.New("controlstate: route recovery episode is stale")
 
 // RouteRecoveryObservation is one durable public-recovery SLI sample.
 type RouteRecoveryObservation struct {
@@ -59,13 +59,13 @@ func (d *Database) ObserveRouteRecovery(
 	}
 	episode, err := queries.LockRouteRecoveryEpisode(ctx, positive(episodeID))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return RouteRecoveryObservation{}, ErrRouteRecoveryEpisodeFenced
+		return RouteRecoveryObservation{}, ErrRouteRecoveryEpisodeStale
 	}
 	if err != nil {
 		return RouteRecoveryObservation{}, fmt.Errorf("controlstate: observe route recovery: lock episode: %w", err)
 	}
 	if episode.RouteID != routeID || !matchesPositiveInt64(episode.RouteVersion, routeVersion) || !episode.OpenedAt.Valid {
-		return RouteRecoveryObservation{}, ErrRouteRecoveryEpisodeFenced
+		return RouteRecoveryObservation{}, ErrRouteRecoveryEpisodeStale
 	}
 	if episode.State == "observed" && episode.ObservedAt.Valid && episode.ObservedSeconds.Valid {
 		if err := tx.Commit(ctx); err != nil {
@@ -74,7 +74,7 @@ func (d *Database) ObserveRouteRecovery(
 		return recoveryObservation(episode), nil
 	}
 	if episode.State != "open" || observedAt.Before(episode.OpenedAt.Time) {
-		return RouteRecoveryObservation{}, ErrRouteRecoveryEpisodeFenced
+		return RouteRecoveryObservation{}, ErrRouteRecoveryEpisodeStale
 	}
 	seconds := observedAt.Sub(episode.OpenedAt.Time).Seconds()
 	episode, err = queries.ObserveRouteRecoveryEpisode(ctx, controlstatedb.ObserveRouteRecoveryEpisodeParams{
@@ -82,7 +82,7 @@ func (d *Database) ObserveRouteRecovery(
 		EpisodeID: positive(episodeID), RouteID: routeID, RouteVersion: positive(routeVersion),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return RouteRecoveryObservation{}, ErrRouteRecoveryEpisodeFenced
+		return RouteRecoveryObservation{}, ErrRouteRecoveryEpisodeStale
 	}
 	if err != nil {
 		return RouteRecoveryObservation{}, fmt.Errorf("controlstate: observe route recovery: close episode: %w", err)

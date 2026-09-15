@@ -14,7 +14,7 @@ import (
 	"strings"
 
 	"github.com/tnldotdev/tnl/internal/clioutput"
-	projectconfig "github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/projectconfig"
 )
 
 const initReadLimit = 1 << 20
@@ -87,9 +87,11 @@ func runInit(ctx context.Context, flags initCommand, stdout, stderr io.Writer) e
 	}
 	if plan.generatedService {
 		typeActions, err := projectTypeIncludeActions(projectConfiguration{
-			root:                plan.root,
-			directories:         map[string]string{"app": plan.root},
-			relativeDirectories: map[string]string{"app": "."},
+			Project: projectconfig.Project{
+				Root:                       plan.root,
+				ServiceDirectories:         map[string]string{"app": plan.root},
+				RelativeServiceDirectories: map[string]string{"app": "."},
+			},
 		})
 		if err != nil {
 			return err

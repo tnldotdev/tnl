@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/clientstate/clientstatedb"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/zalando/go-keyring"
 )
@@ -145,7 +144,7 @@ func TestDarwinClientStateEncryptsControlSessionAndRouteKeys(t *testing.T) {
 		t.Fatal("refresh token is not encrypted")
 	}
 
-	route, err := store.OpenRoute(testRouteID)
+	route, err := store.Certificates("team_1", exactCertificateTestPlan())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,9 +156,7 @@ func TestDarwinClientStateEncryptsControlSessionAndRouteKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	storedPending, err := database.queries.GetRouteCertificate(t.Context(), clientstatedb.GetRouteCertificateParams{
-		ServerOrigin: store.controlEndpoint, RouteID: testRouteID, Phase: certificatePhasePending,
-	})
+	storedPending, err := route.record(t.Context(), certificatePhasePending)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,23 +164,21 @@ func TestDarwinClientStateEncryptsControlSessionAndRouteKeys(t *testing.T) {
 		t.Fatal("pending state contains an unencrypted private key")
 	}
 	renewAt := time.Now().Add(time.Hour).UTC()
-	material, err := route.Commit(
-		t.Context(), "route.example", pending, signedCertificate(t, pending.Key, "route.example"), renewAt, "issuance_current", 1,
+	material, err := route.Stage(
+		t.Context(), "route.example", pending, signedCertificate(t, pending.Key, "route.example"), renewAt, "issuance_current",
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	storedCurrent, err := database.queries.GetRouteCertificate(t.Context(), clientstatedb.GetRouteCertificateParams{
-		ServerOrigin: store.controlEndpoint, RouteID: testRouteID, Phase: certificatePhaseCurrent,
-	})
+	if err := route.Promote(t.Context(), "route.example", material.IssuanceID); err != nil {
+		t.Fatal(err)
+	}
+	storedCurrent, err := route.record(t.Context(), certificatePhaseCurrent)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if bytes.Equal(storedCurrent.KeyDer, keyDER) || !bytes.HasPrefix(storedCurrent.KeyDer, sealedValuePrefix) {
 		t.Fatal("current state contains an unencrypted private key")
-	}
-	if err := route.Close(); err != nil {
-		t.Fatal(err)
 	}
 	if err := database.Close(); err != nil {
 		t.Fatal(err)
@@ -202,11 +197,10 @@ func TestDarwinClientStateEncryptsControlSessionAndRouteKeys(t *testing.T) {
 	if err != nil || !found || session.AccessToken != token.String() {
 		t.Fatalf("control session = %#v, found = %v, error = %v", session, found, err)
 	}
-	route, err = reopened.OpenRoute(testRouteID)
+	route, err = reopened.Certificates("team_1", exactCertificateTestPlan())
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer route.Close()
 	loaded, found, err := route.Current(t.Context(), "route.example")
 	if err != nil || !found {
 		t.Fatalf("current state found = %v, error = %v", found, err)

@@ -10,6 +10,34 @@ import (
 	"database/sql"
 )
 
+const deleteCertificateMaterial = `-- name: DeleteCertificateMaterial :exec
+DELETE FROM certificate_material
+WHERE server_origin = ?1
+  AND team_id = ?2
+  AND cache_key = ?3
+  AND plan = ?4
+  AND phase = ?5
+`
+
+type DeleteCertificateMaterialParams struct {
+	ServerOrigin string
+	TeamID       string
+	CacheKey     string
+	Plan         string
+	Phase        string
+}
+
+func (q *Queries) DeleteCertificateMaterial(ctx context.Context, arg DeleteCertificateMaterialParams) error {
+	_, err := q.db.ExecContext(ctx, deleteCertificateMaterial,
+		arg.ServerOrigin,
+		arg.TeamID,
+		arg.CacheKey,
+		arg.Plan,
+		arg.Phase,
+	)
+	return err
+}
+
 const deleteControlSession = `-- name: DeleteControlSession :exec
 DELETE FROM control_sessions
 WHERE server_origin = ?1
@@ -33,24 +61,6 @@ type DeleteOldTunnelsParams struct {
 
 func (q *Queries) DeleteOldTunnels(ctx context.Context, arg DeleteOldTunnelsParams) error {
 	_, err := q.db.ExecContext(ctx, deleteOldTunnels, arg.TerminalBefore, arg.StaleBefore)
-	return err
-}
-
-const deleteRouteCertificate = `-- name: DeleteRouteCertificate :exec
-DELETE FROM route_certificates
-WHERE server_origin = ?1
-  AND route_id = ?2
-  AND phase = ?3
-`
-
-type DeleteRouteCertificateParams struct {
-	ServerOrigin string
-	RouteID      string
-	Phase        string
-}
-
-func (q *Queries) DeleteRouteCertificate(ctx context.Context, arg DeleteRouteCertificateParams) error {
-	_, err := q.db.ExecContext(ctx, deleteRouteCertificate, arg.ServerOrigin, arg.RouteID, arg.Phase)
 	return err
 }
 
@@ -83,6 +93,49 @@ func (q *Queries) FinishTunnel(ctx context.Context, arg FinishTunnelParams) (int
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const getCertificateMaterial = `-- name: GetCertificateMaterial :one
+SELECT server_origin, team_id, cache_key, "plan", phase, key_der, csr_der, certificate_pem, renew_at, issuance_id, updated_at
+FROM certificate_material
+WHERE server_origin = ?1
+  AND team_id = ?2
+  AND cache_key = ?3
+  AND plan = ?4
+  AND phase = ?5
+`
+
+type GetCertificateMaterialParams struct {
+	ServerOrigin string
+	TeamID       string
+	CacheKey     string
+	Plan         string
+	Phase        string
+}
+
+func (q *Queries) GetCertificateMaterial(ctx context.Context, arg GetCertificateMaterialParams) (CertificateMaterial, error) {
+	row := q.db.QueryRowContext(ctx, getCertificateMaterial,
+		arg.ServerOrigin,
+		arg.TeamID,
+		arg.CacheKey,
+		arg.Plan,
+		arg.Phase,
+	)
+	var i CertificateMaterial
+	err := row.Scan(
+		&i.ServerOrigin,
+		&i.TeamID,
+		&i.CacheKey,
+		&i.Plan,
+		&i.Phase,
+		&i.KeyDer,
+		&i.CsrDer,
+		&i.CertificatePem,
+		&i.RenewAt,
+		&i.IssuanceID,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const getControlSession = `-- name: GetControlSession :one
@@ -118,40 +171,6 @@ func (q *Queries) GetInstallationID(ctx context.Context) (string, error) {
 	var installation_id string
 	err := row.Scan(&installation_id)
 	return installation_id, err
-}
-
-const getRouteCertificate = `-- name: GetRouteCertificate :one
-SELECT server_origin, route_id, phase, hostname, key_der, csr_der, certificate_pem, renew_at, issuance_id, route_version, installed, updated_at
-FROM route_certificates
-WHERE server_origin = ?1
-  AND route_id = ?2
-  AND phase = ?3
-`
-
-type GetRouteCertificateParams struct {
-	ServerOrigin string
-	RouteID      string
-	Phase        string
-}
-
-func (q *Queries) GetRouteCertificate(ctx context.Context, arg GetRouteCertificateParams) (RouteCertificate, error) {
-	row := q.db.QueryRowContext(ctx, getRouteCertificate, arg.ServerOrigin, arg.RouteID, arg.Phase)
-	var i RouteCertificate
-	err := row.Scan(
-		&i.ServerOrigin,
-		&i.RouteID,
-		&i.Phase,
-		&i.Hostname,
-		&i.KeyDer,
-		&i.CsrDer,
-		&i.CertificatePem,
-		&i.RenewAt,
-		&i.IssuanceID,
-		&i.RouteVersion,
-		&i.Installed,
-		&i.UpdatedAt,
-	)
-	return i, err
 }
 
 const getSelectedServer = `-- name: GetSelectedServer :one
@@ -556,6 +575,72 @@ func (q *Queries) SetWorktreeHashSalt(ctx context.Context, worktreeHashSalt []by
 	return err
 }
 
+const upsertCertificateMaterial = `-- name: UpsertCertificateMaterial :exec
+INSERT INTO certificate_material (
+    server_origin,
+    team_id,
+    cache_key,
+    plan,
+    phase,
+    key_der,
+    csr_der,
+    certificate_pem,
+    renew_at,
+    issuance_id,
+    updated_at
+) VALUES (
+    ?1,
+    ?2,
+    ?3,
+    ?4,
+    ?5,
+    ?6,
+    ?7,
+    ?8,
+    ?9,
+    ?10,
+    ?11
+)
+ON CONFLICT (server_origin, team_id, cache_key, plan, phase) DO UPDATE SET
+    key_der = excluded.key_der,
+    csr_der = excluded.csr_der,
+    certificate_pem = excluded.certificate_pem,
+    renew_at = excluded.renew_at,
+    issuance_id = excluded.issuance_id,
+    updated_at = excluded.updated_at
+`
+
+type UpsertCertificateMaterialParams struct {
+	ServerOrigin   string
+	TeamID         string
+	CacheKey       string
+	Plan           string
+	Phase          string
+	KeyDer         []byte
+	CsrDer         []byte
+	CertificatePem []byte
+	RenewAt        sql.NullInt64
+	IssuanceID     string
+	UpdatedAt      int64
+}
+
+func (q *Queries) UpsertCertificateMaterial(ctx context.Context, arg UpsertCertificateMaterialParams) error {
+	_, err := q.db.ExecContext(ctx, upsertCertificateMaterial,
+		arg.ServerOrigin,
+		arg.TeamID,
+		arg.CacheKey,
+		arg.Plan,
+		arg.Phase,
+		arg.KeyDer,
+		arg.CsrDer,
+		arg.CertificatePem,
+		arg.RenewAt,
+		arg.IssuanceID,
+		arg.UpdatedAt,
+	)
+	return err
+}
+
 const upsertControlSession = `-- name: UpsertControlSession :exec
 INSERT INTO control_sessions (
     server_origin,
@@ -606,79 +691,6 @@ func (q *Queries) UpsertControlSession(ctx context.Context, arg UpsertControlSes
 		arg.AccessExpiresAt,
 		arg.RefreshToken,
 		arg.RefreshExpiresAt,
-		arg.UpdatedAt,
-	)
-	return err
-}
-
-const upsertRouteCertificate = `-- name: UpsertRouteCertificate :exec
-INSERT INTO route_certificates (
-    server_origin,
-    route_id,
-    phase,
-    hostname,
-    key_der,
-    csr_der,
-    certificate_pem,
-    renew_at,
-    issuance_id,
-    route_version,
-    installed,
-    updated_at
-) VALUES (
-    ?1,
-    ?2,
-    ?3,
-    ?4,
-    ?5,
-    ?6,
-    ?7,
-    ?8,
-    ?9,
-    ?10,
-    ?11,
-    ?12
-)
-ON CONFLICT (server_origin, route_id, phase) DO UPDATE SET
-    hostname = excluded.hostname,
-    key_der = excluded.key_der,
-    csr_der = excluded.csr_der,
-    certificate_pem = excluded.certificate_pem,
-    renew_at = excluded.renew_at,
-    issuance_id = excluded.issuance_id,
-    route_version = excluded.route_version,
-    installed = excluded.installed,
-    updated_at = excluded.updated_at
-`
-
-type UpsertRouteCertificateParams struct {
-	ServerOrigin   string
-	RouteID        string
-	Phase          string
-	Hostname       string
-	KeyDer         []byte
-	CsrDer         []byte
-	CertificatePem []byte
-	RenewAt        sql.NullInt64
-	IssuanceID     string
-	RouteVersion   int64
-	Installed      int64
-	UpdatedAt      int64
-}
-
-func (q *Queries) UpsertRouteCertificate(ctx context.Context, arg UpsertRouteCertificateParams) error {
-	_, err := q.db.ExecContext(ctx, upsertRouteCertificate,
-		arg.ServerOrigin,
-		arg.RouteID,
-		arg.Phase,
-		arg.Hostname,
-		arg.KeyDer,
-		arg.CsrDer,
-		arg.CertificatePem,
-		arg.RenewAt,
-		arg.IssuanceID,
-		arg.RouteVersion,
-		arg.Installed,
 		arg.UpdatedAt,
 	)
 	return err

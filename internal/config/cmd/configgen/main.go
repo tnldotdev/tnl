@@ -13,6 +13,8 @@ import (
 
 	"github.com/invopop/jsonschema"
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/projectconfig"
+	"github.com/tnldotdev/tnl/internal/tnldconfig"
 )
 
 func main() {
@@ -44,7 +46,7 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
-	if err := writeFile(filepath.Join(root, "internal", "tnlts", "keys.gen.json"), append(data, '\n')); err != nil {
+	if err := writeFile(filepath.Join(root, "internal", "projectconfig", "keys.gen.json"), append(data, '\n')); err != nil {
 		fatal(err)
 	}
 }
@@ -129,10 +131,10 @@ func tunnelSchema() *jsonschema.Schema {
 
 func tnldSchema() *jsonschema.Schema {
 	properties := jsonschema.NewProperties()
-	typeOfTNLD := reflect.TypeOf(config.TNLD{})
+	typeOfConfig := reflect.TypeOf(tnldconfig.Config{})
 	durationType := reflect.TypeOf(time.Duration(0))
-	for index := 0; index < typeOfTNLD.NumField(); index++ {
-		field := typeOfTNLD.Field(index)
+	for index := 0; index < typeOfConfig.NumField(); index++ {
+		field := typeOfConfig.Field(index)
 		name := strings.ReplaceAll(field.Tag.Get("name"), "-", "_")
 		if name == "" || name == "database_direct_url" {
 			continue
@@ -167,7 +169,7 @@ func primitiveSchema(valueType reflect.Type, duration bool) *jsonschema.Schema {
 	case reflect.Slice:
 		return &jsonschema.Schema{Type: "array", Items: primitiveSchema(valueType.Elem(), false)}
 	default:
-		panic(fmt.Sprintf("unsupported TNLD field type %s", valueType))
+		panic(fmt.Sprintf("unsupported tnld config field type %s", valueType))
 	}
 }
 
@@ -188,13 +190,14 @@ func defaultValue(value string, valueType reflect.Type, duration bool) any {
 }
 
 func collectTypeScriptKeys(valueType reflect.Type, result map[string]string) {
+	mappings := projectconfig.TypeScriptKeyMappings()
 	for index := 0; index < valueType.NumField(); index++ {
 		field := valueType.Field(index)
 		staticName, _, _ := strings.Cut(field.Tag.Get("json"), ",")
 		if staticName == "" || staticName == "-" {
 			continue
 		}
-		typeScriptName := field.Tag.Get("tnlts")
+		typeScriptName := mappings[staticName]
 		if typeScriptName == "" {
 			typeScriptName = staticName
 		}

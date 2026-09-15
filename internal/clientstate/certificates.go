@@ -7,22 +7,23 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"database/sql"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
 	"math"
-	"os"
 	"path/filepath"
-	"sync"
+	"strings"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/clientstate/clientstatedb"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
-	"golang.org/x/sys/unix"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 const (
@@ -32,11 +33,11 @@ const (
 
 var ErrCertificateExpired = errors.New("clientstate: application certificate is expired")
 
-type RouteCertificateHandle struct {
-	store   *Store
-	routeID string
-	lock    *os.File
-	once    sync.Once
+type CertificateCache struct {
+	store    *Store
+	teamID   string
+	plan     controlv1.CertificatePlan
+	planJSON string
 }
 
 type Pending struct {
@@ -47,55 +48,70 @@ type Pending struct {
 }
 
 type Material struct {
-	Certificate  tls.Certificate
-	RenewAt      time.Time
-	IssuanceID   string
-	RouteVersion uint64
-	Installed    bool
+	Certificate tls.Certificate
+	RenewAt     time.Time
+	IssuanceID  string
 }
 
-func (s *Store) OpenRoute(routeID string) (*RouteCertificateHandle, error) {
-	if !validRouteID(routeID) {
-		return nil, errors.New("clientstate: invalid route ID")
+func (s *Store) Certificates(teamID string, plan controlv1.CertificatePlan) (*CertificateCache, error) {
+	if teamID == "" || strings.TrimSpace(teamID) != teamID {
+		return nil, errors.New("clientstate: certificate team is required")
 	}
-	lock, err := openLock(filepath.Join(s.locksDir, routeID+".lock"), "route")
+	plan, err := certificateidentity.CanonicalPlan(plan)
 	if err != nil {
 		return nil, err
 	}
-	return &RouteCertificateHandle{store: s, routeID: routeID, lock: lock.file}, nil
+	encoded, err := json.Marshal(plan)
+	if err != nil {
+		return nil, err
+	}
+	return &CertificateCache{store: s, teamID: teamID, plan: plan, planJSON: string(encoded)}, nil
 }
 
-func (r *RouteCertificateHandle) Close() error {
-	var result error
-	r.once.Do(func() {
-		result = errors.Join(unix.Flock(int(r.lock.Fd()), unix.LOCK_UN), r.lock.Close())
+// Lock serializes a certificate transaction, not the tunnel using its material.
+func (r *CertificateCache) Lock(ctx context.Context) (*Lock, error) {
+	encoded, _ := json.Marshal([]string{r.teamID, r.plan.CacheKey})
+	digest := sha256.Sum256(encoded)
+	path := filepath.Join(r.store.locksDir, fmt.Sprintf("certificate-%x.lock", digest))
+	return retryLock(ctx, func() (*Lock, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return openLock(path, "certificate")
 	})
-	return result
 }
 
-func (r *RouteCertificateHandle) Current(ctx context.Context, hostname string) (Material, bool, error) {
-	stored, err := r.store.database.queries.GetRouteCertificate(ctx, clientstatedb.GetRouteCertificateParams{
-		ServerOrigin: r.store.controlEndpoint, RouteID: r.routeID, Phase: certificatePhaseCurrent,
-	})
+func (r *CertificateCache) Current(ctx context.Context, hostname string) (Material, bool, error) {
+	return r.material(ctx, hostname, certificatePhaseCurrent)
+}
+
+func (r *CertificateCache) Staged(ctx context.Context, hostname string) (Material, bool, error) {
+	return r.material(ctx, hostname, certificatePhasePending)
+}
+
+func (r *CertificateCache) material(ctx context.Context, hostname, phase string) (Material, bool, error) {
+	stored, err := r.record(ctx, phase)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Material{}, false, nil
 	}
 	if err != nil {
-		return Material{}, false, fmt.Errorf("clientstate: read current route certificate: %w", err)
+		return Material{}, false, fmt.Errorf("clientstate: read route certificate: %w", err)
 	}
-	if stored.Hostname != hostname || len(stored.CsrDer) == 0 || !stored.RenewAt.Valid ||
-		stored.IssuanceID == "" || stored.RouteVersion <= 0 {
-		return Material{}, true, errors.New("clientstate: current certificate metadata is invalid")
+	if phase == certificatePhasePending && len(stored.CertificatePem) == 0 {
+		return Material{}, false, nil
+	}
+	if len(stored.CsrDer) == 0 || !stored.RenewAt.Valid || stored.IssuanceID == "" {
+		return Material{}, true, errors.New("clientstate: certificate metadata is invalid")
 	}
 	keyDER, err := r.store.secrets.Open(r.secretContext(), stored.KeyDer)
 	if err != nil {
 		return Material{}, true, err
 	}
-	certificate, err := certificate(keyDER, stored.CertificatePem, hostname)
+	certificate, err := certificate(keyDER, stored.CertificatePem, hostname, r.plan.Identifiers)
 	if err != nil {
 		return Material{}, true, err
 	}
-	if err := validateCSR(stored.CsrDer, certificate.PrivateKey, hostname); err != nil {
+	if err := validateCSR(stored.CsrDer, certificate.PrivateKey, r.plan.Identifiers); err != nil {
 		return Material{}, true, err
 	}
 	renewAt := unixNanoTime(stored.RenewAt.Int64)
@@ -103,38 +119,15 @@ func (r *RouteCertificateHandle) Current(ctx context.Context, hostname string) (
 		return Material{}, true, errors.New("clientstate: renewal time is outside certificate validity")
 	}
 	return Material{
-		Certificate: certificate, RenewAt: renewAt, IssuanceID: stored.IssuanceID, RouteVersion: uint64(stored.RouteVersion),
-		Installed: stored.Installed == 1,
+		Certificate: certificate, RenewAt: renewAt, IssuanceID: stored.IssuanceID,
 	}, true, nil
 }
 
-// CertificateAttempt returns the key material for the server's idempotent
-// issuance transaction. A pending CSR takes precedence; otherwise an
-// unacknowledged current certificate reuses its CSR to recover response loss.
-func (r *RouteCertificateHandle) CertificateAttempt(ctx context.Context, hostname string) (Pending, error) {
-	stored, err := r.store.database.queries.GetRouteCertificate(ctx, clientstatedb.GetRouteCertificateParams{
-		ServerOrigin: r.store.controlEndpoint, RouteID: r.routeID, Phase: certificatePhasePending,
-	})
-	if err == nil {
-		return r.pendingFromDB(stored, hostname)
+func (r *CertificateCache) Pending(ctx context.Context, hostname string) (Pending, error) {
+	if !certificateidentity.Covers(r.plan.Identifiers, hostname) {
+		return Pending{}, errors.New("clientstate: certificate plan does not cover hostname")
 	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return Pending{}, fmt.Errorf("clientstate: read pending route certificate: %w", err)
-	}
-	current, found, err := r.Current(ctx, hostname)
-	if err == nil && found && !current.Installed {
-		return r.currentKey(ctx, hostname)
-	}
-	if err != nil && !errors.Is(err, ErrCertificateExpired) {
-		return Pending{}, err
-	}
-	return r.NewPending(ctx, hostname)
-}
-
-func (r *RouteCertificateHandle) Pending(ctx context.Context, hostname string) (Pending, error) {
-	stored, err := r.store.database.queries.GetRouteCertificate(ctx, clientstatedb.GetRouteCertificateParams{
-		ServerOrigin: r.store.controlEndpoint, RouteID: r.routeID, Phase: certificatePhasePending,
-	})
+	stored, err := r.record(ctx, certificatePhasePending)
 	if err == nil {
 		return r.pendingFromDB(stored, hostname)
 	}
@@ -149,7 +142,7 @@ func (r *RouteCertificateHandle) Pending(ctx context.Context, hostname string) (
 	if err != nil {
 		return Pending{}, fmt.Errorf("clientstate: encode application key: %w", err)
 	}
-	csrDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{DNSNames: []string{hostname}}, key)
+	csrDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{DNSNames: r.plan.Identifiers}, key)
 	if err != nil {
 		return Pending{}, fmt.Errorf("clientstate: create application CSR: %w", err)
 	}
@@ -157,33 +150,38 @@ func (r *RouteCertificateHandle) Pending(ctx context.Context, hostname string) (
 	if err != nil {
 		return Pending{}, err
 	}
-	if err := r.store.database.queries.UpsertRouteCertificate(ctx, clientstatedb.UpsertRouteCertificateParams{
-		ServerOrigin: r.store.controlEndpoint, RouteID: r.routeID, Phase: certificatePhasePending,
-		Hostname: hostname, KeyDer: protectedKey, CsrDer: csrDER, IssuanceID: "", RouteVersion: 0,
-		Installed: 0, UpdatedAt: r.store.database.now().UTC().UnixNano(),
+	if err := r.store.database.queries.UpsertCertificateMaterial(ctx, clientstatedb.UpsertCertificateMaterialParams{
+		ServerOrigin: r.store.controlEndpoint, TeamID: r.teamID, CacheKey: r.plan.CacheKey, Plan: r.planJSON, Phase: certificatePhasePending,
+		KeyDer: protectedKey, CsrDer: csrDER, IssuanceID: "",
+		UpdatedAt: r.store.database.now().UTC().UnixNano(),
 	}); err != nil {
 		return Pending{}, fmt.Errorf("clientstate: save pending route certificate: %w", err)
 	}
 	return Pending{Key: key, CSRDER: csrDER, keyDER: keyDER}, nil
 }
 
-func (r *RouteCertificateHandle) Commit(
+// Stage retains issued material without replacing the last acknowledged certificate.
+// The caller holds Lock through staging, control acknowledgement, and promotion.
+func (r *CertificateCache) Stage(
 	ctx context.Context,
 	hostname string,
 	pending Pending,
 	certificatePEM []byte,
 	renewAt time.Time,
 	issuanceID string,
-	routeVersion uint64,
 ) (Material, error) {
-	versionValue, err := databaseVersion(routeVersion)
-	if err != nil || pending.Key == nil || len(pending.keyDER) == 0 || len(pending.CSRDER) == 0 || renewAt.IsZero() ||
-		issuanceID == "" || routeVersion == 0 {
+	if pending.Key == nil || len(pending.keyDER) == 0 || len(pending.CSRDER) == 0 || renewAt.IsZero() || issuanceID == "" {
 		return Material{}, errors.New("clientstate: pending certificate material is incomplete")
 	}
-	installed, err := certificate(pending.keyDER, certificatePEM, hostname)
+	installed, err := certificate(pending.keyDER, certificatePEM, hostname, r.plan.Identifiers)
 	if err != nil {
 		return Material{}, err
+	}
+	if err := validateCSR(pending.CSRDER, installed.PrivateKey, r.plan.Identifiers); err != nil {
+		return Material{}, err
+	}
+	if !pending.Key.PublicKey.Equal(installed.PrivateKey.(*ecdsa.PrivateKey).Public()) {
+		return Material{}, errors.New("clientstate: pending certificate key does not match")
 	}
 	if !renewAt.After(installed.Leaf.NotBefore) || !renewAt.Before(installed.Leaf.NotAfter) {
 		return Material{}, errors.New("clientstate: renewal time is outside certificate validity")
@@ -192,77 +190,71 @@ func (r *RouteCertificateHandle) Commit(
 	if err != nil {
 		return Material{}, err
 	}
-	tx, err := r.store.database.db.BeginTx(ctx, nil)
-	if err != nil {
-		return Material{}, fmt.Errorf("clientstate: begin route certificate commit: %w", err)
-	}
-	defer tx.Rollback()
-	queries := r.store.database.queries.WithTx(tx)
-	if err := queries.UpsertRouteCertificate(ctx, clientstatedb.UpsertRouteCertificateParams{
-		ServerOrigin: r.store.controlEndpoint, RouteID: r.routeID, Phase: certificatePhaseCurrent,
-		Hostname: hostname, KeyDer: protectedKey, CsrDer: bytes.Clone(pending.CSRDER),
+	if err := r.store.database.queries.UpsertCertificateMaterial(ctx, clientstatedb.UpsertCertificateMaterialParams{
+		ServerOrigin: r.store.controlEndpoint, TeamID: r.teamID, CacheKey: r.plan.CacheKey, Plan: r.planJSON, Phase: certificatePhasePending,
+		KeyDer: protectedKey, CsrDer: bytes.Clone(pending.CSRDER),
 		CertificatePem: bytes.Clone(certificatePEM), RenewAt: sql.NullInt64{Int64: renewAt.UTC().UnixNano(), Valid: true},
-		IssuanceID: issuanceID, RouteVersion: versionValue, Installed: 0,
-		UpdatedAt: r.store.database.now().UTC().UnixNano(),
+		IssuanceID: issuanceID,
+		UpdatedAt:  r.store.database.now().UTC().UnixNano(),
 	}); err != nil {
-		return Material{}, fmt.Errorf("clientstate: save current route certificate: %w", err)
-	}
-	if err := queries.DeleteRouteCertificate(ctx, clientstatedb.DeleteRouteCertificateParams{
-		ServerOrigin: r.store.controlEndpoint, RouteID: r.routeID, Phase: certificatePhasePending,
-	}); err != nil {
-		return Material{}, fmt.Errorf("clientstate: remove pending route certificate: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return Material{}, fmt.Errorf("clientstate: commit route certificate: %w", err)
+		return Material{}, fmt.Errorf("clientstate: stage route certificate: %w", err)
 	}
 	return Material{
-		Certificate: installed, RenewAt: renewAt.UTC(), IssuanceID: issuanceID, RouteVersion: routeVersion,
+		Certificate: installed, RenewAt: renewAt.UTC(), IssuanceID: issuanceID,
 	}, nil
 }
 
-func (r *RouteCertificateHandle) MarkInstalled(ctx context.Context, hostname, issuanceID string, routeVersion uint64) (Material, error) {
-	stored, err := r.currentCertificate(ctx)
-	if err != nil || stored.Hostname != hostname || stored.IssuanceID != issuanceID || stored.RouteVersion != int64(routeVersion) {
-		return Material{}, errors.New("clientstate: installed certificate does not match current state")
+func (r *CertificateCache) Promote(ctx context.Context, hostname, issuanceID string) error {
+	material, found, err := r.Staged(ctx, hostname)
+	if err != nil {
+		return err
 	}
-	stored.Installed = 1
-	if err := r.saveCertificate(ctx, stored); err != nil {
-		return Material{}, err
+	if !found || material.IssuanceID != issuanceID {
+		return errors.New("clientstate: acknowledged certificate does not match staged material")
 	}
-	material, _, err := r.Current(ctx, hostname)
-	return material, err
+	tx, err := r.store.database.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	queries := r.store.database.queries.WithTx(tx)
+	identity := clientstatedb.GetCertificateMaterialParams{
+		ServerOrigin: r.store.controlEndpoint, TeamID: r.teamID, CacheKey: r.plan.CacheKey, Plan: r.planJSON, Phase: certificatePhasePending,
+	}
+	stored, err := queries.GetCertificateMaterial(ctx, identity)
+	if err != nil {
+		return err
+	}
+	if stored.IssuanceID != issuanceID {
+		return errors.New("clientstate: staged certificate changed before promotion")
+	}
+	if err := queries.UpsertCertificateMaterial(ctx, clientstatedb.UpsertCertificateMaterialParams{
+		ServerOrigin: stored.ServerOrigin, TeamID: stored.TeamID, CacheKey: stored.CacheKey, Plan: stored.Plan, Phase: certificatePhaseCurrent,
+		KeyDer: stored.KeyDer, CsrDer: stored.CsrDer, CertificatePem: stored.CertificatePem,
+		RenewAt: stored.RenewAt, IssuanceID: stored.IssuanceID, UpdatedAt: r.store.database.now().UTC().UnixNano(),
+	}); err != nil {
+		return err
+	}
+	if err := queries.DeleteCertificateMaterial(ctx, clientstatedb.DeleteCertificateMaterialParams(identity)); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
-func (r *RouteCertificateHandle) currentKey(ctx context.Context, hostname string) (Pending, error) {
-	stored, err := r.currentCertificate(ctx)
-	if err != nil || stored.Hostname != hostname || len(stored.KeyDer) == 0 || len(stored.CsrDer) == 0 {
-		return Pending{}, errors.New("clientstate: current certificate key is incomplete")
+func (r *CertificateCache) NewPending(ctx context.Context, hostname string) (Pending, error) {
+	if !certificateidentity.Covers(r.plan.Identifiers, hostname) {
+		return Pending{}, errors.New("clientstate: certificate plan does not cover hostname")
 	}
-	keyDER, err := r.store.secrets.Open(r.secretContext(), stored.KeyDer)
-	if err != nil {
-		return Pending{}, err
-	}
-	key, err := parseKey(keyDER)
-	if err != nil {
-		return Pending{}, err
-	}
-	if err := validateCSR(stored.CsrDer, key, hostname); err != nil {
-		return Pending{}, err
-	}
-	return Pending{Key: key, CSRDER: bytes.Clone(stored.CsrDer), keyDER: keyDER}, nil
-}
-
-func (r *RouteCertificateHandle) NewPending(ctx context.Context, hostname string) (Pending, error) {
-	if err := r.store.database.queries.DeleteRouteCertificate(ctx, clientstatedb.DeleteRouteCertificateParams{
-		ServerOrigin: r.store.controlEndpoint, RouteID: r.routeID, Phase: certificatePhasePending,
+	if err := r.store.database.queries.DeleteCertificateMaterial(ctx, clientstatedb.DeleteCertificateMaterialParams{
+		ServerOrigin: r.store.controlEndpoint, TeamID: r.teamID, CacheKey: r.plan.CacheKey, Plan: r.planJSON, Phase: certificatePhasePending,
 	}); err != nil {
 		return Pending{}, fmt.Errorf("clientstate: replace pending route certificate: %w", err)
 	}
 	return r.Pending(ctx, hostname)
 }
 
-func (r *RouteCertificateHandle) pendingFromDB(stored clientstatedb.RouteCertificate, hostname string) (Pending, error) {
-	if stored.Hostname != hostname {
+func (r *CertificateCache) pendingFromDB(stored clientstatedb.CertificateMaterial, hostname string) (Pending, error) {
+	if !certificateidentity.Covers(r.plan.Identifiers, hostname) {
 		return Pending{}, errors.New("clientstate: pending certificate metadata is invalid")
 	}
 	keyDER, err := r.store.secrets.Open(r.secretContext(), stored.KeyDer)
@@ -273,37 +265,24 @@ func (r *RouteCertificateHandle) pendingFromDB(stored clientstatedb.RouteCertifi
 	if err != nil {
 		return Pending{}, err
 	}
-	if err := validateCSR(stored.CsrDer, key, hostname); err != nil {
+	if err := validateCSR(stored.CsrDer, key, r.plan.Identifiers); err != nil {
 		return Pending{}, err
 	}
 	return Pending{Key: key, CSRDER: bytes.Clone(stored.CsrDer), keyDER: keyDER}, nil
 }
 
-func (r *RouteCertificateHandle) currentCertificate(ctx context.Context) (clientstatedb.RouteCertificate, error) {
-	stored, err := r.store.database.queries.GetRouteCertificate(ctx, clientstatedb.GetRouteCertificateParams{
-		ServerOrigin: r.store.controlEndpoint, RouteID: r.routeID, Phase: certificatePhaseCurrent,
+func (r *CertificateCache) record(ctx context.Context, phase string) (clientstatedb.CertificateMaterial, error) {
+	return r.store.database.queries.GetCertificateMaterial(ctx, clientstatedb.GetCertificateMaterialParams{
+		ServerOrigin: r.store.controlEndpoint, TeamID: r.teamID, CacheKey: r.plan.CacheKey, Plan: r.planJSON, Phase: phase,
 	})
-	if err != nil {
-		return clientstatedb.RouteCertificate{}, err
-	}
-	return stored, nil
 }
 
-func (r *RouteCertificateHandle) saveCertificate(ctx context.Context, stored clientstatedb.RouteCertificate) error {
-	if err := r.store.database.queries.UpsertRouteCertificate(ctx, clientstatedb.UpsertRouteCertificateParams{
-		ServerOrigin: stored.ServerOrigin, RouteID: stored.RouteID, Phase: stored.Phase,
-		Hostname: stored.Hostname, KeyDer: stored.KeyDer, CsrDer: stored.CsrDer,
-		CertificatePem: stored.CertificatePem, RenewAt: stored.RenewAt, IssuanceID: stored.IssuanceID,
-		RouteVersion: stored.RouteVersion, Installed: stored.Installed, UpdatedAt: r.store.database.now().UTC().UnixNano(),
-	}); err != nil {
-		return fmt.Errorf("clientstate: save route certificate: %w", err)
-	}
-	return nil
+func (r *CertificateCache) secretContext() string {
+	encoded, _ := json.Marshal([]string{r.teamID, r.planJSON})
+	return "certificate-private-key:" + string(encoded)
 }
 
-func (r *RouteCertificateHandle) secretContext() string { return "route-private-key:" + r.routeID }
-
-func validateCSR(csrDER []byte, key any, hostname string) error {
+func validateCSR(csrDER []byte, key any, identifiers []string) error {
 	request, err := x509.ParseCertificateRequest(csrDER)
 	if err != nil {
 		return errors.New("clientstate: pending CSR is invalid")
@@ -315,19 +294,15 @@ func validateCSR(csrDER []byte, key any, hostname string) error {
 	publicKey, keyOK := request.PublicKey.(*ecdsa.PublicKey)
 	expected, expectedOK := signer.Public().(*ecdsa.PublicKey)
 	if request.CheckSignature() != nil || !keyOK || !expectedOK || !publicKey.Equal(expected) ||
-		len(request.DNSNames) != 1 || request.DNSNames[0] != hostname || len(request.EmailAddresses) != 0 ||
+		len(request.EmailAddresses) != 0 ||
 		len(request.IPAddresses) != 0 || len(request.URIs) != 0 || request.Subject.String() != "" ||
-		!certificateidentity.DNSNamesOnly(request.Extensions, request.DNSNames) {
+		!certificateidentity.Matches(request.Extensions, request.DNSNames, identifiers) {
 		return errors.New("clientstate: pending CSR is invalid")
 	}
 	return nil
 }
 
-func certificate(keyDER, certificatePEM []byte, hostname string) (tls.Certificate, error) {
-	key, err := parseKey(keyDER)
-	if err != nil {
-		return tls.Certificate{}, err
-	}
+func certificate(keyDER, certificatePEM []byte, hostname string, identifiers []string) (tls.Certificate, error) {
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
 	result, err := tls.X509KeyPair(certificatePEM, keyPEM)
 	if err != nil {
@@ -340,21 +315,9 @@ func certificate(keyDER, certificatePEM []byte, hostname string) (tls.Certificat
 	if !leaf.NotAfter.After(time.Now()) {
 		return tls.Certificate{}, ErrCertificateExpired
 	}
-	if len(leaf.DNSNames) != 1 || leaf.DNSNames[0] != hostname || len(leaf.EmailAddresses) != 0 ||
-		len(leaf.IPAddresses) != 0 || len(leaf.URIs) != 0 || leaf.IsCA ||
-		leaf.NotBefore.After(time.Now().Add(5*time.Minute)) ||
-		!certificateidentity.DNSNamesOnly(leaf.Extensions, leaf.DNSNames) {
-		return tls.Certificate{}, errors.New("clientstate: application certificate identity or validity is invalid")
-	}
-	serverAuth := false
-	for _, usage := range leaf.ExtKeyUsage {
-		serverAuth = serverAuth || usage == x509.ExtKeyUsageServerAuth || usage == x509.ExtKeyUsageAny
-	}
-	if !serverAuth {
-		return tls.Certificate{}, errors.New("clientstate: application certificate is not valid for TLS servers")
-	}
-	if publicKey, ok := leaf.PublicKey.(*ecdsa.PublicKey); !ok || !publicKey.Equal(&key.PublicKey) {
-		return tls.Certificate{}, errors.New("clientstate: application certificate key does not match")
+	leaf, err = certificateidentity.ValidateCertificate(result, hostname, identifiers)
+	if err != nil {
+		return tls.Certificate{}, err
 	}
 	result.Leaf = leaf
 	return result, nil
@@ -388,23 +351,4 @@ func unixNanoTime(value int64) time.Time {
 
 func validRouteID(value string) bool {
 	return opaqueid.Valid(value, "route_")
-}
-
-func LockRouteCertificates(ctx context.Context, store *Store, routeID string) (*RouteCertificateHandle, error) {
-	if store == nil {
-		return nil, errors.New("clientstate: state store is required")
-	}
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		route, err := store.OpenRoute(routeID)
-		if !errors.Is(err, ErrLocked) {
-			return route, err
-		}
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-ticker.C:
-		}
-	}
 }

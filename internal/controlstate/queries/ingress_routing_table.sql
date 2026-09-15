@@ -3,6 +3,12 @@ SELECT *
 FROM control.ingress_routing_table_clock
 WHERE singleton = true;
 
+-- name: LockIngressRoutingTableClock :one
+SELECT current_revision
+FROM control.ingress_routing_table_clock
+WHERE singleton = true
+FOR UPDATE;
+
 -- name: ListIngressRoutingTableSnapshot :many
 WITH latest AS (
     SELECT DISTINCT ON (

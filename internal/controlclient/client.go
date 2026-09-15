@@ -1,4 +1,9 @@
 // Package controlclient is the bounded client for the tnl control API.
+// Responses are limited to 64 KiB and successful nonempty bodies must be one
+// schema-matching JSON value. Requests default to 20 seconds, with 150 seconds
+// for certificate calls. Empty successes are accepted. Transport/read failures
+// wrap ErrUnavailable, but decoding/size errors do not. Problem codes, rather
+// than HTTP status alone, classify server failures.
 package controlclient
 
 import (
@@ -7,13 +12,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/httpjson"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -140,7 +145,7 @@ func (c *Client) CreateRouteSession(ctx context.Context, routeID, idempotencyKey
 	})
 }
 
-func (c *Client) Ready(ctx context.Context, routeSessionID string, routeVersion uint64, token credentials.SessionToken) error {
+func (c *Client) MarkRouteSessionReady(ctx context.Context, routeSessionID string, routeVersion uint64, token credentials.RouteSessionToken) error {
 	body := controlv1.RouteSessionVersionRequest{RouteVersion: int64(routeVersion)}
 	_, err := request[controlv1.RouteSession](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.MarkRouteSessionReady(ctx, routeSessionID, body, editors...)
@@ -148,21 +153,21 @@ func (c *Client) Ready(ctx context.Context, routeSessionID string, routeVersion 
 	return err
 }
 
-func (c *Client) Heartbeat(ctx context.Context, routeSessionID string, routeVersion uint64, token credentials.SessionToken) (controlv1.RouteSessionHeartbeat, error) {
+func (c *Client) HeartbeatRouteSession(ctx context.Context, routeSessionID string, routeVersion uint64, token credentials.RouteSessionToken) (controlv1.RouteSessionHeartbeat, error) {
 	body := controlv1.RouteSessionVersionRequest{RouteVersion: int64(routeVersion)}
 	return request[controlv1.RouteSessionHeartbeat](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.HeartbeatRouteSession(ctx, routeSessionID, body, editors...)
 	})
 }
 
-func (c *Client) CloseRouteSession(ctx context.Context, routeSessionID string, token credentials.SessionToken) error {
+func (c *Client) CloseRouteSession(ctx context.Context, routeSessionID string, token credentials.RouteSessionToken) error {
 	_, err := request[struct{}](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.CloseRouteSession(ctx, routeSessionID, editors...)
 	})
 	return err
 }
 
-func (c *Client) CreateCertificateIssuance(ctx context.Context, routeSessionID string, routeVersion uint64, token credentials.SessionToken, csrDER []byte, idempotencyKey string) (controlv1.CertificateIssuance, error) {
+func (c *Client) CreateCertificateIssuance(ctx context.Context, routeSessionID string, routeVersion uint64, token credentials.RouteSessionToken, csrDER []byte, idempotencyKey string) (controlv1.CertificateIssuance, error) {
 	params := &controlv1.CreateCertificateIssuanceParams{IdempotencyKey: idempotencyKey}
 	body := controlv1.CreateCertificateIssuanceRequest{RouteVersion: int64(routeVersion), Csr: csrDER}
 	return requestWithTimeout[controlv1.CertificateIssuance](ctx, c, certificateCallTimeout, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
@@ -170,26 +175,26 @@ func (c *Client) CreateCertificateIssuance(ctx context.Context, routeSessionID s
 	})
 }
 
-func (c *Client) CertificateIssuance(ctx context.Context, issuanceID string, token credentials.SessionToken) (controlv1.CertificateIssuance, error) {
+func (c *Client) GetCertificateIssuance(ctx context.Context, issuanceID string, token credentials.RouteSessionToken) (controlv1.CertificateIssuance, error) {
 	return request[controlv1.CertificateIssuance](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.GetCertificateIssuance(ctx, issuanceID, editors...)
 	})
 }
 
-func (c *Client) CertificateChallengeReady(ctx context.Context, issuanceID string, token credentials.SessionToken) (controlv1.CertificateIssuance, error) {
+func (c *Client) MarkCertificateChallengeReady(ctx context.Context, issuanceID string, token credentials.RouteSessionToken) (controlv1.CertificateIssuance, error) {
 	return requestWithTimeout[controlv1.CertificateIssuance](ctx, c, certificateCallTimeout, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.MarkCertificateChallengeReady(ctx, issuanceID, editors...)
 	})
 }
 
-func (c *Client) CertificateChallengeRemoved(ctx context.Context, issuanceID string, token credentials.SessionToken) error {
+func (c *Client) MarkCertificateChallengeRemoved(ctx context.Context, issuanceID string, token credentials.RouteSessionToken) error {
 	_, err := request[controlv1.CertificateIssuance](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.MarkCertificateChallengeRemoved(ctx, issuanceID, editors...)
 	})
 	return err
 }
 
-func (c *Client) CertificateInstalled(ctx context.Context, routeSessionID string, routeVersion uint64, issuanceID string, notAfter time.Time, token credentials.SessionToken) error {
+func (c *Client) MarkRouteSessionCertificateInstalled(ctx context.Context, routeSessionID string, routeVersion uint64, issuanceID string, notAfter time.Time, token credentials.RouteSessionToken) error {
 	body := controlv1.CertificateInstalledRequest{RouteVersion: int64(routeVersion), IssuanceId: issuanceID, NotAfter: notAfter}
 	_, err := request[controlv1.RouteSession](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.MarkRouteSessionCertificateInstalled(ctx, routeSessionID, body, editors...)
@@ -236,12 +241,12 @@ func requestWithTimeout[T any](ctx context.Context, client *Client, timeout time
 		return zero, fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
 	defer response.Body.Close()
-	payload, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
+	payload, err := httpjson.ReadAll(response.Body, maxResponseBytes)
+	if errors.Is(err, httpjson.ErrTooLarge) {
+		return zero, errors.New("controlclient: response exceeds limit")
+	}
 	if err != nil {
 		return zero, fmt.Errorf("%w: %w", ErrUnavailable, err)
-	}
-	if len(payload) > maxResponseBytes {
-		return zero, errors.New("controlclient: response exceeds limit")
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return zero, responseError(response.StatusCode, response.Header, payload)
@@ -250,13 +255,13 @@ func requestWithTimeout[T any](ctx context.Context, client *Client, timeout time
 		return zero, nil
 	}
 	decoder := json.NewDecoder(bytes.NewReader(payload))
-	decoder.DisallowUnknownFields()
 	var result T
-	if err := decoder.Decode(&result); err != nil {
-		return zero, fmt.Errorf("controlclient: decode response: %w", err)
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+	err = httpjson.Decode(decoder, &result)
+	if errors.Is(err, httpjson.ErrTrailingContent) {
 		return zero, errors.New("controlclient: response contains trailing JSON")
+	}
+	if err != nil {
+		return zero, fmt.Errorf("controlclient: decode response: %w", err)
 	}
 	return result, nil
 }

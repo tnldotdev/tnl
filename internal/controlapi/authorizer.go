@@ -18,24 +18,20 @@ import (
 )
 
 type localAuthorizer struct {
-	store          localAuthorizationStore
+	store          BuiltinAuthorizationStore
 	sourceRevision int64
+	dnsAutomation  bool
 }
 
 type routeReadPrincipal struct {
-	identityID string
-	teamIDs    map[string]struct{}
+	identityID    string
+	teamIDs       map[string]struct{}
+	administrator bool
 }
 
 type routeAuthorizer interface {
 	authorization.Authorizer
 	AuthorizeRouteReads(context.Context, string) (routeReadPrincipal, error)
-}
-
-type localAuthorizationStore interface {
-	AuthenticateAccessToken(context.Context, credentials.AccessToken, int64, time.Time) (controlstate.ControlPrincipal, error)
-	IdentityContext(context.Context, string) (controlstate.IdentityContext, error)
-	ListTeamDomains(context.Context, string, string) ([]controlstate.Domain, error)
 }
 
 func (a localAuthorizer) AuthorizeRouteReads(ctx context.Context, accessToken string) (routeReadPrincipal, error) {
@@ -56,7 +52,9 @@ func (a localAuthorizer) AuthorizeRouteReads(ctx context.Context, accessToken st
 	for _, membership := range identity.Memberships {
 		teamIDs[membership.TeamID] = struct{}{}
 	}
-	return routeReadPrincipal{identityID: principal.IdentityID, teamIDs: teamIDs}, nil
+	return routeReadPrincipal{
+		identityID: principal.IdentityID, teamIDs: teamIDs, administrator: principal.Administrator,
+	}, nil
 }
 
 func (a localAuthorizer) Authorize(ctx context.Context, request authorization.Request) (authorization.Decision, error) {
@@ -127,6 +125,19 @@ func (a localAuthorizer) Authorize(ctx context.Context, request authorization.Re
 			CacheKey: request.CanonicalHostname, Scope: request.CanonicalHostname,
 			Identifiers: []string{request.CanonicalHostname}, ChallengeMethod: string(controlv1.TlsAlpn01),
 		}
+		if a.dnsAutomation {
+			plan := decision.CertificatePlan
+			plan.ChallengeMethod = string(controlv1.Dns01)
+			if request.RouteScope == string(controlv1.Member) {
+				label := acting.MemberSlug
+				if domain.Kind == "managed" {
+					label = acting.ManagedLabel
+				}
+				namespace := label + "." + domain.CanonicalDomain
+				plan.CacheKey, plan.Scope = namespace, namespace
+				plan.Identifiers = []string{"*." + namespace, namespace}
+			}
+		}
 	}
 	return decision, nil
 }
@@ -156,7 +167,15 @@ func (a hostedAuthorizer) AuthorizeRouteReads(ctx context.Context, accessToken s
 		}
 		teamIDs[membership.TeamId] = struct{}{}
 	}
-	return routeReadPrincipal{identityID: identity.Identity.Id, teamIDs: teamIDs}, nil
+	if a.store != nil {
+		if _, err := a.store.EnsureExternalAuthorityPrincipal(ctx, identity.Identity.Id, time.Now()); err != nil {
+			return routeReadPrincipal{}, authorization.ErrUnavailable
+		}
+	}
+	return routeReadPrincipal{
+		identityID: identity.Identity.Id, teamIDs: teamIDs,
+		administrator: identity.Identity.Administrator,
+	}, nil
 }
 
 func (a hostedAuthorizer) Authorize(ctx context.Context, request authorization.Request) (authorization.Decision, error) {

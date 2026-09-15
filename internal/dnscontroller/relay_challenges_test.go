@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"slices"
 	"testing"
 
@@ -20,7 +21,7 @@ func TestRelayChallengeManagerReconcilesDurablePresentationSet(t *testing.T) {
 			{ChallengeDigest: current, Active: true}, {ChallengeDigest: concurrent, Active: true},
 		},
 	}}
-	provider := &challengeProviderStub{zone: Zone{ID: "ZSERVER", Nameservers: []string{"ns-1.example.test"}}}
+	provider := &challengeProviderStub{zone: Zone{ID: "ZSERVER", Nameservers: []string{"ns-1.example.test", "ns-2.example.test"}}}
 	verifier := &challengeVerifierStub{verified: true}
 	manager, err := NewRelayChallengeManager(store, provider, verifier, "tnl.example.test", "ZSERVER")
 	if err != nil {
@@ -54,7 +55,43 @@ func TestRelayChallengeManagerReconcilesDurablePresentationSet(t *testing.T) {
 }
 
 type relayChallengeStoreStub struct {
+	challengeStoreStub
 	challenge controlstate.RelayDNSChallengeContext
+}
+
+func TestRelayChallengeManagerFailedCleanupAndDomainGuards(t *testing.T) {
+	for _, hostname := range []string{"relay-a.tnl.example.test", "relay-a.other.test", "relay-a.nottnl.example.test"} {
+		t.Run(hostname, func(t *testing.T) {
+			digest := sha256.Sum256([]byte("failed challenge"))
+			store := &relayChallengeStoreStub{challenge: controlstate.RelayDNSChallengeContext{OrderID: "relay_order_1", RelayServiceID: "relay-a", TLSServerName: hostname, State: "failed_cleaning", ChallengeDigest: digest, PresentationReference: "presentation_1", Presentations: []controlstate.DNSChallengePresentation{{ChallengeDigest: digest}}}}
+			provider, verifier := &challengeProviderStub{}, &challengeVerifierStub{}
+			manager, err := NewRelayChallengeManager(store, provider, verifier, "tnl.example.test", "ZSERVER")
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = manager.Cleanup(t.Context(), "relay_order_1")
+			if hostname == "relay-a.tnl.example.test" {
+				if err != nil || provider.calls != 1 || len(provider.record.DesiredOwnedValues) != 0 || !slices.Equal(provider.record.PreviouslyOwnedValues, []string{base64.RawURLEncoding.EncodeToString(digest[:])}) {
+					t.Fatalf("failed cleanup: error %v, provider %#v", err, provider)
+				}
+				provider.calls = 0
+				if err := manager.Present(t.Context(), "relay_order_1"); err == nil {
+					t.Error("failed cleanup allowed presentation")
+				}
+				if valid, err := manager.Verify(t.Context(), "relay_order_1"); err == nil || valid {
+					t.Errorf("failed cleanup allowed verification: %v, %v", valid, err)
+				}
+			} else {
+				var terminal *terminalError
+				if !errors.As(err, &terminal) {
+					t.Fatalf("out-of-domain cleanup = %v", err)
+				}
+			}
+			if provider.calls != 0 || verifier.calls != 0 {
+				t.Fatalf("unsafe DNS work: provider %d, verifier %d", provider.calls, verifier.calls)
+			}
+		})
+	}
 }
 
 func (s *relayChallengeStoreStub) GetRelayDNSChallengeContext(context.Context, string) (controlstate.RelayDNSChallengeContext, error) {

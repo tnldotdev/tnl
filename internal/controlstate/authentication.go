@@ -17,10 +17,13 @@ import (
 
 const loginAuthenticationMethod = "login_token"
 
+const oidcAuthenticationMethod = "oidc"
+
 var (
 	ErrControlAuthentication = errors.New("controlstate: invalid control credential")
 	ErrControlIdentity       = errors.New("controlstate: identity is unavailable")
 	ErrManagedDomainMismatch = errors.New("controlstate: configured managed deployment domain changed")
+	ErrOIDCAssertionReplay   = errors.New("controlstate: OIDC assertion was already exchanged")
 )
 
 type IdentityContext struct {
@@ -67,6 +70,17 @@ type ControlSession struct {
 	RefreshToken     credentials.RefreshToken
 	RefreshExpiresAt time.Time
 	Identity         IdentityContext
+}
+
+// OIDCIdentity is the bounded identity and assertion state verified from an ID token.
+type OIDCIdentity struct {
+	Issuer          string
+	Subject         string
+	DisplayName     string
+	NormalizedEmail string
+	EmailVerified   bool
+	AssertionDigest [32]byte
+	AssertionExpiry time.Time
 }
 
 func (d *Database) CreateBuiltinControlSession(
@@ -126,6 +140,85 @@ func (d *Database) CreateBuiltinControlSession(
 	return result, nil
 }
 
+// CreateOIDCControlSession consumes one verified assertion and creates or updates
+// its non-administrator local identity before issuing a local control session.
+func (d *Database) CreateOIDCControlSession(
+	ctx context.Context,
+	managedDomain string,
+	identity OIDCIdentity,
+	accessLifetime time.Duration,
+	refreshLifetime time.Duration,
+	now time.Time,
+) (result ControlSession, retErr error) {
+	if !validStateText(managedDomain) || !validStateText(identity.Issuer) || !validStateText(identity.Subject) ||
+		!validStateText(identity.DisplayName) || len(identity.Issuer) > 2048 || len(identity.Subject) > 256 ||
+		len(identity.DisplayName) > 256 || accessLifetime <= 0 || refreshLifetime < accessLifetime ||
+		!identity.AssertionExpiry.After(now) || identity.AssertionDigest == ([32]byte{}) ||
+		(identity.NormalizedEmail == "") != !identity.EmailVerified || len(identity.NormalizedEmail) > 320 {
+		return ControlSession{}, ErrControlAuthentication
+	}
+	if err := d.requireOpen(); err != nil {
+		return ControlSession{}, err
+	}
+	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		return ControlSession{}, fmt.Errorf("controlstate: begin OIDC authentication: %w", err)
+	}
+	defer rollback(ctx, tx, "OIDC authentication", &retErr)()
+	queries := controlstatedb.New(tx)
+	if err := queries.LockIdentityBootstrap(ctx); err != nil {
+		return ControlSession{}, fmt.Errorf("controlstate: lock OIDC identity provisioning: %w", err)
+	}
+	if err := queries.DeleteExpiredOIDCAssertionExchanges(ctx, timestamptz(now)); err != nil {
+		return ControlSession{}, fmt.Errorf("controlstate: expire OIDC assertion exchanges: %w", err)
+	}
+	inserted, err := queries.ConsumeOIDCAssertion(ctx, controlstatedb.ConsumeOIDCAssertionParams{
+		AssertionDigest: identity.AssertionDigest[:], ConsumedAt: timestamptz(now),
+		ExpiresAt: timestamptz(identity.AssertionExpiry),
+	})
+	if err != nil {
+		return ControlSession{}, fmt.Errorf("controlstate: consume OIDC assertion: %w", err)
+	}
+	if inserted != 1 {
+		return ControlSession{}, ErrOIDCAssertionReplay
+	}
+	domain, err := ensureManagedDomain(ctx, queries, managedDomain, now)
+	if err != nil {
+		return ControlSession{}, err
+	}
+	stored, err := queries.FindOIDCIdentity(ctx, controlstatedb.FindOIDCIdentityParams{
+		Issuer: text(identity.Issuer), Subject: text(identity.Subject),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		stored, err = createOIDCIdentity(ctx, queries, domain.ID, identity, now)
+	} else if err == nil && stored.DisabledAt.Valid {
+		return ControlSession{}, ErrControlAuthentication
+	} else if err == nil {
+		stored, err = queries.UpdateOIDCIdentity(ctx, controlstatedb.UpdateOIDCIdentityParams{
+			DisplayName: identity.DisplayName, NormalizedEmail: nullableText(identity.NormalizedEmail),
+			EmailVerified: identity.EmailVerified, UpdatedAt: timestamp(now), ID: stored.ID,
+		})
+	}
+	if err != nil {
+		return ControlSession{}, fmt.Errorf("controlstate: ensure OIDC identity: %w", err)
+	}
+	result, err = d.createControlSession(
+		ctx, queries, stored.ID, stored.Administrator, oidcAuthenticationMethod, 1,
+		accessLifetime, refreshLifetime, now,
+	)
+	if err != nil {
+		return ControlSession{}, err
+	}
+	result.Identity, err = loadIdentityContext(ctx, queries, stored.ID)
+	if err != nil {
+		return ControlSession{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ControlSession{}, fmt.Errorf("controlstate: commit OIDC authentication: %w", err)
+	}
+	return result, nil
+}
+
 func bootstrapBuiltinIdentity(
 	ctx context.Context,
 	queries *controlstatedb.Queries,
@@ -148,22 +241,9 @@ func bootstrapBuiltinIdentity(
 	if err != nil {
 		return controlstatedb.ControlIdentity{}, err
 	}
-	domain, err := queries.FindManagedDomain(ctx)
-	if errors.Is(err, pgx.ErrNoRows) {
-		domainID, idErr := opaqueid.New("domain_")
-		if idErr != nil {
-			return controlstatedb.ControlIdentity{}, idErr
-		}
-		if err := queries.CreateManagedDomain(ctx, controlstatedb.CreateManagedDomainParams{
-			ID: domainID, CanonicalDomain: managedDomain, CreatedAt: timestamp(now),
-		}); err != nil {
-			return controlstatedb.ControlIdentity{}, fmt.Errorf("controlstate: create managed deployment domain: %w", err)
-		}
-		domain.ID, domain.CanonicalDomain = domainID, managedDomain
-	} else if err != nil {
-		return controlstatedb.ControlIdentity{}, fmt.Errorf("controlstate: read managed deployment domain: %w", err)
-	} else if domain.CanonicalDomain != managedDomain {
-		return controlstatedb.ControlIdentity{}, ErrManagedDomainMismatch
+	domain, err := ensureManagedDomain(ctx, queries, managedDomain, now)
+	if err != nil {
+		return controlstatedb.ControlIdentity{}, err
 	}
 
 	label, err := availableManagedLabel(ctx, queries, now)
@@ -201,6 +281,94 @@ func bootstrapBuiltinIdentity(
 		return controlstatedb.ControlIdentity{}, fmt.Errorf("controlstate: set builtin default domain: %w", err)
 	}
 	return queries.FindBuiltinIdentity(ctx)
+}
+
+func createOIDCIdentity(
+	ctx context.Context,
+	queries *controlstatedb.Queries,
+	domainID string,
+	identity OIDCIdentity,
+	now time.Time,
+) (controlstatedb.ControlIdentity, error) {
+	identityID, err := opaqueid.New("identity_")
+	if err != nil {
+		return controlstatedb.ControlIdentity{}, err
+	}
+	teamID, err := opaqueid.New("team_")
+	if err != nil {
+		return controlstatedb.ControlIdentity{}, err
+	}
+	membershipID, err := opaqueid.New("membership_")
+	if err != nil {
+		return controlstatedb.ControlIdentity{}, err
+	}
+	reservationID, err := opaqueid.New("slug_reservation_")
+	if err != nil {
+		return controlstatedb.ControlIdentity{}, err
+	}
+	label, err := availableManagedLabel(ctx, queries, now)
+	if err != nil {
+		return controlstatedb.ControlIdentity{}, err
+	}
+	createdAt := timestamp(now)
+	stored, err := queries.CreateOIDCIdentity(ctx, controlstatedb.CreateOIDCIdentityParams{
+		ID: identityID, Issuer: text(identity.Issuer), Subject: text(identity.Subject),
+		DisplayName: identity.DisplayName, NormalizedEmail: nullableText(identity.NormalizedEmail),
+		EmailVerified: identity.EmailVerified, CreatedAt: createdAt,
+	})
+	if err != nil {
+		return controlstatedb.ControlIdentity{}, fmt.Errorf("controlstate: create OIDC identity: %w", err)
+	}
+	if err := queries.CreatePersonalTeam(ctx, controlstatedb.CreatePersonalTeamParams{
+		ID: teamID, DisplayName: identity.DisplayName, ManagedLabel: label,
+		CreatedByIdentityID: identityID, CreatedAt: createdAt,
+	}); err != nil {
+		return controlstatedb.ControlIdentity{}, fmt.Errorf("controlstate: create OIDC personal team: %w", err)
+	}
+	if err := queries.CreateActiveSlugReservation(ctx, controlstatedb.CreateActiveSlugReservationParams{
+		ID: reservationID, TeamID: teamID, MemberSlug: label,
+		IdentityID: text(identityID), CreatedAt: createdAt,
+	}); err != nil {
+		return controlstatedb.ControlIdentity{}, fmt.Errorf("controlstate: reserve OIDC member slug: %w", err)
+	}
+	if err := queries.CreateOwnerMembership(ctx, controlstatedb.CreateOwnerMembershipParams{
+		ID: membershipID, TeamID: teamID, IdentityID: identityID,
+		SlugReservationID: reservationID, ManagedLabel: label, CreatedAt: createdAt,
+	}); err != nil {
+		return controlstatedb.ControlIdentity{}, fmt.Errorf("controlstate: create OIDC membership: %w", err)
+	}
+	if err := queries.SetPersonalTeamDefaultDomain(ctx, controlstatedb.SetPersonalTeamDefaultDomainParams{
+		DomainID: text(domainID), UpdatedAt: createdAt, TeamID: teamID,
+	}); err != nil {
+		return controlstatedb.ControlIdentity{}, fmt.Errorf("controlstate: set OIDC default domain: %w", err)
+	}
+	return stored, nil
+}
+
+func ensureManagedDomain(
+	ctx context.Context,
+	queries *controlstatedb.Queries,
+	managedDomain string,
+	now time.Time,
+) (controlstatedb.ControlDomain, error) {
+	domain, err := queries.FindManagedDomain(ctx)
+	if errors.Is(err, pgx.ErrNoRows) {
+		domainID, idErr := opaqueid.New("domain_")
+		if idErr != nil {
+			return controlstatedb.ControlDomain{}, idErr
+		}
+		if err := queries.CreateManagedDomain(ctx, controlstatedb.CreateManagedDomainParams{
+			ID: domainID, CanonicalDomain: managedDomain, CreatedAt: timestamp(now),
+		}); err != nil {
+			return controlstatedb.ControlDomain{}, fmt.Errorf("controlstate: create managed deployment domain: %w", err)
+		}
+		domain.ID, domain.CanonicalDomain = domainID, managedDomain
+	} else if err != nil {
+		return controlstatedb.ControlDomain{}, fmt.Errorf("controlstate: read managed deployment domain: %w", err)
+	} else if domain.CanonicalDomain != managedDomain {
+		return controlstatedb.ControlDomain{}, ErrManagedDomainMismatch
+	}
+	return domain, nil
 }
 
 func availableManagedLabel(ctx context.Context, queries *controlstatedb.Queries, now time.Time) (string, error) {

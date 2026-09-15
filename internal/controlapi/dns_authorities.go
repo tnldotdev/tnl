@@ -1,6 +1,8 @@
 package controlapi
 
 import (
+	"crypto/sha256"
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -100,4 +102,12 @@ func dnsAuthorityResponse(authority controlstate.DNSAuthority) controlv1.DNSAuth
 		result.LastError = &authority.LastError
 	}
 	return result
+}
+
+func authorityRequestDigest(value any) ([32]byte, error) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	return sha256.Sum256(encoded), nil
 }

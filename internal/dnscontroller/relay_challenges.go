@@ -2,7 +2,6 @@ package dnscontroller
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"strings"
 
@@ -11,6 +10,7 @@ import (
 
 type RelayChallengeStore interface {
 	GetRelayDNSChallengeContext(context.Context, string) (controlstate.RelayDNSChallengeContext, error)
+	WithDNSChallengeLock(context.Context, string, func() error) error
 }
 
 type RelayChallengeManager struct {
@@ -36,42 +36,41 @@ func NewRelayChallengeManager(
 }
 
 func (m *RelayChallengeManager) Present(ctx context.Context, orderID string) error {
-	challenge, record, _, err := m.challengeRecord(ctx, orderID)
-	if err != nil {
-		return err
-	}
-	if challenge.State != "presenting" {
-		return terminalf("cannot present relay DNS challenge in state %q", challenge.State)
-	}
-	_, err = m.provider.ReconcileChallenge(ctx, record)
+	_, err := m.reconcile(ctx, orderID, "presenting")
 	return err
 }
 
 func (m *RelayChallengeManager) Verify(ctx context.Context, orderID string) (bool, error) {
-	challenge, record, expected, err := m.challengeRecord(ctx, orderID)
-	if err != nil {
-		return false, err
-	}
-	if challenge.State != "presented" {
-		return false, terminalf("cannot verify relay DNS challenge in state %q", challenge.State)
-	}
-	zone, err := m.provider.ReconcileChallenge(ctx, record)
-	if err != nil {
-		return false, err
-	}
-	return m.verifier.VerifyChallenge(ctx, record.RecordName, expected, zone.Nameservers)
+	return m.reconcile(ctx, orderID, "presented")
 }
 
 func (m *RelayChallengeManager) Cleanup(ctx context.Context, orderID string) error {
-	challenge, record, _, err := m.challengeRecord(ctx, orderID)
-	if err != nil {
-		return err
-	}
-	if challenge.State != "cleaning" && challenge.State != "failed_cleaning" {
-		return terminalf("cannot clean relay DNS challenge in state %q", challenge.State)
-	}
-	_, err = m.provider.ReconcileChallenge(ctx, record)
+	_, err := m.reconcile(ctx, orderID, "cleaning")
 	return err
+}
+
+func (m *RelayChallengeManager) reconcile(ctx context.Context, orderID, state string) (bool, error) {
+	initial, err := m.store.GetRelayDNSChallengeContext(ctx, orderID)
+	if err != nil {
+		return false, err
+	}
+	recordName := "_acme-challenge." + initial.TLSServerName
+	verified := false
+	err = m.store.WithDNSChallengeLock(ctx, recordName, func() error {
+		challenge, record, expected, err := m.challengeRecord(ctx, orderID)
+		if err != nil {
+			return err
+		}
+		if challenge.State != state && !(state == "cleaning" && challenge.State == "failed_cleaning") || record.RecordName != recordName {
+			return terminalf("cannot reconcile relay DNS challenge in state %q for %q", challenge.State, record.RecordName)
+		}
+		zone, err := m.provider.ReconcileChallenge(ctx, record)
+		if err == nil && state == "presented" {
+			verified, err = m.verifier.VerifyChallenge(ctx, record.RecordName, expected, zone.Nameservers)
+		}
+		return err
+	})
+	return verified, err
 }
 
 func (m *RelayChallengeManager) challengeRecord(
@@ -89,17 +88,7 @@ func (m *RelayChallengeManager) challengeRecord(
 		ZoneID: m.zoneID, ZoneDomain: m.serverDomain,
 		RecordName: "_acme-challenge." + challenge.TLSServerName,
 	}
-	desired := make(map[string]struct{}, len(challenge.Presentations))
-	owned := make(map[string]struct{}, len(challenge.Presentations))
-	for _, presentation := range challenge.Presentations {
-		value := base64.RawURLEncoding.EncodeToString(presentation.ChallengeDigest[:])
-		owned[value] = struct{}{}
-		if presentation.Active {
-			desired[value] = struct{}{}
-		}
-	}
-	record.DesiredOwnedValues = mapKeys(desired)
-	record.PreviouslyOwnedValues = mapKeys(owned)
-	expected := base64.RawURLEncoding.EncodeToString(challenge.ChallengeDigest[:])
+	record.DesiredOwnedValues, record.PreviouslyOwnedValues = challengeTXTValues(challenge.Presentations)
+	expected := challengeTXTValue(challenge.ChallengeDigest)
 	return challenge, record, expected, nil
 }

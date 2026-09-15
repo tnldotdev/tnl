@@ -13,6 +13,7 @@
     "pretypecheck": "pnpm build",
     "test": "vitest run && node --test packages/tnl/launcher.test.mjs",
     "test:ci": "vitest run && node --test packages/tnl/launcher.test.mjs",
+    "test:coverage": "pnpm build && TNL_TEST_COVERAGE=1 vitest run --coverage",
     "typecheck": "tsc --project packages/tnl/type-test.tsconfig.json && tsc --project packages/tnl/augmented-type-test.tsconfig.json && tsc --project tsconfig.test.json",
     "typecheck:ci": "tsc --project packages/tnl/type-test.tsconfig.json && tsc --project packages/tnl/augmented-type-test.tsconfig.json && tsc --project tsconfig.test.json"
   },
@@ -21,6 +22,7 @@
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.5",
     "@types/ws": "8.18.1",
+    "@vitest/coverage-v8": "4.1.11",
     "json-schema-to-typescript": "16.0.0",
     "npm": "12.0.2",
     "oxfmt": "0.65.0",

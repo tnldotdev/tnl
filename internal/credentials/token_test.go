@@ -70,6 +70,9 @@ func TestLoginTokenRoundTripAndClassIsolation(t *testing.T) {
 	if !strings.HasPrefix(token.String(), loginPrefix) || !verifier.Matches(token) {
 		t.Fatal("generated login token did not match")
 	}
+	if verifier.SourceRevision() == 0 {
+		t.Fatal("generated login token has zero source revision")
+	}
 
 	other, err := NewLoginToken()
 	if err != nil {
@@ -83,6 +86,17 @@ func TestLoginTokenRoundTripAndClassIsolation(t *testing.T) {
 	}
 	if _, err := ParseLoginToken(LoginToken("tnl_route_invalid")); !errors.Is(err, ErrInvalidLoginToken) {
 		t.Fatalf("wrong-class error = %v", err)
+	}
+}
+
+func TestLoginVerifierSourceRevisionPreservesTokenRevisionAlgorithm(t *testing.T) {
+	const token = LoginToken("tnl_login_AAECAwQFBgcICQoLDA0ODw.EBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8")
+	verifier, err := ParseLoginToken(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verifier.SourceRevision() != 2410938896160445502 {
+		t.Fatalf("source revision = %d", verifier.SourceRevision())
 	}
 }
 
@@ -131,11 +145,11 @@ func TestInvitationTokenRoundTrip(t *testing.T) {
 }
 
 func TestDataPlaneTokenClasses(t *testing.T) {
-	session, sessionID, sessionHash, err := NewSessionToken()
+	session, sessionID, sessionHash, err := NewRouteSessionToken()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotID, gotHash, err := ParseSessionToken(session); err != nil || gotID != sessionID || gotHash != sessionHash {
+	if gotID, gotHash, err := ParseRouteSessionToken(session); err != nil || gotID != sessionID || gotHash != sessionHash {
 		t.Fatalf("session round trip = %q, %x, %v", gotID, gotHash, err)
 	}
 	connection, connectionHash, err := NewPublisherConnectionCredential()
@@ -162,17 +176,6 @@ func TestDataPlaneTokenClasses(t *testing.T) {
 	}
 	if parsedHash, err := ParsePublisherConnectionCredential(derivedConnection); err != nil || parsedHash != derivedHash {
 		t.Fatalf("derived publisher connection parse = %x, %v", parsedHash, err)
-	}
-
-	service, err := NewServiceToken()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := ParseServiceToken(service); err != nil {
-		t.Fatalf("service round trip failed: %v", err)
-	}
-	if err := ParseServiceToken(ServiceToken(session)); !errors.Is(err, ErrInvalidServiceToken) {
-		t.Fatalf("session as service error = %v", err)
 	}
 }
 

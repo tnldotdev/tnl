@@ -358,6 +358,8 @@ paths:
       summary: List relay leases
       security:
         - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
       responses:
         "200":
           description: Relay lease page
@@ -1003,7 +1005,7 @@ components:
     PublisherConnectionState:
       type: string
       enum: [assigned, connected, ready, replacing]
-    PublisherConnectionPlan:
+    ConnectionAssignment:
       type: object
       additionalProperties: false
       required:
@@ -1066,7 +1068,7 @@ components:
           minItems: 2
           maxItems: 2
           items:
-            $ref: "#/components/schemas/PublisherConnectionPlan"
+            $ref: "#/components/schemas/ConnectionAssignment"
     RouteSessionVersionRequest:
       type: object
       additionalProperties: false
@@ -1088,7 +1090,7 @@ components:
           minItems: 2
           maxItems: 2
           items:
-            $ref: "#/components/schemas/PublisherConnectionPlan"
+            $ref: "#/components/schemas/ConnectionAssignment"
         policy_denials:
           description: Cumulative, eventually consistent IP policy denials for this route version.
           type: integer

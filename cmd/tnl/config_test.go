@@ -10,11 +10,10 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
-	"github.com/tnldotdev/tnl/internal/clientauth"
-	projectconfig "github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
+	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 func TestConfigPathDoesNotEvaluateTypeScript(t *testing.T) {
@@ -77,17 +76,17 @@ func TestProjectConfigurationUsesStateSpecificWorktreeLabelEverywhere(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.worktree.Label == "" || first.worktree.Label != repeated.worktree.Label ||
-		first.worktree.Label == second.worktree.Label || first.tnl.Tunnel == nil || first.tnl.Tunnel.Subdomain == nil ||
-		*first.tnl.Tunnel.Subdomain != first.worktree.Label {
-		t.Fatalf("worktree labels = %q, %q, %q; config = %#v", first.worktree.Label, repeated.worktree.Label, second.worktree.Label, first.tnl)
+	if first.Worktree.Label == "" || first.Worktree.Label != repeated.Worktree.Label ||
+		first.Worktree.Label == second.Worktree.Label || first.Config.Tunnel == nil || first.Config.Tunnel.Subdomain == nil ||
+		*first.Config.Tunnel.Subdomain != first.Worktree.Label {
+		t.Fatalf("worktree labels = %q, %q, %q; config = %#v", first.Worktree.Label, repeated.Worktree.Label, second.Worktree.Label, first.Config)
 	}
 	publish := publishCommand{}
 	if err := first.applyPublish(&publish); err != nil {
 		t.Fatal(err)
 	}
-	if publish.Subdomain != first.worktree.Label {
-		t.Fatalf("publish subdomain = %q, worktree label = %q", publish.Subdomain, first.worktree.Label)
+	if publish.Subdomain != first.Worktree.Label {
+		t.Fatalf("publish subdomain = %q, worktree label = %q", publish.Subdomain, first.Worktree.Label)
 	}
 }
 
@@ -106,12 +105,12 @@ func TestProjectConfigurationAppliesPrecedenceUnits(t *testing.T) {
 	projectServer := "https://project.example"
 	projectSubdomain := "project"
 	public := true
-	target := projectconfig.Target("3000")
-	project := projectConfiguration{found: true, tnl: projectconfig.TNL{
+	target := config.Target("3000")
+	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{
 		Server:  &projectServer,
-		Tunnel:  &projectconfig.Tunnel{Subdomain: &projectSubdomain, Public: &public},
-		Publish: &projectconfig.Publish{Target: &target},
-	}}
+		Tunnel:  &config.Tunnel{Subdomain: &projectSubdomain, Public: &public},
+		Publish: &config.Publish{Target: &target},
+	}}}
 	if err := project.applyPublish(&flags.Publish); err != nil {
 		t.Fatal(err)
 	}
@@ -127,9 +126,11 @@ func TestProjectConfigurationSetsConfiguredCommandDirectory(t *testing.T) {
 	directory := t.TempDir()
 	command := []string{"vite"}
 	project := projectConfiguration{
-		found:     true,
-		selection: projectconfig.Selection{Path: filepath.Join(directory, "tnl.yml")},
-		tnl:       projectconfig.TNL{Dev: &projectconfig.Dev{Command: command}},
+		Project: projectconfig.Project{
+			Selection: projectconfig.Selection{Path: filepath.Join(directory, "tnl.yml")},
+			Root:      directory,
+			Config:    config.TNL{Dev: &config.Dev{Command: command}},
+		},
 	}
 	flags := devCommand{}
 	if err := project.applyDev(&flags); err != nil {
@@ -144,19 +145,20 @@ func TestProjectConfigurationResolvesNamedServiceAndBuiltInHostname(t *testing.T
 	root := t.TempDir()
 	rootServer := "https://root.example"
 	serviceTeam := "Frontend Team"
-	target := projectconfig.Target("4173")
-	rootTimeout := projectconfig.Duration(20 * time.Second)
+	target := config.Target("4173")
+	rootTimeout := config.Duration(20 * time.Second)
 	project := projectConfiguration{
-		found: true,
-		root:  root,
-		worktree: projectconfig.Worktree{
-			Root: root, Label: "feature-abcdef12",
-		},
-		tnl: projectconfig.TNL{
-			Server: &rootServer,
-			Dev:    &projectconfig.Dev{StartupTimeout: &rootTimeout},
-			Services: map[string]projectconfig.Service{
-				"web": {Team: &serviceTeam, Publish: &projectconfig.Publish{Target: &target}},
+		Project: projectconfig.Project{
+			Root: root,
+			Worktree: projectconfig.Worktree{
+				Root: root, Label: "feature-abcdef12",
+			},
+			Config: config.TNL{
+				Server: &rootServer,
+				Dev:    &config.Dev{StartupTimeout: &rootTimeout},
+				Services: map[string]config.Service{
+					"web": {Team: &serviceTeam, Publish: &config.Publish{Target: &target}},
+				},
 			},
 		},
 	}
@@ -180,11 +182,13 @@ func TestProjectConfigurationResolvesNamedServiceAndBuiltInHostname(t *testing.T
 
 func TestPublishArgumentThatIsNotAServiceRemainsTarget(t *testing.T) {
 	project := projectConfiguration{
-		root:     t.TempDir(),
-		worktree: projectconfig.Worktree{Label: "project-abcdef12"},
-		tnl: projectconfig.TNL{Services: map[string]projectconfig.Service{
-			"web": {},
-		}},
+		Project: projectconfig.Project{
+			Root:     t.TempDir(),
+			Worktree: projectconfig.Worktree{Label: "project-abcdef12"},
+			Config: config.TNL{Services: map[string]config.Service{
+				"web": {},
+			}},
+		},
 	}
 	flags := publishCommand{Target: "3000"}
 	if err := project.applyPublish(&flags); err != nil {
@@ -196,9 +200,9 @@ func TestPublishArgumentThatIsNotAServiceRemainsTarget(t *testing.T) {
 }
 
 func TestProjectConfigurationRequiresServiceWhenAmbiguous(t *testing.T) {
-	project := projectConfiguration{tnl: projectconfig.TNL{Services: map[string]projectconfig.Service{
+	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{Services: map[string]config.Service{
 		"api": {}, "web": {},
-	}}}
+	}}}}
 	if err := project.applyDev(&devCommand{}); err == nil || err.Error() != "service is required; configured services: api, web" {
 		t.Fatalf("ambiguous service error = %v", err)
 	} else if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.ServiceAmbiguous {
@@ -214,9 +218,11 @@ func TestProjectConfigurationUsesServiceDirectoryAsChildCWD(t *testing.T) {
 	}
 	directory := "apps/web"
 	project := projectConfiguration{
-		root: root, worktree: projectconfig.Worktree{Label: "tnl-bb4eff12"},
-		tnl:         projectconfig.TNL{Services: projectconfig.Services{"web": {Directory: &directory}}},
-		directories: map[string]string{"web": serviceDirectory},
+		Project: projectconfig.Project{
+			Root: root, Worktree: projectconfig.Worktree{Label: "tnl-bb4eff12"},
+			Config:             config.TNL{Services: config.Services{"web": {Directory: &directory}}},
+			ServiceDirectories: map[string]string{"web": serviceDirectory},
+		},
 	}
 	flags := devCommand{Service: "web", Command: []string{"sh"}}
 	if err := project.applyDev(&flags); err != nil {
@@ -239,8 +245,7 @@ func TestConfiguredProjectHostnameFixture(t *testing.T) {
 		}},
 	}
 	service, err := configuredProjectService(
-		"api", projectconfig.Worktree{Label: "tnl-bb4eff12"}, projectconfig.TNL{}, current,
-		&clientauth.Client{Discovery: controlv1.ControlDiscovery{DnsAutomation: true}},
+		"api", projectconfig.Worktree{Label: "tnl-bb4eff12"}, config.TNL{}, current,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -262,14 +267,16 @@ func TestEphemeralTunnelDoesNotReceiveWorktreeSubdomain(t *testing.T) {
 func TestEphemeralConfigUsesMetadataHostnameOnlyWithoutRuntimeContextOverride(t *testing.T) {
 	ephemeral := true
 	project := projectConfiguration{
-		root: t.TempDir(), worktree: projectconfig.Worktree{Label: "tnl-bb4eff12"},
-		tnl: projectconfig.TNL{
-			Tunnel: &projectconfig.Tunnel{Ephemeral: &ephemeral},
-			Services: projectconfig.Services{
-				"api": {},
+		Project: projectconfig.Project{
+			Root: t.TempDir(), Worktree: projectconfig.Worktree{Label: "tnl-bb4eff12"},
+			Config: config.TNL{
+				Tunnel: &config.Tunnel{Ephemeral: &ephemeral},
+				Services: config.Services{
+					"api": {},
+				},
 			},
+			ServiceDirectories: map[string]string{"api": t.TempDir()},
 		},
-		directories: map[string]string{"api": t.TempDir()},
 	}
 	withoutOverride := devCommand{Service: "api"}
 	if err := project.applyDev(&withoutOverride); err != nil {
@@ -299,7 +306,7 @@ func TestEphemeralConfigUsesMetadataHostnameOnlyWithoutRuntimeContextOverride(t 
 
 func TestProjectCommandContextUsesRootAndPreservesExplicitServer(t *testing.T) {
 	server, team := "https://project.example", "Project Team"
-	project := projectConfiguration{tnl: projectconfig.TNL{Server: &server, Team: &team}}
+	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{Server: &server, Team: &team}}}
 	flags := cli{}
 	if err := applyProjectCommandContext("route list", project, &flags); err != nil {
 		t.Fatal(err)
@@ -321,5 +328,46 @@ func TestProjectCommandContextUsesRootAndPreservesExplicitServer(t *testing.T) {
 	flags.Route.Delete.ServerURL = "https://explicit.example"
 	if err := applyProjectCommandContext("route delete <route-id>", project, &flags); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestProjectServerSelection(t *testing.T) {
+	projectServer := "https://project.example"
+	for _, selected := range []string{"", "https://invocation.example"} {
+		for _, project := range []*string{nil, &projectServer} {
+			for _, token := range []string{"", "explicit-token"} {
+				server, fromProject, err := resolveProjectServer(selected, project, token)
+				wantProject := selected == "" && project != nil
+				wantError := wantProject && token != ""
+				if (err != nil) != wantError {
+					t.Fatalf("selected=%q, project=%v, token=%q: %v", selected, project, token, err)
+				}
+				if wantError {
+					continue
+				}
+				want := selected
+				if wantProject {
+					want = projectServer
+				}
+				if server != want || fromProject != wantProject {
+					t.Fatalf("selection = %q, %v; want %q, %v", server, fromProject, want, wantProject)
+				}
+			}
+		}
+	}
+}
+
+func TestPublishAndDevRejectProjectSelectedExplicitToken(t *testing.T) {
+	server := "https://project.example"
+	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{Server: &server}}}
+	for _, selected := range []string{"", "https://explicit.example"} {
+		remote := remoteFlags{ServerURL: selected, AccessToken: "explicit-token"}
+		publish := publishCommand{Target: "3000", remoteFlags: remote}
+		dev := devCommand{remoteFlags: remote}
+		for name, err := range map[string]error{"publish": project.applyPublish(&publish), "dev": project.applyDev(&dev)} {
+			if (err != nil) != (selected == "") {
+				t.Fatalf("%s selected=%q: %v", name, selected, err)
+			}
+		}
 	}
 }

@@ -10,9 +10,10 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"reflect"
-	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -378,6 +379,7 @@ func TestDevBootstrapTimesOutAndClosesIdempotently(t *testing.T) {
 func TestDevEnvironmentReplacesProtocolAndRemovesAccessToken(t *testing.T) {
 	t.Setenv("PORT", "9999")
 	t.Setenv("TNL_ACCESS_TOKEN", "secret")
+	t.Setenv("TNL_LOGIN_TOKEN", "test-login-token-sentinel")
 	t.Setenv("TNL_DEV_PROTOCOL", "old")
 	t.Setenv("TNL_TUNNEL_ID", "stale")
 	t.Setenv("TNL_PUBLIC_HOSTNAME", "stale.example")
@@ -387,9 +389,9 @@ func TestDevEnvironmentReplacesProtocolAndRemovesAccessToken(t *testing.T) {
 	environment := environmentMap(devEnvironment(bootstrap, 3000))
 	if environment["PORT"] != "3000" || environment["TNL_DEV_PORT"] != "3000" ||
 		environment["TNL_DEV_PROTOCOL"] != "1" || environment["TNL_DEV_SOCKET"] != bootstrap.socket {
-		t.Fatalf("environment = %#v", environment)
+		t.Fatal("development protocol environment was not replaced")
 	}
-	for _, name := range []string{"TNL_ACCESS_TOKEN", "TNL_PROJECT_RUNTIME", "TNL_TUNNEL_ID", "TNL_PUBLIC_HOSTNAME", "TNL_PUBLIC_URL"} {
+	for _, name := range []string{"TNL_ACCESS_TOKEN", "TNL_LOGIN_TOKEN", "TNL_PROJECT_RUNTIME", "TNL_TUNNEL_ID", "TNL_PUBLIC_HOSTNAME", "TNL_PUBLIC_URL"} {
 		if _, found := environment[name]; found {
 			t.Fatalf("%s was passed to the development server", name)
 		}
@@ -433,46 +435,223 @@ func TestWaitForDevTargetStopsWhenCommandExits(t *testing.T) {
 	}
 }
 
-func TestDevProcessStopTerminatesProcessGroup(t *testing.T) {
-	reader, writer, err := os.Pipe()
+func TestDevProcessNaturalLeaderExitKillsDescendants(t *testing.T) {
+	process, output, reader := startDevProcessTestCommand(t, "natural")
+	waitForDevProcessDone(t, process)
+	assertDevProcessExitStatus(t, process, 23)
+	assertDevProcessOutputEOF(t, output, reader)
+}
+
+func TestDevProcessResponsiveStopKillsDescendantsAndPreservesExitStatus(t *testing.T) {
+	process, output, reader := startDevProcessTestCommand(t, "responsive")
+	stopped := make(chan error, 1)
+	go func() { stopped <- process.Stop(5 * time.Second) }()
+	select {
+	case err := <-stopped:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop waited for its timeout after the leader exited")
+	}
+	assertDevProcessExitStatus(t, process, 23)
+	assertDevProcessOutputEOF(t, output, reader)
+}
+
+func TestDevProcessStopEscalatesWhenLeaderIgnoresSIGTERM(t *testing.T) {
+	process, output, reader := startDevProcessTestCommand(t, "ignoring")
+	const timeout = 100 * time.Millisecond
+	started := time.Now()
+	if err := process.Stop(timeout); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(started); elapsed < timeout {
+		t.Fatalf("Stop escalated after %s, before its %s timeout", elapsed, timeout)
+	}
+	var exitErr *exec.ExitError
+	if err := process.Err(); !errors.As(err, &exitErr) {
+		t.Fatalf("leader wait error = %v", err)
+	}
+	status, ok := exitErr.ProcessState.Sys().(syscall.WaitStatus)
+	if !ok || !status.Signaled() || status.Signal() != syscall.SIGKILL {
+		t.Fatalf("leader wait status = %v", exitErr.ProcessState.Sys())
+	}
+	assertDevProcessOutputEOF(t, output, reader)
+}
+
+func TestDevProcessConcurrentStop(t *testing.T) {
+	process, output, reader := startDevProcessTestCommand(t, "responsive")
+	const callers = 8
+	started := make(chan struct{})
+	stopped := make(chan error, callers)
+	for range callers {
+		go func() {
+			<-started
+			stopped <- process.Stop(5 * time.Second)
+		}()
+	}
+	close(started)
+	for range callers {
+		select {
+		case err := <-stopped:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("concurrent Stop did not return after the leader exited")
+		}
+	}
+	assertDevProcessExitStatus(t, process, 23)
+	assertDevProcessOutputEOF(t, output, reader)
+}
+
+func TestDevProcessRepeatedStop(t *testing.T) {
+	process, output, reader := startDevProcessTestCommand(t, "responsive")
+	if err := process.Stop(5 * time.Second); err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		if err := process.Stop(0); err != nil {
+			t.Fatalf("repeated Stop: %v", err)
+		}
+	}
+	assertDevProcessExitStatus(t, process, 23)
+	assertDevProcessOutputEOF(t, output, reader)
+}
+
+func startDevProcessTestCommand(t *testing.T, mode string) (*devProcess, *os.File, *bufio.Reader) {
+	t.Helper()
+	output, outputWriter, err := os.Pipe()
 	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = output.Close() })
+	executable, err := os.Executable()
+	if err != nil {
+		_ = outputWriter.Close()
 		t.Fatal(err)
 	}
 	process, err := startDevProcess(
-		[]string{"sh", "-c", `sleep 30 & printf '%s\n' "$!"; wait`},
-		os.Environ(), nil, writer, io.Discard,
+		[]string{executable, "-test.run=^TestDevProcessHelper$", "--", mode},
+		append(os.Environ(), "TNL_TEST_DEV_PROCESS_HELPER=1", "GORACE=atexit_sleep_ms=0"),
+		nil, outputWriter, os.Stderr,
 	)
-	if err != nil {
-		reader.Close()
-		writer.Close()
-		t.Fatal(err)
+	if closeErr := outputWriter.Close(); err == nil && closeErr != nil {
+		err = closeErr
 	}
-	t.Cleanup(func() { _ = process.Stop(time.Second) })
-	if err := writer.Close(); err != nil {
-		t.Fatal(err)
-	}
-	line, err := bufio.NewReader(reader).ReadString('\n')
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := reader.Close(); err != nil {
-		t.Fatal(err)
-	}
-	childPID, err := strconv.Atoi(strings.TrimSpace(line))
-	if err != nil || childPID <= 0 {
-		t.Fatalf("child PID = %q, error = %v", line, err)
-	}
-	if err := process.Stop(time.Second); err != nil {
-		t.Fatal(err)
-	}
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		if err := syscall.Kill(childPID, 0); errors.Is(err, syscall.ESRCH) {
-			return
+	t.Cleanup(func() {
+		if err := process.Stop(time.Second); err != nil {
+			t.Errorf("stop development process during cleanup: %v", err)
 		}
-		time.Sleep(10 * time.Millisecond)
+	})
+	if err := output.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
 	}
-	t.Fatalf("development process group child %d survived shutdown", childPID)
+	reader := bufio.NewReader(output)
+	if ready, err := reader.ReadString('\n'); err != nil || ready != "ready\n" {
+		t.Fatalf("descendant readiness = %q, %v", ready, err)
+	}
+	return process, output, reader
+}
+
+func waitForDevProcessDone(t *testing.T, process *devProcess) {
+	t.Helper()
+	select {
+	case <-process.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("development process leader did not exit")
+	}
+}
+
+func assertDevProcessExitStatus(t *testing.T, process *devProcess, want int) {
+	t.Helper()
+	var exitErr *childExitError
+	if err := childResult(process.Err()); !errors.As(err, &exitErr) || exitErr.code != want {
+		t.Fatalf("leader exit result = %v, want status %d", err, want)
+	}
+}
+
+func assertDevProcessOutputEOF(t *testing.T, output *os.File, reader *bufio.Reader) {
+	t.Helper()
+	if err := output.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	remaining, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("wait for descendant output EOF: %v", err)
+	}
+	if len(remaining) != 0 {
+		t.Fatalf("unexpected descendant output: %q", remaining)
+	}
+}
+
+func TestDevProcessHelper(t *testing.T) {
+	if os.Getenv("TNL_TEST_DEV_PROCESS_HELPER") != "1" {
+		return
+	}
+	mode := os.Args[len(os.Args)-1]
+	if mode == "descendant" {
+		signal.Ignore(syscall.SIGTERM)
+		if _, err := io.WriteString(os.Stdout, "ready\n"); err != nil {
+			t.Fatal(err)
+		}
+		ready := os.NewFile(3, "leader-ready")
+		if ready == nil {
+			t.Fatal("missing leader readiness pipe")
+		}
+		if _, err := ready.Write([]byte{1}); err != nil {
+			t.Fatal(err)
+		}
+		if err := ready.Close(); err != nil {
+			t.Fatal(err)
+		}
+		for {
+			time.Sleep(time.Hour)
+		}
+	}
+	var terminated chan os.Signal
+	switch mode {
+	case "natural":
+	case "responsive":
+		terminated = make(chan os.Signal, 1)
+		signal.Notify(terminated, syscall.SIGTERM)
+	case "ignoring":
+		signal.Ignore(syscall.SIGTERM)
+	default:
+		t.Fatal("unknown development process helper mode")
+	}
+	ready, readyWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := exec.Command(os.Args[0], "-test.run=^TestDevProcessHelper$", "--", "descendant")
+	child.Stdout, child.Stderr = os.Stdout, os.Stderr
+	child.ExtraFiles = []*os.File{readyWriter}
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if err := readyWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.ReadFull(ready, make([]byte, 1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := ready.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if mode == "natural" {
+		os.Exit(23)
+	}
+	if mode == "responsive" {
+		<-terminated
+		os.Exit(23)
+	}
+	for {
+		time.Sleep(time.Hour)
+	}
 }
 
 type devHTTPResult struct {

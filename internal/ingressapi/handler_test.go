@@ -296,6 +296,18 @@ func TestIngressStoreErrorsHaveStableProblems(t *testing.T) {
 			if response.Code != test.status {
 				t.Fatalf("status = %d, want %d: %s", response.Code, test.status, response.Body.String())
 			}
+			wire, err := ingressv1.ParseReportIngressUsageResponse(response.Result())
+			if err != nil {
+				t.Fatal(err)
+			}
+			client, err := NewDirectClient(DirectConfig{Store: store, LeaseDuration: 30 * time.Second})
+			if err != nil {
+				t.Fatal(err)
+			}
+			direct, err := client.ReportIngressUsageWithResponse(t.Context(), body.IngressId, body)
+			if err != nil || direct.StatusCode() != wire.StatusCode() || direct.ApplicationproblemJSONDefault == nil || wire.ApplicationproblemJSONDefault == nil || *direct.ApplicationproblemJSONDefault != *wire.ApplicationproblemJSONDefault {
+				t.Fatalf("direct problem differs from HTTP: %#v, %v; HTTP %#v", direct, err, wire)
+			}
 			assertIngressProblemType(t, response, "https://tnl.dev/problems/"+test.problemType)
 		})
 	}

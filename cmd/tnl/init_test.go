@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/tnldotdev/tnl/internal/projectconfig"
 )
 
 func TestInitReportsManualActionForExistingNextConfig(t *testing.T) {
@@ -349,7 +351,9 @@ func TestProjectTypeIncludeActionsPreserveConfiguration(t *testing.T) {
 	if err := os.WriteFile(path, []byte("{\n  \"include\": [\"src/**/*.ts\"]\n}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	project := projectConfiguration{root: root, directories: map[string]string{"api": service}}
+	project := projectConfiguration{Project: projectconfig.Project{
+		Root: root, ServiceDirectories: map[string]string{"api": service},
+	}}
 	actions, err := projectTypeIncludeActions(project)
 	if err != nil {
 		t.Fatal(err)
@@ -412,7 +416,7 @@ func TestProjectTypeIncludeActionUsesRootWithoutNamedServices(t *testing.T) {
 	if err := os.WriteFile(path, []byte("{\n  \"include\": [\"src/**/*.ts\"]\n}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	actions, err := projectTypeIncludeActions(projectConfiguration{root: root})
+	actions, err := projectTypeIncludeActions(projectConfiguration{Project: projectconfig.Project{Root: root}})
 	if err != nil {
 		t.Fatal(err)
 	}

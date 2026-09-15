@@ -1,6 +1,7 @@
 package controlstate
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -233,7 +234,7 @@ func (d *Database) CreateCertificateIssuance(
 func (d *Database) GetCertificateIssuance(
 	ctx context.Context,
 	issuanceID string,
-	token credentials.SessionToken,
+	token credentials.RouteSessionToken,
 	now time.Time,
 ) (result CertificateIssuance, retErr error) {
 	if !validStateText(issuanceID) {
@@ -276,7 +277,7 @@ func (d *Database) GetCertificateIssuance(
 func (d *Database) MarkCertificateChallengeReady(
 	ctx context.Context,
 	issuanceID string,
-	token credentials.SessionToken,
+	token credentials.RouteSessionToken,
 	now time.Time,
 ) (CertificateIssuance, error) {
 	return d.updateCertificateChallenge(ctx, issuanceID, token, now, true)
@@ -285,7 +286,7 @@ func (d *Database) MarkCertificateChallengeReady(
 func (d *Database) MarkCertificateChallengeRemoved(
 	ctx context.Context,
 	issuanceID string,
-	token credentials.SessionToken,
+	token credentials.RouteSessionToken,
 	now time.Time,
 ) (CertificateIssuance, error) {
 	return d.updateCertificateChallenge(ctx, issuanceID, token, now, false)
@@ -294,7 +295,7 @@ func (d *Database) MarkCertificateChallengeRemoved(
 func (d *Database) updateCertificateChallenge(
 	ctx context.Context,
 	issuanceID string,
-	token credentials.SessionToken,
+	token credentials.RouteSessionToken,
 	now time.Time,
 	ready bool,
 ) (result CertificateIssuance, retErr error) {
@@ -404,7 +405,7 @@ func validCertificateChallengeAcknowledgement(
 		return false
 	}
 	for _, authorization := range authorizations {
-		if authorization.ChallengeType != "tls-alpn-01" || !authorization.ExpiresAt.Valid ||
+		if authorization.ChallengeType.String != "tls-alpn-01" || !authorization.ExpiresAt.Valid ||
 			ready && !authorization.ExpiresAt.Time.After(now) {
 			return false
 		}
@@ -428,9 +429,9 @@ func validCertificateChallengeAcknowledgement(
 
 func (d *Database) routeSessionAuthenticationForToken(
 	ctx context.Context,
-	token credentials.SessionToken,
+	token credentials.RouteSessionToken,
 ) (RouteSessionAuthentication, error) {
-	tokenID, tokenHash, err := credentials.ParseSessionToken(token)
+	tokenID, tokenHash, err := credentials.ParseRouteSessionToken(token)
 	if err != nil {
 		return RouteSessionAuthentication{}, ErrRouteSessionCredential
 	}
@@ -443,7 +444,7 @@ func (d *Database) routeSessionAuthenticationForToken(
 	}
 	return RouteSessionAuthentication{
 		RouteSessionID: session.ID, RouteID: session.RouteID,
-		RouteVersion: uint64(session.RouteVersion), SessionToken: token,
+		RouteVersion: uint64(session.RouteVersion), RouteSessionToken: token,
 	}, nil
 }
 
@@ -496,6 +497,16 @@ func canonicalCertificateIdentifiers(identifiers []string) ([]string, error) {
 	return result, nil
 }
 
+func validInstalledCertificate(order controlstatedb.ControlAcmeOrder, hostname string, now time.Time) bool {
+	digest := sha256.Sum256(order.CsrDer)
+	if !bytes.Equal(digest[:], order.CsrDigest) || !order.NotBefore.Valid || !order.NotAfter.Valid {
+		return false
+	}
+	leaf, err := certificateidentity.ValidateIssuedCertificate(order.CertificatePem, order.CsrDer, order.CertificateIdentifiers, now)
+	return err == nil && leaf.VerifyHostname(hostname) == nil &&
+		leaf.NotBefore.Equal(order.NotBefore.Time) && leaf.NotAfter.Equal(order.NotAfter.Time)
+}
+
 func loadCertificateIssuance(
 	ctx context.Context,
 	queries *controlstatedb.Queries,
@@ -528,12 +539,12 @@ func loadCertificateIssuance(
 		result.NotAfter = &notAfter
 	}
 	for _, row := range rows {
-		if row.ChallengeType != "tls-alpn-01" || len(row.ChallengeDigest) != sha256.Size || !row.ExpiresAt.Valid ||
+		if row.ChallengeType.String != "tls-alpn-01" || len(row.ChallengeDigest) != sha256.Size || !row.ExpiresAt.Valid ||
 			row.State == "complete" || row.State == "canceled" {
 			continue
 		}
 		challenge := CertificateChallenge{
-			Identifier: row.Identifier, Method: row.ChallengeType, Token: row.ChallengeToken,
+			Identifier: row.Identifier, Method: row.ChallengeType.String, Token: row.ChallengeToken.String,
 			ExpiresAt: row.ExpiresAt.Time,
 		}
 		copy(challenge.Digest[:], row.ChallengeDigest)

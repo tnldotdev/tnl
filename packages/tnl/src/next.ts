@@ -1,5 +1,6 @@
 import {
   canonicalLoopbackTarget,
+  parseListenerPort,
   readDevelopmentContext,
   registerLocalTarget,
   requestTunnelAssignment,
@@ -94,23 +95,12 @@ function nextTarget(environment: NodeJS.ProcessEnv): `http://${string}` {
   } catch (error) {
     throw new Error("Next.js reported an invalid development listener", { cause: error });
   }
-  const port = parsePort(origin.port, "Next.js listener");
+  const port = parseListenerPort(origin.port, "Next.js listener");
   const reportedPort = environment.PORT;
-  if (reportedPort !== undefined && parsePort(reportedPort, "PORT") !== port) {
+  if (reportedPort !== undefined && parseListenerPort(reportedPort, "PORT") !== port) {
     throw new Error("Next.js reported inconsistent development listener ports");
   }
   return canonicalLoopbackTarget(origin.hostname, port);
-}
-
-function parsePort(value: string, source: string): number {
-  if (!/^[0-9]+$/.test(value)) {
-    throw new Error(`${source} must be a port between 1 and 65535`);
-  }
-  const port = Number(value);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error(`${source} must be a port between 1 and 65535`);
-  }
-  return port;
 }
 
 function unique(values: readonly string[]): string[] {

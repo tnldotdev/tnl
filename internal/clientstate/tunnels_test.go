@@ -79,7 +79,7 @@ func TestTunnelProjectStateIsPartOfInitialV1Migration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 1 || entries[0].Name() != "00001_schema.sql" {
+	if len(entries) == 0 || entries[0].Name() != "00001_schema.sql" {
 		t.Fatalf("client-state migrations = %#v", entries)
 	}
 	data, err := migrationFiles.ReadFile("migrations/00001_schema.sql")

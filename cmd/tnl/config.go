@@ -12,19 +12,13 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/clioutput"
-	projectconfig "github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
-	"github.com/tnldotdev/tnl/internal/tnlts"
+	"github.com/tnldotdev/tnl/internal/projectconfig"
 )
 
 type projectConfiguration struct {
-	selection           projectconfig.Selection
-	tnl                 projectconfig.TNL
-	worktree            projectconfig.Worktree
-	root                string
-	directories         map[string]string
-	relativeDirectories map[string]string
-	found               bool
+	projectconfig.Project
 }
 
 func selectProjectConfiguration(flags cli) (projectconfig.Selection, string, error) {
@@ -57,59 +51,11 @@ func loadProjectConfigurationWithSalt(ctx context.Context, flags cli, salt [32]b
 	if err != nil {
 		return projectConfiguration{}, err
 	}
-	worktree, err := projectconfig.ResolveWorktree(ctx, cwd)
+	project, err := projectconfig.Resolve(ctx, selection, cwd, salt)
 	if err != nil {
-		return projectConfiguration{}, fmt.Errorf("resolve project worktree: %w", err)
-	}
-	worktree = projectconfig.ApplyWorktreeHashSalt(worktree, salt)
-	result := projectConfiguration{selection: selection, worktree: worktree, root: worktree.Root}
-	if selection.Path == "" {
-		return result, nil
-	}
-	result.found = true
-	result.root = filepath.Dir(selection.Path)
-	result.worktree, err = projectconfig.ResolveWorktree(ctx, result.root)
-	if err != nil {
-		return projectConfiguration{}, fmt.Errorf("resolve project worktree: %w", err)
-	}
-	result.worktree = projectconfig.ApplyWorktreeHashSalt(result.worktree, salt)
-	if strings.EqualFold(filepath.Ext(selection.Path), ".ts") {
-		result.tnl, err = tnlts.Load(ctx, selection.Path, cwd, result.worktree)
-		if err != nil {
-			return projectConfiguration{}, err
-		}
-	} else {
-		document, loadErr := projectconfig.LoadDocument(selection.Path)
-		if loadErr != nil {
-			return projectConfiguration{}, loadErr
-		}
-		if document.TNL != nil {
-			result.tnl = *document.TNL
-		}
-	}
-	if err := result.resolveServiceDirectories(); err != nil {
 		return projectConfiguration{}, err
 	}
-	return result, nil
-}
-
-func (c *projectConfiguration) resolveServiceDirectories() error {
-	c.directories = make(map[string]string, len(c.tnl.Services))
-	c.relativeDirectories = make(map[string]string, len(c.tnl.Services))
-	names := make([]string, 0, len(c.tnl.Services))
-	for name := range c.tnl.Services {
-		names = append(names, name)
-	}
-	slices.Sort(names)
-	for _, name := range names {
-		directory, relative, err := c.tnl.ServiceDirectory(c.root, name)
-		if err != nil {
-			return fmt.Errorf("service %q: %w", name, err)
-		}
-		c.directories[name] = directory
-		c.relativeDirectories[name] = relative
-	}
-	return nil
+	return projectConfiguration{Project: project}, nil
 }
 
 func projectRoot(ctx context.Context, flags cli) (string, error) {
@@ -129,7 +75,7 @@ func projectRoot(ctx context.Context, flags cli) (string, error) {
 
 func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 	service := ""
-	if _, found := c.tnl.Services[flags.Target]; found && flags.Target != "" {
+	if _, found := c.Config.Services[flags.Target]; found && flags.Target != "" {
 		service, flags.Target = flags.Target, ""
 	} else if flags.Target == "" {
 		var err error
@@ -138,18 +84,15 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 			return err
 		}
 	}
-	effective, err := c.tnl.EffectiveService(service)
+	effective, err := c.EffectiveService(service)
 	if err != nil {
 		return err
 	}
 	flags.Service = service
-	flags.projectRoot = c.root
-	if flags.ServerURL == "" && effective.Server != nil {
-		flags.ServerURL = *effective.Server
-		flags.serverFromConfig = true
-	}
-	if flags.AccessToken != "" && flags.serverFromConfig {
-		return errors.New("an explicit access token with a project-provided server requires --server or TNL_SERVER")
+	flags.projectRoot = c.Root
+	flags.ServerURL, flags.serverFromConfig, err = resolveProjectServer(flags.ServerURL, effective.Server, flags.AccessToken)
+	if err != nil {
+		return err
 	}
 	if flags.Team != "" {
 		flags.selectedTeam = flags.Team
@@ -160,7 +103,7 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 		flags.Target = string(*effective.Publish.Target)
 	}
 	applyTunnelConfiguration(&flags.tunnelFlags, effective.Tunnel)
-	applyBuiltInHostname(&flags.tunnelFlags, service, c.worktree)
+	applyBuiltInHostname(&flags.tunnelFlags, service, c.Worktree)
 	if flags.Target == "" {
 		if service != "" {
 			return fmt.Errorf("local target is required for service %q through publish.target", service)
@@ -178,22 +121,19 @@ func (c projectConfiguration) applyDev(flags *devCommand) error {
 		if err != nil {
 			return err
 		}
-	} else if _, found := c.tnl.Services[service]; !found {
+	} else if _, found := c.Config.Services[service]; !found {
 		return fmt.Errorf("service %q is not configured", service)
 	}
-	effective, err := c.tnl.EffectiveService(service)
+	effective, err := c.EffectiveService(service)
 	if err != nil {
 		return err
 	}
 	flags.Service = service
-	flags.projectRoot = c.root
+	flags.projectRoot = c.Root
 	flags.project = c
-	if flags.ServerURL == "" && effective.Server != nil {
-		flags.ServerURL = *effective.Server
-		flags.serverFromConfig = true
-	}
-	if flags.AccessToken != "" && flags.serverFromConfig {
-		return errors.New("an explicit access token with a project-provided server requires --server or TNL_SERVER")
+	flags.ServerURL, flags.serverFromConfig, err = resolveProjectServer(flags.ServerURL, effective.Server, flags.AccessToken)
+	if err != nil {
+		return err
 	}
 	if flags.Team != "" {
 		flags.selectedTeam = flags.Team
@@ -201,15 +141,15 @@ func (c projectConfiguration) applyDev(flags *devCommand) error {
 		flags.selectedTeam = *effective.Team
 	}
 	if service == "" {
-		flags.commandDir = c.root
+		flags.commandDir = c.Root
 	} else {
-		flags.commandDir = c.directories[service]
+		flags.commandDir = c.ServiceDirectories[service]
 		if flags.commandDir == "" {
-			flags.commandDir = c.root
+			flags.commandDir = c.Root
 		}
 	}
-	if flags.commandDir == "" && c.selection.Path != "" {
-		flags.commandDir = filepath.Dir(c.selection.Path)
+	if flags.commandDir == "" && c.Selection.Path != "" {
+		flags.commandDir = c.Root
 	}
 	if len(flags.Command) == 0 && effective.Dev != nil && effective.Dev.Command != nil {
 		flags.Command = slices.Clone(effective.Dev.Command)
@@ -226,7 +166,7 @@ func (c projectConfiguration) applyDev(flags *devCommand) error {
 	flags.useMetadataHostname = flags.Host == "" && flags.Subdomain == "" && flags.Team == "" &&
 		flags.Ephemeral && !runtimeServerOverride && !ephemeralFromEnvironment &&
 		effective.Tunnel != nil && effective.Tunnel.Ephemeral != nil && *effective.Tunnel.Ephemeral
-	applyBuiltInHostname(&flags.tunnelFlags, service, c.worktree)
+	applyBuiltInHostname(&flags.tunnelFlags, service, c.Worktree)
 	if flags.StartupTimeout == 0 {
 		flags.StartupTimeout = defaultDevStartupTimeout
 	}
@@ -234,11 +174,11 @@ func (c projectConfiguration) applyDev(flags *devCommand) error {
 }
 
 func (c projectConfiguration) defaultService() (string, error) {
-	if len(c.tnl.Services) == 0 {
+	if len(c.Config.Services) == 0 {
 		return "", nil
 	}
-	names := make([]string, 0, len(c.tnl.Services))
-	for name := range c.tnl.Services {
+	names := make([]string, 0, len(c.Config.Services))
+	for name := range c.Config.Services {
 		names = append(names, name)
 	}
 	slices.Sort(names)
@@ -257,7 +197,7 @@ func applyBuiltInHostname(flags *tunnelFlags, service string, worktree projectco
 	}
 }
 
-func applyTunnelConfiguration(flags *tunnelFlags, tunnel *projectconfig.Tunnel) {
+func applyTunnelConfiguration(flags *tunnelFlags, tunnel *config.Tunnel) {
 	if tunnel == nil {
 		return
 	}
@@ -312,12 +252,12 @@ func runConfigPath(flags cli, stdout io.Writer) error {
 }
 
 func runConfigCheck(loaded projectConfiguration, stdout io.Writer) error {
-	if !loaded.found {
+	if !loaded.Found() {
 		return errors.New("no project configuration file found")
 	}
 	return clioutput.Write(stdout, clioutput.Frame{
 		Command: "tnl config check", State: "valid",
-		Blocks: []clioutput.Block{clioutput.Fields(clioutput.Field{Label: "path", Value: loaded.selection.Path})},
+		Blocks: []clioutput.Block{clioutput.Fields(clioutput.Field{Label: "path", Value: loaded.Selection.Path})},
 	})
 }
 
@@ -325,22 +265,26 @@ func projectSensitiveCommand(command string) bool {
 	return strings.HasPrefix(command, "team ") || strings.HasPrefix(command, "domain ") || strings.HasPrefix(command, "route ")
 }
 
-func applyProjectCommandContext(command string, project projectConfiguration, flags *cli) error {
-	server, team := "", ""
-	if project.tnl.Server != nil {
-		server = *project.tnl.Server
+// resolveProjectServer preserves invocation selection and its provenance. A
+// project must not choose the destination for an explicitly supplied credential.
+func resolveProjectServer(selected string, project *string, token string) (server string, fromProject bool, err error) {
+	if selected != "" || project == nil {
+		return selected, false, nil
 	}
-	if project.tnl.Team != nil {
-		team = *project.tnl.Team
+	if token != "" {
+		return "", false, errors.New("an explicit access token with a project-provided server requires --server or TNL_SERVER")
+	}
+	return *project, true, nil
+}
+
+func applyProjectCommandContext(command string, project projectConfiguration, flags *cli) error {
+	team := ""
+	if project.Config.Team != nil {
+		team = *project.Config.Team
 	}
 	var contextErr error
 	apply := func(remote *remoteFlags, useTeam bool) {
-		if remote.ServerURL == "" {
-			if server != "" && remote.AccessToken != "" {
-				contextErr = errors.New("an explicit access token with a project-provided server requires --server or TNL_SERVER")
-			}
-			remote.ServerURL = server
-		}
+		remote.ServerURL, _, contextErr = resolveProjectServer(remote.ServerURL, project.Config.Server, remote.AccessToken)
 		if useTeam {
 			remote.ProjectTeam = team
 		}

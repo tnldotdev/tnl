@@ -24,6 +24,8 @@ type candidateResult struct {
 
 // Race establishes QUIC first and starts the fallback after fallbackDelay. The
 // first candidate accepted by tunnelv1 wins; TLS completion alone cannot win.
+// A terminal handshake rejection stops both attempts. This policy applies only
+// to connection establishment, not visitor-stream retries.
 func Race(
 	ctx context.Context,
 	primary Candidate,
@@ -96,10 +98,16 @@ func dialCandidate(ctx context.Context, candidate Candidate, hello tunnelv1.Mess
 	if err == nil {
 		return candidateResult{session: session}
 	}
+	return candidateResult{err: err, terminal: IsTerminalHandshakeError(err)}
+}
+
+// IsTerminalHandshakeError identifies protocol rejections that must stop attempts
+// for the current connection assignment. Transport failures and temporary server
+// errors are not terminal. It does not authorize reconnecting a claimed connection.
+func IsTerminalHandshakeError(err error) bool {
 	var protocolError *ProtocolError
-	terminal := errors.As(err, &protocolError) && protocolError.Code != tunnelv1.Unavailable &&
+	return errors.As(err, &protocolError) && protocolError.Code != tunnelv1.Unavailable &&
 		protocolError.Code != tunnelv1.CapacityExceeded && protocolError.Code != tunnelv1.Internal
-	return candidateResult{err: err, terminal: terminal}
 }
 
 func closeLateWinner(results <-chan candidateResult, remaining int) {

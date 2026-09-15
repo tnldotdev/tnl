@@ -1,0 +1,44 @@
+package tunnel
+
+import (
+	"context"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/tnldotdev/tnl/internal/muxsession"
+)
+
+func TestRaceStartsFallbackWhenPrimaryRemainsBlocked(t *testing.T) {
+	primaryStarted := make(chan struct{})
+	primary := muxsession.ConnectorFunc(func(ctx context.Context, _ muxsession.Endpoint) (muxsession.Session, error) {
+		close(primaryStarted)
+		<-ctx.Done()
+		return nil, context.Cause(ctx)
+	})
+	var fallbackCalls atomic.Int32
+	fallback := authenticatedConnector(t, &fallbackCalls)
+
+	const fallbackDelay = 25 * time.Millisecond
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	startedAt := time.Now()
+	session, err := Race(
+		ctx, Candidate{Connector: primary}, Candidate{Connector: fallback}, fallbackDelay, publisherHello(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+	select {
+	case <-primaryStarted:
+	default:
+		t.Fatal("primary transport was not attempted")
+	}
+	if fallbackCalls.Load() != 1 {
+		t.Fatalf("fallback calls = %d; want 1", fallbackCalls.Load())
+	}
+	if elapsed := time.Since(startedAt); elapsed < fallbackDelay {
+		t.Fatalf("fallback won after %s; want at least %s", elapsed, fallbackDelay)
+	}
+}

@@ -22,7 +22,7 @@ import (
 )
 
 var (
-	ErrRelayCertificateWorkFenced  = errors.New("controlstate: relay certificate work lease is stale")
+	ErrRelayCertificateWorkStale   = errors.New("controlstate: relay certificate work lease is stale")
 	ErrRelayCertificateWorkInvalid = errors.New("controlstate: relay certificate work is invalid")
 )
 
@@ -68,13 +68,15 @@ type RelayDNSChallengeContext struct {
 	Presentations         []DNSChallengePresentation
 }
 
+// PrepareRelayCertificateOrder schedules managed material at its persisted
+// RenewAt.
 func (d *Database) PrepareRelayCertificateOrder(
 	ctx context.Context,
 	accountID string,
-	now, renewBefore time.Time,
+	now time.Time,
 	failedRetryInterval time.Duration,
 ) (created bool, retErr error) {
-	if !validStateText(accountID) || now.IsZero() || !renewBefore.After(now) || failedRetryInterval <= 0 {
+	if !validStateText(accountID) || now.IsZero() || failedRetryInterval <= 0 {
 		return false, ErrRelayCertificateWorkInvalid
 	}
 	if err := d.requireOpen(); err != nil {
@@ -87,7 +89,7 @@ func (d *Database) PrepareRelayCertificateOrder(
 	defer rollback(ctx, tx, "prepare relay certificate order", &retErr)()
 	queries := controlstatedb.New(tx)
 	service, err := queries.ClaimRelayServiceForCertificateOrder(ctx, controlstatedb.ClaimRelayServiceForCertificateOrderParams{
-		RenewBefore: timestamptz(renewBefore), RetryFailedAfter: timestamptz(now.Add(-failedRetryInterval)),
+		Now: timestamptz(now), RetryFailedAfter: timestamptz(now.Add(-failedRetryInterval)),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		if err := tx.Commit(ctx); err != nil {
@@ -194,6 +196,13 @@ func (d *Database) SaveRelayCertificateOrderWork(
 	}
 	defer rollback(ctx, tx, "save relay certificate work", &retErr)()
 	queries := controlstatedb.New(tx)
+	// Preparation locks the service before inserting an order. Completion must
+	// use the same order before updating both the order and installed material.
+	if _, err := queries.LockRelayServiceForCertificate(ctx, work.RelayServiceID); errors.Is(err, pgx.ErrNoRows) {
+		return RelayCertificateOrderWork{}, ErrRelayCertificateWorkInvalid
+	} else if err != nil {
+		return RelayCertificateOrderWork{}, fmt.Errorf("controlstate: save relay certificate work: lock service: %w", err)
+	}
 	row, err := queries.SaveRelayCertificateOrderWork(ctx, controlstatedb.SaveRelayCertificateOrderWorkParams{
 		State: work.State, OrderUrl: nullableText(work.OrderURL), FinalizeUrl: nullableText(work.FinalizeURL),
 		CertificateUrl: nullableText(work.CertificateURL), AuthorizationUrl: nullableText(work.AuthorizationURL),
@@ -206,7 +215,7 @@ func (d *Database) SaveRelayCertificateOrderWork(
 		ExpectedOrderRevision: positive(work.OrderRevision),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return RelayCertificateOrderWork{}, ErrRelayCertificateWorkFenced
+		return RelayCertificateOrderWork{}, ErrRelayCertificateWorkStale
 	}
 	if err != nil {
 		return RelayCertificateOrderWork{}, fmt.Errorf("controlstate: save relay certificate work: %w", err)
@@ -357,7 +366,8 @@ func validateRelayCertificateMaterial(work RelayCertificateOrderWork, now time.T
 	if err != nil || leaf.VerifyHostname(work.TLSServerName) != nil || !certificateidentity.DNSNamesOnly(leaf.Extensions, leaf.DNSNames) ||
 		len(leaf.DNSNames) != 1 || leaf.DNSNames[0] != work.TLSServerName || leaf.IsCA ||
 		work.NotBefore == nil || work.NotAfter == nil || work.RenewAt == nil ||
-		!leaf.NotBefore.Equal(*work.NotBefore) || !leaf.NotAfter.Equal(*work.NotAfter) || !leaf.NotAfter.After(now) {
+		!leaf.NotBefore.Equal(*work.NotBefore) || !leaf.NotAfter.Equal(*work.NotAfter) || !leaf.NotAfter.After(now) ||
+		leaf.NotBefore.After(now) || !work.RenewAt.After(leaf.NotBefore) || !work.RenewAt.Before(leaf.NotAfter) {
 		return ErrRelayCertificateWorkInvalid
 	}
 	return nil

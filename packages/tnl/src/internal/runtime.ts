@@ -17,6 +17,7 @@ export interface ProjectRuntime extends ProjectMetadata {
   readonly runningUnderTnlDev: boolean;
 }
 
+/** Validates and deep-freezes public metadata, excluding runtime flags and Node-only discovery fields. */
 export function parseProjectMetadata(value: unknown, description: string): ProjectMetadata {
   const object = record(value, description);
   exactKeys(object, ["memberNamespace", "services"], description);
@@ -33,7 +34,7 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
   const services: Record<string, ProjectServiceMetadata> = {};
   const hostnames = new Set<string>();
   for (const [name, value] of entries) {
-    if (!serviceNamePattern.test(name)) {
+    if (!validServiceName(name)) {
       throw new Error(`${description} contains an invalid service name ${JSON.stringify(name)}`);
     }
     const service = record(value, `${description} service ${JSON.stringify(name)}`);
@@ -68,6 +69,11 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
     memberNamespace,
     services: Object.freeze(services),
   });
+}
+
+/** Matches the native client's 1-32 byte ASCII service-name grammar without normalization. */
+export function validServiceName(value: unknown): value is string {
+  return typeof value === "string" && serviceNamePattern.test(value);
 }
 
 export function parseRuntimePayload(serialized: string | undefined): ProjectRuntime | undefined {

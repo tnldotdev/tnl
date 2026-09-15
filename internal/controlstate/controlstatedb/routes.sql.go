@@ -105,6 +105,7 @@ SET lifecycle_state = 'deleted',
     END,
     dns_last_error = NULL,
     mutation_revision = mutation_revision + 1,
+    suspended_at = NULL,
     deleted_at = $1,
     updated_at = $1
 WHERE id = $2
@@ -1003,6 +1004,21 @@ func (q *Queries) LockIdentityRouteForDelete(ctx context.Context, arg LockIdenti
 	return i, err
 }
 
+const lockLocalRouteTeamForMutation = `-- name: LockLocalRouteTeamForMutation :one
+SELECT teams.id
+FROM control.teams AS teams
+WHERE teams.id = (SELECT routes.team_id FROM control.routes AS routes WHERE routes.id = $1)
+  AND teams.deleted_at IS NULL
+FOR NO KEY UPDATE
+`
+
+func (q *Queries) LockLocalRouteTeamForMutation(ctx context.Context, routeID string) (string, error) {
+	row := q.db.QueryRow(ctx, lockLocalRouteTeamForMutation, routeID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
 const lockRouteCreationControl = `-- name: LockRouteCreationControl :one
 SELECT enabled
 FROM control.maintenance_controls
@@ -1022,9 +1038,10 @@ SELECT id
 FROM control.identities
 WHERE id = $1
   AND disabled_at IS NULL
-FOR UPDATE
+FOR NO KEY UPDATE
 `
 
+// Serialize creators without blocking session and audit foreign-key checks.
 func (q *Queries) LockRouteCreator(ctx context.Context, identityID string) (string, error) {
 	row := q.db.QueryRow(ctx, lockRouteCreator, identityID)
 	var id string

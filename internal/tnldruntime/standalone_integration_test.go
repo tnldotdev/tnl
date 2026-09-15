@@ -10,28 +10,23 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/tnldconfig"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 func TestIntegrationStandaloneLifecycle(t *testing.T) {
-	directURL := os.Getenv("TNL_TEST_POSTGRES_URL")
-	if directURL == "" {
-		t.Skip("TNL_TEST_POSTGRES_URL is not set")
-	}
-	databaseURL, inspect := standaloneTestDatabase(t, directURL)
+	databaseURL, inspect := standaloneTestDatabase(t)
 	acmeServer := standaloneTestACMEServer(t)
 	certificateAuthority := newIntegrationTestCA(t)
 	controlCertificate := certificateAuthority.issueServer(t, "control.tnl.test")
 	relayCertificate := certificateAuthority.issueServer(t, "relay.tnl.test")
 	publicAddress := unusedTCPAddress(t)
 	metricsAddress := unusedTCPAddress(t)
-	cfg := config.TNLD{
-		Mode: config.TNLDModeStandalone, DatabaseURL: databaseURL, MetricsListen: metricsAddress,
+	cfg := tnldconfig.Config{
+		Mode: tnldconfig.RoleStandalone, DatabaseURL: databaseURL, MetricsListen: metricsAddress,
 		ControlListen: unusedTCPAddress(t), PrivateControlListen: unusedTCPAddress(t), IngressListen: publicAddress,
 		RelayTCPListen: unusedTCPAddress(t), RelayUDPListen: unusedUDPAddress(t), InternalRelayListen: unusedTCPAddress(t),
 		ServerDomain: "tnl.test", ManagedDeploymentDomain: "tunnels.test",
@@ -91,11 +86,7 @@ func TestIntegrationStandaloneLifecycle(t *testing.T) {
 }
 
 func TestIntegrationSplitLifecycle(t *testing.T) {
-	directURL := os.Getenv("TNL_TEST_POSTGRES_URL")
-	if directURL == "" {
-		t.Skip("TNL_TEST_POSTGRES_URL is not set")
-	}
-	databaseURL, inspect := standaloneTestDatabase(t, directURL)
+	databaseURL, inspect := standaloneTestDatabase(t)
 	const serverDomain = "127.0.0.1.nip.io"
 	controlHostname := "control." + serverDomain
 	certificateAuthority := newIntegrationTestCA(t)
@@ -106,7 +97,7 @@ func TestIntegrationSplitLifecycle(t *testing.T) {
 	controlAddress := unusedTCPAddress(t)
 	privateControlAddress := unusedTCPAddress(t)
 	serviceClient := splitTestServiceHTTPClient(t, certificateAuthority.roots, privateControlAddress)
-	controlConfig := splitTestConfig(config.TNLDModeControl, unusedTCPAddress(t))
+	controlConfig := splitTestConfig(tnldconfig.RoleControl, unusedTCPAddress(t))
 	controlConfig.DatabaseURL = databaseURL
 	controlConfig.ControlListen = controlAddress
 	controlConfig.PrivateControlListen = privateControlAddress
@@ -129,7 +120,7 @@ func TestIntegrationSplitLifecycle(t *testing.T) {
 	control := startIntegrationProcess(t, controlConfig, acmeServer.Client(), serviceClient)
 	waitForProcessReady(t, control)
 
-	ingressConfig := splitTestConfig(config.TNLDModeIngress, unusedTCPAddress(t))
+	ingressConfig := splitTestConfig(tnldconfig.RoleIngress, unusedTCPAddress(t))
 	ingressConfig.ControlHostname = controlHostname
 	ingressConfig.ClusterSecret = testClusterSecret
 	ingressConfig.IngressID = "ingress-split"
@@ -142,7 +133,7 @@ func TestIntegrationSplitLifecycle(t *testing.T) {
 		t, controlHostname, "relay-b", "relay-b-1",
 		relayBCertificate.certificateFile, relayBCertificate.privateKeyFile,
 	)
-	for _, cfg := range []config.TNLD{ingressConfig, relayAConfig, relayBConfig} {
+	for _, cfg := range []tnldconfig.Config{ingressConfig, relayAConfig, relayBConfig} {
 		if err := cfg.Validate(); err != nil {
 			t.Fatal(err)
 		}
@@ -203,9 +194,9 @@ func TestIntegrationSplitLifecycle(t *testing.T) {
 	stopIntegrationProcess(t, control)
 }
 
-func splitTestConfig(mode config.TNLDMode, metricsAddress string) config.TNLD {
-	return config.TNLD{
-		Mode: mode, MetricsListen: metricsAddress,
+func splitTestConfig(role tnldconfig.Role, metricsAddress string) tnldconfig.Config {
+	return tnldconfig.Config{
+		Mode: role, MetricsListen: metricsAddress,
 		PublicConnectionLimit: 100, RouteConnectionLimit: 10, PublisherConnectionLimit: 10,
 		RelayStreamCapacity: 100, QUICMaxIncomingStreams: 100, QUICIdleTimeout: time.Minute,
 		TunnelFallbackDelay: 10 * time.Millisecond, IngressLeaseDuration: 2 * time.Second,
@@ -217,9 +208,9 @@ func splitTestConfig(mode config.TNLDMode, metricsAddress string) config.TNLD {
 func splitTestRelayConfig(
 	t *testing.T,
 	controlHostname, relayServiceID, relayID, certificateFile, privateKeyFile string,
-) config.TNLD {
+) tnldconfig.Config {
 	t.Helper()
-	cfg := splitTestConfig(config.TNLDModeRelay, unusedTCPAddress(t))
+	cfg := splitTestConfig(tnldconfig.RoleRelay, unusedTCPAddress(t))
 	cfg.ControlHostname = controlHostname
 	cfg.ClusterSecret = testClusterSecret
 	cfg.RelayServiceID = relayServiceID

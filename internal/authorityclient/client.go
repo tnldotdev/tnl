@@ -1,4 +1,9 @@
 // Package authorityclient is the bounded client for the authority API.
+// Responses are limited to 64 KiB and successful nonempty bodies must be one
+// schema-matching JSON value. Numbers in open objects remain json.Number.
+// Requests default to 20 seconds; empty successes are accepted. Transport/read
+// failures wrap ErrUnavailable, but decoding/size errors do not. HTTP 429 and
+// 503 take precedence over problem-body parsing.
 package authorityclient
 
 import (
@@ -7,13 +12,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/httpjson"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 )
@@ -224,12 +229,12 @@ func requestWithToken[T any](ctx context.Context, client *Client, token string, 
 		return zero, fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
 	defer response.Body.Close()
-	payload, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
+	payload, err := httpjson.ReadAll(response.Body, maxResponseBytes)
+	if errors.Is(err, httpjson.ErrTooLarge) {
+		return zero, errors.New("authorityclient: response exceeds limit")
+	}
 	if err != nil {
 		return zero, fmt.Errorf("%w: %w", ErrUnavailable, err)
-	}
-	if len(payload) > maxResponseBytes {
-		return zero, errors.New("authorityclient: response exceeds limit")
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return zero, responseError(response.StatusCode, response.Header, payload)
@@ -239,13 +244,13 @@ func requestWithToken[T any](ctx context.Context, client *Client, token string, 
 	}
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.UseNumber()
-	decoder.DisallowUnknownFields()
 	var result T
-	if err := decoder.Decode(&result); err != nil {
-		return zero, fmt.Errorf("authorityclient: decode response: %w", err)
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+	err = httpjson.Decode(decoder, &result)
+	if errors.Is(err, httpjson.ErrTrailingContent) {
 		return zero, errors.New("authorityclient: response contains trailing JSON")
+	}
+	if err != nil {
+		return zero, fmt.Errorf("authorityclient: decode response: %w", err)
 	}
 	return result, nil
 }

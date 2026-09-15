@@ -16,6 +16,7 @@ import (
 )
 
 const defaultRoutingTablePageSize = 256
+const defaultRoutingTableWait = 25 * time.Second
 
 type Store interface {
 	RegisterIngress(context.Context, controlstate.IngressRegistration, time.Time, time.Duration) (controlstate.IngressLease, error)
@@ -187,7 +188,7 @@ func (h *handler) routingTableEvents(response http.ResponseWriter, request *http
 		serviceapi.WriteProblem(response, http.StatusBadRequest, "invalid_request", "limit must be between 1 and 1000")
 		return
 	}
-	wait, ok := queryWholeSecondDuration(request, "wait", 25*time.Second, 25*time.Second)
+	wait, ok := queryWholeSecondDuration(request, "wait", defaultRoutingTableWait, defaultRoutingTableWait)
 	if !ok {
 		serviceapi.WriteProblem(response, http.StatusBadRequest, "invalid_request", "wait must be a whole-second duration between 0s and 25s")
 		return
@@ -294,26 +295,33 @@ func (h *handler) ingressIdentityFromQuery(
 }
 
 func (h *handler) writeStoreError(response http.ResponseWriter, err error) {
+	status, kind, detail := storeProblem(err, h.report)
+	serviceapi.WriteProblem(response, status, kind, detail)
+}
+
+// storeProblem is shared by HTTP and standalone adapters. Role controllers see
+// API problems, never controlstate error identities.
+func storeProblem(err error, report func(error)) (status int, kind, detail string) {
 	switch {
 	case errors.Is(err, controlstate.ErrIngressAlreadyRunning):
-		serviceapi.WriteProblem(response, http.StatusConflict, "ingress_already_running", "Another process run holds the ingress lease")
+		return http.StatusConflict, "ingress_already_running", "Another process run holds the ingress lease"
 	case errors.Is(err, controlstate.ErrIngressLeaseStale):
-		serviceapi.WriteProblem(response, http.StatusConflict, "ingress_lease_stale", "The ingress lease is no longer current")
-	case errors.Is(err, controlstate.ErrRouteRecoveryEpisodeFenced):
-		serviceapi.WriteProblem(response, http.StatusConflict, "recovery_episode_stale", "The route recovery episode is no longer current")
+		return http.StatusConflict, "ingress_lease_stale", "The ingress lease is no longer current"
+	case errors.Is(err, controlstate.ErrRouteRecoveryEpisodeStale):
+		return http.StatusConflict, "recovery_episode_stale", "The route recovery episode is no longer current"
 	case errors.Is(err, controlstate.ErrIngressUsageReportInvalid):
-		serviceapi.WriteProblem(response, http.StatusBadRequest, "invalid_usage_report", "The ingress usage report is invalid")
+		return http.StatusBadRequest, "invalid_usage_report", "The ingress usage report is invalid"
 	case errors.Is(err, controlstate.ErrIngressUsageRouteNotFound):
-		serviceapi.WriteProblem(response, http.StatusNotFound, "usage_route_not_found", "The reported route version was not found")
+		return http.StatusNotFound, "usage_route_not_found", "The reported route version was not found"
 	case errors.Is(err, controlstate.ErrIngressUsageReportStale):
-		serviceapi.WriteProblem(response, http.StatusConflict, "stale_usage_report", "The ingress usage report revision is stale")
+		return http.StatusConflict, "stale_usage_report", "The ingress usage report revision is stale"
 	case errors.Is(err, controlstate.ErrIngressUsageReportConflict):
-		serviceapi.WriteProblem(response, http.StatusConflict, "usage_report_conflict", "The ingress usage report conflicts with stored state")
+		return http.StatusConflict, "usage_report_conflict", "The ingress usage report conflicts with stored state"
 	case errors.Is(err, controlstate.ErrRouteUsageBucketFinalized):
-		serviceapi.WriteProblem(response, http.StatusConflict, "usage_bucket_finalized", "The route usage bucket is already finalized")
+		return http.StatusConflict, "usage_bucket_finalized", "The route usage bucket is already finalized"
 	default:
-		h.report(err)
-		serviceapi.WriteProblem(response, http.StatusInternalServerError, "internal", "The ingress service request failed")
+		report(err)
+		return http.StatusInternalServerError, "internal", "The ingress service request failed"
 	}
 }
 

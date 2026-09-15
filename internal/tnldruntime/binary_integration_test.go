@@ -3,6 +3,7 @@ package tnldruntime
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,16 +20,29 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/testutil"
 )
 
-func TestIntegrationBinaryStandalonePublish(t *testing.T) {
+type integrationBinaryStandalone struct {
+	repositoryRoot string
+	tnlPath        string
+	databaseURL    string
+	stateDirectory string
+	environment    []string
+	server         *integrationBinaryProcess
+	pebble         integrationPebble
+}
+
+func startIntegrationBinaryStandalone(t *testing.T) *integrationBinaryStandalone {
+	t.Helper()
 	if os.Getenv("TNL_TEST_BINARY_INTEGRATION") != "1" {
 		t.Skip("TNL_TEST_BINARY_INTEGRATION=1 is required")
 	}
 	assertIntegrationPort443Available(t)
-	directURL := os.Getenv("TNL_TEST_POSTGRES_URL")
-	if directURL == "" {
-		t.Skip("TNL_TEST_POSTGRES_URL is not set")
+	testutil.PostgresURL(t)
+	if runtime.GOOS == "darwin" {
+		t.Fatal("binary integration requires a disposable Linux environment: macOS binaries use the login Keychain and do not use SSL_CERT_FILE for system trust; in-process keyring mocks cannot isolate these subprocesses")
 	}
 	repositoryRoot := integrationRepositoryRoot(t)
 	binaryDirectory := t.TempDir()
@@ -37,11 +51,10 @@ func TestIntegrationBinaryStandalonePublish(t *testing.T) {
 	buildIntegrationBinary(t, repositoryRoot, tnldPath, "./cmd/tnld")
 	buildIntegrationBinary(t, repositoryRoot, tnlPath, "./cmd/tnl")
 
-	databaseURL := standaloneTestDatabaseURL(t, directURL)
+	databaseURL := testutil.NewDisposablePostgresDatabaseURL(t, "standalone")
 	trustRoot := newIntegrationTestCA(t)
 	serverCertificate := trustRoot.issueServer(t, "*.127.0.0.1.nip.io")
-	dnsAddress := startIntegrationDNS(t)
-	pebble := startIntegrationPebble(t, 443, dnsAddress)
+	pebble := startIntegrationPebble(t, 443, startIntegrationDNS(t))
 	trustFile := filepath.Join(t.TempDir(), "integration-roots.pem")
 	trustedCertificates := append([]byte{}, trustRoot.certificatePEM...)
 	trustedCertificates = append(trustedCertificates, pebble.apiRootPEM...)
@@ -88,7 +101,7 @@ func TestIntegrationBinaryStandalonePublish(t *testing.T) {
 		"TNLD_TUNNEL_FALLBACK_DELAY":        "10ms",
 	})
 	server := startIntegrationBinaryProcess(t, repositoryRoot, serveEnvironment, tnldPath, "serve")
-	waitForIntegrationBinaryReady(t, server, metricsAddress)
+	waitForIntegrationBinaryReady(t, server, metricsAddress, databaseURL)
 
 	stateDirectory := filepath.Join(t.TempDir(), "state")
 	if err := os.Mkdir(stateDirectory, 0o700); err != nil {
@@ -102,12 +115,27 @@ func TestIntegrationBinaryStandalonePublish(t *testing.T) {
 		"TNL_STATE_DIR":    stateDirectory,
 	})
 	runIntegrationBinaryCommand(t, repositoryRoot, clientEnvironment, tnlPath, "login", "--token")
+	// The login credential is not needed by publishers or their development children.
+	for index, value := range clientEnvironment {
+		if strings.HasPrefix(value, "TNL_LOGIN_TOKEN=") {
+			clientEnvironment = append(clientEnvironment[:index], clientEnvironment[index+1:]...)
+			break
+		}
+	}
+	return &integrationBinaryStandalone{
+		repositoryRoot: repositoryRoot, tnlPath: tnlPath, databaseURL: databaseURL,
+		stateDirectory: stateDirectory, environment: clientEnvironment, server: server, pebble: pebble,
+	}
+}
+
+func TestIntegrationBinaryStandalonePublish(t *testing.T) {
+	fixture := startIntegrationBinaryStandalone(t)
 	target := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("X-Tnl-Integration", "binary")
 		_, _ = io.WriteString(response, request.URL.RequestURI())
 	}))
 	t.Cleanup(target.Close)
-	publish := startIntegrationBinaryPublish(t, repositoryRoot, clientEnvironment, tnlPath,
+	publish := startIntegrationBinaryPublish(t, fixture.repositoryRoot, fixture.environment, fixture.tnlPath,
 		"--no-config", "publish", target.URL, "--host", "binary.routes.127.0.0.1.nip.io",
 		"--allow-ip", "127.0.0.1/32", "--output", "ndjson",
 	)
@@ -115,7 +143,7 @@ func TestIntegrationBinaryStandalonePublish(t *testing.T) {
 	if ready.SchemaVersion != 1 || ready.URL != "https://binary.routes.127.0.0.1.nip.io" || ready.RouteVersion != 1 {
 		t.Fatalf("binary ready event = %#v", ready)
 	}
-	visitor := newIntegrationVisitor(t, pebble.roots, "")
+	visitor := newIntegrationVisitor(t, fixture.pebble.roots, "")
 	var response *http.Response
 	var body []byte
 	var err error
@@ -126,7 +154,7 @@ func TestIntegrationBinaryStandalonePublish(t *testing.T) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("binary visitor request: %v\ntnl publish stderr:\n%s\ntnld output:\n%s", err, publish.stderr.String(), server.output.String())
+			t.Fatalf("binary visitor request: %v\ntnl publish stderr:\n%s\ntnld output:\n%s", err, publish.stderr.String(), fixture.server.output.String())
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
@@ -161,9 +189,10 @@ func (b *synchronizedBuffer) String() string {
 }
 
 type integrationBinaryProcess struct {
-	command *exec.Cmd
-	done    chan struct{}
-	output  synchronizedBuffer
+	command      *exec.Cmd
+	done         chan struct{}
+	output       synchronizedBuffer
+	wantExitCode int
 
 	mu  sync.Mutex
 	err error
@@ -181,6 +210,7 @@ func startIntegrationBinaryProcess(
 	process.command = exec.Command(name, arguments...)
 	process.command.Dir = directory
 	process.command.Env = environment
+	process.command.WaitDelay = time.Second
 	process.command.Stdout = &process.output
 	process.command.Stderr = &process.output
 	if err := process.command.Start(); err != nil {
@@ -207,9 +237,7 @@ func stopIntegrationBinaryProcess(t *testing.T, process *integrationBinaryProces
 	t.Helper()
 	select {
 	case <-process.done:
-		if err := process.result(); err != nil {
-			t.Errorf("binary process exited: %v\n%s", err, process.output.String())
-		}
+		assertIntegrationBinaryProcessResult(t, process)
 		return
 	default:
 	}
@@ -218,31 +246,63 @@ func stopIntegrationBinaryProcess(t *testing.T, process *integrationBinaryProces
 	}
 	select {
 	case <-process.done:
-		if err := process.result(); err != nil {
-			t.Errorf("binary process exited: %v\n%s", err, process.output.String())
-		}
+		assertIntegrationBinaryProcessResult(t, process)
 	case <-time.After(15 * time.Second):
 		_ = process.command.Process.Kill()
+		<-process.done
 		t.Errorf("binary process did not stop\n%s", process.output.String())
 	}
 }
 
-func waitForIntegrationBinaryReady(t *testing.T, process *integrationBinaryProcess, metricsAddress string) {
+func assertIntegrationBinaryProcessResult(t *testing.T, process *integrationBinaryProcess) {
 	t.Helper()
+	err := process.result()
+	if err == nil && process.wantExitCode == 0 {
+		return
+	}
+	var exitError *exec.ExitError
+	if errors.As(err, &exitError) && exitError.ExitCode() == process.wantExitCode {
+		return
+	}
+	t.Errorf("binary process exited: %v, want exit code %d\n%s", err, process.wantExitCode, process.output.String())
+}
+
+func waitForIntegrationBinaryReady(t *testing.T, process *integrationBinaryProcess, metricsAddress, databaseURL string) {
+	t.Helper()
+	ready := false
+	defer func() {
+		if ready {
+			return
+		}
+		t.Logf("tnld output before readiness failure:\n%s", process.output.String())
+		// Migration success does not prove that the database is still reachable.
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		database := inspectStandaloneTestDatabase(t, databaseURL)
+		if err := database.PingContext(ctx); err != nil {
+			t.Logf("independent PostgreSQL connectivity probe failed (system resolver, not TNLD_DNS_SERVER): %v", err)
+		} else {
+			t.Log("independent PostgreSQL connectivity probe succeeded; this does not establish tnld pool readiness")
+		}
+	}()
 	client := &http.Client{Timeout: time.Second}
 	waitForIntegrationCondition(t, 15*time.Second, func() (bool, error) {
 		select {
 		case <-process.done:
-			return false, fmt.Errorf("tnld exited before readiness: %v\n%s", process.result(), process.output.String())
+			t.Fatalf("tnld exited before readiness: %v", process.result())
 		default:
 		}
 		response, err := client.Get("http://" + metricsAddress + "/ready")
 		if err != nil {
-			return false, nil
+			return false, fmt.Errorf("tnld process still running; metrics listener probe: %w", err)
 		}
 		_ = response.Body.Close()
-		return response.StatusCode == http.StatusNoContent, nil
+		if response.StatusCode != http.StatusNoContent {
+			return false, fmt.Errorf("tnld process still running; metrics listener reachable, /ready returned %s", response.Status)
+		}
+		return true, nil
 	})
+	ready = true
 }
 
 type integrationBinaryPublishEvent struct {
@@ -398,7 +458,7 @@ func integrationRepositoryRoot(t *testing.T) string {
 
 func buildIntegrationBinary(t *testing.T, directory, output, commandPackage string) {
 	t.Helper()
-	command := exec.Command("go", "build", "-o", output, commandPackage)
+	command := exec.Command("go", "build", "-p=2", "-o", output, commandPackage)
 	command.Dir = directory
 	if combined, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("build %s: %v\n%s", commandPackage, err, combined)
@@ -423,7 +483,7 @@ func runIntegrationBinaryCommand(
 
 func integrationBinaryEnvironment(values map[string]string) []string {
 	blocked := func(name string) bool {
-		for _, prefix := range []string{"TNLD_", "TNL_"} {
+		for _, prefix := range []string{"TNLD_", "TNL_", "AWS_"} {
 			if strings.HasPrefix(name, prefix) {
 				return true
 			}
@@ -442,6 +502,7 @@ func integrationBinaryEnvironment(values map[string]string) []string {
 			environment = append(environment, value)
 		}
 	}
+	environment = append(environment, "NO_PROXY=*", "no_proxy=*")
 	keys := make([]string, 0, len(values))
 	for key := range values {
 		keys = append(keys, key)
@@ -450,7 +511,7 @@ func integrationBinaryEnvironment(values map[string]string) []string {
 	for _, key := range keys {
 		environment = append(environment, key+"="+values[key])
 	}
-	return append(environment, "NO_PROXY=*", "no_proxy=*")
+	return environment
 }
 
 func assertIntegrationPort443Available(t *testing.T) {

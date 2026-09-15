@@ -9,25 +9,22 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
 	"math/big"
 	"net/netip"
-	"net/url"
-	"os"
 	"reflect"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/routeusage"
+	"github.com/tnldotdev/tnl/internal/testutil"
 	"golang.org/x/crypto/acme/autocert"
 )
 
@@ -75,6 +72,7 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 
 	for _, table := range []string{
 		"identities",
+		"oidc_assertion_exchanges",
 		"managed_label_reservations",
 		"teams",
 		"domains",
@@ -91,6 +89,7 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 		"route_usage_buckets",
 		"route_recovery_episodes",
 		"admin_audit_events",
+		"maintenance_controls",
 	} {
 		var exists bool
 		if err := database.pool.QueryRow(t.Context(), `
@@ -108,20 +107,6 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 			t.Fatalf("control.%s does not exist", table)
 		}
 	}
-	testBuiltinAuthentication(t, database)
-	testAuthorityMutations(t, database)
-	testDNSAuthorities(t, database)
-	testControlTLSState(t, database)
-	testStorageKeyRotation(t, database, testURL)
-	testRelayCertificateOrderWork(t, database)
-	testExternalAuthoritySecret(t, database)
-	testRouteManagement(t, database)
-	testDNSRouteWork(t, database)
-	testRouteSessionCreation(t, database)
-	testIngressUsage(t, database)
-	testRelayControlState(t, database)
-	testHostedPolicyRevocation(t, database)
-
 	var version int64
 	if err := database.pool.QueryRow(t.Context(), `
 		SELECT MAX(version_id) FILTER (WHERE is_applied)
@@ -186,7 +171,7 @@ func testDNSAuthorities(t *testing.T, database *Database) {
 	if err != nil || saved.State != "ready" || saved.WorkRevision != 2 || len(saved.RequiredRecords) != 2 {
 		t.Fatalf("saved DNS authority work = %#v, %v", saved, err)
 	}
-	if _, err := database.SaveDNSAuthorityWork(t.Context(), staleWork, now.Add(4*time.Second)); !errors.Is(err, ErrDNSAuthorityFenced) {
+	if _, err := database.SaveDNSAuthorityWork(t.Context(), staleWork, now.Add(4*time.Second)); !errors.Is(err, ErrDNSAuthorityWorkStale) {
 		t.Fatalf("stale DNS authority save error = %v", err)
 	}
 	released, err := database.ReleaseDNSAuthority(t.Context(), authority.Reference, "hosted-dns-release", now.Add(5*time.Second))
@@ -679,7 +664,7 @@ func testStorageKeyRotation(t *testing.T, database *Database, databaseURL string
 	}
 	staleLease := relayLease.RelayLeaseIdentity
 	staleLease.RelayRunID = "relay-run-stale"
-	if _, err := rotatedDatabase.GetRelayServiceCertificate(t.Context(), staleLease, now); !errors.Is(err, ErrRelayServiceCertificateLeaseInvalid) {
+	if _, err := rotatedDatabase.GetRelayServiceCertificate(t.Context(), staleLease, now); !errors.Is(err, ErrRelayServiceCertificateLeaseStale) {
 		t.Fatalf("stale relay certificate lease error = %v", err)
 	}
 	rotatedCache, err := rotatedDatabase.ControlTLSCache("https://acme.example.test/rotation")
@@ -750,11 +735,11 @@ func testRelayCertificateOrderWork(t *testing.T, database *Database) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := database.PrepareRelayCertificateOrder(t.Context(), account.ID, now, now.Add(30*24*time.Hour), time.Hour)
+	created, err := database.PrepareRelayCertificateOrder(t.Context(), account.ID, now, time.Hour)
 	if err != nil || !created {
 		t.Fatalf("prepare relay certificate order = %v, %v", created, err)
 	}
-	if created, err := database.PrepareRelayCertificateOrder(t.Context(), account.ID, now, now.Add(30*24*time.Hour), time.Hour); err != nil || created {
+	if created, err := database.PrepareRelayCertificateOrder(t.Context(), account.ID, now, time.Hour); err != nil || created {
 		t.Fatalf("duplicate relay certificate order = %v, %v", created, err)
 	}
 	work, found, err := database.ClaimRelayCertificateOrderWork(t.Context(), "relay-certificate-worker-1", now, 10*time.Millisecond)
@@ -785,7 +770,7 @@ func testRelayCertificateOrderWork(t *testing.T, database *Database) {
 		t.Fatalf("recovered relay certificate order = %#v, %v, %v", recovered, found, err)
 	}
 	work.AvailableAt = now
-	if _, err := database.SaveRelayCertificateOrderWork(t.Context(), work, now.Add(time.Millisecond)); !errors.Is(err, ErrRelayCertificateWorkFenced) {
+	if _, err := database.SaveRelayCertificateOrderWork(t.Context(), work, now.Add(time.Millisecond)); !errors.Is(err, ErrRelayCertificateWorkStale) {
 		t.Fatalf("stale relay certificate work error = %v", err)
 	}
 	recovered.State = "presenting"
@@ -839,10 +824,10 @@ func testRelayCertificateOrderWork(t *testing.T, database *Database) {
 	if err != nil || installed.CertificatePEM != string(certificatePEM) || installed.PrivateKeyPEM != string(work.PrivateKeyPEM) {
 		t.Fatalf("installed relay service certificate = %#v, %v", installed, err)
 	}
-	if created, err := database.PrepareRelayCertificateOrder(t.Context(), account.ID, now, now.Add(30*24*time.Hour), time.Hour); err != nil || created {
+	if created, err := database.PrepareRelayCertificateOrder(t.Context(), account.ID, now, time.Hour); err != nil || created {
 		t.Fatalf("early relay certificate renewal = %v, %v", created, err)
 	}
-	if created, err := database.PrepareRelayCertificateOrder(t.Context(), account.ID, now, notAfter.Add(time.Second), time.Hour); err != nil || !created {
+	if created, err := database.PrepareRelayCertificateOrder(t.Context(), account.ID, renewAt, time.Hour); err != nil || !created {
 		t.Fatalf("due relay certificate renewal = %v, %v", created, err)
 	}
 	if _, err := database.pool.Exec(t.Context(), `
@@ -1311,7 +1296,7 @@ func testDNSRouteWork(t *testing.T, database *Database) {
 	if err != nil || saved.State != RouteDNSPublished || !saved.AvailableAt.IsZero() || saved.DNSRevision != 2 {
 		t.Fatalf("saved published DNS route work = %#v, %v", saved, err)
 	}
-	if _, err := database.SaveDNSRouteWork(t.Context(), stale, now.Add(2*time.Second)); !errors.Is(err, ErrDNSRouteFenced) {
+	if _, err := database.SaveDNSRouteWork(t.Context(), stale, now.Add(2*time.Second)); !errors.Is(err, ErrDNSRouteWorkStale) {
 		t.Fatalf("stale DNS route save error = %v", err)
 	}
 	if err := database.DeleteRoute(t.Context(), principal.IdentityID, route.ID, now.Add(3*time.Second)); err != nil {
@@ -1387,7 +1372,7 @@ func testRouteSessionCreation(t *testing.T, database *Database) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if setup.RouteID != request.RouteID || setup.RouteVersion != 1 || setup.State != "starting" || setup.SessionToken == "" {
+	if setup.RouteID != request.RouteID || setup.RouteVersion != 1 || setup.State != "starting" || setup.RouteSessionToken == "" {
 		t.Fatalf("route session setup = %#v", setup)
 	}
 	if _, err := database.pool.Exec(t.Context(), `
@@ -1516,7 +1501,7 @@ func testRouteSessionCreation(t *testing.T, database *Database) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if replacement.RouteVersion != 2 || replacement.RouteSessionID == setup.RouteSessionID || replacement.SessionToken == setup.SessionToken {
+	if replacement.RouteVersion != 2 || replacement.RouteSessionID == setup.RouteSessionID || replacement.RouteSessionToken == setup.RouteSessionToken {
 		t.Fatalf("replacement route session = %#v", replacement)
 	}
 	route, err = database.GetRoute(t.Context(), "identity_session", request.RouteID)
@@ -1544,7 +1529,7 @@ func testRouteSessionReadiness(
 	}
 	authentication := RouteSessionAuthentication{
 		RouteSessionID: setup.RouteSessionID, RouteID: setup.RouteID,
-		RouteVersion: setup.RouteVersion, SessionToken: setup.SessionToken,
+		RouteVersion: setup.RouteVersion, RouteSessionToken: setup.RouteSessionToken,
 	}
 	claims := make([]PublisherConnectionClaimRequest, 0, len(setup.PublisherConnections))
 	claimConnection := func(slot int, at time.Time) {
@@ -1628,7 +1613,7 @@ func testRouteSessionReadiness(
 	if _, err := database.CreateCertificateIssuance(t.Context(), changedIssuance, now.Add(2*time.Millisecond)); !errors.Is(err, ErrCertificateIssuanceIdempotency) {
 		t.Fatalf("certificate issuance idempotency error = %v", err)
 	}
-	loadedIssuance, err := database.GetCertificateIssuance(t.Context(), issuance.ID, setup.SessionToken, now)
+	loadedIssuance, err := database.GetCertificateIssuance(t.Context(), issuance.ID, setup.RouteSessionToken, now)
 	if err != nil || !reflect.DeepEqual(loadedIssuance, issuance) {
 		t.Fatalf("loaded certificate issuance = %#v, %v", loadedIssuance, err)
 	}
@@ -1645,7 +1630,7 @@ func testRouteSessionReadiness(
 		t.Fatalf("recovered ACME order work = %#v, %v, %v", recoveredWork, found, err)
 	}
 	firstWork.AvailableAt = now
-	if _, err := database.SaveACMEOrderWork(t.Context(), firstWork, now.Add(5*time.Millisecond)); !errors.Is(err, ErrACMEWorkFenced) {
+	if _, err := database.SaveACMEOrderWork(t.Context(), firstWork, now.Add(5*time.Millisecond)); !errors.Is(err, ErrACMEWorkStale) {
 		t.Fatalf("stale ACME order work error = %v", err)
 	}
 	recoveredWork.State = "authorizing"
@@ -1678,7 +1663,7 @@ func testRouteSessionReadiness(
 			t.Fatal(err)
 		}
 		otherWork.AvailableAt = now
-		if _, err := database.SaveACMEOrderWork(t.Context(), otherWork, now.Add(17*time.Millisecond)); !errors.Is(err, ErrACMEWorkFenced) {
+		if _, err := database.SaveACMEOrderWork(t.Context(), otherWork, now.Add(17*time.Millisecond)); !errors.Is(err, ErrACMEWorkStale) {
 			t.Fatalf("stale ACME authorization work error = %v", err)
 		}
 	}
@@ -1698,7 +1683,7 @@ func testRouteSessionReadiness(
 	}
 	expiredLeaseWork := orderWork
 	expiredLeaseWork.AvailableAt = now
-	if _, err := database.SaveACMEOrderWork(t.Context(), expiredLeaseWork, now.Add(2*time.Minute)); !errors.Is(err, ErrACMEWorkFenced) {
+	if _, err := database.SaveACMEOrderWork(t.Context(), expiredLeaseWork, now.Add(2*time.Minute)); !errors.Is(err, ErrACMEWorkStale) {
 		t.Fatalf("expired ACME work lease error = %v", err)
 	}
 	if _, err := database.pool.Exec(t.Context(), `
@@ -1707,7 +1692,7 @@ func testRouteSessionReadiness(
 		t.Fatal(err)
 	}
 	orderWork.AvailableAt = now
-	if _, err := database.SaveACMEOrderWork(t.Context(), orderWork, now.Add(19*time.Millisecond)); !errors.Is(err, ErrACMEWorkFenced) {
+	if _, err := database.SaveACMEOrderWork(t.Context(), orderWork, now.Add(19*time.Millisecond)); !errors.Is(err, ErrACMEWorkStale) {
 		t.Fatalf("stale ACME order revision error = %v", err)
 	}
 	if _, err := database.pool.Exec(t.Context(), `
@@ -1716,7 +1701,7 @@ func testRouteSessionReadiness(
 		t.Fatal(err)
 	}
 	issuanceID := issuance.ID
-	notAfter := now.Add(time.Hour)
+	notAfter := now.Add(time.Hour).Truncate(time.Second)
 	challengeDigest := sha256.Sum256([]byte("challenge-readiness"))
 	if _, err := database.pool.Exec(t.Context(), `
 		UPDATE control.acme_orders SET state = 'authorizing', updated_at = $2 WHERE id = $1
@@ -1736,11 +1721,11 @@ func testRouteSessionReadiness(
 	`, issuanceID, request.CertificateIdentifiers[0], challengeDigest[:], now, notAfter); err != nil {
 		t.Fatal(err)
 	}
-	presentedIssuance, err := database.MarkCertificateChallengeReady(t.Context(), issuanceID, setup.SessionToken, now)
+	presentedIssuance, err := database.MarkCertificateChallengeReady(t.Context(), issuanceID, setup.RouteSessionToken, now)
 	if err != nil || len(presentedIssuance.Challenges) != 1 || presentedIssuance.Challenges[0].Token != "challenge-readiness" {
 		t.Fatalf("presented certificate challenge = %#v, %v", presentedIssuance, err)
 	}
-	if _, err := database.MarkCertificateChallengeReady(t.Context(), issuanceID, setup.SessionToken, now.Add(time.Millisecond)); err != nil {
+	if _, err := database.MarkCertificateChallengeReady(t.Context(), issuanceID, setup.RouteSessionToken, now.Add(time.Millisecond)); err != nil {
 		t.Fatalf("idempotent certificate challenge ready: %v", err)
 	}
 	if work, found, err := database.ClaimACMEOrderWork(
@@ -1781,19 +1766,29 @@ func testRouteSessionReadiness(
 	`, issuanceID, now); err != nil {
 		t.Fatal(err)
 	}
-	removedIssuance, err := database.MarkCertificateChallengeRemoved(t.Context(), issuanceID, setup.SessionToken, now)
+	removedIssuance, err := database.MarkCertificateChallengeRemoved(t.Context(), issuanceID, setup.RouteSessionToken, now)
 	if err != nil || len(removedIssuance.Challenges) != 0 {
 		t.Fatalf("removed failed certificate challenge = %#v, %v", removedIssuance, err)
 	}
-	if _, err := database.MarkCertificateChallengeRemoved(t.Context(), issuanceID, setup.SessionToken, now.Add(time.Millisecond)); err != nil {
+	if _, err := database.MarkCertificateChallengeRemoved(t.Context(), issuanceID, setup.RouteSessionToken, now.Add(time.Millisecond)); err != nil {
 		t.Fatalf("idempotent failed certificate challenge removal: %v", err)
 	}
+	certificate := &x509.Certificate{
+		SerialNumber: big.NewInt(1), DNSNames: request.CertificateIdentifiers,
+		NotBefore: now.Truncate(time.Second), NotAfter: notAfter,
+		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	certificateDER, err := x509.CreateCertificate(rand.Reader, certificate, certificate, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certificatePEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificateDER})
 	if _, err := database.pool.Exec(t.Context(), `
 		UPDATE control.acme_orders
-		SET state = 'waiting_for_install', certificate_pem = 'certificate',
-			not_before = $2, not_after = $3, updated_at = $2
+		SET state = 'waiting_for_install', certificate_pem = $4,
+			not_before = $5, not_after = $3, updated_at = $2
 		WHERE id = $1
-	`, issuanceID, now, notAfter); err != nil {
+	`, issuanceID, now, notAfter, certificatePEM, certificate.NotBefore); err != nil {
 		t.Fatal(err)
 	}
 	lifecycle, err := database.MarkRouteCertificateInstalled(t.Context(), authentication, issuanceID, notAfter, now)
@@ -1809,7 +1804,7 @@ func testRouteSessionReadiness(
 	if _, err := database.MarkRouteSessionReady(t.Context(), authentication, now.Add(time.Second)); !errors.Is(err, ErrRouteSessionNotReady) {
 		t.Fatalf("early route readiness error = %v", err)
 	}
-	installedIssuance, err := database.GetCertificateIssuance(t.Context(), issuance.ID, setup.SessionToken, now)
+	installedIssuance, err := database.GetCertificateIssuance(t.Context(), issuance.ID, setup.RouteSessionToken, now)
 	if err != nil || installedIssuance.State != "installed" {
 		t.Fatalf("installed certificate issuance = %#v, %v", installedIssuance, err)
 	}
@@ -2118,14 +2113,14 @@ func testRouteSessionReadiness(
 		dnsContext.PresentationReference != dnsWork.Authorizations[0].PresentationReference {
 		t.Fatalf("DNS challenge context = %#v, %v", dnsContext, err)
 	}
-	wrongToken, _, _, err := credentials.NewSessionToken()
+	wrongToken, _, _, err := credentials.NewRouteSessionToken()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := database.CloseRouteSession(t.Context(), setup.RouteSessionID, wrongToken, observedAt.Add(2*time.Second)); !errors.Is(err, ErrRouteSessionCredential) {
 		t.Fatalf("wrong close credential error = %v", err)
 	}
-	if err := database.CloseRouteSession(t.Context(), setup.RouteSessionID, setup.SessionToken, observedAt.Add(3*time.Second)); err != nil {
+	if err := database.CloseRouteSession(t.Context(), setup.RouteSessionID, setup.RouteSessionToken, observedAt.Add(3*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	dnsCleanupWork, found, err := database.ClaimACMEOrderWork(
@@ -2147,7 +2142,7 @@ func testRouteSessionReadiness(
 	if _, err := database.SaveACMEOrderWork(t.Context(), dnsCleanupWork, dnsCleanupCompletedAt); err != nil {
 		t.Fatalf("complete canceled DNS cleanup: %v", err)
 	}
-	if err := database.CloseRouteSession(t.Context(), setup.RouteSessionID, setup.SessionToken, observedAt.Add(4*time.Second)); err != nil {
+	if err := database.CloseRouteSession(t.Context(), setup.RouteSessionID, setup.RouteSessionToken, observedAt.Add(4*time.Second)); err != nil {
 		t.Fatalf("idempotent route session close: %v", err)
 	}
 	if remaining, found, err := database.ClaimACMEOrderWork(
@@ -2382,7 +2377,7 @@ func testIngressUsage(t *testing.T, database *Database) {
 	if err != nil || len(reclaimed) != 1 || reclaimed[0].WorkEpoch != 2 || reclaimed[0].Attempts != 2 {
 		t.Fatalf("reclaimed usage delivery = %#v, %v", reclaimed, err)
 	}
-	if err := database.CompleteRouteUsageDelivery(t.Context(), firstWork, reclaimedAt); !errors.Is(err, ErrRouteUsageDeliveryFenced) {
+	if err := database.CompleteRouteUsageDelivery(t.Context(), firstWork, reclaimedAt); !errors.Is(err, ErrRouteUsageDeliveryWorkStale) {
 		t.Fatalf("stale usage delivery completion error = %v", err)
 	}
 	retryAt := reclaimedAt.Add(5 * time.Second)
@@ -2825,48 +2820,5 @@ func seedRelayRouteSession(
 
 func newDisposableControlStateDatabaseURL(t *testing.T, suffix string) string {
 	t.Helper()
-	directURL := os.Getenv("TNL_TEST_POSTGRES_URL")
-	if directURL == "" {
-		t.Skip("TNL_TEST_POSTGRES_URL is not set")
-	}
-	adminConfig, err := parseDirectConfig(directURL)
-	if err != nil {
-		t.Fatalf("parse TNL_TEST_POSTGRES_URL: %v", err)
-	}
-	adminDB := stdlib.OpenDB(*adminConfig)
-	t.Cleanup(func() { _ = adminDB.Close() })
-	if err := adminDB.PingContext(t.Context()); err != nil {
-		t.Fatalf("connect using TNL_TEST_POSTGRES_URL: %v", err)
-	}
-	databaseName := "tnl_controlstate_" + suffix + "_" + randomHex(t, 8)
-	identifier := pgx.Identifier{databaseName}.Sanitize()
-	if _, err := adminDB.ExecContext(t.Context(), "CREATE DATABASE "+identifier); err != nil {
-		t.Skipf("fixed control schema requires a disposable database and the configured role cannot create one: %v", err)
-	}
-	t.Cleanup(func() {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), bootstrapRetryDelay*400)
-		defer cancel()
-		_, _ = adminDB.ExecContext(cleanupCtx, `
-			SELECT pg_terminate_backend(pid)
-			FROM pg_stat_activity
-			WHERE datname = $1 AND pid <> pg_backend_pid()
-		`, databaseName)
-		_, _ = adminDB.ExecContext(cleanupCtx, "DROP DATABASE IF EXISTS "+identifier)
-	})
-	parsed, err := url.Parse(directURL)
-	if err != nil {
-		t.Fatalf("parse PostgreSQL test URL: %v", err)
-	}
-	parsed.Path = "/" + databaseName
-	parsed.RawPath = ""
-	return parsed.String()
-}
-
-func randomHex(t *testing.T, bytes int) string {
-	t.Helper()
-	random := make([]byte, bytes)
-	if _, err := rand.Read(random); err != nil {
-		t.Fatal(err)
-	}
-	return hex.EncodeToString(random)
+	return testutil.NewDisposablePostgresDatabaseURL(t, "controlstate_"+suffix)
 }

@@ -24,7 +24,7 @@ func TestDNSAuthorityServiceLifecycle(t *testing.T) {
 	handler := NewHandler(Config{
 		AuthorityEndpoint: "https://authority.example.test", HostedSecret: testHostedSecret,
 		HTTPClient: http.DefaultClient, DNSAutomation: true,
-	}, store, nil)
+	}, store, nil, nil)
 
 	create := httptest.NewRequest(http.MethodPost, "/v1/service/dns-authorities", bytes.NewBufferString(`{
 		"team_id":"team_1","domain_id":"domain_1","canonical_domain":"example.test"
@@ -72,7 +72,7 @@ func TestDNSAuthorityServiceRejectsWrongSecret(t *testing.T) {
 	handler := NewHandler(Config{
 		AuthorityEndpoint: "https://authority.example.test", HostedSecret: testHostedSecret,
 		HTTPClient: http.DefaultClient,
-	}, store, nil)
+	}, store, nil, nil)
 	request := httptest.NewRequest(http.MethodGet, "/v1/service/dns-authorities/dns_authority_0123456789abcdef0123456789abcdef", nil)
 	request.Header.Set("Authorization", "Bearer wrong-secret-012345678901234567890")
 	response := httptest.NewRecorder()

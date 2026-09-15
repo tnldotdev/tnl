@@ -1,14 +1,7 @@
 package clientstate
 
 import (
-	"bytes"
-	"crypto/ecdsa"
-	"crypto/rand"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
 	"errors"
-	"math/big"
 	"os"
 	"path/filepath"
 	"sync"
@@ -19,112 +12,6 @@ import (
 )
 
 const testRouteID = "route_0123456789abcdef0123456789abcdef"
-
-func TestRouteStatePersistsPendingAndCurrentMaterial(t *testing.T) {
-	store := testStore(t, filepath.Join(t.TempDir(), "state"), "https://server.example")
-	route, err := store.OpenRoute(testRouteID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.OpenRoute(testRouteID); !errors.Is(err, ErrLocked) {
-		t.Fatalf("second route lock error = %v", err)
-	}
-	pending, err := route.Pending(t.Context(), "route.example")
-	if err != nil {
-		t.Fatal(err)
-	}
-	firstCSR := bytes.Clone(pending.CSRDER)
-	if err := route.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	route, err = store.OpenRoute(testRouteID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer route.Close()
-	pending, err = route.Pending(t.Context(), "route.example")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(pending.CSRDER, firstCSR) {
-		t.Fatal("pending CSR changed across restart")
-	}
-	renewAt := time.Now().Add(30 * 24 * time.Hour).UTC().Truncate(time.Second)
-	material, err := route.Commit(
-		t.Context(), "route.example", pending, signedCertificate(t, pending.Key, "route.example"), renewAt, "issuance_current", 1,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if material.Certificate.Leaf == nil || !material.RenewAt.Equal(renewAt) {
-		t.Fatalf("committed material = %+v", material)
-	}
-	loaded, found, err := route.Current(t.Context(), "route.example")
-	if err != nil || !found || loaded.Certificate.Leaf == nil || !loaded.RenewAt.Equal(renewAt) {
-		t.Fatalf("loaded material = %+v, %v, %v", loaded, found, err)
-	}
-	if loaded.Installed || loaded.IssuanceID != "issuance_current" || loaded.RouteVersion != 1 {
-		t.Fatalf("loaded durable phase = %+v", loaded)
-	}
-	loaded, err = route.MarkInstalled(t.Context(), "route.example", "issuance_current", 1)
-	if err != nil || !loaded.Installed {
-		t.Fatalf("installed material = %+v, %v", loaded, err)
-	}
-	info, err := os.Stat(DatabasePath(store.database.root))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("database mode = %o", info.Mode().Perm())
-	}
-	replacement, err := route.NewPending(t.Context(), "route.example")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if replacement.Key.PublicKey.Equal(&pending.Key.PublicKey) {
-		t.Fatal("renewal reused the current application key")
-	}
-}
-
-func TestCertificateAttemptRecoversUnacknowledgedCurrentCSR(t *testing.T) {
-	store := testStore(t, filepath.Join(t.TempDir(), "state"), "https://server.example")
-	route, err := store.OpenRoute(testRouteID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer route.Close()
-	pending, err := route.Pending(t.Context(), "route.example")
-	if err != nil {
-		t.Fatal(err)
-	}
-	csr := bytes.Clone(pending.CSRDER)
-	_, err = route.Commit(
-		t.Context(), "route.example", pending, signedCertificate(t, pending.Key, "route.example"),
-		time.Now().Add(30*24*time.Hour), "issuance_current", 1,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	recovered, err := route.CertificateAttempt(t.Context(), "route.example")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(recovered.CSRDER, csr) {
-		t.Fatal("certificate attempt did not recover the unacknowledged current CSR")
-	}
-	replacement, err := route.NewPending(t.Context(), "route.example")
-	if err != nil {
-		t.Fatal(err)
-	}
-	selected, err := route.CertificateAttempt(t.Context(), "route.example")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(selected.CSRDER, replacement.CSRDER) || bytes.Equal(selected.CSRDER, csr) {
-		t.Fatal("pending replacement did not take precedence over current recovery")
-	}
-}
 
 func TestStateRejectsSymlinksAndPublicFiles(t *testing.T) {
 	parent := t.TempDir()
@@ -144,6 +31,13 @@ func TestStateRejectsSymlinksAndPublicFiles(t *testing.T) {
 	database, err := Open(t.Context(), root)
 	if err != nil {
 		t.Fatal(err)
+	}
+	info, err := os.Stat(DatabasePath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("database mode = %o", info.Mode().Perm())
 	}
 	if err := database.Close(); err != nil {
 		t.Fatal(err)
@@ -320,19 +214,4 @@ func testStore(t *testing.T, root, server string) *Store {
 		t.Fatal(err)
 	}
 	return store
-}
-
-func signedCertificate(t *testing.T, key *ecdsa.PrivateKey, hostname string) []byte {
-	t.Helper()
-	now := time.Now()
-	template := &x509.Certificate{
-		SerialNumber: big.NewInt(1), Subject: pkix.Name{}, DNSNames: []string{hostname},
-		NotBefore: now.Add(-time.Minute), NotAfter: now.Add(90 * 24 * time.Hour),
-		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-	}
-	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 }

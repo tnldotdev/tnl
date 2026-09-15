@@ -180,20 +180,9 @@ func (v *AuthoritativeVerifier) query(
 	recordType uint16,
 	expectedNameservers []string,
 ) (bool, error) {
-	request := new(dns.Msg)
-	request.SetQuestion(dns.Fqdn(domain), recordType)
-	request.RecursionDesired = false
-	client := &dns.Client{Net: "udp", Timeout: 5 * time.Second, Dialer: &v.dialer}
-	response, _, err := client.ExchangeContext(ctx, request, server)
+	response, err := v.exchange(ctx, server, domain, recordType)
 	if err != nil {
 		return false, err
-	}
-	if response.Truncated {
-		client.Net = "tcp"
-		response, _, err = client.ExchangeContext(ctx, request, server)
-		if err != nil {
-			return false, err
-		}
 	}
 	if response.Rcode == dns.RcodeNameError {
 		return false, nil
@@ -233,20 +222,9 @@ func (v *AuthoritativeVerifier) queryAddresses(
 	recordType uint16,
 	expected []string,
 ) (bool, error) {
-	request := new(dns.Msg)
-	request.SetQuestion(dns.Fqdn(hostname), recordType)
-	request.RecursionDesired = false
-	client := &dns.Client{Net: "udp", Timeout: 5 * time.Second, Dialer: &v.dialer}
-	response, _, err := client.ExchangeContext(ctx, request, server)
+	response, err := v.exchange(ctx, server, hostname, recordType)
 	if err != nil {
 		return false, err
-	}
-	if response.Truncated {
-		client.Net = "tcp"
-		response, _, err = client.ExchangeContext(ctx, request, server)
-		if err != nil {
-			return false, err
-		}
 	}
 	if response.Rcode == dns.RcodeNameError {
 		return len(expected) == 0 && response.Authoritative, nil
@@ -278,20 +256,9 @@ func (v *AuthoritativeVerifier) queryTXT(
 	ctx context.Context,
 	server, recordName, expected string,
 ) (bool, error) {
-	request := new(dns.Msg)
-	request.SetQuestion(dns.Fqdn(recordName), dns.TypeTXT)
-	request.RecursionDesired = false
-	client := &dns.Client{Net: "udp", Timeout: 5 * time.Second, Dialer: &v.dialer}
-	response, _, err := client.ExchangeContext(ctx, request, server)
+	response, err := v.exchange(ctx, server, recordName, dns.TypeTXT)
 	if err != nil {
 		return false, err
-	}
-	if response.Truncated {
-		client.Net = "tcp"
-		response, _, err = client.ExchangeContext(ctx, request, server)
-		if err != nil {
-			return false, err
-		}
 	}
 	if response.Rcode != dns.RcodeSuccess {
 		return false, nil
@@ -306,6 +273,29 @@ func (v *AuthoritativeVerifier) queryTXT(
 		}
 	}
 	return false, nil
+}
+
+func (v *AuthoritativeVerifier) exchange(
+	ctx context.Context,
+	server, name string,
+	recordType uint16,
+) (*dns.Msg, error) {
+	request := new(dns.Msg)
+	request.SetQuestion(dns.Fqdn(name), recordType)
+	request.RecursionDesired = false
+	client := &dns.Client{Net: "udp", Timeout: 5 * time.Second, Dialer: &v.dialer}
+	response, _, err := client.ExchangeContext(ctx, request, server)
+	if err != nil {
+		return nil, err
+	}
+	if response.Truncated {
+		client.Net = "tcp"
+		response, _, err = client.ExchangeContext(ctx, request, server)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return response, nil
 }
 
 func normalizeDNSNames(values []string) []string {

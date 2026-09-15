@@ -233,11 +233,11 @@ func TestCreateRouteSessionReturnsAuthoritativeRouteState(t *testing.T) {
 		},
 		sessionSetup: controlstate.RouteSessionSetup{
 			RouteSessionID: "session_1", RouteID: "route_1", TeamID: "team_1", MembershipID: "membership_1",
-			RouteVersion: 7, PolicyRevision: 9, SessionToken: credentials.SessionToken("session-token"),
+			RouteVersion: 7, PolicyRevision: 9, RouteSessionToken: credentials.RouteSessionToken("session-token"),
 			State: controlstate.RouteSessionStarting,
 		},
 	}
-	h := &handler{store: store, authorizer: authorizerFunc(func(_ context.Context, request authorization.Request) (authorization.Decision, error) {
+	h := &handler{config: Config{DNSAutomation: true}, store: store, authorizer: authorizerFunc(func(_ context.Context, request authorization.Request) (authorization.Decision, error) {
 		return authorization.Decision{
 			IdentityID: "identity_1", TeamID: request.TeamID, ActingMembershipID: "membership_1",
 			ActingRole: "member", RouteMembershipID: "membership_1", TeamPolicyRevision: 9,
@@ -264,6 +264,20 @@ func TestCreateRouteSessionReturnsAuthoritativeRouteState(t *testing.T) {
 		setup.Route.ExpiresAt == nil || !setup.Route.ExpiresAt.Equal(expiresAt) || !setup.Route.UpdatedAt.Equal(updatedAt) ||
 		setup.Route.NextRouteVersion != 8 || store.authorizationReads != 2 {
 		t.Fatalf("route = %#v, authorization reads = %d", setup.Route, store.authorizationReads)
+	}
+}
+
+func TestCreateRouteSessionRejectsUnconfiguredDNSPlan(t *testing.T) {
+	store := &routeMutationStoreStub{route: controlstate.Route{ID: "route_1", TeamID: "team_1"}}
+	h := &handler{store: store, authorizer: authorizerFunc(func(context.Context, authorization.Request) (authorization.Decision, error) {
+		return authorization.Decision{CertificatePlan: &authorization.CertificatePlan{ChallengeMethod: "dns-01"}}, nil
+	})}
+	request := httptest.NewRequest(http.MethodPost, "/v1/routes/route_1/sessions", nil)
+	request.Header.Set("Authorization", "Bearer access-token")
+	response := httptest.NewRecorder()
+	h.CreateRouteSession(response, request, "route_1", controlv1.CreateRouteSessionParams{})
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "requires DNS-01 automation") {
+		t.Fatalf("unsupported plan = %d: %s", response.Code, response.Body.String())
 	}
 }
 
