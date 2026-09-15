@@ -236,7 +236,7 @@ func runSession(
 			cancelProvisioning()
 			break
 		}
-		if serverReady || !errors.Is(err, controlclient.ErrUnavailable) {
+		if serverReady || !errors.Is(err, controlclient.ErrUnavailable) && !errors.Is(err, controlclient.ErrStatusConflict) {
 			return err
 		}
 		select {

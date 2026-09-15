@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
+	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/tunnel"
@@ -94,6 +95,36 @@ func TestRunReacknowledgesCachedCertificateForEachSession(t *testing.T) {
 		if !errors.Is(err, reachedReady) || acks != 1 {
 			t.Fatalf("session %d: acknowledgements=%d Run=%v", version, acks, err)
 		}
+	}
+}
+
+func TestRunSessionRetriesReadinessConflict(t *testing.T) {
+	previous := activationRetry
+	activationRetry = time.Millisecond
+	defer func() { activationRetry = previous }()
+
+	control, route, state := newCertificateTransactionTest(t)
+	if _, err := attemptCertificateTransaction(t.Context(), control, route, state, control.setup, false); err != nil {
+		t.Fatal(err)
+	}
+	config := certificateSessionTestConfig(t, control)
+	control.create = func([]byte, string) (controlv1.CertificateIssuance, error) {
+		return controlv1.CertificateIssuance{}, errors.New("cached certificate triggered a new issuance")
+	}
+	readyAttempts := 0
+	control.ready = func() error {
+		readyAttempts++
+		if readyAttempts == 1 {
+			return controlclient.ErrStatusConflict
+		}
+		return nil
+	}
+	reachedReady := errors.New("test reached ready")
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	err := runSession(ctx, config, control.setup, func() error { return reachedReady })
+	if !errors.Is(err, reachedReady) || readyAttempts != 2 {
+		t.Fatalf("readiness attempts = %d, session error = %v", readyAttempts, err)
 	}
 }
 
