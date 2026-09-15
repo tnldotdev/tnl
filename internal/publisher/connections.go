@@ -170,6 +170,10 @@ func (m *publisherConnectionManager) Drain(ctx context.Context) error {
 			if err == nil {
 				err = session.RequestPublisherDrain(ctx, requestID)
 			}
+			// A lost transport has already stopped admissions and closed its streams.
+			if err != nil && context.Cause(ctx) == nil && errors.Is(session.Err(), muxsession.ErrClosed) {
+				err = nil
+			}
 			drainErrors[index] = err
 		}()
 	}
