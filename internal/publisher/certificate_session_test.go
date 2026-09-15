@@ -564,7 +564,7 @@ func certificateSessionTestConfig(t *testing.T, control *certificateTestControl)
 	return Config{
 		Control: control, State: control.store, TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1", RouteScope: controlv1.Member,
 		Hostname: control.setup.Route.CanonicalHostname, Target: upstream.URL,
-		FallbackDelay: time.Millisecond, DrainTime: time.Millisecond,
+		FallbackDelay: time.Millisecond, DrainTime: time.Second,
 		QUICConnector: muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
 			return nil, errors.New("test uses TLS/yamux")
 		}),
