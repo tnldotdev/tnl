@@ -4,7 +4,6 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
-import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import { nativeTargets } from "../packages/tnl/lib/native-targets.mjs";
 
@@ -43,6 +42,7 @@ for (const expected of expectedPackages) {
 }
 
 // Validate every registry state before creating an immutable package version.
+const unpublished = [];
 for (const package_ of packages) {
   const registry = await registryPackage(package_.name);
   const taggedVersion = registry?.["dist-tags"]?.[distTag];
@@ -58,15 +58,13 @@ for (const package_ of packages) {
     `${package_.name}@${expectedVersion} already exists with different content`,
   );
   if (existingIntegrity === package_.integrity) {
-    assert.equal(
-      taggedVersion,
-      expectedVersion,
-      `${package_.name}@${expectedVersion} exists but ${distTag} does not select it`,
-    );
+    process.stdout.write(`${package_.name}@${expectedVersion} already has matching content\n`);
+  } else {
+    unpublished.push(package_);
   }
 }
 
-for (const package_ of packages) {
+for (const package_ of unpublished) {
   await publish(package_, distTag);
 }
 
@@ -115,64 +113,19 @@ async function verifyLocalPackage(expected) {
 }
 
 async function publish(package_, tag) {
-  const before = await registryPackage(package_.name);
-  if (before?.versions?.[expectedVersion]?.dist?.integrity === package_.integrity) {
-    process.stdout.write(`${package_.name}@${expectedVersion} already has matching content\n`);
-    return;
-  }
-
-  try {
-    await execFileAsync("npm", ["publish", package_.tarball, "--access", "public", "--tag", tag]);
-  } catch (error) {
-    const registry = await registryPackage(package_.name);
-    if (
-      registry?.versions?.[expectedVersion]?.dist?.integrity !== package_.integrity ||
-      registry?.["dist-tags"]?.[tag] !== expectedVersion
-    ) {
-      throw error;
-    }
-  }
-
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    const registry = await registryPackage(package_.name);
-    const publishedIntegrity = registry?.versions?.[expectedVersion]?.dist?.integrity ?? null;
-    if (
-      publishedIntegrity === package_.integrity &&
-      registry?.["dist-tags"]?.[tag] === expectedVersion
-    ) {
-      process.stdout.write(`${package_.name}@${expectedVersion} published with ${tag}\n`);
-      return;
-    }
-    assert(
-      publishedIntegrity === null || publishedIntegrity === package_.integrity,
-      `${package_.name}@${expectedVersion} was published with unexpected content`,
-    );
-    await delay(3_000);
-  }
-  throw new Error(`timed out waiting for ${package_.name}@${expectedVersion} in the npm registry`);
+  await execFileAsync("npm", ["publish", package_.tarball, "--access", "public", "--tag", tag]);
+  process.stdout.write(`${package_.name}@${expectedVersion} published with ${tag}\n`);
 }
 
 async function registryPackage(packageName) {
-  const url = `https://registry.npmjs.org/${encodeURIComponent(packageName)}`;
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    try {
-      const response = await fetch(url, { signal: AbortSignal.timeout(10_000) });
-      if (response.status === 404) {
-        return null;
-      }
-      if (response.status === 429 || response.status >= 500) {
-        throw new Error(`npm registry returned ${response.status} for ${packageName}`);
-      }
-      assert(response.ok, `npm registry returned ${response.status} for ${packageName}`);
-      return await response.json();
-    } catch (error) {
-      if (attempt === 4) {
-        throw error;
-      }
-      await delay(1000 * (attempt + 1));
-    }
+  const url = new URL(`https://registry.npmjs.org/${encodeURIComponent(packageName)}`);
+  url.searchParams.set("cache-bust", Date.now());
+  const response = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+  if (response.status === 404) {
+    return null;
   }
-  throw new Error(`could not read ${packageName} from the npm registry`);
+  assert(response.ok, `npm registry returned ${response.status} for ${packageName}`);
+  return await response.json();
 }
 
 function compareVersions(left, right) {
