@@ -141,6 +141,7 @@ func TestIntegrationBinarySplitPublishAndVisit(t *testing.T) {
 	if ready.URL != "https://"+routeHost || ready.RouteVersion != 1 {
 		t.Fatalf("split binary ready event = %#v", ready)
 	}
+	waitForIngressRoutingCurrent(t, inspectStandaloneTestDatabase(t, databaseURL), 1)
 	visitor := newIntegrationVisitor(t, pebble.roots, "")
 	response, body, err := visitor.requestURL(http.MethodGet, ready.URL+"/split?source=binary", nil)
 	if err != nil {

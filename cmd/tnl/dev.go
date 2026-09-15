@@ -334,12 +334,6 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 			return context.Cause(ctx)
 		}
 	}
-	if frameworkDone == nil {
-		if err := bootstrap.Close(); err != nil {
-			return err
-		}
-	}
-
 	output, err := newPublishOutput("human", "tnl dev", stdout, stderr, browserOpener(flags.Open))
 	if err != nil {
 		return err
@@ -384,11 +378,6 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 			}
 			framework = configuredResult.framework
 			output.setFramework(framework)
-			if err := bootstrap.Close(); err != nil {
-				cancelPublish()
-				<-publishDone
-				return err
-			}
 		case <-child.Done():
 			cancelPublish()
 			publishErr := <-publishDone

@@ -419,8 +419,8 @@ func (d *Database) createControlSession(
 	if err != nil {
 		return ControlSession{}, fmt.Errorf("controlstate: encrypt retry secret: %w", err)
 	}
-	accessExpiresAt := now.Add(accessLifetime)
-	refreshExpiresAt := now.Add(refreshLifetime)
+	accessExpiresAt := now.Add(accessLifetime).UTC().Truncate(time.Microsecond)
+	refreshExpiresAt := now.Add(refreshLifetime).UTC().Truncate(time.Microsecond)
 	if err := queries.CreateControlSession(ctx, controlstatedb.CreateControlSessionParams{
 		ID: sessionID, IdentityID: identityID, AuthenticationMethod: authenticationMethod,
 		AuthenticationSourceRevision: authenticationSourceRevision, Administrator: administrator,
@@ -523,7 +523,7 @@ func (d *Database) RefreshControlSession(
 	if err != nil {
 		return ControlSession{}, err
 	}
-	accessExpiresAt := now.Add(accessLifetime)
+	accessExpiresAt := now.Add(accessLifetime).UTC().Truncate(time.Microsecond)
 	if row.RefreshExpiresAt.Time.Before(accessExpiresAt) {
 		accessExpiresAt = row.RefreshExpiresAt.Time
 	}

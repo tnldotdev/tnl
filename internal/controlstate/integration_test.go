@@ -911,7 +911,8 @@ func testExternalAuthoritySecret(t *testing.T, database *Database) {
 
 func testBuiltinAuthentication(t *testing.T, database *Database) {
 	t.Helper()
-	now := time.Now().UTC().Truncate(time.Second)
+	// Exercise the precision change when session timestamps round-trip through PostgreSQL.
+	now := time.Now().UTC().Truncate(time.Second).Add(123456789 * time.Nanosecond)
 	const callers = 4
 	results := make(chan ControlSession, callers)
 	exchangeErrors := make(chan error, callers)
