@@ -481,7 +481,7 @@ func provisionBenchmark(
 	}
 	metricsURLs := make([]string, 0, len(serverMachines))
 	for _, item := range serverMachines {
-		metricsURLs = append(metricsURLs, "http://"+item.machine.ID+".vm."+apps[item.role]+".internal:9090/metrics")
+		metricsURLs = append(metricsURLs, "http://"+item.machine.ID+".vm."+apps[item.role]+".internal:9090/metrics#"+item.role)
 	}
 	fmt.Fprintf(stdout, "Topology: %d control, %d ingress, %dx%d relay processes ready\n",
 		plan.Topology.ControlProcesses, plan.Topology.IngressProcesses,

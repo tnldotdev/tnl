@@ -16,10 +16,15 @@ func sampleResources(ctx context.Context, rawURLs []string, moment string) []res
 	result := make([]resourceSample, 0, len(rawURLs))
 	for _, rawURL := range rawURLs {
 		identity := rawURL
+		role := "unknown"
 		if parsed, err := url.Parse(rawURL); err == nil {
 			identity = parsed.Hostname()
+			role = metricRole(parsed.Fragment)
 		}
-		sample := resourceSample{Role: metricRole(identity), Identity: identity, Moment: moment, Timestamp: time.Now().UTC()}
+		if role == "unknown" {
+			role = metricRole(identity)
+		}
+		sample := resourceSample{Role: role, Identity: identity, Moment: moment, Timestamp: time.Now().UTC()}
 		values, err := sampleMetrics(ctx, rawURL)
 		if err != nil {
 			sample.Error = err.Error()
