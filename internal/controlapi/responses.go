@@ -118,11 +118,13 @@ func certificateIssuanceResponse(issuance controlstate.CertificateIssuance) cont
 			CacheKey: issuance.CertificatePlan.CacheKey, Scope: issuance.CertificatePlan.Scope,
 			Identifiers: identifiers, ChallengeMethod: controlv1.CertificateChallengeMethod(issuance.CertificatePlan.ChallengeMethod),
 		},
-		RetryAt: issuance.RetryAt, NotBefore: issuance.NotBefore, NotAfter: issuance.NotAfter,
-		CreatedAt: issuance.CreatedAt, UpdatedAt: issuance.UpdatedAt,
+		RetryAt: issuance.RetryAt, CreatedAt: issuance.CreatedAt, UpdatedAt: issuance.UpdatedAt,
 	}
-	if issuance.CertificatePEM != "" {
-		result.CertificatePem = &issuance.CertificatePEM
+	if result.State == controlv1.CertificateIssuanceStateWaitingForInstall || result.State == controlv1.CertificateIssuanceStateInstalled {
+		if issuance.CertificatePEM != "" {
+			result.CertificatePem = &issuance.CertificatePEM
+		}
+		result.NotBefore, result.NotAfter = issuance.NotBefore, issuance.NotAfter
 	}
 	if len(issuance.Challenges) > 0 {
 		challenges := make([]controlv1.CertificateChallenge, len(issuance.Challenges))

@@ -182,6 +182,11 @@ tasks:
     cmds:
       - go test -race -v ./... -run='^TestIntegration' -count=1 -timeout=15m
 
+  go:test-integration-dns-linux:
+    desc: Run the authoritative DNS integration test in disposable Linux containers
+    cmds:
+      - scripts/test-dns-integration-linux.sh
+
   go:bench-fly:plan:
     desc: Expand and price a Fly benchmark without creating resources
     cmds:
