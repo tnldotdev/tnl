@@ -127,7 +127,7 @@ func (c runCommand) Validate() error {
 	if err != nil || canonical != c.ParentDomain {
 		return errors.New("BENCH_PARENT_DOMAIN must be a canonical hostname")
 	}
-	if canonicalZoneID(c.ParentZoneID) != c.ParentZoneID || strings.ContainsAny(c.ParentZoneID, " /\t\r\n") {
+	if c.ParentZoneID == "" || canonicalZoneID(c.ParentZoneID) != c.ParentZoneID || strings.ContainsAny(c.ParentZoneID, " /\t\r\n") {
 		return errors.New("BENCH_PARENT_ZONE_ID must be a canonical bare hosted-zone ID")
 	}
 	address, err := mail.ParseAddress(c.ACMEEmail)
@@ -716,8 +716,11 @@ func cleanupRun(ctx context.Context, fly flyPlatform, dns benchmarkDNS, manifest
 }
 
 func validateManifestResources(manifest runManifest) error {
-	if manifest.SchemaVersion != runManifestSchemaVersion || manifest.RunID == "" || manifest.ParentDomain == "" ||
-		manifest.ParentZoneID == "" {
+	parentDomain, parentDomainErr := naming.CanonicalizeHostname(manifest.ParentDomain)
+	if manifest.SchemaVersion != runManifestSchemaVersion || !validRunID(manifest.RunID) ||
+		parentDomainErr != nil || parentDomain != manifest.ParentDomain ||
+		manifest.ParentZoneID == "" || canonicalZoneID(manifest.ParentZoneID) != manifest.ParentZoneID ||
+		strings.ContainsAny(manifest.ParentZoneID, " /\t\r\n") {
 		return errors.New("benchmark manifest has an invalid schema or identity")
 	}
 	if manifest.ServerDomain != manifest.RunID+"."+manifest.ParentDomain || manifest.ManagedDomain != "routes."+manifest.ServerDomain {
@@ -735,7 +738,26 @@ func validateManifestResources(manifest runManifest) error {
 		seenApps[app.Role] = struct{}{}
 	}
 	var serverZoneID string
+	seenZones := make(map[string]struct{}, len(manifest.Zones))
 	for _, zone := range manifest.Zones {
+		if _, exists := seenZones[zone.Kind]; exists {
+			return fmt.Errorf("benchmark manifest repeats hosted-zone kind %q", zone.Kind)
+		}
+		seenZones[zone.Kind] = struct{}{}
+		if zone.ID == "" || canonicalZoneID(zone.ID) != zone.ID || strings.ContainsAny(zone.ID, " /\t\r\n") || len(zone.NameServers) < 2 {
+			return fmt.Errorf("benchmark hosted zone %q has an invalid identity", zone.Name)
+		}
+		seenNameServers := make(map[string]struct{}, len(zone.NameServers))
+		for _, nameServer := range zone.NameServers {
+			canonical, err := naming.CanonicalizeHostname(nameServer)
+			if err != nil || canonical != nameServer {
+				return fmt.Errorf("benchmark hosted zone %q has an invalid name server", zone.Name)
+			}
+			if _, exists := seenNameServers[nameServer]; exists {
+				return fmt.Errorf("benchmark hosted zone %q repeats a name server", zone.Name)
+			}
+			seenNameServers[nameServer] = struct{}{}
+		}
 		switch zone.Kind {
 		case "server":
 			if zone.Name != manifest.ServerDomain || zone.ParentName != manifest.ParentDomain || zone.ParentZoneID != manifest.ParentZoneID {
@@ -754,6 +776,9 @@ func validateManifestResources(manifest runManifest) error {
 		if zone.Kind == "managed" && (serverZoneID == "" || zone.ParentZoneID != serverZoneID) {
 			return errors.New("benchmark managed zone does not belong to the recorded server zone")
 		}
+	}
+	if manifest.Volume != nil && (manifest.Volume.App != expectedApps["postgres"] || manifest.Volume.ID == "") {
+		return errors.New("benchmark manifest has an invalid PostgreSQL volume")
 	}
 	return nil
 }
@@ -840,6 +865,26 @@ func newRunID(now time.Time) (string, error) {
 	}
 	suffix = strings.ToLower(strings.NewReplacer("_", "a", "-", "b").Replace(suffix))
 	return "bench-" + now.Format("20060102-150405") + "-" + suffix, nil
+}
+
+func validRunID(value string) bool {
+	const timestampLength = len("20060102-150405")
+	if len(value) != len("bench-")+timestampLength+1+8 || !strings.HasPrefix(value, "bench-") {
+		return false
+	}
+	timestamp := value[len("bench-") : len("bench-")+timestampLength]
+	if _, err := time.Parse("20060102-150405", timestamp); err != nil {
+		return false
+	}
+	if value[len("bench-")+timestampLength] != '-' {
+		return false
+	}
+	for _, character := range value[len("bench-")+timestampLength+1:] {
+		if (character < 'a' || character > 'z') && (character < '0' || character > '9') {
+			return false
+		}
+	}
+	return true
 }
 
 func benchmarkAppNames(runID string) map[string]string {
