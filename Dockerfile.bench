@@ -5,7 +5,6 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOFLAGS=-tags=ts_omit_ssh go build -trimpath -o /out/tnld ./cmd/tnld
-RUN CGO_ENABLED=0 GOFLAGS=-tags=ts_omit_ssh go build -trimpath -o /out/tnl ./cmd/tnl
 RUN CGO_ENABLED=0 GOFLAGS=-tags=ts_omit_ssh go build -trimpath -o /out/tnlbench ./cmd/tnlbench
 
 FROM alpine:3.22
@@ -13,9 +12,8 @@ FROM alpine:3.22
 RUN apk add --no-cache ca-certificates su-exec
 
 COPY --from=build /out/tnld /tnld
-COPY --from=build /out/tnl /usr/local/bin/tnl
 COPY --from=build /out/tnlbench /tnlbench
 
 USER 0:0
-ENTRYPOINT ["/bin/sh", "-c", "ulimit -n \"${TNL_NOFILE_LIMIT:-65536}\" && exec /sbin/su-exec 65532:65532 \"$@\"", "--"]
+ENTRYPOINT ["/bin/sh", "-c", "ulimit -n \"${TNL_NOFILE_LIMIT:-65536}\"; if [ \"${TNLD_MODE:-}\" = ingress ] && [ -z \"${TNLD_INGRESS_ID:-}\" ]; then export TNLD_INGRESS_ID=ingress-${FLY_MACHINE_ID:?}; fi; if [ \"${TNLD_MODE:-}\" = relay ]; then export TNLD_RELAY_ID=${TNLD_RELAY_ID:-relay-${FLY_MACHINE_ID:?}}; export TNLD_INTERNAL_RELAY_ADDRESS=${TNLD_INTERNAL_RELAY_ADDRESS:-${FLY_MACHINE_ID}.vm.${FLY_APP_NAME:?}.internal:9445}; fi; if [ \"$#\" -eq 1 ]; then exec /sbin/su-exec 65532:65532 /bin/sh -c \"$1\"; fi; exec /sbin/su-exec 65532:65532 \"$@\"", "--"]
 CMD ["/tnlbench"]

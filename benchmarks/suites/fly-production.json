@@ -26,6 +26,7 @@
   "pricing": {
     "snapshot_date": "2026-09-16",
     "source_url": "https://fly.io/docs/about/pricing/",
+    "route53_source_url": "https://aws.amazon.com/route53/pricing/",
     "machine_per_second_usd": {
       "shared-cpu-1x": 0.00000194,
       "shared-cpu-2x": 0.00000388,
