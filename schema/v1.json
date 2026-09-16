@@ -252,6 +252,10 @@
           "type": "string",
           "description": "Control API hostname used by ingress and relay processes."
         },
+        "private_control_address": {
+          "type": "string",
+          "description": "Optional private control host and port dialed by ingress and relay processes."
+        },
         "managed_deployment_domain": {
           "type": "string",
           "description": "Managed public route DNS domain."

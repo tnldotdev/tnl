@@ -63,6 +63,7 @@ type Config struct {
 
 	ServerDomain            string   `name:"server-domain" env:"TNLD_SERVER_DOMAIN" help:"Infrastructure DNS suffix used to derive control, ingress, and relay hostnames."`
 	ControlHostname         string   `name:"control-hostname" env:"TNLD_CONTROL_HOSTNAME" help:"Control API hostname used by ingress and relay processes."`
+	PrivateControlAddress   string   `name:"private-control-address" env:"TNLD_PRIVATE_CONTROL_ADDRESS" help:"Optional private control host and port dialed by ingress and relay processes."`
 	ManagedDeploymentDomain string   `name:"managed-deployment-domain" env:"TNLD_MANAGED_DEPLOYMENT_DOMAIN" help:"Managed public route DNS domain."`
 	ReservedRouteNames      []string `name:"reserved-route-name" env:"TNLD_RESERVED_ROUTE_NAMES" help:"DNS labels unavailable for routes; repeat for each label."`
 
@@ -140,6 +141,11 @@ func (c Config) Validate() error {
 		if err := validateControlHostname(c.ControlHostname); err != nil {
 			return err
 		}
+		if c.PrivateControlAddress != "" {
+			if err := validateDialAddress(c.PrivateControlAddress); err != nil {
+				return fmt.Errorf("private control address: %w", err)
+			}
+		}
 		if _, err := serviceapi.NewBearerSecrets(c.ClusterSecret, c.ClusterSecretPrevious); err != nil {
 			return errors.New("cluster secret configuration is invalid")
 		}
@@ -206,7 +212,7 @@ func (c Config) validateControl() error {
 	if err := validateCanonicalHostname(c.ManagedDeploymentDomain, "managed deployment domain"); err != nil {
 		return err
 	}
-	if c.ControlHostname != "" || c.IngressID != "" || c.RelayServiceID != "" || c.RelayID != "" || c.RelayAddress != "" || c.InternalRelayAddress != "" {
+	if c.ControlHostname != "" || c.PrivateControlAddress != "" || c.IngressID != "" || c.RelayServiceID != "" || c.RelayID != "" || c.RelayAddress != "" || c.InternalRelayAddress != "" {
 		return errors.New("split-process configuration is invalid for control and standalone")
 	}
 	if c.Mode == RoleStandalone {
@@ -635,6 +641,21 @@ func validateListenAddress(value string) error {
 		return errors.New("port must be between 1 and 65535")
 	}
 	return nil
+}
+
+func validateDialAddress(value string) error {
+	host, _, err := net.SplitHostPort(value)
+	if err != nil || host == "" || strings.TrimSpace(host) != host {
+		return errors.New("must be a canonical host and port")
+	}
+	if address, err := netip.ParseAddr(host); err == nil {
+		if address.String() != host {
+			return errors.New("must use a canonical IP address")
+		}
+	} else if canonical, err := naming.CanonicalizeHostname(host); err != nil || canonical != host {
+		return errors.New("must use a canonical hostname")
+	}
+	return validateListenAddress(value)
 }
 
 func validateRelayAddress(value string) error {

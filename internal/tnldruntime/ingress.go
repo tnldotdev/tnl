@@ -28,6 +28,7 @@ type ingressRuntime struct {
 
 type ingressProcessSettings struct {
 	controlEndpoint string
+	controlAddress  string
 	clusterSecret   string
 	ingressID       string
 	listen          string
@@ -36,13 +37,16 @@ type ingressProcessSettings struct {
 
 func ingressProcessSettingsFrom(cfg tnldconfig.Config) ingressProcessSettings {
 	return ingressProcessSettings{
-		controlEndpoint: cfg.PrivateControlEndpoint(), clusterSecret: cfg.ClusterSecret,
-		ingressID: cfg.IngressID, listen: cfg.IngressListen, runtime: ingressSettingsFrom(cfg),
+		controlEndpoint: cfg.PrivateControlEndpoint(), controlAddress: cfg.PrivateControlAddress,
+		clusterSecret: cfg.ClusterSecret,
+		ingressID:     cfg.IngressID, listen: cfg.IngressListen, runtime: ingressSettingsFrom(cfg),
 	}
 }
 
 func (d *daemon) startIngress(ctx context.Context, settings ingressProcessSettings, metrics *observability.Metrics) error {
-	privateClient, err := newIngressControlClient(settings.controlEndpoint, settings.clusterSecret, d.serviceHTTP, "")
+	privateClient, err := newIngressControlClient(
+		settings.controlEndpoint, settings.clusterSecret, d.serviceHTTP, settings.controlAddress,
+	)
 	if err != nil {
 		return err
 	}
