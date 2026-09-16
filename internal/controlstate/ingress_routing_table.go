@@ -16,7 +16,7 @@ import (
 
 const MaximumIngressRoutingTablePageSize = 1000
 
-// IngressRoutingTableEvent is one durable ordered projection mutation.
+// IngressRoutingTableEvent is one stored, ordered projection update.
 type IngressRoutingTableEvent struct {
 	RoutingTableRevision uint64
 	Kind                 IngressRoutingTableEventKind
@@ -102,7 +102,7 @@ func (d *Database) ReadIngressRoutingTableSnapshot(
 	return snapshot, nil
 }
 
-// ReadIngressRoutingTableEvents returns a bounded page after one revision.
+// ReadIngressRoutingTableEvents returns a size-limited page after one revision.
 func (d *Database) ReadIngressRoutingTableEvents(
 	ctx context.Context,
 	identity IngressLeaseIdentity,

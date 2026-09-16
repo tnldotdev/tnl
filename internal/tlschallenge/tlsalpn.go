@@ -20,8 +20,8 @@ import (
 
 var acmeIdentifierOID = asn1.ObjectIdentifier{1, 3, 6, 1, 5, 5, 7, 1, 31}
 
-// TLSALPNChallenge is the bounded challenge material delivered to an tlschallenge.
-// The ACME key authorization and account key remain on the server.
+// TLSALPNChallenge contains the size-limited challenge data sent to a publisher.
+// The ACME key authorization and account key stay on the tnl server.
 type TLSALPNChallenge struct {
 	ID        string
 	Hostname  string
@@ -42,9 +42,9 @@ type TLSALPNChallenges struct {
 	hostByID   map[string]string
 }
 
-// Install creates and atomically installs a temporary challenge certificate.
-// Repeating an identical command is idempotent; a new ID replaces the current
-// challenge for the hostname.
+// Install creates and swaps in a temporary challenge certificate as one
+// operation. Repeating the same command has no effect. A new ID replaces the
+// current challenge for the hostname.
 func (s *TLSALPNChallenges) Install(challenge TLSALPNChallenge) error {
 	if challenge.ID == "" {
 		return errors.New("publisher: missing TLS-ALPN challenge ID")

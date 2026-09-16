@@ -20,7 +20,7 @@ var (
 	ErrUnavailable     = errors.New("oidcauth: provider unavailable")
 )
 
-// Identity is the bounded identity information authenticated by an OIDC ID token.
+// Identity contains the limited identity fields authenticated by an OIDC ID token.
 type Identity struct {
 	Issuer          string
 	Subject         string

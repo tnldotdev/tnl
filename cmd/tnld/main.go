@@ -97,7 +97,7 @@ type tnldConfigCommand struct {
 }
 
 type tnldCLI struct {
-	LoginToken struct{}          `cmd:"" name:"login-token" help:"Generate a bootstrap login token."`
+	LoginToken struct{}          `cmd:"" name:"login-token" help:"Generate a login token."`
 	Migrate    struct{}          `cmd:"" help:"Apply control-state database migrations."`
 	Serve      tnldServeCommand  `cmd:"" default:"withargs" help:"Run the tnl server."`
 	Config     tnldConfigCommand `cmd:"" help:"Inspect server configuration."`

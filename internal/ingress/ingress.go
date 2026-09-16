@@ -1,4 +1,5 @@
-// Package ingress routes TLS streams without terminating them, using exact SNI hostnames.
+// Package ingress routes TLS connections by exact SNI hostname without
+// terminating their TLS.
 package ingress
 
 import (

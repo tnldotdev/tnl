@@ -29,37 +29,41 @@ curl --fail https://control.tnl.example.com/v1/ready
 curl --fail http://127.0.0.1:9090/ready
 ```
 
-Private readiness checks the role's current state: control checks its listeners,
-PostgreSQL/schema, and managed public control certificate; ingress checks its
-lease, routing table, certificate readiness, and listener; relay checks its lease,
-certificate, and publisher/internal-forwarding listeners. Standalone checks all
-composed roles. These checks do not prove that every background operation or
-individual route/local service is healthy; publish a test route for an end-to-end
-check. `tnl_info{mode}` identifies each process's role.
+Private readiness checks differ by role:
+
+- Control checks its listeners, PostgreSQL connection, schema version, and
+  public control certificate.
+- Ingress checks its lease, routing table, certificate, and listener.
+- Relay checks its lease, certificate, and publisher and internal-forwarding
+  listeners.
+- Standalone checks every role it contains.
+
+Readiness does not prove that every background task, route, or local service is
+healthy. Publish a test route for an end-to-end check. `tnl_info{mode}` reports
+the process role.
 
 ## Runtime Metrics
 
 - `tnl_control_requests_total{operation,outcome}` and
   `tnl_control_request_duration_seconds{operation}` measure control API traffic.
-- `tnl_routes{state}` reports durable routes by lifecycle state.
+- `tnl_routes{state}` reports stored routes by state.
 - `tnl_relay_leases{state}` reports control-owned relay leases in a relay or
   standalone process.
-- `tnl_publisher_connections{state}` reports publisher connections by durable
-  lifecycle state.
+- `tnl_publisher_connections{state}` reports publisher connections by state.
 - `tnl_streams_active` reports active visitor streams in the process.
-- `tnl_capacity_rejections_total{resource}` reports operations rejected by a
-  bounded resource.
+- `tnl_capacity_rejections_total{resource}` reports operations rejected because
+  a resource is full.
 - `tnl_source_limiter_rejections_total` and `tnl_source_limiter_entries` report
-  abusive connection starts and pressure on the bounded source table.
+  excessive connection attempts and source-IP table usage.
 - `tnl_ip_allowlist_denials_total` reports visitor connections rejected by route
   IP policy without route or source labels.
 - `tnl_forwarded_bytes_total{direction}` reports bytes forwarded through the
   visitor path.
 
-Labels use fixed enumerated values. Route IDs, hostnames, team IDs, membership
-IDs, ingress IDs, relay IDs, request IDs, error text, and SQL text are
-deliberately excluded from metric labels. Correlation details belong in
-structured logs; client responses remain sanitized.
+Labels use a fixed set of values. They never contain route IDs, hostnames, team
+IDs, membership IDs, ingress IDs, relay IDs, request IDs, error text, or SQL.
+Use structured logs for request-specific details. Client responses do not expose
+internal details.
 
 ## Alert Queries
 
@@ -89,6 +93,5 @@ sum(rate(tnl_control_requests_total{outcome="server_error"}[5m]))
   / clamp_min(sum(rate(tnl_control_requests_total[5m])), 0.001) > 0.02
 ```
 
-Deployment repositories should define recording and alert rules appropriate for
-their environment. This repository defines metric names, semantics, and allowed
-label values.
+Each deployment should define recording and alert rules for its environment.
+This repository defines metric names, their meaning, and allowed label values.

@@ -84,7 +84,7 @@ func (d *Database) GetDNSChallengeContext(
 	return result, nil
 }
 
-// WithDNSChallengeLock serializes the durable snapshot and DNS update for one
+// WithDNSChallengeLock serializes the stored snapshot and DNS update for one
 // TXT name across control processes. A transaction lock also works with pooled
 // PostgreSQL connections and is released on cancellation or connection loss.
 func (d *Database) WithDNSChallengeLock(ctx context.Context, recordName string, run func() error) (retErr error) {

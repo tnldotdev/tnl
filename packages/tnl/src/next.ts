@@ -24,7 +24,7 @@ export type NextConfigFactory = (
 
 export type NextConfigInput = NextConfig | Promise<NextConfig> | NextConfigFactory;
 
-/** Adds tnl project metadata and safe `tnl dev` routing to a Next.js development server. */
+/** Configures a Next.js development server for `tnl dev` and adds project metadata. */
 export function withTnl(config: NextConfigInput = {}, ...extra: never[]): NextConfigFactory {
   if (extra.length !== 0) {
     throw new Error("withTnl() does not accept tunnel options; use project configuration");

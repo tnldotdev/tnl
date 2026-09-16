@@ -21,8 +21,9 @@ import (
 
 var subjectAlternativeNameOID = asn1.ObjectIdentifier{2, 5, 29, 17}
 
-// CanonicalPlan validates an authoritative plan and returns an owned, sorted identifier set.
-// Scope and cache key are opaque authorization bindings, not locally derived DNS policy.
+// CanonicalPlan validates a certificate plan and returns it with a copied,
+// sorted identifier list. Scope and cache key come from the authority and are
+// not derived from local DNS rules.
 func CanonicalPlan(plan controlv1.CertificatePlan) (controlv1.CertificatePlan, error) {
 	if plan.CacheKey == "" || len(plan.CacheKey) > 256 || plan.Scope == "" || len(plan.Scope) > 256 || strings.TrimSpace(plan.CacheKey) != plan.CacheKey ||
 		strings.TrimSpace(plan.Scope) != plan.Scope || !plan.ChallengeMethod.Valid() ||
@@ -52,13 +53,13 @@ func SamePlan(left, right controlv1.CertificatePlan) bool {
 		left.ChallengeMethod == right.ChallengeMethod && slices.Equal(left.Identifiers, right.Identifiers)
 }
 
-// Covers applies x509's exact-name and one-label wildcard rules to a canonical route hostname.
+// Covers checks a route hostname against x509 exact-name and one-label wildcard rules.
 func Covers(identifiers []string, hostname string) bool {
 	canonical, err := naming.CanonicalizeHostname(hostname)
 	return err == nil && canonical == hostname && (&x509.Certificate{DNSNames: identifiers}).VerifyHostname(hostname) == nil
 }
 
-// Matches requires the complete authorized DNS SAN set, including no hidden GeneralNames.
+// Matches requires exactly the authorized DNS names and no other SAN name types.
 func Matches(extensions []pkix.Extension, names, identifiers []string) bool {
 	actual, expected := slices.Clone(names), slices.Clone(identifiers)
 	slices.Sort(actual)
@@ -66,7 +67,8 @@ func Matches(extensions []pkix.Extension, names, identifiers []string) bool {
 	return slices.Equal(actual, expected) && DNSNamesOnly(extensions, names)
 }
 
-// ValidateCertificate checks automatic application material without trusting a caller-supplied Leaf.
+// ValidateCertificate checks an automatically issued certificate and private key.
+// It parses the leaf instead of trusting certificate.Leaf from the caller.
 func ValidateCertificate(certificate tls.Certificate, hostname string, identifiers []string) (*x509.Certificate, error) {
 	if len(certificate.Certificate) == 0 || certificate.PrivateKey == nil {
 		return nil, errors.New("certificateidentity: certificate and private key are required")
@@ -93,8 +95,9 @@ func ValidateCertificate(certificate tls.Certificate, hostname string, identifie
 	return leaf, nil
 }
 
-// ValidateIssuedCertificate checks a chain against the authorized CSR without a
-// private key or clock-skew allowance. Trust in the issuer comes from ACME.
+// ValidateIssuedCertificate checks a certificate chain against the authorized
+// CSR. It does not have the private key and does not allow clock skew. ACME is
+// responsible for trusting the issuer.
 func ValidateIssuedCertificate(certificatePEM, csrDER []byte, identifiers []string, now time.Time) (*x509.Certificate, error) {
 	csr, err := x509.ParseCertificateRequest(csrDER)
 	if err != nil || csr.CheckSignature() != nil || len(identifiers) == 0 || !Matches(csr.Extensions, csr.DNSNames, identifiers) {
@@ -153,8 +156,8 @@ func ValidateIssuedCertificate(certificatePEM, csrDER []byte, identifiers []stri
 	return leaf, nil
 }
 
-// DNSNamesOnly reports whether the certificate or CSR has exactly one SAN
-// extension and every GeneralName in it is a dNSName parsed by x509.
+// DNSNamesOnly reports whether the certificate or CSR has one SAN extension and
+// every name in it is a DNS name parsed by x509.
 func DNSNamesOnly(extensions []pkix.Extension, dnsNames []string) bool {
 	var encoded []byte
 	for _, extension := range extensions {

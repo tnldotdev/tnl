@@ -131,8 +131,8 @@ func Accept(ctx context.Context, transport muxsession.Session, authenticate Auth
 	return &Session{transport: transport, control: control}, hello, nil
 }
 
-// OpenPublisherStream opens one visitor stream to a publisher and waits for setup acknowledgement before
-// returning it to the caller. No PROXY v2 or visitor bytes have been sent yet.
+// OpenPublisherStream opens a visitor stream and waits for the publisher to
+// accept it. It returns before sending PROXY v2 metadata or visitor bytes.
 func (s *Session) OpenPublisherStream(ctx context.Context, header tunnelv1.PublisherStreamHeader) (muxsession.Stream, error) {
 	return s.openAcknowledgedStream(ctx, "publisher", func(stream muxsession.Stream) error {
 		return tunnelv1.WritePublisherStreamHeader(stream, header)
@@ -284,7 +284,7 @@ func (r *IncomingPublisherStream) Accept() error {
 	return r.response.respond(tunnelv1.StreamResponse{Type: tunnelv1.StreamAccepted})
 }
 
-// Reject rejects the route stream with a stable semantic code.
+// Reject rejects the route stream with a stable protocol code.
 func (r *IncomingPublisherStream) Reject(code tunnelv1.ErrorCode) error {
 	return r.response.respond(tunnelv1.StreamResponse{Type: tunnelv1.StreamRejected, Code: code})
 }

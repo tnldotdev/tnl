@@ -10,7 +10,7 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-// Candidate is one transport implementation for the same logical endpoint.
+// Candidate is one way to connect to a relay address.
 type Candidate struct {
 	Connector muxsession.Connector
 	Endpoint  muxsession.Endpoint
@@ -32,10 +32,10 @@ type candidateResult struct {
 	terminal  bool
 }
 
-// Race establishes QUIC first and starts the fallback after fallbackDelay. The
-// first candidate accepted by tunnelv1 wins; TLS completion alone cannot win.
-// A terminal handshake rejection stops both attempts. This policy applies only
-// to connection establishment, not visitor-stream retries.
+// Race starts QUIC first, then starts the fallback after fallbackDelay. The first
+// connection accepted by tunnelv1 wins; completing TLS alone is not enough. A
+// permanent handshake rejection stops both attempts. Race only chooses the
+// publisher connection transport. It does not retry visitor streams.
 func Race(
 	ctx context.Context,
 	primary Candidate,
@@ -111,9 +111,10 @@ func dialCandidate(ctx context.Context, candidate Candidate, hello tunnelv1.Mess
 	return candidateResult{err: err, terminal: IsTerminalHandshakeError(err)}
 }
 
-// IsTerminalHandshakeError identifies protocol rejections that must stop attempts
-// for the current connection assignment. Transport failures and temporary server
-// errors are not terminal. It does not authorize reconnecting a claimed connection.
+// IsTerminalHandshakeError reports whether a protocol rejection must stop both
+// attempts for this connection assignment. Network failures and temporary server
+// errors can use the other transport. This result does not allow a claimed
+// connection to reconnect.
 func IsTerminalHandshakeError(err error) bool {
 	var protocolError *ProtocolError
 	return errors.As(err, &protocolError) && protocolError.Code != tunnelv1.Unavailable &&

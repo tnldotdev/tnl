@@ -1,4 +1,4 @@
-// Package clientauth owns CLI authentication and serialized control-session refresh.
+// Package clientauth handles CLI login and coordinates control-session refresh.
 package clientauth
 
 import (

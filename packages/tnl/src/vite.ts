@@ -10,7 +10,7 @@ import type { Plugin } from "vite";
 
 const runtimeDefineName = "process.env.TNL_PROJECT_RUNTIME";
 
-/** Adds tnl project metadata and safe `tnl dev` routing to a Vite development server. */
+/** Configures a Vite development server for `tnl dev` and adds project metadata. */
 export default function tnl(...arguments_: never[]): Plugin {
   if (arguments_.length !== 0) {
     throw new Error("tnl() does not accept tunnel options; use project configuration");

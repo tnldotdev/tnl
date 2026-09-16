@@ -1,9 +1,8 @@
 # tnl
 
-`tnl` publishes a local HTTP service at a public HTTPS hostname. The publisher
-keeps two outbound publisher connections through distinct relay services, and
-public route TLS terminates in the publisher before traffic reaches the local
-service.
+`tnl` gives a local HTTP service a public HTTPS hostname. The publisher opens
+outbound connections to two relay services. Route TLS reaches the publisher and
+terminates there before traffic is sent to the local service.
 
 The repository contains:
 
@@ -16,6 +15,7 @@ The repository contains:
 
 | Guide                                        | Owns                                                                  |
 | -------------------------------------------- | --------------------------------------------------------------------- |
+| [CLI reference](docs/CLI-REFERENCE.md)       | `tnl` and `tnld` commands, configuration, output, and side effects    |
 | [JavaScript package](packages/tnl/README.md) | Next.js, Vite, multi-service configuration, and generated metadata    |
 | [Self-hosting](docs/SELF-HOSTING.md)         | Deployment, configuration, current limitations, backups, and upgrades |
 | [Observability](docs/OBSERVABILITY.md)       | Health probes, readiness guarantees, metrics, and alerts              |
@@ -48,25 +48,24 @@ tnl login https://control.tnl.example.com
 tnl publish 3000
 ```
 
-The default hostname combines the local service and worktree beneath the current
-membership's namespace on the selected team's default domain. Select one child
-label or an exact authorized hostname:
+By default, tnl builds the hostname from the local service and worktree label.
+It places that name in the current member namespace on the team's default
+domain. You can instead choose one child label or an authorized hostname:
 
 ```console
 tnl publish 3000 --subdomain api
 tnl publish 3000 --host api.dev.example.com
 ```
 
-By default, tnl restricts the route to the visitor IP observed by the control
-API. Repeat `--allow-ip` to add addresses or prefixes to that policy, or use
-`--public` to allow every visitor address. Add `--open` to launch the public URL
-after the route version becomes routable. Use `--output=ndjson` for
-machine-readable lifecycle events.
+By default, only the IP address seen by the control API may use the route.
+Repeat `--allow-ip` to allow more addresses or prefixes. Use `--public` to allow
+all addresses. Add `--open` to open the public URL when the route is ready. Use
+`--output=ndjson` for machine-readable status events.
 
-One tunnel owns one current route session with two publisher connection slots
-assigned to distinct relay services. A route version becomes routable after its
-certificate is installed and both connections are ready. Existing routing may
-continue with one ready connection while the publisher replenishes toward two.
+Each tunnel starts one route session. Control assigns its two connection slots
+to different relay services. The route becomes routable after the publisher
+installs its certificate and both connections are ready. After that, the route
+can continue with one connection while the publisher replaces the other.
 
 ## Teams And Domains
 
@@ -106,9 +105,9 @@ tnl dev -- pnpm dev
 tnl dev --port 3000 -- pnpm dev
 ```
 
-Each project/service pair uses a deterministic private Unix socket and exclusive lock.
-Framework integrations register the actual loopback port without receiving
-server access tokens.
+Each project service uses a private Unix socket and lock to prevent duplicate
+`tnl dev` processes. Framework integrations report the actual loopback port.
+They never receive server access tokens.
 
 Run `tnl init` for project setup. Follow the
 [package guide](packages/tnl/README.md) for framework integration, named services,
@@ -137,45 +136,47 @@ tnl:
     startup_timeout: 90s
 ```
 
-TypeScript configuration is implicitly version 1 and uses camel-case names.
-See the [configuration API](packages/tnl/README.md#configuration) for object and
-factory examples, service overrides, and trusted-code evaluation semantics.
+TypeScript configuration is version 1 and uses camel-case names. It runs as
+trusted local code. See the
+[configuration API](packages/tnl/README.md#configuration) for object and factory
+examples and project-service overrides.
 
-Command-line values take precedence over supported `TNL_*` environment values,
-which take precedence over project configuration. Run `tnl config path` to see
-the selected file without evaluating it, and `tnl config check` to load and
-validate it. `tnl config generate` resolves authenticated team/domain context
-and writes project metadata; see the package guide for setup and regeneration.
+Command-line values override supported `TNL_*` environment variables. Those
+variables override project configuration. Run `tnl config path` to show the
+selected file without evaluating it. Run `tnl config check` to load and validate
+the file. `tnl config generate` uses the current team and domain to write project
+metadata; see the package guide for setup and regeneration.
 
-An explicit access token cannot be sent to a server selected only by project
-configuration: also supply `--server` or `TNL_SERVER`.
+When you provide an access token, you must also select the control URL with
+`--server` or `TNL_SERVER`. The client will not send an explicit token to a
+control URL found only in project configuration.
 
 ## Machine Output
 
-`tnl publish --output=ndjson` emits one lifecycle event per line on stdout.
-Events use `schema_version: 1`; `cursor` increases within that invocation, and
-`tunnel_id` identifies the local tunnel. The cursor is not a replay token. The
-[event type](cmd/tnl/output.go) is the field reference.
+`tnl publish --output=ndjson` writes one status event per line on stdout. Events
+use `schema_version: 1`. The `cursor` increases during one command invocation,
+but it cannot be used to replay events. The `tunnel_id` identifies the local
+tunnel. The [event type](cmd/tnl/output.go) lists all fields.
 
-`tnl status --output=json` emits a single
-[local tunnel snapshot](internal/clientstate/tunnels.go), not lifecycle events.
-It defaults to the current project; add `--all` for every local project.
-Prompts and top-level diagnostics go to stderr. Human diagrams are not an
-automation interface, and `tnl dev` preserves child output unchanged.
+`tnl status --output=json` writes one
+[local tunnel snapshot](internal/clientstate/tunnels.go), not a stream of events.
+It shows the current project by default; add `--all` to include every local
+project. Prompts and top-level diagnostics go to stderr. Human-readable diagrams
+are not an automation interface. `tnl dev` passes child output through unchanged.
 
 ## Telemetry
 
-The CLI sends best-effort pseudonymous usage telemetry to
-`https://tnl.dev/api/telemetry` by default, including when using a self-hosted
-server. Disable it with `--no-telemetry` or `TNL_NO_TELEMETRY=true`.
+By default, the CLI sends pseudonymous usage telemetry to
+`https://tnl.dev/api/telemetry`, even when you use a self-hosted server. Delivery
+is best effort. Disable it with `--no-telemetry` or `TNL_NO_TELEMETRY=true`.
 
-The [payload](cmd/tnl/telemetry.go) contains a persistent installation ID stored
-in client state, event and command names, client version, OS, architecture, and
-whether `CI` is set. Route-start events also classify the server as hosted or
-self-hosted and the framework as Next.js, Vite, other, or unspecified. It does
-not include command arguments, tokens, route hostnames, local paths, or visitor
-traffic. The receiver can observe ordinary network metadata such as the source
-IP; receiver-side retention is managed outside this repository.
+The [payload](cmd/tnl/telemetry.go) includes an installation ID stored in client
+state, event and command names, client version, OS, architecture, and whether
+`CI` is set. Route-start events also identify the server as hosted or self-hosted
+and the framework as Next.js, Vite, other, or unspecified. The payload does not
+include command arguments, tokens, route hostnames, local paths, or visitor
+traffic. As with any HTTP request, the receiver can see network information such
+as the source IP. Its retention policy is managed outside this repository.
 
 CLI telemetry is separate from the server's optional
 [route-usage delivery](docs/SELF-HOSTING.md#route-usage). Disabling either does

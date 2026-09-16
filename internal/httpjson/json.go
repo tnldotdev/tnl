@@ -1,6 +1,6 @@
-// Package httpjson shares bounded JSON mechanics, not API policy. Callers own
-// authentication, media-type checks, timeouts, body closure, and problem/error
-// classification. No generated API or domain types belong here.
+// Package httpjson reads and writes size-limited JSON. Callers handle
+// authentication, media types, timeouts, closing bodies, and API errors. This
+// package does not contain generated API or domain types.
 package httpjson
 
 import (
@@ -16,8 +16,8 @@ var (
 	ErrTrailingContent = errors.New("JSON contains trailing content")
 )
 
-// ReadAll reads at most limit+1 bytes to distinguish a full body from truncation.
-// It never closes the reader. Size violations are distinct from I/O failures.
+// ReadAll reads up to limit bytes and returns ErrTooLarge when more data exists.
+// It does not close the reader. I/O failures are returned unchanged.
 func ReadAll(reader io.Reader, limit int64) ([]byte, error) {
 	if limit < 0 || limit == math.MaxInt64 {
 		return nil, errors.New("httpjson: invalid body limit")
@@ -32,9 +32,9 @@ func ReadAll(reader io.Reader, limit int64) ([]byte, error) {
 	return payload, nil
 }
 
-// Decode accepts one JSON value with no unknown struct fields or trailing data.
-// Configure number handling and bound the input before calling. Standard JSON
-// semantics for null and duplicate object keys are unchanged.
+// Decode reads one JSON value and rejects unknown struct fields or trailing data.
+// Configure number handling and limit the input before calling it. The standard
+// handling of null and duplicate object keys is unchanged.
 func Decode(decoder *json.Decoder, destination any) error {
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(destination); err != nil {
@@ -46,8 +46,8 @@ func Decode(decoder *json.Decoder, destination any) error {
 	return nil
 }
 
-// Write emits application/json. Encoding failure aborts the HTTP response rather
-// than appending another error after headers or a partial body have been sent.
+// Write sends an application/json response. If encoding fails after writing has
+// started, it aborts the response instead of adding a second error body.
 func Write(response http.ResponseWriter, status int, value any) {
 	response.Header().Set("Content-Type", "application/json")
 	response.WriteHeader(status)

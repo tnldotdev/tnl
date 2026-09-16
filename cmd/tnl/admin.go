@@ -31,7 +31,7 @@ type adminServerStatusCommand struct {
 
 type adminRelayCommands struct {
 	List  adminRelaysListCommand `cmd:"" help:"List relay leases."`
-	Drain adminRelayDrainCommand `cmd:"" help:"Drain one exact relay lease."`
+	Drain adminRelayDrainCommand `cmd:"" help:"Drain one matching relay lease."`
 }
 
 type adminRelaysListCommand struct {

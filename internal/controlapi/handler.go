@@ -1,4 +1,4 @@
-// Package controlapi serves the public control API and control-side route authorization.
+// Package controlapi serves the control API and authorizes route operations.
 package controlapi
 
 import (
@@ -40,7 +40,7 @@ type Config struct {
 	DNSAutomation           bool
 }
 
-// Store is the durable control state consumed by the control API.
+// Store is the stored state used by the control API.
 type Store interface {
 	EnsureExternalAuthorityPrincipal(context.Context, string, time.Time) ([32]byte, error)
 	ListAuthorizedRoutes(context.Context, string, string) (controlstate.RoutePage, error)

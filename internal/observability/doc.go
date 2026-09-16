@@ -1,2 +1,3 @@
-// Package observability exposes provider-neutral process and service metrics.
+// Package observability provides process and service metrics without depending
+// on one metrics provider.
 package observability

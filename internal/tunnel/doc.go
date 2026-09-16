@@ -1,2 +1,2 @@
-// Package tunnel implements the transport-neutral tunnelv1 session lifecycle.
+// Package tunnel runs tunnelv1 sessions over supported transports.
 package tunnel

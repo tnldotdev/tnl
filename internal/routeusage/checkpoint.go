@@ -1,4 +1,4 @@
-// Package routeusage defines mergeable route-usage telemetry checkpoints.
+// Package routeusage defines route usage data that can be combined across reports.
 package routeusage
 
 import (

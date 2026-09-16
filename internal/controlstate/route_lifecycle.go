@@ -30,7 +30,7 @@ type RouteSessionAuthentication struct {
 	RouteSessionToken credentials.RouteSessionToken
 }
 
-// RouteSessionLifecycle reports durable readiness and current publisher-connection availability.
+// RouteSessionLifecycle reports saved readiness and current publisher connection availability.
 type RouteSessionLifecycle struct {
 	RouteSessionID                string
 	RouteID                       string
@@ -138,7 +138,7 @@ func (d *Database) MarkRouteSessionReady(
 	return routeSessionLifecycle(session, connections, routingTableRevision, routeEntryRevision), nil
 }
 
-// IngressRoutingTableProjection is the durable route view consumed by ingress.
+// IngressRoutingTableProjection is the stored route view used by ingress.
 type IngressRoutingTableProjection struct {
 	RouteSessionID       string                                   `json:"route_session_id"`
 	RouteID              string                                   `json:"route_id"`

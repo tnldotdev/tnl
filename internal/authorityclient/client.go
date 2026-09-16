@@ -1,9 +1,10 @@
-// Package authorityclient is the bounded client for the authority API.
-// Responses are limited to 64 KiB and successful nonempty bodies must be one
-// schema-matching JSON value. Numbers in open objects remain json.Number.
-// Requests default to 20 seconds; empty successes are accepted. Transport/read
-// failures wrap ErrUnavailable, but decoding/size errors do not. HTTP 429 and
-// 503 take precedence over problem-body parsing.
+// Package authorityclient calls the authority API.
+//
+// Responses cannot exceed 64 KiB. A nonempty successful response must contain
+// one JSON value that matches the generated schema. Numbers in open objects stay
+// as json.Number. Requests time out after 20 seconds. Network and read failures
+// wrap ErrUnavailable, but invalid or oversized responses do not. HTTP 429 and
+// 503 are handled before the client reads a problem response.
 package authorityclient
 
 import (
@@ -192,8 +193,8 @@ func (c *Client) ReleaseTeamDomain(ctx context.Context, teamID, domainID string)
 	return err
 }
 
-// AuthorizeServiceOperation asks the authority for a current authorization
-// decision using the hosted service secret instead of the user's access token.
+// AuthorizeServiceOperation asks the external authority to authorize an
+// operation. It uses the hosted secret instead of the user's access token.
 func (c *Client) AuthorizeServiceOperation(
 	ctx context.Context,
 	serviceSecret string,
@@ -255,7 +256,7 @@ func requestWithToken[T any](ctx context.Context, client *Client, token string, 
 	return result, nil
 }
 
-// ValidateControlSessionResponse validates credentials and fixed session metadata returned by authority.
+// ValidateControlSessionResponse checks credentials and session data returned by the authority.
 func ValidateControlSessionResponse(response authorityv1.ControlSessionResponse, expectedSessionID string, expectedRefreshExpiry time.Time) (clientstate.ControlSession, error) {
 	access := credentials.AccessToken(response.AccessToken)
 	refresh := credentials.RefreshToken(response.RefreshToken)

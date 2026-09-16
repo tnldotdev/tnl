@@ -1,5 +1,5 @@
-// Package controlstate owns PostgreSQL-backed durable control state and its
-// transactional lifecycle operations, including schema migration.
+// Package controlstate stores persistent control state in PostgreSQL and changes
+// that state in transactions. It also manages schema migrations.
 package controlstate
 
 import (
@@ -30,15 +30,15 @@ const (
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
 
-// Database is a runtime connection pool for control state. Its PostgreSQL
-// implementation is intentionally kept private to this package.
+// Database is the PostgreSQL connection pool for control state. Its database
+// details remain private to this package.
 type Database struct {
 	pool       *pgxpool.Pool
 	storageKey *storagekey.Keyring
 }
 
-// Migrate applies all embedded control-state migrations using a direct
-// PostgreSQL URL. Concurrent callers are serialized by a durable table row.
+// Migrate applies every embedded control-state migration through a direct
+// PostgreSQL URL. A persistent table lock allows only one migration at a time.
 func Migrate(ctx context.Context, directURL string) (retErr error) {
 	config, err := parseDirectConfig(directURL)
 	if err != nil {

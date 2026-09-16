@@ -26,7 +26,7 @@ type domainClaimCommand struct {
 
 type domainDefaultCommand struct {
 	remoteFlags `embed:""`
-	Domain      string `arg:"" name:"domain" required:"" help:"Domain ID or canonical domain."`
+	Domain      string `arg:"" name:"domain" required:"" help:"Domain ID or domain name."`
 }
 
 type domainListCommand struct {
@@ -35,7 +35,7 @@ type domainListCommand struct {
 
 type domainReleaseCommand struct {
 	remoteFlags `embed:""`
-	Domain      string `arg:"" name:"domain" required:"" help:"Domain ID or canonical domain."`
+	Domain      string `arg:"" name:"domain" required:"" help:"Domain ID or domain name."`
 }
 
 func runDomainClaim(ctx context.Context, command domainClaimCommand, output, diagnostics io.Writer) error {

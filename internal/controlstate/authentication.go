@@ -72,7 +72,8 @@ type ControlSession struct {
 	Identity         IdentityContext
 }
 
-// OIDCIdentity is the bounded identity and assertion state verified from an ID token.
+// OIDCIdentity contains the limited identity and assertion fields verified from
+// an ID token.
 type OIDCIdentity struct {
 	Issuer          string
 	Subject         string

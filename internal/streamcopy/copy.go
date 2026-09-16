@@ -1,4 +1,4 @@
-// Package streamcopy copies opaque bidirectional streams while preserving half-closes.
+// Package streamcopy copies bytes in both directions and preserves half-closes.
 package streamcopy
 
 import (
@@ -21,15 +21,15 @@ type Result struct {
 	RightToLeft int64
 }
 
-// Copy waits for both directions, half-closing destinations when supported.
-// Callers own final closure and cancellation via connection closure/deadlines;
-// a non-normalized first-direction failure closes both to unblock the other.
+// Copy waits for both directions and half-closes each destination when supported.
+// The caller must close or set deadlines on the connections to cancel the copy.
+// An unexpected error in either direction closes both connections.
 func Copy(left, right net.Conn) (Result, error) {
 	return CopyObserved(left, right, nil, nil)
 }
 
-// CopyObserved is Copy with synchronous per-write byte observations. The two
-// direction callbacks may run concurrently and must not block stream progress.
+// CopyObserved is Copy with a callback after each write. The callbacks may run
+// at the same time and must return quickly.
 func CopyObserved(
 	left, right net.Conn,
 	onLeftToRight, onRightToLeft func(int64),

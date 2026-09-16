@@ -49,7 +49,7 @@ func (p *Route53Provider) PublishRoute(ctx context.Context, record RouteRecord) 
 	ownerExists := owner != nil
 	if ownerExists && !plainRecordSet(owner) || ownerExists &&
 		(len(owner.ResourceRecords) != 1 || aws.ToString(owner.ResourceRecords[0].Value) != marker) {
-		return Zone{}, terminalf("route DNS ownership marker does not match")
+		return Zone{}, terminalf("public route DNS ownership marker does not match")
 	}
 	if !ownerExists && len(addressRecords) != 0 {
 		return Zone{}, terminalf("route hostname already has unowned address records")
@@ -106,7 +106,7 @@ func (p *Route53Provider) RemoveRoute(ctx context.Context, record RouteRecord) (
 	}
 	if !plainRecordSet(owner) || len(owner.ResourceRecords) != 1 ||
 		aws.ToString(owner.ResourceRecords[0].Value) != routeOwnerValue(record.RouteID) {
-		return Zone{}, terminalf("route DNS ownership marker does not match")
+		return Zone{}, terminalf("public route DNS ownership marker does not match")
 	}
 	changes := make([]types.Change, 0, len(addressRecords)+1)
 	for _, recordType := range []types.RRType{types.RRTypeA, types.RRTypeAaaa} {
@@ -307,7 +307,7 @@ func (p *Route53Provider) findClaimedZone(ctx context.Context, work controlstate
 func (p *Route53Provider) routeZone(ctx context.Context, record RouteRecord) (Zone, error) {
 	zoneID := canonicalZoneID(record.ZoneID)
 	if zoneID == "" {
-		return Zone{}, terminalf("route DNS zone has no ID")
+		return Zone{}, terminalf("public route DNS zone has no ID")
 	}
 	output, err := p.client.GetHostedZone(ctx, &route53.GetHostedZoneInput{Id: aws.String(zoneID)})
 	if err != nil {
