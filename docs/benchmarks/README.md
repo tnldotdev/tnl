@@ -59,11 +59,19 @@ Execution requires:
 - An existing public Route 53 parent zone and its bare hosted-zone ID.
 - An email address accepted for the configured public ACME directory.
 
+The benchmark tasks load `.env.bench` automatically. Create the ignored local
+file with owner-only permissions, then fill in the benchmark settings and AWS
+credentials:
+
+```console
+install -m 0600 .env.bench.example .env.bench
+```
+
 The runner copies the active AWS credentials into encrypted Fly secrets on the
 control app because control manages benchmark DNS and certificates. It never
-writes generated credentials or AWS credentials to the run manifest. Prefer
-short-lived AWS credentials and do not put `BENCH_APPROVED` in a persistent
-shell profile or environment file.
+writes generated credentials or AWS credentials to the run manifest. Keep
+`.env.bench` at mode `0600`, use dedicated least-privilege credentials, and do
+not add `BENCH_APPROVED` to the file.
 
 ## Execute
 
@@ -72,13 +80,7 @@ Execution creates paid Fly and AWS resources. A plan is not approval. Set both
 that exact suite's plan.
 
 ```console
-BENCH_SUITE=smoke \
-BENCH_APPROVED=1 \
-BENCH_FLY_ORG=example \
-BENCH_PARENT_DOMAIN=bench.example.com \
-BENCH_PARENT_ZONE_ID=Z0123456789EXAMPLE \
-BENCH_ACME_EMAIL=operator@example.com \
-mise exec -- task go:bench-fly:run
+BENCH_APPROVED=1 mise exec -- task go:bench-fly:run
 ```
 
 The runner creates `bench-results/<run-id>/` before provisioning and records

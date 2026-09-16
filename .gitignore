@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+!.env.bench.example
 node_modules/
 coverage/
 dist/
