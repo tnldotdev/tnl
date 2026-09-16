@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/alecthomas/kong"
 	"github.com/tnldotdev/tnl/internal/buildinfo"
@@ -143,6 +144,7 @@ func classifyCommandError(err error) error {
 }
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterFactories ...telemetryReporterFactory) (result error) {
+	started := time.Now()
 	command := ""
 	defer func() {
 		result = classifyCommandError(result)
@@ -177,6 +179,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	flags.Dev.Command = devCommand
 	applyTunnelCLIUnits(parseArgs, parsedCommand, &flags)
 	command = clioutput.CommandTitle("tnl", parsedCommand)
+	var startup *startupTimings
+	switch parsedCommand {
+	case "publish <service-or-target>":
+		startup = newStartupTimings(flags.Publish.StartupTimings, started)
+		flags.Publish.startup = startup
+	case "dev <service>":
+		startup = newStartupTimings(flags.Dev.StartupTimings, started)
+		flags.Dev.startup = startup
+	}
 	var project projectConfiguration
 	projectStateRoot := ""
 	switch parsedCommand {
@@ -212,6 +223,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 			}
 		}
 	}
+	startup.mark("configuration")
 	var telemetry telemetryReporter
 	if !flags.NoTelemetry && len(reporterFactories) != 0 && reporterFactories[0] != nil {
 		root, stateErr := commandStateRoot(parsed)
@@ -308,6 +320,8 @@ func canonicalParsedCommand(command string) string {
 		return "dev <service>"
 	case "publish":
 		return "publish <service-or-target>"
+	case "login <server>":
+		return "login"
 	default:
 		return command
 	}
