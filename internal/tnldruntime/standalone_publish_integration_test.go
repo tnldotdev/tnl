@@ -14,6 +14,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/tunnel"
+	"golang.org/x/net/websocket"
 )
 
 func TestIntegrationStandalonePublishAndVisit(t *testing.T) {
@@ -204,6 +205,87 @@ func TestIntegrationPublisherTransportMatrix(t *testing.T) {
 					quicStats.successful.Load(), quicStats.attempts.Load(), tcpStats.successful.Load(),
 				)
 			}
+		})
+	}
+}
+
+func TestIntegrationLongLivedHTTPStreams(t *testing.T) {
+	for _, transport := range []string{"quic", "tls-tcp"} {
+		t.Run(transport, func(t *testing.T) {
+			fixture := newStandalonePublishFixture(t, "long-lived-http-"+transport)
+			websocketGate := make(chan struct{})
+			sseGate := make(chan struct{})
+			streamGate := make(chan struct{})
+			// Release handlers even if an assertion fails before the first read.
+			releaseWebSocket := sync.OnceFunc(func() { close(websocketGate) })
+			releaseSSE := sync.OnceFunc(func() { close(sseGate) })
+			releaseStream := sync.OnceFunc(func() { close(streamGate) })
+			defer releaseWebSocket()
+			defer releaseSSE()
+			defer releaseStream()
+			mux := http.NewServeMux()
+			mux.Handle("/websocket", websocket.Handler(func(connection *websocket.Conn) {
+				defer connection.Close()
+				if err := connection.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+					return
+				}
+				if err := websocket.Message.Send(connection, "connected"); err != nil {
+					return
+				}
+				if err := waitForDoneWithin(websocketGate, 10*time.Second); err != nil {
+					return
+				}
+				_ = websocket.Message.Send(connection, "update")
+			}))
+			mux.HandleFunc("/events", func(response http.ResponseWriter, _ *http.Request) {
+				flusher, ok := response.(http.Flusher)
+				if !ok {
+					http.Error(response, "streaming unsupported", http.StatusInternalServerError)
+					return
+				}
+				response.Header().Set("Content-Type", "text/event-stream")
+				_, _ = io.WriteString(response, "data: connected\n\n")
+				flusher.Flush()
+				if err := waitForDoneWithin(sseGate, 10*time.Second); err != nil {
+					return
+				}
+				_, _ = io.WriteString(response, "data: update\n\n")
+				flusher.Flush()
+			})
+			mux.HandleFunc("/stream", func(response http.ResponseWriter, _ *http.Request) {
+				flusher, ok := response.(http.Flusher)
+				if !ok {
+					http.Error(response, "streaming unsupported", http.StatusInternalServerError)
+					return
+				}
+				response.Header().Set("Content-Type", "text/plain")
+				_, _ = io.WriteString(response, "first\n")
+				flusher.Flush()
+				if err := waitForDoneWithin(streamGate, 10*time.Second); err != nil {
+					return
+				}
+				_, _ = io.WriteString(response, "second\n")
+				flusher.Flush()
+			})
+			target := httptest.NewServer(mux)
+			cleanupIntegrationHTTPServer(t, target, fixture.owner)
+
+			quicBase, tcpBase := fixture.connectors()
+			var quicConnector, tcpConnector muxsession.Connector
+			if transport == "quic" {
+				quicConnector = quicBase
+				tcpConnector, _ = disabledIntegrationConnector("TLS/TCP disabled by integration test")
+			} else {
+				quicConnector, _ = disabledIntegrationConnector("QUIC disabled by integration test")
+				tcpConnector = tcpBase
+			}
+			handle := fixture.startPublisher(t, target.URL, quicConnector, tcpConnector)
+			ready := fixture.waitReady(t, handle)
+
+			assertIntegrationWebSocketPushes(t, fixture, releaseWebSocket)
+			assertIntegrationSSEPushes(t, fixture, ready.PublicURL, releaseSSE)
+			assertIntegrationStreamingResponse(t, fixture, ready.PublicURL, releaseStream)
+			stopIntegrationPublisher(t, handle)
 		})
 	}
 }

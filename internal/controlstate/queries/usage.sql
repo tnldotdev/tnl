@@ -232,26 +232,39 @@ WHERE ended_at IS NULL
 RETURNING *;
 
 -- name: FinalizeRouteUsageBuckets :many
-UPDATE control.route_usage_buckets
+WITH finalizable AS (
+    SELECT
+        buckets.bucket_id,
+        NOT EXISTS (
+            SELECT 1
+            FROM control.ingress_usage_runs AS incomplete
+            WHERE incomplete.incomplete_from < buckets.bucket_end
+              AND incomplete.incomplete_until > buckets.bucket_start
+        ) AS complete
+    FROM control.route_usage_buckets AS buckets
+    WHERE NOT buckets.finalized
+      AND buckets.bucket_end <= sqlc.arg(through)
+      AND NOT EXISTS (
+          SELECT 1
+          FROM control.ingress_usage_runs AS runs
+          WHERE runs.ended_at IS NULL
+            AND runs.started_at < buckets.bucket_end
+            AND runs.observed_through < buckets.bucket_end
+      )
+    FOR UPDATE OF buckets
+)
+UPDATE control.route_usage_buckets AS buckets
 SET finalized = true,
-    complete = NOT EXISTS (
-        SELECT 1
-        FROM control.ingress_usage_runs AS incomplete
-        WHERE incomplete.incomplete_from < control.route_usage_buckets.bucket_end
-          AND incomplete.incomplete_until > control.route_usage_buckets.bucket_start
-    ),
+    complete = finalizable.complete,
+    observed_through = CASE
+        WHEN finalizable.complete THEN buckets.bucket_end
+        ELSE buckets.observed_through
+    END,
     finalized_at = sqlc.arg(finalized_at),
     updated_at = sqlc.arg(finalized_at)
-WHERE NOT finalized
-  AND bucket_end <= sqlc.arg(through)
-  AND NOT EXISTS (
-      SELECT 1
-      FROM control.ingress_usage_runs AS runs
-      WHERE runs.ended_at IS NULL
-        AND runs.started_at < control.route_usage_buckets.bucket_end
-        AND runs.observed_through < control.route_usage_buckets.bucket_end
-  )
-RETURNING *;
+FROM finalizable
+WHERE buckets.bucket_id = finalizable.bucket_id
+RETURNING buckets.*;
 
 -- name: InsertRouteUsageDelivery :one
 INSERT INTO control.route_usage_deliveries (

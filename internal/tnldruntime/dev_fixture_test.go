@@ -1,6 +1,7 @@
 package tnldruntime
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -228,7 +229,7 @@ func dialIntegrationWebsocket(t *testing.T, config *websocket.Config) *websocket
 	return connection
 }
 
-func assertIntegrationViteHMR(t *testing.T, roots *x509.CertPool, hostname string, client []byte) {
+func assertIntegrationViteHMR(t *testing.T, roots *x509.CertPool, hostname string, client []byte, sourcePath string) {
 	t.Helper()
 	token := regexp.MustCompile(`const wsToken = "([^"]+)"`).FindSubmatch(client)
 	if token == nil {
@@ -252,9 +253,38 @@ func assertIntegrationViteHMR(t *testing.T, roots *x509.CertPool, hostname strin
 	if err := json.Unmarshal([]byte(payload), &message); err != nil || message.Type != "connected" {
 		t.Fatalf("Vite HMR message = %q, error %v", payload, err)
 	}
+	if err := connection.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	replaceIntegrationFixtureText(t, sourcePath, "Vite fixture", "Vite fixture HMR")
+	for {
+		var payload string
+		if err := websocket.Message.Receive(connection, &payload); err != nil {
+			t.Fatalf("receive Vite HMR update through public route: %v", err)
+		}
+		var message struct {
+			Type    string `json:"type"`
+			Updates []struct {
+				Path         string `json:"path"`
+				AcceptedPath string `json:"acceptedPath"`
+			} `json:"updates"`
+		}
+		if err := json.Unmarshal([]byte(payload), &message); err != nil {
+			t.Fatalf("decode Vite HMR update %q: %v", payload, err)
+		}
+		if message.Type != "update" {
+			continue
+		}
+		for _, update := range message.Updates {
+			if update.Path == "/src/main.ts" && update.AcceptedPath == "/src/main.ts" {
+				return
+			}
+		}
+		t.Fatalf("Vite HMR update did not include /src/main.ts: %s", payload)
+	}
 }
 
-func assertIntegrationNextHMR(t *testing.T, roots *x509.CertPool, hostname string) {
+func assertIntegrationNextHMR(t *testing.T, roots *x509.CertPool, hostname, sourcePath string) {
 	t.Helper()
 	config, err := websocket.NewConfig("wss://"+hostname+"/_next/hmr?id=tnl-integration", "https://"+hostname)
 	if err != nil {
@@ -263,15 +293,60 @@ func assertIntegrationNextHMR(t *testing.T, roots *x509.CertPool, hostname strin
 	config.TlsConfig = &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS13}
 	connection := dialIntegrationWebsocket(t, config)
 	defer connection.Close()
-	var payload string
-	if err := websocket.Message.Receive(connection, &payload); err != nil {
-		t.Fatalf("receive Next.js HMR: %v", err)
+	connected := false
+	for !connected {
+		var payload string
+		if err := websocket.Message.Receive(connection, &payload); err != nil {
+			t.Fatalf("receive Next.js HMR connection message through public route: %v", err)
+		}
+		var message struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal([]byte(payload), &message); err != nil {
+			t.Fatalf("decode Next.js HMR connection message %q: %v", payload, err)
+		}
+		switch message.Type {
+		case "isrManifest":
+		case "turbopack-connected":
+			connected = true
+		default:
+			t.Fatalf("unexpected initial Next.js HMR message: %s", payload)
+		}
 	}
-	var message struct {
-		Type string `json:"type"`
+	if err := connection.SetReadDeadline(time.Now().Add(30 * time.Second)); err != nil {
+		t.Fatal(err)
 	}
-	if err := json.Unmarshal([]byte(payload), &message); err != nil || (message.Type != "isrManifest" && message.Type != "turbopack-connected") {
-		t.Fatalf("Next.js HMR message = %q, error %v", payload, err)
+	replaceIntegrationFixtureText(t, sourcePath, "Next.js fixture", "Next.js fixture refreshed")
+	for {
+		var payload string
+		if err := websocket.Message.Receive(connection, &payload); err != nil {
+			t.Fatalf("receive Next.js HMR update through public route: %v", err)
+		}
+		var message struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal([]byte(payload), &message); err != nil {
+			continue // Next.js may interleave binary Turbopack protocol messages.
+		}
+		switch message.Type {
+		case "building", "built", "turbopack-message", "serverComponentChanges", "clientChanges":
+			return
+		}
+	}
+}
+
+func replaceIntegrationFixtureText(t *testing.T, path, old, replacement string) {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := bytes.Replace(content, []byte(old), []byte(replacement), 1)
+	if bytes.Equal(updated, content) {
+		t.Fatalf("fixture %s does not contain %q", path, old)
+	}
+	if err := os.WriteFile(path, updated, 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 

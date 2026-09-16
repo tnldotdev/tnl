@@ -1,3 +1,5 @@
+import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { runInNewContext } from "node:vm";
 import type { ConfigEnv, Plugin, UserConfig } from "vite";
 import { describe, expect, test } from "vitest";
@@ -12,6 +14,7 @@ import {
   openTestWebSocketWithMessage,
   requestTestServer,
   findAvailableLoopbackPort,
+  waitForWebSocketMessage,
 } from "./test-helper/http-websocket.js";
 import { startTestBootstrap } from "./test-helper/bootstrap.js";
 import { withProcessEnvironment } from "./test-helper/environment.js";
@@ -117,11 +120,13 @@ describe("tnl", () => {
 });
 
 test(
-  "runs Vite with host filtering, a preserved wildcard binding, runtime metadata, and an HMR WebSocket handshake",
+  "runs Vite with host filtering, a preserved wildcard binding, runtime metadata, and real HMR",
   { timeout: 60_000 },
   async () => {
     const port = await findAvailableLoopbackPort();
     const fixture = await startViteFixture(port);
+    const source = join(fixture.directory, "src", "main.ts");
+    const originalSource = await readFile(source, "utf8");
 
     await fixture.diagnose(async () => {
       expect(await fixture.request()).toMatchObject({
@@ -159,13 +164,28 @@ test(
       );
       expect(JSON.parse(payload)).toEqual(testPublicProject(true));
 
-      const { message: socketMessage } = await openTestWebSocketWithMessage(
+      const { message: socketMessage, socket } = await openTestWebSocketWithMessage(
         port,
         `/?token=${encodeURIComponent(token)}`,
         { origin: "https://api.member.example", protocol: "vite-hmr" },
       );
       const message = JSON.parse(socketMessage) as { type?: string };
       expect(message.type).toBe("connected");
+      const updateMessage = waitForWebSocketMessage(socket, 30_000);
+      await writeFile(source, originalSource.replace("Vite fixture", "Vite fixture HMR"));
+      const update = JSON.parse(await updateMessage) as {
+        type?: string;
+        updates?: { acceptedPath?: string; path?: string }[];
+      };
+      expect(update).toMatchObject({
+        type: "update",
+        updates: [expect.objectContaining({ acceptedPath: "/src/main.ts", path: "/src/main.ts" })],
+      });
+      const updatedModule = await requestTestServer(port, {
+        path: `/src/main.ts?t=${Date.now()}`,
+      });
+      expect(updatedModule.status).toBe(200);
+      expect(updatedModule.body).toContain("Vite fixture HMR");
     });
   },
 );
