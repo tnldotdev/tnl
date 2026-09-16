@@ -441,12 +441,13 @@ func provisionBenchmark(
 		"TNLD_MODE": "ingress", "TNLD_CONTROL_HOSTNAME": "control." + manifest.ServerDomain,
 		"TNLD_PRIVATE_CONTROL_ADDRESS": apps["control"] + ".internal:9443",
 		"TNLD_INGRESS_LISTEN":          ":8443", "TNLD_METRICS_LISTEN": ":9090",
+		"TNLD_REQUIRE_PROXY_HEADER": "true",
 	}
 	for index := range plan.Topology.IngressProcesses {
 		machine, err := fly.runMachine(ctx, machineSpec{
 			App: apps["ingress"], Name: fmt.Sprintf("ingress-%d", index+1), Image: image,
 			Command: "/tnld serve", Size: plan.Machines.Ingress, Restart: "always", Env: ingressEnvironment,
-			Ports: []string{"443:8443/tcp"},
+			MachineConfig: ingressFlyMachineConfig,
 		})
 		if err != nil {
 			return provisionedBenchmark{}, err
@@ -491,6 +492,8 @@ func provisionBenchmark(
 		serverDomain: manifest.ServerDomain, managedDomain: manifest.ManagedDomain,
 	}, nil
 }
+
+const ingressFlyMachineConfig = `{"services":[{"protocol":"tcp","internal_port":8443,"ports":[{"port":443,"handlers":["proxy_proto"],"proxy_proto_options":{"version":"v2"}}]}]}`
 
 func executeCell(
 	ctx context.Context,

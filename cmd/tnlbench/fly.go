@@ -48,16 +48,17 @@ type flyMachine struct {
 }
 
 type machineSpec struct {
-	App       string
-	Name      string
-	Image     string
-	Command   string
-	Size      string
-	Restart   string
-	Env       map[string]string
-	Ports     []string
-	Volume    string
-	MountPath string
+	App           string
+	Name          string
+	Image         string
+	Command       string
+	Size          string
+	Restart       string
+	Env           map[string]string
+	Ports         []string
+	MachineConfig string
+	Volume        string
+	MountPath     string
 }
 
 func (f flyPlatform) preflight(ctx context.Context) error {
@@ -225,6 +226,9 @@ func (f flyPlatform) runMachine(ctx context.Context, spec machineSpec) (flyMachi
 	}
 	for _, port := range spec.Ports {
 		arguments = append(arguments, "--port", port)
+	}
+	if spec.MachineConfig != "" {
+		arguments = append(arguments, "--machine-config", spec.MachineConfig)
 	}
 	if spec.Volume != "" {
 		arguments = append(arguments, "--volume", spec.Volume+":"+spec.MountPath)
