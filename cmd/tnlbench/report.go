@@ -193,6 +193,7 @@ func buildCellReport(cellID string, rows []benchmarkResult) (cellReport, error) 
 	seen := make(map[string]struct{})
 	want := make(map[string]int)
 	phases := make(map[string]*phaseAccumulator)
+	var resourceSamples []resourceSample
 	for _, row := range rows {
 		if row.Suite != cell.Suite || row.Repetition != cell.Repetition || row.Configuration.Sequence != cell.Sequence ||
 			row.Configuration.Routes != cell.Routes || row.Configuration.FreshConnectionsPerSecond != cell.FreshRate ||
@@ -240,6 +241,7 @@ func buildCellReport(cellID string, rows []benchmarkResult) (cellReport, error) 
 			}
 		}
 		for _, sample := range row.Resources {
+			resourceSamples = append(resourceSamples, sample)
 			for name, value := range sample.Metrics {
 				key := sample.Role + "/" + name
 				cell.ResourceMaximums[key] = max(cell.ResourceMaximums[key], value)
@@ -254,6 +256,16 @@ func buildCellReport(cellID string, rows []benchmarkResult) (cellReport, error) 
 			cell.Failures = append(cell.Failures, fmt.Sprintf("expected %d %s workers, found %d", want[kind], kind, found))
 		}
 	}
+	if cell.Status == "passed" {
+		rejections, err := ingressSourceLimiterRejections(resourceSamples)
+		if err != nil {
+			cell.Status = "failed"
+			cell.Failures = append(cell.Failures, "ingress source limiter validation: "+err.Error())
+		} else if rejections > 0 {
+			cell.Status = "failed"
+			cell.Failures = append(cell.Failures, fmt.Sprintf("ingress source limiter rejected %g visitor connections", rejections))
+		}
+	}
 	for name, phase := range phases {
 		cell.Phases[name] = phaseReport{
 			Attempts: phase.attempts, Successes: phase.successes, Errors: phase.errors, Bytes: phase.bytes,
@@ -265,6 +277,57 @@ func buildCellReport(cellID string, rows []benchmarkResult) (cellReport, error) 
 		}
 	}
 	return cell, nil
+}
+
+func ingressSourceLimiterRejections(samples []resourceSample) (float64, error) {
+	const metric = "tnl_source_limiter_rejections_total"
+	type pair struct {
+		ready, loaded       float64
+		hasReady, hasLoaded bool
+	}
+	byIdentity := make(map[string]pair)
+	for _, sample := range samples {
+		if sample.Role != "ingress" {
+			continue
+		}
+		if sample.Error != "" {
+			return 0, fmt.Errorf("sample %s at %s: %s", sample.Identity, sample.Moment, sample.Error)
+		}
+		value, ok := sample.Metrics[metric]
+		if !ok {
+			return 0, fmt.Errorf("sample %s at %s has no %s", sample.Identity, sample.Moment, metric)
+		}
+		current := byIdentity[sample.Identity]
+		switch sample.Moment {
+		case "ready":
+			if current.hasReady {
+				return 0, fmt.Errorf("sample %s repeats ready metrics", sample.Identity)
+			}
+			current.ready, current.hasReady = value, true
+		case "loaded":
+			if current.hasLoaded {
+				return 0, fmt.Errorf("sample %s repeats loaded metrics", sample.Identity)
+			}
+			current.loaded, current.hasLoaded = value, true
+		default:
+			return 0, fmt.Errorf("sample %s has unknown moment %q", sample.Identity, sample.Moment)
+		}
+		byIdentity[sample.Identity] = current
+	}
+	if len(byIdentity) == 0 {
+		return 0, errors.New("no ingress metrics were collected")
+	}
+	var total float64
+	for identity, values := range byIdentity {
+		if !values.hasReady || !values.hasLoaded {
+			return 0, fmt.Errorf("sample %s does not have ready and loaded metrics", identity)
+		}
+		if values.loaded < values.ready {
+			return 0, fmt.Errorf("sample %s counter reset while the cell ran", identity)
+		}
+		total += values.loaded - values.ready
+	}
+	return total, nil
 }
 
 func workerKindCount(seen map[string]struct{}, kind string) int {
