@@ -60,13 +60,13 @@ type benchmarkWorkerLimits struct {
 }
 
 type benchmarkPricing struct {
-	SnapshotDate         string             `json:"snapshot_date"`
-	SourceURL            string             `json:"source_url"`
-	Route53SourceURL     string             `json:"route53_source_url"`
-	MachinePerSecondUSD  map[string]float64 `json:"machine_per_second_usd"`
-	PublicIPv4PerHour    float64            `json:"public_ipv4_per_hour_usd"`
-	VolumeGBPerMonth     float64            `json:"volume_gb_per_month_usd"`
-	HostedZonePerMonth   float64            `json:"hosted_zone_per_month_usd"`
+	SnapshotDate        string             `json:"snapshot_date"`
+	SourceURL           string             `json:"source_url"`
+	Route53SourceURL    string             `json:"route53_source_url"`
+	MachinePerSecondUSD map[string]float64 `json:"machine_per_second_usd"`
+	PublicIPv4PerHour   float64            `json:"public_ipv4_per_hour_usd"`
+	VolumeGBPerMonth    float64            `json:"volume_gb_per_month_usd"`
+	HostedZonePerMonth  float64            `json:"hosted_zone_per_month_usd"`
 }
 
 type suiteDefinition struct {
@@ -176,7 +176,7 @@ func (c planCommand) build(now time.Time) (benchmarkPlan, error) {
 		PricingSnapshotDate: profile.Pricing.SnapshotDate, PricingSourceURL: profile.Pricing.SourceURL,
 		Route53PricingSourceURL: profile.Pricing.Route53SourceURL,
 		RequiredInputs: []string{
-			"Fly organization access through fly", "AWS credentials with Route 53 access",
+			"Fly organization access through flyctl", "AWS credentials with Route 53 access",
 			"an existing public Route 53 parent zone", "an ACME account email",
 		},
 		Overrides: configuredOverrides(),

@@ -52,7 +52,7 @@ The suites are:
 
 Execution requires:
 
-- `fly` authenticated to the organization selected by `BENCH_FLY_ORG`. Set
+- `flyctl` authenticated to the organization selected by `BENCH_FLY_ORG`. Set
   `BENCH_FLY_BINARY` if it is not on `PATH`.
 - AWS credentials in the standard environment variables with permission to
   create and delete Route 53 hosted zones and update the parent zone.
