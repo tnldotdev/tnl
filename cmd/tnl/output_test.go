@@ -212,6 +212,63 @@ func TestPublishOutputHumanProvisioningWarningStopsAtReady(t *testing.T) {
 	}
 }
 
+func TestPublishOutputTransportFallbackWarning(t *testing.T) {
+	var stdout bytes.Buffer
+	output, err := newPublishOutput("ndjson", "tnl publish", &stdout, io.Discard, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := output.starting("tunnel_0123456789abcdef0123456789abcdef", "http://127.0.0.1:3000"); err != nil {
+		t.Fatal(err)
+	}
+	if err := output.transportFallback(2, "tls-tcp"); err != nil {
+		t.Fatal(err)
+	}
+	if err := output.transportFallback(2, "tls-tcp"); err != nil {
+		t.Fatal(err)
+	}
+	if err := output.ready("https://demo.example", 2); err != nil {
+		t.Fatal(err)
+	}
+
+	decoder := json.NewDecoder(&stdout)
+	var starting, warning, ready publishEvent
+	for _, event := range []*publishEvent{&starting, &warning, &ready} {
+		if err := decoder.Decode(event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if starting.Type != "starting" || warning.Type != "warning" || warning.RouteVersion != 2 ||
+		warning.Transport != "tls-tcp" || warning.Retryable == nil || *warning.Retryable ||
+		!strings.Contains(warning.Message, "QUIC did not establish") || ready.Type != "ready" {
+		t.Fatalf("events = %#v, %#v, %#v", starting, warning, ready)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		t.Fatalf("trailing event: %v", err)
+	}
+}
+
+func TestPublishOutputHumanShowsTransportFallbackAtReady(t *testing.T) {
+	var stderr bytes.Buffer
+	output, err := newPublishOutput("human", "tnl dev", io.Discard, &stderr, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := output.transportFallback(3, "tls-tcp"); err != nil {
+		t.Fatal(err)
+	}
+	if err := output.ready("https://demo.example", 3); err != nil {
+		t.Fatal(err)
+	}
+	got := stderr.String()
+	if strings.Count(got, "+--[ tnl dev ]-- transport fallback ") != 1 ||
+		!strings.Contains(got, "tunnel continues over TLS/TCP") ||
+		!strings.Contains(got, "transport      TLS/TCP fallback") {
+		t.Fatalf("human output = %q", got)
+	}
+}
+
 func TestPublishOutputNDJSONWarnsWhenBrowserCannotOpen(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	openCount := 0

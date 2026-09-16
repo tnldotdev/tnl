@@ -99,6 +99,93 @@ func TestQUICConnectorKeepsIdleSessionAlive(t *testing.T) {
 	}
 }
 
+func TestRequiresBasicQUICPacketConn(t *testing.T) {
+	for _, test := range []struct {
+		address string
+		want    bool
+	}{
+		{address: "fly-global-services:443", want: true},
+		{address: "127.0.0.1:443"},
+		{address: "[::]:443"},
+		{address: "missing-port"},
+	} {
+		if got := requiresBasicQUICPacketConn(test.address); got != test.want {
+			t.Errorf("requiresBasicQUICPacketConn(%q) = %t; want %t", test.address, got, test.want)
+		}
+	}
+}
+
+func TestFlyQUICConfig(t *testing.T) {
+	config := &quic.Config{InitialPacketSize: 1400}
+	flyConfig := flyQUICConfig(config)
+	if flyConfig.InitialPacketSize != compatibleQUICPacketSize {
+		t.Errorf("initial packet size = %d; want %d", flyConfig.InitialPacketSize, compatibleQUICPacketSize)
+	}
+	if !flyConfig.DisablePathMTUDiscovery {
+		t.Error("path MTU discovery remains enabled")
+	}
+	if config.InitialPacketSize != 1400 || config.DisablePathMTUDiscovery {
+		t.Fatal("caller QUIC config was modified")
+	}
+}
+
+func TestQUICConnectorConfig(t *testing.T) {
+	if got := quicConnectorConfig(nil).InitialPacketSize; got != compatibleQUICPacketSize {
+		t.Errorf("default initial packet size = %d; want %d", got, compatibleQUICPacketSize)
+	}
+	config := &quic.Config{InitialPacketSize: 1300}
+	if got := quicConnectorConfig(config).InitialPacketSize; got != 1300 {
+		t.Errorf("explicit initial packet size = %d; want 1300", got)
+	}
+	if config.InitialPacketSize != 1300 {
+		t.Fatal("caller QUIC config was modified")
+	}
+}
+
+func TestBasicQUICPacketConn(t *testing.T) {
+	serverTLS, clientTLS := testTLSConfigs(t)
+	serverTLS, err := transportTLSConfig(serverTLS, "", true)
+	if err != nil {
+		t.Fatalf("configure server TLS: %v", err)
+	}
+	listener, packetConn, err := listenBasicQUIC("127.0.0.1:0", serverTLS, quicConfig(nil))
+	if err != nil {
+		t.Fatalf("listen basic QUIC: %v", err)
+	}
+	address := packetConn.LocalAddr().String()
+	wrapped := &QUICListener{listener: listener, packetConn: packetConn}
+	accepted := make(chan error, 1)
+	go func() {
+		connection, err := wrapped.Accept(context.Background())
+		if err == nil {
+			err = connection.Close()
+		}
+		accepted <- err
+	}()
+	client, err := (QUICConnector{TLSConfig: clientTLS}).Connect(t.Context(), Endpoint{
+		Address: address, ServerName: "relay.test",
+	})
+	if err != nil {
+		t.Fatalf("connect basic QUIC: %v", err)
+	}
+	if err := client.Close(); err != nil {
+		t.Fatalf("close client: %v", err)
+	}
+	if err := <-accepted; err != nil {
+		t.Fatalf("accept basic QUIC: %v", err)
+	}
+	if err := wrapped.Close(); err != nil {
+		t.Fatalf("close basic listener: %v", err)
+	}
+	reopened, err := net.ListenPacket("udp4", address)
+	if err != nil {
+		t.Fatalf("reopen UDP after listener close: %v", err)
+	}
+	if err := reopened.Close(); err != nil {
+		t.Fatalf("close reopened UDP socket: %v", err)
+	}
+}
+
 func assertRoundTrip(t *testing.T, client, server Session, message string) {
 	t.Helper()
 	clientStream, err := client.OpenStream(t.Context())

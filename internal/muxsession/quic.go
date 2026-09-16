@@ -13,6 +13,8 @@ import (
 
 const defaultQUICKeepAlivePeriod = 30 * time.Second
 
+const compatibleQUICPacketSize = 1200
+
 // QUICConfig configures the QUIC transport.
 type QUICConfig struct {
 	Config *quic.Config
@@ -32,7 +34,7 @@ func (c QUICConnector) Connect(ctx context.Context, endpoint Endpoint) (Session,
 	if err != nil {
 		return nil, err
 	}
-	config := quicConfig(c.Config.Config)
+	config := quicConnectorConfig(c.Config.Config)
 	if config.KeepAlivePeriod == 0 {
 		config.KeepAlivePeriod = defaultQUICKeepAlivePeriod
 	}
@@ -49,7 +51,8 @@ func (c QUICConnector) Connect(ctx context.Context, endpoint Endpoint) (Session,
 
 // QUICListener accepts QUIC multiplexed sessions.
 type QUICListener struct {
-	listener *quic.Listener
+	listener   *quic.Listener
+	packetConn net.PacketConn
 }
 
 // ListenQUIC starts a QUIC listener. The returned listener never accepts 0-RTT.
@@ -58,11 +61,58 @@ func ListenQUIC(address string, tlsConfig *tls.Config, config QUICConfig) (*QUIC
 	if err != nil {
 		return nil, err
 	}
-	listener, err := quic.ListenAddr(address, serverConfig, quicConfig(config.Config))
+	listener, packetConn, err := listenQUIC(address, serverConfig, quicConfig(config.Config))
 	if err != nil {
 		return nil, fmt.Errorf("muxsession: listen QUIC: %w", err)
 	}
-	return &QUICListener{listener: listener}, nil
+	return &QUICListener{listener: listener, packetConn: packetConn}, nil
+}
+
+func listenQUIC(address string, tlsConfig *tls.Config, config *quic.Config) (*quic.Listener, net.PacketConn, error) {
+	if !requiresBasicQUICPacketConn(address) {
+		listener, err := quic.ListenAddr(address, tlsConfig, config)
+		return listener, nil, err
+	}
+	// Fly UDP replies must follow the socket route; quic-go's IP_PKTINFO
+	// interface pinning and larger datagrams fail on its forwarding path.
+	return listenBasicQUIC(address, tlsConfig, flyQUICConfig(config))
+}
+
+func flyQUICConfig(config *quic.Config) *quic.Config {
+	config = config.Clone()
+	config.InitialPacketSize = compatibleQUICPacketSize
+	config.DisablePathMTUDiscovery = true
+	return config
+}
+
+func quicConnectorConfig(config *quic.Config) *quic.Config {
+	config = quicConfig(config)
+	if config.InitialPacketSize == 0 {
+		config.InitialPacketSize = compatibleQUICPacketSize
+	}
+	return config
+}
+
+func listenBasicQUIC(address string, tlsConfig *tls.Config, config *quic.Config) (*quic.Listener, net.PacketConn, error) {
+	udpAddress, err := net.ResolveUDPAddr("udp4", address)
+	if err != nil {
+		return nil, nil, err
+	}
+	packetConn, err := net.ListenUDP("udp4", udpAddress)
+	if err != nil {
+		return nil, nil, err
+	}
+	listener, err := quic.Listen(struct{ net.PacketConn }{packetConn}, tlsConfig, config)
+	if err != nil {
+		_ = packetConn.Close()
+		return nil, nil, err
+	}
+	return listener, packetConn, nil
+}
+
+func requiresBasicQUICPacketConn(address string) bool {
+	host, _, err := net.SplitHostPort(address)
+	return err == nil && host == "fly-global-services"
 }
 
 func (l *QUICListener) Accept(ctx context.Context) (Session, error) {
@@ -79,7 +129,13 @@ func (l *QUICListener) Accept(ctx context.Context) (Session, error) {
 
 func (l *QUICListener) Addr() net.Addr { return l.listener.Addr() }
 
-func (l *QUICListener) Close() error { return normalizeQUICError(l.listener.Close()) }
+func (l *QUICListener) Close() error {
+	listenerErr := normalizeQUICError(l.listener.Close())
+	if l.packetConn == nil {
+		return listenerErr
+	}
+	return errors.Join(listenerErr, l.packetConn.Close())
+}
 
 func quicConfig(config *quic.Config) *quic.Config {
 	if config == nil {

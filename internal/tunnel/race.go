@@ -14,12 +14,22 @@ import (
 type Candidate struct {
 	Connector muxsession.Connector
 	Endpoint  muxsession.Endpoint
+	Transport Transport
 }
 
+// Transport identifies one publisher connection transport.
+type Transport string
+
+const (
+	TransportQUIC   Transport = "quic"
+	TransportTLSTCP Transport = "tls-tcp"
+)
+
 type candidateResult struct {
-	session  *Session
-	err      error
-	terminal bool
+	session   *Session
+	transport Transport
+	err       error
+	terminal  bool
 }
 
 // Race establishes QUIC first and starts the fallback after fallbackDelay. The
@@ -32,9 +42,9 @@ func Race(
 	fallback Candidate,
 	fallbackDelay time.Duration,
 	hello tunnelv1.Message,
-) (*Session, error) {
-	if primary.Connector == nil || fallback.Connector == nil || fallbackDelay < 0 {
-		return nil, errors.New("tunnel: two candidates and a non-negative fallback delay are required")
+) (*Session, Transport, error) {
+	if primary.Connector == nil || fallback.Connector == nil || primary.Transport == "" || fallback.Transport == "" || fallbackDelay < 0 {
+		return nil, "", errors.New("tunnel: two candidates and a non-negative fallback delay are required")
 	}
 	raceCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -53,7 +63,7 @@ func Race(
 		case <-ctx.Done():
 			cancel()
 			closeLateWinner(results, remaining)
-			return nil, context.Cause(ctx)
+			return nil, "", context.Cause(ctx)
 		case <-timer.C:
 			if !fallbackStarted {
 				fallbackStarted = true
@@ -65,13 +75,13 @@ func Race(
 			if result.session != nil {
 				cancel()
 				closeLateWinner(results, remaining)
-				return result.session, nil
+				return result.session, result.transport, nil
 			}
 			failures = append(failures, result.err)
 			if result.terminal {
 				cancel()
 				closeLateWinner(results, remaining)
-				return nil, result.err
+				return nil, "", result.err
 			}
 			if !fallbackStarted {
 				if !timer.Stop() {
@@ -86,7 +96,7 @@ func Race(
 			}
 		}
 	}
-	return nil, fmt.Errorf("tunnel: all transport candidates failed: %w", errors.Join(failures...))
+	return nil, "", fmt.Errorf("tunnel: all transport candidates failed: %w", errors.Join(failures...))
 }
 
 func dialCandidate(ctx context.Context, candidate Candidate, hello tunnelv1.Message) candidateResult {
@@ -96,7 +106,7 @@ func dialCandidate(ctx context.Context, candidate Candidate, hello tunnelv1.Mess
 	}
 	session, err := Dial(ctx, transport, hello)
 	if err == nil {
-		return candidateResult{session: session}
+		return candidateResult{session: session, transport: candidate.Transport}
 	}
 	return candidateResult{err: err, terminal: IsTerminalHandshakeError(err)}
 }

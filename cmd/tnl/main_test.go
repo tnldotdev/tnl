@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -204,6 +205,50 @@ func TestCanonicalCommandTitle(t *testing.T) {
 		if got := clioutput.CommandTitle("tnl", command); got != want {
 			t.Fatalf("CommandTitle(%q) = %q, want %q", command, got, want)
 		}
+	}
+}
+
+func TestCanonicalParsedCommandIncludesOptionalArguments(t *testing.T) {
+	for command, want := range map[string]string{
+		"dev":     "dev <service>",
+		"publish": "publish <service-or-target>",
+		"status":  "status",
+	} {
+		if got := canonicalParsedCommand(command); got != want {
+			t.Fatalf("canonicalParsedCommand(%q) = %q, want %q", command, got, want)
+		}
+	}
+}
+
+func TestBareTunnelCommandsReachCanonicalDispatch(t *testing.T) {
+	for _, test := range []struct {
+		command string
+		wantErr string
+	}{
+		{command: "dev", wantErr: "clientstate: server must be an HTTPS origin"},
+		{command: "publish", wantErr: "local target is required as an argument or publish.target in project configuration"},
+	} {
+		t.Run(test.command, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			stateDir := filepath.Join(t.TempDir(), "state")
+			args := []string{"--no-config", test.command, "--state-dir", stateDir, "--server", "http://control.example"}
+			err := run(t.Context(), args, &stdout, &stderr)
+			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("run error = %v, want %q", err, test.wantErr)
+			}
+			var parseError *kong.ParseError
+			if errors.As(err, &parseError) {
+				t.Fatalf("bare %s returned parse error: %v", test.command, err)
+			}
+			wantCommand := "tnl " + test.command
+			if got, ok := clioutput.CommandOf(err); !ok || got != wantCommand {
+				t.Fatalf("command = %q, %t, want %q", got, ok, wantCommand)
+			}
+			writeCommandError(&stderr, err)
+			if got := stderr.String(); !strings.HasPrefix(got, "+--[ "+wantCommand+" ]-- command failed ") {
+				t.Fatalf("error output = %q", got)
+			}
+		})
 	}
 }
 

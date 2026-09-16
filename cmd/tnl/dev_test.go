@@ -48,6 +48,29 @@ func TestDevCommandPassesThroughCommandArguments(t *testing.T) {
 	}
 }
 
+func TestDevCommandWithoutServicePassesThroughCommandArguments(t *testing.T) {
+	var flags cli
+	parser, err := kong.New(&flags)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arguments, command, err := splitDevPassthrough([]string{"dev", "--port", "3000", "--", "node", "server.js"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := parser.Parse(arguments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	flags.Dev.Command = command
+	if parsed.Command() != "dev" || canonicalParsedCommand(parsed.Command()) != "dev <service>" {
+		t.Fatalf("command = %q", parsed.Command())
+	}
+	if flags.Dev.Service != "" || flags.Dev.Port != 3000 || !reflect.DeepEqual(flags.Dev.Command, []string{"node", "server.js"}) {
+		t.Fatalf("flags = %#v", flags.Dev)
+	}
+}
+
 func TestResolveDevCommandRemovesSeparatorAndFindsExecutable(t *testing.T) {
 	if command, err := resolveDevCommand(nil); err != nil || command != nil {
 		t.Fatalf("optional command = %#v, %v", command, err)

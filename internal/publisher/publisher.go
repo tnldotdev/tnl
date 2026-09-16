@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
+	"github.com/tnldotdev/tnl/internal/tunnel"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -66,6 +67,7 @@ const (
 	EventProvisioningStalled EventType = "provisioning_stalled"
 	EventReady               EventType = "ready"
 	EventDraining            EventType = "draining"
+	EventTransportFallback   EventType = "transport_fallback"
 	EventIPPolicyDenials     EventType = "ip_policy_denials"
 )
 
@@ -75,6 +77,7 @@ type Event struct {
 	Hostname      string
 	PublicURL     string
 	RouteVersion  uint64
+	Transport     tunnel.Transport
 	PolicyDenials uint64
 }
 

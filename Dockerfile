@@ -11,6 +11,9 @@ ARG VERSION
 ARG COMMIT
 
 WORKDIR /src
+RUN apt-get update && \
+    apt-get install --yes --no-install-recommends libcap2-bin && \
+    rm -rf /var/lib/apt/lists/*
 COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd ./cmd
@@ -24,7 +27,8 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH GOFLAGS=-tags=ts_omit_ssh \
     go build -mod=readonly -trimpath \
     -ldflags="-s -w -X github.com/tnldotdev/tnl/internal/buildinfo.Version=${VERSION} -X github.com/tnldotdev/tnl/internal/buildinfo.Commit=${COMMIT}" \
-    -o /out/tnl ./cmd/tnl
+    -o /out/tnl ./cmd/tnl && \
+    setcap cap_net_bind_service=+ep /out/tnld
 
 FROM gcr.io/distroless/static-debian13:nonroot@sha256:1c2c046bc09ed40fad370b599a0b1ae7987f55b01e247cf27a7c27cd97e5bbc7
 
@@ -37,7 +41,8 @@ LABEL org.opencontainers.image.source="https://github.com/tnldotdev/tnl" \
       org.opencontainers.image.version=$VERSION \
       org.opencontainers.image.revision=$COMMIT
 
-COPY --from=build --chown=65532:65532 /out/tnld /usr/local/bin/tnld
+# Changing ownership during COPY would clear the file capability.
+COPY --from=build /out/tnld /usr/local/bin/tnld
 COPY --from=build --chown=65532:65532 /out/tnl /usr/local/bin/tnl
 COPY --chown=65532:65532 LICENSE NOTICE THIRD_PARTY_LICENSES.txt /licenses/tnl/
 

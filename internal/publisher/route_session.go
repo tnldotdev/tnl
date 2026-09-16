@@ -10,6 +10,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/tunnel"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -142,6 +143,24 @@ func runSession(
 		cancelTransports()
 		return err
 	}
+	fallbackDone := make(chan struct{})
+	go func() {
+		defer close(fallbackDone)
+		select {
+		case <-sessionCtx.Done():
+		case <-connections.Fallback():
+			if err := observe(config, Event{
+				Type: EventTransportFallback, RouteID: setup.Route.Id, Hostname: setup.Route.CanonicalHostname,
+				RouteVersion: version, Transport: tunnel.TransportTLSTCP,
+			}); err != nil {
+				cancelSession(fmt.Errorf("publisher: observe transport fallback: %w", err))
+			}
+		}
+	}()
+	defer func() {
+		cancelSession(nil)
+		<-fallbackDone
+	}()
 	expirationDone := make(chan struct{})
 	go func() {
 		defer close(expirationDone)
@@ -222,6 +241,14 @@ func runSession(
 	}
 	if err := connections.WaitReady(ctx, 2); err != nil {
 		return err
+	}
+	select {
+	case <-connections.Fallback():
+		<-fallbackDone
+		if sessionCtx.Err() != nil && parentCtx.Err() == nil {
+			return context.Cause(sessionCtx)
+		}
+	default:
 	}
 	for {
 		serverReady := false

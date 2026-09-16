@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/muxsession"
+	"github.com/tnldotdev/tnl/internal/tunnel"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -84,5 +85,98 @@ func TestPublisherConnectionUpdateValidatesBeforeMutation(t *testing.T) {
 			t.Fatalf("publisher connection slot %d was canceled before validation completed", slot)
 		default:
 		}
+	}
+}
+
+func TestStaleTLSFallbackDoesNotPublishFallback(t *testing.T) {
+	assignment := controlv1.ConnectionAssignment{
+		ConnectionAssignmentRevision:           1,
+		ConnectionSlot:                         0,
+		PublisherConnectionCredential:          "credential",
+		PublisherConnectionCredentialExpiresAt: time.Now().Add(time.Minute),
+		PublisherConnectionId:                  "connection_1",
+		RelayAddress:                           "relay.example:443",
+		RelayServiceId:                         "relay_service_1",
+		State:                                  controlv1.PublisherConnectionStateAssigned,
+		TlsServerName:                          "relay.example",
+	}
+	transport := &certificateTestTransport{done: make(chan struct{})}
+	fallbackStarted := make(chan struct{})
+	releaseFallback := make(chan struct{})
+	quic := muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
+		return nil, errors.New("QUIC unavailable")
+	})
+	tcp := muxsession.ConnectorFunc(func(ctx context.Context, _ muxsession.Endpoint) (muxsession.Session, error) {
+		close(fallbackStarted)
+		select {
+		case <-releaseFallback:
+			return transport, nil
+		case <-ctx.Done():
+			return nil, context.Cause(ctx)
+		}
+	})
+	manager := &publisherConnectionManager{
+		ctx: t.Context(), config: publisherConnectionManagerConfig{
+			QUICConnector: quic, TCPConnector: tcp, ReconnectDelay: time.Second,
+		},
+		routeSessionID: "route_session_1", routeID: "route_1", routeVersion: 1,
+		changed: make(chan struct{}), fallback: make(chan struct{}),
+	}
+	connectionCtx, cancel := context.WithCancel(t.Context())
+	managed := &managedPublisherConnection{assignment: assignment, cancel: cancel}
+	manager.connections[0] = managed
+	manager.wg.Add(1)
+	done := make(chan struct{})
+	go func() {
+		manager.run(connectionCtx, 0, managed)
+		close(done)
+	}()
+
+	select {
+	case <-fallbackStarted:
+	case <-t.Context().Done():
+		t.Fatal("TLS/TCP fallback did not start")
+	}
+	replacement := &managedPublisherConnection{assignment: assignment, cancel: func() {}}
+	manager.mu.Lock()
+	manager.connections[0] = replacement
+	manager.mu.Unlock()
+	close(releaseFallback)
+	select {
+	case <-done:
+	case <-t.Context().Done():
+		t.Fatal("stale publisher connection did not stop")
+	}
+
+	select {
+	case <-manager.Fallback():
+		t.Fatal("stale TLS/TCP connection published a fallback event")
+	default:
+	}
+	select {
+	case <-transport.Done():
+	default:
+		t.Fatal("stale TLS/TCP session remained open")
+	}
+	if replacement.ready || replacement.session != nil {
+		t.Fatal("stale TLS/TCP session mutated the replacement connection")
+	}
+	manager.Close()
+}
+
+func TestTLSFallbackIsPublishedBeforeConnectionReadiness(t *testing.T) {
+	manager := &publisherConnectionManager{changed: make(chan struct{}), fallback: make(chan struct{})}
+	managed := &managedPublisherConnection{}
+	manager.connections[0] = managed
+	if !manager.setSession(0, managed, new(tunnel.Session), tunnel.TransportTLSTCP) {
+		t.Fatal("current TLS/TCP connection was rejected")
+	}
+	if err := manager.WaitReady(t.Context(), 1); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-manager.Fallback():
+	default:
+		t.Fatal("TLS/TCP connection became ready before publishing fallback")
 	}
 }
