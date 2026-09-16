@@ -123,15 +123,19 @@ func (c runCommand) Validate() error {
 	if value, found := os.LookupEnv("BENCH_SUITE"); !found || value == "" || value != c.Suite {
 		return errors.New("execution requires an explicit BENCH_SUITE environment variable")
 	}
-	canonical, err := naming.CanonicalizeHostname(c.ParentDomain)
-	if err != nil || canonical != c.ParentDomain {
+	return validateBenchmarkInfrastructure(c.ParentDomain, c.ParentZoneID, c.ACMEEmail)
+}
+
+func validateBenchmarkInfrastructure(parentDomain, parentZoneID, acmeEmail string) error {
+	canonical, err := naming.CanonicalizeHostname(parentDomain)
+	if err != nil || canonical != parentDomain {
 		return errors.New("BENCH_PARENT_DOMAIN must be a canonical hostname")
 	}
-	if c.ParentZoneID == "" || canonicalZoneID(c.ParentZoneID) != c.ParentZoneID || strings.ContainsAny(c.ParentZoneID, " /\t\r\n") {
+	if parentZoneID == "" || canonicalZoneID(parentZoneID) != parentZoneID || strings.ContainsAny(parentZoneID, " /\t\r\n") {
 		return errors.New("BENCH_PARENT_ZONE_ID must be a canonical bare hosted-zone ID")
 	}
-	address, err := mail.ParseAddress(c.ACMEEmail)
-	if err != nil || address.Address != c.ACMEEmail {
+	address, err := mail.ParseAddress(acmeEmail)
+	if err != nil || address.Address != acmeEmail {
 		return errors.New("BENCH_ACME_EMAIL must be a canonical email address")
 	}
 	return nil
@@ -194,6 +198,9 @@ func (c runCommand) run(ctx context.Context, stdout io.Writer) (retErr error) {
 		}
 	}()
 	if err := fly.preflight(ctx); err != nil {
+		return err
+	}
+	if err := fly.validateOrg(ctx); err != nil {
 		return err
 	}
 	if err := dns.validateParentZone(ctx, c.ParentZoneID, c.ParentDomain); err != nil {

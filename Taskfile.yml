@@ -193,6 +193,12 @@ tasks:
     cmds:
       - go run ./cmd/tnlbench plan
 
+  go:bench-fly:preflight:
+    desc: Validate Fly and AWS benchmark access without creating resources
+    dotenv: [.env.bench]
+    cmds:
+      - go run ./cmd/tnlbench preflight
+
   go:bench-fly:run:
     desc: Run an explicitly approved Fly benchmark and clean up its resources
     dotenv: [.env.bench]

@@ -71,6 +71,21 @@ func (f flyPlatform) preflight(ctx context.Context) error {
 	return nil
 }
 
+func (f flyPlatform) validateOrg(ctx context.Context) error {
+	output, err := f.executor.Run(ctx, f.binary, "orgs", "list", "--json")
+	if err != nil {
+		return fmt.Errorf("list Fly organizations: %w", err)
+	}
+	var organizations map[string]string
+	if err := json.Unmarshal(output, &organizations); err != nil {
+		return fmt.Errorf("decode Fly organizations: %w", err)
+	}
+	if _, ok := organizations[f.org]; !ok {
+		return fmt.Errorf("fly organization %q is not available to the authenticated identity", f.org)
+	}
+	return nil
+}
+
 func (f flyPlatform) createApp(ctx context.Context, name string) error {
 	_, err := f.executor.Run(ctx, f.binary, "apps", "create", name, "--org", f.org, "--json", "--yes")
 	if err != nil {
