@@ -1,4 +1,4 @@
-import { rm } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { describe, expect, onTestFinished, test } from "vitest";
 import {
@@ -14,6 +14,7 @@ import {
   temporaryDirectory,
   testPublicProject,
   waitForBootstrapRequest,
+  waitForWebSocketMessage,
   withCurrentDirectory,
   withProcessEnvironment,
 } from "./test-helper.js";
@@ -229,6 +230,8 @@ test(
   { timeout: 60_000 },
   async () => {
     const fixture = fileURLToPath(new URL("fixtures/next/app", import.meta.url));
+    const pageSource = fileURLToPath(new URL("fixtures/next/app/app/page.tsx", import.meta.url));
+    const originalPageSource = await readFile(pageSource, "utf8");
     const nextOutput = fileURLToPath(new URL("fixtures/next/app/.next", import.meta.url));
     const generatedFixtureFiles = [
       nextOutput,
@@ -249,6 +252,7 @@ test(
     });
     onTestFinished(async () => {
       await process_.close();
+      await writeFile(pageSource, originalPageSource);
       await Promise.all(
         generatedFixtureFiles.map((file) => rm(file, { force: true, recursive: true })),
       );
@@ -295,6 +299,35 @@ test(
       onTestFinished(() => socket.close());
       const message = JSON.parse(socketMessage) as { type?: string };
       expect(["isrManifest", "turbopack-connected"]).toContain(message.type);
+      let connected = message.type === "turbopack-connected";
+      while (!connected) {
+        const nextMessage = JSON.parse(await waitForWebSocketMessage(socket, 30_000)) as {
+          type?: string;
+        };
+        connected = nextMessage.type === "turbopack-connected";
+      }
+      let updateMessage = waitForWebSocketMessage(socket, 30_000);
+      await writeFile(
+        pageSource,
+        originalPageSource.replace("Next.js fixture", "Next.js fixture refreshed"),
+      );
+      let updateType = "";
+      while (updateType !== "built") {
+        const update = JSON.parse(await updateMessage) as { type?: string };
+        updateType = update.type ?? "";
+        if (updateType !== "built") {
+          updateMessage = waitForWebSocketMessage(socket, 30_000);
+        }
+      }
+      await expect
+        .poll(
+          async () => {
+            const updatedPage = await requestTestServer(port);
+            return updatedPage.status === 200 ? updatedPage.body : "";
+          },
+          { timeout: 30_000 },
+        )
+        .toContain("Next.js fixture refreshed");
       await expect(
         openTestWebSocket(port, "/_next/hmr?id=tnl-attacker", {
           origin: "https://attacker.example",

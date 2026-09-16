@@ -41,6 +41,14 @@ const (
 	OIDCLoginFlowAuthorizationCodePKCE OIDCLoginFlow = "authorization_code_pkce"
 )
 
+// RelayQUICPacketIOMode selects the UDP socket path used by relay QUIC listeners.
+type RelayQUICPacketIOMode string
+
+const (
+	RelayQUICPacketIOModeOptimized RelayQUICPacketIOMode = "optimized"
+	RelayQUICPacketIOModeBasic     RelayQUICPacketIOMode = "basic"
+)
+
 func (r Role) RunsControl() bool { return r == RoleStandalone || r == RoleControl }
 func (r Role) RunsIngress() bool { return r == RoleStandalone || r == RoleIngress }
 func (r Role) RunsRelay() bool   { return r == RoleStandalone || r == RoleRelay }
@@ -53,13 +61,14 @@ type Config struct {
 	DatabaseURL   string `name:"database-url" env:"TNLD_DATABASE_URL" help:"Pooled PostgreSQL URL used by control and standalone."`
 	MetricsListen string `name:"metrics-listen" env:"TNLD_METRICS_LISTEN" default:"127.0.0.1:9090" help:"Private Prometheus listen address; empty disables metrics."`
 
-	ControlListen        string `name:"control-listen" env:"TNLD_CONTROL_LISTEN" help:"Public control HTTPS listen address."`
-	PrivateControlListen string `name:"private-control-listen" env:"TNLD_PRIVATE_CONTROL_LISTEN" help:"Private cluster-authenticated ingress and relay API listen address."`
-	IngressListen        string `name:"ingress-listen" env:"TNLD_INGRESS_LISTEN" help:"Public visitor TCP listen address."`
-	RelayTCPListen       string `name:"relay-tcp-listen" env:"TNLD_RELAY_TCP_LISTEN" help:"Public TLS/TCP publisher-connection listen address."`
-	RelayUDPListen       string `name:"relay-udp-listen" env:"TNLD_RELAY_UDP_LISTEN" help:"Public QUIC publisher-connection listen address."`
-	InternalRelayListen  string `name:"internal-relay-listen" env:"TNLD_INTERNAL_RELAY_LISTEN" help:"Internal forwarding listen address."`
-	DNSServer            string `name:"dns-server" env:"TNLD_DNS_SERVER" help:"DNS resolver used for authoritative verification; defaults to the system resolver."`
+	ControlListen         string                `name:"control-listen" env:"TNLD_CONTROL_LISTEN" help:"Public control HTTPS listen address."`
+	PrivateControlListen  string                `name:"private-control-listen" env:"TNLD_PRIVATE_CONTROL_LISTEN" help:"Private cluster-authenticated ingress and relay API listen address."`
+	IngressListen         string                `name:"ingress-listen" env:"TNLD_INGRESS_LISTEN" help:"Public visitor TCP listen address."`
+	RelayTCPListen        string                `name:"relay-tcp-listen" env:"TNLD_RELAY_TCP_LISTEN" help:"Public TLS/TCP publisher-connection listen address."`
+	RelayUDPListen        string                `name:"relay-udp-listen" env:"TNLD_RELAY_UDP_LISTEN" help:"Public QUIC publisher-connection listen address."`
+	RelayQUICPacketIOMode RelayQUICPacketIOMode `name:"relay-quic-packet-io-mode" env:"TNLD_RELAY_QUIC_PACKET_IO_MODE" default:"optimized" enum:"optimized,basic" help:"Relay QUIC UDP packet I/O mode: ${enum}."`
+	InternalRelayListen   string                `name:"internal-relay-listen" env:"TNLD_INTERNAL_RELAY_LISTEN" help:"Internal forwarding listen address."`
+	DNSServer             string                `name:"dns-server" env:"TNLD_DNS_SERVER" help:"DNS resolver used for authoritative verification; defaults to the system resolver."`
 
 	ServerDomain            string   `name:"server-domain" env:"TNLD_SERVER_DOMAIN" help:"Infrastructure DNS suffix used to derive control, ingress, and relay hostnames."`
 	ControlHostname         string   `name:"control-hostname" env:"TNLD_CONTROL_HOSTNAME" help:"Control API hostname used by ingress and relay processes."`
@@ -126,6 +135,10 @@ type Config struct {
 func (c Config) Validate() error {
 	if !c.Mode.RunsControl() && !c.Mode.RunsIngress() && !c.Mode.RunsRelay() {
 		return errors.New("mode must be standalone, control, ingress, or relay")
+	}
+	if c.RelayQUICPacketIOMode != "" && c.RelayQUICPacketIOMode != RelayQUICPacketIOModeOptimized &&
+		c.RelayQUICPacketIOMode != RelayQUICPacketIOModeBasic {
+		return errors.New("relay QUIC packet I/O mode must be optimized or basic")
 	}
 	if c.Mode.RunsControl() {
 		if err := c.validateControl(); err != nil {

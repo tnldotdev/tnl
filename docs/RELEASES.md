@@ -159,9 +159,37 @@ GitHub token with Contents read/write access to `tnldotdev/homebrew-tap`. Enable
 immutable releases, tag protection, GitHub Packages, and artifact attestations
 before the first release.
 
-Use the `tnl-release` agent skill to assess changes, propose one version, run the
-required checks, and prepare the release. `tnl`, `tnld`, `@tnldotdev/tnl`, and
-the four native packages share a root `v<version>` tag.
+Use the [`tnl-release`](../.agents/skills/tnl-release/SKILL.md) agent skill to
+assess changes, propose one version, run the required checks, and prepare the
+release. `tnl`, `tnld`, `@tnldotdev/tnl`, and the four native packages share a
+root `v<version>` tag.
+
+### Stable promotion
+
+A release-candidate tag may be published before live staging qualification; its
+artifacts are the inputs to that testing. Do not describe it as qualified until
+the [`tnl-release-smoke`](../.agents/skills/tnl-release-smoke/SKILL.md) skill has
+produced a passing report.
+
+Before creating a stable tag without a prerelease suffix:
+
+1. Publish an RC with the same base version from the exact commit intended for
+   the stable tag.
+2. Deploy that RC's verified image digest to staging and install its published
+   client package.
+3. Run the common live smoke suite. Run the conditional split and replica suites
+   only when those roles are actually deployed separately on staging; an
+   incomplete intended split deployment is blocked rather than treated as
+   standalone.
+4. Restore staging and require a `qualified` report with no mandatory failed,
+   blocked, or unrun checks.
+5. Verify `main`, the qualified RC, and the proposed stable tag all resolve to
+   the same commit. Any later commit or file change requires another RC and
+   another qualification.
+
+The smoke report records the client version, source commit, signed image digest,
+deployed release, topology, test evidence, cleanup, and residual topology
+limitations. Stable qualification does not authorize production deployment.
 
 From a clean, fully verified `main` commit:
 
@@ -176,7 +204,8 @@ conditions. After environment approval it builds signed archives and SBOMs,
 pushes and signs the versioned image, publishes the npm client packages, and
 attaches the image digest. Stable tags then update `Formula/tnl.rb` in the
 Homebrew tap. Review the completed release and never move or reuse a release
-tag.
+tag. After stable publication, verify npm `latest`, Homebrew installation, and
+that the stable archives, binaries, and container report the qualified commit.
 
 ### npm client
 

@@ -109,6 +109,7 @@ func runSession(
 			return err
 		}
 	}
+	observeStartup(config, StartupInitialHeartbeat)
 	ctx = sessionCtx
 	var material clientstate.Material
 	route, err := NewRouteServer(RouteServerConfig{
@@ -235,13 +236,16 @@ func runSession(
 	if err := connections.WaitReady(ctx, 1); err != nil {
 		return err
 	}
+	observeStartup(config, StartupFirstConnection)
 	material, err = issueInitialCertificate(ctx, config.Control, route, state, setup)
 	if err != nil {
 		return err
 	}
+	observeStartup(config, StartupCertificate)
 	if err := connections.WaitReady(ctx, 2); err != nil {
 		return err
 	}
+	observeStartup(config, StartupAllConnections)
 	select {
 	case <-connections.Fallback():
 		<-fallbackDone

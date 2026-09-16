@@ -34,6 +34,7 @@ var standaloneRelays = [...]struct {
 type standaloneSettings struct {
 	publicListen           string
 	relayUDPListen         string
+	quicPacketIOMode       tnldconfig.RelayQUICPacketIOMode
 	quicIdleTimeout        time.Duration
 	quicMaxIncomingStreams int64
 	serverHostname         string
@@ -49,6 +50,7 @@ func standaloneSettingsFrom(cfg tnldconfig.Config) standaloneSettings {
 	return standaloneSettings{
 		publicListen:           cfg.IngressListen,
 		relayUDPListen:         cfg.RelayUDPListen,
+		quicPacketIOMode:       cfg.RelayQUICPacketIOMode,
 		quicIdleTimeout:        cfg.QUICIdleTimeout,
 		quicMaxIncomingStreams: cfg.QUICMaxIncomingStreams,
 		serverHostname:         cfg.ServerHostname(),
@@ -137,9 +139,12 @@ func (d *daemon) startStandalone(
 	if err != nil {
 		return err
 	}
-	udpListener, err := muxsession.ListenQUIC(settings.relayUDPListen, transportTLS, muxsession.QUICConfig{Config: &quic.Config{
-		MaxIdleTimeout: settings.quicIdleTimeout, MaxIncomingStreams: settings.quicMaxIncomingStreams,
-	}})
+	udpListener, err := muxsession.ListenQUIC(settings.relayUDPListen, transportTLS, muxsession.QUICConfig{
+		Config: &quic.Config{
+			MaxIdleTimeout: settings.quicIdleTimeout, MaxIncomingStreams: settings.quicMaxIncomingStreams,
+		},
+		PacketIOMode: muxsession.QUICPacketIOMode(settings.quicPacketIOMode),
+	})
 	if err != nil {
 		return fmt.Errorf("listen for standalone QUIC publisher connections: %w", err)
 	}

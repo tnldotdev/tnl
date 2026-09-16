@@ -57,7 +57,17 @@ type Config struct {
 	ProvisioningStalledDelay time.Duration
 	Logf                     func(string, ...any)
 	Observe                  func(Event) error
+	ObserveStartup           func(StartupPhase)
 }
+
+type StartupPhase string
+
+const (
+	StartupInitialHeartbeat StartupPhase = "initial heartbeat"
+	StartupFirstConnection  StartupPhase = "first connection"
+	StartupCertificate      StartupPhase = "certificate installed"
+	StartupAllConnections   StartupPhase = "both connections"
+)
 
 type EventType string
 
@@ -273,6 +283,12 @@ func observe(config Config, event Event) error {
 		return nil
 	}
 	return config.Observe(event)
+}
+
+func observeStartup(config Config, phase StartupPhase) {
+	if config.ObserveStartup != nil {
+		config.ObserveStartup(phase)
+	}
 }
 
 func opaqueID(prefix string) (string, error) {

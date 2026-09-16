@@ -211,6 +211,14 @@ func (o *publishOutput) ready(url string, routeVersion uint64) error {
 	return nil
 }
 
+func (o *publishOutput) startupTimings(fields []clioutput.Field) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return writeHumanFrame(o.stderr, o.command, "startup timings", "elapsed / since previous milestone",
+		clioutput.Fields(fields...),
+	)
+}
+
 func (o *publishOutput) currentIP(ip string) error {
 	if o.mode == "human" {
 		o.mu.Lock()

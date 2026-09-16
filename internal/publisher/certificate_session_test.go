@@ -98,6 +98,30 @@ func TestRunReacknowledgesCachedCertificateForEachSession(t *testing.T) {
 	}
 }
 
+func TestRunReportsStartupPhasesInOrder(t *testing.T) {
+	control, route, state := newCertificateTransactionTest(t)
+	if _, err := attemptCertificateTransaction(t.Context(), control, route, state, control.setup, false); err != nil {
+		t.Fatal(err)
+	}
+	config := certificateSessionTestConfig(t, control)
+	var phases []StartupPhase
+	config.ObserveStartup = func(phase StartupPhase) { phases = append(phases, phase) }
+	reachedReady := errors.New("test reached ready")
+	control.ready = func() error { return reachedReady }
+	if err := runCertificateSessionTest(t, config); !errors.Is(err, reachedReady) {
+		t.Fatalf("Run = %v", err)
+	}
+	want := []StartupPhase{
+		StartupInitialHeartbeat,
+		StartupFirstConnection,
+		StartupCertificate,
+		StartupAllConnections,
+	}
+	if !slices.Equal(phases, want) {
+		t.Fatalf("startup phases = %q, want %q", phases, want)
+	}
+}
+
 func TestRunSessionRetriesReadinessConflict(t *testing.T) {
 	previous := activationRetry
 	activationRetry = time.Millisecond
