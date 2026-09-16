@@ -116,6 +116,28 @@ func TestUsageReporterAdvancesIdleWatermark(t *testing.T) {
 	}
 }
 
+func TestUsageReporterRefreshesRejectedIdleWatermark(t *testing.T) {
+	control := &usageControlStub{err: errors.New("unavailable")}
+	reporter, err := NewUsageReporter(control, time.Second, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := time.Date(2026, 9, 4, 12, 0, 10, 0, time.UTC)
+	if err := reporter.flush(t.Context(), first, false); !errors.Is(err, control.err) {
+		t.Fatalf("first flush error = %v", err)
+	}
+	control.err = nil
+	second := first.Add(10 * time.Second)
+	if err := reporter.flush(t.Context(), second, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(control.calls) != 2 || control.calls[0].observedThrough == nil ||
+		!control.calls[0].observedThrough.Equal(first) || control.calls[1].observedThrough == nil ||
+		!control.calls[1].observedThrough.Equal(second) {
+		t.Fatalf("idle checkpoints = %#v", control.calls)
+	}
+}
+
 func TestUsageReporterCompletesOnlyFinalPage(t *testing.T) {
 	control := new(usageControlStub)
 	reporter, err := NewUsageReporter(control, time.Second, nil)
