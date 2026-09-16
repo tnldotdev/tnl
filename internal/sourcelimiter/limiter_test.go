@@ -1,9 +1,11 @@
 package sourcelimiter
 
 import (
+	"fmt"
 	"net/netip"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -72,7 +74,17 @@ func TestLimiterBoundsEntriesAndEvictsOldest(t *testing.T) {
 }
 
 func TestLimiterConcurrentCardinalityBound(t *testing.T) {
-	limiter, err := New(Config{Rate: 1000, Burst: 10, MaxEntries: 128, IdleExpiration: time.Minute, Shards: 16})
+	var maximum atomic.Int64
+	limiter, err := New(Config{Rate: 1000, Burst: 10, MaxEntries: 128, IdleExpiration: time.Minute, Shards: 16,
+		OnEntriesChanged: func(entries int) {
+			// The callback runs under entriesMu; it must not call Entries.
+			for old := maximum.Load(); int64(entries) > old; old = maximum.Load() {
+				if maximum.CompareAndSwap(old, int64(entries)) {
+					break
+				}
+			}
+		},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,6 +103,77 @@ func TestLimiterConcurrentCardinalityBound(t *testing.T) {
 	if entries := limiter.Entries(); entries != 128 {
 		t.Fatalf("entries = %d, want 128", entries)
 	}
+	if got := maximum.Load(); got != 128 {
+		t.Fatalf("maximum observed cardinality = %d, want 128", got)
+	}
+}
+
+func TestLimiterRevisitUpdatesEvictionOrder(t *testing.T) {
+	for _, burst := range []int{1, 2} {
+		t.Run(fmt.Sprintf("burst=%d", burst), func(t *testing.T) {
+			now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+			limiter, err := New(Config{Rate: 0.000001, Burst: burst, MaxEntries: 2, Shards: 4,
+				IdleExpiration: time.Hour, Now: func() time.Time { return now }})
+			if err != nil {
+				t.Fatal(err)
+			}
+			a, b, c := netip.MustParseAddr("192.0.2.1"), netip.MustParseAddr("192.0.2.2"), netip.MustParseAddr("192.0.2.3")
+			if !limiter.Allow(a) {
+				t.Fatal("first source rejected")
+			}
+			now = now.Add(time.Second)
+			if !limiter.Allow(b) {
+				t.Fatal("second source rejected")
+			}
+			now = now.Add(time.Second)
+			if allowed := limiter.Allow(a); allowed != (burst == 2) {
+				t.Fatalf("revisit allowed = %t", allowed)
+			}
+			now = now.Add(time.Second)
+			if !limiter.Allow(c) {
+				t.Fatal("new source rejected")
+			}
+			if !limiterHasEntry(limiter, a) || limiterHasEntry(limiter, b) || !limiterHasEntry(limiter, c) || limiter.Entries() != 2 {
+				t.Fatal("revisited source, including a denied revisit, must outlive the older source")
+			}
+		})
+	}
+}
+
+func TestLimiterIdleExpiration(t *testing.T) {
+	for _, elapsed := range []time.Duration{time.Minute - time.Nanosecond, time.Minute} {
+		t.Run(elapsed.String(), func(t *testing.T) {
+			now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+			limiter, err := New(Config{Rate: 0.000001, Burst: 1, MaxEntries: 2, Shards: 1,
+				IdleExpiration: time.Minute, Now: func() time.Time { return now }})
+			if err != nil {
+				t.Fatal(err)
+			}
+			source := netip.MustParseAddr("192.0.2.1")
+			if !limiter.Allow(source) {
+				t.Fatal("first source rejected")
+			}
+			now = now.Add(elapsed)
+			if allowed := limiter.Allow(source); allowed != (elapsed == time.Minute) {
+				t.Fatalf("after %v allowed = %t", elapsed, allowed)
+			}
+		})
+	}
+	t.Run("reap on insertion", func(t *testing.T) {
+		now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+		limiter, err := New(Config{Rate: 1, Burst: 1, MaxEntries: 2, Shards: 1,
+			IdleExpiration: time.Minute, Now: func() time.Time { return now }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		a, b, c := netip.MustParseAddr("192.0.2.1"), netip.MustParseAddr("192.0.2.2"), netip.MustParseAddr("192.0.2.3")
+		limiter.Allow(a)
+		limiter.Allow(b)
+		now = now.Add(time.Minute)
+		if !limiter.Allow(c) || limiter.Entries() != 1 || limiterHasEntry(limiter, a) || limiterHasEntry(limiter, b) {
+			t.Fatal("idle entries were not reaped at expiration")
+		}
+	})
 }
 
 func TestNewRejectsInvalidConfiguration(t *testing.T) {

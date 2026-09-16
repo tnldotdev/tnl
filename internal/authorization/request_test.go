@@ -77,19 +77,18 @@ func TestCanonicalRequestAndIPPolicyHashes(t *testing.T) {
 	}
 	plan := CertificatePlan{CacheKey: "route.example", Scope: "route.example", Identifiers: []string{"route.example"}, ChallengeMethod: "tls-alpn-01"}
 	sessionJSON := []byte(`{"allowed_ip_prefixes":["192.0.2.0/24","2001:db8::/64"],"canonical_hostname":"route.example","certificate_plan":{"cache_key":"route.example","scope":"route.example","identifiers":["route.example"],"challenge_method":"tls-alpn-01"},"domain_id":"domain_1","ephemeral":true,"membership_id":"membership_1","policy_revision":3,"route_id":"route_1","route_scope":"member","route_version":4,"target":"http://127.0.0.1:3000","team_id":"team_1"}`)
-	sessionDigest, err := CanonicalRequestHash(OperationRequest{
+	sessionRequest := OperationRequest{
 		Operation: OperationRouteSessionCreate, TeamID: "team_1", MembershipID: "membership_1", DomainID: "domain_1",
 		CanonicalHostname: "route.example", RouteScope: "member", RouteID: "route_1", RouteVersion: 4,
 		PolicyRevision: 3, Target: "http://127.0.0.1:3000", AllowedIPPrefixes: prefixes, Ephemeral: true,
 		CertificatePlan: &plan,
-	})
+	}
+	sessionDigest, err := CanonicalRequestHash(sessionRequest)
 	if err != nil || sessionDigest != Digest(sha256.Sum256(sessionJSON)) {
 		t.Fatalf("session digest = %s, error = %v", sessionDigest, err)
 	}
-	if _, err := CanonicalRequestHash(OperationRequest{
-		Operation: OperationRouteSessionCreate, TeamID: "team_1", RouteID: "route_1", RouteVersion: 4,
-		PolicyRevision: 3, CertificatePlan: &plan,
-	}); err == nil {
+	sessionRequest.AllowedIPPrefixes = nil
+	if _, err := CanonicalRequestHash(sessionRequest); err == nil {
 		t.Fatal("route-session request without an IP policy was accepted")
 	}
 	updateJSON := []byte(`{"allowed_ip_prefixes":["192.0.2.0/24","2001:db8::/64"],"canonical_hostname":"route.example","domain_id":"domain_1","ephemeral":true,"membership_id":"membership_1","policy_revision":3,"route_id":"route_1","route_mutation_revision":4,"route_scope":"member","target":"http://127.0.0.1:4000","team_id":"team_1"}`)

@@ -323,28 +323,28 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 // The interface specification for the client above.
 type ClientInterface interface {
 
-	// ClaimPublisherConnectionWithBody Atomically redeem one publisher connection credential
+	// ClaimPublisherConnectionWithBody Claim a publisher connection with its credential
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/claim (the `ClaimPublisherConnection` operationId).
 	ClaimPublisherConnectionWithBody(ctx context.Context, publisherConnectionId PublisherConnectionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ClaimPublisherConnection Atomically redeem one publisher connection credential
+	// ClaimPublisherConnection Claim a publisher connection with its credential
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/claim (the `ClaimPublisherConnection` operationId).
 	ClaimPublisherConnection(ctx context.Context, publisherConnectionId PublisherConnectionID, body ClaimPublisherConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DisconnectPublisherConnectionWithBody Close one exact publisher connection lifecycle
+	// DisconnectPublisherConnectionWithBody Close a matching publisher connection
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/disconnect (the `DisconnectPublisherConnection` operationId).
 	DisconnectPublisherConnectionWithBody(ctx context.Context, publisherConnectionId PublisherConnectionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DisconnectPublisherConnection Close one exact publisher connection lifecycle
+	// DisconnectPublisherConnection Close a matching publisher connection
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -365,7 +365,7 @@ type ClientInterface interface {
 	// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/ready (the `MarkPublisherConnectionReady` operationId).
 	MarkPublisherConnectionReady(ctx context.Context, publisherConnectionId PublisherConnectionID, body MarkPublisherConnectionReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetRelayServiceCertificate Retrieve the current public relay certificate and private key
+	// GetRelayServiceCertificate Retrieve the current relay transport certificate and private key
 	//
 	// Corresponds with GET /internal/v1/relay-services/{relay_service_id}/certificate (the `GetRelayServiceCertificate` operationId).
 	GetRelayServiceCertificate(ctx context.Context, relayServiceId RelayServiceID, params *GetRelayServiceCertificateParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -384,28 +384,28 @@ type ClientInterface interface {
 	// Corresponds with POST /internal/v1/relays/register (the `RegisterRelay` operationId).
 	RegisterRelay(ctx context.Context, body RegisterRelayJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DrainRelayWithBody Remove one exact relay process from new work
+	// DrainRelayWithBody Stop a matching relay process from accepting new work
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /internal/v1/relays/{relay_id}/drain (the `DrainRelay` operationId).
 	DrainRelayWithBody(ctx context.Context, relayId RelayID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DrainRelay Remove one exact relay process from new work
+	// DrainRelay Stop a matching relay process from accepting new work
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /internal/v1/relays/{relay_id}/drain (the `DrainRelay` operationId).
 	DrainRelay(ctx context.Context, relayId RelayID, body DrainRelayJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RenewRelayWithBody Renew one exact relay lease
+	// RenewRelayWithBody Renew a matching relay lease
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /internal/v1/relays/{relay_id}/renew (the `RenewRelay` operationId).
 	RenewRelayWithBody(ctx context.Context, relayId RelayID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RenewRelay Renew one exact relay lease
+	// RenewRelay Renew a matching relay lease
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -413,7 +413,7 @@ type ClientInterface interface {
 	RenewRelay(ctx context.Context, relayId RelayID, body RenewRelayJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
-// ClaimPublisherConnectionWithBody Atomically redeem one publisher connection credential
+// ClaimPublisherConnectionWithBody Claim a publisher connection with its credential
 //
 // Takes any type of body and a specified content type.
 //
@@ -430,7 +430,7 @@ func (c *Client) ClaimPublisherConnectionWithBody(ctx context.Context, publisher
 	return c.Client.Do(req)
 }
 
-// ClaimPublisherConnection Atomically redeem one publisher connection credential
+// ClaimPublisherConnection Claim a publisher connection with its credential
 //
 // Takes a body of the `application/json` content type.
 //
@@ -447,7 +447,7 @@ func (c *Client) ClaimPublisherConnection(ctx context.Context, publisherConnecti
 	return c.Client.Do(req)
 }
 
-// DisconnectPublisherConnectionWithBody Close one exact publisher connection lifecycle
+// DisconnectPublisherConnectionWithBody Close a matching publisher connection
 //
 // Takes any type of body and a specified content type.
 //
@@ -464,7 +464,7 @@ func (c *Client) DisconnectPublisherConnectionWithBody(ctx context.Context, publ
 	return c.Client.Do(req)
 }
 
-// DisconnectPublisherConnection Close one exact publisher connection lifecycle
+// DisconnectPublisherConnection Close a matching publisher connection
 //
 // Takes a body of the `application/json` content type.
 //
@@ -515,7 +515,7 @@ func (c *Client) MarkPublisherConnectionReady(ctx context.Context, publisherConn
 	return c.Client.Do(req)
 }
 
-// GetRelayServiceCertificate Retrieve the current public relay certificate and private key
+// GetRelayServiceCertificate Retrieve the current relay transport certificate and private key
 //
 // Corresponds with GET /internal/v1/relay-services/{relay_service_id}/certificate (the `GetRelayServiceCertificate` operationId).
 func (c *Client) GetRelayServiceCertificate(ctx context.Context, relayServiceId RelayServiceID, params *GetRelayServiceCertificateParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -564,7 +564,7 @@ func (c *Client) RegisterRelay(ctx context.Context, body RegisterRelayJSONReques
 	return c.Client.Do(req)
 }
 
-// DrainRelayWithBody Remove one exact relay process from new work
+// DrainRelayWithBody Stop a matching relay process from accepting new work
 //
 // Takes any type of body and a specified content type.
 //
@@ -581,7 +581,7 @@ func (c *Client) DrainRelayWithBody(ctx context.Context, relayId RelayID, conten
 	return c.Client.Do(req)
 }
 
-// DrainRelay Remove one exact relay process from new work
+// DrainRelay Stop a matching relay process from accepting new work
 //
 // Takes a body of the `application/json` content type.
 //
@@ -598,7 +598,7 @@ func (c *Client) DrainRelay(ctx context.Context, relayId RelayID, body DrainRela
 	return c.Client.Do(req)
 }
 
-// RenewRelayWithBody Renew one exact relay lease
+// RenewRelayWithBody Renew a matching relay lease
 //
 // Takes any type of body and a specified content type.
 //
@@ -615,7 +615,7 @@ func (c *Client) RenewRelayWithBody(ctx context.Context, relayId RelayID, conten
 	return c.Client.Do(req)
 }
 
-// RenewRelay Renew one exact relay lease
+// RenewRelay Renew a matching relay lease
 //
 // Takes a body of the `application/json` content type.
 //
@@ -1024,28 +1024,28 @@ func WithBaseURL(baseURL string) ClientOption {
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
 
-	// ClaimPublisherConnectionWithBodyWithResponse Atomically redeem one publisher connection credential
+	// ClaimPublisherConnectionWithBodyWithResponse Claim a publisher connection with its credential
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/claim (the `ClaimPublisherConnection` operationId).
 	ClaimPublisherConnectionWithBodyWithResponse(ctx context.Context, publisherConnectionId PublisherConnectionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClaimPublisherConnectionResponse, error)
 
-	// ClaimPublisherConnectionWithResponse Atomically redeem one publisher connection credential
+	// ClaimPublisherConnectionWithResponse Claim a publisher connection with its credential
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/claim (the `ClaimPublisherConnection` operationId).
 	ClaimPublisherConnectionWithResponse(ctx context.Context, publisherConnectionId PublisherConnectionID, body ClaimPublisherConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*ClaimPublisherConnectionResponse, error)
 
-	// DisconnectPublisherConnectionWithBodyWithResponse Close one exact publisher connection lifecycle
+	// DisconnectPublisherConnectionWithBodyWithResponse Close a matching publisher connection
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/disconnect (the `DisconnectPublisherConnection` operationId).
 	DisconnectPublisherConnectionWithBodyWithResponse(ctx context.Context, publisherConnectionId PublisherConnectionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DisconnectPublisherConnectionResponse, error)
 
-	// DisconnectPublisherConnectionWithResponse Close one exact publisher connection lifecycle
+	// DisconnectPublisherConnectionWithResponse Close a matching publisher connection
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -1066,7 +1066,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/ready (the `MarkPublisherConnectionReady` operationId).
 	MarkPublisherConnectionReadyWithResponse(ctx context.Context, publisherConnectionId PublisherConnectionID, body MarkPublisherConnectionReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*MarkPublisherConnectionReadyResponse, error)
 
-	// GetRelayServiceCertificateWithResponse Retrieve the current public relay certificate and private key
+	// GetRelayServiceCertificateWithResponse Retrieve the current relay transport certificate and private key
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -1087,28 +1087,28 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /internal/v1/relays/register (the `RegisterRelay` operationId).
 	RegisterRelayWithResponse(ctx context.Context, body RegisterRelayJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterRelayResponse, error)
 
-	// DrainRelayWithBodyWithResponse Remove one exact relay process from new work
+	// DrainRelayWithBodyWithResponse Stop a matching relay process from accepting new work
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /internal/v1/relays/{relay_id}/drain (the `DrainRelay` operationId).
 	DrainRelayWithBodyWithResponse(ctx context.Context, relayId RelayID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DrainRelayResponse, error)
 
-	// DrainRelayWithResponse Remove one exact relay process from new work
+	// DrainRelayWithResponse Stop a matching relay process from accepting new work
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /internal/v1/relays/{relay_id}/drain (the `DrainRelay` operationId).
 	DrainRelayWithResponse(ctx context.Context, relayId RelayID, body DrainRelayJSONRequestBody, reqEditors ...RequestEditorFn) (*DrainRelayResponse, error)
 
-	// RenewRelayWithBodyWithResponse Renew one exact relay lease
+	// RenewRelayWithBodyWithResponse Renew a matching relay lease
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /internal/v1/relays/{relay_id}/renew (the `RenewRelay` operationId).
 	RenewRelayWithBodyWithResponse(ctx context.Context, relayId RelayID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenewRelayResponse, error)
 
-	// RenewRelayWithResponse Renew one exact relay lease
+	// RenewRelayWithResponse Renew a matching relay lease
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -1459,7 +1459,7 @@ func (r RenewRelayResponse) ContentType() string {
 	return ""
 }
 
-// ClaimPublisherConnectionWithBodyWithResponse Atomically redeem one publisher connection credential
+// ClaimPublisherConnectionWithBodyWithResponse Claim a publisher connection with its credential
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -1472,7 +1472,7 @@ func (c *ClientWithResponses) ClaimPublisherConnectionWithBodyWithResponse(ctx c
 	return ParseClaimPublisherConnectionResponse(rsp)
 }
 
-// ClaimPublisherConnectionWithResponse Atomically redeem one publisher connection credential
+// ClaimPublisherConnectionWithResponse Claim a publisher connection with its credential
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -1485,7 +1485,7 @@ func (c *ClientWithResponses) ClaimPublisherConnectionWithResponse(ctx context.C
 	return ParseClaimPublisherConnectionResponse(rsp)
 }
 
-// DisconnectPublisherConnectionWithBodyWithResponse Close one exact publisher connection lifecycle
+// DisconnectPublisherConnectionWithBodyWithResponse Close a matching publisher connection
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -1498,7 +1498,7 @@ func (c *ClientWithResponses) DisconnectPublisherConnectionWithBodyWithResponse(
 	return ParseDisconnectPublisherConnectionResponse(rsp)
 }
 
-// DisconnectPublisherConnectionWithResponse Close one exact publisher connection lifecycle
+// DisconnectPublisherConnectionWithResponse Close a matching publisher connection
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -1537,7 +1537,7 @@ func (c *ClientWithResponses) MarkPublisherConnectionReadyWithResponse(ctx conte
 	return ParseMarkPublisherConnectionReadyResponse(rsp)
 }
 
-// GetRelayServiceCertificateWithResponse Retrieve the current public relay certificate and private key
+// GetRelayServiceCertificateWithResponse Retrieve the current relay transport certificate and private key
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -1576,7 +1576,7 @@ func (c *ClientWithResponses) RegisterRelayWithResponse(ctx context.Context, bod
 	return ParseRegisterRelayResponse(rsp)
 }
 
-// DrainRelayWithBodyWithResponse Remove one exact relay process from new work
+// DrainRelayWithBodyWithResponse Stop a matching relay process from accepting new work
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -1589,7 +1589,7 @@ func (c *ClientWithResponses) DrainRelayWithBodyWithResponse(ctx context.Context
 	return ParseDrainRelayResponse(rsp)
 }
 
-// DrainRelayWithResponse Remove one exact relay process from new work
+// DrainRelayWithResponse Stop a matching relay process from accepting new work
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -1602,7 +1602,7 @@ func (c *ClientWithResponses) DrainRelayWithResponse(ctx context.Context, relayI
 	return ParseDrainRelayResponse(rsp)
 }
 
-// RenewRelayWithBodyWithResponse Renew one exact relay lease
+// RenewRelayWithBodyWithResponse Renew a matching relay lease
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -1615,7 +1615,7 @@ func (c *ClientWithResponses) RenewRelayWithBodyWithResponse(ctx context.Context
 	return ParseRenewRelayResponse(rsp)
 }
 
-// RenewRelayWithResponse Renew one exact relay lease
+// RenewRelayWithResponse Renew a matching relay lease
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -1874,25 +1874,25 @@ func ParseRenewRelayResponse(rsp *http.Response) (*RenewRelayResponse, error) {
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
-	// ClaimPublisherConnection Atomically redeem one publisher connection credential
+	// ClaimPublisherConnection Claim a publisher connection with its credential
 	// (POST /internal/v1/publisher-connections/{publisher_connection_id}/claim)
 	ClaimPublisherConnection(w http.ResponseWriter, r *http.Request, publisherConnectionId PublisherConnectionID)
-	// DisconnectPublisherConnection Close one exact publisher connection lifecycle
+	// DisconnectPublisherConnection Close a matching publisher connection
 	// (POST /internal/v1/publisher-connections/{publisher_connection_id}/disconnect)
 	DisconnectPublisherConnection(w http.ResponseWriter, r *http.Request, publisherConnectionId PublisherConnectionID)
 	// MarkPublisherConnectionReady Mark one connected publisher connection ready
 	// (POST /internal/v1/publisher-connections/{publisher_connection_id}/ready)
 	MarkPublisherConnectionReady(w http.ResponseWriter, r *http.Request, publisherConnectionId PublisherConnectionID)
-	// GetRelayServiceCertificate Retrieve the current public relay certificate and private key
+	// GetRelayServiceCertificate Retrieve the current relay transport certificate and private key
 	// (GET /internal/v1/relay-services/{relay_service_id}/certificate)
 	GetRelayServiceCertificate(w http.ResponseWriter, r *http.Request, relayServiceId RelayServiceID, params GetRelayServiceCertificateParams)
 	// RegisterRelay Register one relay process run
 	// (POST /internal/v1/relays/register)
 	RegisterRelay(w http.ResponseWriter, r *http.Request)
-	// DrainRelay Remove one exact relay process from new work
+	// DrainRelay Stop a matching relay process from accepting new work
 	// (POST /internal/v1/relays/{relay_id}/drain)
 	DrainRelay(w http.ResponseWriter, r *http.Request, relayId RelayID)
-	// RenewRelay Renew one exact relay lease
+	// RenewRelay Renew a matching relay lease
 	// (POST /internal/v1/relays/{relay_id}/renew)
 	RenewRelay(w http.ResponseWriter, r *http.Request, relayId RelayID)
 }
@@ -2247,580 +2247,4 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/publisher-connections/{publisher_connection_id}/disconnect", wrapper.DisconnectPublisherConnection)
 
 	return m
-}
-
-type ProblemApplicationProblemPlusJSONResponse Problem
-
-type ClaimPublisherConnectionRequestObject struct {
-	PublisherConnectionId PublisherConnectionID `json:"publisher_connection_id"`
-	Body                  *ClaimPublisherConnectionJSONRequestBody
-}
-
-type ClaimPublisherConnectionResponseObject interface {
-	VisitClaimPublisherConnectionResponse(w http.ResponseWriter) error
-}
-
-type ClaimPublisherConnection200JSONResponse ClaimedPublisherConnection
-
-func (response ClaimPublisherConnection200JSONResponse) VisitClaimPublisherConnectionResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type ClaimPublisherConnectiondefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response ClaimPublisherConnectiondefaultApplicationProblemPlusJSONResponse) VisitClaimPublisherConnectionResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type DisconnectPublisherConnectionRequestObject struct {
-	PublisherConnectionId PublisherConnectionID `json:"publisher_connection_id"`
-	Body                  *DisconnectPublisherConnectionJSONRequestBody
-}
-
-type DisconnectPublisherConnectionResponseObject interface {
-	VisitDisconnectPublisherConnectionResponse(w http.ResponseWriter) error
-}
-
-type DisconnectPublisherConnection200JSONResponse ClaimedPublisherConnection
-
-func (response DisconnectPublisherConnection200JSONResponse) VisitDisconnectPublisherConnectionResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type DisconnectPublisherConnectiondefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response DisconnectPublisherConnectiondefaultApplicationProblemPlusJSONResponse) VisitDisconnectPublisherConnectionResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type MarkPublisherConnectionReadyRequestObject struct {
-	PublisherConnectionId PublisherConnectionID `json:"publisher_connection_id"`
-	Body                  *MarkPublisherConnectionReadyJSONRequestBody
-}
-
-type MarkPublisherConnectionReadyResponseObject interface {
-	VisitMarkPublisherConnectionReadyResponse(w http.ResponseWriter) error
-}
-
-type MarkPublisherConnectionReady200JSONResponse ClaimedPublisherConnection
-
-func (response MarkPublisherConnectionReady200JSONResponse) VisitMarkPublisherConnectionReadyResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type MarkPublisherConnectionReadydefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response MarkPublisherConnectionReadydefaultApplicationProblemPlusJSONResponse) VisitMarkPublisherConnectionReadyResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetRelayServiceCertificateRequestObject struct {
-	RelayServiceId RelayServiceID `json:"relay_service_id"`
-	Params         GetRelayServiceCertificateParams
-}
-
-type GetRelayServiceCertificateResponseObject interface {
-	VisitGetRelayServiceCertificateResponse(w http.ResponseWriter) error
-}
-
-type GetRelayServiceCertificate200ResponseHeaders struct {
-	CacheControl string
-}
-
-type GetRelayServiceCertificate200JSONResponse struct {
-	Body    RelayServiceCertificate
-	Headers GetRelayServiceCertificate200ResponseHeaders
-}
-
-func (response GetRelayServiceCertificate200JSONResponse) VisitGetRelayServiceCertificateResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", fmt.Sprint(response.Headers.CacheControl))
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetRelayServiceCertificatedefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response GetRelayServiceCertificatedefaultApplicationProblemPlusJSONResponse) VisitGetRelayServiceCertificateResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type RegisterRelayRequestObject struct {
-	Body *RegisterRelayJSONRequestBody
-}
-
-type RegisterRelayResponseObject interface {
-	VisitRegisterRelayResponse(w http.ResponseWriter) error
-}
-
-type RegisterRelay200JSONResponse RelayLease
-
-func (response RegisterRelay200JSONResponse) VisitRegisterRelayResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type RegisterRelaydefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response RegisterRelaydefaultApplicationProblemPlusJSONResponse) VisitRegisterRelayResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type DrainRelayRequestObject struct {
-	RelayId RelayID `json:"relay_id"`
-	Body    *DrainRelayJSONRequestBody
-}
-
-type DrainRelayResponseObject interface {
-	VisitDrainRelayResponse(w http.ResponseWriter) error
-}
-
-type DrainRelay200JSONResponse RelayLease
-
-func (response DrainRelay200JSONResponse) VisitDrainRelayResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type DrainRelaydefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response DrainRelaydefaultApplicationProblemPlusJSONResponse) VisitDrainRelayResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type RenewRelayRequestObject struct {
-	RelayId RelayID `json:"relay_id"`
-	Body    *RenewRelayJSONRequestBody
-}
-
-type RenewRelayResponseObject interface {
-	VisitRenewRelayResponse(w http.ResponseWriter) error
-}
-
-type RenewRelay200JSONResponse RelayLease
-
-func (response RenewRelay200JSONResponse) VisitRenewRelayResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type RenewRelaydefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response RenewRelaydefaultApplicationProblemPlusJSONResponse) VisitRenewRelayResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-// StrictServerInterface represents all server handlers.
-type StrictServerInterface interface {
-	// ClaimPublisherConnection Atomically redeem one publisher connection credential
-	// (POST /internal/v1/publisher-connections/{publisher_connection_id}/claim)
-	ClaimPublisherConnection(ctx context.Context, request ClaimPublisherConnectionRequestObject) (ClaimPublisherConnectionResponseObject, error)
-	// DisconnectPublisherConnection Close one exact publisher connection lifecycle
-	// (POST /internal/v1/publisher-connections/{publisher_connection_id}/disconnect)
-	DisconnectPublisherConnection(ctx context.Context, request DisconnectPublisherConnectionRequestObject) (DisconnectPublisherConnectionResponseObject, error)
-	// MarkPublisherConnectionReady Mark one connected publisher connection ready
-	// (POST /internal/v1/publisher-connections/{publisher_connection_id}/ready)
-	MarkPublisherConnectionReady(ctx context.Context, request MarkPublisherConnectionReadyRequestObject) (MarkPublisherConnectionReadyResponseObject, error)
-	// GetRelayServiceCertificate Retrieve the current public relay certificate and private key
-	// (GET /internal/v1/relay-services/{relay_service_id}/certificate)
-	GetRelayServiceCertificate(ctx context.Context, request GetRelayServiceCertificateRequestObject) (GetRelayServiceCertificateResponseObject, error)
-	// RegisterRelay Register one relay process run
-	// (POST /internal/v1/relays/register)
-	RegisterRelay(ctx context.Context, request RegisterRelayRequestObject) (RegisterRelayResponseObject, error)
-	// DrainRelay Remove one exact relay process from new work
-	// (POST /internal/v1/relays/{relay_id}/drain)
-	DrainRelay(ctx context.Context, request DrainRelayRequestObject) (DrainRelayResponseObject, error)
-	// RenewRelay Renew one exact relay lease
-	// (POST /internal/v1/relays/{relay_id}/renew)
-	RenewRelay(ctx context.Context, request RenewRelayRequestObject) (RenewRelayResponseObject, error)
-}
-
-type StrictHandlerFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error)
-type StrictMiddlewareFunc func(f StrictHandlerFunc, operationID string) StrictHandlerFunc
-
-type StrictHTTPServerOptions struct {
-	RequestErrorHandlerFunc  func(w http.ResponseWriter, r *http.Request, err error)
-	ResponseErrorHandlerFunc func(w http.ResponseWriter, r *http.Request, err error)
-}
-
-func NewStrictHandler(ssi StrictServerInterface, middlewares []StrictMiddlewareFunc) ServerInterface {
-	return &strictHandler{ssi: ssi, middlewares: middlewares, options: StrictHTTPServerOptions{
-		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-		},
-		ResponseErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		},
-	}}
-}
-
-func NewStrictHandlerWithOptions(ssi StrictServerInterface, middlewares []StrictMiddlewareFunc, options StrictHTTPServerOptions) ServerInterface {
-	if options.RequestErrorHandlerFunc == nil {
-		options.RequestErrorHandlerFunc = func(w http.ResponseWriter, r *http.Request, err error) {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-		}
-	}
-	if options.ResponseErrorHandlerFunc == nil {
-		options.ResponseErrorHandlerFunc = func(w http.ResponseWriter, r *http.Request, err error) {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-	}
-	return &strictHandler{ssi: ssi, middlewares: middlewares, options: options}
-}
-
-type strictHandler struct {
-	ssi         StrictServerInterface
-	middlewares []StrictMiddlewareFunc
-	options     StrictHTTPServerOptions
-}
-
-// ClaimPublisherConnection operation middleware
-func (sh *strictHandler) ClaimPublisherConnection(w http.ResponseWriter, r *http.Request, publisherConnectionId PublisherConnectionID) {
-	var request ClaimPublisherConnectionRequestObject
-
-	request.PublisherConnectionId = publisherConnectionId
-
-	var body ClaimPublisherConnectionJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.ClaimPublisherConnection(ctx, request.(ClaimPublisherConnectionRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "ClaimPublisherConnection")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(ClaimPublisherConnectionResponseObject); ok {
-		if err := validResponse.VisitClaimPublisherConnectionResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// DisconnectPublisherConnection operation middleware
-func (sh *strictHandler) DisconnectPublisherConnection(w http.ResponseWriter, r *http.Request, publisherConnectionId PublisherConnectionID) {
-	var request DisconnectPublisherConnectionRequestObject
-
-	request.PublisherConnectionId = publisherConnectionId
-
-	var body DisconnectPublisherConnectionJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.DisconnectPublisherConnection(ctx, request.(DisconnectPublisherConnectionRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "DisconnectPublisherConnection")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(DisconnectPublisherConnectionResponseObject); ok {
-		if err := validResponse.VisitDisconnectPublisherConnectionResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// MarkPublisherConnectionReady operation middleware
-func (sh *strictHandler) MarkPublisherConnectionReady(w http.ResponseWriter, r *http.Request, publisherConnectionId PublisherConnectionID) {
-	var request MarkPublisherConnectionReadyRequestObject
-
-	request.PublisherConnectionId = publisherConnectionId
-
-	var body MarkPublisherConnectionReadyJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.MarkPublisherConnectionReady(ctx, request.(MarkPublisherConnectionReadyRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "MarkPublisherConnectionReady")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(MarkPublisherConnectionReadyResponseObject); ok {
-		if err := validResponse.VisitMarkPublisherConnectionReadyResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// GetRelayServiceCertificate operation middleware
-func (sh *strictHandler) GetRelayServiceCertificate(w http.ResponseWriter, r *http.Request, relayServiceId RelayServiceID, params GetRelayServiceCertificateParams) {
-	var request GetRelayServiceCertificateRequestObject
-
-	request.RelayServiceId = relayServiceId
-	request.Params = params
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.GetRelayServiceCertificate(ctx, request.(GetRelayServiceCertificateRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "GetRelayServiceCertificate")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(GetRelayServiceCertificateResponseObject); ok {
-		if err := validResponse.VisitGetRelayServiceCertificateResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// RegisterRelay operation middleware
-func (sh *strictHandler) RegisterRelay(w http.ResponseWriter, r *http.Request) {
-	var request RegisterRelayRequestObject
-
-	var body RegisterRelayJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.RegisterRelay(ctx, request.(RegisterRelayRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "RegisterRelay")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(RegisterRelayResponseObject); ok {
-		if err := validResponse.VisitRegisterRelayResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// DrainRelay operation middleware
-func (sh *strictHandler) DrainRelay(w http.ResponseWriter, r *http.Request, relayId RelayID) {
-	var request DrainRelayRequestObject
-
-	request.RelayId = relayId
-
-	var body DrainRelayJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.DrainRelay(ctx, request.(DrainRelayRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "DrainRelay")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(DrainRelayResponseObject); ok {
-		if err := validResponse.VisitDrainRelayResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// RenewRelay operation middleware
-func (sh *strictHandler) RenewRelay(w http.ResponseWriter, r *http.Request, relayId RelayID) {
-	var request RenewRelayRequestObject
-
-	request.RelayId = relayId
-
-	var body RenewRelayJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.RenewRelay(ctx, request.(RenewRelayRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "RenewRelay")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(RenewRelayResponseObject); ok {
-		if err := validResponse.VisitRenewRelayResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
 }

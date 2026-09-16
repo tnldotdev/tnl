@@ -105,7 +105,7 @@ type BatchResult struct {
 	ItemId   string            `json:"item_id"`
 }
 
-// DurationHistogram A cumulative duration histogram. cumulative_counts uses fixed inclusive upper bounds of 1ms, 5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2.5s, 5s, 10s, 30s, 1m, 5m, 15m, 1h, 6h, 24h, 3d, 7d, and +Inf, in that order.
+// DurationHistogram A cumulative duration histogram. cumulative_counts contains these fixed inclusive upper bounds, in order: 1ms, 5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2.5s, 5s, 10s, 30s, 1m, 5m, 15m, 1h, 6h, 24h, 3d, 7d, and +Inf.
 type DurationHistogram struct {
 	Count            PositiveInteger   `json:"count"`
 	CumulativeCounts []UnsignedInteger `json:"cumulative_counts"`
@@ -139,20 +139,20 @@ type RouteID = ResourceID
 
 // RouteUsageBucketReport defines model for RouteUsageBucketReport.
 type RouteUsageBucketReport struct {
-	// ActingIdentityId Immutable acting identity attribution captured for this route version.
+	// ActingIdentityId Acting identity recorded when this route version was created.
 	ActingIdentityId IdentityID `json:"acting_identity_id"`
 	BucketStart      time.Time  `json:"bucket_start"`
 
 	// CapacityDenials Matched attempts rejected by the route connection limit.
 	CapacityDenials UnsignedInteger `json:"capacity_denials"`
 
-	// Complete Whether accounting is complete through the bucket end without a missing ingress reporting interval.
+	// Complete Whether accounting covers the entire bucket without a missing ingress report.
 	Complete bool `json:"complete"`
 
-	// ConnectionAttempts Connections counted immediately after an ordinary route match, before policy and capacity checks.
+	// ConnectionAttempts Connections counted after a route match and before policy and capacity checks.
 	ConnectionAttempts UnsignedInteger `json:"connection_attempts"`
 
-	// ConnectionNanoseconds Wall-clock duration of successful streams, split across the buckets in which time elapsed.
+	// ConnectionNanoseconds Elapsed time for successful streams, divided among the buckets in which the time passed.
 	ConnectionNanoseconds UnsignedInteger `json:"connection_nanoseconds"`
 
 	// EgressBytes Bytes successfully forwarded from publishers to visitors.
@@ -162,7 +162,7 @@ type RouteUsageBucketReport struct {
 	IngressBytes UnsignedInteger `json:"ingress_bytes"`
 	ItemId       string          `json:"item_id"`
 
-	// ObservedThrough End of known accounting coverage for this bucket. Equals the bucket end when complete is true.
+	// ObservedThrough Latest time covered by this bucket. Equals the bucket end when complete is true.
 	ObservedThrough time.Time `json:"observed_through"`
 
 	// PolicyDenials Matched attempts rejected by route access policy.
@@ -171,7 +171,7 @@ type RouteUsageBucketReport struct {
 	// PublisherOpenFailures Attempts for which opening a publisher stream failed.
 	PublisherOpenFailures UnsignedInteger `json:"publisher_open_failures"`
 
-	// PublisherOpenLatency Latency of publisher open calls, including failed calls, attributed when the call returns. Absent when the bucket has no observations; absence is undefined and is not a zero-valued observation.
+	// PublisherOpenLatency Time taken to open a publisher stream, including failed attempts. The value is recorded when the attempt ends. The field is absent, rather than zero, when the bucket has no observations.
 	PublisherOpenLatency *DurationHistogram               `json:"publisher_open_latency,omitempty"`
 	Resolution           RouteUsageBucketReportResolution `json:"resolution"`
 	Revision             PositiveInteger                  `json:"revision"`
@@ -180,22 +180,22 @@ type RouteUsageBucketReport struct {
 	// RouteVersion Route version measured by this report.
 	RouteVersion PositiveInteger `json:"route_version"`
 
-	// SuccessfulConnectionDuration End-to-end duration of successful forwarding streams, attributed when a stream closes. Absent when the bucket has no observations; absence is undefined and is not a zero-valued observation.
+	// SuccessfulConnectionDuration Total time for a successful visitor stream. The value is recorded when the stream closes. The field is absent, rather than zero, when the bucket has no observations.
 	SuccessfulConnectionDuration *DurationHistogram `json:"successful_connection_duration,omitempty"`
 
 	// SuccessfulStreams Publisher streams that entered bidirectional forwarding.
 	SuccessfulStreams UnsignedInteger `json:"successful_streams"`
 
-	// TeamId Immutable team attribution captured for this route version.
+	// TeamId Team recorded when this route version was created.
 	TeamId TeamID `json:"team_id"`
 
-	// TimeToFirstPublisherByte Time from route match until the first publisher byte is forwarded to the visitor, attributed when that byte is written. Absent when the bucket has no observations; absence is undefined and is not a zero-valued observation.
+	// TimeToFirstPublisherByte Time from a route match until the first publisher byte reaches the visitor. The value is recorded when that byte is written. The field is absent, rather than zero, when the bucket has no observations.
 	TimeToFirstPublisherByte *DurationHistogram `json:"time_to_first_publisher_byte,omitempty"`
 
-	// VisitorNetworkEstimate Precision-12 HyperLogLog estimate of distinct visitor networks for this route and bucket. The sketch is shared by route versions, so reports for the same route and bucket carry the same estimate and must not be summed.
+	// VisitorNetworkEstimate Precision-12 HyperLogLog estimate of distinct visitor networks for this route and bucket. All route versions share the same sketch, so do not add estimates from reports for the same route and bucket.
 	VisitorNetworkEstimate UnsignedInteger `json:"visitor_network_estimate"`
 
-	// VisitorNetworkHll Versioned precision-12 HyperLogLog checkpoint. Decoded bytes start with version 1, precision 12, and an encoding byte. Sparse encoding 0 continues with a big-endian uint16 entry count followed by sorted (big-endian uint16 register index, uint8 register value) entries; dense encoding 1 continues with 4096 uint8 registers. Inputs are IPv4 /32 or IPv6 /64 networks HMACed with a route-scoped secret derived daily from the daemon's stable master secret; no source identifier is included. Merge registers by their maximum rather than summing estimates when aggregating reports.
+	// VisitorNetworkHll Versioned precision-12 HyperLogLog data. After base64 decoding, the bytes start with version 1, precision 12, and an encoding byte. Sparse encoding 0 then contains a big-endian uint16 entry count and sorted entries of a big-endian uint16 register index followed by a uint8 value. Dense encoding 1 contains 4096 uint8 registers. Inputs are visitor IPv4 /32 or IPv6 /64 networks HMACed with a route-scoped secret that changes daily. No source address is included. When combining reports, merge each register by its maximum value instead of adding estimates.
 	VisitorNetworkHll []byte `json:"visitor_network_hll"`
 }
 
@@ -787,208 +787,4 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/routes/usage-bucket-reports", wrapper.IngestRouteUsageBucketReports)
 
 	return m
-}
-
-type ProblemApplicationProblemPlusJSONResponse Problem
-
-type IngestRouteUsageBucketReportsRequestObject struct {
-	Body *IngestRouteUsageBucketReportsJSONRequestBody
-}
-
-type IngestRouteUsageBucketReportsResponseObject interface {
-	VisitIngestRouteUsageBucketReportsResponse(w http.ResponseWriter) error
-}
-
-type IngestRouteUsageBucketReports200JSONResponse RouteUsageBucketReportBatchResponse
-
-func (response IngestRouteUsageBucketReports200JSONResponse) VisitIngestRouteUsageBucketReportsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type IngestRouteUsageBucketReports400ApplicationProblemPlusJSONResponse struct {
-	ProblemApplicationProblemPlusJSONResponse
-}
-
-func (response IngestRouteUsageBucketReports400ApplicationProblemPlusJSONResponse) VisitIngestRouteUsageBucketReportsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(400)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type IngestRouteUsageBucketReports401ApplicationProblemPlusJSONResponse Problem
-
-func (response IngestRouteUsageBucketReports401ApplicationProblemPlusJSONResponse) VisitIngestRouteUsageBucketReportsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(401)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type IngestRouteUsageBucketReports404ApplicationProblemPlusJSONResponse Problem
-
-func (response IngestRouteUsageBucketReports404ApplicationProblemPlusJSONResponse) VisitIngestRouteUsageBucketReportsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(404)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type IngestRouteUsageBucketReports409ApplicationProblemPlusJSONResponse Problem
-
-func (response IngestRouteUsageBucketReports409ApplicationProblemPlusJSONResponse) VisitIngestRouteUsageBucketReportsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(409)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type IngestRouteUsageBucketReports413ApplicationProblemPlusJSONResponse Problem
-
-func (response IngestRouteUsageBucketReports413ApplicationProblemPlusJSONResponse) VisitIngestRouteUsageBucketReportsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(413)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type IngestRouteUsageBucketReports415ApplicationProblemPlusJSONResponse Problem
-
-func (response IngestRouteUsageBucketReports415ApplicationProblemPlusJSONResponse) VisitIngestRouteUsageBucketReportsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(415)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type IngestRouteUsageBucketReportsdefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response IngestRouteUsageBucketReportsdefaultApplicationProblemPlusJSONResponse) VisitIngestRouteUsageBucketReportsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-// StrictServerInterface represents all server handlers.
-type StrictServerInterface interface {
-	// IngestRouteUsageBucketReports Ingest route usage bucket reports
-	// (POST /v1/routes/usage-bucket-reports)
-	IngestRouteUsageBucketReports(ctx context.Context, request IngestRouteUsageBucketReportsRequestObject) (IngestRouteUsageBucketReportsResponseObject, error)
-}
-
-type StrictHandlerFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error)
-type StrictMiddlewareFunc func(f StrictHandlerFunc, operationID string) StrictHandlerFunc
-
-type StrictHTTPServerOptions struct {
-	RequestErrorHandlerFunc  func(w http.ResponseWriter, r *http.Request, err error)
-	ResponseErrorHandlerFunc func(w http.ResponseWriter, r *http.Request, err error)
-}
-
-func NewStrictHandler(ssi StrictServerInterface, middlewares []StrictMiddlewareFunc) ServerInterface {
-	return &strictHandler{ssi: ssi, middlewares: middlewares, options: StrictHTTPServerOptions{
-		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-		},
-		ResponseErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		},
-	}}
-}
-
-func NewStrictHandlerWithOptions(ssi StrictServerInterface, middlewares []StrictMiddlewareFunc, options StrictHTTPServerOptions) ServerInterface {
-	if options.RequestErrorHandlerFunc == nil {
-		options.RequestErrorHandlerFunc = func(w http.ResponseWriter, r *http.Request, err error) {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-		}
-	}
-	if options.ResponseErrorHandlerFunc == nil {
-		options.ResponseErrorHandlerFunc = func(w http.ResponseWriter, r *http.Request, err error) {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-	}
-	return &strictHandler{ssi: ssi, middlewares: middlewares, options: options}
-}
-
-type strictHandler struct {
-	ssi         StrictServerInterface
-	middlewares []StrictMiddlewareFunc
-	options     StrictHTTPServerOptions
-}
-
-// IngestRouteUsageBucketReports operation middleware
-func (sh *strictHandler) IngestRouteUsageBucketReports(w http.ResponseWriter, r *http.Request) {
-	var request IngestRouteUsageBucketReportsRequestObject
-
-	var body IngestRouteUsageBucketReportsJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.IngestRouteUsageBucketReports(ctx, request.(IngestRouteUsageBucketReportsRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "IngestRouteUsageBucketReports")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(IngestRouteUsageBucketReportsResponseObject); ok {
-		if err := validResponse.VisitIngestRouteUsageBucketReportsResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
 }

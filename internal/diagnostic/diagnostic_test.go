@@ -3,8 +3,10 @@ package diagnostic
 import (
 	"bytes"
 	"errors"
+	"html"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -99,6 +101,7 @@ func TestWriteHTTPNegotiatesRepresentation(t *testing.T) {
 		{name: "explicit plain", method: http.MethodGet, accept: "text/plain", contentType: "text/plain; charset=utf-8", body: true},
 		{name: "html disabled", method: http.MethodGet, accept: "text/html;q=0,*/*;q=1", contentType: "text/plain; charset=utf-8", body: true},
 		{name: "head", method: http.MethodHead, accept: "text/html", contentType: "text/html; charset=utf-8", body: false},
+		{name: "head plain", method: http.MethodHead, accept: "text/plain", contentType: "text/plain; charset=utf-8", body: false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			request := httptest.NewRequest(test.method, "https://route.example/", nil)
@@ -113,6 +116,30 @@ func TestWriteHTTPNegotiatesRepresentation(t *testing.T) {
 			}
 			if test.body != (response.Body.Len() != 0) {
 				t.Fatalf("body = %q", response.Body.String())
+			}
+			get := httptest.NewRecorder()
+			getRequest := httptest.NewRequest(http.MethodGet, "https://route.example/", nil)
+			getRequest.Header.Set("Accept", test.accept)
+			WriteHTTP(get, getRequest, http.StatusBadGateway, TargetUnavailable)
+			if response.Header().Get("Content-Length") != strconv.Itoa(get.Body.Len()) {
+				t.Fatalf("Content-Length = %q, GET bytes = %d", response.Header().Get("Content-Length"), get.Body.Len())
+			}
+			if test.contentType == "text/plain; charset=utf-8" {
+				if get.Body.String() != Text(TargetUnavailable) {
+					t.Fatalf("plain body = %q", get.Body.String())
+				}
+				if response.Header().Get("Content-Security-Policy") != "" || response.Header().Get("Referrer-Policy") != "" {
+					t.Fatal("plain response has unexpected HTML headers")
+				}
+			} else {
+				if response.Header().Get("Content-Security-Policy") != "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'" ||
+					response.Header().Get("Referrer-Policy") != "no-referrer" {
+					t.Fatalf("HTML headers = %v", response.Header())
+				}
+				if !strings.Contains(get.Body.String(), html.EscapeString(Text(TargetUnavailable))) ||
+					!strings.Contains(get.Body.String(), "<title>local service unavailable - tnl</title>") {
+					t.Fatalf("HTML diagnostic content = %q", get.Body.String())
+				}
 			}
 			if test.contentType == "text/html; charset=utf-8" && test.body {
 				body := response.Body.String()

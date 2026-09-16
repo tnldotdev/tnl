@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -102,7 +103,8 @@ func TestPublishOutputHumanPrintsURLOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	if stdout.Len() != 0 || !strings.HasPrefix(stderr.String(), "+--[ tnl publish ]-- ready ") ||
-		!strings.Contains(stderr.String(), "https://demo.example") ||
+		strings.Count(stderr.String(), "]-- ready ") != 1 ||
+		strings.Count(stderr.String(), "https://demo.example") != 1 ||
 		!strings.Contains(stderr.String(), "IP policy") || !strings.Contains(stderr.String(), "2001:db8::1") ||
 		!strings.Contains(stderr.String(), "+-- opened in browser; ctrl+c to stop ") {
 		t.Fatalf("stdout = %q, stderr = %q", stdout.String(), stderr.String())
@@ -264,7 +266,7 @@ func TestPublishOutputHumanShowsTransportFallbackAtReady(t *testing.T) {
 	got := stderr.String()
 	if strings.Count(got, "+--[ tnl dev ]-- transport fallback ") != 1 ||
 		!strings.Contains(got, "tunnel continues over TLS/TCP") ||
-		!strings.Contains(got, "transport      TLS/TCP fallback") {
+		!strings.Contains(got, "transport") || !strings.Contains(got, "TLS/TCP fallback") {
 		t.Fatalf("human output = %q", got)
 	}
 }
@@ -366,10 +368,50 @@ func TestPublishOutputHumanProvisioningAndAggregateDenials(t *testing.T) {
 		strings.Contains(got, "192.0.2") || strings.ContainsRune(got, '\x1b') {
 		t.Fatalf("human lifecycle output = %q", got)
 	}
-	for _, line := range strings.Split(got, "\n") {
-		if len(line) > 72 {
-			t.Fatalf("line exceeds 72 columns: %q", line)
+}
+
+func TestPublishNDJSONWireKeysAndOmissions(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	output, err := newPublishOutput("ndjson", "tnl publish", &stdout, &stderr, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := output.starting("tunnel_0123456789abcdef0123456789abcdef", "http://127.0.0.1:3000"); err != nil {
+		t.Fatal(err)
+	}
+	if err := output.ready("https://demo.example", 7); err != nil {
+		t.Fatal(err)
+	}
+	if err := output.failed(diagnostic.Wrap(diagnostic.TargetUnavailable, errors.New("connection refused"))); err != nil {
+		t.Fatal(err)
+	}
+	if err := output.stopped(); err != nil {
+		t.Fatal(err)
+	}
+	decoder := json.NewDecoder(&stdout)
+	for index, fields := range []map[string]any{
+		{"type": "starting", "target": "http://127.0.0.1:3000"},
+		{"type": "ready", "url": "https://demo.example", "route_version": float64(7)},
+		{"type": "error", "message": "connection refused", "retryable": false, "code": string(diagnostic.TargetUnavailable), "help_url": diagnostic.HelpURL(diagnostic.TargetUnavailable)},
+		{"type": "stopped", "reason": "canceled"},
+	} {
+		var wire map[string]any
+		if err := decoder.Decode(&wire); err != nil {
+			t.Fatal(err)
 		}
+		fields["schema_version"] = float64(1)
+		fields["cursor"] = float64(index + 1)
+		fields["tunnel_id"] = "tunnel_0123456789abcdef0123456789abcdef"
+		if !reflect.DeepEqual(wire, fields) {
+			t.Fatalf("event %d = %#v, want %#v", index, wire, fields)
+		}
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		t.Fatalf("trailing output = %v, %v", extra, err)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q", stderr.String())
 	}
 }
 

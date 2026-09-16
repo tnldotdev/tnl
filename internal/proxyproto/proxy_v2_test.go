@@ -181,7 +181,21 @@ func TestDecodeReturnsBeforePayload(t *testing.T) {
 	if err := server.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	go client.Write(encoded)
+	_ = client.SetWriteDeadline(time.Now().Add(time.Second))
+	done := make(chan error, 1)
+	t.Cleanup(func() {
+		_ = client.Close()
+		_ = server.Close()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Errorf("write header: %v", err)
+			}
+		case <-time.After(time.Second):
+			t.Error("header writer did not stop")
+		}
+	})
+	go func() { _, err := client.Write(encoded); done <- err }()
 
 	if _, _, err := Decode(server); err != nil {
 		t.Fatal(err)

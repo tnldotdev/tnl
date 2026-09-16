@@ -3,6 +3,7 @@ package projectconfig
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -38,35 +39,35 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
 }
 
 func TestLoadRejectsVersionedOrDaemonResult(t *testing.T) {
-	for name, source := range map[string]string{
-		"version": `export default {version: 1};`,
-		"tnld":    `export default {tnld: {mode: "relay"}};`,
-		"snake":   `export default {tunnel: {allow_ip: ["192.0.2.1"]}};`,
+	for field, source := range map[string]string{
+		"version":  `export default {version: 1};`,
+		"tnld":     `export default {tnld: {mode: "relay"}};`,
+		"allow_ip": `export default {tunnel: {allow_ip: ["192.0.2.1"]}};`,
 	} {
 		path := filepath.Join(t.TempDir(), "tnl.config.ts")
 		if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := loadTypeScript(t.Context(), path, filepath.Dir(path), Worktree{}); err == nil {
-			t.Fatalf("%s result was accepted", name)
+		if _, err := loadTypeScript(t.Context(), path, filepath.Dir(path), Worktree{}); err == nil || !strings.Contains(err.Error(), `unknown TypeScript configuration field "`+field+`"`) {
+			t.Fatalf("%s result error = %v, want unknown-field rejection", field, err)
 		}
 	}
 }
 
 func TestLoadAppliesStaticValidationToNestedServices(t *testing.T) {
-	for name, source := range map[string]string{
-		"duration":  `export default {services: {api: {dev: {startupTimeout: "+1s"}}}};`,
-		"target":    `export default {services: {api: {publish: {target: "https://example.com"}}}};`,
-		"ip":        `export default {services: {api: {tunnel: {allowIP: ["192.0.2.7/24"]}}}};`,
-		"duplicate": `export default {services: {api: {tunnel: {allowIP: ["192.0.2.1", "192.0.2.1/32"]}}}};`,
+	for name, test := range map[string]struct{ source, category string }{
+		"duration":  {`export default {services: {api: {dev: {startupTimeout: "+1s"}}}};`, "invalid duration syntax"},
+		"target":    {`export default {services: {api: {publish: {target: "https://example.com"}}}};`, "services.api: publish.target:"},
+		"ip":        {`export default {services: {api: {tunnel: {allowIP: ["192.0.2.7/24"]}}}};`, "must be a canonical IP address or prefix"},
+		"duplicate": {`export default {services: {api: {tunnel: {allowIP: ["192.0.2.1", "192.0.2.1/32"]}}}};`, "is duplicated"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "tnl.config.ts")
-			if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
+			if err := os.WriteFile(path, []byte(test.source), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := loadTypeScript(t.Context(), path, filepath.Dir(path), Worktree{}); err == nil {
-				t.Fatal("invalid TypeScript service configuration was accepted")
+			if _, err := loadTypeScript(t.Context(), path, filepath.Dir(path), Worktree{}); err == nil || !strings.Contains(err.Error(), test.category) {
+				t.Fatalf("invalid TypeScript service error = %v, want %q", err, test.category)
 			}
 		})
 	}

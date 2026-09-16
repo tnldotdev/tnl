@@ -212,10 +212,24 @@ func TestRoute53ProviderRemovesAddressFamilyAndSupportsAAAAOnly(t *testing.T) {
 			if len(client.changes) != 3 {
 				t.Fatalf("changes %#v", client.changes)
 			}
+			deletions := 0
+			wantValue := "192.0.2.10"
+			if family == types.RRTypeAaaa {
+				wantValue = "2001:db8::10"
+			}
 			for _, change := range client.changes {
-				if change.ResourceRecordSet.Type == family && (change.Action != types.ChangeActionDelete || len(change.ResourceRecordSet.ResourceRecords) != 1) {
+				if change.ResourceRecordSet.Type != family {
+					continue
+				}
+				if change.Action != types.ChangeActionDelete || len(change.ResourceRecordSet.ResourceRecords) != 1 ||
+					aws.ToString(change.ResourceRecordSet.Name) != "api.tunnels.example.test." ||
+					aws.ToString(change.ResourceRecordSet.ResourceRecords[0].Value) != wantValue {
 					t.Fatalf("removed family %#v", change)
 				}
+				deletions++
+			}
+			if deletions != 1 {
+				t.Fatalf("matching deletions = %d, changes %#v", deletions, client.changes)
 			}
 		})
 	}

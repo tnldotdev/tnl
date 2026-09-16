@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import * as path from "node:path";
-import { describe, expect, onTestFinished, test } from "vitest";
+import { describe, expect, test } from "vitest";
 import {
   canonicalLoopbackTarget,
   discoverProject,
@@ -14,11 +14,11 @@ import {
 import { parseRuntimePayload } from "./dist/internal/runtime.js";
 import {
   createProjectFixture,
-  startTestBootstrap,
   temporaryDirectory,
   testProjectDocument,
   testPublicProject,
-} from "./test-helper.js";
+} from "./test-helper/project.js";
+import { startTestBootstrap } from "./test-helper/bootstrap.js";
 
 describe("development context", () => {
   test.each(["", "0", "65536", " 80", "+80", "8.0", "8e1", "80\n"])(
@@ -137,8 +137,7 @@ describe("development context", () => {
     const runtimeDirectory = path.join(runtimeRoot, `tnl-${process.getuid()}`);
     await mkdir(runtimeDirectory, { mode: 0o700 });
     const socket = path.join(runtimeDirectory, `dev-${socketIdentity(projectRoot, "api")}.sock`);
-    const bootstrap = await startTestBootstrap({ socket });
-    onTestFinished(() => bootstrap.close());
+    await startTestBootstrap({ socket });
 
     const context = readDevelopmentContext({ XDG_RUNTIME_DIR: runtimeRoot }, serviceDirectory);
     expect(context.bootstrap).toEqual({ socket });
@@ -211,7 +210,6 @@ describe("protocol v1", () => {
         publicURL: "https://override.example",
       }),
     });
-    onTestFinished(() => bootstrap.close());
     const context = readDevelopmentContext(bootstrap.environment);
     expect(context.bootstrap).not.toBeNull();
     if (context.bootstrap === null) {
@@ -266,7 +264,6 @@ describe("protocol v1", () => {
     const malformed = await startTestBootstrap({
       responseBody: JSON.stringify({ ...validAssignmentResponse(), unexpected: true }),
     });
-    onTestFinished(() => malformed.close());
     const malformedContext = readDevelopmentContext(malformed.environment);
     await expect(
       requestTunnelAssignment("next", requiredBootstrap(malformedContext.bootstrap)),
@@ -276,7 +273,6 @@ describe("protocol v1", () => {
       responseBody: "x".repeat(64 * 1024 + 1),
       status: 409,
     });
-    onTestFinished(() => oversized.close());
     const oversizedContext = readDevelopmentContext(oversized.environment);
     await expect(
       requestTunnelAssignment("next", requiredBootstrap(oversizedContext.bootstrap)),
@@ -312,7 +308,6 @@ describe("protocol v1", () => {
     const bootstrap = await startTestBootstrap({
       responseBody: JSON.stringify({ ...validAssignmentResponse(), ...replacement }),
     });
-    onTestFinished(() => bootstrap.close());
     const context = readDevelopmentContext(bootstrap.environment);
     await expect(
       requestTunnelAssignment("vite", requiredBootstrap(context.bootstrap)),
@@ -321,7 +316,6 @@ describe("protocol v1", () => {
 
   test("validates framework and listener targets before sending", async () => {
     const bootstrap = await startTestBootstrap();
-    onTestFinished(() => bootstrap.close());
     const context = readDevelopmentContext(bootstrap.environment);
     const connection = requiredBootstrap(context.bootstrap);
     await expect(requestTunnelAssignment("Next.js", connection)).rejects.toThrow(/framework name/);

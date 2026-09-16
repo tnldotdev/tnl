@@ -82,7 +82,11 @@ func TestConnectionAssignmentResponsesExposeClosedSlotsAsReplacing(t *testing.T)
 			State: "closed",
 		}
 	}
-	for _, connection := range connectionAssignmentResponses(assignments) {
+	connections := connectionAssignmentResponses(assignments)
+	if len(connections) != len(assignments) {
+		t.Fatalf("connection assignments = %d, want %d", len(connections), len(assignments))
+	}
+	for _, connection := range connections {
 		if connection.State != controlv1.PublisherConnectionStateReplacing {
 			t.Fatalf("closed publisher connection state = %q, want replacing", connection.State)
 		}

@@ -25,12 +25,12 @@ func TestRegistryCandidateRequiresExactCurrentPublisherConnection(t *testing.T) 
 	}}
 	header := tunnelv1.InternalForwardingHeader{
 		ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.InternalForwardingStream,
-		VisitorConnectionID: "visitor_connection_1", RouteID: connection.ref.RouteID,
-		RouteSessionID: connection.ref.RouteSessionID, RouteVersion: connection.ref.RouteVersion,
-		PublisherConnectionID: connection.ref.PublisherConnectionID, ConnectionSlot: connection.ref.ConnectionSlot,
-		ConnectionAssignmentRevision: connection.ref.ConnectionAssignmentRevision,
-		RelayServiceID:               connection.ref.RelayServiceID, RelayID: connection.claimed.RelayId,
-		RelayRunID: connection.claimed.RelayRunId, RelayLeaseRevision: uint64(connection.claimed.RelayLeaseRevision),
+		VisitorConnectionID: "visitor_connection_1", RouteID: "route_1",
+		RouteSessionID: "route_session_1", RouteVersion: 2,
+		PublisherConnectionID: "publisher_connection_1", ConnectionSlot: 0,
+		ConnectionAssignmentRevision: 3,
+		RelayServiceID:               "relay_service_1", RelayID: "relay_1",
+		RelayRunID: "relay_run_1", RelayLeaseRevision: 4,
 		RouteExpiresAt: now.Add(time.Minute), LeaseExpiresAt: now.Add(time.Minute),
 	}
 	if candidate, ok := registry.Candidate(header, now); !ok || candidate != connection {

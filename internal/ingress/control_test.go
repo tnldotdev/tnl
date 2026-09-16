@@ -15,14 +15,14 @@ func TestDirectStaleLeaseClearsController(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	response, err := client.RenewIngressWithResponse(t.Context(), "ingress-1", ingressv1.IngressRenewal{
+	_, err = client.RenewIngress(t.Context(), "ingress-1", ingressv1.IngressRenewal{
 		IngressId: "ingress-1", IngressRunId: "run-1", IngressLeaseRevision: 1,
 	})
-	if err != nil {
-		t.Fatalf("store error escaped direct adapter: %v", err)
+	if err == nil {
+		t.Fatal("direct adapter accepted a stale lease")
 	}
 	controller := &Controller{lease: ingressv1.IngressLease{IngressLeaseRevision: 1}, routingTableCurrent: true}
-	controller.responseError("renew", response.StatusCode(), response.ApplicationproblemJSONDefault)
+	controller.responseError("renew", err)
 	if controller.lease.IngressLeaseRevision != 0 || controller.routingTableCurrent {
 		t.Fatalf("stale state retained: %#v", controller)
 	}

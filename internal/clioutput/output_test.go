@@ -94,6 +94,36 @@ func TestRenderWrapsAndEscapesWithoutExceedingLimit(t *testing.T) {
 	assertFrameInvariants(t, got)
 }
 
+func TestRenderPreservesLongUniqueValueAcrossWrapping(t *testing.T) {
+	var value strings.Builder
+	for index := range 80 {
+		fmt.Fprintf(&value, "%03dabcdef", index)
+	}
+	for name, block := range map[string]Block{
+		"text":  Text(value.String()),
+		"field": Fields(Field{Label: "hostname", Value: value.String()}),
+		"flow":  Flow(FlowNode{Label: value.String()}),
+		"tree":  Tree(TreeNode{Label: "hostname", Value: value.String()}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := Render(Frame{Command: "tnl status", State: "result", Blocks: []Block{block}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertFrameInvariants(t, got)
+			var unwrapped strings.Builder
+			for _, line := range strings.Split(got, "\n") {
+				if strings.HasPrefix(line, "|") {
+					unwrapped.WriteString(strings.TrimSpace(strings.Trim(line, "|")))
+				}
+			}
+			if !strings.Contains(unwrapped.String(), value.String()) {
+				t.Fatalf("wrapped %s lost or reordered value bytes:\n%s", name, got)
+			}
+		})
+	}
+}
+
 func TestRenderRightBorderIsAligned(t *testing.T) {
 	tests := map[string]Frame{
 		"dev output": {

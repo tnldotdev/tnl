@@ -11,7 +11,7 @@
   "include": [
     "vitest.config.ts",
     "packages/**/*.test.ts",
-    "packages/tnl/test-helper.ts",
+    "packages/tnl/test-helper/**/*.ts",
     "packages/tnl/fixtures/**/*.ts",
     "packages/tnl/fixtures/**/*.tsx"
   ],

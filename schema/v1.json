@@ -222,7 +222,7 @@
         },
         "private_control_listen": {
           "type": "string",
-          "description": "Private cluster-authenticated ingress and relay API listen address."
+          "description": "Private control API listen address for ingress and relays."
         },
         "ingress_listen": {
           "type": "string",
@@ -236,19 +236,13 @@
           "type": "string",
           "description": "Public QUIC publisher-connection listen address."
         },
-        "relay_quic_packet_io_mode": {
-          "type": "string",
-          "enum": ["optimized", "basic"],
-          "description": "Relay QUIC UDP packet I/O mode: ${enum}.",
-          "default": "optimized"
-        },
         "internal_relay_listen": {
           "type": "string",
           "description": "Internal forwarding listen address."
         },
         "dns_server": {
           "type": "string",
-          "description": "DNS resolver used for authoritative verification; defaults to the system resolver."
+          "description": "DNS resolver used to verify claimed domains. Defaults to the system resolver."
         },
         "server_domain": {
           "type": "string",
@@ -264,30 +258,30 @@
         },
         "managed_deployment_domain": {
           "type": "string",
-          "description": "Managed public route DNS domain."
+          "description": "Server-controlled domain used for member namespaces."
         },
         "reserved_route_name": {
           "items": {
             "type": "string"
           },
           "type": "array",
-          "description": "DNS labels unavailable for routes; repeat for each label."
+          "description": "DNS labels that routes cannot use. Repeat for each label."
         },
         "control_tls_certificate_file": {
           "type": "string",
-          "description": "Optional static public control certificate chain override."
+          "description": "Optional static control certificate chain."
         },
         "control_tls_private_key_file": {
           "type": "string",
-          "description": "Optional static public control private key override."
+          "description": "Optional static control private key."
         },
         "relay_tls_certificate_file": {
           "type": "string",
-          "description": "Optional static public relay certificate chain override."
+          "description": "Optional static relay transport certificate chain."
         },
         "relay_tls_private_key_file": {
           "type": "string",
-          "description": "Optional static public relay private key override."
+          "description": "Optional static relay transport private key."
         },
         "acme_directory_url": {
           "type": "string",
@@ -327,11 +321,11 @@
         },
         "login_token": {
           "type": "string",
-          "description": "Bootstrap login token for the built-in administrator identity."
+          "description": "Login token for the built-in administrator identity."
         },
         "authority_endpoint": {
           "type": "string",
-          "description": "Exact external authority HTTPS origin; defaults to the control origin."
+          "description": "External authority URL. Defaults to the control URL."
         },
         "access_token_lifetime": {
           "type": "string",
@@ -388,7 +382,7 @@
         },
         "hosted_secret": {
           "type": "string",
-          "description": "Current secret shared by control and the hosted authority."
+          "description": "Current secret shared by control and the external authority."
         },
         "hosted_secret_previous": {
           "type": "string",
@@ -396,7 +390,7 @@
         },
         "storage_key": {
           "type": "string",
-          "description": "Canonical base64url AES-256 key used to encrypt recoverable PostgreSQL secrets."
+          "description": "Unpadded base64url AES-256 key used to encrypt recoverable PostgreSQL secrets."
         },
         "storage_key_previous": {
           "type": "string",
@@ -416,7 +410,7 @@
         },
         "relay_address": {
           "type": "string",
-          "description": "Stable public relay hostname and port advertised by this relay service."
+          "description": "Relay address advertised by this relay service."
         },
         "internal_relay_address": {
           "type": "string",
@@ -458,7 +452,7 @@
         },
         "tunnel_fallback_delay": {
           "type": "string",
-          "description": "Delay before racing TLS/TCP against QUIC.",
+          "description": "Delay before trying TLS/TCP while QUIC connects.",
           "default": "250ms"
         },
         "ingress_lease_duration": {
@@ -483,7 +477,7 @@
         },
         "routing_table_wait": {
           "type": "string",
-          "description": "Ingress routing-table long-poll duration.",
+          "description": "Maximum wait for ingress routing-table updates.",
           "default": "25s"
         },
         "drain_timeout": {

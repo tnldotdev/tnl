@@ -684,14 +684,14 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/auth/refresh (the `RefreshControlSession` operationId).
 	RefreshControlSession(ctx context.Context, body RefreshControlSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ExchangeLoginTokenWithBody Exchange the bootstrap login token for a control session
+	// ExchangeLoginTokenWithBody Exchange a login token for a control session
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/auth/token (the `ExchangeLoginToken` operationId).
 	ExchangeLoginTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ExchangeLoginToken Exchange the bootstrap login token for a control session
+	// ExchangeLoginToken Exchange a login token for a control session
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -703,35 +703,35 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/identity (the `GetIdentityContext` operationId).
 	GetIdentityContext(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AcceptInvitationWithBody Consume an invitation secret
+	// AcceptInvitationWithBody Accept an invitation with its secret
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/invitations/accept (the `AcceptInvitation` operationId).
 	AcceptInvitationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AcceptInvitation Consume an invitation secret
+	// AcceptInvitation Accept an invitation with its secret
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/invitations/accept (the `AcceptInvitation` operationId).
 	AcceptInvitation(ctx context.Context, body AcceptInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AuthorizeServiceOperationWithBody Authorize one control operation against current authority state
+	// AuthorizeServiceOperationWithBody Authorize a control operation using current authority state
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/service/authorize (the `AuthorizeServiceOperation` operationId).
 	AuthorizeServiceOperationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AuthorizeServiceOperation Authorize one control operation against current authority state
+	// AuthorizeServiceOperation Authorize a control operation using current authority state
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/service/authorize (the `AuthorizeServiceOperation` operationId).
 	AuthorizeServiceOperation(ctx context.Context, body AuthorizeServiceOperationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListTeams List teams visible through current memberships
+	// ListTeams List teams for the authenticated identity
 	//
 	// Corresponds with GET /v1/teams (the `ListTeams` operationId).
 	ListTeams(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -755,7 +755,7 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/teams/{team_id} (the `GetTeam` operationId).
 	GetTeam(ctx context.Context, teamId TeamID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListTeamDomains List managed and claimed domains available to the team
+	// ListTeamDomains List domains available to the team
 	//
 	// Corresponds with GET /v1/teams/{team_id}/domains (the `ListTeamDomains` operationId).
 	ListTeamDomains(ctx context.Context, teamId TeamID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -916,7 +916,7 @@ func (c *Client) RefreshControlSession(ctx context.Context, body RefreshControlS
 	return c.Client.Do(req)
 }
 
-// ExchangeLoginTokenWithBody Exchange the bootstrap login token for a control session
+// ExchangeLoginTokenWithBody Exchange a login token for a control session
 //
 // Takes any type of body and a specified content type.
 //
@@ -933,7 +933,7 @@ func (c *Client) ExchangeLoginTokenWithBody(ctx context.Context, contentType str
 	return c.Client.Do(req)
 }
 
-// ExchangeLoginToken Exchange the bootstrap login token for a control session
+// ExchangeLoginToken Exchange a login token for a control session
 //
 // Takes a body of the `application/json` content type.
 //
@@ -965,7 +965,7 @@ func (c *Client) GetIdentityContext(ctx context.Context, reqEditors ...RequestEd
 	return c.Client.Do(req)
 }
 
-// AcceptInvitationWithBody Consume an invitation secret
+// AcceptInvitationWithBody Accept an invitation with its secret
 //
 // Takes any type of body and a specified content type.
 //
@@ -982,7 +982,7 @@ func (c *Client) AcceptInvitationWithBody(ctx context.Context, contentType strin
 	return c.Client.Do(req)
 }
 
-// AcceptInvitation Consume an invitation secret
+// AcceptInvitation Accept an invitation with its secret
 //
 // Takes a body of the `application/json` content type.
 //
@@ -999,7 +999,7 @@ func (c *Client) AcceptInvitation(ctx context.Context, body AcceptInvitationJSON
 	return c.Client.Do(req)
 }
 
-// AuthorizeServiceOperationWithBody Authorize one control operation against current authority state
+// AuthorizeServiceOperationWithBody Authorize a control operation using current authority state
 //
 // Takes any type of body and a specified content type.
 //
@@ -1016,7 +1016,7 @@ func (c *Client) AuthorizeServiceOperationWithBody(ctx context.Context, contentT
 	return c.Client.Do(req)
 }
 
-// AuthorizeServiceOperation Authorize one control operation against current authority state
+// AuthorizeServiceOperation Authorize a control operation using current authority state
 //
 // Takes a body of the `application/json` content type.
 //
@@ -1033,7 +1033,7 @@ func (c *Client) AuthorizeServiceOperation(ctx context.Context, body AuthorizeSe
 	return c.Client.Do(req)
 }
 
-// ListTeams List teams visible through current memberships
+// ListTeams List teams for the authenticated identity
 //
 // Corresponds with GET /v1/teams (the `ListTeams` operationId).
 func (c *Client) ListTeams(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -1097,7 +1097,7 @@ func (c *Client) GetTeam(ctx context.Context, teamId TeamID, reqEditors ...Reque
 	return c.Client.Do(req)
 }
 
-// ListTeamDomains List managed and claimed domains available to the team
+// ListTeamDomains List domains available to the team
 //
 // Corresponds with GET /v1/teams/{team_id}/domains (the `ListTeamDomains` operationId).
 func (c *Client) ListTeamDomains(ctx context.Context, teamId TeamID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -2191,14 +2191,14 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/auth/refresh (the `RefreshControlSession` operationId).
 	RefreshControlSessionWithResponse(ctx context.Context, body RefreshControlSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*RefreshControlSessionResponse, error)
 
-	// ExchangeLoginTokenWithBodyWithResponse Exchange the bootstrap login token for a control session
+	// ExchangeLoginTokenWithBodyWithResponse Exchange a login token for a control session
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/auth/token (the `ExchangeLoginToken` operationId).
 	ExchangeLoginTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExchangeLoginTokenResponse, error)
 
-	// ExchangeLoginTokenWithResponse Exchange the bootstrap login token for a control session
+	// ExchangeLoginTokenWithResponse Exchange a login token for a control session
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -2212,35 +2212,35 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/identity (the `GetIdentityContext` operationId).
 	GetIdentityContextWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetIdentityContextResponse, error)
 
-	// AcceptInvitationWithBodyWithResponse Consume an invitation secret
+	// AcceptInvitationWithBodyWithResponse Accept an invitation with its secret
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/invitations/accept (the `AcceptInvitation` operationId).
 	AcceptInvitationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcceptInvitationResponse, error)
 
-	// AcceptInvitationWithResponse Consume an invitation secret
+	// AcceptInvitationWithResponse Accept an invitation with its secret
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/invitations/accept (the `AcceptInvitation` operationId).
 	AcceptInvitationWithResponse(ctx context.Context, body AcceptInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*AcceptInvitationResponse, error)
 
-	// AuthorizeServiceOperationWithBodyWithResponse Authorize one control operation against current authority state
+	// AuthorizeServiceOperationWithBodyWithResponse Authorize a control operation using current authority state
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/service/authorize (the `AuthorizeServiceOperation` operationId).
 	AuthorizeServiceOperationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizeServiceOperationResponse, error)
 
-	// AuthorizeServiceOperationWithResponse Authorize one control operation against current authority state
+	// AuthorizeServiceOperationWithResponse Authorize a control operation using current authority state
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/service/authorize (the `AuthorizeServiceOperation` operationId).
 	AuthorizeServiceOperationWithResponse(ctx context.Context, body AuthorizeServiceOperationJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeServiceOperationResponse, error)
 
-	// ListTeamsWithResponse List teams visible through current memberships
+	// ListTeamsWithResponse List teams for the authenticated identity
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -2268,7 +2268,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/teams/{team_id} (the `GetTeam` operationId).
 	GetTeamWithResponse(ctx context.Context, teamId TeamID, reqEditors ...RequestEditorFn) (*GetTeamResponse, error)
 
-	// ListTeamDomainsWithResponse List managed and claimed domains available to the team
+	// ListTeamDomainsWithResponse List domains available to the team
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -3378,7 +3378,7 @@ func (c *ClientWithResponses) RefreshControlSessionWithResponse(ctx context.Cont
 	return ParseRefreshControlSessionResponse(rsp)
 }
 
-// ExchangeLoginTokenWithBodyWithResponse Exchange the bootstrap login token for a control session
+// ExchangeLoginTokenWithBodyWithResponse Exchange a login token for a control session
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -3391,7 +3391,7 @@ func (c *ClientWithResponses) ExchangeLoginTokenWithBodyWithResponse(ctx context
 	return ParseExchangeLoginTokenResponse(rsp)
 }
 
-// ExchangeLoginTokenWithResponse Exchange the bootstrap login token for a control session
+// ExchangeLoginTokenWithResponse Exchange a login token for a control session
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -3417,7 +3417,7 @@ func (c *ClientWithResponses) GetIdentityContextWithResponse(ctx context.Context
 	return ParseGetIdentityContextResponse(rsp)
 }
 
-// AcceptInvitationWithBodyWithResponse Consume an invitation secret
+// AcceptInvitationWithBodyWithResponse Accept an invitation with its secret
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -3430,7 +3430,7 @@ func (c *ClientWithResponses) AcceptInvitationWithBodyWithResponse(ctx context.C
 	return ParseAcceptInvitationResponse(rsp)
 }
 
-// AcceptInvitationWithResponse Consume an invitation secret
+// AcceptInvitationWithResponse Accept an invitation with its secret
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -3443,7 +3443,7 @@ func (c *ClientWithResponses) AcceptInvitationWithResponse(ctx context.Context, 
 	return ParseAcceptInvitationResponse(rsp)
 }
 
-// AuthorizeServiceOperationWithBodyWithResponse Authorize one control operation against current authority state
+// AuthorizeServiceOperationWithBodyWithResponse Authorize a control operation using current authority state
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -3456,7 +3456,7 @@ func (c *ClientWithResponses) AuthorizeServiceOperationWithBodyWithResponse(ctx 
 	return ParseAuthorizeServiceOperationResponse(rsp)
 }
 
-// AuthorizeServiceOperationWithResponse Authorize one control operation against current authority state
+// AuthorizeServiceOperationWithResponse Authorize a control operation using current authority state
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -3469,7 +3469,7 @@ func (c *ClientWithResponses) AuthorizeServiceOperationWithResponse(ctx context.
 	return ParseAuthorizeServiceOperationResponse(rsp)
 }
 
-// ListTeamsWithResponse List teams visible through current memberships
+// ListTeamsWithResponse List teams for the authenticated identity
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -3521,7 +3521,7 @@ func (c *ClientWithResponses) GetTeamWithResponse(ctx context.Context, teamId Te
 	return ParseGetTeamResponse(rsp)
 }
 
-// ListTeamDomainsWithResponse List managed and claimed domains available to the team
+// ListTeamDomainsWithResponse List domains available to the team
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -4384,19 +4384,19 @@ type ServerInterface interface {
 	// RefreshControlSession Rotate a control session's access and refresh tokens
 	// (POST /v1/auth/refresh)
 	RefreshControlSession(w http.ResponseWriter, r *http.Request)
-	// ExchangeLoginToken Exchange the bootstrap login token for a control session
+	// ExchangeLoginToken Exchange a login token for a control session
 	// (POST /v1/auth/token)
 	ExchangeLoginToken(w http.ResponseWriter, r *http.Request)
 	// GetIdentityContext Read the authenticated identity and memberships
 	// (GET /v1/identity)
 	GetIdentityContext(w http.ResponseWriter, r *http.Request)
-	// AcceptInvitation Consume an invitation secret
+	// AcceptInvitation Accept an invitation with its secret
 	// (POST /v1/invitations/accept)
 	AcceptInvitation(w http.ResponseWriter, r *http.Request)
-	// AuthorizeServiceOperation Authorize one control operation against current authority state
+	// AuthorizeServiceOperation Authorize a control operation using current authority state
 	// (POST /v1/service/authorize)
 	AuthorizeServiceOperation(w http.ResponseWriter, r *http.Request)
-	// ListTeams List teams visible through current memberships
+	// ListTeams List teams for the authenticated identity
 	// (GET /v1/teams)
 	ListTeams(w http.ResponseWriter, r *http.Request)
 	// CreateTeam Create an organization team
@@ -4405,7 +4405,7 @@ type ServerInterface interface {
 	// GetTeam Read one team
 	// (GET /v1/teams/{team_id})
 	GetTeam(w http.ResponseWriter, r *http.Request, teamId TeamID)
-	// ListTeamDomains List managed and claimed domains available to the team
+	// ListTeamDomains List domains available to the team
 	// (GET /v1/teams/{team_id}/domains)
 	ListTeamDomains(w http.ResponseWriter, r *http.Request, teamId TeamID)
 	// ClaimTeamDomain Begin claiming one domain
@@ -5132,1462 +5132,4 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/service/authorize", wrapper.AuthorizeServiceOperation)
 
 	return m
-}
-
-type BearerProblemResponseHeaders struct {
-	WWWAuthenticate string
-}
-type BearerProblemApplicationProblemPlusJSONResponse struct {
-	Body Problem
-
-	Headers BearerProblemResponseHeaders
-}
-
-type ProblemApplicationProblemPlusJSONResponse Problem
-
-type LogoutControlSessionRequestObject struct {
-}
-
-type LogoutControlSessionResponseObject interface {
-	VisitLogoutControlSessionResponse(w http.ResponseWriter) error
-}
-
-type LogoutControlSession204Response struct {
-}
-
-func (response LogoutControlSession204Response) VisitLogoutControlSessionResponse(w http.ResponseWriter) error {
-	w.WriteHeader(204)
-	return nil
-}
-
-type LogoutControlSessiondefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	Headers    BearerProblemResponseHeaders
-	StatusCode int
-}
-
-func (response LogoutControlSessiondefaultApplicationProblemPlusJSONResponse) VisitLogoutControlSessionResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type ExchangeOIDCTokenRequestObject struct {
-	Body *ExchangeOIDCTokenJSONRequestBody
-}
-
-type ExchangeOIDCTokenResponseObject interface {
-	VisitExchangeOIDCTokenResponse(w http.ResponseWriter) error
-}
-
-type ExchangeOIDCToken200JSONResponse ControlSessionResponse
-
-func (response ExchangeOIDCToken200JSONResponse) VisitExchangeOIDCTokenResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type ExchangeOIDCTokendefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response ExchangeOIDCTokendefaultApplicationProblemPlusJSONResponse) VisitExchangeOIDCTokenResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type RefreshControlSessionRequestObject struct {
-	Body *RefreshControlSessionJSONRequestBody
-}
-
-type RefreshControlSessionResponseObject interface {
-	VisitRefreshControlSessionResponse(w http.ResponseWriter) error
-}
-
-type RefreshControlSession200JSONResponse ControlSessionResponse
-
-func (response RefreshControlSession200JSONResponse) VisitRefreshControlSessionResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type RefreshControlSessiondefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response RefreshControlSessiondefaultApplicationProblemPlusJSONResponse) VisitRefreshControlSessionResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type ExchangeLoginTokenRequestObject struct {
-	Body *ExchangeLoginTokenJSONRequestBody
-}
-
-type ExchangeLoginTokenResponseObject interface {
-	VisitExchangeLoginTokenResponse(w http.ResponseWriter) error
-}
-
-type ExchangeLoginToken200JSONResponse ControlSessionResponse
-
-func (response ExchangeLoginToken200JSONResponse) VisitExchangeLoginTokenResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type ExchangeLoginTokendefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response ExchangeLoginTokendefaultApplicationProblemPlusJSONResponse) VisitExchangeLoginTokenResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetIdentityContextRequestObject struct {
-}
-
-type GetIdentityContextResponseObject interface {
-	VisitGetIdentityContextResponse(w http.ResponseWriter) error
-}
-
-type GetIdentityContext200JSONResponse IdentityContext
-
-func (response GetIdentityContext200JSONResponse) VisitGetIdentityContextResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetIdentityContextdefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	Headers    BearerProblemResponseHeaders
-	StatusCode int
-}
-
-func (response GetIdentityContextdefaultApplicationProblemPlusJSONResponse) VisitGetIdentityContextResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type AcceptInvitationRequestObject struct {
-	Body *AcceptInvitationJSONRequestBody
-}
-
-type AcceptInvitationResponseObject interface {
-	VisitAcceptInvitationResponse(w http.ResponseWriter) error
-}
-
-type AcceptInvitation200JSONResponse Membership
-
-func (response AcceptInvitation200JSONResponse) VisitAcceptInvitationResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type AcceptInvitationdefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response AcceptInvitationdefaultApplicationProblemPlusJSONResponse) VisitAcceptInvitationResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type AuthorizeServiceOperationRequestObject struct {
-	Body *AuthorizeServiceOperationJSONRequestBody
-}
-
-type AuthorizeServiceOperationResponseObject interface {
-	VisitAuthorizeServiceOperationResponse(w http.ResponseWriter) error
-}
-
-type AuthorizeServiceOperation200JSONResponse ServiceAuthorizationDecision
-
-func (response AuthorizeServiceOperation200JSONResponse) VisitAuthorizeServiceOperationResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type AuthorizeServiceOperationdefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response AuthorizeServiceOperationdefaultApplicationProblemPlusJSONResponse) VisitAuthorizeServiceOperationResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type ListTeamsRequestObject struct {
-}
-
-type ListTeamsResponseObject interface {
-	VisitListTeamsResponse(w http.ResponseWriter) error
-}
-
-type ListTeams200JSONResponse TeamPage
-
-func (response ListTeams200JSONResponse) VisitListTeamsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type ListTeamsdefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	Headers    BearerProblemResponseHeaders
-	StatusCode int
-}
-
-func (response ListTeamsdefaultApplicationProblemPlusJSONResponse) VisitListTeamsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type CreateTeamRequestObject struct {
-	Params CreateTeamParams
-	Body   *CreateTeamJSONRequestBody
-}
-
-type CreateTeamResponseObject interface {
-	VisitCreateTeamResponse(w http.ResponseWriter) error
-}
-
-type CreateTeam201JSONResponse Team
-
-func (response CreateTeam201JSONResponse) VisitCreateTeamResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(201)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type CreateTeamdefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response CreateTeamdefaultApplicationProblemPlusJSONResponse) VisitCreateTeamResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetTeamRequestObject struct {
-	TeamId TeamID `json:"team_id"`
-}
-
-type GetTeamResponseObject interface {
-	VisitGetTeamResponse(w http.ResponseWriter) error
-}
-
-type GetTeam200JSONResponse Team
-
-func (response GetTeam200JSONResponse) VisitGetTeamResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetTeamdefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response GetTeamdefaultApplicationProblemPlusJSONResponse) VisitGetTeamResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type ListTeamDomainsRequestObject struct {
-	TeamId TeamID `json:"team_id"`
-}
-
-type ListTeamDomainsResponseObject interface {
-	VisitListTeamDomainsResponse(w http.ResponseWriter) error
-}
-
-type ListTeamDomains200JSONResponse DomainPage
-
-func (response ListTeamDomains200JSONResponse) VisitListTeamDomainsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type ListTeamDomainsdefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response ListTeamDomainsdefaultApplicationProblemPlusJSONResponse) VisitListTeamDomainsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type ClaimTeamDomainRequestObject struct {
-	TeamId TeamID `json:"team_id"`
-	Params ClaimTeamDomainParams
-	Body   *ClaimTeamDomainJSONRequestBody
-}
-
-type ClaimTeamDomainResponseObject interface {
-	VisitClaimTeamDomainResponse(w http.ResponseWriter) error
-}
-
-type ClaimTeamDomain201JSONResponse Domain
-
-func (response ClaimTeamDomain201JSONResponse) VisitClaimTeamDomainResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(201)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type ClaimTeamDomaindefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response ClaimTeamDomaindefaultApplicationProblemPlusJSONResponse) VisitClaimTeamDomainResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type ReleaseTeamDomainRequestObject struct {
-	TeamId   TeamID   `json:"team_id"`
-	DomainId DomainID `json:"domain_id"`
-}
-
-type ReleaseTeamDomainResponseObject interface {
-	VisitReleaseTeamDomainResponse(w http.ResponseWriter) error
-}
-
-type ReleaseTeamDomain204Response struct {
-}
-
-func (response ReleaseTeamDomain204Response) VisitReleaseTeamDomainResponse(w http.ResponseWriter) error {
-	w.WriteHeader(204)
-	return nil
-}
-
-type ReleaseTeamDomaindefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response ReleaseTeamDomaindefaultApplicationProblemPlusJSONResponse) VisitReleaseTeamDomainResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type SetTeamDefaultDomainRequestObject struct {
-	TeamId   TeamID   `json:"team_id"`
-	DomainId DomainID `json:"domain_id"`
-}
-
-type SetTeamDefaultDomainResponseObject interface {
-	VisitSetTeamDefaultDomainResponse(w http.ResponseWriter) error
-}
-
-type SetTeamDefaultDomain200JSONResponse Team
-
-func (response SetTeamDefaultDomain200JSONResponse) VisitSetTeamDefaultDomainResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type SetTeamDefaultDomaindefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response SetTeamDefaultDomaindefaultApplicationProblemPlusJSONResponse) VisitSetTeamDefaultDomainResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type ListTeamInvitationsRequestObject struct {
-	TeamId TeamID `json:"team_id"`
-}
-
-type ListTeamInvitationsResponseObject interface {
-	VisitListTeamInvitationsResponse(w http.ResponseWriter) error
-}
-
-type ListTeamInvitations200JSONResponse InvitationPage
-
-func (response ListTeamInvitations200JSONResponse) VisitListTeamInvitationsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type ListTeamInvitationsdefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response ListTeamInvitationsdefaultApplicationProblemPlusJSONResponse) VisitListTeamInvitationsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type CreateTeamInvitationRequestObject struct {
-	TeamId TeamID `json:"team_id"`
-	Params CreateTeamInvitationParams
-	Body   *CreateTeamInvitationJSONRequestBody
-}
-
-type CreateTeamInvitationResponseObject interface {
-	VisitCreateTeamInvitationResponse(w http.ResponseWriter) error
-}
-
-type CreateTeamInvitation201JSONResponse InvitationSecret
-
-func (response CreateTeamInvitation201JSONResponse) VisitCreateTeamInvitationResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(201)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type CreateTeamInvitationdefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response CreateTeamInvitationdefaultApplicationProblemPlusJSONResponse) VisitCreateTeamInvitationResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type RevokeTeamInvitationRequestObject struct {
-	TeamId       TeamID       `json:"team_id"`
-	InvitationId InvitationID `json:"invitation_id"`
-}
-
-type RevokeTeamInvitationResponseObject interface {
-	VisitRevokeTeamInvitationResponse(w http.ResponseWriter) error
-}
-
-type RevokeTeamInvitation204Response struct {
-}
-
-func (response RevokeTeamInvitation204Response) VisitRevokeTeamInvitationResponse(w http.ResponseWriter) error {
-	w.WriteHeader(204)
-	return nil
-}
-
-type RevokeTeamInvitationdefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response RevokeTeamInvitationdefaultApplicationProblemPlusJSONResponse) VisitRevokeTeamInvitationResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type ListTeamMembershipsRequestObject struct {
-	TeamId TeamID `json:"team_id"`
-}
-
-type ListTeamMembershipsResponseObject interface {
-	VisitListTeamMembershipsResponse(w http.ResponseWriter) error
-}
-
-type ListTeamMemberships200JSONResponse MembershipPage
-
-func (response ListTeamMemberships200JSONResponse) VisitListTeamMembershipsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type ListTeamMembershipsdefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response ListTeamMembershipsdefaultApplicationProblemPlusJSONResponse) VisitListTeamMembershipsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type RemoveMembershipRequestObject struct {
-	TeamId       TeamID       `json:"team_id"`
-	MembershipId MembershipID `json:"membership_id"`
-}
-
-type RemoveMembershipResponseObject interface {
-	VisitRemoveMembershipResponse(w http.ResponseWriter) error
-}
-
-type RemoveMembership204Response struct {
-}
-
-func (response RemoveMembership204Response) VisitRemoveMembershipResponse(w http.ResponseWriter) error {
-	w.WriteHeader(204)
-	return nil
-}
-
-type RemoveMembershipdefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response RemoveMembershipdefaultApplicationProblemPlusJSONResponse) VisitRemoveMembershipResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type SetMembershipRoleRequestObject struct {
-	TeamId       TeamID       `json:"team_id"`
-	MembershipId MembershipID `json:"membership_id"`
-	Body         *SetMembershipRoleJSONRequestBody
-}
-
-type SetMembershipRoleResponseObject interface {
-	VisitSetMembershipRoleResponse(w http.ResponseWriter) error
-}
-
-type SetMembershipRole200JSONResponse Membership
-
-func (response SetMembershipRole200JSONResponse) VisitSetMembershipRoleResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type SetMembershipRoledefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response SetMembershipRoledefaultApplicationProblemPlusJSONResponse) VisitSetMembershipRoleResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-// StrictServerInterface represents all server handlers.
-type StrictServerInterface interface {
-	// LogoutControlSession Revoke the authenticated control session
-	// (POST /v1/auth/logout)
-	LogoutControlSession(ctx context.Context, request LogoutControlSessionRequestObject) (LogoutControlSessionResponseObject, error)
-	// ExchangeOIDCToken Exchange an OIDC ID token for a control session
-	// (POST /v1/auth/oidc)
-	ExchangeOIDCToken(ctx context.Context, request ExchangeOIDCTokenRequestObject) (ExchangeOIDCTokenResponseObject, error)
-	// RefreshControlSession Rotate a control session's access and refresh tokens
-	// (POST /v1/auth/refresh)
-	RefreshControlSession(ctx context.Context, request RefreshControlSessionRequestObject) (RefreshControlSessionResponseObject, error)
-	// ExchangeLoginToken Exchange the bootstrap login token for a control session
-	// (POST /v1/auth/token)
-	ExchangeLoginToken(ctx context.Context, request ExchangeLoginTokenRequestObject) (ExchangeLoginTokenResponseObject, error)
-	// GetIdentityContext Read the authenticated identity and memberships
-	// (GET /v1/identity)
-	GetIdentityContext(ctx context.Context, request GetIdentityContextRequestObject) (GetIdentityContextResponseObject, error)
-	// AcceptInvitation Consume an invitation secret
-	// (POST /v1/invitations/accept)
-	AcceptInvitation(ctx context.Context, request AcceptInvitationRequestObject) (AcceptInvitationResponseObject, error)
-	// AuthorizeServiceOperation Authorize one control operation against current authority state
-	// (POST /v1/service/authorize)
-	AuthorizeServiceOperation(ctx context.Context, request AuthorizeServiceOperationRequestObject) (AuthorizeServiceOperationResponseObject, error)
-	// ListTeams List teams visible through current memberships
-	// (GET /v1/teams)
-	ListTeams(ctx context.Context, request ListTeamsRequestObject) (ListTeamsResponseObject, error)
-	// CreateTeam Create an organization team
-	// (POST /v1/teams)
-	CreateTeam(ctx context.Context, request CreateTeamRequestObject) (CreateTeamResponseObject, error)
-	// GetTeam Read one team
-	// (GET /v1/teams/{team_id})
-	GetTeam(ctx context.Context, request GetTeamRequestObject) (GetTeamResponseObject, error)
-	// ListTeamDomains List managed and claimed domains available to the team
-	// (GET /v1/teams/{team_id}/domains)
-	ListTeamDomains(ctx context.Context, request ListTeamDomainsRequestObject) (ListTeamDomainsResponseObject, error)
-	// ClaimTeamDomain Begin claiming one domain
-	// (POST /v1/teams/{team_id}/domains)
-	ClaimTeamDomain(ctx context.Context, request ClaimTeamDomainRequestObject) (ClaimTeamDomainResponseObject, error)
-	// ReleaseTeamDomain Release one claimed domain
-	// (DELETE /v1/teams/{team_id}/domains/{domain_id})
-	ReleaseTeamDomain(ctx context.Context, request ReleaseTeamDomainRequestObject) (ReleaseTeamDomainResponseObject, error)
-	// SetTeamDefaultDomain Select a ready default domain
-	// (POST /v1/teams/{team_id}/domains/{domain_id}/default)
-	SetTeamDefaultDomain(ctx context.Context, request SetTeamDefaultDomainRequestObject) (SetTeamDefaultDomainResponseObject, error)
-	// ListTeamInvitations List team invitations
-	// (GET /v1/teams/{team_id}/invitations)
-	ListTeamInvitations(ctx context.Context, request ListTeamInvitationsRequestObject) (ListTeamInvitationsResponseObject, error)
-	// CreateTeamInvitation Create an expiring invitation
-	// (POST /v1/teams/{team_id}/invitations)
-	CreateTeamInvitation(ctx context.Context, request CreateTeamInvitationRequestObject) (CreateTeamInvitationResponseObject, error)
-	// RevokeTeamInvitation Revoke one pending invitation
-	// (DELETE /v1/teams/{team_id}/invitations/{invitation_id})
-	RevokeTeamInvitation(ctx context.Context, request RevokeTeamInvitationRequestObject) (RevokeTeamInvitationResponseObject, error)
-	// ListTeamMemberships List team memberships
-	// (GET /v1/teams/{team_id}/memberships)
-	ListTeamMemberships(ctx context.Context, request ListTeamMembershipsRequestObject) (ListTeamMembershipsResponseObject, error)
-	// RemoveMembership Remove one membership
-	// (DELETE /v1/teams/{team_id}/memberships/{membership_id})
-	RemoveMembership(ctx context.Context, request RemoveMembershipRequestObject) (RemoveMembershipResponseObject, error)
-	// SetMembershipRole Change one membership's team role
-	// (PATCH /v1/teams/{team_id}/memberships/{membership_id})
-	SetMembershipRole(ctx context.Context, request SetMembershipRoleRequestObject) (SetMembershipRoleResponseObject, error)
-}
-
-type StrictHandlerFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error)
-type StrictMiddlewareFunc func(f StrictHandlerFunc, operationID string) StrictHandlerFunc
-
-type StrictHTTPServerOptions struct {
-	RequestErrorHandlerFunc  func(w http.ResponseWriter, r *http.Request, err error)
-	ResponseErrorHandlerFunc func(w http.ResponseWriter, r *http.Request, err error)
-}
-
-func NewStrictHandler(ssi StrictServerInterface, middlewares []StrictMiddlewareFunc) ServerInterface {
-	return &strictHandler{ssi: ssi, middlewares: middlewares, options: StrictHTTPServerOptions{
-		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-		},
-		ResponseErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		},
-	}}
-}
-
-func NewStrictHandlerWithOptions(ssi StrictServerInterface, middlewares []StrictMiddlewareFunc, options StrictHTTPServerOptions) ServerInterface {
-	if options.RequestErrorHandlerFunc == nil {
-		options.RequestErrorHandlerFunc = func(w http.ResponseWriter, r *http.Request, err error) {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-		}
-	}
-	if options.ResponseErrorHandlerFunc == nil {
-		options.ResponseErrorHandlerFunc = func(w http.ResponseWriter, r *http.Request, err error) {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-	}
-	return &strictHandler{ssi: ssi, middlewares: middlewares, options: options}
-}
-
-type strictHandler struct {
-	ssi         StrictServerInterface
-	middlewares []StrictMiddlewareFunc
-	options     StrictHTTPServerOptions
-}
-
-// LogoutControlSession operation middleware
-func (sh *strictHandler) LogoutControlSession(w http.ResponseWriter, r *http.Request) {
-	var request LogoutControlSessionRequestObject
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.LogoutControlSession(ctx, request.(LogoutControlSessionRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "LogoutControlSession")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(LogoutControlSessionResponseObject); ok {
-		if err := validResponse.VisitLogoutControlSessionResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// ExchangeOIDCToken operation middleware
-func (sh *strictHandler) ExchangeOIDCToken(w http.ResponseWriter, r *http.Request) {
-	var request ExchangeOIDCTokenRequestObject
-
-	var body ExchangeOIDCTokenJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.ExchangeOIDCToken(ctx, request.(ExchangeOIDCTokenRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "ExchangeOIDCToken")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(ExchangeOIDCTokenResponseObject); ok {
-		if err := validResponse.VisitExchangeOIDCTokenResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// RefreshControlSession operation middleware
-func (sh *strictHandler) RefreshControlSession(w http.ResponseWriter, r *http.Request) {
-	var request RefreshControlSessionRequestObject
-
-	var body RefreshControlSessionJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.RefreshControlSession(ctx, request.(RefreshControlSessionRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "RefreshControlSession")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(RefreshControlSessionResponseObject); ok {
-		if err := validResponse.VisitRefreshControlSessionResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// ExchangeLoginToken operation middleware
-func (sh *strictHandler) ExchangeLoginToken(w http.ResponseWriter, r *http.Request) {
-	var request ExchangeLoginTokenRequestObject
-
-	var body ExchangeLoginTokenJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.ExchangeLoginToken(ctx, request.(ExchangeLoginTokenRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "ExchangeLoginToken")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(ExchangeLoginTokenResponseObject); ok {
-		if err := validResponse.VisitExchangeLoginTokenResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// GetIdentityContext operation middleware
-func (sh *strictHandler) GetIdentityContext(w http.ResponseWriter, r *http.Request) {
-	var request GetIdentityContextRequestObject
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.GetIdentityContext(ctx, request.(GetIdentityContextRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "GetIdentityContext")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(GetIdentityContextResponseObject); ok {
-		if err := validResponse.VisitGetIdentityContextResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// AcceptInvitation operation middleware
-func (sh *strictHandler) AcceptInvitation(w http.ResponseWriter, r *http.Request) {
-	var request AcceptInvitationRequestObject
-
-	var body AcceptInvitationJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.AcceptInvitation(ctx, request.(AcceptInvitationRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "AcceptInvitation")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(AcceptInvitationResponseObject); ok {
-		if err := validResponse.VisitAcceptInvitationResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// AuthorizeServiceOperation operation middleware
-func (sh *strictHandler) AuthorizeServiceOperation(w http.ResponseWriter, r *http.Request) {
-	var request AuthorizeServiceOperationRequestObject
-
-	var body AuthorizeServiceOperationJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.AuthorizeServiceOperation(ctx, request.(AuthorizeServiceOperationRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "AuthorizeServiceOperation")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(AuthorizeServiceOperationResponseObject); ok {
-		if err := validResponse.VisitAuthorizeServiceOperationResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// ListTeams operation middleware
-func (sh *strictHandler) ListTeams(w http.ResponseWriter, r *http.Request) {
-	var request ListTeamsRequestObject
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.ListTeams(ctx, request.(ListTeamsRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "ListTeams")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(ListTeamsResponseObject); ok {
-		if err := validResponse.VisitListTeamsResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// CreateTeam operation middleware
-func (sh *strictHandler) CreateTeam(w http.ResponseWriter, r *http.Request, params CreateTeamParams) {
-	var request CreateTeamRequestObject
-
-	request.Params = params
-
-	var body CreateTeamJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.CreateTeam(ctx, request.(CreateTeamRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "CreateTeam")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(CreateTeamResponseObject); ok {
-		if err := validResponse.VisitCreateTeamResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// GetTeam operation middleware
-func (sh *strictHandler) GetTeam(w http.ResponseWriter, r *http.Request, teamId TeamID) {
-	var request GetTeamRequestObject
-
-	request.TeamId = teamId
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.GetTeam(ctx, request.(GetTeamRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "GetTeam")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(GetTeamResponseObject); ok {
-		if err := validResponse.VisitGetTeamResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// ListTeamDomains operation middleware
-func (sh *strictHandler) ListTeamDomains(w http.ResponseWriter, r *http.Request, teamId TeamID) {
-	var request ListTeamDomainsRequestObject
-
-	request.TeamId = teamId
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.ListTeamDomains(ctx, request.(ListTeamDomainsRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "ListTeamDomains")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(ListTeamDomainsResponseObject); ok {
-		if err := validResponse.VisitListTeamDomainsResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// ClaimTeamDomain operation middleware
-func (sh *strictHandler) ClaimTeamDomain(w http.ResponseWriter, r *http.Request, teamId TeamID, params ClaimTeamDomainParams) {
-	var request ClaimTeamDomainRequestObject
-
-	request.TeamId = teamId
-	request.Params = params
-
-	var body ClaimTeamDomainJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.ClaimTeamDomain(ctx, request.(ClaimTeamDomainRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "ClaimTeamDomain")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(ClaimTeamDomainResponseObject); ok {
-		if err := validResponse.VisitClaimTeamDomainResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// ReleaseTeamDomain operation middleware
-func (sh *strictHandler) ReleaseTeamDomain(w http.ResponseWriter, r *http.Request, teamId TeamID, domainId DomainID) {
-	var request ReleaseTeamDomainRequestObject
-
-	request.TeamId = teamId
-	request.DomainId = domainId
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.ReleaseTeamDomain(ctx, request.(ReleaseTeamDomainRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "ReleaseTeamDomain")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(ReleaseTeamDomainResponseObject); ok {
-		if err := validResponse.VisitReleaseTeamDomainResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// SetTeamDefaultDomain operation middleware
-func (sh *strictHandler) SetTeamDefaultDomain(w http.ResponseWriter, r *http.Request, teamId TeamID, domainId DomainID) {
-	var request SetTeamDefaultDomainRequestObject
-
-	request.TeamId = teamId
-	request.DomainId = domainId
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.SetTeamDefaultDomain(ctx, request.(SetTeamDefaultDomainRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "SetTeamDefaultDomain")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(SetTeamDefaultDomainResponseObject); ok {
-		if err := validResponse.VisitSetTeamDefaultDomainResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// ListTeamInvitations operation middleware
-func (sh *strictHandler) ListTeamInvitations(w http.ResponseWriter, r *http.Request, teamId TeamID) {
-	var request ListTeamInvitationsRequestObject
-
-	request.TeamId = teamId
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.ListTeamInvitations(ctx, request.(ListTeamInvitationsRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "ListTeamInvitations")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(ListTeamInvitationsResponseObject); ok {
-		if err := validResponse.VisitListTeamInvitationsResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// CreateTeamInvitation operation middleware
-func (sh *strictHandler) CreateTeamInvitation(w http.ResponseWriter, r *http.Request, teamId TeamID, params CreateTeamInvitationParams) {
-	var request CreateTeamInvitationRequestObject
-
-	request.TeamId = teamId
-	request.Params = params
-
-	var body CreateTeamInvitationJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.CreateTeamInvitation(ctx, request.(CreateTeamInvitationRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "CreateTeamInvitation")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(CreateTeamInvitationResponseObject); ok {
-		if err := validResponse.VisitCreateTeamInvitationResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// RevokeTeamInvitation operation middleware
-func (sh *strictHandler) RevokeTeamInvitation(w http.ResponseWriter, r *http.Request, teamId TeamID, invitationId InvitationID) {
-	var request RevokeTeamInvitationRequestObject
-
-	request.TeamId = teamId
-	request.InvitationId = invitationId
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.RevokeTeamInvitation(ctx, request.(RevokeTeamInvitationRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "RevokeTeamInvitation")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(RevokeTeamInvitationResponseObject); ok {
-		if err := validResponse.VisitRevokeTeamInvitationResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// ListTeamMemberships operation middleware
-func (sh *strictHandler) ListTeamMemberships(w http.ResponseWriter, r *http.Request, teamId TeamID) {
-	var request ListTeamMembershipsRequestObject
-
-	request.TeamId = teamId
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.ListTeamMemberships(ctx, request.(ListTeamMembershipsRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "ListTeamMemberships")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(ListTeamMembershipsResponseObject); ok {
-		if err := validResponse.VisitListTeamMembershipsResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// RemoveMembership operation middleware
-func (sh *strictHandler) RemoveMembership(w http.ResponseWriter, r *http.Request, teamId TeamID, membershipId MembershipID) {
-	var request RemoveMembershipRequestObject
-
-	request.TeamId = teamId
-	request.MembershipId = membershipId
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.RemoveMembership(ctx, request.(RemoveMembershipRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "RemoveMembership")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(RemoveMembershipResponseObject); ok {
-		if err := validResponse.VisitRemoveMembershipResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// SetMembershipRole operation middleware
-func (sh *strictHandler) SetMembershipRole(w http.ResponseWriter, r *http.Request, teamId TeamID, membershipId MembershipID) {
-	var request SetMembershipRoleRequestObject
-
-	request.TeamId = teamId
-	request.MembershipId = membershipId
-
-	var body SetMembershipRoleJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.SetMembershipRole(ctx, request.(SetMembershipRoleRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "SetMembershipRole")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(SetMembershipRoleResponseObject); ok {
-		if err := validResponse.VisitSetMembershipRoleResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
 }

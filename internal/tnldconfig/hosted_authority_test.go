@@ -30,7 +30,7 @@ func TestHostedAuthorityConfiguration(t *testing.T) {
 			config := valid
 			mutate(&config)
 			if err := config.validateHostedAuthority(); err == nil || strings.TrimSpace(err.Error()) == "" {
-				t.Fatal("invalid hosted authority configuration was accepted")
+				t.Fatal("invalid external authority configuration was accepted")
 			}
 		})
 	}

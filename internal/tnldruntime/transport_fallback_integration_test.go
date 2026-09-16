@@ -15,11 +15,11 @@ func TestIntegrationPublisherFallsBackWhenQUICStalls(t *testing.T) {
 	target := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(response, "TLS/TCP fallback")
 	}))
-	t.Cleanup(target.Close)
+	cleanupIntegrationHTTPServer(t, target, fixture.owner)
 
-	quicAttempts := make(chan struct{}, 2)
+	var quicAttempts eventRecorder[struct{}]
 	quic := muxsession.ConnectorFunc(func(ctx context.Context, _ muxsession.Endpoint) (muxsession.Session, error) {
-		quicAttempts <- struct{}{}
+		quicAttempts.append(struct{}{})
 		<-ctx.Done()
 		return nil, context.Cause(ctx)
 	})
@@ -27,12 +27,8 @@ func TestIntegrationPublisherFallsBackWhenQUICStalls(t *testing.T) {
 	handle := fixture.startPublisher(t, target.URL, quic, tcp)
 	ready := fixture.waitReady(t, handle)
 
-	for range 2 {
-		select {
-		case <-quicAttempts:
-		default:
-			t.Fatal("publisher connection did not try QUIC before falling back")
-		}
+	if attempts, _ := quicAttempts.snapshot(); len(attempts) < 2 {
+		t.Fatal("publisher connection did not try QUIC before falling back")
 	}
 	response, body, err := fixture.visitor.requestURL(http.MethodGet, ready.PublicURL, nil)
 	if err != nil {

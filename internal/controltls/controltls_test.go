@@ -84,7 +84,7 @@ func TestACMEHTTPClientRestoresOrderLocation(t *testing.T) {
 					_, _ = io.WriteString(response, `{"finalize":"`+origin+`/finalize"}`)
 				case "/finalize":
 					if supplied {
-						response.Header().Set("Location", origin+"/order/1")
+						response.Header().Set("Location", origin+"/order/supplied")
 					}
 					_, _ = io.WriteString(response, `{"status":"processing"}`)
 				default:
@@ -99,15 +99,26 @@ func TestACMEHTTPClientRestoresOrderLocation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, _ = io.Copy(io.Discard, created.Body)
+			body, readErr := io.ReadAll(created.Body)
 			_ = created.Body.Close()
+			if readErr != nil || string(body) != `{"finalize":"`+origin+`/finalize"}` {
+				t.Fatalf("restored order body = %q, %v", body, readErr)
+			}
 			finalized, err := client.Post(origin+"/finalize", "application/json", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer finalized.Body.Close()
-			if location := finalized.Header.Get("Location"); location != origin+"/order/1" {
+			wantLocation := origin + "/order/1"
+			if supplied {
+				wantLocation = origin + "/order/supplied"
+			}
+			if location := finalized.Header.Get("Location"); location != wantLocation {
 				t.Fatalf("finalize Location = %q", location)
+			}
+			body, readErr = io.ReadAll(finalized.Body)
+			if readErr != nil || string(body) != `{"status":"processing"}` {
+				t.Fatalf("finalize body = %q, %v", body, readErr)
 			}
 		})
 	}

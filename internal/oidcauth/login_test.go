@@ -2,220 +2,227 @@ package oidcauth
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/testutil/oidctest"
+	"github.com/coreos/go-oidc/v3/oidc"
+	"golang.org/x/oauth2"
 )
 
-func TestLoginDiscoversProviderAndValidatesNonce(t *testing.T) {
+func TestLoginDeviceCode(t *testing.T) {
+	p := newTestProvider(t, "")
+	ctx := loginTestContext(t)
+	var mu sync.Mutex
+	var nonce, idToken string
+	deviceCalls, tokenCalls := 0, 0
+	p.mux.HandleFunc("/device", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		deviceCalls++
+		if err := r.ParseForm(); err != nil {
+			t.Error(err)
+		}
+		nonce = r.Form.Get("nonce")
+		if r.Method != http.MethodPost || r.Form.Get("client_id") != "tnl-cli" || r.Form.Get("scope") != "openid" || nonce == "" {
+			t.Errorf("device request = %s %v", r.Method, r.Form)
+		}
+		writeProviderJSON(t, w, map[string]any{
+			"device_code": "device-code", "user_code": "ABCD-1234",
+			"verification_uri": p.issuer + "/device-login", "expires_in": 60, "interval": 1,
+		})
+	})
+	p.mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		tokenCalls++
+		if err := r.ParseForm(); err != nil {
+			t.Error(err)
+		}
+		if r.Method != http.MethodPost || r.Header.Get("Authorization") != "" || r.Form.Get("client_id") != "tnl-cli" ||
+			r.Form.Get("grant_type") != "urn:ietf:params:oauth:grant-type:device_code" || r.Form.Get("device_code") != "device-code" {
+			t.Errorf("token request = %s %v, authorization = %q", r.Method, r.Form, r.Header.Get("Authorization"))
+		}
+		writeProviderJSON(t, w, map[string]any{"access_token": "provider-access", "token_type": "Bearer", "expires_in": 300, "id_token": idToken})
+	})
+	var output bytes.Buffer
+	openCount := 0
+	result, err := Login(ctx, Config{
+		Issuer: p.issuer, ClientID: "tnl-cli", LoginFlow: LoginFlowDeviceCode, Scopes: []string{"openid"}, HTTPClient: p.client,
+		OpenURL: func(target string) error {
+			openCount++
+			if target != p.issuer+"/device-login" {
+				t.Errorf("browser target = %q", target)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			// OpenURL runs on the test goroutine. Prepare the token here, not in /token.
+			idToken = p.signer.Token(t, "key-1", map[string]any{
+				"iss": p.issuer, "sub": "user-123", "aud": "tnl-cli", "nonce": nonce,
+				"iat": time.Now().Unix(), "exp": time.Now().Add(time.Hour).Unix(),
+			})
+			return errors.New("browser unavailable") // Manual device login remains usable.
+		},
+	}, &output)
+	mu.Lock()
+	defer mu.Unlock()
+	if err != nil || result.IDToken != idToken || result.Identity.Issuer != p.issuer || result.Identity.Subject != "user-123" ||
+		result.Identity.Nonce != nonce || result.Identity.ExpiresAt.IsZero() || openCount != 1 || deviceCalls != 1 || tokenCalls != 1 ||
+		output.String() != "Open "+p.issuer+"/device-login\nCode: ABCD-1234\n" {
+		t.Fatalf("result=%#v error=%v output=%q calls=%d/%d/%d", result, err, output.String(), openCount, deviceCalls, tokenCalls)
+	}
+}
+
+func TestAuthorizationCodePKCELogin(t *testing.T) {
+	p := newTestProvider(t, "")
+	ctx := loginTestContext(t)
+	var mu sync.Mutex
+	var challenge, redirectURI, idToken string
+	authorizeCalls, tokenCalls := 0, 0
+	p.mux.HandleFunc("/authorize", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		authorizeCalls++
+		query := r.URL.Query()
+		challenge, redirectURI = query.Get("code_challenge"), query.Get("redirect_uri")
+		if r.Method != http.MethodGet || query.Get("code_challenge_method") != "S256" || query.Get("nonce") == "" || challenge == "" ||
+			query.Get("client_id") != "tnl-cli" || query.Get("response_type") != "code" || query.Get("scope") != "openid" || query.Get("state") == "" {
+			t.Errorf("authorization request = %s %v", r.Method, query)
+		}
+		http.Redirect(w, r, redirectURI+"?code=authorization-code&state="+url.QueryEscape(query.Get("state")), http.StatusFound)
+	})
+	p.mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		tokenCalls++
+		if err := r.ParseForm(); err != nil {
+			t.Error(err)
+		}
+		verifier := r.Form.Get("code_verifier")
+		verifierHash := sha256.Sum256([]byte(verifier))
+		if r.Method != http.MethodPost || r.Header.Get("Authorization") != "" || r.Form.Get("client_id") != "tnl-cli" ||
+			r.Form.Get("grant_type") != "authorization_code" || r.Form.Get("code") != "authorization-code" ||
+			r.Form.Get("redirect_uri") != redirectURI || len(verifier) < 43 || len(verifier) > 128 ||
+			base64.RawURLEncoding.EncodeToString(verifierHash[:]) != challenge {
+			t.Errorf("token request = %s %v", r.Method, r.Form)
+		}
+		writeProviderJSON(t, w, map[string]any{"access_token": "provider-access", "token_type": "Bearer", "expires_in": 300, "id_token": idToken})
+	})
+	driveBrowser := func(target string) error {
+		authorizationURL, err := url.Parse(target)
+		if err != nil {
+			return err
+		}
+		preparedToken := p.signer.Token(t, "key-1", map[string]any{
+			"iss": p.issuer, "sub": "user-123", "aud": "tnl-cli", "nonce": authorizationURL.Query().Get("nonce"),
+			"iat": time.Now().Unix(), "exp": time.Now().Add(time.Hour).Unix(),
+		})
+		mu.Lock()
+		idToken = preparedToken
+		mu.Unlock()
+		for _, visit := range []struct {
+			target string
+			status int
+		}{
+			{authorizationURL.Query().Get("redirect_uri") + "?code=ignored&state=invalid", http.StatusBadRequest},
+			{target, http.StatusOK},
+		} {
+			request, err := http.NewRequestWithContext(ctx, http.MethodGet, visit.target, nil)
+			if err != nil {
+				return err
+			}
+			response, err := p.client.Do(request)
+			if err != nil {
+				return err
+			}
+			if err := response.Body.Close(); err != nil {
+				return err
+			}
+			if response.StatusCode != visit.status {
+				return fmt.Errorf("browser status = %d, want %d", response.StatusCode, visit.status)
+			}
+		}
+		return nil
+	}
+	var output bytes.Buffer
+	var driverErr error
+	openCount := 0
+	result, err := Login(ctx, Config{
+		Issuer: p.issuer, ClientID: "tnl-cli", LoginFlow: LoginFlowAuthorizationCodePKCE, Scopes: []string{"openid"}, HTTPClient: p.client,
+		OpenURL: func(target string) error {
+			openCount++
+			driverErr = driveBrowser(target)
+			return driverErr
+		},
+	}, &output)
+	if driverErr != nil {
+		t.Fatalf("browser driver: %v (Login: %v)", driverErr, err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if err != nil || result.IDToken != idToken || result.Identity.Subject != "user-123" ||
+		openCount != 1 || authorizeCalls != 1 || tokenCalls != 1 || !strings.Contains(output.String(), p.issuer+"/authorize") {
+		t.Fatalf("result=%#v error=%v output=%q calls=%d/%d/%d", result, err, output.String(), openCount, authorizeCalls, tokenCalls)
+	}
+}
+
+func TestVerifiedResultClaims(t *testing.T) {
+	p := newTestProvider(t, "")
+	ctx := oidc.ClientContext(loginTestContext(t), p.client)
+	provider, err := oidc.NewProvider(ctx, p.issuer)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, test := range []struct {
-		name            string
-		nonce           string
-		subject         string
-		audience        any
-		authorizedParty string
-		valid           bool
+		name                   string
+		change                 func(map[string]any)
+		deviceValid, pkceValid bool
 	}{
-		{name: "valid", subject: "user-123", valid: true},
-		{name: "valid without nonce", nonce: "missing", subject: "user-123", valid: true},
-		{name: "multiple audiences missing azp", subject: "user-123", audience: []string{"tnl-cli", "other-client"}},
-		{name: "multiple audiences wrong azp", subject: "user-123", audience: []string{"tnl-cli", "other-client"}, authorizedParty: "other-client"},
-		{name: "multiple audiences correct azp", subject: "user-123", audience: []string{"tnl-cli", "other-client"}, authorizedParty: "tnl-cli", valid: true},
-		{name: "single audience wrong azp", subject: "user-123", authorizedParty: "other-client"},
-		{name: "single audience correct azp", subject: "user-123", authorizedParty: "tnl-cli", valid: true},
-		{name: "nonce mismatch", nonce: "wrong", subject: "user-123"},
-		{name: "missing subject"},
+		{"valid", func(map[string]any) {}, true, true},
+		{"missing nonce", func(c map[string]any) { delete(c, "nonce") }, true, false},
+		{"wrong nonce", func(c map[string]any) { c["nonce"] = "wrong" }, false, false},
+		{"missing subject", func(c map[string]any) { delete(c, "sub") }, false, false},
+		{"wrong audience", func(c map[string]any) { c["aud"] = "other" }, false, false},
+		{"multiple audiences missing azp", func(c map[string]any) { c["aud"] = []string{"tnl-cli", "other"} }, false, false},
+		{"multiple audiences wrong azp", func(c map[string]any) { c["aud"] = []string{"tnl-cli", "other"}; c["azp"] = "other" }, false, false},
+		{"multiple audiences correct azp", func(c map[string]any) { c["aud"] = []string{"tnl-cli", "other"}; c["azp"] = "tnl-cli" }, true, true},
+		{"single audience wrong azp", func(c map[string]any) { c["azp"] = "other" }, false, false},
+		{"single audience correct azp", func(c map[string]any) { c["azp"] = "tnl-cli" }, true, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			signer := oidctest.NewSigner(t)
-			var mu sync.Mutex
-			nonce := ""
-			var provider *httptest.Server
-			provider = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				switch r.URL.Path {
-				case "/.well-known/openid-configuration":
-					_ = json.NewEncoder(w).Encode(map[string]any{
-						"issuer":                        provider.URL,
-						"jwks_uri":                      provider.URL + "/jwks",
-						"authorization_endpoint":        provider.URL + "/authorize",
-						"device_authorization_endpoint": provider.URL + "/device",
-						"token_endpoint":                provider.URL + "/token",
-					})
-				case "/jwks":
-					_ = json.NewEncoder(w).Encode(map[string]any{"keys": []any{signer.JWK("key-1")}})
-				case "/device":
-					if err := r.ParseForm(); err != nil {
-						t.Error(err)
+			expires := time.Now().Add(time.Hour).Truncate(time.Second)
+			claims := map[string]any{"iss": p.issuer, "sub": "user-123", "aud": "tnl-cli", "nonce": "expected", "iat": time.Now().Unix(), "exp": expires.Unix()}
+			test.change(claims)
+			raw := p.signer.Token(t, "key-1", claims)
+			token := (&oauth2.Token{}).WithExtra(map[string]any{"id_token": raw})
+			for _, flow := range []struct {
+				name  string
+				valid bool
+			}{{LoginFlowDeviceCode, test.deviceValid}, {LoginFlowAuthorizationCodePKCE, test.pkceValid}} {
+				t.Run(flow.name, func(t *testing.T) {
+					result, err := verifiedResult(ctx, provider, "tnl-cli", "expected", flow.name, token)
+					if (err == nil) != flow.valid {
+						t.Fatalf("result=%#v error=%v, want valid=%t", result, err, flow.valid)
 					}
-					mu.Lock()
-					nonce = r.Form.Get("nonce")
-					mu.Unlock()
-					_ = json.NewEncoder(w).Encode(map[string]any{
-						"device_code": "device-code", "user_code": "ABCD-1234",
-						"verification_uri": provider.URL + "/device-login", "expires_in": 60, "interval": 1,
-					})
-				case "/token":
-					if authorization := r.Header.Get("Authorization"); authorization != "" {
-						t.Errorf("token authorization header = %q", authorization)
+					if flow.valid && (result.IDToken != raw || result.Identity.Issuer != p.issuer || result.Identity.Subject != "user-123" || !result.Identity.ExpiresAt.Equal(expires)) {
+						t.Fatalf("result = %#v", result)
 					}
-					if err := r.ParseForm(); err != nil {
-						t.Error(err)
-					}
-					if clientID := r.Form.Get("client_id"); clientID != "tnl-cli" {
-						t.Errorf("token client_id = %q", clientID)
-					}
-					mu.Lock()
-					tokenNonce := nonce
-					mu.Unlock()
-					if test.nonce == "missing" {
-						tokenNonce = ""
-					} else if test.nonce != "" {
-						tokenNonce = test.nonce
-					}
-					now := time.Now()
-					audience := test.audience
-					if audience == nil {
-						audience = "tnl-cli"
-					}
-					claims := map[string]any{
-						"iss": provider.URL, "sub": test.subject, "aud": audience, "nonce": tokenNonce,
-						"iat": now.Unix(), "exp": now.Add(5 * time.Minute).Unix(),
-					}
-					if test.authorizedParty != "" {
-						claims["azp"] = test.authorizedParty
-					}
-					idToken := signer.Token(t, "key-1", claims)
-					w.Header().Set("Content-Type", "application/json")
-					_ = json.NewEncoder(w).Encode(map[string]any{
-						"access_token": "provider-access", "refresh_token": "provider-refresh",
-						"token_type": "Bearer", "expires_in": 300, "refresh_expires_in": 3600, "id_token": idToken,
-					})
-				default:
-					http.NotFound(w, r)
-				}
-			}))
-			defer provider.Close()
-
-			var output bytes.Buffer
-			openCount := 0
-			result, err := Login(context.Background(), Config{
-				Issuer: provider.URL, ClientID: "tnl-cli", LoginFlow: LoginFlowDeviceCode,
-				Scopes: []string{"openid"}, HTTPClient: provider.Client(),
-				OpenURL: func(string) error {
-					openCount++
-					return errors.New("browser unavailable")
-				},
-			}, &output)
-			if openCount != 1 {
-				t.Fatalf("browser open count = %d", openCount)
-			}
-			if test.valid && (err != nil || result.IDToken == "" || result.Identity.Issuer != provider.URL ||
-				result.Identity.Subject != "user-123" || result.Identity.ExpiresAt.IsZero() ||
-				!strings.Contains(output.String(), "ABCD-1234")) {
-				t.Fatalf("result = %#v, output = %q, error = %v", result, output.String(), err)
-			}
-			if !test.valid && err == nil {
-				t.Fatal("invalid token accepted")
+				})
 			}
 		})
 	}
 }
 
-func TestAuthorizationCodePKCELogin(t *testing.T) {
-	signer := oidctest.NewSigner(t)
-	var nonce, challenge, redirectURI string
-	var provider *httptest.Server
-	provider = httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		switch request.URL.Path {
-		case "/.well-known/openid-configuration":
-			_ = json.NewEncoder(response).Encode(map[string]any{
-				"issuer": provider.URL, "jwks_uri": provider.URL + "/jwks",
-				"authorization_endpoint": provider.URL + "/authorize", "token_endpoint": provider.URL + "/token",
-			})
-		case "/jwks":
-			_ = json.NewEncoder(response).Encode(map[string]any{"keys": []any{signer.JWK("key-1")}})
-		case "/authorize":
-			nonce = request.URL.Query().Get("nonce")
-			challenge = request.URL.Query().Get("code_challenge")
-			redirectURI = request.URL.Query().Get("redirect_uri")
-			if request.URL.Query().Get("code_challenge_method") != "S256" || nonce == "" || challenge == "" {
-				t.Errorf("authorization query = %v", request.URL.Query())
-			}
-			redirect := redirectURI + "?code=authorization-code&state=" + request.URL.Query().Get("state")
-			http.Redirect(response, request, redirect, http.StatusFound)
-		case "/token":
-			if err := request.ParseForm(); err != nil {
-				t.Error(err)
-			}
-			verifierHash := sha256.Sum256([]byte(request.Form.Get("code_verifier")))
-			if request.Form.Get("code") != "authorization-code" || request.Form.Get("redirect_uri") != redirectURI ||
-				base64.RawURLEncoding.EncodeToString(verifierHash[:]) != challenge {
-				t.Errorf("token form = %v", request.Form)
-			}
-			now := time.Now()
-			idToken := signer.Token(t, "key-1", map[string]any{
-				"iss": provider.URL, "sub": "user-123", "aud": "tnl-cli", "nonce": nonce,
-				"iat": now.Unix(), "exp": now.Add(5 * time.Minute).Unix(),
-			})
-			response.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(response).Encode(map[string]any{
-				"access_token": "provider-access", "refresh_token": "provider-refresh",
-				"token_type": "Bearer", "expires_in": 300, "refresh_token_expires_in": 3600, "id_token": idToken,
-			})
-		default:
-			http.NotFound(response, request)
-		}
-	}))
-	defer provider.Close()
-	client := provider.Client()
-	var output bytes.Buffer
-	result, err := Login(context.Background(), Config{
-		Issuer: provider.URL, ClientID: "tnl-cli", LoginFlow: LoginFlowAuthorizationCodePKCE,
-		Scopes: []string{"openid"}, HTTPClient: client,
-		OpenURL: func(target string) error {
-			authorizationURL, err := url.Parse(target)
-			if err != nil {
-				return err
-			}
-			invalidCallback := authorizationURL.Query().Get("redirect_uri") + "?code=ignored&state=invalid"
-			response, err := client.Get(invalidCallback)
-			if err != nil {
-				return err
-			}
-			if closeErr := response.Body.Close(); closeErr != nil {
-				return closeErr
-			}
-			if response.StatusCode != http.StatusBadRequest {
-				return fmt.Errorf("invalid callback status = %d", response.StatusCode)
-			}
-			response, err = client.Get(target)
-			if err == nil {
-				err = response.Body.Close()
-			}
-			return err
-		},
-	}, &output)
-	if err != nil || result.IDToken == "" || result.Identity.Subject != "user-123" ||
-		!strings.Contains(output.String(), provider.URL+"/authorize") {
-		t.Fatalf("result = %#v, output = %q, error = %v", result, output.String(), err)
-	}
-}
-
 func TestLoginRequiresExplicitOpenIDScopes(t *testing.T) {
 	for _, scopes := range [][]string{nil, {}, {"operations"}, {"openid", "openid"}} {
-		if _, err := Login(context.Background(), Config{
+		if _, err := Login(t.Context(), Config{
 			Issuer: "https://issuer.example", ClientID: "tnl-cli", LoginFlow: LoginFlowDeviceCode, Scopes: scopes,
 		}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "invalid configuration") {
 			t.Fatalf("scopes %v error = %v", scopes, err)

@@ -14,7 +14,7 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
-var activationRetry = 2 * time.Second
+const activationRetry = 2 * time.Second
 
 func createRouteSession(ctx context.Context, config Config, route controlv1.Route) (controlv1.RouteSessionSetup, error) {
 	idempotencyKey, err := opaqueID("route_session_")
@@ -109,7 +109,6 @@ func runSession(
 			return err
 		}
 	}
-	observeStartup(config, StartupInitialHeartbeat)
 	ctx = sessionCtx
 	var material clientstate.Material
 	route, err := NewRouteServer(RouteServerConfig{
@@ -219,7 +218,7 @@ func runSession(
 	go func() {
 		err := heartbeatSessionAfterUpdate(
 			sessionCtx, config.Control, setup.RouteSession.Id, version, routeSessionToken, heartbeat.RouteSession.ExpiresAt,
-			connections.Update, observePolicyDenials,
+			connections.Update, observePolicyDenials, config.heartbeatInterval,
 		)
 		if err != nil && parentCtx.Err() != nil && errors.Is(context.Cause(sessionCtx), context.Cause(parentCtx)) {
 			err = nil
@@ -236,16 +235,13 @@ func runSession(
 	if err := connections.WaitReady(ctx, 1); err != nil {
 		return err
 	}
-	observeStartup(config, StartupFirstConnection)
 	material, err = issueInitialCertificate(ctx, config.Control, route, state, setup)
 	if err != nil {
 		return err
 	}
-	observeStartup(config, StartupCertificate)
 	if err := connections.WaitReady(ctx, 2); err != nil {
 		return err
 	}
-	observeStartup(config, StartupAllConnections)
 	select {
 	case <-connections.Fallback():
 		<-fallbackDone

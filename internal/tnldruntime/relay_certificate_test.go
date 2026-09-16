@@ -1,9 +1,7 @@
 package tnldruntime
 
 import (
-	"crypto/tls"
-	"crypto/x509"
-	"os"
+	"bytes"
 	"testing"
 
 	"github.com/tnldotdev/tnl/pkg/api/relayv1"
@@ -11,44 +9,59 @@ import (
 
 func TestRelayCertificateSourceValidatesAndReloads(t *testing.T) {
 	const hostname = "relay-a.example.test"
-	certificate := newIntegrationTestCA(t).issueServer(t, hostname)
-	certificatePEM, err := os.ReadFile(certificate.certificateFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	privateKeyPEM, err := os.ReadFile(certificate.privateKeyFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	keyPair, err := tls.X509KeyPair(certificatePEM, privateKeyPEM)
-	if err != nil {
-		t.Fatal(err)
-	}
-	leaf, err := x509.ParseCertificate(keyPair.Certificate[0])
-	if err != nil {
-		t.Fatal(err)
-	}
+	ca := newTestCertificateAuthority(t)
+	first, second := ca.issue(t, hostname), ca.issue(t, hostname)
 	source, err := newRelayCertificateSource("relay-a", hostname)
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Keep the same live config through both installs; recreating it would not
+	// demonstrate that existing listeners observe a certificate replacement.
 	config := source.TLSConfig()
 	if _, err := config.GetCertificate(nil); err == nil {
-		t.Fatal("empty relay certificate source returned a certificate")
+		t.Fatal("empty certificate source returned a certificate")
 	}
-	relayCertificate := relayv1.RelayServiceCertificate{
-		RelayServiceId: "relay-a", TlsServerName: hostname,
-		CertificatePem: string(certificatePEM), PrivateKeyPem: string(privateKeyPEM), NotAfter: leaf.NotAfter,
+	certificate := func(material testCertificateMaterial) relayv1.RelayServiceCertificate {
+		return relayv1.RelayServiceCertificate{
+			RelayServiceId: "relay-a", TlsServerName: hostname,
+			CertificatePem: string(material.certificatePEM), PrivateKeyPem: string(material.privateKeyPEM), NotAfter: material.leaf.NotAfter,
+		}
 	}
-	if err := source.Install(relayCertificate); err != nil {
+	if err := source.Install(certificate(first)); err != nil {
 		t.Fatal(err)
 	}
-	installed, err := config.GetCertificate(nil)
-	if err != nil || installed.Leaf == nil || !installed.Leaf.NotAfter.Equal(leaf.NotAfter) {
-		t.Fatalf("installed relay certificate = %#v, %v", installed, err)
+	installedFirst, err := config.GetCertificate(nil)
+	if err != nil || installedFirst.Leaf == nil || !bytes.Equal(installedFirst.Certificate[0], first.leaf.Raw) {
+		t.Fatalf("first installed certificate = %#v, %v", installedFirst, err)
 	}
-	relayCertificate.TlsServerName = "relay-b.example.test"
-	if err := source.Install(relayCertificate); err == nil {
-		t.Fatal("mismatched relay certificate identity was accepted")
+	if err := source.Install(certificate(second)); err != nil {
+		t.Fatal(err)
+	}
+	installedSecond, err := config.GetCertificate(nil)
+	if err != nil || installedSecond == installedFirst || !bytes.Equal(installedSecond.Certificate[0], second.leaf.Raw) {
+		t.Fatalf("live config did not replace the certificate: %#v, %v", installedSecond, err)
+	}
+	if bytes.Equal(installedFirst.Certificate[0], installedSecond.Certificate[0]) {
+		t.Fatal("test certificates are identical")
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(*relayv1.RelayServiceCertificate)
+	}{
+		{"identity", func(c *relayv1.RelayServiceCertificate) { c.TlsServerName = "relay-b.example.test" }},
+		{"key_pair", func(c *relayv1.RelayServiceCertificate) { c.PrivateKeyPem = string(first.privateKeyPEM) }},
+		{"expiry", func(c *relayv1.RelayServiceCertificate) { c.NotAfter = c.NotAfter.Add(-1) }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			invalid := certificate(second)
+			test.mutate(&invalid)
+			if err := source.Install(invalid); err == nil {
+				t.Fatal("invalid update was accepted")
+			}
+			lastGood, err := config.GetCertificate(nil)
+			if err != nil || lastGood != installedSecond || !bytes.Equal(lastGood.Certificate[0], second.leaf.Raw) {
+				t.Fatalf("invalid update replaced last good certificate: %#v, %v", lastGood, err)
+			}
+		})
 	}
 }

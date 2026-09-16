@@ -80,16 +80,16 @@ func (c *cleanerStub) ListRoutes(_ context.Context, team string) ([]controlv1.Ro
 	return append([]controlv1.Route(nil), c.routes...), nil
 }
 
-func (c *cleanerStub) DeleteRoute(_ context.Context, route controlv1.Route) error {
+func (c *cleanerStub) DeleteRoute(_ context.Context, routeID string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.calls = append(c.calls, "delete:"+route.Id)
+	c.calls = append(c.calls, "delete:"+routeID)
 	select {
 	case <-c.stopped:
 	default:
 		return fmt.Errorf("delete before publisher stopped")
 	}
-	c.deleted = append(c.deleted, route.Id)
+	c.deleted = append(c.deleted, routeID)
 	c.routes = nil
 	return nil
 }

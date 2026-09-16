@@ -61,14 +61,34 @@ func TestBlockingLockWaitsForRelease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer first.Close()
 	acquired := make(chan error, 1)
+	attempting := make(chan struct{})
+	joined := false
+	t.Cleanup(func() {
+		if err := first.Close(); err != nil {
+			t.Error(err)
+		}
+		if !joined {
+			select {
+			case err := <-acquired:
+				if err != nil {
+					t.Error(err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Error("blocking acquisition did not finish after cleanup released the lock")
+			}
+		}
+	})
 	go func() {
+		close(attempting)
 		lock, err := Acquire(path, Blocking, os.Geteuid())
 		acquired <- errors.Join(err, lock.Close())
 	}()
+	// This synchronizes the acquisition attempt, not entry into the kernel.
+	<-attempting
 	select {
 	case err := <-acquired:
+		joined = true
 		t.Fatalf("acquired held lock: %v", err)
 	case <-time.After(20 * time.Millisecond):
 	}
@@ -77,6 +97,7 @@ func TestBlockingLockWaitsForRelease(t *testing.T) {
 	}
 	select {
 	case err := <-acquired:
+		joined = true
 		if err != nil {
 			t.Fatal(err)
 		}

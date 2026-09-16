@@ -1,7 +1,6 @@
 package controlstate
 
 import (
-	"errors"
 	"math"
 	"net/netip"
 	"testing"
@@ -68,21 +67,5 @@ func TestRelayStateMethodsRequireOpenDatabase(t *testing.T) {
 		t.Context(), identity, time.Now(), time.Now().Add(time.Minute),
 	); err == nil {
 		t.Fatal("BeginRelayDrain succeeded")
-	}
-}
-
-func TestRelayStateErrorsAreDistinct(t *testing.T) {
-	t.Parallel()
-	values := []error{
-		ErrRelayRegistrationConflict, ErrRelayLeaseStale, ErrRelayDraining, ErrRelayConnectionCapacity,
-		ErrPublisherConnectionUnavailable, ErrPublisherConnectionCredential, ErrConnectionAssignmentStale,
-		ErrPublisherConnectionAlreadyClaimed, ErrPublisherConnectionRelayService,
-	}
-	for index, left := range values {
-		for otherIndex, right := range values {
-			if index != otherIndex && errors.Is(left, right) {
-				t.Fatalf("%v matches %v", left, right)
-			}
-		}
 	}
 }

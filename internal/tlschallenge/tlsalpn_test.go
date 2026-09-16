@@ -44,9 +44,9 @@ func TestTLSALPNChallengeCertificate(t *testing.T) {
 	if len(certificate.Certificate) != 1 {
 		t.Fatalf("certificate chain length = %d; want 1", len(certificate.Certificate))
 	}
-	leaf := certificate.Leaf
-	if leaf == nil {
-		t.Fatal("missing parsed leaf certificate")
+	leaf, err := x509.ParseCertificate(certificate.Certificate[0])
+	if err != nil {
+		t.Fatal(err)
 	}
 	if len(leaf.DNSNames) != 1 || leaf.DNSNames[0] != "route.example" ||
 		len(leaf.IPAddresses) != 0 || len(leaf.EmailAddresses) != 0 || len(leaf.URIs) != 0 {
@@ -59,6 +59,10 @@ func TestTLSALPNChallengeCertificate(t *testing.T) {
 	if !ok || publicKey.Curve.Params().Name != "P-256" {
 		t.Fatalf("public key = %T; want ECDSA P-256", leaf.PublicKey)
 	}
+	privateKey, ok := certificate.PrivateKey.(*ecdsa.PrivateKey)
+	if !ok || !publicKey.Equal(privateKey.Public()) {
+		t.Fatal("transmitted certificate does not match its private key")
+	}
 	if leaf.KeyUsage != x509.KeyUsageDigitalSignature ||
 		len(leaf.ExtKeyUsage) != 1 || leaf.ExtKeyUsage[0] != x509.ExtKeyUsageServerAuth {
 		t.Fatalf("unexpected key usage: %v, %v", leaf.KeyUsage, leaf.ExtKeyUsage)
@@ -69,7 +73,8 @@ func TestTLSALPNChallengeCertificate(t *testing.T) {
 
 	var identifiers int
 	for _, extension := range leaf.Extensions {
-		if !extension.Id.Equal(acmeIdentifierOID) {
+		// RFC 8737 section 3: id-pe-acmeIdentifier.
+		if !extension.Id.Equal(asn1.ObjectIdentifier{1, 3, 6, 1, 5, 5, 7, 1, 31}) {
 			continue
 		}
 		identifiers++

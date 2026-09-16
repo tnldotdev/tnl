@@ -1,16 +1,21 @@
 package acmeclient
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -20,153 +25,169 @@ func TestClientRegistersAccountAndCreatesProfileOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var server *httptest.Server
-	nonceCounter := 0
-	accountAttempts := 0
 	retryAfter := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
-	handler := http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		endpoint := server.URL + request.URL.Path
-		switch request.URL.Path {
-		case "/dir":
-			writeTestJSON(t, response, map[string]any{
-				"newNonce": server.URL + "/nonce", "newAccount": server.URL + "/new-account",
-				"newOrder": server.URL + "/new-order",
-				"meta":     map[string]any{"termsOfService": server.URL + "/terms", "profiles": map[string]string{"tlsserver": "server"}},
-			})
-		case "/nonce":
-			nonceCounter++
-			response.Header().Set("Replay-Nonce", "nonce-head")
-			response.WriteHeader(http.StatusNoContent)
-		case "/new-account":
-			accountAttempts++
-			protected, payload := verifyTestJWS(t, request, key, endpoint)
-			if protected["kid"] != nil || protected["jwk"] == nil {
-				t.Fatalf("account protected header = %#v", protected)
-			}
-			var registration struct {
-				Contact              []string `json:"contact"`
-				TermsOfServiceAgreed bool     `json:"termsOfServiceAgreed"`
-			}
-			if err := json.Unmarshal(payload, &registration); err != nil {
-				t.Fatal(err)
-			}
-			if len(registration.Contact) != 1 || registration.Contact[0] != "mailto:operator@example.test" || !registration.TermsOfServiceAgreed {
-				t.Fatalf("account registration = %#v", registration)
-			}
-			response.Header().Set("Replay-Nonce", "nonce-account")
-			if accountAttempts == 1 {
-				response.WriteHeader(http.StatusBadRequest)
-				writeTestJSON(t, response, map[string]any{
-					"type": "urn:ietf:params:acme:error:badNonce", "detail": "retry",
-				})
-				return
-			}
-			response.Header().Set("Location", server.URL+"/account/1")
-			response.WriteHeader(http.StatusCreated)
-			writeTestJSON(t, response, map[string]any{"status": "valid", "contact": registration.Contact})
-		case "/new-order":
-			protected, payload := verifyTestJWS(t, request, key, endpoint)
-			if protected["kid"] != server.URL+"/account/1" || protected["jwk"] != nil {
-				t.Fatalf("order protected header = %#v", protected)
-			}
-			var orderRequest struct {
-				Identifiers []Identifier `json:"identifiers"`
-				Profile     string       `json:"profile"`
-			}
-			if err := json.Unmarshal(payload, &orderRequest); err != nil {
-				t.Fatal(err)
-			}
-			if len(orderRequest.Identifiers) != 1 || orderRequest.Identifiers[0] != (Identifier{Type: "dns", Value: "route.example.test"}) || orderRequest.Profile != "tlsserver" {
-				t.Fatalf("order request = %#v", orderRequest)
-			}
-			response.Header().Set("Replay-Nonce", "nonce-order")
-			response.Header().Set("Location", server.URL+"/order/1")
-			response.Header().Set("Retry-After", retryAfter.Format(http.TimeFormat))
-			response.WriteHeader(http.StatusCreated)
-			writeTestJSON(t, response, map[string]any{
-				"status": "pending", "identifiers": orderRequest.Identifiers,
-				"authorizations": []string{server.URL + "/authorization/1"}, "finalize": server.URL + "/finalize/1",
-			})
-		case "/challenge/1":
-			verifyTestJWS(t, request, key, endpoint)
-			response.Header().Set("Replay-Nonce", "nonce-challenge")
-			response.Header().Set("Retry-After", retryAfter.Format(http.TimeFormat))
-			writeTestJSON(t, response, map[string]any{"status": "pending"})
-		default:
-			http.NotFound(response, request)
-		}
+	const registration = `{"contact":["mailto:operator@example.test"],"termsOfServiceAgreed":true}`
+	server := newScriptedACMEServer(t, key, []acmeStep{
+		{method: "GET", path: "/dir", status: 200, body: `{"newNonce":"$ORIGIN/nonce","newAccount":"$ORIGIN/new-account","newOrder":"$ORIGIN/new-order","meta":{"termsOfService":"$ORIGIN/terms","profiles":{"tlsserver":"server"}}}`},
+		{method: "HEAD", path: "/nonce", status: 204, nextNonce: "nonce-1"},
+		{method: "POST", path: "/new-account", nonce: "nonce-1", payload: registration,
+			status: 400, nextNonce: "nonce-2-replacement", body: `{"type":"urn:ietf:params:acme:error:badNonce","detail":"retry"}`},
+		{method: "POST", path: "/new-account", nonce: "nonce-2-replacement", payload: registration,
+			status: 201, nextNonce: "nonce-3", location: "/account/1", body: `{"status":"valid","contact":["mailto:operator@example.test"]}`},
+		{method: "POST", path: "/new-order", nonce: "nonce-3", kid: "/account/1",
+			payload: `{"identifiers":[{"type":"dns","value":"route.example.test"}],"profile":"tlsserver"}`,
+			status:  201, nextNonce: "nonce-4", location: "/order/1", retryAfter: retryAfter.Format(http.TimeFormat),
+			body: `{"status":"pending","identifiers":[{"type":"dns","value":"route.example.test"}],"authorizations":["$ORIGIN/authorization/1"],"finalize":"$ORIGIN/finalize/1"}`},
+		{method: "POST", path: "/challenge/1", nonce: "nonce-4", kid: "/account/1", payload: `{}`,
+			status: 200, nextNonce: "nonce-5", retryAfter: retryAfter.Format(http.TimeFormat), body: `{"status":"pending"}`},
 	})
-	server = httptest.NewServer(handler)
-	t.Cleanup(server.Close)
-	client, err := New(server.Client(), server.URL+"/dir", key, "")
+	httpClient := server.Client()
+	httpClient.Timeout = 5 * time.Second
+	client, err := New(httpClient, server.URL+"/dir", key, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	account, directory, err := client.ReconcileAccount(t.Context(), "operator@example.test", true)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	account, directory, err := client.ReconcileAccount(ctx, "operator@example.test", true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if account.URL != server.URL+"/account/1" || account.Status != "valid" || directory.Meta.TermsOfService != server.URL+"/terms" || accountAttempts != 2 || nonceCounter != 1 {
-		t.Fatalf("account = %#v, directory = %#v, attempts = %d, nonces = %d", account, directory, accountAttempts, nonceCounter)
+	if account.URL != server.URL+"/account/1" || account.Status != "valid" || directory.Meta.TermsOfService != server.URL+"/terms" {
+		t.Fatalf("account = %#v, directory = %#v", account, directory)
 	}
-	order, err := client.NewOrder(t.Context(), []string{"route.example.test"}, "tlsserver")
+	order, err := client.NewOrder(ctx, []string{"route.example.test"}, "tlsserver")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if order.URL != server.URL+"/order/1" || order.Status != "pending" || len(order.Authorizations) != 1 ||
-		!order.RetryAfter.Equal(retryAfter) {
+	if order.URL != server.URL+"/order/1" || order.Status != "pending" ||
+		!reflect.DeepEqual(order.Authorizations, []string{server.URL + "/authorization/1"}) ||
+		order.Finalize != server.URL+"/finalize/1" || !order.RetryAfter.Equal(retryAfter) {
 		t.Fatalf("order = %#v", order)
 	}
-	challengeRetryAfter, err := client.AcceptChallenge(t.Context(), server.URL+"/challenge/1")
+	challengeRetryAfter, err := client.AcceptChallenge(ctx, server.URL+"/challenge/1")
 	if err != nil || !challengeRetryAfter.Equal(retryAfter) {
 		t.Fatalf("challenge retry after = %v, %v", challengeRetryAfter, err)
 	}
 }
 
-func verifyTestJWS(t *testing.T, request *http.Request, key *ecdsa.PrivateKey, endpoint string) (map[string]any, []byte) {
+// Each step supplies a response and records the request for assertions on the
+// test goroutine. Distinct nonces make stale reuse and extra HEADs observable.
+type acmeStep struct {
+	method, path, nonce, kid, payload     string
+	status                                int
+	nextNonce, location, retryAfter, body string
+}
+
+func newScriptedACMEServer(t *testing.T, key *ecdsa.PrivateKey, steps []acmeStep) *httptest.Server {
 	t.Helper()
-	body, err := io.ReadAll(request.Body)
-	if err != nil {
-		t.Fatal(err)
+	type recordedRequest struct {
+		method, path, contentType string
+		protected                 map[string]any
+		payload                   []byte
+		err                       error
 	}
-	var envelope struct {
-		Protected string `json:"protected"`
-		Payload   string `json:"payload"`
-		Signature string `json:"signature"`
-	}
-	if err := json.Unmarshal(body, &envelope); err != nil {
-		t.Fatal(err)
+	var mu sync.Mutex
+	var requests []recordedRequest
+	var writeErrors []error
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		record := recordedRequest{method: r.Method, path: r.URL.RequestURI(), contentType: r.Header.Get("Content-Type")}
+		if r.Method == http.MethodPost {
+			record.protected, record.payload, record.err = verifyTestJWS(r, key)
+		}
+		index := len(requests)
+		requests = append(requests, record)
+		if index >= len(steps) {
+			http.Error(w, "unexpected request", http.StatusInternalServerError)
+			return
+		}
+		step := steps[index]
+		origin := "http://" + r.Host
+		w.Header().Set("Content-Type", "application/json")
+		if step.nextNonce != "" {
+			w.Header().Set("Replay-Nonce", step.nextNonce)
+		}
+		if step.location != "" {
+			w.Header().Set("Location", origin+step.location)
+		}
+		if step.retryAfter != "" {
+			w.Header().Set("Retry-After", step.retryAfter)
+		}
+		w.WriteHeader(step.status)
+		if _, err := io.WriteString(w, strings.ReplaceAll(step.body, "$ORIGIN", origin)); err != nil {
+			writeErrors = append(writeErrors, err)
+		}
+	}))
+	t.Cleanup(func() {
+		server.Close()
+		mu.Lock()
+		defer mu.Unlock()
+		for _, err := range writeErrors {
+			t.Errorf("script response: %v", err)
+		}
+		if len(requests) != len(steps) {
+			t.Errorf("requests = %d, want %d", len(requests), len(steps))
+		}
+		for index, got := range requests {
+			if index >= len(steps) {
+				break
+			}
+			want := steps[index]
+			if got.method != want.method || got.path != want.path || got.err != nil {
+				t.Errorf("request %d: %s %s, JWS error = %v; want %s %s", index, got.method, got.path, got.err, want.method, want.path)
+			}
+			if want.method != http.MethodPost {
+				continue
+			}
+			protected := map[string]any{"alg": "ES256", "url": server.URL + want.path, "nonce": want.nonce}
+			if want.kid != "" {
+				protected["kid"] = server.URL + want.kid
+			} else {
+				protected["jwk"] = map[string]any{"crv": "P-256", "kty": "EC",
+					"x": base64.RawURLEncoding.EncodeToString(key.X.FillBytes(make([]byte, 32))),
+					"y": base64.RawURLEncoding.EncodeToString(key.Y.FillBytes(make([]byte, 32)))}
+			}
+			if got.contentType != "application/jose+json" || !reflect.DeepEqual(got.protected, protected) {
+				t.Errorf("request %d: content type=%q protected=%#v, want %#v", index, got.contentType, got.protected, protected)
+			}
+			var payload, expected any
+			if err := json.Unmarshal([]byte(want.payload), &expected); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(got.payload, &payload); err != nil || !reflect.DeepEqual(payload, expected) {
+				t.Errorf("request %d: payload=%s, want %s; error=%v", index, got.payload, want.payload, err)
+			}
+		}
+	})
+	return server
+}
+
+func verifyTestJWS(request *http.Request, key *ecdsa.PrivateKey) (map[string]any, []byte, error) {
+	var envelope struct{ Protected, Payload, Signature string }
+	if err := json.NewDecoder(request.Body).Decode(&envelope); err != nil {
+		return nil, nil, err
 	}
 	protectedJSON, err := base64.RawURLEncoding.DecodeString(envelope.Protected)
 	if err != nil {
-		t.Fatal(err)
+		return nil, nil, err
 	}
 	var protected map[string]any
 	if err := json.Unmarshal(protectedJSON, &protected); err != nil {
-		t.Fatal(err)
+		return nil, nil, err
 	}
-	if protected["alg"] != "ES256" || protected["url"] != endpoint || protected["nonce"] == "" {
-		t.Fatalf("protected header = %#v", protected)
+	if nonce, ok := protected["nonce"].(string); !ok || nonce == "" {
+		return protected, nil, fmt.Errorf("missing or invalid nonce: %#v", protected["nonce"])
 	}
 	signature, err := base64.RawURLEncoding.DecodeString(envelope.Signature)
 	if err != nil || len(signature) != 64 {
-		t.Fatalf("signature length = %d, error = %v", len(signature), err)
+		return protected, nil, fmt.Errorf("signature length = %d, error = %v", len(signature), err)
 	}
 	digest := sha256.Sum256([]byte(envelope.Protected + "." + envelope.Payload))
 	if !ecdsa.Verify(&key.PublicKey, digest[:], new(big.Int).SetBytes(signature[:32]), new(big.Int).SetBytes(signature[32:])) {
-		t.Fatal("JWS signature is invalid")
+		return protected, nil, fmt.Errorf("invalid JWS signature")
 	}
 	payload, err := base64.RawURLEncoding.DecodeString(envelope.Payload)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return protected, payload
-}
-
-func writeTestJSON(t *testing.T, response http.ResponseWriter, value any) {
-	t.Helper()
-	response.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(response).Encode(value); err != nil {
-		t.Fatal(err)
-	}
+	return protected, payload, err
 }

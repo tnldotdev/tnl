@@ -15,33 +15,33 @@ var _ relayv1.ServerInterface = generatedServer{}
 func (s generatedServer) ClaimPublisherConnection(
 	response http.ResponseWriter,
 	request *http.Request,
-	_ relayv1.PublisherConnectionID,
+	publisherConnectionID relayv1.PublisherConnectionID,
 ) {
-	s.handler.claimPublisherConnection(response, request)
+	s.handler.claimPublisherConnection(response, request, publisherConnectionID)
 }
 
 func (s generatedServer) DisconnectPublisherConnection(
 	response http.ResponseWriter,
 	request *http.Request,
-	_ relayv1.PublisherConnectionID,
+	publisherConnectionID relayv1.PublisherConnectionID,
 ) {
-	s.handler.disconnectPublisherConnection(response, request)
+	s.handler.disconnectPublisherConnection(response, request, publisherConnectionID)
 }
 
 func (s generatedServer) MarkPublisherConnectionReady(
 	response http.ResponseWriter,
 	request *http.Request,
-	_ relayv1.PublisherConnectionID,
+	publisherConnectionID relayv1.PublisherConnectionID,
 ) {
-	s.handler.markPublisherConnectionReady(response, request)
+	s.handler.markPublisherConnectionReady(response, request, publisherConnectionID)
 }
 
 func (s generatedServer) RegisterRelay(response http.ResponseWriter, request *http.Request) {
 	s.handler.registerRelay(response, request)
 }
 
-func (s generatedServer) DrainRelay(response http.ResponseWriter, request *http.Request, _ relayv1.RelayID) {
-	s.handler.drainRelay(response, request)
+func (s generatedServer) DrainRelay(response http.ResponseWriter, request *http.Request, relayID relayv1.RelayID) {
+	s.handler.drainRelay(response, request, relayID)
 }
 
 func (s generatedServer) GetRelayServiceCertificate(
@@ -53,6 +53,6 @@ func (s generatedServer) GetRelayServiceCertificate(
 	s.handler.getRelayServiceCertificate(response, request, relayServiceID, params)
 }
 
-func (s generatedServer) RenewRelay(response http.ResponseWriter, request *http.Request, _ relayv1.RelayID) {
-	s.handler.renewRelay(response, request)
+func (s generatedServer) RenewRelay(response http.ResponseWriter, request *http.Request, relayID relayv1.RelayID) {
+	s.handler.renewRelay(response, request, relayID)
 }

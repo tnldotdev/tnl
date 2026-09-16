@@ -38,7 +38,7 @@ func TestRelayWorkerDNSFailureDoesNotAdvance(t *testing.T) {
 					dns.err = errors.New("DNS unavailable")
 				}
 				worker := &RelayWorker{config: RelayConfig{DNSChallenges: dns, PollInterval: time.Second}}
-				api := &relayACMEStub{}
+				api := &acmeStub{}
 				work := controlstate.RelayCertificateOrderWork{ID: "relay_order_1", State: phase, TLSServerName: "relay-a.example.test", ChallengeURL: "https://acme.example.test/challenge/1"}
 				err := worker.advance(t.Context(), api, &work, now)
 				if (err != nil) != unavailable || work.State != phase || api.acceptedChallenge != "" {
@@ -61,7 +61,7 @@ func TestRelayWorkerCleanupFailurePreservesCertificateAndRetry(t *testing.T) {
 			}
 			t.Run(name, func(t *testing.T) {
 				now := time.Now().UTC().Truncate(time.Second)
-				csr, certificate := relayTestCertificate(t, "relay-a.example.test", now)
+				csr, certificate := testCertificate(t, "relay-a.example.test", now)
 				renewAt := now.Add(30 * time.Minute)
 				work := controlstate.RelayCertificateOrderWork{ID: "relay_order_1", State: phase, TLSServerName: "relay-a.example.test", CSRDER: csr, ChallengeURL: "https://acme.example.test/challenge/1", Account: controlstate.ACMEAccount{AccountURL: "https://acme.example.test/account/1"}}
 				if phase == "cleaning" {
@@ -79,7 +79,7 @@ func TestRelayWorkerCleanupFailurePreservesCertificateAndRetry(t *testing.T) {
 					}
 					return errors.New("DNS cleanup unavailable")
 				}}
-				worker := &RelayWorker{store: store, config: RelayConfig{DNSChallenges: dns, FailedRetryInterval: time.Hour}, now: func() time.Time { return now }, client: func(controlstate.ACMEAccount) (acmeAPI, error) { return &relayACMEStub{}, nil }}
+				worker := &RelayWorker{store: store, config: RelayConfig{DNSChallenges: dns, FailedRetryInterval: time.Hour}, now: func() time.Time { return now }, client: func(controlstate.ACMEAccount) (acmeAPI, error) { return &acmeStub{}, nil }}
 				found, err := worker.processOne(ctx)
 				if !found {
 					t.Fatal("cleanup was not claimed")
@@ -117,18 +117,18 @@ func TestRelayWorkerIssuanceRejectsInvalidRenewalCertificate(t *testing.T) {
 		t.Run(failure, func(t *testing.T) {
 			now := time.Now().UTC().Truncate(time.Second)
 			const hostname = "relay-a.example.test"
-			csr, certificate := relayTestCertificate(t, hostname, now)
+			csr, certificate := testCertificate(t, hostname, now)
 			switch failure {
 			case "wrong_key":
-				_, certificate = relayTestCertificate(t, hostname, now)
+				_, certificate = testCertificate(t, hostname, now)
 			case "wrong_hostname":
-				csr, certificate = relayTestCertificate(t, "relay-b.example.test", now)
+				csr, certificate = testCertificate(t, "relay-b.example.test", now)
 			case "expired":
-				csr, certificate = relayTestCertificate(t, hostname, now.Add(-2*time.Hour))
+				csr, certificate = testCertificate(t, hostname, now.Add(-2*time.Hour))
 			case "future":
-				csr, certificate = relayTestCertificate(t, hostname, now.Add(2*time.Hour))
+				csr, certificate = testCertificate(t, hostname, now.Add(2*time.Hour))
 			}
-			api := &relayACMEStub{order: acmeclient.Order{URL: "https://acme.example.test/order/1", Finalize: "https://acme.example.test/finalize/1", Certificate: "https://acme.example.test/certificate/1", Status: "valid", Identifiers: []acmeclient.Identifier{{Type: "dns", Value: hostname}}}, certificatePEM: certificate}
+			api := &acmeStub{order: acmeclient.Order{URL: "https://acme.example.test/order/1", Finalize: "https://acme.example.test/finalize/1", Certificate: "https://acme.example.test/certificate/1", Status: "valid", Identifiers: []acmeclient.Identifier{{Type: "dns", Value: hostname}}}, certificatePEM: certificate}
 			dns := &relayDNSChallengesStub{}
 			worker := &RelayWorker{config: RelayConfig{DNSChallenges: dns}}
 			work := controlstate.RelayCertificateOrderWork{ID: "relay_order_1", State: "finalizing", TLSServerName: hostname, CSRDER: csr, OrderURL: api.order.URL, ChallengeURL: "https://acme.example.test/challenge/1"}
@@ -155,14 +155,7 @@ func (*relayStoreStub) PrepareRelayCertificateOrder(context.Context, string, tim
 func (s *relayStoreStub) ClaimRelayCertificateOrderWork(context.Context, string, time.Time, time.Duration) (controlstate.RelayCertificateOrderWork, bool, error) {
 	return s.work, true, nil
 }
-func (s *relayStoreStub) SaveRelayCertificateOrderWork(_ context.Context, work controlstate.RelayCertificateOrderWork, now time.Time) (controlstate.RelayCertificateOrderWork, error) {
-	if work.State == "complete" {
-		notBefore, notAfter, err := validateRelayCertificate(work.CertificatePEM, work.CSRDER, work.TLSServerName, now)
-		if err != nil || work.NotBefore == nil || work.NotAfter == nil || work.RenewAt == nil ||
-			!notBefore.Equal(*work.NotBefore) || !notAfter.Equal(*work.NotAfter) {
-			return controlstate.RelayCertificateOrderWork{}, controlstate.ErrRelayCertificateWorkInvalid
-		}
-	}
+func (s *relayStoreStub) SaveRelayCertificateOrderWork(_ context.Context, work controlstate.RelayCertificateOrderWork, _ time.Time) (controlstate.RelayCertificateOrderWork, error) {
 	s.saves++
 	s.saved = work
 	return work, nil

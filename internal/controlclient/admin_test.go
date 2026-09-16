@@ -8,6 +8,11 @@ import (
 
 func TestAdminListRelaysReadsEveryPage(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/v1/admin/relays" || request.Header.Get("Authorization") != "Bearer access" || request.Header.Get("Accept") != "application/json, application/problem+json" {
+			t.Errorf("unexpected admin request: %s %s", request.Method, request.URL)
+			http.Error(response, "unexpected request", http.StatusBadRequest)
+			return
+		}
 		response.Header().Set("Content-Type", "application/json")
 		switch request.URL.Query().Get("cursor") {
 		case "":
@@ -15,7 +20,8 @@ func TestAdminListRelaysReadsEveryPage(t *testing.T) {
 		case "relay_a":
 			_, _ = response.Write([]byte(`{"relays":[{"relay_id":"relay_b"}]}`))
 		default:
-			t.Fatalf("cursor = %q", request.URL.Query().Get("cursor"))
+			t.Errorf("cursor = %q", request.URL.Query().Get("cursor"))
+			http.Error(response, "unexpected cursor", http.StatusBadRequest)
 		}
 	}))
 	defer server.Close()

@@ -1,9 +1,10 @@
-// Package serviceapi contains HTTP primitives shared by the private service APIs.
+// Package serviceapi provides HTTP helpers for the private service APIs.
 package serviceapi
 
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"mime"
 	"net/http"
 	"strings"
@@ -12,6 +13,29 @@ import (
 )
 
 const MaximumRequestBytes = 64 << 10
+
+// ProblemError describes a private service API failure without HTTP client or
+// server details.
+type ProblemError struct {
+	Status int
+	Type   string
+	Title  string
+	Detail string
+}
+
+func (e *ProblemError) Error() string {
+	if e.Type != "" {
+		return fmt.Sprintf("service API returned %d (%s): %s", e.Status, e.Type, e.Detail)
+	}
+	return fmt.Sprintf("service API returned HTTP %d", e.Status)
+}
+
+func NewProblemError(status int, problemType, detail string) *ProblemError {
+	return &ProblemError{
+		Status: status, Type: "https://tnl.dev/problems/" + problemType,
+		Title: strings.ReplaceAll(problemType, "_", " "), Detail: detail,
+	}
+}
 
 func DecodeJSON(response http.ResponseWriter, request *http.Request, destination any) bool {
 	mediaType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
@@ -36,25 +60,20 @@ func WriteJSON(response http.ResponseWriter, status int, value any) {
 }
 
 func WriteProblem(response http.ResponseWriter, status int, problemType, detail string) {
+	WriteProblemError(response, NewProblemError(status, problemType, detail))
+}
+
+func WriteProblemError(response http.ResponseWriter, problem *ProblemError) {
 	response.Header().Set("Content-Type", "application/problem+json")
-	response.WriteHeader(status)
+	response.WriteHeader(problem.Status)
 	_ = json.NewEncoder(response).Encode(struct {
 		Type   string `json:"type"`
 		Title  string `json:"title"`
 		Status int    `json:"status"`
 		Detail string `json:"detail"`
 	}{
-		Type: "https://tnl.dev/problems/" + problemType, Title: strings.ReplaceAll(problemType, "_", " "),
-		Status: status, Detail: detail,
+		Type: problem.Type, Title: problem.Title, Status: problem.Status, Detail: problem.Detail,
 	})
-}
-
-func MatchingPathValue(response http.ResponseWriter, request *http.Request, name, bodyValue string) bool {
-	if bodyValue == request.PathValue(name) {
-		return true
-	}
-	WriteProblem(response, http.StatusBadRequest, "invalid_request", "Path and request body identifiers do not match")
-	return false
 }
 
 func ValidIdentifiers(values ...string) bool {

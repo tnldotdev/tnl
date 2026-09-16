@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"testing"
+	"time"
 )
 
 const echExtension = 0xfe0d
@@ -19,6 +20,17 @@ func TestInspectClientHelloFromTLSClient(t *testing.T) {
 		serverConnection.Close()
 	})
 	done := make(chan error, 1)
+	t.Cleanup(func() {
+		_ = clientConnection.Close()
+		_ = serverConnection.Close()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("TLS client worker did not stop")
+		}
+	})
+	_ = clientConnection.SetDeadline(time.Now().Add(5 * time.Second))
+	_ = serverConnection.SetDeadline(time.Now().Add(5 * time.Second))
 	go func() {
 		client := tls.Client(clientConnection, &tls.Config{
 			ServerName: "demo.example",
@@ -41,7 +53,6 @@ func TestInspectClientHelloFromTLSClient(t *testing.T) {
 
 	serverConnection.Close()
 	clientConnection.Close()
-	<-done
 }
 
 func TestInspectClientHelloFragmentsAndReplays(t *testing.T) {

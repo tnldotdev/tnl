@@ -5,6 +5,5 @@ generate:
   client: true
   models: true
   std-http-server: true
-  strict-server: true
 output-options:
   skip-prune: true

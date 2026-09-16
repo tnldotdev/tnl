@@ -19,19 +19,16 @@ import (
 
 func TestHostedAuthorizerSendsServiceSecretAndReturnsControlDecision(t *testing.T) {
 	const serviceSecret = "0123456789abcdef0123456789abcdef"
+	type observedRequest struct {
+		method, path, authorization string
+		body                        authorityv1.ServiceAuthorizationRequest
+		err                         error
+	}
+	received := make(chan observedRequest, 1)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.URL.Path != "/v1/service/authorize" || request.Header.Get("Authorization") != "Bearer "+serviceSecret {
-			t.Fatalf("request = %s %s, authorization %q", request.Method, request.URL.Path, request.Header.Get("Authorization"))
-		}
 		var body authorityv1.ServiceAuthorizationRequest
-		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-			t.Fatal(err)
-		}
-		if body.AccessToken != "opaque-user-token" || body.Operation != authorityv1.RouteSessionCreate ||
-			body.RouteId == nil || *body.RouteId != "route_1" || body.RouteMutationRevision == nil ||
-			*body.RouteMutationRevision != 3 || !slices.Equal(body.AllowedIpPrefixes, []string{"192.0.2.0/24"}) {
-			t.Fatalf("authorization request = %#v", body)
-		}
+		err := json.NewDecoder(request.Body).Decode(&body)
+		received <- observedRequest{request.Method, request.URL.Path, request.Header.Get("Authorization"), body, err}
 		writeJSON(response, http.StatusOK, authorityv1.ServiceAuthorizationDecision{
 			IdentityId: "identity_1", TeamId: "team_1", ActingMembershipId: "membership_1",
 			ActingRole: authorityv1.TeamRoleOwner, RouteMembershipId: pointer("membership_1"), TeamPolicyRevision: 4,
@@ -59,6 +56,22 @@ func TestHostedAuthorizerSendsServiceSecretAndReturnsControlDecision(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
+	select {
+	case got := <-received:
+		if got.err != nil || got.method != http.MethodPost || got.path != "/v1/service/authorize" || got.authorization != "Bearer "+serviceSecret {
+			t.Fatalf("request = %#v", got)
+		}
+		body := got.body
+		if body.AccessToken != "opaque-user-token" || body.Operation != authorityv1.RouteSessionCreate ||
+			body.RouteId == nil || *body.RouteId != "route_1" || body.RouteMutationRevision == nil ||
+			*body.RouteMutationRevision != 3 || body.RouteVersion == nil || *body.RouteVersion != 2 ||
+			body.TeamId != "team_1" || body.DomainId != "domain_1" || body.CanonicalHostname != "api.example.test" ||
+			body.Target != "http://127.0.0.1:3000" || !slices.Equal(body.AllowedIpPrefixes, []string{"192.0.2.0/24"}) {
+			t.Fatalf("authorization request = %#v", body)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("authority received no authorization request")
+	}
 	if decision.IdentityID != "identity_1" || decision.TeamPolicyRevision != 4 ||
 		decision.CertificatePlan == nil || decision.CertificatePlan.ChallengeMethod != "dns-01" ||
 		decision.RetrySecret != retrySecret {
@@ -67,10 +80,9 @@ func TestHostedAuthorizerSendsServiceSecretAndReturnsControlDecision(t *testing.
 }
 
 func TestHostedAuthorizerUsesCurrentAuthorityMembershipsForRouteReads(t *testing.T) {
+	received := make(chan [3]string, 1)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.URL.Path != "/v1/identity" || request.Header.Get("Authorization") != "Bearer opaque-user-token" {
-			t.Fatalf("request = %s %s, authorization %q", request.Method, request.URL.Path, request.Header.Get("Authorization"))
-		}
+		received <- [3]string{request.Method, request.URL.Path, request.Header.Get("Authorization")}
 		writeJSON(response, http.StatusOK, authorityv1.IdentityContext{
 			Identity:       authorityv1.Identity{Id: "identity_1", DisplayName: "User"},
 			Memberships:    []authorityv1.Membership{{Id: "membership_1", TeamId: "team_1"}},
@@ -91,6 +103,14 @@ func TestHostedAuthorizerUsesCurrentAuthorityMembershipsForRouteReads(t *testing
 	}
 	if _, ok := principal.teamIDs["team_1"]; !ok {
 		t.Fatalf("principal = %#v", principal)
+	}
+	select {
+	case got := <-received:
+		if got != [3]string{http.MethodGet, "/v1/identity", "Bearer opaque-user-token"} {
+			t.Fatalf("identity request = %v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("authority received no identity request")
 	}
 }
 

@@ -84,7 +84,7 @@ func TestIntegrationRelayLifecycleCleanupCrossesCertificateExpiry(t *testing.T) 
 		config: RelayConfig{WorkerID: "worker-cleanup", AccountID: account.ID, LeaseDuration: time.Minute,
 			FailedRetryInterval: time.Hour, DNSChallenges: dns},
 		now:    func() time.Time { return current },
-		client: func(controlstate.ACMEAccount) (acmeAPI, error) { return &relayACMEStub{}, nil },
+		client: func(controlstate.ACMEAccount) (acmeAPI, error) { return &acmeStub{}, nil },
 	}
 	if found, err := worker.processOne(t.Context()); err != nil || !found {
 		t.Fatalf("cleanup: found %v, error %v", found, err)

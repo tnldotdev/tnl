@@ -19,6 +19,7 @@ import (
 func TestConfigPathDoesNotEvaluateTypeScript(t *testing.T) {
 	directory := t.TempDir()
 	stateRoot := filepath.Join(directory, "state")
+	t.Setenv("TNL_STATE_DIR", stateRoot)
 	configPath := filepath.Join(directory, "tnl.config.ts")
 	markerPath := filepath.Join(directory, "evaluated")
 	source := `import { writeFileSync } from "node:fs";

@@ -34,11 +34,12 @@ func TestDecode(t *testing.T) {
 	for _, test := range []struct {
 		body            string
 		valid, trailing bool
+		want            int
 	}{
-		{`{"value":1}`, true, false}, {"{\"value\":1} \n", true, false},
-		{`null`, true, false}, {`{"value":1,"value":2}`, true, false},
-		{`{"unknown":1}`, false, false}, {`{`, false, false}, {``, false, false},
-		{`{"value":1} {}`, false, true}, {`{"value":1} garbage`, false, true},
+		{`{"value":1}`, true, false, 1}, {"{\"value\":1} \n", true, false, 1},
+		{`null`, true, false, 0}, {`{"value":1,"value":2}`, true, false, 2},
+		{`{"unknown":1}`, false, false, 0}, {`{`, false, false, 0}, {``, false, false, 0},
+		{`{"value":1} {}`, false, true, 0}, {`{"value":1} garbage`, false, true, 0},
 	} {
 		var value struct {
 			Value int `json:"value"`
@@ -46,6 +47,9 @@ func TestDecode(t *testing.T) {
 		err := Decode(json.NewDecoder(strings.NewReader(test.body)), &value)
 		if (err == nil) != test.valid || errors.Is(err, ErrTrailingContent) != test.trailing {
 			t.Errorf("Decode(%q) = %v", test.body, err)
+		}
+		if test.valid && value.Value != test.want {
+			t.Errorf("Decode(%q) value = %d, want %d", test.body, value.Value, test.want)
 		}
 	}
 	for _, useNumber := range []bool{false, true} {
@@ -61,6 +65,9 @@ func TestDecode(t *testing.T) {
 		}
 		if number, ok := value.Value.(json.Number); ok != useNumber || (ok && number.String() != "9007199254740993") {
 			t.Fatalf("number = %#v", value.Value)
+		}
+		if !useNumber && value.Value != float64(9007199254740992) {
+			t.Fatalf("rounded float64 = %#v", value.Value)
 		}
 	}
 }

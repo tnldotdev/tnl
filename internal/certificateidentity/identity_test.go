@@ -106,7 +106,7 @@ func TestValidateIssuedCertificate(t *testing.T) {
 	}
 	ca := &x509.Certificate{SerialNumber: big.NewInt(1), IsCA: true, BasicConstraintsValid: true,
 		KeyUsage: x509.KeyUsageCertSign, NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour)}
-	encode := func(template, parent *x509.Certificate, publicKey any, signer *ecdsa.PrivateKey) []byte {
+	encode := func(t *testing.T, template, parent *x509.Certificate, publicKey any, signer *ecdsa.PrivateKey) []byte {
 		t.Helper()
 		der, err := x509.CreateCertificate(rand.Reader, template, parent, publicKey, signer)
 		if err != nil {
@@ -114,10 +114,10 @@ func TestValidateIssuedCertificate(t *testing.T) {
 		}
 		return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 	}
-	caPEM := encode(ca, ca, &caKey.PublicKey, caKey)
+	caPEM := encode(t, ca, ca, &caKey.PublicKey, caKey)
 	leaf := x509.Certificate{SerialNumber: big.NewInt(2), DNSNames: identifiers,
 		NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour), ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
-	leafPEM := encode(&leaf, ca, &key.PublicKey, caKey)
+	leafPEM := encode(t, &leaf, ca, &key.PublicKey, caKey)
 	chain := string(leafPEM) + string(caPEM)
 	request := func(names []string, extensions []pkix.Extension) []byte {
 		t.Helper()
@@ -128,6 +128,8 @@ func TestValidateIssuedCertificate(t *testing.T) {
 		return der
 	}
 	csr := request(identifiers, nil)
+	withHeaders, _ := pem.Decode(leafPEM)
+	withHeaders.Headers = map[string]string{"Extra": "header"}
 	badCertificate, _ := pem.Decode(leafPEM)
 	badCertificate.Bytes[len(badCertificate.Bytes)-1] ^= 1
 	for _, test := range []struct {
@@ -142,7 +144,7 @@ func TestValidateIssuedCertificate(t *testing.T) {
 		{"skipped_malformed_block", "-----BEGIN CERTIFICATE-----\n!invalid!\n-----END CERTIFICATE-----\n" + chain, false},
 		{"empty", " \t\r\n", false},
 		{"wrong_block_type", string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: []byte("invalid")})), false},
-		{"headers", string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Headers: map[string]string{"Extra": "header"}, Bytes: []byte("invalid")})), false},
+		{"headers", string(pem.EncodeToMemory(withHeaders)) + string(caPEM), false},
 		{"malformed_DER", string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("invalid")})), false},
 		{"wrong_chain", string(leafPEM) + string(leafPEM), false},
 		{"bad_chain_signature", string(pem.EncodeToMemory(badCertificate)) + string(caPEM), false},
@@ -188,14 +190,14 @@ func TestValidateIssuedCertificate(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			changed := leaf
 			test.change(&changed)
-			chain := append(encode(&changed, ca, &key.PublicKey, caKey), caPEM...)
+			chain := append(encode(t, &changed, ca, &key.PublicKey, caKey), caPEM...)
 			if _, err := ValidateIssuedCertificate(chain, csr, identifiers, now); err == nil {
 				t.Fatal("invalid issued certificate accepted")
 			}
 		})
 	}
 	t.Run("wrong_key", func(t *testing.T) {
-		chain := append(encode(&leaf, ca, &caKey.PublicKey, caKey), caPEM...)
+		chain := append(encode(t, &leaf, ca, &caKey.PublicKey, caKey), caPEM...)
 		if _, err := ValidateIssuedCertificate(chain, csr, identifiers, now); err == nil {
 			t.Fatal("certificate with a different key accepted")
 		}

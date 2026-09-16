@@ -1,10 +1,8 @@
 package tnldruntime
 
 import (
-	"bufio"
 	"bytes"
-	"crypto/tls"
-	"database/sql"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,12 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/publisher"
-	"github.com/tnldotdev/tnl/internal/tnldconfig"
 	"github.com/tnldotdev/tnl/internal/tunnel"
-	"golang.org/x/net/websocket"
 )
 
 func TestIntegrationStandalonePublishAndVisit(t *testing.T) {
@@ -39,7 +34,7 @@ func TestIntegrationStandalonePublishAndVisit(t *testing.T) {
 		response.Header().Set("X-Tnl-Integration", "publisher")
 		_, _ = io.WriteString(response, "visitor reached local service")
 	}))
-	t.Cleanup(target.Close)
+	cleanupIntegrationHTTPServer(t, target, fixture.owner)
 
 	quicConnector, tcpConnector := fixture.connectors()
 	handle := fixture.startPublisher(t, target.URL, quicConnector, tcpConnector)
@@ -107,7 +102,7 @@ func TestIntegrationPublisherTransportMatrix(t *testing.T) {
 				}
 				_, _ = io.WriteString(response, request.URL.Path)
 			}))
-			t.Cleanup(target.Close)
+			cleanupIntegrationHTTPServer(t, target, fixture.owner)
 
 			quicBase, tcpBase := fixture.connectors()
 			var quicStats, tcpStats *integrationConnectorStats
@@ -144,9 +139,16 @@ func TestIntegrationPublisherTransportMatrix(t *testing.T) {
 					results <- nil
 				}()
 			}
+			join, cancelJoin := context.WithTimeout(t.Context(), 15*time.Second)
+			defer cancelJoin()
 			for range concurrentRequests {
-				if err := <-results; err != nil {
-					t.Error(err)
+				select {
+				case err := <-results:
+					if err != nil {
+						t.Error(err)
+					}
+				case <-join.Done():
+					t.Fatal("concurrent visitor requests did not finish")
 				}
 			}
 			if t.Failed() {
@@ -206,204 +208,12 @@ func TestIntegrationPublisherTransportMatrix(t *testing.T) {
 	}
 }
 
-func TestIntegrationLongLivedHTTPStreams(t *testing.T) {
-	fixture := newStandalonePublishFixture(t, "long-lived-http")
-	websocketGates := make(chan chan struct{}, 1)
-	sseGates := make(chan chan struct{}, 1)
-	streamGates := make(chan chan struct{}, 1)
-	mux := http.NewServeMux()
-	mux.Handle("/websocket", websocket.Handler(func(connection *websocket.Conn) {
-		defer connection.Close()
-		if err := websocket.Message.Send(connection, "connected"); err != nil {
-			return
-		}
-		gate := make(chan struct{})
-		websocketGates <- gate
-		select {
-		case <-gate:
-		case <-connection.Request().Context().Done():
-			return
-		}
-		_ = websocket.Message.Send(connection, "update")
-	}))
-	mux.HandleFunc("/events", func(response http.ResponseWriter, request *http.Request) {
-		flusher, ok := response.(http.Flusher)
-		if !ok {
-			http.Error(response, "streaming unsupported", http.StatusInternalServerError)
-			return
-		}
-		response.Header().Set("Content-Type", "text/event-stream")
-		_, _ = io.WriteString(response, "data: connected\n\n")
-		flusher.Flush()
-		gate := make(chan struct{})
-		sseGates <- gate
-		select {
-		case <-gate:
-		case <-request.Context().Done():
-			return
-		}
-		_, _ = io.WriteString(response, "data: update\n\n")
-		flusher.Flush()
-	})
-	mux.HandleFunc("/stream", func(response http.ResponseWriter, request *http.Request) {
-		flusher, ok := response.(http.Flusher)
-		if !ok {
-			http.Error(response, "streaming unsupported", http.StatusInternalServerError)
-			return
-		}
-		response.Header().Set("Content-Type", "text/plain")
-		_, _ = io.WriteString(response, "first\n")
-		flusher.Flush()
-		gate := make(chan struct{})
-		streamGates <- gate
-		select {
-		case <-gate:
-		case <-request.Context().Done():
-			return
-		}
-		_, _ = io.WriteString(response, "second\n")
-		flusher.Flush()
-	})
-	target := httptest.NewServer(mux)
-	t.Cleanup(target.Close)
-
-	for _, transport := range []string{"quic", "tls-tcp"} {
-		t.Run(transport, func(t *testing.T) {
-			quicBase, tcpBase := fixture.connectors()
-			var quicConnector, tcpConnector muxsession.Connector
-			if transport == "quic" {
-				quicConnector = quicBase
-				tcpConnector, _ = disabledIntegrationConnector("TLS/TCP disabled by integration test")
-			} else {
-				quicConnector, _ = disabledIntegrationConnector("QUIC disabled by integration test")
-				tcpConnector = tcpBase
-			}
-			handle := fixture.startPublisher(t, target.URL, quicConnector, tcpConnector)
-			ready := fixture.waitReady(t, handle)
-
-			assertIntegrationWebSocketPushes(t, fixture, websocketGates)
-			assertIntegrationSSEPushes(t, fixture, ready.PublicURL, sseGates)
-			assertIntegrationStreamingResponse(t, fixture, ready.PublicURL, streamGates)
-			stopIntegrationPublisher(t, handle)
-		})
-	}
-}
-
-func assertIntegrationStreamingResponse(
-	t *testing.T,
-	fixture *standalonePublishFixture,
-	publicURL string,
-	gates <-chan chan struct{},
-) {
-	t.Helper()
-	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, publicURL+"/stream", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	response, err := fixture.visitor.client.Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK || response.Header.Get("Content-Type") != "text/plain" {
-		t.Fatalf("streaming response = %s, headers %#v", response.Status, response.Header)
-	}
-	reader := bufio.NewReader(response.Body)
-	if chunk, readErr := reader.ReadString('\n'); readErr != nil || chunk != "first\n" {
-		t.Fatalf("first streaming chunk = %q, %v", chunk, readErr)
-	}
-	gate := <-gates
-	time.Sleep(250 * time.Millisecond)
-	close(gate)
-	if chunk, readErr := reader.ReadString('\n'); readErr != nil || chunk != "second\n" {
-		t.Fatalf("second streaming chunk = %q, %v", chunk, readErr)
-	}
-}
-
-func assertIntegrationWebSocketPushes(
-	t *testing.T,
-	fixture *standalonePublishFixture,
-	gates <-chan chan struct{},
-) {
-	t.Helper()
-	config, err := websocket.NewConfig("wss://"+fixture.identity.hostname+"/websocket", "https://"+fixture.identity.hostname)
-	if err != nil {
-		t.Fatal(err)
-	}
-	secured, err := tls.Dial("tcp", fixture.publicAddress, &tls.Config{
-		RootCAs: fixture.pebble.roots, ServerName: fixture.identity.hostname, MinVersion: tls.VersionTLS13,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	connection, err := websocket.NewClient(config, secured)
-	if err != nil {
-		_ = secured.Close()
-		t.Fatal(err)
-	}
-	defer connection.Close()
-	if err := connection.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	var message string
-	if err := websocket.Message.Receive(connection, &message); err != nil || message != "connected" {
-		t.Fatalf("first WebSocket message = %q, %v", message, err)
-	}
-	gate := <-gates
-	time.Sleep(250 * time.Millisecond)
-	close(gate)
-	if err := websocket.Message.Receive(connection, &message); err != nil || message != "update" {
-		t.Fatalf("second WebSocket message = %q, %v", message, err)
-	}
-}
-
-func assertIntegrationSSEPushes(
-	t *testing.T,
-	fixture *standalonePublishFixture,
-	publicURL string,
-	gates <-chan chan struct{},
-) {
-	t.Helper()
-	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, publicURL+"/events", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	response, err := fixture.visitor.client.Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK || response.Header.Get("Content-Type") != "text/event-stream" {
-		t.Fatalf("SSE response = %s, headers %#v", response.Status, response.Header)
-	}
-	reader := bufio.NewReader(response.Body)
-	readEvent := func() string {
-		data, readErr := reader.ReadString('\n')
-		if readErr != nil {
-			t.Fatal(readErr)
-		}
-		if separator, readErr := reader.ReadString('\n'); readErr != nil || separator != "\n" {
-			t.Fatalf("SSE separator = %q, %v", separator, readErr)
-		}
-		return data
-	}
-	if event := readEvent(); event != "data: connected\n" {
-		t.Fatalf("first SSE event = %q", event)
-	}
-	gate := <-gates
-	time.Sleep(250 * time.Millisecond)
-	close(gate)
-	if event := readEvent(); event != "data: update\n" {
-		t.Fatalf("second SSE event = %q", event)
-	}
-}
-
 func TestIntegrationPublisherRestartReusesCertificate(t *testing.T) {
 	fixture := newStandalonePublishFixture(t, "restart")
 	target := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(response, "publisher restart")
 	}))
-	t.Cleanup(target.Close)
+	cleanupIntegrationHTTPServer(t, target, fixture.owner)
 	quicConnector, tcpConnector := fixture.connectors()
 
 	first := fixture.startPublisher(t, target.URL, quicConnector, tcpConnector)
@@ -420,9 +230,9 @@ func TestIntegrationPublisherRestartReusesCertificate(t *testing.T) {
 	firstOrderCount := integrationRouteOrderCount(t, fixture.inspect, firstReady.RouteID)
 
 	stopIntegrationPublisher(t, first)
-	waitForIntegrationCondition(t, 10*time.Second, func() (bool, error) {
+	waitForIntegrationCondition(t, 10*time.Second, func(ctx context.Context) (bool, error) {
 		var closed bool
-		err := fixture.inspect.QueryRowContext(t.Context(), `
+		err := fixture.inspect.QueryRowContext(ctx, `
 			SELECT closed_at IS NOT NULL
 			FROM control.route_sessions
 			WHERE route_id = $1 AND route_version = $2
@@ -454,180 +264,5 @@ func TestIntegrationPublisherRestartReusesCertificate(t *testing.T) {
 	}
 	if orderCount := integrationRouteOrderCount(t, fixture.inspect, secondReady.RouteID); orderCount != firstOrderCount {
 		t.Fatalf("route ACME order count = %d, want %d", orderCount, firstOrderCount)
-	}
-}
-
-type standalonePublishFixture struct {
-	databaseURL     string
-	inspect         *sql.DB
-	publicAddress   string
-	relayUDPAddress string
-	pebble          integrationPebble
-	process         *integrationProcess
-	identity        *integrationPublishingIdentity
-	visitor         *integrationVisitor
-}
-
-func newStandalonePublishFixture(t *testing.T, hostnameLabel string) *standalonePublishFixture {
-	t.Helper()
-	databaseURL, inspect := standaloneTestDatabase(t)
-	publicAddress := unusedTCPAddress(t)
-	relayUDPAddress := unusedUDPAddress(t)
-	dnsAddress := startIntegrationDNS(t)
-	pebble := startIntegrationPebble(t, integrationPort(t, publicAddress), dnsAddress)
-	cfg := standalonePublishConfig(t, databaseURL, publicAddress, relayUDPAddress, pebble.directoryURL)
-	if err := cfg.Validate(); err != nil {
-		t.Fatal(err)
-	}
-	process := startIntegrationProcessWithOptions(t, cfg, integrationProcessOptions{
-		acmeHTTPClient: pebble.httpClient, serviceHTTPClient: &http.Client{Timeout: 10 * time.Second},
-		relayClientTLS: &tls.Config{RootCAs: pebble.roots, MinVersion: tls.VersionTLS13},
-	})
-	waitForProcessReady(t, process)
-	controlHTTP, _ := newIntegrationHTTPSClient(t, pebble.roots, publicAddress, false)
-	controlOrigin := "https://" + cfg.ServerHostname()
-	identity := newIntegrationPublishingIdentity(t, controlOrigin, controlHTTP, hostnameLabel)
-	visitor := newIntegrationVisitor(t, pebble.roots, publicAddress)
-	return &standalonePublishFixture{
-		databaseURL: databaseURL, inspect: inspect, publicAddress: publicAddress,
-		relayUDPAddress: relayUDPAddress, pebble: pebble, process: process,
-		identity: identity, visitor: visitor,
-	}
-}
-
-func standalonePublishConfig(
-	t *testing.T,
-	databaseURL, publicAddress, relayUDPAddress, directoryURL string,
-) tnldconfig.Config {
-	t.Helper()
-	const serverDomain = "integration.test"
-	return tnldconfig.Config{
-		Mode: tnldconfig.RoleStandalone, DatabaseURL: databaseURL, MetricsListen: unusedTCPAddress(t),
-		ControlListen: unusedTCPAddress(t), PrivateControlListen: unusedTCPAddress(t), IngressListen: publicAddress,
-		RelayTCPListen: unusedTCPAddress(t), RelayUDPListen: relayUDPAddress, InternalRelayListen: unusedTCPAddress(t),
-		ServerDomain: serverDomain, ManagedDeploymentDomain: "routes." + serverDomain,
-		ACMEDirectoryURL: directoryURL, ACMEEmail: "integration@example.test",
-		ACMEAcceptTerms: true, ACMEProfile: "tlsserver", LoginToken: testLoginToken,
-		StorageKey:          testStorageKey,
-		AccessTokenLifetime: 5 * time.Minute, RefreshTokenLifetime: time.Hour,
-		PublicConnectionLimit: 100, RouteConnectionLimit: 100, PublisherConnectionLimit: 10,
-		RelayStreamCapacity: 100, QUICMaxIncomingStreams: 100, QUICIdleTimeout: time.Minute,
-		TunnelFallbackDelay: 10 * time.Millisecond, IngressLeaseDuration: 5 * time.Second,
-		RelayLeaseDuration: 5 * time.Second, LeaseRenewalInterval: time.Second,
-		ControlRetryInterval: 10 * time.Millisecond, RoutingTableWait: time.Second, DrainTimeout: 3 * time.Second,
-	}
-}
-
-func (f *standalonePublishFixture) connectors() (muxsession.Connector, muxsession.Connector) {
-	relayTLS := &tls.Config{RootCAs: f.pebble.roots, MinVersion: tls.VersionTLS13}
-	return redirectIntegrationConnector(f.relayUDPAddress, muxsession.QUICConnector{TLSConfig: relayTLS}),
-		redirectIntegrationConnector(f.publicAddress, muxsession.TLSYamuxConnector{TLSConfig: relayTLS})
-}
-
-func (f *standalonePublishFixture) startPublisher(
-	t *testing.T,
-	target string,
-	quicConnector, tcpConnector muxsession.Connector,
-) *integrationPublisher {
-	t.Helper()
-	return startIntegrationPublisher(t, f.identity.publisherConfig(target, quicConnector, tcpConnector), f.diagnostics)
-}
-
-func (f *standalonePublishFixture) waitReady(t *testing.T, handle *integrationPublisher) publisher.Event {
-	t.Helper()
-	ready := waitForPublisherReady(t, handle)
-	if ready.Hostname != f.identity.hostname || ready.PublicURL != "https://"+f.identity.hostname {
-		t.Fatalf("publisher ready event = %#v", ready)
-	}
-	waitForReadyPublisherConnections(t, f.inspect, ready.RouteID, ready.RouteVersion, 2)
-	waitForIngressRoutingCurrent(t, f.inspect, 1)
-	return ready
-}
-
-func (f *standalonePublishFixture) diagnostics() string {
-	return integrationPublisherDiagnostics(f.inspect, f.pebble.logPath)
-}
-
-func integrationRouteOrderCount(t *testing.T, database *sql.DB, routeID string) int {
-	t.Helper()
-	var count int
-	if err := database.QueryRowContext(t.Context(), `
-		SELECT count(*) FROM control.acme_orders WHERE route_id = $1
-	`, routeID).Scan(&count); err != nil {
-		t.Fatal(err)
-	}
-	return count
-}
-
-func assertStandaloneUsage(
-	t *testing.T,
-	databaseURL string,
-	database *sql.DB,
-	routeID string,
-	routeVersion uint64,
-) {
-	t.Helper()
-	var reportCount int
-	var allFinal bool
-	var attempts, policyDenials, capacityDenials, publisherFailures, successful, ingressBytes, egressBytes int64
-	if err := database.QueryRowContext(t.Context(), `
-		WITH latest AS (
-			SELECT DISTINCT ON (bucket_start)
-				final, connection_attempts, policy_denials, capacity_denials,
-				publisher_open_failures, successful_streams, ingress_bytes, egress_bytes
-			FROM control.ingress_usage_reports
-			WHERE route_id = $1 AND route_version = $2
-			ORDER BY bucket_start, report_revision DESC
-		)
-		SELECT count(*), coalesce(bool_and(final), false),
-			coalesce(sum(connection_attempts), 0), coalesce(sum(policy_denials), 0),
-			coalesce(sum(capacity_denials), 0), coalesce(sum(publisher_open_failures), 0),
-			coalesce(sum(successful_streams), 0), coalesce(sum(ingress_bytes), 0), coalesce(sum(egress_bytes), 0)
-		FROM latest
-	`, routeID, routeVersion).Scan(
-		&reportCount, &allFinal, &attempts, &policyDenials, &capacityDenials,
-		&publisherFailures, &successful, &ingressBytes, &egressBytes,
-	); err != nil {
-		t.Fatal(err)
-	}
-	if reportCount == 0 || !allFinal || attempts < 1 || successful < 1 || ingressBytes == 0 || egressBytes == 0 ||
-		policyDenials != 0 || capacityDenials != 0 || publisherFailures != 0 {
-		t.Fatalf(
-			"final usage reports = count %d, final %t, attempts/denials/failures/successes %d/%d/%d/%d/%d, bytes %d/%d",
-			reportCount, allFinal, attempts, policyDenials, capacityDenials, publisherFailures, successful, ingressBytes, egressBytes,
-		)
-	}
-
-	var bucketCount int
-	var through time.Time
-	if err := database.QueryRowContext(t.Context(), `
-		SELECT count(*), max(bucket_end)
-		FROM control.route_usage_buckets
-		WHERE route_id = $1 AND route_version = $2
-	`, routeID, routeVersion).Scan(&bucketCount, &through); err != nil {
-		t.Fatal(err)
-	}
-	if bucketCount == 0 {
-		t.Fatal("route usage bucket was not created")
-	}
-	state, err := controlstate.Open(t.Context(), databaseURL, testStorageKey, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer state.Close()
-	finalized, err := state.FinalizeRouteUsageBuckets(t.Context(), through, through)
-	if err != nil || finalized != bucketCount {
-		t.Fatalf("route usage finalization = %d, %v; want %d", finalized, err, bucketCount)
-	}
-	var allFinalized, allComplete bool
-	if err := database.QueryRowContext(t.Context(), `
-		SELECT coalesce(bool_and(finalized), false), coalesce(bool_and(complete), false)
-		FROM control.route_usage_buckets
-		WHERE route_id = $1 AND route_version = $2
-	`, routeID, routeVersion).Scan(&allFinalized, &allComplete); err != nil {
-		t.Fatal(err)
-	}
-	if !allFinalized || !allComplete {
-		t.Fatalf("route usage buckets = finalized %t, complete %t", allFinalized, allComplete)
 	}
 }

@@ -48,10 +48,11 @@ func TestForwarderPoolsExactRelaySessionAndPreservesBytes(t *testing.T) {
 	}
 
 	for _, visitorConnectionID := range []string{"visitor_connection_1", "visitor_connection_2"} {
-		connection, err := backends[0].Open(t.Context(), visitorConnectionID)
+		connection, err := backends[0].Open(ingressContext(t), visitorConnectionID)
 		if err != nil {
 			t.Fatalf("Open(%q): %v", visitorConnectionID, err)
 		}
+		ownIngressConn(t, connection)
 		if _, err := connection.Write([]byte("ping")); err != nil {
 			t.Fatalf("write %q: %v", visitorConnectionID, err)
 		}
@@ -61,7 +62,7 @@ func TestForwarderPoolsExactRelaySessionAndPreservesBytes(t *testing.T) {
 		}
 		_ = connection.Close()
 
-		request := <-requests
+		request := ingressAwait(t, requests)
 		want := forwardingTestHeader(entry, visitorConnectionID)
 		if request.header != want || request.payload != "ping" {
 			t.Fatalf("forwarded request = %#v; want header %#v and payload ping", request, want)
@@ -73,10 +74,11 @@ func TestForwarderPoolsExactRelaySessionAndPreservesBytes(t *testing.T) {
 
 	entry.PublisherConnections[0].RelayRunId = "relay_run_2"
 	entry.PublisherConnections[0].RelayLeaseRevision++
-	connection, err := mustOnlyBackend(t, forwarder, entry).Open(t.Context(), "visitor_connection_3")
+	connection, err := mustOnlyBackend(t, forwarder, entry).Open(ingressContext(t), "visitor_connection_3")
 	if err != nil {
 		t.Fatalf("Open replacement lease: %v", err)
 	}
+	ownIngressConn(t, connection)
 	if _, err := connection.Write([]byte("next")); err != nil {
 		t.Fatalf("write replacement lease: %v", err)
 	}
@@ -85,7 +87,7 @@ func TestForwarderPoolsExactRelaySessionAndPreservesBytes(t *testing.T) {
 		t.Fatalf("replacement response = %q, %v", response, err)
 	}
 	_ = connection.Close()
-	request := <-requests
+	request := ingressAwait(t, requests)
 	if want := forwardingTestHeader(entry, "visitor_connection_3"); request.header != want || request.payload != "next" {
 		t.Fatalf("replacement request = %#v; want header %#v and payload next", request, want)
 	}
@@ -103,7 +105,7 @@ func TestForwarderRejectsMismatchedRelayCertificate(t *testing.T) {
 	forwarder := newTestForwarder(t, material)
 
 	backend := mustOnlyBackend(t, forwarder, forwardingTestEntry(time.Now(), server.address()))
-	_, err := backend.Open(t.Context(), "visitor_connection_1")
+	_, err := backend.Open(ingressContext(t), "visitor_connection_1")
 	if err == nil || !strings.Contains(err.Error(), "certificate") {
 		t.Fatalf("Open error = %v; want relay hostname rejection", err)
 	}
@@ -134,7 +136,7 @@ func TestForwarderPreservesStaleAssignmentRejection(t *testing.T) {
 	backend := mustOnlyBackend(t, forwarder, forwardingTestEntry(time.Now(), server.address()))
 
 	for _, visitorConnectionID := range []string{"visitor_connection_1", "visitor_connection_2"} {
-		_, err := backend.Open(t.Context(), visitorConnectionID)
+		_, err := backend.Open(ingressContext(t), visitorConnectionID)
 		var protocolError *tunnel.ProtocolError
 		if !errors.As(err, &protocolError) || protocolError.Code != tunnelv1.StaleConnectionAssignment {
 			t.Fatalf("Open(%q) error = %v; want stale connection assignment", visitorConnectionID, err)
@@ -326,10 +328,10 @@ func captureForwardingRequests(
 	if err != nil {
 		return err
 	}
+	defer session.Close()
 	if hello.Role != tunnelv1.Ingress {
 		return errors.New("test relay accepted a non-ingress tunnel")
 	}
-	defer session.Close()
 	for {
 		incoming, err := session.AcceptInternalForwardingStream(ctx)
 		if err != nil {
@@ -338,18 +340,30 @@ func captureForwardingRequests(
 			}
 			return err
 		}
-		if err := incoming.Accept(); err != nil {
+		if err := func() error {
+			defer incoming.Stream.Close()
+			if err := incoming.Accept(); err != nil {
+				return err
+			}
+			if err := incoming.Stream.SetDeadline(time.Now().Add(fixtureTimeout)); err != nil {
+				return err
+			}
+			payload := make([]byte, 4)
+			if _, err := io.ReadFull(incoming.Stream, payload); err != nil {
+				return err
+			}
+			if _, err := incoming.Stream.Write([]byte("pong")); err != nil {
+				return err
+			}
+			select {
+			case requests <- forwardingTestRequest{header: incoming.Header, payload: string(payload)}:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}(); err != nil {
 			return err
 		}
-		payload := make([]byte, 4)
-		if _, err := io.ReadFull(incoming.Stream, payload); err != nil {
-			return err
-		}
-		if _, err := incoming.Stream.Write([]byte("pong")); err != nil {
-			return err
-		}
-		requests <- forwardingTestRequest{header: incoming.Header, payload: string(payload)}
-		_ = incoming.Stream.Close()
 	}
 }
 
@@ -381,14 +395,24 @@ func startForwardingTestServerWithCertificate(
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(func() { _ = listener.Close() })
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	server := &forwardingTestServer{
 		listener: listener, cancel: cancel, errors: make(chan error, 16),
 	}
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{certificate}}
+	done := make(chan struct{})
+	t.Cleanup(func() {
+		cancel()
+		_ = listener.Close()
+		ingressAwait(t, done)
+		for err := range server.errors {
+			t.Errorf("forwarding test server: %v", err)
+		}
+	})
 	server.active.Add(1)
 	go func() {
-		defer server.active.Done()
+		defer func() { server.active.Done(); server.active.Wait(); close(server.errors); close(done) }()
 		for {
 			connection, err := listener.Accept()
 			if err != nil {
@@ -400,6 +424,10 @@ func startForwardingTestServerWithCertificate(
 			server.active.Add(1)
 			go func() {
 				defer server.active.Done()
+				defer connection.Close()
+				stop := context.AfterFunc(ctx, func() { _ = connection.Close() })
+				defer stop()
+				_ = connection.SetDeadline(time.Now().Add(fixtureTimeout))
 				transport, err := muxsession.AcceptTLSYamux(ctx, connection, tlsConfig, muxsession.TLSYamuxConfig{})
 				if err != nil {
 					if ctx.Err() == nil {
@@ -407,6 +435,7 @@ func startForwardingTestServerWithCertificate(
 					}
 					return
 				}
+				defer transport.Close()
 				server.accepted.Add(1)
 				if err := handle(ctx, transport); err != nil && ctx.Err() == nil {
 					server.errors <- err
@@ -414,15 +443,6 @@ func startForwardingTestServerWithCertificate(
 			}()
 		}
 	}()
-	t.Cleanup(func() {
-		cancel()
-		_ = listener.Close()
-		server.active.Wait()
-		close(server.errors)
-		for err := range server.errors {
-			t.Errorf("forwarding test server: %v", err)
-		}
-	})
 	return server
 }
 

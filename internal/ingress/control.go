@@ -12,19 +12,20 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
 )
 
 const routingTablePageSize = 1000
 
 type ControlClient interface {
-	RegisterIngressWithResponse(context.Context, ingressv1.RegisterIngressJSONRequestBody, ...ingressv1.RequestEditorFn) (*ingressv1.RegisterIngressResponse, error)
-	RenewIngressWithResponse(context.Context, ingressv1.IngressID, ingressv1.RenewIngressJSONRequestBody, ...ingressv1.RequestEditorFn) (*ingressv1.RenewIngressResponse, error)
-	DrainIngressWithResponse(context.Context, ingressv1.IngressID, ingressv1.DrainIngressJSONRequestBody, ...ingressv1.RequestEditorFn) (*ingressv1.DrainIngressResponse, error)
-	GetIngressRoutingTableSnapshotWithResponse(context.Context, ingressv1.IngressID, *ingressv1.GetIngressRoutingTableSnapshotParams, ...ingressv1.RequestEditorFn) (*ingressv1.GetIngressRoutingTableSnapshotResponse, error)
-	GetIngressRoutingTableEventsWithResponse(context.Context, ingressv1.IngressID, *ingressv1.GetIngressRoutingTableEventsParams, ...ingressv1.RequestEditorFn) (*ingressv1.GetIngressRoutingTableEventsResponse, error)
-	ReportIngressUsageWithResponse(context.Context, ingressv1.IngressID, ingressv1.ReportIngressUsageJSONRequestBody, ...ingressv1.RequestEditorFn) (*ingressv1.ReportIngressUsageResponse, error)
-	ObserveRouteRecoveryWithResponse(context.Context, ingressv1.IngressID, int64, ingressv1.ObserveRouteRecoveryJSONRequestBody, ...ingressv1.RequestEditorFn) (*ingressv1.ObserveRouteRecoveryResponse, error)
+	RegisterIngress(context.Context, ingressv1.IngressRegistration) (ingressv1.IngressLease, error)
+	RenewIngress(context.Context, ingressv1.IngressID, ingressv1.IngressRenewal) (ingressv1.IngressLease, error)
+	DrainIngress(context.Context, ingressv1.IngressID, ingressv1.IngressDrainRequest) (ingressv1.IngressLease, error)
+	GetIngressRoutingTableSnapshot(context.Context, ingressv1.IngressID, ingressv1.GetIngressRoutingTableSnapshotParams) (ingressv1.IngressRoutingTableSnapshot, error)
+	GetIngressRoutingTableEvents(context.Context, ingressv1.IngressID, ingressv1.GetIngressRoutingTableEventsParams) (ingressv1.IngressRoutingTablePage, error)
+	ReportIngressUsage(context.Context, ingressv1.IngressID, ingressv1.IngressUsageReportBatch) error
+	ObserveRouteRecovery(context.Context, ingressv1.IngressID, int64, ingressv1.RouteRecoveryObservationRequest) (ingressv1.RouteRecoveryObservation, error)
 }
 
 type IngressLoadFunc func() int64
@@ -136,17 +137,11 @@ func (c *Controller) runOnce(ctx context.Context) error {
 }
 
 func (c *Controller) register(ctx context.Context) error {
-	response, err := c.client.RegisterIngressWithResponse(ctx, c.registration)
+	lease, err := c.client.RegisterIngress(ctx, c.registration)
 	if err != nil {
-		return retryableIngressControlError("register ingress", err)
+		return ingressControlError("register ingress", err)
 	}
-	if response == nil {
-		return ingressResponseError("register ingress", 0, nil)
-	}
-	if response.JSON200 == nil {
-		return ingressResponseError("register ingress", response.StatusCode(), response.ApplicationproblemJSONDefault)
-	}
-	return c.setLease(*response.JSON200)
+	return c.setLease(lease)
 }
 
 func (c *Controller) renewLoop(ctx context.Context) error {
@@ -167,7 +162,7 @@ func (c *Controller) renewLoop(ctx context.Context) error {
 		if connections < 0 {
 			return errors.New("ingress: reported connection count cannot be negative")
 		}
-		response, err := c.client.RenewIngressWithResponse(ctx, c.registration.IngressId, ingressv1.IngressRenewal{
+		lease, err := c.client.RenewIngress(ctx, c.registration.IngressId, ingressv1.IngressRenewal{
 			IngressId: c.registration.IngressId, IngressRunId: c.registration.IngressRunId,
 			IngressLeaseRevision: lease.IngressLeaseRevision, ReportedConnections: connections,
 			RoutingTableRevision: revision,
@@ -176,15 +171,9 @@ func (c *Controller) renewLoop(ctx context.Context) error {
 			if ctx.Err() != nil {
 				return nil
 			}
-			return retryableIngressControlError("renew ingress", err)
+			return c.responseError("renew ingress", err)
 		}
-		if response == nil {
-			return c.responseError("renew ingress", 0, nil)
-		}
-		if response.JSON200 == nil {
-			return c.responseError("renew ingress", response.StatusCode(), response.ApplicationproblemJSONDefault)
-		}
-		if err := c.setLease(*response.JSON200); err != nil {
+		if err := c.setLease(lease); err != nil {
 			return err
 		}
 	}
@@ -198,10 +187,10 @@ func (c *Controller) routingLoop(ctx context.Context) error {
 		}
 		limit, wait := routingTablePageSize, c.routingWait
 		lease := c.Lease()
-		response, err := c.client.GetIngressRoutingTableEventsWithResponse(
+		page, err := c.client.GetIngressRoutingTableEvents(
 			ctx,
 			c.registration.IngressId,
-			&ingressv1.GetIngressRoutingTableEventsParams{
+			ingressv1.GetIngressRoutingTableEventsParams{
 				IngressRunId: c.registration.IngressRunId, IngressLeaseRevision: lease.IngressLeaseRevision,
 				After: revision, Limit: &limit, Wait: &wait,
 			},
@@ -210,55 +199,36 @@ func (c *Controller) routingLoop(ctx context.Context) error {
 			if ctx.Err() != nil {
 				return nil
 			}
-			return retryableIngressControlError("read ingress routing table", err)
-		}
-		if response != nil && response.JSON200 != nil {
-			if err := c.routingTable.ApplyPage(revision, *response.JSON200); err != nil {
-				return fmt.Errorf("ingress: apply routing-table page: %w", err)
+			var problem *serviceapi.ProblemError
+			if errors.As(err, &problem) && problem.Status == http.StatusConflict &&
+				problem.Type == "https://tnl.dev/problems/routing_table_resnapshot_required" {
+				c.markRoutingTableCurrent(false)
+				if err := c.loadSnapshot(ctx); err != nil {
+					return err
+				}
+				continue
 			}
-			continue
+			return ingressControlError("read ingress routing table", err)
 		}
-		if response != nil && response.StatusCode() == http.StatusConflict &&
-			response.ApplicationproblemJSON409 != nil &&
-			response.ApplicationproblemJSON409.Type == "https://tnl.dev/problems/routing_table_resnapshot_required" {
-			c.markRoutingTableCurrent(false)
-			if err := c.loadSnapshot(ctx); err != nil {
-				return err
-			}
-			continue
+		if err := c.routingTable.ApplyPage(revision, page); err != nil {
+			return fmt.Errorf("ingress: apply routing-table page: %w", err)
 		}
-		if response == nil {
-			return ingressResponseError("read ingress routing table", 0, nil)
-		}
-		problem := response.ApplicationproblemJSONDefault
-		if response.ApplicationproblemJSON409 != nil {
-			problem = response.ApplicationproblemJSON409
-		}
-		return ingressResponseError("read ingress routing table", response.StatusCode(), problem)
 	}
 }
 
 func (c *Controller) loadSnapshot(ctx context.Context) error {
 	lease := c.Lease()
-	response, err := c.client.GetIngressRoutingTableSnapshotWithResponse(
+	snapshot, err := c.client.GetIngressRoutingTableSnapshot(
 		ctx,
 		c.registration.IngressId,
-		&ingressv1.GetIngressRoutingTableSnapshotParams{
+		ingressv1.GetIngressRoutingTableSnapshotParams{
 			IngressRunId: c.registration.IngressRunId, IngressLeaseRevision: lease.IngressLeaseRevision,
 		},
 	)
 	if err != nil {
-		return retryableIngressControlError("read ingress routing-table snapshot", err)
+		return ingressControlError("read ingress routing-table snapshot", err)
 	}
-	if response == nil {
-		return ingressResponseError("read ingress routing-table snapshot", 0, nil)
-	}
-	if response.JSON200 == nil {
-		return ingressResponseError(
-			"read ingress routing-table snapshot", response.StatusCode(), response.ApplicationproblemJSONDefault,
-		)
-	}
-	if err := c.routingTable.ApplySnapshot(*response.JSON200); err != nil {
+	if err := c.routingTable.ApplySnapshot(snapshot); err != nil {
 		return fmt.Errorf("ingress: apply routing-table snapshot: %w", err)
 	}
 	c.markRoutingTableCurrent(true)
@@ -310,20 +280,14 @@ func (c *Controller) Drain(ctx context.Context, deadline time.Time) error {
 	if lease.IngressLeaseRevision <= 0 || !deadline.After(c.now()) {
 		return errors.New("ingress: active lease and future drain deadline are required")
 	}
-	response, err := c.client.DrainIngressWithResponse(ctx, c.registration.IngressId, ingressv1.IngressDrainRequest{
+	updated, err := c.client.DrainIngress(ctx, c.registration.IngressId, ingressv1.IngressDrainRequest{
 		IngressId: c.registration.IngressId, IngressRunId: c.registration.IngressRunId,
 		IngressLeaseRevision: lease.IngressLeaseRevision, Deadline: deadline,
 	})
 	if err != nil {
-		return retryableIngressControlError("drain ingress", err)
+		return c.responseError("drain ingress", err)
 	}
-	if response == nil {
-		return c.responseError("drain ingress", 0, nil)
-	}
-	if response.JSON200 == nil {
-		return c.responseError("drain ingress", response.StatusCode(), response.ApplicationproblemJSONDefault)
-	}
-	return c.setLease(*response.JSON200)
+	return c.setLease(updated)
 }
 
 func (c *Controller) ReportUsage(ctx context.Context, batch usageReportBatch) error {
@@ -331,19 +295,13 @@ func (c *Controller) ReportUsage(ctx context.Context, batch usageReportBatch) er
 	if lease.IngressLeaseRevision <= 0 || !lease.LeaseExpiresAt.After(c.now()) {
 		return errors.New("ingress: control lease is unavailable")
 	}
-	response, err := c.client.ReportIngressUsageWithResponse(ctx, c.registration.IngressId, ingressv1.IngressUsageReportBatch{
+	err := c.client.ReportIngressUsage(ctx, c.registration.IngressId, ingressv1.IngressUsageReportBatch{
 		IngressId: c.registration.IngressId, IngressRunId: c.registration.IngressRunId,
 		IngressLeaseRevision: lease.IngressLeaseRevision, Reports: batch.reports,
 		ObservedThrough: batch.observedThrough, Complete: batch.complete,
 	})
 	if err != nil {
-		return retryableIngressControlError("report ingress usage", err)
-	}
-	if response == nil {
-		return ingressResponseError("report ingress usage", 0, nil)
-	}
-	if response.StatusCode() != http.StatusNoContent {
-		return ingressResponseError("report ingress usage", response.StatusCode(), response.ApplicationproblemJSONDefault)
+		return ingressControlError("report ingress usage", err)
 	}
 	return nil
 }
@@ -362,7 +320,7 @@ func (c *Controller) ObserveRecovery(
 	if lease.IngressLeaseRevision <= 0 || !lease.LeaseExpiresAt.After(c.now()) {
 		return ingressv1.RouteRecoveryObservation{}, errors.New("ingress: control lease is unavailable")
 	}
-	response, err := c.client.ObserveRouteRecoveryWithResponse(
+	observation, err := c.client.ObserveRouteRecovery(
 		ctx, c.registration.IngressId, int64(episodeID), ingressv1.RouteRecoveryObservationRequest{
 			IngressId: c.registration.IngressId, IngressRunId: c.registration.IngressRunId,
 			IngressLeaseRevision: lease.IngressLeaseRevision, RouteId: routeID,
@@ -370,17 +328,8 @@ func (c *Controller) ObserveRecovery(
 		},
 	)
 	if err != nil {
-		return ingressv1.RouteRecoveryObservation{}, retryableIngressControlError("observe route recovery", err)
+		return ingressv1.RouteRecoveryObservation{}, ingressControlError("observe route recovery", err)
 	}
-	if response == nil {
-		return ingressv1.RouteRecoveryObservation{}, ingressResponseError("observe route recovery", 0, nil)
-	}
-	if response.JSON200 == nil {
-		return ingressv1.RouteRecoveryObservation{}, ingressResponseError(
-			"observe route recovery", response.StatusCode(), response.ApplicationproblemJSONDefault,
-		)
-	}
-	observation := *response.JSON200
 	if observation.EpisodeId != int64(episodeID) || observation.RouteId != routeID ||
 		observation.RouteVersion != int64(routeVersion) || observation.OpenedAt.IsZero() ||
 		observation.ObservedAt.IsZero() || observation.ObservedSeconds < 0 {
@@ -447,13 +396,25 @@ func retryableIngressControlError(operation string, err error) error {
 	return &temporaryIngressControlError{operation: operation, err: err}
 }
 
-func ingressResponseError(operation string, status int, problem *ingressv1.Problem) error {
-	return &ControlProblemError{Operation: operation, Status: status, Problem: problem}
+func ingressControlError(operation string, err error) error {
+	var problem *serviceapi.ProblemError
+	if !errors.As(err, &problem) {
+		return retryableIngressControlError(operation, err)
+	}
+	var body *ingressv1.Problem
+	if problem.Type != "" {
+		body = &ingressv1.Problem{
+			Status: problem.Status, Type: problem.Type, Title: problem.Title, Detail: problem.Detail,
+		}
+	}
+	return &ControlProblemError{Operation: operation, Status: problem.Status, Problem: body}
 }
 
-func (c *Controller) responseError(operation string, status int, problem *ingressv1.Problem) error {
-	err := ingressResponseError(operation, status, problem)
-	if problem != nil && problem.Type == "https://tnl.dev/problems/ingress_lease_stale" {
+func (c *Controller) responseError(operation string, err error) error {
+	err = ingressControlError(operation, err)
+	var problem *ControlProblemError
+	if errors.As(err, &problem) && problem.Problem != nil &&
+		problem.Problem.Type == "https://tnl.dev/problems/ingress_lease_stale" {
 		c.clearLease()
 	}
 	return err

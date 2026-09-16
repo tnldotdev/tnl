@@ -2,13 +2,7 @@ package certificates
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
-	"math/big"
+	"reflect"
 	"testing"
 	"time"
 
@@ -19,9 +13,9 @@ import (
 func TestRelayWorkerAdvancesRelayCertificateOrder(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	const hostname = "relay-a.example.test"
-	csrDER, certificatePEM := relayTestCertificate(t, hostname, now)
+	csrDER, certificatePEM := testCertificate(t, hostname, now)
 	expires := now.Add(time.Hour)
-	api := &relayACMEStub{
+	api := &acmeStub{
 		order: acmeclient.Order{
 			URL: "https://acme.example.test/order/1", Status: "pending", Expires: &expires,
 			Identifiers:    []acmeclient.Identifier{{Type: "dns", Value: hostname}},
@@ -68,7 +62,7 @@ func TestRelayWorkerAdvancesRelayCertificateOrder(t *testing.T) {
 	if err := worker.advance(t.Context(), api, &work, now.Add(3*time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if work.State != "validating" || api.acceptedChallenge != work.ChallengeURL || dnsChallenges.verified != true {
+	if work.State != "validating" || api.acceptedChallenge != work.ChallengeURL || dnsChallenges.verifiedOrder != work.ID {
 		t.Fatalf("validating order work = %#v, calls %#v", work, dnsChallenges)
 	}
 	api.authorization.Status = "valid"
@@ -98,6 +92,18 @@ func TestRelayWorkerAdvancesRelayCertificateOrder(t *testing.T) {
 	if work.State != "complete" || dnsChallenges.cleaned != work.ID {
 		t.Fatalf("completed order work = %#v, calls %#v", work, dnsChallenges)
 	}
+	if !reflect.DeepEqual(work.CertificatePEM, certificatePEM) || work.NotBefore == nil || !work.NotBefore.Equal(now.Add(-time.Minute)) ||
+		work.NotAfter == nil || !work.NotAfter.Equal(now.Add(time.Hour)) ||
+		!reflect.DeepEqual(dnsChallenges.presentCalls, []string{"relay_certificate_order_1"}) ||
+		!reflect.DeepEqual(dnsChallenges.verifyCalls, []string{"relay_certificate_order_1"}) ||
+		!reflect.DeepEqual(dnsChallenges.cleanupCalls, []string{"relay_certificate_order_1"}) {
+		t.Fatalf("completed certificate = %#v, DNS calls = %#v", work, dnsChallenges)
+	}
+	if !reflect.DeepEqual(api.newOrders, []newOrderCall{{[]string{hostname}, "tlsserver"}}) ||
+		!reflect.DeepEqual(api.finalizations, []finalizeCall{{"https://acme.example.test/order/1", "https://acme.example.test/finalize/1", csrDER}}) ||
+		!reflect.DeepEqual(api.certificateURLs, []string{"https://acme.example.test/certificate/1"}) {
+		t.Fatalf("ACME requests = %#v", api)
+	}
 }
 
 func TestRelayWorkerCleansTerminalChallengeFailure(t *testing.T) {
@@ -116,78 +122,31 @@ func TestRelayWorkerCleansTerminalChallengeFailure(t *testing.T) {
 	}
 }
 
-type relayACMEStub struct {
-	order             acmeclient.Order
-	authorization     acmeclient.Authorization
-	finalizedOrder    acmeclient.Order
-	certificatePEM    []byte
-	acceptedChallenge string
-}
-
-func (s *relayACMEStub) NewOrder(context.Context, []string, string) (acmeclient.Order, error) {
-	return s.order, nil
-}
-func (s *relayACMEStub) GetOrder(context.Context, string) (acmeclient.Order, error) {
-	return s.order, nil
-}
-func (s *relayACMEStub) GetAuthorization(context.Context, string) (acmeclient.Authorization, error) {
-	return s.authorization, nil
-}
-func (s *relayACMEStub) AcceptChallenge(_ context.Context, challengeURL string) (time.Time, error) {
-	s.acceptedChallenge = challengeURL
-	return time.Time{}, nil
-}
-func (s *relayACMEStub) FinalizeOrder(context.Context, string, string, []byte) (acmeclient.Order, error) {
-	return s.finalizedOrder, nil
-}
-func (s *relayACMEStub) DownloadCertificate(context.Context, string) ([]byte, error) {
-	return append([]byte(nil), s.certificatePEM...), nil
-}
-func (s *relayACMEStub) KeyAuthorization(token string) (string, error) {
-	return token + ".thumbprint", nil
-}
-
 type relayDNSChallengesStub struct {
-	presented string
-	cleaned   string
-	verified  bool
-	err       error
-	cleanup   func(context.Context) error
+	presented                               string
+	verifiedOrder                           string
+	cleaned                                 string
+	verified                                bool
+	err                                     error
+	cleanup                                 func(context.Context) error
+	presentCalls, verifyCalls, cleanupCalls []string
 }
 
 func (s *relayDNSChallengesStub) Present(_ context.Context, orderID string) error {
 	s.presented = orderID
+	s.presentCalls = append(s.presentCalls, orderID)
 	return s.err
 }
-func (s *relayDNSChallengesStub) Verify(context.Context, string) (bool, error) {
+func (s *relayDNSChallengesStub) Verify(_ context.Context, orderID string) (bool, error) {
+	s.verifiedOrder = orderID
+	s.verifyCalls = append(s.verifyCalls, orderID)
 	return s.verified, s.err
 }
 func (s *relayDNSChallengesStub) Cleanup(ctx context.Context, orderID string) error {
 	s.cleaned = orderID
+	s.cleanupCalls = append(s.cleanupCalls, orderID)
 	if s.cleanup != nil {
 		return s.cleanup(ctx)
 	}
 	return s.err
-}
-
-func relayTestCertificate(t *testing.T, hostname string, now time.Time) ([]byte, []byte) {
-	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	csrDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{DNSNames: []string{hostname}}, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	template := &x509.Certificate{
-		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: hostname}, DNSNames: []string{hostname},
-		NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature,
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, BasicConstraintsValid: true,
-	}
-	certificateDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return csrDER, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificateDER})
 }

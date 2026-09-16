@@ -16,41 +16,41 @@ func (s generatedServer) RegisterIngress(response http.ResponseWriter, request *
 	s.handler.registerIngress(response, request)
 }
 
-func (s generatedServer) DrainIngress(response http.ResponseWriter, request *http.Request, _ ingressv1.IngressID) {
-	s.handler.drainIngress(response, request)
+func (s generatedServer) DrainIngress(response http.ResponseWriter, request *http.Request, ingressID ingressv1.IngressID) {
+	s.handler.drainIngress(response, request, ingressID)
 }
 
-func (s generatedServer) RenewIngress(response http.ResponseWriter, request *http.Request, _ ingressv1.IngressID) {
-	s.handler.renewIngress(response, request)
+func (s generatedServer) RenewIngress(response http.ResponseWriter, request *http.Request, ingressID ingressv1.IngressID) {
+	s.handler.renewIngress(response, request, ingressID)
 }
 
 func (s generatedServer) ObserveRouteRecovery(
 	response http.ResponseWriter,
 	request *http.Request,
-	_ ingressv1.IngressID,
-	_ int64,
+	ingressID ingressv1.IngressID,
+	episodeID int64,
 ) {
-	s.handler.observeRecovery(response, request)
+	s.handler.observeRecovery(response, request, ingressID, episodeID)
 }
 
 func (s generatedServer) GetIngressRoutingTableEvents(
 	response http.ResponseWriter,
 	request *http.Request,
-	_ ingressv1.IngressID,
-	_ ingressv1.GetIngressRoutingTableEventsParams,
+	ingressID ingressv1.IngressID,
+	params ingressv1.GetIngressRoutingTableEventsParams,
 ) {
-	s.handler.routingTableEvents(response, request)
+	s.handler.routingTableEvents(response, request, ingressID, params)
 }
 
 func (s generatedServer) GetIngressRoutingTableSnapshot(
 	response http.ResponseWriter,
 	request *http.Request,
-	_ ingressv1.IngressID,
-	_ ingressv1.GetIngressRoutingTableSnapshotParams,
+	ingressID ingressv1.IngressID,
+	params ingressv1.GetIngressRoutingTableSnapshotParams,
 ) {
-	s.handler.routingTableSnapshot(response, request)
+	s.handler.routingTableSnapshot(response, request, ingressID, params)
 }
 
-func (s generatedServer) ReportIngressUsage(response http.ResponseWriter, request *http.Request, _ ingressv1.IngressID) {
-	s.handler.reportUsage(response, request)
+func (s generatedServer) ReportIngressUsage(response http.ResponseWriter, request *http.Request, ingressID ingressv1.IngressID) {
+	s.handler.reportUsage(response, request, ingressID)
 }

@@ -75,7 +75,6 @@ services:
       TNLD_MODE: relay
       TNLD_RELAY_ADDRESS: relay-a.${TNLD_SERVER_DOMAIN}:443
       TNLD_RELAY_ID: relay-a-1
-      TNLD_RELAY_QUIC_PACKET_IO_MODE: optimized
       TNLD_RELAY_SERVICE_ID: relay-a
       TNLD_RELAY_TCP_LISTEN: :8443
       TNLD_RELAY_UDP_LISTEN: :8443
@@ -102,7 +101,6 @@ services:
       TNLD_MODE: relay
       TNLD_RELAY_ADDRESS: relay-b.${TNLD_SERVER_DOMAIN}:443
       TNLD_RELAY_ID: relay-b-1
-      TNLD_RELAY_QUIC_PACKET_IO_MODE: optimized
       TNLD_RELAY_SERVICE_ID: relay-b
       TNLD_RELAY_TCP_LISTEN: :8443
       TNLD_RELAY_UDP_LISTEN: :8443

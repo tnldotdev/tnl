@@ -206,10 +206,14 @@ func (d *daemon) startIngressRuntime(
 	return nil
 }
 
-func newIngressControlClient(endpoint, clusterSecret string, base *http.Client, dialAddress string) (*ingressv1.ClientWithResponses, error) {
+func newIngressControlClient(endpoint, clusterSecret string, base *http.Client, dialAddress string) (ingress.ControlClient, error) {
 	client, err := newPrivateServiceHTTPClient(base, clusterSecret, dialAddress)
 	if err != nil {
 		return nil, err
 	}
-	return ingressv1.NewClientWithResponses(endpoint, ingressv1.WithHTTPClient(client))
+	generated, err := ingressv1.NewClientWithResponses(endpoint, ingressv1.WithHTTPClient(client))
+	if err != nil {
+		return nil, err
+	}
+	return ingress.NewHTTPControlClient(generated)
 }

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -26,6 +27,7 @@ func TestTunnelSnapshotTracksLifecycleConsistently(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer tunnel.Finish(context.Background(), nil)
 
 	assertTunnelSnapshot(t, database, TunnelStateStarting, TunnelSummary{Total: 1, Starting: 1})
 	if err := tunnel.SetRoute(t.Context(), testRouteID, "route.example"); err != nil {
@@ -60,8 +62,6 @@ func TestTunnelSnapshotTracksLifecycleConsistently(t *testing.T) {
 		t.Fatalf("snapshot JSON route version fields = %s", encoded)
 	}
 
-	now = now.Add(tunnelLeaseDuration + time.Nanosecond)
-	assertTunnelSnapshot(t, database, TunnelStateStale, TunnelSummary{Total: 1, Stale: 1})
 	if err := tunnel.Finish(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
@@ -71,6 +71,59 @@ func TestTunnelSnapshotTracksLifecycleConsistently(t *testing.T) {
 	}
 	if snapshot.Summary.Total != 0 || len(snapshot.Tunnels) != 0 {
 		t.Fatalf("finished snapshot = %#v", snapshot)
+	}
+}
+
+func TestPersistedTunnelSnapshotExpiresWithoutHeartbeat(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "state")
+	owner, err := Open(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer owner.Close()
+	now := time.Date(2026, time.September, 2, 12, 0, 0, 0, time.UTC)
+	owner.now = func() time.Time { return now }
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	tunnel, err := owner.BeginTunnel(ctx, BeginTunnelOptions{
+		Command: TunnelCommandPublish, Server: "https://server.example", Target: "3000", Project: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulate an owner exiting without Finish: retain the persisted row, but
+	// stop and join lease maintenance before advancing the reader's clock.
+	cancel()
+	select {
+	case <-tunnel.done:
+	case <-time.After(time.Second):
+		t.Fatal("heartbeat did not stop")
+	}
+	if err := owner.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := Open(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	for _, test := range []struct {
+		name    string
+		offset  time.Duration
+		state   TunnelState
+		summary TunnelSummary
+	}{
+		{"before", tunnelLeaseDuration - time.Nanosecond, TunnelStateStarting, TunnelSummary{Total: 1, Starting: 1}},
+		{"at", tunnelLeaseDuration, TunnelStateStale, TunnelSummary{Total: 1, Stale: 1}},
+		{"after", tunnelLeaseDuration + time.Nanosecond, TunnelStateStale, TunnelSummary{Total: 1, Stale: 1}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			reader.now = func() time.Time { return now.Add(test.offset) }
+			snapshot := assertTunnelSnapshot(t, reader, test.state, test.summary)
+			if snapshot.Tunnels[0].ID != tunnel.ID() || !snapshot.Tunnels[0].HeartbeatAt.Equal(now) {
+				t.Fatalf("persisted snapshot changed: %#v", snapshot)
+			}
+		})
 	}
 }
 
@@ -132,11 +185,35 @@ func TestTunnelSnapshotIsSharedAcrossProcesses(t *testing.T) {
 	}
 }
 
+func TestLiveTunnelHeartbeatRenewsPersistedLease(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		database, err := Open(t.Context(), filepath.Join(t.TempDir(), "state"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer database.Close()
+		tunnel, err := database.BeginTunnel(t.Context(), BeginTunnelOptions{Command: TunnelCommandDev, Server: "https://server.example", Project: t.TempDir()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tunnel.Finish(context.Background(), nil)
+		initial := assertTunnelSnapshot(t, database, TunnelStateStarting, TunnelSummary{Total: 1, Starting: 1}).Tunnels[0]
+		synctest.Wait() // Ensure the heartbeat ticker is running before advancing time.
+		time.Sleep(tunnelLeaseDuration + tunnelHeartbeatInterval)
+		synctest.Wait()
+		renewed := assertTunnelSnapshot(t, database, TunnelStateStarting, TunnelSummary{Total: 1, Starting: 1}).Tunnels[0]
+		if !renewed.HeartbeatAt.After(initial.LeaseExpiresAt) || !renewed.LeaseExpiresAt.Equal(renewed.HeartbeatAt.Add(tunnelLeaseDuration)) {
+			t.Fatalf("lease was not renewed: initial=%#v renewed=%#v", initial, renewed)
+		}
+	})
+}
+
 func TestTunnelCancelsContextWhenLeaseCannotBeMaintained(t *testing.T) {
 	database, err := Open(t.Context(), filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer database.Close()
 	database.heartbeatInterval = time.Millisecond
 	tunnel, err := database.BeginTunnel(t.Context(), BeginTunnelOptions{
 		Command: TunnelCommandPublish, Server: "https://server.example", Target: "3000", Project: t.TempDir(),
@@ -144,6 +221,14 @@ func TestTunnelCancelsContextWhenLeaseCannotBeMaintained(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		tunnel.cancel(nil)
+		select {
+		case <-tunnel.done:
+		case <-time.After(time.Second):
+			t.Error("heartbeat did not join")
+		}
+	})
 	if err := database.Close(); err != nil {
 		t.Fatal(err)
 	}

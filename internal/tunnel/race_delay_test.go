@@ -4,14 +4,22 @@ import (
 	"context"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/muxsession"
 )
 
 func TestRaceStartsFallbackWhenPrimaryRemainsBlocked(t *testing.T) {
+	synctest.Test(t, testRaceStartsFallbackWhenPrimaryRemainsBlocked)
+}
+
+func testRaceStartsFallbackWhenPrimaryRemainsBlocked(t *testing.T) {
 	primaryStarted := make(chan struct{})
+	primaryDone := make(chan struct{})
+	t.Cleanup(func() { await(t, primaryDone) })
 	primary := muxsession.ConnectorFunc(func(ctx context.Context, _ muxsession.Endpoint) (muxsession.Session, error) {
+		defer close(primaryDone)
 		close(primaryStarted)
 		<-ctx.Done()
 		return nil, context.Cause(ctx)

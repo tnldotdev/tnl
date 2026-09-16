@@ -735,7 +735,7 @@ type RouteSession struct {
 
 // RouteSessionHeartbeat defines model for RouteSessionHeartbeat.
 type RouteSessionHeartbeat struct {
-	// PolicyDenials Cumulative, eventually consistent IP policy denials for this route version.
+	// PolicyDenials Total IP policy denials reported so far for this route version. The total may lag.
 	PolicyDenials        int64                  `json:"policy_denials"`
 	PublisherConnections []ConnectionAssignment `json:"publisher_connections"`
 	RouteSession         RouteSession           `json:"route_session"`
@@ -948,14 +948,14 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/admin/relays (the `ListAdminRelays` operationId).
 	ListAdminRelays(ctx context.Context, params *ListAdminRelaysParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DrainAdminRelayWithBody Remove one exact relay lease from placement and begin draining
+	// DrainAdminRelayWithBody Remove a matching relay lease from placement and begin draining
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/admin/relays/{relay_id}/drain (the `DrainAdminRelay` operationId).
 	DrainAdminRelayWithBody(ctx context.Context, relayId RelayID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DrainAdminRelay Remove one exact relay lease from placement and begin draining
+	// DrainAdminRelay Remove a matching relay lease from placement and begin draining
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -987,7 +987,7 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/client-ip (the `GetClientIP` operationId).
 	GetClientIP(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetControlDiscovery Describe control, authority, and authentication facts
+	// GetControlDiscovery Describe control and its authentication methods
 	//
 	// Corresponds with GET /v1/discovery (the `GetControlDiscovery` operationId).
 	GetControlDiscovery(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -997,12 +997,12 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/health (the `GetHealth` operationId).
 	GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetReadiness Confirm that control and durable state are ready
+	// GetReadiness Confirm that control and its database are ready
 	//
 	// Corresponds with GET /v1/ready (the `GetReadiness` operationId).
 	GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CloseRouteSession Close and drain one publisher attachment without deleting its route
+	// CloseRouteSession Close and drain a route session without deleting its route
 	//
 	// Corresponds with DELETE /v1/route-sessions/{route_session_id} (the `CloseRouteSession` operationId).
 	CloseRouteSession(ctx context.Context, routeSessionId RouteSessionID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1035,114 +1035,114 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/route-sessions/{route_session_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
 	CreateCertificateIssuance(ctx context.Context, routeSessionId RouteSessionID, params *CreateCertificateIssuanceParams, body CreateCertificateIssuanceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// HeartbeatRouteSessionWithBody Renew one publisher lease and replenish publisher connections
+	// HeartbeatRouteSessionWithBody Renew a route session and replace missing publisher connections
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/route-sessions/{route_session_id}/heartbeat (the `HeartbeatRouteSession` operationId).
 	HeartbeatRouteSessionWithBody(ctx context.Context, routeSessionId RouteSessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// HeartbeatRouteSession Renew one publisher lease and replenish publisher connections
+	// HeartbeatRouteSession Renew a route session and replace missing publisher connections
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/route-sessions/{route_session_id}/heartbeat (the `HeartbeatRouteSession` operationId).
 	HeartbeatRouteSession(ctx context.Context, routeSessionId RouteSessionID, body HeartbeatRouteSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// MarkRouteSessionReadyWithBody Complete publisher readiness after certificate installation and two ready publisher connections
+	// MarkRouteSessionReadyWithBody Mark a route session ready after its certificate and two publisher connections are ready
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/route-sessions/{route_session_id}/ready (the `MarkRouteSessionReady` operationId).
 	MarkRouteSessionReadyWithBody(ctx context.Context, routeSessionId RouteSessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// MarkRouteSessionReady Complete publisher readiness after certificate installation and two ready publisher connections
+	// MarkRouteSessionReady Mark a route session ready after its certificate and two publisher connections are ready
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/route-sessions/{route_session_id}/ready (the `MarkRouteSessionReady` operationId).
 	MarkRouteSessionReady(ctx context.Context, routeSessionId RouteSessionID, body MarkRouteSessionReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListRoutes List durable routes for one team
+	// ListRoutes List routes for one team
 	//
 	// Corresponds with GET /v1/routes (the `ListRoutes` operationId).
 	ListRoutes(ctx context.Context, params *ListRoutesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateRouteWithBody Create one durable team route
+	// CreateRouteWithBody Create one team route
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/routes (the `CreateRoute` operationId).
 	CreateRouteWithBody(ctx context.Context, params *CreateRouteParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateRoute Create one durable team route
+	// CreateRoute Create one team route
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/routes (the `CreateRoute` operationId).
 	CreateRoute(ctx context.Context, params *CreateRouteParams, body CreateRouteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DeleteRoute Delete one durable route and close its route session
+	// DeleteRoute Delete one route and close its route session
 	//
 	// Corresponds with DELETE /v1/routes/{route_id} (the `DeleteRoute` operationId).
 	DeleteRoute(ctx context.Context, routeId RouteID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetRoute Read one durable route
+	// GetRoute Read one route
 	//
 	// Corresponds with GET /v1/routes/{route_id} (the `GetRoute` operationId).
 	GetRoute(ctx context.Context, routeId RouteID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// UpdateRouteWithBody Reconcile one route's mutable publisher state
+	// UpdateRouteWithBody Update a route's target and IP policy
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with PATCH /v1/routes/{route_id} (the `UpdateRoute` operationId).
 	UpdateRouteWithBody(ctx context.Context, routeId RouteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// UpdateRoute Reconcile one route's mutable publisher state
+	// UpdateRoute Update a route's target and IP policy
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with PATCH /v1/routes/{route_id} (the `UpdateRoute` operationId).
 	UpdateRoute(ctx context.Context, routeId RouteID, body UpdateRouteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateRouteSession Create one publisher attachment and allocate its route version
+	// CreateRouteSession Create a route session and allocate its route version
 	//
 	// Corresponds with POST /v1/routes/{route_id}/sessions (the `CreateRouteSession` operationId).
 	CreateRouteSession(ctx context.Context, routeId RouteID, params *CreateRouteSessionParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateDNSAuthorityWithBody Create DNS execution state for one claimed domain
+	// CreateDNSAuthorityWithBody Create a DNS authority for one claimed domain
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/service/dns-authorities (the `CreateDNSAuthority` operationId).
 	CreateDNSAuthorityWithBody(ctx context.Context, params *CreateDNSAuthorityParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateDNSAuthority Create DNS execution state for one claimed domain
+	// CreateDNSAuthority Create a DNS authority for one claimed domain
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/service/dns-authorities (the `CreateDNSAuthority` operationId).
 	CreateDNSAuthority(ctx context.Context, params *CreateDNSAuthorityParams, body CreateDNSAuthorityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ReleaseDNSAuthority Begin releasing one claimed domain's DNS execution state
+	// ReleaseDNSAuthority Begin releasing a claimed domain's DNS authority
 	//
 	// Corresponds with DELETE /v1/service/dns-authorities/{dns_authority_reference} (the `ReleaseDNSAuthority` operationId).
 	ReleaseDNSAuthority(ctx context.Context, dnsAuthorityReference DNSAuthorityReference, params *ReleaseDNSAuthorityParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetDNSAuthority Read DNS execution state for one claimed domain
+	// GetDNSAuthority Read a claimed domain's DNS authority
 	//
 	// Corresponds with GET /v1/service/dns-authorities/{dns_authority_reference} (the `GetDNSAuthority` operationId).
 	GetDNSAuthority(ctx context.Context, dnsAuthorityReference DNSAuthorityReference, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RevokeHostedPolicyWithBody Apply a hosted team policy revision and close affected route sessions
+	// RevokeHostedPolicyWithBody Apply a policy revision from the external authority and close affected route sessions
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
 	RevokeHostedPolicyWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RevokeHostedPolicy Apply a hosted team policy revision and close affected route sessions
+	// RevokeHostedPolicy Apply a policy revision from the external authority and close affected route sessions
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -1214,7 +1214,7 @@ func (c *Client) ListAdminRelays(ctx context.Context, params *ListAdminRelaysPar
 	return c.Client.Do(req)
 }
 
-// DrainAdminRelayWithBody Remove one exact relay lease from placement and begin draining
+// DrainAdminRelayWithBody Remove a matching relay lease from placement and begin draining
 //
 // Takes any type of body and a specified content type.
 //
@@ -1231,7 +1231,7 @@ func (c *Client) DrainAdminRelayWithBody(ctx context.Context, relayId RelayID, c
 	return c.Client.Do(req)
 }
 
-// DrainAdminRelay Remove one exact relay lease from placement and begin draining
+// DrainAdminRelay Remove a matching relay lease from placement and begin draining
 //
 // Takes a body of the `application/json` content type.
 //
@@ -1323,7 +1323,7 @@ func (c *Client) GetClientIP(ctx context.Context, reqEditors ...RequestEditorFn)
 	return c.Client.Do(req)
 }
 
-// GetControlDiscovery Describe control, authority, and authentication facts
+// GetControlDiscovery Describe control and its authentication methods
 //
 // Corresponds with GET /v1/discovery (the `GetControlDiscovery` operationId).
 func (c *Client) GetControlDiscovery(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -1353,7 +1353,7 @@ func (c *Client) GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (
 	return c.Client.Do(req)
 }
 
-// GetReadiness Confirm that control and durable state are ready
+// GetReadiness Confirm that control and its database are ready
 //
 // Corresponds with GET /v1/ready (the `GetReadiness` operationId).
 func (c *Client) GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -1368,7 +1368,7 @@ func (c *Client) GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn
 	return c.Client.Do(req)
 }
 
-// CloseRouteSession Close and drain one publisher attachment without deleting its route
+// CloseRouteSession Close and drain a route session without deleting its route
 //
 // Corresponds with DELETE /v1/route-sessions/{route_session_id} (the `CloseRouteSession` operationId).
 func (c *Client) CloseRouteSession(ctx context.Context, routeSessionId RouteSessionID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -1451,7 +1451,7 @@ func (c *Client) CreateCertificateIssuance(ctx context.Context, routeSessionId R
 	return c.Client.Do(req)
 }
 
-// HeartbeatRouteSessionWithBody Renew one publisher lease and replenish publisher connections
+// HeartbeatRouteSessionWithBody Renew a route session and replace missing publisher connections
 //
 // Takes any type of body and a specified content type.
 //
@@ -1468,7 +1468,7 @@ func (c *Client) HeartbeatRouteSessionWithBody(ctx context.Context, routeSession
 	return c.Client.Do(req)
 }
 
-// HeartbeatRouteSession Renew one publisher lease and replenish publisher connections
+// HeartbeatRouteSession Renew a route session and replace missing publisher connections
 //
 // Takes a body of the `application/json` content type.
 //
@@ -1485,7 +1485,7 @@ func (c *Client) HeartbeatRouteSession(ctx context.Context, routeSessionId Route
 	return c.Client.Do(req)
 }
 
-// MarkRouteSessionReadyWithBody Complete publisher readiness after certificate installation and two ready publisher connections
+// MarkRouteSessionReadyWithBody Mark a route session ready after its certificate and two publisher connections are ready
 //
 // Takes any type of body and a specified content type.
 //
@@ -1502,7 +1502,7 @@ func (c *Client) MarkRouteSessionReadyWithBody(ctx context.Context, routeSession
 	return c.Client.Do(req)
 }
 
-// MarkRouteSessionReady Complete publisher readiness after certificate installation and two ready publisher connections
+// MarkRouteSessionReady Mark a route session ready after its certificate and two publisher connections are ready
 //
 // Takes a body of the `application/json` content type.
 //
@@ -1519,7 +1519,7 @@ func (c *Client) MarkRouteSessionReady(ctx context.Context, routeSessionId Route
 	return c.Client.Do(req)
 }
 
-// ListRoutes List durable routes for one team
+// ListRoutes List routes for one team
 //
 // Corresponds with GET /v1/routes (the `ListRoutes` operationId).
 func (c *Client) ListRoutes(ctx context.Context, params *ListRoutesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -1534,7 +1534,7 @@ func (c *Client) ListRoutes(ctx context.Context, params *ListRoutesParams, reqEd
 	return c.Client.Do(req)
 }
 
-// CreateRouteWithBody Create one durable team route
+// CreateRouteWithBody Create one team route
 //
 // Takes any type of body and a specified content type.
 //
@@ -1551,7 +1551,7 @@ func (c *Client) CreateRouteWithBody(ctx context.Context, params *CreateRoutePar
 	return c.Client.Do(req)
 }
 
-// CreateRoute Create one durable team route
+// CreateRoute Create one team route
 //
 // Takes a body of the `application/json` content type.
 //
@@ -1568,7 +1568,7 @@ func (c *Client) CreateRoute(ctx context.Context, params *CreateRouteParams, bod
 	return c.Client.Do(req)
 }
 
-// DeleteRoute Delete one durable route and close its route session
+// DeleteRoute Delete one route and close its route session
 //
 // Corresponds with DELETE /v1/routes/{route_id} (the `DeleteRoute` operationId).
 func (c *Client) DeleteRoute(ctx context.Context, routeId RouteID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -1583,7 +1583,7 @@ func (c *Client) DeleteRoute(ctx context.Context, routeId RouteID, reqEditors ..
 	return c.Client.Do(req)
 }
 
-// GetRoute Read one durable route
+// GetRoute Read one route
 //
 // Corresponds with GET /v1/routes/{route_id} (the `GetRoute` operationId).
 func (c *Client) GetRoute(ctx context.Context, routeId RouteID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -1598,7 +1598,7 @@ func (c *Client) GetRoute(ctx context.Context, routeId RouteID, reqEditors ...Re
 	return c.Client.Do(req)
 }
 
-// UpdateRouteWithBody Reconcile one route's mutable publisher state
+// UpdateRouteWithBody Update a route's target and IP policy
 //
 // Takes any type of body and a specified content type.
 //
@@ -1615,7 +1615,7 @@ func (c *Client) UpdateRouteWithBody(ctx context.Context, routeId RouteID, conte
 	return c.Client.Do(req)
 }
 
-// UpdateRoute Reconcile one route's mutable publisher state
+// UpdateRoute Update a route's target and IP policy
 //
 // Takes a body of the `application/json` content type.
 //
@@ -1632,7 +1632,7 @@ func (c *Client) UpdateRoute(ctx context.Context, routeId RouteID, body UpdateRo
 	return c.Client.Do(req)
 }
 
-// CreateRouteSession Create one publisher attachment and allocate its route version
+// CreateRouteSession Create a route session and allocate its route version
 //
 // Corresponds with POST /v1/routes/{route_id}/sessions (the `CreateRouteSession` operationId).
 func (c *Client) CreateRouteSession(ctx context.Context, routeId RouteID, params *CreateRouteSessionParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -1647,7 +1647,7 @@ func (c *Client) CreateRouteSession(ctx context.Context, routeId RouteID, params
 	return c.Client.Do(req)
 }
 
-// CreateDNSAuthorityWithBody Create DNS execution state for one claimed domain
+// CreateDNSAuthorityWithBody Create a DNS authority for one claimed domain
 //
 // Takes any type of body and a specified content type.
 //
@@ -1664,7 +1664,7 @@ func (c *Client) CreateDNSAuthorityWithBody(ctx context.Context, params *CreateD
 	return c.Client.Do(req)
 }
 
-// CreateDNSAuthority Create DNS execution state for one claimed domain
+// CreateDNSAuthority Create a DNS authority for one claimed domain
 //
 // Takes a body of the `application/json` content type.
 //
@@ -1681,7 +1681,7 @@ func (c *Client) CreateDNSAuthority(ctx context.Context, params *CreateDNSAuthor
 	return c.Client.Do(req)
 }
 
-// ReleaseDNSAuthority Begin releasing one claimed domain's DNS execution state
+// ReleaseDNSAuthority Begin releasing a claimed domain's DNS authority
 //
 // Corresponds with DELETE /v1/service/dns-authorities/{dns_authority_reference} (the `ReleaseDNSAuthority` operationId).
 func (c *Client) ReleaseDNSAuthority(ctx context.Context, dnsAuthorityReference DNSAuthorityReference, params *ReleaseDNSAuthorityParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -1696,7 +1696,7 @@ func (c *Client) ReleaseDNSAuthority(ctx context.Context, dnsAuthorityReference 
 	return c.Client.Do(req)
 }
 
-// GetDNSAuthority Read DNS execution state for one claimed domain
+// GetDNSAuthority Read a claimed domain's DNS authority
 //
 // Corresponds with GET /v1/service/dns-authorities/{dns_authority_reference} (the `GetDNSAuthority` operationId).
 func (c *Client) GetDNSAuthority(ctx context.Context, dnsAuthorityReference DNSAuthorityReference, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -1711,7 +1711,7 @@ func (c *Client) GetDNSAuthority(ctx context.Context, dnsAuthorityReference DNSA
 	return c.Client.Do(req)
 }
 
-// RevokeHostedPolicyWithBody Apply a hosted team policy revision and close affected route sessions
+// RevokeHostedPolicyWithBody Apply a policy revision from the external authority and close affected route sessions
 //
 // Takes any type of body and a specified content type.
 //
@@ -1728,7 +1728,7 @@ func (c *Client) RevokeHostedPolicyWithBody(ctx context.Context, contentType str
 	return c.Client.Do(req)
 }
 
-// RevokeHostedPolicy Apply a hosted team policy revision and close affected route sessions
+// RevokeHostedPolicy Apply a policy revision from the external authority and close affected route sessions
 //
 // Takes a body of the `application/json` content type.
 //
@@ -2915,14 +2915,14 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/admin/relays (the `ListAdminRelays` operationId).
 	ListAdminRelaysWithResponse(ctx context.Context, params *ListAdminRelaysParams, reqEditors ...RequestEditorFn) (*ListAdminRelaysResponse, error)
 
-	// DrainAdminRelayWithBodyWithResponse Remove one exact relay lease from placement and begin draining
+	// DrainAdminRelayWithBodyWithResponse Remove a matching relay lease from placement and begin draining
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/admin/relays/{relay_id}/drain (the `DrainAdminRelay` operationId).
 	DrainAdminRelayWithBodyWithResponse(ctx context.Context, relayId RelayID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DrainAdminRelayResponse, error)
 
-	// DrainAdminRelayWithResponse Remove one exact relay lease from placement and begin draining
+	// DrainAdminRelayWithResponse Remove a matching relay lease from placement and begin draining
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -2964,7 +2964,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/client-ip (the `GetClientIP` operationId).
 	GetClientIPWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetClientIPResponse, error)
 
-	// GetControlDiscoveryWithResponse Describe control, authority, and authentication facts
+	// GetControlDiscoveryWithResponse Describe control and its authentication methods
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -2978,14 +2978,14 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/health (the `GetHealth` operationId).
 	GetHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetHealthResponse, error)
 
-	// GetReadinessWithResponse Confirm that control and durable state are ready
+	// GetReadinessWithResponse Confirm that control and its database are ready
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/ready (the `GetReadiness` operationId).
 	GetReadinessWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetReadinessResponse, error)
 
-	// CloseRouteSessionWithResponse Close and drain one publisher attachment without deleting its route
+	// CloseRouteSessionWithResponse Close and drain a route session without deleting its route
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -3020,126 +3020,126 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/route-sessions/{route_session_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
 	CreateCertificateIssuanceWithResponse(ctx context.Context, routeSessionId RouteSessionID, params *CreateCertificateIssuanceParams, body CreateCertificateIssuanceJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCertificateIssuanceResponse, error)
 
-	// HeartbeatRouteSessionWithBodyWithResponse Renew one publisher lease and replenish publisher connections
+	// HeartbeatRouteSessionWithBodyWithResponse Renew a route session and replace missing publisher connections
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/route-sessions/{route_session_id}/heartbeat (the `HeartbeatRouteSession` operationId).
 	HeartbeatRouteSessionWithBodyWithResponse(ctx context.Context, routeSessionId RouteSessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*HeartbeatRouteSessionResponse, error)
 
-	// HeartbeatRouteSessionWithResponse Renew one publisher lease and replenish publisher connections
+	// HeartbeatRouteSessionWithResponse Renew a route session and replace missing publisher connections
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/route-sessions/{route_session_id}/heartbeat (the `HeartbeatRouteSession` operationId).
 	HeartbeatRouteSessionWithResponse(ctx context.Context, routeSessionId RouteSessionID, body HeartbeatRouteSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*HeartbeatRouteSessionResponse, error)
 
-	// MarkRouteSessionReadyWithBodyWithResponse Complete publisher readiness after certificate installation and two ready publisher connections
+	// MarkRouteSessionReadyWithBodyWithResponse Mark a route session ready after its certificate and two publisher connections are ready
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/route-sessions/{route_session_id}/ready (the `MarkRouteSessionReady` operationId).
 	MarkRouteSessionReadyWithBodyWithResponse(ctx context.Context, routeSessionId RouteSessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MarkRouteSessionReadyResponse, error)
 
-	// MarkRouteSessionReadyWithResponse Complete publisher readiness after certificate installation and two ready publisher connections
+	// MarkRouteSessionReadyWithResponse Mark a route session ready after its certificate and two publisher connections are ready
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/route-sessions/{route_session_id}/ready (the `MarkRouteSessionReady` operationId).
 	MarkRouteSessionReadyWithResponse(ctx context.Context, routeSessionId RouteSessionID, body MarkRouteSessionReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*MarkRouteSessionReadyResponse, error)
 
-	// ListRoutesWithResponse List durable routes for one team
+	// ListRoutesWithResponse List routes for one team
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/routes (the `ListRoutes` operationId).
 	ListRoutesWithResponse(ctx context.Context, params *ListRoutesParams, reqEditors ...RequestEditorFn) (*ListRoutesResponse, error)
 
-	// CreateRouteWithBodyWithResponse Create one durable team route
+	// CreateRouteWithBodyWithResponse Create one team route
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/routes (the `CreateRoute` operationId).
 	CreateRouteWithBodyWithResponse(ctx context.Context, params *CreateRouteParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateRouteResponse, error)
 
-	// CreateRouteWithResponse Create one durable team route
+	// CreateRouteWithResponse Create one team route
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/routes (the `CreateRoute` operationId).
 	CreateRouteWithResponse(ctx context.Context, params *CreateRouteParams, body CreateRouteJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateRouteResponse, error)
 
-	// DeleteRouteWithResponse Delete one durable route and close its route session
+	// DeleteRouteWithResponse Delete one route and close its route session
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with DELETE /v1/routes/{route_id} (the `DeleteRoute` operationId).
 	DeleteRouteWithResponse(ctx context.Context, routeId RouteID, reqEditors ...RequestEditorFn) (*DeleteRouteResponse, error)
 
-	// GetRouteWithResponse Read one durable route
+	// GetRouteWithResponse Read one route
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/routes/{route_id} (the `GetRoute` operationId).
 	GetRouteWithResponse(ctx context.Context, routeId RouteID, reqEditors ...RequestEditorFn) (*GetRouteResponse, error)
 
-	// UpdateRouteWithBodyWithResponse Reconcile one route's mutable publisher state
+	// UpdateRouteWithBodyWithResponse Update a route's target and IP policy
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PATCH /v1/routes/{route_id} (the `UpdateRoute` operationId).
 	UpdateRouteWithBodyWithResponse(ctx context.Context, routeId RouteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateRouteResponse, error)
 
-	// UpdateRouteWithResponse Reconcile one route's mutable publisher state
+	// UpdateRouteWithResponse Update a route's target and IP policy
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PATCH /v1/routes/{route_id} (the `UpdateRoute` operationId).
 	UpdateRouteWithResponse(ctx context.Context, routeId RouteID, body UpdateRouteJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateRouteResponse, error)
 
-	// CreateRouteSessionWithResponse Create one publisher attachment and allocate its route version
+	// CreateRouteSessionWithResponse Create a route session and allocate its route version
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/routes/{route_id}/sessions (the `CreateRouteSession` operationId).
 	CreateRouteSessionWithResponse(ctx context.Context, routeId RouteID, params *CreateRouteSessionParams, reqEditors ...RequestEditorFn) (*CreateRouteSessionResponse, error)
 
-	// CreateDNSAuthorityWithBodyWithResponse Create DNS execution state for one claimed domain
+	// CreateDNSAuthorityWithBodyWithResponse Create a DNS authority for one claimed domain
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/service/dns-authorities (the `CreateDNSAuthority` operationId).
 	CreateDNSAuthorityWithBodyWithResponse(ctx context.Context, params *CreateDNSAuthorityParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateDNSAuthorityResponse, error)
 
-	// CreateDNSAuthorityWithResponse Create DNS execution state for one claimed domain
+	// CreateDNSAuthorityWithResponse Create a DNS authority for one claimed domain
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/service/dns-authorities (the `CreateDNSAuthority` operationId).
 	CreateDNSAuthorityWithResponse(ctx context.Context, params *CreateDNSAuthorityParams, body CreateDNSAuthorityJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateDNSAuthorityResponse, error)
 
-	// ReleaseDNSAuthorityWithResponse Begin releasing one claimed domain's DNS execution state
+	// ReleaseDNSAuthorityWithResponse Begin releasing a claimed domain's DNS authority
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with DELETE /v1/service/dns-authorities/{dns_authority_reference} (the `ReleaseDNSAuthority` operationId).
 	ReleaseDNSAuthorityWithResponse(ctx context.Context, dnsAuthorityReference DNSAuthorityReference, params *ReleaseDNSAuthorityParams, reqEditors ...RequestEditorFn) (*ReleaseDNSAuthorityResponse, error)
 
-	// GetDNSAuthorityWithResponse Read DNS execution state for one claimed domain
+	// GetDNSAuthorityWithResponse Read a claimed domain's DNS authority
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/service/dns-authorities/{dns_authority_reference} (the `GetDNSAuthority` operationId).
 	GetDNSAuthorityWithResponse(ctx context.Context, dnsAuthorityReference DNSAuthorityReference, reqEditors ...RequestEditorFn) (*GetDNSAuthorityResponse, error)
 
-	// RevokeHostedPolicyWithBodyWithResponse Apply a hosted team policy revision and close affected route sessions
+	// RevokeHostedPolicyWithBodyWithResponse Apply a policy revision from the external authority and close affected route sessions
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/service/revoke (the `RevokeHostedPolicy` operationId).
 	RevokeHostedPolicyWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RevokeHostedPolicyResponse, error)
 
-	// RevokeHostedPolicyWithResponse Apply a hosted team policy revision and close affected route sessions
+	// RevokeHostedPolicyWithResponse Apply a policy revision from the external authority and close affected route sessions
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -4481,7 +4481,7 @@ func (c *ClientWithResponses) ListAdminRelaysWithResponse(ctx context.Context, p
 	return ParseListAdminRelaysResponse(rsp)
 }
 
-// DrainAdminRelayWithBodyWithResponse Remove one exact relay lease from placement and begin draining
+// DrainAdminRelayWithBodyWithResponse Remove a matching relay lease from placement and begin draining
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -4494,7 +4494,7 @@ func (c *ClientWithResponses) DrainAdminRelayWithBodyWithResponse(ctx context.Co
 	return ParseDrainAdminRelayResponse(rsp)
 }
 
-// DrainAdminRelayWithResponse Remove one exact relay lease from placement and begin draining
+// DrainAdminRelayWithResponse Remove a matching relay lease from placement and begin draining
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -4572,7 +4572,7 @@ func (c *ClientWithResponses) GetClientIPWithResponse(ctx context.Context, reqEd
 	return ParseGetClientIPResponse(rsp)
 }
 
-// GetControlDiscoveryWithResponse Describe control, authority, and authentication facts
+// GetControlDiscoveryWithResponse Describe control and its authentication methods
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -4598,7 +4598,7 @@ func (c *ClientWithResponses) GetHealthWithResponse(ctx context.Context, reqEdit
 	return ParseGetHealthResponse(rsp)
 }
 
-// GetReadinessWithResponse Confirm that control and durable state are ready
+// GetReadinessWithResponse Confirm that control and its database are ready
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -4611,7 +4611,7 @@ func (c *ClientWithResponses) GetReadinessWithResponse(ctx context.Context, reqE
 	return ParseGetReadinessResponse(rsp)
 }
 
-// CloseRouteSessionWithResponse Close and drain one publisher attachment without deleting its route
+// CloseRouteSessionWithResponse Close and drain a route session without deleting its route
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -4676,7 +4676,7 @@ func (c *ClientWithResponses) CreateCertificateIssuanceWithResponse(ctx context.
 	return ParseCreateCertificateIssuanceResponse(rsp)
 }
 
-// HeartbeatRouteSessionWithBodyWithResponse Renew one publisher lease and replenish publisher connections
+// HeartbeatRouteSessionWithBodyWithResponse Renew a route session and replace missing publisher connections
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -4689,7 +4689,7 @@ func (c *ClientWithResponses) HeartbeatRouteSessionWithBodyWithResponse(ctx cont
 	return ParseHeartbeatRouteSessionResponse(rsp)
 }
 
-// HeartbeatRouteSessionWithResponse Renew one publisher lease and replenish publisher connections
+// HeartbeatRouteSessionWithResponse Renew a route session and replace missing publisher connections
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -4702,7 +4702,7 @@ func (c *ClientWithResponses) HeartbeatRouteSessionWithResponse(ctx context.Cont
 	return ParseHeartbeatRouteSessionResponse(rsp)
 }
 
-// MarkRouteSessionReadyWithBodyWithResponse Complete publisher readiness after certificate installation and two ready publisher connections
+// MarkRouteSessionReadyWithBodyWithResponse Mark a route session ready after its certificate and two publisher connections are ready
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -4715,7 +4715,7 @@ func (c *ClientWithResponses) MarkRouteSessionReadyWithBodyWithResponse(ctx cont
 	return ParseMarkRouteSessionReadyResponse(rsp)
 }
 
-// MarkRouteSessionReadyWithResponse Complete publisher readiness after certificate installation and two ready publisher connections
+// MarkRouteSessionReadyWithResponse Mark a route session ready after its certificate and two publisher connections are ready
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -4728,7 +4728,7 @@ func (c *ClientWithResponses) MarkRouteSessionReadyWithResponse(ctx context.Cont
 	return ParseMarkRouteSessionReadyResponse(rsp)
 }
 
-// ListRoutesWithResponse List durable routes for one team
+// ListRoutesWithResponse List routes for one team
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -4741,7 +4741,7 @@ func (c *ClientWithResponses) ListRoutesWithResponse(ctx context.Context, params
 	return ParseListRoutesResponse(rsp)
 }
 
-// CreateRouteWithBodyWithResponse Create one durable team route
+// CreateRouteWithBodyWithResponse Create one team route
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -4754,7 +4754,7 @@ func (c *ClientWithResponses) CreateRouteWithBodyWithResponse(ctx context.Contex
 	return ParseCreateRouteResponse(rsp)
 }
 
-// CreateRouteWithResponse Create one durable team route
+// CreateRouteWithResponse Create one team route
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -4767,7 +4767,7 @@ func (c *ClientWithResponses) CreateRouteWithResponse(ctx context.Context, param
 	return ParseCreateRouteResponse(rsp)
 }
 
-// DeleteRouteWithResponse Delete one durable route and close its route session
+// DeleteRouteWithResponse Delete one route and close its route session
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -4780,7 +4780,7 @@ func (c *ClientWithResponses) DeleteRouteWithResponse(ctx context.Context, route
 	return ParseDeleteRouteResponse(rsp)
 }
 
-// GetRouteWithResponse Read one durable route
+// GetRouteWithResponse Read one route
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -4793,7 +4793,7 @@ func (c *ClientWithResponses) GetRouteWithResponse(ctx context.Context, routeId 
 	return ParseGetRouteResponse(rsp)
 }
 
-// UpdateRouteWithBodyWithResponse Reconcile one route's mutable publisher state
+// UpdateRouteWithBodyWithResponse Update a route's target and IP policy
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -4806,7 +4806,7 @@ func (c *ClientWithResponses) UpdateRouteWithBodyWithResponse(ctx context.Contex
 	return ParseUpdateRouteResponse(rsp)
 }
 
-// UpdateRouteWithResponse Reconcile one route's mutable publisher state
+// UpdateRouteWithResponse Update a route's target and IP policy
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -4819,7 +4819,7 @@ func (c *ClientWithResponses) UpdateRouteWithResponse(ctx context.Context, route
 	return ParseUpdateRouteResponse(rsp)
 }
 
-// CreateRouteSessionWithResponse Create one publisher attachment and allocate its route version
+// CreateRouteSessionWithResponse Create a route session and allocate its route version
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -4832,7 +4832,7 @@ func (c *ClientWithResponses) CreateRouteSessionWithResponse(ctx context.Context
 	return ParseCreateRouteSessionResponse(rsp)
 }
 
-// CreateDNSAuthorityWithBodyWithResponse Create DNS execution state for one claimed domain
+// CreateDNSAuthorityWithBodyWithResponse Create a DNS authority for one claimed domain
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -4845,7 +4845,7 @@ func (c *ClientWithResponses) CreateDNSAuthorityWithBodyWithResponse(ctx context
 	return ParseCreateDNSAuthorityResponse(rsp)
 }
 
-// CreateDNSAuthorityWithResponse Create DNS execution state for one claimed domain
+// CreateDNSAuthorityWithResponse Create a DNS authority for one claimed domain
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -4858,7 +4858,7 @@ func (c *ClientWithResponses) CreateDNSAuthorityWithResponse(ctx context.Context
 	return ParseCreateDNSAuthorityResponse(rsp)
 }
 
-// ReleaseDNSAuthorityWithResponse Begin releasing one claimed domain's DNS execution state
+// ReleaseDNSAuthorityWithResponse Begin releasing a claimed domain's DNS authority
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -4871,7 +4871,7 @@ func (c *ClientWithResponses) ReleaseDNSAuthorityWithResponse(ctx context.Contex
 	return ParseReleaseDNSAuthorityResponse(rsp)
 }
 
-// GetDNSAuthorityWithResponse Read DNS execution state for one claimed domain
+// GetDNSAuthorityWithResponse Read a claimed domain's DNS authority
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -4884,7 +4884,7 @@ func (c *ClientWithResponses) GetDNSAuthorityWithResponse(ctx context.Context, d
 	return ParseGetDNSAuthorityResponse(rsp)
 }
 
-// RevokeHostedPolicyWithBodyWithResponse Apply a hosted team policy revision and close affected route sessions
+// RevokeHostedPolicyWithBodyWithResponse Apply a policy revision from the external authority and close affected route sessions
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -4897,7 +4897,7 @@ func (c *ClientWithResponses) RevokeHostedPolicyWithBodyWithResponse(ctx context
 	return ParseRevokeHostedPolicyResponse(rsp)
 }
 
-// RevokeHostedPolicyWithResponse Apply a hosted team policy revision and close affected route sessions
+// RevokeHostedPolicyWithResponse Apply a policy revision from the external authority and close affected route sessions
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -5807,7 +5807,7 @@ type ServerInterface interface {
 	// ListAdminRelays List relay leases
 	// (GET /v1/admin/relays)
 	ListAdminRelays(w http.ResponseWriter, r *http.Request, params ListAdminRelaysParams)
-	// DrainAdminRelay Remove one exact relay lease from placement and begin draining
+	// DrainAdminRelay Remove a matching relay lease from placement and begin draining
 	// (POST /v1/admin/relays/{relay_id}/drain)
 	DrainAdminRelay(w http.ResponseWriter, r *http.Request, relayId RelayID)
 	// GetAdminServerStatus Read control, ingress, and relay status
@@ -5825,16 +5825,16 @@ type ServerInterface interface {
 	// GetClientIP Return the requesting client's public IP address
 	// (GET /v1/client-ip)
 	GetClientIP(w http.ResponseWriter, r *http.Request)
-	// GetControlDiscovery Describe control, authority, and authentication facts
+	// GetControlDiscovery Describe control and its authentication methods
 	// (GET /v1/discovery)
 	GetControlDiscovery(w http.ResponseWriter, r *http.Request)
 	// GetHealth Confirm that the control HTTP server is serving
 	// (GET /v1/health)
 	GetHealth(w http.ResponseWriter, r *http.Request)
-	// GetReadiness Confirm that control and durable state are ready
+	// GetReadiness Confirm that control and its database are ready
 	// (GET /v1/ready)
 	GetReadiness(w http.ResponseWriter, r *http.Request)
-	// CloseRouteSession Close and drain one publisher attachment without deleting its route
+	// CloseRouteSession Close and drain a route session without deleting its route
 	// (DELETE /v1/route-sessions/{route_session_id})
 	CloseRouteSession(w http.ResponseWriter, r *http.Request, routeSessionId RouteSessionID)
 	// MarkRouteSessionCertificateInstalled Record installation of the current route certificate
@@ -5843,40 +5843,40 @@ type ServerInterface interface {
 	// CreateCertificateIssuance Begin issuance for the route session's certificate plan
 	// (POST /v1/route-sessions/{route_session_id}/certificate-issuances)
 	CreateCertificateIssuance(w http.ResponseWriter, r *http.Request, routeSessionId RouteSessionID, params CreateCertificateIssuanceParams)
-	// HeartbeatRouteSession Renew one publisher lease and replenish publisher connections
+	// HeartbeatRouteSession Renew a route session and replace missing publisher connections
 	// (POST /v1/route-sessions/{route_session_id}/heartbeat)
 	HeartbeatRouteSession(w http.ResponseWriter, r *http.Request, routeSessionId RouteSessionID)
-	// MarkRouteSessionReady Complete publisher readiness after certificate installation and two ready publisher connections
+	// MarkRouteSessionReady Mark a route session ready after its certificate and two publisher connections are ready
 	// (POST /v1/route-sessions/{route_session_id}/ready)
 	MarkRouteSessionReady(w http.ResponseWriter, r *http.Request, routeSessionId RouteSessionID)
-	// ListRoutes List durable routes for one team
+	// ListRoutes List routes for one team
 	// (GET /v1/routes)
 	ListRoutes(w http.ResponseWriter, r *http.Request, params ListRoutesParams)
-	// CreateRoute Create one durable team route
+	// CreateRoute Create one team route
 	// (POST /v1/routes)
 	CreateRoute(w http.ResponseWriter, r *http.Request, params CreateRouteParams)
-	// DeleteRoute Delete one durable route and close its route session
+	// DeleteRoute Delete one route and close its route session
 	// (DELETE /v1/routes/{route_id})
 	DeleteRoute(w http.ResponseWriter, r *http.Request, routeId RouteID)
-	// GetRoute Read one durable route
+	// GetRoute Read one route
 	// (GET /v1/routes/{route_id})
 	GetRoute(w http.ResponseWriter, r *http.Request, routeId RouteID)
-	// UpdateRoute Reconcile one route's mutable publisher state
+	// UpdateRoute Update a route's target and IP policy
 	// (PATCH /v1/routes/{route_id})
 	UpdateRoute(w http.ResponseWriter, r *http.Request, routeId RouteID)
-	// CreateRouteSession Create one publisher attachment and allocate its route version
+	// CreateRouteSession Create a route session and allocate its route version
 	// (POST /v1/routes/{route_id}/sessions)
 	CreateRouteSession(w http.ResponseWriter, r *http.Request, routeId RouteID, params CreateRouteSessionParams)
-	// CreateDNSAuthority Create DNS execution state for one claimed domain
+	// CreateDNSAuthority Create a DNS authority for one claimed domain
 	// (POST /v1/service/dns-authorities)
 	CreateDNSAuthority(w http.ResponseWriter, r *http.Request, params CreateDNSAuthorityParams)
-	// ReleaseDNSAuthority Begin releasing one claimed domain's DNS execution state
+	// ReleaseDNSAuthority Begin releasing a claimed domain's DNS authority
 	// (DELETE /v1/service/dns-authorities/{dns_authority_reference})
 	ReleaseDNSAuthority(w http.ResponseWriter, r *http.Request, dnsAuthorityReference DNSAuthorityReference, params ReleaseDNSAuthorityParams)
-	// GetDNSAuthority Read DNS execution state for one claimed domain
+	// GetDNSAuthority Read a claimed domain's DNS authority
 	// (GET /v1/service/dns-authorities/{dns_authority_reference})
 	GetDNSAuthority(w http.ResponseWriter, r *http.Request, dnsAuthorityReference DNSAuthorityReference)
-	// RevokeHostedPolicy Apply a hosted team policy revision and close affected route sessions
+	// RevokeHostedPolicy Apply a policy revision from the external authority and close affected route sessions
 	// (POST /v1/service/revoke)
 	RevokeHostedPolicy(w http.ResponseWriter, r *http.Request)
 }
@@ -6806,1946 +6806,4 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/service/dns-authorities/{dns_authority_reference}", wrapper.GetDNSAuthority)
 
 	return m
-}
-
-type ProblemApplicationProblemPlusJSONResponse Problem
-
-type ListMaintenanceControlsRequestObject struct {
-}
-
-type ListMaintenanceControlsResponseObject interface {
-	VisitListMaintenanceControlsResponse(w http.ResponseWriter) error
-}
-
-type ListMaintenanceControls200JSONResponse []MaintenanceControl
-
-func (response ListMaintenanceControls200JSONResponse) VisitListMaintenanceControlsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type ListMaintenanceControlsdefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response ListMaintenanceControlsdefaultApplicationProblemPlusJSONResponse) VisitListMaintenanceControlsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type SetMaintenanceControlRequestObject struct {
-	ControlName MaintenanceControlName `json:"control_name"`
-	Body        *SetMaintenanceControlJSONRequestBody
-}
-
-type SetMaintenanceControlResponseObject interface {
-	VisitSetMaintenanceControlResponse(w http.ResponseWriter) error
-}
-
-type SetMaintenanceControl200JSONResponse MaintenanceControl
-
-func (response SetMaintenanceControl200JSONResponse) VisitSetMaintenanceControlResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type SetMaintenanceControldefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response SetMaintenanceControldefaultApplicationProblemPlusJSONResponse) VisitSetMaintenanceControlResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type ListAdminRelaysRequestObject struct {
-	Params ListAdminRelaysParams
-}
-
-type ListAdminRelaysResponseObject interface {
-	VisitListAdminRelaysResponse(w http.ResponseWriter) error
-}
-
-type ListAdminRelays200JSONResponse AdminRelayPage
-
-func (response ListAdminRelays200JSONResponse) VisitListAdminRelaysResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type ListAdminRelaysdefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response ListAdminRelaysdefaultApplicationProblemPlusJSONResponse) VisitListAdminRelaysResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type DrainAdminRelayRequestObject struct {
-	RelayId RelayID `json:"relay_id"`
-	Body    *DrainAdminRelayJSONRequestBody
-}
-
-type DrainAdminRelayResponseObject interface {
-	VisitDrainAdminRelayResponse(w http.ResponseWriter) error
-}
-
-type DrainAdminRelay200JSONResponse AdminRelayLease
-
-func (response DrainAdminRelay200JSONResponse) VisitDrainAdminRelayResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type DrainAdminRelaydefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response DrainAdminRelaydefaultApplicationProblemPlusJSONResponse) VisitDrainAdminRelayResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetAdminServerStatusRequestObject struct {
-}
-
-type GetAdminServerStatusResponseObject interface {
-	VisitGetAdminServerStatusResponse(w http.ResponseWriter) error
-}
-
-type GetAdminServerStatus200JSONResponse AdminServerStatus
-
-func (response GetAdminServerStatus200JSONResponse) VisitGetAdminServerStatusResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetAdminServerStatusdefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response GetAdminServerStatusdefaultApplicationProblemPlusJSONResponse) VisitGetAdminServerStatusResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetCertificateIssuanceRequestObject struct {
-	IssuanceId IssuanceID `json:"issuance_id"`
-}
-
-type GetCertificateIssuanceResponseObject interface {
-	VisitGetCertificateIssuanceResponse(w http.ResponseWriter) error
-}
-
-type GetCertificateIssuance200JSONResponse CertificateIssuance
-
-func (response GetCertificateIssuance200JSONResponse) VisitGetCertificateIssuanceResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetCertificateIssuancedefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response GetCertificateIssuancedefaultApplicationProblemPlusJSONResponse) VisitGetCertificateIssuanceResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type MarkCertificateChallengeReadyRequestObject struct {
-	IssuanceId IssuanceID `json:"issuance_id"`
-}
-
-type MarkCertificateChallengeReadyResponseObject interface {
-	VisitMarkCertificateChallengeReadyResponse(w http.ResponseWriter) error
-}
-
-type MarkCertificateChallengeReady200JSONResponse CertificateIssuance
-
-func (response MarkCertificateChallengeReady200JSONResponse) VisitMarkCertificateChallengeReadyResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type MarkCertificateChallengeReadydefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response MarkCertificateChallengeReadydefaultApplicationProblemPlusJSONResponse) VisitMarkCertificateChallengeReadyResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type MarkCertificateChallengeRemovedRequestObject struct {
-	IssuanceId IssuanceID `json:"issuance_id"`
-}
-
-type MarkCertificateChallengeRemovedResponseObject interface {
-	VisitMarkCertificateChallengeRemovedResponse(w http.ResponseWriter) error
-}
-
-type MarkCertificateChallengeRemoved200JSONResponse CertificateIssuance
-
-func (response MarkCertificateChallengeRemoved200JSONResponse) VisitMarkCertificateChallengeRemovedResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type MarkCertificateChallengeRemoveddefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response MarkCertificateChallengeRemoveddefaultApplicationProblemPlusJSONResponse) VisitMarkCertificateChallengeRemovedResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetClientIPRequestObject struct {
-}
-
-type GetClientIPResponseObject interface {
-	VisitGetClientIPResponse(w http.ResponseWriter) error
-}
-
-type GetClientIP200JSONResponse ClientIPResponse
-
-func (response GetClientIP200JSONResponse) VisitGetClientIPResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetClientIPdefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response GetClientIPdefaultApplicationProblemPlusJSONResponse) VisitGetClientIPResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetControlDiscoveryRequestObject struct {
-}
-
-type GetControlDiscoveryResponseObject interface {
-	VisitGetControlDiscoveryResponse(w http.ResponseWriter) error
-}
-
-type GetControlDiscovery200JSONResponse ControlDiscovery
-
-func (response GetControlDiscovery200JSONResponse) VisitGetControlDiscoveryResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetControlDiscoverydefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response GetControlDiscoverydefaultApplicationProblemPlusJSONResponse) VisitGetControlDiscoveryResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetHealthRequestObject struct {
-}
-
-type GetHealthResponseObject interface {
-	VisitGetHealthResponse(w http.ResponseWriter) error
-}
-
-type GetHealth200JSONResponse HealthResponse
-
-func (response GetHealth200JSONResponse) VisitGetHealthResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetHealthdefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response GetHealthdefaultApplicationProblemPlusJSONResponse) VisitGetHealthResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetReadinessRequestObject struct {
-}
-
-type GetReadinessResponseObject interface {
-	VisitGetReadinessResponse(w http.ResponseWriter) error
-}
-
-type GetReadiness200JSONResponse ReadinessResponse
-
-func (response GetReadiness200JSONResponse) VisitGetReadinessResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetReadiness503JSONResponse ReadinessResponse
-
-func (response GetReadiness503JSONResponse) VisitGetReadinessResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(503)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetReadinessdefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response GetReadinessdefaultApplicationProblemPlusJSONResponse) VisitGetReadinessResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type CloseRouteSessionRequestObject struct {
-	RouteSessionId RouteSessionID `json:"route_session_id"`
-}
-
-type CloseRouteSessionResponseObject interface {
-	VisitCloseRouteSessionResponse(w http.ResponseWriter) error
-}
-
-type CloseRouteSession204Response struct {
-}
-
-func (response CloseRouteSession204Response) VisitCloseRouteSessionResponse(w http.ResponseWriter) error {
-	w.WriteHeader(204)
-	return nil
-}
-
-type CloseRouteSessiondefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response CloseRouteSessiondefaultApplicationProblemPlusJSONResponse) VisitCloseRouteSessionResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type MarkRouteSessionCertificateInstalledRequestObject struct {
-	RouteSessionId RouteSessionID `json:"route_session_id"`
-	Body           *MarkRouteSessionCertificateInstalledJSONRequestBody
-}
-
-type MarkRouteSessionCertificateInstalledResponseObject interface {
-	VisitMarkRouteSessionCertificateInstalledResponse(w http.ResponseWriter) error
-}
-
-type MarkRouteSessionCertificateInstalled200JSONResponse RouteSession
-
-func (response MarkRouteSessionCertificateInstalled200JSONResponse) VisitMarkRouteSessionCertificateInstalledResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type MarkRouteSessionCertificateInstalleddefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response MarkRouteSessionCertificateInstalleddefaultApplicationProblemPlusJSONResponse) VisitMarkRouteSessionCertificateInstalledResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type CreateCertificateIssuanceRequestObject struct {
-	RouteSessionId RouteSessionID `json:"route_session_id"`
-	Params         CreateCertificateIssuanceParams
-	Body           *CreateCertificateIssuanceJSONRequestBody
-}
-
-type CreateCertificateIssuanceResponseObject interface {
-	VisitCreateCertificateIssuanceResponse(w http.ResponseWriter) error
-}
-
-type CreateCertificateIssuance201JSONResponse CertificateIssuance
-
-func (response CreateCertificateIssuance201JSONResponse) VisitCreateCertificateIssuanceResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(201)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type CreateCertificateIssuancedefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response CreateCertificateIssuancedefaultApplicationProblemPlusJSONResponse) VisitCreateCertificateIssuanceResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type HeartbeatRouteSessionRequestObject struct {
-	RouteSessionId RouteSessionID `json:"route_session_id"`
-	Body           *HeartbeatRouteSessionJSONRequestBody
-}
-
-type HeartbeatRouteSessionResponseObject interface {
-	VisitHeartbeatRouteSessionResponse(w http.ResponseWriter) error
-}
-
-type HeartbeatRouteSession200JSONResponse RouteSessionHeartbeat
-
-func (response HeartbeatRouteSession200JSONResponse) VisitHeartbeatRouteSessionResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type HeartbeatRouteSessiondefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response HeartbeatRouteSessiondefaultApplicationProblemPlusJSONResponse) VisitHeartbeatRouteSessionResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type MarkRouteSessionReadyRequestObject struct {
-	RouteSessionId RouteSessionID `json:"route_session_id"`
-	Body           *MarkRouteSessionReadyJSONRequestBody
-}
-
-type MarkRouteSessionReadyResponseObject interface {
-	VisitMarkRouteSessionReadyResponse(w http.ResponseWriter) error
-}
-
-type MarkRouteSessionReady200JSONResponse RouteSession
-
-func (response MarkRouteSessionReady200JSONResponse) VisitMarkRouteSessionReadyResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type MarkRouteSessionReadydefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response MarkRouteSessionReadydefaultApplicationProblemPlusJSONResponse) VisitMarkRouteSessionReadyResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type ListRoutesRequestObject struct {
-	Params ListRoutesParams
-}
-
-type ListRoutesResponseObject interface {
-	VisitListRoutesResponse(w http.ResponseWriter) error
-}
-
-type ListRoutes200JSONResponse RoutePage
-
-func (response ListRoutes200JSONResponse) VisitListRoutesResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type ListRoutesdefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response ListRoutesdefaultApplicationProblemPlusJSONResponse) VisitListRoutesResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type CreateRouteRequestObject struct {
-	Params CreateRouteParams
-	Body   *CreateRouteJSONRequestBody
-}
-
-type CreateRouteResponseObject interface {
-	VisitCreateRouteResponse(w http.ResponseWriter) error
-}
-
-type CreateRoute201JSONResponse Route
-
-func (response CreateRoute201JSONResponse) VisitCreateRouteResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(201)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type CreateRoutedefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response CreateRoutedefaultApplicationProblemPlusJSONResponse) VisitCreateRouteResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type DeleteRouteRequestObject struct {
-	RouteId RouteID `json:"route_id"`
-}
-
-type DeleteRouteResponseObject interface {
-	VisitDeleteRouteResponse(w http.ResponseWriter) error
-}
-
-type DeleteRoute204Response struct {
-}
-
-func (response DeleteRoute204Response) VisitDeleteRouteResponse(w http.ResponseWriter) error {
-	w.WriteHeader(204)
-	return nil
-}
-
-type DeleteRoutedefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response DeleteRoutedefaultApplicationProblemPlusJSONResponse) VisitDeleteRouteResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetRouteRequestObject struct {
-	RouteId RouteID `json:"route_id"`
-}
-
-type GetRouteResponseObject interface {
-	VisitGetRouteResponse(w http.ResponseWriter) error
-}
-
-type GetRoute200JSONResponse Route
-
-func (response GetRoute200JSONResponse) VisitGetRouteResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetRoutedefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response GetRoutedefaultApplicationProblemPlusJSONResponse) VisitGetRouteResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type UpdateRouteRequestObject struct {
-	RouteId RouteID `json:"route_id"`
-	Body    *UpdateRouteJSONRequestBody
-}
-
-type UpdateRouteResponseObject interface {
-	VisitUpdateRouteResponse(w http.ResponseWriter) error
-}
-
-type UpdateRoute200JSONResponse Route
-
-func (response UpdateRoute200JSONResponse) VisitUpdateRouteResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type UpdateRoutedefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response UpdateRoutedefaultApplicationProblemPlusJSONResponse) VisitUpdateRouteResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type CreateRouteSessionRequestObject struct {
-	RouteId RouteID `json:"route_id"`
-	Params  CreateRouteSessionParams
-}
-
-type CreateRouteSessionResponseObject interface {
-	VisitCreateRouteSessionResponse(w http.ResponseWriter) error
-}
-
-type CreateRouteSession201JSONResponse RouteSessionSetup
-
-func (response CreateRouteSession201JSONResponse) VisitCreateRouteSessionResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(201)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type CreateRouteSessiondefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response CreateRouteSessiondefaultApplicationProblemPlusJSONResponse) VisitCreateRouteSessionResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type CreateDNSAuthorityRequestObject struct {
-	Params CreateDNSAuthorityParams
-	Body   *CreateDNSAuthorityJSONRequestBody
-}
-
-type CreateDNSAuthorityResponseObject interface {
-	VisitCreateDNSAuthorityResponse(w http.ResponseWriter) error
-}
-
-type CreateDNSAuthority201JSONResponse DNSAuthority
-
-func (response CreateDNSAuthority201JSONResponse) VisitCreateDNSAuthorityResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(201)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type CreateDNSAuthoritydefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response CreateDNSAuthoritydefaultApplicationProblemPlusJSONResponse) VisitCreateDNSAuthorityResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type ReleaseDNSAuthorityRequestObject struct {
-	DnsAuthorityReference DNSAuthorityReference `json:"dns_authority_reference"`
-	Params                ReleaseDNSAuthorityParams
-}
-
-type ReleaseDNSAuthorityResponseObject interface {
-	VisitReleaseDNSAuthorityResponse(w http.ResponseWriter) error
-}
-
-type ReleaseDNSAuthority202JSONResponse DNSAuthority
-
-func (response ReleaseDNSAuthority202JSONResponse) VisitReleaseDNSAuthorityResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(202)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type ReleaseDNSAuthoritydefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response ReleaseDNSAuthoritydefaultApplicationProblemPlusJSONResponse) VisitReleaseDNSAuthorityResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetDNSAuthorityRequestObject struct {
-	DnsAuthorityReference DNSAuthorityReference `json:"dns_authority_reference"`
-}
-
-type GetDNSAuthorityResponseObject interface {
-	VisitGetDNSAuthorityResponse(w http.ResponseWriter) error
-}
-
-type GetDNSAuthority200JSONResponse DNSAuthority
-
-func (response GetDNSAuthority200JSONResponse) VisitGetDNSAuthorityResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetDNSAuthoritydefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response GetDNSAuthoritydefaultApplicationProblemPlusJSONResponse) VisitGetDNSAuthorityResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type RevokeHostedPolicyRequestObject struct {
-	Body *RevokeHostedPolicyJSONRequestBody
-}
-
-type RevokeHostedPolicyResponseObject interface {
-	VisitRevokeHostedPolicyResponse(w http.ResponseWriter) error
-}
-
-type RevokeHostedPolicy204Response struct {
-}
-
-func (response RevokeHostedPolicy204Response) VisitRevokeHostedPolicyResponse(w http.ResponseWriter) error {
-	w.WriteHeader(204)
-	return nil
-}
-
-type RevokeHostedPolicydefaultApplicationProblemPlusJSONResponse struct {
-	Body       Problem
-	StatusCode int
-}
-
-func (response RevokeHostedPolicydefaultApplicationProblemPlusJSONResponse) VisitRevokeHostedPolicyResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-// StrictServerInterface represents all server handlers.
-type StrictServerInterface interface {
-	// ListMaintenanceControls List maintenance controls
-	// (GET /v1/admin/maintenance-controls)
-	ListMaintenanceControls(ctx context.Context, request ListMaintenanceControlsRequestObject) (ListMaintenanceControlsResponseObject, error)
-	// SetMaintenanceControl Set one maintenance control
-	// (PUT /v1/admin/maintenance-controls/{control_name})
-	SetMaintenanceControl(ctx context.Context, request SetMaintenanceControlRequestObject) (SetMaintenanceControlResponseObject, error)
-	// ListAdminRelays List relay leases
-	// (GET /v1/admin/relays)
-	ListAdminRelays(ctx context.Context, request ListAdminRelaysRequestObject) (ListAdminRelaysResponseObject, error)
-	// DrainAdminRelay Remove one exact relay lease from placement and begin draining
-	// (POST /v1/admin/relays/{relay_id}/drain)
-	DrainAdminRelay(ctx context.Context, request DrainAdminRelayRequestObject) (DrainAdminRelayResponseObject, error)
-	// GetAdminServerStatus Read control, ingress, and relay status
-	// (GET /v1/admin/status)
-	GetAdminServerStatus(ctx context.Context, request GetAdminServerStatusRequestObject) (GetAdminServerStatusResponseObject, error)
-	// GetCertificateIssuance Read one route-session certificate issuance
-	// (GET /v1/certificate-issuances/{issuance_id})
-	GetCertificateIssuance(ctx context.Context, request GetCertificateIssuanceRequestObject) (GetCertificateIssuanceResponseObject, error)
-	// MarkCertificateChallengeReady Confirm a TLS-ALPN-01 challenge is installed
-	// (POST /v1/certificate-issuances/{issuance_id}/challenge-ready)
-	MarkCertificateChallengeReady(ctx context.Context, request MarkCertificateChallengeReadyRequestObject) (MarkCertificateChallengeReadyResponseObject, error)
-	// MarkCertificateChallengeRemoved Confirm a TLS-ALPN-01 challenge is removed
-	// (POST /v1/certificate-issuances/{issuance_id}/challenge-removed)
-	MarkCertificateChallengeRemoved(ctx context.Context, request MarkCertificateChallengeRemovedRequestObject) (MarkCertificateChallengeRemovedResponseObject, error)
-	// GetClientIP Return the requesting client's public IP address
-	// (GET /v1/client-ip)
-	GetClientIP(ctx context.Context, request GetClientIPRequestObject) (GetClientIPResponseObject, error)
-	// GetControlDiscovery Describe control, authority, and authentication facts
-	// (GET /v1/discovery)
-	GetControlDiscovery(ctx context.Context, request GetControlDiscoveryRequestObject) (GetControlDiscoveryResponseObject, error)
-	// GetHealth Confirm that the control HTTP server is serving
-	// (GET /v1/health)
-	GetHealth(ctx context.Context, request GetHealthRequestObject) (GetHealthResponseObject, error)
-	// GetReadiness Confirm that control and durable state are ready
-	// (GET /v1/ready)
-	GetReadiness(ctx context.Context, request GetReadinessRequestObject) (GetReadinessResponseObject, error)
-	// CloseRouteSession Close and drain one publisher attachment without deleting its route
-	// (DELETE /v1/route-sessions/{route_session_id})
-	CloseRouteSession(ctx context.Context, request CloseRouteSessionRequestObject) (CloseRouteSessionResponseObject, error)
-	// MarkRouteSessionCertificateInstalled Record installation of the current route certificate
-	// (POST /v1/route-sessions/{route_session_id}/certificate-installed)
-	MarkRouteSessionCertificateInstalled(ctx context.Context, request MarkRouteSessionCertificateInstalledRequestObject) (MarkRouteSessionCertificateInstalledResponseObject, error)
-	// CreateCertificateIssuance Begin issuance for the route session's certificate plan
-	// (POST /v1/route-sessions/{route_session_id}/certificate-issuances)
-	CreateCertificateIssuance(ctx context.Context, request CreateCertificateIssuanceRequestObject) (CreateCertificateIssuanceResponseObject, error)
-	// HeartbeatRouteSession Renew one publisher lease and replenish publisher connections
-	// (POST /v1/route-sessions/{route_session_id}/heartbeat)
-	HeartbeatRouteSession(ctx context.Context, request HeartbeatRouteSessionRequestObject) (HeartbeatRouteSessionResponseObject, error)
-	// MarkRouteSessionReady Complete publisher readiness after certificate installation and two ready publisher connections
-	// (POST /v1/route-sessions/{route_session_id}/ready)
-	MarkRouteSessionReady(ctx context.Context, request MarkRouteSessionReadyRequestObject) (MarkRouteSessionReadyResponseObject, error)
-	// ListRoutes List durable routes for one team
-	// (GET /v1/routes)
-	ListRoutes(ctx context.Context, request ListRoutesRequestObject) (ListRoutesResponseObject, error)
-	// CreateRoute Create one durable team route
-	// (POST /v1/routes)
-	CreateRoute(ctx context.Context, request CreateRouteRequestObject) (CreateRouteResponseObject, error)
-	// DeleteRoute Delete one durable route and close its route session
-	// (DELETE /v1/routes/{route_id})
-	DeleteRoute(ctx context.Context, request DeleteRouteRequestObject) (DeleteRouteResponseObject, error)
-	// GetRoute Read one durable route
-	// (GET /v1/routes/{route_id})
-	GetRoute(ctx context.Context, request GetRouteRequestObject) (GetRouteResponseObject, error)
-	// UpdateRoute Reconcile one route's mutable publisher state
-	// (PATCH /v1/routes/{route_id})
-	UpdateRoute(ctx context.Context, request UpdateRouteRequestObject) (UpdateRouteResponseObject, error)
-	// CreateRouteSession Create one publisher attachment and allocate its route version
-	// (POST /v1/routes/{route_id}/sessions)
-	CreateRouteSession(ctx context.Context, request CreateRouteSessionRequestObject) (CreateRouteSessionResponseObject, error)
-	// CreateDNSAuthority Create DNS execution state for one claimed domain
-	// (POST /v1/service/dns-authorities)
-	CreateDNSAuthority(ctx context.Context, request CreateDNSAuthorityRequestObject) (CreateDNSAuthorityResponseObject, error)
-	// ReleaseDNSAuthority Begin releasing one claimed domain's DNS execution state
-	// (DELETE /v1/service/dns-authorities/{dns_authority_reference})
-	ReleaseDNSAuthority(ctx context.Context, request ReleaseDNSAuthorityRequestObject) (ReleaseDNSAuthorityResponseObject, error)
-	// GetDNSAuthority Read DNS execution state for one claimed domain
-	// (GET /v1/service/dns-authorities/{dns_authority_reference})
-	GetDNSAuthority(ctx context.Context, request GetDNSAuthorityRequestObject) (GetDNSAuthorityResponseObject, error)
-	// RevokeHostedPolicy Apply a hosted team policy revision and close affected route sessions
-	// (POST /v1/service/revoke)
-	RevokeHostedPolicy(ctx context.Context, request RevokeHostedPolicyRequestObject) (RevokeHostedPolicyResponseObject, error)
-}
-
-type StrictHandlerFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error)
-type StrictMiddlewareFunc func(f StrictHandlerFunc, operationID string) StrictHandlerFunc
-
-type StrictHTTPServerOptions struct {
-	RequestErrorHandlerFunc  func(w http.ResponseWriter, r *http.Request, err error)
-	ResponseErrorHandlerFunc func(w http.ResponseWriter, r *http.Request, err error)
-}
-
-func NewStrictHandler(ssi StrictServerInterface, middlewares []StrictMiddlewareFunc) ServerInterface {
-	return &strictHandler{ssi: ssi, middlewares: middlewares, options: StrictHTTPServerOptions{
-		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-		},
-		ResponseErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		},
-	}}
-}
-
-func NewStrictHandlerWithOptions(ssi StrictServerInterface, middlewares []StrictMiddlewareFunc, options StrictHTTPServerOptions) ServerInterface {
-	if options.RequestErrorHandlerFunc == nil {
-		options.RequestErrorHandlerFunc = func(w http.ResponseWriter, r *http.Request, err error) {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-		}
-	}
-	if options.ResponseErrorHandlerFunc == nil {
-		options.ResponseErrorHandlerFunc = func(w http.ResponseWriter, r *http.Request, err error) {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-	}
-	return &strictHandler{ssi: ssi, middlewares: middlewares, options: options}
-}
-
-type strictHandler struct {
-	ssi         StrictServerInterface
-	middlewares []StrictMiddlewareFunc
-	options     StrictHTTPServerOptions
-}
-
-// ListMaintenanceControls operation middleware
-func (sh *strictHandler) ListMaintenanceControls(w http.ResponseWriter, r *http.Request) {
-	var request ListMaintenanceControlsRequestObject
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.ListMaintenanceControls(ctx, request.(ListMaintenanceControlsRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "ListMaintenanceControls")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(ListMaintenanceControlsResponseObject); ok {
-		if err := validResponse.VisitListMaintenanceControlsResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// SetMaintenanceControl operation middleware
-func (sh *strictHandler) SetMaintenanceControl(w http.ResponseWriter, r *http.Request, controlName MaintenanceControlName) {
-	var request SetMaintenanceControlRequestObject
-
-	request.ControlName = controlName
-
-	var body SetMaintenanceControlJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.SetMaintenanceControl(ctx, request.(SetMaintenanceControlRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "SetMaintenanceControl")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(SetMaintenanceControlResponseObject); ok {
-		if err := validResponse.VisitSetMaintenanceControlResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// ListAdminRelays operation middleware
-func (sh *strictHandler) ListAdminRelays(w http.ResponseWriter, r *http.Request, params ListAdminRelaysParams) {
-	var request ListAdminRelaysRequestObject
-
-	request.Params = params
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.ListAdminRelays(ctx, request.(ListAdminRelaysRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "ListAdminRelays")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(ListAdminRelaysResponseObject); ok {
-		if err := validResponse.VisitListAdminRelaysResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// DrainAdminRelay operation middleware
-func (sh *strictHandler) DrainAdminRelay(w http.ResponseWriter, r *http.Request, relayId RelayID) {
-	var request DrainAdminRelayRequestObject
-
-	request.RelayId = relayId
-
-	var body DrainAdminRelayJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.DrainAdminRelay(ctx, request.(DrainAdminRelayRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "DrainAdminRelay")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(DrainAdminRelayResponseObject); ok {
-		if err := validResponse.VisitDrainAdminRelayResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// GetAdminServerStatus operation middleware
-func (sh *strictHandler) GetAdminServerStatus(w http.ResponseWriter, r *http.Request) {
-	var request GetAdminServerStatusRequestObject
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.GetAdminServerStatus(ctx, request.(GetAdminServerStatusRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "GetAdminServerStatus")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(GetAdminServerStatusResponseObject); ok {
-		if err := validResponse.VisitGetAdminServerStatusResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// GetCertificateIssuance operation middleware
-func (sh *strictHandler) GetCertificateIssuance(w http.ResponseWriter, r *http.Request, issuanceId IssuanceID) {
-	var request GetCertificateIssuanceRequestObject
-
-	request.IssuanceId = issuanceId
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.GetCertificateIssuance(ctx, request.(GetCertificateIssuanceRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "GetCertificateIssuance")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(GetCertificateIssuanceResponseObject); ok {
-		if err := validResponse.VisitGetCertificateIssuanceResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// MarkCertificateChallengeReady operation middleware
-func (sh *strictHandler) MarkCertificateChallengeReady(w http.ResponseWriter, r *http.Request, issuanceId IssuanceID) {
-	var request MarkCertificateChallengeReadyRequestObject
-
-	request.IssuanceId = issuanceId
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.MarkCertificateChallengeReady(ctx, request.(MarkCertificateChallengeReadyRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "MarkCertificateChallengeReady")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(MarkCertificateChallengeReadyResponseObject); ok {
-		if err := validResponse.VisitMarkCertificateChallengeReadyResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// MarkCertificateChallengeRemoved operation middleware
-func (sh *strictHandler) MarkCertificateChallengeRemoved(w http.ResponseWriter, r *http.Request, issuanceId IssuanceID) {
-	var request MarkCertificateChallengeRemovedRequestObject
-
-	request.IssuanceId = issuanceId
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.MarkCertificateChallengeRemoved(ctx, request.(MarkCertificateChallengeRemovedRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "MarkCertificateChallengeRemoved")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(MarkCertificateChallengeRemovedResponseObject); ok {
-		if err := validResponse.VisitMarkCertificateChallengeRemovedResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// GetClientIP operation middleware
-func (sh *strictHandler) GetClientIP(w http.ResponseWriter, r *http.Request) {
-	var request GetClientIPRequestObject
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.GetClientIP(ctx, request.(GetClientIPRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "GetClientIP")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(GetClientIPResponseObject); ok {
-		if err := validResponse.VisitGetClientIPResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// GetControlDiscovery operation middleware
-func (sh *strictHandler) GetControlDiscovery(w http.ResponseWriter, r *http.Request) {
-	var request GetControlDiscoveryRequestObject
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.GetControlDiscovery(ctx, request.(GetControlDiscoveryRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "GetControlDiscovery")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(GetControlDiscoveryResponseObject); ok {
-		if err := validResponse.VisitGetControlDiscoveryResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// GetHealth operation middleware
-func (sh *strictHandler) GetHealth(w http.ResponseWriter, r *http.Request) {
-	var request GetHealthRequestObject
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.GetHealth(ctx, request.(GetHealthRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "GetHealth")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(GetHealthResponseObject); ok {
-		if err := validResponse.VisitGetHealthResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// GetReadiness operation middleware
-func (sh *strictHandler) GetReadiness(w http.ResponseWriter, r *http.Request) {
-	var request GetReadinessRequestObject
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.GetReadiness(ctx, request.(GetReadinessRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "GetReadiness")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(GetReadinessResponseObject); ok {
-		if err := validResponse.VisitGetReadinessResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// CloseRouteSession operation middleware
-func (sh *strictHandler) CloseRouteSession(w http.ResponseWriter, r *http.Request, routeSessionId RouteSessionID) {
-	var request CloseRouteSessionRequestObject
-
-	request.RouteSessionId = routeSessionId
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.CloseRouteSession(ctx, request.(CloseRouteSessionRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "CloseRouteSession")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(CloseRouteSessionResponseObject); ok {
-		if err := validResponse.VisitCloseRouteSessionResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// MarkRouteSessionCertificateInstalled operation middleware
-func (sh *strictHandler) MarkRouteSessionCertificateInstalled(w http.ResponseWriter, r *http.Request, routeSessionId RouteSessionID) {
-	var request MarkRouteSessionCertificateInstalledRequestObject
-
-	request.RouteSessionId = routeSessionId
-
-	var body MarkRouteSessionCertificateInstalledJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.MarkRouteSessionCertificateInstalled(ctx, request.(MarkRouteSessionCertificateInstalledRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "MarkRouteSessionCertificateInstalled")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(MarkRouteSessionCertificateInstalledResponseObject); ok {
-		if err := validResponse.VisitMarkRouteSessionCertificateInstalledResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// CreateCertificateIssuance operation middleware
-func (sh *strictHandler) CreateCertificateIssuance(w http.ResponseWriter, r *http.Request, routeSessionId RouteSessionID, params CreateCertificateIssuanceParams) {
-	var request CreateCertificateIssuanceRequestObject
-
-	request.RouteSessionId = routeSessionId
-	request.Params = params
-
-	var body CreateCertificateIssuanceJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.CreateCertificateIssuance(ctx, request.(CreateCertificateIssuanceRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "CreateCertificateIssuance")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(CreateCertificateIssuanceResponseObject); ok {
-		if err := validResponse.VisitCreateCertificateIssuanceResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// HeartbeatRouteSession operation middleware
-func (sh *strictHandler) HeartbeatRouteSession(w http.ResponseWriter, r *http.Request, routeSessionId RouteSessionID) {
-	var request HeartbeatRouteSessionRequestObject
-
-	request.RouteSessionId = routeSessionId
-
-	var body HeartbeatRouteSessionJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.HeartbeatRouteSession(ctx, request.(HeartbeatRouteSessionRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "HeartbeatRouteSession")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(HeartbeatRouteSessionResponseObject); ok {
-		if err := validResponse.VisitHeartbeatRouteSessionResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// MarkRouteSessionReady operation middleware
-func (sh *strictHandler) MarkRouteSessionReady(w http.ResponseWriter, r *http.Request, routeSessionId RouteSessionID) {
-	var request MarkRouteSessionReadyRequestObject
-
-	request.RouteSessionId = routeSessionId
-
-	var body MarkRouteSessionReadyJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.MarkRouteSessionReady(ctx, request.(MarkRouteSessionReadyRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "MarkRouteSessionReady")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(MarkRouteSessionReadyResponseObject); ok {
-		if err := validResponse.VisitMarkRouteSessionReadyResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// ListRoutes operation middleware
-func (sh *strictHandler) ListRoutes(w http.ResponseWriter, r *http.Request, params ListRoutesParams) {
-	var request ListRoutesRequestObject
-
-	request.Params = params
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.ListRoutes(ctx, request.(ListRoutesRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "ListRoutes")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(ListRoutesResponseObject); ok {
-		if err := validResponse.VisitListRoutesResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// CreateRoute operation middleware
-func (sh *strictHandler) CreateRoute(w http.ResponseWriter, r *http.Request, params CreateRouteParams) {
-	var request CreateRouteRequestObject
-
-	request.Params = params
-
-	var body CreateRouteJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.CreateRoute(ctx, request.(CreateRouteRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "CreateRoute")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(CreateRouteResponseObject); ok {
-		if err := validResponse.VisitCreateRouteResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// DeleteRoute operation middleware
-func (sh *strictHandler) DeleteRoute(w http.ResponseWriter, r *http.Request, routeId RouteID) {
-	var request DeleteRouteRequestObject
-
-	request.RouteId = routeId
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.DeleteRoute(ctx, request.(DeleteRouteRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "DeleteRoute")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(DeleteRouteResponseObject); ok {
-		if err := validResponse.VisitDeleteRouteResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// GetRoute operation middleware
-func (sh *strictHandler) GetRoute(w http.ResponseWriter, r *http.Request, routeId RouteID) {
-	var request GetRouteRequestObject
-
-	request.RouteId = routeId
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.GetRoute(ctx, request.(GetRouteRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "GetRoute")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(GetRouteResponseObject); ok {
-		if err := validResponse.VisitGetRouteResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// UpdateRoute operation middleware
-func (sh *strictHandler) UpdateRoute(w http.ResponseWriter, r *http.Request, routeId RouteID) {
-	var request UpdateRouteRequestObject
-
-	request.RouteId = routeId
-
-	var body UpdateRouteJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.UpdateRoute(ctx, request.(UpdateRouteRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "UpdateRoute")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(UpdateRouteResponseObject); ok {
-		if err := validResponse.VisitUpdateRouteResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// CreateRouteSession operation middleware
-func (sh *strictHandler) CreateRouteSession(w http.ResponseWriter, r *http.Request, routeId RouteID, params CreateRouteSessionParams) {
-	var request CreateRouteSessionRequestObject
-
-	request.RouteId = routeId
-	request.Params = params
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.CreateRouteSession(ctx, request.(CreateRouteSessionRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "CreateRouteSession")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(CreateRouteSessionResponseObject); ok {
-		if err := validResponse.VisitCreateRouteSessionResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// CreateDNSAuthority operation middleware
-func (sh *strictHandler) CreateDNSAuthority(w http.ResponseWriter, r *http.Request, params CreateDNSAuthorityParams) {
-	var request CreateDNSAuthorityRequestObject
-
-	request.Params = params
-
-	var body CreateDNSAuthorityJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.CreateDNSAuthority(ctx, request.(CreateDNSAuthorityRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "CreateDNSAuthority")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(CreateDNSAuthorityResponseObject); ok {
-		if err := validResponse.VisitCreateDNSAuthorityResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// ReleaseDNSAuthority operation middleware
-func (sh *strictHandler) ReleaseDNSAuthority(w http.ResponseWriter, r *http.Request, dnsAuthorityReference DNSAuthorityReference, params ReleaseDNSAuthorityParams) {
-	var request ReleaseDNSAuthorityRequestObject
-
-	request.DnsAuthorityReference = dnsAuthorityReference
-	request.Params = params
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.ReleaseDNSAuthority(ctx, request.(ReleaseDNSAuthorityRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "ReleaseDNSAuthority")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(ReleaseDNSAuthorityResponseObject); ok {
-		if err := validResponse.VisitReleaseDNSAuthorityResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// GetDNSAuthority operation middleware
-func (sh *strictHandler) GetDNSAuthority(w http.ResponseWriter, r *http.Request, dnsAuthorityReference DNSAuthorityReference) {
-	var request GetDNSAuthorityRequestObject
-
-	request.DnsAuthorityReference = dnsAuthorityReference
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.GetDNSAuthority(ctx, request.(GetDNSAuthorityRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "GetDNSAuthority")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(GetDNSAuthorityResponseObject); ok {
-		if err := validResponse.VisitGetDNSAuthorityResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// RevokeHostedPolicy operation middleware
-func (sh *strictHandler) RevokeHostedPolicy(w http.ResponseWriter, r *http.Request) {
-	var request RevokeHostedPolicyRequestObject
-
-	var body RevokeHostedPolicyJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.RevokeHostedPolicy(ctx, request.(RevokeHostedPolicyRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "RevokeHostedPolicy")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(RevokeHostedPolicyResponseObject); ok {
-		if err := validResponse.VisitRevokeHostedPolicyResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
 }
