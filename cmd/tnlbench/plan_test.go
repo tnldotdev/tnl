@@ -10,50 +10,66 @@ import (
 	"time"
 )
 
-func TestBuildSmokePlan(t *testing.T) {
-	command := repositoryPlanCommand("smoke")
-	plan, err := command.build(time.Date(2026, time.September, 2, 12, 0, 0, 0, time.UTC))
+func TestBuildSmokePlanUsesProductionTopologyAndSafeWorkerRate(t *testing.T) {
+	plan, err := repositoryPlanCommand("smoke").build(time.Date(2026, time.September, 16, 12, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !plan.ReadOnly || plan.Transport != "auto" || plan.Workload.Classification != "assumed" {
-		t.Fatalf("plan metadata = %#v", plan)
+	if !plan.ReadOnly || plan.SchemaVersion != 1 || plan.Topology.ControlProcesses != 2 ||
+		plan.Topology.IngressProcesses != 2 || plan.Topology.RelayServices != 2 ||
+		plan.Topology.RelayProcessesPerService != 2 || len(plan.Cells) != 1 {
+		t.Fatalf("plan = %#v", plan)
 	}
-	if plan.SchemaVersion != 2 || len(plan.Cells) != 1 || plan.Cells[0].Relays != 2 || plan.Cells[0].Routes != 25 || plan.Cells[0].Drivers != 1 {
-		t.Fatalf("cells = %#v", plan.Cells)
-	}
-	if plan.ExpectedResultRows != 1 || plan.ExpectedSpend.TotalUSD <= 0 ||
-		plan.MaximumSpend.TotalUSD <= plan.ExpectedSpend.TotalUSD {
-		t.Fatalf("plan totals = rows %d, expected $%f, maximum $%f",
-			plan.ExpectedResultRows, plan.ExpectedSpend.TotalUSD, plan.MaximumSpend.TotalUSD)
+	cell := plan.Cells[0]
+	if cell.Routes != 2 || cell.FreshConnectionsPerSecond != 2 || cell.HeldStreams != 2 ||
+		cell.PublisherWorkers != 1 || cell.LoadWorkers != 1 || cell.FreshConnectionsPerWorker >= 40 ||
+		plan.ExpectedResultRows != 2 || plan.ExpectedSpendUSD <= 0 || plan.MaximumSpendUSD <= plan.ExpectedSpendUSD {
+		t.Fatalf("cell = %#v, plan = %#v", cell, plan)
 	}
 }
 
-func TestBuildScalePlanRequiresAndUsesSchedulingTarget(t *testing.T) {
-	command := repositoryPlanCommand("scale")
-	if _, err := command.build(time.Now()); err == nil || !strings.Contains(err.Error(), "qualified scheduling target") {
+func TestBuildScoutPlanAddsLoadWorkersBeforeSourceLimit(t *testing.T) {
+	plan, err := repositoryPlanCommand("scout").build(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Cells) != 5 {
+		t.Fatalf("cells = %d", len(plan.Cells))
+	}
+	for _, cell := range plan.Cells {
+		if cell.FreshConnectionsPerWorker >= 40 {
+			t.Fatalf("unsafe worker rate in %#v", cell)
+		}
+	}
+	last := plan.Cells[len(plan.Cells)-1]
+	if last.PublisherWorkers != 4 || last.LoadWorkers != 4 || last.HeldStreamsPerWorker != 500 {
+		t.Fatalf("last cell = %#v", last)
+	}
+}
+
+func TestBuildConfirmPlanRequiresCompleteTarget(t *testing.T) {
+	command := repositoryPlanCommand("confirm")
+	if _, err := command.build(time.Now()); err == nil || !strings.Contains(err.Error(), "confirm requires") {
 		t.Fatalf("missing target error = %v", err)
 	}
-	command.ConnectionsPerRelay = 300
+	command.Routes, command.FreshRate, command.HeldStreams = 500, 30, 1000
 	plan, err := command.build(time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan.Cells) != 12 || plan.Cells[len(plan.Cells)-1].Routes != 1500 || plan.ExpectedResultRows != 27 {
-		t.Fatalf("scale plan = %d cells, final %#v, %d rows", len(plan.Cells), plan.Cells[len(plan.Cells)-1], plan.ExpectedResultRows)
+	if len(plan.Cells) != 3 || plan.Cells[2].Repetition != 3 || plan.Cells[2].FreshConnectionsPerWorker >= 40 {
+		t.Fatalf("confirm plan = %#v", plan.Cells)
 	}
 }
 
-func TestPlanHumanOutputLabelsAssumptions(t *testing.T) {
-	command := repositoryPlanCommand("smoke")
+func TestPlanHumanOutputStatesReadOnlyPaidBoundary(t *testing.T) {
 	var output bytes.Buffer
-	if err := command.run(&output); err != nil {
+	if err := repositoryPlanCommand("smoke").run(&output); err != nil {
 		t.Fatal(err)
 	}
-	text := output.String()
-	for _, want := range []string{"Benchmark plan (READ ONLY)", "WORKLOAD ASSUMPTIONS (NOT OBSERVED)", "Expected spend", "Required inputs"} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("plan output omitted %q:\n%s", want, text)
+	for _, want := range []string{"Benchmark plan (READ ONLY)", "2 control, 2 ingress, 2x2 relay", "Estimated spend", "creates paid Fly"} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("plan output omitted %q:\n%s", want, output.String())
 		}
 	}
 }
@@ -69,23 +85,19 @@ type errorWriter struct{ err error }
 
 func (w errorWriter) Write([]byte) (int, error) { return 0, w.err }
 
-func TestDecodeProfileRejectsUnknownFields(t *testing.T) {
+func TestDecodeJSONFileRejectsUnknownFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "profile.json")
 	if err := os.WriteFile(path, []byte(`{"schema_version":1,"unknown":true}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	var profile workloadProfile
-	if err := decodeProfile(path, &profile); err == nil || !strings.Contains(err.Error(), "unknown field") {
+	var profile benchmarkProfile
+	if err := decodeJSONFile(path, &profile); err == nil || !strings.Contains(err.Error(), "unknown field") {
 		t.Fatalf("decode error = %v", err)
 	}
 }
 
 func repositoryPlanCommand(suite string) planCommand {
 	return planCommand{
-		Suite:        suite,
-		ProfileFile:  filepath.Join("..", "..", "benchmarks", "suites", "p1-horizontal.json"),
-		WorkloadFile: filepath.Join("..", "..", "benchmarks", "workloads", "agent-worktrees-assumed-v1.json"),
-		PricingFile:  filepath.Join("..", "..", "benchmarks", "pricing", "fly-sjc.json"),
-		Format:       "human",
+		Suite: suite, ProfileFile: filepath.Join("..", "..", "benchmarks", "suites", "fly-production.json"), Format: "human",
 	}
 }

@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+const benchmarkResultSchemaVersion = 5
+
 var durationBucketBoundsMilliseconds = []float64{
 	1, 2, 5, 10, 20, 50, 100, 200, 500, 1_000, 2_000, 5_000, 10_000, 30_000, 60_000, 120_000,
 }
@@ -14,41 +16,49 @@ type benchmarkResult struct {
 	CellID        string              `json:"cell_id"`
 	Status        string              `json:"status"`
 	Suite         string              `json:"suite"`
-	Workload      string              `json:"workload"`
 	Repetition    int                 `json:"repetition"`
-	Shard         resultShard         `json:"shard"`
+	Worker        resultWorker        `json:"worker"`
 	Configuration resultConfiguration `json:"configuration"`
 	Phases        []phaseResult       `json:"phases"`
-	ScaleIn       map[string]any      `json:"scale_in"`
-	Resources     resultResources     `json:"resources"`
+	Resources     []resourceSample    `json:"resources,omitempty"`
 	Cleanup       resultCleanup       `json:"cleanup"`
-	Failure       *resultFailure      `json:"failure"`
+	Failure       *resultFailure      `json:"failure,omitempty"`
 }
 
-type resultShard struct {
-	Index int `json:"index"`
-	Count int `json:"count"`
+type resultWorker struct {
+	Kind  string `json:"kind"`
+	Index int    `json:"index"`
+	Count int    `json:"count"`
 }
 
 type resultConfiguration struct {
-	Topology                     string `json:"topology"`
-	Routes                       int    `json:"routes"`
-	ExpectedPublisherConnections int    `json:"expected_publisher_connections"`
-	Parallel                     int    `json:"parallel"`
-	PayloadBytes                 int    `json:"payload_bytes"`
+	Sequence                  int `json:"sequence"`
+	Routes                    int `json:"routes"`
+	AssignedRoutes            int `json:"assigned_routes,omitempty"`
+	FreshConnectionsPerSecond int `json:"fresh_connections_per_second,omitempty"`
+	HeldStreams               int `json:"held_streams,omitempty"`
+	AssignedFreshRate         int `json:"assigned_fresh_connections_per_second,omitempty"`
+	AssignedHeldStreams       int `json:"assigned_held_streams,omitempty"`
+	WarmupSeconds             int `json:"warmup_seconds,omitempty"`
+	DurationSeconds           int `json:"duration_seconds,omitempty"`
+	PayloadBytes              int `json:"payload_bytes,omitempty"`
 }
 
 type phaseResult struct {
-	Name                   string             `json:"name"`
-	StartedAt              time.Time          `json:"started_at"`
-	DurationMilliseconds   float64            `json:"duration_milliseconds"`
-	Attempts               int                `json:"attempts"`
-	Successes              int                `json:"successes"`
-	Errors                 int                `json:"errors"`
-	Bytes                  int64              `json:"bytes"`
-	Latency                *durationHistogram `json:"latency,omitempty"`
-	FirstByteLatency       *durationHistogram `json:"first_byte_latency,omitempty"`
-	ThroughputMiBPerSecond float64            `json:"throughput_mib_per_second,omitempty"`
+	Name                 string             `json:"name"`
+	StartedAt            time.Time          `json:"started_at"`
+	DurationMilliseconds float64            `json:"duration_milliseconds"`
+	Attempts             int                `json:"attempts"`
+	Successes            int                `json:"successes"`
+	Errors               int                `json:"errors"`
+	Bytes                int64              `json:"bytes"`
+	AchievedRate         float64            `json:"achieved_rate,omitempty"`
+	Concurrency          int                `json:"concurrency,omitempty"`
+	DNS                  *durationHistogram `json:"dns,omitempty"`
+	Connect              *durationHistogram `json:"connect,omitempty"`
+	TLS                  *durationHistogram `json:"tls,omitempty"`
+	FirstByte            *durationHistogram `json:"first_byte,omitempty"`
+	Total                *durationHistogram `json:"total,omitempty"`
 }
 
 type durationHistogram struct {
@@ -60,67 +70,34 @@ type durationHistogram struct {
 	MaximumMilliseconds float64   `json:"maximum_milliseconds"`
 }
 
-type resultResources struct {
-	ReadyRelays   []relaySample `json:"ready_relays"`
-	SettledRelays []relaySample `json:"settled_relays"`
+type resourceSample struct {
+	Role      string             `json:"role"`
+	Identity  string             `json:"identity"`
+	Moment    string             `json:"moment"`
+	Metrics   map[string]float64 `json:"metrics,omitempty"`
+	Error     string             `json:"error,omitempty"`
+	Timestamp time.Time          `json:"timestamp"`
 }
 
 type resultCleanup struct {
-	ExpectedPublisherConnections int  `json:"expected_publisher_connections"`
-	Exact                        bool `json:"exact"`
+	RoutesDeleted int  `json:"routes_deleted"`
+	Exact         bool `json:"exact"`
 }
 
 type resultFailure struct {
 	Message string `json:"message"`
 }
 
-func newBenchmarkResult(flags cli, started time.Time, measured measurements, runErr error) benchmarkResult {
-	result := benchmarkResult{
-		SchemaVersion: 4,
-		CellID:        flags.cellID(),
-		Status:        "passed",
-		Suite:         flags.Suite,
-		Workload:      flags.Workload,
-		Repetition:    flags.Repetition,
-		Shard:         resultShard{Index: flags.DriverIndex, Count: flags.DriverCount},
-		Configuration: resultConfiguration{
-			Topology: flags.Topology, Routes: flags.Routes,
-			ExpectedPublisherConnections: flags.expectedPublisherConnections(),
-			Parallel:                     flags.Parallel, PayloadBytes: flags.PayloadBytes,
-		},
-		Phases: []phaseResult{}, ScaleIn: map[string]any{},
-		Resources: resultResources{ReadyRelays: measured.ReadyRelays, SettledRelays: measured.SettledRelays},
-		Cleanup:   resultCleanup{ExpectedPublisherConnections: 0, Exact: runErr == nil},
-	}
-	if runErr != nil {
-		result.Status = "failed"
-		result.Failure = &resultFailure{Message: runErr.Error()}
-		result.Phases = append(result.Phases, phaseResult{
-			Name: "driver", StartedAt: started, DurationMilliseconds: milliseconds(time.Since(started)),
+func failedResult(cellID, suite string, repetition int, worker resultWorker, configuration resultConfiguration, started time.Time, err error) benchmarkResult {
+	return benchmarkResult{
+		SchemaVersion: benchmarkResultSchemaVersion, CellID: cellID, Status: "failed", Suite: suite,
+		Repetition: repetition, Worker: worker, Configuration: configuration,
+		Phases: []phaseResult{{
+			Name: "worker", StartedAt: started, DurationMilliseconds: milliseconds(time.Since(started)),
 			Attempts: 1, Errors: 1,
-		})
-		return result
+		}},
+		Failure: &resultFailure{Message: err.Error()},
 	}
-	result.Phases = append(result.Phases,
-		phaseResult{
-			Name: "activation", StartedAt: measured.ActivationStarted,
-			DurationMilliseconds: milliseconds(measured.ActivationElapsed), Attempts: len(measured.Activation),
-			Successes: len(measured.Activation), Latency: newDurationHistogram(measured.Activation),
-		},
-		phaseResult{
-			Name: "correctness", StartedAt: measured.RequestStarted,
-			DurationMilliseconds: milliseconds(measured.RequestElapsed), Attempts: len(measured.Request),
-			Successes: len(measured.Request), Bytes: int64(len(measured.Request) * flags.PayloadBytes),
-			Latency: newDurationHistogram(measured.Request), FirstByteLatency: newDurationHistogram(measured.FirstByte),
-			ThroughputMiBPerSecond: float64(len(measured.Request)*flags.PayloadBytes) / (1024 * 1024) / measured.RequestElapsed.Seconds(),
-		},
-		phaseResult{
-			Name: "cleanup", StartedAt: measured.CleanupStarted,
-			DurationMilliseconds: milliseconds(measured.CleanupElapsed), Attempts: len(measured.Teardown),
-			Successes: len(measured.Teardown), Latency: newDurationHistogram(measured.Teardown),
-		},
-	)
-	return result
 }
 
 func newDurationHistogram(samples []time.Duration) *durationHistogram {
@@ -185,4 +162,8 @@ func histogramPercentile(histogram *durationHistogram, percentile int) float64 {
 		}
 	}
 	return histogram.MaximumMilliseconds
+}
+
+func milliseconds(duration time.Duration) float64 {
+	return float64(duration) / float64(time.Millisecond)
 }

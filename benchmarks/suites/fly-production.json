@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "id": "fly-production-v1",
+  "updated_date": "2026-09-16",
+  "region": "sjc",
+  "topology": {
+    "control_processes": 2,
+    "ingress_processes": 2,
+    "relay_services": 2,
+    "relay_processes_per_service": 2
+  },
+  "machines": {
+    "postgres": "shared-cpu-2x",
+    "control": "performance-2x",
+    "ingress": "performance-2x",
+    "relay": "performance-1x",
+    "coordinator": "shared-cpu-1x",
+    "publisher": "performance-2x",
+    "load": "performance-2x"
+  },
+  "worker_limits": {
+    "routes_per_publisher": 250,
+    "fresh_connections_per_load_second": 30,
+    "held_streams_per_load": 500
+  },
+  "pricing": {
+    "snapshot_date": "2026-09-16",
+    "source_url": "https://fly.io/docs/about/pricing/",
+    "machine_per_second_usd": {
+      "shared-cpu-1x": 0.00000194,
+      "shared-cpu-2x": 0.00000388,
+      "performance-1x": 0.00001426,
+      "performance-2x": 0.00002852
+    },
+    "public_ipv4_per_hour_usd": 0.002,
+    "volume_gb_per_month_usd": 0.15,
+    "hosted_zone_per_month_usd": 0.5
+  },
+  "suites": {
+    "smoke": {
+      "repetitions": 1,
+      "cells": [
+        {
+          "routes": 2,
+          "fresh_connections_per_second": 2,
+          "held_streams": 2,
+          "warmup_seconds": 5,
+          "duration_seconds": 15
+        }
+      ]
+    },
+    "scout": {
+      "repetitions": 1,
+      "cells": [
+        {
+          "routes": 25,
+          "fresh_connections_per_second": 5,
+          "held_streams": 25,
+          "warmup_seconds": 15,
+          "duration_seconds": 60
+        },
+        {
+          "routes": 100,
+          "fresh_connections_per_second": 10,
+          "held_streams": 100,
+          "warmup_seconds": 20,
+          "duration_seconds": 90
+        },
+        {
+          "routes": 250,
+          "fresh_connections_per_second": 20,
+          "held_streams": 500,
+          "warmup_seconds": 30,
+          "duration_seconds": 120
+        },
+        {
+          "routes": 500,
+          "fresh_connections_per_second": 40,
+          "held_streams": 1000,
+          "warmup_seconds": 45,
+          "duration_seconds": 180
+        },
+        {
+          "routes": 1000,
+          "fresh_connections_per_second": 80,
+          "held_streams": 2000,
+          "warmup_seconds": 60,
+          "duration_seconds": 240
+        }
+      ]
+    },
+    "confirm": {
+      "repetitions": 3,
+      "requires_target": true,
+      "cells": []
+    }
+  }
+}

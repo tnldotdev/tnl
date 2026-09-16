@@ -17,13 +17,15 @@ func TestDurationHistogramMergesBeforePercentiles(t *testing.T) {
 	}
 }
 
-func TestNewBenchmarkResultEmitsFailureRow(t *testing.T) {
-	result := newBenchmarkResult(cli{
-		CellID: "smoke-relay2-r25-rep1", Suite: "smoke", Workload: "agent-worktrees-assumed-v1",
-		Repetition: 1, DriverCount: 1, Routes: 25, Topology: "split",
-	}, time.Now().Add(-time.Second), measurements{}, contextErrorForTest{})
-	if result.SchemaVersion != 4 || result.Status != "failed" || result.Failure == nil ||
-		len(result.Phases) != 1 || result.Phases[0].Errors != 1 || result.Configuration.Topology != "split" {
+func TestFailedResultEmitsWorkerRow(t *testing.T) {
+	worker := resultWorker{Kind: "load", Index: 1, Count: 2}
+	configuration := resultConfiguration{Sequence: 1, Routes: 25}
+	result := failedResult(
+		"smoke-r25-c5-s25-rep1", "smoke", 1, worker, configuration,
+		time.Now().Add(-time.Second), contextErrorForTest{},
+	)
+	if result.SchemaVersion != benchmarkResultSchemaVersion || result.Status != "failed" || result.Failure == nil ||
+		len(result.Phases) != 1 || result.Phases[0].Errors != 1 || result.Worker != worker || result.Configuration != configuration {
 		t.Fatalf("failure result = %#v", result)
 	}
 }
