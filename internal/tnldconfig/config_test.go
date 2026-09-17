@@ -1,7 +1,6 @@
 package tnldconfig
 
 import (
-	"slices"
 	"testing"
 	"time"
 )
@@ -166,7 +165,7 @@ func TestConfigControlHostnameRejectsURLAndPort(t *testing.T) {
 		IngressLeaseDuration: 30 * time.Second, RelayLeaseDuration: 30 * time.Second,
 		LeaseRenewalInterval: 10 * time.Second, ControlRetryInterval: time.Second,
 		RoutingTableWait: time.Second, DrainTimeout: time.Second,
-		TunnelFallbackDelay: time.Second, QUICIdleTimeout: time.Second,
+		QUICIdleTimeout: time.Second,
 	}
 	for _, value := range []string{"https://control.tnl.example.com", "control.tnl.example.com:443", "control.tnl.example.com/path", "Control.tnl.example.com"} {
 		config := base
@@ -181,19 +180,6 @@ func TestConfigRejectsGatewayConfiguration(t *testing.T) {
 	for _, args := range [][]string{{"--mode", "gateway"}, {"--gateway-id", "gateway-1"}, {"--domain", "example.com"}} {
 		if _, err := Parse(args); err == nil {
 			t.Fatalf("retired configuration %q was accepted", args)
-		}
-	}
-}
-
-func TestEffectiveReservedRouteNames(t *testing.T) {
-	config := Config{
-		Mode: RoleStandalone, ServerDomain: "example.com", ManagedDeploymentDomain: "example.com",
-		ReservedRouteNames: []string{"custom"},
-	}
-	got := config.EffectiveReservedRouteNames()
-	for _, want := range []string{"custom", "domains", "control", "ingress", "relay"} {
-		if !slices.Contains(got, want) {
-			t.Fatalf("reserved route names %v do not contain %q", got, want)
 		}
 	}
 }

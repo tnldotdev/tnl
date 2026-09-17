@@ -299,8 +299,8 @@ func splitTestConfig(role tnldconfig.Role, metricsAddress string) tnldconfig.Con
 		Mode: role, MetricsListen: metricsAddress,
 		PublicConnectionLimit: 100, RouteConnectionLimit: 10, PublisherConnectionLimit: 10,
 		RelayStreamCapacity: 100, QUICMaxIncomingStreams: 100, QUICIdleTimeout: time.Minute,
-		TunnelFallbackDelay: 10 * time.Millisecond, IngressLeaseDuration: 2 * time.Second,
-		RelayLeaseDuration: 2 * time.Second, LeaseRenewalInterval: 500 * time.Millisecond,
+		IngressLeaseDuration: 2 * time.Second,
+		RelayLeaseDuration:   2 * time.Second, LeaseRenewalInterval: 500 * time.Millisecond,
 		ControlRetryInterval: 50 * time.Millisecond, RoutingTableWait: time.Second, DrainTimeout: time.Second,
 	}
 }

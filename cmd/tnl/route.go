@@ -21,7 +21,7 @@ type routeListCommand struct {
 
 type routeDeleteCommand struct {
 	remoteFlags `embed:""`
-	RouteID     string `arg:"" name:"route-id" required:""`
+	RouteID     string `arg:"" name:"route-id" required:"" help:"Route ID to delete."`
 }
 
 func runRouteList(ctx context.Context, command routeListCommand, output, diagnostics io.Writer) error {

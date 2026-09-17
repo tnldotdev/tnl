@@ -80,7 +80,6 @@ func startIntegrationBinaryStandalone(t *testing.T) *integrationBinaryStandalone
 		"TNLD_ROUTING_TABLE_WAIT":           "1s",
 		"TNLD_SERVER_DOMAIN":                "127.0.0.1.nip.io",
 		"TNLD_STORAGE_KEY":                  testStorageKey,
-		"TNLD_TUNNEL_FALLBACK_DELAY":        "10ms",
 	})
 	owner := newBinaryTopology(t)
 	server := owner.start(t, tnldconfig.RoleStandalone, repositoryRoot, serveEnvironment, tnldPath, "serve")

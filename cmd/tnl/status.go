@@ -15,7 +15,7 @@ import (
 
 type statusCommand struct {
 	Output   string `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
-	StateDir string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Directory for persistent client state."`
+	StateDir string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
 	All      bool   `name:"all" help:"Show tunnels from every local project."`
 	Project  string `kong:"-"`
 }

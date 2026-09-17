@@ -20,7 +20,7 @@ type domainCommand struct {
 
 type domainClaimCommand struct {
 	remoteFlags `embed:""`
-	Domain      string `arg:"" name:"domain" required:""`
+	Domain      string `arg:"" name:"domain" required:"" help:"Canonical domain name to claim."`
 	Default     bool   `name:"default" help:"Make the domain the team default after it becomes ready."`
 }
 

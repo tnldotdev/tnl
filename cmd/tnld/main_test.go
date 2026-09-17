@@ -82,7 +82,7 @@ func TestResolveConfigFileRespectsEnvironmentAndFlags(t *testing.T) {
 		RelayServiceID: "relay-test", RelayID: "relay-test", RelayAddress: "relay.example.com:443",
 		InternalRelayAddress: "relay.internal:9443", RelayTCPListen: ":443", RelayUDPListen: ":443",
 		PublicConnectionLimit: 1, RouteConnectionLimit: 1, PublisherConnectionLimit: 1, QUICMaxIncomingStreams: 1,
-		QUICIdleTimeout: time.Second, TunnelFallbackDelay: time.Second, IngressLeaseDuration: 3 * time.Second,
+		QUICIdleTimeout: time.Second, IngressLeaseDuration: 3 * time.Second,
 		RelayLeaseDuration: 3 * time.Second, LeaseRenewalInterval: time.Second, ControlRetryInterval: time.Second,
 		RoutingTableWait: time.Second, DrainTimeout: time.Second,
 	}
@@ -96,7 +96,10 @@ func TestResolveConfigFileRespectsEnvironmentAndFlags(t *testing.T) {
 }
 
 func TestParserRejectsRemovedServeFlags(t *testing.T) {
-	for _, flag := range []string{"--state-dir", "--backup-url", "--relay-map-file", "--edge-url", "--worker-token"} {
+	for _, flag := range []string{
+		"--state-dir", "--backup-url", "--relay-map-file", "--edge-url", "--worker-token",
+		"--reserved-route-name", "--tunnel-fallback-delay",
+	} {
 		var flags tnldCLI
 		parser, err := newTNLDParser(&flags, new(bytes.Buffer))
 		if err != nil {
