@@ -516,7 +516,7 @@ func FuzzNormalizeTarget(f *testing.F) {
 		}
 		address, err := netip.ParseAddr(parsed.Hostname())
 		if err != nil || !address.IsLoopback() || address.Zone() != "" {
-			t.Fatalf("canonical target is not literal loopback: %q", canonical)
+			t.Fatalf("canonical target is not local-only: %q", canonical)
 		}
 		port, err := strconv.ParseUint(parsed.Port(), 10, 16)
 		if err != nil || port == 0 {

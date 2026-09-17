@@ -82,11 +82,11 @@ func TestDevBootstrapConfiguresAndRegistersOneTarget(t *testing.T) {
 	}
 	result = postDevRequest(bootstrap, "/v1/target", devTargetRequest{Protocol: 1, Framework: "vite", Target: "http://192.0.2.1:5173"})
 	if result.err != nil || result.status != http.StatusBadRequest {
-		t.Fatalf("non-loopback target result = %#v", result)
+		t.Fatalf("remote target result = %#v", result)
 	}
 }
 
-func TestDevBootstrapRequiresTheForcedPortAndPreservesTheLoopbackHost(t *testing.T) {
+func TestDevBootstrapRequiresTheForcedPortAndPreservesTheTargetHost(t *testing.T) {
 	ctx := devBootstrapTestContext(t)
 	bootstrap := startDevBootstrapTest(t, ctx, "http://127.0.0.1:5173", t.TempDir())
 	_, done := configureDevBootstrapTest(t, ctx, bootstrap, devConfigurationRequest{Protocol: 1, Framework: "next"})

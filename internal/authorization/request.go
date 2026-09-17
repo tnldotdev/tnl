@@ -232,7 +232,7 @@ func canonicalIPPrefix(value string) (netip.Prefix, error) {
 	return netip.PrefixFrom(address, bits).Masked(), nil
 }
 
-// ValidateRouteTarget accepts the loopback HTTP target format used by routes.
+// ValidateRouteTarget accepts the local HTTP target format used by routes.
 func ValidateRouteTarget(target string) error {
 	canonical, err := localproxy.NormalizeTarget(target)
 	if err != nil || canonical != target {

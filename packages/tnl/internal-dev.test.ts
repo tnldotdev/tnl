@@ -320,7 +320,7 @@ describe("protocol v1", () => {
     const connection = requiredBootstrap(context.bootstrap);
     await expect(requestTunnelAssignment("Next.js", connection)).rejects.toThrow(/framework name/);
     expect(() => canonicalLoopbackTarget("127.0.0.1", 0)).toThrow(/listener port/);
-    expect(() => canonicalLoopbackTarget("192.0.2.1", 3000)).toThrow(/loopback listener/);
+    expect(() => canonicalLoopbackTarget("192.0.2.1", 3000)).toThrow(/localhost or all interfaces/);
     expect(bootstrap.requests).toHaveLength(0);
   });
 

@@ -70,7 +70,7 @@ type Dev struct {
 	StartupTimeout *Duration `json:"startup_timeout,omitempty" yaml:"startup_timeout,omitempty"`
 }
 
-// Target accepts either a loopback HTTP URL or a literal port.
+// Target accepts either a local HTTP URL or a literal port.
 type Target string
 
 func (t *Target) UnmarshalJSON(data []byte) error {

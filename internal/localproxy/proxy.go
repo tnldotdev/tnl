@@ -1,4 +1,4 @@
-// Package localproxy forwards one public hostname to one loopback HTTP target.
+// Package localproxy forwards one public hostname to one local HTTP target.
 package localproxy
 
 import (
@@ -21,7 +21,7 @@ import (
 
 const maxHeaderFields = 100
 
-// Preflight validates target and verifies that it accepts a loopback TCP connection.
+// Preflight validates target and verifies that it accepts a local TCP connection.
 func Preflight(ctx context.Context, target string) error {
 	canonicalTarget, err := NormalizeTarget(target)
 	if err != nil {
@@ -38,7 +38,7 @@ func Preflight(ctx context.Context, target string) error {
 	return nil
 }
 
-// WaitForTarget waits until a valid target accepts a loopback TCP connection.
+// WaitForTarget waits until a valid target accepts a local TCP connection.
 func WaitForTarget(ctx context.Context, target string) error {
 	return waitForTarget(ctx, target, Preflight)
 }
@@ -117,7 +117,7 @@ func New(target, hostname string) (http.Handler, error) {
 // NormalizeTarget validates a local proxy target and returns its canonical HTTP origin.
 func NormalizeTarget(target string) (string, error) {
 	if target == "" || strings.ContainsFunc(target, unicode.IsSpace) {
-		return "", diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("localproxy: target must be a bare port, localhost port, or loopback HTTP origin"))
+		return "", diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("localproxy: target must be a port, localhost:<port>, or an HTTP URL on this computer"))
 	}
 
 	barePort := true
@@ -135,7 +135,7 @@ func NormalizeTarget(target string) (string, error) {
 	} else if !barePort {
 		parsed, err := url.Parse(target)
 		if err != nil || !strings.EqualFold(parsed.Scheme, "http") || parsed.User != nil || parsed.Host == "" || parsed.Path != "" || parsed.ForceQuery || parsed.RawQuery != "" || strings.Contains(target, "#") {
-			return "", diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("localproxy: target must be a bare port, localhost port, or loopback HTTP origin"))
+			return "", diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("localproxy: target must be a port, localhost:<port>, or an HTTP URL on this computer"))
 		}
 		hostname, portText = parsed.Hostname(), parsed.Port()
 		if strings.EqualFold(hostname, "localhost") {
@@ -145,7 +145,7 @@ func NormalizeTarget(target string) (string, error) {
 
 	address, err := netip.ParseAddr(hostname)
 	if err != nil || !address.IsLoopback() || address.Zone() != "" {
-		return "", diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("localproxy: target host must be localhost or a literal loopback address"))
+		return "", diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("localproxy: target host must be localhost, a 127.x.x.x address, or ::1"))
 	}
 	port, err := strconv.Atoi(portText)
 	if err != nil || port < 1 || port > 65535 {

@@ -199,10 +199,10 @@ settings in project configuration rather than passing integration options.
 
 ### Listener Requirements
 
-The target must use HTTP over loopback. A wildcard binding (`0.0.0.0` or `::`)
-is allowed because tnl can still connect through loopback. Binding only to a
-specific LAN address is not supported. Vite middleware mode does not provide a
-supported listener. Next.js must report an HTTP listener URL.
+The listener must accept HTTP on localhost. A wildcard binding (`0.0.0.0` or
+`::`) is allowed because it includes localhost. Binding only to a specific LAN
+address is not supported. Vite middleware mode does not provide a supported
+listener. Next.js must report an HTTP listener URL.
 
 When a port is forced, the integration checks the actual listener instead of
 trusting configuration alone. The integration preserves Vite's

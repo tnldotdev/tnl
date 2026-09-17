@@ -41,7 +41,7 @@ downloaded artifact. macOS binaries are not Apple-signed or notarized.
 
 ## Publish
 
-Authenticate once, then publish a loopback port or URL:
+Authenticate once, then publish a local service port or URL:
 
 ```console
 tnl login https://control.tnl.example.com
@@ -106,7 +106,7 @@ tnl dev --port 3000 -- pnpm dev
 ```
 
 Each project service uses a private Unix socket and lock to prevent duplicate
-`tnl dev` processes. Framework integrations report the actual loopback port.
+`tnl dev` processes. Framework integrations report the actual local service port.
 They never receive server access tokens.
 
 Run `tnl init` for project setup. Follow the

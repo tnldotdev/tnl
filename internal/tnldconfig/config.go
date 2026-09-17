@@ -293,7 +293,7 @@ func (c Config) validateRouteUsage() error {
 	endpoint, err := url.Parse(c.RouteUsageURL)
 	if err != nil || endpoint.Host == "" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" ||
 		endpoint.Scheme != "https" && (endpoint.Scheme != "http" || !isLoopbackHost(endpoint.Hostname())) {
-		return errors.New("route usage URL must be an HTTPS base URL or a loopback HTTP base URL")
+		return errors.New("route usage URL must be an HTTPS base URL or an HTTP base URL on this computer")
 	}
 	return nil
 }

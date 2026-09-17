@@ -122,7 +122,7 @@ export function canonicalLoopbackTarget(host: string, port: number): CanonicalLo
   if (hostname === "::1") {
     return `http://[::1]:${port}`;
   }
-  throw new Error("tnl development target must use a loopback listener");
+  throw new Error("tnl development target must listen on localhost or all interfaces");
 }
 
 export async function registerLocalTarget(

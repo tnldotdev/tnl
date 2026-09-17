@@ -151,7 +151,7 @@ describe("withTnl", () => {
     {
       expected: "http://[::1]:3400",
       origin: "http://[::1]:3400",
-      source: "IPv6 loopback hostname",
+      source: "IPv6 localhost address",
     },
     {
       expected: "http://[::1]:3500",
@@ -185,8 +185,8 @@ describe("withTnl", () => {
     },
     {
       environment: { __NEXT_PRIVATE_ORIGIN: "http://192.0.2.1:3000", PORT: "3000" },
-      expected: /loopback listener/,
-      name: "non-loopback target",
+      expected: /localhost or all interfaces/,
+      name: "remote target",
     },
     {
       environment: { __NEXT_PRIVATE_ORIGIN: "http://127.0.0.1:3000", PORT: "3001" },
@@ -202,7 +202,7 @@ describe("withTnl", () => {
     expect(bootstrap.requests).toHaveLength(0);
   });
 
-  test("preserves a loopback host when tnl dev forces only the port", async () => {
+  test("preserves a local host when tnl dev forces only the port", async () => {
     const bootstrap = await startTestBootstrap();
     await withProcessEnvironment(
       {

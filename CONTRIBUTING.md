@@ -100,7 +100,7 @@ by the CLI, not repository code generation. Their user workflow belongs in the
 
 The local stack builds this checkout and runs PostgreSQL, Pebble, and standalone
 `tnld`. It uses `127.0.0.1.nip.io` for public route namespaces and publishes ports
-only on loopback. With Docker running:
+only on localhost. With Docker running:
 
 ```console
 mise exec -- task local:up

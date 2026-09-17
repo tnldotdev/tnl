@@ -29,7 +29,7 @@ Use these terms consistently in code, APIs, CLI help, and documentation.
 | **publisher**     | The local `tnl publish` or `tnl dev` process.                      |
 | **visitor**       | A browser or other client connecting to a public route.            |
 | **local service** | The developer's HTTP application.                                  |
-| **target**        | The loopback URL the publisher uses to reach the local service.    |
+| **target**        | The local HTTP URL the publisher uses to reach the local service.  |
 | **tunnel**        | One local `tnl publish` or `tnl dev` invocation and its lifecycle. |
 
 ## Projects And Client State

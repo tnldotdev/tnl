@@ -233,7 +233,7 @@ test("reports a fallback listener for server-side forced-port validation", async
   });
 });
 
-test("registers and serves an IPv6 loopback target", async () => {
+test("registers and serves an IPv6 localhost target", async () => {
   const port = await findAvailableLoopbackPort("::1");
   const fixture = await startViteFixture(port, {}, "::1");
 
