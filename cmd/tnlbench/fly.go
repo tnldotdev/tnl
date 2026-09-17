@@ -57,8 +57,6 @@ type machineSpec struct {
 	Env           map[string]string
 	Ports         []string
 	MachineConfig string
-	Volume        string
-	MountPath     string
 }
 
 func (f flyPlatform) preflight(ctx context.Context) error {
@@ -133,7 +131,7 @@ func redactCommandError(err error, secrets map[string]string) error {
 func (f flyPlatform) buildImage(ctx context.Context, app, label string) (string, error) {
 	_, err := f.executor.Run(
 		ctx, f.binary, "deploy", ".", "--app", app, "--dockerfile", "Dockerfile.bench",
-		"--build-only", "--push", "--image-label", label, "--yes",
+		"--config", "benchmarks/fly-build.toml", "--build-only", "--push", "--image-label", label, "--yes",
 	)
 	if err != nil {
 		return "", fmt.Errorf("build benchmark image: %w", err)
@@ -180,48 +178,6 @@ func (f flyPlatform) allocateAddresses(ctx context.Context, app string, sharedIP
 	return result, nil
 }
 
-func (f flyPlatform) createVolume(ctx context.Context, app, name string, sizeGB int) (string, error) {
-	output, err := f.executor.Run(
-		ctx, f.binary, "volumes", "create", name, "--app", app, "--region", f.region,
-		"--size", fmt.Sprint(sizeGB), "--snapshot-retention", "1", "--json", "--yes",
-	)
-	if err != nil {
-		return "", fmt.Errorf("create Fly volume for %s: %w", app, err)
-	}
-	var value any
-	if err := json.Unmarshal(output, &value); err != nil {
-		return "", fmt.Errorf("decode Fly volume for %s: %w", app, err)
-	}
-	id := nestedJSONString(value, "id")
-	if id == "" {
-		return "", fmt.Errorf("fly volume for %s has no ID", app)
-	}
-	return id, nil
-}
-
-func nestedJSONString(value any, key string) string {
-	switch value := value.(type) {
-	case map[string]any:
-		for name, child := range value {
-			if strings.EqualFold(name, key) {
-				if text, ok := child.(string); ok {
-					return text
-				}
-			}
-			if found := nestedJSONString(child, key); found != "" {
-				return found
-			}
-		}
-	case []any:
-		for _, child := range value {
-			if found := nestedJSONString(child, key); found != "" {
-				return found
-			}
-		}
-	}
-	return ""
-}
-
 func (f flyPlatform) runMachine(ctx context.Context, spec machineSpec) (flyMachine, error) {
 	arguments := []string{"machine", "run", spec.Image}
 	if spec.Command != "" {
@@ -244,9 +200,6 @@ func (f flyPlatform) runMachine(ctx context.Context, spec machineSpec) (flyMachi
 	}
 	if spec.MachineConfig != "" {
 		arguments = append(arguments, "--machine-config", spec.MachineConfig)
-	}
-	if spec.Volume != "" {
-		arguments = append(arguments, "--volume", spec.Volume+":"+spec.MountPath)
 	}
 	if _, err := f.executor.Run(ctx, f.binary, arguments...); err != nil {
 		return flyMachine{}, fmt.Errorf("run Fly machine %s: %w", spec.Name, err)
@@ -322,23 +275,4 @@ func (f flyPlatform) destroyMachines(ctx context.Context, app string) error {
 	}
 	_, err = f.executor.Run(ctx, f.binary, arguments...)
 	return err
-}
-
-func (f flyPlatform) waitPostgres(ctx context.Context, app, machineID string) error {
-	deadline := time.Now().Add(5 * time.Minute)
-	for {
-		_, err := f.executor.Run(
-			ctx, f.binary, "ssh", "console", "--app", app, "--machine", machineID,
-			"--command", "pg_isready -U tnl -d tnl", "--pty=false",
-		)
-		if err == nil {
-			return nil
-		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("PostgreSQL did not become ready: %w", err)
-		}
-		if err := sleepContext(ctx, 2*time.Second); err != nil {
-			return err
-		}
-	}
 }

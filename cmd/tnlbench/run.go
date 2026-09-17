@@ -21,7 +21,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming"
 )
 
-const runManifestSchemaVersion = 1
+const runManifestSchemaVersion = 2
 
 type runCommand struct {
 	Suite        string `name:"suite" env:"BENCH_SUITE" required:"" help:"Explicit suite to execute: smoke, scout, or confirm."`
@@ -45,24 +45,24 @@ type cleanupCommand struct {
 }
 
 type runManifest struct {
-	SchemaVersion int                     `json:"schema_version"`
-	RunID         string                  `json:"run_id"`
-	Status        string                  `json:"status"`
-	CreatedAt     time.Time               `json:"created_at"`
-	UpdatedAt     time.Time               `json:"updated_at"`
-	FlyOrg        string                  `json:"fly_org"`
-	Region        string                  `json:"region"`
-	ParentDomain  string                  `json:"parent_domain"`
-	ParentZoneID  string                  `json:"parent_zone_id"`
-	ServerDomain  string                  `json:"server_domain"`
-	ManagedDomain string                  `json:"managed_domain"`
-	Image         string                  `json:"image,omitempty"`
-	Apps          []manifestApp           `json:"apps"`
-	Zones         []manifestZone          `json:"zones"`
-	Addresses     map[string]flyAddresses `json:"addresses,omitempty"`
-	Volume        *manifestVolume         `json:"volume,omitempty"`
-	Cells         []manifestCell          `json:"cells,omitempty"`
-	CleanupErrors []string                `json:"cleanup_errors,omitempty"`
+	SchemaVersion   int                      `json:"schema_version"`
+	RunID           string                   `json:"run_id"`
+	Status          string                   `json:"status"`
+	CreatedAt       time.Time                `json:"created_at"`
+	UpdatedAt       time.Time                `json:"updated_at"`
+	FlyOrg          string                   `json:"fly_org"`
+	Region          string                   `json:"region"`
+	ParentDomain    string                   `json:"parent_domain"`
+	ParentZoneID    string                   `json:"parent_zone_id"`
+	ServerDomain    string                   `json:"server_domain"`
+	ManagedDomain   string                   `json:"managed_domain"`
+	Image           string                   `json:"image,omitempty"`
+	Apps            []manifestApp            `json:"apps"`
+	Zones           []manifestZone           `json:"zones"`
+	Addresses       map[string]flyAddresses  `json:"addresses,omitempty"`
+	ManagedPostgres *manifestManagedPostgres `json:"managed_postgres"`
+	Cells           []manifestCell           `json:"cells,omitempty"`
+	CleanupErrors   []string                 `json:"cleanup_errors,omitempty"`
 }
 
 type manifestApp struct {
@@ -82,10 +82,15 @@ type manifestZone struct {
 	Removed      bool     `json:"removed,omitempty"`
 }
 
-type manifestVolume struct {
-	App     string `json:"app"`
-	ID      string `json:"id"`
-	Removed bool   `json:"removed,omitempty"`
+type manifestManagedPostgres struct {
+	ID                   string `json:"id,omitempty"`
+	Name                 string `json:"name"`
+	Region               string `json:"region"`
+	Plan                 string `json:"plan"`
+	PostgresMajorVersion int    `json:"postgres_major_version"`
+	StorageGB            int    `json:"storage_gb"`
+	CreationStarted      bool   `json:"creation_started,omitempty"`
+	Removed              bool   `json:"removed,omitempty"`
 }
 
 type manifestCell struct {
@@ -99,7 +104,6 @@ type runSecrets struct {
 	LoginToken       string
 	ClusterSecret    string
 	StorageKey       string
-	DatabasePassword string
 	CoordinatorToken string
 	AWSAccessKeyID   string
 	AWSSecretKey     string
@@ -122,6 +126,9 @@ func (c runCommand) Validate() error {
 	}
 	if value, found := os.LookupEnv("BENCH_SUITE"); !found || value == "" || value != c.Suite {
 		return errors.New("execution requires an explicit BENCH_SUITE environment variable")
+	}
+	if !validFlySlug(c.FlyOrg) {
+		return errors.New("BENCH_FLY_ORG must be a canonical Fly organization slug")
 	}
 	return validateBenchmarkInfrastructure(c.ParentDomain, c.ParentZoneID, c.ACMEEmail)
 }
@@ -165,7 +172,10 @@ func (c runCommand) run(ctx context.Context, stdout io.Writer) (retErr error) {
 		CreatedAt: time.Now().UTC(), FlyOrg: c.FlyOrg, Region: plan.Region,
 		ParentDomain: c.ParentDomain, ParentZoneID: c.ParentZoneID,
 		ServerDomain: runID + "." + c.ParentDomain, ManagedDomain: "routes." + runID + "." + c.ParentDomain,
-		Addresses: make(map[string]flyAddresses),
+		Addresses: make(map[string]flyAddresses), ManagedPostgres: &manifestManagedPostgres{
+			Name: benchmarkManagedPostgresName(runID), Region: plan.Region, Plan: plan.ManagedPostgres.Plan,
+			PostgresMajorVersion: plan.ManagedPostgres.PostgresMajorVersion, StorageGB: plan.ManagedPostgres.StorageGB,
+		},
 	}
 	manifestPath := filepath.Join(runDirectory, "manifest.json")
 	if err := saveManifest(manifestPath, &manifest); err != nil {
@@ -201,6 +211,9 @@ func (c runCommand) run(ctx context.Context, stdout io.Writer) (retErr error) {
 		return err
 	}
 	if err := fly.validateOrg(ctx); err != nil {
+		return err
+	}
+	if err := fly.validateManagedPostgresAccess(ctx); err != nil {
 		return err
 	}
 	if err := dns.validateParentZone(ctx, c.ParentZoneID, c.ParentDomain); err != nil {
@@ -285,6 +298,27 @@ func provisionBenchmark(
 	manifest *runManifest,
 	secrets runSecrets,
 ) (provisionedBenchmark, error) {
+	manifest.ManagedPostgres.CreationStarted = true
+	if err := saveManifest(manifestPath, manifest); err != nil {
+		return provisionedBenchmark{}, err
+	}
+	databaseCtx, cancelDatabase := context.WithTimeout(
+		ctx, time.Duration(plan.ManagedPostgres.ProvisionTimeoutSeconds)*time.Second,
+	)
+	database, databaseCredentials, databaseErr := fly.createManagedPostgres(
+		databaseCtx, manifest.ManagedPostgres.Name, plan.ManagedPostgres,
+	)
+	cancelDatabase()
+	if database.ID != "" {
+		manifest.ManagedPostgres.ID = database.ID
+		if err := saveManifest(manifestPath, manifest); err != nil {
+			return provisionedBenchmark{}, errors.Join(databaseErr, err)
+		}
+	}
+	if databaseErr != nil {
+		return provisionedBenchmark{}, databaseErr
+	}
+
 	serverZone, err := dns.createZone(ctx, manifest.ServerDomain, manifest.RunID+"-server")
 	if err != nil {
 		return provisionedBenchmark{}, err
@@ -319,7 +353,7 @@ func provisionBenchmark(
 	}
 
 	apps := benchmarkAppNames(manifest.RunID)
-	for _, role := range []string{"postgres", "control", "ingress", "relay-a", "relay-b", "coordinator", "publisher", "load"} {
+	for _, role := range []string{"control", "ingress", "relay-a", "relay-b", "coordinator", "publisher", "load"} {
 		if err := fly.createApp(ctx, apps[role]); err != nil {
 			return provisionedBenchmark{}, err
 		}
@@ -365,11 +399,9 @@ func provisionBenchmark(
 		}
 	}
 
-	databaseURL := "postgres://tnl:" + secrets.DatabasePassword + "@" + apps["postgres"] + ".internal:5432/tnl?sslmode=disable"
 	appSecrets := map[string]map[string]string{
-		"postgres": {"POSTGRES_PASSWORD": secrets.DatabasePassword},
 		"control": {
-			"TNLD_DATABASE_URL": databaseURL, "TNLD_DATABASE_DIRECT_URL": databaseURL,
+			"TNLD_DATABASE_URL": databaseCredentials.PooledURL, "TNLD_DATABASE_DIRECT_URL": databaseCredentials.DirectURL,
 			"TNLD_LOGIN_TOKEN": secrets.LoginToken, "TNLD_CLUSTER_SECRET": secrets.ClusterSecret,
 			"TNLD_STORAGE_KEY": secrets.StorageKey, "AWS_ACCESS_KEY_ID": secrets.AWSAccessKeyID,
 			"AWS_SECRET_ACCESS_KEY": secrets.AWSSecretKey, "AWS_SESSION_TOKEN": secrets.AWSSessionToken,
@@ -387,25 +419,6 @@ func provisionBenchmark(
 		if err := fly.setSecrets(ctx, apps[role], values); err != nil {
 			return provisionedBenchmark{}, err
 		}
-	}
-	volumeID, err := fly.createVolume(ctx, apps["postgres"], "postgres_data", 1)
-	if err != nil {
-		return provisionedBenchmark{}, err
-	}
-	manifest.Volume = &manifestVolume{App: apps["postgres"], ID: volumeID}
-	if err := saveManifest(manifestPath, manifest); err != nil {
-		return provisionedBenchmark{}, err
-	}
-	postgres, err := fly.runMachine(ctx, machineSpec{
-		App: apps["postgres"], Name: "postgres-1", Image: "postgres:18-alpine", Size: plan.Machines.Postgres,
-		Restart: "always", Env: map[string]string{"POSTGRES_USER": "tnl", "POSTGRES_DB": "tnl"},
-		Volume: volumeID, MountPath: "/var/lib/postgresql/data",
-	})
-	if err != nil {
-		return provisionedBenchmark{}, err
-	}
-	if err := fly.waitPostgres(ctx, apps["postgres"], postgres.ID); err != nil {
-		return provisionedBenchmark{}, err
 	}
 	if err := fly.runEphemeral(ctx, machineSpec{
 		App: apps["control"], Name: "migrate", Image: image, Command: "/tnld migrate", Size: "shared-cpu-1x",
@@ -688,6 +701,7 @@ func cleanupRun(ctx context.Context, fly flyPlatform, dns benchmarkDNS, manifest
 	manifest.CleanupErrors = nil
 	_ = saveManifest(manifestPath, manifest)
 	var cleanupErr error
+	controlRemoved := true
 	for index := len(manifest.Apps) - 1; index >= 0; index-- {
 		app := &manifest.Apps[index]
 		if app.Removed {
@@ -696,13 +710,21 @@ func cleanupRun(ctx context.Context, fly flyPlatform, dns benchmarkDNS, manifest
 		if err := fly.destroyApp(ctx, app.Name); err != nil {
 			cleanupErr = errors.Join(cleanupErr, err)
 			manifest.CleanupErrors = append(manifest.CleanupErrors, err.Error())
+			if app.Role == "control" {
+				controlRemoved = false
+			}
 			continue
 		}
 		app.Removed = true
-		if manifest.Volume != nil && manifest.Volume.App == app.Name {
-			manifest.Volume.Removed = true
-		}
 		_ = saveManifest(manifestPath, manifest)
+	}
+	if !controlRemoved {
+		err := errors.New("preserve Fly Managed Postgres because the control app was not removed")
+		cleanupErr = errors.Join(cleanupErr, err)
+		manifest.CleanupErrors = append(manifest.CleanupErrors, err.Error())
+	} else if err := cleanupManagedPostgres(ctx, fly, manifestPath, manifest); err != nil {
+		cleanupErr = errors.Join(cleanupErr, err)
+		manifest.CleanupErrors = append(manifest.CleanupErrors, err.Error())
 	}
 	for index := len(manifest.Zones) - 1; index >= 0; index-- {
 		zone := &manifest.Zones[index]
@@ -725,9 +747,101 @@ func cleanupRun(ctx context.Context, fly flyPlatform, dns benchmarkDNS, manifest
 	return errors.Join(cleanupErr, saveManifest(manifestPath, manifest))
 }
 
+func cleanupManagedPostgres(
+	ctx context.Context,
+	fly flyPlatform,
+	manifestPath string,
+	manifest *runManifest,
+) error {
+	database := manifest.ManagedPostgres
+	if database == nil || database.Removed {
+		return nil
+	}
+	if !database.CreationStarted && database.ID == "" {
+		database.Removed = true
+		return saveManifest(manifestPath, manifest)
+	}
+	cluster, found, err := discoverManagedPostgresForCleanup(ctx, fly, *database, manifest.FlyOrg)
+	if err != nil {
+		return err
+	}
+	if !found {
+		database.Removed = true
+		return saveManifest(manifestPath, manifest)
+	}
+	if database.ID == "" {
+		database.ID = cluster.ID
+		if err := saveManifest(manifestPath, manifest); err != nil {
+			return err
+		}
+	}
+	details, err := fly.managedPostgresStatus(ctx, cluster.ID)
+	if err != nil {
+		return err
+	}
+	if details.ID != database.ID || details.Name != database.Name || details.Region != database.Region ||
+		!strings.EqualFold(details.Plan, database.Plan) || details.StorageGB != database.StorageGB {
+		return fmt.Errorf("refuse to clean unowned Fly Managed Postgres cluster %q", details.Name)
+	}
+	if err := fly.destroyManagedPostgres(ctx, cluster.ID); err != nil {
+		return err
+	}
+	database.Removed = true
+	return saveManifest(manifestPath, manifest)
+}
+
+func discoverManagedPostgresForCleanup(
+	ctx context.Context,
+	fly flyPlatform,
+	expected manifestManagedPostgres,
+	flyOrg string,
+) (flyManagedPostgresCluster, bool, error) {
+	deadline := time.Now().Add(2 * time.Minute)
+	for {
+		clusters, err := fly.listManagedPostgres(ctx)
+		if err != nil {
+			return flyManagedPostgresCluster{}, false, err
+		}
+		cluster, found, err := selectManagedPostgresForCleanup(expected, flyOrg, clusters)
+		if err != nil || found || expected.ID != "" || time.Now().After(deadline) {
+			return cluster, found, err
+		}
+		if err := sleepContext(ctx, 5*time.Second); err != nil {
+			return flyManagedPostgresCluster{}, false, fmt.Errorf("discover Fly Managed Postgres cluster %q: %w", expected.Name, err)
+		}
+	}
+}
+
+func selectManagedPostgresForCleanup(
+	expected manifestManagedPostgres,
+	flyOrg string,
+	clusters []flyManagedPostgresCluster,
+) (flyManagedPostgresCluster, bool, error) {
+	var matches []flyManagedPostgresCluster
+	for _, cluster := range clusters {
+		if cluster.Name == expected.Name || expected.ID != "" && cluster.ID == expected.ID {
+			matches = append(matches, cluster)
+		}
+	}
+	if len(matches) == 0 {
+		return flyManagedPostgresCluster{}, false, nil
+	}
+	if len(matches) != 1 {
+		return flyManagedPostgresCluster{}, false, errors.New("refuse to clean ambiguous Fly Managed Postgres clusters")
+	}
+	cluster := matches[0]
+	if expected.ID != "" && cluster.ID != expected.ID || cluster.Name != expected.Name ||
+		cluster.Organization.Slug != flyOrg || cluster.Region != expected.Region ||
+		!strings.EqualFold(cluster.Plan, expected.Plan) {
+		return flyManagedPostgresCluster{}, false, fmt.Errorf("refuse to clean unowned Fly Managed Postgres cluster %q", cluster.Name)
+	}
+	return cluster, true, nil
+}
+
 func validateManifestResources(manifest runManifest) error {
 	parentDomain, parentDomainErr := naming.CanonicalizeHostname(manifest.ParentDomain)
 	if manifest.SchemaVersion != runManifestSchemaVersion || !validRunID(manifest.RunID) ||
+		!validFlySlug(manifest.FlyOrg) || len(manifest.Region) != 3 || !validFlySlug(manifest.Region) ||
 		parentDomainErr != nil || parentDomain != manifest.ParentDomain ||
 		manifest.ParentZoneID == "" || canonicalZoneID(manifest.ParentZoneID) != manifest.ParentZoneID ||
 		strings.ContainsAny(manifest.ParentZoneID, " /\t\r\n") {
@@ -787,8 +901,13 @@ func validateManifestResources(manifest runManifest) error {
 			return errors.New("benchmark managed zone does not belong to the recorded server zone")
 		}
 	}
-	if manifest.Volume != nil && (manifest.Volume.App != expectedApps["postgres"] || manifest.Volume.ID == "") {
-		return errors.New("benchmark manifest has an invalid PostgreSQL volume")
+	database := manifest.ManagedPostgres
+	if database == nil || database.Name != benchmarkManagedPostgresName(manifest.RunID) || database.Region != manifest.Region ||
+		database.Plan == "" || database.Plan != strings.ToLower(database.Plan) ||
+		(database.PostgresMajorVersion != 16 && database.PostgresMajorVersion != 17) ||
+		database.StorageGB < 10 || database.StorageGB > 500 ||
+		database.ID != "" && !validFlyResourceID(database.ID) {
+		return errors.New("benchmark manifest has an invalid Fly Managed Postgres identity")
 	}
 	return nil
 }
@@ -846,17 +965,13 @@ func generateRunSecrets() (runSecrets, error) {
 	if err != nil {
 		return runSecrets{}, err
 	}
-	database, err := randomBase64(24)
-	if err != nil {
-		return runSecrets{}, err
-	}
 	coordinator, err := randomBase64(32)
 	if err != nil {
 		return runSecrets{}, err
 	}
 	return runSecrets{
 		LoginToken: string(login), ClusterSecret: cluster, StorageKey: storage,
-		DatabasePassword: database, CoordinatorToken: coordinator,
+		CoordinatorToken: coordinator,
 	}, nil
 }
 
@@ -900,10 +1015,39 @@ func validRunID(value string) bool {
 func benchmarkAppNames(runID string) map[string]string {
 	prefix := "tnl-bench-" + runID + "-"
 	return map[string]string{
-		"postgres": prefix + "pg", "control": prefix + "ctl", "ingress": prefix + "ing",
-		"relay-a": prefix + "ra", "relay-b": prefix + "rb", "coordinator": prefix + "coord",
+		"control": prefix + "ctl", "ingress": prefix + "ing", "relay-a": prefix + "ra",
+		"relay-b": prefix + "rb", "coordinator": prefix + "coord",
 		"publisher": prefix + "pub", "load": prefix + "load",
 	}
+}
+
+func benchmarkManagedPostgresName(runID string) string {
+	return "tnl-bench-" + runID + "-pg"
+}
+
+func validFlyResourceID(value string) bool {
+	if value == "" || len(value) > 256 {
+		return false
+	}
+	for _, character := range value {
+		if (character < 'a' || character > 'z') && (character < 'A' || character > 'Z') &&
+			(character < '0' || character > '9') && character != '-' && character != '_' {
+			return false
+		}
+	}
+	return true
+}
+
+func validFlySlug(value string) bool {
+	if value == "" || len(value) > 63 || value[0] == '-' || value[len(value)-1] == '-' {
+		return false
+	}
+	for _, character := range value {
+		if (character < 'a' || character > 'z') && (character < '0' || character > '9') && character != '-' {
+			return false
+		}
+	}
+	return true
 }
 
 func balancedAssignment(total, workers, index int) int {
