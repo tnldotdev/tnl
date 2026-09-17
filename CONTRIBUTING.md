@@ -263,6 +263,63 @@ work, so repeat capacity measurements with tracing disabled (the default).
 All runs check one CA order and one installed certificate issuance per route;
 activation timings distinguish total setup from each publisher's observed wait.
 
+### Per-Component Runtime Load
+
+`task go:test-separated-load` runs the same real visitor workload with one server
+role per container, a publisher container, four visitor containers, a local service,
+Pebble/DNS, PostgreSQL, and a coordinator. It calls production runtime and publisher
+code from ordinary Go test processes; it is not a CLI startup benchmark. The 64
+publishers share one Go process/client state, so publisher memory is a group cost,
+not the cost of 64 independent CLI processes.
+
+```console
+mise exec -- task go:test-separated-load ROUTES=64 RPS=160 DURATION=30s RESULTS=bench-results/separated-reference
+mise exec -- env TNL_TEST_PUBLISHER_CPUS=0.25 task go:test-separated-load ROUTES=64 RPS=160 DURATION=30s RESULTS=bench-results/separated-publisher-025
+mise exec -- task go:test-separated-load ROUTES=4 RPS=16 DURATION=10s RACE=1 RESULTS=bench-results/separated-race
+```
+
+Each visitor has two workers and two queue slots, retaining eight of each in total.
+Four real container IPs preserve the source limiter. The normal limit is 50 new
+connections/second per source after its burst, so rates above 200/sec can hit that
+limit. Phase start/stop barriers run outside the request path; a 300ms future stop
+allows all four visitors to observe the same deadline. Reports count every elapsed
+offered slot, including misses, rather than assuming exactly `RPS * DURATION`.
+
+| Component     | CPU quota | Memory limit | Override prefix                        |
+| ------------- | --------: | -----------: | -------------------------------------- |
+| Control       |         1 |       512MiB | `TNL_TEST_CONTROL`                     |
+| Ingress       |         1 |       256MiB | `TNL_TEST_INGRESS`                     |
+| Each relay    |         1 |       256MiB | `TNL_TEST_RELAY_A`, `TNL_TEST_RELAY_B` |
+| Publishers    |         2 |       512MiB | `TNL_TEST_PUBLISHER`                   |
+| Each visitor  |         1 |       128MiB | `TNL_TEST_VISITOR`                     |
+| Local service |         1 |       128MiB | `TNL_TEST_APP`                         |
+| Pebble/DNS    |         1 |       128MiB | `TNL_TEST_PEBBLE`                      |
+| PostgreSQL    |         1 |       512MiB | `TNL_TEST_DATABASE`                    |
+| Coordinator   |       0.5 |       128MiB | Fixed                                  |
+
+Append `_CPUS` or `_MEMORY` to a prefix and pass it through `mise exec -- env`.
+Swap is disabled. Publisher targets remain loopback-only: the local service has
+its own cgroup but shares the publisher network namespace. Their network counters
+are therefore marked shared and must not be summed. CPU and memory remain separate.
+
+The result directory contains per-phase cgroup CPU, throttling, memory/current/peak,
+OOM, and network-counter JSON, raw production `.prom` scrapes, visitor results,
+and container exit evidence. Gauge samples at one-second intervals appear in the
+console log; redirect it to retain those samples. PostgreSQL's own resource files
+are read through its disposable superuser connection, without a metrics sidecar.
+Resource intervals include coordination/collection overhead and record their actual
+duration; cgroup memory includes charged page cache. Quota and peak figures describe
+the whole container, including its test wrapper.
+
+Checks retain provisioning deadlines, one CA order per route, route versions,
+recovery, healthy-route traffic during shutdown, and zero final active sessions,
+connections, and reservations. Ingress stops while control/PostgreSQL remain up,
+flushing its final usage checkpoints; latest per-route/bucket reports must match
+stored connection and byte totals. The runner fails if any component exits early
+and cleans its containers, networks, temporary keys/state, and volumes. Use a fresh
+`RESULTS` path per experiment to preserve earlier evidence. These local cgroup-v2
+experiments still use graceful runtime restart, local DNS/Pebble, and no WAN loss.
+
 ### JavaScript Package
 
 `pnpm test` and `pnpm typecheck` build through lifecycle hooks. Their `:ci`

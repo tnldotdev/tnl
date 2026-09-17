@@ -1,0 +1,283 @@
+package tnldruntime
+
+import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/tnldconfig"
+)
+
+const separatedDirectory = "/load"
+const separatedDomain = "split.integration.test"
+
+var separatedComponents = []string{"control", "ingress", "relay-a", "relay-b", "publishers", "visitor-1", "visitor-2", "visitor-3", "visitor-4", "app", "pebble"}
+
+// This fixed Compose experiment uses file barriers only for scheduling. All
+// product communication still uses the real authenticated APIs and transports.
+func separatedWrite(t *testing.T, name string, value any) {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(separatedDirectory, name+".json")
+	if err := os.WriteFile(path+".tmp", data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(path+".tmp", path); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func separatedRead(t *testing.T, ctx context.Context, name string, value any) bool {
+	t.Helper()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		data, err := os.ReadFile(filepath.Join(separatedDirectory, name+".json"))
+		if err == nil {
+			if value != nil {
+				if err := json.Unmarshal(data, value); err != nil {
+					t.Fatal(err)
+				}
+			}
+			return true
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			t.Fatal(err)
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-ticker.C:
+		}
+	}
+}
+
+func separatedWait(t *testing.T, name string, timeout time.Duration, value any) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), timeout)
+	defer cancel()
+	if !separatedRead(t, ctx, name, value) {
+		t.Fatalf("separated component deadline waiting for %s", name)
+	}
+}
+
+func separatedRoots(t *testing.T, path string) *x509.CertPool {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(separatedDirectory, path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(data) {
+		t.Fatal("invalid test roots")
+	}
+	return roots
+}
+
+func separatedHTTP(t *testing.T) *http.Client {
+	client, _ := newIntegrationHTTPSClient(t, separatedRoots(t, "roots.pem"), "", false)
+	return client
+}
+
+func TestSeparatedRuntimeSetup(t *testing.T) {
+	if os.Getenv("TNL_TEST_SEPARATED_COMPONENT") != "setup" {
+		t.Skip("run task go:test-separated-load")
+	}
+	if err := controlstate.Migrate(t.Context(), os.Getenv("TNL_TEST_POSTGRES_URL")); err != nil {
+		t.Fatal(err)
+	}
+	ca := newIntegrationTestCA(t)
+	if err := os.WriteFile(filepath.Join(separatedDirectory, "roots.pem"), ca.certificatePEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, role := range []string{"control", "relay-a", "relay-b", "pebble"} {
+		hostname := role + "." + separatedDomain
+		if role == "pebble" {
+			hostname = "pebble"
+		}
+		material := ca.issue(t, hostname)
+		if err := errors.Join(os.WriteFile(filepath.Join(separatedDirectory, role+".pem"), material.certificatePEM, 0o600),
+			os.WriteFile(filepath.Join(separatedDirectory, role+".key"), material.privateKeyPEM, 0o600)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	separatedWrite(t, "pebble-config", map[string]any{"pebble": map[string]any{
+		"listenAddress": "0.0.0.0:14000", "managementListenAddress": "0.0.0.0:15000",
+		"certificate": "/load/pebble.pem", "privateKey": "/load/pebble.key",
+		"httpPort": 80, "tlsPort": 443, "externalAccountBindingRequired": false,
+		"retryAfter": map[string]int{"authz": 0, "order": 0}, "keyAlgorithm": "ecdsa",
+		"profiles": map[string]any{"default": map[string]any{"description": "integration", "validityPeriod": 3600},
+			"tlsserver": map[string]any{"description": "tnl route TLS", "validityPeriod": 3600}},
+	}})
+}
+
+func separatedConfig(t *testing.T, component string) tnldconfig.Config {
+	t.Helper()
+	role := tnldconfig.Role(component)
+	if strings.HasPrefix(component, "relay-") {
+		role = tnldconfig.RoleRelay
+	}
+	cfg := splitTestConfig(role, "0.0.0.0:9090")
+	cfg.IngressLeaseDuration, cfg.RelayLeaseDuration = 30*time.Second, 30*time.Second
+	cfg.LeaseRenewalInterval, cfg.DrainTimeout = 10*time.Second, 5*time.Second
+	cfg.VisitorConnectionLimit, cfg.RouteConnectionLimit = 20000, 500
+	cfg.PublisherConnectionLimit, cfg.RelayStreamCapacity = 1000, 4096
+	cfg.QUICMaxIncomingStreams, cfg.QUICIdleTimeout = 4096, 45*time.Second
+	cfg.ClusterSecret = testClusterSecret
+	switch role {
+	case tnldconfig.RoleControl:
+		cfg.DatabaseURL = os.Getenv("TNL_TEST_POSTGRES_URL")
+		cfg.ControlListen, cfg.PrivateControlListen = "0.0.0.0:443", "0.0.0.0:9443"
+		cfg.ServerDomain, cfg.ManagedDeploymentDomain = separatedDomain, "routes."+separatedDomain
+		cfg.ControlTLSCertificateFile, cfg.ControlTLSPrivateKeyFile = "/load/control.pem", "/load/control.key"
+		cfg.ACMEDirectoryURL, cfg.ACMEEmail = "https://pebble:14000/dir", "integration@example.test"
+		cfg.ACMEAcceptTerms, cfg.ACMEProfile = true, "tlsserver"
+		cfg.LoginToken, cfg.StorageKey = testLoginToken, testStorageKey
+		cfg.AccessTokenLifetime, cfg.RefreshTokenLifetime = 5*time.Minute, time.Hour
+	case tnldconfig.RoleIngress:
+		cfg.ControlHostname, cfg.IngressID = "control."+separatedDomain, "ingress-separated"
+		cfg.IngressListen = "0.0.0.0:443"
+	case tnldconfig.RoleRelay:
+		cfg.ControlHostname = "control." + separatedDomain
+		cfg.RelayServiceID, cfg.RelayID = component, component+"-1"
+		cfg.RelayAddress = component + "." + separatedDomain + ":443"
+		cfg.RelayTLSCertificateFile, cfg.RelayTLSPrivateKeyFile = "/load/"+component+".pem", "/load/"+component+".key"
+		cfg.RelayTCPListen, cfg.RelayUDPListen = "0.0.0.0:443", "0.0.0.0:443"
+		cfg.InternalRelayListen, cfg.InternalRelayAddress = "0.0.0.0:8443", component+":8443"
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	return cfg
+}
+
+type separatedResources struct {
+	NetworkNamespace          string
+	At                        time.Time
+	CPUQuota, MemoryLimit     string
+	CPUUsec, ThrottledUsec    uint64
+	Periods, ThrottledPeriods uint64
+	Memory, Peak, OOMKills    uint64
+	ReceiveBytes, SendBytes   uint64
+	GOMAXPROCS                int
+	CAOrders                  int64
+}
+
+func readSeparatedResources() (separatedResources, error) {
+	r, err := readSeparatedResourceFiles(func(path string) (string, error) {
+		data, err := os.ReadFile(path)
+		return strings.TrimSpace(string(data)), err
+	})
+	r.GOMAXPROCS = runtime.GOMAXPROCS(0)
+	return r, err
+}
+
+func readSeparatedResourceFiles(read func(string) (string, error)) (separatedResources, error) {
+	r := separatedResources{At: time.Now()}
+	var err error
+	if r.CPUQuota, err = read("/sys/fs/cgroup/cpu.max"); err != nil {
+		return r, err
+	}
+	if r.MemoryLimit, err = read("/sys/fs/cgroup/memory.max"); err != nil {
+		return r, err
+	}
+	for file, values := range map[string]map[string]*uint64{
+		"cpu.stat":      {"usage_usec": &r.CPUUsec, "throttled_usec": &r.ThrottledUsec, "nr_periods": &r.Periods, "nr_throttled": &r.ThrottledPeriods},
+		"memory.events": {"oom_kill": &r.OOMKills},
+	} {
+		text, err := read("/sys/fs/cgroup/" + file)
+		if err != nil {
+			return r, err
+		}
+		fields := strings.Fields(text)
+		for i := 0; i+1 < len(fields); i += 2 {
+			if value := values[fields[i]]; value != nil {
+				*value, err = strconv.ParseUint(fields[i+1], 10, 64)
+				if err != nil {
+					return r, err
+				}
+			}
+		}
+	}
+	for file, value := range map[string]*uint64{"memory.current": &r.Memory, "memory.peak": &r.Peak} {
+		text, err := read("/sys/fs/cgroup/" + file)
+		if err != nil {
+			return r, err
+		}
+		*value, err = strconv.ParseUint(text, 10, 64)
+		if err != nil {
+			return r, err
+		}
+	}
+	text, err := read("/proc/net/dev")
+	if err != nil {
+		return r, err
+	}
+	for _, line := range strings.Split(text, "\n") {
+		name, counters, ok := strings.Cut(line, ":")
+		if !ok || strings.TrimSpace(name) == "lo" {
+			continue
+		}
+		fields := strings.Fields(counters)
+		if len(fields) != 16 {
+			return r, fmt.Errorf("invalid network counters")
+		}
+		rx, rxErr := strconv.ParseUint(fields[0], 10, 64)
+		tx, txErr := strconv.ParseUint(fields[8], 10, 64)
+		if err := errors.Join(rxErr, txErr); err != nil {
+			return r, err
+		}
+		r.ReceiveBytes += rx
+		r.SendBytes += tx
+	}
+	return r, nil
+}
+
+func serveSeparatedResources(t *testing.T, orders func() int64) {
+	t.Helper()
+	component := os.Getenv("TNL_TEST_SEPARATED_COMPONENT")
+	address := ":9091"
+	if component == "app" {
+		address = ":9092"
+	}
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &http.Server{ReadHeaderTimeout: time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		value, err := readSeparatedResources()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		value.CAOrders = orders()
+		value.NetworkNamespace = component
+		if component == "app" {
+			value.NetworkNamespace = "publishers"
+		}
+		_ = json.NewEncoder(w).Encode(value)
+	})}
+	done := make(chan struct{})
+	go func() { defer close(done); _ = server.Serve(listener) }()
+	t.Cleanup(func() { _ = server.Close(); <-done })
+}
+
+func separatedRelayTLS(t *testing.T) *tls.Config {
+	return &tls.Config{RootCAs: separatedRoots(t, "roots.pem"), MinVersion: tls.VersionTLS13}
+}

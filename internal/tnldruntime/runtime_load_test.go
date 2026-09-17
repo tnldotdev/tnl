@@ -333,13 +333,17 @@ type runtimeLoadVisitors struct {
 }
 
 func startRuntimeLoadVisitors(t *testing.T, client *http.Client, urls []string, payload []byte, rate int, onFailure func(string)) *runtimeLoadVisitors {
+	return startRuntimeLoadVisitorWorkers(t, client, urls, payload, rate, 8, onFailure)
+}
+
+func startRuntimeLoadVisitorWorkers(t *testing.T, client *http.Client, urls []string, payload []byte, rate, concurrency int, onFailure func(string)) *runtimeLoadVisitors {
 	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
 	load := &runtimeLoadVisitors{cancel: cancel, done: make(chan struct{}), start: time.Now()}
-	jobs := make(chan string, 8)
+	jobs := make(chan string, concurrency)
 	var workers sync.WaitGroup
 	var firstFailure sync.Once
-	for range 8 {
+	for range concurrency {
 		workers.Go(func() {
 			for url := range jobs {
 				result := runtimeLoadRequest(t.Context(), client, url, payload)

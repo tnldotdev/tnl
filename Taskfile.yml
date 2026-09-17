@@ -260,6 +260,23 @@ tasks:
           compose up --abort-on-container-exit --exit-code-from test postgres test
         '
 
+  go:test-separated-load:
+    desc: Run per-component constrained real visitor/recovery/shutdown load
+    vars:
+      ROUTES: '{{default "64" .ROUTES}}'
+      RPS: '{{default "160" .RPS}}'
+      DURATION: '{{default "30s" .DURATION}}'
+      RACE: '{{default "0" .RACE}}'
+      RESULTS: '{{default "bench-results/separated-runtime" .RESULTS}}'
+    env:
+      TNL_TEST_RUNTIME_ROUTES: "{{.ROUTES}}"
+      TNL_TEST_RUNTIME_RPS: "{{.RPS}}"
+      TNL_TEST_RUNTIME_DURATION: "{{.DURATION}}"
+      TNL_TEST_SPLIT_RACE: "{{.RACE}}"
+      TNL_TEST_SPLIT_RESULTS: "{{.ROOT_DIR}}/{{.RESULTS}}"
+    cmds:
+      - bash scripts/separated-runtime-load.sh
+
   go:bench-fly:plan:
     desc: Expand and price a Fly benchmark without creating resources
     dotenv: [.env.bench]
