@@ -19,7 +19,7 @@ type benchmarkCLI struct {
 	Publisher   publisherCommand   `cmd:"" help:"Create and hold one shard of benchmark routes."`
 	Load        loadCommand        `cmd:"" help:"Generate visitor load for one benchmark cell."`
 	Report      reportCommand      `cmd:"" help:"Merge worker results and write report artifacts."`
-	Resolver    resolverCommand    `cmd:"" help:"Resolve private-CA challenges through authoritative DNS."`
+	Resolver    resolverCommand    `cmd:"" help:"Resolve benchmark hostnames through authoritative DNS."`
 }
 
 func main() {

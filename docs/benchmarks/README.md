@@ -11,10 +11,10 @@ The production profile uses:
 - Two ingress processes behind one public ingress address.
 - Fly PROXY v2 metadata preserving each visitor source address at ingress.
 - Two relay services, each with two relay processes behind one relay address.
-- Automatic control, relay transport, and route certificate issuance. Capacity
-  suites use a private Pebble ACME service with real DNS and TLS validation
-  through a benchmark-local authoritative resolver instead of Fly's caching
-  system resolver; the small compatibility suite uses Let's Encrypt.
+- Automatic control, relay transport, and route certificate issuance. A
+  benchmark-local authoritative resolver avoids stale recursive DNS during
+  validation and load; capacity suites use private Pebble ACME, while the small
+  compatibility suite uses Let's Encrypt.
 - A transient server-domain Route 53 zone and a nested managed deployment
   domain zone.
 
@@ -121,21 +121,22 @@ errors stop the campaign and trigger cleanup.
 
 For `smoke`, `scout`, and `confirm`, the runner starts a private Pebble Machine
 without a public Fly port. Pebble performs normal DNS-01 and TLS-ALPN-01
-validation. A loopback resolver sends DNS-01 lookups directly to the Route 53
-authoritative name servers whose delegation and records the runner has already
-verified, avoiding stale recursive caches without bypassing challenge checks.
-The runner combines the static Pebble API root with Pebble's dynamic issuance
-root, installs that bundle only in benchmark Machines, and uses it for host-side
-readiness checks without modifying the operator trust store. `compatibility`
-omits Pebble and uses Let's Encrypt, so keep that suite small to avoid public CA
-rate limits.
+validation. Pebble and load workers use a loopback resolver that sends benchmark
+lookups directly to the Route 53 authoritative name servers and waits for
+records to appear. This avoids stale recursive caches without bypassing DNS or
+challenge checks. The runner combines the static Pebble API root with Pebble's
+dynamic issuance root, installs that bundle only in benchmark Machines, and uses
+it for host-side readiness checks without modifying the operator trust store.
+`compatibility` omits Pebble and uses Let's Encrypt, so keep that suite small to
+avoid public CA rate limits.
 
 Each publisher exchanges the same built-in login token, resolves the same
 personal member namespace, and uses its own persistent client-state volume.
 Routes remain enabled between cells while route sessions stop, allowing later
 cells to reuse route state and certificates. Lifecycle churn uses deterministic
 prewarmed routes instead of creating identities or certificates during the
-measured phase.
+measured phase. Each active route has an independent churn route so generator
+concurrency does not impose the measured lifecycle-rate boundary.
 
 Managed Postgres credentials remain only in runner memory and encrypted Fly
 secrets. The manifest records the generated cluster identity and configuration,

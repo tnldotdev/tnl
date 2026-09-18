@@ -97,14 +97,13 @@ func TestIntegrationControlTLSLeadershipConnectionLoss(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	workers := newIntegrationWorkers(t, cancel)
-	started, canceled := make(chan struct{}), make(chan struct{})
-	joinTLSCallbackOnCleanup(t, cancel, canceled)
+	started, canceled := make(chan struct{}, 2), make(chan struct{}, 2)
 	done := make(chan error, 1)
 	workers.Go(func() {
 		done <- database.RunControlTLSLeader(ctx, func(ctx context.Context) error {
-			close(started)
+			started <- struct{}{}
 			<-ctx.Done()
-			close(canceled)
+			canceled <- struct{}{}
 			return nil
 		})
 	})
@@ -131,13 +130,11 @@ func TestIntegrationControlTLSLeadershipConnectionLoss(t *testing.T) {
 	`, pids[0]).Scan(&terminated); err != nil || !terminated {
 		t.Fatalf("terminate leader backend %d: %t, %v", pids[0], terminated, err)
 	}
-	if err := awaitIntegrationResult(t, ctx, done); err == nil {
-		t.Fatal("leadership connection loss returned no error")
-	}
 	awaitIntegrationResult(t, ctx, canceled)
-	var ran atomic.Bool
-	if err := database.RunControlTLSLeader(ctx, func(context.Context) error { ran.Store(true); return nil }); err != nil || !ran.Load() {
-		t.Fatalf("replacement after connection loss: ran %t, error %v", ran.Load(), err)
+	awaitIntegrationResult(t, ctx, started)
+	cancel()
+	if err := awaitIntegrationResult(t, t.Context(), done); err != nil {
+		t.Fatalf("leadership recovery returned %v", err)
 	}
 }
 

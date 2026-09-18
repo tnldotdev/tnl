@@ -140,6 +140,7 @@ type provisionedBenchmark struct {
 	database         flyManagedPostgresCredentials
 	serverDomain     string
 	managedDomain    string
+	resolverEnv      map[string]string
 	publisherVolumes []flyVolume
 }
 
@@ -232,6 +233,17 @@ func (c runCommand) run(ctx context.Context, stdout io.Writer) (retErr error) {
 	if err := writeIndentedJSON(filepath.Join(runDirectory, "plan.json"), plan); err != nil {
 		return err
 	}
+	resultsPath := filepath.Join(runDirectory, "results.jsonl")
+	reportWritten := false
+	defer func() {
+		if retErr == nil || reportWritten {
+			return
+		}
+		progress.printf("report: writing partial result artifacts after failure")
+		if reportErr := (reportCommand{RunDirectory: runDirectory, allowIncomplete: true}).run(stdout); reportErr != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("write partial benchmark report: %w", reportErr))
+		}
+	}()
 	progress.printf("run: %s", runID)
 	progress.printf("output: %s", runDirectory)
 
@@ -291,7 +303,6 @@ func (c runCommand) run(ctx context.Context, stdout io.Writer) (retErr error) {
 	if err := saveManifest(manifestPath, &manifest); err != nil {
 		return err
 	}
-	resultsPath := filepath.Join(runDirectory, "results.jsonl")
 	campaignFailed := false
 	for _, cell := range plan.Cells {
 		progress.printf("cell %s: starting", cell.ID)
@@ -319,6 +330,7 @@ func (c runCommand) run(ctx context.Context, stdout io.Writer) (retErr error) {
 	if err := (reportCommand{RunDirectory: runDirectory}).run(stdout); err != nil {
 		return err
 	}
+	reportWritten = true
 	progress.printf("report: complete")
 	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cleanupCancel()
@@ -742,7 +754,7 @@ func provisionBenchmark(
 		apps: apps, addresses: manifest.Addresses, metricsURLs: metricsURLs, image: image,
 		manifestPath: manifestPath, secrets: secrets, database: databaseCredentials,
 		serverDomain: manifest.ServerDomain, managedDomain: manifest.ManagedDomain,
-		publisherVolumes: publisherVolumes,
+		resolverEnv: benchmarkResolverEnvironment(serverZone, managedZone, nil), publisherVolumes: publisherVolumes,
 	}, nil
 }
 
@@ -772,6 +784,21 @@ func machineProvisionFailure(
 	cause error,
 	relatedApps ...benchmarkDiagnosticApp,
 ) error {
+	path, err := captureMachineDiagnostics(fly, manifestPath, diagnosticName, app, machines, secrets, database, relatedApps...)
+	if err != nil {
+		return errors.Join(cause, err)
+	}
+	return fmt.Errorf("%w (%s diagnostics: %s)", cause, diagnosticName, path)
+}
+
+func captureMachineDiagnostics(
+	fly flyPlatform,
+	manifestPath, diagnosticName, app string,
+	machines []flyMachine,
+	secrets runSecrets,
+	database flyManagedPostgresCredentials,
+	relatedApps ...benchmarkDiagnosticApp,
+) (string, error) {
 	diagnosticsCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	listed, err := fly.listMachines(diagnosticsCtx, app)
@@ -796,13 +823,13 @@ func machineProvisionFailure(
 	})
 	directory := filepath.Join(filepath.Dir(manifestPath), "diagnostics")
 	if err := os.MkdirAll(directory, 0o700); err != nil {
-		return errors.Join(cause, fmt.Errorf("create %s diagnostics directory: %w", diagnosticName, err))
+		return "", fmt.Errorf("create %s diagnostics directory: %w", diagnosticName, err)
 	}
 	path := filepath.Join(directory, diagnosticName+".txt")
 	if err := os.WriteFile(path, []byte(diagnostics), 0o600); err != nil {
-		return errors.Join(cause, fmt.Errorf("write %s diagnostics: %w", diagnosticName, err))
+		return "", fmt.Errorf("write %s diagnostics: %w", diagnosticName, err)
 	}
-	return fmt.Errorf("%w (%s diagnostics: %s)", cause, diagnosticName, path)
+	return path, nil
 }
 
 const ingressFlyMachineConfig = `{"services":[{"protocol":"tcp","internal_port":8443,"ports":[{"port":443,"handlers":["proxy_proto"],"proxy_proto_options":{"version":"v2"}}]}]}`
@@ -885,27 +912,31 @@ func executeCell(
 	for index := range cell.LoadWorkers {
 		fresh := balancedAssignment(cell.FreshConnectionsPerSecond, cell.LoadWorkers, index)
 		held := balancedAssignment(cell.HeldStreams, cell.LoadWorkers, index)
+		environment := map[string]string{
+			"TNL_BENCH_CELL_ID": cell.ID, "TNL_BENCH_SUITE": plan.Suite, "TNL_BENCH_AXIS": cell.Axis,
+			"TNL_BENCH_REPETITION": fmt.Sprint(cell.Repetition), "TNL_BENCH_SEQUENCE": fmt.Sprint(cell.Sequence),
+			"TNL_BENCH_COORDINATOR_URL": coordinatorURL, "TNL_BENCH_WORKER_INDEX": fmt.Sprint(index),
+			"TNL_BENCH_WORKER_COUNT": fmt.Sprint(cell.LoadWorkers), "TNL_BENCH_ROUTES": fmt.Sprint(cell.Routes),
+			"TNL_BENCH_TOTAL_FRESH_CONNECTIONS_PER_SECOND": fmt.Sprint(cell.FreshConnectionsPerSecond),
+			"TNL_BENCH_TOTAL_HELD_STREAMS":                 fmt.Sprint(cell.HeldStreams),
+			"TNL_BENCH_LIFECYCLE_CHURN_PER_SECOND":         fmt.Sprint(cell.LifecycleChurnPerSecond),
+			"TNL_BENCH_FRESH_CONNECTIONS_PER_SECOND":       fmt.Sprint(fresh), "TNL_BENCH_HELD_STREAMS": fmt.Sprint(held),
+			"TNL_BENCH_PAYLOAD_BYTES":    fmt.Sprint(cell.PayloadBytes),
+			"TNL_BENCH_WARMUP":           (time.Duration(cell.WarmupSeconds) * time.Second).String(),
+			"TNL_BENCH_DURATION":         (time.Duration(cell.DurationSeconds) * time.Second).String(),
+			"TNL_BENCH_TIMEOUT":          (time.Duration(cell.TimeoutSeconds) * time.Second).String(),
+			"TNL_BENCH_RESOLVER_ADDRESS": benchmarkAuthoritativeDNSAddress,
+		}
+		for name, value := range benchmark.resolverEnv {
+			environment[name] = value
+		}
 		progress.printf(
 			"cell %s: starting load worker %d/%d (%d fresh/s, %d held)",
 			cell.ID, index+1, cell.LoadWorkers, fresh, held,
 		)
 		machine, err := fly.runMachine(ctx, machineSpec{
 			App: benchmark.apps["load"], Name: fmt.Sprintf("load-%s-%d", shortCellID(cell.ID), index),
-			Image: benchmark.image, Command: "/tnlbench load", Size: plan.Machines.Load, Restart: "no",
-			Env: map[string]string{
-				"TNL_BENCH_CELL_ID": cell.ID, "TNL_BENCH_SUITE": plan.Suite, "TNL_BENCH_AXIS": cell.Axis,
-				"TNL_BENCH_REPETITION": fmt.Sprint(cell.Repetition), "TNL_BENCH_SEQUENCE": fmt.Sprint(cell.Sequence),
-				"TNL_BENCH_COORDINATOR_URL": coordinatorURL, "TNL_BENCH_WORKER_INDEX": fmt.Sprint(index),
-				"TNL_BENCH_WORKER_COUNT": fmt.Sprint(cell.LoadWorkers), "TNL_BENCH_ROUTES": fmt.Sprint(cell.Routes),
-				"TNL_BENCH_TOTAL_FRESH_CONNECTIONS_PER_SECOND": fmt.Sprint(cell.FreshConnectionsPerSecond),
-				"TNL_BENCH_TOTAL_HELD_STREAMS":                 fmt.Sprint(cell.HeldStreams),
-				"TNL_BENCH_LIFECYCLE_CHURN_PER_SECOND":         fmt.Sprint(cell.LifecycleChurnPerSecond),
-				"TNL_BENCH_FRESH_CONNECTIONS_PER_SECOND":       fmt.Sprint(fresh), "TNL_BENCH_HELD_STREAMS": fmt.Sprint(held),
-				"TNL_BENCH_PAYLOAD_BYTES": fmt.Sprint(cell.PayloadBytes),
-				"TNL_BENCH_WARMUP":        (time.Duration(cell.WarmupSeconds) * time.Second).String(),
-				"TNL_BENCH_DURATION":      (time.Duration(cell.DurationSeconds) * time.Second).String(),
-				"TNL_BENCH_TIMEOUT":       (time.Duration(cell.TimeoutSeconds) * time.Second).String(),
-			},
+			Image: benchmark.image, Command: benchmarkLoadCommand, Size: plan.Machines.Load, Restart: "no", Env: environment,
 		})
 		if err != nil {
 			return "failed", 0, cellMachineProvisionFailure(progress, fly, benchmark, "load", machine, err)
@@ -916,23 +947,31 @@ func executeCell(
 		"cell %s: waiting for workload results (warmup %ds, measure %ds, timeout %ds)",
 		cell.ID, cell.WarmupSeconds, cell.DurationSeconds, cell.TimeoutSeconds,
 	)
-	status, err := waitCell(ctx, progress, coordinator, time.Duration(cell.TimeoutSeconds)*time.Second)
-	if err != nil {
-		return "failed", 0, err
-	}
+	status, waitErr := waitCell(ctx, progress, coordinator, time.Duration(cell.TimeoutSeconds)*time.Second)
 	progress.printf("cell %s: collecting results", cell.ID)
-	results, err := coordinatorResults(ctx, coordinator)
+	results, resultsErr := coordinatorResults(ctx, coordinator)
+	if resultsErr != nil {
+		cause := errors.Join(waitErr, resultsErr)
+		return "failed", 0, cellExecutionFailure(progress, fly, benchmark, cell, cause)
+	}
+	resultStatus, rows, err := summarizeCellResults(results)
 	if err != nil {
-		return "failed", 0, err
+		return "failed", 0, cellExecutionFailure(progress, fly, benchmark, cell, errors.Join(waitErr, err))
 	}
-	rows := 0
-	for _, line := range strings.Split(strings.TrimSpace(string(results)), "\n") {
-		if line != "" {
-			rows++
-		}
+	if waitErr != nil {
+		progress.printf("cell %s: recovered complete results after status polling failed", cell.ID)
 	}
+	status.Status = resultStatus
 	if err := appendResults(resultsPath, results); err != nil {
 		return "failed", rows, err
+	}
+	if status.Status != "passed" {
+		progress.printf("cell %s: capturing workload diagnostics", cell.ID)
+		if path, err := captureCellDiagnostics(fly, benchmark, cell); err != nil {
+			progress.printf("cell %s: diagnostics failed: %v", cell.ID, err)
+		} else {
+			progress.printf("cell %s: diagnostics written to %s", cell.ID, path)
+		}
 	}
 	progress.printf("cell %s: stopping workers", cell.ID)
 	for _, role := range []string{"publisher", "load", "coordinator"} {
@@ -941,6 +980,32 @@ func executeCell(
 		}
 	}
 	return status.Status, rows, nil
+}
+
+func summarizeCellResults(data []byte) (string, int, error) {
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	status, rows := "passed", 0
+	for {
+		var result benchmarkResult
+		err := decoder.Decode(&result)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return "failed", rows, fmt.Errorf("decode cell result %d: %w", rows+1, err)
+		}
+		if err := validateResultIdentity(result); err != nil {
+			return "failed", rows, fmt.Errorf("validate cell result %d: %w", rows+1, err)
+		}
+		rows++
+		if result.Status != "passed" {
+			status = "failed"
+		}
+	}
+	if rows == 0 {
+		return "failed", 0, errors.New("coordinator returned no result rows")
+	}
+	return status, rows, nil
 }
 
 func cellMachineProvisionFailure(
@@ -963,6 +1028,31 @@ func cellMachineProvisionFailure(
 	return machineProvisionFailure(
 		fly, benchmark.manifestPath, role, benchmark.apps[role], machines,
 		benchmark.secrets, benchmark.database, cause, related...,
+	)
+}
+
+func cellExecutionFailure(
+	progress *benchmarkProgress,
+	fly flyPlatform,
+	benchmark provisionedBenchmark,
+	cell planCell,
+	cause error,
+) error {
+	progress.printf("cell %s: capturing failure diagnostics", cell.ID)
+	path, err := captureCellDiagnostics(fly, benchmark, cell)
+	if err != nil {
+		return errors.Join(cause, err)
+	}
+	return fmt.Errorf("%w (cell diagnostics: %s)", cause, path)
+}
+
+func captureCellDiagnostics(fly flyPlatform, benchmark provisionedBenchmark, cell planCell) (string, error) {
+	return captureMachineDiagnostics(
+		fly, benchmark.manifestPath, "cell-"+cell.ID,
+		benchmark.apps["coordinator"], nil, benchmark.secrets, benchmark.database,
+		benchmarkDiagnosticApp{name: "publisher", app: benchmark.apps["publisher"]},
+		benchmarkDiagnosticApp{name: "load", app: benchmark.apps["load"]},
+		benchmarkDiagnosticApp{name: "control", app: benchmark.apps["control"]},
 	)
 }
 

@@ -28,6 +28,7 @@ type loadCommand struct {
 	TotalFreshRate   int           `name:"total-fresh-connections-per-second" env:"TNL_BENCH_TOTAL_FRESH_CONNECTIONS_PER_SECOND" required:"" help:"Total fresh visitor connection rate for the cell."`
 	TotalHeldStreams int           `name:"total-held-streams" env:"TNL_BENCH_TOTAL_HELD_STREAMS" help:"Total held-open streams for the cell."`
 	LifecycleChurn   int           `name:"lifecycle-churn-per-second" env:"TNL_BENCH_LIFECYCLE_CHURN_PER_SECOND" help:"Total route-session lifecycle operations per second."`
+	ResolverAddress  string        `name:"resolver-address" env:"TNL_BENCH_RESOLVER_ADDRESS" help:"Optional DNS server used for public route lookups."`
 	FreshRate        int           `name:"fresh-connections-per-second" env:"TNL_BENCH_FRESH_CONNECTIONS_PER_SECOND" required:"" help:"Fresh visitor connection rate for this worker."`
 	HeldStreams      int           `name:"held-streams" env:"TNL_BENCH_HELD_STREAMS" help:"Held-open streams for this worker."`
 	Warmup           time.Duration `name:"warmup" env:"TNL_BENCH_WARMUP" required:"" help:"Warmup after held streams are ready."`
@@ -52,6 +53,11 @@ func (c loadCommand) Validate() error {
 	if c.PublicAddress != "" {
 		if _, _, err := net.SplitHostPort(c.PublicAddress); err != nil {
 			return fmt.Errorf("public address: %w", err)
+		}
+	}
+	if c.ResolverAddress != "" {
+		if _, _, err := net.SplitHostPort(c.ResolverAddress); err != nil {
+			return fmt.Errorf("resolver address: %w", err)
 		}
 	}
 	return nil
@@ -204,6 +210,14 @@ func (c loadCommand) request(ctx context.Context, hostname, path string, hold bo
 		transport.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return new(net.Dialer).DialContext(ctx, "tcp", c.PublicAddress)
 		}
+	} else if c.ResolverAddress != "" {
+		dialer := &net.Dialer{Resolver: &net.Resolver{
+			PreferGo: true,
+			Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				return new(net.Dialer).DialContext(ctx, "tcp", c.ResolverAddress)
+			},
+		}}
+		transport.DialContext = dialer.DialContext
 	}
 	started := time.Now()
 	var timing visitorTiming

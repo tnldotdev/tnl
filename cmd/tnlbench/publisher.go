@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -411,18 +413,23 @@ func runLifecycleChurn(
 	attempts, completed := 0, 0
 	loadComplete := false
 	var durations []time.Duration
-	var churnErr error
+	var loadErr error
+	missed, failed := 0, 0
+	var failureSamples []string
 	for !loadComplete || completed < attempts {
 		select {
 		case err := <-loadDone:
 			loadComplete = true
 			loadDone = nil
-			churnErr = errors.Join(churnErr, err)
+			loadErr = err
 		case result := <-results:
 			completed++
 			if result.err != nil {
 				phase.Errors++
-				churnErr = errors.Join(churnErr, result.err)
+				failed++
+				if len(failureSamples) < 3 && !slices.Contains(failureSamples, result.err.Error()) {
+					failureSamples = append(failureSamples, result.err.Error())
+				}
 			} else {
 				phase.Successes++
 				durations = append(durations, result.duration)
@@ -443,17 +450,18 @@ func runLifecycleChurn(
 				attempts++
 				completed++
 				phase.Errors++
-				churnErr = errors.Join(churnErr, errors.New("lifecycle churn could not keep pace with its target"))
+				missed++
 			}
 			timer.Reset(interval)
 		case <-ctx.Done():
-			return phase, errors.Join(churnErr, ctx.Err())
+			return phase, errors.Join(loadErr, lifecycleChurnError(missed, failed, failureSamples, len(routes)), ctx.Err())
 		}
 	}
 	phase.Attempts = attempts
 	phase.DurationMilliseconds = milliseconds(time.Since(started))
 	phase.AchievedRate = float64(phase.Successes) / time.Since(started).Seconds()
 	phase.Total = newDurationHistogram(durations)
+	churnErr := errors.Join(loadErr, lifecycleChurnError(missed, failed, failureSamples, len(routes)))
 	if phase.AchievedRate < 0.95*float64(flags.AssignedChurnRate) {
 		churnErr = errors.Join(churnErr, fmt.Errorf(
 			"lifecycle churn rate %.2f/s was below 95%% of the %.2f/s target",
@@ -461,6 +469,21 @@ func runLifecycleChurn(
 		))
 	}
 	return phase, churnErr
+}
+
+func lifecycleChurnError(missed, failed int, samples []string, routes int) error {
+	var err error
+	if missed > 0 {
+		err = fmt.Errorf("%d lifecycle churn attempts could not start because all %d churn routes were busy", missed, routes)
+	}
+	if failed > 0 {
+		message := fmt.Sprintf("%d lifecycle churn operations failed", failed)
+		if len(samples) != 0 {
+			message += "; samples: " + strings.Join(samples, "; ")
+		}
+		err = errors.Join(err, errors.New(message))
+	}
+	return err
 }
 
 func runChurnRoute(

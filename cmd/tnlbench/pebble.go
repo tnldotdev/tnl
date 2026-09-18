@@ -12,12 +12,13 @@ import (
 )
 
 const (
-	benchmarkPebbleDNSServer = "127.0.0.1:8053"
-	benchmarkPebbleCommand   = "/tnlbench resolver & exec /pebble -config /etc/tnlbench/pebble-config.json -strict=false -dnsserver " + benchmarkPebbleDNSServer
-	benchmarkPebbleReady     = "wget -q --spider --no-check-certificate https://127.0.0.1:14000/dir"
-	benchmarkPebbleRoots     = "printf 'TNL_BENCH_ROOTS_BEGIN\\n'; cat /etc/tnlbench/benchmark-api-root.pem; printf '\\n'; wget -qO- --no-check-certificate https://127.0.0.1:15000/roots/0; printf '\\nTNL_BENCH_ROOTS_END\\n'"
-	benchmarkRootsBegin      = "TNL_BENCH_ROOTS_BEGIN\n"
-	benchmarkRootsEnd        = "\nTNL_BENCH_ROOTS_END"
+	benchmarkAuthoritativeDNSAddress = "127.0.0.1:8053"
+	benchmarkPebbleCommand           = "/tnlbench resolver & exec /pebble -config /etc/tnlbench/pebble-config.json -strict=false -dnsserver " + benchmarkAuthoritativeDNSAddress
+	benchmarkLoadCommand             = "/tnlbench resolver & exec /tnlbench load"
+	benchmarkPebbleReady             = "wget -q --spider --no-check-certificate https://127.0.0.1:14000/dir"
+	benchmarkPebbleRoots             = "printf 'TNL_BENCH_ROOTS_BEGIN\\n'; cat /etc/tnlbench/benchmark-api-root.pem; printf '\\n'; wget -qO- --no-check-certificate https://127.0.0.1:15000/roots/0; printf '\\nTNL_BENCH_ROOTS_END\\n'"
+	benchmarkRootsBegin              = "TNL_BENCH_ROOTS_BEGIN\n"
+	benchmarkRootsEnd                = "\nTNL_BENCH_ROOTS_END"
 )
 
 func provisionBenchmarkPebble(
@@ -28,14 +29,10 @@ func provisionBenchmarkPebble(
 ) (string, error) {
 	machine, err := fly.runMachine(ctx, machineSpec{
 		App: app, Name: "pebble", Image: image, Command: benchmarkPebbleCommand, Size: size, Restart: "no",
-		Env: map[string]string{
+		Env: benchmarkResolverEnvironment(serverZone, managedZone, map[string]string{
 			"PEBBLE_AUTHZREUSE": "0", "PEBBLE_VA_ALWAYS_VALID": "0", "PEBBLE_VA_NOSLEEP": "1",
-			"PEBBLE_WFE_NONCEREJECT":                  "0",
-			"TNL_BENCH_RESOLVER_SERVER_DOMAIN":        serverZone.Name,
-			"TNL_BENCH_RESOLVER_SERVER_NAME_SERVERS":  strings.Join(serverZone.NameServers, ","),
-			"TNL_BENCH_RESOLVER_MANAGED_DOMAIN":       managedZone.Name,
-			"TNL_BENCH_RESOLVER_MANAGED_NAME_SERVERS": strings.Join(managedZone.NameServers, ","),
-		},
+			"PEBBLE_WFE_NONCEREJECT": "0",
+		}),
 	})
 	if err != nil {
 		return "", err
@@ -55,6 +52,17 @@ func provisionBenchmarkPebble(
 		return "", fmt.Errorf("read benchmark Pebble trust roots: %w", err)
 	}
 	return strings.TrimSpace(string(bundle)) + "\n", nil
+}
+
+func benchmarkResolverEnvironment(serverZone, managedZone manifestZone, values map[string]string) map[string]string {
+	if values == nil {
+		values = make(map[string]string)
+	}
+	values["TNL_BENCH_RESOLVER_SERVER_DOMAIN"] = serverZone.Name
+	values["TNL_BENCH_RESOLVER_SERVER_NAME_SERVERS"] = strings.Join(serverZone.NameServers, ",")
+	values["TNL_BENCH_RESOLVER_MANAGED_DOMAIN"] = managedZone.Name
+	values["TNL_BENCH_RESOLVER_MANAGED_NAME_SERVERS"] = strings.Join(managedZone.NameServers, ",")
+	return values
 }
 
 func extractBenchmarkRootBundle(output []byte) ([]byte, error) {

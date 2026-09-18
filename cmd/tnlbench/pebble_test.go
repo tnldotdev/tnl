@@ -42,7 +42,7 @@ func TestProvisionBenchmarkPebbleUsesRealValidationAndReturnsRoots(t *testing.T)
 			t.Fatalf("machine arguments omit %q: %v", want, arguments)
 		}
 	}
-	if !strings.Contains(benchmarkPebbleCommand, "-dnsserver "+benchmarkPebbleDNSServer) {
+	if !strings.Contains(benchmarkPebbleCommand, "-dnsserver "+benchmarkAuthoritativeDNSAddress) {
 		t.Fatalf("Pebble command does not select the benchmark DNS resolver: %q", benchmarkPebbleCommand)
 	}
 	if !strings.HasPrefix(benchmarkPebbleCommand, "/tnlbench resolver & ") {

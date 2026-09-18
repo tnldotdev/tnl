@@ -14,13 +14,17 @@ import (
 )
 
 type reportCommand struct {
-	RunDirectory string `name:"run" env:"BENCH_RUN" type:"path" required:"" help:"Benchmark run directory containing results.jsonl."`
+	RunDirectory    string `name:"run" env:"BENCH_RUN" type:"path" required:"" help:"Benchmark run directory containing results.jsonl."`
+	allowIncomplete bool
 }
+
+var errNoBenchmarkResults = errors.New("results.jsonl contains no result rows")
 
 type benchmarkReport struct {
 	SchemaVersion            int                      `json:"schema_version"`
 	GeneratedAt              time.Time                `json:"generated_at"`
 	Status                   string                   `json:"status"`
+	Incomplete               bool                     `json:"incomplete,omitempty"`
 	ResultRows               int                      `json:"result_rows"`
 	PassedRows               int                      `json:"passed_rows"`
 	FailedRows               int                      `json:"failed_rows"`
@@ -127,12 +131,15 @@ type phaseAccumulator struct {
 
 func (c reportCommand) run(stdout io.Writer) error {
 	results, err := readBenchmarkResults(filepath.Join(c.RunDirectory, "results.jsonl"))
-	if err != nil {
+	if err != nil && !(c.allowIncomplete && (errors.Is(err, os.ErrNotExist) || errors.Is(err, errNoBenchmarkResults))) {
 		return err
 	}
-	report, err := buildReport(results)
-	if err != nil {
-		return err
+	report := benchmarkReport{SchemaVersion: 3, GeneratedAt: time.Now().UTC(), Status: "failed", Cells: []cellReport{}}
+	if len(results) != 0 {
+		report, err = buildReport(results)
+		if err != nil {
+			return err
+		}
 	}
 	var plan benchmarkPlan
 	if err := decodeJSONFile(filepath.Join(c.RunDirectory, "plan.json"), &plan); err == nil {
@@ -141,6 +148,10 @@ func (c reportCommand) run(stdout io.Writer) error {
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("read benchmark plan: %w", err)
+	}
+	if c.allowIncomplete {
+		report.Status = "failed"
+		report.Incomplete = true
 	}
 	jsonPath := filepath.Join(c.RunDirectory, "report.json")
 	if err := writeReportJSON(jsonPath, report); err != nil {
@@ -180,7 +191,7 @@ func readBenchmarkResults(path string) ([]benchmarkResult, error) {
 		return nil, err
 	}
 	if len(results) == 0 {
-		return nil, errors.New("results.jsonl contains no result rows")
+		return nil, errNoBenchmarkResults
 	}
 	return results, nil
 }
@@ -701,6 +712,9 @@ func writeReportJSON(path string, report benchmarkReport) error {
 func formatReportMarkdown(report benchmarkReport) string {
 	var output strings.Builder
 	fmt.Fprintf(&output, "# Fly Benchmark Report\n\nStatus: **%s**\n\n", report.Status)
+	if report.Incomplete {
+		output.WriteString("The campaign ended before all planned cells produced results.\n\n")
+	}
 	fmt.Fprintf(&output, "Result rows: %d passed, %d failed, %d total.\n\n", report.PassedRows, report.FailedRows, report.ResultRows)
 	if report.ProfileID != "" {
 		fmt.Fprintf(&output, "Profile: `%s` in `%s`; %d control, %d ingress, %dx%d relay processes; certificates: %s.\n\n",
