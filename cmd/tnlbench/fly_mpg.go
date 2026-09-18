@@ -189,7 +189,11 @@ func (f flyPlatform) destroyManagedPostgres(ctx context.Context, id string) erro
 }
 
 func redactManagedPostgresError(err error) error {
-	message := databaseURLPattern.ReplaceAllString(err.Error(), "[REDACTED_DATABASE_URL]")
+	return errors.New(redactDatabaseText(err.Error()))
+}
+
+func redactDatabaseText(message string) string {
+	message = databaseURLPattern.ReplaceAllString(message, "[REDACTED_DATABASE_URL]")
 	message = databasePasswordJSONPattern.ReplaceAllString(message, `${1}[REDACTED]${2}`)
-	return errors.New(message)
+	return message
 }

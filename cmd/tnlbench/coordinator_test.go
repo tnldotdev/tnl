@@ -13,7 +13,7 @@ import (
 )
 
 func TestCoordinatorReleasesPhasesAndOrdersResults(t *testing.T) {
-	state := newCoordinatorState("cell-1", 2, 1)
+	state := newCoordinatorState("cell-1", 2, 1, 2)
 	server := httptest.NewServer(coordinatorHandler("secret", state))
 	defer server.Close()
 	client, err := newCoordinatorClient(server.URL, "secret")
@@ -22,7 +22,7 @@ func TestCoordinatorReleasesPhasesAndOrdersResults(t *testing.T) {
 	}
 	wait := make(chan error, 1)
 	go func() { wait <- client.waitPublishers(t.Context()) }()
-	if err := client.publisherReady(t.Context(), 0); err != nil {
+	if err := client.publisherReady(t.Context(), 0, []benchmarkRouteRegistration{{Index: 0, Hostname: "first.example.com"}}); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -30,11 +30,18 @@ func TestCoordinatorReleasesPhasesAndOrdersResults(t *testing.T) {
 		t.Fatalf("publisher wait returned early: %v", err)
 	case <-time.After(10 * time.Millisecond):
 	}
-	if err := client.publisherReady(t.Context(), 1); err != nil {
+	if err := client.publisherReady(t.Context(), 1, []benchmarkRouteRegistration{{Index: 1, Hostname: "second.example.com"}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := <-wait; err != nil {
 		t.Fatal(err)
+	}
+	routes, err := client.routes(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != 2 || routes[0] != "first.example.com" || routes[1] != "second.example.com" {
+		t.Fatalf("routes = %v", routes)
 	}
 	for _, worker := range []resultWorker{{Kind: "load", Index: 0, Count: 1}, {Kind: "publisher", Index: 1, Count: 2}, {Kind: "publisher", Index: 0, Count: 2}} {
 		if err := client.postResult(t.Context(), passedTestResult(worker)); err != nil {
@@ -65,7 +72,7 @@ func TestCoordinatorReleasesPhasesAndOrdersResults(t *testing.T) {
 }
 
 func TestCoordinatorFailureAbortsWait(t *testing.T) {
-	state := newCoordinatorState("cell-1", 1, 1)
+	state := newCoordinatorState("cell-1", 1, 1, 1)
 	server := httptest.NewServer(coordinatorHandler("secret", state))
 	defer server.Close()
 	client, _ := newCoordinatorClient(server.URL, "secret")
@@ -77,6 +84,19 @@ func TestCoordinatorFailureAbortsWait(t *testing.T) {
 	}
 	if err := client.waitPublishers(context.Background()); err == nil {
 		t.Fatal("aborted publisher wait succeeded")
+	}
+}
+
+func TestCoordinatorRejectsConflictingRouteRegistration(t *testing.T) {
+	state := newCoordinatorState("cell-1", 2, 1, 2)
+	server := httptest.NewServer(coordinatorHandler("secret", state))
+	defer server.Close()
+	client, _ := newCoordinatorClient(server.URL, "secret")
+	if err := client.publisherReady(t.Context(), 0, []benchmarkRouteRegistration{{Index: 0, Hostname: "route.example.com"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.publisherReady(t.Context(), 1, []benchmarkRouteRegistration{{Index: 0, Hostname: "other.example.com"}}); err == nil {
+		t.Fatal("conflicting route registration succeeded")
 	}
 }
 

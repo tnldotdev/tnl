@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"strings"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -25,33 +25,49 @@ import (
 
 type publisherCommand struct {
 	workerCommand
-	ServerURL      string        `name:"server" env:"TNL_BENCH_SERVER" required:"" help:"Control URL."`
-	LoginToken     string        `name:"login-token" env:"TNL_BENCH_LOGIN_TOKEN" required:"" help:"Built-in authority login token."`
-	ControlCAFile  string        `name:"control-ca-file" env:"TNL_BENCH_CONTROL_CA_FILE" type:"path" help:"Optional PEM CA for the control API."`
-	HostnameSuffix string        `name:"hostname-suffix" env:"TNL_BENCH_HOSTNAME_SUFFIX" required:"" help:"Managed deployment domain used by benchmark routes."`
-	Routes         int           `name:"routes" env:"TNL_BENCH_ROUTES" required:"" help:"Total route count in the cell."`
-	RouteOffset    int           `name:"route-offset" env:"TNL_BENCH_ROUTE_OFFSET" help:"First global route index assigned to this worker."`
-	AssignedRoutes int           `name:"assigned-routes" env:"TNL_BENCH_ASSIGNED_ROUTES" required:"" help:"Routes assigned to this worker."`
-	FreshRate      int           `name:"fresh-connections-per-second" env:"TNL_BENCH_FRESH_CONNECTIONS_PER_SECOND" required:"" help:"Total fresh visitor connection rate for the cell."`
-	HeldStreams    int           `name:"held-streams" env:"TNL_BENCH_HELD_STREAMS" help:"Total held-open streams for the cell."`
-	Parallel       int           `name:"parallel" env:"TNL_BENCH_PARALLEL" default:"16" help:"Maximum concurrent route operations."`
-	PayloadBytes   int           `name:"payload-bytes" env:"TNL_BENCH_PAYLOAD_BYTES" default:"16384" help:"Fresh-response payload size."`
-	MetricsURLs    []string      `name:"metrics-url" env:"TNL_BENCH_METRICS_URLS" help:"Private process metrics URL; repeat for each process."`
-	Timeout        time.Duration `name:"timeout" env:"TNL_BENCH_TIMEOUT" default:"30m" help:"Worker deadline."`
+	ServerURL          string        `name:"server" env:"TNL_BENCH_SERVER" required:"" help:"Control URL."`
+	LoginToken         string        `name:"login-token" env:"TNL_BENCH_LOGIN_TOKEN" required:"" help:"Built-in authority login token."`
+	ControlCAFile      string        `name:"control-ca-file" env:"TNL_BENCH_CONTROL_CA_FILE" type:"path" help:"Optional PEM CA for the control API."`
+	HostnameSuffix     string        `name:"hostname-suffix" env:"TNL_BENCH_HOSTNAME_SUFFIX" required:"" help:"Managed deployment domain used by benchmark routes."`
+	Routes             int           `name:"routes" env:"TNL_BENCH_ROUTES" required:"" help:"Total route count in the cell."`
+	AssignedRoutes     int           `name:"assigned-routes" env:"TNL_BENCH_ASSIGNED_ROUTES" required:"" help:"Routes assigned to this worker."`
+	RoutesPerPublisher int           `name:"routes-per-publisher" env:"TNL_BENCH_ROUTES_PER_PUBLISHER" required:"" help:"Stable route-index band assigned to each publisher generator."`
+	RoutesPerChurn     int           `name:"routes-per-churn-route" env:"TNL_BENCH_ROUTES_PER_CHURN_ROUTE" required:"" help:"Active routes represented by each lifecycle-churn route."`
+	StateRoot          string        `name:"state-root" env:"TNL_BENCH_STATE_ROOT" default:"/state" type:"path" help:"Persistent state root for this publisher generator."`
+	FreshRate          int           `name:"fresh-connections-per-second" env:"TNL_BENCH_FRESH_CONNECTIONS_PER_SECOND" required:"" help:"Total fresh visitor connection rate for the cell."`
+	HeldStreams        int           `name:"held-streams" env:"TNL_BENCH_HELD_STREAMS" help:"Total held-open streams for the cell."`
+	ChurnRate          int           `name:"lifecycle-churn-per-second" env:"TNL_BENCH_LIFECYCLE_CHURN_PER_SECOND" help:"Total route-session lifecycle operations per second for the cell."`
+	AssignedChurnRate  int           `name:"assigned-lifecycle-churn-per-second" env:"TNL_BENCH_ASSIGNED_LIFECYCLE_CHURN_PER_SECOND" help:"Route-session lifecycle operations per second assigned to this publisher."`
+	Parallel           int           `name:"parallel" env:"TNL_BENCH_PARALLEL" default:"16" help:"Maximum concurrent route operations."`
+	PayloadBytes       int           `name:"payload-bytes" env:"TNL_BENCH_PAYLOAD_BYTES" default:"16384" help:"Fresh-response payload size."`
+	MetricsURLs        []string      `name:"metrics-url" env:"TNL_BENCH_METRICS_URLS" help:"Private process metrics URL; repeat for each process."`
+	Timeout            time.Duration `name:"timeout" env:"TNL_BENCH_TIMEOUT" default:"30m" help:"Worker deadline."`
 }
 
 func (c publisherCommand) Validate() error {
 	if err := c.workerCommand.validate(); err != nil {
 		return err
 	}
-	if c.Routes <= 0 || c.RouteOffset < 0 || c.AssignedRoutes <= 0 || c.RouteOffset+c.AssignedRoutes > c.Routes {
+	if c.Routes <= 0 || c.AssignedRoutes <= 0 || c.RoutesPerPublisher <= 0 || c.RoutesPerPublisher > 10_000 ||
+		c.RoutesPerChurn <= 0 || c.RoutesPerChurn > c.RoutesPerPublisher ||
+		c.RoutesPerPublisher%c.RoutesPerChurn != 0 ||
+		c.AssignedRoutes != len(benchmarkRouteIndexes(c.Routes, c.RoutesPerPublisher, c.WorkerCount, c.WorkerIndex)) {
 		return errors.New("publisher route assignment is invalid")
 	}
-	if c.FreshRate <= 0 || c.HeldStreams < 0 {
+	if c.FreshRate <= 0 || c.HeldStreams < 0 || c.ChurnRate < 0 || c.AssignedChurnRate < 0 || c.AssignedChurnRate > c.ChurnRate {
 		return errors.New("publisher cell load shape is invalid")
+	}
+	if c.AssignedChurnRate != benchmarkPublisherChurnAssignment(c.ChurnRate, c.WorkerCount, c.WorkerIndex) {
+		return errors.New("publisher lifecycle churn assignment is invalid")
 	}
 	if c.Parallel <= 0 || c.Parallel > 256 || c.PayloadBytes <= 0 || c.PayloadBytes > 16<<20 || c.Timeout <= 0 {
 		return errors.New("publisher parallelism, payload, or timeout is invalid")
+	}
+	if _, err := credentials.ParseLoginToken(credentials.LoginToken(c.LoginToken)); err != nil {
+		return errors.New("publisher login token is invalid")
+	}
+	if !filepath.IsAbs(c.StateRoot) {
+		return errors.New("publisher state root must be absolute")
 	}
 	hostname, err := naming.CanonicalizeHostname(c.HostnameSuffix)
 	if err != nil || hostname != c.HostnameSuffix {
@@ -61,16 +77,11 @@ func (c publisherCommand) Validate() error {
 }
 
 type routeProcess struct {
+	index    int
 	hostname string
-	teamID   string
 	routeID  string
 	cancel   context.CancelFunc
 	done     chan error
-}
-
-type routeCleaner interface {
-	DeleteRoute(context.Context, string) error
-	ListRoutes(context.Context, string) ([]controlv1.Route, error)
 }
 
 type benchmarkRouteContext struct {
@@ -79,6 +90,15 @@ type benchmarkRouteContext struct {
 	domainID       string
 	routeScope     controlv1.RouteScope
 	policyRevision uint64
+}
+
+type benchmarkRouteSpec struct {
+	index        int
+	hostname     string
+	namespace    string
+	control      *controlclient.Client
+	routeContext benchmarkRouteContext
+	state        *clientstate.Store
 }
 
 func (c publisherCommand) run(parent context.Context) error {
@@ -91,8 +111,9 @@ func (c publisherCommand) run(parent context.Context) error {
 	}
 	worker := resultWorker{Kind: "publisher", Index: c.WorkerIndex, Count: c.WorkerCount}
 	configuration := resultConfiguration{
-		Sequence: c.Sequence, Routes: c.Routes, AssignedRoutes: c.AssignedRoutes,
+		Axis: c.Axis, Sequence: c.Sequence, Routes: c.Routes, AssignedRoutes: c.AssignedRoutes,
 		FreshConnectionsPerSecond: c.FreshRate, HeldStreams: c.HeldStreams, PayloadBytes: c.PayloadBytes,
+		LifecycleChurnPerSecond: c.ChurnRate, AssignedLifecycleChurn: c.AssignedChurnRate,
 	}
 	result, runErr := c.execute(ctx, worker, configuration)
 	if runErr != nil && result.SchemaVersion == 0 {
@@ -119,57 +140,15 @@ func (c publisherCommand) execute(ctx context.Context, worker resultWorker, conf
 	if err != nil {
 		return benchmarkResult{}, err
 	}
-	login := credentials.LoginToken(c.LoginToken)
-	if _, err := credentials.ParseLoginToken(login); err != nil {
-		return benchmarkResult{}, errors.New("invalid login token")
-	}
-	discovery, err := anonymous.Discovery(ctx)
+	discovery, err := retryBenchmarkDiscovery(ctx, 2*time.Minute, anonymous.Discovery)
 	if err != nil {
 		return benchmarkResult{}, fmt.Errorf("read control discovery: %w", err)
 	}
-	authority, err := authorityclient.New(discovery.AuthorityEndpoint, controlHTTP, "")
-	if err != nil {
-		return benchmarkResult{}, err
-	}
-	issued, err := authority.Exchange(ctx, login)
-	if err != nil {
-		return benchmarkResult{}, fmt.Errorf("exchange login token: %w", err)
-	}
-	access := credentials.AccessToken(issued.AccessToken)
-	if _, _, err := credentials.ParseAccessToken(access); err != nil {
-		return benchmarkResult{}, errors.New("authority returned an invalid access token")
-	}
-	control, err := controlclient.New(c.ServerURL, controlHTTP, access)
-	if err != nil {
-		return benchmarkResult{}, err
-	}
-	authority, err = authorityclient.New(discovery.AuthorityEndpoint, controlHTTP, access)
+	anonymousAuthority, err := authorityclient.New(discovery.AuthorityEndpoint, controlHTTP, "")
 	if err != nil {
 		return benchmarkResult{}, err
 	}
 	if _, err := benchmarkHostnameSuffix(discovery, c.HostnameSuffix); err != nil {
-		return benchmarkResult{}, err
-	}
-	hostnames := make([]string, c.AssignedRoutes)
-	for index := range hostnames {
-		hostnames[index] = benchmarkHostname(c.RouteOffset+index, c.HostnameSuffix)
-	}
-	routeContext, err := resolveBenchmarkRouteContext(ctx, authority, hostnames[0])
-	if err != nil {
-		return benchmarkResult{}, err
-	}
-	stateRoot, err := os.MkdirTemp("", "tnlbench-state-")
-	if err != nil {
-		return benchmarkResult{}, err
-	}
-	defer os.RemoveAll(stateRoot)
-	stateDatabase, err := clientstate.Open(ctx, stateRoot)
-	if err != nil {
-		return benchmarkResult{}, err
-	}
-	defer stateDatabase.Close()
-	state, err := stateDatabase.Server(ctx, c.ServerURL)
-	if err != nil {
 		return benchmarkResult{}, err
 	}
 	payload := make([]byte, c.PayloadBytes)
@@ -192,14 +171,25 @@ func (c publisherCommand) execute(ctx context.Context, worker resultWorker, conf
 	defer origin.Close()
 
 	activationStarted := time.Now().UTC()
+	routeSpecs, stateDatabases, err := prepareBenchmarkRoutes(
+		ctx, c, controlHTTP, anonymousAuthority, discovery.AuthorityEndpoint,
+		benchmarkRouteIndexes(c.Routes, c.RoutesPerPublisher, c.WorkerCount, c.WorkerIndex),
+	)
+	if err != nil {
+		return benchmarkResult{}, err
+	}
+	defer func() {
+		for _, database := range stateDatabases {
+			_ = database.Close()
+		}
+	}()
 	processes, activation, err := activateRoutes(
-		ctx, c, control, routeContext, &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: controlRoots},
-		state, origin.URL, hostnames,
+		ctx, c, &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: controlRoots}, origin.URL, routeSpecs,
 	)
 	if err != nil {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cleanupCancel()
-		_, _ = cleanupRoutes(cleanupCtx, c.Parallel, control, processes)
+		_, _ = stopRoutes(cleanupCtx, processes)
 		return benchmarkResult{}, err
 	}
 	activationElapsed := time.Since(activationStarted)
@@ -208,45 +198,308 @@ func (c publisherCommand) execute(ctx context.Context, worker resultWorker, conf
 		if !cleaned {
 			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cleanupCancel()
-			_, _ = cleanupRoutes(cleanupCtx, c.Parallel, control, processes)
+			_, _ = stopRoutes(cleanupCtx, processes)
 		}
 	}()
+	churnRoutes := benchmarkChurnRoutes(routeSpecs, c.WorkerIndex, c.RoutesPerChurn)
+	var churnWarmupPhase *phaseResult
+	if c.AssignedChurnRate > 0 {
+		warmupStarted := time.Now().UTC()
+		warmProcesses, warmup, err := activateRoutes(
+			ctx, c, &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: controlRoots}, origin.URL, churnRoutes,
+		)
+		if err != nil {
+			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cleanupCancel()
+			_, _ = stopRoutes(cleanupCtx, warmProcesses)
+			return benchmarkResult{}, fmt.Errorf("warm lifecycle churn routes: %w", err)
+		}
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		_, cleanupErr := stopRoutes(cleanupCtx, warmProcesses)
+		cleanupCancel()
+		if cleanupErr != nil {
+			return benchmarkResult{}, fmt.Errorf("stop lifecycle churn warmup: %w", cleanupErr)
+		}
+		churnWarmupPhase = &phaseResult{
+			Name: "lifecycle_churn_warmup", StartedAt: warmupStarted,
+			DurationMilliseconds: milliseconds(time.Since(warmupStarted)),
+			Attempts:             len(warmup), Successes: len(warmup), Total: newDurationHistogram(warmup),
+		}
+	}
 	resources := sampleResources(ctx, c.MetricsURLs, "ready")
-	if err := coordinator.publisherReady(ctx, c.WorkerIndex); err != nil {
+	resourceSamples := startResourceSampler(ctx, c.MetricsURLs, 5*time.Second)
+	resourceSamplesStopped := false
+	defer func() {
+		if !resourceSamplesStopped {
+			_ = resourceSamples.Stop()
+		}
+	}()
+	registrations := make([]benchmarkRouteRegistration, 0, len(processes))
+	for _, process := range processes {
+		if process != nil {
+			registrations = append(registrations, benchmarkRouteRegistration{Index: process.index, Hostname: process.hostname})
+		}
+	}
+	if err := coordinator.publisherReady(ctx, c.WorkerIndex, registrations); err != nil {
 		return benchmarkResult{}, err
 	}
-	if err := coordinator.waitLoad(ctx); err != nil {
-		return benchmarkResult{}, err
+	var churnPhase *phaseResult
+	var workloadErr error
+	if c.AssignedChurnRate == 0 {
+		workloadErr = coordinator.waitLoad(ctx)
+	} else {
+		loadDone := make(chan error, 1)
+		go func() { loadDone <- coordinator.waitLoad(ctx) }()
+		phase, err := runLifecycleChurn(
+			ctx, c, &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: controlRoots}, origin.URL,
+			churnRoutes, loadDone,
+		)
+		churnPhase = &phase
+		workloadErr = err
 	}
+	resources = append(resources, resourceSamples.Stop()...)
+	resourceSamplesStopped = true
 	resources = append(resources, sampleResources(ctx, c.MetricsURLs, "loaded")...)
 	cleanupStarted := time.Now().UTC()
-	teardown, cleanupErr := cleanupRoutes(ctx, c.Parallel, control, processes)
+	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	teardown, cleanupErr := stopRoutes(cleanupCtx, processes)
+	cleanupCancel()
 	cleanupElapsed := time.Since(cleanupStarted)
 	cleaned = true
-	if cleanupErr != nil {
-		return benchmarkResult{}, cleanupErr
+	phases := []phaseResult{
+		{
+			Name: "activation", StartedAt: activationStarted, DurationMilliseconds: milliseconds(activationElapsed),
+			Attempts: len(activation), Successes: len(activation), Total: newDurationHistogram(activation),
+		},
+		{
+			Name: "deactivation", StartedAt: cleanupStarted, DurationMilliseconds: milliseconds(cleanupElapsed),
+			Attempts: len(teardown), Successes: len(teardown), Total: newDurationHistogram(teardown),
+		},
 	}
-	return benchmarkResult{
+	if churnWarmupPhase != nil {
+		phases = append(phases, *churnWarmupPhase)
+	}
+	if churnPhase != nil {
+		phases = append(phases, *churnPhase)
+	}
+	retainedRoutes := len(teardown)
+	if churnWarmupPhase != nil {
+		retainedRoutes += len(churnRoutes)
+	}
+	result := benchmarkResult{
 		SchemaVersion: benchmarkResultSchemaVersion, CellID: c.CellID, Status: "passed", Suite: c.Suite,
 		Repetition: c.Repetition, Worker: worker, Configuration: configuration, Resources: resources,
-		Phases: []phaseResult{
-			{
-				Name: "activation", StartedAt: activationStarted, DurationMilliseconds: milliseconds(activationElapsed),
-				Attempts: len(activation), Successes: len(activation), Total: newDurationHistogram(activation),
-			},
-			{
-				Name: "cleanup", StartedAt: cleanupStarted, DurationMilliseconds: milliseconds(cleanupElapsed),
-				Attempts: len(teardown), Successes: len(teardown), Total: newDurationHistogram(teardown),
-			},
-		},
-		Cleanup: resultCleanup{RoutesDeleted: len(teardown), Exact: true},
-	}, nil
+		Phases:  phases,
+		Cleanup: resultCleanup{RoutesRetained: retainedRoutes, Exact: cleanupErr == nil},
+	}
+	runErr := errors.Join(workloadErr, cleanupErr)
+	if runErr != nil {
+		result.Status = "failed"
+		result.Failure = &resultFailure{Message: runErr.Error()}
+	}
+	return result, runErr
 }
 
-func resolveBenchmarkRouteContext(ctx context.Context, authority *authorityclient.Client, hostname string) (benchmarkRouteContext, error) {
+func retryBenchmarkDiscovery(
+	ctx context.Context,
+	timeout time.Duration,
+	request func(context.Context) (controlv1.ControlDiscovery, error),
+) (controlv1.ControlDiscovery, error) {
+	retryCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	for {
+		discovery, err := request(retryCtx)
+		if err == nil || !errors.Is(err, controlclient.ErrUnavailable) {
+			return discovery, err
+		}
+		if sleepErr := sleepContext(retryCtx, time.Second); sleepErr != nil {
+			return controlv1.ControlDiscovery{}, errors.Join(err, sleepErr)
+		}
+	}
+}
+
+func prepareBenchmarkRoutes(
+	ctx context.Context,
+	flags publisherCommand,
+	httpClient *http.Client,
+	anonymousAuthority *authorityclient.Client,
+	authorityEndpoint string,
+	routeIndexes []int,
+) ([]benchmarkRouteSpec, []*clientstate.Database, error) {
+	routes := make([]benchmarkRouteSpec, 0, len(routeIndexes))
+	login := credentials.LoginToken(flags.LoginToken)
+	issued, err := anonymousAuthority.Exchange(ctx, login)
+	if err != nil {
+		return nil, nil, fmt.Errorf("exchange login token: %w", err)
+	}
+	access := credentials.AccessToken(issued.AccessToken)
+	if _, _, err := credentials.ParseAccessToken(access); err != nil {
+		return nil, nil, errors.New("authority returned an invalid access token")
+	}
+	control, err := controlclient.New(flags.ServerURL, httpClient, access)
+	if err != nil {
+		return nil, nil, err
+	}
+	authority, err := authorityclient.New(authorityEndpoint, httpClient, access)
+	if err != nil {
+		return nil, nil, err
+	}
+	routeContext, namespace, err := resolveBenchmarkRouteContext(ctx, authority, flags.HostnameSuffix)
+	if err != nil {
+		return nil, nil, err
+	}
+	stateDatabase, err := clientstate.Open(ctx, flags.StateRoot)
+	if err != nil {
+		return nil, nil, err
+	}
+	state, err := stateDatabase.Server(ctx, flags.ServerURL)
+	if err != nil {
+		_ = stateDatabase.Close()
+		return nil, nil, err
+	}
+	for _, routeIndex := range routeIndexes {
+		routes = append(routes, benchmarkRouteSpec{
+			index: routeIndex, hostname: benchmarkHostname(routeIndex, namespace), namespace: namespace, control: control,
+			routeContext: routeContext, state: state,
+		})
+	}
+	return routes, []*clientstate.Database{stateDatabase}, nil
+}
+
+func benchmarkChurnRoutes(routes []benchmarkRouteSpec, worker, routesPerChurn int) []benchmarkRouteSpec {
+	seen := make(map[int]struct{})
+	result := make([]benchmarkRouteSpec, 0)
+	for _, route := range routes {
+		group := route.index / routesPerChurn
+		if _, exists := seen[group]; exists {
+			continue
+		}
+		seen[group] = struct{}{}
+		churn := route
+		churn.index = -1
+		churn.hostname = fmt.Sprintf("tnlbench-churn-w%02d-g%06d.%s", worker, group, route.namespace)
+		result = append(result, churn)
+	}
+	return result
+}
+
+func runLifecycleChurn(
+	ctx context.Context,
+	flags publisherCommand,
+	transportTLS *tls.Config,
+	target string,
+	routes []benchmarkRouteSpec,
+	loadDone <-chan error,
+) (phaseResult, error) {
+	started := time.Now().UTC()
+	phase := phaseResult{Name: "lifecycle_churn", StartedAt: started}
+	if flags.AssignedChurnRate <= 0 || len(routes) == 0 {
+		return phase, errors.New("lifecycle churn has no assigned routes")
+	}
+	available := make(chan benchmarkRouteSpec, len(routes))
+	for _, route := range routes {
+		available <- route
+	}
+	type churnResult struct {
+		duration time.Duration
+		err      error
+	}
+	results := make(chan churnResult, len(routes))
+	interval := time.Second / time.Duration(flags.AssignedChurnRate)
+	timer := time.NewTimer(0)
+	defer timer.Stop()
+	attempts, completed := 0, 0
+	loadComplete := false
+	var durations []time.Duration
+	var churnErr error
+	for !loadComplete || completed < attempts {
+		select {
+		case err := <-loadDone:
+			loadComplete = true
+			loadDone = nil
+			churnErr = errors.Join(churnErr, err)
+		case result := <-results:
+			completed++
+			if result.err != nil {
+				phase.Errors++
+				churnErr = errors.Join(churnErr, result.err)
+			} else {
+				phase.Successes++
+				durations = append(durations, result.duration)
+			}
+		case <-timer.C:
+			if loadComplete {
+				continue
+			}
+			select {
+			case route := <-available:
+				attempts++
+				go func() {
+					duration, err := runChurnRoute(ctx, route, transportTLS, target)
+					available <- route
+					results <- churnResult{duration: duration, err: err}
+				}()
+			default:
+				attempts++
+				completed++
+				phase.Errors++
+				churnErr = errors.Join(churnErr, errors.New("lifecycle churn could not keep pace with its target"))
+			}
+			timer.Reset(interval)
+		case <-ctx.Done():
+			return phase, errors.Join(churnErr, ctx.Err())
+		}
+	}
+	phase.Attempts = attempts
+	phase.DurationMilliseconds = milliseconds(time.Since(started))
+	phase.AchievedRate = float64(phase.Successes) / time.Since(started).Seconds()
+	phase.Total = newDurationHistogram(durations)
+	if phase.AchievedRate < 0.95*float64(flags.AssignedChurnRate) {
+		churnErr = errors.Join(churnErr, fmt.Errorf(
+			"lifecycle churn rate %.2f/s was below 95%% of the %.2f/s target",
+			phase.AchievedRate, float64(flags.AssignedChurnRate),
+		))
+	}
+	return phase, churnErr
+}
+
+func runChurnRoute(
+	ctx context.Context,
+	route benchmarkRouteSpec,
+	transportTLS *tls.Config,
+	target string,
+) (time.Duration, error) {
+	started := time.Now()
+	routeCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	ready := false
+	err := publisher.Run(routeCtx, publisher.Config{
+		Control: route.control, TeamID: route.routeContext.teamID, MembershipID: route.routeContext.membershipID,
+		DomainID: route.routeContext.domainID, Hostname: route.hostname, RouteScope: route.routeContext.routeScope,
+		PolicyRevision: route.routeContext.policyRevision, Target: target, State: route.state,
+		QUICConnector: muxsession.QUICConnector{TLSConfig: transportTLS},
+		TCPConnector:  muxsession.TLSYamuxConnector{TLSConfig: transportTLS},
+		Observe: func(event publisher.Event) error {
+			if event.Type == publisher.EventReady {
+				ready = true
+				cancel()
+			}
+			return nil
+		},
+	})
+	if ready && (err == nil || errors.Is(err, context.Canceled)) {
+		return time.Since(started), nil
+	}
+	if err == nil {
+		err = errors.New("publisher exited before lifecycle route became ready")
+	}
+	return time.Since(started), err
+}
+
+func resolveBenchmarkRouteContext(ctx context.Context, authority *authorityclient.Client, managedDomain string) (benchmarkRouteContext, string, error) {
 	identity, err := authority.IdentityContext(ctx)
 	if err != nil {
-		return benchmarkRouteContext{}, fmt.Errorf("read identity context: %w", err)
+		return benchmarkRouteContext{}, "", fmt.Errorf("read identity context: %w", err)
 	}
 	var membership authorityv1.Membership
 	for _, candidate := range identity.Memberships {
@@ -256,19 +509,19 @@ func resolveBenchmarkRouteContext(ctx context.Context, authority *authorityclien
 		}
 	}
 	if membership.Id == "" {
-		return benchmarkRouteContext{}, errors.New("benchmark identity has no personal-team membership")
+		return benchmarkRouteContext{}, "", errors.New("benchmark identity has no personal-team membership")
 	}
 	team, err := authority.GetTeam(ctx, membership.TeamId)
 	if err != nil {
-		return benchmarkRouteContext{}, fmt.Errorf("read benchmark team: %w", err)
+		return benchmarkRouteContext{}, "", fmt.Errorf("read benchmark team: %w", err)
 	}
 	domains, err := authority.ListTeamDomains(ctx, team.Id)
 	if err != nil {
-		return benchmarkRouteContext{}, fmt.Errorf("list benchmark domains: %w", err)
+		return benchmarkRouteContext{}, "", fmt.Errorf("list benchmark domains: %w", err)
 	}
 	var domain authorityv1.Domain
 	for _, candidate := range domains.Domains {
-		if candidate.State != authorityv1.DomainStateReady || hostname != candidate.CanonicalDomain && !strings.HasSuffix(hostname, "."+candidate.CanonicalDomain) {
+		if candidate.State != authorityv1.DomainStateReady || candidate.CanonicalDomain != managedDomain || candidate.Kind != authorityv1.Managed {
 			continue
 		}
 		if len(candidate.CanonicalDomain) > len(domain.CanonicalDomain) {
@@ -276,72 +529,63 @@ func resolveBenchmarkRouteContext(ctx context.Context, authority *authorityclien
 		}
 	}
 	if domain.Id == "" {
-		return benchmarkRouteContext{}, fmt.Errorf("benchmark hostname %s is outside the personal team's ready domains", hostname)
+		return benchmarkRouteContext{}, "", fmt.Errorf("managed deployment domain %s is not ready for the personal team", managedDomain)
 	}
-	label := membership.MemberSlug
-	if domain.Kind == authorityv1.Managed {
-		label = membership.ManagedLabel
-	}
-	namespace := label + "." + domain.CanonicalDomain
-	routeScope := controlv1.Shared
-	if hostname == namespace || strings.HasSuffix(hostname, "."+namespace) && strings.Count(strings.TrimSuffix(hostname, "."+namespace), ".") == 0 {
-		routeScope = controlv1.Member
-	} else if membership.Role == authorityv1.TeamRoleMember {
-		return benchmarkRouteContext{}, errors.New("benchmark hostname requires a shared route but the personal-team membership is not an administrator")
-	}
+	namespace := membership.ManagedLabel + "." + domain.CanonicalDomain
 	if team.PolicyRevision < 0 {
-		return benchmarkRouteContext{}, errors.New("authority returned an invalid team policy revision")
+		return benchmarkRouteContext{}, "", errors.New("authority returned an invalid team policy revision")
 	}
 	return benchmarkRouteContext{
 		teamID: team.Id, membershipID: membership.Id, domainID: domain.Id,
-		routeScope: routeScope, policyRevision: uint64(team.PolicyRevision),
-	}, nil
+		routeScope: controlv1.Member, policyRevision: uint64(team.PolicyRevision),
+	}, namespace, nil
 }
 
 func activateRoutes(
 	ctx context.Context,
 	flags publisherCommand,
-	routes *controlclient.Client,
-	routeContext benchmarkRouteContext,
 	transportTLS *tls.Config,
-	state *clientstate.Store,
 	target string,
-	hostnames []string,
+	specs []benchmarkRouteSpec,
 ) ([]*routeProcess, []time.Duration, error) {
-	processes := make([]*routeProcess, len(hostnames))
+	processes := make([]*routeProcess, len(specs))
 	activated := make(chan struct {
-		index    int
+		slot     int
+		route    int
 		duration time.Duration
 		err      error
-	}, len(hostnames))
+	}, len(specs))
 	semaphore := make(chan struct{}, flags.Parallel)
-	for index := range hostnames {
+	for slot, spec := range specs {
 		select {
 		case semaphore <- struct{}{}:
 		case <-ctx.Done():
 			return processes, nil, ctx.Err()
 		}
 		routeCtx, cancel := context.WithCancel(ctx)
-		process := &routeProcess{hostname: hostnames[index], teamID: routeContext.teamID, cancel: cancel, done: make(chan error, 1)}
-		processes[index] = process
-		go func(index int, process *routeProcess) {
+		process := &routeProcess{
+			index: spec.index, hostname: spec.hostname, cancel: cancel, done: make(chan error, 1),
+		}
+		processes[slot] = process
+		go func(slot int, spec benchmarkRouteSpec, process *routeProcess) {
 			started := time.Now()
 			var signal sync.Once
 			signalResult := func(err error) {
 				signal.Do(func() {
 					<-semaphore
 					activated <- struct {
-						index    int
+						slot     int
+						route    int
 						duration time.Duration
 						err      error
-					}{index: index, duration: time.Since(started), err: err}
+					}{slot: slot, route: spec.index, duration: time.Since(started), err: err}
 				})
 			}
 			ready := false
 			err := publisher.Run(routeCtx, publisher.Config{
-				Control: routes, TeamID: routeContext.teamID, MembershipID: routeContext.membershipID,
-				DomainID: routeContext.domainID, Hostname: process.hostname, RouteScope: routeContext.routeScope,
-				PolicyRevision: routeContext.policyRevision, Target: target, State: state,
+				Control: spec.control, TeamID: spec.routeContext.teamID, MembershipID: spec.routeContext.membershipID,
+				DomainID: spec.routeContext.domainID, Hostname: process.hostname, RouteScope: spec.routeContext.routeScope,
+				PolicyRevision: spec.routeContext.policyRevision, Target: target, State: spec.state,
 				QUICConnector: muxsession.QUICConnector{TLSConfig: transportTLS},
 				TCPConnector:  muxsession.TLSYamuxConnector{TLSConfig: transportTLS},
 				Observe: func(event publisher.Event) error {
@@ -356,21 +600,21 @@ func activateRoutes(
 				},
 			})
 			if ready && routeCtx.Err() == nil {
-				fmt.Fprintf(os.Stderr, "tnlbench: route %d publisher exited after readiness: %v\n", index, err)
+				fmt.Fprintf(os.Stderr, "tnlbench: route %d publisher exited after readiness: %v\n", spec.index, err)
 			}
 			signalResult(err)
 			process.done <- err
 			close(process.done)
-		}(index, process)
+		}(slot, spec, process)
 	}
-	timings := make([]time.Duration, len(hostnames))
-	for completed := 1; completed <= len(hostnames); completed++ {
+	timings := make([]time.Duration, len(specs))
+	for completed := 1; completed <= len(specs); completed++ {
 		select {
 		case result := <-activated:
 			if result.err != nil {
-				return processes, nil, fmt.Errorf("activate route %d: %w", result.index, result.err)
+				return processes, nil, fmt.Errorf("activate route %d: %w", result.route, result.err)
 			}
-			timings[result.index] = result.duration
+			timings[result.slot] = result.duration
 		case <-ctx.Done():
 			return processes, nil, ctx.Err()
 		}
@@ -378,69 +622,25 @@ func activateRoutes(
 	return processes, timings, nil
 }
 
-func cleanupRoutes(ctx context.Context, parallel int, server routeCleaner, processes []*routeProcess) ([]time.Duration, error) {
+func stopRoutes(ctx context.Context, processes []*routeProcess) ([]time.Duration, error) {
 	started := time.Now()
-	teamID := ""
 	for _, process := range processes {
 		if process != nil {
-			if teamID == "" {
-				teamID = process.teamID
-			}
 			process.cancel()
 		}
 	}
-	routeIDs := make([]string, len(processes))
-	var cleanupErr error
-	for index, process := range processes {
+	var stopErr error
+	for _, process := range processes {
 		if process == nil {
 			continue
 		}
 		select {
 		case err := <-process.done:
 			if err != nil && !errors.Is(err, context.Canceled) {
-				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("stop route %d: %w", index, err))
+				stopErr = errors.Join(stopErr, fmt.Errorf("stop route %d: %w", process.index, err))
 			}
-			routeIDs[index] = process.routeID
 		case <-ctx.Done():
-			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("stop route %d: %w", index, ctx.Err()))
-			routeIDs[index] = process.routeID
-		}
-	}
-	cleanupCtx := ctx
-	cancelCleanup := func() {}
-	if ctx.Err() != nil {
-		cleanupCtx, cancelCleanup = context.WithTimeout(context.Background(), 30*time.Second)
-	}
-	defer cancelCleanup()
-	remaining, verifyErr := remainingRoutes(cleanupCtx, server, teamID, routeIDs)
-	if verifyErr != nil {
-		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("list benchmark routes for cleanup: %w", verifyErr))
-	} else {
-		type cleanupResult struct{ err error }
-		results := make(chan cleanupResult, len(remaining))
-		semaphore := make(chan struct{}, parallel)
-		for _, routeID := range routeIDs {
-			route, found := remaining[routeID]
-			if routeID == "" || !found {
-				continue
-			}
-			semaphore <- struct{}{}
-			go func(route controlv1.Route) {
-				defer func() { <-semaphore }()
-				err := server.DeleteRoute(cleanupCtx, route.Id)
-				if errors.Is(err, controlclient.ErrNotFound) {
-					err = nil
-				}
-				results <- cleanupResult{err: err}
-			}(route)
-		}
-		for range remaining {
-			cleanupErr = errors.Join(cleanupErr, (<-results).err)
-		}
-		if stillRemaining, err := remainingRoutes(cleanupCtx, server, teamID, routeIDs); err != nil {
-			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("verify benchmark route cleanup: %w", err))
-		} else if len(stillRemaining) != 0 {
-			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("benchmark cleanup left %d routes", len(stillRemaining)))
+			stopErr = errors.Join(stopErr, fmt.Errorf("stop route %d: %w", process.index, ctx.Err()))
 		}
 	}
 	timings := make([]time.Duration, 0, len(processes))
@@ -449,30 +649,7 @@ func cleanupRoutes(ctx context.Context, parallel int, server routeCleaner, proce
 			timings = append(timings, time.Since(started))
 		}
 	}
-	return timings, cleanupErr
-}
-
-func remainingRoutes(ctx context.Context, server routeCleaner, teamID string, routeIDs []string) (map[string]controlv1.Route, error) {
-	wanted := make(map[string]struct{}, len(routeIDs))
-	for _, routeID := range routeIDs {
-		if routeID != "" {
-			wanted[routeID] = struct{}{}
-		}
-	}
-	if len(wanted) == 0 {
-		return nil, nil
-	}
-	routes, err := server.ListRoutes(ctx, teamID)
-	if err != nil {
-		return nil, err
-	}
-	remaining := make(map[string]controlv1.Route)
-	for _, route := range routes {
-		if _, found := wanted[route.Id]; found {
-			remaining[route.Id] = route
-		}
-	}
-	return remaining, nil
+	return timings, stopErr
 }
 
 func benchmarkHostnameSuffix(discovery controlv1.ControlDiscovery, configured string) (string, error) {

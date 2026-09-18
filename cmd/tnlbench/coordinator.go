@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/naming"
 )
 
 type coordinatorCommand struct {
@@ -21,12 +23,13 @@ type coordinatorCommand struct {
 	CellID           string        `name:"cell-id" env:"TNL_BENCH_CELL_ID" required:"" help:"Expanded benchmark cell ID."`
 	PublisherWorkers int           `name:"publisher-workers" env:"TNL_BENCH_PUBLISHER_WORKERS" required:"" help:"Expected publisher worker count."`
 	LoadWorkers      int           `name:"load-workers" env:"TNL_BENCH_LOAD_WORKERS" required:"" help:"Expected load worker count."`
+	Routes           int           `name:"routes" env:"TNL_BENCH_ROUTES" required:"" help:"Expected registered route count."`
 	ShutdownDelay    time.Duration `name:"shutdown-delay" env:"TNL_BENCH_SHUTDOWN_DELAY" default:"1h" help:"Maximum time to retain completed results for collection."`
 }
 
 func (c coordinatorCommand) Validate() error {
-	if c.PublisherWorkers <= 0 || c.LoadWorkers <= 0 {
-		return errors.New("publisher and load worker counts must be positive")
+	if c.PublisherWorkers <= 0 || c.LoadWorkers <= 0 || c.Routes <= 0 {
+		return errors.New("publisher and load worker and route counts must be positive")
 	}
 	if c.ShutdownDelay <= 0 {
 		return errors.New("shutdown delay must be positive")
@@ -38,8 +41,10 @@ type coordinatorState struct {
 	cellID              string
 	publisherWorkers    int
 	loadWorkers         int
+	routeCount          int
 	mu                  sync.Mutex
 	publishersReady     map[int]struct{}
+	routes              map[int]string
 	results             map[string]benchmarkResult
 	publishersReadyWait chan struct{}
 	loadDoneWait        chan struct{}
@@ -62,16 +67,21 @@ type coordinatorStatus struct {
 	Failure          string `json:"failure,omitempty"`
 }
 
-func newCoordinatorState(cellID string, publishers, load int) *coordinatorState {
+type benchmarkRouteRegistration struct {
+	Index    int    `json:"index"`
+	Hostname string `json:"hostname"`
+}
+
+func newCoordinatorState(cellID string, publishers, load, routes int) *coordinatorState {
 	return &coordinatorState{
-		cellID: cellID, publisherWorkers: publishers, loadWorkers: load,
-		publishersReady: make(map[int]struct{}), results: make(map[string]benchmarkResult),
+		cellID: cellID, publisherWorkers: publishers, loadWorkers: load, routeCount: routes,
+		publishersReady: make(map[int]struct{}), routes: make(map[int]string), results: make(map[string]benchmarkResult),
 		publishersReadyWait: make(chan struct{}), loadDoneWait: make(chan struct{}), abortedWait: make(chan struct{}),
 	}
 }
 
 func (c coordinatorCommand) run(ctx context.Context) error {
-	state := newCoordinatorState(c.CellID, c.PublisherWorkers, c.LoadWorkers)
+	state := newCoordinatorState(c.CellID, c.PublisherWorkers, c.LoadWorkers, c.Routes)
 	server := &http.Server{Addr: c.Listen, Handler: coordinatorHandler(c.Token, state), ReadHeaderTimeout: 5 * time.Second}
 	stopped := make(chan error, 1)
 	go func() { stopped <- server.ListenAndServe() }()
@@ -92,6 +102,7 @@ func coordinatorHandler(token string, state *coordinatorState) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/publishers/ready", state.handlePublisherReady)
 	mux.HandleFunc("GET /v1/wait/publishers", state.handleWaitPublishers)
+	mux.HandleFunc("GET /v1/routes", state.handleRoutes)
 	mux.HandleFunc("GET /v1/wait/load", state.handleWaitLoad)
 	mux.HandleFunc("POST /v1/results", state.handleResult)
 	mux.HandleFunc("GET /v1/results", state.handleResults)
@@ -110,14 +121,87 @@ func (s *coordinatorState) handlePublisherReady(response http.ResponseWriter, re
 	if !ok {
 		return
 	}
+	var registrations []benchmarkRouteRegistration
+	decoder := json.NewDecoder(io.LimitReader(request.Body, 1<<20))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&registrations); err != nil {
+		http.Error(response, "invalid route registrations", http.StatusBadRequest)
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		http.Error(response, "invalid route registrations", http.StatusBadRequest)
+		return
+	}
+	validated := make(map[int]string, len(registrations))
+	for _, registration := range registrations {
+		hostname, err := naming.CanonicalizeHostname(registration.Hostname)
+		if err != nil || hostname != registration.Hostname || registration.Index < 0 || registration.Index >= s.routeCount {
+			http.Error(response, "invalid route registration", http.StatusBadRequest)
+			return
+		}
+		if _, exists := validated[registration.Index]; exists {
+			http.Error(response, "duplicate route registration", http.StatusBadRequest)
+			return
+		}
+		validated[registration.Index] = registration.Hostname
+	}
 	s.mu.Lock()
+	if _, exists := s.publishersReady[index]; exists {
+		s.mu.Unlock()
+		http.Error(response, "publisher is already ready", http.StatusConflict)
+		return
+	}
+	for routeIndex, hostname := range validated {
+		if _, exists := s.routes[routeIndex]; exists || containsHostname(s.routes, hostname) {
+			s.mu.Unlock()
+			http.Error(response, "route registration conflicts", http.StatusConflict)
+			return
+		}
+	}
+	for routeIndex, hostname := range validated {
+		s.routes[routeIndex] = hostname
+	}
 	s.publishersReady[index] = struct{}{}
 	ready := len(s.publishersReady) == s.publisherWorkers
+	if ready && len(s.routes) != s.routeCount {
+		s.failure = fmt.Sprintf("publishers registered %d of %d routes", len(s.routes), s.routeCount)
+	}
+	failure := s.failure
 	s.mu.Unlock()
+	if failure != "" {
+		s.abortedOnce.Do(func() { close(s.abortedWait) })
+		http.Error(response, failure, http.StatusConflict)
+		return
+	}
 	if ready {
 		s.publishersReadyOnce.Do(func() { close(s.publishersReadyWait) })
 	}
 	response.WriteHeader(http.StatusNoContent)
+}
+
+func containsHostname(routes map[int]string, hostname string) bool {
+	for _, candidate := range routes {
+		if candidate == hostname {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *coordinatorState) handleRoutes(response http.ResponseWriter, _ *http.Request) {
+	s.mu.Lock()
+	if len(s.publishersReady) != s.publisherWorkers || len(s.routes) != s.routeCount {
+		s.mu.Unlock()
+		http.Error(response, "publisher routes are not ready", http.StatusTooEarly)
+		return
+	}
+	routes := make([]string, s.routeCount)
+	for index, hostname := range s.routes {
+		routes[index] = hostname
+	}
+	s.mu.Unlock()
+	response.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(response).Encode(routes)
 }
 
 func (s *coordinatorState) handleWaitPublishers(response http.ResponseWriter, request *http.Request) {
@@ -279,8 +363,12 @@ func newCoordinatorClient(rawURL, token string) (*coordinatorClient, error) {
 	return &coordinatorClient{baseURL: endpoint.String(), token: token, client: &http.Client{Timeout: 35 * time.Minute}}, nil
 }
 
-func (c *coordinatorClient) publisherReady(ctx context.Context, index int) error {
-	return c.do(ctx, http.MethodPost, "/v1/publishers/ready?index="+strconv.Itoa(index), nil, http.StatusNoContent)
+func (c *coordinatorClient) publisherReady(ctx context.Context, index int, routes []benchmarkRouteRegistration) error {
+	body, err := json.Marshal(routes)
+	if err != nil {
+		return err
+	}
+	return c.do(ctx, http.MethodPost, "/v1/publishers/ready?index="+strconv.Itoa(index), bytes.NewReader(body), http.StatusNoContent)
 }
 
 func (c *coordinatorClient) waitPublishers(ctx context.Context) error {
@@ -289,6 +377,28 @@ func (c *coordinatorClient) waitPublishers(ctx context.Context) error {
 
 func (c *coordinatorClient) waitLoad(ctx context.Context) error {
 	return c.do(ctx, http.MethodGet, "/v1/wait/load", nil, http.StatusNoContent)
+}
+
+func (c *coordinatorClient) routes(ctx context.Context) ([]string, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/routes", nil)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Authorization", "Bearer "+c.token)
+	response, err := c.client.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		data, readErr := io.ReadAll(io.LimitReader(response.Body, 64<<10))
+		return nil, errors.Join(fmt.Errorf("coordinator routes: HTTP %d: %s", response.StatusCode, data), readErr)
+	}
+	var routes []string
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&routes); err != nil {
+		return nil, err
+	}
+	return routes, nil
 }
 
 func (c *coordinatorClient) postResult(ctx context.Context, result benchmarkResult) error {

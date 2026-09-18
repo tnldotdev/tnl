@@ -9,36 +9,86 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 func sampleResources(ctx context.Context, rawURLs []string, moment string) []resourceSample {
-	result := make([]resourceSample, 0, len(rawURLs))
-	for _, rawURL := range rawURLs {
-		identity := rawURL
-		role := "unknown"
-		if parsed, err := url.Parse(rawURL); err == nil {
-			identity = parsed.Hostname()
-			role = metricRole(parsed.Fragment)
-		}
-		if role == "unknown" {
-			role = metricRole(identity)
-		}
-		sample := resourceSample{Role: role, Identity: identity, Moment: moment, Timestamp: time.Now().UTC()}
-		values, err := sampleMetrics(ctx, rawURL)
-		if err != nil {
-			sample.Error = err.Error()
-		} else {
-			sample.Metrics = make(map[string]float64)
-			for name, value := range values {
-				if strings.HasPrefix(name, "tnl_") || strings.HasPrefix(name, "process_") || name == "go_goroutines" {
-					sample.Metrics[name] = value
+	result := make([]resourceSample, len(rawURLs))
+	var workers sync.WaitGroup
+	for index, rawURL := range rawURLs {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			identity := rawURL
+			role := "unknown"
+			if parsed, err := url.Parse(rawURL); err == nil {
+				identity = parsed.Hostname()
+				role = metricRole(parsed.Fragment)
+			}
+			if role == "unknown" {
+				role = metricRole(identity)
+			}
+			sample := resourceSample{Role: role, Identity: identity, Moment: moment, Timestamp: time.Now().UTC()}
+			values, err := sampleMetrics(ctx, rawURL)
+			if err != nil {
+				sample.Error = err.Error()
+			} else {
+				sample.Metrics = make(map[string]float64)
+				for name, value := range values {
+					if strings.HasPrefix(name, "tnl_") || strings.HasPrefix(name, "process_") || name == "go_goroutines" {
+						sample.Metrics[name] = value
+					}
 				}
 			}
-		}
-		result = append(result, sample)
+			result[index] = sample
+		}()
 	}
+	workers.Wait()
 	return result
+}
+
+type resourceSampler struct {
+	cancel context.CancelFunc
+	done   chan []resourceSample
+	once   sync.Once
+	result []resourceSample
+}
+
+func startResourceSampler(parent context.Context, rawURLs []string, interval time.Duration) *resourceSampler {
+	ctx, cancel := context.WithCancel(parent)
+	sampler := &resourceSampler{cancel: cancel, done: make(chan []resourceSample, 1)}
+	go func() {
+		var samples []resourceSample
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		sequence := 0
+		for {
+			select {
+			case <-ctx.Done():
+				sampler.done <- samples
+				return
+			default:
+			}
+			select {
+			case <-ticker.C:
+				sequence++
+				samples = append(samples, sampleResources(parent, rawURLs, fmt.Sprintf("load-%06d", sequence))...)
+			case <-ctx.Done():
+				sampler.done <- samples
+				return
+			}
+		}
+	}()
+	return sampler
+}
+
+func (s *resourceSampler) Stop() []resourceSample {
+	s.once.Do(func() {
+		s.cancel()
+		s.result = <-s.done
+	})
+	return append([]resourceSample(nil), s.result...)
 }
 
 func metricRole(identity string) string {

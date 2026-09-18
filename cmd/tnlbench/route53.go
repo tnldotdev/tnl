@@ -4,13 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"net/netip"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/route53"
 	"github.com/aws/aws-sdk-go-v2/service/route53/types"
 	"github.com/aws/smithy-go"
+	mdns "github.com/miekg/dns"
 )
 
 type benchmarkRoute53API interface {
@@ -21,7 +25,15 @@ type benchmarkRoute53API interface {
 	DeleteHostedZone(context.Context, *route53.DeleteHostedZoneInput, ...func(*route53.Options)) (*route53.DeleteHostedZoneOutput, error)
 }
 
-type benchmarkDNS struct{ client benchmarkRoute53API }
+type benchmarkResolver interface {
+	LookupNS(context.Context, string) ([]*net.NS, error)
+	LookupNetIP(context.Context, string, string) ([]netip.Addr, error)
+}
+
+type benchmarkDNS struct {
+	client   benchmarkRoute53API
+	resolver benchmarkResolver
+}
 
 func (d benchmarkDNS) validateParentZone(ctx context.Context, zoneID, domain string) error {
 	output, err := d.client.GetHostedZone(ctx, &route53.GetHostedZoneInput{Id: aws.String(zoneID)})
@@ -33,6 +45,22 @@ func (d benchmarkDNS) validateParentZone(ctx context.Context, zoneID, domain str
 		return errors.New("benchmark parent hosted zone does not match BENCH_PARENT_DOMAIN or is private")
 	}
 	return nil
+}
+
+func (d benchmarkDNS) hostedZoneNameServers(ctx context.Context, zoneID string) ([]string, error) {
+	output, err := d.client.GetHostedZone(ctx, &route53.GetHostedZoneInput{Id: aws.String(zoneID)})
+	if err != nil {
+		return nil, fmt.Errorf("read benchmark hosted-zone name servers: %w", err)
+	}
+	if output.DelegationSet == nil || len(output.DelegationSet.NameServers) < 2 {
+		return nil, errors.New("benchmark hosted zone has no public delegation set")
+	}
+	nameServers := append([]string(nil), output.DelegationSet.NameServers...)
+	for index := range nameServers {
+		nameServers[index] = canonicalDNSName(nameServers[index])
+	}
+	slices.Sort(nameServers)
+	return nameServers, nil
 }
 
 func (d benchmarkDNS) createZone(ctx context.Context, name, reference string) (manifestZone, error) {
@@ -65,6 +93,7 @@ func (d benchmarkDNS) upsertDelegation(ctx context.Context, parentZoneID string,
 }
 
 func (d benchmarkDNS) upsertAddress(ctx context.Context, zoneID, hostname string, ipv4, ipv6 []string) error {
+	var changes []types.Change
 	for _, record := range []struct {
 		typeName types.RRType
 		values   []string
@@ -72,22 +101,257 @@ func (d benchmarkDNS) upsertAddress(ctx context.Context, zoneID, hostname string
 		if len(record.values) == 0 {
 			continue
 		}
-		if err := d.changeRecord(ctx, zoneID, types.ChangeActionUpsert, recordSet(hostname, record.typeName, record.values)); err != nil {
-			return err
-		}
+		changes = append(changes, types.Change{
+			Action: types.ChangeActionUpsert, ResourceRecordSet: recordSet(hostname, record.typeName, record.values),
+		})
+	}
+	if len(changes) == 0 {
+		return nil
+	}
+	if err := d.changeRecords(ctx, zoneID, changes); err != nil {
+		return fmt.Errorf("change benchmark DNS address %s: %w", hostname, err)
 	}
 	return nil
 }
 
+func (d benchmarkDNS) waitDelegation(
+	ctx context.Context,
+	parentNameServers []string,
+	zone manifestZone,
+	timeout time.Duration,
+) error {
+	expected := make(map[string]struct{}, len(zone.NameServers))
+	for _, nameServer := range zone.NameServers {
+		expected[canonicalDNSName(nameServer)] = struct{}{}
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	var lastErr error
+	for {
+		matchedAll := true
+		for _, parentNameServer := range parentNameServers {
+			nameServers, err := d.lookupAuthoritativeNameServers(ctx, parentNameServer, zone.Name)
+			if err != nil {
+				lastErr = fmt.Errorf("query %s: %w", parentNameServer, err)
+				matchedAll = false
+				break
+			}
+			matched := len(nameServers) == len(expected)
+			if matched {
+				for _, nameServer := range nameServers {
+					if _, ok := expected[canonicalDNSName(nameServer)]; !ok {
+						matched = false
+						break
+					}
+				}
+			}
+			if matched {
+				continue
+			}
+			matchedAll = false
+			observed := make([]string, 0, len(nameServers))
+			for _, nameServer := range nameServers {
+				observed = append(observed, canonicalDNSName(nameServer))
+			}
+			slices.Sort(observed)
+			wanted := append([]string(nil), zone.NameServers...)
+			for index := range wanted {
+				wanted[index] = canonicalDNSName(wanted[index])
+			}
+			slices.Sort(wanted)
+			lastErr = fmt.Errorf("%s resolved name servers %v, want %v", parentNameServer, observed, wanted)
+			break
+		}
+		if matchedAll {
+			return nil
+		}
+		if err := sleepContext(ctx, 2*time.Second); err != nil {
+			return fmt.Errorf("wait for authoritative DNS delegation of %s: %w (last lookup error: %v)", zone.Name, err, lastErr)
+		}
+	}
+}
+
+func (d benchmarkDNS) waitAddresses(
+	ctx context.Context,
+	nameServers []string,
+	hostname string,
+	ipv4, ipv6 []string,
+	timeout time.Duration,
+) error {
+	expected := make(map[netip.Addr]struct{}, len(ipv4)+len(ipv6))
+	for _, value := range append(append([]string(nil), ipv4...), ipv6...) {
+		address, err := netip.ParseAddr(value)
+		if err != nil {
+			return fmt.Errorf("parse expected benchmark address %q: %w", value, err)
+		}
+		expected[address.Unmap()] = struct{}{}
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	var lastErr error
+	for {
+		matchedAll := true
+		for _, nameServer := range nameServers {
+			addresses, err := d.lookupAuthoritativeAddresses(ctx, nameServer, hostname)
+			if err != nil {
+				lastErr = fmt.Errorf("query %s: %w", nameServer, err)
+				matchedAll = false
+				break
+			}
+			matched := addressesMatchExpected(addresses, expected)
+			if matched {
+				continue
+			}
+			matchedAll = false
+			observed := make([]string, 0, len(addresses))
+			for _, address := range addresses {
+				observed = append(observed, address.Unmap().String())
+			}
+			slices.Sort(observed)
+			wanted := make([]string, 0, len(expected))
+			for address := range expected {
+				wanted = append(wanted, address.String())
+			}
+			slices.Sort(wanted)
+			lastErr = fmt.Errorf("%s resolved addresses %v, want %v", nameServer, observed, wanted)
+			break
+		}
+		if matchedAll {
+			return nil
+		}
+		if err := sleepContext(ctx, 2*time.Second); err != nil {
+			return fmt.Errorf("wait for authoritative DNS addresses of %s: %w (last lookup error: %v)", hostname, err, lastErr)
+		}
+	}
+}
+
+func (d benchmarkDNS) lookupAuthoritativeNameServers(ctx context.Context, nameServer, hostname string) ([]string, error) {
+	if d.resolver != nil {
+		records, err := d.resolver.LookupNS(ctx, hostname)
+		if err != nil {
+			return nil, err
+		}
+		nameServers := make([]string, 0, len(records))
+		for _, record := range records {
+			nameServers = append(nameServers, canonicalDNSName(record.Host))
+		}
+		return nameServers, nil
+	}
+	response, err := queryAuthoritativeDNS(ctx, nameServer, hostname, mdns.TypeNS)
+	if err != nil {
+		return nil, err
+	}
+	if response.Rcode == mdns.RcodeNameError {
+		return nil, nil
+	}
+	if response.Rcode != mdns.RcodeSuccess {
+		return nil, fmt.Errorf("dns response code is %s", mdns.RcodeToString[response.Rcode])
+	}
+	var nameServers []string
+	for _, section := range [][]mdns.RR{response.Answer, response.Ns} {
+		for _, answer := range section {
+			record, ok := answer.(*mdns.NS)
+			if ok && strings.EqualFold(record.Hdr.Name, mdns.Fqdn(hostname)) {
+				nameServers = append(nameServers, canonicalDNSName(record.Ns))
+			}
+		}
+	}
+	return nameServers, nil
+}
+
+func (d benchmarkDNS) lookupAuthoritativeAddresses(ctx context.Context, nameServer, hostname string) ([]netip.Addr, error) {
+	if d.resolver != nil {
+		return d.resolver.LookupNetIP(ctx, "ip", hostname)
+	}
+	var addresses []netip.Addr
+	for _, recordType := range []uint16{mdns.TypeA, mdns.TypeAAAA} {
+		response, err := queryAuthoritativeDNS(ctx, nameServer, hostname, recordType)
+		if err != nil {
+			return nil, err
+		}
+		if response.Rcode == mdns.RcodeNameError {
+			continue
+		}
+		if response.Rcode != mdns.RcodeSuccess {
+			return nil, fmt.Errorf("dns response code is %s", mdns.RcodeToString[response.Rcode])
+		}
+		if !response.Authoritative {
+			return nil, errors.New("dns response is not authoritative")
+		}
+		for _, answer := range response.Answer {
+			var address net.IP
+			switch record := answer.(type) {
+			case *mdns.A:
+				address = record.A
+			case *mdns.AAAA:
+				address = record.AAAA
+			}
+			parsed, ok := netip.AddrFromSlice(address)
+			if ok {
+				addresses = append(addresses, parsed.Unmap())
+			}
+		}
+	}
+	return addresses, nil
+}
+
+func queryAuthoritativeDNS(ctx context.Context, nameServer, hostname string, recordType uint16) (*mdns.Msg, error) {
+	servers := []string{nameServer}
+	if _, _, err := net.SplitHostPort(nameServer); err != nil {
+		addresses, err := net.DefaultResolver.LookupNetIP(ctx, "ip4", nameServer)
+		if err != nil {
+			return nil, fmt.Errorf("resolve authoritative name server %s: %w", nameServer, err)
+		}
+		if len(addresses) == 0 {
+			return nil, fmt.Errorf("resolve authoritative name server %s: no IPv4 address", nameServer)
+		}
+		servers = make([]string, 0, len(addresses))
+		for _, address := range addresses {
+			servers = append(servers, netip.AddrPortFrom(address, 53).String())
+		}
+	}
+	query := new(mdns.Msg)
+	query.SetQuestion(mdns.Fqdn(hostname), recordType)
+	query.RecursionDesired = false
+	client := &mdns.Client{Net: "udp", Timeout: 5 * time.Second}
+	var queryErr error
+	for _, server := range servers {
+		response, _, err := client.ExchangeContext(ctx, query, server)
+		if err == nil {
+			return response, nil
+		}
+		queryErr = errors.Join(queryErr, err)
+	}
+	return nil, queryErr
+}
+
+func addressesMatchExpected(addresses []netip.Addr, expected map[netip.Addr]struct{}) bool {
+	if len(addresses) != len(expected) {
+		return false
+	}
+	for _, address := range addresses {
+		if _, ok := expected[address.Unmap()]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 func (d benchmarkDNS) changeRecord(ctx context.Context, zoneID string, action types.ChangeAction, record *types.ResourceRecordSet) error {
-	_, err := d.client.ChangeResourceRecordSets(ctx, &route53.ChangeResourceRecordSetsInput{
-		HostedZoneId: aws.String(zoneID),
-		ChangeBatch: &types.ChangeBatch{Comment: aws.String("transient tnl benchmark"), Changes: []types.Change{{
-			Action: action, ResourceRecordSet: record,
-		}}},
-	})
+	err := d.changeRecords(ctx, zoneID, []types.Change{{Action: action, ResourceRecordSet: record}})
 	if err != nil {
 		return fmt.Errorf("change benchmark DNS record %s: %w", aws.ToString(record.Name), err)
+	}
+	return nil
+}
+
+func (d benchmarkDNS) changeRecords(ctx context.Context, zoneID string, changes []types.Change) error {
+	_, err := d.client.ChangeResourceRecordSets(ctx, &route53.ChangeResourceRecordSetsInput{
+		HostedZoneId: aws.String(zoneID),
+		ChangeBatch:  &types.ChangeBatch{Comment: aws.String("transient tnl benchmark"), Changes: changes},
+	})
+	if err != nil {
+		return err
 	}
 	return nil
 }
@@ -131,9 +395,7 @@ func (d benchmarkDNS) deleteZone(ctx context.Context, zone manifestZone) error {
 			record := records[index]
 			changes = append(changes, types.Change{Action: types.ChangeActionDelete, ResourceRecordSet: &record})
 		}
-		if _, err := d.client.ChangeResourceRecordSets(ctx, &route53.ChangeResourceRecordSetsInput{
-			HostedZoneId: aws.String(zone.ID), ChangeBatch: &types.ChangeBatch{Changes: changes},
-		}); err != nil && !route53Error(err, "NoSuchHostedZone") {
+		if err := d.changeRecords(ctx, zone.ID, changes); err != nil && !route53Error(err, "NoSuchHostedZone") {
 			return fmt.Errorf("empty benchmark hosted zone %s: %w", zone.Name, err)
 		}
 	}

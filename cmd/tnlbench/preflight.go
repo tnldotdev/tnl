@@ -10,6 +10,7 @@ import (
 )
 
 type preflightCommand struct {
+	ProfileFile  string `name:"profile" env:"BENCH_PROFILE" default:"benchmarks/suites/fly-production.json" type:"path" help:"Production-candidate benchmark profile."`
 	FlyOrg       string `name:"fly-org" env:"BENCH_FLY_ORG" required:"" help:"Fly organization slug."`
 	FlyBinary    string `name:"fly-binary" env:"BENCH_FLY_BINARY" default:"flyctl" help:"Fly CLI executable."`
 	ParentDomain string `name:"parent-domain" env:"BENCH_PARENT_DOMAIN" required:"" help:"Existing public Route 53 parent domain."`
@@ -26,6 +27,13 @@ func (c preflightCommand) Validate() error {
 
 func (c preflightCommand) run(ctx context.Context, stdout io.Writer) error {
 	if err := c.Validate(); err != nil {
+		return err
+	}
+	var profile benchmarkProfile
+	if err := decodeJSONFile(c.ProfileFile, &profile); err != nil {
+		return fmt.Errorf("benchmark profile: %w", err)
+	}
+	if err := validateBenchmarkProfile(profile); err != nil {
 		return err
 	}
 	fly := flyPlatform{binary: c.FlyBinary, org: c.FlyOrg, executor: osCommandExecutor{}}

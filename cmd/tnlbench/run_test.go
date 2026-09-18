@@ -2,7 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"encoding/pem"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -37,6 +41,19 @@ func TestRunValidationRequiresBothPaidResourceGates(t *testing.T) {
 	}
 }
 
+func TestBenchmarkProgressIncludesElapsedTime(t *testing.T) {
+	startedAt := time.Date(2026, time.September, 18, 2, 0, 0, 0, time.UTC)
+	var output strings.Builder
+	progress := &benchmarkProgress{
+		output: &output, startedAt: startedAt,
+		now: func() time.Time { return startedAt.Add(time.Minute + 5*time.Second + 900*time.Millisecond) },
+	}
+	progress.printf("database: ready")
+	if got, want := output.String(), "[+1m5s] database: ready\n"; got != want {
+		t.Fatalf("progress = %q, want %q", got, want)
+	}
+}
+
 func TestManifestContainsNoGeneratedSecrets(t *testing.T) {
 	secrets, err := generateRunSecrets()
 	if err != nil {
@@ -44,10 +61,11 @@ func TestManifestContainsNoGeneratedSecrets(t *testing.T) {
 	}
 	manifest := runManifest{
 		SchemaVersion: runManifestSchemaVersion, RunID: "bench-20260916-120000-abcdefgh",
-		FlyOrg: "example", Region: "sjc", ParentDomain: "bench.example.com", ParentZoneID: "Z123",
-		ServerDomain:    "bench-20260916-120000-abcdefgh.bench.example.com",
-		ManagedDomain:   "routes.bench-20260916-120000-abcdefgh.bench.example.com",
-		ManagedPostgres: testManifestManagedPostgres("bench-20260916-120000-abcdefgh"),
+		FlyOrg: "example", Region: "sjc", Topology: testTopology(), ParentDomain: "bench.example.com", ParentZoneID: "Z123",
+		CertificateAuthority: benchmarkCertificateAuthorityPebble,
+		ServerDomain:         "bench-20260916-120000-abcdefgh.bench.example.com",
+		ManagedDomain:        "routes.bench-20260916-120000-abcdefgh.bench.example.com",
+		ManagedPostgres:      testManifestManagedPostgres("bench-20260916-120000-abcdefgh"),
 	}
 	data, err := json.Marshal(manifest)
 	if err != nil {
@@ -65,11 +83,12 @@ func TestManifestContainsNoGeneratedSecrets(t *testing.T) {
 func TestManifestCleanupOwnershipChecks(t *testing.T) {
 	manifest := runManifest{
 		SchemaVersion: runManifestSchemaVersion, RunID: "bench-20260916-120000-abcdefgh",
-		FlyOrg: "example", Region: "sjc", ParentDomain: "bench.example.com", ParentZoneID: "Z123",
-		ServerDomain:    "bench-20260916-120000-abcdefgh.bench.example.com",
-		ManagedDomain:   "routes.bench-20260916-120000-abcdefgh.bench.example.com",
-		ManagedPostgres: testManifestManagedPostgres("bench-20260916-120000-abcdefgh"),
-		Apps:            []manifestApp{{Role: "control", Name: "tnl-bench-bench-20260916-120000-abcdefgh-ctl"}},
+		FlyOrg: "example", Region: "sjc", Topology: testTopology(), ParentDomain: "bench.example.com", ParentZoneID: "Z123",
+		CertificateAuthority: benchmarkCertificateAuthorityPebble,
+		ServerDomain:         "bench-20260916-120000-abcdefgh.bench.example.com",
+		ManagedDomain:        "routes.bench-20260916-120000-abcdefgh.bench.example.com",
+		ManagedPostgres:      testManifestManagedPostgres("bench-20260916-120000-abcdefgh"),
+		Apps:                 []manifestApp{{Role: "control", Name: "tnl-bench-bench-20260916-120000-abcdefgh-ctl"}},
 		Zones: []manifestZone{{
 			Kind: "server", Name: "bench-20260916-120000-abcdefgh.bench.example.com", ID: "ZSERVER",
 			ParentName: "bench.example.com", ParentZoneID: "Z123",
@@ -99,6 +118,29 @@ func TestBalancedAssignmentPreservesTotals(t *testing.T) {
 	}
 }
 
+func TestPublisherChurnAssignmentBalancesActiveGenerators(t *testing.T) {
+	var assignments []int
+	for worker := range 4 {
+		assignments = append(assignments, benchmarkPublisherChurnAssignment(5, 4, worker))
+	}
+	if !slices.Equal(assignments, []int{2, 1, 1, 1}) {
+		t.Fatalf("assignments = %v", assignments)
+	}
+}
+
+func TestBenchmarkChurnRoutesUseOneStableRoutePerGroup(t *testing.T) {
+	routes := []benchmarkRouteSpec{
+		{index: 0, namespace: "alice.example.test"},
+		{index: 1, namespace: "alice.example.test"},
+		{index: 40, namespace: "alice.example.test"},
+	}
+	churn := benchmarkChurnRoutes(routes, 2, 10)
+	if len(churn) != 2 || churn[0].index != -1 || churn[0].hostname != "tnlbench-churn-w02-g000000.alice.example.test" ||
+		churn[1].index != -1 || churn[1].hostname != "tnlbench-churn-w02-g000004.alice.example.test" {
+		t.Fatalf("churn routes = %#v", churn)
+	}
+}
+
 func TestRunIDIsDNSAndAppSafe(t *testing.T) {
 	runID, err := newRunID(time.Date(2026, time.September, 16, 12, 34, 56, 0, time.UTC))
 	if err != nil {
@@ -110,13 +152,13 @@ func TestRunIDIsDNSAndAppSafe(t *testing.T) {
 	if !validRunID(runID) {
 		t.Fatalf("generated run ID %q is not valid", runID)
 	}
-	for role, app := range benchmarkAppNames(runID) {
+	for role, app := range benchmarkAppNames(runID, 2) {
 		if len(app) > 63 || !strings.HasPrefix(app, "tnl-bench-"+runID+"-") {
 			t.Fatalf("%s app = %q", role, app)
 		}
 	}
-	if database := benchmarkManagedPostgresName(runID); len(database) > 63 || !strings.HasPrefix(database, "tnl-bench-"+runID+"-") {
-		t.Fatalf("Managed Postgres name = %q", database)
+	if database := benchmarkDatabaseName(runID); len(database) > 63 || !strings.HasPrefix(database, "tnl-bench-"+runID+"-") {
+		t.Fatalf("Managed Postgres database name = %q", database)
 	}
 }
 
@@ -131,19 +173,35 @@ func TestValidRunIDRejectsNonGeneratedValues(t *testing.T) {
 	}
 }
 
+func TestBenchmarkAppNamesFollowRelayServiceCount(t *testing.T) {
+	runID := "bench-20260916-120000-abcdefgh"
+	roles := benchmarkRelayRoles(3)
+	if !slices.Equal(roles, []string{"relay-a", "relay-b", "relay-c"}) {
+		t.Fatalf("relay roles = %v", roles)
+	}
+	apps := benchmarkAppNames(runID, 3)
+	if len(apps) != 9 || apps["relay-c"] != "tnl-bench-"+runID+"-rc" {
+		t.Fatalf("apps = %v", apps)
+	}
+}
+
 func TestCleanupRunSkipsRemovedAppsAndPersistsProgress(t *testing.T) {
 	runID := "bench-20260916-120000-abcdefgh"
-	apps := benchmarkAppNames(runID)
+	apps := benchmarkAppNames(runID, 2)
 	manifest := runManifest{
 		SchemaVersion: runManifestSchemaVersion, RunID: runID, Status: "cleanup_failed",
-		FlyOrg: "example", Region: "sjc", ParentDomain: "bench.example.com", ParentZoneID: "Z123",
-		ServerDomain: runID + ".bench.example.com", ManagedDomain: "routes." + runID + ".bench.example.com",
+		FlyOrg: "example", Region: "sjc", Topology: testTopology(), ParentDomain: "bench.example.com", ParentZoneID: "Z123",
+		CertificateAuthority: benchmarkCertificateAuthorityPebble,
+		ServerDomain:         runID + ".bench.example.com", ManagedDomain: "routes." + runID + ".bench.example.com",
 		ManagedPostgres: testManifestManagedPostgres(runID),
 		Apps:            []manifestApp{{Role: "control", Name: apps["control"]}},
 	}
 	executor := new(executorStub)
 	manifestPath := filepath.Join(t.TempDir(), "manifest.json")
-	if err := cleanupRun(t.Context(), flyPlatform{binary: "fly", executor: executor}, benchmarkDNS{}, manifestPath, &manifest); err != nil {
+	if err := cleanupRun(
+		t.Context(), flyPlatform{binary: "fly", executor: executor},
+		benchmarkDNS{}, manifestPath, &manifest, nil,
+	); err != nil {
 		t.Fatal(err)
 	}
 	if manifest.Status != "cleaned" || !manifest.Apps[0].Removed || !manifest.ManagedPostgres.Removed || len(executor.calls) != 1 {
@@ -163,87 +221,169 @@ func TestCleanupRunSkipsRemovedAppsAndPersistsProgress(t *testing.T) {
 
 func TestCleanupRunDestroysControlBeforeManagedPostgres(t *testing.T) {
 	runID := "bench-20260916-120000-abcdefgh"
-	apps := benchmarkAppNames(runID)
+	apps := benchmarkAppNames(runID, 2)
 	database := testManifestManagedPostgres(runID)
-	database.ID = "mpg_123"
 	database.CreationStarted = true
-	cluster := flyManagedPostgresCluster{
+	database.ID = "mpg_123"
+	live := flyManagedPostgresCluster{
 		ID: database.ID, Name: database.Name, Region: database.Region, Plan: database.Plan, StorageGB: database.StorageGB,
 		Organization: flyManagedPostgresOrganization{Slug: "example"},
 	}
-	clusters, err := json.Marshal([]flyManagedPostgresCluster{cluster})
+	databases, err := json.Marshal([]flyManagedPostgresCluster{live})
 	if err != nil {
 		t.Fatal(err)
 	}
-	executor := &executorStub{responses: [][]byte{
-		nil, clusters, []byte(`{"data":{"id":"mpg_123","name":"tnl-bench-bench-20260916-120000-abcdefgh-pg","region":"sjc","plan":"basic","disk":10}}`),
-		nil, []byte("No managed postgres clusters found in organization example\n"),
+	status, err := json.Marshal(struct {
+		Data flyManagedPostgresCluster `json:"data"`
+	}{Data: live})
+	if err != nil {
+		t.Fatal(err)
+	}
+	flyExecutor := &executorStub{responses: [][]byte{
+		nil, databases, status, nil, []byte(`[]`),
 	}}
 	manifest := runManifest{
-		SchemaVersion: runManifestSchemaVersion, RunID: runID, Status: "cleanup_failed", FlyOrg: "example", Region: "sjc",
-		ParentDomain: "bench.example.com", ParentZoneID: "Z123", ServerDomain: runID + ".bench.example.com",
+		SchemaVersion: runManifestSchemaVersion, RunID: runID, Status: "cleanup_failed", FlyOrg: "example", Region: "sjc", Topology: testTopology(),
+		CertificateAuthority: benchmarkCertificateAuthorityPebble,
+		ParentDomain:         "bench.example.com", ParentZoneID: "Z123", ServerDomain: runID + ".bench.example.com",
 		ManagedDomain: "routes." + runID + ".bench.example.com", ManagedPostgres: database,
 		Apps: []manifestApp{{Role: "control", Name: apps["control"]}},
 	}
 	manifestPath := filepath.Join(t.TempDir(), "manifest.json")
 	if err := cleanupRun(
-		t.Context(), flyPlatform{binary: "fly", org: "example", executor: executor}, benchmarkDNS{}, manifestPath, &manifest,
+		t.Context(), flyPlatform{binary: "fly", org: "example", executor: flyExecutor},
+		benchmarkDNS{}, manifestPath, &manifest, nil,
 	); err != nil {
 		t.Fatal(err)
 	}
-	if len(executor.calls) != 5 || executor.calls[0].args[0] != "apps" ||
-		!slices.Equal(executor.calls[3].args, []string{"mpg", "destroy", "mpg_123", "--yes"}) ||
+	if len(flyExecutor.calls) != 5 || flyExecutor.calls[0].args[0] != "apps" ||
+		!slices.Equal(flyExecutor.calls[3].args, []string{"mpg", "destroy", database.ID, "--yes"}) ||
 		!manifest.ManagedPostgres.Removed {
-		t.Fatalf("manifest = %#v, calls = %#v", manifest, executor.calls)
+		t.Fatalf("manifest = %#v, Fly calls = %#v", manifest, flyExecutor.calls)
 	}
 }
 
 func TestCleanupRunPreservesManagedPostgresWhenControlRemovalFails(t *testing.T) {
 	runID := "bench-20260916-120000-abcdefgh"
 	database := testManifestManagedPostgres(runID)
-	database.ID = "mpg_123"
 	database.CreationStarted = true
 	manifest := runManifest{
-		SchemaVersion: runManifestSchemaVersion, RunID: runID, Status: "cleanup_failed", FlyOrg: "example", Region: "sjc",
-		ParentDomain: "bench.example.com", ParentZoneID: "Z123", ServerDomain: runID + ".bench.example.com",
+		SchemaVersion: runManifestSchemaVersion, RunID: runID, Status: "cleanup_failed", FlyOrg: "example", Region: "sjc", Topology: testTopology(),
+		CertificateAuthority: benchmarkCertificateAuthorityPebble,
+		ParentDomain:         "bench.example.com", ParentZoneID: "Z123", ServerDomain: runID + ".bench.example.com",
 		ManagedDomain: "routes." + runID + ".bench.example.com", ManagedPostgres: database,
-		Apps: []manifestApp{{Role: "control", Name: benchmarkAppNames(runID)["control"]}},
+		Apps: []manifestApp{{Role: "control", Name: benchmarkAppNames(runID, 2)["control"]}},
 	}
 	executor := &executorStub{errs: []error{errors.New("destroy failed")}}
 	err := cleanupRun(
-		t.Context(), flyPlatform{binary: "fly", org: "example", executor: executor}, benchmarkDNS{},
-		filepath.Join(t.TempDir(), "manifest.json"), &manifest,
+		t.Context(), flyPlatform{binary: "fly", org: "example", executor: executor},
+		benchmarkDNS{}, filepath.Join(t.TempDir(), "manifest.json"), &manifest, nil,
 	)
 	if err == nil || len(executor.calls) != 1 || manifest.ManagedPostgres.Removed || manifest.Status != "cleanup_failed" {
 		t.Fatalf("manifest = %#v, calls = %#v, error = %v", manifest, executor.calls, err)
 	}
 }
 
+func TestCleanupRunRemovesPublisherMachinesBeforeVolumesAndApp(t *testing.T) {
+	runID := "bench-20260916-120000-abcdefgh"
+	apps := benchmarkAppNames(runID, 2)
+	database := testManifestManagedPostgres(runID)
+	database.Removed = true
+	manifest := runManifest{
+		SchemaVersion: runManifestSchemaVersion, RunID: runID, Status: "cleanup_failed",
+		FlyOrg: "example", Region: "sjc", Topology: testTopology(), ParentDomain: "bench.example.com", ParentZoneID: "Z123",
+		CertificateAuthority: benchmarkCertificateAuthorityPebble,
+		ServerDomain:         runID + ".bench.example.com", ManagedDomain: "routes." + runID + ".bench.example.com",
+		ManagedPostgres: database, Apps: []manifestApp{{Role: "publisher", Name: apps["publisher"]}},
+		Volumes: []manifestVolume{{Index: 0, Name: benchmarkPublisherVolumeName(0), ID: "vol_123", Region: "sjc", SizeGB: 1}},
+	}
+	executor := &executorStub{responses: [][]byte{[]byte(`[]`), nil, nil}}
+	if err := cleanupRun(
+		t.Context(), flyPlatform{binary: "fly", org: "example", executor: executor},
+		benchmarkDNS{}, filepath.Join(t.TempDir(), "manifest.json"), &manifest, nil,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if len(executor.calls) != 3 || executor.calls[0].args[0] != "machine" || executor.calls[1].args[0] != "volumes" ||
+		executor.calls[2].args[0] != "apps" || !manifest.Volumes[0].Removed || !manifest.Apps[0].Removed {
+		t.Fatalf("manifest = %#v, calls = %#v", manifest, executor.calls)
+	}
+}
+
 func TestDiscoverManagedPostgresForCleanupRetriesInterruptedCreationByName(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		expected := *testManifestManagedPostgres("bench-20260916-120000-abcdefgh")
-		cluster := flyManagedPostgresCluster{
-			ID: "mpg_123", Name: expected.Name, Region: expected.Region, Plan: expected.Plan, StorageGB: expected.StorageGB,
+		database := flyManagedPostgresCluster{
+			ID: "mpg_123", Name: expected.Name, Region: expected.Region, Plan: expected.Plan,
 			Organization: flyManagedPostgresOrganization{Slug: "example"},
 		}
-		clusters, err := json.Marshal([]flyManagedPostgresCluster{cluster})
+		databases, err := json.Marshal([]flyManagedPostgresCluster{database})
 		if err != nil {
 			t.Fatal(err)
 		}
 		executor := &executorStub{responses: [][]byte{
-			[]byte("No managed postgres clusters found in organization example\n"), clusters,
+			[]byte(`[]`), databases,
 		}}
 		got, found, err := discoverManagedPostgresForCleanup(
 			t.Context(), flyPlatform{binary: "fly", org: "example", executor: executor}, expected, "example",
 		)
-		if err != nil || !found || got.ID != cluster.ID || len(executor.calls) != 2 {
-			t.Fatalf("cluster = %#v, found = %t, calls = %#v, error = %v", got, found, executor.calls, err)
+		if err != nil || !found || got.Name != database.Name || len(executor.calls) != 2 {
+			t.Fatalf("database = %#v, found = %t, calls = %#v, error = %v", got, found, executor.calls, err)
 		}
 	})
 }
 
+func TestControlProvisionFailurePersistsRedactedDiagnostics(t *testing.T) {
+	directory := t.TempDir()
+	manifestPath := filepath.Join(directory, "manifest.json")
+	executor := &executorStub{responses: [][]byte{
+		[]byte("TOKEN=login-secret"),
+		[]byte(`database postgresql://fly-user:database-secret@pgbouncer.cluster.flympg.net/fly-db {"password":"json-secret"}`),
+	}}
+	err := controlProvisionFailure(
+		flyPlatform{binary: "fly", executor: executor}, manifestPath, "control-app",
+		[]flyMachine{{ID: "machine-1", Name: "control-1"}},
+		runSecrets{LoginToken: "login-secret"},
+		flyManagedPostgresCredentials{
+			PooledURL: "postgresql://fly-user:database-secret@pgbouncer.cluster.flympg.net/fly-db",
+		},
+		errors.New("not ready"),
+	)
+	if err == nil || !strings.Contains(err.Error(), "diagnostics/control.txt") {
+		t.Fatalf("error = %v", err)
+	}
+	data, readErr := os.ReadFile(filepath.Join(directory, "diagnostics", "control.txt"))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	text := string(data)
+	for _, secret := range []string{"login-secret", "database-secret", "json-secret"} {
+		if strings.Contains(text, secret) {
+			t.Fatalf("diagnostics contain %q: %s", secret, text)
+		}
+	}
+}
+
+func TestWaitHTTPSReadyUsesBenchmarkTrustRoots(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+	root := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})
+	if err := waitHTTPSReady(t.Context(), server.URL, string(root), time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if err := waitHTTPSReady(t.Context(), server.URL, "not a certificate", 0); err == nil {
+		t.Fatal("invalid benchmark trust roots were accepted")
+	}
+}
+
 func testManifestManagedPostgres(runID string) *manifestManagedPostgres {
 	return &manifestManagedPostgres{
-		Name: benchmarkManagedPostgresName(runID), Region: "sjc", Plan: "basic", PostgresMajorVersion: 17, StorageGB: 10,
+		Name: benchmarkDatabaseName(runID), Region: "sjc", Plan: "basic", PostgresMajorVersion: 17, StorageGB: 10,
 	}
+}
+
+func testTopology() benchmarkTopology {
+	return benchmarkTopology{ControlProcesses: 2, IngressProcesses: 2, RelayServices: 2, RelayProcessesPerService: 2}
 }

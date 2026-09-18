@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-const benchmarkResultSchemaVersion = 5
+const benchmarkResultSchemaVersion = 6
 
 var durationBucketBoundsMilliseconds = []float64{
 	1, 2, 5, 10, 20, 50, 100, 200, 500, 1_000, 2_000, 5_000, 10_000, 30_000, 60_000, 120_000,
@@ -32,16 +32,19 @@ type resultWorker struct {
 }
 
 type resultConfiguration struct {
-	Sequence                  int `json:"sequence"`
-	Routes                    int `json:"routes"`
-	AssignedRoutes            int `json:"assigned_routes,omitempty"`
-	FreshConnectionsPerSecond int `json:"fresh_connections_per_second,omitempty"`
-	HeldStreams               int `json:"held_streams,omitempty"`
-	AssignedFreshRate         int `json:"assigned_fresh_connections_per_second,omitempty"`
-	AssignedHeldStreams       int `json:"assigned_held_streams,omitempty"`
-	WarmupSeconds             int `json:"warmup_seconds,omitempty"`
-	DurationSeconds           int `json:"duration_seconds,omitempty"`
-	PayloadBytes              int `json:"payload_bytes,omitempty"`
+	Axis                      string `json:"axis"`
+	Sequence                  int    `json:"sequence"`
+	Routes                    int    `json:"routes"`
+	AssignedRoutes            int    `json:"assigned_routes,omitempty"`
+	FreshConnectionsPerSecond int    `json:"fresh_connections_per_second,omitempty"`
+	HeldStreams               int    `json:"held_streams,omitempty"`
+	LifecycleChurnPerSecond   int    `json:"lifecycle_churn_per_second,omitempty"`
+	AssignedLifecycleChurn    int    `json:"assigned_lifecycle_churn_per_second,omitempty"`
+	AssignedFreshRate         int    `json:"assigned_fresh_connections_per_second,omitempty"`
+	AssignedHeldStreams       int    `json:"assigned_held_streams,omitempty"`
+	WarmupSeconds             int    `json:"warmup_seconds,omitempty"`
+	DurationSeconds           int    `json:"duration_seconds,omitempty"`
+	PayloadBytes              int    `json:"payload_bytes,omitempty"`
 }
 
 type phaseResult struct {
@@ -80,8 +83,9 @@ type resourceSample struct {
 }
 
 type resultCleanup struct {
-	RoutesDeleted int  `json:"routes_deleted"`
-	Exact         bool `json:"exact"`
+	RoutesDeleted  int  `json:"routes_deleted"`
+	RoutesRetained int  `json:"routes_retained"`
+	Exact          bool `json:"exact"`
 }
 
 type resultFailure struct {

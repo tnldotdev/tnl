@@ -13,19 +13,21 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/tnldotdev/tnl/internal/naming"
 )
 
-const heldStreamOpenRate = 25
+const (
+	heldStreamOpenRate = 25
+	recoveryTimeout    = 30 * time.Second
+	recoveryInterval   = time.Second
+)
 
 type loadCommand struct {
 	workerCommand
 	Routes           int           `name:"routes" env:"TNL_BENCH_ROUTES" required:"" help:"Total route count in the cell."`
-	HostnameSuffix   string        `name:"hostname-suffix" env:"TNL_BENCH_HOSTNAME_SUFFIX" required:"" help:"Managed deployment domain used by benchmark routes."`
 	PublicAddress    string        `name:"public-address" env:"TNL_BENCH_PUBLIC_ADDRESS" help:"Optional ingress host:port override; normal runs use public route DNS."`
 	TotalFreshRate   int           `name:"total-fresh-connections-per-second" env:"TNL_BENCH_TOTAL_FRESH_CONNECTIONS_PER_SECOND" required:"" help:"Total fresh visitor connection rate for the cell."`
 	TotalHeldStreams int           `name:"total-held-streams" env:"TNL_BENCH_TOTAL_HELD_STREAMS" help:"Total held-open streams for the cell."`
+	LifecycleChurn   int           `name:"lifecycle-churn-per-second" env:"TNL_BENCH_LIFECYCLE_CHURN_PER_SECOND" help:"Total route-session lifecycle operations per second."`
 	FreshRate        int           `name:"fresh-connections-per-second" env:"TNL_BENCH_FRESH_CONNECTIONS_PER_SECOND" required:"" help:"Fresh visitor connection rate for this worker."`
 	HeldStreams      int           `name:"held-streams" env:"TNL_BENCH_HELD_STREAMS" help:"Held-open streams for this worker."`
 	Warmup           time.Duration `name:"warmup" env:"TNL_BENCH_WARMUP" required:"" help:"Warmup after held streams are ready."`
@@ -39,7 +41,8 @@ func (c loadCommand) Validate() error {
 	if err := c.workerCommand.validate(); err != nil {
 		return err
 	}
-	if c.Routes <= 0 || c.TotalFreshRate <= 0 || c.TotalHeldStreams < 0 || c.FreshRate < 0 || c.FreshRate >= 40 ||
+	if c.Routes <= 0 || c.TotalFreshRate <= 0 || c.TotalHeldStreams < 0 || c.LifecycleChurn < 0 ||
+		c.FreshRate < 0 || c.FreshRate >= 40 ||
 		c.FreshRate > c.TotalFreshRate || c.HeldStreams < 0 || c.HeldStreams > c.TotalHeldStreams || c.Warmup < 0 || c.Duration <= 0 {
 		return errors.New("load shape is invalid or could exercise the ingress source limiter")
 	}
@@ -50,10 +53,6 @@ func (c loadCommand) Validate() error {
 		if _, _, err := net.SplitHostPort(c.PublicAddress); err != nil {
 			return fmt.Errorf("public address: %w", err)
 		}
-	}
-	hostname, err := naming.CanonicalizeHostname(c.HostnameSuffix)
-	if err != nil || hostname != c.HostnameSuffix {
-		return errors.New("hostname suffix must be canonical")
 	}
 	return nil
 }
@@ -78,8 +77,10 @@ func (c loadCommand) run(parent context.Context) error {
 	}
 	worker := resultWorker{Kind: "load", Index: c.WorkerIndex, Count: c.WorkerCount}
 	configuration := resultConfiguration{
-		Sequence: c.Sequence, Routes: c.Routes, FreshConnectionsPerSecond: c.TotalFreshRate, HeldStreams: c.TotalHeldStreams,
-		AssignedFreshRate: c.FreshRate, AssignedHeldStreams: c.HeldStreams,
+		Axis: c.Axis, Sequence: c.Sequence, Routes: c.Routes,
+		FreshConnectionsPerSecond: c.TotalFreshRate, HeldStreams: c.TotalHeldStreams,
+		LifecycleChurnPerSecond: c.LifecycleChurn,
+		AssignedFreshRate:       c.FreshRate, AssignedHeldStreams: c.HeldStreams,
 		WarmupSeconds: int(c.Warmup.Seconds()), DurationSeconds: int(c.Duration.Seconds()), PayloadBytes: c.PayloadBytes,
 	}
 	result, runErr := c.execute(ctx, worker, configuration)
@@ -99,9 +100,12 @@ func (c loadCommand) execute(ctx context.Context, worker resultWorker, configura
 	if err := coordinator.waitPublishers(ctx); err != nil {
 		return benchmarkResult{}, err
 	}
-	hostnames := make([]string, c.Routes)
-	for index := range hostnames {
-		hostnames[index] = benchmarkHostname(index, c.HostnameSuffix)
+	hostnames, err := coordinator.routes(ctx)
+	if err != nil {
+		return benchmarkResult{}, err
+	}
+	if len(hostnames) != c.Routes {
+		return benchmarkResult{}, fmt.Errorf("coordinator returned %d routes, want %d", len(hostnames), c.Routes)
 	}
 	resources := sampleResources(ctx, c.MetricsURLs, "ready")
 	correctnessStarted := time.Now().UTC()
@@ -118,9 +122,27 @@ func (c loadCommand) execute(ctx context.Context, worker resultWorker, configura
 	held, heldResults, err := c.openHeldStreams(ctx, hostnames)
 	if err != nil {
 		closeHeldStreams(held)
-		return benchmarkResult{}, err
+		heldPhase := phaseFromVisitorResults("held", heldStarted, time.Since(heldStarted), heldResults, len(held))
+		recovery, recoveryErr := c.runRecovery(ctx, hostnames)
+		resources = append(resources, sampleResources(ctx, c.MetricsURLs, "loaded")...)
+		message := err.Error()
+		if recoveryErr != nil {
+			message += "; " + recoveryErr.Error()
+		}
+		result := benchmarkResult{
+			SchemaVersion: benchmarkResultSchemaVersion, CellID: c.CellID, Status: "failed", Suite: c.Suite,
+			Repetition: c.Repetition, Worker: worker, Configuration: configuration,
+			Phases: []phaseResult{correctnessPhase, heldPhase, recovery}, Resources: resources,
+			Cleanup: resultCleanup{Exact: true}, Failure: &resultFailure{Message: message},
+		}
+		return result, errors.New(message)
 	}
-	defer closeHeldStreams(held)
+	heldClosed := false
+	defer func() {
+		if !heldClosed {
+			closeHeldStreams(held)
+		}
+	}()
 	heldPhase := phaseFromVisitorResults("held", heldStarted, time.Since(heldStarted), heldResults, c.HeldStreams)
 	if err := sleepContext(ctx, c.Warmup); err != nil {
 		return benchmarkResult{}, err
@@ -130,16 +152,44 @@ func (c loadCommand) execute(ctx context.Context, worker resultWorker, configura
 	freshElapsed := time.Since(freshStarted)
 	freshPhase := phaseFromVisitorResults("fresh", freshStarted, freshElapsed, fresh, c.HeldStreams)
 	freshPhase.AchievedRate = float64(freshPhase.Successes) / freshElapsed.Seconds()
+	closeHeldStreams(held)
+	heldClosed = true
+	saturated := freshPhase.Errors != 0 || (c.FreshRate > 0 && freshPhase.AchievedRate < 0.95*float64(c.FreshRate))
+	var recoveryPhase *phaseResult
+	var recoveryErr error
+	if saturated {
+		recovery, err := c.runRecovery(ctx, hostnames)
+		recoveryPhase, recoveryErr = &recovery, err
+	}
 	resources = append(resources, sampleResources(ctx, c.MetricsURLs, "loaded")...)
+	phases := []phaseResult{correctnessPhase, heldPhase, freshPhase}
+	if recoveryPhase != nil {
+		phases = append(phases, *recoveryPhase)
+	}
 	result := benchmarkResult{
 		SchemaVersion: benchmarkResultSchemaVersion, CellID: c.CellID, Status: "passed", Suite: c.Suite,
 		Repetition: c.Repetition, Worker: worker, Configuration: configuration,
-		Phases: []phaseResult{correctnessPhase, heldPhase, freshPhase}, Resources: resources,
+		Phases: phases, Resources: resources,
 		Cleanup: resultCleanup{Exact: true},
 	}
 	if freshPhase.Errors != 0 {
 		result.Status = "failed"
-		result.Failure = &resultFailure{Message: fmt.Sprintf("%d of %d fresh visitor connections failed", freshPhase.Errors, freshPhase.Attempts)}
+		message := fmt.Sprintf("%d of %d fresh visitor connections failed", freshPhase.Errors, freshPhase.Attempts)
+		if recoveryErr != nil {
+			message += "; " + recoveryErr.Error()
+		}
+		result.Failure = &resultFailure{Message: message}
+		return result, errors.New(result.Failure.Message)
+	}
+	if c.FreshRate > 0 && freshPhase.AchievedRate < 0.95*float64(c.FreshRate) {
+		result.Status = "failed"
+		message := fmt.Sprintf(
+			"fresh visitor rate %.2f/s was below 95%% of the %.2f/s target", freshPhase.AchievedRate, float64(c.FreshRate),
+		)
+		if recoveryErr != nil {
+			message += "; " + recoveryErr.Error()
+		}
+		result.Failure = &resultFailure{Message: message}
 		return result, errors.New(result.Failure.Message)
 	}
 	return result, nil
@@ -306,6 +356,25 @@ launch:
 		collected = append(collected, result)
 	}
 	return collected
+}
+
+func (c loadCommand) runRecovery(ctx context.Context, hostnames []string) (phaseResult, error) {
+	started := time.Now().UTC()
+	probeCtx, cancel := context.WithTimeout(ctx, recoveryTimeout)
+	defer cancel()
+	var results []visitorResult
+	for {
+		hostname := hostnames[(c.WorkerIndex+len(results)*c.WorkerCount)%len(hostnames)]
+		result := c.request(probeCtx, hostname, "/bench", false)
+		results = append(results, result)
+		if result.err == nil {
+			return phaseFromVisitorResults("recovery", started, time.Since(started), results, 0), nil
+		}
+		if err := sleepContext(probeCtx, recoveryInterval); err != nil {
+			phase := phaseFromVisitorResults("recovery", started, time.Since(started), results, 0)
+			return phase, fmt.Errorf("visitor traffic did not recover within %s", recoveryTimeout)
+		}
+	}
 }
 
 func phaseFromVisitorResults(name string, started time.Time, elapsed time.Duration, results []visitorResult, concurrency int) phaseResult {
