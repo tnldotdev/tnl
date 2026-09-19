@@ -53,7 +53,7 @@ the process role.
 - Control and standalone export `tnl_database_pool_max_connections`,
   `tnl_database_pool_acquired_connections`, `tnl_database_pool_idle_connections`,
   and `tnl_database_pool_total_connections` from their local pgx pool.
-  The pool defaults to six connections per process; `pool_max_conns` in
+  The pool defaults to seven connections per process; `pool_max_conns` in
   `TNLD_DATABASE_URL` overrides the default.
   `tnl_database_pool_acquires_total`, `tnl_database_pool_waited_acquires_total`,
   `tnl_database_pool_acquire_wait_seconds_total`, and
