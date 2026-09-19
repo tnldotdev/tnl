@@ -46,6 +46,7 @@ func IsolatedPublishingTest(t *testing.T) bool {
 	defer cancel()
 	command := exec.CommandContext(ctx, executable, "-test.run=^"+regexp.QuoteMeta(t.Name())+"$", "-test.v", "-test.timeout=40s")
 	command.Env = append(os.Environ(), "GO_TEST_PUBLISHING_HELPER="+t.Name(), "GORACE=atexit_sleep_ms=0")
+	command.WaitDelay = time.Second
 	output, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("publishing regression: %v\n%s", err, output)

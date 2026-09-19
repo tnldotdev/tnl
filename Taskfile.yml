@@ -139,7 +139,8 @@ tasks:
   go:generate-check:
     cmds:
       - task: go:generate
-      - git diff --exit-code -- pkg/api internal/clientstate/clientstatedb internal/controlstate/controlstatedb internal/projectconfig/keys.gen.json packages/tnl/lib/config.d.ts schema/v1.json
+      - git diff --exit-code HEAD -- pkg/api internal/clientstate/clientstatedb internal/controlstate/controlstatedb internal/projectconfig/keys.gen.json packages/tnl/lib/config.d.ts schema/v1.json
+      - test -z "$(git ls-files --others --exclude-standard -- pkg/api internal/clientstate/clientstatedb internal/controlstate/controlstatedb internal/projectconfig/keys.gen.json packages/tnl/lib/config.d.ts schema/v1.json)"
 
   go:format:
     cmds:

@@ -54,9 +54,7 @@ jobs:
           require-lockfile: true
 
       - name: Build JavaScript packages
-        run: |
-          pnpm install --frozen-lockfile
-          pnpm build
+        run: pnpm build
 
       - name: Install Task
         uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
