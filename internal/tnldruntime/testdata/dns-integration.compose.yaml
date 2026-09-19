@@ -1,0 +1,36 @@
+name: tnl-dns-integration-test
+
+services:
+  postgres:
+    image: postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: postgres
+    healthcheck:
+      test: [CMD-SHELL, pg_isready --username postgres --dbname postgres]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+  test:
+    image: golang:1.27.0-bookworm@sha256:ded31c68586d2e49e760acc2e65a884b23d032e9bbbed0ae0c55abd3fcaf4452
+    init: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+    working_dir: /workspace
+    environment:
+      GOFLAGS: -tags=ts_omit_ssh
+      TNL_TEST_INTEGRATION: "1"
+      TNL_TEST_POSTGRES_URL: postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable
+    volumes:
+      - ../../..:/workspace:ro
+    command:
+      - sh
+      - -ec
+      - |
+        go install github.com/letsencrypt/pebble/v2/cmd/pebble@v2.10.1
+        go test -race -v ./internal/tnldruntime \
+          -run='^TestIntegrationSplitAutomaticRelayDNSCertificates$$' \
+          -count=1 -timeout=5m

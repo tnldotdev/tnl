@@ -62,15 +62,15 @@ func newIntegrationViteFixture(t *testing.T, server *integrationBinaryStandalone
 
 func (f *integrationViteFixture) disableMaintenance(t *testing.T, name string) {
 	t.Helper()
-	set := func(enabled bool) {
+	set := func(allowed bool) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		var actual bool
 		err := f.database.QueryRowContext(ctx, `UPDATE control.maintenance_controls
-			SET enabled = $2, revision = revision + 1, updated_at = now(), updated_by = 'binary-test'
-			WHERE control_name = $1 RETURNING enabled`, name, enabled).Scan(&actual)
-		if err != nil || actual != enabled {
-			t.Errorf("set maintenance control %s to %t: %v", name, enabled, err)
+			SET allowed = $2, revision = revision + 1, updated_at = now(), updated_by = 'binary-test'
+			WHERE control_name = $1 RETURNING allowed`, name, allowed).Scan(&actual)
+		if err != nil || actual != allowed {
+			t.Errorf("set maintenance control %s to %t: %v", name, allowed, err)
 		}
 	}
 	t.Cleanup(func() { set(true) })

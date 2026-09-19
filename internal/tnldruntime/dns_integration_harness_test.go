@@ -87,7 +87,11 @@ type integrationDNSRecord struct {
 	Name   string
 	Type   string
 	TTL    int
-	Values []string `xml:"ResourceRecords>ResourceRecord>Value"`
+	Values []integrationDNSValue `xml:"ResourceRecords>ResourceRecord"`
+}
+
+type integrationDNSValue struct {
+	Value string `xml:"Value"`
 }
 
 type integrationDNSZone struct {
@@ -298,7 +302,7 @@ func (f *integrationRoute53) serveDNS(w dns.ResponseWriter, request *dns.Msg) {
 				add("ns1.integration.test. hostmaster.integration.test. 1 60 60 60 1")
 			default:
 				for _, value := range zone.records[name+"/"+dns.TypeToString[question.Qtype]].Values {
-					add(value)
+					add(value.Value)
 				}
 			}
 		}

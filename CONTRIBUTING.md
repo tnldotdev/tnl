@@ -37,7 +37,8 @@ Prepare the integration prerequisites below before running that tier.
 | Race               | `task go:test-race`                                          | Go race detector; integration tests remain opt-in                                           |
 | Integration        | `task go:test-integration`                                   | Disposable PostgreSQL, Pebble from `mise install`, installed dependencies, and `pnpm build` |
 | Binary integration | `env TNL_TEST_BINARY_INTEGRATION=1 task go:test-integration` | Integration prerequisites plus disposable Linux with local DNS/HTTPS ports available        |
-| DNS integration    | `task go:test-integration-dns-linux`                         | Docker; runs the authoritative DNS test with isolated Linux port 53 and PostgreSQL          |
+| DNS integration    | `task go:test-integration-dns-linux`                         | Docker Compose; runs the authoritative DNS test with isolated Linux port 53 and PostgreSQL  |
+| Local load         | `task go:test-load`                                          | Disposable PostgreSQL, using the same URL prerequisite as integration tests                 |
 | Package checks     | `pnpm run pack`                                              | Checks JavaScript exports and tarball contents                                              |
 | Release snapshot   | `task package`                                               | Builds native archives and npm packages, then verifies installations; does not publish      |
 
@@ -48,15 +49,66 @@ forcibly drop databases, so never use a production server.
 Binary tests change subprocess trust and configuration and bind privileged
 ports. They run only on Linux; use the
 [integration workflow](.github/workflows/integration.yml) as the setup
-reference. The DNS integration task creates separate Linux and PostgreSQL
-containers without exposing their ports on the host. This lets the test DNS
-server use port 53 inside its container on any Docker host.
+reference. The DNS integration task uses a dedicated Compose topology without
+exposing its ports on the host. This lets the test DNS server use port 53 inside
+its Linux container on any Docker host. The fixed Compose project name and
+pre-run cleanup recover resources left by an interrupted prior invocation.
 
 Task supplies `GOFLAGS=-tags=ts_omit_ssh`. Preserve it for direct Go commands:
 
 ```console
 mise exec -- env GOFLAGS=-tags=ts_omit_ssh go test ./internal/tunnel
 ```
+
+### Local Load Tests
+
+Set `TNL_TEST_POSTGRES_URL` to a disposable PostgreSQL server, using the same
+requirements as integration tests, then run `mise exec -- task go:test-load`.
+CI supplies the database through the load workflow's PostgreSQL service.
+
+The default is 1,000 routes, with 64 workflows and two eight-connection request
+pools. `ROUTES=<positive count>` changes only the route count; `RUN=<Go test regex>`
+selects scenarios (default `^TestLoad`). For example:
+
+```console
+TNL_TEST_POSTGRES_URL='postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable' \
+  mise exec -- task go:test-load ROUTES=32 RUN='^TestLoadSteadyState$'
+```
+
+- `TestLoadPlacement` creates route sessions and claims their two publisher
+  connections across four relay process records.
+- `TestLoadPlacementWithHostnameLookup` adds a real authenticated hostname-lookup
+  handler call before each session, preserving the same startup workflow.
+- `TestLoadSteadyState` prepares ready sessions serially through production state
+  methods and local signed-certificate fixtures, without injected SQL delay, and
+  reports setup duration separately. Its timed mix runs three heartbeats per
+  route, two serial usage streams (one per ingress, pages of 16), and concurrent
+  ingress renewal plus routing event/snapshot reads through the same request
+  pools. Each usage stream sends two cumulative revisions and replays every page
+  once. Checks cover unchanged ready session/assignment identities, exact
+  per-route bucket totals, ordered and complete routing revisions, and final
+  snapshots containing every live route.
+- `TestLoadRelayRecovery` restarts one relay process's database lease while 32
+  recovery workflows, 32 healthy workflows, and two serial usage writers share
+  the same pools. It verifies replacement assignments, stale-claim rejection,
+  surviving connections, complete recovery, and exact final usage. It needs at
+  least two routes and reports readiness time separately from final checks.
+
+These scenarios exercise database state without real tunnels, visitor traffic,
+DNS resolution, or ACME network calls. The steady-state fixture signs test
+certificates locally. One-hour logical session and process leases keep fixture
+setup from expiring them; the accelerated repetitions are not a lease-cadence or
+soak benchmark.
+
+Use `DELAY=5ms` or `DELAY=20ms` to add client-side delay after successful SQL
+commands. This is a latency-sensitivity model, not measured network latency.
+Each timed operation has a twenty-second deadline and each workload, including
+its final checks, has five minutes. The test binary has a twenty-minute outer
+timeout for all cases plus setup and cleanup. Actors are stopped and joined
+on completion or failure; failures retain counts and timings in ordinary test
+output. CI runs 0ms on PRs/main and 5ms nightly or manually.
+Use 20ms for local experiments. Ordinary and integration test tasks skip these
+load tests.
 
 ### JavaScript Package
 
