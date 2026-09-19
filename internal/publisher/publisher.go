@@ -47,6 +47,7 @@ type Config struct {
 	RouteScope               controlv1.RouteScope
 	Hostname                 string
 	Target                   string
+	RequestLimit             int // Zero selects localproxy.DefaultRequestLimit.
 	AllowedIPPrefixes        []string
 	Ephemeral                bool
 	State                    *clientstate.Store
@@ -85,6 +86,9 @@ type Event struct {
 func Run(ctx context.Context, config Config) (result error) {
 	if config.Control == nil {
 		return errors.New("publisher: control client is required")
+	}
+	if config.RequestLimit < 0 {
+		return errors.New("publisher: request limit cannot be negative")
 	}
 	if config.DrainTime < 0 || config.FallbackDelay < 0 {
 		return errors.New("publisher: drain time and fallback delay cannot be negative")

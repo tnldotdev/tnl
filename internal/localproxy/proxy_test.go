@@ -40,7 +40,7 @@ func TestProxyForwardsOnlyExactTrustedRequests(t *testing.T) {
 		response.WriteHeader(http.StatusNoContent)
 	}))
 	defer upstream.Close()
-	handler, err := New(upstream.URL, "route.example")
+	handler, err := New(upstream.URL, "route.example", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestProxyForwardsOnlyExactTrustedRequests(t *testing.T) {
 }
 
 func TestNewDiagnosesInvalidRouteHostname(t *testing.T) {
-	if _, err := New("3000", "INVALID.example"); err == nil {
+	if _, err := New("3000", "INVALID.example", 0); err == nil {
 		t.Fatal("New accepted a noncanonical route hostname")
 	} else if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.RouteInvalid {
 		t.Fatalf("New diagnostic = %q, %t", code, ok)
@@ -104,7 +104,7 @@ func TestProxyDiagnosesUnavailableTarget(t *testing.T) {
 	if err := listener.Close(); err != nil {
 		t.Fatal(err)
 	}
-	handler, err := New(target, "route.example")
+	handler, err := New(target, "route.example", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestProxyPreservesLocalServiceErrors(t *testing.T) {
 		http.Error(response, "application failure", http.StatusBadGateway)
 	}))
 	defer upstream.Close()
-	handler, err := New(upstream.URL, "route.example")
+	handler, err := New(upstream.URL, "route.example", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +194,7 @@ func TestProxyForwardsWebSocketUpgrade(t *testing.T) {
 		default:
 		}
 	})
-	handler, err := New(upstream.URL, "route.example")
+	handler, err := New(upstream.URL, "route.example", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,6 +236,25 @@ func TestProxyForwardsWebSocketUpgrade(t *testing.T) {
 	if string(payload) != "hot" {
 		t.Fatalf("payload = %q", payload)
 	}
+	// An upgraded connection still occupies a request slot even though the
+	// HTTP transport no longer owns it as an ordinary pooled connection.
+	overloadClient := frontend.Client()
+	overloadClient.Timeout = 2 * time.Second
+	overloadClient.Transport.(*http.Transport).TLSClientConfig.ServerName = "route.example"
+	overloadClient.Transport.(*http.Transport).TLSClientConfig.InsecureSkipVerify = true // Self-signed test certificate for another host.
+	overloadRequest, err := http.NewRequestWithContext(ctx, http.MethodGet, frontend.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	overloadRequest.Host = "route.example"
+	overloadResponse, err := overloadClient.Do(overloadRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = overloadResponse.Body.Close()
+	if overloadResponse.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("request during upgrade = %d", overloadResponse.StatusCode)
+	}
 	if _, err := io.WriteString(connection, "client upgrade bytes"); err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +284,7 @@ func TestProxyFlushesStreamingResponses(t *testing.T) {
 	}))
 	t.Cleanup(upstream.Close)
 	t.Cleanup(unblock)
-	handler, err := New(upstream.URL, "route.example")
+	handler, err := New(upstream.URL, "route.example", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

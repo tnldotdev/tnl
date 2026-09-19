@@ -13,7 +13,7 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
 	path := filepath.Join(directory, "tnl.config.ts")
 	source := `export default async ({cwd, env, worktree}: any) => ({
   server: env.TNL_SERVER === undefined ? "https://control.example.com" : "leaked",
-  tunnel: {subdomain: worktree.label},
+  tunnel: {subdomain: worktree.label, requestLimit: 750},
   publish: {target: 3000},
   dev: {command: ["pnpm", "dev"], startupTimeout: "30s"},
   services: {api: {directory: "apps/api", dev: {startupTimeout: "45s"}}},
@@ -29,6 +29,7 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
 	}
 	if value.Server == nil || *value.Server != "https://control.example.com" || value.Tunnel == nil || value.Tunnel.Subdomain == nil ||
 		*value.Tunnel.Subdomain != worktree.Label ||
+		value.Tunnel.RequestLimit == nil || *value.Tunnel.RequestLimit != 750 ||
 		value.Publish == nil || value.Publish.Target == nil || string(*value.Publish.Target) != "3000" ||
 		value.Dev == nil || value.Dev.StartupTimeout == nil || value.Dev.StartupTimeout.Value() != 30*time.Second ||
 		value.Services["api"].Directory == nil || *value.Services["api"].Directory != "apps/api" ||
@@ -56,10 +57,11 @@ func TestLoadRejectsVersionedOrDaemonResult(t *testing.T) {
 
 func TestLoadAppliesStaticValidationToNestedServices(t *testing.T) {
 	for name, test := range map[string]struct{ source, category string }{
-		"duration":  {`export default {services: {api: {dev: {startupTimeout: "+1s"}}}};`, "invalid duration syntax"},
-		"target":    {`export default {services: {api: {publish: {target: "https://example.com"}}}};`, "services.api: publish.target:"},
-		"ip":        {`export default {services: {api: {tunnel: {allowIP: ["192.0.2.7/24"]}}}};`, "must be a canonical IP address or prefix"},
-		"duplicate": {`export default {services: {api: {tunnel: {allowIP: ["192.0.2.1", "192.0.2.1/32"]}}}};`, "is duplicated"},
+		"request limit": {`export default {services: {api: {tunnel: {requestLimit: 0}}}};`, "services.api: tunnel.request_limit must be greater than zero"},
+		"duration":      {`export default {services: {api: {dev: {startupTimeout: "+1s"}}}};`, "invalid duration syntax"},
+		"target":        {`export default {services: {api: {publish: {target: "https://example.com"}}}};`, "services.api: publish.target:"},
+		"ip":            {`export default {services: {api: {tunnel: {allowIP: ["192.0.2.7/24"]}}}};`, "must be a canonical IP address or prefix"},
+		"duplicate":     {`export default {services: {api: {tunnel: {allowIP: ["192.0.2.1", "192.0.2.1/32"]}}}};`, "is duplicated"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "tnl.config.ts")

@@ -21,6 +21,10 @@ import (
 
 const maxHeaderFields = 100
 
+// DefaultRequestLimit bounds active requests to one route's local service,
+// across all visitor connections and HTTP/2 streams.
+const DefaultRequestLimit = 500
+
 // Preflight validates target and verifies that it accepts a local TCP connection.
 func Preflight(ctx context.Context, target string) error {
 	canonicalTarget, err := NormalizeTarget(target)
@@ -64,7 +68,13 @@ func waitForTarget(ctx context.Context, target string, preflight func(context.Co
 	}
 }
 
-func New(target, hostname string) (http.Handler, error) {
+func New(target, hostname string, requestLimit int) (http.Handler, error) {
+	if requestLimit < 0 {
+		return nil, errors.New("localproxy: request limit cannot be negative")
+	}
+	if requestLimit == 0 {
+		requestLimit = DefaultRequestLimit
+	}
 	canonical, err := naming.CanonicalizeHostname(hostname)
 	if err != nil || canonical != hostname {
 		return nil, diagnostic.Wrap(diagnostic.RouteInvalid, errors.New("localproxy: hostname must be canonical"))
@@ -82,6 +92,7 @@ func New(target, hostname string) (http.Handler, error) {
 		ForceAttemptHTTP2:   false,
 		MaxIdleConns:        16,
 		MaxIdleConnsPerHost: 16,
+		MaxConnsPerHost:     requestLimit,
 		IdleConnTimeout:     90 * time.Second,
 		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
 			if network != "tcp" || address != targetAddress {
@@ -105,11 +116,27 @@ func New(target, hostname string) (http.Handler, error) {
 			diagnostic.WriteHTTP(response, request, http.StatusBadGateway, diagnostic.TargetUnavailable)
 		},
 	}
+	requests := make(chan struct{}, requestLimit)
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if !validRequest(request, hostname) {
 			diagnostic.WriteHTTP(response, request, http.StatusBadRequest, diagnostic.RequestRejected)
 			return
 		}
+		// Admission is shared across the route, not per visitor connection. Do
+		// not queue handlers behind the upstream transport's connection limit.
+		select {
+		case requests <- struct{}{}:
+			defer func() { <-requests }()
+		default:
+			if request.ProtoMajor == 1 {
+				// Avoid draining an unread body before sending the rejection.
+				response.Header().Set("Connection", "close")
+			}
+			response.Header().Set("Retry-After", "1")
+			diagnostic.WriteHTTP(response, request, http.StatusServiceUnavailable, diagnostic.RequestRejected)
+			return
+		}
+		// The slot remains occupied through streamed responses and upgrades.
 		proxy.ServeHTTP(response, request)
 	}), nil
 }

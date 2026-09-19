@@ -167,6 +167,9 @@ func validateServiceValues(server, team *string, tunnel *Tunnel, publish *Publis
 		return errors.New("team must not be empty or surrounded by whitespace")
 	}
 	if tunnel != nil {
+		if tunnel.RequestLimit != nil && *tunnel.RequestLimit <= 0 {
+			return errors.New("tunnel.request_limit must be greater than zero")
+		}
 		if tunnel.Host != nil && tunnel.Subdomain != nil {
 			return errors.New("tunnel.host and tunnel.subdomain are mutually exclusive")
 		}

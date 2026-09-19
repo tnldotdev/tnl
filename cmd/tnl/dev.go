@@ -357,7 +357,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	defer cancelPublish()
 	publishDone := make(chan error, 1)
 	go func() {
-		publisherConfig := services.config(target, allowedIPPrefixes)
+		publisherConfig := services.config(target, allowedIPPrefixes, flags.requestLimit())
 		publisherConfig.Logf = output.logf
 		publisherConfig.Observe = withTelemetryObserver(telemetry, "dev", serverURL, currentFramework, func(event publisher.Event) error {
 			return handlePublisherEvent(publishCtx, tunnel, output, event)

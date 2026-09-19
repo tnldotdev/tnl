@@ -61,9 +61,12 @@ func TestResolveIPPolicyFailsWhenCurrentIPCannotBeResolved(t *testing.T) {
 }
 
 func TestPublisherConfigPreservesEphemeralRouteChoice(t *testing.T) {
-	configured := (publisherServices{ephemeral: true}).config("http://127.0.0.1:3000", nil)
+	configured := (publisherServices{ephemeral: true}).config("http://127.0.0.1:3000", nil, 750)
 	if !configured.Ephemeral {
 		t.Fatal("ephemeral route choice was not passed to the publisher")
+	}
+	if configured.RequestLimit != 750 {
+		t.Fatalf("request limit = %d", configured.RequestLimit)
 	}
 }
 

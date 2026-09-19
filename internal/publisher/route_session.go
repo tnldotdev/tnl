@@ -113,6 +113,7 @@ func runSession(
 	var material clientstate.Material
 	route, err := NewRouteServer(RouteServerConfig{
 		Hostname: setup.Route.CanonicalHostname, Target: config.Target, CertificatePlan: plan,
+		RequestLimit: config.RequestLimit,
 	})
 	if err != nil {
 		return err

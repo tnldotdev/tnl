@@ -14,6 +14,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientauth"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/controlclient"
+	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/publisher"
@@ -224,7 +225,14 @@ func memberNamespace(membership authorityv1.Membership, domain authorityv1.Domai
 	return label + "." + domain.CanonicalDomain
 }
 
-func (p publisherServices) config(target string, allowedIPPrefixes []string) publisher.Config {
+func (flags tunnelFlags) requestLimit() int {
+	if flags.RequestLimit != nil {
+		return *flags.RequestLimit
+	}
+	return localproxy.DefaultRequestLimit
+}
+
+func (p publisherServices) config(target string, allowedIPPrefixes []string, requestLimit int) publisher.Config {
 	relayTransportTLS := &tls.Config{MinVersion: tls.VersionTLS13}
 	return publisher.Config{
 		Control:           p.routes,
@@ -235,6 +243,7 @@ func (p publisherServices) config(target string, allowedIPPrefixes []string) pub
 		RouteScope:        p.routeScope,
 		PolicyRevision:    p.policyRevision,
 		Target:            target,
+		RequestLimit:      requestLimit,
 		AllowedIPPrefixes: allowedIPPrefixes,
 		Ephemeral:         p.ephemeral,
 		State:             p.state,

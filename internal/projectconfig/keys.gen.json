@@ -1,5 +1,6 @@
 {
   "allow_all_ips": "allowAllIPs",
   "allow_ip": "allowIP",
+  "request_limit": "requestLimit",
   "startup_timeout": "startupTimeout"
 }

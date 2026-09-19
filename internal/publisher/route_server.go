@@ -30,6 +30,7 @@ import (
 type RouteServerConfig struct {
 	Hostname        string
 	Target          string
+	RequestLimit    int // Zero selects localproxy.DefaultRequestLimit.
 	Certificate     tls.Certificate
 	CertificatePlan controlv1.CertificatePlan
 }
@@ -70,7 +71,7 @@ func NewRouteServer(config RouteServerConfig) (*RouteServer, error) {
 			return nil, errors.New("publisher: certificate plan does not cover route")
 		}
 	}
-	handler, err := localproxy.New(config.Target, hostname)
+	handler, err := localproxy.New(config.Target, hostname, config.RequestLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -87,9 +88,12 @@ func NewRouteServer(config RouteServerConfig) (*RouteServer, error) {
 		http: &http.Server{
 			Handler:           handler,
 			ReadHeaderTimeout: 10 * time.Second,
-			IdleTimeout:       2 * time.Minute,
-			MaxHeaderBytes:    64 << 10,
-			ErrorLog:          log.New(io.Discard, "", 0),
+			// Bound incomplete bodies with a real read deadline. For HTTP/2,
+			// net/http enforces this independently on each request stream.
+			ReadTimeout:    30 * time.Second,
+			IdleTimeout:    2 * time.Minute,
+			MaxHeaderBytes: 64 << 10,
+			ErrorLog:       log.New(io.Discard, "", 0),
 		},
 		httpDone:           make(chan error, 1),
 		certificateExpired: make(chan struct{}),

@@ -175,6 +175,9 @@ func mergeTunnel(base, override *config.Tunnel) *config.Tunnel {
 	if override.Ephemeral != nil {
 		result.Ephemeral = override.Ephemeral
 	}
+	if override.RequestLimit != nil {
+		result.RequestLimit = override.RequestLimit
+	}
 	return result
 }
 

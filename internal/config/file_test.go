@@ -50,6 +50,7 @@ tnl:
   tunnel:
     allow_ip: [192.0.2.1]
     allow_all_ips: false
+    request_limit: 750
   publish:
     target: 3000
   dev:
@@ -67,7 +68,8 @@ tnl:
 	if document.TNL == nil || document.TNL.Server == nil || *document.TNL.Server != "https://control.example.com" ||
 		document.TNL.Publish == nil || document.TNL.Publish.Target == nil || string(*document.TNL.Publish.Target) != "3000" ||
 		document.TNL.Dev == nil || document.TNL.Dev.StartupTimeout == nil || document.TNL.Dev.StartupTimeout.Value() != 90*time.Second ||
-		document.TNL.Tunnel == nil || document.TNL.Tunnel.AllowAllIPs == nil || *document.TNL.Tunnel.AllowAllIPs {
+		document.TNL.Tunnel == nil || document.TNL.Tunnel.AllowAllIPs == nil || *document.TNL.Tunnel.AllowAllIPs ||
+		document.TNL.Tunnel.RequestLimit == nil || *document.TNL.Tunnel.RequestLimit != 750 {
 		t.Fatalf("document = %#v", document)
 	}
 }
@@ -134,10 +136,12 @@ func TestStaticFormatsShareTargetIPAndDurationValidation(t *testing.T) {
 		})
 	}
 	for name, test := range map[string]struct{ json, yaml, category string }{
-		"duration":  {`{"version":1,"tnl":{"dev":{"startup_timeout":"+1s"}}}`, "version: 1\ntnl:\n  dev:\n    startup_timeout: +1s\n", "invalid duration syntax"},
-		"target":    {`{"version":1,"tnl":{"publish":{"target":"https://example.com"}}}`, "version: 1\ntnl:\n  publish:\n    target: https://example.com\n", "publish.target:"},
-		"ip":        {`{"version":1,"tnl":{"tunnel":{"allow_ip":["192.0.2.7/24"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_ip: [192.0.2.7/24]\n", "must be a canonical IP address or prefix"},
-		"duplicate": {`{"version":1,"tnl":{"tunnel":{"allow_ip":["192.0.2.1","192.0.2.1/32"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_ip: [192.0.2.1, 192.0.2.1/32]\n", "is duplicated"},
+		"zero request limit":     {`{"version":1,"tnl":{"tunnel":{"request_limit":0}}}`, "version: 1\ntnl:\n  tunnel:\n    request_limit: 0\n", "tunnel.request_limit must be greater than zero"},
+		"negative request limit": {`{"version":1,"tnl":{"services":{"web":{"tunnel":{"request_limit":-1}}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      tunnel:\n        request_limit: -1\n", "services.web: tunnel.request_limit must be greater than zero"},
+		"duration":               {`{"version":1,"tnl":{"dev":{"startup_timeout":"+1s"}}}`, "version: 1\ntnl:\n  dev:\n    startup_timeout: +1s\n", "invalid duration syntax"},
+		"target":                 {`{"version":1,"tnl":{"publish":{"target":"https://example.com"}}}`, "version: 1\ntnl:\n  publish:\n    target: https://example.com\n", "publish.target:"},
+		"ip":                     {`{"version":1,"tnl":{"tunnel":{"allow_ip":["192.0.2.7/24"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_ip: [192.0.2.7/24]\n", "must be a canonical IP address or prefix"},
+		"duplicate":              {`{"version":1,"tnl":{"tunnel":{"allow_ip":["192.0.2.1","192.0.2.1/32"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_ip: [192.0.2.1, 192.0.2.1/32]\n", "is duplicated"},
 	} {
 		for extension, invalid := range map[string]string{"json": test.json, "yml": test.yaml} {
 			t.Run(name+"/"+extension, func(t *testing.T) {

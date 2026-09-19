@@ -33,6 +33,10 @@ export interface TnlConfig {
      * @maxItems 63
      */
     allowIP?: string[];
+    /**
+     * Maximum concurrent requests forwarded by the publisher for this route, including streams and upgrades.
+     */
+    requestLimit?: number;
   };
   publish?: Publish;
   dev?: Dev;
@@ -79,6 +83,10 @@ export interface TnlConfig {
          * @maxItems 63
          */
         allowIP?: string[];
+        /**
+         * Maximum concurrent requests forwarded by the publisher for this route, including streams and upgrades.
+         */
+        requestLimit?: number;
       };
       publish?: Publish;
       dev?: Dev;

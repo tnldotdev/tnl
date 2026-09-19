@@ -40,12 +40,13 @@ type openOptions struct {
 }
 
 type tunnelFlags struct {
-	Team        string   `name:"team" env:"TNL_TEAM" help:"Team ID or unambiguous display name."`
-	Host        string   `name:"host" env:"TNL_HOST" help:"Hostname to publish. Defaults to the worktree label in the current member namespace."`
-	Subdomain   string   `name:"subdomain" env:"TNL_SUBDOMAIN" help:"One label beneath the current member namespace."`
-	AllowIP     []string `name:"allow-ip" help:"Allow a visitor IP address or prefix. Repeat for each value."`
-	AllowAllIPs bool     `name:"allow-all-ips" env:"TNL_ALLOW_ALL_IPS" help:"Allow visitors from every IP address."`
-	Ephemeral   bool     `name:"ephemeral" env:"TNL_EPHEMERAL" help:"Remove the route when this tunnel stops."`
+	Team         string   `name:"team" env:"TNL_TEAM" help:"Team ID or unambiguous display name."`
+	Host         string   `name:"host" env:"TNL_HOST" help:"Hostname to publish. Defaults to the worktree label in the current member namespace."`
+	Subdomain    string   `name:"subdomain" env:"TNL_SUBDOMAIN" help:"One label beneath the current member namespace."`
+	AllowIP      []string `name:"allow-ip" help:"Allow a visitor IP address or prefix. Repeat for each value."`
+	AllowAllIPs  bool     `name:"allow-all-ips" env:"TNL_ALLOW_ALL_IPS" help:"Allow visitors from every IP address."`
+	Ephemeral    bool     `name:"ephemeral" env:"TNL_EPHEMERAL" help:"Remove the route when this tunnel stops."`
+	RequestLimit *int     `name:"request-limit" env:"TNL_REQUEST_LIMIT" help:"Maximum concurrent requests forwarded to the local service, including streams and upgrades. Defaults to 500."`
 
 	allowAllIPsFromCLI bool
 	ephemeralFromCLI   bool

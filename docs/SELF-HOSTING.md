@@ -112,6 +112,32 @@ address through `TNLD_INGRESS_IPV4_ADDRESSES` or
 `TNLD_INGRESS_IPV6_ADDRESSES`. If you leave these settings empty, control does
 not manage public route DNS. You must publish the records yourself.
 
+## Publisher HTTP Limits
+
+Route TLS terminates at the publisher, which accepts HTTP/1.1 and HTTP/2 and
+forwards requests to the local service over HTTP/1.1. Each publisher route admits
+at most **500 concurrent requests** by default, shared across all visitor
+connections and both publisher connections. A request holds its slot until the
+response finishes, including streaming responses and WebSocket upgrades.
+
+Set `tnl publish --request-limit=750` or `tnl dev --request-limit=750` to choose
+a different positive limit. `TNL_REQUEST_LIMIT` and the root or service-level
+`tnl.tunnel.request_limit` project setting also configure it; TypeScript uses
+`tunnel.requestLimit`. Precedence is CLI, environment, service setting, root
+setting, then 500. The publisher's upstream HTTP transport uses the same
+connection cap and retains at most 16 idle connections. Excess requests receive
+HTTP 503 with `Retry-After: 1` and `TNL_REQUEST_REJECTED` before contacting the
+local service.
+
+The publisher enforces a 10-second header timeout and a 30-second request-read
+timeout. HTTP/1.1 must finish sending headers and body within 30 seconds;
+HTTP/2 receives a separate 30-second body-read deadline for each stream.
+Trickling bytes does not extend these deadlines. Completed uploads can receive
+long-running responses, and WebSocket connections remain supported.
+
+`TNLD_ROUTE_CONNECTION_LIMIT` separately bounds visitor connections at ingress
+(default 500). Changing it does not change the publisher request budget.
+
 ## Login Token
 
 Generate one login token and store it in the deployment secret store:

@@ -13,6 +13,7 @@ import (
 
 	"github.com/invopop/jsonschema"
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
 )
@@ -118,6 +119,10 @@ func tunnelSchema() *jsonschema.Schema {
 	})
 	properties.Set("allow_all_ips", &jsonschema.Schema{Type: "boolean", Description: "Allow visitors from every IP address."})
 	properties.Set("ephemeral", &jsonschema.Schema{Type: "boolean", Description: "Remove the route when this tunnel stops."})
+	properties.Set("request_limit", &jsonschema.Schema{
+		Type: "integer", Minimum: "1", Default: localproxy.DefaultRequestLimit,
+		Description: "Maximum concurrent requests forwarded by the publisher for this route, including streams and upgrades.",
+	})
 	allowAllProperties := jsonschema.NewProperties()
 	allowAllProperties.Set("allow_all_ips", &jsonschema.Schema{Const: true})
 	return &jsonschema.Schema{

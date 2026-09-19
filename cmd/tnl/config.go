@@ -201,6 +201,9 @@ func applyTunnelConfiguration(flags *tunnelFlags, tunnel *config.Tunnel) {
 	if tunnel == nil {
 		return
 	}
+	if flags.RequestLimit == nil {
+		flags.RequestLimit = tunnel.RequestLimit
+	}
 	if flags.Host == "" && flags.Subdomain == "" {
 		if tunnel.Host != nil {
 			flags.Host = *tunnel.Host
@@ -223,6 +226,9 @@ func applyTunnelConfiguration(flags *tunnelFlags, tunnel *config.Tunnel) {
 }
 
 func validateTunnelFlags(flags tunnelFlags) error {
+	if flags.RequestLimit != nil && *flags.RequestLimit <= 0 {
+		return errors.New("--request-limit must be greater than zero")
+	}
 	if flags.Host != "" && flags.Subdomain != "" {
 		return errors.New("--host and --subdomain are mutually exclusive")
 	}

@@ -1,7 +1,7 @@
 import { defineConfig, type TnlConfigInput } from "@tnldotdev/tnl/config";
 
 const staticConfig = {
-  tunnel: { allowIP: ["192.0.2.0/24"], subdomain: "review" },
+  tunnel: { allowIP: ["192.0.2.0/24"], subdomain: "review", requestLimit: 750 },
   publish: { target: 3000 },
   dev: { command: ["pnpm", "dev"], startupTimeout: "30s" },
 } satisfies TnlConfigInput;

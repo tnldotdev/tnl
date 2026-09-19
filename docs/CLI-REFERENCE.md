@@ -166,15 +166,16 @@ expose only `--state-dir`.
 
 These flags are used by `publish` and `dev`:
 
-| Flag                 | Default and environment        | Behavior                                                                      |
-| -------------------- | ------------------------------ | ----------------------------------------------------------------------------- |
-| `--open`             | false; no environment variable | Open the first ready public URL in the default browser.                       |
-| `--team=STRING`      | empty; `TNL_TEAM`              | Team ID or unambiguous display name. Does not persist an invocation override. |
-| `--host=STRING`      | empty; `TNL_HOST`              | Publish one complete, normalized hostname.                                    |
-| `--subdomain=STRING` | empty; `TNL_SUBDOMAIN`         | Publish one label beneath the current member namespace.                       |
-| `--allow-ip=VALUE`   | empty; no environment variable | Add a visitor IP address or prefix. Repeat at most 63 times.                  |
-| `--allow-all-ips`    | false; `TNL_ALLOW_ALL_IPS`     | Allow visitors from every IP address.                                         |
-| `--ephemeral`        | false; `TNL_EPHEMERAL`         | Request route cleanup when this tunnel stops.                                 |
+| Flag                  | Default and environment        | Behavior                                                                                                                              |
+| --------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `--open`              | false; no environment variable | Open the first ready public URL in the default browser.                                                                               |
+| `--team=STRING`       | empty; `TNL_TEAM`              | Team ID or unambiguous display name. Does not persist an invocation override.                                                         |
+| `--host=STRING`       | empty; `TNL_HOST`              | Publish one complete, normalized hostname.                                                                                            |
+| `--subdomain=STRING`  | empty; `TNL_SUBDOMAIN`         | Publish one label beneath the current member namespace.                                                                               |
+| `--allow-ip=VALUE`    | empty; no environment variable | Add a visitor IP address or prefix. Repeat at most 63 times.                                                                          |
+| `--allow-all-ips`     | false; `TNL_ALLOW_ALL_IPS`     | Allow visitors from every IP address.                                                                                                 |
+| `--ephemeral`         | false; `TNL_EPHEMERAL`         | Request route cleanup when this tunnel stops.                                                                                         |
+| `--request-limit=INT` | `500`; `TNL_REQUEST_LIMIT`     | Maximum concurrent requests forwarded by this publisher route. Must be positive; includes streaming responses and WebSocket upgrades. |
 
 `--host` and `--subdomain` are mutually exclusive. `--allow-all-ips` and
 `--allow-ip` are mutually exclusive. Without `--allow-all-ips`, the current
@@ -229,13 +230,13 @@ under `tnl`. TypeScript configuration evaluates directly to the tnl project
 settings. Root settings are inherited by named services; a service overrides
 root settings field by field.
 
-| Project setting  | Fields                                                        |
-| ---------------- | ------------------------------------------------------------- |
-| Root and service | `server`, `team`, `tunnel`, `publish`, `dev`                  |
-| Service only     | `directory`, relative to the project configuration            |
-| `tunnel`         | `host`, `subdomain`, `allow_ip`, `allow_all_ips`, `ephemeral` |
-| `publish`        | `target`                                                      |
-| `dev`            | `command`, `port`, `startup_timeout`                          |
+| Project setting  | Fields                                                                         |
+| ---------------- | ------------------------------------------------------------------------------ |
+| Root and service | `server`, `team`, `tunnel`, `publish`, `dev`                                   |
+| Service only     | `directory`, relative to the project configuration                             |
+| `tunnel`         | `host`, `subdomain`, `allow_ip`, `allow_all_ips`, `ephemeral`, `request_limit` |
+| `publish`        | `target`                                                                       |
+| `dev`            | `command`, `port`, `startup_timeout`                                           |
 
 The effective runtime precedence is:
 
@@ -251,6 +252,14 @@ The effective runtime precedence is:
 | Hostname unit       | CLI host/subdomain, environment host/subdomain, project host/subdomain, built-in selection    |
 | IP policy unit      | CLI all-IP/allow list, `TNL_ALLOW_ALL_IPS`, project all-IP/allow list, current-IP-only policy |
 | Ephemeral           | Explicit CLI value, presence of `TNL_EPHEMERAL`, project value, false                         |
+| Request limit       | `--request-limit`, `TNL_REQUEST_LIMIT`, service/root `tunnel.request_limit`, `500`            |
+
+TypeScript configuration uses `tunnel.requestLimit`. This publisher request
+budget is shared across HTTP/1.1 connections and HTTP/2 streams for one route;
+it is independent of the ingress visitor-connection limit. Excess requests
+receive HTTP 503 with `Retry-After: 1` and `TNL_REQUEST_REJECTED` before reaching
+the local service. See [publisher HTTP limits](SELF-HOSTING.md#publisher-http-limits)
+for upload deadlines and streaming behavior.
 
 Host and subdomain are chosen together: selecting one clears a lower-priority
 value for the other. The same rule applies to all-IP and allow-list settings.

@@ -91,7 +91,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if err != nil {
 		return fail(err)
 	}
-	publisherConfig := services.config(target, allowedIPPrefixes)
+	publisherConfig := services.config(target, allowedIPPrefixes, flags.requestLimit())
 	publisherConfig.Logf = output.logf
 	publisherConfig.Observe = withTelemetryObserver(telemetry, "publish", serverURL, nil, func(event publisher.Event) error {
 		return handlePublisherEvent(ctx, tunnel, output, event)

@@ -36,9 +36,12 @@ func TestSchemaSourceIncludesServicesTeamAndEphemeral(t *testing.T) {
 	if _, found := tunnel.Properties.Get("ephemeral"); !found {
 		t.Fatal("tunnel ephemeral property is missing")
 	}
+	if limit, found := tunnel.Properties.Get("request_limit"); !found || limit.Minimum != "1" || limit.Default != 500 {
+		t.Fatalf("tunnel request limit schema = %#v", limit)
+	}
 	keys := map[string]string{}
 	collectTypeScriptKeys(reflect.TypeOf(config.TNL{}), keys)
-	if keys["allow_ip"] != "allowIP" || keys["startup_timeout"] != "startupTimeout" {
+	if keys["allow_ip"] != "allowIP" || keys["startup_timeout"] != "startupTimeout" || keys["request_limit"] != "requestLimit" {
 		t.Fatalf("TypeScript key mappings = %#v", keys)
 	}
 	duration := schemaForType(reflect.TypeOf(config.Duration(0)))

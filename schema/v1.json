@@ -105,6 +105,12 @@
             "ephemeral": {
               "type": "boolean",
               "description": "Remove the route when this tunnel stops."
+            },
+            "request_limit": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Maximum concurrent requests forwarded by the publisher for this route, including streams and upgrades.",
+              "default": 500
             }
           },
           "additionalProperties": false,
@@ -181,6 +187,12 @@
                   "ephemeral": {
                     "type": "boolean",
                     "description": "Remove the route when this tunnel stops."
+                  },
+                  "request_limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Maximum concurrent requests forwarded by the publisher for this route, including streams and upgrades.",
+                    "default": 500
                   }
                 },
                 "additionalProperties": false,
