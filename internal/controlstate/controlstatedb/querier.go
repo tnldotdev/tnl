@@ -14,7 +14,6 @@ type Querier interface {
 	AcceptTeamInvitation(ctx context.Context, arg AcceptTeamInvitationParams) (int64, error)
 	ActivateMemberSlug(ctx context.Context, arg ActivateMemberSlugParams) (int64, error)
 	AdvanceAuthorityRevision(ctx context.Context, arg AdvanceAuthorityRevisionParams) (int64, error)
-	AdvanceIngressRoutingTableClock(ctx context.Context, arg AdvanceIngressRoutingTableClockParams) error
 	AdvanceTeamPolicyRevision(ctx context.Context, arg AdvanceTeamPolicyRevisionParams) (int64, error)
 	AllocateRouteVersion(ctx context.Context, arg AllocateRouteVersionParams) (int64, error)
 	ApplyIngressUsageDelta(ctx context.Context, arg ApplyIngressUsageDeltaParams) (ControlRouteUsageBucket, error)
@@ -112,6 +111,7 @@ type Querier interface {
 	InsertAdminAuditEvent(ctx context.Context, arg InsertAdminAuditEventParams) error
 	InsertCertificateIssuanceAuditEvent(ctx context.Context, arg InsertCertificateIssuanceAuditEventParams) error
 	InsertExpiredEphemeralRouteDeleteAuditEvent(ctx context.Context, arg InsertExpiredEphemeralRouteDeleteAuditEventParams) error
+	InsertFinalIngressRoutingTableEvent(ctx context.Context, arg InsertFinalIngressRoutingTableEventParams) (int64, error)
 	InsertIngressRoutingTableEvent(ctx context.Context, arg InsertIngressRoutingTableEventParams) (int64, error)
 	InsertIngressUsageReport(ctx context.Context, arg InsertIngressUsageReportParams) (ControlIngressUsageReport, error)
 	InsertRelayCertificateOrder(ctx context.Context, arg InsertRelayCertificateOrderParams) (ControlRelayCertificateOrder, error)

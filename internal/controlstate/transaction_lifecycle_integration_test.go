@@ -108,6 +108,74 @@ func TestIntegrationTransactionRoutingClockSerializesAllocation(t *testing.T) {
 	}
 }
 
+func TestIntegrationTransactionRoutingEntryRevisionFollowsRouteLock(t *testing.T) {
+	database, now := newCertificatePlanDatabase(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	plan := CertificatePlan{CacheKey: "entry.example.test", Scope: "entry.example.test", Identifiers: []string{"entry.example.test"}, ChallengeMethod: "tls-alpn-01"}
+	route, authentication := newExternalPlanSession(t, database, now, "team_entry", "entry.example.test", "managed:example.test", plan)
+	first, err := database.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rollbackTestTransaction(t, first)
+	second, err := database.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rollbackTestTransaction(t, second)
+	firstQueries := controlstatedb.New(first)
+	storedRoute, err := firstQueries.LockRouteForSession(ctx, route.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	storedSession, err := firstQueries.GetRouteSession(ctx, authentication.RouteSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstPending := pendingIngressRoutingTableEvents{}
+	firstPublished, err := firstPending.addRouteEvent(ctx, firstQueries, storedRoute, storedSession, nil, IngressRouteTombstone, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := firstPending.publish(ctx, firstQueries); err != nil {
+		t.Fatal(err)
+	}
+	workers := newIntegrationWorkers(t, cancel)
+	defer workers.stop()
+	secondDone := make(chan error, 1)
+	var secondPublished *publishedIngressRoutingTableEvent
+	workers.Go(func() {
+		secondQueries := controlstatedb.New(second)
+		storedRoute, err := secondQueries.LockRouteForSession(ctx, route.ID)
+		if err == nil {
+			storedSession, sessionErr := secondQueries.GetRouteSession(ctx, authentication.RouteSessionID)
+			err = sessionErr
+			if err == nil {
+				secondPending := pendingIngressRoutingTableEvents{}
+				secondPublished, err = secondPending.addRouteEvent(ctx, secondQueries, storedRoute, storedSession, nil, IngressRouteTombstone, now.Add(time.Second))
+				if err == nil {
+					err = secondPending.publish(ctx, secondQueries)
+				}
+			}
+		}
+		if err == nil {
+			err = second.Commit(ctx)
+		}
+		secondDone <- err
+	})
+	waitForPostgresBlock(t, ctx, database, int32(first.Conn().PgConn().PID()), secondDone)
+	if err := first.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := awaitIntegrationResult(t, ctx, secondDone); err != nil {
+		t.Fatal(err)
+	}
+	if firstPublished.entryRevision != 1 || secondPublished == nil || secondPublished.entryRevision != 2 {
+		t.Fatalf("entry revisions = %+v, %+v; want 1, 2", firstPublished, secondPublished)
+	}
+}
+
 func TestIntegrationTransactionRoutingPublicationRollbackAndPendingEvents(t *testing.T) {
 	database, now := newCertificatePlanDatabase(t)
 	plan := func(hostname string) CertificatePlan {
@@ -190,6 +258,14 @@ func TestIntegrationTransactionRoutingPublicationRollbackAndPendingEvents(t *tes
 	}
 	defer rollbackTestTransaction(t, tx)
 	queries = controlstatedb.New(tx)
+	storedA, err = queries.LockRouteForSession(t.Context(), routeA.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	storedB, err = queries.LockRouteForSession(t.Context(), routeB.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	pending = pendingIngressRoutingTableEvents{}
 	first, err = pending.addRouteEvent(t.Context(), queries, storedA, sessionA, nil, IngressRouteTombstone, now)
 	if err != nil {

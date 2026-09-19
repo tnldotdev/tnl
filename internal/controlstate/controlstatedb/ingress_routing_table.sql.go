@@ -11,22 +11,68 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const advanceIngressRoutingTableClock = `-- name: AdvanceIngressRoutingTableClock :exec
-UPDATE control.ingress_routing_table_clock
-SET current_revision = $1,
-    updated_at = $2
-WHERE singleton = true
-  AND current_revision < $1
+const insertFinalIngressRoutingTableEvent = `-- name: InsertFinalIngressRoutingTableEvent :one
+WITH inserted AS (
+    INSERT INTO control.ingress_routing_table_events (
+        event_kind,
+        route_id,
+        route_version,
+        canonical_hostname,
+        entry_revision,
+        projection,
+        route_expires_at,
+        created_at
+    ) VALUES (
+        $1,
+        $2,
+        $3,
+        $4,
+        $5,
+        $6,
+        $7,
+        $8
+    )
+    RETURNING routing_table_revision
+), advanced AS (
+    UPDATE control.ingress_routing_table_clock
+    SET current_revision = inserted.routing_table_revision,
+        updated_at = $9
+    FROM inserted
+    WHERE singleton = true
+      AND current_revision < inserted.routing_table_revision
+    RETURNING control.ingress_routing_table_clock.current_revision
+)
+SELECT current_revision AS routing_table_revision
+FROM advanced
 `
 
-type AdvanceIngressRoutingTableClockParams struct {
-	RoutingTableRevision int64
-	UpdatedAt            pgtype.Timestamptz
+type InsertFinalIngressRoutingTableEventParams struct {
+	EventKind         string
+	RouteID           string
+	RouteVersion      int64
+	CanonicalHostname string
+	EntryRevision     int64
+	Projection        []byte
+	RouteExpiresAt    pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
 }
 
-func (q *Queries) AdvanceIngressRoutingTableClock(ctx context.Context, arg AdvanceIngressRoutingTableClockParams) error {
-	_, err := q.db.Exec(ctx, advanceIngressRoutingTableClock, arg.RoutingTableRevision, arg.UpdatedAt)
-	return err
+func (q *Queries) InsertFinalIngressRoutingTableEvent(ctx context.Context, arg InsertFinalIngressRoutingTableEventParams) (int64, error) {
+	row := q.db.QueryRow(ctx, insertFinalIngressRoutingTableEvent,
+		arg.EventKind,
+		arg.RouteID,
+		arg.RouteVersion,
+		arg.CanonicalHostname,
+		arg.EntryRevision,
+		arg.Projection,
+		arg.RouteExpiresAt,
+		arg.CreatedAt,
+		arg.UpdatedAt,
+	)
+	var routing_table_revision int64
+	err := row.Scan(&routing_table_revision)
+	return routing_table_revision, err
 }
 
 const insertIngressRoutingTableEvent = `-- name: InsertIngressRoutingTableEvent :one
