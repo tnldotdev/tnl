@@ -261,6 +261,12 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	}
 
 	framework := ""
+	var frameworkMu sync.RWMutex
+	currentFramework := func() string {
+		frameworkMu.RLock()
+		defer frameworkMu.RUnlock()
+		return framework
+	}
 	completeConfiguration := func(configuration devConfigurationRequest) (string, error) {
 		bootstrap.Resolve(assignment, nil)
 		targetCtx, cancelTarget := context.WithTimeout(ctx, flags.StartupTimeout)
@@ -353,7 +359,7 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 	go func() {
 		publisherConfig := services.config(target, allowedIPPrefixes)
 		publisherConfig.Logf = output.logf
-		publisherConfig.Observe = withTelemetryObserver(telemetry, "dev", serverURL, telemetryFramework(framework), func(event publisher.Event) error {
+		publisherConfig.Observe = withTelemetryObserver(telemetry, "dev", serverURL, currentFramework, func(event publisher.Event) error {
 			return handlePublisherEvent(publishCtx, tunnel, output, event)
 		})
 		publishDone <- publisher.Run(publishCtx, publisherConfig)
@@ -376,8 +382,10 @@ func runDev(ctx context.Context, flags devCommand, stdin io.Reader, stdout, stde
 					errors.New("development target changed after publishing started"),
 				)
 			}
+			frameworkMu.Lock()
 			framework = configuredResult.framework
-			output.setFramework(framework)
+			frameworkMu.Unlock()
+			output.setFramework(configuredResult.framework)
 		case <-child.Done():
 			cancelPublish()
 			publishErr := <-publishDone

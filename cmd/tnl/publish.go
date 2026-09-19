@@ -93,7 +93,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	}
 	publisherConfig := services.config(target, allowedIPPrefixes)
 	publisherConfig.Logf = output.logf
-	publisherConfig.Observe = withTelemetryObserver(telemetry, "publish", serverURL, "", func(event publisher.Event) error {
+	publisherConfig.Observe = withTelemetryObserver(telemetry, "publish", serverURL, nil, func(event publisher.Event) error {
 		return handlePublisherEvent(ctx, tunnel, output, event)
 	})
 	err = publisher.Run(ctx, publisherConfig)
