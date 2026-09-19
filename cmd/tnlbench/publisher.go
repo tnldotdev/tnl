@@ -27,23 +27,26 @@ import (
 
 type publisherCommand struct {
 	workerCommand
-	ServerURL          string        `name:"server" env:"TNL_BENCH_SERVER" required:"" help:"Control URL."`
-	LoginToken         string        `name:"login-token" env:"TNL_BENCH_LOGIN_TOKEN" required:"" help:"Built-in authority login token."`
-	ControlCAFile      string        `name:"control-ca-file" env:"TNL_BENCH_CONTROL_CA_FILE" type:"path" help:"Optional PEM CA for the control API."`
-	HostnameSuffix     string        `name:"hostname-suffix" env:"TNL_BENCH_HOSTNAME_SUFFIX" required:"" help:"Managed deployment domain used by benchmark routes."`
-	Routes             int           `name:"routes" env:"TNL_BENCH_ROUTES" required:"" help:"Total route count in the cell."`
-	AssignedRoutes     int           `name:"assigned-routes" env:"TNL_BENCH_ASSIGNED_ROUTES" required:"" help:"Routes assigned to this worker."`
-	RoutesPerPublisher int           `name:"routes-per-publisher" env:"TNL_BENCH_ROUTES_PER_PUBLISHER" required:"" help:"Stable route-index band assigned to each publisher generator."`
-	RoutesPerChurn     int           `name:"routes-per-churn-route" env:"TNL_BENCH_ROUTES_PER_CHURN_ROUTE" required:"" help:"Active routes represented by each lifecycle-churn route."`
-	StateRoot          string        `name:"state-root" env:"TNL_BENCH_STATE_ROOT" default:"/state" type:"path" help:"Persistent state root for this publisher generator."`
-	FreshRate          int           `name:"fresh-connections-per-second" env:"TNL_BENCH_FRESH_CONNECTIONS_PER_SECOND" required:"" help:"Total fresh visitor connection rate for the cell."`
-	HeldStreams        int           `name:"held-streams" env:"TNL_BENCH_HELD_STREAMS" help:"Total held-open streams for the cell."`
-	ChurnRate          int           `name:"lifecycle-churn-per-second" env:"TNL_BENCH_LIFECYCLE_CHURN_PER_SECOND" help:"Total route-session lifecycle operations per second for the cell."`
-	AssignedChurnRate  int           `name:"assigned-lifecycle-churn-per-second" env:"TNL_BENCH_ASSIGNED_LIFECYCLE_CHURN_PER_SECOND" help:"Route-session lifecycle operations per second assigned to this publisher."`
-	Parallel           int           `name:"parallel" env:"TNL_BENCH_PARALLEL" default:"16" help:"Maximum concurrent route operations."`
-	PayloadBytes       int           `name:"payload-bytes" env:"TNL_BENCH_PAYLOAD_BYTES" default:"16384" help:"Fresh-response payload size."`
-	MetricsURLs        []string      `name:"metrics-url" env:"TNL_BENCH_METRICS_URLS" help:"Private process metrics URL; repeat for each process."`
-	Timeout            time.Duration `name:"timeout" env:"TNL_BENCH_TIMEOUT" default:"30m" help:"Worker deadline."`
+	ServerURL           string        `name:"server" env:"TNL_BENCH_SERVER" required:"" help:"Control URL."`
+	LoginToken          string        `name:"login-token" env:"TNL_BENCH_LOGIN_TOKEN" required:"" help:"Built-in authority login token."`
+	ControlCAFile       string        `name:"control-ca-file" env:"TNL_BENCH_CONTROL_CA_FILE" type:"path" help:"Optional PEM CA for the control API."`
+	HostnameSuffix      string        `name:"hostname-suffix" env:"TNL_BENCH_HOSTNAME_SUFFIX" required:"" help:"Managed deployment domain used by benchmark routes."`
+	Routes              int           `name:"routes" env:"TNL_BENCH_ROUTES" required:"" help:"Total route count in the cell."`
+	AssignedRoutes      int           `name:"assigned-routes" env:"TNL_BENCH_ASSIGNED_ROUTES" required:"" help:"Routes assigned to this worker."`
+	RoutesPerPublisher  int           `name:"routes-per-publisher" env:"TNL_BENCH_ROUTES_PER_PUBLISHER" required:"" help:"Stable route-index band assigned to each publisher generator."`
+	RoutesPerChurn      int           `name:"routes-per-churn-route" env:"TNL_BENCH_ROUTES_PER_CHURN_ROUTE" required:"" help:"Active routes represented by each lifecycle-churn route."`
+	StateRoot           string        `name:"state-root" env:"TNL_BENCH_STATE_ROOT" default:"/state" type:"path" help:"Persistent state root for this publisher generator."`
+	FreshRate           int           `name:"fresh-connections-per-second" env:"TNL_BENCH_FRESH_CONNECTIONS_PER_SECOND" required:"" help:"Total fresh visitor connection rate for the cell."`
+	HeldStreams         int           `name:"held-streams" env:"TNL_BENCH_HELD_STREAMS" help:"Total held-open streams for the cell."`
+	ChurnRate           int           `name:"lifecycle-churn-per-second" env:"TNL_BENCH_LIFECYCLE_CHURN_PER_SECOND" help:"Total route-session lifecycle operations per second for the cell."`
+	AssignedChurnRate   int           `name:"assigned-lifecycle-churn-per-second" env:"TNL_BENCH_ASSIGNED_LIFECYCLE_CHURN_PER_SECOND" help:"Route-session lifecycle operations per second assigned to this publisher."`
+	Parallel            int           `name:"parallel" env:"TNL_BENCH_PARALLEL" default:"16" help:"Maximum concurrent route operations."`
+	PayloadBytes        int           `name:"payload-bytes" env:"TNL_BENCH_PAYLOAD_BYTES" default:"16384" help:"Fresh-response payload size."`
+	MetricsURLs         []string      `name:"metrics-url" env:"TNL_BENCH_METRICS_URLS" help:"Private process metrics URL; repeat for each process."`
+	DiagnosticURLs      []string      `name:"database-diagnostics-url" env:"TNL_BENCH_DATABASE_DIAGNOSTICS_URLS" help:"Private control database diagnostics URL; repeat for each control process."`
+	NoProgressTimeout   time.Duration `name:"no-progress-timeout" env:"TNL_BENCH_NO_PROGRESS_TIMEOUT" default:"2m" help:"Maximum time without another route becoming ready during activation."`
+	Timeout             time.Duration `name:"timeout" env:"TNL_BENCH_TIMEOUT" default:"30m" help:"Worker deadline."`
+	onActivationFailure func()
 }
 
 func (c publisherCommand) Validate() error {
@@ -62,7 +65,7 @@ func (c publisherCommand) Validate() error {
 	if c.AssignedChurnRate != benchmarkPublisherChurnAssignment(c.ChurnRate, c.WorkerCount, c.WorkerIndex) {
 		return errors.New("publisher lifecycle churn assignment is invalid")
 	}
-	if c.Parallel <= 0 || c.Parallel > 256 || c.PayloadBytes <= 0 || c.PayloadBytes > 16<<20 || c.Timeout <= 0 {
+	if c.Parallel <= 0 || c.Parallel > 256 || c.PayloadBytes <= 0 || c.PayloadBytes > 16<<20 || c.Timeout <= 0 || c.NoProgressTimeout < 0 {
 		return errors.New("publisher parallelism, payload, or timeout is invalid")
 	}
 	if _, err := credentials.ParseLoginToken(credentials.LoginToken(c.LoginToken)); err != nil {
@@ -117,10 +120,28 @@ func (c publisherCommand) run(parent context.Context) error {
 		FreshConnectionsPerSecond: c.FreshRate, HeldStreams: c.HeldStreams, PayloadBytes: c.PayloadBytes,
 		LifecycleChurnPerSecond: c.ChurnRate, AssignedLifecycleChurn: c.AssignedChurnRate,
 	}
+	resources := sampleResources(ctx, c.MetricsURLs, "before_activation")
+	sampler := startResourceSampler(context.WithoutCancel(ctx), c.MetricsURLs, 5*time.Second)
+	defer sampler.Stop()
+	var diagnostics []databaseDiagnostic
+	var snapshotOnce sync.Once
+	c.onActivationFailure = func() {
+		snapshotOnce.Do(func() {
+			diagnostics = sampleDatabaseDiagnostics(ctx, c.DiagnosticURLs)
+			resources = append(resources, sampleResources(context.WithoutCancel(ctx), c.MetricsURLs, "failure")...)
+		})
+	}
 	result, runErr := c.execute(ctx, worker, configuration)
 	if runErr != nil && result.SchemaVersion == 0 {
+		partial := result
+		c.onActivationFailure()
 		result = failedResult(c.CellID, c.Suite, c.Repetition, worker, configuration, started, runErr)
+		result.Phases = append(partial.Phases, result.Phases...)
 	}
+	resources = append(resources, sampler.Stop()...)
+	result.Resources = append(resources, result.Resources...)
+	result.DroppedResourceSamples = sampler.dropped
+	result.DatabaseDiagnostics = diagnostics
 	postCtx, postCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer postCancel()
 	if err := coordinator.postResult(postCtx, result); err != nil {
@@ -189,12 +210,14 @@ func (c publisherCommand) execute(ctx context.Context, worker resultWorker, conf
 		ctx, c, &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: controlRoots}, origin.URL, routeSpecs,
 	)
 	if err != nil {
+		phase := activationResult("activation", activationStarted, processes, activation, err)
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cleanupCancel()
 		_, _ = stopRoutes(cleanupCtx, processes)
-		return benchmarkResult{}, err
+		return benchmarkResult{Phases: []phaseResult{phase}}, err
 	}
 	activationElapsed := time.Since(activationStarted)
+	activationPhase := activationResult("activation", activationStarted, processes, activation, nil)
 	cleaned := false
 	defer func() {
 		if !cleaned {
@@ -211,10 +234,13 @@ func (c publisherCommand) execute(ctx context.Context, worker resultWorker, conf
 			ctx, c, &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: controlRoots}, origin.URL, churnRoutes,
 		)
 		if err != nil {
+			phase := activationResult("lifecycle_churn_warmup", warmupStarted, warmProcesses, warmup, err)
 			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cleanupCancel()
 			_, _ = stopRoutes(cleanupCtx, warmProcesses)
-			return benchmarkResult{}, fmt.Errorf("warm lifecycle churn routes: %w", err)
+			return benchmarkResult{Phases: []phaseResult{
+				activationPhase, phase,
+			}}, fmt.Errorf("warm lifecycle churn routes: %w", err)
 		}
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		_, cleanupErr := stopRoutes(cleanupCtx, warmProcesses)
@@ -229,13 +255,6 @@ func (c publisherCommand) execute(ctx context.Context, worker resultWorker, conf
 		}
 	}
 	resources := sampleResources(ctx, c.MetricsURLs, "ready")
-	resourceSamples := startResourceSampler(ctx, c.MetricsURLs, 5*time.Second)
-	resourceSamplesStopped := false
-	defer func() {
-		if !resourceSamplesStopped {
-			_ = resourceSamples.Stop()
-		}
-	}()
 	registrations := make([]benchmarkRouteRegistration, 0, len(processes))
 	for _, process := range processes {
 		if process != nil {
@@ -259,8 +278,6 @@ func (c publisherCommand) execute(ctx context.Context, worker resultWorker, conf
 		churnPhase = &phase
 		workloadErr = err
 	}
-	resources = append(resources, resourceSamples.Stop()...)
-	resourceSamplesStopped = true
 	resources = append(resources, sampleResources(ctx, c.MetricsURLs, "loaded")...)
 	cleanupStarted := time.Now().UTC()
 	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -297,7 +314,10 @@ func (c publisherCommand) execute(ctx context.Context, worker resultWorker, conf
 	runErr := errors.Join(workloadErr, cleanupErr)
 	if runErr != nil {
 		result.Status = "failed"
-		result.Failure = &resultFailure{Message: runErr.Error()}
+		result.Failure = &resultFailure{Message: runErr.Error(), Stage: "measurement"}
+		if cleanupErr != nil {
+			result.Failure.Stage = "cleanup"
+		}
 	}
 	return result, runErr
 }
@@ -571,41 +591,49 @@ func activateRoutes(
 	target string,
 	specs []benchmarkRouteSpec,
 ) ([]*routeProcess, []time.Duration, error) {
-	processes := make([]*routeProcess, len(specs))
+	return activateRoutesWithRunner(ctx, flags, transportTLS, target, specs, publisher.Run)
+}
+
+func activateRoutesWithRunner(
+	ctx context.Context,
+	flags publisherCommand,
+	transportTLS *tls.Config,
+	target string,
+	specs []benchmarkRouteSpec,
+	run func(context.Context, publisher.Config) error,
+) (processes []*routeProcess, timings []time.Duration, retErr error) {
+	defer func() {
+		if retErr != nil && flags.onActivationFailure != nil {
+			// Capture the wait graph while the other publishers are still alive.
+			flags.onActivationFailure()
+		}
+	}()
+	processes = make([]*routeProcess, len(specs))
 	activated := make(chan struct {
-		slot     int
 		route    int
 		duration time.Duration
 		err      error
 	}, len(specs))
-	semaphore := make(chan struct{}, flags.Parallel)
-	for slot, spec := range specs {
-		select {
-		case semaphore <- struct{}{}:
-		case <-ctx.Done():
-			return processes, nil, ctx.Err()
-		}
+	start := func(slot int, spec benchmarkRouteSpec) {
 		routeCtx, cancel := context.WithCancel(ctx)
 		process := &routeProcess{
 			index: spec.index, hostname: spec.hostname, cancel: cancel, done: make(chan error, 1),
 		}
 		processes[slot] = process
-		go func(slot int, spec benchmarkRouteSpec, process *routeProcess) {
+		go func() {
 			started := time.Now()
 			var signal sync.Once
 			signalResult := func(err error) {
 				signal.Do(func() {
-					<-semaphore
 					activated <- struct {
-						slot     int
 						route    int
 						duration time.Duration
 						err      error
-					}{slot: slot, route: spec.index, duration: time.Since(started), err: err}
+					}{route: spec.index, duration: time.Since(started), err: err}
 				})
 			}
 			ready := false
-			err := publisher.Run(routeCtx, publisher.Config{
+			err := run(routeCtx, publisher.Config{
 				Control: spec.control, TeamID: spec.routeContext.teamID, MembershipID: spec.routeContext.membershipID,
 				DomainID: spec.routeContext.domainID, Hostname: process.hostname, RouteScope: spec.routeContext.routeScope,
 				PolicyRevision: spec.routeContext.policyRevision, Target: target, State: spec.state,
@@ -625,24 +653,59 @@ func activateRoutes(
 			if ready && routeCtx.Err() == nil {
 				fmt.Fprintf(os.Stderr, "tnlbench: route %d publisher exited after readiness: %v\n", spec.index, err)
 			}
+			if !ready && err == nil {
+				err = errors.New("publisher exited before route became ready")
+			}
 			signalResult(err)
 			process.done <- err
 			close(process.done)
-		}(slot, spec, process)
+		}()
 	}
-	timings := make([]time.Duration, len(specs))
-	for completed := 1; completed <= len(specs); completed++ {
+	noProgress := flags.NoProgressTimeout
+	if noProgress == 0 {
+		noProgress = 2 * time.Minute
+	}
+	timer := time.NewTimer(noProgress)
+	defer timer.Stop()
+	next, active := 0, 0
+	for len(timings) < len(specs) {
+		for next < len(specs) && active < flags.Parallel {
+			if ctx.Err() != nil {
+				return processes, timings, ctx.Err()
+			}
+			start(next, specs[next])
+			next++
+			active++
+		}
 		select {
 		case result := <-activated:
+			active--
 			if result.err != nil {
-				return processes, nil, fmt.Errorf("activate route %d: %w", result.route, result.err)
+				return processes, timings, fmt.Errorf("activate route %d (%d ready, %d started): %w", result.route, len(timings), next, result.err)
 			}
-			timings[result.slot] = result.duration
+			timings = append(timings, result.duration)
+			timer.Reset(noProgress)
+		case <-timer.C:
+			return processes, timings, fmt.Errorf("activation made no progress for %s (%d ready, %d started, %d pending)", noProgress, len(timings), next, active)
 		case <-ctx.Done():
-			return processes, nil, ctx.Err()
+			return processes, timings, ctx.Err()
 		}
 	}
 	return processes, timings, nil
+}
+
+func activationResult(name string, started time.Time, processes []*routeProcess, timings []time.Duration, err error) phaseResult {
+	phase := phaseResult{Name: name, StartedAt: started, DurationMilliseconds: milliseconds(time.Since(started)),
+		Successes: len(timings), Total: newDurationHistogram(timings)}
+	for _, process := range processes {
+		if process != nil {
+			phase.Attempts++
+		}
+	}
+	if err != nil {
+		phase.Errors = 1
+	}
+	return phase
 }
 
 func stopRoutes(ctx context.Context, processes []*routeProcess) ([]time.Duration, error) {

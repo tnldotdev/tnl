@@ -139,7 +139,7 @@ func (c loadCommand) execute(ctx context.Context, worker resultWorker, configura
 			SchemaVersion: benchmarkResultSchemaVersion, CellID: c.CellID, Status: "failed", Suite: c.Suite,
 			Repetition: c.Repetition, Worker: worker, Configuration: configuration,
 			Phases: []phaseResult{correctnessPhase, heldPhase, recovery}, Resources: resources,
-			Cleanup: resultCleanup{Exact: true}, Failure: &resultFailure{Message: message},
+			Cleanup: resultCleanup{Exact: true}, Failure: &resultFailure{Message: message, Stage: "measurement"},
 		}
 		return result, errors.New(message)
 	}
@@ -163,7 +163,7 @@ func (c loadCommand) execute(ctx context.Context, worker resultWorker, configura
 	saturated := freshPhase.Errors != 0 || (c.FreshRate > 0 && freshPhase.AchievedRate < 0.95*float64(c.FreshRate))
 	var recoveryPhase *phaseResult
 	var recoveryErr error
-	if saturated {
+	if saturated || c.LifecycleChurn > 0 {
 		recovery, err := c.runRecovery(ctx, hostnames)
 		recoveryPhase, recoveryErr = &recovery, err
 	}
@@ -184,7 +184,7 @@ func (c loadCommand) execute(ctx context.Context, worker resultWorker, configura
 		if recoveryErr != nil {
 			message += "; " + recoveryErr.Error()
 		}
-		result.Failure = &resultFailure{Message: message}
+		result.Failure = &resultFailure{Message: message, Stage: "measurement"}
 		return result, errors.New(result.Failure.Message)
 	}
 	if c.FreshRate > 0 && freshPhase.AchievedRate < 0.95*float64(c.FreshRate) {
@@ -195,8 +195,13 @@ func (c loadCommand) execute(ctx context.Context, worker resultWorker, configura
 		if recoveryErr != nil {
 			message += "; " + recoveryErr.Error()
 		}
-		result.Failure = &resultFailure{Message: message}
+		result.Failure = &resultFailure{Message: message, Stage: "measurement"}
 		return result, errors.New(result.Failure.Message)
+	}
+	if recoveryErr != nil {
+		result.Status = "failed"
+		result.Failure = &resultFailure{Message: recoveryErr.Error(), Stage: "measurement"}
+		return result, recoveryErr
 	}
 	return result, nil
 }

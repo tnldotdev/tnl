@@ -115,9 +115,13 @@ results and reports, then removes all recorded resources. The first control
 process establishes the public control endpoint before the other control
 process starts, avoiding concurrent initial certificate issuance.
 
-A workload saturation result does not stop later cells, so every scout ramp can
-establish its own observed boundary. Provisioning, instrumentation, and cleanup
-errors stop the campaign and trigger cleanup.
+A measured workload saturation result allows later cells only when every load
+worker demonstrates recovery. Setup, activation, churn warmup, instrumentation,
+and cleanup failures stop the campaign and trigger cleanup. Activation consumes
+failures as routes start and aborts after two minutes without another route
+becoming ready (`tnlbench publisher --no-progress-timeout`). Partial worker
+results are collected without waiting for the remaining workers. Setup failures
+are reported separately and do not establish saturation boundaries.
 
 For `smoke`, `scout`, and `confirm`, the runner starts a private Pebble Machine
 without a public Fly port. Pebble performs normal DNS-01 and TLS-ALPN-01
@@ -182,7 +186,20 @@ BENCH_RUN=bench-results/<run-id> mise exec -- task go:bench-fly:report
 
 Each worker records activation, deactivation, lifecycle-churn, or visitor
 phases, correctness failures, fixed latency histograms, retained route counts,
-and process metrics sampled before, every five seconds during, and after load.
+and process metrics. The first publisher samples before activation, every five
+seconds through execution and cleanup, and at the ready/loaded boundaries.
+Setup failures retain partial activation counts and the collected metrics. The
+periodic sample window is bounded to 1 MiB to keep result uploads small; any
+omitted older samples are counted in the result and reported explicitly.
+
+Before canceling publishers after an activation failure or no-progress timeout,
+each publisher requests a bounded database snapshot from every control's private
+observability listener and records any collection errors. Snapshots survive in
+`results.jsonl` and `report.json`, with a summary in `report.md`. They include
+PostgreSQL wait events and blocking-session relationships; control request and
+local pgx pool metrics provide the surrounding context. Collection has its own
+five-second deadline, including when the workload context has expired.
+
 Fresh-connection and lifecycle-churn cells pass only when they complete without
 operation errors and sustain at least 95 percent of the assigned target rate.
 Lifecycle-churn routes are created and brought to readiness before load, so the
@@ -196,6 +213,7 @@ releases held streams and then sends one low-rate visitor probe at a time for up
 to 30 seconds. The report records how many saturated workers recovered and the
 slowest observed time until a successful response. This measures post-load
 service recovery; it is not a relay-failure or existing-stream survival test.
+Churn cells also run this visitor recovery check after their visitor measurement.
 
 The report identifies the last passing target, last target that passed every
 repetition, and first failing target independently for each axis. It records

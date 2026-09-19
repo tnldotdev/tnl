@@ -100,6 +100,7 @@ func serveWithRelayClientTLS(
 			return err
 		}
 		d.database = database
+		metrics.RegisterDatabasePool(database.PoolStats)
 		d.forward("clean up ephemeral routes", runAsync(func() error {
 			return runEphemeralRouteCleanup(lifetime, database)
 		}))
@@ -216,7 +217,7 @@ func serveWithRelayClientTLS(
 
 	controlHandler := http.Handler(nil)
 	if d.database != nil {
-		controlHandler, err = newPublicAPIHandler(cfg, d.startedAt, d.serviceHTTP, d.database)
+		controlHandler, err = newPublicAPIHandler(cfg, d.startedAt, d.serviceHTTP, d.database, metrics)
 		if err != nil {
 			return err
 		}
@@ -268,7 +269,7 @@ func serveWithRelayClientTLS(
 			defer cancel()
 			return d.ready(readyCtx, cfg.Mode, time.Now()) == nil
 		})
-		server, err := observability.Listen(cfg.MetricsListen, handler)
+		server, err := observability.Listen(cfg.MetricsListen, withDatabaseDiagnostics(handler, d.database))
 		if err != nil {
 			return fmt.Errorf("listen for observability: %w", err)
 		}

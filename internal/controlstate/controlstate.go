@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -33,8 +34,9 @@ var migrationFiles embed.FS
 // Database is the PostgreSQL connection pool for control state. Its database
 // details remain private to this package.
 type Database struct {
-	pool       *pgxpool.Pool
-	storageKey *storagekey.Keyring
+	pool          *pgxpool.Pool
+	storageKey    *storagekey.Keyring
+	diagnosticsMu sync.Mutex
 }
 
 // Migrate applies every embedded control-state migration through a direct

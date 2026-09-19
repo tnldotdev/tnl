@@ -303,24 +303,11 @@ func (c runCommand) run(ctx context.Context, stdout io.Writer) (retErr error) {
 	if err := saveManifest(manifestPath, &manifest); err != nil {
 		return err
 	}
-	campaignFailed := false
-	for _, cell := range plan.Cells {
-		progress.printf("cell %s: starting", cell.ID)
-		status, rows, err := executeCell(ctx, progress, fly, benchmark, plan, cell, resultsPath)
-		manifest.Cells = append(manifest.Cells, manifestCell{
-			ID: cell.ID, Status: status, ResultRows: rows, CompletedAt: time.Now().UTC(),
-		})
-		if saveErr := saveManifest(manifestPath, &manifest); saveErr != nil {
-			return errors.Join(err, saveErr)
-		}
-		if err != nil {
-			progress.printf("cell %s: failed; details will follow after cleanup", cell.ID)
-			return err
-		}
-		progress.printf("cell %s: %s (%d result rows)", cell.ID, status, rows)
-		if status != "passed" {
-			campaignFailed = true
-		}
+	campaignFailed, err := executeCampaignCells(progress, plan.Cells, manifestPath, &manifest, func(cell planCell) (string, int, error) {
+		return executeCell(ctx, progress, fly, benchmark, plan, cell, resultsPath)
+	})
+	if err != nil {
+		return err
 	}
 	manifest.Status = "reporting"
 	if err := saveManifest(manifestPath, &manifest); err != nil {
@@ -895,6 +882,13 @@ func executeCell(
 		if index == 0 {
 			environment["TNL_BENCH_METRICS_URLS"] = strings.Join(benchmark.metricsURLs, ",")
 		}
+		var diagnosticURLs []string
+		for _, endpoint := range benchmark.metricsURLs {
+			if strings.HasSuffix(endpoint, "#control") {
+				diagnosticURLs = append(diagnosticURLs, strings.TrimSuffix(endpoint, "/metrics#control")+"/debug/database")
+			}
+		}
+		environment["TNL_BENCH_DATABASE_DIAGNOSTICS_URLS"] = strings.Join(diagnosticURLs, ",")
 		progress.printf(
 			"cell %s: starting publisher %d/%d (%d routes, %d churn/s)",
 			cell.ID, index+1, cell.PublisherWorkers, assigned, churn,
@@ -949,7 +943,7 @@ func executeCell(
 	)
 	status, waitErr := waitCell(ctx, progress, coordinator, time.Duration(cell.TimeoutSeconds)*time.Second)
 	progress.printf("cell %s: collecting results", cell.ID)
-	results, resultsErr := coordinatorResults(ctx, coordinator)
+	results, resultsErr := coordinatorResults(ctx, coordinator, status.AbortCampaign)
 	if resultsErr != nil {
 		cause := errors.Join(waitErr, resultsErr)
 		return "failed", 0, cellExecutionFailure(progress, fly, benchmark, cell, cause)
@@ -958,12 +952,16 @@ func executeCell(
 	if err != nil {
 		return "failed", 0, cellExecutionFailure(progress, fly, benchmark, cell, errors.Join(waitErr, err))
 	}
-	if waitErr != nil {
+	if waitErr != nil && !status.AbortCampaign {
 		progress.printf("cell %s: recovered complete results after status polling failed", cell.ID)
 	}
 	status.Status = resultStatus
 	if err := appendResults(resultsPath, results); err != nil {
 		return "failed", rows, err
+	}
+	continuationErr := cellContinuationError(results)
+	if status.AbortCampaign {
+		continuationErr = errors.Join(waitErr, continuationErr)
 	}
 	if status.Status != "passed" {
 		progress.printf("cell %s: capturing workload diagnostics", cell.ID)
@@ -979,7 +977,41 @@ func executeCell(
 			return status.Status, rows, err
 		}
 	}
-	return status.Status, rows, nil
+	return status.Status, rows, continuationErr
+}
+
+// A failed setup cannot establish a capacity boundary. Measured saturation can
+// continue only when every load worker has demonstrated post-load recovery.
+func cellContinuationError(data []byte) error {
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	failed, loads, recovered := false, 0, 0
+	for {
+		var result benchmarkResult
+		if err := decoder.Decode(&result); errors.Is(err, io.EOF) {
+			break
+		} else if err != nil {
+			return err
+		}
+		if result.Status != "passed" {
+			failed = true
+			if stage := resultFailureStage(result); stage != "measurement" {
+				return fmt.Errorf("cell %s %s failed; stopping campaign before the next cell", result.CellID, stage)
+			}
+		}
+		if result.Worker.Kind == "load" {
+			loads++
+			for _, phase := range result.Phases {
+				if phase.Name == "recovery" && phase.Successes > 0 {
+					recovered++
+					break
+				}
+			}
+		}
+	}
+	if failed && (loads == 0 || loads != recovered) {
+		return errors.New("cell failed without successful recovery from every load worker; stopping campaign")
+	}
+	return nil
 }
 
 func summarizeCellResults(data []byte) (string, int, error) {
@@ -1006,6 +1038,27 @@ func summarizeCellResults(data []byte) (string, int, error) {
 		return "failed", 0, errors.New("coordinator returned no result rows")
 	}
 	return status, rows, nil
+}
+
+func executeCampaignCells(progress *benchmarkProgress, cells []planCell, manifestPath string, manifest *runManifest,
+	execute func(planCell) (string, int, error),
+) (bool, error) {
+	failed := false
+	for _, cell := range cells {
+		progress.printf("cell %s: starting", cell.ID)
+		status, rows, err := execute(cell)
+		manifest.Cells = append(manifest.Cells, manifestCell{ID: cell.ID, Status: status, ResultRows: rows, CompletedAt: time.Now().UTC()})
+		if saveErr := saveManifest(manifestPath, manifest); saveErr != nil {
+			return true, errors.Join(err, saveErr)
+		}
+		if err != nil {
+			progress.printf("cell %s: failed; details will follow after cleanup", cell.ID)
+			return true, err
+		}
+		progress.printf("cell %s: %s (%d result rows)", cell.ID, status, rows)
+		failed = failed || status != "passed"
+	}
+	return failed, nil
 }
 
 func cellMachineProvisionFailure(
@@ -1101,6 +1154,9 @@ func waitCell(
 			if status.Complete {
 				return status, nil
 			}
+			if status.AbortCampaign {
+				return status, errors.New("worker setup failed; collecting partial results and stopping campaign")
+			}
 		} else if !now.Before(nextHeartbeat) {
 			progress.printf("cell: coordinator status temporarily unavailable; retrying")
 			nextHeartbeat = now.Add(15 * time.Second)
@@ -1132,8 +1188,12 @@ func coordinatorStatusRequest(ctx context.Context, client *coordinatorClient) (c
 	return status, nil
 }
 
-func coordinatorResults(ctx context.Context, client *coordinatorClient) ([]byte, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+"/v1/results", nil)
+func coordinatorResults(ctx context.Context, client *coordinatorClient, partial bool) ([]byte, error) {
+	endpoint := client.baseURL + "/v1/results"
+	if partial {
+		endpoint += "?partial=1"
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
 	}

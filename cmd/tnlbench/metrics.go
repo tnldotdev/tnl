@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/controlstate"
 )
 
 func sampleResources(ctx context.Context, rawURLs []string, moment string) []resourceSample {
@@ -49,10 +52,11 @@ func sampleResources(ctx context.Context, rawURLs []string, moment string) []res
 }
 
 type resourceSampler struct {
-	cancel context.CancelFunc
-	done   chan []resourceSample
-	once   sync.Once
-	result []resourceSample
+	cancel  context.CancelFunc
+	done    chan []resourceSample
+	once    sync.Once
+	result  []resourceSample
+	dropped int
 }
 
 func startResourceSampler(parent context.Context, rawURLs []string, interval time.Duration) *resourceSampler {
@@ -60,6 +64,8 @@ func startResourceSampler(parent context.Context, rawURLs []string, interval tim
 	sampler := &resourceSampler{cancel: cancel, done: make(chan []resourceSample, 1)}
 	go func() {
 		var samples []resourceSample
+		var sizes []int
+		bytes := 0
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		sequence := 0
@@ -73,7 +79,18 @@ func startResourceSampler(parent context.Context, rawURLs []string, interval tim
 			select {
 			case <-ticker.C:
 				sequence++
-				samples = append(samples, sampleResources(parent, rawURLs, fmt.Sprintf("load-%06d", sequence))...)
+				for _, sample := range sampleResources(parent, rawURLs, fmt.Sprintf("sample-%06d", sequence)) {
+					data, _ := json.Marshal(sample)
+					samples, sizes = append(samples, sample), append(sizes, len(data))
+					bytes += len(data)
+					// Keep the most recent window within the coordinator's result-body
+					// limit, leaving room for boundary samples and diagnostics.
+					for bytes > 1<<20 && len(samples) > 0 {
+						bytes -= sizes[0]
+						samples, sizes = samples[1:], sizes[1:]
+						sampler.dropped++
+					}
+				}
 			case <-ctx.Done():
 				sampler.done <- samples
 				return
@@ -126,14 +143,62 @@ func parseMetrics(body string) map[string]float64 {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		fields := strings.Fields(line)
-		if len(fields) != 2 {
+		// Labels can contain spaces (for example a matched HTTP route pattern).
+		separator := strings.LastIndexByte(line, ' ')
+		if separator < 0 {
 			continue
 		}
-		value, err := strconv.ParseFloat(fields[1], 64)
+		value, err := strconv.ParseFloat(line[separator+1:], 64)
 		if err == nil {
-			values[fields[0]] = value
+			values[line[:separator]] = value
 		}
 	}
 	return values
+}
+
+type databaseDiagnostic struct {
+	Identity  string                            `json:"identity"`
+	Timestamp time.Time                         `json:"timestamp"`
+	Snapshot  *controlstate.DatabaseDiagnostics `json:"snapshot,omitempty"`
+	Error     string                            `json:"error,omitempty"`
+}
+
+func sampleDatabaseDiagnostics(parent context.Context, endpoints []string) []databaseDiagnostic {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 5*time.Second)
+	defer cancel()
+	results := make([]databaseDiagnostic, len(endpoints))
+	var workers sync.WaitGroup
+	for index, endpoint := range endpoints {
+		workers.Go(func() {
+			diagnostic := databaseDiagnostic{Identity: endpoint, Timestamp: time.Now().UTC()}
+			defer func() { results[index] = diagnostic }()
+			request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+			if err != nil {
+				diagnostic.Error = "invalid database diagnostics endpoint"
+				return
+			}
+			response, err := http.DefaultClient.Do(request)
+			if err != nil {
+				diagnostic.Error = err.Error()
+				return
+			}
+			defer response.Body.Close()
+			if response.StatusCode != http.StatusOK {
+				var problem struct {
+					Error string `json:"error"`
+				}
+				_ = json.NewDecoder(io.LimitReader(response.Body, 4<<10)).Decode(&problem)
+				diagnostic.Error = fmt.Sprintf("HTTP %d: %s", response.StatusCode, problem.Error)
+				return
+			}
+			var snapshot controlstate.DatabaseDiagnostics
+			if err := json.NewDecoder(io.LimitReader(response.Body, 64<<10)).Decode(&snapshot); err != nil {
+				diagnostic.Error = fmt.Sprintf("decode database diagnostics: %v", err)
+				return
+			}
+			diagnostic.Snapshot = &snapshot
+		})
+	}
+	workers.Wait()
+	return results
 }
