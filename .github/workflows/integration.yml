@@ -16,21 +16,7 @@ jobs:
   integration:
     name: Go integration
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    services:
-      postgres:
-        image: postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
-        env:
-          POSTGRES_DB: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_USER: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready --username postgres --dbname postgres"
-          --health-interval 2s
-          --health-timeout 5s
-          --health-retries 10
+    timeout-minutes: 30
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -53,9 +39,6 @@ jobs:
           cache: true
           require-lockfile: true
 
-      - name: Build JavaScript packages
-        run: pnpm build
-
       - name: Install Task
         uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
         with:
@@ -70,7 +53,10 @@ jobs:
         run: sudo sysctl --write net.ipv4.ip_unprivileged_port_start=53
 
       - name: Run integration tests
-        env:
-          TNL_TEST_BINARY_INTEGRATION: "1"
-          TNL_TEST_POSTGRES_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
-        run: task go:test-integration
+        run: task go:test:integration
+
+      - name: Run binary integration tests
+        run: task go:test:integration:binary
+
+      - name: Run DNS integration test
+        run: task go:test:integration:dns

@@ -9,23 +9,26 @@ x-runtime: &runtime
     - coordination:/load
   environment: &environment
     PATH: /artifacts:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-    TNL_TEST_INTEGRATION: "1"
-    TNL_TEST_RUNTIME_ROUTES: "${TNL_TEST_RUNTIME_ROUTES:-64}"
-    TNL_TEST_RUNTIME_RPS: "${TNL_TEST_RUNTIME_RPS:-160}"
-    TNL_TEST_RUNTIME_DURATION: "${TNL_TEST_RUNTIME_DURATION:-30s}"
   command:
-    [
-      /artifacts/runtime.test,
-      -test.v,
-      -test.run=^TestSeparatedRuntimeComponent$$,
-      -test.timeout=20m,
-    ]
+    - sh
+    - -ec
+    - |
+      exec /artifacts/runtime.test \
+        -test.v \
+        -test.run='^TestSeparatedRuntimeComponent$$' \
+        -test.timeout=20m \
+        -tnl-test-tier=separated-load \
+        -tnl-test-postgres-url='postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable' \
+        -tnl-separated-component="$${SEPARATED_COMPONENT}" \
+        -tnl-runtime-load-routes='${ROUTES:-64}' \
+        -tnl-runtime-load-rps='${RPS:-160}' \
+        -tnl-runtime-load-duration='${DURATION:-30s}'
 
 x-visitor: &visitor
   <<: *runtime
-  cpus: "${TNL_TEST_VISITOR_CPUS:-1}"
-  mem_limit: "${TNL_TEST_VISITOR_MEMORY:-128m}"
-  memswap_limit: "${TNL_TEST_VISITOR_MEMORY:-128m}"
+  cpus: "${VISITOR_CPUS:-1}"
+  mem_limit: "${VISITOR_MEMORY:-128m}"
+  memswap_limit: "${VISITOR_MEMORY:-128m}"
 
 services:
   build:
@@ -34,7 +37,7 @@ services:
     environment:
       GOFLAGS: -tags=ts_omit_ssh
       GOBIN: /artifacts
-      TNL_TEST_SPLIT_RACE: "${TNL_TEST_SPLIT_RACE:-0}"
+      RACE: "${RACE:-0}"
     volumes:
       - ../../..:/workspace:ro
       - artifacts:/artifacts
@@ -43,7 +46,7 @@ services:
       - -ec
       - |
         go install github.com/letsencrypt/pebble/v2/cmd/pebble@v2.10.1
-        if [ "$${TNL_TEST_SPLIT_RACE}" = 1 ]; then
+        if [ "$${RACE}" = 1 ]; then
           go test -race -c -o /artifacts/runtime.test ./internal/tnldruntime
         else
           go test -c -o /artifacts/runtime.test ./internal/tnldruntime
@@ -51,9 +54,9 @@ services:
 
   postgres:
     image: postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
-    cpus: "${TNL_TEST_DATABASE_CPUS:-1}"
-    mem_limit: "${TNL_TEST_DATABASE_MEMORY:-512m}"
-    memswap_limit: "${TNL_TEST_DATABASE_MEMORY:-512m}"
+    cpus: "${DATABASE_CPUS:-1}"
+    mem_limit: "${DATABASE_MEMORY:-512m}"
+    memswap_limit: "${DATABASE_MEMORY:-512m}"
     environment:
       POSTGRES_DB: postgres
       POSTGRES_PASSWORD: postgres
@@ -66,123 +69,129 @@ services:
 
   setup:
     <<: *runtime
-    environment:
-      <<: *environment
-      TNL_TEST_SEPARATED_COMPONENT: setup
-      TNL_TEST_POSTGRES_URL: postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable
     command:
-      [/artifacts/runtime.test, -test.v, -test.run=^TestSeparatedRuntimeSetup$$, -test.timeout=1m]
+      - /artifacts/runtime.test
+      - -test.v
+      - -test.run=^TestSeparatedRuntimeSetup$$
+      - -test.timeout=1m
+      - -tnl-test-tier=separated-load
+      - -tnl-test-postgres-url=postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable
+      - -tnl-separated-component=setup
 
   control:
     <<: *runtime
-    cpus: "${TNL_TEST_CONTROL_CPUS:-1}"
-    mem_limit: "${TNL_TEST_CONTROL_MEMORY:-512m}"
-    memswap_limit: "${TNL_TEST_CONTROL_MEMORY:-512m}"
+    cpus: "${CONTROL_CPUS:-1}"
+    mem_limit: "${CONTROL_MEMORY:-512m}"
+    memswap_limit: "${CONTROL_MEMORY:-512m}"
     environment:
       <<: *environment
-      TNL_TEST_SEPARATED_COMPONENT: control
-      TNL_TEST_POSTGRES_URL: postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable
+      SEPARATED_COMPONENT: control
     networks:
       default:
         aliases: [control.split.integration.test]
 
   ingress:
     <<: *runtime
-    cpus: "${TNL_TEST_INGRESS_CPUS:-1}"
-    mem_limit: "${TNL_TEST_INGRESS_MEMORY:-256m}"
-    memswap_limit: "${TNL_TEST_INGRESS_MEMORY:-256m}"
+    cpus: "${INGRESS_CPUS:-1}"
+    mem_limit: "${INGRESS_MEMORY:-256m}"
+    memswap_limit: "${INGRESS_MEMORY:-256m}"
     environment:
       <<: *environment
-      TNL_TEST_SEPARATED_COMPONENT: ingress
+      SEPARATED_COMPONENT: ingress
 
   relay-a:
     <<: *runtime
-    cpus: "${TNL_TEST_RELAY_A_CPUS:-1}"
-    mem_limit: "${TNL_TEST_RELAY_A_MEMORY:-256m}"
-    memswap_limit: "${TNL_TEST_RELAY_A_MEMORY:-256m}"
+    cpus: "${RELAY_A_CPUS:-1}"
+    mem_limit: "${RELAY_A_MEMORY:-256m}"
+    memswap_limit: "${RELAY_A_MEMORY:-256m}"
     environment:
       <<: *environment
-      TNL_TEST_SEPARATED_COMPONENT: relay-a
+      SEPARATED_COMPONENT: relay-a
     networks:
       default:
         aliases: [relay-a.split.integration.test]
 
   relay-b:
     <<: *runtime
-    cpus: "${TNL_TEST_RELAY_B_CPUS:-1}"
-    mem_limit: "${TNL_TEST_RELAY_B_MEMORY:-256m}"
-    memswap_limit: "${TNL_TEST_RELAY_B_MEMORY:-256m}"
+    cpus: "${RELAY_B_CPUS:-1}"
+    mem_limit: "${RELAY_B_MEMORY:-256m}"
+    memswap_limit: "${RELAY_B_MEMORY:-256m}"
     environment:
       <<: *environment
-      TNL_TEST_SEPARATED_COMPONENT: relay-b
+      SEPARATED_COMPONENT: relay-b
     networks:
       default:
         aliases: [relay-b.split.integration.test]
 
   publishers:
     <<: *runtime
-    cpus: "${TNL_TEST_PUBLISHER_CPUS:-2}"
-    mem_limit: "${TNL_TEST_PUBLISHER_MEMORY:-512m}"
-    memswap_limit: "${TNL_TEST_PUBLISHER_MEMORY:-512m}"
+    cpus: "${PUBLISHER_CPUS:-2}"
+    mem_limit: "${PUBLISHER_MEMORY:-512m}"
+    memswap_limit: "${PUBLISHER_MEMORY:-512m}"
     environment:
       <<: *environment
-      TNL_TEST_SEPARATED_COMPONENT: publishers
+      SEPARATED_COMPONENT: publishers
 
   visitor-1:
     <<: *visitor
     environment:
       <<: *environment
-      TNL_TEST_SEPARATED_COMPONENT: visitor-1
+      SEPARATED_COMPONENT: visitor-1
   visitor-2:
     <<: *visitor
     environment:
       <<: *environment
-      TNL_TEST_SEPARATED_COMPONENT: visitor-2
+      SEPARATED_COMPONENT: visitor-2
   visitor-3:
     <<: *visitor
     environment:
       <<: *environment
-      TNL_TEST_SEPARATED_COMPONENT: visitor-3
+      SEPARATED_COMPONENT: visitor-3
   visitor-4:
     <<: *visitor
     environment:
       <<: *environment
-      TNL_TEST_SEPARATED_COMPONENT: visitor-4
+      SEPARATED_COMPONENT: visitor-4
 
   app:
     <<: *runtime
     network_mode: service:publishers
-    cpus: "${TNL_TEST_APP_CPUS:-1}"
-    mem_limit: "${TNL_TEST_APP_MEMORY:-128m}"
-    memswap_limit: "${TNL_TEST_APP_MEMORY:-128m}"
+    cpus: "${APP_CPUS:-1}"
+    mem_limit: "${APP_MEMORY:-128m}"
+    memswap_limit: "${APP_MEMORY:-128m}"
     environment:
       <<: *environment
-      TNL_TEST_SEPARATED_COMPONENT: app
+      SEPARATED_COMPONENT: app
 
   pebble:
     <<: *runtime
-    cpus: "${TNL_TEST_PEBBLE_CPUS:-1}"
-    mem_limit: "${TNL_TEST_PEBBLE_MEMORY:-128m}"
-    memswap_limit: "${TNL_TEST_PEBBLE_MEMORY:-128m}"
+    cpus: "${PEBBLE_CPUS:-1}"
+    mem_limit: "${PEBBLE_MEMORY:-128m}"
+    memswap_limit: "${PEBBLE_MEMORY:-128m}"
     environment:
       <<: *environment
-      TNL_TEST_SEPARATED_COMPONENT: pebble
+      SEPARATED_COMPONENT: pebble
 
   coordinator:
     <<: *runtime
     cpus: "0.5"
     mem_limit: 128m
     memswap_limit: 128m
-    environment:
-      <<: *environment
-      TNL_TEST_SEPARATED_COMPONENT: coordinator
-      TNL_TEST_POSTGRES_URL: postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable
     volumes:
       - artifacts:/artifacts:ro
       - coordination:/load
-      - ${TNL_TEST_SPLIT_RESULTS:?results directory required}:/results
+      - ${RESULTS:?results directory required}:/results
     command:
-      [/artifacts/runtime.test, -test.v, -test.run=^TestLoadSeparatedRuntime$$, -test.timeout=15m]
+      - /artifacts/runtime.test
+      - -test.v
+      - -test.run=^TestLoadSeparatedRuntime$$
+      - -test.timeout=15m
+      - -tnl-test-tier=separated-load
+      - -tnl-test-postgres-url=postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable
+      - -tnl-separated-component=coordinator
+      - "-tnl-runtime-load-routes=${ROUTES:-64}"
+      - "-tnl-runtime-load-rps=${RPS:-160}"
+      - "-tnl-runtime-load-duration=${DURATION:-30s}"
 
 volumes:
   artifacts:

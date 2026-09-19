@@ -7,7 +7,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientstate"
 )
 
-func TestIntegrationBinaryControlSessionRefreshAndLogout(t *testing.T) {
+func TestBinaryIntegrationControlSessionRefreshAndLogout(t *testing.T) {
 	fixture := startIntegrationBinaryStandalone(t)
 	const controlOrigin = "https://control.127.0.0.1.nip.io"
 

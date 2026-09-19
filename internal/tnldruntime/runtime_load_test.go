@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"net"
@@ -15,7 +16,6 @@ import (
 	"os"
 	"runtime"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -25,33 +25,42 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
+)
+
+var (
+	runtimeLoadRoutes   = flag.Int("tnl-runtime-load-routes", 16, "number of runtime load routes")
+	runtimeLoadRPS      = flag.Int("tnl-runtime-load-rps", 20, "runtime load requests per second")
+	runtimeLoadSources  = flag.Int("tnl-runtime-load-sources", 1, "runtime load visitor source addresses")
+	runtimeLoadDuration = flag.Duration("tnl-runtime-load-duration", 30*time.Second, "minimum duration of each runtime load phase")
+	runtimeLoadTrace    = flag.Bool("tnl-runtime-load-trace", false, "trace runtime load certificate provisioning")
 )
 
 // All role instances and publishers share this test process, but use real
 // listeners, authenticated HTTP APIs, publisher transports, route TLS and Pebble.
 // The Compose task bounds their aggregate resources separately from PostgreSQL.
-func TestLoadRuntimeVisitors(t *testing.T) {
-	if os.Getenv("TNL_TEST_RUNTIME_LOAD") != "1" {
-		t.Skip("run task go:test-runtime-load")
+func TestRuntimeLoadVisitors(t *testing.T) {
+	testutil.RequireTestTier(t, testutil.TestTierRuntimeLoad)
+	routes, rate, sources, duration := *runtimeLoadRoutes, *runtimeLoadRPS, *runtimeLoadSources, *runtimeLoadDuration
+	if routes < 2 || routes > 128 {
+		t.Fatal("runtime load routes must be between 2 and 128")
 	}
-	routes := runtimeLoadInt(t, "TNL_TEST_RUNTIME_ROUTES", 16, 2, 128)
-	rate := runtimeLoadInt(t, "TNL_TEST_RUNTIME_RPS", 20, 1, 500)
-	sources := runtimeLoadInt(t, "TNL_TEST_RUNTIME_SOURCES", 1, 1, 8)
+	if rate < 1 || rate > 500 {
+		t.Fatal("runtime load requests per second must be between 1 and 500")
+	}
+	if sources < 1 || sources > 8 {
+		t.Fatal("runtime load sources must be between 1 and 8")
+	}
 	if sources > 1 && runtime.GOOS != "linux" {
 		t.Skip("multiple loopback visitor source addresses require the Linux load task")
 	}
-	duration := 30 * time.Second
-	if raw := os.Getenv("TNL_TEST_RUNTIME_DURATION"); raw != "" {
-		var err error
-		duration, err = time.ParseDuration(raw)
-		if err != nil || duration < 10*time.Second || duration > 2*time.Minute {
-			t.Fatal("runtime phase duration must be between 10s and 2m")
-		}
+	if duration < 10*time.Second || duration > 2*time.Minute {
+		t.Fatal("runtime phase duration must be between 10s and 2m")
 	}
 	t.Logf("runtime_load routes=%d rps=%d sources=%d phase_duration=%s visitor_workers=8 payload_bytes=32768 gomaxprocs=%d process_leases=30s renewals=10s", routes, rate, sources, duration, runtime.GOMAXPROCS(0))
 	timeline := time.Now()
-	trace := os.Getenv("TNL_TEST_RUNTIME_TRACE") == "1"
+	trace := *runtimeLoadTrace
 	var newOrders atomic.Int64
 	fixture := newSplitPublishFixtureWithOptions(t, "runtime-load", splitPublishOptions{
 		configureControlHTTP: func(client *http.Client) {
@@ -545,18 +554,6 @@ func (s *runtimeLoadStream) stop(t *testing.T) {
 	if err := waitForDoneWithin(s.done, 5*time.Second); err != nil {
 		t.Error("held stream did not stop: ", err)
 	}
-}
-
-func runtimeLoadInt(t *testing.T, name string, fallback, minimum, maximum int) int {
-	t.Helper()
-	if raw := os.Getenv(name); raw != "" {
-		value, err := strconv.Atoi(raw)
-		if err != nil || value < minimum || value > maximum {
-			t.Fatalf("%s must be between %d and %d", name, minimum, maximum)
-		}
-		return value
-	}
-	return fallback
 }
 
 func logRuntimeLoadResources(t *testing.T, phase string) {

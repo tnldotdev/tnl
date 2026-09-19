@@ -145,7 +145,7 @@ func startDevProcessTestCommand(t *testing.T, mode string) (*devProcess, *os.Fil
 	}
 	process, err := startDevProcess(
 		[]string{executable, "-test.run=^TestDevProcessHelper$", "--", mode},
-		append(os.Environ(), "TNL_TEST_DEV_PROCESS_HELPER=1", "GORACE=atexit_sleep_ms=0"), nil, outputWriter, os.Stderr,
+		append(os.Environ(), "GO_WANT_DEV_PROCESS_HELPER=1", "GORACE=atexit_sleep_ms=0"), nil, outputWriter, os.Stderr,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -196,7 +196,7 @@ func assertDevProcessOutputEOF(t *testing.T, output *os.File, reader *bufio.Read
 }
 
 func TestDevProcessHelper(t *testing.T) {
-	if os.Getenv("TNL_TEST_DEV_PROCESS_HELPER") != "1" {
+	if os.Getenv("GO_WANT_DEV_PROCESS_HELPER") != "1" {
 		return
 	}
 	mode := os.Args[len(os.Args)-1]

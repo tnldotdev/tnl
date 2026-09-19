@@ -3,7 +3,6 @@ package controlstate_test
 import (
 	"context"
 	"net/http"
-	"os"
 	"testing"
 	"time"
 
@@ -15,14 +14,14 @@ import (
 )
 
 func TestLoadCadence(t *testing.T) {
-	controlstate.RunCadenceLoad(t, func(database *controlstate.Database, now func() time.Time, resnapshot <-chan struct{}) (ingress.ControlClient, error) {
+	controlstate.RunCadenceLoad(t, func(database *controlstate.Database, now func() time.Time, resnapshot <-chan struct{}, retention bool) (ingress.ControlClient, error) {
 		client, err := ingressapi.NewDirectClient(ingressapi.DirectConfig{
 			Store: database, LeaseDuration: 30 * time.Second, Now: now,
 		})
 		if err != nil {
 			return nil, err
 		}
-		return &cadenceIngressClient{ControlClient: client, resnapshot: resnapshot}, nil
+		return &cadenceIngressClient{ControlClient: client, resnapshot: resnapshot, retention: retention}, nil
 	})
 }
 
@@ -32,6 +31,7 @@ type cadenceIngressClient struct {
 	ingress.ControlClient
 	resnapshot <-chan struct{}
 	requested  bool // Only the controller's serial routing loop accesses this.
+	retention  bool
 }
 
 func (c *cadenceIngressClient) GetIngressRoutingTableEvents(ctx context.Context, id ingressv1.IngressID, params ingressv1.GetIngressRoutingTableEventsParams) (ingressv1.IngressRoutingTablePage, error) {
@@ -39,7 +39,7 @@ func (c *cadenceIngressClient) GetIngressRoutingTableEvents(ctx context.Context,
 		select {
 		case <-c.resnapshot:
 			c.requested = true
-			if os.Getenv("TNL_TEST_LOAD_RETENTION") != "" {
+			if c.retention {
 				// Restore an old consumer cursor against the real published floor.
 				// The production API, not this wrapper, must require a resnapshot.
 				params.After = 0

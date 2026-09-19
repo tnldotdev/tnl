@@ -1,8 +1,8 @@
 package controlstate
 
 import (
+	"flag"
 	"fmt"
-	"os"
 	"strconv"
 	"testing"
 	"time"
@@ -10,6 +10,15 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/testutil"
+)
+
+var (
+	loadDelay     = flag.Duration("tnl-load-delay", 0, "delay after successful database commands")
+	loadRoutes    = flag.Int("tnl-load-routes", 1000, "number of routes in the database load test")
+	loadHistory   = flag.Int("tnl-load-history", 1, "initial routing events per route")
+	loadDuration  = flag.Duration("tnl-load-duration", 0, "paced database load duration")
+	loadRetention = flag.Duration("tnl-load-retention", 0, "routing history retention window")
 )
 
 type controlLoadFixture struct {
@@ -27,35 +36,18 @@ type controlLoadFixture struct {
 
 func newControlLoadFixture(t *testing.T) *controlLoadFixture {
 	t.Helper()
-	if os.Getenv("TNL_TEST_LOAD") != "1" {
-		t.Skip("run task go:test-load")
+	testutil.RequireTestTier(t, testutil.TestTierDatabaseLoad)
+	if *loadDelay < 0 || *loadDelay > 50*time.Millisecond {
+		t.Fatal("query delay must be between 0 and 50ms")
 	}
-	delay := time.Duration(0)
-	if raw := os.Getenv("TNL_TEST_LOAD_DELAY"); raw != "" {
-		var err error
-		delay, err = time.ParseDuration(raw)
-		if err != nil || delay < 0 || delay > 50*time.Millisecond {
-			t.Fatal("query delay must be between 0 and 50ms")
-		}
+	if *loadRoutes <= 0 || int64(*loadRoutes) > 2147483647 {
+		t.Fatal("route count must be a positive PostgreSQL integer")
 	}
-	routes := 1000
-	if raw := os.Getenv("TNL_TEST_LOAD_ROUTES"); raw != "" {
-		var err error
-		routes, err = strconv.Atoi(raw)
-		if err != nil || routes <= 0 || int64(routes) > 2147483647 {
-			t.Fatal("route count must be a positive PostgreSQL integer")
-		}
-	}
-	history := int64(1)
-	if raw := os.Getenv("TNL_TEST_LOAD_HISTORY"); raw != "" {
-		var err error
-		history, err = strconv.ParseInt(raw, 10, 32)
-		if err != nil || history < 1 {
-			t.Fatal("history events per route must be a positive PostgreSQL integer")
-		}
+	if *loadHistory < 1 || int64(*loadHistory) > 2147483647 {
+		t.Fatal("history events per route must be a positive PostgreSQL integer")
 	}
 	database, now, request, originalLeases := newRouteSessionPrerequisites(t)
-	f := &controlLoadFixture{database: database, now: now, base: request, routes: routes, history: int(history), leases: make(map[string][]RelayLease)}
+	f := &controlLoadFixture{database: database, now: now, base: request, routes: *loadRoutes, history: *loadHistory, leases: make(map[string][]RelayLease)}
 	_, err := database.pool.Exec(t.Context(), `
 		INSERT INTO control.routes (id, team_id, domain_id, created_by_identity_id, idempotency_key,
 			request_digest, canonical_hostname, target, route_scope, policy_revision, ip_policy,
@@ -63,11 +55,11 @@ func newControlLoadFixture(t *testing.T) *controlLoadFixture {
 		SELECT 'route_load_' || n, team_id, domain_id, created_by_identity_id, 'load-' || n,
 			request_digest, 'load-' || n || '.example.test', target, route_scope, policy_revision,
 			ip_policy, lifecycle_state, dns_state, created_at, updated_at
-		FROM control.routes CROSS JOIN generate_series(0, $1::integer - 1) AS n WHERE id = $2`, routes, request.RouteID)
+		FROM control.routes CROSS JOIN generate_series(0, $1::integer - 1) AS n WHERE id = $2`, *loadRoutes, request.RouteID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	capacity := max(4096, routes)
+	capacity := max(4096, *loadRoutes)
 	if _, err := database.pool.Exec(t.Context(), `UPDATE control.relay_leases SET connection_capacity = $1`, capacity); err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +72,7 @@ func newControlLoadFixture(t *testing.T) *controlLoadFixture {
 		}
 		f.leases[service] = []RelayLease{first, second}
 	}
-	f.delay = delay
+	f.delay = *loadDelay
 	for range 2 {
 		metrics := observability.New("control")
 		activity, connections := new(queryActivity), new(connectionActivity)
@@ -89,7 +81,7 @@ func newControlLoadFixture(t *testing.T) *controlLoadFixture {
 		config.MaxConns = 8
 		config.ConnConfig.RuntimeParams["application_name"] = "tnl-load-test"
 		config.ConnConfig.Tracer = &queryDelayTracer{
-			connectionTracer: &connectionTracer{connections: connections, purpose: requestPoolConnection, queries: activity}, delay: delay,
+			connectionTracer: &connectionTracer{connections: connections, purpose: requestPoolConnection, queries: activity}, delay: *loadDelay,
 		}
 		pool, err := pgxpool.NewWithConfig(t.Context(), config)
 		if err != nil {

@@ -19,10 +19,12 @@ import (
 	"github.com/miekg/dns"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
-func TestIntegrationSplitAutomaticRelayDNSCertificates(t *testing.T) {
+func TestDNSIntegrationSplitAutomaticRelayCertificates(t *testing.T) {
+	testutil.RequireTestTier(t, testutil.TestTierDNS)
 	if runtime.GOOS == "darwin" {
 		t.Skip("automatic DNS integration requires binding privileged port 53")
 	}

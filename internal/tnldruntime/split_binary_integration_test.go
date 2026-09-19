@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func TestIntegrationBinarySplitPublishAndVisit(t *testing.T) {
+func TestBinaryIntegrationSplitPublishAndVisit(t *testing.T) {
 	f := startIntegrationBinarySplit(t)
 	target := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		_, _ = io.WriteString(response, request.URL.RequestURI())

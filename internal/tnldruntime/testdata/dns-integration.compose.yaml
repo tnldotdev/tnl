@@ -22,8 +22,6 @@ services:
     working_dir: /workspace
     environment:
       GOFLAGS: -tags=ts_omit_ssh
-      TNL_TEST_INTEGRATION: "1"
-      TNL_TEST_POSTGRES_URL: postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable
     volumes:
       - ../../..:/workspace:ro
     command:
@@ -32,5 +30,7 @@ services:
       - |
         go install github.com/letsencrypt/pebble/v2/cmd/pebble@v2.10.1
         go test -race -v ./internal/tnldruntime \
-          -run='^TestIntegrationSplitAutomaticRelayDNSCertificates$$' \
-          -count=1 -timeout=5m
+          -run='^TestDNSIntegrationSplitAutomaticRelayCertificates$$' \
+          -count=1 -timeout=5m -args \
+          -tnl-test-tier=dns \
+          -tnl-test-postgres-url='postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable'

@@ -4,14 +4,41 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"flag"
 	"net/url"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 )
+
+// TestTier identifies an opt-in test suite.
+type TestTier string
+
+const (
+	TestTierRoutine       TestTier = "routine"
+	TestTierIntegration   TestTier = "integration"
+	TestTierBinary        TestTier = "binary"
+	TestTierDNS           TestTier = "dns"
+	TestTierDatabaseLoad  TestTier = "database-load"
+	TestTierRuntimeLoad   TestTier = "runtime-load"
+	TestTierSeparatedLoad TestTier = "separated-load"
+)
+
+var (
+	testTier        = flag.String("tnl-test-tier", string(TestTierRoutine), "tnl test tier")
+	testPostgresURL = flag.String("tnl-test-postgres-url", "", "disposable PostgreSQL administration URL")
+)
+
+// RequireTestTier skips a test unless its suite is selected.
+func RequireTestTier(t testing.TB, required TestTier) {
+	t.Helper()
+	selected := selectedTestTier(t)
+	if selected != required {
+		t.Skipf("requires the %s test tier", required)
+	}
+}
 
 // NewDisposablePostgresDatabaseURL creates a uniquely named PostgreSQL
 // database and drops it, including any remaining connections, during cleanup.
@@ -21,11 +48,11 @@ func NewDisposablePostgresDatabaseURL(t testing.TB, suffix string) string {
 	parsed := parsePostgresTestURL(t, directURL)
 	adminConfig, err := pgx.ParseConfig(directURL)
 	if err != nil {
-		t.Fatalf("parse TNL_TEST_POSTGRES_URL: %v", err)
+		t.Fatalf("parse -tnl-test-postgres-url: %v", err)
 	}
 	admin, err := pgx.ConnectConfig(t.Context(), adminConfig)
 	if err != nil {
-		t.Fatalf("connect using TNL_TEST_POSTGRES_URL: %v", err)
+		t.Fatalf("connect using -tnl-test-postgres-url: %v", err)
 	}
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -63,33 +90,45 @@ func NewDisposablePostgresDatabaseURL(t testing.TB, suffix string) string {
 	return parsed.String()
 }
 
-// PostgresURL returns the PostgreSQL administration URL for integration tests.
+// PostgresURL returns the PostgreSQL administration URL for PostgreSQL-backed tests.
 func PostgresURL(t testing.TB) string {
 	t.Helper()
-	directURL := os.Getenv("TNL_TEST_POSTGRES_URL")
+	if selectedTestTier(t) == TestTierRoutine {
+		t.Skip("requires a PostgreSQL-backed test tier")
+	}
+	directURL := *testPostgresURL
 	if directURL == "" {
-		if os.Getenv("TNL_TEST_INTEGRATION") == "1" || os.Getenv("TNL_TEST_BINARY_INTEGRATION") == "1" {
-			t.Fatal("explicit integration testing requires TNL_TEST_POSTGRES_URL")
-		}
-		t.Skip("TNL_TEST_POSTGRES_URL is not set")
+		t.Fatal("selected test tier requires -tnl-test-postgres-url")
 	}
 	return directURL
+}
+
+func selectedTestTier(t testing.TB) TestTier {
+	t.Helper()
+	tier := TestTier(*testTier)
+	switch tier {
+	case TestTierRoutine, TestTierIntegration, TestTierBinary, TestTierDNS, TestTierDatabaseLoad, TestTierRuntimeLoad, TestTierSeparatedLoad:
+		return tier
+	default:
+		t.Fatalf("unknown tnl test tier %q", tier)
+		return ""
+	}
 }
 
 func parsePostgresTestURL(t testing.TB, rawURL string) *url.URL {
 	t.Helper()
 	if rawURL != strings.TrimSpace(rawURL) {
-		t.Fatal("TNL_TEST_POSTGRES_URL contains surrounding whitespace")
+		t.Fatal("-tnl-test-postgres-url contains surrounding whitespace")
 	}
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
-		t.Fatalf("parse TNL_TEST_POSTGRES_URL: %v", err)
+		t.Fatalf("parse -tnl-test-postgres-url: %v", err)
 	}
 	if parsed.Scheme != "postgres" && parsed.Scheme != "postgresql" {
-		t.Fatal("TNL_TEST_POSTGRES_URL must use the postgres or postgresql scheme")
+		t.Fatal("-tnl-test-postgres-url must use the postgres or postgresql scheme")
 	}
 	if parsed.Opaque != "" || parsed.Fragment != "" || strings.TrimPrefix(parsed.EscapedPath(), "/") == "" {
-		t.Fatal("TNL_TEST_POSTGRES_URL must be a valid URL naming a database")
+		t.Fatal("-tnl-test-postgres-url must be a valid URL naming a database")
 	}
 	return parsed
 }

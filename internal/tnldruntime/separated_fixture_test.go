@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"net"
 	"net/http"
@@ -18,11 +19,14 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
 )
 
 const separatedDirectory = "/load"
 const separatedDomain = "split.integration.test"
+
+var separatedComponent = flag.String("tnl-separated-component", "", "separated runtime load component")
 
 var separatedComponents = []string{"control", "ingress", "relay-a", "relay-b", "publishers", "visitor-1", "visitor-2", "visitor-3", "visitor-4", "app", "pebble"}
 
@@ -96,10 +100,11 @@ func separatedHTTP(t *testing.T) *http.Client {
 }
 
 func TestSeparatedRuntimeSetup(t *testing.T) {
-	if os.Getenv("TNL_TEST_SEPARATED_COMPONENT") != "setup" {
-		t.Skip("run task go:test-separated-load")
+	testutil.RequireTestTier(t, testutil.TestTierSeparatedLoad)
+	if *separatedComponent != "setup" {
+		t.Skip("run task go:test:load:runtime:separated")
 	}
-	if err := controlstate.Migrate(t.Context(), os.Getenv("TNL_TEST_POSTGRES_URL")); err != nil {
+	if err := controlstate.Migrate(t.Context(), testutil.PostgresURL(t)); err != nil {
 		t.Fatal(err)
 	}
 	ca := newIntegrationTestCA(t)
@@ -142,7 +147,7 @@ func separatedConfig(t *testing.T, component string) tnldconfig.Config {
 	cfg.ClusterSecret = testClusterSecret
 	switch role {
 	case tnldconfig.RoleControl:
-		cfg.DatabaseURL = os.Getenv("TNL_TEST_POSTGRES_URL")
+		cfg.DatabaseURL = testutil.PostgresURL(t)
 		cfg.ControlListen, cfg.PrivateControlListen = "0.0.0.0:443", "0.0.0.0:9443"
 		cfg.ServerDomain, cfg.ManagedDeploymentDomain = separatedDomain, "routes."+separatedDomain
 		cfg.ControlTLSCertificateFile, cfg.ControlTLSPrivateKeyFile = "/load/control.pem", "/load/control.key"
@@ -251,7 +256,7 @@ func readSeparatedResourceFiles(read func(string) (string, error)) (separatedRes
 
 func serveSeparatedResources(t *testing.T, orders func() int64) {
 	t.Helper()
-	component := os.Getenv("TNL_TEST_SEPARATED_COMPONENT")
+	component := *separatedComponent
 	address := ":9091"
 	if component == "app" {
 		address = ":9092"

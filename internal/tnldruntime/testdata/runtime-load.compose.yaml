@@ -19,9 +19,9 @@ services:
 
   postgres:
     image: postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
-    cpus: "${TNL_TEST_DATABASE_CPUS:-1}"
-    mem_limit: "${TNL_TEST_DATABASE_MEMORY:-512m}"
-    memswap_limit: "${TNL_TEST_DATABASE_MEMORY:-512m}"
+    cpus: "${DATABASE_CPUS:-1}"
+    mem_limit: "${DATABASE_MEMORY:-512m}"
+    memswap_limit: "${DATABASE_MEMORY:-512m}"
     environment:
       POSTGRES_DB: postgres
       POSTGRES_PASSWORD: postgres
@@ -35,32 +35,29 @@ services:
   test:
     image: golang:1.27.0-bookworm@sha256:ded31c68586d2e49e760acc2e65a884b23d032e9bbbed0ae0c55abd3fcaf4452
     init: true
-    cpus: "${TNL_TEST_RUNTIME_CPUS:-2}"
-    mem_limit: "${TNL_TEST_RUNTIME_MEMORY:-1g}"
-    memswap_limit: "${TNL_TEST_RUNTIME_MEMORY:-1g}"
+    cpus: "${RUNTIME_CPUS:-2}"
+    mem_limit: "${RUNTIME_MEMORY:-1g}"
+    memswap_limit: "${RUNTIME_MEMORY:-1g}"
     depends_on:
       postgres:
         condition: service_healthy
     environment:
       PATH: /artifacts:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-      TNL_TEST_INTEGRATION: "1"
-      TNL_TEST_RUNTIME_LOAD: "1"
-      TNL_TEST_RUNTIME_ROUTES: "${TNL_TEST_RUNTIME_ROUTES:-16}"
-      TNL_TEST_RUNTIME_RPS: "${TNL_TEST_RUNTIME_RPS:-20}"
-      TNL_TEST_RUNTIME_SOURCES: "${TNL_TEST_RUNTIME_SOURCES:-1}"
-      TNL_TEST_RUNTIME_TRACE: "${TNL_TEST_RUNTIME_TRACE:-0}"
-      TNL_TEST_RUNTIME_DURATION: "${TNL_TEST_RUNTIME_DURATION:-30s}"
-      TNL_TEST_POSTGRES_URL: postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable
     volumes:
       - artifacts:/artifacts:ro
     command:
-      [
-        /artifacts/runtime.test,
-        -test.v,
-        -test.run=^TestLoadRuntimeVisitors$$,
-        -test.count=1,
-        -test.timeout=15m,
-      ]
+      - /artifacts/runtime.test
+      - -test.v
+      - -test.run=^TestRuntimeLoadVisitors$$
+      - -test.count=1
+      - -test.timeout=15m
+      - -tnl-test-tier=runtime-load
+      - -tnl-test-postgres-url=postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable
+      - "-tnl-runtime-load-routes=${ROUTES:-16}"
+      - "-tnl-runtime-load-rps=${RPS:-20}"
+      - "-tnl-runtime-load-sources=${SOURCES:-1}"
+      - "-tnl-runtime-load-trace=${TRACE:-0}"
+      - "-tnl-runtime-load-duration=${DURATION:-30s}"
 
 volumes:
   artifacts:

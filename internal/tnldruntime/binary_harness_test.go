@@ -390,12 +390,12 @@ func assertIntegrationPort443Available(t *testing.T) {
 	t.Helper()
 	tcpListener, err := net.Listen("tcp", "127.0.0.1:443")
 	if err != nil {
-		t.Fatalf("TNL_TEST_BINARY_INTEGRATION=1 requires TCP port 443 on 127.0.0.1: %v", err)
+		t.Fatalf("binary integration requires TCP port 443 on 127.0.0.1: %v", err)
 	}
 	defer tcpListener.Close()
 	udpListener, err := net.ListenPacket("udp", "127.0.0.1:443")
 	if err != nil {
-		t.Fatalf("TNL_TEST_BINARY_INTEGRATION=1 requires UDP port 443 on 127.0.0.1: %v", err)
+		t.Fatalf("binary integration requires UDP port 443 on 127.0.0.1: %v", err)
 	}
 	_ = udpListener.Close()
 	_ = tcpListener.Close()

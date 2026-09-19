@@ -20,7 +20,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/projectmeta"
 )
 
-func TestIntegrationBinaryStandaloneDev(t *testing.T) {
+func TestBinaryIntegrationStandaloneDev(t *testing.T) {
 	fixture := startIntegrationBinaryStandalone(t)
 	t.Run("visitor_and_cancellation", func(t *testing.T) { testIntegrationViteHappyPath(t, fixture) })
 	t.Run("cancel_during_provisioning", func(t *testing.T) { testIntegrationViteCancelProvisioning(t, fixture) })

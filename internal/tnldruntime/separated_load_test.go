@@ -17,6 +17,7 @@ import (
 
 	dto "github.com/prometheus/client_model/go"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/testutil"
 )
 
 type separatedSnapshot struct {
@@ -25,16 +26,12 @@ type separatedSnapshot struct {
 }
 
 func TestLoadSeparatedRuntime(t *testing.T) {
-	if os.Getenv("TNL_TEST_SEPARATED_COMPONENT") != "coordinator" {
-		t.Skip("run task go:test-separated-load")
+	testutil.RequireTestTier(t, testutil.TestTierSeparatedLoad)
+	if *separatedComponent != "coordinator" {
+		t.Skip("run task go:test:load:runtime:separated")
 	}
-	routes := runtimeLoadInt(t, "TNL_TEST_RUNTIME_ROUTES", 64, 4, 128)
-	rate := runtimeLoadInt(t, "TNL_TEST_RUNTIME_RPS", 160, 4, 500)
-	duration, err := time.ParseDuration(os.Getenv("TNL_TEST_RUNTIME_DURATION"))
-	if err != nil || duration < 10*time.Second || duration > 2*time.Minute {
-		t.Fatal("phase duration must be 10s through 2m")
-	}
-	database := inspectStandaloneTestDatabase(t, os.Getenv("TNL_TEST_POSTGRES_URL"))
+	routes, rate, duration := separatedLoadParameters(t)
+	database := inspectStandaloneTestDatabase(t, testutil.PostgresURL(t))
 	t.Logf("separated_load routes=%d rps=%d sources=4 workers=8 queue=8 payload=32768 phase_duration=%s", routes, rate, duration)
 	defer func() {
 		if !t.Failed() {
@@ -182,6 +179,21 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 		t.Fatalf("final usage accounting: mismatches=%d error=%v", mismatches, err)
 	}
 	t.Logf("separated_verified routes=%d active_sessions=0 active_connections=0 reservations=0 usage_buckets=%d attempts=%d successes=%d ingress_bytes=%d egress_bytes=%d", routes, buckets, attempts, successes, ingressBytes, egressBytes)
+}
+
+func separatedLoadParameters(t *testing.T) (int, int, time.Duration) {
+	t.Helper()
+	routes, rate, duration := *runtimeLoadRoutes, *runtimeLoadRPS, *runtimeLoadDuration
+	if routes < 4 || routes > 128 {
+		t.Fatal("separated runtime load routes must be between 4 and 128")
+	}
+	if rate < 4 || rate > 500 {
+		t.Fatal("separated runtime load requests per second must be between 4 and 500")
+	}
+	if duration < 10*time.Second || duration > 2*time.Minute {
+		t.Fatal("separated runtime load phase duration must be between 10s and 2m")
+	}
+	return routes, rate, duration
 }
 
 func separatedCapture(t *testing.T, database *sql.DB, name string) separatedSnapshot {

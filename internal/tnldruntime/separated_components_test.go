@@ -20,13 +20,16 @@ import (
 	"github.com/miekg/dns"
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/testutil"
 )
 
 func TestSeparatedRuntimeComponent(t *testing.T) {
-	component := os.Getenv("TNL_TEST_SEPARATED_COMPONENT")
+	testutil.RequireTestTier(t, testutil.TestTierSeparatedLoad)
+	component := *separatedComponent
 	if component == "" || component == "setup" || component == "coordinator" {
-		t.Skip("run task go:test-separated-load")
+		t.Skip("run task go:test:load:runtime:separated")
 	}
+	routes, rate, _ := separatedLoadParameters(t)
 	ctx, cancel := signal.NotifyContext(t.Context(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
 	var orders atomic.Int64
@@ -37,9 +40,9 @@ func TestSeparatedRuntimeComponent(t *testing.T) {
 	case "app":
 		runSeparatedApp(t, ctx)
 	case "publishers":
-		runSeparatedPublishers(t, ctx)
+		runSeparatedPublishers(t, ctx, routes)
 	case "visitor-1", "visitor-2", "visitor-3", "visitor-4":
-		runSeparatedVisitor(t, ctx, component)
+		runSeparatedVisitor(t, ctx, component, rate)
 	case "control", "ingress", "relay-a", "relay-b":
 		if !separatedRead(t, ctx, "pebble.ready", nil) {
 			return
@@ -200,11 +203,10 @@ type separatedPublishers struct {
 	Ready []publisher.Event
 }
 
-func runSeparatedPublishers(t *testing.T, ctx context.Context) {
+func runSeparatedPublishers(t *testing.T, ctx context.Context, count int) {
 	if !separatedRead(t, ctx, "publish.start", nil) {
 		return
 	}
-	count := runtimeLoadInt(t, "TNL_TEST_RUNTIME_ROUTES", 64, 4, 128)
 	owner := newRuntimeTopology(t)
 	identity := newIntegrationPublishingIdentity(t, "https://control."+separatedDomain, separatedHTTP(t), "runtime-load", owner)
 	quic := muxsession.QUICConnector{TLSConfig: separatedRelayTLS(t)}
@@ -273,7 +275,7 @@ type separatedVisitorResult struct {
 	HeldSurviving int
 }
 
-func runSeparatedVisitor(t *testing.T, ctx context.Context, component string) {
+func runSeparatedVisitor(t *testing.T, ctx context.Context, component string, rate int) {
 	var publishers separatedPublishers
 	if !separatedRead(t, ctx, "publishers.ready", &publishers) {
 		return
@@ -284,7 +286,6 @@ func runSeparatedVisitor(t *testing.T, ctx context.Context, component string) {
 	index, _ := strconv.Atoi(strings.TrimPrefix(component, "visitor-"))
 	visitor := newIntegrationVisitor(t, separatedRoots(t, "route-roots.pem"), "ingress:443")
 	payload := bytes.Repeat([]byte("tnl!"), 8192)
-	rate := runtimeLoadInt(t, "TNL_TEST_RUNTIME_RPS", 160, 4, 500)
 	// Four real source IPs, two workers/queue slots each: aggregate 8/8.
 	localRate := rate / 4
 	if index <= rate%4 {

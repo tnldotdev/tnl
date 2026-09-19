@@ -22,15 +22,17 @@ import (
 	"github.com/tnldotdev/tnl/internal/testutil"
 )
 
+var integrationDNSChild = flag.String("tnl-dns-child", "", "isolated DNS integration child test")
+
 // Start a fresh process before net/http caches proxy settings. Even if the SDK
 // ignores the endpoint override, its public API requests hit a rejecting proxy.
 // Process-group cleanup also contains daemon panics without orphaning Pebble.
 func integrationDNSSubprocess(t *testing.T) bool {
 	t.Helper()
-	if os.Getenv("TNL_TEST_DNS_CHILD") == t.Name() {
+	if *integrationDNSChild == t.Name() {
 		return false
 	}
-	testutil.PostgresURL(t)
+	postgresURL := testutil.PostgresURL(t)
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("rejected nonlocal integration request: %s %s", r.Method, r.Host)
 		http.Error(w, "integration tests forbid nonlocal API requests", http.StatusForbidden)
@@ -46,11 +48,15 @@ func integrationDNSSubprocess(t *testing.T) bool {
 	if _, subtests, ok := strings.Cut(flag.Lookup("test.run").Value.String(), "/"); ok {
 		testRun += "/" + subtests
 	}
-	command := exec.Command(executable, "-test.run="+testRun, "-test.v", "-test.timeout=170s")
+	command := exec.Command(executable,
+		"-test.run="+testRun, "-test.v", "-test.timeout=170s",
+		"-tnl-test-tier="+string(testutil.TestTierDNS),
+		"-tnl-test-postgres-url="+postgresURL,
+		"-tnl-dns-child="+t.Name(),
+	)
 	cleanupGroup := isolateIntegrationDNSProcess(t, command)
 	temporaryDirectory := t.TempDir()
 	command.Env = append(os.Environ(),
-		"TNL_TEST_DNS_CHILD="+t.Name(),
 		"TMPDIR="+temporaryDirectory,
 		"AWS_ACCESS_KEY_ID=tnl-integration-only", "AWS_SECRET_ACCESS_KEY=not-a-real-aws-secret",
 		"AWS_SESSION_TOKEN=", "AWS_EC2_METADATA_DISABLED=true", "AWS_PROFILE=",
@@ -122,7 +128,7 @@ type integrationRoute53 struct {
 
 func newIntegrationRoute53(t *testing.T, zoneID, domain string) *integrationRoute53 {
 	t.Helper()
-	if os.Getenv("TNL_TEST_DNS_CHILD") == "" {
+	if *integrationDNSChild == "" {
 		t.Fatal("Route 53 fixture requires the isolated, network-restricted test subprocess")
 	}
 	f := &integrationRoute53{

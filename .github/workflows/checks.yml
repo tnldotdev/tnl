@@ -33,8 +33,8 @@ jobs:
       - name: Check packages
         run: |
           pnpm build
-          pnpm typecheck:ci
-          pnpm test:ci
+          pnpm typecheck:run
+          pnpm test:run
           pnpm lint
           pnpm format:check
           pnpm run pack
@@ -186,7 +186,7 @@ jobs:
           checksum: a54a408f6861ff921f6e87774180db31bacd8c1e7c944ca696db9fea49a82fc7
 
       - name: Run race tests
-        run: task go:test-race
+        run: task go:test:race
 
   release-build:
     name: Release build (${{ matrix.target }})

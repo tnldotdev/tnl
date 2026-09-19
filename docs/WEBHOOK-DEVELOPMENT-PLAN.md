@@ -597,8 +597,8 @@ mise exec -- task generate-check
 mise exec -- task format-check
 mise exec -- task lint
 mise exec -- task test
-mise exec -- task go:test-race
-mise exec -- task go:test-integration
+mise exec -- task go:test:race
+mise exec -- task go:test:integration
 mise exec -- task build
 ```
 

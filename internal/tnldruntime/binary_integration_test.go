@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func TestIntegrationBinaryStandalonePublish(t *testing.T) {
+func TestBinaryIntegrationStandalonePublish(t *testing.T) {
 	fixture := startIntegrationBinaryStandalone(t)
 	target := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("X-Tnl-Integration", "binary")

@@ -22,9 +22,7 @@ type integrationBinaryStandalone struct {
 
 func startIntegrationBinaryStandalone(t *testing.T) *integrationBinaryStandalone {
 	t.Helper()
-	if os.Getenv("TNL_TEST_BINARY_INTEGRATION") != "1" {
-		t.Skip("TNL_TEST_BINARY_INTEGRATION=1 is required")
-	}
+	testutil.RequireTestTier(t, testutil.TestTierBinary)
 	if runtime.GOOS == "darwin" {
 		t.Fatal("binary integration requires a disposable Linux environment: macOS binaries use the login Keychain and do not use SSL_CERT_FILE for system trust; in-process keyring mocks cannot isolate these subprocesses")
 	}

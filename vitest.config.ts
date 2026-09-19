@@ -3,9 +3,9 @@ import { defineConfig } from "vitest/config";
 
 const sourceDirectory = fileURLToPath(new URL("packages/tnl/src/", import.meta.url));
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   resolve:
-    process.env.TNL_TEST_COVERAGE === "1"
+    mode === "coverage"
       ? {
           alias: [
             // Internal tests normally exercise dist too; coverage deliberately uses the
@@ -57,4 +57,4 @@ export default defineConfig({
     unstubEnvs: true,
     unstubGlobals: true,
   },
-});
+}));

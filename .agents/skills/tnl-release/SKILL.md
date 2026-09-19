@@ -54,7 +54,7 @@ infer that a stable release is wanted.
    derives the npm client package versions from GoReleaser metadata; do not edit
    their `0.0.0-development` source placeholders.
 2. Run `task generate-check`, `task format-check`, `task lint`, `task test`,
-   `task go:test-race`, `task build`, and `task package`.
+   `task go:test:race`, `task build`, and `task package`.
 3. Inspect all five tarballs produced by
    `task package`. Confirm that each native binary is executable and identical
    to its release archive, both npm and pnpm installations run `tnl version`,

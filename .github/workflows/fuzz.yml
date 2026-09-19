@@ -17,31 +17,9 @@ env:
 
 jobs:
   fuzz:
-    name: Go fuzz (${{ matrix.name }})
+    name: Go fuzz
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: router
-            package: ./internal/router
-            target: FuzzInspectClientHello
-          - name: proxy protocol
-            package: ./internal/proxyproto
-            target: FuzzDecode
-          - name: tunnel protocol
-            package: ./pkg/protocol/tunnelv1
-            target: FuzzReadFrames
-          - name: local target policy
-            package: ./internal/localproxy
-            target: FuzzNormalizeTarget
-          - name: hostname policy
-            package: ./internal/naming
-            target: FuzzCanonicalize
-          - name: custom domain policy
-            package: ./internal/naming
-            target: FuzzDomainPolicy
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -53,13 +31,14 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-          cache-dependency-path: |
-            go.sum
-            ${{ matrix.package }}/**/*.go
+          cache-dependency-path: go.sum
+
+      - name: Install Task
+        uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.53.1
+          repo-token: ""
+          checksum: a54a408f6861ff921f6e87774180db31bacd8c1e7c944ca696db9fea49a82fc7
 
       - name: Run fuzz tests
-        env:
-          FUZZ_TIME: 15s
-          PACKAGE: ${{ matrix.package }}
-          TARGET: ${{ matrix.target }}
-        run: go test "$PACKAGE" -run='^$' -fuzz="^${TARGET}$" -fuzztime="$FUZZ_TIME"
+        run: task go:test:fuzz TIME=15s

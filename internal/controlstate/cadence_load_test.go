@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -33,22 +32,18 @@ const (
 // RunCadenceLoad is bridged from the external test package so it can use the
 // production ingress API adapter without a controlstate import cycle. This is
 // still a database workload: publisher transports and visitor sockets are absent.
-func RunCadenceLoad(t *testing.T, newClient func(*Database, func() time.Time, <-chan struct{}) (ingress.ControlClient, error)) {
+func RunCadenceLoad(t *testing.T, newClient func(*Database, func() time.Time, <-chan struct{}, bool) (ingress.ControlClient, error)) {
 	t.Helper()
-	raw := os.Getenv("TNL_TEST_LOAD_CADENCE_DURATION")
-	if raw == "" {
+	duration := *loadDuration
+	if duration == 0 {
 		t.Skip("select RUN='^TestLoadCadence$' DURATION=10m for the paced workload")
 	}
-	duration, err := time.ParseDuration(raw)
-	if err != nil || duration < 2*time.Minute || duration > 10*time.Minute || duration%time.Minute != 0 {
+	if duration < 2*time.Minute || duration > 10*time.Minute || duration%time.Minute != 0 {
 		t.Fatal("cadence duration must be whole minutes between 2m and 10m")
 	}
-	var retention time.Duration
-	if raw := os.Getenv("TNL_TEST_LOAD_RETENTION"); raw != "" {
-		retention, err = time.ParseDuration(raw)
-		if err != nil || retention < 30*time.Second || retention >= duration/2 {
-			t.Fatal("test retention must be at least 30s and shorter than half the cadence duration")
-		}
+	retention := *loadRetention
+	if retention != 0 && (retention < 30*time.Second || retention >= duration/2) {
+		t.Fatal("test retention must be at least 30s and shorter than half the cadence duration")
 	}
 	f := newControlLoadFixture(t)
 	if f.routes < 2 {
@@ -108,7 +103,7 @@ func RunCadenceLoad(t *testing.T, newClient func(*Database, func() time.Time, <-
 	var controllers [2]*ingress.Controller
 	var ingressMetrics [2]*observability.Metrics
 	for index := range controllers {
-		client, err := newClient(f.controls[index], now, resnapshot)
+		client, err := newClient(f.controls[index], now, resnapshot, retention != 0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -139,10 +134,11 @@ func RunCadenceLoad(t *testing.T, newClient func(*Database, func() time.Time, <-
 	f.startMetrics(t)
 	var ingressBefore [2][]*dto.MetricFamily
 	for index, metrics := range ingressMetrics {
-		ingressBefore[index], err = metrics.Gather()
+		gathered, err := metrics.Gather()
 		if err != nil {
 			t.Fatal(err)
 		}
+		ingressBefore[index] = gathered
 	}
 	var databaseBytesBefore int64
 	var walStart string

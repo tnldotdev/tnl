@@ -114,12 +114,12 @@ tasks:
     deps: [go:lint, go:vulncheck, js:lint, js:typecheck, workflows:lint]
 
   test:
-    desc: Run all tests
+    desc: Run routine Go and JavaScript tests
     deps: [go:test, js:test]
 
   coverage:
     desc: Produce diagnostic Go and TypeScript coverage reports
-    deps: [go:test-coverage, js:test-coverage]
+    deps: [go:test:coverage, js:test:coverage]
 
   build:
     desc: Build all packages and commands
@@ -163,7 +163,7 @@ tasks:
     cmds:
       - go test ./...
 
-  go:test-coverage:
+  go:test:coverage:
     desc: Produce a diagnostic Go coverage report
     cmds:
       - mkdir -p coverage/go
@@ -171,19 +171,28 @@ tasks:
       - go run scripts/filter-go-coverage.go coverage/go/coverage-with-generated.out coverage/go/coverage.out
       - go tool cover -html=coverage/go/coverage.out -o=coverage/go/index.html
 
-  go:test-race:
-    desc: Run all Go tests with the race detector
+  go:test:race:
+    desc: Run routine Go tests with the race detector
     cmds:
       - go test -race ./...
 
-  go:test-integration:
-    desc: Run opt-in Go integration tests
-    env:
-      TNL_TEST_INTEGRATION: "1"
+  go:test:integration:
+    desc: Run PostgreSQL-backed Go integration tests
+    vars:
+      RUN: '{{default "^TestIntegration" .RUN}}'
     cmds:
-      - go test -race -v ./... -run='^TestIntegration' -count=1 -timeout=15m
+      - node scripts/run-go-tests-with-postgres.mjs -- go test -race -v ./internal/controlapi ./internal/controlstate ./internal/certificates ./internal/dnscontroller ./internal/tnldruntime -run='{{.RUN}}' -count=1 -timeout=15m -args -tnl-test-tier=integration
 
-  go:test-integration-dns-linux:
+  go:test:integration:binary:
+    desc: Run Linux binary integration tests
+    deps: [js:build]
+    preconditions:
+      - sh: test "$(uname -s)" = Linux
+        msg: Binary integration tests require Linux
+    cmds:
+      - node scripts/run-go-tests-with-postgres.mjs -- go test -race -v ./internal/tnldruntime -run='^TestBinaryIntegration' -count=1 -timeout=15m -args -tnl-test-tier=binary
+
+  go:test:integration:dns:
     desc: Run the authoritative DNS integration test in disposable Linux containers
     cmds:
       - |
@@ -199,31 +208,19 @@ tasks:
           compose up --abort-on-container-exit --exit-code-from test --remove-orphans
         '
 
-  go:test-load:
+  go:test:load:database:
     desc: Run database load tests (DELAY=0ms/5ms/20ms, ROUTES=1000, HISTORY=1 event/route, RUN=^TestLoad)
     vars:
       DELAY: '{{default "0ms" .DELAY}}'
       ROUTES: '{{default "1000" .ROUTES}}'
       HISTORY: '{{default "1" .HISTORY}}'
-      DURATION: '{{default "" .DURATION}}'
-      RETENTION: '{{default "" .RETENTION}}'
+      DURATION: '{{default "0s" .DURATION}}'
+      RETENTION: '{{default "0s" .RETENTION}}'
       RUN: '{{default "^TestLoad" .RUN}}'
-    env:
-      TNL_TEST_INTEGRATION: "1"
-      TNL_TEST_LOAD: "1"
-      TNL_TEST_LOAD_DELAY: "{{.DELAY}}"
-      TNL_TEST_LOAD_ROUTES: "{{.ROUTES}}"
-      TNL_TEST_LOAD_HISTORY: "{{.HISTORY}}"
-      TNL_TEST_LOAD_CADENCE_DURATION: "{{.DURATION}}"
-      TNL_TEST_LOAD_RETENTION: "{{.RETENTION}}"
-      TNL_TEST_LOAD_RUN: "{{.RUN}}"
-    preconditions:
-      - sh: test -n "${TNL_TEST_POSTGRES_URL:-}"
-        msg: TNL_TEST_POSTGRES_URL must point to a disposable PostgreSQL server
     cmds:
-      - go test -v ./internal/controlstate -run="$TNL_TEST_LOAD_RUN" -count=1 -timeout=20m
+      - node scripts/run-go-tests-with-postgres.mjs -- go test -v ./internal/controlstate -run='{{.RUN}}' -count=1 -timeout=20m -args -tnl-test-tier=database-load -tnl-load-delay='{{.DELAY}}' -tnl-load-routes='{{.ROUTES}}' -tnl-load-history='{{.HISTORY}}' -tnl-load-duration='{{.DURATION}}' -tnl-load-retention='{{.RETENTION}}'
 
-  go:test-runtime-load:
+  go:test:load:runtime:
     desc: Run real local visitor/shutdown load (2 CPU/1GiB test, 1 CPU/512MiB PostgreSQL)
     vars:
       ROUTES: '{{default "16" .ROUTES}}'
@@ -236,15 +233,15 @@ tasks:
       DATABASE_MEMORY: '{{default "512m" .DATABASE_MEMORY}}'
       DURATION: '{{default "30s" .DURATION}}'
     env:
-      TNL_TEST_RUNTIME_ROUTES: "{{.ROUTES}}"
-      TNL_TEST_RUNTIME_RPS: "{{.RPS}}"
-      TNL_TEST_RUNTIME_SOURCES: "{{.SOURCES}}"
-      TNL_TEST_RUNTIME_TRACE: "{{.TRACE}}"
-      TNL_TEST_RUNTIME_CPUS: "{{.RUNTIME_CPUS}}"
-      TNL_TEST_RUNTIME_MEMORY: "{{.RUNTIME_MEMORY}}"
-      TNL_TEST_DATABASE_CPUS: "{{.DATABASE_CPUS}}"
-      TNL_TEST_DATABASE_MEMORY: "{{.DATABASE_MEMORY}}"
-      TNL_TEST_RUNTIME_DURATION: "{{.DURATION}}"
+      ROUTES: "{{.ROUTES}}"
+      RPS: "{{.RPS}}"
+      SOURCES: "{{.SOURCES}}"
+      TRACE: "{{.TRACE}}"
+      RUNTIME_CPUS: "{{.RUNTIME_CPUS}}"
+      RUNTIME_MEMORY: "{{.RUNTIME_MEMORY}}"
+      DATABASE_CPUS: "{{.DATABASE_CPUS}}"
+      DATABASE_MEMORY: "{{.DATABASE_MEMORY}}"
+      DURATION: "{{.DURATION}}"
     cmds:
       - |
         bash -euo pipefail -c '
@@ -260,7 +257,7 @@ tasks:
           compose up --abort-on-container-exit --exit-code-from test postgres test
         '
 
-  go:test-separated-load:
+  go:test:load:runtime:separated:
     desc: Run per-component constrained real visitor/recovery/shutdown load
     vars:
       ROUTES: '{{default "64" .ROUTES}}'
@@ -269,13 +266,26 @@ tasks:
       RACE: '{{default "0" .RACE}}'
       RESULTS: '{{default "bench-results/separated-runtime" .RESULTS}}'
     env:
-      TNL_TEST_RUNTIME_ROUTES: "{{.ROUTES}}"
-      TNL_TEST_RUNTIME_RPS: "{{.RPS}}"
-      TNL_TEST_RUNTIME_DURATION: "{{.DURATION}}"
-      TNL_TEST_SPLIT_RACE: "{{.RACE}}"
-      TNL_TEST_SPLIT_RESULTS: "{{.ROOT_DIR}}/{{.RESULTS}}"
+      ROUTES: "{{.ROUTES}}"
+      RPS: "{{.RPS}}"
+      DURATION: "{{.DURATION}}"
+      RACE: "{{.RACE}}"
+      RESULTS: "{{.ROOT_DIR}}/{{.RESULTS}}"
     cmds:
       - bash scripts/separated-runtime-load.sh
+
+  go:test:fuzz:
+    desc: Fuzz all Go parser and policy boundaries
+    vars:
+      TIME: '{{default "15s" .TIME}}'
+    cmds:
+      - go test ./internal/router -run='^$' -fuzz='^FuzzInspectClientHello$' -fuzztime='{{.TIME}}'
+      - go test ./internal/proxyproto -run='^$' -fuzz='^FuzzDecode$' -fuzztime='{{.TIME}}'
+      - go test ./pkg/protocol/tunnelv1 -run='^$' -fuzz='^FuzzReadFrames$' -fuzztime='{{.TIME}}'
+      - go test ./internal/localproxy -run='^$' -fuzz='^FuzzNormalizeTarget$' -fuzztime='{{.TIME}}'
+      - go test ./internal/naming -run='^$' -fuzz='^FuzzCanonicalize$' -fuzztime='{{.TIME}}'
+      - go test ./internal/naming -run='^$' -fuzz='^FuzzDomainPolicy$' -fuzztime='{{.TIME}}'
+      - go test ./internal/clioutput -run='^$' -fuzz='^FuzzRender$' -fuzztime='{{.TIME}}'
 
   go:bench-fly:plan:
     desc: Expand and price a Fly benchmark without creating resources
@@ -331,7 +341,7 @@ tasks:
     cmds:
       - pnpm test
 
-  js:test-coverage:
+  js:test:coverage:
     desc: Produce a diagnostic TypeScript coverage report
     cmds:
       - pnpm test:coverage

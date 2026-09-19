@@ -282,7 +282,12 @@ Frames follow this general form:
 - The Taskfile injects `GOFLAGS=-tags=ts_omit_ssh`. Preserve it for direct Go commands.
 - Follow [CONTRIBUTING.md](CONTRIBUTING.md) for the validation sequence, generated-source ownership, local stack, and test-tier prerequisites.
 - `task generate-check` regenerates files before comparing generated paths to `HEAD`; it is not read-only. `task format-check` is read-only.
-- `pnpm test` and `pnpm typecheck` build through lifecycle hooks. Their `:ci` variants and direct Vitest runs require an explicit build first.
+- Task targets are the public test interface; use `go:test:integration:*` and `go:test:load:*`, and have CI call the same targets.
+- Use `-tnl-*` flags for Go test selection and inputs. Never introduce `TNL_TEST_*` environment variables.
+- Keep routine tests safe by default; opt-in tests must explicitly require their test tier.
+- PostgreSQL-backed targets must create, use, and remove digest-pinned disposable PostgreSQL themselves.
+- Use environment variables only for Task/Compose orchestration and resource limits; pass test-binary settings as flags.
+- Package `test` and `typecheck` scripts build explicitly; `*:run` variants reuse an existing build.
 
 # Architecture
 

@@ -19,8 +19,8 @@ mise exec -- task generate-check
 mise exec -- task format-check
 mise exec -- task lint
 mise exec -- task test
-mise exec -- task go:test-race
-mise exec -- task go:test-integration
+mise exec -- task go:test:race
+mise exec -- task go:test:integration
 mise exec -- task build
 ```
 
@@ -31,20 +31,23 @@ Prepare the integration prerequisites below before running that tier.
 
 ### Test Tiers
 
-| Tier               | Command after `mise exec --`                                 | Prerequisites and scope                                                                     |
-| ------------------ | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
-| Routine            | `task test`                                                  | Installed JavaScript dependencies; includes a package build                                 |
-| Race               | `task go:test-race`                                          | Go race detector; integration tests remain opt-in                                           |
-| Integration        | `task go:test-integration`                                   | Disposable PostgreSQL, Pebble from `mise install`, installed dependencies, and `pnpm build` |
-| Binary integration | `env TNL_TEST_BINARY_INTEGRATION=1 task go:test-integration` | Integration prerequisites plus disposable Linux with local DNS/HTTPS ports available        |
-| DNS integration    | `task go:test-integration-dns-linux`                         | Docker Compose; runs the authoritative DNS test with isolated Linux port 53 and PostgreSQL  |
-| Local load         | `task go:test-load`                                          | Disposable PostgreSQL, using the same URL prerequisite as integration tests                 |
-| Package checks     | `pnpm run pack`                                              | Checks JavaScript exports and tarball contents                                              |
-| Release snapshot   | `task package`                                               | Builds native archives and npm packages, then verifies installations; does not publish      |
+| Tier               | Command after `mise exec --`          | Prerequisites and scope                                                                    |
+| ------------------ | ------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Routine            | `task test`                           | Installed JavaScript dependencies; includes a package build                                |
+| Race               | `task go:test:race`                   | Go race detector; PostgreSQL-backed tiers remain opt-in                                    |
+| Integration        | `task go:test:integration`            | Docker; Pebble from `mise install`; Task manages disposable PostgreSQL                     |
+| Binary integration | `task go:test:integration:binary`     | Integration prerequisites plus disposable Linux with local DNS/HTTPS ports available       |
+| DNS integration    | `task go:test:integration:dns`        | Docker Compose; runs the authoritative DNS test with isolated Linux port 53 and PostgreSQL |
+| Database load      | `task go:test:load:database`          | Docker; Task manages disposable PostgreSQL                                                 |
+| Runtime load       | `task go:test:load:runtime`           | Docker Compose; constrained real publishers and visitor traffic                            |
+| Separated runtime  | `task go:test:load:runtime:separated` | Docker Compose; one constrained container per runtime component                            |
+| Go fuzzing         | `task go:test:fuzz`                   | Runs every maintained Go fuzz target                                                       |
+| Package checks     | `pnpm run pack`                       | Checks JavaScript exports and tarball contents                                             |
+| Release snapshot   | `task package`                        | Builds native archives and npm packages, then verifies installations; does not publish     |
 
-Integration tests require `TNL_TEST_POSTGRES_URL`. It must point to a disposable
-PostgreSQL server whose user can create databases. The fixtures create and
-forcibly drop databases, so never use a production server.
+PostgreSQL-backed tasks start an isolated, digest-pinned PostgreSQL container,
+wait for it to become healthy, and remove it after the test command. Focus a tier
+with `RUN`, for example `task go:test:integration RUN='^TestIntegrationRouteRecovery$'`.
 
 Binary tests change subprocess trust and configuration and bind privileged
 ports. They run only on Linux; use the
@@ -62,17 +65,15 @@ mise exec -- env GOFLAGS=-tags=ts_omit_ssh go test ./internal/tunnel
 
 ### Local Load Tests
 
-Set `TNL_TEST_POSTGRES_URL` to a disposable PostgreSQL server, using the same
-requirements as integration tests, then run `mise exec -- task go:test-load`.
-CI supplies the database through the load workflow's PostgreSQL service.
+Run database load tests with `mise exec -- task go:test:load:database`. Task
+creates and removes their PostgreSQL container; CI uses the same command.
 
 The default is 1,000 routes, with 64 workflows and two eight-connection request
 pools. `ROUTES=<positive count>` changes only the route count; `RUN=<Go test regex>`
 selects scenarios (default `^TestLoad`). For example:
 
 ```console
-TNL_TEST_POSTGRES_URL='postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable' \
-  mise exec -- task go:test-load ROUTES=32 RUN='^TestLoadSteadyState$'
+mise exec -- task go:test:load:database ROUTES=32 RUN='^TestLoadSteadyState$'
 ```
 
 - `TestLoadPlacement` creates route sessions and claims their two publisher
@@ -124,11 +125,11 @@ Checkpoints use 16-report pages, replay the first nonempty page once, and must
 finish before the next ten-second checkpoint. This is an explicit baseline
 activity model, not a high-bandwidth or held-stream test.
 
-For example, with the disposable PostgreSQL URL configured:
+For example:
 
 ```console
-mise exec -- task go:test-load ROUTES=1000 DURATION=10m RUN='^TestLoadCadence$'
-mise exec -- task go:test-load ROUTES=10000 HISTORY=100 DURATION=10m RUN='^TestLoadCadence$'
+mise exec -- task go:test:load:database ROUTES=1000 DURATION=10m RUN='^TestLoadCadence$'
+mise exec -- task go:test:load:database ROUTES=10000 HISTORY=100 DURATION=10m RUN='^TestLoadCadence$'
 ```
 
 Cadence output includes scheduled/completed work, overdue work, scheduler delay,
@@ -161,7 +162,7 @@ floor checks, and two-second call deadlines. The test window must be at least
 30 seconds and less than half `DURATION`; production uses ten minutes. For example:
 
 ```console
-mise exec -- task go:test-load ROUTES=1000 DELAY=5ms DURATION=10m RETENTION=1m RUN='^TestLoadCadence$'
+mise exec -- task go:test:load:database ROUTES=1000 DELAY=5ms DURATION=10m RETENTION=1m RUN='^TestLoadCadence$'
 ```
 
 This forces ingress to replay an old cursor through the real resnapshot boundary,
@@ -171,7 +172,7 @@ all concurrent database activity. Short test windows exercise repeated cleanup;
 they do not establish production-window or multi-day storage requirements.
 
 For isolated query-plan investigation, select `RUN='^TestProfile'` with
-`DELAY=0ms` and the same disposable PostgreSQL prerequisite. These opt-in tests
+`DELAY=0ms`. These opt-in tests
 log the actual generated queries' `EXPLAIN (ANALYZE, BUFFERS, SETTINGS)` plans:
 placement counts at up to 1,000, 2,500, and `ROUTES` sessions, and routing reads
 with 4, 10, and 100 events per live route. For example, `ROUTES=10000
@@ -209,20 +210,20 @@ accelerated finite database workload with one-hour logical leases, not a soak or
 an end-to-end publisher test. For example:
 
 ```console
-mise exec -- task go:test-load ROUTES=1000 DELAY=5ms RUN='^TestLoadShutdown$'
+mise exec -- task go:test:load:database ROUTES=1000 DELAY=5ms RUN='^TestLoadShutdown$'
 ```
 
 ### Constrained Runtime Load
 
-`task go:test-runtime-load` runs local control, ingress, two relays, real publishers,
+`task go:test:load:runtime` runs local control, ingress, two relays, real publishers,
 Pebble, a local service, and fresh HTTPS visitor requests. Half the publishers use
 QUIC and half TLS/TCP. It measures steady traffic, relay runtime restart, and
 bounded publisher shutdown while visitors continue using the surviving routes.
 It also keeps up to eight HTTP streaming responses open during the relay restart.
 
 ```console
-mise exec -- task go:test-runtime-load ROUTES=16 RPS=80 SOURCES=4 DURATION=30s
-mise exec -- task go:test-runtime-load ROUTES=16 RPS=80 SOURCES=4 DURATION=30s RUNTIME_CPUS=0.5 RUNTIME_MEMORY=128m DATABASE_CPUS=0.5 DATABASE_MEMORY=256m
+mise exec -- task go:test:load:runtime ROUTES=16 RPS=80 SOURCES=4 DURATION=30s
+mise exec -- task go:test:load:runtime ROUTES=16 RPS=80 SOURCES=4 DURATION=30s RUNTIME_CPUS=0.5 RUNTIME_MEMORY=128m DATABASE_CPUS=0.5 DATABASE_MEMORY=256m
 ```
 
 `DURATION` is the minimum duration of each traffic phase (10s–2m), not the whole
@@ -265,7 +266,7 @@ activation timings distinguish total setup from each publisher's observed wait.
 
 ### Per-Component Runtime Load
 
-`task go:test-separated-load` runs the same real visitor workload with one server
+`task go:test:load:runtime:separated` runs the same real visitor workload with one server
 role per container, a publisher container, four visitor containers, a local service,
 Pebble/DNS, PostgreSQL, and a coordinator. It calls production runtime and publisher
 code from ordinary Go test processes; it is not a CLI startup benchmark. The 64
@@ -273,9 +274,9 @@ publishers share one Go process/client state, so publisher memory is a group cos
 not the cost of 64 independent CLI processes.
 
 ```console
-mise exec -- task go:test-separated-load ROUTES=64 RPS=160 DURATION=30s RESULTS=bench-results/separated-reference
-mise exec -- env TNL_TEST_PUBLISHER_CPUS=0.25 task go:test-separated-load ROUTES=64 RPS=160 DURATION=30s RESULTS=bench-results/separated-publisher-025
-mise exec -- task go:test-separated-load ROUTES=4 RPS=16 DURATION=10s RACE=1 RESULTS=bench-results/separated-race
+mise exec -- task go:test:load:runtime:separated ROUTES=64 RPS=160 DURATION=30s RESULTS=bench-results/separated-reference
+mise exec -- env PUBLISHER_CPUS=0.25 task go:test:load:runtime:separated ROUTES=64 RPS=160 DURATION=30s RESULTS=bench-results/separated-publisher-025
+mise exec -- task go:test:load:runtime:separated ROUTES=4 RPS=16 DURATION=10s RACE=1 RESULTS=bench-results/separated-race
 ```
 
 Each visitor has two workers and two queue slots, retaining eight of each in total.
@@ -285,17 +286,17 @@ limit. Phase start/stop barriers run outside the request path; a 300ms future st
 allows all four visitors to observe the same deadline. Reports count every elapsed
 offered slot, including misses, rather than assuming exactly `RPS * DURATION`.
 
-| Component     | CPU quota | Memory limit | Override prefix                        |
-| ------------- | --------: | -----------: | -------------------------------------- |
-| Control       |         1 |       512MiB | `TNL_TEST_CONTROL`                     |
-| Ingress       |         1 |       256MiB | `TNL_TEST_INGRESS`                     |
-| Each relay    |         1 |       256MiB | `TNL_TEST_RELAY_A`, `TNL_TEST_RELAY_B` |
-| Publishers    |         2 |       512MiB | `TNL_TEST_PUBLISHER`                   |
-| Each visitor  |         1 |       128MiB | `TNL_TEST_VISITOR`                     |
-| Local service |         1 |       128MiB | `TNL_TEST_APP`                         |
-| Pebble/DNS    |         1 |       128MiB | `TNL_TEST_PEBBLE`                      |
-| PostgreSQL    |         1 |       512MiB | `TNL_TEST_DATABASE`                    |
-| Coordinator   |       0.5 |       128MiB | Fixed                                  |
+| Component     | CPU quota | Memory limit | Overrides                            |
+| ------------- | --------: | -----------: | ------------------------------------ |
+| Control       |         1 |       512MiB | `CONTROL_CPUS`, `CONTROL_MEMORY`     |
+| Ingress       |         1 |       256MiB | `INGRESS_CPUS`, `INGRESS_MEMORY`     |
+| Each relay    |         1 |       256MiB | `RELAY_A_*`, `RELAY_B_*`             |
+| Publishers    |         2 |       512MiB | `PUBLISHER_CPUS`, `PUBLISHER_MEMORY` |
+| Each visitor  |         1 |       128MiB | `VISITOR_CPUS`, `VISITOR_MEMORY`     |
+| Local service |         1 |       128MiB | `APP_CPUS`, `APP_MEMORY`             |
+| Pebble/DNS    |         1 |       128MiB | `PEBBLE_CPUS`, `PEBBLE_MEMORY`       |
+| PostgreSQL    |         1 |       512MiB | `DATABASE_CPUS`, `DATABASE_MEMORY`   |
+| Coordinator   |       0.5 |       128MiB | Fixed                                |
 
 Append `_CPUS` or `_MEMORY` to a prefix and pass it through `mise exec -- env`.
 Swap is disabled. Publisher targets remain loopback-only: the local service has
@@ -322,8 +323,8 @@ experiments still use graceful runtime restart, local DNS/Pebble, and no WAN los
 
 ### JavaScript Package
 
-`pnpm test` and `pnpm typecheck` build through lifecycle hooks. Their `:ci`
-variants and direct Vitest runs do not. Build once before focused tests:
+`pnpm test` and `pnpm typecheck` build explicitly. Their `:run` variants and
+direct Vitest runs do not. Build once before focused tests:
 
 ```console
 mise exec -- pnpm --filter @tnldotdev/tnl build

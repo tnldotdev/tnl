@@ -20,9 +20,7 @@ type integrationBinarySplit struct {
 
 func startIntegrationBinarySplit(t *testing.T) *integrationBinarySplit {
 	t.Helper()
-	if os.Getenv("TNL_TEST_BINARY_INTEGRATION") != "1" {
-		t.Skip("TNL_TEST_BINARY_INTEGRATION=1 is required")
-	}
+	testutil.RequireTestTier(t, testutil.TestTierBinary)
 	if runtime.GOOS == "darwin" {
 		t.Fatal("binary integration requires a disposable Linux environment")
 	}
