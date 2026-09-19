@@ -53,7 +53,7 @@ the process role.
 - Control and standalone export `tnl_database_pool_max_connections`,
   `tnl_database_pool_acquired_connections`, `tnl_database_pool_idle_connections`,
   and `tnl_database_pool_total_connections` from their local pgx pool.
-  The pool defaults to seven connections per process; `pool_max_conns` in
+  The pool defaults to eight connections per process; `pool_max_conns` in
   `TNLD_DATABASE_URL` overrides the default.
   `tnl_database_pool_acquires_total`, `tnl_database_pool_waited_acquires_total`,
   `tnl_database_pool_acquire_wait_seconds_total`, and
@@ -107,6 +107,27 @@ fails; `error` describes that bounded failure. Database permissions still determ
 visibility into PostgreSQL sessions, wait states, and blocking relationships.
 Local operation age includes driver/network/pooler time and does not by itself
 prove a PostgreSQL lock wait or identify its blocking transaction.
+
+`connections` accounts for local client sockets by fixed purpose: `request_pool`,
+`tls_leadership`, `dns_challenge`, `diagnostics`, and `pooler_diagnostics`. Each
+reports open and connecting sockets, cumulative successful opens, completed
+socket cleanups, and failed connection attempts. Counts are captured before the
+observer connects and remain available when the database cannot be reached.
+They describe this process's clients, not PostgreSQL backend slots or a
+deployment-wide connection limit. Dedicated connections remain excluded from
+request-pool SQL activity.
+
+Within the same three-second snapshot budget, a one-second read-only attempt
+connects to the `pgbouncer` admin database on the configured pooled endpoint,
+using the runtime credentials. `pooler.settings` retains only pool mode and
+allowlisted numeric connection/lifetime limits from `SHOW CONFIG`.
+`pooler.clients` aggregates `SHOW CLIENTS` states on the reached pooler instance,
+including the observer, with an explicit truncation flag above 4,096 clients.
+Client identities and addresses
+are not returned. A denied or unsupported admin console is recorded in
+`pooler.error`; missing settings or counts remain unavailable, never inferred
+from the database plan. Local accounting and PostgreSQL diagnostics still work
+when pooler inspection is unavailable.
 
 ## Alert Queries
 

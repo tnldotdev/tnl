@@ -97,8 +97,7 @@ func (d *Database) WithDNSChallengeLock(ctx context.Context, recordName string, 
 	}
 	// The callback reads through d.pool. Waiting for locks must not exhaust that
 	// pool and deadlock those reads, including when pool_max_conns is one.
-	config := d.pool.Config().ConnConfig.Copy()
-	config.Tracer = nil // Advisory-lock waits are outside the request pool.
+	config := d.dedicatedConnectionConfig(dnsChallengeConnection)
 	connection, err := pgx.ConnectConfig(ctx, config)
 	if err != nil {
 		return fmt.Errorf("controlstate: connect DNS challenge lock: %w", err)
