@@ -34,6 +34,7 @@ execution.
 ```console
 BENCH_SUITE=smoke mise exec -- task go:bench-fly:plan
 BENCH_SUITE=scout mise exec -- task go:bench-fly:plan
+BENCH_SUITE=scout BENCH_AXIS=active_routes mise exec -- task go:bench-fly:plan
 BENCH_SUITE=confirm \
   BENCH_ROUTES=500 \
   BENCH_FRESH_CONNECTIONS_PER_SECOND=30 \
@@ -58,6 +59,12 @@ The suites are:
 - `confirm`: three repetitions of one explicitly supplied target.
 - `compatibility`: one minimal cell against Let's Encrypt for public-CA
   compatibility, not capacity discovery.
+
+`BENCH_AXIS` (or `--axis`) selects one axis already present in the suite. The
+planner preserves its targets, order, and worker shapes and recalculates result
+counts, duration, and spend before execution. An unknown or absent axis is an
+error. Omitting it runs the entire suite. Axis selection does not change DNS
+resolution: correctness and measured visitor requests still use public route DNS.
 
 ## Prerequisites
 
@@ -105,13 +112,20 @@ resources, or estimated cost ceiling changes.
 BENCH_APPROVED=1 mise exec -- task go:bench-fly:run
 ```
 
+For an approved active-route-only scout, use the same selection as the plan:
+
+```console
+BENCH_SUITE=scout BENCH_AXIS=active_routes BENCH_APPROVED=1 mise exec -- task go:bench-fly:run
+```
+
 The runner creates `bench-results/<run-id>/` before provisioning and records
 each resource in `manifest.json` as soon as creation starts. It provisions Fly
 Managed Postgres, builds one benchmark-only image, migrates with the direct
 database URL, and serves through the pooled database URL. It waits for every
 Route 53 authoritative name server to publish each delegated zone and server
-address, starts and probes every process, executes cells sequentially, writes
-results and reports, then removes all recorded resources. The first control
+address, starts and probes every process, executes cells sequentially, saves
+results, removes all recorded resources, then writes reports including the
+infrastructure cleanup outcome. The first control
 process establishes the public control endpoint before the other control
 process starts, avoiding concurrent initial certificate issuance.
 
@@ -123,12 +137,23 @@ becoming ready (`tnlbench publisher --no-progress-timeout`). Partial worker
 results are collected without waiting for the remaining workers. Setup failures
 are reported separately and do not establish saturation boundaries.
 
+Each cell uses bounded activation, DNS readiness, visitor measurement, then
+bounded route-session shutdown. Normal shutdown honors the same per-generator
+`tnlbench publisher --parallel` limit as activation (16 by default): it cancels
+and awaits one publisher in each available slot before starting another stop.
+Successful shutdown requires the publishers to finish, including their control
+API close acknowledgments. Close failures remain fatal to the cell; the runner
+does not start the next cell with uncertain prior-session state. The overall
+two-minute shutdown deadline still cancels any remaining routes on expiration.
+
 For `smoke`, `scout`, and `confirm`, the runner starts a private Pebble Machine
 without a public Fly port. Pebble performs normal DNS-01 and TLS-ALPN-01
 validation. Pebble and load workers use a loopback resolver that sends benchmark
-lookups directly to the Route 53 authoritative name servers and waits for
-records to appear. This avoids stale recursive caches without bypassing DNS or
-challenge checks. The runner combines the static Pebble API root with Pebble's
+lookups directly to the Route 53 authoritative name servers. Address queries
+return the first valid authoritative answer and finish within two seconds;
+TXT challenge queries retain bounded propagation retries. This avoids stale
+recursive caches without bypassing DNS or challenge checks. The runner combines
+the static Pebble API root with Pebble's
 dynamic issuance root, installs that bundle only in benchmark Machines, and uses
 it for host-side readiness checks without modifying the operator trust store.
 `compatibility` omits Pebble and uses Let's Encrypt, so keep that suite small to
@@ -192,6 +217,14 @@ Setup failures retain partial activation counts and the collected metrics. The
 periodic sample window is bounded to 1 MiB to keep result uploads small; any
 omitted older samples are counted in the result and reported explicitly.
 
+Before correctness checks, each load worker records a `dns_readiness` setup
+phase for its assigned hostnames, with at most eight concurrent lookups and a
+five-minute overall deadline within the existing worker timeout. Readiness
+retries only DNS propagation and records duration, successes, and errors even
+when setup fails. Correctness and measured visitor requests still perform their
+normal lookups and retain their existing strict failure criteria. A configured
+public-address override skips the DNS-readiness phase.
+
 Before canceling publishers after an activation failure or no-progress timeout,
 each publisher requests a bounded database snapshot from every control's private
 observability listener and records any collection errors. Snapshots survive in
@@ -199,6 +232,19 @@ observability listener and records any collection errors. Snapshots survive in
 PostgreSQL wait events and blocking-session relationships; control request and
 local pgx pool metrics provide the surrounding context. Collection has its own
 five-second deadline, including when the workload context has expired.
+Snapshots also include per-purpose local connection lifecycle counts and, when
+the runtime user can access the PgBouncer admin console, actual pooler settings
+and aggregate client counts. Unavailable pooler inspection is explicit; a plan's
+documented limits are not substituted for observations. Failed-cell logs include
+both configured relay services.
+
+Every worker phase shares a single first-failure capture, including teardown;
+the first failed stop captures database and pool evidence before its slot starts
+another stop. Deactivation records actual successes, errors, and per-stop
+durations, including failed attempts, rather than treating timing entries as
+successful closes. A cancellation joined with a close error remains a failure.
+Reports show visitor workload, route-session shutdown, and infrastructure
+cleanup outcomes separately while retaining the strict overall cell result.
 
 Fresh-connection and lifecycle-churn cells pass only when they complete without
 operation errors and sustain at least 95 percent of the assigned target rate.

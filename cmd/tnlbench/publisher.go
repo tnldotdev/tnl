@@ -27,26 +27,26 @@ import (
 
 type publisherCommand struct {
 	workerCommand
-	ServerURL           string        `name:"server" env:"TNL_BENCH_SERVER" required:"" help:"Control URL."`
-	LoginToken          string        `name:"login-token" env:"TNL_BENCH_LOGIN_TOKEN" required:"" help:"Built-in authority login token."`
-	ControlCAFile       string        `name:"control-ca-file" env:"TNL_BENCH_CONTROL_CA_FILE" type:"path" help:"Optional PEM CA for the control API."`
-	HostnameSuffix      string        `name:"hostname-suffix" env:"TNL_BENCH_HOSTNAME_SUFFIX" required:"" help:"Managed deployment domain used by benchmark routes."`
-	Routes              int           `name:"routes" env:"TNL_BENCH_ROUTES" required:"" help:"Total route count in the cell."`
-	AssignedRoutes      int           `name:"assigned-routes" env:"TNL_BENCH_ASSIGNED_ROUTES" required:"" help:"Routes assigned to this worker."`
-	RoutesPerPublisher  int           `name:"routes-per-publisher" env:"TNL_BENCH_ROUTES_PER_PUBLISHER" required:"" help:"Stable route-index band assigned to each publisher generator."`
-	RoutesPerChurn      int           `name:"routes-per-churn-route" env:"TNL_BENCH_ROUTES_PER_CHURN_ROUTE" required:"" help:"Active routes represented by each lifecycle-churn route."`
-	StateRoot           string        `name:"state-root" env:"TNL_BENCH_STATE_ROOT" default:"/state" type:"path" help:"Persistent state root for this publisher generator."`
-	FreshRate           int           `name:"fresh-connections-per-second" env:"TNL_BENCH_FRESH_CONNECTIONS_PER_SECOND" required:"" help:"Total fresh visitor connection rate for the cell."`
-	HeldStreams         int           `name:"held-streams" env:"TNL_BENCH_HELD_STREAMS" help:"Total held-open streams for the cell."`
-	ChurnRate           int           `name:"lifecycle-churn-per-second" env:"TNL_BENCH_LIFECYCLE_CHURN_PER_SECOND" help:"Total route-session lifecycle operations per second for the cell."`
-	AssignedChurnRate   int           `name:"assigned-lifecycle-churn-per-second" env:"TNL_BENCH_ASSIGNED_LIFECYCLE_CHURN_PER_SECOND" help:"Route-session lifecycle operations per second assigned to this publisher."`
-	Parallel            int           `name:"parallel" env:"TNL_BENCH_PARALLEL" default:"16" help:"Maximum concurrent route operations."`
-	PayloadBytes        int           `name:"payload-bytes" env:"TNL_BENCH_PAYLOAD_BYTES" default:"16384" help:"Fresh-response payload size."`
-	MetricsURLs         []string      `name:"metrics-url" env:"TNL_BENCH_METRICS_URLS" help:"Private process metrics URL; repeat for each process."`
-	DiagnosticURLs      []string      `name:"database-diagnostics-url" env:"TNL_BENCH_DATABASE_DIAGNOSTICS_URLS" help:"Private control database diagnostics URL; repeat for each control process."`
-	NoProgressTimeout   time.Duration `name:"no-progress-timeout" env:"TNL_BENCH_NO_PROGRESS_TIMEOUT" default:"2m" help:"Maximum time without another route becoming ready during activation."`
-	Timeout             time.Duration `name:"timeout" env:"TNL_BENCH_TIMEOUT" default:"30m" help:"Worker deadline."`
-	onActivationFailure func()
+	ServerURL          string        `name:"server" env:"TNL_BENCH_SERVER" required:"" help:"Control URL."`
+	LoginToken         string        `name:"login-token" env:"TNL_BENCH_LOGIN_TOKEN" required:"" help:"Built-in authority login token."`
+	ControlCAFile      string        `name:"control-ca-file" env:"TNL_BENCH_CONTROL_CA_FILE" type:"path" help:"Optional PEM CA for the control API."`
+	HostnameSuffix     string        `name:"hostname-suffix" env:"TNL_BENCH_HOSTNAME_SUFFIX" required:"" help:"Managed deployment domain used by benchmark routes."`
+	Routes             int           `name:"routes" env:"TNL_BENCH_ROUTES" required:"" help:"Total route count in the cell."`
+	AssignedRoutes     int           `name:"assigned-routes" env:"TNL_BENCH_ASSIGNED_ROUTES" required:"" help:"Routes assigned to this worker."`
+	RoutesPerPublisher int           `name:"routes-per-publisher" env:"TNL_BENCH_ROUTES_PER_PUBLISHER" required:"" help:"Stable route-index band assigned to each publisher generator."`
+	RoutesPerChurn     int           `name:"routes-per-churn-route" env:"TNL_BENCH_ROUTES_PER_CHURN_ROUTE" required:"" help:"Active routes represented by each lifecycle-churn route."`
+	StateRoot          string        `name:"state-root" env:"TNL_BENCH_STATE_ROOT" default:"/state" type:"path" help:"Persistent state root for this publisher generator."`
+	FreshRate          int           `name:"fresh-connections-per-second" env:"TNL_BENCH_FRESH_CONNECTIONS_PER_SECOND" required:"" help:"Total fresh visitor connection rate for the cell."`
+	HeldStreams        int           `name:"held-streams" env:"TNL_BENCH_HELD_STREAMS" help:"Total held-open streams for the cell."`
+	ChurnRate          int           `name:"lifecycle-churn-per-second" env:"TNL_BENCH_LIFECYCLE_CHURN_PER_SECOND" help:"Total route-session lifecycle operations per second for the cell."`
+	AssignedChurnRate  int           `name:"assigned-lifecycle-churn-per-second" env:"TNL_BENCH_ASSIGNED_LIFECYCLE_CHURN_PER_SECOND" help:"Route-session lifecycle operations per second assigned to this publisher."`
+	Parallel           int           `name:"parallel" env:"TNL_BENCH_PARALLEL" default:"16" help:"Maximum concurrent route operations."`
+	PayloadBytes       int           `name:"payload-bytes" env:"TNL_BENCH_PAYLOAD_BYTES" default:"16384" help:"Fresh-response payload size."`
+	MetricsURLs        []string      `name:"metrics-url" env:"TNL_BENCH_METRICS_URLS" help:"Private process metrics URL; repeat for each process."`
+	DiagnosticURLs     []string      `name:"database-diagnostics-url" env:"TNL_BENCH_DATABASE_DIAGNOSTICS_URLS" help:"Private control database diagnostics URL; repeat for each control process."`
+	NoProgressTimeout  time.Duration `name:"no-progress-timeout" env:"TNL_BENCH_NO_PROGRESS_TIMEOUT" default:"2m" help:"Maximum time without another route becoming ready during activation."`
+	Timeout            time.Duration `name:"timeout" env:"TNL_BENCH_TIMEOUT" default:"30m" help:"Worker deadline."`
+	onFailure          func()
 }
 
 func (c publisherCommand) Validate() error {
@@ -127,25 +127,22 @@ func (c publisherCommand) run(parent context.Context) error {
 	resources := sampleResources(ctx, c.MetricsURLs, "before_activation")
 	sampler := startResourceSampler(context.WithoutCancel(ctx), c.MetricsURLs, 5*time.Second)
 	defer sampler.Stop()
-	var diagnostics []databaseDiagnostic
-	var snapshotOnce sync.Once
-	c.onActivationFailure = func() {
-		snapshotOnce.Do(func() {
-			diagnostics = sampleDatabaseDiagnostics(ctx, c.DiagnosticURLs)
-			resources = append(resources, sampleFailureResources(ctx, failureMetricsURLs)...)
-		})
-	}
+	failure := &failureCapture{ctx: ctx, metricsURLs: failureMetricsURLs, diagnosticURLs: c.DiagnosticURLs}
+	c.onFailure = failure.capture
 	result, runErr := c.execute(ctx, worker, configuration)
+	if runErr != nil {
+		failure.capture()
+	}
 	if runErr != nil && result.SchemaVersion == 0 {
 		partial := result
-		c.onActivationFailure()
 		result = failedResult(c.CellID, c.Suite, c.Repetition, worker, configuration, started, runErr)
 		result.Phases = append(partial.Phases, result.Phases...)
 	}
 	resources = append(resources, sampler.Stop()...)
 	result.Resources = append(resources, result.Resources...)
+	result.Resources = append(result.Resources, failure.resources...)
 	result.DroppedResourceSamples = sampler.dropped
-	result.DatabaseDiagnostics = diagnostics
+	result.DatabaseDiagnostics = failure.diagnostics
 	postCtx, postCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer postCancel()
 	if err := coordinator.postResult(postCtx, result); err != nil {
@@ -154,7 +151,7 @@ func (c publisherCommand) run(parent context.Context) error {
 	return runErr
 }
 
-func (c publisherCommand) execute(ctx context.Context, worker resultWorker, configuration resultConfiguration) (benchmarkResult, error) {
+func (c publisherCommand) execute(ctx context.Context, worker resultWorker, configuration resultConfiguration) (result benchmarkResult, retErr error) {
 	coordinator, _ := newCoordinatorClient(c.CoordinatorURL, c.CoordinatorToken)
 	controlRoots, err := loadCertPool(c.ControlCAFile)
 	if err != nil {
@@ -217,21 +214,27 @@ func (c publisherCommand) execute(ctx context.Context, worker resultWorker, conf
 		phase := activationResult("activation", activationStarted, processes, activation, err)
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cleanupCancel()
-		_, _ = stopRoutes(cleanupCtx, processes)
-		return benchmarkResult{Phases: []phaseResult{phase}}, err
+		shutdown, stopErr := stopRoutes(cleanupCtx, processes, c.Parallel, c.onFailure)
+		return benchmarkResult{Phases: []phaseResult{phase, shutdown}}, errors.Join(err, stopErr)
 	}
 	activationElapsed := time.Since(activationStarted)
 	activationPhase := activationResult("activation", activationStarted, processes, activation, nil)
 	cleaned := false
 	defer func() {
 		if !cleaned {
+			if retErr != nil && c.onFailure != nil {
+				c.onFailure()
+			}
 			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cleanupCancel()
-			_, _ = stopRoutes(cleanupCtx, processes)
+			shutdown, stopErr := stopRoutes(cleanupCtx, processes, c.Parallel, c.onFailure)
+			result.Phases = append(result.Phases, shutdown)
+			retErr = errors.Join(retErr, stopErr)
 		}
 	}()
 	churnRoutes := benchmarkChurnRoutes(routeSpecs, c.WorkerIndex, c.RoutesPerChurn)
 	var churnWarmupPhase *phaseResult
+	var churnWarmupShutdown *phaseResult
 	if c.AssignedChurnRate > 0 {
 		warmupStarted := time.Now().UTC()
 		warmProcesses, warmup, err := activateRoutes(
@@ -241,16 +244,19 @@ func (c publisherCommand) execute(ctx context.Context, worker resultWorker, conf
 			phase := activationResult("lifecycle_churn_warmup", warmupStarted, warmProcesses, warmup, err)
 			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cleanupCancel()
-			_, _ = stopRoutes(cleanupCtx, warmProcesses)
+			shutdown, stopErr := stopRoutes(cleanupCtx, warmProcesses, c.Parallel, c.onFailure)
+			shutdown.Name = "lifecycle_churn_warmup_deactivation"
 			return benchmarkResult{Phases: []phaseResult{
-				activationPhase, phase,
-			}}, fmt.Errorf("warm lifecycle churn routes: %w", err)
+				activationPhase, phase, shutdown,
+			}}, fmt.Errorf("warm lifecycle churn routes: %w", errors.Join(err, stopErr))
 		}
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		_, cleanupErr := stopRoutes(cleanupCtx, warmProcesses)
+		shutdown, cleanupErr := stopRoutes(cleanupCtx, warmProcesses, c.Parallel, c.onFailure)
 		cleanupCancel()
+		shutdown.Name = "lifecycle_churn_warmup_deactivation"
+		churnWarmupShutdown = &shutdown
 		if cleanupErr != nil {
-			return benchmarkResult{}, fmt.Errorf("stop lifecycle churn warmup: %w", cleanupErr)
+			return benchmarkResult{Phases: []phaseResult{activationPhase, shutdown}}, fmt.Errorf("stop lifecycle churn warmup: %w", cleanupErr)
 		}
 		churnWarmupPhase = &phaseResult{
 			Name: "lifecycle_churn_warmup", StartedAt: warmupStarted,
@@ -282,34 +288,33 @@ func (c publisherCommand) execute(ctx context.Context, worker resultWorker, conf
 		churnPhase = &phase
 		workloadErr = err
 	}
+	if workloadErr != nil && c.onFailure != nil {
+		c.onFailure()
+	}
 	resources = append(resources, sampleResources(ctx, c.MetricsURLs, "loaded")...)
-	cleanupStarted := time.Now().UTC()
 	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	teardown, cleanupErr := stopRoutes(cleanupCtx, processes)
+	teardown, cleanupErr := stopRoutes(cleanupCtx, processes, c.Parallel, c.onFailure)
 	cleanupCancel()
-	cleanupElapsed := time.Since(cleanupStarted)
 	cleaned = true
 	phases := []phaseResult{
 		{
 			Name: "activation", StartedAt: activationStarted, DurationMilliseconds: milliseconds(activationElapsed),
 			Attempts: len(activation), Successes: len(activation), Total: newDurationHistogram(activation),
 		},
-		{
-			Name: "deactivation", StartedAt: cleanupStarted, DurationMilliseconds: milliseconds(cleanupElapsed),
-			Attempts: len(teardown), Successes: len(teardown), Total: newDurationHistogram(teardown),
-		},
+		teardown,
 	}
 	if churnWarmupPhase != nil {
 		phases = append(phases, *churnWarmupPhase)
+		phases = append(phases, *churnWarmupShutdown)
 	}
 	if churnPhase != nil {
 		phases = append(phases, *churnPhase)
 	}
-	retainedRoutes := len(teardown)
+	retainedRoutes := teardown.Attempts
 	if churnWarmupPhase != nil {
 		retainedRoutes += len(churnRoutes)
 	}
-	result := benchmarkResult{
+	result = benchmarkResult{
 		SchemaVersion: benchmarkResultSchemaVersion, CellID: c.CellID, Status: "passed", Suite: c.Suite,
 		Repetition: c.Repetition, Worker: worker, Configuration: configuration, Resources: resources,
 		Phases:  phases,
@@ -607,9 +612,9 @@ func activateRoutesWithRunner(
 	run func(context.Context, publisher.Config) error,
 ) (processes []*routeProcess, timings []time.Duration, retErr error) {
 	defer func() {
-		if retErr != nil && flags.onActivationFailure != nil {
+		if retErr != nil && flags.onFailure != nil {
 			// Capture the wait graph while the other publishers are still alive.
-			flags.onActivationFailure()
+			flags.onFailure()
 		}
 	}()
 	processes = make([]*routeProcess, len(specs))
@@ -710,36 +715,6 @@ func activationResult(name string, started time.Time, processes []*routeProcess,
 		phase.Errors = 1
 	}
 	return phase
-}
-
-func stopRoutes(ctx context.Context, processes []*routeProcess) ([]time.Duration, error) {
-	started := time.Now()
-	for _, process := range processes {
-		if process != nil {
-			process.cancel()
-		}
-	}
-	var stopErr error
-	for _, process := range processes {
-		if process == nil {
-			continue
-		}
-		select {
-		case err := <-process.done:
-			if err != nil && !errors.Is(err, context.Canceled) {
-				stopErr = errors.Join(stopErr, fmt.Errorf("stop route %d: %w", process.index, err))
-			}
-		case <-ctx.Done():
-			stopErr = errors.Join(stopErr, fmt.Errorf("stop route %d: %w", process.index, ctx.Err()))
-		}
-	}
-	timings := make([]time.Duration, 0, len(processes))
-	for _, process := range processes {
-		if process != nil {
-			timings = append(timings, time.Since(started))
-		}
-	}
-	return timings, stopErr
 }
 
 func benchmarkHostnameSuffix(discovery controlv1.ControlDiscovery, configured string) (string, error) {

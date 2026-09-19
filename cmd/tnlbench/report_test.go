@@ -65,6 +65,9 @@ func TestReportCommandWritesArtifacts(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(directory, "plan.json"), planData, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := saveManifest(filepath.Join(directory, "manifest.json"), &runManifest{Status: "cleaned"}); err != nil {
+		t.Fatal(err)
+	}
 	var output strings.Builder
 	if err := (reportCommand{RunDirectory: directory}).run(&output); err != nil {
 		t.Fatal(err)
@@ -77,7 +80,7 @@ func TestReportCommandWritesArtifacts(t *testing.T) {
 	if err := json.Unmarshal(data, &report); err != nil {
 		t.Fatal(err)
 	}
-	if report.SchemaVersion != 3 || report.Status != "passed" || report.ProfileID != "production-test" ||
+	if report.SchemaVersion != 3 || report.Status != "passed" || report.InfrastructureCleanup != "passed" || report.ProfileID != "production-test" ||
 		len(report.Cells) != 1 || report.Cells[0].ResultRows != 2 || report.Cells[0].MonthlyCostUSD != 100 ||
 		report.Cells[0].CapacityPerDollar != 1 {
 		t.Fatalf("report = %#v", report)
@@ -86,10 +89,64 @@ func TestReportCommandWritesArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, fragment := range []string{"Status: **passed**", "Highest repeatably passing cell: not established.", "not product SLOs"} {
+	for _, fragment := range []string{"Status: **passed**", "Infrastructure cleanup: **passed**", "Highest repeatably passing cell: not established.", "not product SLOs"} {
 		if !strings.Contains(string(markdown), fragment) {
 			t.Fatalf("report missing %q:\n%s", fragment, markdown)
 		}
+	}
+}
+
+func TestReportKeepsVisitorSuccessWhenShutdownFails(t *testing.T) {
+	for _, legacyCounts := range []bool{false, true} {
+		publisher := reportTestResult("cell", 0, 1, "publisher", 0, 1, "passed", time.Millisecond)
+		publisher.Status = "failed"
+		publisher.Failure = &resultFailure{Message: "close deadline exceeded", Stage: "cleanup"}
+		publisher.Phases = []phaseResult{{Name: "deactivation", Attempts: 100, Successes: 99, Errors: 1}}
+		if legacyCounts {
+			publisher.Phases[0].Successes, publisher.Phases[0].Errors = 100, 0
+		}
+		load := reportTestResult("cell", 0, 1, "load", 0, 1, "passed", time.Millisecond)
+		report, err := buildReport([]benchmarkResult{publisher, load})
+		if err != nil {
+			t.Fatal(err)
+		}
+		cell := report.Cells[0]
+		if report.Status != "failed" || cell.VisitorStatus != "passed" || cell.ShutdownStatus != "failed" || cell.FailureStage != "cleanup" || report.HighestPassing != nil || report.FirstSaturation != nil {
+			t.Fatalf("cleanup failure changed workload outcome or capacity: %+v", report)
+		}
+		if text := formatReportMarkdown(report); !strings.Contains(text, "Visitor workload: **passed**. Route-session shutdown: **failed**.") {
+			t.Fatalf("phase outcomes missing: %s", text)
+		}
+	}
+}
+
+func TestReportDoesNotCallMissingWorkersSuccessful(t *testing.T) {
+	load := reportTestResult("cell", 0, 1, "load", 0, 2, "passed", time.Millisecond)
+	publisher := reportTestResult("cell", 0, 1, "publisher", 0, 2, "passed", time.Millisecond)
+	publisher.Phases = []phaseResult{{Name: "deactivation", Attempts: 1, Successes: 1}}
+	report, err := buildReport([]benchmarkResult{publisher, load})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Status != "failed" || report.Cells[0].VisitorStatus != "incomplete" || report.Cells[0].ShutdownStatus != "incomplete" {
+		t.Fatalf("missing workers reported as successful: %+v", report)
+	}
+}
+
+func TestReportRecordsInfrastructureCleanupFailure(t *testing.T) {
+	directory := t.TempDir()
+	if err := saveManifest(filepath.Join(directory, "manifest.json"), &runManifest{Status: "cleanup_failed"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := (reportCommand{RunDirectory: directory, allowIncomplete: true}).run(&bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	var report benchmarkReport
+	if err := decodeJSONFile(filepath.Join(directory, "report.json"), &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.InfrastructureCleanup != "failed" || report.Status != "failed" {
+		t.Fatalf("cleanup failure lost: %+v", report)
 	}
 }
 

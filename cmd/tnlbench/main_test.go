@@ -111,7 +111,7 @@ func TestStopRoutesWaitsForPublisherAndPreservesDurableRoute(t *testing.T) {
 		done := make(chan error, 1)
 		processes := []*routeProcess{{index: 7, routeID: "route_1", cancel: func() { close(canceled) }, done: done}}
 		finished := make(chan error, 1)
-		go func() { _, err := stopRoutes(t.Context(), processes); finished <- err }()
+		go func() { _, err := stopRoutes(t.Context(), processes, 1, nil); finished <- err }()
 		synctest.Wait()
 		select {
 		case <-canceled:

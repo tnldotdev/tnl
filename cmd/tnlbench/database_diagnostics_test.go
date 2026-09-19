@@ -17,6 +17,20 @@ func TestDatabaseDiagnosticMaximumShapeRoundTrip(t *testing.T) {
 	now := time.Date(2026, 9, 18, 12, 0, 0, 999999999, time.UTC)
 	age, queryID := math.MaxFloat64, int64(math.MinInt64)
 	snapshot := controlstate.DatabaseDiagnostics{CapturedAt: now, Truncated: true, OperationsTruncated: true}
+	snapshot.Connections = make(map[string]controlstate.DatabaseConnectionCounts)
+	for _, purpose := range []string{"request_pool", "tls_leadership", "dns_challenge", "diagnostics", "pooler_diagnostics"} {
+		snapshot.Connections[purpose] = controlstate.DatabaseConnectionCounts{
+			Open: math.MaxInt64, Connecting: math.MaxInt64, Opened: math.MaxInt64, Closed: math.MaxInt64, Failed: math.MaxInt64,
+		}
+	}
+	snapshot.Pooler = &controlstate.DatabasePoolerDiagnostics{
+		Settings: map[string]string{"pool_mode": "transaction"},
+		Clients:  &controlstate.DatabasePoolerClients{Total: 4096, Active: 4096, Waiting: 4096, Other: 4096, Truncated: true},
+		Error:    strings.Repeat("x", 160),
+	}
+	for _, key := range []string{"max_client_conn", "default_pool_size", "reserve_pool_size", "max_db_connections", "max_user_connections", "server_lifetime", "client_idle_timeout"} {
+		snapshot.Pooler.Settings[key] = "4294967295"
+	}
 	for index := range controlstate.MaxDatabaseDiagnosticSessions {
 		session := controlstate.DatabaseSession{
 			PID: math.MaxInt32, Operation: strings.Repeat("Q", 128),

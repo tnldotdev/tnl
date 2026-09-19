@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -24,6 +25,7 @@ type benchmarkReport struct {
 	SchemaVersion            int                      `json:"schema_version"`
 	GeneratedAt              time.Time                `json:"generated_at"`
 	Status                   string                   `json:"status"`
+	InfrastructureCleanup    string                   `json:"infrastructure_cleanup,omitempty"`
 	Incomplete               bool                     `json:"incomplete,omitempty"`
 	ResultRows               int                      `json:"result_rows"`
 	PassedRows               int                      `json:"passed_rows"`
@@ -53,6 +55,8 @@ type cellReport struct {
 	Sequence            int                    `json:"sequence"`
 	Repetition          int                    `json:"repetition"`
 	Status              string                 `json:"status"`
+	VisitorStatus       string                 `json:"visitor_status"`
+	ShutdownStatus      string                 `json:"shutdown_status"`
 	ResultRows          int                    `json:"result_rows"`
 	PublisherWorkers    int                    `json:"publisher_workers"`
 	LoadWorkers         int                    `json:"load_workers"`
@@ -153,7 +157,21 @@ func (c reportCommand) run(stdout io.Writer) error {
 	}
 	if c.allowIncomplete {
 		report.Status = "failed"
-		report.Incomplete = true
+		report.Incomplete = report.Incomplete || len(results) == 0
+	}
+	manifest, err := loadManifest(filepath.Join(c.RunDirectory, "manifest.json"))
+	if err == nil {
+		switch manifest.Status {
+		case "cleaned":
+			report.InfrastructureCleanup = "passed"
+		case "cleanup_failed":
+			report.InfrastructureCleanup = "failed"
+			report.Status = "failed"
+		default:
+			report.InfrastructureCleanup = "pending"
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
 	jsonPath := filepath.Join(c.RunDirectory, "report.json")
 	if err := writeReportJSON(jsonPath, report); err != nil {
@@ -294,6 +312,7 @@ func buildCellReport(cellID string, rows []benchmarkResult) (cellReport, error) 
 		CellID: cellID, Target: strings.TrimSuffix(cellID, fmt.Sprintf("-rep%d", first.Repetition)), Suite: first.Suite,
 		Axis: first.Configuration.Axis, Sequence: first.Configuration.Sequence, Repetition: first.Repetition,
 		Status: "passed", ResultRows: len(rows), Routes: first.Configuration.Routes,
+		VisitorStatus: "not_run", ShutdownStatus: "not_run",
 		LifecycleChurn: first.Configuration.LifecycleChurnPerSecond,
 		PayloadBytes:   first.Configuration.PayloadBytes, Phases: make(map[string]phaseReport),
 		FreshRate: first.Configuration.FreshConnectionsPerSecond, HeldStreams: first.Configuration.HeldStreams,
@@ -303,6 +322,7 @@ func buildCellReport(cellID string, rows []benchmarkResult) (cellReport, error) 
 	want := make(map[string]int)
 	phases := make(map[string]*phaseAccumulator)
 	var resourceSamples []resourceSample
+	visitorWorkers, shutdownWorkers := 0, 0
 	for _, row := range rows {
 		if row.Suite != cell.Suite || row.Repetition != cell.Repetition || row.Configuration.Axis != cell.Axis ||
 			row.Configuration.Sequence != cell.Sequence ||
@@ -320,6 +340,37 @@ func buildCellReport(cellID string, rows []benchmarkResult) (cellReport, error) 
 			return cellReport{}, fmt.Errorf("cell %q has inconsistent %s worker counts", cellID, row.Worker.Kind)
 		}
 		want[row.Worker.Kind] = row.Worker.Count
+		if row.Worker.Kind == "load" {
+			attempted := row.Status == "passed"
+			for _, phase := range row.Phases {
+				attempted = attempted || phase.Name == "correctness" || phase.Name == "fresh" || phase.Name == "held"
+			}
+			if attempted {
+				visitorWorkers++
+				if row.Status == "failed" {
+					cell.VisitorStatus = "failed"
+				} else if cell.VisitorStatus == "not_run" {
+					cell.VisitorStatus = "passed"
+				}
+			}
+		}
+		if row.Worker.Kind == "publisher" {
+			for _, phase := range row.Phases {
+				if phase.Name == "deactivation" && phase.Attempts > 0 {
+					shutdownWorkers++
+					if phase.Errors > 0 || phase.Successes != phase.Attempts {
+						cell.ShutdownStatus = "failed"
+					} else if cell.ShutdownStatus == "not_run" {
+						cell.ShutdownStatus = "passed"
+					}
+				}
+			}
+			// Older results counted timing entries as successful stops. Preserve
+			// the recorded cleanup failure rather than trusting those counts.
+			if resultFailureStage(row) == "cleanup" {
+				cell.ShutdownStatus = "failed"
+			}
+		}
 		if row.Status != "passed" {
 			cell.Status = "failed"
 			stage := resultFailureStage(row)
@@ -371,6 +422,12 @@ func buildCellReport(cellID string, rows []benchmarkResult) (cellReport, error) 
 	}
 	addDerivedResourceMaximums(cell.ResourceMaximums, resourceSamples)
 	cell.PublisherWorkers, cell.LoadWorkers = want["publisher"], want["load"]
+	if cell.VisitorStatus == "passed" && visitorWorkers != cell.LoadWorkers {
+		cell.VisitorStatus = "incomplete"
+	}
+	if cell.ShutdownStatus == "passed" && shutdownWorkers != cell.PublisherWorkers {
+		cell.ShutdownStatus = "incomplete"
+	}
 	for _, kind := range []string{"publisher", "load"} {
 		found := workerKindCount(seen, kind)
 		if want[kind] == 0 || found != want[kind] {
@@ -423,6 +480,33 @@ func buildCellReport(cellID string, rows []benchmarkResult) (cellReport, error) 
 		cell.Bottleneck = cell.FailureStage + " failure"
 	}
 	for _, diagnostic := range cell.DatabaseDiagnostics {
+		if diagnostic.Snapshot != nil {
+			var purposes []string
+			for purpose := range diagnostic.Snapshot.Connections {
+				purposes = append(purposes, purpose)
+			}
+			slices.Sort(purposes)
+			for _, purpose := range purposes {
+				counts := diagnostic.Snapshot.Connections[purpose]
+				cell.BottleneckEvidence = append(cell.BottleneckEvidence, fmt.Sprintf("local database clients %s (%s): %d open, %d connecting, %d opened, %d closed, %d failed connects", diagnostic.Identity, purpose, counts.Open, counts.Connecting, counts.Opened, counts.Closed, counts.Failed))
+			}
+			if pooler := diagnostic.Snapshot.Pooler; pooler != nil {
+				var settings []string
+				for key, value := range pooler.Settings {
+					settings = append(settings, key+"="+value)
+				}
+				slices.Sort(settings)
+				if len(settings) != 0 {
+					cell.BottleneckEvidence = append(cell.BottleneckEvidence, "PgBouncer settings "+diagnostic.Identity+": "+strings.Join(settings, ", "))
+				}
+				if clients := pooler.Clients; clients != nil {
+					cell.BottleneckEvidence = append(cell.BottleneckEvidence, fmt.Sprintf("PgBouncer clients %s: %d total (including observer), %d active, %d waiting, %d other, truncated=%t", diagnostic.Identity, clients.Total, clients.Active, clients.Waiting, clients.Other, clients.Truncated))
+				}
+				if pooler.Error != "" {
+					cell.BottleneckEvidence = append(cell.BottleneckEvidence, "PgBouncer inspection unavailable "+diagnostic.Identity+": "+pooler.Error)
+				}
+			}
+		}
 		if diagnostic.Snapshot != nil && len(diagnostic.Snapshot.ActiveOperations) != 0 {
 			var operations []string
 			for _, operation := range diagnostic.Snapshot.ActiveOperations[:min(3, len(diagnostic.Snapshot.ActiveOperations))] {
@@ -766,6 +850,9 @@ func writeReportJSON(path string, report benchmarkReport) error {
 func formatReportMarkdown(report benchmarkReport) string {
 	var output strings.Builder
 	fmt.Fprintf(&output, "# Fly Benchmark Report\n\nStatus: **%s**\n\n", report.Status)
+	if report.InfrastructureCleanup != "" {
+		fmt.Fprintf(&output, "Infrastructure cleanup: **%s**.\n\n", report.InfrastructureCleanup)
+	}
 	if report.Incomplete {
 		output.WriteString("The campaign ended before all planned cells produced results.\n\n")
 	}
@@ -802,6 +889,7 @@ func formatReportMarkdown(report benchmarkReport) string {
 	}
 	for _, cell := range report.Cells {
 		fmt.Fprintf(&output, "\n## %s\n\n", cell.CellID)
+		fmt.Fprintf(&output, "Visitor workload: **%s**. Route-session shutdown: **%s**.\n\n", cell.VisitorStatus, cell.ShutdownStatus)
 		output.WriteString("| Phase | Attempts | Successes | Errors | Rate | Concurrency | DNS p95 ms | Connect p95 ms | TLS p95 ms | TTFB p95 ms | Total p95 ms |\n")
 		output.WriteString("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n")
 		names := make([]string, 0, len(cell.Phases))

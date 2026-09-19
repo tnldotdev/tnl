@@ -37,7 +37,7 @@ type loadCommand struct {
 	MetricsURLs      []string      `name:"metrics-url" env:"TNL_BENCH_METRICS_URLS" help:"Private process metrics URL; repeat for each process."`
 	DiagnosticURLs   []string      `name:"database-diagnostics-url" env:"TNL_BENCH_DATABASE_DIAGNOSTICS_URLS" help:"Private control database diagnostics URL; repeat for each control process."`
 	Timeout          time.Duration `name:"timeout" env:"TNL_BENCH_TIMEOUT" default:"30m" help:"Worker deadline."`
-	onVisitorFailure func()
+	onFailure        func()
 }
 
 func (c loadCommand) Validate() error {
@@ -93,21 +93,19 @@ func (c loadCommand) run(parent context.Context) error {
 	}
 	failureMetricsURLs := c.MetricsURLs
 	c.MetricsURLs = nil // The publisher owns routine metrics sampling.
-	var once sync.Once
-	var diagnostics []databaseDiagnostic
-	var failureResources []resourceSample
-	c.onVisitorFailure = func() {
-		once.Do(func() {
-			diagnostics = sampleDatabaseDiagnostics(ctx, c.DiagnosticURLs)
-			failureResources = sampleFailureResources(ctx, failureMetricsURLs)
-		})
-	}
+	failure := &failureCapture{ctx: ctx, metricsURLs: failureMetricsURLs, diagnosticURLs: c.DiagnosticURLs}
+	c.onFailure = failure.capture
 	result, runErr := c.execute(ctx, worker, configuration)
-	if runErr != nil && result.SchemaVersion == 0 {
-		result = failedResult(c.CellID, c.Suite, c.Repetition, worker, configuration, started, runErr)
+	if runErr != nil {
+		failure.capture()
 	}
-	result.DatabaseDiagnostics = diagnostics
-	result.Resources = append(result.Resources, failureResources...)
+	if runErr != nil && result.SchemaVersion == 0 {
+		partial := result
+		result = failedResult(c.CellID, c.Suite, c.Repetition, worker, configuration, started, runErr)
+		result.Phases = append(partial.Phases, result.Phases...)
+	}
+	result.DatabaseDiagnostics = failure.diagnostics
+	result.Resources = append(result.Resources, failure.resources...)
 	postCtx, postCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer postCancel()
 	if err := coordinator.postResult(postCtx, result); err != nil {
@@ -129,15 +127,32 @@ func (c loadCommand) execute(ctx context.Context, worker resultWorker, configura
 		return benchmarkResult{}, fmt.Errorf("coordinator returned %d routes, want %d", len(hostnames), c.Routes)
 	}
 	resources := sampleResources(ctx, c.MetricsURLs, "ready")
+	var setupPhases []phaseResult
+	if c.PublicAddress == "" {
+		var assignedHostnames []string
+		for index := c.WorkerIndex; index < len(hostnames); index += c.WorkerCount {
+			assignedHostnames = append(assignedHostnames, hostnames[index])
+		}
+		dnsCtx, cancelDNS := context.WithTimeout(ctx, benchmarkDNSPropagationTimeout)
+		dnsPhase, err := waitForBenchmarkDNS(dnsCtx, assignedHostnames, visitorDNSResolver(c.ResolverAddress).LookupHost, 250*time.Millisecond)
+		cancelDNS()
+		setupPhases = append(setupPhases, dnsPhase)
+		if err != nil {
+			if c.onFailure != nil {
+				c.onFailure()
+			}
+			return benchmarkResult{Phases: setupPhases}, err
+		}
+	}
 	correctnessStarted := time.Now().UTC()
 	correctness := make([]visitorResult, 0, divideRoundUp(c.Routes, c.WorkerCount))
 	for index := c.WorkerIndex; index < len(hostnames); index += c.WorkerCount {
 		correctness = append(correctness, c.request(ctx, hostnames[index], "/bench", false))
 	}
-	if err := visitorResultsError("correctness", correctness); err != nil {
-		return benchmarkResult{}, err
-	}
 	correctnessPhase := phaseFromVisitorResults("correctness", correctnessStarted, time.Since(correctnessStarted), correctness, 0)
+	if err := visitorResultsError("correctness", correctness); err != nil {
+		return benchmarkResult{Phases: append(setupPhases, correctnessPhase)}, err
+	}
 
 	heldStarted := time.Now().UTC()
 	held, heldResults, err := c.openHeldStreams(ctx, hostnames)
@@ -153,7 +168,7 @@ func (c loadCommand) execute(ctx context.Context, worker resultWorker, configura
 		result := benchmarkResult{
 			SchemaVersion: benchmarkResultSchemaVersion, CellID: c.CellID, Status: "failed", Suite: c.Suite,
 			Repetition: c.Repetition, Worker: worker, Configuration: configuration,
-			Phases: []phaseResult{correctnessPhase, heldPhase, recovery}, Resources: resources,
+			Phases: append(setupPhases, correctnessPhase, heldPhase, recovery), Resources: resources,
 			Cleanup: resultCleanup{Exact: true}, Failure: &resultFailure{Message: message, Stage: "measurement"},
 		}
 		return result, errors.New(message)
@@ -166,7 +181,7 @@ func (c loadCommand) execute(ctx context.Context, worker resultWorker, configura
 	}()
 	heldPhase := phaseFromVisitorResults("held", heldStarted, time.Since(heldStarted), heldResults, c.HeldStreams)
 	if err := sleepContext(ctx, c.Warmup); err != nil {
-		return benchmarkResult{}, err
+		return benchmarkResult{Phases: append(setupPhases, correctnessPhase, heldPhase)}, err
 	}
 	freshStarted := time.Now().UTC()
 	fresh := c.runFreshConnections(ctx, hostnames)
@@ -183,7 +198,7 @@ func (c loadCommand) execute(ctx context.Context, worker resultWorker, configura
 		recoveryPhase, recoveryErr = &recovery, err
 	}
 	resources = append(resources, sampleResources(ctx, c.MetricsURLs, "loaded")...)
-	phases := []phaseResult{correctnessPhase, heldPhase, freshPhase}
+	phases := append(setupPhases, correctnessPhase, heldPhase, freshPhase)
 	if recoveryPhase != nil {
 		phases = append(phases, *recoveryPhase)
 	}
@@ -224,8 +239,8 @@ func (c loadCommand) execute(ctx context.Context, worker resultWorker, configura
 func (c loadCommand) request(ctx context.Context, hostname, path string, hold bool) (result visitorResult) {
 	defer func() {
 		var held *heldResponse
-		if result.err != nil && !errors.As(result.err, &held) && c.onVisitorFailure != nil {
-			c.onVisitorFailure()
+		if result.err != nil && !errors.As(result.err, &held) && c.onFailure != nil {
+			c.onFailure()
 		}
 	}()
 	transport := &http.Transport{
@@ -237,12 +252,7 @@ func (c loadCommand) request(ctx context.Context, hostname, path string, hold bo
 			return new(net.Dialer).DialContext(ctx, "tcp", c.PublicAddress)
 		}
 	} else if c.ResolverAddress != "" {
-		dialer := &net.Dialer{Resolver: &net.Resolver{
-			PreferGo: true,
-			Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
-				return new(net.Dialer).DialContext(ctx, "tcp", c.ResolverAddress)
-			},
-		}}
+		dialer := &net.Dialer{Resolver: visitorDNSResolver(c.ResolverAddress)}
 		transport.DialContext = dialer.DialContext
 	}
 	started := time.Now()
