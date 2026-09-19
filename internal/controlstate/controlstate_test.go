@@ -48,6 +48,14 @@ func TestParseDirectConfig(t *testing.T) {
 func TestParsePoolConfig(t *testing.T) {
 	t.Parallel()
 
+	defaultConfig, err := parsePoolConfig("postgresql://user:secret@database.example/tnl?sslmode=require")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if defaultConfig.MaxConns != 6 {
+		t.Fatalf("default maximum connections = %d, want 6", defaultConfig.MaxConns)
+	}
+
 	config, err := parsePoolConfig("postgresql://user:secret@database.example/tnl?sslmode=require&pool_max_conns=7&default_query_exec_mode=cache_statement")
 	if err != nil {
 		t.Fatal(err)

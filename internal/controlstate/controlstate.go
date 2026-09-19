@@ -227,7 +227,7 @@ func parsePoolConfig(rawURL string) (*pgxpool.Config, error) {
 	parsed, _ := url.Parse(rawURL) // Already validated above.
 	parameters := parsed.Query()
 	if !parameters.Has("pool_max_conns") {
-		parameters.Set("pool_max_conns", "8")
+		parameters.Set("pool_max_conns", "6")
 		parsed.RawQuery = parameters.Encode()
 	}
 	config, err := pgxpool.ParseConfig(parsed.String())
