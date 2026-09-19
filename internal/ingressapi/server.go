@@ -28,9 +28,9 @@ func (s generatedServer) ObserveRouteRecovery(
 	response http.ResponseWriter,
 	request *http.Request,
 	ingressID ingressv1.IngressID,
-	episodeID int64,
+	recoveryEpisodeID int64,
 ) {
-	s.handler.observeRecovery(response, request, ingressID, episodeID)
+	s.handler.observeRecovery(response, request, ingressID, recoveryEpisodeID)
 }
 
 func (s generatedServer) GetIngressRoutingTableEvents(

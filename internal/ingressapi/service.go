@@ -216,7 +216,7 @@ func (s *service) ReportIngressUsage(
 func (s *service) ObserveRouteRecovery(
 	ctx context.Context,
 	ingressID ingressv1.IngressID,
-	episodeID int64,
+	recoveryEpisodeID int64,
 	body ingressv1.RouteRecoveryObservationRequest,
 ) (ingressv1.RouteRecoveryObservation, error) {
 	if ingressID != body.IngressId {
@@ -224,7 +224,7 @@ func (s *service) ObserveRouteRecovery(
 	}
 	identity, ok := ingressLeaseIdentity(body.IngressId, body.IngressRunId, body.IngressLeaseRevision)
 	routeVersion, routeOK := serviceapi.Positive(body.RouteVersion)
-	episode, episodeOK := serviceapi.Positive(episodeID)
+	episode, episodeOK := serviceapi.Positive(recoveryEpisodeID)
 	if !ok || !routeOK || !episodeOK || !serviceapi.ValidIdentifiers(body.RouteId) || body.ObservedAt.IsZero() {
 		return ingressv1.RouteRecoveryObservation{}, serviceapi.NewProblemError(
 			http.StatusBadRequest, "invalid_request", "Recovery observation identity is invalid",
@@ -237,7 +237,7 @@ func (s *service) ObserveRouteRecovery(
 		return ingressv1.RouteRecoveryObservation{}, s.storeError(ctx, err)
 	}
 	return ingressv1.RouteRecoveryObservation{
-		EpisodeId: int64(observation.EpisodeID), RouteId: observation.RouteID,
+		RecoveryEpisodeId: int64(observation.RecoveryEpisodeID), RouteId: observation.RouteID,
 		RouteVersion: int64(observation.RouteVersion), OpenedAt: observation.OpenedAt,
 		ObservedAt: observation.ObservedAt, ObservedSeconds: observation.ObservedSeconds,
 	}, nil

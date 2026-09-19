@@ -2,6 +2,7 @@ package controlstate
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -55,7 +56,7 @@ func TestIntegrationRouteSessionCreation(t *testing.T) {
 	if _, err := database.UpdateAuthorizedRoute(t.Context(), AuthorizedRouteUpdateRequest{
 		RouteID: request.RouteID, TeamID: request.TeamID, ActingIdentityID: request.ActingIdentityID,
 		Target: "http://127.0.0.1:4000", AllowedIPPrefixes: []string{"192.0.2.0/24"}, PolicyRevision: 1, ExpectedMutationRevision: 2,
-	}, now); !errors.Is(err, ErrRouteAttached) {
+	}, now); !errors.Is(err, ErrRouteSessionOpen) {
 		t.Fatalf("attached route update: %v", err)
 	}
 	route, err := database.GetRoute(t.Context(), request.ActingIdentityID, request.RouteID)
@@ -68,18 +69,18 @@ func TestIntegrationRouteSessionExpiryAndGatedReplay(t *testing.T) {
 	f := newRouteSessionFixture(t)
 	database, now, setup, request := f.database, f.now, f.setup, f.request
 	closedAt := setup.CreatedAt.Add(5 * time.Second)
-	if _, err := database.pool.Exec(t.Context(), `UPDATE control.route_sessions SET publisher_expires_at = $2 WHERE id = $1`, setup.RouteSessionID, closedAt); err != nil {
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.route_sessions SET state = 'ready', ready_at = $2, publisher_expires_at = $3 WHERE id = $1`, setup.RouteSessionID, now, closedAt); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.pool.Exec(t.Context(), `UPDATE control.maintenance_controls SET enabled = false, revision = revision + 1, updated_at = $1, updated_by = 'test' WHERE control_name = 'route_session_creation'`, now); err != nil {
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.maintenance_controls SET allowed = false, revision = revision + 1, updated_at = $1, updated_by = 'test' WHERE control_name = 'route_session_creation'`, now); err != nil {
 		t.Fatal(err)
 	}
 	retry, err := database.CreateRouteSession(t.Context(), request, now.Add(7*time.Second), 30*time.Second, time.Minute)
-	if err != nil || retry.ClosedAt == nil || !retry.ClosedAt.Equal(closedAt) || !retry.ExpiresAt.Equal(closedAt) {
+	if err != nil || retry.ReadyAt == nil || !retry.ReadyAt.Equal(now) || retry.ClosedAt == nil || !retry.ClosedAt.Equal(closedAt) || !retry.ExpiresAt.Equal(closedAt) {
 		t.Fatalf("gated replay expiry = %#v, %v", retry, err)
 	}
 	expected := setup
-	expected.State, expected.ExpiresAt, expected.ClosedAt = "expired", closedAt, &closedAt
+	expected.State, expected.ExpiresAt, expected.ReadyAt, expected.ClosedAt = "expired", closedAt, retry.ReadyAt, &closedAt
 	for index := range expected.PublisherConnections {
 		expected.PublisherConnections[index].State = PublisherConnectionClosed
 	}
@@ -90,11 +91,15 @@ func TestIntegrationRouteSessionExpiryAndGatedReplay(t *testing.T) {
 	if err := database.pool.QueryRow(t.Context(), `SELECT close_reason FROM control.route_sessions WHERE id = $1`, setup.RouteSessionID).Scan(&reason); err != nil || reason != "publisher_expired" {
 		t.Fatalf("close reason = %q, %v", reason, err)
 	}
+	var eventKind string
+	if err := database.pool.QueryRow(t.Context(), `SELECT event_kind FROM control.ingress_routing_table_events WHERE route_id = $1 AND route_version = $2`, setup.RouteID, setup.RouteVersion).Scan(&eventKind); err != nil || eventKind != string(IngressRouteTombstone) {
+		t.Fatalf("gated replay routing event = %q, %v", eventKind, err)
+	}
 	request.IdempotencyKey, request.RequestDigest, request.ExpectedMutationRevision = "replacement", sha256.Sum256([]byte("replacement")), 2
 	if _, err := database.CreateRouteSession(t.Context(), request, now.Add(8*time.Second), 30*time.Second, time.Minute); !errors.Is(err, ErrRouteSessionCreationGated) {
 		t.Fatalf("gated creation: %v", err)
 	}
-	if _, err := database.pool.Exec(t.Context(), `UPDATE control.maintenance_controls SET enabled = true, revision = revision + 1, updated_at = $1, updated_by = 'test' WHERE control_name = 'route_session_creation'`, now); err != nil {
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.maintenance_controls SET allowed = true, revision = revision + 1, updated_at = $1, updated_by = 'test' WHERE control_name = 'route_session_creation'`, now); err != nil {
 		t.Fatal(err)
 	}
 	replacement, err := database.CreateRouteSession(t.Context(), request, now.Add(9*time.Second), 30*time.Second, time.Minute)
@@ -199,6 +204,50 @@ func TestIntegrationRouteSessionHeartbeatPreservesConnectionsAndExpiry(t *testin
 		if connection.PublisherConnectionID != previous.PublisherConnectionID || connection.ConnectionAssignmentRevision != previous.ConnectionAssignmentRevision || connection.State != PublisherConnectionReady {
 			t.Fatalf("expired credential replaced connected slot %d: %#v", slot, connection)
 		}
+	}
+}
+
+func TestIntegrationHealthyRouteSessionHeartbeatSkipsUnrelatedPlacementLock(t *testing.T) {
+	f := newRouteSessionFixture(t)
+	database, now := f.database, f.now
+	readyTestSession(t, f)
+	if _, err := database.RegisterRelay(t.Context(), relayLifecycleRegistration("placement-unrelated"), now, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	gate, err := database.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rollbackTestTransaction(t, gate)
+	if _, err := gate.Exec(ctx, `SELECT relay_service_id FROM control.relay_services WHERE relay_service_id = 'placement-unrelated' FOR UPDATE`); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	workers := newIntegrationWorkers(t, cancel)
+	workers.Go(func() {
+		setup, err := database.HeartbeatRouteSession(ctx, f.authentication(), now.Add(time.Second), time.Hour, time.Minute)
+		if err == nil {
+			for slot, connection := range setup.PublisherConnections {
+				previous := f.setup.PublisherConnections[slot]
+				if connection.PublisherConnectionID != previous.PublisherConnectionID ||
+					connection.ConnectionAssignmentRevision != previous.ConnectionAssignmentRevision ||
+					connection.State != PublisherConnectionReady {
+					err = errors.New("healthy heartbeat replaced publisher connections")
+					break
+				}
+			}
+		}
+		done <- err
+	})
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("healthy heartbeat waited for an unrelated relay-service lock")
 	}
 }
 

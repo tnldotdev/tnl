@@ -232,8 +232,8 @@ func publisherHello() tunnelv1.Message {
 		},
 	}
 }
-func publisherStreamHeader() tunnelv1.PublisherStreamHeader {
-	return tunnelv1.PublisherStreamHeader{
+func visitorStreamHeader() tunnelv1.VisitorStreamHeader {
+	return tunnelv1.VisitorStreamHeader{
 		ProtocolVersion: 1, Kind: tunnelv1.VisitorStream, VisitorConnectionID: "visitor_connection_1",
 		RouteID: "route_1", RouteSessionID: "route_session_1", RouteVersion: 2,
 		PublisherConnectionID: "publisher_connection_1", ConnectionAssignmentRevision: 3,

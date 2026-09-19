@@ -27,10 +27,10 @@ type Metrics struct {
 }
 
 // New constructs an isolated registry for one tnld role.
-func New(mode string) *Metrics {
+func New(role string) *Metrics {
 	registry := prometheus.NewRegistry()
 	info := prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "tnl_info", Help: "Information about the running tnld process.", ConstLabels: prometheus.Labels{"mode": mode},
+		Name: "tnl_info", Help: "Information about the running tnld process.", ConstLabels: prometheus.Labels{"role": role},
 	})
 	info.Set(1)
 	metrics := &Metrics{

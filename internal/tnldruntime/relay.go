@@ -80,7 +80,7 @@ func (d *daemon) startRelay(ctx context.Context, settings relayProcessSettings, 
 		return fmt.Errorf("listen for internal forwarding: %w", err)
 	}
 	transportTLS := settings.transportTLS
-	var certificateChanged func(relayv1.RelayServiceCertificate) error
+	var certificateChanged func(relayv1.RelayTransportCertificate) error
 	if transportTLS == nil {
 		certificateSource, err := newRelayCertificateSource(settings.relayServiceID, settings.tlsServerName)
 		if err != nil {
@@ -133,7 +133,7 @@ type relayRuntimeConfig struct {
 	relayAddress       string
 	tlsServerName      string
 	transportTLS       *tls.Config
-	certificateChanged func(relayv1.RelayServiceCertificate) error
+	certificateChanged func(relayv1.RelayTransportCertificate) error
 	clusterSecrets     serviceapi.BearerSecrets
 	internalAddress    string
 	internalListener   net.Listener

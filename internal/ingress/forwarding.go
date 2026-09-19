@@ -151,7 +151,7 @@ type forwardingBackend struct {
 	header    tunnelv1.InternalForwardingHeader
 }
 
-// Open waits for relay acceptance after the publisher stream is acknowledged.
+// Open waits for relay acceptance after the visitor stream is acknowledged.
 // The caller owns the returned stream, not the pooled session. Acceptance does
 // not establish route TLS or prove local-service health.
 func (b forwardingBackend) Open(ctx context.Context, visitorConnectionID string) (net.Conn, error) {

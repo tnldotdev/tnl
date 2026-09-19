@@ -102,6 +102,7 @@ func (d *Database) MarkRouteSessionReady(
 	}
 	defer rollback(ctx, tx, "mark route session ready", &retErr)()
 	queries := controlstatedb.New(tx)
+	pendingEvents := pendingIngressRoutingTableEvents{}
 	route, session, err := lockAuthenticatedRouteSession(ctx, queries, authentication, now)
 	if err != nil {
 		return RouteSessionLifecycle{}, err
@@ -110,7 +111,7 @@ func (d *Database) MarkRouteSessionReady(
 	if err != nil {
 		return RouteSessionLifecycle{}, err
 	}
-	var routingTableRevision, routeEntryRevision int64
+	var publishedEvent *publishedIngressRoutingTableEvent
 	if !session.ReadyAt.Valid {
 		if !session.CertificateInstalledAt.Valid || len(connections) != routeSessionConnectionCount {
 			return RouteSessionLifecycle{}, ErrRouteSessionNotReady
@@ -125,12 +126,20 @@ func (d *Database) MarkRouteSessionReady(
 		if err != nil {
 			return RouteSessionLifecycle{}, fmt.Errorf("controlstate: mark route session ready: update session: %w", err)
 		}
-		routingTableRevision, routeEntryRevision, err = emitRouteRoutingTableEvent(
+		publishedEvent, err = pendingEvents.addRouteEvent(
 			ctx, queries, route, session, connections, "route_upsert", now,
 		)
 		if err != nil {
 			return RouteSessionLifecycle{}, err
 		}
+	}
+	if err := pendingEvents.publish(ctx, queries); err != nil {
+		return RouteSessionLifecycle{}, err
+	}
+	var routingTableRevision, routeEntryRevision int64
+	if publishedEvent != nil {
+		routingTableRevision = publishedEvent.routingTableRevision
+		routeEntryRevision = publishedEvent.entryRevision
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return RouteSessionLifecycle{}, fmt.Errorf("controlstate: mark route session ready: commit: %w", err)
@@ -260,6 +269,7 @@ func (d *Database) HeartbeatRouteSession(
 	}
 	defer rollback(ctx, tx, "heartbeat route session", &retErr)()
 	queries := controlstatedb.New(tx)
+	pendingEvents := pendingIngressRoutingTableEvents{}
 	route, session, err := lockAuthenticatedRouteSession(ctx, queries, authentication, now)
 	if err != nil {
 		return RouteSessionSetup{}, err
@@ -283,18 +293,25 @@ func (d *Database) HeartbeatRouteSession(
 		return RouteSessionSetup{}, fmt.Errorf("controlstate: heartbeat route session: update lease: %w", err)
 	}
 	leaseExtended := session.PublisherExpiresAt.Time.After(previousExpiresAt)
-	removedReadyConnection, err := replenishRouteSessionConnections(
-		ctx, queries, session, authentication.RouteSessionToken, now, connectionCredentialDuration,
-	)
-	if err != nil {
-		return RouteSessionSetup{}, err
-	}
-	if session.PolicyDenials < 0 {
-		return RouteSessionSetup{}, errors.New("controlstate: heartbeat route session: invalid policy denial count")
-	}
 	connections, err := validReadyPublisherConnections(ctx, queries, session.ID, now)
 	if err != nil {
 		return RouteSessionSetup{}, err
+	}
+	removedReadyConnection := false
+	if len(connections) != routeSessionConnectionCount {
+		removedReadyConnection, err = replenishRouteSessionConnections(
+			ctx, queries, session, authentication.RouteSessionToken, now, connectionCredentialDuration,
+		)
+		if err != nil {
+			return RouteSessionSetup{}, err
+		}
+		connections, err = validReadyPublisherConnections(ctx, queries, session.ID, now)
+		if err != nil {
+			return RouteSessionSetup{}, err
+		}
+	}
+	if session.PolicyDenials < 0 {
+		return RouteSessionSetup{}, errors.New("controlstate: heartbeat route session: invalid policy denial count")
 	}
 	if session.ReadyAt.Valid && removedReadyConnection {
 		if err := openRouteRecoveryEpisode(ctx, queries, route.ID, session.RouteVersion, now); err != nil {
@@ -303,12 +320,12 @@ func (d *Database) HeartbeatRouteSession(
 	}
 	if session.ReadyAt.Valid && (leaseExtended && len(connections) > 0 || removedReadyConnection) {
 		eventKind := routeRoutingTableEventKind(len(connections) > 0)
-		if _, _, err := emitRouteRoutingTableEvent(ctx, queries, route, session, connections, eventKind, now); err != nil {
+		if _, err := pendingEvents.addRouteEvent(ctx, queries, route, session, connections, eventKind, now); err != nil {
 			return RouteSessionSetup{}, err
 		}
 	}
 	if leaseExtended && len(connections) > 0 || removedReadyConnection {
-		if err := emitCurrentChallengeRoutingTableEvent(ctx, queries, route, session, connections, now); err != nil {
+		if err := pendingEvents.addCurrentChallengeEvent(ctx, queries, route, session, connections, now); err != nil {
 			return RouteSessionSetup{}, err
 		}
 	}
@@ -317,6 +334,9 @@ func (d *Database) HeartbeatRouteSession(
 		return RouteSessionSetup{}, err
 	}
 	setup.PolicyDenials = uint64(session.PolicyDenials)
+	if err := pendingEvents.publish(ctx, queries); err != nil {
+		return RouteSessionSetup{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return RouteSessionSetup{}, fmt.Errorf("controlstate: heartbeat route session: commit: %w", err)
 	}
@@ -340,6 +360,7 @@ func (d *Database) markPublisherConnectionReady(
 	}
 	defer rollback(ctx, tx, "mark publisher connection ready", &retErr)()
 	queries := controlstatedb.New(tx)
+	pendingEvents := pendingIngressRoutingTableEvents{}
 	route, session, err := lockRouteSessionForPublisherConnection(ctx, queries, request, now)
 	if err != nil {
 		return ClaimedPublisherConnection{}, err
@@ -379,9 +400,12 @@ func (d *Database) markPublisherConnectionReady(
 		return ClaimedPublisherConnection{}, err
 	}
 	if beforeState != PublisherConnectionReady {
-		if err := emitPublisherConnectionRoutingChanges(ctx, queries, route, session, connections, now); err != nil {
+		if err := pendingEvents.addPublisherConnectionChanges(ctx, queries, route, session, connections, now); err != nil {
 			return ClaimedPublisherConnection{}, err
 		}
+	}
+	if err := pendingEvents.publish(ctx, queries); err != nil {
+		return ClaimedPublisherConnection{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return ClaimedPublisherConnection{}, fmt.Errorf("controlstate: mark publisher connection ready: commit: %w", err)
@@ -407,6 +431,7 @@ func (d *Database) disconnectPublisherConnection(
 	}
 	defer rollback(ctx, tx, "disconnect publisher connection", &retErr)()
 	queries := controlstatedb.New(tx)
+	pendingEvents := pendingIngressRoutingTableEvents{}
 	route, session, err := lockRouteSessionForPublisherConnection(ctx, queries, request, now)
 	if err != nil {
 		return ClaimedPublisherConnection{}, err
@@ -441,9 +466,12 @@ func (d *Database) disconnectPublisherConnection(
 		}
 	}
 	if beforeState == PublisherConnectionReady {
-		if err := emitPublisherConnectionRoutingChanges(ctx, queries, route, session, connections, now); err != nil {
+		if err := pendingEvents.addPublisherConnectionChanges(ctx, queries, route, session, connections, now); err != nil {
 			return ClaimedPublisherConnection{}, err
 		}
+	}
+	if err := pendingEvents.publish(ctx, queries); err != nil {
+		return ClaimedPublisherConnection{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return ClaimedPublisherConnection{}, fmt.Errorf("controlstate: disconnect publisher connection: commit: %w", err)
@@ -547,7 +575,7 @@ func activeRouteSessionChallengeExpiry(
 	return expiresAt.Time, true, nil
 }
 
-func emitPublisherConnectionRoutingChanges(
+func (pending *pendingIngressRoutingTableEvents) addPublisherConnectionChanges(
 	ctx context.Context,
 	queries *controlstatedb.Queries,
 	route controlstatedb.ControlRoute,
@@ -556,17 +584,17 @@ func emitPublisherConnectionRoutingChanges(
 	now time.Time,
 ) error {
 	if session.ReadyAt.Valid {
-		if _, _, err := emitRouteRoutingTableEvent(
+		if _, err := pending.addRouteEvent(
 			ctx, queries, route, session, connections,
 			routeRoutingTableEventKind(len(connections) > 0), now,
 		); err != nil {
 			return err
 		}
 	}
-	return emitCurrentChallengeRoutingTableEvent(ctx, queries, route, session, connections, now)
+	return pending.addCurrentChallengeEvent(ctx, queries, route, session, connections, now)
 }
 
-func emitCurrentChallengeRoutingTableEvent(
+func (pending *pendingIngressRoutingTableEvents) addCurrentChallengeEvent(
 	ctx context.Context,
 	queries *controlstatedb.Queries,
 	route controlstatedb.ControlRoute,
@@ -578,7 +606,7 @@ func emitCurrentChallengeRoutingTableEvent(
 	if err != nil || !challengeActive {
 		return err
 	}
-	_, _, err = emitChallengeRoutingTableEvent(
+	_, err = pending.addChallengeEvent(
 		ctx, queries, route, session, connections,
 		challengeRoutingTableEventKind(len(connections) > 0), challengeExpiresAt, now,
 	)
@@ -599,7 +627,7 @@ func challengeRoutingTableEventKind(available bool) IngressRoutingTableEventKind
 	return IngressChallengeTombstone
 }
 
-func emitRouteRoutingTableEvent(
+func (pending *pendingIngressRoutingTableEvents) addRouteEvent(
 	ctx context.Context,
 	queries *controlstatedb.Queries,
 	route controlstatedb.ControlRoute,
@@ -607,11 +635,11 @@ func emitRouteRoutingTableEvent(
 	connections []controlstatedb.ListValidReadyPublisherConnectionsRow,
 	eventKind IngressRoutingTableEventKind,
 	now time.Time,
-) (int64, int64, error) {
-	return emitIngressRoutingTableEvent(ctx, queries, route, session, connections, eventKind, session.PublisherExpiresAt.Time, now)
+) (*publishedIngressRoutingTableEvent, error) {
+	return pending.addEvent(ctx, queries, route, session, connections, eventKind, session.PublisherExpiresAt.Time, now)
 }
 
-func emitChallengeRoutingTableEvent(
+func (pending *pendingIngressRoutingTableEvents) addChallengeEvent(
 	ctx context.Context,
 	queries *controlstatedb.Queries,
 	route controlstatedb.ControlRoute,
@@ -620,14 +648,34 @@ func emitChallengeRoutingTableEvent(
 	eventKind IngressRoutingTableEventKind,
 	expiresAt time.Time,
 	now time.Time,
-) (int64, int64, error) {
+) (*publishedIngressRoutingTableEvent, error) {
 	if session.PublisherExpiresAt.Time.Before(expiresAt) {
 		expiresAt = session.PublisherExpiresAt.Time
 	}
-	return emitIngressRoutingTableEvent(ctx, queries, route, session, connections, eventKind, expiresAt, now)
+	return pending.addEvent(ctx, queries, route, session, connections, eventKind, expiresAt, now)
 }
 
-func emitIngressRoutingTableEvent(
+type publishedIngressRoutingTableEvent struct {
+	routingTableRevision int64
+	entryRevision        int64
+}
+
+type pendingIngressRoutingTableEvent struct {
+	eventKind           IngressRoutingTableEventKind
+	routeID             string
+	routeVersion        int64
+	canonicalHostname   string
+	projection          []byte
+	projectionExpiresAt time.Time
+	createdAt           time.Time
+	published           *publishedIngressRoutingTableEvent
+}
+
+type pendingIngressRoutingTableEvents struct {
+	events []pendingIngressRoutingTableEvent
+}
+
+func (pending *pendingIngressRoutingTableEvents) addEvent(
 	ctx context.Context,
 	queries *controlstatedb.Queries,
 	route controlstatedb.ControlRoute,
@@ -636,7 +684,7 @@ func emitIngressRoutingTableEvent(
 	eventKind IngressRoutingTableEventKind,
 	projectionExpiresAt time.Time,
 	now time.Time,
-) (int64, int64, error) {
+) (*publishedIngressRoutingTableEvent, error) {
 	projection := IngressRoutingTableProjection{
 		RouteSessionID: session.ID, RouteID: route.ID, RouteVersion: uint64(session.RouteVersion),
 		CanonicalHostname: route.CanonicalHostname, PolicyRevision: uint64(route.PolicyRevision),
@@ -652,17 +700,17 @@ func emitIngressRoutingTableEvent(
 			RouteID: route.ID, RouteVersion: session.RouteVersion,
 		})
 		if err == nil {
-			value := uint64(episode.EpisodeID)
+			value := uint64(episode.RecoveryEpisodeID)
 			projection.RecoveryEpisodeID = &value
 		} else if !errors.Is(err, pgx.ErrNoRows) {
-			return 0, 0, fmt.Errorf("controlstate: read route recovery episode: %w", err)
+			return nil, fmt.Errorf("controlstate: read route recovery episode: %w", err)
 		}
 	}
 	for _, connection := range connections {
 		if !connection.ConnectedRelayID.Valid || !connection.ConnectedRelayRunID.Valid ||
 			!connection.ConnectedRelayLeaseRevision.Valid || connection.ConnectedRelayLeaseRevision.Int64 <= 0 ||
 			connection.ConnectionAssignmentRevision <= 0 || !connection.LeaseExpiresAt.Valid {
-			return 0, 0, errors.New("controlstate: invalid ingress routing-table publisher connection row")
+			return nil, errors.New("controlstate: invalid ingress routing-table publisher connection row")
 		}
 		projection.PublisherConnections = append(projection.PublisherConnections, IngressRoutingTablePublisherConnection{
 			ConnectionSlot: int(connection.ConnectionSlot), PublisherConnectionID: connection.PublisherConnectionID,
@@ -676,41 +724,72 @@ func emitIngressRoutingTableEvent(
 	}
 	payload, err := json.Marshal(projection)
 	if err != nil {
-		return 0, 0, fmt.Errorf("controlstate: encode ingress routing-table projection: %w", err)
+		return nil, fmt.Errorf("controlstate: encode ingress routing-table projection: %w", err)
 	}
-	entryRevision, err := queries.LatestIngressRoutingEntryRevision(ctx, controlstatedb.LatestIngressRoutingEntryRevisionParams{
-		RouteID: route.ID, RouteVersion: session.RouteVersion,
+	published := &publishedIngressRoutingTableEvent{}
+	pending.events = append(pending.events, pendingIngressRoutingTableEvent{
+		eventKind: eventKind, routeID: route.ID, routeVersion: session.RouteVersion,
+		canonicalHostname: route.CanonicalHostname, projection: payload,
+		projectionExpiresAt: projectionExpiresAt, createdAt: now, published: published,
 	})
-	if err != nil {
-		return 0, 0, fmt.Errorf("controlstate: read ingress routing-table entry revision: %w", err)
+	return published, nil
+}
+
+func (pending *pendingIngressRoutingTableEvents) publish(ctx context.Context, queries *controlstatedb.Queries) error {
+	if len(pending.events) == 0 {
+		return nil
 	}
-	if entryRevision == math.MaxInt64 {
-		return 0, 0, errors.New("controlstate: ingress routing-table entry revision is exhausted")
-	}
-	entryRevision++
-	routeExpiresAt := pgtype.Timestamptz{}
-	if eventKind == IngressRouteUpsert || eventKind == IngressChallengeUpsert {
-		routeExpiresAt = timestamptz(projectionExpiresAt)
-	}
-	// Hold the clock through commit before the INSERT allocates a sequence value,
-	// so a committed ingress cursor can never skip an earlier uncommitted event.
+	// This is the transaction's final phase. The clock remains held through
+	// commit, and callers must not perform further database work after it.
 	if _, err := queries.LockIngressRoutingTableClock(ctx); err != nil {
-		return 0, 0, fmt.Errorf("controlstate: lock ingress routing-table clock: %w", err)
+		return fmt.Errorf("controlstate: lock ingress routing-table clock: %w", err)
 	}
-	routingTableRevision, err := queries.InsertIngressRoutingTableEvent(ctx, controlstatedb.InsertIngressRoutingTableEventParams{
-		EventKind: string(eventKind), RouteID: route.ID, RouteVersion: session.RouteVersion,
-		CanonicalHostname: route.CanonicalHostname, EntryRevision: entryRevision,
-		Projection: payload, RouteExpiresAt: routeExpiresAt, CreatedAt: timestamptz(now),
-	})
-	if err != nil {
-		return 0, 0, fmt.Errorf("controlstate: insert ingress routing-table event: %w", err)
+	type routeVersion struct {
+		routeID      string
+		routeVersion int64
+	}
+	entryRevisions := make(map[routeVersion]int64)
+	var latestRoutingTableRevision int64
+	for index := range pending.events {
+		event := &pending.events[index]
+		key := routeVersion{routeID: event.routeID, routeVersion: event.routeVersion}
+		entryRevision, found := entryRevisions[key]
+		if !found {
+			var err error
+			entryRevision, err = queries.LatestIngressRoutingEntryRevision(ctx, controlstatedb.LatestIngressRoutingEntryRevisionParams{
+				RouteID: event.routeID, RouteVersion: event.routeVersion,
+			})
+			if err != nil {
+				return fmt.Errorf("controlstate: read ingress routing-table entry revision: %w", err)
+			}
+		}
+		if entryRevision == math.MaxInt64 {
+			return errors.New("controlstate: ingress routing-table entry revision is exhausted")
+		}
+		entryRevision++
+		entryRevisions[key] = entryRevision
+		routeExpiresAt := pgtype.Timestamptz{}
+		if event.eventKind == IngressRouteUpsert || event.eventKind == IngressChallengeUpsert {
+			routeExpiresAt = timestamptz(event.projectionExpiresAt)
+		}
+		routingTableRevision, err := queries.InsertIngressRoutingTableEvent(ctx, controlstatedb.InsertIngressRoutingTableEventParams{
+			EventKind: string(event.eventKind), RouteID: event.routeID, RouteVersion: event.routeVersion,
+			CanonicalHostname: event.canonicalHostname, EntryRevision: entryRevision,
+			Projection: event.projection, RouteExpiresAt: routeExpiresAt, CreatedAt: timestamptz(event.createdAt),
+		})
+		if err != nil {
+			return fmt.Errorf("controlstate: insert ingress routing-table event: %w", err)
+		}
+		event.published.routingTableRevision = routingTableRevision
+		event.published.entryRevision = entryRevision
+		latestRoutingTableRevision = routingTableRevision
 	}
 	if err := queries.AdvanceIngressRoutingTableClock(ctx, controlstatedb.AdvanceIngressRoutingTableClockParams{
-		RoutingTableRevision: routingTableRevision, UpdatedAt: timestamptz(now),
+		RoutingTableRevision: latestRoutingTableRevision, UpdatedAt: timestamptz(pending.events[len(pending.events)-1].createdAt),
 	}); err != nil {
-		return 0, 0, fmt.Errorf("controlstate: advance ingress routing-table clock: %w", err)
+		return fmt.Errorf("controlstate: advance ingress routing-table clock: %w", err)
 	}
-	return routingTableRevision, entryRevision, nil
+	return nil
 }
 
 func openRouteRecoveryEpisode(

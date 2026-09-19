@@ -213,11 +213,11 @@ func applyTunnelConfiguration(flags *tunnelFlags, tunnel *config.Tunnel) {
 	if tunnel.Ephemeral != nil && !flags.ephemeralFromCLI && !ephemeralFromEnvironment {
 		flags.Ephemeral = *tunnel.Ephemeral
 	}
-	_, publicFromEnvironment := os.LookupEnv("TNL_PUBLIC")
-	if !flags.publicFromCLI && flags.AllowIP == nil && !publicFromEnvironment {
+	_, allowAllIPsFromEnvironment := os.LookupEnv("TNL_ALLOW_ALL_IPS")
+	if !flags.allowAllIPsFromCLI && flags.AllowIP == nil && !allowAllIPsFromEnvironment {
 		flags.AllowIP = slices.Clone(tunnel.AllowIP)
-		if tunnel.Public != nil {
-			flags.Public = *tunnel.Public
+		if tunnel.AllowAllIPs != nil {
+			flags.AllowAllIPs = *tunnel.AllowAllIPs
 		}
 	}
 }
@@ -226,8 +226,8 @@ func validateTunnelFlags(flags tunnelFlags) error {
 	if flags.Host != "" && flags.Subdomain != "" {
 		return errors.New("--host and --subdomain are mutually exclusive")
 	}
-	if flags.Public && flags.AllowIP != nil {
-		return errors.New("--public and --allow-ip are mutually exclusive")
+	if flags.AllowAllIPs && flags.AllowIP != nil {
+		return errors.New("--allow-all-ips and --allow-ip are mutually exclusive")
 	}
 	if len(flags.AllowIP) > 63 {
 		return errors.New("--allow-ip may be repeated at most 63 times")

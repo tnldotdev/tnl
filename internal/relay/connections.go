@@ -61,7 +61,7 @@ func (c *PublisherConnection) OpenVisitor(ctx context.Context, visitorConnection
 	if err := c.beginOpen(); err != nil {
 		return nil, err
 	}
-	stream, err := c.session.OpenPublisherStream(ctx, tunnelv1.PublisherStreamHeader{
+	stream, err := c.session.OpenVisitorStream(ctx, tunnelv1.VisitorStreamHeader{
 		ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.VisitorStream,
 		VisitorConnectionID: visitorConnectionID, RouteID: c.ref.RouteID,
 		RouteSessionID: c.ref.RouteSessionID, RouteVersion: c.ref.RouteVersion,

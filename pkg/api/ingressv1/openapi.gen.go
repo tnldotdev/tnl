@@ -182,22 +182,22 @@ type IngressRoutingTableSnapshot struct {
 
 // IngressUsageReport defines model for IngressUsageReport.
 type IngressUsageReport struct {
-	BucketEnd             time.Time  `json:"bucket_end"`
-	BucketStart           time.Time  `json:"bucket_start"`
-	CapacityDenials       int64      `json:"capacity_denials"`
-	ConnectionAttempts    int64      `json:"connection_attempts"`
-	ConnectionNanoseconds int64      `json:"connection_nanoseconds"`
-	EgressBytes           int64      `json:"egress_bytes"`
-	Final                 bool       `json:"final"`
-	HistogramData         []byte     `json:"histogram_data"`
-	IngressBytes          int64      `json:"ingress_bytes"`
-	ObservedThrough       time.Time  `json:"observed_through"`
-	PolicyDenials         int64      `json:"policy_denials"`
-	PublisherOpenFailures int64      `json:"publisher_open_failures"`
-	ReportRevision        int64      `json:"report_revision"`
-	RouteId               Identifier `json:"route_id"`
-	RouteVersion          int64      `json:"route_version"`
-	SuccessfulStreams     int64      `json:"successful_streams"`
+	BucketEnd                 time.Time  `json:"bucket_end"`
+	BucketStart               time.Time  `json:"bucket_start"`
+	CapacityDenials           int64      `json:"capacity_denials"`
+	ConnectionAttempts        int64      `json:"connection_attempts"`
+	ConnectionNanoseconds     int64      `json:"connection_nanoseconds"`
+	EgressBytes               int64      `json:"egress_bytes"`
+	Final                     bool       `json:"final"`
+	HistogramData             []byte     `json:"histogram_data"`
+	IngressBytes              int64      `json:"ingress_bytes"`
+	ObservedThrough           time.Time  `json:"observed_through"`
+	PolicyDenials             int64      `json:"policy_denials"`
+	ReportRevision            int64      `json:"report_revision"`
+	RouteId                   Identifier `json:"route_id"`
+	RouteVersion              int64      `json:"route_version"`
+	SuccessfulStreams         int64      `json:"successful_streams"`
+	VisitorStreamOpenFailures int64      `json:"visitor_stream_open_failures"`
 }
 
 // IngressUsageReportBatch defines model for IngressUsageReportBatch.
@@ -220,12 +220,12 @@ type Problem struct {
 
 // RouteRecoveryObservation defines model for RouteRecoveryObservation.
 type RouteRecoveryObservation struct {
-	EpisodeId       int64      `json:"episode_id"`
-	ObservedAt      time.Time  `json:"observed_at"`
-	ObservedSeconds float64    `json:"observed_seconds"`
-	OpenedAt        time.Time  `json:"opened_at"`
-	RouteId         Identifier `json:"route_id"`
-	RouteVersion    int64      `json:"route_version"`
+	ObservedAt        time.Time  `json:"observed_at"`
+	ObservedSeconds   float64    `json:"observed_seconds"`
+	OpenedAt          time.Time  `json:"opened_at"`
+	RecoveryEpisodeId int64      `json:"recovery_episode_id"`
+	RouteId           Identifier `json:"route_id"`
+	RouteVersion      int64      `json:"route_version"`
 }
 
 // RouteRecoveryObservationRequest defines model for RouteRecoveryObservationRequest.
@@ -405,15 +405,15 @@ type ClientInterface interface {
 	//
 	// Takes any type of body and a specified content type.
 	//
-	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/route-recovery/{episode_id}/observed (the `ObserveRouteRecovery` operationId).
-	ObserveRouteRecoveryWithBody(ctx context.Context, ingressId IngressID, episodeId int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/route-recovery/{recovery_episode_id}/observed (the `ObserveRouteRecovery` operationId).
+	ObserveRouteRecoveryWithBody(ctx context.Context, ingressId IngressID, recoveryEpisodeId int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ObserveRouteRecovery Record the first publisher byte after route recovery
 	//
 	// Takes a body of the `application/json` content type.
 	//
-	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/route-recovery/{episode_id}/observed (the `ObserveRouteRecovery` operationId).
-	ObserveRouteRecovery(ctx context.Context, ingressId IngressID, episodeId int64, body ObserveRouteRecoveryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/route-recovery/{recovery_episode_id}/observed (the `ObserveRouteRecovery` operationId).
+	ObserveRouteRecovery(ctx context.Context, ingressId IngressID, recoveryEpisodeId int64, body ObserveRouteRecoveryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetIngressRoutingTableEvents Wait for ordered ingress routing-table events
 	//
@@ -546,9 +546,9 @@ func (c *Client) RenewIngress(ctx context.Context, ingressId IngressID, body Ren
 //
 // Takes any type of body and a specified content type.
 //
-// Corresponds with POST /internal/v1/ingresses/{ingress_id}/route-recovery/{episode_id}/observed (the `ObserveRouteRecovery` operationId).
-func (c *Client) ObserveRouteRecoveryWithBody(ctx context.Context, ingressId IngressID, episodeId int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewObserveRouteRecoveryRequestWithBody(c.Server, ingressId, episodeId, contentType, body)
+// Corresponds with POST /internal/v1/ingresses/{ingress_id}/route-recovery/{recovery_episode_id}/observed (the `ObserveRouteRecovery` operationId).
+func (c *Client) ObserveRouteRecoveryWithBody(ctx context.Context, ingressId IngressID, recoveryEpisodeId int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewObserveRouteRecoveryRequestWithBody(c.Server, ingressId, recoveryEpisodeId, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -563,9 +563,9 @@ func (c *Client) ObserveRouteRecoveryWithBody(ctx context.Context, ingressId Ing
 //
 // Takes a body of the `application/json` content type.
 //
-// Corresponds with POST /internal/v1/ingresses/{ingress_id}/route-recovery/{episode_id}/observed (the `ObserveRouteRecovery` operationId).
-func (c *Client) ObserveRouteRecovery(ctx context.Context, ingressId IngressID, episodeId int64, body ObserveRouteRecoveryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewObserveRouteRecoveryRequest(c.Server, ingressId, episodeId, body)
+// Corresponds with POST /internal/v1/ingresses/{ingress_id}/route-recovery/{recovery_episode_id}/observed (the `ObserveRouteRecovery` operationId).
+func (c *Client) ObserveRouteRecovery(ctx context.Context, ingressId IngressID, recoveryEpisodeId int64, body ObserveRouteRecoveryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewObserveRouteRecoveryRequest(c.Server, ingressId, recoveryEpisodeId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -775,18 +775,18 @@ func NewRenewIngressRequestWithBody(server string, ingressId IngressID, contentT
 }
 
 // NewObserveRouteRecoveryRequest calls the generic ObserveRouteRecovery builder with application/json body
-func NewObserveRouteRecoveryRequest(server string, ingressId IngressID, episodeId int64, body ObserveRouteRecoveryJSONRequestBody) (*http.Request, error) {
+func NewObserveRouteRecoveryRequest(server string, ingressId IngressID, recoveryEpisodeId int64, body ObserveRouteRecoveryJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewObserveRouteRecoveryRequestWithBody(server, ingressId, episodeId, "application/json", bodyReader)
+	return NewObserveRouteRecoveryRequestWithBody(server, ingressId, recoveryEpisodeId, "application/json", bodyReader)
 }
 
 // NewObserveRouteRecoveryRequestWithBody constructs an http.Request for the ObserveRouteRecovery method, with any body, and a specified content type
-func NewObserveRouteRecoveryRequestWithBody(server string, ingressId IngressID, episodeId int64, contentType string, body io.Reader) (*http.Request, error) {
+func NewObserveRouteRecoveryRequestWithBody(server string, ingressId IngressID, recoveryEpisodeId int64, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -798,7 +798,7 @@ func NewObserveRouteRecoveryRequestWithBody(server string, ingressId IngressID, 
 
 	var pathParam1 string
 
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "episode_id", episodeId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "recovery_episode_id", recoveryEpisodeId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
 	if err != nil {
 		return nil, err
 	}
@@ -1127,15 +1127,15 @@ type ClientWithResponsesInterface interface {
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/route-recovery/{episode_id}/observed (the `ObserveRouteRecovery` operationId).
-	ObserveRouteRecoveryWithBodyWithResponse(ctx context.Context, ingressId IngressID, episodeId int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ObserveRouteRecoveryResponse, error)
+	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/route-recovery/{recovery_episode_id}/observed (the `ObserveRouteRecovery` operationId).
+	ObserveRouteRecoveryWithBodyWithResponse(ctx context.Context, ingressId IngressID, recoveryEpisodeId int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ObserveRouteRecoveryResponse, error)
 
 	// ObserveRouteRecoveryWithResponse Record the first publisher byte after route recovery
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/route-recovery/{episode_id}/observed (the `ObserveRouteRecovery` operationId).
-	ObserveRouteRecoveryWithResponse(ctx context.Context, ingressId IngressID, episodeId int64, body ObserveRouteRecoveryJSONRequestBody, reqEditors ...RequestEditorFn) (*ObserveRouteRecoveryResponse, error)
+	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/route-recovery/{recovery_episode_id}/observed (the `ObserveRouteRecovery` operationId).
+	ObserveRouteRecoveryWithResponse(ctx context.Context, ingressId IngressID, recoveryEpisodeId int64, body ObserveRouteRecoveryJSONRequestBody, reqEditors ...RequestEditorFn) (*ObserveRouteRecoveryResponse, error)
 
 	// GetIngressRoutingTableEventsWithResponse Wait for ordered ingress routing-table events
 	//
@@ -1584,9 +1584,9 @@ func (c *ClientWithResponses) RenewIngressWithResponse(ctx context.Context, ingr
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /internal/v1/ingresses/{ingress_id}/route-recovery/{episode_id}/observed (the `ObserveRouteRecovery` operationId).
-func (c *ClientWithResponses) ObserveRouteRecoveryWithBodyWithResponse(ctx context.Context, ingressId IngressID, episodeId int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ObserveRouteRecoveryResponse, error) {
-	rsp, err := c.ObserveRouteRecoveryWithBody(ctx, ingressId, episodeId, contentType, body, reqEditors...)
+// Corresponds with POST /internal/v1/ingresses/{ingress_id}/route-recovery/{recovery_episode_id}/observed (the `ObserveRouteRecovery` operationId).
+func (c *ClientWithResponses) ObserveRouteRecoveryWithBodyWithResponse(ctx context.Context, ingressId IngressID, recoveryEpisodeId int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ObserveRouteRecoveryResponse, error) {
+	rsp, err := c.ObserveRouteRecoveryWithBody(ctx, ingressId, recoveryEpisodeId, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -1597,9 +1597,9 @@ func (c *ClientWithResponses) ObserveRouteRecoveryWithBodyWithResponse(ctx conte
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /internal/v1/ingresses/{ingress_id}/route-recovery/{episode_id}/observed (the `ObserveRouteRecovery` operationId).
-func (c *ClientWithResponses) ObserveRouteRecoveryWithResponse(ctx context.Context, ingressId IngressID, episodeId int64, body ObserveRouteRecoveryJSONRequestBody, reqEditors ...RequestEditorFn) (*ObserveRouteRecoveryResponse, error) {
-	rsp, err := c.ObserveRouteRecovery(ctx, ingressId, episodeId, body, reqEditors...)
+// Corresponds with POST /internal/v1/ingresses/{ingress_id}/route-recovery/{recovery_episode_id}/observed (the `ObserveRouteRecovery` operationId).
+func (c *ClientWithResponses) ObserveRouteRecoveryWithResponse(ctx context.Context, ingressId IngressID, recoveryEpisodeId int64, body ObserveRouteRecoveryJSONRequestBody, reqEditors ...RequestEditorFn) (*ObserveRouteRecoveryResponse, error) {
+	rsp, err := c.ObserveRouteRecovery(ctx, ingressId, recoveryEpisodeId, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -1904,8 +1904,8 @@ type ServerInterface interface {
 	// (POST /internal/v1/ingresses/{ingress_id}/renew)
 	RenewIngress(w http.ResponseWriter, r *http.Request, ingressId IngressID)
 	// ObserveRouteRecovery Record the first publisher byte after route recovery
-	// (POST /internal/v1/ingresses/{ingress_id}/route-recovery/{episode_id}/observed)
-	ObserveRouteRecovery(w http.ResponseWriter, r *http.Request, ingressId IngressID, episodeId int64)
+	// (POST /internal/v1/ingresses/{ingress_id}/route-recovery/{recovery_episode_id}/observed)
+	ObserveRouteRecovery(w http.ResponseWriter, r *http.Request, ingressId IngressID, recoveryEpisodeId int64)
 	// GetIngressRoutingTableEvents Wait for ordered ingress routing-table events
 	// (GET /internal/v1/ingresses/{ingress_id}/routing-table/events)
 	GetIngressRoutingTableEvents(w http.ResponseWriter, r *http.Request, ingressId IngressID, params GetIngressRoutingTableEventsParams)
@@ -2007,17 +2007,17 @@ func (siw *ServerInterfaceWrapper) ObserveRouteRecovery(w http.ResponseWriter, r
 		return
 	}
 
-	// ------------- Path parameter "episode_id" -------------
-	var episodeId int64
+	// ------------- Path parameter "recovery_episode_id" -------------
+	var recoveryEpisodeId int64
 
-	err = runtime.BindStyledParameterWithOptions("simple", "episode_id", r.PathValue("episode_id"), &episodeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	err = runtime.BindStyledParameterWithOptions("simple", "recovery_episode_id", r.PathValue("recovery_episode_id"), &recoveryEpisodeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "episode_id", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "recovery_episode_id", Err: err})
 		return
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ObserveRouteRecovery(w, r, ingressId, episodeId)
+		siw.Handler.ObserveRouteRecovery(w, r, ingressId, recoveryEpisodeId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2328,7 +2328,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/routing-table/snapshot", wrapper.GetIngressRoutingTableSnapshot)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/routing-table/events", wrapper.GetIngressRoutingTableEvents)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/usage-reports", wrapper.ReportIngressUsage)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/route-recovery/{episode_id}/observed", wrapper.ObserveRouteRecovery)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/route-recovery/{recovery_episode_id}/observed", wrapper.ObserveRouteRecovery)
 
 	return m
 }

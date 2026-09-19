@@ -238,7 +238,7 @@ WHERE sessions.closed_at IS NULL
   AND connections.state IN ('assigned', 'connected', 'ready', 'draining')
 GROUP BY connections.relay_service_id;
 
--- name: StoreRelayServiceCertificate :one
+-- name: StoreRelayTransportCertificate :one
 UPDATE control.relay_services
 SET transport_certificate_pem = sqlc.arg(transport_certificate_pem),
     transport_private_key_ciphertext = sqlc.arg(transport_private_key_ciphertext),
@@ -251,7 +251,7 @@ WHERE relay_service_id = sqlc.arg(relay_service_id)
   AND enabled
 RETURNING *;
 
--- name: GetRelayServiceCertificate :one
+-- name: GetRelayTransportCertificate :one
 SELECT services.*
 FROM control.relay_services AS services
 JOIN control.relay_leases AS leases USING (relay_service_id)

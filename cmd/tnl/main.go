@@ -40,15 +40,15 @@ type openOptions struct {
 }
 
 type tunnelFlags struct {
-	Team      string   `name:"team" env:"TNL_TEAM" help:"Team ID or unambiguous display name."`
-	Host      string   `name:"host" env:"TNL_HOST" help:"Hostname to publish. Defaults to the worktree label in the current member namespace."`
-	Subdomain string   `name:"subdomain" env:"TNL_SUBDOMAIN" help:"One label beneath the current member namespace."`
-	AllowIP   []string `name:"allow-ip" help:"Allow a visitor IP address or prefix. Repeat for each value."`
-	Public    bool     `name:"public" env:"TNL_PUBLIC" help:"Allow visitors from every IP address."`
-	Ephemeral bool     `name:"ephemeral" env:"TNL_EPHEMERAL" help:"Remove the route when this tunnel stops."`
+	Team        string   `name:"team" env:"TNL_TEAM" help:"Team ID or unambiguous display name."`
+	Host        string   `name:"host" env:"TNL_HOST" help:"Hostname to publish. Defaults to the worktree label in the current member namespace."`
+	Subdomain   string   `name:"subdomain" env:"TNL_SUBDOMAIN" help:"One label beneath the current member namespace."`
+	AllowIP     []string `name:"allow-ip" help:"Allow a visitor IP address or prefix. Repeat for each value."`
+	AllowAllIPs bool     `name:"allow-all-ips" env:"TNL_ALLOW_ALL_IPS" help:"Allow visitors from every IP address."`
+	Ephemeral   bool     `name:"ephemeral" env:"TNL_EPHEMERAL" help:"Remove the route when this tunnel stops."`
 
-	publicFromCLI    bool
-	ephemeralFromCLI bool
+	allowAllIPsFromCLI bool
+	ephemeralFromCLI   bool
 }
 
 type remoteFlags struct {
@@ -293,10 +293,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runAdminRelayDrain(ctx, flags.Admin.Relays.Drain, stdout, stderr)
 	case "admin maintenance list":
 		return runAdminMaintenanceList(ctx, flags.Admin.Maintenance.List, stdout, stderr)
-	case "admin maintenance enable <name>":
-		return runAdminMaintenanceSet(ctx, flags.Admin.Maintenance.Enable, true, stdout, stderr)
-	case "admin maintenance disable <name>":
-		return runAdminMaintenanceSet(ctx, flags.Admin.Maintenance.Disable, false, stdout, stderr)
+	case "admin maintenance allow <name>":
+		return runAdminMaintenanceSet(ctx, flags.Admin.Maintenance.Allow, true, stdout, stderr)
+	case "admin maintenance block <name>":
+		return runAdminMaintenanceSet(ctx, flags.Admin.Maintenance.Block, false, stdout, stderr)
 	default:
 		return errors.New("command is required")
 	}
@@ -314,7 +314,7 @@ func canonicalParsedCommand(command string) string {
 }
 
 func applyTunnelCLIUnits(args []string, command string, flags *cli) {
-	host, subdomain, allowIP, public, ephemeral := false, false, false, false, false
+	host, subdomain, allowIP, allowAllIPs, ephemeral := false, false, false, false, false
 	commandIndex := rootCommandIndex(args)
 	for index, argument := range args {
 		if index <= commandIndex {
@@ -327,14 +327,14 @@ func applyTunnelCLIUnits(args []string, command string, flags *cli) {
 			subdomain = true
 		case argument == "--allow-ip" || strings.HasPrefix(argument, "--allow-ip="):
 			allowIP = true
-		case argument == "--public" || argument == "--no-public" || strings.HasPrefix(argument, "--public="):
-			public = true
+		case argument == "--allow-all-ips" || argument == "--no-allow-all-ips" || strings.HasPrefix(argument, "--allow-all-ips="):
+			allowAllIPs = true
 		case argument == "--ephemeral" || argument == "--no-ephemeral" || strings.HasPrefix(argument, "--ephemeral="):
 			ephemeral = true
 		}
 	}
 	apply := func(tunnel *tunnelFlags) {
-		tunnel.publicFromCLI = public
+		tunnel.allowAllIPsFromCLI = allowAllIPs
 		tunnel.ephemeralFromCLI = ephemeral
 		if host && !subdomain {
 			tunnel.Subdomain = ""
@@ -342,8 +342,8 @@ func applyTunnelCLIUnits(args []string, command string, flags *cli) {
 		if subdomain && !host {
 			tunnel.Host = ""
 		}
-		if allowIP && !public {
-			tunnel.Public = false
+		if allowIP && !allowAllIPs {
+			tunnel.AllowAllIPs = false
 		}
 	}
 	switch command {

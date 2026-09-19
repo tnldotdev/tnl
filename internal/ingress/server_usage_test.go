@@ -160,7 +160,7 @@ func (b *gatedOpenBackend) Open(ctx context.Context, _ string) (net.Conn, error)
 	}
 }
 
-func TestIngressRecordsRouteCapacityAndPublisherOpenFailure(t *testing.T) {
+func TestIngressRecordsRouteCapacityAndVisitorStreamOpenFailure(t *testing.T) {
 	release := make(chan struct{})
 	unblock := sync.OnceFunc(func() { close(release) })
 	t.Cleanup(unblock)

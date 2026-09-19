@@ -226,6 +226,7 @@ func (d *Database) SetMembershipRole(
 	}
 	defer rollback(ctx, tx, "set membership role", &retErr)()
 	queries := controlstatedb.New(tx)
+	pendingEvents := pendingIngressRoutingTableEvents{}
 	actor, err := lockTeamActor(ctx, queries, identityID, teamID)
 	if err != nil {
 		return Membership{}, err
@@ -268,7 +269,7 @@ func (d *Database) SetMembershipRole(
 	}); err != nil || updated != 1 {
 		return Membership{}, authorityRowsError("set membership role: update membership", updated, err)
 	}
-	if err := closeMembershipRouteSessions(ctx, queries, teamID, membershipID, false, now, "authority_policy_changed"); err != nil {
+	if err := closeMembershipRouteSessions(ctx, queries, &pendingEvents, teamID, membershipID, false, now, "authority_policy_changed"); err != nil {
 		return Membership{}, err
 	}
 	row, err := queries.GetTeamMembershipContext(ctx, controlstatedb.GetTeamMembershipContextParams{
@@ -276,6 +277,9 @@ func (d *Database) SetMembershipRole(
 	})
 	if err != nil {
 		return Membership{}, fmt.Errorf("controlstate: set membership role: read result: %w", err)
+	}
+	if err := pendingEvents.publish(ctx, queries); err != nil {
+		return Membership{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Membership{}, fmt.Errorf("controlstate: set membership role: commit: %w", err)
@@ -303,6 +307,7 @@ func (d *Database) RemoveMembership(
 	}
 	defer rollback(ctx, tx, "remove membership", &retErr)()
 	queries := controlstatedb.New(tx)
+	pendingEvents := pendingIngressRoutingTableEvents{}
 	actor, err := lockTeamActor(ctx, queries, identityID, teamID)
 	if err != nil {
 		return err
@@ -348,7 +353,10 @@ func (d *Database) RemoveMembership(
 	}); err != nil || updated != 1 {
 		return authorityRowsError("remove membership: quarantine slug", updated, err)
 	}
-	if err := closeMembershipRouteSessions(ctx, queries, teamID, membershipID, true, now, "membership_removed"); err != nil {
+	if err := closeMembershipRouteSessions(ctx, queries, &pendingEvents, teamID, membershipID, true, now, "membership_removed"); err != nil {
+		return err
+	}
+	if err := pendingEvents.publish(ctx, queries); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -423,6 +431,7 @@ func lockTeamActor(
 func closeMembershipRouteSessions(
 	ctx context.Context,
 	queries *controlstatedb.Queries,
+	pendingEvents *pendingIngressRoutingTableEvents,
 	teamID, membershipID string,
 	suspendMemberRoutes bool,
 	now time.Time,
@@ -437,7 +446,7 @@ func closeMembershipRouteSessions(
 	for _, route := range routes {
 		session, err := queries.GetOpenRouteSession(ctx, route.ID)
 		if err == nil && (route.MembershipID.String == membershipID || session.MembershipID.String == membershipID) {
-			if err := closeRouteSession(ctx, queries, route, session, RouteSessionClosed, now, reason); err != nil {
+			if err := closeRouteSession(ctx, queries, pendingEvents, route, session, RouteSessionClosed, now, reason); err != nil {
 				return err
 			}
 		} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {

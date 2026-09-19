@@ -91,7 +91,7 @@ func (h *handler) CreateRoute(response http.ResponseWriter, request *http.Reques
 		RouteScope: controlstate.RouteScope(decision.RouteScope), AllowedIPPrefixes: allowedIPPrefixes,
 		DNSState: dnsState, DNSAuthorityReference: dnsAuthorityReference,
 		AuthorityIssuer: h.externalAuthorityIssuer(),
-		PolicyRevision:  decision.TeamPolicyRevision,
+		PolicyRevision:  decision.PolicyRevision,
 		Ephemeral:       ephemeral,
 	}, time.Now())
 	if err != nil {
@@ -145,7 +145,7 @@ func (h *handler) UpdateRoute(response http.ResponseWriter, request *http.Reques
 	updated, err := h.store.UpdateAuthorizedRoute(request.Context(), controlstate.AuthorizedRouteUpdateRequest{
 		RouteID: route.ID, TeamID: decision.TeamID, ActingIdentityID: decision.IdentityID,
 		Target: *body.Target, AllowedIPPrefixes: allowedIPPrefixes,
-		AuthorityIssuer: h.externalAuthorityIssuer(), PolicyRevision: decision.TeamPolicyRevision,
+		AuthorityIssuer: h.externalAuthorityIssuer(), PolicyRevision: decision.PolicyRevision,
 		ExpectedMutationRevision: route.MutationRevision,
 	}, time.Now())
 	if err != nil {
@@ -202,7 +202,7 @@ func (h *handler) DeleteRoute(response http.ResponseWriter, request *http.Reques
 	}
 	if err := h.store.DeleteAuthorizedRoute(request.Context(), controlstate.AuthorizedRouteDeleteRequest{
 		RouteID: route.ID, TeamID: decision.TeamID, ActingIdentityID: decision.IdentityID,
-		AuthorityIssuer: h.externalAuthorityIssuer(), PolicyRevision: decision.TeamPolicyRevision,
+		AuthorityIssuer: h.externalAuthorityIssuer(), PolicyRevision: decision.PolicyRevision,
 		ExpectedMutationRevision: route.MutationRevision,
 	}, time.Now()); err != nil {
 		writeControlStateProblem(response, "delete route", err)
@@ -258,7 +258,7 @@ func (h *handler) CreateRouteSession(
 	digest, err := authorization.CanonicalRequestHash(authorization.OperationRequest{
 		Operation: authorization.OperationRouteSessionCreate, TeamID: decision.TeamID, MembershipID: decision.ActingMembershipID,
 		DomainID: decision.DomainID, CanonicalHostname: decision.CanonicalHostname, RouteScope: decision.RouteScope,
-		RouteID: route.ID, RouteVersion: route.AuthorizationRouteVersion, PolicyRevision: decision.TeamPolicyRevision,
+		RouteID: route.ID, RouteVersion: route.AuthorizationRouteVersion, PolicyRevision: decision.PolicyRevision,
 		Target: route.Target, Ephemeral: route.Ephemeral, CertificatePlan: &plan, AllowedIPPrefixes: allowedIPPrefixes,
 	})
 	if err != nil {
@@ -270,7 +270,7 @@ func (h *handler) CreateRouteSession(
 		ActingIdentityID: decision.IdentityID, RequireLocalAuthority: h.externalAuthorityIssuer() == "",
 		RetrySecret:    decision.RetrySecret[:],
 		IdempotencyKey: idempotencyKey, RequestDigest: [32]byte(digest),
-		PolicyRevision: decision.TeamPolicyRevision, CertificateCacheKey: plan.CacheKey,
+		PolicyRevision: decision.PolicyRevision, CertificateCacheKey: plan.CacheKey,
 		CertificateScope: plan.Scope, CertificateIdentifiers: plan.Identifiers,
 		CertificateChallenge:     plan.ChallengeMethod,
 		AuthorityIssuer:          h.externalAuthorityIssuer(),

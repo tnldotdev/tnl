@@ -45,10 +45,14 @@ ORDER BY routing_table_revision
 LIMIT sqlc.arg(page_limit);
 
 -- name: LatestIngressRoutingEntryRevision :one
-SELECT COALESCE(MAX(entry_revision), 0)::bigint
-FROM control.ingress_routing_table_events
-WHERE route_id = sqlc.arg(route_id)
-  AND route_version = sqlc.arg(route_version);
+SELECT COALESCE((
+    SELECT entry_revision
+    FROM control.ingress_routing_table_events
+    WHERE route_id = sqlc.arg(route_id)
+      AND route_version = sqlc.arg(route_version)
+    ORDER BY routing_table_revision DESC
+    LIMIT 1
+), 0)::bigint;
 
 -- name: InsertIngressRoutingTableEvent :one
 INSERT INTO control.ingress_routing_table_events (

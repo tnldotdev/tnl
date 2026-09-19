@@ -1,6 +1,6 @@
 openapi: 3.1.0
 info:
-  title: tnl relay service API
+  title: tnl relay API
   version: 1.0.0
   license:
     name: MIT
@@ -74,7 +74,7 @@ paths:
           $ref: "#/components/responses/Problem"
   /internal/v1/relay-services/{relay_service_id}/certificate:
     get:
-      operationId: getRelayServiceCertificate
+      operationId: getRelayTransportCertificate
       summary: Retrieve the current relay transport certificate and private key
       parameters:
         - $ref: "#/components/parameters/RelayServiceID"
@@ -107,7 +107,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/RelayServiceCertificate"
+                $ref: "#/components/schemas/RelayTransportCertificate"
         default:
           $ref: "#/components/responses/Problem"
   /internal/v1/publisher-connections/{publisher_connection_id}/claim:
@@ -376,7 +376,7 @@ components:
         lease_expires_at:
           type: string
           format: date-time
-    RelayServiceCertificate:
+    RelayTransportCertificate:
       type: object
       additionalProperties: false
       required: [relay_service_id, tls_server_name, certificate_pem, private_key_pem, not_after]

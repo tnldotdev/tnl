@@ -104,8 +104,10 @@ func (d *Database) RunControlTLSLeader(ctx context.Context, run func(context.Con
 	}
 	retry := time.NewTicker(time.Second)
 	defer retry.Stop()
+	config := d.pool.Config().ConnConfig.Copy()
+	config.Tracer = nil
 	for {
-		connection, err := d.pool.Acquire(ctx)
+		connection, err := pgx.ConnectConfig(ctx, config)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil
@@ -117,7 +119,7 @@ func (d *Database) RunControlTLSLeader(ctx context.Context, run func(context.Con
 		}
 		transaction, err := connection.Begin(ctx)
 		if err != nil {
-			connection.Release()
+			closeControlTLSLeadershipConnection(connection)
 			if ctx.Err() != nil {
 				return nil
 			}
@@ -130,7 +132,7 @@ func (d *Database) RunControlTLSLeader(ctx context.Context, run func(context.Con
 			rollbackCtx, cancel := context.WithTimeout(context.Background(), controlTLSLeadershipCheckInterval)
 			_ = transaction.Rollback(rollbackCtx)
 			cancel()
-			connection.Release()
+			closeControlTLSLeadershipConnection(connection)
 		}
 		var acquired bool
 		err = transaction.QueryRow(ctx, `SELECT pg_try_advisory_xact_lock($1)`, controlTLSLeadershipKey).Scan(&acquired)
@@ -192,6 +194,12 @@ func (d *Database) RunControlTLSLeader(ctx context.Context, run func(context.Con
 			return nil
 		}
 	}
+}
+
+func closeControlTLSLeadershipConnection(connection *pgx.Conn) {
+	closeCtx, cancel := context.WithTimeout(context.Background(), controlTLSLeadershipCheckInterval)
+	defer cancel()
+	_ = connection.Close(closeCtx)
 }
 
 func waitControlTLSLeadershipRetry(ctx context.Context, retry <-chan time.Time) bool {

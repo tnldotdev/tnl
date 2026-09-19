@@ -22,7 +22,7 @@ type ControlClient interface {
 	RegisterRelay(context.Context, relayv1.RelayRegistration) (relayv1.RelayLease, error)
 	RenewRelay(context.Context, relayv1.RelayID, relayv1.RelayRenewal) (relayv1.RelayLease, error)
 	DrainRelay(context.Context, relayv1.RelayID, relayv1.RelayDrainRequest) (relayv1.RelayLease, error)
-	GetRelayServiceCertificate(context.Context, relayv1.RelayServiceID, relayv1.GetRelayServiceCertificateParams) (relayv1.RelayServiceCertificate, error)
+	GetRelayTransportCertificate(context.Context, relayv1.RelayServiceID, relayv1.GetRelayTransportCertificateParams) (relayv1.RelayTransportCertificate, error)
 	ClaimPublisherConnection(context.Context, relayv1.PublisherConnectionID, relayv1.PublisherConnectionClaim) (relayv1.ClaimedPublisherConnection, error)
 	MarkPublisherConnectionReady(context.Context, relayv1.PublisherConnectionID, relayv1.PublisherConnectionTransition) (relayv1.ClaimedPublisherConnection, error)
 	DisconnectPublisherConnection(context.Context, relayv1.PublisherConnectionID, relayv1.PublisherConnectionDisconnect) (relayv1.ClaimedPublisherConnection, error)
@@ -37,7 +37,7 @@ type ControllerConfig struct {
 	RetryInterval      time.Duration
 	Load               LoadFunc
 	LeaseChanged       func(relayv1.RelayLease, relayv1.RelayLease)
-	CertificateChanged func(relayv1.RelayServiceCertificate) error
+	CertificateChanged func(relayv1.RelayTransportCertificate) error
 	Now                func() time.Time
 	Report             func(error)
 }
@@ -51,7 +51,7 @@ type Controller struct {
 	retryInterval      time.Duration
 	load               LoadFunc
 	leaseChanged       func(relayv1.RelayLease, relayv1.RelayLease)
-	certificateChanged func(relayv1.RelayServiceCertificate) error
+	certificateChanged func(relayv1.RelayTransportCertificate) error
 	now                func() time.Time
 	report             func(error)
 
@@ -185,7 +185,7 @@ func (c *Controller) Ready(now time.Time) bool {
 }
 
 func (c *Controller) refreshCertificate(ctx context.Context, lease relayv1.RelayLease) error {
-	certificate, err := c.client.GetRelayServiceCertificate(ctx, lease.RelayServiceId, relayv1.GetRelayServiceCertificateParams{
+	certificate, err := c.client.GetRelayTransportCertificate(ctx, lease.RelayServiceId, relayv1.GetRelayTransportCertificateParams{
 		RelayId: lease.RelayId, RelayRunId: lease.RelayRunId, RelayLeaseRevision: lease.RelayLeaseRevision,
 	})
 	if err != nil {

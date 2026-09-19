@@ -130,6 +130,7 @@ type loaderContext struct {
 
 var typeScriptKeyMappings = map[string]string{
 	"allow_ip":        "allowIP",
+	"allow_all_ips":   "allowAllIPs",
 	"startup_timeout": "startupTimeout",
 }
 

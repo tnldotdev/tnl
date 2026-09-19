@@ -22,7 +22,7 @@ type controlTLSSettings struct {
 
 func controlTLSSettingsFrom(cfg tnldconfig.Config) controlTLSSettings {
 	additionalHostnames := []string(nil)
-	if cfg.Mode == tnldconfig.RoleStandalone && cfg.ControlTLSCertificateFile == "" &&
+	if cfg.Role == tnldconfig.RoleStandalone && cfg.ControlTLSCertificateFile == "" &&
 		cfg.RelayTLSCertificateFile == "" && !cfg.RelayCertificateAutomationEnabled() {
 		additionalHostnames = []string{cfg.StandaloneRelayHostname()}
 	}

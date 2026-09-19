@@ -80,10 +80,14 @@ func (q *Queries) InsertIngressRoutingTableEvent(ctx context.Context, arg Insert
 }
 
 const latestIngressRoutingEntryRevision = `-- name: LatestIngressRoutingEntryRevision :one
-SELECT COALESCE(MAX(entry_revision), 0)::bigint
-FROM control.ingress_routing_table_events
-WHERE route_id = $1
-  AND route_version = $2
+SELECT COALESCE((
+    SELECT entry_revision
+    FROM control.ingress_routing_table_events
+    WHERE route_id = $1
+      AND route_version = $2
+    ORDER BY routing_table_revision DESC
+    LIMIT 1
+), 0)::bigint
 `
 
 type LatestIngressRoutingEntryRevisionParams struct {

@@ -53,7 +53,7 @@ var (
 
 // Checkpoint is one cumulative ingress-process contribution to a route bucket.
 type Checkpoint struct {
-	PublisherOpenLatency         DurationHistogram
+	VisitorStreamOpenLatency     DurationHistogram
 	TimeToFirstPublisherByte     DurationHistogram
 	SuccessfulConnectionDuration DurationHistogram
 	VisitorNetworks              VisitorSketch
@@ -62,7 +62,7 @@ type Checkpoint struct {
 // Merge combines independent ingress-process checkpoints.
 func (c *Checkpoint) Merge(other Checkpoint) error {
 	for _, pair := range [][2]*DurationHistogram{
-		{&c.PublisherOpenLatency, &other.PublisherOpenLatency},
+		{&c.VisitorStreamOpenLatency, &other.VisitorStreamOpenLatency},
 		{&c.TimeToFirstPublisherByte, &other.TimeToFirstPublisherByte},
 		{&c.SuccessfulConnectionDuration, &other.SuccessfulConnectionDuration},
 	} {
@@ -77,7 +77,7 @@ func (c *Checkpoint) Merge(other Checkpoint) error {
 // MarshalBinary encodes a strict, versioned checkpoint.
 func (c Checkpoint) MarshalBinary() []byte {
 	sections := [4][]byte{
-		c.PublisherOpenLatency.marshalBinary(),
+		c.VisitorStreamOpenLatency.marshalBinary(),
 		c.TimeToFirstPublisherByte.marshalBinary(),
 		c.SuccessfulConnectionDuration.marshalBinary(),
 		c.VisitorNetworks.marshalBinary(),
@@ -115,7 +115,7 @@ func ParseCheckpoint(data []byte) (Checkpoint, error) {
 	if offset != len(data) {
 		return Checkpoint{}, errors.New("routeusage: trailing checkpoint data")
 	}
-	publisherOpenLatency, err := parseDurationHistogram(sections[0])
+	visitorStreamOpenLatency, err := parseDurationHistogram(sections[0])
 	if err != nil {
 		return Checkpoint{}, err
 	}
@@ -132,7 +132,7 @@ func ParseCheckpoint(data []byte) (Checkpoint, error) {
 		return Checkpoint{}, err
 	}
 	return Checkpoint{
-		PublisherOpenLatency: publisherOpenLatency, TimeToFirstPublisherByte: timeToFirstPublisherByte,
+		VisitorStreamOpenLatency: visitorStreamOpenLatency, TimeToFirstPublisherByte: timeToFirstPublisherByte,
 		SuccessfulConnectionDuration: successfulConnectionDuration, VisitorNetworks: visitorNetworks,
 	}, nil
 }

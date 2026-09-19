@@ -47,9 +47,9 @@ type adminRelayDrainCommand struct {
 }
 
 type adminMaintenanceCommands struct {
-	List    adminMaintenanceListCommand `cmd:"" help:"List maintenance controls."`
-	Enable  adminMaintenanceSetCommand  `cmd:"" help:"Enable a maintenance control."`
-	Disable adminMaintenanceSetCommand  `cmd:"" help:"Disable a maintenance control."`
+	List  adminMaintenanceListCommand `cmd:"" help:"List maintenance controls."`
+	Allow adminMaintenanceSetCommand  `cmd:"" help:"Allow the selected operation."`
+	Block adminMaintenanceSetCommand  `cmd:"" help:"Block the selected operation."`
 }
 
 type adminMaintenanceListCommand struct {
@@ -73,9 +73,9 @@ func runAdminServerStatus(ctx context.Context, command adminServerStatusCommand,
 				{Label: "relays", Value: countState(value.RelayLeases, "lease", "leases")},
 			}}),
 			clioutput.Fields(
-				clioutput.Field{Label: "mode", Value: string(value.Mode)},
+				clioutput.Field{Label: "role", Value: string(value.Role)},
 				clioutput.Field{Label: "routes", Value: fmt.Sprintf("%d enabled / %d suspended", value.EnabledRoutes, value.SuspendedRoutes)},
-				clioutput.Field{Label: "sessions", Value: fmt.Sprintf("%d ready / %d starting", value.ReadyRouteSessions, value.StartingRouteSessions)},
+				clioutput.Field{Label: "route sessions", Value: fmt.Sprintf("%d ready / %d starting", value.ReadyRouteSessions, value.StartingRouteSessions)},
 				clioutput.Field{Label: "started", Value: adminTime(value.StartedAt)},
 				clioutput.Field{Label: "current", Value: adminTime(value.CurrentTime)},
 			),
@@ -96,14 +96,14 @@ func runAdminRelaysList(ctx context.Context, command adminRelaysListCommand, std
 				state = "draining"
 			}
 			fields := []clioutput.Field{
-				{Label: "service", Value: string(value.RelayServiceId)},
-				{Label: "run", Value: string(value.RelayRunId)},
-				{Label: "revision", Value: strconv.FormatInt(value.RelayLeaseRevision, 10)},
+				{Label: "relay service", Value: string(value.RelayServiceId)},
+				{Label: "process run", Value: string(value.RelayRunId)},
+				{Label: "lease revision", Value: strconv.FormatInt(value.RelayLeaseRevision, 10)},
 				{Label: "relay address", Value: value.RelayAddress},
 				{Label: "internal address", Value: value.InternalRelayAddress},
-				{Label: "connections", Value: fmt.Sprintf("%d / %d", value.ReportedConnections, value.ConnectionCapacity)},
-				{Label: "streams", Value: fmt.Sprintf("%d / %d", value.ReportedStreams, value.StreamCapacity)},
-				{Label: "expires", Value: adminTime(value.ExpiresAt)},
+				{Label: "publisher connections", Value: fmt.Sprintf("%d / %d", value.ReportedConnections, value.ConnectionCapacity)},
+				{Label: "visitor streams", Value: fmt.Sprintf("%d / %d", value.ReportedStreams, value.StreamCapacity)},
+				{Label: "lease expires", Value: adminTime(value.LeaseExpiresAt)},
 			}
 			if value.DrainDeadline != nil {
 				fields = append(fields, clioutput.Field{Label: "drain deadline", Value: adminTime(*value.DrainDeadline)})
@@ -131,8 +131,8 @@ func runAdminRelayDrain(ctx context.Context, command adminRelayDrainCommand, std
 			footer = "deadline " + adminTime(*lease.DrainDeadline)
 		}
 		return writeHumanTransition(stdout, "tnl admin relays drain", "draining", string(lease.RelayId), "", "rejecting new work", footer,
-			clioutput.Field{Label: "run", Value: string(lease.RelayRunId)},
-			clioutput.Field{Label: "revision", Value: strconv.FormatInt(lease.RelayLeaseRevision, 10)},
+			clioutput.Field{Label: "process run", Value: string(lease.RelayRunId)},
+			clioutput.Field{Label: "lease revision", Value: strconv.FormatInt(lease.RelayLeaseRevision, 10)},
 		)
 	})
 }
@@ -146,8 +146,8 @@ func runAdminMaintenanceList(ctx context.Context, command adminMaintenanceListCo
 		blocks := make([]clioutput.Block, 0, len(values))
 		for _, value := range values {
 			blocks = append(blocks, clioutput.Section(string(value.Name), clioutput.Fields(
-				clioutput.Field{Label: "state", Value: enabledState(value.Enabled)},
-				clioutput.Field{Label: "revision", Value: strconv.FormatInt(value.Revision, 10)},
+				clioutput.Field{Label: "state", Value: allowedState(value.Allowed)},
+				clioutput.Field{Label: "control revision", Value: strconv.FormatInt(value.Revision, 10)},
 				clioutput.Field{Label: "updated", Value: adminTime(value.UpdatedAt)},
 				clioutput.Field{Label: "updated by", Value: string(value.UpdatedBy)},
 			)))
@@ -156,19 +156,19 @@ func runAdminMaintenanceList(ctx context.Context, command adminMaintenanceListCo
 	})
 }
 
-func runAdminMaintenanceSet(ctx context.Context, command adminMaintenanceSetCommand, enabled bool, stdout, stderr io.Writer) error {
-	action := "disable"
-	if enabled {
-		action = "enable"
+func runAdminMaintenanceSet(ctx context.Context, command adminMaintenanceSetCommand, allowed bool, stdout, stderr io.Writer) error {
+	action := "block"
+	if allowed {
+		action = "allow"
 	}
 	commandName := "tnl admin maintenance " + action
 	return withRemoteAdminClient(ctx, command.remoteFlags, commandName, stderr, func(client *controlclient.Client) error {
-		value, err := client.AdminSetMaintenanceControl(ctx, controlv1.MaintenanceControlName(command.Name), enabled)
+		value, err := client.AdminSetMaintenanceControl(ctx, controlv1.MaintenanceControlName(command.Name), allowed)
 		if err != nil {
 			return err
 		}
-		return writeHumanTransition(stdout, commandName, "updated", string(value.Name), "", enabledState(value.Enabled), "",
-			clioutput.Field{Label: "revision", Value: strconv.FormatInt(value.Revision, 10)})
+		return writeHumanTransition(stdout, commandName, "updated", string(value.Name), "", allowedState(value.Allowed), "",
+			clioutput.Field{Label: "control revision", Value: strconv.FormatInt(value.Revision, 10)})
 	})
 }
 

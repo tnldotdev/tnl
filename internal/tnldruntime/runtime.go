@@ -72,7 +72,7 @@ func serveWithRelayClientTLS(
 		return errors.New("ACME and service HTTP clients are required")
 	}
 	clusterSecret := cfg.ClusterSecret
-	if cfg.Mode == tnldconfig.RoleStandalone {
+	if cfg.Role == tnldconfig.RoleStandalone {
 		random := make([]byte, 32)
 		if _, err := rand.Read(random); err != nil {
 			return fmt.Errorf("generate standalone cluster secret: %w", err)
@@ -92,9 +92,9 @@ func serveWithRelayClientTLS(
 	}
 	defer func() { retErr = errors.Join(retErr, d.shutdown(cfg.DrainTimeout)) }()
 
-	metrics := observability.New(string(cfg.Mode))
+	metrics := observability.New(string(cfg.Role))
 
-	if cfg.Mode.RunsControl() {
+	if cfg.Role.RunsControl() {
 		database, err := controlstate.Open(ctx, cfg.DatabaseURL, cfg.StorageKey, cfg.StorageKeyPrevious)
 		if err != nil {
 			return err
@@ -223,7 +223,7 @@ func serveWithRelayClientTLS(
 		}
 	}
 
-	switch cfg.Mode {
+	switch cfg.Role {
 	case tnldconfig.RoleRelay:
 		settings := relayProcessSettingsFrom(cfg)
 		settings.transportTLS, err = relayTLSConfig(cfg, nil)
@@ -267,7 +267,7 @@ func serveWithRelayClientTLS(
 		handler := observability.ProcessHandler(metrics.Handler(), func() bool {
 			readyCtx, cancel := context.WithTimeout(lifetime, 2*time.Second)
 			defer cancel()
-			return d.ready(readyCtx, cfg.Mode, time.Now()) == nil
+			return d.ready(readyCtx, cfg.Role, time.Now()) == nil
 		})
 		server, err := observability.Listen(cfg.MetricsListen, withDatabaseDiagnostics(handler, d.database))
 		if err != nil {

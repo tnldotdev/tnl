@@ -34,10 +34,10 @@ WHERE route_session_id = sqlc.arg(route_session_id)
 ORDER BY connection_slot;
 
 -- name: LockRouteSessionCreationControl :one
-SELECT enabled
+SELECT allowed
 FROM control.maintenance_controls
 WHERE control_name = 'route_session_creation'
-FOR UPDATE;
+FOR SHARE;
 
 -- name: AllocateRouteVersion :one
 UPDATE control.routes

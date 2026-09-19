@@ -123,7 +123,7 @@ func startIntegrationProcessWithOptions(t *testing.T, cfg tnldconfig.Config, opt
 		options.serviceHTTPClient = &http.Client{Timeout: 10 * time.Second}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	name := string(cfg.Mode)
+	name := string(cfg.Role)
 	if cfg.IngressID != "" {
 		name += " " + cfg.IngressID
 	}
@@ -132,7 +132,7 @@ func startIntegrationProcessWithOptions(t *testing.T, cfg tnldconfig.Config, opt
 	}
 	process := &integrationProcess{cancel: cancel, done: make(chan struct{}), metricsAddress: cfg.MetricsListen, name: name}
 	if options.owner != nil {
-		options.owner.own(cfg.Mode, process)
+		options.owner.own(cfg.Role, process)
 	} else {
 		t.Cleanup(func() {
 			process.cancel()
@@ -296,8 +296,8 @@ func unusedUDPAddress(t *testing.T) string {
 
 func splitTestConfig(role tnldconfig.Role, metricsAddress string) tnldconfig.Config {
 	return tnldconfig.Config{
-		Mode: role, MetricsListen: metricsAddress,
-		PublicConnectionLimit: 100, RouteConnectionLimit: 10, PublisherConnectionLimit: 10,
+		Role: role, MetricsListen: metricsAddress,
+		VisitorConnectionLimit: 100, RouteConnectionLimit: 10, PublisherConnectionLimit: 10,
 		RelayStreamCapacity: 100, QUICMaxIncomingStreams: 100, QUICIdleTimeout: time.Minute,
 		IngressLeaseDuration: 2 * time.Second,
 		RelayLeaseDuration:   2 * time.Second, LeaseRenewalInterval: 500 * time.Millisecond,

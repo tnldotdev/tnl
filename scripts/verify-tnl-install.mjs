@@ -82,7 +82,7 @@ async function verifyPackageManager(packageManager, registryURL) {
       path.join(consumer, "verify-config.mjs"),
       `import assert from "node:assert/strict";
 import { defineConfig } from "@tnldotdev/tnl/config";
-const config = { tunnel: { public: true } };
+const config = { tunnel: { allowAllIPs: true } };
 assert.equal(defineConfig(config), config);
 `,
     );

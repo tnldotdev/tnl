@@ -722,7 +722,7 @@ CREATE TABLE control.ingress_usage_reports (
     connection_attempts bigint NOT NULL CHECK (connection_attempts >= 0),
     policy_denials bigint NOT NULL CHECK (policy_denials >= 0),
     capacity_denials bigint NOT NULL CHECK (capacity_denials >= 0),
-    publisher_open_failures bigint NOT NULL CHECK (publisher_open_failures >= 0),
+    visitor_stream_open_failures bigint NOT NULL CHECK (visitor_stream_open_failures >= 0),
     successful_streams bigint NOT NULL CHECK (successful_streams >= 0),
     connection_nanoseconds bigint NOT NULL CHECK (connection_nanoseconds >= 0),
     ingress_bytes bigint NOT NULL CHECK (ingress_bytes >= 0),
@@ -753,7 +753,7 @@ CREATE TABLE control.route_usage_buckets (
     connection_attempts bigint NOT NULL DEFAULT 0 CHECK (connection_attempts >= 0),
     policy_denials bigint NOT NULL DEFAULT 0 CHECK (policy_denials >= 0),
     capacity_denials bigint NOT NULL DEFAULT 0 CHECK (capacity_denials >= 0),
-    publisher_open_failures bigint NOT NULL DEFAULT 0 CHECK (publisher_open_failures >= 0),
+    visitor_stream_open_failures bigint NOT NULL DEFAULT 0 CHECK (visitor_stream_open_failures >= 0),
     successful_streams bigint NOT NULL DEFAULT 0 CHECK (successful_streams >= 0),
     connection_nanoseconds bigint NOT NULL DEFAULT 0 CHECK (connection_nanoseconds >= 0),
     ingress_bytes bigint NOT NULL DEFAULT 0 CHECK (ingress_bytes >= 0),
@@ -802,7 +802,7 @@ CREATE INDEX route_usage_deliveries_available
     WHERE state <> 'delivered';
 
 CREATE TABLE control.route_recovery_episodes (
-    episode_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    recovery_episode_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     route_id text NOT NULL REFERENCES control.routes(id) ON DELETE RESTRICT,
     route_version bigint NOT NULL CHECK (route_version >= 1),
     state text NOT NULL CHECK (state IN ('open', 'observed', 'canceled')),
@@ -855,7 +855,7 @@ VALUES (true, now());
 
 CREATE TABLE control.maintenance_controls (
     control_name text PRIMARY KEY CHECK (control_name IN ('route_creation', 'route_session_creation', 'certificate_issuance')),
-    enabled boolean NOT NULL,
+    allowed boolean NOT NULL,
     revision bigint NOT NULL CHECK (revision >= 1),
     updated_at timestamptz NOT NULL,
     updated_by text NOT NULL CHECK (updated_by <> '')
@@ -863,7 +863,7 @@ CREATE TABLE control.maintenance_controls (
 
 INSERT INTO control.maintenance_controls (
     control_name,
-    enabled,
+    allowed,
     revision,
     updated_at,
     updated_by

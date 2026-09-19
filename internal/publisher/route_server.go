@@ -250,7 +250,7 @@ func (r *RouteServer) ServePublisherConnection(
 		return err
 	}
 	for {
-		incoming, err := session.AcceptPublisherStream(ctx)
+		incoming, err := session.AcceptVisitorStream(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil
@@ -290,7 +290,7 @@ func (r *RouteServer) ServePublisherConnection(
 }
 
 func (r *RouteServer) validateIncomingRoute(
-	header tunnelv1.PublisherStreamHeader,
+	header tunnelv1.VisitorStreamHeader,
 	ref tunnelv1.PublisherConnectionRef,
 ) tunnelv1.ErrorCode {
 	if header.RouteID != ref.RouteID || header.RouteSessionID != ref.RouteSessionID ||

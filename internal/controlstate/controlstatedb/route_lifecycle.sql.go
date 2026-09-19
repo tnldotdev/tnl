@@ -18,7 +18,7 @@ SET state = 'canceled',
 WHERE route_id = $2
   AND route_version = $3
   AND state = 'open'
-RETURNING episode_id, route_id, route_version, state, opened_at, observed_at, canceled_at, observed_seconds
+RETURNING recovery_episode_id, route_id, route_version, state, opened_at, observed_at, canceled_at, observed_seconds
 `
 
 type CancelOpenRouteRecoveryEpisodeParams struct {
@@ -31,7 +31,7 @@ func (q *Queries) CancelOpenRouteRecoveryEpisode(ctx context.Context, arg Cancel
 	row := q.db.QueryRow(ctx, cancelOpenRouteRecoveryEpisode, arg.CanceledAt, arg.RouteID, arg.RouteVersion)
 	var i ControlRouteRecoveryEpisode
 	err := row.Scan(
-		&i.EpisodeID,
+		&i.RecoveryEpisodeID,
 		&i.RouteID,
 		&i.RouteVersion,
 		&i.State,
@@ -97,7 +97,7 @@ func (q *Queries) ExpirePublisherConnection(ctx context.Context, arg ExpirePubli
 }
 
 const getOpenRouteRecoveryEpisode = `-- name: GetOpenRouteRecoveryEpisode :one
-SELECT episode_id, route_id, route_version, state, opened_at, observed_at, canceled_at, observed_seconds
+SELECT recovery_episode_id, route_id, route_version, state, opened_at, observed_at, canceled_at, observed_seconds
 FROM control.route_recovery_episodes
 WHERE route_id = $1
   AND route_version = $2
@@ -113,7 +113,7 @@ func (q *Queries) GetOpenRouteRecoveryEpisode(ctx context.Context, arg GetOpenRo
 	row := q.db.QueryRow(ctx, getOpenRouteRecoveryEpisode, arg.RouteID, arg.RouteVersion)
 	var i ControlRouteRecoveryEpisode
 	err := row.Scan(
-		&i.EpisodeID,
+		&i.RecoveryEpisodeID,
 		&i.RouteID,
 		&i.RouteVersion,
 		&i.State,
@@ -251,6 +251,9 @@ WHERE connections.route_session_id = $1
   AND connections.state = 'ready'
   AND relays.lease_expires_at > $2
   AND NOT relays.draining
+  AND relays.protocol_version = 1
+  AND relays.connection_capacity > 0
+  AND relays.stream_capacity > 0
   AND services.enabled
 ORDER BY connections.connection_slot
 `
@@ -374,17 +377,17 @@ func (q *Queries) LockInvalidReadyPublisherConnections(ctx context.Context, now 
 }
 
 const lockRouteRecoveryEpisode = `-- name: LockRouteRecoveryEpisode :one
-SELECT episode_id, route_id, route_version, state, opened_at, observed_at, canceled_at, observed_seconds
+SELECT recovery_episode_id, route_id, route_version, state, opened_at, observed_at, canceled_at, observed_seconds
 FROM control.route_recovery_episodes
-WHERE episode_id = $1
+WHERE recovery_episode_id = $1
 FOR UPDATE
 `
 
-func (q *Queries) LockRouteRecoveryEpisode(ctx context.Context, episodeID int64) (ControlRouteRecoveryEpisode, error) {
-	row := q.db.QueryRow(ctx, lockRouteRecoveryEpisode, episodeID)
+func (q *Queries) LockRouteRecoveryEpisode(ctx context.Context, recoveryEpisodeID int64) (ControlRouteRecoveryEpisode, error) {
+	row := q.db.QueryRow(ctx, lockRouteRecoveryEpisode, recoveryEpisodeID)
 	var i ControlRouteRecoveryEpisode
 	err := row.Scan(
-		&i.EpisodeID,
+		&i.RecoveryEpisodeID,
 		&i.RouteID,
 		&i.RouteVersion,
 		&i.State,
@@ -571,32 +574,32 @@ UPDATE control.route_recovery_episodes
 SET state = 'observed',
     observed_at = $1,
     observed_seconds = $2
-WHERE episode_id = $3
+WHERE recovery_episode_id = $3
   AND route_id = $4
   AND route_version = $5
   AND state = 'open'
-RETURNING episode_id, route_id, route_version, state, opened_at, observed_at, canceled_at, observed_seconds
+RETURNING recovery_episode_id, route_id, route_version, state, opened_at, observed_at, canceled_at, observed_seconds
 `
 
 type ObserveRouteRecoveryEpisodeParams struct {
-	ObservedAt      pgtype.Timestamptz
-	ObservedSeconds pgtype.Float8
-	EpisodeID       int64
-	RouteID         string
-	RouteVersion    int64
+	ObservedAt        pgtype.Timestamptz
+	ObservedSeconds   pgtype.Float8
+	RecoveryEpisodeID int64
+	RouteID           string
+	RouteVersion      int64
 }
 
 func (q *Queries) ObserveRouteRecoveryEpisode(ctx context.Context, arg ObserveRouteRecoveryEpisodeParams) (ControlRouteRecoveryEpisode, error) {
 	row := q.db.QueryRow(ctx, observeRouteRecoveryEpisode,
 		arg.ObservedAt,
 		arg.ObservedSeconds,
-		arg.EpisodeID,
+		arg.RecoveryEpisodeID,
 		arg.RouteID,
 		arg.RouteVersion,
 	)
 	var i ControlRouteRecoveryEpisode
 	err := row.Scan(
-		&i.EpisodeID,
+		&i.RecoveryEpisodeID,
 		&i.RouteID,
 		&i.RouteVersion,
 		&i.State,

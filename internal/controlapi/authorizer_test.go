@@ -31,7 +31,7 @@ func TestHostedAuthorizerSendsServiceSecretAndReturnsControlDecision(t *testing.
 		received <- observedRequest{request.Method, request.URL.Path, request.Header.Get("Authorization"), body, err}
 		writeJSON(response, http.StatusOK, authorityv1.ServiceAuthorizationDecision{
 			IdentityId: "identity_1", TeamId: "team_1", ActingMembershipId: "membership_1",
-			ActingRole: authorityv1.TeamRoleOwner, RouteMembershipId: pointer("membership_1"), TeamPolicyRevision: 4,
+			ActingRole: authorityv1.TeamRoleOwner, RouteMembershipId: pointer("membership_1"), PolicyRevision: 4,
 			DomainId: "domain_1", CanonicalHostname: "api.example.test", RouteScope: authorityv1.RouteScopeMember,
 			DnsAuthorityReference: "dns_authority_1", CertificatePlan: &authorityv1.CertificatePlan{
 				CacheKey: "example.test", Scope: "example.test", Identifiers: []string{"example.test", "*.example.test"},
@@ -72,7 +72,7 @@ func TestHostedAuthorizerSendsServiceSecretAndReturnsControlDecision(t *testing.
 	case <-time.After(time.Second):
 		t.Fatal("authority received no authorization request")
 	}
-	if decision.IdentityID != "identity_1" || decision.TeamPolicyRevision != 4 ||
+	if decision.IdentityID != "identity_1" || decision.PolicyRevision != 4 ||
 		decision.CertificatePlan == nil || decision.CertificatePlan.ChallengeMethod != "dns-01" ||
 		decision.RetrySecret != retrySecret {
 		t.Fatalf("decision = %#v", decision)
@@ -134,7 +134,7 @@ func TestLocalAuthorizerUsesCurrentMembershipAndDomain(t *testing.T) {
 		t.Fatal(err)
 	}
 	if decision.IdentityID != "identity_1" || decision.ActingMembershipID != "membership_1" ||
-		decision.TeamPolicyRevision != 7 || decision.RetrySecret != retrySecret {
+		decision.PolicyRevision != 7 || decision.RetrySecret != retrySecret {
 		t.Fatalf("decision = %#v", decision)
 	}
 	store.authenticationError = controlstate.ErrControlAuthentication

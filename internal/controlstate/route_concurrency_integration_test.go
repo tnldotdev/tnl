@@ -152,3 +152,89 @@ func TestIntegrationRouteCreatorLockPreservesIdentityProtection(t *testing.T) {
 		})
 	}
 }
+
+func TestIntegrationTeamCreationIdentityLockAvoidsDomainForeignKeyCycle(t *testing.T) {
+	database, now := newControlStateIntegrationDatabase(t, "team_creator_domain_fk")
+	session := newBuiltinSession(t, database, now)
+	identity := session.Identity.Identity.ID
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	gate, err := database.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rollbackTestTransaction(t, gate)
+	if _, err := gate.Exec(ctx, `SELECT id FROM control.domains WHERE kind = 'managed' FOR UPDATE`); err != nil {
+		t.Fatal(err)
+	}
+	workers := newIntegrationWorkers(t, cancel)
+	created := make(chan error, 1)
+	workers.Go(func() {
+		_, err := database.CreateTeam(ctx, authorityTeamRequest(identity), now)
+		created <- err
+	})
+	waitForPostgresBlock(t, ctx, database, int32(gate.Conn().PgConn().PID()), created)
+	if _, err := gate.Exec(ctx, `SET LOCAL lock_timeout = '100ms'`); err != nil {
+		t.Fatal(err)
+	}
+	// This models an identity foreign-key check performed by domain work while
+	// team creation is waiting on the domain row.
+	if _, err := gate.Exec(ctx, `SELECT id FROM control.identities WHERE id = $1 FOR KEY SHARE`, identity); err != nil {
+		t.Fatalf("team creator blocked domain identity foreign-key work: %v", err)
+	}
+	if err := gate.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := awaitIntegrationResult(t, ctx, created); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestIntegrationTeamCreatorLockPreservesIdentityProtection(t *testing.T) {
+	database, now := newControlStateIntegrationDatabase(t, "team_creator_lock")
+	session := newBuiltinSession(t, database, now)
+	identity := session.Identity.Identity.ID
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	owner, err := database.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rollbackTestTransaction(t, owner)
+	if _, err := controlstatedb.New(owner).LockIdentityForTeamCreation(ctx, identity); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name, statement string
+		blocked         bool
+	}{
+		{"foreign_key_check", `SELECT id FROM control.identities WHERE id = $1 FOR KEY SHARE`, false},
+		{"another_creator", "", true},
+		{"disable", `UPDATE control.identities SET disabled_at = now() WHERE id = $1`, true},
+		{"delete", `DELETE FROM control.identities WHERE id = $1`, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			other, err := database.pool.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer rollbackTestTransaction(t, other)
+			if _, err := other.Exec(ctx, `SET LOCAL lock_timeout = '100ms'`); err != nil {
+				t.Fatal(err)
+			}
+			if test.statement == "" {
+				_, err = controlstatedb.New(other).LockIdentityForTeamCreation(ctx, identity)
+			} else {
+				_, err = other.Exec(ctx, test.statement, identity)
+			}
+			var postgresError *pgconn.PgError
+			if test.blocked {
+				if !errors.As(err, &postgresError) || postgresError.Code != "55P03" {
+					t.Fatalf("identity mutation was not blocked by the team creator: %v", err)
+				}
+			} else if err != nil {
+				t.Fatalf("identity foreign-key check was blocked: %v", err)
+			}
+		})
+	}
+}

@@ -108,7 +108,7 @@ func TestFlyMachineRunUsesOneControlledCommand(t *testing.T) {
 	platform := flyPlatform{binary: "fly", region: "sjc", executor: executor}
 	machine, err := platform.runMachine(t.Context(), machineSpec{
 		App: "relay-app", Name: "relay-a-1", Image: "registry/image:tag", Command: "/tnld serve",
-		Size: "performance-1x", Restart: "always", Env: map[string]string{"TNLD_MODE": "relay"},
+		Size: "performance-1x", Restart: "always", Env: map[string]string{"TNLD_ROLE": "relay"},
 		Ports: []string{"443:443/tcp", "443:443/udp"}, Volumes: []string{"vol_state:/state"},
 	})
 	if err != nil {

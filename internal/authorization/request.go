@@ -69,7 +69,7 @@ type Decision struct {
 	ActingMembershipID    string
 	ActingRole            string
 	RouteMembershipID     string
-	TeamPolicyRevision    uint64
+	PolicyRevision        uint64
 	DomainID              string
 	CanonicalHostname     string
 	RouteScope            string

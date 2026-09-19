@@ -105,7 +105,7 @@ func TestPublishOutputHumanPrintsURLOnce(t *testing.T) {
 	if stdout.Len() != 0 || !strings.HasPrefix(stderr.String(), "+--[ tnl publish ]-- ready ") ||
 		strings.Count(stderr.String(), "]-- ready ") != 1 ||
 		strings.Count(stderr.String(), "https://demo.example") != 1 ||
-		!strings.Contains(stderr.String(), "IP policy") || !strings.Contains(stderr.String(), "2001:db8::1") ||
+		!strings.Contains(stderr.String(), "automatically allowed IP") || !strings.Contains(stderr.String(), "2001:db8::1") ||
 		!strings.Contains(stderr.String(), "+-- opened in browser; ctrl+c to stop ") {
 		t.Fatalf("stdout = %q, stderr = %q", stdout.String(), stderr.String())
 	}

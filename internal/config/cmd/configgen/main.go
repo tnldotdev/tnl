@@ -90,10 +90,12 @@ func schemaForType(valueType reflect.Type) *jsonschema.Schema {
 
 func servicesSchema() *jsonschema.Schema {
 	properties := jsonschema.NewProperties()
-	properties.Set("directory", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1)})
-	properties.Set("server", &jsonschema.Schema{Type: "string"})
-	properties.Set("team", &jsonschema.Schema{Type: "string"})
-	properties.Set("tunnel", tunnelSchema())
+	properties.Set("directory", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1), Description: "Service directory relative to the project configuration."})
+	properties.Set("server", &jsonschema.Schema{Type: "string", Description: "Control URL override for this service."})
+	properties.Set("team", &jsonschema.Schema{Type: "string", Description: "Team override for this service."})
+	tunnel := tunnelSchema()
+	tunnel.Description = "Route and tunnel overrides for this service."
+	properties.Set("tunnel", tunnel)
 	properties.Set("publish", &jsonschema.Schema{Ref: "#/$defs/Publish"})
 	properties.Set("dev", &jsonschema.Schema{Ref: "#/$defs/Dev"})
 	service := &jsonschema.Schema{
@@ -108,21 +110,22 @@ func servicesSchema() *jsonschema.Schema {
 
 func tunnelSchema() *jsonschema.Schema {
 	properties := jsonschema.NewProperties()
-	properties.Set("host", &jsonschema.Schema{Type: "string"})
-	properties.Set("subdomain", &jsonschema.Schema{Type: "string"})
+	properties.Set("host", &jsonschema.Schema{Type: "string", Description: "Complete route hostname to publish."})
+	properties.Set("subdomain", &jsonschema.Schema{Type: "string", Description: "One DNS label beneath the current member namespace."})
 	properties.Set("allow_ip", &jsonschema.Schema{
 		Type: "array", Items: &jsonschema.Schema{Type: "string"}, MaxItems: integerPointer(63), UniqueItems: true,
+		Description: "Visitor IP addresses or prefixes allowed to use the route; the current client IP is added automatically.",
 	})
-	properties.Set("public", &jsonschema.Schema{Type: "boolean"})
-	properties.Set("ephemeral", &jsonschema.Schema{Type: "boolean"})
-	publicProperties := jsonschema.NewProperties()
-	publicProperties.Set("public", &jsonschema.Schema{Const: true})
+	properties.Set("allow_all_ips", &jsonschema.Schema{Type: "boolean", Description: "Allow visitors from every IP address."})
+	properties.Set("ephemeral", &jsonschema.Schema{Type: "boolean", Description: "Remove the route when this tunnel stops."})
+	allowAllProperties := jsonschema.NewProperties()
+	allowAllProperties.Set("allow_all_ips", &jsonschema.Schema{Const: true})
 	return &jsonschema.Schema{
 		Type: "object", Properties: properties, AdditionalProperties: jsonschema.FalseSchema,
 		AllOf: []*jsonschema.Schema{
 			{Not: &jsonschema.Schema{Required: []string{"host", "subdomain"}}},
 			{
-				If:   &jsonschema.Schema{Properties: publicProperties, Required: []string{"public"}},
+				If:   &jsonschema.Schema{Properties: allowAllProperties, Required: []string{"allow_all_ips"}},
 				Then: &jsonschema.Schema{Not: &jsonschema.Schema{Required: []string{"allow_ip"}}},
 			},
 		},

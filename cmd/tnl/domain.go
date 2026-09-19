@@ -41,7 +41,7 @@ type domainReleaseCommand struct {
 func runDomainClaim(ctx context.Context, command domainClaimCommand, output, diagnostics io.Writer) error {
 	domain, err := naming.CanonicalizeHostname(command.Domain)
 	if err != nil || domain != command.Domain {
-		return errors.New("domain must be a canonical hostname")
+		return errors.New("domain must use lowercase ASCII DNS labels without a trailing dot")
 	}
 	session, err := openTeamSession(ctx, command.remoteFlags, "tnl domain claim", diagnostics)
 	if err != nil {

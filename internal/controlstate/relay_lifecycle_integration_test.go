@@ -98,6 +98,10 @@ func TestIntegrationRelayLifecycleServiceBeforeLeaseLocks(t *testing.T) {
 		t.Run(operation, func(t *testing.T) {
 			database, now := newRelayLifecycleDatabase(t)
 			setup, registrations := newRelayLifecycleSession(t, database, now)
+			heartbeatAt := now
+			if operation == "placement" {
+				heartbeatAt = now.Add(2 * time.Minute)
+			}
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
 			gate, err := database.pool.Begin(ctx)
@@ -140,7 +144,7 @@ func TestIntegrationRelayLifecycleServiceBeforeLeaseLocks(t *testing.T) {
 					_, err = database.HeartbeatRouteSession(ctx, RouteSessionAuthentication{
 						RouteSessionID: setup.RouteSessionID, RouteID: setup.RouteID,
 						RouteVersion: setup.RouteVersion, RouteSessionToken: setup.RouteSessionToken,
-					}, now, time.Hour, time.Minute)
+					}, heartbeatAt, time.Hour, time.Minute)
 				}
 				completed <- err
 			})

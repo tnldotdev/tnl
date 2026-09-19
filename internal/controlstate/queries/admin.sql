@@ -43,7 +43,7 @@ ORDER BY control_name;
 
 -- name: SetMaintenanceControl :one
 UPDATE control.maintenance_controls
-SET enabled = sqlc.arg(enabled),
+SET allowed = sqlc.arg(allowed),
     revision = revision + 1,
     updated_at = sqlc.arg(updated_at),
     updated_by = sqlc.arg(updated_by)

@@ -43,8 +43,8 @@ func runRouteList(ctx context.Context, command routeListCommand, output, diagnos
 		blocks = append(blocks, clioutput.Section(route.CanonicalHostname, clioutput.Fields(
 			clioutput.Field{Label: "scope", Value: string(route.RouteScope)},
 			clioutput.Field{Label: "state", Value: string(route.LifecycleState)},
-			clioutput.Field{Label: "route version", Value: strconv.FormatInt(route.NextRouteVersion, 10)},
-			clioutput.Field{Label: "id", Value: route.Id},
+			clioutput.Field{Label: "next route version", Value: strconv.FormatInt(route.NextRouteVersion, 10)},
+			clioutput.Field{Label: "route ID", Value: route.Id},
 		)))
 	}
 	return writeHumanFrame(output, "tnl route list", countState(len(blocks), "route", "routes"), "", blocks...)

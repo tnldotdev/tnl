@@ -1207,7 +1207,7 @@ SELECT id
 FROM control.identities
 WHERE id = $1
   AND disabled_at IS NULL
-FOR UPDATE
+FOR NO KEY UPDATE
 `
 
 func (q *Queries) LockIdentityForTeamCreation(ctx context.Context, identityID string) (string, error) {

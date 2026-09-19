@@ -17,10 +17,10 @@ func TestIntegrationRouteRecovery(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	var episodeID int64
+	var recoveryEpisodeID int64
 	var openedAt time.Time
-	if err := database.pool.QueryRow(t.Context(), `SELECT episode_id, opened_at FROM control.route_recovery_episodes
-		WHERE route_id = $1 AND route_version = $2 AND state = 'open'`, f.setup.RouteID, f.setup.RouteVersion).Scan(&episodeID, &openedAt); err != nil {
+	if err := database.pool.QueryRow(t.Context(), `SELECT recovery_episode_id, opened_at FROM control.route_recovery_episodes
+		WHERE route_id = $1 AND route_version = $2 AND state = 'open'`, f.setup.RouteID, f.setup.RouteVersion).Scan(&recoveryEpisodeID, &openedAt); err != nil {
 		t.Fatal(err)
 	}
 	replenishAt := now.Add(3 * time.Second)
@@ -48,17 +48,17 @@ func TestIntegrationRouteRecovery(t *testing.T) {
 	if err := json.Unmarshal(payload, &projection); err != nil {
 		t.Fatal(err)
 	}
-	if projection.RecoveryEpisodeID == nil || *projection.RecoveryEpisodeID != uint64(episodeID) ||
+	if projection.RecoveryEpisodeID == nil || *projection.RecoveryEpisodeID != uint64(recoveryEpisodeID) ||
 		len(projection.PublisherConnections) != 1 || projection.RouteVersion != f.setup.RouteVersion {
 		t.Fatalf("recovered projection = %#v", projection)
 	}
 	observedAt := recoveredAt.Add(750 * time.Millisecond)
 	wantSeconds := observedAt.Sub(openedAt).Seconds()
-	observation, err := database.ObserveRouteRecovery(t.Context(), ingress.IngressLeaseIdentity, f.setup.RouteID, f.setup.RouteVersion, uint64(episodeID), observedAt)
+	observation, err := database.ObserveRouteRecovery(t.Context(), ingress.IngressLeaseIdentity, f.setup.RouteID, f.setup.RouteVersion, uint64(recoveryEpisodeID), observedAt)
 	if err != nil || observation.ObservedSeconds != wantSeconds {
 		t.Fatalf("recovery observation = %#v, %v", observation, err)
 	}
-	repeated, err := database.ObserveRouteRecovery(t.Context(), ingress.IngressLeaseIdentity, f.setup.RouteID, f.setup.RouteVersion, uint64(episodeID), observedAt.Add(time.Second))
+	repeated, err := database.ObserveRouteRecovery(t.Context(), ingress.IngressLeaseIdentity, f.setup.RouteID, f.setup.RouteVersion, uint64(recoveryEpisodeID), observedAt.Add(time.Second))
 	if err != nil || !reflect.DeepEqual(repeated, observation) {
 		t.Fatalf("observation replay = %#v, %v", repeated, err)
 	}

@@ -35,21 +35,21 @@ func TestAdminHandlersExposeDurableState(t *testing.T) {
 			NextCursor: "relay_1",
 		},
 		controls: []controlstate.MaintenanceControl{{
-			Name: controlstate.MaintenanceControlRouteCreation, Enabled: true, Revision: 1,
+			Name: controlstate.MaintenanceControlRouteCreation, Allowed: true, Revision: 1,
 			UpdatedAt: now, UpdatedBy: "identity_admin",
 		}},
 	}
 	store.drained = store.relayPage.Relays[0]
 	store.drained.Draining = true
 	store.drained.DrainDeadline = &deadline
-	handler := NewHandler(Config{Mode: "control", StartedAt: now.Add(-time.Hour)}, store, store, func(context.Context) error { return nil })
+	handler := NewHandler(Config{Role: "control", StartedAt: now.Add(-time.Hour)}, store, store, func(context.Context) error { return nil })
 
 	status := serveAdminRequest(handler, http.MethodGet, "/v1/admin/status", "")
 	if status.Code != http.StatusOK {
 		t.Fatalf("status = %d: %s", status.Code, status.Body.String())
 	}
 	var statusBody controlv1.AdminServerStatus
-	if err := json.Unmarshal(status.Body.Bytes(), &statusBody); err != nil || statusBody.RelayLeases != 6 || statusBody.Mode != controlv1.Control {
+	if err := json.Unmarshal(status.Body.Bytes(), &statusBody); err != nil || statusBody.RelayLeases != 6 || statusBody.Role != controlv1.Control {
 		t.Fatalf("status body = %#v, %v", statusBody, err)
 	}
 
@@ -69,10 +69,10 @@ func TestAdminHandlersExposeDurableState(t *testing.T) {
 	if controls.Code != http.StatusOK || !strings.Contains(controls.Body.String(), `"name":"route_creation"`) {
 		t.Fatalf("maintenance controls = %d: %s", controls.Code, controls.Body.String())
 	}
-	set := serveAdminRequest(handler, http.MethodPut, "/v1/admin/maintenance-controls/route_creation", `{"enabled":false}`)
+	set := serveAdminRequest(handler, http.MethodPut, "/v1/admin/maintenance-controls/route_creation", `{"allowed":false}`)
 	if set.Code != http.StatusOK || store.setName != controlstate.MaintenanceControlRouteCreation ||
-		store.setEnabled || store.setActor != "identity_admin" || store.setRequestID == "" {
-		t.Fatalf("set maintenance control = %d, %q, %t: %s", set.Code, store.setName, store.setEnabled, set.Body.String())
+		store.setAllowed || store.setActor != "identity_admin" || store.setRequestID == "" {
+		t.Fatalf("set maintenance control = %d, %q, %t: %s", set.Code, store.setName, store.setAllowed, set.Body.String())
 	}
 }
 
@@ -109,7 +109,7 @@ type adminStoreStub struct {
 	drainRequestID string
 	controls       []controlstate.MaintenanceControl
 	setName        controlstate.MaintenanceControlName
-	setEnabled     bool
+	setAllowed     bool
 	setActor       string
 	setRequestID   string
 }
@@ -148,12 +148,12 @@ func (s *adminStoreStub) ListMaintenanceControls(context.Context) ([]controlstat
 func (s *adminStoreStub) SetMaintenanceControl(
 	_ context.Context,
 	name controlstate.MaintenanceControlName,
-	enabled bool,
+	allowed bool,
 	actorIdentityID, requestID string,
 	_ time.Time,
 ) (controlstate.MaintenanceControl, error) {
-	s.setName, s.setEnabled, s.setActor, s.setRequestID = name, enabled, actorIdentityID, requestID
+	s.setName, s.setAllowed, s.setActor, s.setRequestID = name, allowed, actorIdentityID, requestID
 	return controlstate.MaintenanceControl{
-		Name: name, Enabled: enabled, Revision: 2, UpdatedAt: time.Now(), UpdatedBy: actorIdentityID,
+		Name: name, Allowed: allowed, Revision: 2, UpdatedAt: time.Now(), UpdatedBy: actorIdentityID,
 	}, nil
 }

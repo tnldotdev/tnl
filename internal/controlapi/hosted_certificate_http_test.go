@@ -85,7 +85,7 @@ func TestIntegrationHostedCertificateIssuanceHTTP(t *testing.T) {
 			decision := authorityv1.ServiceAuthorizationDecision{
 				IdentityId: "external_identity", TeamId: request.TeamId, DomainId: request.DomainId,
 				ActingMembershipId: membershipID, RouteMembershipId: &membershipID, ActingRole: authorityv1.TeamRoleMember,
-				TeamPolicyRevision: 1, CanonicalHostname: hostname, RouteScope: authorityv1.RouteScopeMember,
+				PolicyRevision: 1, CanonicalHostname: hostname, RouteScope: authorityv1.RouteScopeMember,
 				DnsAuthorityReference: "managed:routes.example.test",
 			}
 			if request.Operation == authorityv1.RouteSessionCreate {

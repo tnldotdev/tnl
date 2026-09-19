@@ -106,9 +106,9 @@ func TestRouteServerClosesStreamAfterMalformedProxyHeader(t *testing.T) {
 	}
 	var buffer [1]byte
 	if _, err := relay.Read(buffer[:]); err == nil {
-		t.Fatal("malformed publisher stream remained open")
+		t.Fatal("malformed visitor stream remained open")
 	} else if networkError, ok := err.(net.Error); ok && networkError.Timeout() {
-		t.Fatal("malformed publisher stream was not closed")
+		t.Fatal("malformed visitor stream was not closed")
 	}
 }
 
@@ -219,7 +219,7 @@ func TestRouteServerServesTransportNeutralPublisherConnection(t *testing.T) {
 		awaitPublisherTest(t, serveDone)
 	})
 
-	stream, err := acceptedRelay.session.OpenPublisherStream(ctx, tunnelv1.PublisherStreamHeader{
+	stream, err := acceptedRelay.session.OpenVisitorStream(ctx, tunnelv1.VisitorStreamHeader{
 		ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.VisitorStream,
 		VisitorConnectionID: "visitor_connection_1", RouteID: ref.RouteID,
 		RouteSessionID: ref.RouteSessionID, RouteVersion: ref.RouteVersion,

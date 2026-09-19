@@ -16,7 +16,7 @@ client.$defs = {
 };
 renameProperties(client, keys);
 
-const generated = await compile(client, "TNL", {
+const generated = await compile(client, "TnlConfig", {
   bannerComment: "",
   format: false,
   style: { singleQuote: false },
@@ -41,9 +41,9 @@ export interface TnlConfigContext {
 
 export type TnlConfigFactory = (
   context: TnlConfigContext,
-) => TNL | Promise<TNL>;
+) => TnlConfig | Promise<TnlConfig>;
 
-export type TnlConfigInput = TNL | TnlConfigFactory;
+export type TnlConfigInput = TnlConfig | TnlConfigFactory;
 
 /** Adds type checking to a version-1 tnl.config.ts configuration. */
 export declare function defineConfig<const Config extends TnlConfigInput>(config: Config): Config;

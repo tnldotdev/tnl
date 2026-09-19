@@ -104,12 +104,12 @@ components:
         - acting_identity_id
         - resolution
         - bucket_start
-        - revision
+        - report_revision
         - observed_through
         - connection_attempts
         - policy_denials
         - capacity_denials
-        - publisher_open_failures
+        - visitor_stream_open_failures
         - successful_streams
         - connection_nanoseconds
         - ingress_bytes
@@ -138,7 +138,7 @@ components:
         bucket_start:
           type: string
           format: date-time
-        revision:
+        report_revision:
           $ref: "#/components/schemas/PositiveInteger"
         observed_through:
           type: string
@@ -153,12 +153,12 @@ components:
         capacity_denials:
           $ref: "#/components/schemas/UnsignedInteger"
           description: Matched attempts rejected by the route connection limit.
-        publisher_open_failures:
+        visitor_stream_open_failures:
           $ref: "#/components/schemas/UnsignedInteger"
-          description: Attempts for which opening a publisher stream failed.
+          description: Attempts for which opening a visitor stream failed.
         successful_streams:
           $ref: "#/components/schemas/UnsignedInteger"
-          description: Publisher streams that entered bidirectional forwarding.
+          description: Visitor streams that entered bidirectional forwarding.
         connection_nanoseconds:
           $ref: "#/components/schemas/UnsignedInteger"
           description: Elapsed time for successful streams, divided among the buckets in which the time passed.
@@ -168,11 +168,11 @@ components:
         egress_bytes:
           $ref: "#/components/schemas/UnsignedInteger"
           description: Bytes successfully forwarded from publishers to visitors.
-        publisher_open_latency:
+        visitor_stream_open_latency:
           allOf:
             - $ref: "#/components/schemas/DurationHistogram"
           description: >-
-            Time taken to open a publisher stream, including failed attempts.
+            Time taken to open a visitor stream, including failed attempts.
             The value is recorded when the attempt ends. The field is absent,
             rather than zero, when the bucket has no observations.
         time_to_first_publisher_byte:

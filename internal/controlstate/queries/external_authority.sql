@@ -106,7 +106,7 @@ SELECT routes.*,
         FROM control.route_sessions AS sessions
         WHERE sessions.route_id = routes.id
           AND sessions.closed_at IS NULL
-    ), '')::text AS attached_session_id
+    ), '')::text AS open_route_session_id
 FROM control.routes AS routes
 WHERE routes.team_id = sqlc.arg(team_id)
   AND routes.lifecycle_state <> 'deleted'
@@ -121,7 +121,7 @@ SELECT routes.*,
         FROM control.route_sessions AS sessions
         WHERE sessions.route_id = routes.id
           AND sessions.closed_at IS NULL
-    ), '')::text AS attached_session_id,
+    ), '')::text AS open_route_session_id,
     COALESCE((
         SELECT sessions.route_version
         FROM control.route_sessions AS sessions

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/acme/autocert"
 )
 
@@ -46,7 +47,12 @@ func TestIntegrationControlTLSCache(t *testing.T) {
 }
 
 func TestIntegrationControlTLSLeadershipExclusionAndHandoff(t *testing.T) {
-	database, _ := newControlStateIntegrationDatabase(t, "tls_leadership")
+	database, databaseURL, _ := newControlStateIntegrationDatabaseWithURL(t, "tls_leadership")
+	otherDatabase, err := Open(t.Context(), databaseURL, testStorageKey, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(otherDatabase.Close)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	workers := newIntegrationWorkers(t, cancel)
@@ -71,7 +77,7 @@ func TestIntegrationControlTLSLeadershipExclusionAndHandoff(t *testing.T) {
 	otherCtx, cancelOther := context.WithTimeout(ctx, 100*time.Millisecond)
 	defer cancelOther()
 	otherRan := make(chan struct{}, 1)
-	if err := database.RunControlTLSLeader(otherCtx, func(context.Context) error {
+	if err := otherDatabase.RunControlTLSLeader(otherCtx, func(context.Context) error {
 		otherRan <- struct{}{}
 		return nil
 	}); err != nil {
@@ -89,6 +95,47 @@ func TestIntegrationControlTLSLeadershipExclusionAndHandoff(t *testing.T) {
 	var ran atomic.Bool
 	if err := database.RunControlTLSLeader(ctx, func(context.Context) error { ran.Store(true); return nil }); err != nil || !ran.Load() {
 		t.Fatalf("replacement leader: ran %t, error %v", ran.Load(), err)
+	}
+}
+
+func TestIntegrationControlTLSLeadershipDoesNotConsumeApplicationPool(t *testing.T) {
+	database, databaseURL, _ := newControlStateIntegrationDatabaseWithURL(t, "tls_leadership_pool")
+	database.Close()
+	config, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.MaxConns = 1
+	pool, err := pgxpool.NewWithConfig(t.Context(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	database = &Database{pool: pool, storageKey: database.storageKey}
+	t.Cleanup(database.Close)
+	cache, err := database.ControlTLSCache("https://acme.example.test/directory")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	if err := database.RunControlTLSLeader(ctx, func(ctx context.Context) error {
+		if err := cache.Put(ctx, "control.example.test", []byte("certificate state")); err != nil {
+			return err
+		}
+		data, err := cache.Get(ctx, "control.example.test")
+		if err != nil || !bytes.Equal(data, []byte("certificate state")) {
+			return errors.New("control TLS cache round trip failed")
+		}
+		var sessions int
+		if err := database.pool.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()`).Scan(&sessions); err != nil {
+			return err
+		}
+		if sessions < 2 {
+			return errors.New("leadership connection was not separately owned")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -135,6 +182,50 @@ func TestIntegrationControlTLSLeadershipConnectionLoss(t *testing.T) {
 	cancel()
 	if err := awaitIntegrationResult(t, t.Context(), done); err != nil {
 		t.Fatalf("leadership recovery returned %v", err)
+	}
+}
+
+func TestIntegrationControlTLSLeadershipShutdownClosesConnection(t *testing.T) {
+	database, _ := newControlStateIntegrationDatabase(t, "tls_shutdown")
+	ctx, cancel := context.WithCancel(t.Context())
+	workers := newIntegrationWorkers(t, cancel)
+	started := make(chan struct{})
+	done := make(chan error, 1)
+	workers.Go(func() {
+		done <- database.RunControlTLSLeader(ctx, func(ctx context.Context) error {
+			close(started)
+			<-ctx.Done()
+			return nil
+		})
+	})
+	awaitIntegrationResult(t, t.Context(), started)
+	var pid int32
+	if err := database.pool.QueryRow(t.Context(), `
+		SELECT pid FROM pg_locks
+		WHERE locktype = 'advisory'
+		  AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+		  AND classid::bigint = $1 AND objid::bigint = $2 AND objsubid = 1
+		  AND granted AND pid <> pg_backend_pid()
+	`, controlTLSLeadershipKey>>32, controlTLSLeadershipKey&0xffffffff).Scan(&pid); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	if err := awaitIntegrationResult(t, t.Context(), done); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var sessions int
+		if err := database.pool.QueryRow(t.Context(), `SELECT count(*) FROM pg_stat_activity WHERE pid = $1`, pid).Scan(&sessions); err != nil {
+			t.Fatal(err)
+		}
+		if sessions == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("leadership backend %d remained after shutdown", pid)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 

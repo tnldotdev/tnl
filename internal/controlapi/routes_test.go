@@ -63,7 +63,7 @@ func TestUpdateRouteAuthorizesExactRouteAndCanonicalMutation(t *testing.T) {
 	}}
 	authorizer := &recordingAuthorizer{principal: testRouteReadPrincipal(), decision: authorization.Decision{
 		IdentityID: "identity_1", TeamID: "team_1", ActingMembershipID: "membership_1",
-		ActingRole: "owner", RouteMembershipID: "membership_1", TeamPolicyRevision: 7,
+		ActingRole: "owner", RouteMembershipID: "membership_1", PolicyRevision: 7,
 		DomainID: "domain_1", CanonicalHostname: "demo.example", RouteScope: "member",
 	}}
 	h := &handler{store: store, authorizer: authorizer}
@@ -194,8 +194,8 @@ func TestRouteMutationsDoNotRevealRoutesOutsideCurrentTeams(t *testing.T) {
 
 func TestUpdateRouteMapsOpenSessionConflict(t *testing.T) {
 	response := httptest.NewRecorder()
-	writeControlStateProblem(response, "update route", controlstate.ErrRouteAttached)
-	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), `"code":"route_attached"`) {
+	writeControlStateProblem(response, "update route", controlstate.ErrRouteSessionOpen)
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), `"code":"route_session_open"`) {
 		t.Fatalf("response = %d: %s", response.Code, response.Body.String())
 	}
 }
@@ -215,7 +215,7 @@ func TestCreateRouteSessionReturnsAuthoritativeRouteState(t *testing.T) {
 			CanonicalHostname: "demo.example", Target: "http://127.0.0.1:3000",
 			RouteScope: controlstate.RouteScopeMember, LifecycleState: controlstate.RouteLifecycleEnabled,
 			NextRouteVersion: 8, MutationRevision: 5, Ephemeral: true, ExpiresAt: &expiresAt,
-			AttachedSessionID: "session_1", UpdatedAt: updatedAt,
+			OpenRouteSessionID: "session_1", UpdatedAt: updatedAt,
 		},
 		sessionSetup: controlstate.RouteSessionSetup{
 			RouteSessionID: "session_1", RouteID: "route_1", TeamID: "team_1", MembershipID: "membership_1",
@@ -225,7 +225,7 @@ func TestCreateRouteSessionReturnsAuthoritativeRouteState(t *testing.T) {
 	}
 	authorizer := &recordingAuthorizer{principal: testRouteReadPrincipal(), decision: authorization.Decision{
 		IdentityID: "identity_1", TeamID: "team_1", ActingMembershipID: "membership_1",
-		ActingRole: "member", RouteMembershipID: "membership_1", TeamPolicyRevision: 9,
+		ActingRole: "member", RouteMembershipID: "membership_1", PolicyRevision: 9,
 		DomainID: "domain_1", CanonicalHostname: "demo.example", RouteScope: "member", RetrySecret: [32]byte{1, 2, 3},
 		CertificatePlan: &authorization.CertificatePlan{
 			CacheKey: "member.example", Scope: "member.example", Identifiers: []string{"member.example", "*.member.example"},
@@ -245,7 +245,7 @@ func TestCreateRouteSessionReturnsAuthoritativeRouteState(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &setup); err != nil {
 		t.Fatal(err)
 	}
-	if setup.Route.AttachedSessionId == nil || *setup.Route.AttachedSessionId != "session_1" ||
+	if setup.Route.OpenRouteSessionId == nil || *setup.Route.OpenRouteSessionId != "session_1" ||
 		setup.Route.ExpiresAt == nil || !setup.Route.ExpiresAt.Equal(expiresAt) || !setup.Route.UpdatedAt.Equal(updatedAt) ||
 		setup.Route.NextRouteVersion != 8 || store.authorizationReads != 2 {
 		t.Fatalf("route = %#v, authorization reads = %d", setup.Route, store.authorizationReads)
@@ -405,7 +405,7 @@ func TestCreateRouteCanonicalEquivalenceAndIdempotency(t *testing.T) {
 	store := &routeCreationStore{result: controlstate.Route{ID: "route_created", CanonicalHostname: "demo.example"}}
 	authorizer := &recordingAuthorizer{decision: authorization.Decision{
 		IdentityID: "identity_1", TeamID: "team_1", RouteMembershipID: "membership_1", DomainID: "domain_1",
-		CanonicalHostname: "demo.example", RouteScope: "member", TeamPolicyRevision: 9, DNSAuthorityReference: "dns_authority_1",
+		CanonicalHostname: "demo.example", RouteScope: "member", PolicyRevision: 9, DNSAuthorityReference: "dns_authority_1",
 	}}
 	h := &handler{store: store, authorizer: authorizer, config: Config{DNSAutomation: true}}
 	for _, test := range []struct{ name, prefixes, target string }{

@@ -205,6 +205,7 @@ func (d *Database) ReleaseTeamDomain(
 	}
 	defer rollback(ctx, tx, "release team domain", &retErr)()
 	queries := controlstatedb.New(tx)
+	pendingEvents := pendingIngressRoutingTableEvents{}
 	actor, err := lockTeamActor(ctx, queries, identityID, teamID)
 	if err != nil {
 		return err
@@ -265,7 +266,7 @@ func (d *Database) ReleaseTeamDomain(
 		return fmt.Errorf("controlstate: release team domain: lock routes: %w", err)
 	}
 	for _, route := range routes {
-		if err := closeOpenRouteSession(ctx, queries, route, now, "domain_releasing"); err != nil {
+		if err := closeOpenRouteSession(ctx, queries, &pendingEvents, route, now, "domain_releasing"); err != nil {
 			return err
 		}
 		updated, err := queries.SuspendAuthorityRoute(ctx, controlstatedb.SuspendAuthorityRouteParams{
@@ -277,6 +278,9 @@ func (d *Database) ReleaseTeamDomain(
 		if updated != 1 {
 			return ErrAuthorityConflict
 		}
+	}
+	if err := pendingEvents.publish(ctx, queries); err != nil {
+		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("controlstate: release team domain: commit: %w", err)

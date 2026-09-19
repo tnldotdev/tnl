@@ -46,7 +46,7 @@ func TestIntegrationStorageKeyRotation(t *testing.T) {
 		t.Fatalf("seed relay order key: found %t, %v", found, err)
 	}
 	certificate, privateKey := testRelayCertificate(t, lease.TLSServerName, now)
-	if _, err := database.StoreRelayServiceCertificate(ctx, lease.RelayServiceID, lease.TLSServerName, certificate, privateKey, now); err != nil {
+	if _, err := database.StoreRelayTransportCertificate(ctx, lease.RelayServiceID, lease.TLSServerName, certificate, privateKey, now); err != nil {
 		t.Fatal(err)
 	}
 	masterKey, err := database.EnsureExternalAuthorityPrincipal(ctx, "identity_rotation", now)
@@ -145,7 +145,7 @@ func TestIntegrationStorageKeyRotation(t *testing.T) {
 	if err != nil || !bytes.Equal(data, cacheData) {
 		t.Fatalf("recover control TLS cache: %v", err)
 	}
-	recoveredCertificate, err := reopened.GetRelayServiceCertificate(ctx, lease.RelayLeaseIdentity, now)
+	recoveredCertificate, err := reopened.GetRelayTransportCertificate(ctx, lease.RelayLeaseIdentity, now)
 	if err != nil || recoveredCertificate.CertificatePEM != string(certificate) || recoveredCertificate.PrivateKeyPEM != string(privateKey) {
 		t.Fatalf("recover relay certificate: %v", err)
 	}

@@ -104,6 +104,7 @@ func (d *Database) CreateRouteSession(
 	}
 	defer rollback(ctx, tx, "create route session", &retErr)()
 	queries := controlstatedb.New(tx)
+	pendingEvents := pendingIngressRoutingTableEvents{}
 
 	if request.RequireLocalAuthority {
 		if _, err := queries.LockLocalTeamForMutation(ctx, request.TeamID); errors.Is(err, pgx.ErrNoRows) {
@@ -148,7 +149,7 @@ func (d *Database) CreateRouteSession(
 			return RouteSessionSetup{}, ErrRouteAuthority
 		}
 	}
-	if err := expireStaleOpenRouteSession(ctx, queries, route, now); err != nil {
+	if err := expireStaleOpenRouteSession(ctx, queries, &pendingEvents, route, now); err != nil {
 		return RouteSessionSetup{}, err
 	}
 
@@ -161,6 +162,9 @@ func (d *Database) CreateRouteSession(
 		}
 		setup, err := loadRouteSessionSetup(ctx, queries, request.RetrySecret, request.RouteID+"\x00"+request.IdempotencyKey, existing)
 		if err != nil {
+			return RouteSessionSetup{}, err
+		}
+		if err := pendingEvents.publish(ctx, queries); err != nil {
 			return RouteSessionSetup{}, err
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -275,6 +279,9 @@ func (d *Database) CreateRouteSession(
 		RequestID: request.IdempotencyKey, RouteSessionID: routeSessionID, OccurredAt: timestamptz(now),
 	}); err != nil {
 		return RouteSessionSetup{}, fmt.Errorf("controlstate: create route session: insert audit event: %w", err)
+	}
+	if err := pendingEvents.publish(ctx, queries); err != nil {
+		return RouteSessionSetup{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return RouteSessionSetup{}, fmt.Errorf("controlstate: create route session: commit: %w", err)

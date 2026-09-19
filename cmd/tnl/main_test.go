@@ -37,7 +37,7 @@ func TestCLIExposesTeamDomainRouteAndFinalAdminCommands(t *testing.T) {
 		"team invite list", "team invite revoke", "team join", "team member set-role", "team member remove",
 		"domain claim", "domain default", "domain list", "domain release", "route list", "route delete",
 		"admin server status", "admin relays list", "admin relays drain", "admin maintenance list",
-		"admin maintenance enable", "admin maintenance disable",
+		"admin maintenance allow", "admin maintenance block",
 	} {
 		if !commands[command] {
 			t.Fatalf("command %q missing from help model", command)
@@ -108,7 +108,7 @@ func TestPublishHostnameOptions(t *testing.T) {
 
 func TestTunnelCLIUnitOverridesConflictingEnvironmentUnit(t *testing.T) {
 	t.Setenv("TNL_HOST", "environment.example")
-	t.Setenv("TNL_PUBLIC", "true")
+	t.Setenv("TNL_ALLOW_ALL_IPS", "true")
 	var flags cli
 	parser, err := kong.New(&flags)
 	if err != nil {
@@ -120,7 +120,7 @@ func TestTunnelCLIUnitOverridesConflictingEnvironmentUnit(t *testing.T) {
 		t.Fatal(err)
 	}
 	applyTunnelCLIUnits(args, parsed.Command(), &flags)
-	if flags.Publish.Host != "" || flags.Publish.Subdomain != "api" || flags.Publish.Public ||
+	if flags.Publish.Host != "" || flags.Publish.Subdomain != "api" || flags.Publish.AllowAllIPs ||
 		len(flags.Publish.AllowIP) != 1 {
 		t.Fatalf("publish flags = %#v", flags.Publish)
 	}
@@ -132,7 +132,7 @@ func TestExplicitFalseTunnelFlagsOverrideProjectConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	args := []string{"publish", "3000", "--public=false", "--ephemeral=false"}
+	args := []string{"publish", "3000", "--allow-all-ips=false", "--ephemeral=false"}
 	parsed, err := parser.Parse(args)
 	if err != nil {
 		t.Fatal(err)
@@ -140,9 +140,9 @@ func TestExplicitFalseTunnelFlagsOverrideProjectConfiguration(t *testing.T) {
 	applyTunnelCLIUnits(args, parsed.Command(), &flags)
 	configured := true
 	applyTunnelConfiguration(&flags.Publish.tunnelFlags, &config.Tunnel{
-		Public: &configured, Ephemeral: &configured,
+		AllowAllIPs: &configured, Ephemeral: &configured,
 	})
-	if flags.Publish.Public || flags.Publish.Ephemeral {
+	if flags.Publish.AllowAllIPs || flags.Publish.Ephemeral {
 		t.Fatalf("publish flags = %#v", flags.Publish)
 	}
 }

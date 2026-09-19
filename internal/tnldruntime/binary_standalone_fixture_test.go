@@ -69,7 +69,7 @@ func startIntegrationBinaryStandalone(t *testing.T) *integrationBinaryStandalone
 		"TNLD_LOGIN_TOKEN":                  testLoginToken,
 		"TNLD_MANAGED_DEPLOYMENT_DOMAIN":    "routes.127.0.0.1.nip.io",
 		"TNLD_METRICS_LISTEN":               metricsAddress,
-		"TNLD_MODE":                         "standalone",
+		"TNLD_ROLE":                         "standalone",
 		"TNLD_PRIVATE_CONTROL_LISTEN":       "127.0.0.1:1",
 		"TNLD_REFRESH_TOKEN_LIFETIME":       "1h",
 		"TNLD_RELAY_LEASE_DURATION":         "5s",

@@ -33,7 +33,7 @@ services:
       TNLD_CONTROL_LISTEN: :8443
       TNLD_INGRESS_LISTEN: :8443
       TNLD_METRICS_LISTEN: 0.0.0.0:9090
-      TNLD_MODE: standalone
+      TNLD_ROLE: standalone
       TNLD_RELAY_UDP_LISTEN: :8443
     ports:
       - "${TNL_PUBLIC_BIND:-0.0.0.0}:443:8443/tcp"

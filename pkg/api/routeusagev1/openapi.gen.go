@@ -166,16 +166,10 @@ type RouteUsageBucketReport struct {
 	ObservedThrough time.Time `json:"observed_through"`
 
 	// PolicyDenials Matched attempts rejected by route access policy.
-	PolicyDenials UnsignedInteger `json:"policy_denials"`
-
-	// PublisherOpenFailures Attempts for which opening a publisher stream failed.
-	PublisherOpenFailures UnsignedInteger `json:"publisher_open_failures"`
-
-	// PublisherOpenLatency Time taken to open a publisher stream, including failed attempts. The value is recorded when the attempt ends. The field is absent, rather than zero, when the bucket has no observations.
-	PublisherOpenLatency *DurationHistogram               `json:"publisher_open_latency,omitempty"`
-	Resolution           RouteUsageBucketReportResolution `json:"resolution"`
-	Revision             PositiveInteger                  `json:"revision"`
-	RouteId              RouteID                          `json:"route_id"`
+	PolicyDenials  UnsignedInteger                  `json:"policy_denials"`
+	ReportRevision PositiveInteger                  `json:"report_revision"`
+	Resolution     RouteUsageBucketReportResolution `json:"resolution"`
+	RouteId        RouteID                          `json:"route_id"`
 
 	// RouteVersion Route version measured by this report.
 	RouteVersion PositiveInteger `json:"route_version"`
@@ -183,7 +177,7 @@ type RouteUsageBucketReport struct {
 	// SuccessfulConnectionDuration Total time for a successful visitor stream. The value is recorded when the stream closes. The field is absent, rather than zero, when the bucket has no observations.
 	SuccessfulConnectionDuration *DurationHistogram `json:"successful_connection_duration,omitempty"`
 
-	// SuccessfulStreams Publisher streams that entered bidirectional forwarding.
+	// SuccessfulStreams Visitor streams that entered bidirectional forwarding.
 	SuccessfulStreams UnsignedInteger `json:"successful_streams"`
 
 	// TeamId Team recorded when this route version was created.
@@ -197,6 +191,12 @@ type RouteUsageBucketReport struct {
 
 	// VisitorNetworkHll Versioned precision-12 HyperLogLog data. After base64 decoding, the bytes start with version 1, precision 12, and an encoding byte. Sparse encoding 0 then contains a big-endian uint16 entry count and sorted entries of a big-endian uint16 register index followed by a uint8 value. Dense encoding 1 contains 4096 uint8 registers. Inputs are visitor IPv4 /32 or IPv6 /64 networks HMACed with a route-scoped secret that changes daily. No source address is included. When combining reports, merge each register by its maximum value instead of adding estimates.
 	VisitorNetworkHll []byte `json:"visitor_network_hll"`
+
+	// VisitorStreamOpenFailures Attempts for which opening a visitor stream failed.
+	VisitorStreamOpenFailures UnsignedInteger `json:"visitor_stream_open_failures"`
+
+	// VisitorStreamOpenLatency Time taken to open a visitor stream, including failed attempts. The value is recorded when the attempt ends. The field is absent, rather than zero, when the bucket has no observations.
+	VisitorStreamOpenLatency *DurationHistogram `json:"visitor_stream_open_latency,omitempty"`
 }
 
 // RouteUsageBucketReportResolution defines model for RouteUsageBucketReport.Resolution.

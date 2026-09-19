@@ -114,7 +114,7 @@ func (d *Database) getRouteForAuthorization(ctx context.Context, routeID, routeS
 	result := routeFromValues(
 		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target,
 		row.RouteScope, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState, row.AllowedIpPrefixes,
-		row.NextRouteVersion, row.MutationRevision, row.Ephemeral, row.ExpiresAt, row.AttachedSessionID, row.CreatedAt, row.UpdatedAt,
+		row.NextRouteVersion, row.MutationRevision, row.Ephemeral, row.ExpiresAt, row.OpenRouteSessionID, row.CreatedAt, row.UpdatedAt,
 	)
 	result.AuthorizationRouteVersion = uint64(row.AuthorizationRouteVersion)
 	return result, nil

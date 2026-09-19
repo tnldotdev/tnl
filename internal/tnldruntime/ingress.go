@@ -72,22 +72,22 @@ type ingressRuntimeConfig struct {
 }
 
 type ingressSettings struct {
-	publicConnectionLimit int64
-	routeConnectionLimit  int64
-	requireProxyHeader    bool
-	leaseRenewalInterval  time.Duration
-	controlRetryInterval  time.Duration
-	routingTableWait      time.Duration
+	visitorConnectionLimit int64
+	routeConnectionLimit   int64
+	requireProxyHeader     bool
+	leaseRenewalInterval   time.Duration
+	controlRetryInterval   time.Duration
+	routingTableWait       time.Duration
 }
 
 func ingressSettingsFrom(cfg tnldconfig.Config) ingressSettings {
 	return ingressSettings{
-		publicConnectionLimit: cfg.PublicConnectionLimit,
-		routeConnectionLimit:  cfg.RouteConnectionLimit,
-		requireProxyHeader:    cfg.RequireProxyHeader,
-		leaseRenewalInterval:  cfg.LeaseRenewalInterval,
-		controlRetryInterval:  cfg.ControlRetryInterval,
-		routingTableWait:      cfg.RoutingTableWait,
+		visitorConnectionLimit: cfg.VisitorConnectionLimit,
+		routeConnectionLimit:   cfg.RouteConnectionLimit,
+		requireProxyHeader:     cfg.RequireProxyHeader,
+		leaseRenewalInterval:   cfg.LeaseRenewalInterval,
+		controlRetryInterval:   cfg.ControlRetryInterval,
+		routingTableWait:       cfg.RoutingTableWait,
 	}
 }
 
@@ -108,7 +108,7 @@ func (d *daemon) startIngressRuntime(
 		Client: runtimeConfig.client, RoutingTable: routingTable,
 		Registration: ingressv1.IngressRegistration{
 			IngressId: runtimeConfig.ingressID, IngressRunId: runID, ProtocolVersion: tunnelv1.Version,
-			ConnectionCapacity: settings.publicConnectionLimit,
+			ConnectionCapacity: settings.visitorConnectionLimit,
 		},
 		RenewalInterval: settings.leaseRenewalInterval, RetryInterval: settings.controlRetryInterval,
 		RoutingWait: settings.routingTableWait,
@@ -149,7 +149,7 @@ func (d *daemon) startIngressRuntime(
 		return err
 	}
 	runtime.forwarder = forwarder
-	publicCapacity, err := runtimeCapacity("public connection", settings.publicConnectionLimit)
+	publicCapacity, err := runtimeCapacity("visitor connection", settings.visitorConnectionLimit)
 	if err != nil {
 		return err
 	}

@@ -73,20 +73,20 @@ func (c *HTTPControlClient) DrainRelay(
 	return *response.JSON200, nil
 }
 
-func (c *HTTPControlClient) GetRelayServiceCertificate(
+func (c *HTTPControlClient) GetRelayTransportCertificate(
 	ctx context.Context,
 	relayServiceID relayv1.RelayServiceID,
-	params relayv1.GetRelayServiceCertificateParams,
-) (relayv1.RelayServiceCertificate, error) {
-	response, err := c.client.GetRelayServiceCertificateWithResponse(ctx, relayServiceID, &params)
+	params relayv1.GetRelayTransportCertificateParams,
+) (relayv1.RelayTransportCertificate, error) {
+	response, err := c.client.GetRelayTransportCertificateWithResponse(ctx, relayServiceID, &params)
 	if err != nil {
-		return relayv1.RelayServiceCertificate{}, err
+		return relayv1.RelayTransportCertificate{}, err
 	}
 	if response == nil {
-		return relayv1.RelayServiceCertificate{}, relayHTTPProblem(0, nil)
+		return relayv1.RelayTransportCertificate{}, relayHTTPProblem(0, nil)
 	}
 	if response.JSON200 == nil {
-		return relayv1.RelayServiceCertificate{}, relayHTTPProblem(response.StatusCode(), response.ApplicationproblemJSONDefault)
+		return relayv1.RelayTransportCertificate{}, relayHTTPProblem(response.StatusCode(), response.ApplicationproblemJSONDefault)
 	}
 	return *response.JSON200, nil
 }

@@ -116,7 +116,7 @@ func (a localAuthorizer) Authorize(ctx context.Context, request authorization.Re
 	decision := authorization.Decision{
 		IdentityID: principal.IdentityID, TeamID: request.TeamID, ActingMembershipID: acting.ID,
 		ActingRole: acting.Role, RouteMembershipID: routeMembershipID,
-		TeamPolicyRevision: uint64(acting.PolicyRevision), DomainID: request.DomainID,
+		PolicyRevision: uint64(acting.PolicyRevision), DomainID: request.DomainID,
 		CanonicalHostname: request.CanonicalHostname, RouteScope: request.RouteScope,
 		DNSAuthorityReference: domain.DNSAuthorityReference, RetrySecret: principal.RetrySecret,
 	}
@@ -217,7 +217,7 @@ func (a hostedAuthorizer) Authorize(ctx context.Context, request authorization.R
 	}
 	decision := authorization.Decision{
 		IdentityID: wire.IdentityId, TeamID: wire.TeamId, ActingMembershipID: wire.ActingMembershipId,
-		ActingRole: string(wire.ActingRole), TeamPolicyRevision: uint64(wire.TeamPolicyRevision),
+		ActingRole: string(wire.ActingRole), PolicyRevision: uint64(wire.PolicyRevision),
 		DomainID: wire.DomainId, CanonicalHostname: wire.CanonicalHostname, RouteScope: string(wire.RouteScope),
 		DNSAuthorityReference: wire.DnsAuthorityReference,
 	}
@@ -244,7 +244,7 @@ func (a hostedAuthorizer) Authorize(ctx context.Context, request authorization.R
 func validAuthorizationDecision(request authorization.Request, decision authorization.Decision) bool {
 	if decision.IdentityID == "" || decision.TeamID != request.TeamID || decision.ActingMembershipID == "" ||
 		decision.ActingRole != "member" && decision.ActingRole != "admin" && decision.ActingRole != "owner" ||
-		decision.TeamPolicyRevision == 0 || decision.DomainID != request.DomainID ||
+		decision.PolicyRevision == 0 || decision.DomainID != request.DomainID ||
 		decision.CanonicalHostname != request.CanonicalHostname || decision.RouteScope != request.RouteScope ||
 		strings.TrimSpace(decision.DNSAuthorityReference) == "" {
 		return false

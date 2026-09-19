@@ -138,10 +138,10 @@ func (c *HTTPControlClient) ReportIngressUsage(
 func (c *HTTPControlClient) ObserveRouteRecovery(
 	ctx context.Context,
 	ingressID ingressv1.IngressID,
-	episodeID int64,
+	recoveryEpisodeID int64,
 	body ingressv1.RouteRecoveryObservationRequest,
 ) (ingressv1.RouteRecoveryObservation, error) {
-	response, err := c.client.ObserveRouteRecoveryWithResponse(ctx, ingressID, episodeID, body)
+	response, err := c.client.ObserveRouteRecoveryWithResponse(ctx, ingressID, recoveryEpisodeID, body)
 	if err != nil {
 		return ingressv1.RouteRecoveryObservation{}, err
 	}

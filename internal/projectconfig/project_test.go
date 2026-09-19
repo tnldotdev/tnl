@@ -29,7 +29,7 @@ tnl:
       team: Web Team
       tunnel:
         subdomain: web
-        public: true
+        allow_all_ips: true
       publish:
         target: 4000
       dev:
@@ -50,7 +50,7 @@ tnl:
 	if effective.Server == nil || *effective.Server != "https://root.example" ||
 		effective.Team == nil || *effective.Team != "Web Team" ||
 		effective.Tunnel == nil || effective.Tunnel.Subdomain == nil || *effective.Tunnel.Subdomain != "web" ||
-		effective.Tunnel.Public == nil || !*effective.Tunnel.Public || effective.Tunnel.AllowIP != nil ||
+		effective.Tunnel.AllowAllIPs == nil || !*effective.Tunnel.AllowAllIPs || effective.Tunnel.AllowIP != nil ||
 		effective.Tunnel.Ephemeral == nil || !*effective.Tunnel.Ephemeral ||
 		effective.Publish == nil || effective.Publish.Target == nil || string(*effective.Publish.Target) != "4000" ||
 		effective.Dev == nil || effective.Dev.StartupTimeout == nil || effective.Dev.StartupTimeout.Value() != 45*time.Second ||

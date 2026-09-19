@@ -78,29 +78,29 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 }
 
 func newTNLDParser(flags *tnldCLI, output io.Writer) (*kong.Kong, error) {
-	return kong.New(flags, kong.Name("tnld"), kong.Description("tnl server."), kong.Writers(output, output))
+	return kong.New(flags, kong.Name("tnld"), kong.Description("tnld process."), kong.Writers(output, output))
 }
 
 type tnldServeCommand struct {
-	ConfigPath string     `name:"config" env:"TNLD_CONFIG" type:"path" help:"Load YAML or JSON server configuration."`
+	ConfigPath string     `name:"config" env:"TNLD_CONFIG" type:"path" help:"Load YAML or JSON process configuration."`
 	Values     tnldValues `embed:""`
 }
 
 type tnldValues tnldconfig.Config
 
 type tnldConfigCheckCommand struct {
-	ConfigPath string `name:"config" env:"TNLD_CONFIG" type:"path" help:"Validate YAML or JSON server configuration."`
+	ConfigPath string `name:"config" env:"TNLD_CONFIG" type:"path" help:"Validate YAML or JSON process configuration."`
 }
 
 type tnldConfigCommand struct {
-	Check tnldConfigCheckCommand `cmd:"" help:"Validate server configuration without starting services."`
+	Check tnldConfigCheckCommand `cmd:"" help:"Validate process configuration without starting services."`
 }
 
 type tnldCLI struct {
 	LoginToken struct{}          `cmd:"" name:"login-token" help:"Generate a login token."`
 	Migrate    struct{}          `cmd:"" help:"Apply control-state database migrations."`
-	Serve      tnldServeCommand  `cmd:"" default:"withargs" help:"Run the tnl server."`
-	Config     tnldConfigCommand `cmd:"" help:"Inspect server configuration."`
+	Serve      tnldServeCommand  `cmd:"" default:"withargs" help:"Run the configured tnld process."`
+	Config     tnldConfigCommand `cmd:"" help:"Inspect process configuration."`
 	Version    struct{}          `cmd:"" help:"Print release version information."`
 }
 

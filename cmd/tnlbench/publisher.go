@@ -120,6 +120,10 @@ func (c publisherCommand) run(parent context.Context) error {
 		FreshConnectionsPerSecond: c.FreshRate, HeldStreams: c.HeldStreams, PayloadBytes: c.PayloadBytes,
 		LifecycleChurnPerSecond: c.ChurnRate, AssignedLifecycleChurn: c.AssignedChurnRate,
 	}
+	failureMetricsURLs := c.MetricsURLs
+	if c.WorkerIndex != 0 {
+		c.MetricsURLs = nil
+	}
 	resources := sampleResources(ctx, c.MetricsURLs, "before_activation")
 	sampler := startResourceSampler(context.WithoutCancel(ctx), c.MetricsURLs, 5*time.Second)
 	defer sampler.Stop()
@@ -128,7 +132,7 @@ func (c publisherCommand) run(parent context.Context) error {
 	c.onActivationFailure = func() {
 		snapshotOnce.Do(func() {
 			diagnostics = sampleDatabaseDiagnostics(ctx, c.DiagnosticURLs)
-			resources = append(resources, sampleResources(context.WithoutCancel(ctx), c.MetricsURLs, "failure")...)
+			resources = append(resources, sampleFailureResources(ctx, failureMetricsURLs)...)
 		})
 	}
 	result, runErr := c.execute(ctx, worker, configuration)

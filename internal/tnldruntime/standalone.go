@@ -84,7 +84,7 @@ func (d *daemon) startStandalone(
 	d.forward("serve control API", serveTLS(d.controlServer, controlListener))
 
 	transportTLS := settings.relayTransportTLS
-	var certificateChanged func(relayv1.RelayServiceCertificate) error
+	var certificateChanged func(relayv1.RelayTransportCertificate) error
 	if transportTLS == nil {
 		serviceIDs := make([]string, len(standaloneRelays))
 		for index, identity := range standaloneRelays {

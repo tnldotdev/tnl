@@ -11,7 +11,7 @@ import (
 )
 
 func readControl(r io.Reader) error    { _, err := ReadControl(r); return err }
-func readPublisher(r io.Reader) error  { _, err := ReadPublisherStreamHeader(r); return err }
+func readVisitor(r io.Reader) error    { _, err := ReadVisitorStreamHeader(r); return err }
 func readForwarding(r io.Reader) error { _, err := ReadInternalForwardingHeader(r); return err }
 func readResponse(r io.Reader) error   { _, err := ReadStreamResponse(r); return err }
 
@@ -21,7 +21,7 @@ var frameReaders = []struct {
 	read  func(io.Reader) error
 }{
 	{"control-hello", MaxControlBytes, readControl},
-	{"publisher-stream-header", MaxHeaderBytes, readPublisher},
+	{"visitor-stream-header", MaxHeaderBytes, readVisitor},
 	{"internal-forwarding-header", MaxHeaderBytes, readForwarding},
 	{"stream-response", MaxHeaderBytes, readResponse},
 }
@@ -126,8 +126,8 @@ func TestFrameWritersPropagateErrorsAndShortWrites(t *testing.T) {
 			return WriteControl(w, Message{Type: HelloAccepted, ProtocolVersion: Version})
 		}},
 		{"publisher", func(w io.Writer) error {
-			h, _ := ReadPublisherStreamHeader(bytes.NewReader(goldenWire(t, "publisher-stream-header")))
-			return WritePublisherStreamHeader(w, h)
+			h, _ := ReadVisitorStreamHeader(bytes.NewReader(goldenWire(t, "visitor-stream-header")))
+			return WriteVisitorStreamHeader(w, h)
 		}},
 		{"forwarding", func(w io.Writer) error {
 			h, _ := ReadInternalForwardingHeader(bytes.NewReader(goldenWire(t, "internal-forwarding-header")))
@@ -182,7 +182,7 @@ func TestStreamWriterRejectsOversizeBeforeWriting(t *testing.T) {
 	if err := WriteInternalForwardingHeader(&out, h); err == nil || out.Len() != 0 {
 		t.Fatalf("oversized write: %v, %d bytes", err, out.Len())
 	}
-	publisher, err := ReadPublisherStreamHeader(bytes.NewReader(goldenWire(t, "publisher-stream-header")))
+	publisher, err := ReadVisitorStreamHeader(bytes.NewReader(goldenWire(t, "visitor-stream-header")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +190,7 @@ func TestStreamWriterRejectsOversizeBeforeWriting(t *testing.T) {
 	if err := publisher.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	if err := WritePublisherStreamHeader(&out, publisher); err == nil || out.Len() != 0 {
+	if err := WriteVisitorStreamHeader(&out, publisher); err == nil || out.Len() != 0 {
 		t.Fatalf("oversized publisher write: %v, %d bytes", err, out.Len())
 	}
 }

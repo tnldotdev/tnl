@@ -145,7 +145,7 @@ func TestUsageReporterCompletesOnlyFinalPage(t *testing.T) {
 		t.Fatal(err)
 	}
 	base := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
-	for index := range 257 {
+	for index := range 33 {
 		connection := reporter.Open(
 			fmt.Sprintf("route-%03d", index), 1, netip.MustParseAddr("192.0.2.1"), base,
 		)
@@ -155,9 +155,10 @@ func TestUsageReporterCompletesOnlyFinalPage(t *testing.T) {
 	if err := reporter.flush(t.Context(), base.Add(time.Second), true); err != nil {
 		t.Fatal(err)
 	}
-	if len(control.calls) != 2 || len(control.calls[0].reports) != 256 || len(control.calls[1].reports) != 1 ||
+	if len(control.calls) != 3 || len(control.calls[0].reports) != 16 || len(control.calls[1].reports) != 16 || len(control.calls[2].reports) != 1 ||
 		control.calls[0].observedThrough != nil || control.calls[0].complete ||
-		control.calls[1].observedThrough == nil || !control.calls[1].complete {
+		control.calls[1].observedThrough != nil || control.calls[1].complete ||
+		control.calls[2].observedThrough == nil || !control.calls[2].complete {
 		t.Fatalf("final pages = %#v", control.calls)
 	}
 }
@@ -193,8 +194,8 @@ func TestUsageReporterCapturesHistogramsAndVisitorSketch(t *testing.T) {
 	}
 	base := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
 	connection := reporter.Open("route-a", 3, netip.MustParseAddr("192.0.2.1"), base.Add(time.Second))
-	connection.PublisherOpening(base.Add(2 * time.Second))
-	connection.PublisherOpened(base.Add(5 * time.Second))
+	connection.VisitorStreamOpening(base.Add(2 * time.Second))
+	connection.VisitorStreamOpened(base.Add(5 * time.Second))
 	connection.StreamOpened(base.Add(6 * time.Second))
 	connection.AddEgress(10, base.Add(10*time.Second))
 	connection.Close(base.Add(16 * time.Second))
@@ -208,8 +209,8 @@ func TestUsageReporterCapturesHistogramsAndVisitorSketch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if checkpoint.PublisherOpenLatency.Count() != 1 ||
-		checkpoint.PublisherOpenLatency.SumNanoseconds() != uint64(3*time.Second) ||
+	if checkpoint.VisitorStreamOpenLatency.Count() != 1 ||
+		checkpoint.VisitorStreamOpenLatency.SumNanoseconds() != uint64(3*time.Second) ||
 		checkpoint.TimeToFirstPublisherByte.Count() != 1 ||
 		checkpoint.TimeToFirstPublisherByte.SumNanoseconds() != uint64(9*time.Second) ||
 		checkpoint.SuccessfulConnectionDuration.Count() != 1 ||
@@ -220,8 +221,9 @@ func TestUsageReporterCapturesHistogramsAndVisitorSketch(t *testing.T) {
 }
 
 type usageControlStub struct {
-	calls []usageReportBatch
-	err   error
+	calls    []usageReportBatch
+	err      error
+	onReport func(usageReportBatch) error
 }
 
 func (s *usageControlStub) ReportUsage(_ context.Context, batch usageReportBatch) error {
@@ -232,7 +234,153 @@ func (s *usageControlStub) ReportUsage(_ context.Context, batch usageReportBatch
 		cloned.observedThrough = &value
 	}
 	s.calls = append(s.calls, cloned)
+	if s.onReport != nil {
+		return s.onReport(batch)
+	}
 	return s.err
+}
+
+func TestUsageReporterFreezesCheckpointWhileFirstPageBlocked(t *testing.T) {
+	control := new(usageControlStub)
+	reporter, err := NewUsageReporter(control, time.Second, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
+	source := netip.MustParseAddr("192.0.2.1")
+	for index := range 257 {
+		connection := reporter.Open(fmt.Sprintf("route-%03d", index), 1, source, base)
+		connection.Close(base)
+	}
+	started, release := make(chan struct{}), make(chan struct{})
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	control.onReport = func(usageReportBatch) error {
+		if len(control.calls) == 1 {
+			close(started)
+			select {
+			case <-release:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		return nil
+	}
+	done := make(chan error, 1)
+	cutoff := base.Add(59 * time.Second)
+	go func() { done <- reporter.flush(ctx, cutoff, false) }()
+	select {
+	case <-started:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	// Mutate the first page and an unsent page, then cross the minute while the
+	// request is blocked. None of these events belong to the frozen checkpoint.
+	for _, name := range []string{"route-000", "route-256"} {
+		connection := reporter.Open(name, 1, source, cutoff)
+		connection.Close(cutoff)
+	}
+	connection := reporter.Open("new-minute", 1, source, base.Add(61*time.Second))
+	connection.Close(base.Add(61 * time.Second))
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	seen := make(map[string]bool)
+	for index, batch := range control.calls {
+		if (batch.observedThrough != nil) != (index == len(control.calls)-1) {
+			t.Fatal("watermark before all pages acknowledged")
+		}
+		for _, report := range batch.reports {
+			if report.ObservedThrough.Before(report.BucketStart) || report.RouteId == "new-minute" || seen[report.RouteId] || report.ConnectionAttempts != 1 {
+				t.Fatalf("checkpoint changed during drain: route=%s attempts=%d start=%s observed=%s duplicate=%t", report.RouteId, report.ConnectionAttempts, report.BucketStart, report.ObservedThrough, seen[report.RouteId])
+			}
+			seen[report.RouteId] = true
+		}
+	}
+	if len(seen) != 257 {
+		t.Fatalf("reported %d routes", len(seen))
+	}
+	control.calls = nil
+	control.onReport = nil
+	// A delayed ticker timestamp must not predate an already observed mutation.
+	if err := reporter.flush(ctx, cutoff, false); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, batch := range control.calls {
+		for _, report := range batch.reports {
+			if report.ObservedThrough.Before(report.BucketStart) {
+				t.Fatal("stale cutoff created invalid report")
+			}
+			if report.RouteId == "new-minute" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatal("next checkpoint lost concurrent bucket")
+	}
+}
+
+func TestUsageReporterLostPageResponseRetriesFrozenPayloadBeforeClose(t *testing.T) {
+	control := new(usageControlStub)
+	reporter, err := NewUsageReporter(control, time.Second, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Now().UTC().Truncate(time.Minute)
+	source := netip.MustParseAddr("192.0.2.1")
+	for index := range 33 {
+		connection := reporter.Open(fmt.Sprintf("route-%02d", index), 1, source, base)
+		connection.Close(base)
+	}
+	lost := errors.New("response lost after server committed")
+	control.onReport = func(usageReportBatch) error {
+		if len(control.calls) == 2 {
+			return lost
+		}
+		return nil
+	}
+	if err := reporter.flush(t.Context(), base, false); !errors.Is(err, lost) {
+		t.Fatalf("lost response = %v", err)
+	}
+	if len(control.calls) != 2 || control.calls[0].observedThrough != nil || control.calls[1].observedThrough != nil {
+		t.Fatal("premature watermark")
+	}
+	connection := reporter.Open("route-16", 1, source, base)
+	connection.PolicyDenied(base)
+	connection.Close(base)
+	if err := reporter.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(control.calls[1], control.calls[2]) {
+		t.Fatal("retry changed payload or revision")
+	}
+	if control.calls[3].observedThrough == nil || control.calls[3].complete {
+		t.Fatal("prior checkpoint was not completed before close")
+	}
+	last := control.calls[len(control.calls)-1]
+	if !last.complete || last.observedThrough == nil || !reporter.closed {
+		t.Fatal("close did not finish final checkpoint")
+	}
+	found := false
+	for _, batch := range control.calls[4:] {
+		if len(batch.reports) > 16 {
+			t.Fatal("unbounded page")
+		}
+		for _, report := range batch.reports {
+			if !report.Final {
+				t.Fatal("close emitted nonfinal report")
+			}
+			if report.RouteId == "route-16" {
+				found = report.ConnectionAttempts == 2 && report.PolicyDenials == 1 && report.ReportRevision == 2
+			}
+		}
+	}
+	if !found {
+		t.Fatal("close lost mutation made during retry")
+	}
 }
 
 func (*usageControlStub) VisitorNetworkHashKey(time.Time) ([32]byte, bool) {

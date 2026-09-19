@@ -104,7 +104,7 @@ func TestIntegrationRelayCertificateOrderWork(t *testing.T) {
 	if err != nil || completed.State != "complete" {
 		t.Fatalf("completed relay order = %#v, %v", completed, err)
 	}
-	installed, err := database.GetRelayServiceCertificate(t.Context(), lease.RelayLeaseIdentity, now.Add(16*time.Millisecond))
+	installed, err := database.GetRelayTransportCertificate(t.Context(), lease.RelayLeaseIdentity, now.Add(16*time.Millisecond))
 	if err != nil || installed.CertificatePEM != string(certificate) || installed.PrivateKeyPEM != string(work.PrivateKeyPEM) {
 		t.Fatalf("installed relay certificate differs from issued material: %v", err)
 	}
@@ -123,10 +123,10 @@ func TestIntegrationRelayCertificateRejectsStaleLease(t *testing.T) {
 		t.Fatal(err)
 	}
 	certificate, key := testRelayCertificate(t, lease.TLSServerName, now)
-	if _, err := database.StoreRelayServiceCertificate(t.Context(), lease.RelayServiceID, lease.TLSServerName, certificate, key, now); err != nil {
+	if _, err := database.StoreRelayTransportCertificate(t.Context(), lease.RelayServiceID, lease.TLSServerName, certificate, key, now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.GetRelayServiceCertificate(t.Context(), lease.RelayLeaseIdentity, now); err != nil {
+	if _, err := database.GetRelayTransportCertificate(t.Context(), lease.RelayLeaseIdentity, now); err != nil {
 		t.Fatalf("current lease: %v", err)
 	}
 	for _, kind := range []string{"run", "revision", "expired"} {
@@ -140,7 +140,7 @@ func TestIntegrationRelayCertificateRejectsStaleLease(t *testing.T) {
 			case "expired":
 				at = lease.LeaseExpiresAt
 			}
-			if _, err := database.GetRelayServiceCertificate(t.Context(), identity, at); !errors.Is(err, ErrRelayServiceCertificateLeaseStale) {
+			if _, err := database.GetRelayTransportCertificate(t.Context(), identity, at); !errors.Is(err, ErrRelayTransportCertificateLeaseStale) {
 				t.Fatalf("%s lease: %v", kind, err)
 			}
 		})

@@ -5,16 +5,16 @@ import (
 	"testing"
 )
 
-func TestHostedAuthorityConfiguration(t *testing.T) {
+func TestExternalAuthorityConfiguration(t *testing.T) {
 	valid := Config{
-		Mode:              RoleControl,
+		Role:              RoleControl,
 		AuthorityEndpoint: "https://authority.example",
 		HostedSecret:      "hosted-service-secret-012345678901",
 		OIDCIssuer:        "https://identity.example/realms/company",
 		OIDCClientID:      "tnl-cli",
 		OIDCLoginFlow:     OIDCLoginFlowDeviceCode,
 	}
-	if err := valid.validateHostedAuthority(); err != nil {
+	if err := valid.validateExternalAuthority(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -29,7 +29,7 @@ func TestHostedAuthorityConfiguration(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			config := valid
 			mutate(&config)
-			if err := config.validateHostedAuthority(); err == nil || strings.TrimSpace(err.Error()) == "" {
+			if err := config.validateExternalAuthority(); err == nil || strings.TrimSpace(err.Error()) == "" {
 				t.Fatal("invalid external authority configuration was accepted")
 			}
 		})

@@ -94,7 +94,7 @@ func (f *integrationViteFixture) start(t *testing.T, exitCode int) {
 			t.Error("tnl dev left its Vite process running")
 		}
 	})
-	f.dev = startIntegrationBinaryProcess(t, f.project.root, environment, f.server.tnlPath, "dev", "api", "--public")
+	f.dev = startIntegrationBinaryProcess(t, f.project.root, environment, f.server.tnlPath, "dev", "api", "--allow-all-ips")
 	f.dev.wantExitCode = exitCode
 	t.Cleanup(func() {
 		if t.Failed() {

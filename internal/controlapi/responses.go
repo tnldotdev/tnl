@@ -27,8 +27,8 @@ func routeResponse(route controlstate.Route) controlv1.Route {
 		}
 		result.AllowedIpPrefixes = &prefixes
 	}
-	if route.AttachedSessionID != "" {
-		result.AttachedSessionId = &route.AttachedSessionID
+	if route.OpenRouteSessionID != "" {
+		result.OpenRouteSessionId = &route.OpenRouteSessionID
 	}
 	return result
 }

@@ -147,7 +147,7 @@ SELECT routes.id, routes.team_id, routes.domain_id, routes.membership_id, routes
         FROM control.route_sessions AS sessions
         WHERE sessions.route_id = routes.id
           AND sessions.closed_at IS NULL
-    ), '')::text AS attached_session_id,
+    ), '')::text AS open_route_session_id,
     COALESCE((
         SELECT sessions.route_version
         FROM control.route_sessions AS sessions
@@ -198,7 +198,7 @@ type GetExternalAuthorityRouteRow struct {
 	UpdatedAt                 pgtype.Timestamptz
 	SuspendedAt               pgtype.Timestamptz
 	DeletedAt                 pgtype.Timestamptz
-	AttachedSessionID         string
+	OpenRouteSessionID        string
 	AuthorizationRouteVersion int64
 }
 
@@ -239,7 +239,7 @@ func (q *Queries) GetExternalAuthorityRoute(ctx context.Context, arg GetExternal
 		&i.UpdatedAt,
 		&i.SuspendedAt,
 		&i.DeletedAt,
-		&i.AttachedSessionID,
+		&i.OpenRouteSessionID,
 		&i.AuthorizationRouteVersion,
 	)
 	return i, err
@@ -252,7 +252,7 @@ SELECT routes.id, routes.team_id, routes.domain_id, routes.membership_id, routes
         FROM control.route_sessions AS sessions
         WHERE sessions.route_id = routes.id
           AND sessions.closed_at IS NULL
-    ), '')::text AS attached_session_id
+    ), '')::text AS open_route_session_id
 FROM control.routes AS routes
 WHERE routes.team_id = $1
   AND routes.lifecycle_state <> 'deleted'
@@ -300,7 +300,7 @@ type ListExternalAuthorityRoutesRow struct {
 	UpdatedAt             pgtype.Timestamptz
 	SuspendedAt           pgtype.Timestamptz
 	DeletedAt             pgtype.Timestamptz
-	AttachedSessionID     string
+	OpenRouteSessionID    string
 }
 
 func (q *Queries) ListExternalAuthorityRoutes(ctx context.Context, arg ListExternalAuthorityRoutesParams) ([]ListExternalAuthorityRoutesRow, error) {
@@ -346,7 +346,7 @@ func (q *Queries) ListExternalAuthorityRoutes(ctx context.Context, arg ListExter
 			&i.UpdatedAt,
 			&i.SuspendedAt,
 			&i.DeletedAt,
-			&i.AttachedSessionID,
+			&i.OpenRouteSessionID,
 		); err != nil {
 			return nil, err
 		}

@@ -106,7 +106,7 @@ func runTeamCurrent(ctx context.Context, command teamCurrentCommand, output, dia
 			clioutput.Field{Label: "kind", Value: string(current.team.Kind)},
 			clioutput.Field{Label: "role", Value: string(current.membership.Role)},
 			clioutput.Field{Label: "member slug", Value: current.membership.MemberSlug},
-			clioutput.Field{Label: "id", Value: current.team.Id},
+			clioutput.Field{Label: "team ID", Value: current.team.Id},
 		),
 	)
 }
@@ -131,10 +131,10 @@ func runTeamList(ctx context.Context, command teamListCommand, output, diagnosti
 			clioutput.Field{Label: "kind", Value: string(membership.TeamKind)},
 			clioutput.Field{Label: "role", Value: string(membership.Role)},
 			clioutput.Field{Label: "member slug", Value: membership.MemberSlug},
-			clioutput.Field{Label: "id", Value: membership.TeamId},
+			clioutput.Field{Label: "team ID", Value: membership.TeamId},
 		)))
 	}
-	return writeHumanFrame(output, "tnl team list", countState(len(blocks), "membership", "memberships"), "* selected", blocks...)
+	return writeHumanFrame(output, "tnl team list", countState(len(blocks), "team", "teams"), "* selected", blocks...)
 }
 
 func runTeamUse(ctx context.Context, command teamUseCommand, output, diagnostics io.Writer) error {
@@ -155,7 +155,7 @@ func runTeamUse(ctx context.Context, command teamUseCommand, output, diagnostics
 			clioutput.Field{Label: "team", Value: membership.TeamDisplayName},
 			clioutput.Field{Label: "role", Value: string(membership.Role)},
 			clioutput.Field{Label: "member slug", Value: membership.MemberSlug},
-			clioutput.Field{Label: "id", Value: membership.TeamId},
+			clioutput.Field{Label: "team ID", Value: membership.TeamId},
 		),
 	)
 }
@@ -181,7 +181,7 @@ func runTeamCreate(ctx context.Context, command teamCreateCommand, output, diagn
 		clioutput.Fields(
 			clioutput.Field{Label: "team", Value: team.DisplayName},
 			clioutput.Field{Label: "member slug", Value: command.MemberSlug},
-			clioutput.Field{Label: "id", Value: team.Id},
+			clioutput.Field{Label: "team ID", Value: team.Id},
 		),
 	)
 }
@@ -208,9 +208,9 @@ func runTeamMembers(ctx context.Context, command teamMembersCommand, output, dia
 	for _, value := range page.Memberships {
 		blocks = append(blocks, clioutput.Section(value.MemberSlug, clioutput.Fields(
 			clioutput.Field{Label: "role", Value: string(value.Role)},
-			clioutput.Field{Label: "identity", Value: value.IdentityId},
+			clioutput.Field{Label: "identity ID", Value: value.IdentityId},
 			clioutput.Field{Label: "managed label", Value: value.ManagedLabel},
-			clioutput.Field{Label: "id", Value: value.Id},
+			clioutput.Field{Label: "membership ID", Value: value.Id},
 		)))
 	}
 	return writeHumanFrame(output, "tnl team members", countState(len(blocks), "member", "members"), "", blocks...)

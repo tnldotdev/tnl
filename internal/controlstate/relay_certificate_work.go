@@ -229,7 +229,7 @@ func (d *Database) SaveRelayCertificateOrderWork(
 			return RelayCertificateOrderWork{}, fmt.Errorf("controlstate: save relay certificate work: encrypt installed key: %w", err)
 		}
 		leaf, _ := relayCertificateLeaf(work.CertificatePEM, work.PrivateKeyPEM)
-		if _, err := queries.StoreRelayServiceCertificate(ctx, controlstatedb.StoreRelayServiceCertificateParams{
+		if _, err := queries.StoreRelayTransportCertificate(ctx, controlstatedb.StoreRelayTransportCertificateParams{
 			TransportCertificatePem: text(string(work.CertificatePEM)), TransportPrivateKeyCiphertext: privateKeyCiphertext,
 			TransportPrivateKeyStorageKeyID: text(d.storageKey.CurrentID()), TransportCertificateSerial: text(leaf.SerialNumber.String()),
 			TransportCertificateExpiresAt: timestamptz(leaf.NotAfter), UpdatedAt: timestamptz(now),

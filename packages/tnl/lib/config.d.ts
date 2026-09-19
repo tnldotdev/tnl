@@ -1,29 +1,81 @@
-export interface TNL {
+export interface TnlConfig {
+  /**
+   * Control URL used by this project.
+   */
   server?: string;
+  /**
+   * Team ID or unambiguous display name used by this project.
+   */
   team?: string;
+  /**
+   * Default route and tunnel settings.
+   */
   tunnel?: {
+    /**
+     * Complete route hostname to publish.
+     */
     host?: string;
+    /**
+     * One DNS label beneath the current member namespace.
+     */
     subdomain?: string;
-    public?: boolean;
+    /**
+     * Remove the route when this tunnel stops.
+     */
     ephemeral?: boolean;
     /**
+     * Allow visitors from every IP address.
+     */
+    allowAllIPs?: boolean;
+    /**
+     * Visitor IP addresses or prefixes allowed to use the route; the current client IP is added automatically.
+     *
      * @maxItems 63
      */
     allowIP?: string[];
   };
   publish?: Publish;
   dev?: Dev;
+  /**
+   * Named local services with optional project-setting overrides.
+   */
   services?: {
     [k: string]: {
+      /**
+       * Service directory relative to the project configuration.
+       */
       directory?: string;
+      /**
+       * Control URL override for this service.
+       */
       server?: string;
+      /**
+       * Team override for this service.
+       */
       team?: string;
+      /**
+       * Route and tunnel overrides for this service.
+       */
       tunnel?: {
+        /**
+         * Complete route hostname to publish.
+         */
         host?: string;
+        /**
+         * One DNS label beneath the current member namespace.
+         */
         subdomain?: string;
-        public?: boolean;
+        /**
+         * Remove the route when this tunnel stops.
+         */
         ephemeral?: boolean;
         /**
+         * Allow visitors from every IP address.
+         */
+        allowAllIPs?: boolean;
+        /**
+         * Visitor IP addresses or prefixes allowed to use the route; the current client IP is added automatically.
+         *
          * @maxItems 63
          */
         allowIP?: string[];
@@ -34,14 +86,25 @@ export interface TNL {
   };
 }
 export interface Publish {
+  /**
+   * Local HTTP URL or port reached by the publisher.
+   */
   target?: string | number;
 }
 export interface Dev {
   /**
+   * Child command and arguments run by tnl dev.
+   *
    * @minItems 1
    */
   command?: [string, ...string[]];
+  /**
+   * Required local service port for tnl dev.
+   */
   port?: number;
+  /**
+   * Maximum time to wait for the local service to start.
+   */
   startupTimeout?: string;
 }
 
@@ -61,9 +124,9 @@ export interface TnlConfigContext {
   readonly worktree: TnlWorktree;
 }
 
-export type TnlConfigFactory = (context: TnlConfigContext) => TNL | Promise<TNL>;
+export type TnlConfigFactory = (context: TnlConfigContext) => TnlConfig | Promise<TnlConfig>;
 
-export type TnlConfigInput = TNL | TnlConfigFactory;
+export type TnlConfigInput = TnlConfig | TnlConfigFactory;
 
 /** Adds type checking to a version-1 tnl.config.ts configuration. */
 export declare function defineConfig<const Config extends TnlConfigInput>(config: Config): Config;

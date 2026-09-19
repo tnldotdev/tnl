@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/controlstate"
 )
 
 func TestSampleResourcesUsesRoleMetadataWithoutSendingFragment(t *testing.T) {
@@ -38,20 +40,20 @@ func TestMetricsParserKeepsLabelsContainingSpaces(t *testing.T) {
 	}
 }
 
-func TestFailedPublisherRetainsEarlyMetricsAndDatabaseSnapshot(t *testing.T) {
+func TestNonzeroFailedPublisherCollectsFailureMetricsWithoutRoutineMetrics(t *testing.T) {
 	metrics := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/debug/database" {
-			_, _ = w.Write([]byte(`{"sessions":[{"pid":1,"state":"active","wait_type":"Lock","blocking_pids":[2]}]}`))
+			_, _ = w.Write([]byte(`{"sessions":[{"pid":1,"state":"active","wait_type":"Lock","transaction_age_seconds":null,"query_age_seconds":null,"blocking_pids":[2]}]}`))
 			return
 		}
 		_, _ = w.Write([]byte("tnl_database_pool_acquired_connections 4\n"))
 	}))
 	defer metrics.Close()
-	state := newCoordinatorState("early", 1, 1, 1)
+	state := newCoordinatorState("early", 2, 1, 1)
 	coordinator := httptest.NewServer(coordinatorHandler("secret", state))
 	defer coordinator.Close()
 	command := publisherCommand{
-		workerCommand: workerCommand{CellID: "early", Suite: "scout", Axis: "active_routes", Repetition: 1, WorkerCount: 1, CoordinatorURL: coordinator.URL, CoordinatorToken: "secret"},
+		workerCommand: workerCommand{CellID: "early", Suite: "scout", Axis: "active_routes", Repetition: 1, WorkerIndex: 1, WorkerCount: 2, CoordinatorURL: coordinator.URL, CoordinatorToken: "secret"},
 		ControlCAFile: filepath.Join(t.TempDir(), "missing-ca"), Routes: 1, AssignedRoutes: 1, PayloadBytes: 16, Timeout: time.Second,
 		MetricsURLs: []string{metrics.URL + "/metrics#control"}, DiagnosticURLs: []string{metrics.URL + "/debug/database"},
 	}
@@ -66,9 +68,29 @@ func TestFailedPublisherRetainsEarlyMetricsAndDatabaseSnapshot(t *testing.T) {
 	if err := json.Unmarshal(data, &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.Failure.Stage != "setup" || len(result.Resources) < 2 || result.Resources[0].Moment != "before_activation" ||
-		len(result.DatabaseDiagnostics) != 1 || result.DatabaseDiagnostics[0].Snapshot.Sessions[0].WaitType != "Lock" {
+	if result.Failure.Stage != "setup" || len(result.Resources) != 1 || result.Resources[0].Moment != "failure" ||
+		result.Resources[0].Metrics["tnl_database_pool_acquired_connections"] != 4 || len(result.DatabaseDiagnostics) != 1 ||
+		result.DatabaseDiagnostics[0].Snapshot.Sessions[0].WaitType != "Lock" ||
+		result.DatabaseDiagnostics[0].Snapshot.Sessions[0].TransactionAgeSeconds != nil {
 		t.Fatalf("result=%+v", result)
+	}
+	reportResult := reportTestResult("early", 0, 1, "publisher", 1, 2, "failed", time.Millisecond)
+	reportResult.DatabaseDiagnostics = result.DatabaseDiagnostics
+	report, err := buildReport([]benchmarkResult{reportResult})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Cells) != 1 || !strings.Contains(strings.Join(report.Cells[0].BottleneckEvidence, "\n"), "oldest transaction unavailable") {
+		t.Fatalf("report did not preserve unavailable database age: %+v", report)
+	}
+	data, err = json.Marshal(controlstate.DatabaseSession{})
+	if err != nil || !strings.Contains(string(data), `"transaction_age_seconds":null`) || !strings.Contains(string(data), `"query_age_seconds":null`) {
+		t.Fatalf("unavailable database metadata = %s, %v", data, err)
+	}
+	var legacy controlstate.DatabaseSession
+	if err := json.Unmarshal([]byte(`{"transaction_age_seconds":1.5,"query_age_seconds":2.5}`), &legacy); err != nil ||
+		legacy.TransactionAgeSeconds == nil || *legacy.TransactionAgeSeconds != 1.5 {
+		t.Fatalf("legacy numeric database metadata = %+v, %v", legacy, err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()

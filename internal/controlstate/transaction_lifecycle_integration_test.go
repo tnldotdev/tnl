@@ -50,8 +50,15 @@ func TestIntegrationTransactionRoutingClockSerializesAllocation(t *testing.T) {
 		if err != nil {
 			return 0, err
 		}
-		revision, _, err := emitRouteRoutingTableEvent(ctx, queries, route, session, nil, IngressRouteTombstone, now)
-		return revision, err
+		pending := pendingIngressRoutingTableEvents{}
+		published, err := pending.addRouteEvent(ctx, queries, route, session, nil, IngressRouteTombstone, now)
+		if err != nil {
+			return 0, err
+		}
+		if err := pending.publish(ctx, queries); err != nil {
+			return 0, err
+		}
+		return published.routingTableRevision, nil
 	}
 	firstRevision, err := emit(first, 0)
 	if err != nil {
@@ -98,6 +105,198 @@ func TestIntegrationTransactionRoutingClockSerializesAllocation(t *testing.T) {
 	if err != nil || len(page.Events) != 1 || page.Events[0].RouteID != routes[1].ID ||
 		page.NextRevision != uint64(secondRevision) || secondRevision <= firstRevision || page.More {
 		t.Fatalf("next committed page skipped an event: %#v, %v", page, err)
+	}
+}
+
+func TestIntegrationTransactionRoutingPublicationRollbackAndPendingEvents(t *testing.T) {
+	database, now := newCertificatePlanDatabase(t)
+	plan := func(hostname string) CertificatePlan {
+		return CertificatePlan{CacheKey: hostname, Scope: hostname, Identifiers: []string{hostname}, ChallengeMethod: "tls-alpn-01"}
+	}
+	routeA, authenticationA := newExternalPlanSession(t, database, now, "team_pending_a", "pending-a.example.test", "managed:example.test", plan("pending-a.example.test"))
+	routeB, authenticationB := newExternalPlanSession(t, database, now, "team_pending_b", "pending-b.example.test", "managed:example.test", plan("pending-b.example.test"))
+	var baselineEvents, baselineClock int64
+	if err := database.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.ingress_routing_table_events`).Scan(&baselineEvents); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.pool.QueryRow(t.Context(), `SELECT current_revision FROM control.ingress_routing_table_clock WHERE singleton`).Scan(&baselineClock); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := database.pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	queries := controlstatedb.New(tx)
+	storedA, err := queries.LockRouteForSession(t.Context(), routeA.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionA, err := queries.GetRouteSession(t.Context(), authenticationA.RouteSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	storedB, err := queries.LockRouteForSession(t.Context(), routeB.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionB, err := queries.GetRouteSession(t.Context(), authenticationB.RouteSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(t.Context(), `UPDATE control.routes SET target = 'http://127.0.0.1:4999' WHERE id = $1`, routeA.ID); err != nil {
+		t.Fatal(err)
+	}
+	pending := pendingIngressRoutingTableEvents{}
+	first, err := pending.addRouteEvent(t.Context(), queries, storedA, sessionA, nil, IngressRouteTombstone, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := pending.addChallengeEvent(t.Context(), queries, storedA, sessionA, nil, IngressChallengeTombstone, now.Add(time.Minute), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	third, err := pending.addRouteEvent(t.Context(), queries, storedB, sessionB, nil, IngressRouteTombstone, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pending.publish(t.Context(), queries); err != nil {
+		t.Fatal(err)
+	}
+	if first.entryRevision != 1 || second.entryRevision != 2 || third.entryRevision != 1 ||
+		first.routingTableRevision >= second.routingTableRevision || second.routingTableRevision >= third.routingTableRevision {
+		t.Fatalf("published revisions = %+v, %+v, %+v", first, second, third)
+	}
+	if err := tx.Rollback(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	var events, clock int64
+	var target string
+	if err := database.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.ingress_routing_table_events`).Scan(&events); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.pool.QueryRow(t.Context(), `SELECT current_revision FROM control.ingress_routing_table_clock WHERE singleton`).Scan(&clock); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.pool.QueryRow(t.Context(), `SELECT target FROM control.routes WHERE id = $1`, routeA.ID).Scan(&target); err != nil {
+		t.Fatal(err)
+	}
+	if events != baselineEvents || clock != baselineClock || target != routeA.Target {
+		t.Fatalf("rollback left events/clock/target = %d/%d/%q; want %d/%d/%q", events, clock, target, baselineEvents, baselineClock, routeA.Target)
+	}
+
+	tx, err = database.pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rollbackTestTransaction(t, tx)
+	queries = controlstatedb.New(tx)
+	pending = pendingIngressRoutingTableEvents{}
+	first, err = pending.addRouteEvent(t.Context(), queries, storedA, sessionA, nil, IngressRouteTombstone, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err = pending.addChallengeEvent(t.Context(), queries, storedA, sessionA, nil, IngressChallengeTombstone, now.Add(time.Minute), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	third, err = pending.addRouteEvent(t.Context(), queries, storedB, sessionB, nil, IngressRouteTombstone, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pending.publish(t.Context(), queries); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if first.entryRevision != 1 || second.entryRevision != 2 || third.entryRevision != 1 ||
+		first.routingTableRevision >= second.routingTableRevision || second.routingTableRevision >= third.routingTableRevision {
+		t.Fatalf("committed pending revisions = %+v, %+v, %+v", first, second, third)
+	}
+}
+
+func TestIntegrationTransactionExpiredReplacementFollowsHeartbeatPlacementLocks(t *testing.T) {
+	database, now := newCertificatePlanDatabase(t)
+	plan := func(hostname string) CertificatePlan {
+		return CertificatePlan{CacheKey: hostname, Scope: hostname, Identifiers: []string{hostname}, ChallengeMethod: "tls-alpn-01"}
+	}
+	_, heartbeatAuthentication := newExternalPlanSession(t, database, now, "team_cycle_heartbeat", "heartbeat-cycle.example.test", "managed:example.test", plan("heartbeat-cycle.example.test"))
+	replacementRoute, replacementAuthentication := newExternalPlanSession(t, database, now, "team_cycle_replacement", "replacement-cycle.example.test", "managed:example.test", plan("replacement-cycle.example.test"))
+	for _, authentication := range []RouteSessionAuthentication{heartbeatAuthentication, replacementAuthentication} {
+		if _, err := database.pool.Exec(t.Context(), `UPDATE control.route_sessions SET state = 'ready', ready_at = $2 WHERE id = $1`, authentication.RouteSessionID, now); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.pool.Exec(t.Context(), `UPDATE control.route_session_connections AS connections
+			SET state = 'ready', connected_relay_id = leases.relay_id,
+			    connected_relay_run_id = leases.relay_run_id,
+			    connected_relay_lease_revision = leases.relay_lease_revision,
+			    claim_id = 'transaction-cycle', connected_at = $2, ready_at = $2
+			FROM control.relay_leases AS leases
+			WHERE connections.route_session_id = $1
+			  AND leases.relay_service_id = connections.relay_service_id`, authentication.RouteSessionID, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.route_session_connections
+		SET connected_relay_run_id = 'stale-run'
+		WHERE route_session_id = $1 AND connection_slot = 0`, heartbeatAuthentication.RouteSessionID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.route_sessions SET publisher_expires_at = $1 WHERE id = $2`, now.Add(time.Second), replacementAuthentication.RouteSessionID); err != nil {
+		t.Fatal(err)
+	}
+	secret, err := database.EnsureExternalAuthorityPrincipal(t.Context(), "identity_"+replacementRoute.TeamID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacementRequest := RouteSessionRequest{
+		RouteID: replacementRoute.ID, TeamID: replacementRoute.TeamID, MembershipID: replacementRoute.MembershipID,
+		ActingIdentityID: "identity_" + replacementRoute.TeamID, RetrySecret: secret[:], IdempotencyKey: "replacement",
+		RequestDigest: sha256.Sum256([]byte("replacement")), PolicyRevision: 1,
+		CertificateCacheKey: replacementRoute.CanonicalHostname, CertificateScope: replacementRoute.CanonicalHostname,
+		CertificateIdentifiers: []string{replacementRoute.CanonicalHostname}, CertificateChallenge: "tls-alpn-01",
+		AuthorityIssuer: "https://authority.example.test", ExpectedMutationRevision: replacementRoute.MutationRevision + 1,
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	gate, err := database.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rollbackTestTransaction(t, gate)
+	if _, err := controlstatedb.New(gate).LockIngressRoutingTableClock(ctx); err != nil {
+		t.Fatal(err)
+	}
+	workers := newIntegrationWorkers(t, cancel)
+	heartbeatDone := make(chan error, 1)
+	var heartbeatSetup RouteSessionSetup
+	workers.Go(func() {
+		var err error
+		heartbeatSetup, err = database.HeartbeatRouteSession(ctx, heartbeatAuthentication, now.Add(2*time.Second), time.Hour, time.Hour)
+		heartbeatDone <- err
+	})
+	heartbeatPID := waitForPostgresBlock(t, ctx, database, int32(gate.Conn().PgConn().PID()), heartbeatDone)
+	replacementDone := make(chan error, 1)
+	workers.Go(func() {
+		_, err := database.CreateRouteSession(ctx, replacementRequest, now.Add(2*time.Second), time.Hour, time.Hour)
+		replacementDone <- err
+	})
+	// Replacement must reach placement behind the heartbeat. If closure acquired
+	// the routing clock immediately, it would wait on the gate instead.
+	waitForPostgresBlock(t, ctx, database, heartbeatPID, replacementDone)
+	if err := gate.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := awaitIntegrationResult(t, ctx, heartbeatDone); err != nil {
+		t.Fatal(err)
+	}
+	if heartbeatSetup.PublisherConnections[0].State != PublisherConnectionAssigned ||
+		heartbeatSetup.PublisherConnections[0].ConnectionAssignmentRevision != 2 ||
+		heartbeatSetup.PublisherConnections[1].State != PublisherConnectionReady {
+		t.Fatalf("stale relay run replacement = %#v", heartbeatSetup.PublisherConnections)
+	}
+	if err := awaitIntegrationResult(t, ctx, replacementDone); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -397,7 +596,7 @@ func TestIntegrationTransactionHostedRevocationIncludesConcurrentCreation(t *tes
 		t.Fatal(err)
 	}
 	defer rollbackTestTransaction(t, gate)
-	if _, err := controlstatedb.New(gate).LockRouteCreationControl(ctx); err != nil {
+	if _, err := gate.Exec(ctx, `SELECT control_name FROM control.maintenance_controls WHERE control_name = 'route_creation' FOR UPDATE`); err != nil {
 		t.Fatal(err)
 	}
 	workers := newIntegrationWorkers(t, cancel)

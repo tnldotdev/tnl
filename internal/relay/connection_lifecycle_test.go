@@ -194,13 +194,13 @@ func TestPublisherConnectionDrainWaitsForStreamAndRejectsNewWork(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	t.Cleanup(cancel)
-	peer := make(chan *tunnel.IncomingPublisherStream, 1)
+	peer := make(chan *tunnel.IncomingVisitorStream, 1)
 	accepted := relayWorker(t, func() { cancel(); _ = publisher.Close() }, func() error {
-		incoming, err := publisher.AcceptPublisherStream(ctx)
+		incoming, err := publisher.AcceptVisitorStream(ctx)
 		if err != nil {
 			return err
 		}
-		if incoming.Header != (tunnelv1.PublisherStreamHeader{ProtocolVersion: 1, Kind: tunnelv1.VisitorStream, VisitorConnectionID: "visitor_1", RouteID: "route_1", RouteSessionID: "session_1", RouteVersion: 2, PublisherConnectionID: "connection_1", ConnectionAssignmentRevision: 3}) {
+		if incoming.Header != (tunnelv1.VisitorStreamHeader{ProtocolVersion: 1, Kind: tunnelv1.VisitorStream, VisitorConnectionID: "visitor_1", RouteID: "route_1", RouteSessionID: "session_1", RouteVersion: 2, PublisherConnectionID: "connection_1", ConnectionAssignmentRevision: 3}) {
 			_ = incoming.Stream.Close()
 			return errors.New("incorrect visitor header")
 		}
@@ -268,7 +268,7 @@ func TestPublisherConnectionCloseInterruptsPendingOpen(t *testing.T) {
 		}
 		return err
 	})
-	incoming, err := publisher.AcceptPublisherStream(ctx)
+	incoming, err := publisher.AcceptVisitorStream(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +303,7 @@ func TestPublisherConnectionDrainCancellationClosesPendingOpen(t *testing.T) {
 		}
 		return err
 	})
-	incoming, err := publisher.AcceptPublisherStream(ctx)
+	incoming, err := publisher.AcceptVisitorStream(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

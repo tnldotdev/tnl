@@ -47,8 +47,8 @@ func NewRecoveryReporter(
 	}, nil
 }
 
-func (r *RecoveryReporter) Observe(routeID string, routeVersion, episodeID uint64, observedAt time.Time) {
-	if r == nil || r.control == nil || episodeID == 0 {
+func (r *RecoveryReporter) Observe(routeID string, routeVersion, recoveryEpisodeID uint64, observedAt time.Time) {
+	if r == nil || r.control == nil || recoveryEpisodeID == 0 {
 		return
 	}
 	r.mu.Lock()
@@ -56,22 +56,22 @@ func (r *RecoveryReporter) Observe(routeID string, routeVersion, episodeID uint6
 		r.mu.Unlock()
 		return
 	}
-	if _, exists := r.pending[episodeID]; exists {
+	if _, exists := r.pending[recoveryEpisodeID]; exists {
 		r.mu.Unlock()
 		return
 	}
-	r.pending[episodeID] = struct{}{}
+	r.pending[recoveryEpisodeID] = struct{}{}
 	r.active.Add(1)
 	r.mu.Unlock()
 	go func() {
 		defer r.active.Done()
 		defer func() {
 			r.mu.Lock()
-			delete(r.pending, episodeID)
+			delete(r.pending, recoveryEpisodeID)
 			r.mu.Unlock()
 		}()
 		for {
-			if _, err := r.control.ObserveRecovery(r.ctx, routeID, routeVersion, episodeID, observedAt); err == nil {
+			if _, err := r.control.ObserveRecovery(r.ctx, routeID, routeVersion, recoveryEpisodeID, observedAt); err == nil {
 				return
 			} else if r.ctx.Err() == nil {
 				r.report(err)

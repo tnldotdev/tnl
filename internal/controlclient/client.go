@@ -279,7 +279,7 @@ func responseError(status int, header http.Header, payload []byte) error {
 		return ErrNotFound
 	case controlv1.NameUnavailable:
 		return ErrNameUnavailable
-	case controlv1.Conflict, controlv1.RouteAttached, controlv1.PolicyRevisionStale:
+	case controlv1.Conflict, controlv1.RouteSessionOpen, controlv1.PolicyRevisionStale:
 		return ErrStatusConflict
 	case controlv1.DnsSetupPending:
 		return ErrDNSProofPending

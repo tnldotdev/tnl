@@ -50,7 +50,7 @@ func (s *relayCertificateSource) TLSConfig() *tls.Config {
 	}}
 }
 
-func (s *relayCertificateSource) Install(certificate relayv1.RelayServiceCertificate) error {
+func (s *relayCertificateSource) Install(certificate relayv1.RelayTransportCertificate) error {
 	if _, ok := s.relayServiceIDs[certificate.RelayServiceId]; !ok || certificate.TlsServerName != s.tlsServerName {
 		return errors.New("relay transport certificate identity does not match")
 	}

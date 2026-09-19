@@ -117,22 +117,22 @@ func (s *service) DrainRelay(
 	return relayLease(lease), nil
 }
 
-func (s *service) GetRelayServiceCertificate(
+func (s *service) GetRelayTransportCertificate(
 	ctx context.Context,
 	relayServiceID relayv1.RelayServiceID,
-	params relayv1.GetRelayServiceCertificateParams,
-) (relayv1.RelayServiceCertificate, error) {
+	params relayv1.GetRelayTransportCertificateParams,
+) (relayv1.RelayTransportCertificate, error) {
 	identity, ok := relayLeaseIdentity(relayServiceID, params.RelayId, params.RelayRunId, params.RelayLeaseRevision)
 	if !ok {
-		return relayv1.RelayServiceCertificate{}, serviceapi.NewProblemError(
+		return relayv1.RelayTransportCertificate{}, serviceapi.NewProblemError(
 			http.StatusBadRequest, "invalid_request", "Relay certificate lease identity is invalid",
 		)
 	}
-	certificate, err := s.store.GetRelayServiceCertificate(ctx, identity, s.now())
+	certificate, err := s.store.GetRelayTransportCertificate(ctx, identity, s.now())
 	if err != nil {
-		return relayv1.RelayServiceCertificate{}, s.storeError(ctx, err)
+		return relayv1.RelayTransportCertificate{}, s.storeError(ctx, err)
 	}
-	return relayv1.RelayServiceCertificate{
+	return relayv1.RelayTransportCertificate{
 		RelayServiceId: certificate.RelayServiceID, TlsServerName: certificate.TLSServerName,
 		CertificatePem: certificate.CertificatePEM, PrivateKeyPem: certificate.PrivateKeyPEM,
 		NotAfter: certificate.NotAfter,

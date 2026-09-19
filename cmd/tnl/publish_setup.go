@@ -157,7 +157,7 @@ func resolvePublishHostname(
 	if subdomain != "" {
 		canonical, err := naming.CanonicalizeHostname(subdomain)
 		if err != nil || canonical != subdomain || strings.Contains(subdomain, ".") {
-			return "", authorityv1.Domain{}, "", errors.New("subdomain must be one canonical DNS label")
+			return "", authorityv1.Domain{}, "", errors.New("subdomain must be one lowercase ASCII DNS label")
 		}
 		hostname = subdomain + "." + namespace
 	}
@@ -170,7 +170,7 @@ func resolvePublishHostname(
 	}
 	canonical, err := naming.CanonicalizeHostname(hostname)
 	if err != nil || canonical != hostname {
-		return "", authorityv1.Domain{}, "", errors.New("hostname must be canonical")
+		return "", authorityv1.Domain{}, "", errors.New("hostname must use lowercase ASCII DNS labels without a trailing dot")
 	}
 	if hostname != namespace && !strings.HasSuffix(hostname, "."+namespace) {
 		domain, err = readyDomainForHostname(current.domains, hostname)

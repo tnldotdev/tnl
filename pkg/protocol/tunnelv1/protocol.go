@@ -83,8 +83,8 @@ const (
 	InternalForwardingStream StreamKind = "internal_forward"
 )
 
-// PublisherStreamHeader identifies one visitor stream opened on a publisher connection.
-type PublisherStreamHeader struct {
+// VisitorStreamHeader identifies one visitor stream opened on a publisher connection.
+type VisitorStreamHeader struct {
 	ProtocolVersion              uint32     `json:"protocol_version"`
 	Kind                         StreamKind `json:"kind"`
 	VisitorConnectionID          string     `json:"visitor_connection_id"`
@@ -145,20 +145,20 @@ func ReadControl(reader io.Reader) (Message, error) {
 	return message, nil
 }
 
-func WritePublisherStreamHeader(writer io.Writer, header PublisherStreamHeader) error {
+func WriteVisitorStreamHeader(writer io.Writer, header VisitorStreamHeader) error {
 	if err := header.Validate(); err != nil {
 		return err
 	}
 	return writeJSONFrame(writer, header, MaxHeaderBytes)
 }
 
-func ReadPublisherStreamHeader(reader io.Reader) (PublisherStreamHeader, error) {
-	var header PublisherStreamHeader
+func ReadVisitorStreamHeader(reader io.Reader) (VisitorStreamHeader, error) {
+	var header VisitorStreamHeader
 	if err := readJSONFrame(reader, &header, MaxHeaderBytes); err != nil {
-		return PublisherStreamHeader{}, err
+		return VisitorStreamHeader{}, err
 	}
 	if err := header.Validate(); err != nil {
-		return PublisherStreamHeader{}, err
+		return VisitorStreamHeader{}, err
 	}
 	return header, nil
 }
@@ -249,11 +249,11 @@ func (r PublisherConnectionRef) Validate() error {
 	return nil
 }
 
-func (h PublisherStreamHeader) Validate() error {
+func (h VisitorStreamHeader) Validate() error {
 	if h.ProtocolVersion != Version || h.Kind != VisitorStream || !validIdentifier(h.VisitorConnectionID) ||
 		!validIdentifier(h.RouteID) || !validIdentifier(h.RouteSessionID) || h.RouteVersion == 0 ||
 		!validIdentifier(h.PublisherConnectionID) || h.ConnectionAssignmentRevision == 0 {
-		return errors.New("tunnelv1: invalid publisher stream header")
+		return errors.New("tunnelv1: invalid visitor stream header")
 	}
 	return nil
 }

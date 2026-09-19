@@ -1,4 +1,5 @@
 {
+  "allow_all_ips": "allowAllIPs",
   "allow_ip": "allowIP",
   "startup_timeout": "startupTimeout"
 }

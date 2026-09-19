@@ -926,7 +926,7 @@ components:
           team_id,
           acting_membership_id,
           acting_role,
-          team_policy_revision,
+          policy_revision,
           domain_id,
           canonical_hostname,
           route_scope,
@@ -943,7 +943,7 @@ components:
           $ref: "#/components/schemas/TeamRole"
         route_membership_id:
           $ref: "#/components/schemas/MembershipID"
-        team_policy_revision:
+        policy_revision:
           type: integer
           format: int64
           minimum: 1
