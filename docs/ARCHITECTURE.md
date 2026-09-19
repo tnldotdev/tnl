@@ -32,6 +32,26 @@ repository.
 hostnames. It is independent of `TNLD_MANAGED_DEPLOYMENT_DOMAIN`, which supplies
 public route namespaces.
 
+## Database Lock Scope
+
+Shared-parent guards in `internal/controlstate` document the invariant they
+protect, required conflicts, allowed concurrency, and transaction lifetime next
+to their SQL. Choose the lock mode for the whole transaction, including implicit
+writes and foreign-key checks. Lock ordering and lock strength are separate
+decisions.
+
+Session creation shares the team authorization guard before locking its route;
+authority mutations take a conflicting guard. These guards acquire a keyed
+transaction advisory lock before the team row so incoming readers cannot starve
+a waiting authority writer. Publisher-connection claims and
+readiness similarly share a keyed transaction advisory guard and a relay-service
+row guard, then exclusively lock the selected relay lease. Blocking service
+writers queue exclusively before taking service and lease row locks. Maintenance
+using `SKIP LOCKED` remains opportunistic and must not wait for a service guard
+after acquiring its row.
+Concurrency tests must prove both that conflicting operations wait and that
+independent operations finish while a controlled blocker remains held.
+
 ## Connections And Trust
 
 Publishers maintain two connections through different relay services. A route

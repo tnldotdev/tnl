@@ -157,12 +157,30 @@ FOR UPDATE OF t, actor;
 -- Local authority mutations lock the team before identities, memberships,
 -- domains, DNS authorities, and routes. Authorization is rechecked under this
 -- transaction-held guard; hosted teams never require fabricated local rows.
+-- Queue writers with the session readers using a transaction advisory lock:
+-- PostgreSQL row-lock readers alone can bypass a waiting writer indefinitely.
 -- name: LockLocalTeamForMutation :one
-SELECT id
-FROM control.teams
-WHERE id = sqlc.arg(team_id)
-  AND deleted_at IS NULL
-FOR NO KEY UPDATE;
+WITH guard AS MATERIALIZED (
+    SELECT pg_advisory_xact_lock(hashtextextended('tnl:local-team:' || sqlc.arg(team_id)::text, 0))
+)
+SELECT teams.id
+FROM control.teams AS teams CROSS JOIN guard
+WHERE teams.id = sqlc.arg(team_id)
+  AND teams.deleted_at IS NULL
+FOR NO KEY UPDATE OF teams;
+
+-- Session creation reads authority under this guard before locking its route.
+-- Different routes may start together; team/role/domain mutations must wait.
+-- Callers must not upgrade this guard by writing the team later in the transaction.
+-- name: LockLocalTeamForSession :one
+WITH guard AS MATERIALIZED (
+    SELECT pg_advisory_xact_lock_shared(hashtextextended('tnl:local-team:' || sqlc.arg(team_id)::text, 0))
+)
+SELECT teams.id
+FROM control.teams AS teams CROSS JOIN guard
+WHERE teams.id = sqlc.arg(team_id)
+  AND teams.deleted_at IS NULL
+FOR SHARE OF teams;
 
 -- name: ListTeamMembershipContexts :many
 SELECT
@@ -422,12 +440,15 @@ FROM control.team_invitations
 WHERE token_digest = sqlc.arg(token_digest);
 
 -- name: LockTeamForInvitationAcceptance :one
-SELECT id
-FROM control.teams
-WHERE id = sqlc.arg(team_id)
-  AND kind = 'organization'
-  AND deleted_at IS NULL
-FOR UPDATE;
+WITH guard AS MATERIALIZED (
+    SELECT pg_advisory_xact_lock(hashtextextended('tnl:local-team:' || sqlc.arg(team_id)::text, 0))
+)
+SELECT teams.id
+FROM control.teams AS teams CROSS JOIN guard
+WHERE teams.id = sqlc.arg(team_id)
+  AND teams.kind = 'organization'
+  AND teams.deleted_at IS NULL
+FOR UPDATE OF teams;
 
 -- name: TeamMembershipIdentityExists :one
 SELECT EXISTS (

@@ -145,6 +145,9 @@ func (d *Database) ReportIngressUsage(
 	return nil
 }
 
+// The caller holds the current ingress lease and usage-run guards, serializing
+// this run's append-only report history. Routes and runs are FK-protected and
+// sessions are retained, so replays need no route/session locks.
 func applyIngressUsageReport(
 	ctx context.Context,
 	queries *controlstatedb.Queries,
@@ -154,18 +157,6 @@ func applyIngressUsageReport(
 ) error {
 	routeVersion, _ := positiveInt64(report.RouteVersion)
 	reportRevision, _ := positiveInt64(report.ReportRevision)
-	if _, err := queries.LockRouteForUsage(ctx, report.RouteID); errors.Is(err, pgx.ErrNoRows) {
-		return ErrIngressUsageRouteNotFound
-	} else if err != nil {
-		return fmt.Errorf("controlstate: report ingress usage: lock route: %w", err)
-	}
-	if _, err := queries.LockRouteSessionForUsage(ctx, controlstatedb.LockRouteSessionForUsageParams{
-		RouteID: report.RouteID, RouteVersion: routeVersion,
-	}); errors.Is(err, pgx.ErrNoRows) {
-		return ErrIngressUsageRouteNotFound
-	} else if err != nil {
-		return fmt.Errorf("controlstate: report ingress usage: lock route version: %w", err)
-	}
 	key := controlstatedb.GetLatestIngressUsageReportParams{
 		IngressID: identity.IngressID, IngressRunID: identity.IngressRunID,
 		RouteID: report.RouteID, RouteVersion: routeVersion, BucketStart: timestamptz(report.BucketStart),
@@ -197,6 +188,18 @@ func applyIngressUsageReport(
 	delta, err := ingressUsageDelta(previous, report, errors.Is(err, pgx.ErrNoRows))
 	if err != nil {
 		return err
+	}
+	if _, err := queries.LockRouteForUsage(ctx, report.RouteID); errors.Is(err, pgx.ErrNoRows) {
+		return ErrIngressUsageRouteNotFound
+	} else if err != nil {
+		return fmt.Errorf("controlstate: report ingress usage: lock route: %w", err)
+	}
+	if _, err := queries.LockRouteSessionForUsage(ctx, controlstatedb.LockRouteSessionForUsageParams{
+		RouteID: report.RouteID, RouteVersion: routeVersion,
+	}); errors.Is(err, pgx.ErrNoRows) {
+		return ErrIngressUsageRouteNotFound
+	} else if err != nil {
+		return fmt.Errorf("controlstate: report ingress usage: lock route version: %w", err)
 	}
 	bucket, bucketErr := queries.GetRouteUsageBucketForUpdate(ctx, controlstatedb.GetRouteUsageBucketForUpdateParams{
 		RouteID: report.RouteID, RouteVersion: routeVersion, BucketStart: timestamptz(report.BucketStart),
@@ -231,12 +234,14 @@ func applyIngressUsageReport(
 	} else if err != nil {
 		return fmt.Errorf("controlstate: report ingress usage: apply aggregate delta: %w", err)
 	}
-	if _, err := queries.ApplyRouteSessionPolicyDenials(ctx, controlstatedb.ApplyRouteSessionPolicyDenialsParams{
-		PolicyDenials: delta.policyDenials, RouteID: report.RouteID, RouteVersion: routeVersion,
-	}); errors.Is(err, pgx.ErrNoRows) {
-		return errors.New("controlstate: route-session policy denial counter is exhausted")
-	} else if err != nil {
-		return fmt.Errorf("controlstate: report ingress usage: apply route-session policy denials: %w", err)
+	if delta.policyDenials != 0 {
+		if _, err := queries.ApplyRouteSessionPolicyDenials(ctx, controlstatedb.ApplyRouteSessionPolicyDenialsParams{
+			PolicyDenials: delta.policyDenials, RouteID: report.RouteID, RouteVersion: routeVersion,
+		}); errors.Is(err, pgx.ErrNoRows) {
+			return errors.New("controlstate: route-session policy denial counter is exhausted")
+		} else if err != nil {
+			return fmt.Errorf("controlstate: report ingress usage: apply route-session policy denials: %w", err)
+		}
 	}
 	return nil
 }

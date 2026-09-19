@@ -11,32 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const allocateRouteVersion = `-- name: AllocateRouteVersion :one
-UPDATE control.routes
-SET next_route_version = next_route_version + 1,
-    mutation_revision = mutation_revision + 1,
-    updated_at = $1
-WHERE id = $2
-  AND next_route_version < 9223372036854775807
-  AND mutation_revision = $3
-  AND mutation_revision < 9223372036854775807
-  AND lifecycle_state = 'enabled'
-RETURNING (next_route_version - 1)::bigint
-`
-
-type AllocateRouteVersionParams struct {
-	UpdatedAt                pgtype.Timestamptz
-	RouteID                  string
-	ExpectedMutationRevision int64
-}
-
-func (q *Queries) AllocateRouteVersion(ctx context.Context, arg AllocateRouteVersionParams) (int64, error) {
-	row := q.db.QueryRow(ctx, allocateRouteVersion, arg.UpdatedAt, arg.RouteID, arg.ExpectedMutationRevision)
-	var column_1 int64
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
 const getActiveRouteSessionMembership = `-- name: GetActiveRouteSessionMembership :one
 SELECT m.id, m.role, t.policy_revision
 FROM control.team_memberships AS m
@@ -155,6 +129,18 @@ func (q *Queries) GetRouteSessionByIdempotency(ctx context.Context, arg GetRoute
 }
 
 const insertRouteSession = `-- name: InsertRouteSession :one
+WITH version AS (
+UPDATE control.routes
+SET next_route_version = next_route_version + 1,
+    mutation_revision = mutation_revision + 1,
+    updated_at = $15
+WHERE id = $2
+  AND next_route_version < 9223372036854775807
+  AND mutation_revision = $18
+  AND mutation_revision < 9223372036854775807
+  AND lifecycle_state = 'enabled'
+RETURNING (next_route_version - 1)::bigint AS route_version
+)
 INSERT INTO control.route_sessions (
     id,
     route_id,
@@ -175,12 +161,13 @@ INSERT INTO control.route_sessions (
     created_at,
     last_heartbeat_at,
     publisher_expires_at
-) VALUES (
+) SELECT
     $1,
     $2,
     $3,
     $4,
     $5,
+    version.route_version,
     $6,
     $7,
     $8,
@@ -190,34 +177,33 @@ INSERT INTO control.route_sessions (
     $12,
     $13,
     $14,
-    $15,
     'starting',
+    $15,
     $16,
-    $17,
-    $18
-)
+    $17
+FROM version
 RETURNING id, route_id, team_id, membership_id, acting_identity_id, route_version, idempotency_key, request_digest, session_token_id, session_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason
 `
 
 type InsertRouteSessionParams struct {
-	ID                     string
-	RouteID                string
-	TeamID                 string
-	MembershipID           pgtype.Text
-	ActingIdentityID       string
-	RouteVersion           int64
-	IdempotencyKey         string
-	RequestDigest          []byte
-	SessionTokenID         string
-	SessionTokenDigest     []byte
-	PolicyRevision         int64
-	CertificateCacheKey    string
-	CertificateScope       string
-	CertificateIdentifiers []string
-	CertificateChallenge   string
-	CreatedAt              pgtype.Timestamptz
-	LastHeartbeatAt        pgtype.Timestamptz
-	PublisherExpiresAt     pgtype.Timestamptz
+	ID                       string
+	RouteID                  string
+	TeamID                   string
+	MembershipID             pgtype.Text
+	ActingIdentityID         string
+	IdempotencyKey           string
+	RequestDigest            []byte
+	SessionTokenID           string
+	SessionTokenDigest       []byte
+	PolicyRevision           int64
+	CertificateCacheKey      string
+	CertificateScope         string
+	CertificateIdentifiers   []string
+	CertificateChallenge     string
+	CreatedAt                pgtype.Timestamptz
+	LastHeartbeatAt          pgtype.Timestamptz
+	PublisherExpiresAt       pgtype.Timestamptz
+	ExpectedMutationRevision int64
 }
 
 func (q *Queries) InsertRouteSession(ctx context.Context, arg InsertRouteSessionParams) (ControlRouteSession, error) {
@@ -227,7 +213,6 @@ func (q *Queries) InsertRouteSession(ctx context.Context, arg InsertRouteSession
 		arg.TeamID,
 		arg.MembershipID,
 		arg.ActingIdentityID,
-		arg.RouteVersion,
 		arg.IdempotencyKey,
 		arg.RequestDigest,
 		arg.SessionTokenID,
@@ -240,6 +225,7 @@ func (q *Queries) InsertRouteSession(ctx context.Context, arg InsertRouteSession
 		arg.CreatedAt,
 		arg.LastHeartbeatAt,
 		arg.PublisherExpiresAt,
+		arg.ExpectedMutationRevision,
 	)
 	var i ControlRouteSession
 	err := row.Scan(
@@ -312,7 +298,7 @@ func (q *Queries) InsertRouteSessionAuditEvent(ctx context.Context, arg InsertRo
 	return err
 }
 
-const insertRouteSessionConnection = `-- name: InsertRouteSessionConnection :one
+const insertRouteSessionConnections = `-- name: InsertRouteSessionConnections :many
 INSERT INTO control.route_session_connections (
     route_session_id,
     route_id,
@@ -327,77 +313,88 @@ INSERT INTO control.route_session_connections (
     publisher_connection_credential_expires_at,
     state,
     assigned_at
-) VALUES (
+) SELECT
     $1,
     $2,
     $3,
-    $4,
-    $5,
+    slots.connection_slot::smallint,
+    ($4::text[])[slots.connection_slot + 1],
     1,
-    $6,
-    $7,
-    $8,
+    ($5::text[])[slots.connection_slot + 1],
+    ($6::text[])[slots.connection_slot + 1],
+    ($7::text[])[slots.connection_slot + 1],
+    ($8::bytea[])[slots.connection_slot + 1],
     $9,
-    $10,
     'assigned',
-    $11
-)
+    $10
+FROM generate_series(0, 1) AS slots(connection_slot)
 RETURNING route_session_id, route_id, route_version, connection_slot, publisher_connection_id, connection_assignment_revision, relay_service_id, relay_address, tls_server_name, publisher_connection_credential_digest, publisher_connection_credential_expires_at, connected_relay_id, connected_relay_run_id, connected_relay_lease_revision, claim_id, state, assigned_at, connected_at, ready_at, disconnected_at, closed_at
 `
 
-type InsertRouteSessionConnectionParams struct {
+type InsertRouteSessionConnectionsParams struct {
 	RouteSessionID                         string
 	RouteID                                string
 	RouteVersion                           int64
-	ConnectionSlot                         int16
-	PublisherConnectionID                  string
-	RelayServiceID                         string
-	RelayAddress                           string
-	TlsServerName                          string
-	PublisherConnectionCredentialDigest    []byte
+	PublisherConnectionIds                 []string
+	RelayServiceIds                        []string
+	RelayAddresses                         []string
+	TlsServerNames                         []string
+	CredentialDigests                      [][]byte
 	PublisherConnectionCredentialExpiresAt pgtype.Timestamptz
 	AssignedAt                             pgtype.Timestamptz
 }
 
-func (q *Queries) InsertRouteSessionConnection(ctx context.Context, arg InsertRouteSessionConnectionParams) (ControlRouteSessionConnection, error) {
-	row := q.db.QueryRow(ctx, insertRouteSessionConnection,
+func (q *Queries) InsertRouteSessionConnections(ctx context.Context, arg InsertRouteSessionConnectionsParams) ([]ControlRouteSessionConnection, error) {
+	rows, err := q.db.Query(ctx, insertRouteSessionConnections,
 		arg.RouteSessionID,
 		arg.RouteID,
 		arg.RouteVersion,
-		arg.ConnectionSlot,
-		arg.PublisherConnectionID,
-		arg.RelayServiceID,
-		arg.RelayAddress,
-		arg.TlsServerName,
-		arg.PublisherConnectionCredentialDigest,
+		arg.PublisherConnectionIds,
+		arg.RelayServiceIds,
+		arg.RelayAddresses,
+		arg.TlsServerNames,
+		arg.CredentialDigests,
 		arg.PublisherConnectionCredentialExpiresAt,
 		arg.AssignedAt,
 	)
-	var i ControlRouteSessionConnection
-	err := row.Scan(
-		&i.RouteSessionID,
-		&i.RouteID,
-		&i.RouteVersion,
-		&i.ConnectionSlot,
-		&i.PublisherConnectionID,
-		&i.ConnectionAssignmentRevision,
-		&i.RelayServiceID,
-		&i.RelayAddress,
-		&i.TlsServerName,
-		&i.PublisherConnectionCredentialDigest,
-		&i.PublisherConnectionCredentialExpiresAt,
-		&i.ConnectedRelayID,
-		&i.ConnectedRelayRunID,
-		&i.ConnectedRelayLeaseRevision,
-		&i.ClaimID,
-		&i.State,
-		&i.AssignedAt,
-		&i.ConnectedAt,
-		&i.ReadyAt,
-		&i.DisconnectedAt,
-		&i.ClosedAt,
-	)
-	return i, err
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ControlRouteSessionConnection
+	for rows.Next() {
+		var i ControlRouteSessionConnection
+		if err := rows.Scan(
+			&i.RouteSessionID,
+			&i.RouteID,
+			&i.RouteVersion,
+			&i.ConnectionSlot,
+			&i.PublisherConnectionID,
+			&i.ConnectionAssignmentRevision,
+			&i.RelayServiceID,
+			&i.RelayAddress,
+			&i.TlsServerName,
+			&i.PublisherConnectionCredentialDigest,
+			&i.PublisherConnectionCredentialExpiresAt,
+			&i.ConnectedRelayID,
+			&i.ConnectedRelayRunID,
+			&i.ConnectedRelayLeaseRevision,
+			&i.ClaimID,
+			&i.State,
+			&i.AssignedAt,
+			&i.ConnectedAt,
+			&i.ReadyAt,
+			&i.DisconnectedAt,
+			&i.ClosedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listRouteSessionConnections = `-- name: ListRouteSessionConnections :many

@@ -101,16 +101,17 @@ func newControlStateIntegrationDatabaseWithURL(t *testing.T, suffix string) (*Da
 
 // Poll PostgreSQL's actual wait graph, rather than assuming a goroutine has
 // reached a lock after an arbitrary scheduling delay.
-func waitForPostgresBlock(t *testing.T, ctx context.Context, database *Database, blocker int32, done <-chan error) int32 {
+func waitForPostgresBlock(t *testing.T, ctx context.Context, database *Database, blocker int32, done <-chan error, otherBlockers ...int32) int32 {
 	t.Helper()
+	blockers := append([]int32{blocker}, otherBlockers...)
 	tick := time.NewTicker(time.Millisecond)
 	defer tick.Stop()
 	for {
 		var pid int32
 		err := database.pool.QueryRow(ctx, `
 			SELECT pid FROM pg_stat_activity
-			WHERE datname = current_database() AND $1::integer = ANY(pg_blocking_pids(pid))
-		`, blocker).Scan(&pid)
+			WHERE datname = current_database() AND pg_blocking_pids(pid) && $1::integer[]
+		`, blockers).Scan(&pid)
 		if err == nil {
 			return pid
 		}
@@ -119,9 +120,9 @@ func waitForPostgresBlock(t *testing.T, ctx context.Context, database *Database,
 		}
 		select {
 		case err := <-done:
-			t.Fatalf("operation ended before blocking on backend %d: %v", blocker, err)
+			t.Fatalf("operation ended before blocking on backends %v: %v", blockers, err)
 		case <-ctx.Done():
-			t.Fatalf("operation did not block on backend %d: %v", blocker, ctx.Err())
+			t.Fatalf("operation did not block on backends %v: %v", blockers, ctx.Err())
 		case <-tick.C:
 		}
 	}

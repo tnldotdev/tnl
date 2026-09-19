@@ -371,10 +371,17 @@ func (q *Queries) LockDNSAuthorityLocalDomain(ctx context.Context, authorityRefe
 }
 
 const lockDNSAuthorityLocalTeam = `-- name: LockDNSAuthorityLocalTeam :exec
+WITH guard AS MATERIALIZED (
+    SELECT teams.id,
+        pg_advisory_xact_lock(hashtextextended('tnl:local-team:' || teams.id, 0))
+    FROM control.teams AS teams
+    JOIN control.domains AS domains ON domains.team_id = teams.id
+    WHERE domains.dns_authority_reference = $1
+    ORDER BY teams.id
+)
 SELECT teams.id
 FROM control.teams AS teams
-JOIN control.domains AS domains ON domains.team_id = teams.id
-WHERE domains.dns_authority_reference = $1
+JOIN guard ON guard.id = teams.id
 ORDER BY teams.id
 FOR NO KEY UPDATE OF teams
 `

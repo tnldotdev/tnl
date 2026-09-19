@@ -519,7 +519,6 @@ WHERE ingress_id = $1
   AND bucket_start = $5
 ORDER BY report_revision DESC
 LIMIT 1
-FOR UPDATE
 `
 
 type GetLatestIngressUsageReportParams struct {
