@@ -131,3 +131,16 @@ SELECT routes.*,
 FROM control.routes AS routes
 WHERE routes.id = sqlc.arg(route_id)
   AND routes.lifecycle_state <> 'deleted';
+
+-- name: GetAuthorizedRouteByHostname :one
+SELECT routes.*,
+    COALESCE((
+        SELECT sessions.id
+        FROM control.route_sessions AS sessions
+        WHERE sessions.route_id = routes.id
+          AND sessions.closed_at IS NULL
+    ), '')::text AS open_route_session_id
+FROM control.routes AS routes
+WHERE routes.team_id = sqlc.arg(team_id)
+  AND routes.canonical_hostname = sqlc.arg(canonical_hostname)
+  AND routes.lifecycle_state <> 'deleted';

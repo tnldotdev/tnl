@@ -24,7 +24,7 @@ const defaultProvisioningStalledDelay = 2 * time.Minute
 
 type RouteControlClient interface {
 	CreateRoute(context.Context, controlv1.CreateRouteRequest, string) (controlv1.Route, error)
-	ListRoutes(context.Context, string) ([]controlv1.Route, error)
+	GetRouteByHostname(context.Context, string, string) (controlv1.Route, error)
 	UpdateRoute(context.Context, string, controlv1.UpdateRouteRequest) (controlv1.Route, error)
 	DeleteRoute(context.Context, string) error
 	CreateRouteSession(context.Context, string, string) (controlv1.RouteSessionSetup, error)
@@ -108,6 +108,7 @@ func Run(ctx context.Context, config Config) (result error) {
 	if err != nil {
 		return err
 	}
+	config.Hostname = hostname
 	if config.State == nil {
 		return errors.New("publisher: client state is required")
 	}
@@ -181,18 +182,16 @@ func createOrLoadRoute(ctx context.Context, config Config) (controlv1.Route, boo
 	}
 	config.AllowedIPPrefixes = allowedIPPrefixes
 	if !config.Ephemeral {
-		routes, err := config.Control.ListRoutes(ctx, config.TeamID)
-		if err != nil {
+		route, err := config.Control.GetRouteByHostname(ctx, config.TeamID, config.Hostname)
+		if err != nil && !errors.Is(err, controlclient.ErrNotFound) {
 			return controlv1.Route{}, false, err
 		}
-		for _, route := range routes {
-			if route.CanonicalHostname == config.Hostname {
-				if err := validateRouteIdentity(route, config); err != nil {
-					return controlv1.Route{}, false, err
-				}
-				reconciled, err := reconcileRoute(ctx, config, route)
-				return reconciled, false, err
+		if err == nil {
+			if err := validateRouteIdentity(route, config); err != nil {
+				return controlv1.Route{}, false, err
 			}
+			reconciled, err := reconcileRoute(ctx, config, route)
+			return reconciled, false, err
 		}
 	}
 	idempotencyKey, err := opaqueID("route_")
@@ -218,7 +217,7 @@ func createOrLoadRoute(ctx context.Context, config Config) (controlv1.Route, boo
 }
 
 func validateRouteIdentity(route controlv1.Route, config Config) error {
-	if route.TeamId != config.TeamID || route.DomainId != config.DomainID || route.RouteScope != config.RouteScope ||
+	if route.CanonicalHostname != config.Hostname || route.TeamId != config.TeamID || route.DomainId != config.DomainID || route.RouteScope != config.RouteScope ||
 		route.Ephemeral != config.Ephemeral {
 		return diagnostic.Wrap(diagnostic.RouteConflict, errors.New("publisher: existing route identity does not match the requested route"))
 	}

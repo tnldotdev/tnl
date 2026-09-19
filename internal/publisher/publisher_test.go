@@ -21,7 +21,7 @@ func TestCreateOrLoadRouteReusesDurableRoute(t *testing.T) {
 		CanonicalHostname: "demo.example", RouteScope: controlv1.Member, Target: "http://127.0.0.1:3000",
 		LifecycleState: controlv1.Enabled,
 	}
-	control := &publisherControlStub{allowed: []string{"list"}, routes: []controlv1.Route{want}}
+	control := &publisherControlStub{allowed: []string{"lookup"}, routes: []controlv1.Route{want}}
 	got, created, err := createOrLoadRoute(t.Context(), Config{
 		Control: control, TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
 		Hostname: "demo.example", RouteScope: controlv1.Member, Target: "http://127.0.0.1:3000",
@@ -32,11 +32,14 @@ func TestCreateOrLoadRouteReusesDurableRoute(t *testing.T) {
 	if got.Id != want.Id || created || control.created != nil || control.updated != nil {
 		t.Fatalf("route = %#v, create request = %#v, update request = %#v", got, control.created, control.updated)
 	}
+	if control.lookupCalls != 1 || control.lookup != [2]string{"team_1", "demo.example"} {
+		t.Fatalf("expected one exact lookup, got %d calls for %v", control.lookupCalls, control.lookup)
+	}
 }
 
 func TestCreateOrLoadRouteReconcilesTargetAndIPPolicy(t *testing.T) {
 	existingPolicy := []string{"192.0.2.0/24"}
-	control := &publisherControlStub{allowed: []string{"list", "update"}, routes: []controlv1.Route{{
+	control := &publisherControlStub{allowed: []string{"lookup", "update"}, routes: []controlv1.Route{{
 		Id: "route_existing", TeamId: "team_1", DomainId: "domain_1", MembershipId: pointer("membership_1"),
 		CanonicalHostname: "demo.example", RouteScope: controlv1.Member, Target: "http://127.0.0.1:3000",
 		AllowedIpPrefixes: &existingPolicy, LifecycleState: controlv1.Enabled,
@@ -58,7 +61,7 @@ func TestCreateOrLoadRouteReconcilesTargetAndIPPolicy(t *testing.T) {
 }
 
 func TestCreateOrLoadRouteRejectsDifferentIdentityOrLifecycle(t *testing.T) {
-	control := &publisherControlStub{allowed: []string{"list"}, routes: []controlv1.Route{{
+	control := &publisherControlStub{allowed: []string{"lookup"}, routes: []controlv1.Route{{
 		Id: "route_existing", TeamId: "team_1", DomainId: "domain_other",
 		CanonicalHostname: "demo.example", RouteScope: controlv1.Shared, Target: "http://127.0.0.1:3000",
 	}}}
@@ -85,8 +88,8 @@ func TestCreateOrLoadRouteNeverReusesEphemeralRoute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !created || route.Id != "route_created" || control.listCalls != 0 || control.created == nil {
-		t.Fatalf("route = %#v, created = %t, list calls = %d", route, created, control.listCalls)
+	if !created || route.Id != "route_created" || control.lookupCalls != 0 || control.created == nil {
+		t.Fatalf("route = %#v, created = %t, lookup calls = %d", route, created, control.lookupCalls)
 	}
 }
 
@@ -99,6 +102,22 @@ func TestReconcileRouteRejectsSuspendedRoute(t *testing.T) {
 	}
 	if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.RouteConflict {
 		t.Fatalf("reconcile diagnostic = %q, %t", code, ok)
+	}
+}
+
+func TestCreateOrLoadRouteFindsSuspendedRouteWithoutRecreating(t *testing.T) {
+	control := &publisherControlStub{allowed: []string{"lookup"}, routes: []controlv1.Route{{
+		Id: "route_suspended", TeamId: "team_1", DomainId: "domain_1", CanonicalHostname: "demo.example",
+		RouteScope: controlv1.Shared, LifecycleState: controlv1.Suspended,
+	}}}
+	_, created, err := createOrLoadRoute(t.Context(), Config{
+		Control: control, TeamID: "team_1", DomainID: "domain_1", Hostname: "demo.example", RouteScope: controlv1.Shared,
+	})
+	if created || control.created != nil || control.updated != nil || control.lookupCalls != 1 {
+		t.Fatalf("suspended route was changed: %+v", control)
+	}
+	if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.RouteConflict {
+		t.Fatalf("suspended route diagnostic = %q, %t: %v", code, ok, err)
 	}
 }
 
@@ -137,7 +156,7 @@ func TestCreateRouteSessionClassifiesLifecycleConflict(t *testing.T) {
 }
 
 func TestCreateOrLoadRouteCreatesTeamScopedRoute(t *testing.T) {
-	control := &publisherControlStub{allowed: []string{"list", "create"}}
+	control := &publisherControlStub{allowed: []string{"lookup", "create"}}
 	allowed := []string{"2001:db8::1/64", "192.0.2.9/24"}
 	wantAllowed := []string{"192.0.2.0/24", "2001:db8::/64"}
 	got, created, err := createOrLoadRoute(t.Context(), Config{
@@ -154,6 +173,29 @@ func TestCreateOrLoadRouteCreatesTeamScopedRoute(t *testing.T) {
 		control.created.AllowedIpPrefixes == nil || !slices.Equal(*control.created.AllowedIpPrefixes, wantAllowed) ||
 		!slices.Equal(allowed, []string{"2001:db8::1/64", "192.0.2.9/24"}) {
 		t.Fatalf("route = %#v, create request = %#v", got, control.created)
+	}
+}
+
+func TestCreateOrLoadRouteLookupErrorsDoNotCreate(t *testing.T) {
+	for _, failure := range []error{controlclient.ErrUnavailable, controlclient.ErrUnauthenticated, errors.New("invalid filtered response")} {
+		control := &publisherControlStub{allowed: []string{"lookup"}, lookupErr: failure}
+		_, created, err := createOrLoadRoute(t.Context(), Config{Control: control, TeamID: "team_1", Hostname: "demo.example"})
+		if !errors.Is(err, failure) || created || control.lookupCalls != 1 || control.created != nil {
+			t.Fatalf("lookup error triggered creation: created=%t err=%v calls=%v", created, err, control.calls)
+		}
+	}
+}
+
+func TestCreateOrLoadRoutePreservesConcurrentCreationConflict(t *testing.T) {
+	control := &publisherControlStub{allowed: []string{"lookup", "create"}, createErr: controlclient.ErrNameUnavailable}
+	_, created, err := createOrLoadRoute(t.Context(), Config{
+		Control: control, TeamID: "team_1", DomainID: "domain_1", Hostname: "demo.example", RouteScope: controlv1.Shared,
+	})
+	if created || !errors.Is(err, controlclient.ErrNameUnavailable) || control.lookupCalls != 1 || control.created == nil {
+		t.Fatalf("concurrent create result = %t, %v", created, err)
+	}
+	if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.RouteConflict {
+		t.Fatalf("conflict diagnostic = %q, %t", code, ok)
 	}
 }
 
@@ -317,7 +359,9 @@ type publisherControlStub struct {
 	created         *controlv1.CreateRouteRequest
 	updated         *controlv1.UpdateRouteRequest
 	deleted         *string
-	listCalls       int
+	lookupCalls     int
+	lookup          [2]string
+	lookupErr       error
 	heartbeat       func(context.Context, string, uint64, credentials.RouteSessionToken) (controlv1.RouteSessionHeartbeat, error)
 	createErr       error
 	updateErr       error
@@ -346,10 +390,19 @@ func (s *publisherControlStub) CreateRoute(_ context.Context, body controlv1.Cre
 	return route, nil
 }
 
-func (s *publisherControlStub) ListRoutes(context.Context, string) ([]controlv1.Route, error) {
-	s.record("list")
-	s.listCalls++
-	return slices.Clone(s.routes), nil
+func (s *publisherControlStub) GetRouteByHostname(_ context.Context, teamID, hostname string) (controlv1.Route, error) {
+	s.record("lookup")
+	s.lookupCalls++
+	s.lookup = [2]string{teamID, hostname}
+	if s.lookupErr != nil {
+		return controlv1.Route{}, s.lookupErr
+	}
+	for _, route := range s.routes {
+		if route.CanonicalHostname == hostname {
+			return route, nil
+		}
+	}
+	return controlv1.Route{}, controlclient.ErrNotFound
 }
 
 func (s *publisherControlStub) UpdateRoute(_ context.Context, id string, body controlv1.UpdateRouteRequest) (controlv1.Route, error) {

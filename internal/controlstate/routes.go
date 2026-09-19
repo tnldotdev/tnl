@@ -441,6 +441,28 @@ func (d *Database) ListAuthorizedRoutes(ctx context.Context, teamID, cursor stri
 	return page, nil
 }
 
+// GetAuthorizedRouteByHostname reads one non-deleted route after a current
+// team-read authorization decision, using the existing hostname index.
+func (d *Database) GetAuthorizedRouteByHostname(ctx context.Context, teamID, hostname string) (Route, error) {
+	canonical, err := naming.CanonicalizeHostname(hostname)
+	if !validStateText(teamID) || err != nil || canonical != hostname {
+		return Route{}, ErrRouteInvalid
+	}
+	if err := d.requireOpen(); err != nil {
+		return Route{}, err
+	}
+	row, err := controlstatedb.New(d.pool).GetAuthorizedRouteByHostname(ctx, controlstatedb.GetAuthorizedRouteByHostnameParams{
+		TeamID: teamID, CanonicalHostname: hostname,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Route{}, ErrRouteNotFound
+	}
+	if err != nil {
+		return Route{}, fmt.Errorf("controlstate: get authorized route by hostname: %w", err)
+	}
+	return routeFromExternalAuthorityListRow(controlstatedb.ListExternalAuthorityRoutesRow(row)), nil
+}
+
 func (d *Database) GetRoute(ctx context.Context, identityID, routeID string) (Route, error) {
 	if !validStateText(identityID) || !validStateText(routeID) {
 		return Route{}, ErrRouteInvalid

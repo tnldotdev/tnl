@@ -99,7 +99,7 @@ func newCertificateTestControl(t *testing.T, hostname string, plan controlv1.Cer
 		t.Fatal(err)
 	}
 	return &certificateTestControl{
-		publisherControlStub: publisherControlStub{allowed: []string{"list"}}, signer: signer,
+		publisherControlStub: publisherControlStub{allowed: []string{"lookup"}}, signer: signer,
 		setup: controlv1.RouteSessionSetup{
 			Route:             controlv1.Route{Id: certificateTestRouteID, CanonicalHostname: hostname, TeamId: "team_1", DomainId: "domain_1", MembershipId: pointer("membership_1"), RouteScope: controlv1.Member, LifecycleState: controlv1.Enabled},
 			RouteSession:      controlv1.RouteSession{Id: "route_session_0123456789abcdef0123456789abcdef", RouteId: certificateTestRouteID, TeamId: "team_1", RouteVersion: 1, ExpiresAt: time.Now().Add(time.Hour)},

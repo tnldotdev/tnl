@@ -140,6 +140,104 @@ func (q *Queries) EnsureExternalRetryMasterKey(ctx context.Context, arg EnsureEx
 	return i, err
 }
 
+const getAuthorizedRouteByHostname = `-- name: GetAuthorizedRouteByHostname :one
+SELECT routes.id, routes.team_id, routes.domain_id, routes.membership_id, routes.created_by_identity_id, routes.idempotency_key, routes.request_digest, routes.canonical_hostname, routes.target, routes.route_scope, routes.policy_revision, routes.ip_policy, routes.allowed_ip_prefixes, routes.lifecycle_state, routes.dns_authority_reference, routes.dns_state, routes.dns_revision, routes.dns_work_owner, routes.dns_work_epoch, routes.dns_work_expires_at, routes.dns_attempts, routes.dns_available_at, routes.dns_last_error, routes.next_route_version, routes.mutation_revision, routes.ephemeral, routes.expires_at, routes.suspension_revision, routes.suspension_reason, routes.created_at, routes.updated_at, routes.suspended_at, routes.deleted_at,
+    COALESCE((
+        SELECT sessions.id
+        FROM control.route_sessions AS sessions
+        WHERE sessions.route_id = routes.id
+          AND sessions.closed_at IS NULL
+    ), '')::text AS open_route_session_id
+FROM control.routes AS routes
+WHERE routes.team_id = $1
+  AND routes.canonical_hostname = $2
+  AND routes.lifecycle_state <> 'deleted'
+`
+
+type GetAuthorizedRouteByHostnameParams struct {
+	TeamID            string
+	CanonicalHostname string
+}
+
+type GetAuthorizedRouteByHostnameRow struct {
+	ID                    string
+	TeamID                string
+	DomainID              string
+	MembershipID          pgtype.Text
+	CreatedByIdentityID   string
+	IdempotencyKey        string
+	RequestDigest         []byte
+	CanonicalHostname     string
+	Target                string
+	RouteScope            string
+	PolicyRevision        int64
+	IpPolicy              string
+	AllowedIpPrefixes     []netip.Prefix
+	LifecycleState        string
+	DnsAuthorityReference pgtype.Text
+	DnsState              string
+	DnsRevision           int64
+	DnsWorkOwner          pgtype.Text
+	DnsWorkEpoch          int64
+	DnsWorkExpiresAt      pgtype.Timestamptz
+	DnsAttempts           int64
+	DnsAvailableAt        pgtype.Timestamptz
+	DnsLastError          pgtype.Text
+	NextRouteVersion      int64
+	MutationRevision      int64
+	Ephemeral             bool
+	ExpiresAt             pgtype.Timestamptz
+	SuspensionRevision    int64
+	SuspensionReason      pgtype.Text
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+	SuspendedAt           pgtype.Timestamptz
+	DeletedAt             pgtype.Timestamptz
+	OpenRouteSessionID    string
+}
+
+func (q *Queries) GetAuthorizedRouteByHostname(ctx context.Context, arg GetAuthorizedRouteByHostnameParams) (GetAuthorizedRouteByHostnameRow, error) {
+	row := q.db.QueryRow(ctx, getAuthorizedRouteByHostname, arg.TeamID, arg.CanonicalHostname)
+	var i GetAuthorizedRouteByHostnameRow
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.DomainID,
+		&i.MembershipID,
+		&i.CreatedByIdentityID,
+		&i.IdempotencyKey,
+		&i.RequestDigest,
+		&i.CanonicalHostname,
+		&i.Target,
+		&i.RouteScope,
+		&i.PolicyRevision,
+		&i.IpPolicy,
+		&i.AllowedIpPrefixes,
+		&i.LifecycleState,
+		&i.DnsAuthorityReference,
+		&i.DnsState,
+		&i.DnsRevision,
+		&i.DnsWorkOwner,
+		&i.DnsWorkEpoch,
+		&i.DnsWorkExpiresAt,
+		&i.DnsAttempts,
+		&i.DnsAvailableAt,
+		&i.DnsLastError,
+		&i.NextRouteVersion,
+		&i.MutationRevision,
+		&i.Ephemeral,
+		&i.ExpiresAt,
+		&i.SuspensionRevision,
+		&i.SuspensionReason,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SuspendedAt,
+		&i.DeletedAt,
+		&i.OpenRouteSessionID,
+	)
+	return i, err
+}
+
 const getExternalAuthorityRoute = `-- name: GetExternalAuthorityRoute :one
 SELECT routes.id, routes.team_id, routes.domain_id, routes.membership_id, routes.created_by_identity_id, routes.idempotency_key, routes.request_digest, routes.canonical_hostname, routes.target, routes.route_scope, routes.policy_revision, routes.ip_policy, routes.allowed_ip_prefixes, routes.lifecycle_state, routes.dns_authority_reference, routes.dns_state, routes.dns_revision, routes.dns_work_owner, routes.dns_work_epoch, routes.dns_work_expires_at, routes.dns_attempts, routes.dns_available_at, routes.dns_last_error, routes.next_route_version, routes.mutation_revision, routes.ephemeral, routes.expires_at, routes.suspension_revision, routes.suspension_reason, routes.created_at, routes.updated_at, routes.suspended_at, routes.deleted_at,
     COALESCE((

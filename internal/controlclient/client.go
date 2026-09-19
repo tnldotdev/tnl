@@ -20,6 +20,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/httpjson"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -118,6 +119,34 @@ func (c *Client) ListRoutes(ctx context.Context, teamID string) ([]controlv1.Rou
 		}
 		cursor = *page.NextCursor
 	}
+}
+
+// GetRouteByHostname uses one filtered request instead of paging through a
+// team's routes. Reject unfiltered responses from servers ignoring the filter.
+func (c *Client) GetRouteByHostname(ctx context.Context, teamID, hostname string) (controlv1.Route, error) {
+	canonical, err := naming.CanonicalizeHostname(hostname)
+	if teamID == "" || err != nil || canonical != hostname {
+		return controlv1.Route{}, errors.New("controlclient: team and canonical hostname are required")
+	}
+	params := &controlv1.ListRoutesParams{TeamId: teamID, CanonicalHostname: &hostname}
+	page, err := requestWithAccess[controlv1.RoutePage](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.ListRoutes(ctx, params, editors...)
+	})
+	if err != nil {
+		return controlv1.Route{}, err
+	}
+	if page.NextCursor != nil || len(page.Routes) > 1 {
+		return controlv1.Route{}, errors.New("controlclient: server returned an unfiltered hostname lookup")
+	}
+	if len(page.Routes) == 0 {
+		return controlv1.Route{}, ErrNotFound
+	}
+	route := page.Routes[0]
+	if route.Id == "" || route.TeamId != teamID || route.CanonicalHostname != hostname ||
+		(route.LifecycleState != controlv1.Enabled && route.LifecycleState != controlv1.Suspended) {
+		return controlv1.Route{}, errors.New("controlclient: server returned an invalid hostname lookup")
+	}
+	return route, nil
 }
 
 func (c *Client) GetRoute(ctx context.Context, routeID string) (controlv1.Route, error) {
