@@ -317,15 +317,12 @@ func (r *UsageReporter) observeVisitor(routeID string, source netip.Addr, at tim
 }
 
 func (r *UsageReporter) cleanupVisitors() {
+	used := make(map[usageVisitorKey]struct{}, len(r.visitors))
+	for bucketKey := range r.buckets {
+		used[usageVisitorKey{routeID: bucketKey.routeID, start: bucketKey.start}] = struct{}{}
+	}
 	for visitorKey := range r.visitors {
-		used := false
-		for bucketKey := range r.buckets {
-			if bucketKey.routeID == visitorKey.routeID && bucketKey.start.Equal(visitorKey.start) {
-				used = true
-				break
-			}
-		}
-		if !used {
+		if _, exists := used[visitorKey]; !exists {
 			delete(r.visitors, visitorKey)
 		}
 	}

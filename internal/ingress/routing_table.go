@@ -3,6 +3,7 @@ package ingress
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"net/netip"
 	"sync"
 	"time"
@@ -86,11 +87,14 @@ func (t *RoutingTable) ApplyPage(after int64, page ingressv1.IngressRoutingTable
 		if page.NextRevision != after {
 			return fmt.Errorf("%w: empty page advanced revision", ErrRoutingTableRevision)
 		}
-	} else if page.Events[len(page.Events)-1].RoutingTableRevision != page.NextRevision {
+		return nil
+	}
+	if page.Events[len(page.Events)-1].RoutingTableRevision != page.NextRevision {
 		return fmt.Errorf("%w: next revision does not match page", ErrRoutingTableRevision)
 	}
-	routes := cloneRoutingEntries(t.routes)
-	challenges := cloneRoutingEntries(t.challenges)
+	// Stored entries are immutable; only incoming entries need deep copies.
+	routes := maps.Clone(t.routes)
+	challenges := maps.Clone(t.challenges)
 	previousRevision := after
 	for _, event := range page.Events {
 		if event.RoutingTableRevision <= previousRevision || event.RoutingTableRevision > page.ThroughRevision {
@@ -234,15 +238,6 @@ func routingEntryForEvent(event ingressv1.IngressRoutingTableEvent) routingTable
 
 func isChallengeEvent(kind ingressv1.IngressRoutingTableEventKind) bool {
 	return kind == ingressv1.ChallengeUpsert || kind == ingressv1.ChallengeTombstone
-}
-
-func cloneRoutingEntries(source map[string]routingTableEntry) map[string]routingTableEntry {
-	result := make(map[string]routingTableEntry, len(source))
-	for hostname, entry := range source {
-		entry.entry = cloneRoutingTableEntry(entry.entry)
-		result[hostname] = entry
-	}
-	return result
 }
 
 func cloneRoutingTableEntry(source ingressv1.IngressRoutingTableEntry) ingressv1.IngressRoutingTableEntry {
