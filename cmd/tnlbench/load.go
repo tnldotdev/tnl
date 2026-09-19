@@ -35,7 +35,9 @@ type loadCommand struct {
 	Duration         time.Duration `name:"duration" env:"TNL_BENCH_DURATION" required:"" help:"Measured fresh-connection duration."`
 	PayloadBytes     int           `name:"payload-bytes" env:"TNL_BENCH_PAYLOAD_BYTES" default:"16384" help:"Expected fresh-response payload size."`
 	MetricsURLs      []string      `name:"metrics-url" env:"TNL_BENCH_METRICS_URLS" help:"Private process metrics URL; repeat for each process."`
+	DiagnosticURLs   []string      `name:"database-diagnostics-url" env:"TNL_BENCH_DATABASE_DIAGNOSTICS_URLS" help:"Private control database diagnostics URL; repeat for each control process."`
 	Timeout          time.Duration `name:"timeout" env:"TNL_BENCH_TIMEOUT" default:"30m" help:"Worker deadline."`
+	onVisitorFailure func()
 }
 
 func (c loadCommand) Validate() error {
@@ -89,10 +91,23 @@ func (c loadCommand) run(parent context.Context) error {
 		AssignedFreshRate:       c.FreshRate, AssignedHeldStreams: c.HeldStreams,
 		WarmupSeconds: int(c.Warmup.Seconds()), DurationSeconds: int(c.Duration.Seconds()), PayloadBytes: c.PayloadBytes,
 	}
+	failureMetricsURLs := c.MetricsURLs
+	c.MetricsURLs = nil // The publisher owns routine metrics sampling.
+	var once sync.Once
+	var diagnostics []databaseDiagnostic
+	var failureResources []resourceSample
+	c.onVisitorFailure = func() {
+		once.Do(func() {
+			diagnostics = sampleDatabaseDiagnostics(ctx, c.DiagnosticURLs)
+			failureResources = sampleFailureResources(ctx, failureMetricsURLs)
+		})
+	}
 	result, runErr := c.execute(ctx, worker, configuration)
 	if runErr != nil && result.SchemaVersion == 0 {
 		result = failedResult(c.CellID, c.Suite, c.Repetition, worker, configuration, started, runErr)
 	}
+	result.DatabaseDiagnostics = diagnostics
+	result.Resources = append(result.Resources, failureResources...)
 	postCtx, postCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer postCancel()
 	if err := coordinator.postResult(postCtx, result); err != nil {
@@ -206,7 +221,13 @@ func (c loadCommand) execute(ctx context.Context, worker resultWorker, configura
 	return result, nil
 }
 
-func (c loadCommand) request(ctx context.Context, hostname, path string, hold bool) visitorResult {
+func (c loadCommand) request(ctx context.Context, hostname, path string, hold bool) (result visitorResult) {
+	defer func() {
+		var held *heldResponse
+		if result.err != nil && !errors.As(result.err, &held) && c.onVisitorFailure != nil {
+			c.onVisitorFailure()
+		}
+	}()
 	transport := &http.Transport{
 		TLSClientConfig:   &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"}},
 		DisableKeepAlives: true, ForceAttemptHTTP2: false, DisableCompression: true,

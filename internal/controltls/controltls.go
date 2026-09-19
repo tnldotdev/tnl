@@ -23,6 +23,7 @@ import (
 
 const (
 	certificateRefreshInterval    = 5 * time.Minute
+	certificateRefreshBackoff     = 30 * time.Second
 	maximumACMEOrderResponseBytes = 1 << 20
 )
 
@@ -51,6 +52,14 @@ type Source struct {
 	mu           sync.RWMutex
 	certificates map[string]*tls.Certificate
 	refreshAt    map[string]time.Time
+	loading      map[string]*certificateLoad
+	loadErrors   map[string]error
+	refresh      chan struct{}
+}
+
+type certificateLoad struct {
+	done chan struct{}
+	err  error
 }
 
 func New(config Config) (*Source, error) {
@@ -90,6 +99,8 @@ func New(config Config) (*Source, error) {
 		hostnames: hostnames, hostSet: hostSet, cache: config.Cache, manager: manager,
 		runLeader: config.RunLeader, report: config.Report,
 		certificates: make(map[string]*tls.Certificate, len(hostnames)), refreshAt: make(map[string]time.Time, len(hostnames)),
+		loading: make(map[string]*certificateLoad, len(hostnames)), refresh: make(chan struct{}, 1),
+		loadErrors: make(map[string]error, len(hostnames)),
 	}
 	tlsConfig.MinVersion = tls.VersionTLS13
 	tlsConfig.GetCertificate = source.GetCertificate
@@ -103,11 +114,11 @@ func (s *Source) Ready(now time.Time) bool {
 	for _, hostname := range s.hostnames {
 		s.mu.RLock()
 		certificate := s.certificates[hostname]
-		ready := certificate != nil && certificate.Leaf != nil && !now.Before(certificate.Leaf.NotBefore) &&
-			certificate.Leaf.NotAfter.After(now)
+		ready := validCertificate(certificate, hostname, now)
 		s.mu.RUnlock()
 		if !ready {
-			if _, err := s.loadCertificate(hostname, now); err != nil {
+			loaded, err := s.loadCertificate(hostname, now)
+			if err != nil || !validCertificate(loaded, hostname, now) || !validCertificate(loaded, hostname, time.Now()) {
 				return false
 			}
 		}
@@ -133,14 +144,43 @@ func (s *Source) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, e
 	s.mu.RLock()
 	certificate, refreshAt := s.certificates[hostname], s.refreshAt[hostname]
 	s.mu.RUnlock()
-	if certificate != nil && certificate.Leaf != nil && !now.Before(certificate.Leaf.NotBefore) &&
-		certificate.Leaf.NotAfter.After(now) && refreshAt.After(now) {
+	if validCertificate(certificate, hostname, time.Now()) {
+		if !refreshAt.After(now) {
+			select {
+			case s.refresh <- struct{}{}:
+			default:
+			}
+		}
 		return certificate, nil
 	}
 	return s.loadCertificate(hostname, now)
 }
 
 func (s *Source) Run(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-s.refresh:
+				for _, hostname := range s.hostnames {
+					s.mu.RLock()
+					due := s.certificates[hostname] != nil && !s.refreshAt[hostname].After(time.Now())
+					s.mu.RUnlock()
+					if due {
+						_, err := s.refreshCertificate(ctx, hostname, time.Now())
+						if err != nil && s.report != nil && ctx.Err() == nil {
+							s.report(err)
+						}
+					}
+				}
+			}
+		}
+	}()
+	defer func() { cancel(); <-done }()
 	return s.runLeader(ctx, func(ctx context.Context) error {
 		for {
 			var issuanceErr error
@@ -172,8 +212,78 @@ func (s *Source) Run(ctx context.Context) error {
 }
 
 func (s *Source) loadCertificate(hostname string, now time.Time) (*tls.Certificate, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	return s.refreshCertificate(context.Background(), hostname, now)
+}
+
+func validCertificate(certificate *tls.Certificate, hostname string, now time.Time) bool {
+	return certificate != nil && certificate.Leaf != nil && !now.Before(certificate.Leaf.NotBefore) &&
+		now.Before(certificate.Leaf.NotAfter) && certificate.Leaf.VerifyHostname(hostname) == nil
+}
+
+// All cache reads, including initial misses, share one bounded load per hostname.
+// Failed refreshes retain valid material and back off. Initial misses retry after
+// one second so certificate provisioning becomes visible to readiness promptly.
+func (s *Source) refreshCertificate(parent context.Context, hostname string, now time.Time) (*tls.Certificate, error) {
+	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
 	defer cancel()
+	s.mu.Lock()
+	if load := s.loading[hostname]; load != nil {
+		s.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-load.done:
+		}
+		s.mu.RLock()
+		certificate := s.certificates[hostname]
+		s.mu.RUnlock()
+		if validCertificate(certificate, hostname, time.Now()) {
+			return certificate, nil
+		}
+		if load.err != nil {
+			return nil, load.err
+		}
+		return nil, errors.New("controltls: certificate expired during load")
+	}
+	if certificate := s.certificates[hostname]; s.refreshAt[hostname].After(now) && validCertificate(certificate, hostname, time.Now()) {
+		s.mu.Unlock()
+		return certificate, nil
+	}
+	if err := s.loadErrors[hostname]; err != nil && s.refreshAt[hostname].After(now) {
+		s.mu.Unlock()
+		return nil, err
+	}
+	load := &certificateLoad{done: make(chan struct{})}
+	s.loading[hostname] = load
+	s.mu.Unlock()
+	certificate, err := s.readCertificate(ctx, hostname)
+	s.mu.Lock()
+	if err == nil {
+		s.certificates[hostname] = certificate
+		s.refreshAt[hostname] = time.Now().Add(certificateRefreshInterval)
+		delete(s.loadErrors, hostname)
+	} else {
+		backoff := certificateRefreshBackoff
+		if s.certificates[hostname] == nil {
+			backoff = time.Second
+		}
+		s.refreshAt[hostname] = time.Now().Add(backoff)
+		s.loadErrors[hostname] = err
+	}
+	load.err = err
+	delete(s.loading, hostname)
+	close(load.done)
+	s.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	if !validCertificate(certificate, hostname, time.Now()) {
+		return nil, errors.New("controltls: certificate expired during load")
+	}
+	return certificate, nil
+}
+
+func (s *Source) readCertificate(ctx context.Context, hostname string) (*tls.Certificate, error) {
 	data, err := s.cache.Get(ctx, hostname)
 	if err != nil {
 		return nil, fmt.Errorf("controltls: load certificate: %w", err)
@@ -183,18 +293,13 @@ func (s *Source) loadCertificate(hostname string, now time.Time) (*tls.Certifica
 		return nil, errors.New("controltls: cached certificate is invalid")
 	}
 	leaf, err := x509.ParseCertificate(certificate.Certificate[0])
-	if err != nil || leaf.VerifyHostname(hostname) != nil || now.Before(leaf.NotBefore) || !now.Before(leaf.NotAfter) {
+	if err != nil {
 		return nil, errors.New("controltls: cached certificate is not valid for the requested hostname")
 	}
 	certificate.Leaf = leaf
-	refreshAt := now.Add(certificateRefreshInterval)
-	if refreshAt.After(leaf.NotAfter) {
-		refreshAt = leaf.NotAfter
+	if !validCertificate(&certificate, hostname, time.Now()) {
+		return nil, errors.New("controltls: cached certificate is not valid for the requested hostname")
 	}
-	s.mu.Lock()
-	s.certificates[hostname] = &certificate
-	s.refreshAt[hostname] = refreshAt
-	s.mu.Unlock()
 	return &certificate, nil
 }
 

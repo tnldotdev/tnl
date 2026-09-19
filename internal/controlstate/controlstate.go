@@ -37,6 +37,7 @@ type Database struct {
 	pool          *pgxpool.Pool
 	storageKey    *storagekey.Keyring
 	diagnosticsMu sync.Mutex
+	activity      *queryActivity
 }
 
 // Migrate applies every embedded control-state migration through a direct
@@ -133,6 +134,8 @@ func Open(ctx context.Context, pooledURL, currentStorageKey, previousStorageKey 
 	if err != nil {
 		return nil, fmt.Errorf("controlstate: open: %w", err)
 	}
+	activity := new(queryActivity)
+	config.ConnConfig.Tracer = activity
 	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
 		return nil, fmt.Errorf("controlstate: open database: %w", err)
@@ -151,7 +154,7 @@ func Open(ctx context.Context, pooledURL, currentStorageKey, previousStorageKey 
 		pool.Close()
 		return nil, fmt.Errorf("controlstate: incompatible database schema version %d; supported version is %d", version, schemaVersion)
 	}
-	return &Database{pool: pool, storageKey: keyring}, nil
+	return &Database{pool: pool, storageKey: keyring, activity: activity}, nil
 }
 
 // Close closes all runtime database connections. It is safe to call more than
@@ -221,7 +224,13 @@ func parsePoolConfig(rawURL string) (*pgxpool.Config, error) {
 	if err := validateDatabaseURL(rawURL); err != nil {
 		return nil, err
 	}
-	config, err := pgxpool.ParseConfig(rawURL)
+	parsed, _ := url.Parse(rawURL) // Already validated above.
+	parameters := parsed.Query()
+	if !parameters.Has("pool_max_conns") {
+		parameters.Set("pool_max_conns", "8")
+		parsed.RawQuery = parameters.Encode()
+	}
+	config, err := pgxpool.ParseConfig(parsed.String())
 	if err != nil {
 		return nil, fmt.Errorf("configure PostgreSQL URL: %w", err)
 	}

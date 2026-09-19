@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tnldotdev/tnl/internal/observability"
 )
@@ -56,6 +57,69 @@ func TestIntegrationDatabaseMetricsDuringPoolExhaustion(t *testing.T) {
 	}
 }
 
+func TestIntegrationDatabaseDiagnosticsMarksOmittedBlockers(t *testing.T) {
+	database, databaseURL, _ := newControlStateIntegrationDatabaseWithURL(t, "diagnostic_blocker_limit")
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	var blockers []pgx.Tx
+	for range MaxDatabaseDiagnosticBlockers + 1 {
+		// Separate connections keep this independent of the test machine's pool
+		// size. They model concurrent shared lock holders, not request activity.
+		connection, err := pgx.Connect(ctx, databaseURL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer connection.Close(context.Background())
+		blocker, err := connection.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rollbackTestTransaction(t, blocker)
+		if _, err := blocker.Exec(ctx, `SELECT pg_advisory_xact_lock_shared(987654321)`); err != nil {
+			t.Fatal(err)
+		}
+		blockers = append(blockers, blocker)
+	}
+	waitCtx, cancelWait := context.WithCancel(ctx)
+	defer cancelWait()
+	done := make(chan error, 1)
+	workers := newIntegrationWorkers(t, cancelWait)
+	defer workers.stop()
+	workers.Go(func() { _, err := database.pool.Exec(waitCtx, `SELECT pg_advisory_xact_lock(987654321)`); done <- err })
+	waiterPID := waitForPostgresBlock(t, ctx, database, int32(blockers[0].Conn().PgConn().PID()), done)
+	for _, omitted := range []bool{true, false} {
+		if !omitted {
+			if err := blockers[len(blockers)-1].Rollback(ctx); err != nil {
+				t.Fatal(err)
+			}
+		}
+		snapshot, err := database.Diagnostics(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if snapshot.Truncated {
+			t.Fatal("blocker truncation incorrectly marked session list truncated")
+		}
+		found := false
+		for _, session := range snapshot.Sessions {
+			if session.PID != waiterPID {
+				continue
+			}
+			found = true
+			if len(session.BlockingPIDs) != MaxDatabaseDiagnosticBlockers || session.BlockingPIDsTruncated != omitted {
+				t.Fatalf("blocker boundary omitted=%t: %+v", omitted, session)
+			}
+		}
+		if !found {
+			t.Fatal("snapshot omitted the blocked query")
+		}
+	}
+	cancelWait()
+	if err := awaitIntegrationResult(t, ctx, done); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancel waiter: %v", err)
+	}
+}
+
 func TestIntegrationDatabaseDiagnosticsIdentifyBlockingTransaction(t *testing.T) {
 	database, _ := newControlStateIntegrationDatabase(t, "blocking_diagnostics")
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -85,7 +149,7 @@ func TestIntegrationDatabaseDiagnosticsIdentifyBlockingTransaction(t *testing.T)
 	}
 	found := false
 	for _, session := range snapshot.Sessions {
-		if session.PID == waiterPID && session.WaitType == "Lock" && session.Operation == "BlockedDiagnostic" && slices.Contains(session.BlockingPIDs, blockerPID) {
+		if session.PID == waiterPID && session.WaitType == "Lock" && session.Operation == "unknown" && slices.Contains(session.BlockingPIDs, blockerPID) {
 			found = true
 		}
 	}

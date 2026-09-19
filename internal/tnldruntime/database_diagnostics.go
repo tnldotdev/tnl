@@ -15,13 +15,9 @@ func withDatabaseDiagnostics(handler http.Handler, database *controlstate.Databa
 	mux := http.NewServeMux()
 	mux.Handle("/", handler)
 	mux.HandleFunc("GET /debug/database", func(w http.ResponseWriter, r *http.Request) {
-		snapshot, err := database.Diagnostics(r.Context())
+		snapshot, _ := database.Diagnostics(r.Context())
 		w.Header().Set("Content-Type", "application/json")
-		if err != nil {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-			return
-		}
+		// Local activity remains useful even when the upstream snapshot failed.
 		_ = json.NewEncoder(w).Encode(snapshot)
 	})
 	return mux
