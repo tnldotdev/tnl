@@ -11,12 +11,12 @@ control or standalone. Serving processes never migrate the database.
 
 ## Required Configuration
 
-| Mode       | Required settings                                                                                                                                                             |
-| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Standalone | `TNLD_MODE`, `TNLD_DATABASE_URL`, `TNLD_SERVER_DOMAIN`, `TNLD_MANAGED_DEPLOYMENT_DOMAIN`, `TNLD_ACME_EMAIL`, `TNLD_ACME_ACCEPT_TERMS`, one authority mode, `TNLD_STORAGE_KEY` |
-| Control    | The same control-owned settings as standalone, plus `TNLD_CLUSTER_SECRET`                                                                                                     |
-| Ingress    | `TNLD_MODE`, `TNLD_CONTROL_HOSTNAME`, `TNLD_CLUSTER_SECRET`, `TNLD_INGRESS_ID`                                                                                                |
-| Relay      | `TNLD_MODE`, `TNLD_CONTROL_HOSTNAME`, `TNLD_CLUSTER_SECRET`, `TNLD_RELAY_SERVICE_ID`, `TNLD_RELAY_ID`, `TNLD_RELAY_ADDRESS`, `TNLD_INTERNAL_RELAY_ADDRESS`                    |
+| Role       | Required settings                                                                                                                                                                      |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Standalone | `TNLD_ROLE`, `TNLD_DATABASE_URL`, `TNLD_SERVER_DOMAIN`, `TNLD_MANAGED_DEPLOYMENT_DOMAIN`, `TNLD_ACME_EMAIL`, `TNLD_ACME_ACCEPT_TERMS`, one authority configuration, `TNLD_STORAGE_KEY` |
+| Control    | The same control-owned settings as standalone, plus `TNLD_CLUSTER_SECRET`                                                                                                              |
+| Ingress    | `TNLD_ROLE`, `TNLD_CONTROL_HOSTNAME`, `TNLD_CLUSTER_SECRET`, `TNLD_INGRESS_ID`                                                                                                         |
+| Relay      | `TNLD_ROLE`, `TNLD_CONTROL_HOSTNAME`, `TNLD_CLUSTER_SECRET`, `TNLD_RELAY_SERVICE_ID`, `TNLD_RELAY_ID`, `TNLD_RELAY_ADDRESS`, `TNLD_INTERNAL_RELAY_ADDRESS`                             |
 
 `TNLD_CONTROL_HOSTNAME` is a canonical hostname without a scheme, path, or
 port. HTTPS on port 443 is always implied. Process run IDs are generated locally
@@ -31,11 +31,12 @@ Listen addresses, limits, timing, metrics, a different ACME directory, and
 static public certificates are optional advanced settings. Private PKI and
 custom trust roots are not supported.
 
-Control and standalone require exactly one authority mode. For the built-in
-authority, leave `TNLD_AUTHORITY_ENDPOINT` unset and set `TNLD_LOGIN_TOKEN`. For
-an external authority, set `TNLD_AUTHORITY_ENDPOINT`, `TNLD_HOSTED_SECRET`, and
-the `TNLD_OIDC_*` discovery settings. Do not set `TNLD_LOGIN_TOKEN`. Only control
-and the external authority share the hosted secret.
+Control and standalone require exactly one authority configuration. For the
+built-in authority, leave `TNLD_AUTHORITY_ENDPOINT` unset and set
+`TNLD_LOGIN_TOKEN`. For an external authority, set `TNLD_AUTHORITY_ENDPOINT`,
+`TNLD_HOSTED_SECRET`, and the `TNLD_OIDC_*` discovery settings. Do not set
+`TNLD_LOGIN_TOKEN`. Only control and the external authority share the hosted
+secret.
 
 Set `TNLD_DATABASE_URL` to the runtime database URL. Set
 `TNLD_DATABASE_DIRECT_URL` to the direct migration URL; only `tnld migrate` reads
@@ -161,9 +162,9 @@ exchanges update its display name and verified email within their size limits.
 Local access and refresh tokens remain valid after `TNLD_LOGIN_TOKEN` rotates.
 Use the login-token administrator for administrative operations.
 
-External authority mode advertises the same OIDC settings to clients but does
+An external authority advertises the same OIDC settings to clients but does
 not register the built-in authority routes. The external authority owns token
-exchange and authorization decisions in that mode.
+exchange and authorization decisions.
 
 ## Cluster Authentication
 
@@ -263,10 +264,10 @@ Maintenance controls gate only new work and do not stop existing routes or
 sessions:
 
 ```console
-tnl admin maintenance disable route_creation
-tnl admin maintenance disable route_session_creation
-tnl admin maintenance disable certificate_issuance
-tnl admin maintenance enable route_creation
+tnl admin maintenance block route_creation
+tnl admin maintenance block route_session_creation
+tnl admin maintenance block certificate_issuance
+tnl admin maintenance allow route_creation
 ```
 
 Relay drain and maintenance changes create audit events in PostgreSQL. Process

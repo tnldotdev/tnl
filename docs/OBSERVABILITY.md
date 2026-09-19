@@ -39,7 +39,7 @@ Private readiness checks differ by role:
 - Standalone checks every role it contains.
 
 Readiness does not prove that every background task, route, or local service is
-healthy. Publish a test route for an end-to-end check. `tnl_info{mode}` reports
+healthy. Publish a test route for an end-to-end check. `tnl_info{role}` reports
 the process role.
 
 ## Runtime Metrics
@@ -90,8 +90,18 @@ returned. A `truncated` flag identifies incomplete snapshots.
 The snapshot uses a separate connection through the configured pooled URL, with
 a three-second timeout and at most one collection per process at a time. It can
 inspect an exhausted local pgx pool, but it still depends on the external pooler
-and PostgreSQL being reachable. A failed snapshot returns HTTP 503 with a bounded
-diagnostic error. Database permissions determine visibility into other sessions.
+and PostgreSQL being reachable. The endpoint also captures up to 64 currently
+active request-pool SQL operations directly from pgx instrumentation, with elapsed
+seconds and an `operations_truncated` flag. Names are restricted to compiled sqlc
+query names, transaction commands, or `unknown`; no SQL or arguments are retained.
+Connection-initialization queries may be `unknown`. Requests still waiting to
+acquire a pool connection have not started SQL and appear only in pool metrics.
+
+The endpoint returns HTTP 200 with local activity even when the upstream snapshot
+fails; `error` describes that bounded failure. Database permissions still determine
+visibility into PostgreSQL sessions, wait states, and blocking relationships.
+Local operation age includes driver/network/pooler time and does not by itself
+prove a PostgreSQL lock wait or identify its blocking transaction.
 
 ## Alert Queries
 

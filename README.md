@@ -22,6 +22,7 @@ The repository contains:
 | [Releases](docs/RELEASES.md)                 | Artifact installation, verification, and publishing                   |
 | [Contributing](CONTRIBUTING.md)              | Toolchain, local stack, test tiers, and generated sources             |
 | [Architecture](docs/ARCHITECTURE.md)         | Runtime invariants, package ownership, and API boundaries             |
+| [Glossary](docs/GLOSSARY.md)                 | Canonical product, runtime, routing, and security terms               |
 
 ## Install
 
@@ -58,9 +59,10 @@ tnl publish 3000 --host api.dev.example.com
 ```
 
 By default, only the IP address seen by the control API may use the route.
-Repeat `--allow-ip` to allow more addresses or prefixes. Use `--public` to allow
-all addresses. Add `--open` to open the public URL when the route is ready. Use
-`--output=ndjson` for machine-readable status events.
+Repeat `--allow-ip` to allow more addresses or prefixes. Use
+`--allow-all-ips` to allow all addresses. Add `--open` to open the public URL
+when the route is ready. Use `--output=ndjson` for machine-readable status
+events.
 
 Each tunnel starts one route session. Control assigns its two connection slots
 to different relay services. The route becomes routable after the publisher
