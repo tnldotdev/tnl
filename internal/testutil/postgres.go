@@ -17,13 +17,12 @@ import (
 type TestTier string
 
 const (
-	TestTierRoutine       TestTier = "routine"
-	TestTierIntegration   TestTier = "integration"
-	TestTierBinary        TestTier = "binary"
-	TestTierDNS           TestTier = "dns"
-	TestTierDatabaseLoad  TestTier = "database-load"
-	TestTierRuntimeLoad   TestTier = "runtime-load"
-	TestTierSeparatedLoad TestTier = "separated-load"
+	TestTierRoutine      TestTier = "routine"
+	TestTierIntegration  TestTier = "integration"
+	TestTierBinary       TestTier = "binary"
+	TestTierDNS          TestTier = "dns"
+	TestTierDatabaseLoad TestTier = "database-load"
+	TestTierRuntimeLoad  TestTier = "runtime-load"
 )
 
 var (
@@ -107,7 +106,7 @@ func selectedTestTier(t testing.TB) TestTier {
 	t.Helper()
 	tier := TestTier(*testTier)
 	switch tier {
-	case TestTierRoutine, TestTierIntegration, TestTierBinary, TestTierDNS, TestTierDatabaseLoad, TestTierRuntimeLoad, TestTierSeparatedLoad:
+	case TestTierRoutine, TestTierIntegration, TestTierBinary, TestTierDNS, TestTierDatabaseLoad, TestTierRuntimeLoad:
 		return tier
 	default:
 		t.Fatalf("unknown tnl test tier %q", tier)

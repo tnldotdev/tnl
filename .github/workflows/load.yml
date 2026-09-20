@@ -23,9 +23,9 @@ concurrency:
 
 jobs:
   load:
-    name: Database load
+    name: Database and runtime workloads
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -58,4 +58,24 @@ jobs:
       - name: Run load tests
         env:
           DELAY: ${{ github.event_name == 'schedule' && '5ms' || inputs.delay || '0ms' }}
-        run: task go:test:load:database DELAY="$DELAY"
+          ROUTES: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1000' || '32' }}
+        run: task go:test:load:database DELAY="$DELAY" ROUTES="$ROUTES"
+
+      - name: Run runtime smoke
+        run: task go:test:load:runtime RACE=1 RESULTS=bench-results/ci-smoke
+
+      - name: Run reference and fault workloads
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: |
+          task go:test:load:runtime ROUTES=64 RPS=160 DURATION=30s RESULTS=bench-results/ci-reference
+          task go:test:load:runtime SCENARIO=relay-kill RESULTS=bench-results/ci-relay-kill
+          task go:test:load:runtime SCENARIO=forwarding-blackhole RESULTS=bench-results/ci-forwarding-blackhole
+
+      - name: Retain workload evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: runtime-workloads
+          path: bench-results/ci-*
+          if-no-files-found: ignore
+          retention-days: 7

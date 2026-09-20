@@ -278,6 +278,17 @@ Frames follow this general form:
 
 # Development Workflow
 
+# Tests and Benchmarks
+
+- Routine tests cover deterministic invariants without external infrastructure.
+- Integration tests use the smallest real setup needed to verify a boundary.
+- Runtime tests use one separated local topology and default to small smoke workloads.
+- Large load/fault sweeps and Fly benchmarks are explicit opt-in runs.
+- Local runtime and Fly share publisher, visitor, and measurement implementations.
+- Add coverage at the lowest sufficient layer; migrate unique assertions before retiring overlapping tests.
+
+# Development Commands
+
 - Use the versions in `mise.toml`. Bootstrap with `mise trust`, `mise install`, then `mise exec -- pnpm install --frozen-lockfile`; run repository commands from the root through `mise exec --`.
 - The Taskfile injects `GOFLAGS=-tags=ts_omit_ssh`. Preserve it for direct Go commands.
 - Follow [CONTRIBUTING.md](CONTRIBUTING.md) for the validation sequence, generated-source ownership, local stack, and test-tier prerequisites.

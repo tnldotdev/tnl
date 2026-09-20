@@ -1,7 +1,10 @@
 name: tnl-separated-load-test
 
 x-runtime: &runtime
-  image: golang:1.27.0-bookworm@sha256:ded31c68586d2e49e760acc2e65a884b23d032e9bbbed0ae0c55abd3fcaf4452
+  image: tnl-runtime-load:local
+  build:
+    context: ../../..
+    dockerfile: internal/tnldruntime/testdata/runtime-load.Dockerfile
   init: true
   stop_grace_period: 15s
   volumes:
@@ -17,12 +20,16 @@ x-runtime: &runtime
         -test.v \
         -test.run='^TestSeparatedRuntimeComponent$$' \
         -test.timeout=20m \
-        -tnl-test-tier=separated-load \
+        -tnl-test-tier=runtime-load \
         -tnl-test-postgres-url='postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable' \
         -tnl-separated-component="$${SEPARATED_COMPONENT}" \
-        -tnl-runtime-load-routes='${ROUTES:-64}' \
-        -tnl-runtime-load-rps='${RPS:-160}' \
-        -tnl-runtime-load-duration='${DURATION:-30s}'
+        -tnl-runtime-load-routes='${ROUTES:-4}' \
+        -tnl-runtime-load-rps='${RPS:-16}' \
+        -tnl-runtime-load-workers='${WORKERS:-128}' \
+        -tnl-runtime-load-queue='${QUEUE:-8}' \
+        -tnl-runtime-load-scenario='${SCENARIO:-relay-restart}' \
+        -tnl-runtime-load-trace='${TRACE:-0}' \
+        -tnl-runtime-load-duration='${DURATION:-10s}'
 
 x-visitor: &visitor
   <<: *runtime
@@ -41,6 +48,8 @@ services:
     volumes:
       - ../../..:/workspace:ro
       - artifacts:/artifacts
+      - go-cache:/root/.cache/go-build
+      - go-modules:/go/pkg/mod
     command:
       - sh
       - -ec
@@ -74,7 +83,7 @@ services:
       - -test.v
       - -test.run=^TestSeparatedRuntimeSetup$$
       - -test.timeout=1m
-      - -tnl-test-tier=separated-load
+      - -tnl-test-tier=runtime-load
       - -tnl-test-postgres-url=postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable
       - -tnl-separated-component=setup
 
@@ -92,6 +101,7 @@ services:
 
   ingress:
     <<: *runtime
+    cap_add: [NET_ADMIN]
     cpus: "${INGRESS_CPUS:-1}"
     mem_limit: "${INGRESS_MEMORY:-256m}"
     memswap_limit: "${INGRESS_MEMORY:-256m}"
@@ -174,6 +184,7 @@ services:
 
   coordinator:
     <<: *runtime
+    ports: ["127.0.0.1::8080"]
     cpus: "0.5"
     mem_limit: 128m
     memswap_limit: 128m
@@ -186,13 +197,23 @@ services:
       - -test.v
       - -test.run=^TestLoadSeparatedRuntime$$
       - -test.timeout=15m
-      - -tnl-test-tier=separated-load
+      - -tnl-test-tier=runtime-load
       - -tnl-test-postgres-url=postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable
       - -tnl-separated-component=coordinator
-      - "-tnl-runtime-load-routes=${ROUTES:-64}"
-      - "-tnl-runtime-load-rps=${RPS:-160}"
-      - "-tnl-runtime-load-duration=${DURATION:-30s}"
+      - "-tnl-runtime-load-routes=${ROUTES:-4}"
+      - "-tnl-runtime-load-rps=${RPS:-16}"
+      - "-tnl-runtime-load-workers=${WORKERS:-128}"
+      - "-tnl-runtime-load-queue=${QUEUE:-8}"
+      - "-tnl-runtime-load-scenario=${SCENARIO:-relay-restart}"
+      - "-tnl-runtime-load-trace=${TRACE:-0}"
+      - "-tnl-runtime-load-duration=${DURATION:-10s}"
 
 volumes:
   artifacts:
   coordination:
+  go-cache:
+    external: true
+    name: tnl-load-go-build
+  go-modules:
+    external: true
+    name: tnl-load-go-modules

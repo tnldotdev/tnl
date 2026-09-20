@@ -5,8 +5,10 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -16,6 +18,7 @@ import (
 	"time"
 
 	dto "github.com/prometheus/client_model/go"
+	"github.com/tnldotdev/tnl/internal/benchworkload"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/testutil"
 )
@@ -25,14 +28,37 @@ type separatedSnapshot struct {
 	Metrics   map[string][]*dto.MetricFamily `json:"-"`
 }
 
+var (
+	runtimeLoadRoutes   = flag.Int("tnl-runtime-load-routes", 4, "runtime load route count")
+	runtimeLoadRPS      = flag.Int("tnl-runtime-load-rps", 16, "runtime load offered requests/second")
+	runtimeLoadDuration = flag.Duration("tnl-runtime-load-duration", 10*time.Second, "runtime measurement window")
+	runtimeLoadWorkers  = flag.Int("tnl-runtime-load-workers", 128, "total visitor concurrency across four containers")
+	runtimeLoadQueue    = flag.Int("tnl-runtime-load-queue", 8, "total waiting slots across four containers")
+	runtimeLoadScenario = flag.String("tnl-runtime-load-scenario", "relay-restart", "relay-restart, relay-kill, or forwarding-blackhole")
+	runtimeLoadTrace    = flag.Bool("tnl-runtime-load-trace", false, "trace certificate provisioning")
+)
+
 func TestLoadSeparatedRuntime(t *testing.T) {
-	testutil.RequireTestTier(t, testutil.TestTierSeparatedLoad)
+	testutil.RequireTestTier(t, testutil.TestTierRuntimeLoad)
 	if *separatedComponent != "coordinator" {
-		t.Skip("run task go:test:load:runtime:separated")
+		t.Skip("run task go:test:load:runtime")
 	}
 	routes, rate, duration := separatedLoadParameters(t)
+	token, err := os.ReadFile("/load/coordinator-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("tcp", ":8080")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &http.Server{ReadHeaderTimeout: time.Second, Handler: benchworkload.NewCoordinator().Handler(string(token))}
+	serverDone := make(chan struct{})
+	go func() { defer close(serverDone); _ = server.Serve(listener) }()
+	t.Cleanup(func() { _ = server.Close(); <-serverDone })
+	separatedWrite(t, "coordinator.ready", true)
 	database := inspectStandaloneTestDatabase(t, testutil.PostgresURL(t))
-	t.Logf("separated_load routes=%d rps=%d sources=4 workers=8 queue=8 payload=32768 phase_duration=%s", routes, rate, duration)
+	t.Logf("separated_load routes=%d rps=%d sources=4 workers=%d queue=%d payload=32768 phase_duration=%s", routes, rate, *runtimeLoadWorkers, *runtimeLoadQueue, duration)
 	defer func() {
 		if !t.Failed() {
 			return
@@ -49,11 +75,17 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 		separatedWait(t, name+".ready", 30*time.Second, nil)
 	}
 	activation := time.Now()
+	stopTrace := func() {}
+	if *runtimeLoadTrace {
+		stopTrace = traceRuntimeCertificateState(t, database, activation)
+	}
+	defer stopTrace()
 	separatedWrite(t, "publish.start", activation)
 	var publishers separatedPublishers
 	// Publishers keep the existing individual 30s checks. This only bounds the
 	// whole sequence of four-publisher groups, including IPC and inspection.
 	separatedWait(t, "publishers.ready", time.Duration((routes+3)/4)*30*time.Second+10*time.Second, &publishers)
+	stopTrace()
 	if len(publishers.Ready) != routes {
 		t.Fatal("publisher count mismatch")
 	}
@@ -74,14 +106,61 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 	for i := 1; i <= 4; i++ {
 		separatedWait(t, fmt.Sprintf("visitor-%d.ready", i), 15*time.Second, nil)
 	}
-	for _, phase := range []string{"steady", "relay-restart", "shutdown"} {
+	sequence := 0
+	for _, phase := range []string{"steady", *runtimeLoadScenario, "shutdown"} {
 		before := separatedCapture(t, database, phase+"-before")
 		stopSamples := sampleSeparatedGauges(t, phase)
 		start := time.Now().Add(time.Second)
-		separatedWrite(t, phase+".start", start)
+		window := duration
+		if phase == "relay-restart" {
+			window = max(window, 40*time.Second)
+		}
+		if phase == "relay-kill" {
+			window = max(window, 80*time.Second)
+		}
+		if phase == "forwarding-blackhole" {
+			window = max(window, 50*time.Second)
+		}
+		urls := publishers.URLs
+		if phase == "shutdown" {
+			urls = urls[len(urls)/2:]
+		}
+		separatedWrite(t, fmt.Sprintf("phase-%d", sequence), benchworkload.Phase{Name: phase, Start: start, Duration: window, URLs: urls, CloseHeld: phase == *runtimeLoadScenario})
+		sequence++
 		waitUntilIntegrationTime(t, start.Add(time.Second))
 		var restart separatedRestart
 		var repaired time.Time
+		if phase == "relay-kill" || phase == "forwarding-blackhole" {
+			var oldRun string
+			if err := database.QueryRowContext(integrationOperationContext(t), `SELECT relay_run_id FROM control.relay_leases WHERE relay_id = 'relay-a-1'`).Scan(&oldRun); err != nil {
+				t.Fatal(err)
+			}
+			separatedWrite(t, "fault.request", phase)
+			separatedWait(t, "fault.applied", 15*time.Second, &restart)
+			var restored time.Time
+			separatedWait(t, "fault.restored", 45*time.Second, &restored)
+			restart.Restored = restored
+			if phase == "relay-kill" {
+				separatedWait(t, "relay-a.restarted", 10*time.Second, nil)
+				waitForIntegrationCondition(t, 25*time.Second, func(ctx context.Context) (bool, error) {
+					var current string
+					err := database.QueryRowContext(ctx, `SELECT relay_run_id FROM control.relay_leases WHERE relay_id='relay-a-1' AND lease_expires_at>now() AND NOT draining`).Scan(&current)
+					return current != "" && current != oldRun, err
+				})
+				for _, ready := range publishers.Ready {
+					waitForReadyPublisherConnections(t, database, ready.RouteID, ready.RouteVersion, 2)
+				}
+			} else {
+				// Let opens begun inside the blackhole exhaust their existing 10s
+				// forwarding budget. Fresh visitor deadlines stay at five seconds.
+				waitUntilIntegrationTime(t, restored.Add(10*time.Second))
+			}
+			waitForIngressRoutingCurrent(t, database, 1)
+			repaired = time.Now()
+			for _, ready := range publishers.Ready {
+				assertRouteVersion(t, database, ready.RouteID, ready.RouteVersion)
+			}
+		}
 		switch phase {
 		case "relay-restart":
 			separatedWrite(t, "relay-a.restart", time.Now())
@@ -106,11 +185,7 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 			separatedWait(t, "close-half.done", time.Duration((routes/2+3)/4)*10*time.Second, &elapsed)
 			t.Logf("separated_partial_shutdown publishers=%d elapsed=%s", routes/2, elapsed)
 		}
-		waitUntilIntegrationTime(t, start.Add(duration))
-		// A future shared stop time avoids adding the file-poll delay to each
-		// generator's offered schedule. IPC is outside the request retry budget.
-		stop := time.Now().Add(300 * time.Millisecond)
-		separatedWrite(t, phase+".stop", stop)
+		waitUntilIntegrationTime(t, start.Add(window))
 		var results []separatedVisitorResult
 		for i := 1; i <= 4; i++ {
 			var result separatedVisitorResult
@@ -128,7 +203,21 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 		after := separatedCapture(t, database, phase+"-after")
 		separatedReportResources(t, phase, before, after)
 		separatedReportVisitors(t, phase, results, restart, repaired)
+		// Cover every live route, not only routes sampled late in a traffic window.
+		name := phase + "-correctness"
+		separatedWrite(t, fmt.Sprintf("phase-%d", sequence), benchworkload.Phase{Name: name, URLs: urls})
+		sequence++
+		for i := 1; i <= 4; i++ {
+			var result separatedVisitorResult
+			separatedWait(t, fmt.Sprintf("%s.visitor-%d", name, i), time.Duration((len(urls)+3)/4)*5*time.Second+time.Second, &result)
+			for _, row := range result.Requests {
+				if row.Error != "" {
+					t.Errorf("%s: %s", name, row.Error)
+				}
+			}
+		}
 	}
+	separatedWrite(t, fmt.Sprintf("phase-%d", sequence), benchworkload.Phase{Done: true})
 	for i := 1; i <= 4; i++ {
 		var passed bool
 		separatedWait(t, fmt.Sprintf("visitor-%d.done", i), 30*time.Second, &passed)
@@ -193,6 +282,12 @@ func separatedLoadParameters(t *testing.T) (int, int, time.Duration) {
 	if duration < 10*time.Second || duration > 2*time.Minute {
 		t.Fatal("separated runtime load phase duration must be between 10s and 2m")
 	}
+	if *runtimeLoadWorkers < 4 || *runtimeLoadWorkers > 4096 || *runtimeLoadQueue < 0 || *runtimeLoadQueue > 4096 {
+		t.Fatal("invalid visitor concurrency or queue")
+	}
+	if !slices.Contains([]string{"relay-restart", "relay-kill", "forwarding-blackhole"}, *runtimeLoadScenario) {
+		t.Fatal("invalid runtime scenario")
+	}
 	return routes, rate, duration
 }
 
@@ -253,6 +348,13 @@ func separatedReportResources(t *testing.T, phase string, before, after separate
 	t.Helper()
 	for _, component := range append(slices.Clone(separatedComponents), "postgres", "coordinator") {
 		a, b := before.Resources[component], after.Resources[component]
+		if a.ProcessRunID != b.ProcessRunID {
+			t.Logf("separated_resource phase=%s component=%s interval_reset=true before_run=%s after_run=%s memory=%d peak=%d oom_kills=%d", phase, component, a.ProcessRunID, b.ProcessRunID, b.Memory, b.Peak, b.OOMKills)
+			if b.OOMKills != 0 {
+				t.Errorf("%s OOM after restart", component)
+			}
+			continue
+		}
 		seconds := b.At.Sub(a.At).Seconds()
 		t.Logf("separated_resource phase=%s component=%s interval=%.3fs quota=%q memory_limit=%q cpu_seconds=%.6f cpu_cores=%.4f throttled_seconds=%.6f throttled_periods=%d/%d memory=%d peak=%d oom_kills=%d rx_bytes=%d tx_bytes=%d gomaxprocs=%d network_namespace=%s",
 			phase, component, seconds, b.CPUQuota, b.MemoryLimit, float64(b.CPUUsec-a.CPUUsec)/1e6, float64(b.CPUUsec-a.CPUUsec)/1e6/seconds,
@@ -263,7 +365,7 @@ func separatedReportResources(t *testing.T, phase string, before, after separate
 		}
 	}
 	for _, role := range []string{"control", "ingress", "relay-a", "relay-b"} {
-		if role == "relay-a" && phase == "relay-restart" {
+		if role == "relay-a" && (phase == "relay-restart" || phase == "relay-kill") {
 			continue
 		} // New runtime registry.
 		summaries, err := observability.DurationSummaries(before.Metrics[role], after.Metrics[role])
@@ -280,12 +382,14 @@ func separatedReportResources(t *testing.T, phase string, before, after separate
 
 func separatedReportVisitors(t *testing.T, phase string, results []separatedVisitorResult, restart separatedRestart, repaired time.Time) {
 	t.Helper()
-	var durations []time.Duration
-	var firstBytes []time.Duration
 	var first, firstExit time.Time
 	failures, missed, total, surviving := 0, 0, 0, 0
+	var merged benchworkload.VisitorResult
 	for _, result := range results {
-		missed += result.Missed
+		if err := merged.Merge(result.VisitorResult); err != nil {
+			t.Fatal(err)
+		}
+		missed += result.Missed + result.QueueExpired
 		surviving += result.HeldSurviving
 		for _, row := range result.Requests {
 			total++
@@ -294,13 +398,11 @@ func separatedReportVisitors(t *testing.T, phase string, results []separatedVisi
 				if failures <= 3 {
 					t.Logf("separated_request_failure phase=%s started=%s error=%s", phase, row.Started, row.Error)
 				}
-				if phase != "relay-restart" || !row.Started.Before(repaired) {
+				if phase != *runtimeLoadScenario || !row.Started.Before(repaired) {
 					t.Errorf("visitor failed in %s after recovery=%t", phase, !row.Started.Before(repaired))
 				}
 				continue
 			}
-			durations = append(durations, row.Duration)
-			firstBytes = append(firstBytes, row.FirstByte.Sub(row.Started))
 			if !row.Started.Before(restart.Started) && (first.IsZero() || row.FirstByte.Before(first)) {
 				first = row.FirstByte
 			}
@@ -309,18 +411,43 @@ func separatedReportVisitors(t *testing.T, phase string, results []separatedVisi
 			}
 		}
 	}
-	slices.Sort(durations)
-	slices.Sort(firstBytes)
-	t.Logf("separated_visitors phase=%s requests=%d success=%d failures=%d missed=%d p50=%s p95=%s maximum=%s first_body_byte_p95=%s", phase, total, len(durations), failures, missed,
-		runtimeLoadQuantile(durations, .5), runtimeLoadQuantile(durations, .95), runtimeLoadQuantile(durations, 1), runtimeLoadQuantile(firstBytes, .95))
+	format := func(value *float64) string {
+		if value == nil {
+			return "unavailable"
+		}
+		return fmt.Sprintf("%.3fms", *value)
+	}
+	t.Logf("separated_visitors phase=%s requests=%d success=%d failures=%d missed=%d p50=%s p95=%s maximum=%.3fms first_body_byte_p95=%s offer=%s drain=%s", phase, total, merged.Successes, failures, missed,
+		format(merged.Total.Percentile(50)), format(merged.Total.Percentile(95)), merged.Total.MaximumMilliseconds, format(merged.FirstByte.Percentile(95)), merged.OfferDuration, merged.DrainDuration)
+	if data, err := json.Marshal(merged); err != nil {
+		t.Fatal(err)
+	} else if err := os.WriteFile(filepath.Join("/results", phase+"-summary.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if missed != 0 || total == 0 {
 		t.Errorf("phase %s: missed=%d requests=%d", phase, missed, total)
 	}
-	if phase == "relay-restart" {
+	if phase == *runtimeLoadScenario {
 		if first.IsZero() || firstExit.IsZero() {
 			t.Error("no successful visitor during recovery")
 		}
-		t.Logf("separated_recovery first_body_after_stop=%s first_body_after_exit=%s runtime_exit=%s all_connections_repaired=%s held_surviving=%d", first.Sub(restart.Started), firstExit.Sub(restart.Exited), restart.Exited.Sub(restart.Started), repaired.Sub(restart.Started), surviving)
+		if phase == "forwarding-blackhole" {
+			t.Logf("separated_recovery first_body_after_drop_applied=%s verified_recovery_after_rule_removal=%s held_surviving=%d", firstExit.Sub(restart.Exited), repaired.Sub(restart.Restored), surviving)
+		} else {
+			t.Logf("separated_recovery first_body_after_stop=%s first_body_after_exit=%s runtime_exit=%s all_connections_repaired=%s held_surviving=%d", first.Sub(restart.Started), firstExit.Sub(restart.Exited), restart.Exited.Sub(restart.Started), repaired.Sub(restart.Started), surviving)
+		}
+		data, err := json.Marshal(struct {
+			Scenario                                          string
+			Fault                                             separatedRestart
+			FirstSuccessfulBodyAfterApplied, VerifiedRecovery time.Time
+			HeldSurviving                                     int
+		}{phase, restart, firstExit, repaired, surviving})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join("/results", phase+"-recovery.json"), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -342,7 +469,7 @@ func sampleSeparatedGauges(t *testing.T, phase string) func() {
 			case <-ticker.C:
 			}
 			for _, role := range []string{"control", "ingress", "relay-a", "relay-b"} {
-				if phase == "relay-restart" && role == "relay-a" {
+				if (phase == "relay-restart" || phase == "relay-kill") && role == "relay-a" {
 					continue
 				}
 				response, err := integrationGET(ctx, client, "http://"+role+":9090/metrics")

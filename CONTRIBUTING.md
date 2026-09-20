@@ -31,19 +31,18 @@ Prepare the integration prerequisites below before running that tier.
 
 ### Test Tiers
 
-| Tier               | Command after `mise exec --`          | Prerequisites and scope                                                                    |
-| ------------------ | ------------------------------------- | ------------------------------------------------------------------------------------------ |
-| Routine            | `task test`                           | Installed JavaScript dependencies; includes a package build                                |
-| Race               | `task go:test:race`                   | Go race detector; PostgreSQL-backed tiers remain opt-in                                    |
-| Integration        | `task go:test:integration`            | Docker; Pebble from `mise install`; Task manages disposable PostgreSQL                     |
-| Binary integration | `task go:test:integration:binary`     | Integration prerequisites plus disposable Linux with local DNS/HTTPS ports available       |
-| DNS integration    | `task go:test:integration:dns`        | Docker Compose; runs the authoritative DNS test with isolated Linux port 53 and PostgreSQL |
-| Database load      | `task go:test:load:database`          | Docker; Task manages disposable PostgreSQL                                                 |
-| Runtime load       | `task go:test:load:runtime`           | Docker Compose; constrained real publishers and visitor traffic                            |
-| Separated runtime  | `task go:test:load:runtime:separated` | Docker Compose; one constrained container per runtime component                            |
-| Go fuzzing         | `task go:test:fuzz`                   | Runs every maintained Go fuzz target                                                       |
-| Package checks     | `pnpm run pack`                       | Checks JavaScript exports and tarball contents                                             |
-| Release snapshot   | `task package`                        | Builds native archives and npm packages, then verifies installations; does not publish     |
+| Tier               | Command after `mise exec --`      | Prerequisites and scope                                                                    |
+| ------------------ | --------------------------------- | ------------------------------------------------------------------------------------------ |
+| Routine            | `task test`                       | Installed JavaScript dependencies; includes a package build                                |
+| Race               | `task go:test:race`               | Go race detector; PostgreSQL-backed tiers remain opt-in                                    |
+| Integration        | `task go:test:integration`        | Docker; Pebble from `mise install`; Task manages disposable PostgreSQL                     |
+| Binary integration | `task go:test:integration:binary` | Integration prerequisites plus disposable Linux with local DNS/HTTPS ports available       |
+| DNS integration    | `task go:test:integration:dns`    | Docker Compose; runs the authoritative DNS test with isolated Linux port 53 and PostgreSQL |
+| Database load      | `task go:test:load:database`      | Docker; Task manages disposable PostgreSQL                                                 |
+| Runtime load       | `task go:test:load:runtime`       | Docker Compose; constrained real publishers and visitor traffic                            |
+| Go fuzzing         | `task go:test:fuzz`               | Runs every maintained Go fuzz target                                                       |
+| Package checks     | `pnpm run pack`                   | Checks JavaScript exports and tarball contents                                             |
+| Release snapshot   | `task package`                    | Builds native archives and npm packages, then verifies installations; does not publish     |
 
 PostgreSQL-backed tasks start an isolated, digest-pinned PostgreSQL container,
 wait for it to become healthy, and remove it after the test command. Focus a tier
@@ -67,6 +66,11 @@ mise exec -- env GOFLAGS=-tags=ts_omit_ssh go test ./internal/tunnel
 
 Run database load tests with `mise exec -- task go:test:load:database`. Task
 creates and removes their PostgreSQL container; CI uses the same command.
+
+PR CI passes `ROUTES=32` for the database smoke. Scheduled and manually selected
+load runs use the full 1,000-route workload, followed by the runtime reference and
+fault scenarios. Routine Go and JavaScript stages run sequentially so package
+build cleanup cannot race Go's repository traversal.
 
 The default is 1,000 routes, with 64 workflows and two eight-connection request
 pools. `ROUTES=<positive count>` changes only the route count; `RUN=<Go test regex>`
@@ -213,78 +217,51 @@ an end-to-end publisher test. For example:
 mise exec -- task go:test:load:database ROUTES=1000 DELAY=5ms RUN='^TestLoadShutdown$'
 ```
 
-### Constrained Runtime Load
+### Runtime Load
 
-`task go:test:load:runtime` runs local control, ingress, two relays, real publishers,
-Pebble, a local service, and fresh HTTPS visitor requests. Half the publishers use
-QUIC and half TLS/TCP. It measures steady traffic, relay runtime restart, and
-bounded publisher shutdown while visitors continue using the surviving routes.
-It also keeps up to eight HTTP streaming responses open during the relay restart.
+`task go:test:load:runtime` runs one separated topology: control, ingress, two
+relays, a publisher group, four visitor containers, a local service, Pebble/DNS,
+PostgreSQL, and a coordinator. Publishers, visitors, histograms, and authenticated
+HTTP coordination are shared with Fly through `internal/benchworkload`.
+Production `publisher.Run` and `clientauth` own publishing and session refresh.
 
-```console
-mise exec -- task go:test:load:runtime ROUTES=16 RPS=80 SOURCES=4 DURATION=30s
-mise exec -- task go:test:load:runtime ROUTES=16 RPS=80 SOURCES=4 DURATION=30s RUNTIME_CPUS=0.5 RUNTIME_MEMORY=128m DATABASE_CPUS=0.5 DATABASE_MEMORY=256m
-```
-
-`DURATION` is the minimum duration of each traffic phase (10s–2m), not the whole
-test; setup and repair can extend the total. Eight visitor workers offer the
-configured rate through a bounded queue. Missed scheduled requests fail the test,
-as do failed steady/post-repair/healthy-shutdown requests. Transient failures
-during relay restart are counted and reported. Each request verifies a 32KiB body
-and route TLS; successful-request latency samples are reported separately from
-failures. Visitor requests have five seconds and publisher stops ten seconds.
-
-The default limits are two CPUs/1GiB for the runtime container and one CPU/512MiB
-for PostgreSQL, with swap disabled. The build runs separately before measurement.
-All role instances, publishers, visitors, and the local service share one Go test
-process; Pebble is another process in that same runtime container. These are
-aggregate limits, not per-role production capacity. `RUNTIME_CPUS`,
-`RUNTIME_MEMORY`, `DATABASE_CPUS`, and `DATABASE_MEMORY` select other explicit caps.
-The task cleans its Compose containers, network, and volumes on exit.
-
-The load fixture uses normal 30-second process leases, ten-second renewals, and
-production connection/stream capacities. It retains a five-second relay drain,
-one-second publisher drain, one-second routing long poll, and 50ms control retry
-from the integration fixture. Relay restart is cancellation/drain, not an OS kill.
-Measurements distinguish stop initiation, runtime exit, and restoration of both
-publisher connections. Source limiting is active: `SOURCES` selects 1–8 distinct
-Linux loopback source addresses explicitly permitted by route IP policy. One
-source cannot sustain more than the normal 50 new connections/second after its
-200-connection burst is exhausted.
-
-This does not exercise public DNS, a public CA, external authority, separate role
-machines, WAN latency/loss, or production bandwidth pricing. Provisioning is real
-against Pebble and retains the existing 30-second readiness check; a larger trial
-can fail during activation before any visitor-capacity phase starts.
-
-Use `TRACE=1` when investigating provisioning. It logs explicit certificate HTTP
-response metadata and samples persisted order/challenge states every 250ms during
-activation, without credentials or challenge material. The sampler adds database
-work, so repeat capacity measurements with tracing disabled (the default).
-All runs check one CA order and one installed certificate issuance per route;
-activation timings distinguish total setup from each publisher's observed wait.
-
-### Per-Component Runtime Load
-
-`task go:test:load:runtime:separated` runs the same real visitor workload with one server
-role per container, a publisher container, four visitor containers, a local service,
-Pebble/DNS, PostgreSQL, and a coordinator. It calls production runtime and publisher
-code from ordinary Go test processes; it is not a CLI startup benchmark. The 64
-publishers share one Go process/client state, so publisher memory is a group cost,
-not the cost of 64 independent CLI processes.
+The default smoke has four routes, both QUIC and TLS/TCP, 16 fresh requests/sec,
+ten-second steady/shutdown windows, **128 visitor workers**, and **eight waiting
+slots** across the four visitor containers. Every request uses fresh verified
+HTTP/1.1 TLS and validates the origin-observed hostname and 32KiB response.
+Its five-second budget includes queue waiting; requests are never retried.
 
 ```console
-mise exec -- task go:test:load:runtime:separated ROUTES=64 RPS=160 DURATION=30s RESULTS=bench-results/separated-reference
-mise exec -- env PUBLISHER_CPUS=0.25 task go:test:load:runtime:separated ROUTES=64 RPS=160 DURATION=30s RESULTS=bench-results/separated-publisher-025
-mise exec -- task go:test:load:runtime:separated ROUTES=4 RPS=16 DURATION=10s RACE=1 RESULTS=bench-results/separated-race
+mise exec -- task go:test:load:runtime RACE=1 RESULTS=bench-results/runtime-smoke
+mise exec -- task go:test:load:runtime ROUTES=64 RPS=160 DURATION=30s RESULTS=bench-results/runtime-reference
+mise exec -- env PUBLISHER_CPUS=0.25 task go:test:load:runtime ROUTES=64 RPS=160 DURATION=30s RESULTS=bench-results/runtime-publisher-025
+mise exec -- task go:test:load:runtime SCENARIO=relay-kill RESULTS=bench-results/runtime-kill
+mise exec -- task go:test:load:runtime SCENARIO=forwarding-blackhole RESULTS=bench-results/runtime-blackhole
 ```
 
-Each visitor has two workers and two queue slots, retaining eight of each in total.
-Four real container IPs preserve the source limiter. The normal limit is 50 new
-connections/second per source after its burst, so rates above 200/sec can hit that
-limit. Phase start/stop barriers run outside the request path; a 300ms future stop
-allows all four visitors to observe the same deadline. Reports count every elapsed
-offered slot, including misses, rather than assuming exactly `RPS * DURATION`.
+`WORKERS` and `QUEUE` independently set total visitor concurrency and waiting
+slots. Fixed offer windows count scheduled, started, completed, failed, timed-out,
+missed, and queue-expired work. Offering and drain durations are separate. Successful
+request histograms use production buckets and merge counts across generators.
+First-byte timing means the first response **body** byte.
+
+One coordinator supplies the phase sequence. Every route receives correctness
+probes after each traffic window. Held streams must survive steady traffic; fault
+windows retain all disruptions and require successful post-recovery traffic.
+Missed offers fail every window. Four real source IPs preserve the normal
+50-new-connections/sec source limit; concurrency does not create more source IPs.
+
+`SCENARIO=relay-restart` is the default graceful restart. `relay-kill` uses Docker
+SIGKILL, leaves the relay down longer than its 30-second lease, and requires a new
+process run ID after restart. `forwarding-blackhole` drops only ingress-to-relay-a
+TCP port 8443 for 15 seconds and verifies nonzero packet-drop counters. Control,
+publisher, and relay-b paths remain available. Fault windows last at least 40, 80,
+and 50 seconds respectively, while request and production deadlines are unchanged.
+
+`TRACE=1` retains certificate HTTP metadata and persisted challenge/order sampling
+for provisioning diagnosis. It adds inspection work; reference measurements leave
+it disabled. Activation retains a 30-second per-publisher deadline, with four
+concurrent starts and a ten-second per-publisher shutdown deadline.
 
 | Component     | CPU quota | Memory limit | Overrides                            |
 | ------------- | --------: | -----------: | ------------------------------------ |
@@ -305,7 +282,8 @@ are therefore marked shared and must not be summed. CPU and memory remain separa
 
 The result directory contains per-phase cgroup CPU, throttling, memory/current/peak,
 OOM, and network-counter JSON, raw production `.prom` scrapes, visitor results,
-and container exit evidence. Gauge samples at one-second intervals appear in the
+and container exit evidence. Shared visitor summaries retain the merged histogram
+counts and separate offering/drain durations. Gauge samples at one-second intervals appear in the
 console log; redirect it to retain those samples. PostgreSQL's own resource files
 are read through its disposable superuser connection, without a metrics sidecar.
 Resource intervals include coordination/collection overhead and record their actual
@@ -318,8 +296,11 @@ connections, and reservations. Ingress stops while control/PostgreSQL remain up,
 flushing its final usage checkpoints; latest per-route/bucket reports must match
 stored connection and byte totals. The runner fails if any component exits early
 and cleans its containers, networks, temporary keys/state, and volumes. Use a fresh
-`RESULTS` path per experiment to preserve earlier evidence. These local cgroup-v2
-experiments still use graceful runtime restart, local DNS/Pebble, and no WAN loss.
+`RESULTS` path per experiment to preserve earlier evidence. Only the selected relay
+SIGKILL is an expected early exit. Go build/module caches persist in dedicated
+Docker volumes; databases, keys, publisher state, and coordination are fresh per
+run. The origin has a separate cgroup locally; Fly embeds it in each publisher
+process, so publisher resource costs include the origin there.
 
 ### JavaScript Package
 

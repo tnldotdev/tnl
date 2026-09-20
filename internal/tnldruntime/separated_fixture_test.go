@@ -2,6 +2,7 @@ package tnldruntime
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -18,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/benchworkload"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
@@ -30,9 +32,31 @@ var separatedComponent = flag.String("tnl-separated-component", "", "separated r
 
 var separatedComponents = []string{"control", "ingress", "relay-a", "relay-b", "publishers", "visitor-1", "visitor-2", "visitor-3", "visitor-4", "app", "pebble"}
 
-// This fixed Compose experiment uses file barriers only for scheduling. All
-// product communication still uses the real authenticated APIs and transports.
+func separatedCoordination(t *testing.T) *benchworkload.Coordination {
+	t.Helper()
+	data, err := os.ReadFile("/load/coordinator-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := benchworkload.NewCoordination("http://coordinator:8080", string(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return client
+}
+
+// Coordination uses the same authenticated HTTP events as Fly. The shared
+// volume contains only fixture keys/configuration, never lifecycle barriers.
 func separatedWrite(t *testing.T, name string, value any) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	if err := separatedCoordination(t).Put(ctx, name, value); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func separatedArtifact(t *testing.T, name string, value any) {
 	t.Helper()
 	data, err := json.Marshal(value)
 	if err != nil {
@@ -49,27 +73,13 @@ func separatedWrite(t *testing.T, name string, value any) {
 
 func separatedRead(t *testing.T, ctx context.Context, name string, value any) bool {
 	t.Helper()
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		data, err := os.ReadFile(filepath.Join(separatedDirectory, name+".json"))
-		if err == nil {
-			if value != nil {
-				if err := json.Unmarshal(data, value); err != nil {
-					t.Fatal(err)
-				}
-			}
-			return true
-		}
-		if !errors.Is(err, os.ErrNotExist) {
-			t.Fatal(err)
-		}
-		select {
-		case <-ctx.Done():
+	if err := separatedCoordination(t).Wait(ctx, name, value); err != nil {
+		if ctx.Err() != nil {
 			return false
-		case <-ticker.C:
 		}
+		t.Fatal(err)
 	}
+	return true
 }
 
 func separatedWait(t *testing.T, name string, timeout time.Duration, value any) {
@@ -100,14 +110,17 @@ func separatedHTTP(t *testing.T) *http.Client {
 }
 
 func TestSeparatedRuntimeSetup(t *testing.T) {
-	testutil.RequireTestTier(t, testutil.TestTierSeparatedLoad)
+	testutil.RequireTestTier(t, testutil.TestTierRuntimeLoad)
 	if *separatedComponent != "setup" {
-		t.Skip("run task go:test:load:runtime:separated")
+		t.Skip("run task go:test:load:runtime")
 	}
 	if err := controlstate.Migrate(t.Context(), testutil.PostgresURL(t)); err != nil {
 		t.Fatal(err)
 	}
 	ca := newIntegrationTestCA(t)
+	if err := os.WriteFile("/load/coordinator-token", []byte(rand.Text()), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(separatedDirectory, "roots.pem"), ca.certificatePEM, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +135,7 @@ func TestSeparatedRuntimeSetup(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	separatedWrite(t, "pebble-config", map[string]any{"pebble": map[string]any{
+	separatedArtifact(t, "pebble-config", map[string]any{"pebble": map[string]any{
 		"listenAddress": "0.0.0.0:14000", "managementListenAddress": "0.0.0.0:15000",
 		"certificate": "/load/pebble.pem", "privateKey": "/load/pebble.key",
 		"httpPort": 80, "tlsPort": 443, "externalAccountBindingRequired": false,
@@ -173,6 +186,7 @@ func separatedConfig(t *testing.T, component string) tnldconfig.Config {
 }
 
 type separatedResources struct {
+	ProcessRunID              string
 	NetworkNamespace          string
 	At                        time.Time
 	CPUQuota, MemoryLimit     string
@@ -190,8 +204,11 @@ func readSeparatedResources() (separatedResources, error) {
 		return strings.TrimSpace(string(data)), err
 	})
 	r.GOMAXPROCS = runtime.GOMAXPROCS(0)
+	r.ProcessRunID = separatedObserverRunID
 	return r, err
 }
+
+var separatedObserverRunID = rand.Text()
 
 func readSeparatedResourceFiles(read func(string) (string, error)) (separatedResources, error) {
 	r := separatedResources{At: time.Now()}

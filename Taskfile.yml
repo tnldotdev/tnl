@@ -111,19 +111,30 @@ tasks:
 
   lint:
     desc: Run static analysis
-    deps: [go:lint, go:vulncheck, js:lint, js:typecheck, workflows:lint]
+    cmds:
+      - task: go:lint
+      - task: go:vulncheck
+      - task: js:lint
+      - task: js:typecheck
+      - task: workflows:lint
 
   test:
     desc: Run routine Go and JavaScript tests
-    deps: [go:test, js:test]
+    cmds:
+      - task: go:test
+      - task: js:test
 
   coverage:
     desc: Produce diagnostic Go and TypeScript coverage reports
-    deps: [go:test:coverage, js:test:coverage]
+    cmds:
+      - task: go:test:coverage
+      - task: js:test:coverage
 
   build:
     desc: Build all packages and commands
-    deps: [go:build, js:build]
+    cmds:
+      - task: go:build
+      - task: js:build
 
   package:
     desc: Build a local release snapshot
@@ -221,58 +232,29 @@ tasks:
       - node scripts/run-go-tests-with-postgres.mjs -- go test -v ./internal/controlstate -run='{{.RUN}}' -count=1 -timeout=20m -args -tnl-test-tier=database-load -tnl-load-delay='{{.DELAY}}' -tnl-load-routes='{{.ROUTES}}' -tnl-load-history='{{.HISTORY}}' -tnl-load-duration='{{.DURATION}}' -tnl-load-retention='{{.RETENTION}}'
 
   go:test:load:runtime:
-    desc: Run real local visitor/shutdown load (2 CPU/1GiB test, 1 CPU/512MiB PostgreSQL)
-    vars:
-      ROUTES: '{{default "16" .ROUTES}}'
-      RPS: '{{default "20" .RPS}}'
-      SOURCES: '{{default "1" .SOURCES}}'
-      TRACE: '{{default "0" .TRACE}}'
-      RUNTIME_CPUS: '{{default "2" .RUNTIME_CPUS}}'
-      RUNTIME_MEMORY: '{{default "1g" .RUNTIME_MEMORY}}'
-      DATABASE_CPUS: '{{default "1" .DATABASE_CPUS}}'
-      DATABASE_MEMORY: '{{default "512m" .DATABASE_MEMORY}}'
-      DURATION: '{{default "30s" .DURATION}}'
-    env:
-      ROUTES: "{{.ROUTES}}"
-      RPS: "{{.RPS}}"
-      SOURCES: "{{.SOURCES}}"
-      TRACE: "{{.TRACE}}"
-      RUNTIME_CPUS: "{{.RUNTIME_CPUS}}"
-      RUNTIME_MEMORY: "{{.RUNTIME_MEMORY}}"
-      DATABASE_CPUS: "{{.DATABASE_CPUS}}"
-      DATABASE_MEMORY: "{{.DATABASE_MEMORY}}"
-      DURATION: "{{.DURATION}}"
-    cmds:
-      - |
-        bash -euo pipefail -c '
-          compose() {
-            docker compose --ansi never --progress plain --file internal/tnldruntime/testdata/runtime-load.compose.yaml "$@"
-          }
-          cleanup() {
-            compose down --volumes --remove-orphans >/dev/null 2>&1 || true
-          }
-          trap cleanup EXIT HUP INT TERM
-          cleanup
-          compose run --rm build
-          compose up --abort-on-container-exit --exit-code-from test postgres test
-        '
-
-  go:test:load:runtime:separated:
     desc: Run per-component constrained real visitor/recovery/shutdown load
     vars:
-      ROUTES: '{{default "64" .ROUTES}}'
-      RPS: '{{default "160" .RPS}}'
-      DURATION: '{{default "30s" .DURATION}}'
+      ROUTES: '{{default "4" .ROUTES}}'
+      RPS: '{{default "16" .RPS}}'
+      DURATION: '{{default "10s" .DURATION}}'
+      WORKERS: '{{default "128" .WORKERS}}'
+      QUEUE: '{{default "8" .QUEUE}}'
+      SCENARIO: '{{default "relay-restart" .SCENARIO}}'
+      TRACE: '{{default "0" .TRACE}}'
       RACE: '{{default "0" .RACE}}'
-      RESULTS: '{{default "bench-results/separated-runtime" .RESULTS}}'
+      RESULTS: '{{default (printf "bench-results/runtime-%s" (now | date "20060102-150405")) .RESULTS}}'
     env:
       ROUTES: "{{.ROUTES}}"
       RPS: "{{.RPS}}"
       DURATION: "{{.DURATION}}"
+      WORKERS: "{{.WORKERS}}"
+      QUEUE: "{{.QUEUE}}"
+      SCENARIO: "{{.SCENARIO}}"
+      TRACE: "{{.TRACE}}"
       RACE: "{{.RACE}}"
       RESULTS: "{{.ROOT_DIR}}/{{.RESULTS}}"
     cmds:
-      - bash scripts/separated-runtime-load.sh
+      - node scripts/runtime-load.mjs
 
   go:test:fuzz:
     desc: Fuzz all Go parser and policy boundaries
@@ -288,16 +270,10 @@ tasks:
       - go test ./internal/clioutput -run='^$' -fuzz='^FuzzRender$' -fuzztime='{{.TIME}}'
 
   go:bench-fly:plan:
-    desc: Expand and price a Fly benchmark without creating resources
+    desc: Describe one Fly workload and its resources without creating them
     dotenv: [.env.bench]
     cmds:
       - go run ./cmd/tnlbench plan
-
-  go:bench-fly:preflight:
-    desc: Validate Fly and AWS benchmark access without creating resources
-    dotenv: [.env.bench]
-    cmds:
-      - go run ./cmd/tnlbench preflight
 
   go:bench-fly:run:
     desc: Run an explicitly approved Fly benchmark and clean up its resources

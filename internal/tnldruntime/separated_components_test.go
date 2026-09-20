@@ -1,15 +1,15 @@
 package tnldruntime
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"io"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -18,20 +18,22 @@ import (
 	"time"
 
 	"github.com/miekg/dns"
-	"github.com/tnldotdev/tnl/internal/muxsession"
+	"github.com/tnldotdev/tnl/internal/benchworkload"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/testutil"
 )
 
 func TestSeparatedRuntimeComponent(t *testing.T) {
-	testutil.RequireTestTier(t, testutil.TestTierSeparatedLoad)
+	testutil.RequireTestTier(t, testutil.TestTierRuntimeLoad)
 	component := *separatedComponent
 	if component == "" || component == "setup" || component == "coordinator" {
-		t.Skip("run task go:test:load:runtime:separated")
+		t.Skip("run task go:test:load:runtime")
 	}
 	routes, rate, _ := separatedLoadParameters(t)
 	ctx, cancel := signal.NotifyContext(t.Context(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
+	coordination := separatedCoordination(t)
+	waitForIntegrationCondition(t, 30*time.Second, func(ctx context.Context) (bool, error) { return coordination.Get(ctx, "coordinator.ready", nil) })
 	var orders atomic.Int64
 	serveSeparatedResources(t, orders.Load)
 	switch component {
@@ -51,6 +53,9 @@ func TestSeparatedRuntimeComponent(t *testing.T) {
 			return
 		}
 		client := separatedHTTP(t)
+		if component == "control" && *runtimeLoadTrace {
+			traceRuntimeCertificateHTTP(t, client, time.Now())
+		}
 		base := client.Transport
 		client.Transport = splitACMERoundTripFunc(func(request *http.Request) (*http.Response, error) {
 			if request.Method == http.MethodPost && request.URL.Path == "/order-plz" {
@@ -64,7 +69,15 @@ func TestSeparatedRuntimeComponent(t *testing.T) {
 			relayClientTLS:    separatedRelayTLS(t), owner: newRuntimeTopology(t)}
 		process := startIntegrationProcessWithOptions(t, cfg, options)
 		waitForProcessReady(t, process)
-		separatedWrite(t, component+".ready", time.Now())
+		readyName := component + ".ready"
+		if component == "relay-a" && *runtimeLoadScenario == "relay-kill" {
+			if found, err := coordination.Get(ctx, readyName, nil); err != nil {
+				t.Fatal(err)
+			} else if found {
+				readyName = "relay-a.restarted"
+			}
+		}
+		separatedWrite(t, readyName, time.Now())
 		if component == "ingress" {
 			if !separatedRead(t, ctx, "ingress.stop", nil) {
 				return
@@ -74,7 +87,7 @@ func TestSeparatedRuntimeComponent(t *testing.T) {
 			<-ctx.Done()
 			return
 		}
-		if component == "relay-a" {
+		if component == "relay-a" && *runtimeLoadScenario == "relay-restart" {
 			if !separatedRead(t, ctx, "relay-a.restart", nil) {
 				return
 			}
@@ -164,33 +177,11 @@ func runSeparatedPebble(t *testing.T, ctx context.Context) {
 }
 
 func runSeparatedApp(t *testing.T, ctx context.Context) {
-	payload := bytes.Repeat([]byte("tnl!"), 8192)
 	listener, err := net.Listen("tcp", ":8080")
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := &http.Server{ReadHeaderTimeout: time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/stream" {
-			_, _ = w.Write(payload)
-			return
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = io.WriteString(w, "ready\n")
-		w.(http.Flusher).Flush()
-		ticker := time.NewTicker(100 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-r.Context().Done():
-				return
-			case <-ticker.C:
-				if _, err := io.WriteString(w, "tick\n"); err != nil {
-					return
-				}
-				w.(http.Flusher).Flush()
-			}
-		}
-	})}
+	server := &http.Server{ReadHeaderTimeout: time.Second, Handler: benchworkload.Origin(32768)}
 	done := make(chan struct{})
 	go func() { defer close(done); _ = server.Serve(listener) }()
 	t.Cleanup(func() { _ = server.Close(); <-done })
@@ -207,11 +198,6 @@ func runSeparatedPublishers(t *testing.T, ctx context.Context, count int) {
 	if !separatedRead(t, ctx, "publish.start", nil) {
 		return
 	}
-	owner := newRuntimeTopology(t)
-	identity := newIntegrationPublishingIdentity(t, "https://control."+separatedDomain, separatedHTTP(t), "runtime-load", owner)
-	quic := muxsession.QUICConnector{TLSConfig: separatedRelayTLS(t)}
-	tcp := muxsession.TLSYamuxConnector{TLSConfig: separatedRelayTLS(t)}
-	_, namespace, _ := strings.Cut(identity.hostname, ".")
 	var prefixes []string
 	for index := 1; index <= 4; index++ {
 		ips, err := net.LookupIP("visitor-" + strconv.Itoa(index))
@@ -224,58 +210,76 @@ func runSeparatedPublishers(t *testing.T, ctx context.Context, count int) {
 			}
 		}
 	}
-	handles := make([]*integrationPublisher, count)
+	group, err := benchworkload.OpenPublishers(ctx, benchworkload.PublisherConfig{
+		Server: "https://control." + separatedDomain, LoginToken: testLoginToken,
+		Domain: "routes." + separatedDomain, StateRoot: filepath.Join(t.TempDir(), "state"), Target: "http://127.0.0.1:8080",
+		HTTPClient: separatedHTTP(t), RelayTLS: separatedRelayTLS(t), AllowedIPPrefixes: prefixes,
+		Transport: "mixed", Parallel: 4, ReadyTimeout: 30 * time.Second, StopTimeout: 10 * time.Second, DrainTime: time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), time.Duration(count+1)*10*time.Second)
+		defer cancel()
+		if _, err := group.Close(cleanup); err != nil {
+			t.Error(err)
+		}
+	})
+	monitor, stopMonitor := context.WithCancel(ctx)
+	defer stopMonitor()
+	go func() {
+		select {
+		case err := <-group.Failures():
+			failureCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = separatedCoordination(t).Put(failureCtx, "failure", err.Error())
+			stopMonitor()
+		case <-monitor.Done():
+		}
+	}()
 	result := separatedPublishers{URLs: make([]string, count), Ready: make([]publisher.Event, count)}
 	started := time.Now()
-	for offset := 0; offset < count; offset += 4 {
-		batch := time.Now()
-		for index := offset; index < min(offset+4, count); index++ {
-			cfg := identity.publisherConfig("http://127.0.0.1:8080", quic, tcp)
-			cfg.Hostname = "runtime-" + strconv.Itoa(index) + "." + namespace
-			cfg.AllowedIPPrefixes = prefixes
-			cfg.FallbackDelay = 250 * time.Millisecond
-			if index%2 == 0 {
-				cfg.TCPConnector, _ = disabledIntegrationConnector("QUIC cohort")
-			} else {
-				cfg.QUICConnector, _ = disabledIntegrationConnector("TLS/TCP cohort")
-			}
-			handles[index] = startOwnedIntegrationPublisher(t, owner, cfg, nil)
-		}
-		for index := offset; index < min(offset+4, count); index++ {
-			result.Ready[index] = waitForPublisherReady(t, handles[index])
-			result.URLs[index] = result.Ready[index].PublicURL
-			t.Logf("separated_activation index=%d elapsed=%s launch_to_ready_observed=%s", index, time.Since(started), time.Since(batch))
-		}
+	ready, err := group.Start(monitor, benchworkload.RouteIndexes(count, 1, 0))
+	if err != nil {
+		t.Fatal(err)
 	}
+	for _, route := range ready {
+		result.Ready[route.Index], result.URLs[route.Index] = route.Ready, route.Ready.PublicURL
+		t.Logf("separated_activation index=%d launch_to_ready=%s", route.Index, route.Activation)
+	}
+	t.Logf("separated_activation_total=%s", time.Since(started))
 	separatedWrite(t, "publishers.ready", result)
 	for _, phase := range []string{"close-half", "close-all"} {
-		if !separatedRead(t, ctx, phase, nil) {
+		if !separatedRead(t, monitor, phase, nil) {
 			return
 		}
 		at := time.Now()
+		indexes := benchworkload.RouteIndexes(count, 1, 0)
 		if phase == "close-half" {
-			stopRuntimeLoadPublishers(t, handles[:count/2])
+			indexes = indexes[:count/2]
 		} else {
-			stopRuntimeLoadPublishers(t, handles[count/2:])
+			indexes = indexes[count/2:]
+		}
+		if _, err := group.Stop(ctx, indexes); err != nil {
+			t.Fatal(err)
 		}
 		separatedWrite(t, phase+".done", time.Since(at))
 	}
 	<-ctx.Done()
 }
 
-type separatedRestart struct{ Started, Exited time.Time }
-type separatedRequest struct {
-	Started, FirstByte time.Time
-	Duration           time.Duration
-	Error              string
-}
+type separatedRestart struct{ Started, Exited, Restored time.Time }
 type separatedVisitorResult struct {
-	Requests      []separatedRequest
-	Missed        int
+	benchworkload.VisitorResult
+	Requests      []benchworkload.RequestResult
 	HeldSurviving int
 }
 
 func runSeparatedVisitor(t *testing.T, ctx context.Context, component string, rate int) {
+	lifecycle := ctx
+	ctx, stopFailures := separatedCoordination(t).WorkloadContext(ctx)
+	defer stopFailures()
 	var publishers separatedPublishers
 	if !separatedRead(t, ctx, "publishers.ready", &publishers) {
 		return
@@ -284,65 +288,68 @@ func runSeparatedVisitor(t *testing.T, ctx context.Context, component string, ra
 		return
 	}
 	index, _ := strconv.Atoi(strings.TrimPrefix(component, "visitor-"))
-	visitor := newIntegrationVisitor(t, separatedRoots(t, "route-roots.pem"), "ingress:443")
-	payload := bytes.Repeat([]byte("tnl!"), 8192)
-	// Four real source IPs, two workers/queue slots each: aggregate 8/8.
-	localRate := rate / 4
-	if index <= rate%4 {
-		localRate++
-	}
-	var streams []*runtimeLoadStream
+	visitor := benchworkload.Visitor{Roots: separatedRoots(t, "route-roots.pem"), Address: "ingress:443", PayloadBytes: 32768}
+	localRate := benchworkload.Assignment(rate, 4, index-1)
+	var streams []*benchworkload.HeldStream
 	for i := index - 1; i < min(8, len(publishers.URLs)); i += 4 {
-		streams = append(streams, startRuntimeLoadStream(t, visitor.transport, publishers.URLs[i]))
+		stream, err := visitor.Hold(ctx, publishers.URLs[i])
+		if err != nil {
+			t.Fatal(err)
+		}
+		streams = append(streams, stream)
+		t.Cleanup(func() {
+			if err := stream.Close(); err != nil {
+				t.Error(err)
+			}
+		})
 	}
 	separatedWrite(t, component+".ready", time.Now())
-	for _, phase := range []string{"steady", "relay-restart", "shutdown"} {
-		var start time.Time
-		if !separatedRead(t, ctx, phase+".start", &start) {
+	for sequence := 0; ; sequence++ {
+		var phase benchworkload.Phase
+		if !separatedRead(t, ctx, fmt.Sprintf("phase-%d", sequence), &phase) {
 			return
 		}
-		// Spread the four sources' first offers over one global scheduling period.
-		waitUntilIntegrationTime(t, start.Add(time.Duration(index-1)*time.Second/time.Duration(rate)))
-		urls := publishers.URLs
-		if phase == "shutdown" {
-			urls = urls[len(urls)/2:]
+		if phase.Done {
+			break
 		}
-		load := startRuntimeLoadVisitorWorkers(t, visitor.client, urls, payload, localRate, 2, func(url string) { t.Logf("separated_visitor_first_failure url=%s", url) })
-		var stop time.Time
-		if !separatedRead(t, ctx, phase+".stop", &stop) {
-			load.stop(t, "cleanup")
-			return
-		}
-		waitUntilIntegrationTime(t, stop)
-		rows := load.stop(t, phase)
-		result := separatedVisitorResult{Missed: load.missed}
-		for _, row := range rows {
-			value := separatedRequest{Started: row.started, FirstByte: row.firstByte, Duration: row.duration}
-			if row.err != nil {
-				value.Error = row.err.Error()
-			}
-			result.Requests = append(result.Requests, value)
-		}
-		if phase == "relay-restart" {
-			for _, stream := range streams {
-				select {
-				case <-stream.done:
-				default:
-					result.HeldSurviving++
+		result := separatedVisitorResult{}
+		if phase.Duration == 0 {
+			for i := index - 1; i < len(phase.URLs); i += 4 {
+				row := visitor.Request(ctx, phase.URLs[i], time.Now())
+				if row.Error != "" {
+					t.Error(row.Error)
 				}
-				stream.stop(t)
+				result.Requests = append(result.Requests, row)
+			}
+		} else {
+			cfg := benchworkload.VisitorConfig{Rate: localRate,
+				Workers: benchworkload.Assignment(*runtimeLoadWorkers, 4, index-1), QueueSlots: benchworkload.Assignment(*runtimeLoadQueue, 4, index-1),
+				Start: phase.Start.Add(time.Duration(index-1) * time.Second / time.Duration(rate)), Duration: phase.Duration,
+				OnResult: func(row benchworkload.RequestResult) { result.Requests = append(result.Requests, row) },
+			}
+			var err error
+			result.VisitorResult, err = visitor.Run(ctx, cfg, phase.URLs)
+			if err != nil {
+				t.Fatal(err)
 			}
 		}
-		separatedWrite(t, phase+"."+component, result)
-	}
-	// Every route receives a fresh verified request after repair/shutdown if live.
-	for _, url := range publishers.URLs[len(publishers.URLs)/2:] {
-		if result := runtimeLoadRequest(ctx, visitor.client, url, payload); result.err != nil {
-			t.Error(result.err)
+		for _, stream := range streams {
+			if stream.Alive() {
+				result.HeldSurviving++
+			}
+			if phase.Name == "steady" && !stream.Alive() {
+				t.Error("held stream ended before fault")
+			}
+			if phase.CloseHeld {
+				if err := stream.Close(); err != nil {
+					t.Error(err)
+				}
+			}
 		}
+		separatedWrite(t, phase.Name+"."+component, result)
 	}
 	separatedWrite(t, component+".done", !t.Failed())
-	<-ctx.Done()
+	<-lifecycle.Done()
 }
 
 // Decode resources through a bounded request; no Docker socket is mounted in a
