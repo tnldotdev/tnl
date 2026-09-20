@@ -48,13 +48,6 @@ type flyMachine struct {
 	State string `json:"state"`
 }
 
-type flyVolume struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Region string `json:"region"`
-	SizeGB int    `json:"size_gb"`
-}
-
 type machineSpec struct {
 	App           string
 	Name          string
@@ -64,7 +57,6 @@ type machineSpec struct {
 	Restart       string
 	Env           map[string]string
 	Ports         []string
-	Volumes       []string
 	MachineConfig string
 }
 
@@ -190,32 +182,6 @@ func (f flyPlatform) allocateAddresses(ctx context.Context, app string, sharedIP
 	return result, nil
 }
 
-func (f flyPlatform) createVolume(ctx context.Context, app, name string, sizeGB int) (flyVolume, error) {
-	output, err := f.executor.Run(
-		ctx, f.binary, "volumes", "create", name, "--app", app, "--region", f.region,
-		"--size", fmt.Sprint(sizeGB), "--scheduled-snapshots=false", "--json", "--yes",
-	)
-	if err != nil {
-		return flyVolume{}, fmt.Errorf("create Fly volume %s: %w", name, err)
-	}
-	var volume flyVolume
-	if err := json.Unmarshal(output, &volume); err != nil {
-		return flyVolume{}, fmt.Errorf("decode Fly volume %s: %w", name, err)
-	}
-	if volume.ID == "" || volume.Name != name || volume.Region != f.region || volume.SizeGB != sizeGB {
-		return flyVolume{}, fmt.Errorf("fly volume %s did not match its requested identity", name)
-	}
-	return volume, nil
-}
-
-func (f flyPlatform) destroyVolume(ctx context.Context, app, id string) error {
-	_, err := f.executor.Run(ctx, f.binary, "volumes", "destroy", id, "--app", app, "--yes")
-	if err != nil && !strings.Contains(err.Error(), "not found") && !strings.Contains(err.Error(), "Could not find") {
-		return fmt.Errorf("destroy Fly volume %s: %w", id, err)
-	}
-	return nil
-}
-
 func (f flyPlatform) runMachine(ctx context.Context, spec machineSpec) (flyMachine, error) {
 	arguments := []string{"machine", "run", spec.Image}
 	if spec.Command != "" {
@@ -235,9 +201,6 @@ func (f flyPlatform) runMachine(ctx context.Context, spec machineSpec) (flyMachi
 	}
 	for _, port := range spec.Ports {
 		arguments = append(arguments, "--port", port)
-	}
-	for _, volume := range spec.Volumes {
-		arguments = append(arguments, "--volume", volume)
 	}
 	if spec.MachineConfig != "" {
 		arguments = append(arguments, "--machine-config", spec.MachineConfig)

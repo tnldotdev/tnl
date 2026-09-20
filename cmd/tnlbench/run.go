@@ -19,25 +19,18 @@ import (
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/route53"
+	"github.com/tnldotdev/tnl/internal/benchworkload"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/naming"
 )
 
 const (
-	runManifestSchemaVersion       = 3
+	runManifestSchemaVersion       = 4
 	benchmarkDNSPropagationTimeout = 5 * time.Minute
 )
 
 type runCommand struct {
-	Suite        string `name:"suite" env:"BENCH_SUITE" required:"" help:"Explicit suite to execute: smoke, scout, confirm, or compatibility."`
-	Axis         string `name:"axis" env:"BENCH_AXIS" help:"Select one axis from the suite, preserving its targets and order."`
-	ProfileFile  string `name:"profile" env:"BENCH_PROFILE" default:"benchmarks/suites/fly-production.json" type:"path" help:"Production-candidate benchmark profile."`
-	Routes       int    `name:"routes" env:"BENCH_ROUTES" help:"Route count override; required for confirm."`
-	FreshRate    int    `name:"fresh-connections-per-second" env:"BENCH_FRESH_CONNECTIONS_PER_SECOND" help:"Fresh visitor connection rate override; required for confirm."`
-	HeldStreams  int    `name:"held-streams" env:"BENCH_HELD_STREAMS" help:"Held-open stream override; required for confirm."`
-	ChurnRate    int    `name:"lifecycle-churn-per-second" env:"BENCH_LIFECYCLE_CHURN_PER_SECOND" help:"Route-session lifecycle churn override."`
-	PayloadBytes int    `name:"payload-bytes" env:"BENCH_PAYLOAD_BYTES" help:"Fresh-response payload override."`
-	Repetitions  int    `name:"repetitions" env:"BENCH_REPETITIONS" help:"Repetition override."`
+	workloadOptions
 	Approved     string `name:"approved" env:"BENCH_APPROVED" required:"" help:"Paid-resource approval; must be exactly 1."`
 	FlyOrg       string `name:"fly-org" env:"BENCH_FLY_ORG" required:"" help:"Fly organization slug."`
 	FlyBinary    string `name:"fly-binary" env:"BENCH_FLY_BINARY" default:"flyctl" help:"Fly CLI executable."`
@@ -68,7 +61,6 @@ type runManifest struct {
 	ManagedDomain        string                   `json:"managed_domain"`
 	Image                string                   `json:"image,omitempty"`
 	Apps                 []manifestApp            `json:"apps"`
-	Volumes              []manifestVolume         `json:"volumes,omitempty"`
 	Zones                []manifestZone           `json:"zones"`
 	Addresses            map[string]flyAddresses  `json:"addresses,omitempty"`
 	ManagedPostgres      *manifestManagedPostgres `json:"managed_postgres,omitempty"`
@@ -91,15 +83,6 @@ type manifestZone struct {
 	NameServers  []string `json:"name_servers"`
 	Delegated    bool     `json:"delegated"`
 	Removed      bool     `json:"removed,omitempty"`
-}
-
-type manifestVolume struct {
-	Index   int    `json:"index"`
-	Name    string `json:"name"`
-	ID      string `json:"id"`
-	Region  string `json:"region"`
-	SizeGB  int    `json:"size_gb"`
-	Removed bool   `json:"removed,omitempty"`
 }
 
 type manifestManagedPostgres struct {
@@ -132,17 +115,16 @@ type runSecrets struct {
 }
 
 type provisionedBenchmark struct {
-	apps             map[string]string
-	addresses        map[string]flyAddresses
-	metricsURLs      []string
-	image            string
-	manifestPath     string
-	secrets          runSecrets
-	database         flyManagedPostgresCredentials
-	serverDomain     string
-	managedDomain    string
-	resolverEnv      map[string]string
-	publisherVolumes []flyVolume
+	apps          map[string]string
+	addresses     map[string]flyAddresses
+	metricsURLs   []string
+	image         string
+	manifestPath  string
+	secrets       runSecrets
+	database      flyManagedPostgresCredentials
+	serverDomain  string
+	managedDomain string
+	resolverEnv   map[string]string
 }
 
 type benchmarkProgress struct {
@@ -199,14 +181,15 @@ func (c runCommand) run(ctx context.Context, stdout io.Writer) (retErr error) {
 	if err := c.Validate(); err != nil {
 		return err
 	}
-	plan, err := (planCommand{
-		Suite: c.Suite, Axis: c.Axis, ProfileFile: c.ProfileFile, Routes: c.Routes, FreshRate: c.FreshRate,
-		HeldStreams: c.HeldStreams, ChurnRate: c.ChurnRate, PayloadBytes: c.PayloadBytes,
-		Repetitions: c.Repetitions, Format: "json",
-	}).build(time.Now())
+	plan, err := c.workloadOptions.build()
 	if err != nil {
 		return err
 	}
+	if err := writeHumanPlan(stdout, plan); err != nil {
+		return err
+	}
+	ctx, cancelRun := context.WithTimeout(ctx, time.Duration(plan.MaximumDurationSeconds)*time.Second-20*time.Minute)
+	defer cancelRun()
 	runID, err := newRunID(time.Now().UTC())
 	if err != nil {
 		return err
@@ -304,9 +287,11 @@ func (c runCommand) run(ctx context.Context, stdout io.Writer) (retErr error) {
 	if err := saveManifest(manifestPath, &manifest); err != nil {
 		return err
 	}
-	campaignFailed, err := executeCampaignCells(progress, plan.Cells, manifestPath, &manifest, func(cell planCell) (string, int, error) {
-		return executeCell(ctx, progress, fly, benchmark, plan, cell, resultsPath)
-	})
+	status, rows, err := executeCell(ctx, progress, fly, benchmark, plan, plan.Target, resultsPath)
+	manifest.Cells = []manifestCell{{ID: plan.Target.ID, Status: status, ResultRows: rows, CompletedAt: time.Now().UTC()}}
+	if saveErr := saveManifest(manifestPath, &manifest); saveErr != nil {
+		return errors.Join(err, saveErr)
+	}
 	if err != nil {
 		return err
 	}
@@ -328,8 +313,8 @@ func (c runCommand) run(ctx context.Context, stdout io.Writer) (retErr error) {
 	}
 	reportWritten = true
 	progress.printf("report: complete")
-	if campaignFailed {
-		return fmt.Errorf("benchmark completed with failed cells; see %s", filepath.Join(runDirectory, "report.json"))
+	if status != "passed" {
+		return fmt.Errorf("benchmark failed; see %s", filepath.Join(runDirectory, "report.json"))
 	}
 	return nil
 }
@@ -468,24 +453,6 @@ func provisionBenchmark(
 		return provisionedBenchmark{}, err
 	}
 	progress.printf("image: ready")
-	publisherVolumes := make([]flyVolume, 0, plan.WorkerLimits.PublisherMachines)
-	progress.printf("storage: creating %d publisher volumes", plan.WorkerLimits.PublisherMachines)
-	for index := range plan.WorkerLimits.PublisherMachines {
-		volume, err := fly.createVolume(
-			ctx, apps["publisher"], benchmarkPublisherVolumeName(index), plan.WorkerLimits.PublisherVolumeGB,
-		)
-		if err != nil {
-			return provisionedBenchmark{}, err
-		}
-		publisherVolumes = append(publisherVolumes, volume)
-		manifest.Volumes = append(manifest.Volumes, manifestVolume{
-			Index: index, Name: volume.Name, ID: volume.ID, Region: volume.Region, SizeGB: volume.SizeGB,
-		})
-		if err := saveManifest(manifestPath, manifest); err != nil {
-			return provisionedBenchmark{}, err
-		}
-		progress.printf("storage: volume %d/%d ready", index+1, plan.WorkerLimits.PublisherMachines)
-	}
 	serverRoles := append([]string{"control", "ingress"}, benchmarkRelayRoles(plan.Topology.RelayServices)...)
 	for _, role := range serverRoles {
 		progress.printf("network: allocating addresses for %s", role)
@@ -742,7 +709,7 @@ func provisionBenchmark(
 		apps: apps, addresses: manifest.Addresses, metricsURLs: metricsURLs, image: image,
 		manifestPath: manifestPath, secrets: secrets, database: databaseCredentials,
 		serverDomain: manifest.ServerDomain, managedDomain: manifest.ManagedDomain,
-		resolverEnv: benchmarkResolverEnvironment(serverZone, managedZone, nil), publisherVolumes: publisherVolumes,
+		resolverEnv: benchmarkResolverEnvironment(serverZone, managedZone, nil),
 	}, nil
 }
 
@@ -834,12 +801,8 @@ func executeCell(
 	cell planCell,
 	resultsPath string,
 ) (string, int, error) {
-	progress.printf("cell %s: clearing workers from the previous cell", cell.ID)
-	for _, role := range []string{"coordinator", "publisher", "load"} {
-		if err := fly.destroyMachines(ctx, benchmark.apps[role]); err != nil {
-			return "failed", 0, err
-		}
-	}
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(cell.TimeoutSeconds)*time.Second)
+	defer cancel()
 	coordinatorURL := "https://" + benchmark.apps["coordinator"] + ".fly.dev"
 	progress.printf("cell %s: starting coordinator", cell.ID)
 	coordinatorMachine, err := fly.runMachine(ctx, machineSpec{
@@ -849,71 +812,62 @@ func executeCell(
 			"TNL_BENCH_CELL_ID": cell.ID, "TNL_BENCH_PUBLISHER_WORKERS": fmt.Sprint(cell.PublisherWorkers),
 			"TNL_BENCH_LOAD_WORKERS": fmt.Sprint(cell.LoadWorkers), "TNL_BENCH_ROUTES": fmt.Sprint(cell.Routes),
 			"TNL_BENCH_COORDINATOR_LISTEN": ":8080",
+			"TNL_BENCH_REPETITIONS":        fmt.Sprint(cell.Repetitions),
+			"TNL_BENCH_WARMUP":             (time.Duration(cell.WarmupSeconds) * time.Second).String(),
+			"TNL_BENCH_DURATION":           (time.Duration(cell.DurationSeconds) * time.Second).String(),
+			"TNL_BENCH_TIMEOUT":            (time.Duration(cell.TimeoutSeconds) * time.Second).String(),
+			"TNL_BENCH_METRICS_URLS":       strings.Join(benchmark.metricsURLs, ","),
 		},
 		Ports: []string{"443:8080/tcp:http:tls"},
 	})
 	if err != nil {
 		return "failed", 0, cellMachineProvisionFailure(progress, fly, benchmark, "coordinator", coordinatorMachine, err)
 	}
-	coordinator, _ := newCoordinatorClient(coordinatorURL, benchmark.secrets.CoordinatorToken)
+	coordinator, _ := benchworkload.NewCoordination(coordinatorURL, benchmark.secrets.CoordinatorToken)
 	if err := waitCoordinator(ctx, coordinator, 5*time.Minute); err != nil {
 		return "failed", 0, cellMachineProvisionFailure(progress, fly, benchmark, "coordinator", coordinatorMachine, err)
 	}
 	progress.printf("cell %s: coordinator ready", cell.ID)
+	workerMachines := make(map[string][]flyMachine)
 	for index := range cell.PublisherWorkers {
-		assigned := len(benchmarkRouteIndexes(
-			cell.Routes, plan.WorkerLimits.RoutesPerPublisher, cell.PublisherWorkers, index,
-		))
-		churn := benchmarkPublisherChurnAssignment(cell.LifecycleChurnPerSecond, cell.PublisherWorkers, index)
+		assigned := len(benchworkload.RouteIndexes(cell.Routes, cell.PublisherWorkers, index))
 		environment := map[string]string{
-			"TNL_BENCH_CELL_ID": cell.ID, "TNL_BENCH_SUITE": plan.Suite, "TNL_BENCH_AXIS": cell.Axis,
-			"TNL_BENCH_REPETITION": fmt.Sprint(cell.Repetition), "TNL_BENCH_SEQUENCE": fmt.Sprint(cell.Sequence),
+			"TNL_BENCH_CELL_ID":         cell.ID,
 			"TNL_BENCH_COORDINATOR_URL": coordinatorURL, "TNL_BENCH_WORKER_INDEX": fmt.Sprint(index),
 			"TNL_BENCH_WORKER_COUNT":    fmt.Sprint(cell.PublisherWorkers),
 			"TNL_BENCH_SERVER":          "https://control." + benchmark.serverDomain,
 			"TNL_BENCH_HOSTNAME_SUFFIX": benchmark.managedDomain, "TNL_BENCH_ROUTES": fmt.Sprint(cell.Routes),
-			"TNL_BENCH_ASSIGNED_ROUTES":                     fmt.Sprint(assigned),
-			"TNL_BENCH_ROUTES_PER_PUBLISHER":                fmt.Sprint(plan.WorkerLimits.RoutesPerPublisher),
-			"TNL_BENCH_ROUTES_PER_CHURN_ROUTE":              fmt.Sprint(plan.WorkerLimits.RoutesPerChurnRoute),
-			"TNL_BENCH_STATE_ROOT":                          "/state",
-			"TNL_BENCH_FRESH_CONNECTIONS_PER_SECOND":        fmt.Sprint(cell.FreshConnectionsPerSecond),
-			"TNL_BENCH_HELD_STREAMS":                        fmt.Sprint(cell.HeldStreams),
-			"TNL_BENCH_LIFECYCLE_CHURN_PER_SECOND":          fmt.Sprint(cell.LifecycleChurnPerSecond),
-			"TNL_BENCH_ASSIGNED_LIFECYCLE_CHURN_PER_SECOND": fmt.Sprint(churn),
-			"TNL_BENCH_PAYLOAD_BYTES":                       fmt.Sprint(cell.PayloadBytes),
-			"TNL_BENCH_TIMEOUT":                             (time.Duration(cell.TimeoutSeconds) * time.Second).String(),
+			"TNL_BENCH_STATE_ROOT":    "/state",
+			"TNL_BENCH_PAYLOAD_BYTES": fmt.Sprint(cell.PayloadBytes),
+			"TNL_BENCH_TIMEOUT":       (time.Duration(cell.TimeoutSeconds) * time.Second).String(),
 		}
 		environment["TNL_BENCH_METRICS_URLS"] = strings.Join(benchmark.metricsURLs, ",")
 		environment["TNL_BENCH_DATABASE_DIAGNOSTICS_URLS"] = strings.Join(databaseDiagnosticURLs(benchmark.metricsURLs), ",")
 		progress.printf(
-			"cell %s: starting publisher %d/%d (%d routes, %d churn/s)",
-			cell.ID, index+1, cell.PublisherWorkers, assigned, churn,
+			"target %s: starting publisher %d/%d (%d routes)",
+			cell.ID, index+1, cell.PublisherWorkers, assigned,
 		)
 		machine, err := fly.runMachine(ctx, machineSpec{
 			App: benchmark.apps["publisher"], Name: fmt.Sprintf("publisher-%s-%d", shortCellID(cell.ID), index),
 			Image: benchmark.image, Command: "/tnlbench publisher", Size: plan.Machines.Publisher, Restart: "no", Env: environment,
-			Volumes: []string{benchmark.publisherVolumes[index].ID + ":/state"},
 		})
 		if err != nil {
 			return "failed", 0, cellMachineProvisionFailure(progress, fly, benchmark, "publisher", machine, err)
 		}
 		progress.printf("cell %s: publisher %d/%d started", cell.ID, index+1, cell.PublisherWorkers)
+		workerMachines["publisher"] = append(workerMachines["publisher"], machine)
 	}
 	for index := range cell.LoadWorkers {
-		fresh := balancedAssignment(cell.FreshConnectionsPerSecond, cell.LoadWorkers, index)
-		held := balancedAssignment(cell.HeldStreams, cell.LoadWorkers, index)
+		fresh := benchworkload.Assignment(cell.FreshConnectionsPerSecond, cell.LoadWorkers, index)
+		held := benchworkload.Assignment(cell.HeldStreams, cell.LoadWorkers, index)
 		environment := map[string]string{
-			"TNL_BENCH_CELL_ID": cell.ID, "TNL_BENCH_SUITE": plan.Suite, "TNL_BENCH_AXIS": cell.Axis,
-			"TNL_BENCH_REPETITION": fmt.Sprint(cell.Repetition), "TNL_BENCH_SEQUENCE": fmt.Sprint(cell.Sequence),
+			"TNL_BENCH_CELL_ID":         cell.ID,
 			"TNL_BENCH_COORDINATOR_URL": coordinatorURL, "TNL_BENCH_WORKER_INDEX": fmt.Sprint(index),
 			"TNL_BENCH_WORKER_COUNT": fmt.Sprint(cell.LoadWorkers), "TNL_BENCH_ROUTES": fmt.Sprint(cell.Routes),
-			"TNL_BENCH_TOTAL_FRESH_CONNECTIONS_PER_SECOND": fmt.Sprint(cell.FreshConnectionsPerSecond),
-			"TNL_BENCH_TOTAL_HELD_STREAMS":                 fmt.Sprint(cell.HeldStreams),
-			"TNL_BENCH_LIFECYCLE_CHURN_PER_SECOND":         fmt.Sprint(cell.LifecycleChurnPerSecond),
-			"TNL_BENCH_FRESH_CONNECTIONS_PER_SECOND":       fmt.Sprint(fresh), "TNL_BENCH_HELD_STREAMS": fmt.Sprint(held),
+			"TNL_BENCH_CONCURRENCY":                  fmt.Sprint(benchworkload.Assignment(cell.Concurrency, cell.LoadWorkers, index)),
+			"TNL_BENCH_QUEUE_SLOTS":                  fmt.Sprint(benchworkload.Assignment(cell.QueueSlots, cell.LoadWorkers, index)),
+			"TNL_BENCH_FRESH_CONNECTIONS_PER_SECOND": fmt.Sprint(fresh), "TNL_BENCH_HELD_STREAMS": fmt.Sprint(held),
 			"TNL_BENCH_PAYLOAD_BYTES":    fmt.Sprint(cell.PayloadBytes),
-			"TNL_BENCH_WARMUP":           (time.Duration(cell.WarmupSeconds) * time.Second).String(),
-			"TNL_BENCH_DURATION":         (time.Duration(cell.DurationSeconds) * time.Second).String(),
 			"TNL_BENCH_TIMEOUT":          (time.Duration(cell.TimeoutSeconds) * time.Second).String(),
 			"TNL_BENCH_RESOLVER_ADDRESS": benchmarkAuthoritativeDNSAddress,
 		}
@@ -934,34 +888,60 @@ func executeCell(
 			return "failed", 0, cellMachineProvisionFailure(progress, fly, benchmark, "load", machine, err)
 		}
 		progress.printf("cell %s: load worker %d/%d started", cell.ID, index+1, cell.LoadWorkers)
+		workerMachines["load"] = append(workerMachines["load"], machine)
 	}
 	progress.printf(
 		"cell %s: waiting for workload results (warmup %ds, measure %ds, timeout %ds)",
 		cell.ID, cell.WarmupSeconds, cell.DurationSeconds, cell.TimeoutSeconds,
 	)
-	status, waitErr := waitCell(ctx, progress, coordinator, time.Duration(cell.TimeoutSeconds)*time.Second)
-	progress.printf("cell %s: collecting results", cell.ID)
-	results, resultsErr := coordinatorResults(ctx, coordinator, status.AbortCampaign)
-	if resultsErr != nil {
-		cause := errors.Join(waitErr, resultsErr)
-		return "failed", 0, cellExecutionFailure(progress, fly, benchmark, cell, cause)
+	status, results, waitErr := collectWorkload(ctx, coordinator, func(ctx context.Context) error {
+		for _, kind := range []string{"publisher", "load"} {
+			machines, err := fly.listMachines(ctx, benchmark.apps[kind])
+			if err != nil {
+				return err
+			}
+			states := make(map[string]string)
+			for _, machine := range machines {
+				states[machine.ID] = machine.State
+			}
+			for index, machine := range workerMachines[kind] {
+				if states[machine.ID] == "started" {
+					continue
+				}
+				found, err := coordinator.Get(ctx, fmt.Sprintf("result.%s-%d", kind, index), nil)
+				if err != nil {
+					return err
+				}
+				if !found {
+					return fmt.Errorf("%s %s exited without a result (state %q)", kind, machine.ID, states[machine.ID])
+				}
+			}
+		}
+		return nil
+	})
+	for _, result := range results {
+		data, err := json.Marshal(result)
+		if err != nil {
+			return "failed", len(results), err
+		}
+		if err := appendResults(resultsPath, data); err != nil {
+			return "failed", len(results), err
+		}
 	}
-	resultStatus, rows, err := summarizeCellResults(results)
+	if waitErr != nil {
+		return "failed", len(results), cellExecutionFailure(progress, fly, benchmark, cell, waitErr)
+	}
+	report, err := buildReport(results)
+	if err == nil {
+		err = applyPlanToReport(&report, plan)
+	}
 	if err != nil {
-		return "failed", 0, cellExecutionFailure(progress, fly, benchmark, cell, errors.Join(waitErr, err))
+		return "failed", len(results), err
 	}
-	if waitErr != nil && !status.AbortCampaign {
-		progress.printf("cell %s: recovered complete results after status polling failed", cell.ID)
+	if report.Status != "passed" {
+		status = "failed"
 	}
-	status.Status = resultStatus
-	if err := appendResults(resultsPath, results); err != nil {
-		return "failed", rows, err
-	}
-	continuationErr := cellContinuationError(results)
-	if status.AbortCampaign {
-		continuationErr = errors.Join(waitErr, continuationErr)
-	}
-	if status.Status != "passed" {
+	if status != "passed" {
 		progress.printf("cell %s: capturing workload diagnostics", cell.ID)
 		if path, err := captureCellDiagnostics(fly, benchmark, cell); err != nil {
 			progress.printf("cell %s: diagnostics failed: %v", cell.ID, err)
@@ -972,91 +952,10 @@ func executeCell(
 	progress.printf("cell %s: stopping workers", cell.ID)
 	for _, role := range []string{"publisher", "load", "coordinator"} {
 		if err := fly.destroyMachines(ctx, benchmark.apps[role]); err != nil {
-			return status.Status, rows, err
+			return status, len(results), err
 		}
 	}
-	return status.Status, rows, continuationErr
-}
-
-// A failed setup cannot establish a capacity boundary. Measured saturation can
-// continue only when every load worker has demonstrated post-load recovery.
-func cellContinuationError(data []byte) error {
-	decoder := json.NewDecoder(strings.NewReader(string(data)))
-	failed, loads, recovered := false, 0, 0
-	for {
-		var result benchmarkResult
-		if err := decoder.Decode(&result); errors.Is(err, io.EOF) {
-			break
-		} else if err != nil {
-			return err
-		}
-		if result.Status != "passed" {
-			failed = true
-			if stage := resultFailureStage(result); stage != "measurement" {
-				return fmt.Errorf("cell %s %s failed; stopping campaign before the next cell", result.CellID, stage)
-			}
-		}
-		if result.Worker.Kind == "load" {
-			loads++
-			for _, phase := range result.Phases {
-				if phase.Name == "recovery" && phase.Successes > 0 {
-					recovered++
-					break
-				}
-			}
-		}
-	}
-	if failed && (loads == 0 || loads != recovered) {
-		return errors.New("cell failed without successful recovery from every load worker; stopping campaign")
-	}
-	return nil
-}
-
-func summarizeCellResults(data []byte) (string, int, error) {
-	decoder := json.NewDecoder(strings.NewReader(string(data)))
-	status, rows := "passed", 0
-	for {
-		var result benchmarkResult
-		err := decoder.Decode(&result)
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return "failed", rows, fmt.Errorf("decode cell result %d: %w", rows+1, err)
-		}
-		if err := validateResultIdentity(result); err != nil {
-			return "failed", rows, fmt.Errorf("validate cell result %d: %w", rows+1, err)
-		}
-		rows++
-		if result.Status != "passed" {
-			status = "failed"
-		}
-	}
-	if rows == 0 {
-		return "failed", 0, errors.New("coordinator returned no result rows")
-	}
-	return status, rows, nil
-}
-
-func executeCampaignCells(progress *benchmarkProgress, cells []planCell, manifestPath string, manifest *runManifest,
-	execute func(planCell) (string, int, error),
-) (bool, error) {
-	failed := false
-	for _, cell := range cells {
-		progress.printf("cell %s: starting", cell.ID)
-		status, rows, err := execute(cell)
-		manifest.Cells = append(manifest.Cells, manifestCell{ID: cell.ID, Status: status, ResultRows: rows, CompletedAt: time.Now().UTC()})
-		if saveErr := saveManifest(manifestPath, manifest); saveErr != nil {
-			return true, errors.Join(err, saveErr)
-		}
-		if err != nil {
-			progress.printf("cell %s: failed; details will follow after cleanup", cell.ID)
-			return true, err
-		}
-		progress.printf("cell %s: %s (%d result rows)", cell.ID, status, rows)
-		failed = failed || status != "passed"
-	}
-	return failed, nil
+	return status, len(results), nil
 }
 
 func cellMachineProvisionFailure(
@@ -1110,13 +1009,13 @@ func captureCellDiagnostics(fly flyPlatform, benchmark provisionedBenchmark, cel
 	)
 }
 
-func waitCoordinator(ctx context.Context, client *coordinatorClient, timeout time.Duration) error {
+func waitCoordinator(ctx context.Context, client *benchworkload.Coordination, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for {
 		requestCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		_, err := coordinatorStatusRequest(requestCtx, client)
+		found, err := client.Get(requestCtx, "coordinator.ready", nil)
 		cancel()
-		if err == nil {
+		if err == nil && found {
 			return nil
 		}
 		if time.Now().After(deadline) {
@@ -1128,90 +1027,37 @@ func waitCoordinator(ctx context.Context, client *coordinatorClient, timeout tim
 	}
 }
 
-func waitCell(
-	ctx context.Context,
-	progress *benchmarkProgress,
-	client *coordinatorClient,
-	timeout time.Duration,
-) (coordinatorStatus, error) {
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	lastSummary := ""
-	nextHeartbeat := time.Time{}
+func collectWorkload(ctx context.Context, client *benchworkload.Coordination, checkWorkers func(context.Context) error) (string, []benchmarkResult, error) {
+	var workerErr error
+	nextCheck := time.Time{}
 	for {
-		status, err := coordinatorStatusRequest(ctx, client)
-		now := time.Now()
-		if err == nil {
-			summary := fmt.Sprintf(
-				"publishers %d/%d ready, publisher results %d/%d, load results %d/%d",
-				status.PublishersReady, status.PublisherWorkers, status.PublisherResults, status.PublisherWorkers,
-				status.LoadResults, status.LoadWorkers,
-			)
-			if summary != lastSummary || !now.Before(nextHeartbeat) {
-				progress.printf("cell %s: %s", status.CellID, summary)
-				lastSummary = summary
-				nextHeartbeat = now.Add(15 * time.Second)
+		var status string
+		found, err := client.Get(ctx, "complete", &status)
+		if err != nil {
+			return "failed", nil, err
+		}
+		if found {
+			var results []benchmarkResult
+			found, err := client.Get(ctx, "results", &results)
+			if err != nil {
+				return "failed", nil, err
 			}
-			if status.Complete {
-				return status, nil
+			if !found {
+				return "failed", nil, errors.New("coordinator completion has no results")
 			}
-			if status.AbortCampaign {
-				return status, errors.New("worker setup failed; collecting partial results and stopping campaign")
+			return status, results, workerErr
+		}
+		if workerErr == nil && checkWorkers != nil && time.Now().After(nextCheck) {
+			workerErr = checkWorkers(ctx)
+			nextCheck = time.Now().Add(15 * time.Second)
+			if workerErr != nil {
+				_ = client.Put(ctx, "failure", boundedFailure(workerErr.Error()))
 			}
-		} else if !now.Before(nextHeartbeat) {
-			progress.printf("cell: coordinator status temporarily unavailable; retrying")
-			nextHeartbeat = now.Add(15 * time.Second)
 		}
 		if err := sleepContext(ctx, 2*time.Second); err != nil {
-			return coordinatorStatus{}, errors.Join(err, ctx.Err())
+			return "failed", nil, err
 		}
 	}
-}
-
-func coordinatorStatusRequest(ctx context.Context, client *coordinatorClient) (coordinatorStatus, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+"/v1/status", nil)
-	if err != nil {
-		return coordinatorStatus{}, err
-	}
-	request.Header.Set("Authorization", "Bearer "+client.token)
-	response, err := (&http.Client{Timeout: 10 * time.Second}).Do(request)
-	if err != nil {
-		return coordinatorStatus{}, err
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return coordinatorStatus{}, fmt.Errorf("coordinator status: HTTP %d", response.StatusCode)
-	}
-	var status coordinatorStatus
-	if err := json.NewDecoder(io.LimitReader(response.Body, 64<<10)).Decode(&status); err != nil {
-		return coordinatorStatus{}, err
-	}
-	return status, nil
-}
-
-func coordinatorResults(ctx context.Context, client *coordinatorClient, partial bool) ([]byte, error) {
-	endpoint := client.baseURL + "/v1/results"
-	if partial {
-		endpoint += "?partial=1"
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return nil, err
-	}
-	request.Header.Set("Authorization", "Bearer "+client.token)
-	response, err := (&http.Client{Timeout: 30 * time.Second}).Do(request)
-	if err != nil {
-		return nil, err
-	}
-	defer response.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(response.Body, 16<<20))
-	if err != nil {
-		return nil, err
-	}
-	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("coordinator results: HTTP %d: %s", response.StatusCode, data)
-	}
-	return data, nil
 }
 
 func cleanupRun(
@@ -1229,45 +1075,10 @@ func cleanupRun(
 	manifest.CleanupErrors = nil
 	_ = saveManifest(manifestPath, manifest)
 	var cleanupErr error
-	publisherStorageRemoved := true
-	if len(manifest.Volumes) != 0 {
-		publisherApp := benchmarkAppNames(manifest.RunID, manifest.Topology.RelayServices)["publisher"]
-		progress.printf("cleanup: stopping publisher machines")
-		if err := fly.destroyMachines(ctx, publisherApp); err != nil {
-			progress.printf("cleanup: publisher machines failed")
-			publisherStorageRemoved = false
-			cleanupErr = errors.Join(cleanupErr, err)
-			manifest.CleanupErrors = append(manifest.CleanupErrors, err.Error())
-		} else {
-			for index := len(manifest.Volumes) - 1; index >= 0; index-- {
-				volume := &manifest.Volumes[index]
-				if volume.Removed {
-					continue
-				}
-				progress.printf("cleanup: removing publisher volume %d", volume.Index+1)
-				if err := fly.destroyVolume(ctx, publisherApp, volume.ID); err != nil {
-					progress.printf("cleanup: publisher volume %d failed", volume.Index+1)
-					publisherStorageRemoved = false
-					cleanupErr = errors.Join(cleanupErr, err)
-					manifest.CleanupErrors = append(manifest.CleanupErrors, err.Error())
-					continue
-				}
-				volume.Removed = true
-				_ = saveManifest(manifestPath, manifest)
-				progress.printf("cleanup: publisher volume %d removed", volume.Index+1)
-			}
-		}
-	}
 	controlRemoved := true
 	for index := len(manifest.Apps) - 1; index >= 0; index-- {
 		app := &manifest.Apps[index]
 		if app.Removed {
-			continue
-		}
-		if app.Role == "publisher" && !publisherStorageRemoved {
-			err := errors.New("preserve publisher app because its state volumes were not removed")
-			cleanupErr = errors.Join(cleanupErr, err)
-			manifest.CleanupErrors = append(manifest.CleanupErrors, err.Error())
 			continue
 		}
 		progress.printf("cleanup: removing %s app", app.Role)
@@ -1450,22 +1261,6 @@ func validateManifestResources(manifest runManifest) error {
 		}
 		seenApps[app.Role] = struct{}{}
 	}
-	seenVolumes := make(map[string]struct{}, len(manifest.Volumes))
-	seenVolumeIndexes := make(map[int]struct{}, len(manifest.Volumes))
-	for _, volume := range manifest.Volumes {
-		if volume.Index < 0 || volume.Index >= 16 || volume.Name != benchmarkPublisherVolumeName(volume.Index) ||
-			!validResourceID(volume.ID) || volume.Region != manifest.Region || volume.SizeGB <= 0 || volume.SizeGB > 10 {
-			return fmt.Errorf("benchmark manifest has an invalid publisher volume %q", volume.ID)
-		}
-		if _, exists := seenVolumes[volume.ID]; exists {
-			return fmt.Errorf("benchmark manifest repeats publisher volume %q", volume.ID)
-		}
-		if _, exists := seenVolumeIndexes[volume.Index]; exists {
-			return fmt.Errorf("benchmark manifest repeats publisher volume index %d", volume.Index)
-		}
-		seenVolumes[volume.ID] = struct{}{}
-		seenVolumeIndexes[volume.Index] = struct{}{}
-	}
 	var serverZoneID string
 	seenZones := make(map[string]struct{}, len(manifest.Zones))
 	for _, zone := range manifest.Zones {
@@ -1641,30 +1436,6 @@ func benchmarkDatabaseName(runID string) string {
 	return "tnl-bench-" + runID + "-pg"
 }
 
-func benchmarkPublisherVolumeName(index int) string {
-	return fmt.Sprintf("publisher_state_%d", index)
-}
-
-func benchmarkRouteIndexes(routes, routesPerPublisher, workers, worker int) []int {
-	if routes <= 0 || routesPerPublisher <= 0 || workers != divideRoundUp(routes, routesPerPublisher) || worker < 0 || worker >= workers {
-		return nil
-	}
-	first := worker * routesPerPublisher
-	last := min(first+routesPerPublisher, routes)
-	indexes := make([]int, last-first)
-	for index := range indexes {
-		indexes[index] = first + index
-	}
-	return indexes
-}
-
-func benchmarkPublisherChurnAssignment(total, workers, worker int) int {
-	if total < 0 || workers <= 0 || worker < 0 || worker >= workers {
-		return 0
-	}
-	return balancedAssignment(total, workers, worker)
-}
-
 func validResourceID(value string) bool {
 	if value == "" || len(value) > 256 {
 		return false
@@ -1688,14 +1459,6 @@ func validFlySlug(value string) bool {
 		}
 	}
 	return true
-}
-
-func balancedAssignment(total, workers, index int) int {
-	base, remainder := total/workers, total%workers
-	if index < remainder {
-		return base + 1
-	}
-	return base
 }
 
 func shortCellID(value string) string {

@@ -13,11 +13,13 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/benchworkload"
 )
 
 func TestRunValidationRequiresBothPaidResourceGates(t *testing.T) {
 	valid := runCommand{
-		Suite: "smoke", Approved: "1", FlyOrg: "example", ParentDomain: "bench.example.com",
+		workloadOptions: workloadOptions{Suite: "smoke"}, Approved: "1", FlyOrg: "example", ParentDomain: "bench.example.com",
 		ParentZoneID: "Z0123456789", ACMEEmail: "operator@example.com", ResultsRoot: t.TempDir(),
 	}
 	t.Setenv("BENCH_SUITE", "smoke")
@@ -108,70 +110,13 @@ func TestBalancedAssignmentPreservesTotals(t *testing.T) {
 	for _, test := range []struct{ total, workers int }{{1, 4}, {80, 3}, {1000, 4}} {
 		sum, minimum, maximum := 0, test.total, 0
 		for index := range test.workers {
-			value := balancedAssignment(test.total, test.workers, index)
+			value := benchworkload.Assignment(test.total, test.workers, index)
 			sum += value
 			minimum, maximum = min(minimum, value), max(maximum, value)
 		}
 		if sum != test.total || maximum-minimum > 1 {
 			t.Fatalf("assignment %d/%d = total %d, range %d..%d", test.total, test.workers, sum, minimum, maximum)
 		}
-	}
-}
-
-func TestPublisherChurnAssignmentBalancesActiveGenerators(t *testing.T) {
-	var assignments []int
-	for worker := range 4 {
-		assignments = append(assignments, benchmarkPublisherChurnAssignment(5, 4, worker))
-	}
-	if !slices.Equal(assignments, []int{2, 1, 1, 1}) {
-		t.Fatalf("assignments = %v", assignments)
-	}
-}
-
-func TestLifecycleChurnErrorSummarizesRepeatedFailures(t *testing.T) {
-	err := lifecycleChurnError(914, 12, []string{"first", "second"}, 10)
-	message := err.Error()
-	for _, want := range []string{
-		"914 lifecycle churn attempts could not start because all 10 churn routes were busy",
-		"12 lifecycle churn operations failed; samples: first; second",
-	} {
-		if !strings.Contains(message, want) {
-			t.Fatalf("error %q does not contain %q", message, want)
-		}
-	}
-	if len(message) > 256 {
-		t.Fatalf("summarized error is unexpectedly long: %d bytes", len(message))
-	}
-}
-
-func TestSummarizeCellResultsValidatesAndCountsRows(t *testing.T) {
-	passed := reportTestResult("smoke-r2-c2-s2-rep1", 0, 1, "publisher", 0, 1, "passed", time.Millisecond)
-	failed := reportTestResult("smoke-r2-c2-s2-rep1", 0, 1, "load", 0, 1, "failed", time.Millisecond)
-	var data strings.Builder
-	for _, result := range []benchmarkResult{passed, failed} {
-		if err := json.NewEncoder(&data).Encode(result); err != nil {
-			t.Fatal(err)
-		}
-	}
-	status, rows, err := summarizeCellResults([]byte(data.String()))
-	if err != nil || status != "failed" || rows != 2 {
-		t.Fatalf("summary = %q, %d, %v", status, rows, err)
-	}
-	if _, _, err := summarizeCellResults(nil); err == nil {
-		t.Fatal("empty results were accepted")
-	}
-}
-
-func TestBenchmarkChurnRoutesUseOneStableRoutePerGroup(t *testing.T) {
-	routes := []benchmarkRouteSpec{
-		{index: 0, namespace: "alice.example.test"},
-		{index: 1, namespace: "alice.example.test"},
-		{index: 40, namespace: "alice.example.test"},
-	}
-	churn := benchmarkChurnRoutes(routes, 2, 10)
-	if len(churn) != 2 || churn[0].index != -1 || churn[0].hostname != "tnlbench-churn-w02-g000000.alice.example.test" ||
-		churn[1].index != -1 || churn[1].hostname != "tnlbench-churn-w02-g000004.alice.example.test" {
-		t.Fatalf("churn routes = %#v", churn)
 	}
 }
 
@@ -315,32 +260,6 @@ func TestCleanupRunPreservesManagedPostgresWhenControlRemovalFails(t *testing.T)
 	)
 	if err == nil || len(executor.calls) != 1 || manifest.ManagedPostgres.Removed || manifest.Status != "cleanup_failed" {
 		t.Fatalf("manifest = %#v, calls = %#v, error = %v", manifest, executor.calls, err)
-	}
-}
-
-func TestCleanupRunRemovesPublisherMachinesBeforeVolumesAndApp(t *testing.T) {
-	runID := "bench-20260916-120000-abcdefgh"
-	apps := benchmarkAppNames(runID, 2)
-	database := testManifestManagedPostgres(runID)
-	database.Removed = true
-	manifest := runManifest{
-		SchemaVersion: runManifestSchemaVersion, RunID: runID, Status: "cleanup_failed",
-		FlyOrg: "example", Region: "sjc", Topology: testTopology(), ParentDomain: "bench.example.com", ParentZoneID: "Z123",
-		CertificateAuthority: benchmarkCertificateAuthorityPebble,
-		ServerDomain:         runID + ".bench.example.com", ManagedDomain: "routes." + runID + ".bench.example.com",
-		ManagedPostgres: database, Apps: []manifestApp{{Role: "publisher", Name: apps["publisher"]}},
-		Volumes: []manifestVolume{{Index: 0, Name: benchmarkPublisherVolumeName(0), ID: "vol_123", Region: "sjc", SizeGB: 1}},
-	}
-	executor := &executorStub{responses: [][]byte{[]byte(`[]`), nil, nil}}
-	if err := cleanupRun(
-		t.Context(), flyPlatform{binary: "fly", org: "example", executor: executor},
-		benchmarkDNS{}, filepath.Join(t.TempDir(), "manifest.json"), &manifest, nil,
-	); err != nil {
-		t.Fatal(err)
-	}
-	if len(executor.calls) != 3 || executor.calls[0].args[0] != "machine" || executor.calls[1].args[0] != "volumes" ||
-		executor.calls[2].args[0] != "apps" || !manifest.Volumes[0].Removed || !manifest.Apps[0].Removed {
-		t.Fatalf("manifest = %#v, calls = %#v", manifest, executor.calls)
 	}
 }
 

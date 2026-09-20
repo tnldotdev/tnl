@@ -1,126 +1,96 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"errors"
-	"io"
-	"net/http"
+	"fmt"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/benchworkload"
+	"github.com/tnldotdev/tnl/internal/publisher"
 )
 
-func TestCoordinatorReleasesPhasesAndOrdersResults(t *testing.T) {
-	state := newCoordinatorState("cell-1", 2, 1, 2)
-	server := httptest.NewServer(coordinatorHandler("secret", state))
-	defer server.Close()
-	client, err := newCoordinatorClient(server.URL, "secret")
-	if err != nil {
-		t.Fatal(err)
-	}
-	wait := make(chan error, 1)
-	go func() { wait <- client.waitPublishers(t.Context()) }()
-	if err := client.publisherReady(t.Context(), 0, []benchmarkRouteRegistration{{Index: 0, Hostname: "first.example.com"}}); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case err := <-wait:
-		t.Fatalf("publisher wait returned early: %v", err)
-	case <-time.After(10 * time.Millisecond):
-	}
-	if err := client.publisherReady(t.Context(), 1, []benchmarkRouteRegistration{{Index: 1, Hostname: "second.example.com"}}); err != nil {
-		t.Fatal(err)
-	}
-	if err := <-wait; err != nil {
-		t.Fatal(err)
-	}
-	routes, err := client.routes(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(routes) != 2 || routes[0] != "first.example.com" || routes[1] != "second.example.com" {
-		t.Fatalf("routes = %v", routes)
-	}
-	for _, worker := range []resultWorker{{Kind: "load", Index: 0, Count: 1}, {Kind: "publisher", Index: 1, Count: 2}, {Kind: "publisher", Index: 0, Count: 2}} {
-		if err := client.postResult(t.Context(), passedTestResult(worker)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	request, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, server.URL+"/v1/results", nil)
-	request.Header.Set("Authorization", "Bearer secret")
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer response.Body.Close()
-	decoder := json.NewDecoder(response.Body)
-	var got []string
-	for {
-		var result benchmarkResult
-		if err := decoder.Decode(&result); errors.Is(err, io.EOF) {
-			break
-		} else if err != nil {
-			t.Fatal(err)
-		}
-		got = append(got, result.Worker.Kind)
-	}
-	if response.StatusCode != http.StatusOK || !bytes.Equal([]byte(got[0]+got[1]+got[2]), []byte("publisherpublisherload")) {
-		t.Fatalf("status = %d, order = %v", response.StatusCode, got)
-	}
-}
-
-func TestCoordinatorFailureAbortsWait(t *testing.T) {
-	state := newCoordinatorState("cell-1", 1, 1, 1)
-	server := httptest.NewServer(coordinatorHandler("secret", state))
-	defer server.Close()
-	client, _ := newCoordinatorClient(server.URL, "secret")
-	result := passedTestResult(resultWorker{Kind: "load", Index: 0, Count: 1})
-	result.Status = "failed"
-	result.Failure = &resultFailure{Message: strings.Repeat("saturated ", coordinatorStatusFailureLimit)}
-	if err := client.postResult(t.Context(), result); err != nil {
-		t.Fatal(err)
-	}
-	if err := client.waitPublishers(context.Background()); err == nil {
-		t.Fatal("aborted publisher wait succeeded")
-	} else if len(err.Error()) > coordinatorStatusFailureLimit+128 {
-		t.Fatalf("publisher wait error is unexpectedly long: %d bytes", len(err.Error()))
-	}
-	state.mu.Lock()
-	stored := state.results["load:0"].Failure.Message
-	state.mu.Unlock()
-	if len(stored) > coordinatorStatusFailureLimit+len("\n[truncated]") || !strings.HasSuffix(stored, "\n[truncated]") {
-		t.Fatalf("stored failure length = %d", len(stored))
-	}
-}
-
-func TestCoordinatorRejectsConflictingRouteRegistration(t *testing.T) {
-	state := newCoordinatorState("cell-1", 2, 1, 2)
-	server := httptest.NewServer(coordinatorHandler("secret", state))
-	defer server.Close()
-	client, _ := newCoordinatorClient(server.URL, "secret")
-	if err := client.publisherReady(t.Context(), 0, []benchmarkRouteRegistration{{Index: 0, Hostname: "route.example.com"}}); err != nil {
-		t.Fatal(err)
-	}
-	if err := client.publisherReady(t.Context(), 1, []benchmarkRouteRegistration{{Index: 0, Hostname: "other.example.com"}}); err == nil {
-		t.Fatal("conflicting route registration succeeded")
-	}
-}
-
-func TestCoordinatorStatusBoundsFailure(t *testing.T) {
-	state := newCoordinatorState("cell-1", 1, 1, 1)
-	state.failure = strings.Repeat("failure ", coordinatorStatusFailureLimit)
-	status := state.statusLocked()
-	if len(status.Failure) > coordinatorStatusFailureLimit+len("\n[truncated]") || !strings.HasSuffix(status.Failure, "\n[truncated]") {
-		t.Fatalf("bounded failure length = %d, suffix = %q", len(status.Failure), status.Failure[len(status.Failure)-16:])
-	}
-}
-
 func passedTestResult(worker resultWorker) benchmarkResult {
-	return benchmarkResult{
-		SchemaVersion: benchmarkResultSchemaVersion, CellID: "cell-1", Status: "passed", Suite: "smoke",
-		Repetition: 1, Worker: worker,
+	return benchmarkResult{SchemaVersion: benchmarkResultSchemaVersion, CellID: "cell-1", Status: "passed", Worker: worker, Cleanup: resultCleanup{Exact: true}}
+}
+
+func TestCoordinatorOwnsRepeatedWindowsAndWaitsForAllParticipants(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	server := httptest.NewServer(benchworkload.NewCoordinator().Handler("token"))
+	defer server.Close()
+	client, _ := benchworkload.NewCoordination(server.URL, "token")
+	c := coordinatorCommand{PublisherWorkers: 1, LoadWorkers: 2, Routes: 1, Repetitions: 2, Duration: time.Millisecond}
+	if err := client.Put(ctx, "publisher-0.ready", []benchworkload.PublishedRoute{{Index: 0, Ready: publisher.Event{PublicURL: "https://route.example.test"}}}); err != nil {
+		t.Fatal(err)
+	}
+	finished := make(chan error, 3)
+	go func() {
+		err := client.Wait(ctx, "publish.stop", nil)
+		if err == nil {
+			err = client.Put(ctx, "result.publisher-0", passedTestResult(resultWorker{Kind: "publisher", Count: 1}))
+		}
+		finished <- err
+	}()
+	for index := range 2 {
+		go func() {
+			if err := client.Wait(ctx, "routes", nil); err != nil {
+				finished <- err
+				return
+			}
+			if err := client.Put(ctx, fmt.Sprintf("load-%d.ready", index), true); err != nil {
+				finished <- err
+				return
+			}
+			for sequence := range 4 {
+				var phase benchworkload.Phase
+				if err := client.Wait(ctx, fmt.Sprintf("phase-%d", sequence), &phase); err != nil {
+					finished <- err
+					return
+				}
+				if sequence == 3 {
+					if !phase.Done {
+						finished <- fmt.Errorf("missing final barrier")
+						return
+					}
+					break
+				}
+				if err := client.Put(ctx, fmt.Sprintf("%s.load-%d", phase.Name, index), phaseResult{Name: phase.Name}); err != nil {
+					finished <- err
+					return
+				}
+			}
+			finished <- client.Put(ctx, fmt.Sprintf("result.load-%d", index), passedTestResult(resultWorker{Kind: "load", Index: index, Count: 2}))
+		}()
+	}
+	rows, err := c.execute(ctx, client)
+	if err != nil || len(rows) != 3 {
+		t.Fatalf("rows=%d err=%v", len(rows), err)
+	}
+	for range 3 {
+		if err := <-finished; err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestCoordinatorRejectsConflictingRoutesAndCollectsPartialFailure(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	server := httptest.NewServer(benchworkload.NewCoordinator().Handler("token"))
+	defer server.Close()
+	client, _ := benchworkload.NewCoordination(server.URL, "token")
+	for i := range 2 {
+		_ = client.Put(ctx, fmt.Sprintf("publisher-%d.ready", i), []benchworkload.PublishedRoute{{Index: 0, Ready: publisher.Event{PublicURL: "https://route.example.test"}}})
+		_ = client.Put(ctx, fmt.Sprintf("result.publisher-%d", i), passedTestResult(resultWorker{Kind: "publisher", Index: i, Count: 2}))
+	}
+	_ = client.Put(ctx, "result.load-0", passedTestResult(resultWorker{Kind: "load", Count: 1}))
+	rows, err := (coordinatorCommand{PublisherWorkers: 2, LoadWorkers: 1, Routes: 2}).execute(ctx, client)
+	if err == nil || len(rows) != 3 {
+		t.Fatalf("conflict not rejected/partial results lost: %v rows=%d", err, len(rows))
+	}
+	if found, _ := client.Get(ctx, "publish.stop", nil); !found {
+		t.Fatal("failure did not release publisher cleanup")
 	}
 }

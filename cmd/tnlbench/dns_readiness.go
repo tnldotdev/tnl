@@ -24,7 +24,8 @@ func visitorDNSResolver(address string) *net.Resolver {
 // correctness and measured visitor request still performs its normal lookup.
 func waitForBenchmarkDNS(ctx context.Context, hostnames []string, lookup func(context.Context, string) ([]string, error), retryInterval time.Duration) (phaseResult, error) {
 	started := time.Now().UTC()
-	results := make([]visitorResult, len(hostnames))
+	timings := make([]time.Duration, len(hostnames))
+	failures := make([]error, len(hostnames))
 	concurrency := min(8, len(hostnames))
 	var workers sync.WaitGroup
 	for worker := range concurrency {
@@ -45,16 +46,25 @@ func waitForBenchmarkDNS(ctx context.Context, hostnames []string, lookup func(co
 					}
 				}
 				elapsed := time.Since(began)
-				results[index] = visitorResult{timing: visitorTiming{dns: elapsed, total: elapsed}, err: err}
+				timings[index], failures[index] = elapsed, err
 			}
 		})
 	}
 	workers.Wait()
-	phase := phaseFromVisitorResults("dns_readiness", started, time.Since(started), results, concurrency)
-	for index, result := range results {
-		if result.err != nil {
-			return phase, fmt.Errorf("DNS readiness for %s: %w", hostnames[index], result.err)
+	phase := phaseResult{Name: "dns_readiness", StartedAt: started, DurationMilliseconds: milliseconds(time.Since(started)), Attempts: len(hostnames), Concurrency: concurrency}
+	var successful []time.Duration
+	var first error
+	for i, err := range failures {
+		if err != nil {
+			phase.Errors++
+			if first == nil {
+				first = fmt.Errorf("DNS readiness for %s: %w", hostnames[i], err)
+			}
+		} else {
+			phase.Successes++
+			successful = append(successful, timings[i])
 		}
 	}
-	return phase, nil
+	phase.DNS = newDurationHistogram(successful)
+	return phase, first
 }

@@ -8,80 +8,40 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	dto "github.com/prometheus/client_model/go"
-	"github.com/prometheus/common/model"
-
+	"github.com/tnldotdev/tnl/internal/benchworkload"
 	"github.com/tnldotdev/tnl/internal/observability"
 )
 
 type reportCommand struct {
-	RunDirectory    string `name:"run" env:"BENCH_RUN" type:"path" required:"" help:"Benchmark run directory containing results.jsonl."`
+	RunDirectory    string `name:"run" env:"BENCH_RUN" type:"path" required:"" help:"Benchmark run directory."`
 	allowIncomplete bool
 }
 
-var errNoBenchmarkResults = errors.New("results.jsonl contains no result rows")
+var errNoBenchmarkResults = errors.New("no benchmark result rows")
 
 type benchmarkReport struct {
-	SchemaVersion            int                      `json:"schema_version"`
-	GeneratedAt              time.Time                `json:"generated_at"`
-	Status                   string                   `json:"status"`
-	InfrastructureCleanup    string                   `json:"infrastructure_cleanup,omitempty"`
-	Incomplete               bool                     `json:"incomplete,omitempty"`
-	ResultRows               int                      `json:"result_rows"`
-	PassedRows               int                      `json:"passed_rows"`
-	FailedRows               int                      `json:"failed_rows"`
-	ProfileID                string                   `json:"profile_id,omitempty"`
-	Region                   string                   `json:"region,omitempty"`
-	Topology                 benchmarkTopology        `json:"topology,omitempty"`
-	Machines                 benchmarkMachines        `json:"machines,omitempty"`
-	ManagedPostgres          benchmarkManagedPostgres `json:"managed_postgres,omitempty"`
-	CertificateAuthority     string                   `json:"certificate_authority,omitempty"`
-	ExpectedSpendUSD         float64                  `json:"expected_spend_usd,omitempty"`
-	MaximumSpendUSD          float64                  `json:"maximum_spend_usd,omitempty"`
-	Cells                    []cellReport             `json:"cells"`
-	HighestPassing           *capacityPoint           `json:"highest_passing,omitempty"`
-	HighestRepeatablyPassing *capacityPoint           `json:"highest_repeatably_passing,omitempty"`
-	FirstSaturation          *capacityPoint           `json:"first_saturation,omitempty"`
-	CapacityRamps            []capacityRamp           `json:"capacity_ramps,omitempty"`
+	TargetID              string                  `json:"target_id"`
+	PublisherWorkers      int                     `json:"publisher_workers"`
+	LoadWorkers           int                     `json:"load_workers"`
+	SchemaVersion         int                     `json:"schema_version"`
+	GeneratedAt           time.Time               `json:"generated_at"`
+	Status                string                  `json:"status"`
+	VisitorStatus         string                  `json:"visitor_status"`
+	ShutdownStatus        string                  `json:"shutdown_status"`
+	InfrastructureCleanup string                  `json:"infrastructure_cleanup"`
+	Incomplete            bool                    `json:"incomplete"`
+	Plan                  *benchmarkPlan          `json:"plan,omitempty"`
+	ResultRows            int                     `json:"result_rows"`
+	Phases                map[string]phaseResult  `json:"phases"`
+	ServerDurations       []processDurationReport `json:"server_durations"`
+	DatabaseDiagnostics   []databaseDiagnostic    `json:"database_diagnostics,omitempty"`
+	Failures              []string                `json:"failures"`
 }
-
-type cellReport struct {
-	FailureStage        string                  `json:"failure_stage,omitempty"`
-	DatabaseDiagnostics []databaseDiagnostic    `json:"database_diagnostics,omitempty"`
-	CellID              string                  `json:"cell_id"`
-	Target              string                  `json:"target"`
-	Suite               string                  `json:"suite"`
-	Axis                string                  `json:"axis"`
-	Sequence            int                     `json:"sequence"`
-	Repetition          int                     `json:"repetition"`
-	Status              string                  `json:"status"`
-	VisitorStatus       string                  `json:"visitor_status"`
-	ShutdownStatus      string                  `json:"shutdown_status"`
-	ResultRows          int                     `json:"result_rows"`
-	PublisherWorkers    int                     `json:"publisher_workers"`
-	LoadWorkers         int                     `json:"load_workers"`
-	Routes              int                     `json:"routes"`
-	FreshRate           int                     `json:"fresh_connections_per_second"`
-	HeldStreams         int                     `json:"held_streams"`
-	LifecycleChurn      int                     `json:"lifecycle_churn_per_second"`
-	PayloadBytes        int                     `json:"payload_bytes"`
-	BandwidthBPS        float64                 `json:"bandwidth_bytes_per_second,omitempty"`
-	MonthlyCostUSD      float64                 `json:"estimated_monthly_cost_usd,omitempty"`
-	CapacityPerDollar   float64                 `json:"capacity_per_monthly_dollar,omitempty"`
-	Bottleneck          string                  `json:"bottleneck"`
-	BottleneckEvidence  []string                `json:"bottleneck_evidence,omitempty"`
-	Recovery            *recoveryReport         `json:"recovery,omitempty"`
-	Phases              map[string]phaseReport  `json:"phases"`
-	ResourceMaximums    map[string]float64      `json:"resource_maximums,omitempty"`
-	ServerDurations     []processDurationReport `json:"server_durations"`
-	Failures            []string                `json:"failures"`
-}
-
 type processDurationReport struct {
 	Role      string                          `json:"role"`
 	Identity  string                          `json:"identity"`
@@ -93,112 +53,37 @@ type processDurationReport struct {
 	Durations []observability.DurationSummary `json:"durations"`
 }
 
-type phaseReport struct {
-	DurationMilliseconds float64  `json:"duration_milliseconds"`
-	Attempts             int      `json:"attempts"`
-	Successes            int      `json:"successes"`
-	Errors               int      `json:"errors"`
-	Bytes                int64    `json:"bytes"`
-	AchievedRate         float64  `json:"achieved_rate,omitempty"`
-	Concurrency          int      `json:"concurrency,omitempty"`
-	DNSP95               *float64 `json:"dns_p95_milliseconds"`
-	ConnectP95           *float64 `json:"connect_p95_milliseconds"`
-	TLSP95               *float64 `json:"tls_p95_milliseconds"`
-	FirstByteP50         *float64 `json:"first_byte_p50_milliseconds"`
-	FirstByteP95         *float64 `json:"first_byte_p95_milliseconds"`
-	TotalP50             *float64 `json:"total_p50_milliseconds"`
-	TotalP95             *float64 `json:"total_p95_milliseconds"`
-	TotalMaximum         float64  `json:"total_maximum_milliseconds,omitempty"`
-}
-
-type recoveryReport struct {
-	Workers              int     `json:"workers"`
-	RecoveredWorkers     int     `json:"recovered_workers"`
-	Attempts             int     `json:"attempts"`
-	Errors               int     `json:"errors"`
-	DurationMilliseconds float64 `json:"duration_milliseconds"`
-}
-
-type capacityPoint struct {
-	Target            string          `json:"target"`
-	Axis              string          `json:"axis"`
-	Sequence          int             `json:"sequence"`
-	Routes            int             `json:"routes"`
-	FreshRate         int             `json:"fresh_connections_per_second"`
-	HeldStreams       int             `json:"held_streams"`
-	LifecycleChurn    int             `json:"lifecycle_churn_per_second"`
-	PayloadBytes      int             `json:"payload_bytes"`
-	CapacityValue     float64         `json:"capacity_value"`
-	CapacityUnit      string          `json:"capacity_unit"`
-	MonthlyCostUSD    float64         `json:"estimated_monthly_cost_usd,omitempty"`
-	CapacityPerDollar float64         `json:"capacity_per_monthly_dollar,omitempty"`
-	Recovery          *recoveryReport `json:"recovery,omitempty"`
-	Repetitions       int             `json:"repetitions"`
-	Passed            int             `json:"passed"`
-}
-
-type capacityRamp struct {
-	Axis                  string         `json:"axis"`
-	LastPassing           *capacityPoint `json:"last_passing,omitempty"`
-	LastRepeatablyPassing *capacityPoint `json:"last_repeatably_passing,omitempty"`
-	FirstFailing          *capacityPoint `json:"first_failing,omitempty"`
-}
-
-type phaseAccumulator struct {
-	workers, attempts, successes, errors, concurrency int
-	bytes                                             int64
-	achievedRate, durationMilliseconds                float64
-	dns, connect, handshake                           *durationHistogram
-	firstByte, total                                  *durationHistogram
-}
-
 func (c reportCommand) run(stdout io.Writer) error {
-	results, err := readBenchmarkResults(filepath.Join(c.RunDirectory, "results.jsonl"))
+	rows, err := readBenchmarkResults(filepath.Join(c.RunDirectory, "results.jsonl"))
 	if err != nil && !(c.allowIncomplete && (errors.Is(err, os.ErrNotExist) || errors.Is(err, errNoBenchmarkResults))) {
 		return err
 	}
-	report := benchmarkReport{SchemaVersion: 4, GeneratedAt: time.Now().UTC(), Status: "failed", Cells: []cellReport{}}
-	if len(results) != 0 {
-		report, err = buildReport(results)
-		if err != nil {
-			return err
-		}
+	report, err := buildReport(rows)
+	if err != nil {
+		return err
 	}
 	var plan benchmarkPlan
-	if err := decodeJSONFile(filepath.Join(c.RunDirectory, "plan.json"), &plan); err == nil {
-		if err := applyPlanToReport(&report, plan); err != nil {
-			return err
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("read benchmark plan: %w", err)
+	if err := decodeJSONFile(filepath.Join(c.RunDirectory, "plan.json"), &plan); err != nil {
+		return err
 	}
-	if c.allowIncomplete {
-		report.Status = "failed"
-		report.Incomplete = report.Incomplete || len(results) == 0
+	if err := applyPlanToReport(&report, plan); err != nil {
+		return err
 	}
 	manifest, err := loadManifest(filepath.Join(c.RunDirectory, "manifest.json"))
-	if err == nil {
-		switch manifest.Status {
-		case "cleaned":
-			report.InfrastructureCleanup = "passed"
-		case "cleanup_failed":
-			report.InfrastructureCleanup = "failed"
-			report.Status = "failed"
-		default:
-			report.InfrastructureCleanup = "pending"
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
+	if err != nil {
 		return err
 	}
-	jsonPath := filepath.Join(c.RunDirectory, "report.json")
-	if err := writeReportJSON(jsonPath, report); err != nil {
+	report.InfrastructureCleanup = manifest.Status
+	if manifest.Status != "cleaned" || c.allowIncomplete {
+		report.Status = "failed"
+	}
+	if err := writeIndentedJSON(filepath.Join(c.RunDirectory, "report.json"), report); err != nil {
 		return err
 	}
-	markdownPath := filepath.Join(c.RunDirectory, "report.md")
-	if err := os.WriteFile(markdownPath, []byte(formatReportMarkdown(report)), 0o600); err != nil {
-		return fmt.Errorf("write report markdown: %w", err)
+	if err := os.WriteFile(filepath.Join(c.RunDirectory, "report.md"), []byte(formatReportMarkdown(report)), 0o600); err != nil {
+		return err
 	}
-	fmt.Fprintf(stdout, "Report: %s\nMarkdown: %s\n", jsonPath, markdownPath)
+	fmt.Fprintf(stdout, "Report: %s\n", filepath.Join(c.RunDirectory, "report.md"))
 	return nil
 }
 
@@ -208,899 +93,313 @@ func readBenchmarkResults(path string) ([]benchmarkResult, error) {
 		return nil, err
 	}
 	defer file.Close()
-	var results []benchmarkResult
+	var rows []benchmarkResult
 	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 64<<10), 4<<20)
-	for line := 1; scanner.Scan(); line++ {
+	scanner.Buffer(make([]byte, 64<<10), 16<<20)
+	for scanner.Scan() {
 		if strings.TrimSpace(scanner.Text()) == "" {
 			continue
 		}
-		var result benchmarkResult
-		if err := json.Unmarshal(scanner.Bytes(), &result); err != nil {
-			return nil, fmt.Errorf("decode result line %d: %w", line, err)
+		var row benchmarkResult
+		if err := json.Unmarshal(scanner.Bytes(), &row); err != nil {
+			return nil, err
 		}
-		if err := validateResultIdentity(result); err != nil {
-			return nil, fmt.Errorf("result line %d: %w", line, err)
+		if err := validateResultIdentity(row); err != nil {
+			return nil, err
 		}
-		results = append(results, result)
+		rows = append(rows, row)
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
-	if len(results) == 0 {
+	if len(rows) == 0 {
 		return nil, errNoBenchmarkResults
 	}
-	return results, nil
+	return rows, nil
 }
 
-func validateResultIdentity(result benchmarkResult) error {
-	if result.SchemaVersion != benchmarkResultSchemaVersion || result.CellID == "" || result.Suite == "" || result.Repetition <= 0 ||
-		!validBenchmarkAxis(result.Configuration.Axis) || result.Configuration.PayloadBytes <= 0 ||
-		(result.Status != "passed" && result.Status != "failed") ||
-		(result.Worker.Kind != "publisher" && result.Worker.Kind != "load") || result.Worker.Count <= 0 ||
-		result.Worker.Index < 0 || result.Worker.Index >= result.Worker.Count || result.Configuration.Sequence < 0 ||
-		result.Configuration.Routes <= 0 {
-		return errors.New("invalid result schema or identity")
+func validateResultIdentity(row benchmarkResult) error {
+	if row.SchemaVersion != benchmarkResultSchemaVersion || row.CellID == "" || (row.Status != "passed" && row.Status != "failed") || (row.Worker.Kind != "publisher" && row.Worker.Kind != "load") || row.Worker.Count < 1 || row.Worker.Index < 0 || row.Worker.Index >= row.Worker.Count {
+		return errors.New("invalid result identity")
 	}
 	return nil
 }
 
-func buildReport(results []benchmarkResult) (benchmarkReport, error) {
-	report := benchmarkReport{SchemaVersion: 4, GeneratedAt: time.Now().UTC(), Status: "passed", ResultRows: len(results)}
-	grouped := make(map[string][]benchmarkResult)
-	for _, result := range results {
-		if err := validateResultIdentity(result); err != nil {
-			return benchmarkReport{}, err
-		}
-		grouped[result.CellID] = append(grouped[result.CellID], result)
-		if result.Status == "passed" {
-			report.PassedRows++
-		} else {
-			report.FailedRows++
-			report.Status = "failed"
-		}
-	}
-	for cellID, rows := range grouped {
-		cell, err := buildCellReport(cellID, rows)
-		if err != nil {
-			return benchmarkReport{}, err
-		}
-		if cell.Status != "passed" {
-			report.Status = "failed"
-		}
-		report.Cells = append(report.Cells, cell)
-	}
-	sort.Slice(report.Cells, func(i, j int) bool {
-		if report.Cells[i].Sequence != report.Cells[j].Sequence {
-			return report.Cells[i].Sequence < report.Cells[j].Sequence
-		}
-		return report.Cells[i].Repetition < report.Cells[j].Repetition
-	})
-	summarizeReportCapacity(&report)
-	return report, nil
-}
-
-func applyPlanToReport(report *benchmarkReport, plan benchmarkPlan) error {
-	if plan.SchemaVersion != 3 || plan.ProfileID == "" || plan.Region == "" || plan.Suite == "" {
-		return errors.New("benchmark plan identity is invalid")
-	}
-	report.ProfileID, report.Region = plan.ProfileID, plan.Region
-	report.Topology, report.Machines, report.ManagedPostgres = plan.Topology, plan.Machines, plan.ManagedPostgres
-	report.CertificateAuthority = plan.CertificateAuthority
-	report.ExpectedSpendUSD, report.MaximumSpendUSD = plan.ExpectedSpendUSD, plan.MaximumSpendUSD
-	byID := make(map[string]planCell, len(plan.Cells))
-	for _, cell := range plan.Cells {
-		byID[cell.ID] = cell
-	}
-	if len(report.Cells) != len(plan.Cells) {
-		report.Status, report.Incomplete = "failed", true
-	}
-	for index := range report.Cells {
-		cell := &report.Cells[index]
-		planned, found := byID[cell.CellID]
-		if !found || cell.Suite != plan.Suite || planned.Axis != cell.Axis || planned.Sequence != cell.Sequence ||
-			planned.Repetition != cell.Repetition || planned.Routes != cell.Routes ||
-			planned.FreshConnectionsPerSecond != cell.FreshRate || planned.HeldStreams != cell.HeldStreams ||
-			planned.LifecycleChurnPerSecond != cell.LifecycleChurn || planned.PayloadBytes != cell.PayloadBytes ||
-			planned.EstimatedMonthlyCostUSD <= 0 {
-			return fmt.Errorf("benchmark plan does not match result cell %q", cell.CellID)
-		}
-		cell.MonthlyCostUSD = planned.EstimatedMonthlyCostUSD
-		value, _ := capacityValue(*cell)
-		if cell.MonthlyCostUSD > 0 {
-			cell.CapacityPerDollar = value / cell.MonthlyCostUSD
-		}
-	}
-	summarizeReportCapacity(report)
-	return nil
-}
-
-func summarizeReportCapacity(report *benchmarkReport) {
-	report.CapacityRamps = capacityRamps(report.Cells)
-	report.HighestPassing, report.HighestRepeatablyPassing, report.FirstSaturation = nil, nil, nil
-	if len(report.CapacityRamps) == 1 {
-		report.HighestPassing, report.HighestRepeatablyPassing, report.FirstSaturation = capacitySummary(report.Cells)
-	}
-}
-
-func buildCellReport(cellID string, rows []benchmarkResult) (cellReport, error) {
-	first := rows[0]
-	cell := cellReport{
-		CellID: cellID, Target: strings.TrimSuffix(cellID, fmt.Sprintf("-rep%d", first.Repetition)), Suite: first.Suite,
-		Axis: first.Configuration.Axis, Sequence: first.Configuration.Sequence, Repetition: first.Repetition,
-		Status: "passed", ResultRows: len(rows), Routes: first.Configuration.Routes,
-		VisitorStatus: "not_run", ShutdownStatus: "not_run",
-		LifecycleChurn: first.Configuration.LifecycleChurnPerSecond,
-		PayloadBytes:   first.Configuration.PayloadBytes, Phases: make(map[string]phaseReport),
-		FreshRate: first.Configuration.FreshConnectionsPerSecond, HeldStreams: first.Configuration.HeldStreams,
-		ResourceMaximums: make(map[string]float64), Failures: []string{}, Bottleneck: "not saturated",
-	}
-	seen := make(map[string]struct{})
-	want := make(map[string]int)
-	phases := make(map[string]*phaseAccumulator)
-	var resourceSamples []resourceSample
-	visitorWorkers, shutdownWorkers := 0, 0
+func buildReport(rows []benchmarkResult) (benchmarkReport, error) {
+	r := benchmarkReport{SchemaVersion: 5, GeneratedAt: time.Now().UTC(), Status: "passed", VisitorStatus: "not_run", ShutdownStatus: "not_run", ResultRows: len(rows), Phases: make(map[string]phaseResult)}
+	seen := make(map[string]bool)
+	expected := make(map[string]int)
+	counts := make(map[string]int)
+	var target string
 	for _, row := range rows {
-		if row.Suite != cell.Suite || row.Repetition != cell.Repetition || row.Configuration.Axis != cell.Axis ||
-			row.Configuration.Sequence != cell.Sequence ||
-			row.Configuration.Routes != cell.Routes || row.Configuration.FreshConnectionsPerSecond != cell.FreshRate ||
-			row.Configuration.HeldStreams != cell.HeldStreams ||
-			row.Configuration.LifecycleChurnPerSecond != cell.LifecycleChurn || row.Configuration.PayloadBytes != cell.PayloadBytes {
-			return cellReport{}, fmt.Errorf("cell %q has inconsistent result configuration", cellID)
+		if err := validateResultIdentity(row); err != nil {
+			return r, err
 		}
-		key := fmt.Sprintf("%s:%d", row.Worker.Kind, row.Worker.Index)
-		if _, exists := seen[key]; exists {
-			return cellReport{}, fmt.Errorf("cell %q repeats worker %s", cellID, key)
+		if target != "" && target != row.CellID {
+			return r, errors.New("results contain multiple targets")
 		}
-		seen[key] = struct{}{}
-		if previous := want[row.Worker.Kind]; previous != 0 && previous != row.Worker.Count {
-			return cellReport{}, fmt.Errorf("cell %q has inconsistent %s worker counts", cellID, row.Worker.Kind)
+		target = row.CellID
+		key := fmt.Sprintf("%s-%d", row.Worker.Kind, row.Worker.Index)
+		if seen[key] {
+			return r, errors.New("duplicate worker result")
 		}
-		want[row.Worker.Kind] = row.Worker.Count
-		if row.Worker.Kind == "load" {
-			attempted := row.Status == "passed"
-			for _, phase := range row.Phases {
-				attempted = attempted || phase.Name == "correctness" || phase.Name == "fresh" || phase.Name == "held"
+		seen[key] = true
+		if want := expected[row.Worker.Kind]; want != 0 && want != row.Worker.Count {
+			return r, errors.New("inconsistent worker counts")
+		}
+		expected[row.Worker.Kind] = row.Worker.Count
+		counts[row.Worker.Kind]++
+		if row.Status != "passed" {
+			r.Status = "failed"
+			if row.Failure != nil {
+				r.Failures = append(r.Failures, row.Failure.Message)
 			}
-			if attempted {
-				visitorWorkers++
-				if row.Status == "failed" {
-					cell.VisitorStatus = "failed"
-				} else if cell.VisitorStatus == "not_run" {
-					cell.VisitorStatus = "passed"
-				}
+		}
+		if row.Worker.Kind == "load" {
+			if r.VisitorStatus != "failed" {
+				r.VisitorStatus = row.Status
 			}
 		}
 		if row.Worker.Kind == "publisher" {
-			for _, phase := range row.Phases {
-				if phase.Name == "deactivation" && phase.Attempts > 0 {
-					shutdownWorkers++
-					if phase.Errors > 0 || phase.Successes != phase.Attempts {
-						cell.ShutdownStatus = "failed"
-					} else if cell.ShutdownStatus == "not_run" {
-						cell.ShutdownStatus = "passed"
-					}
-				}
-			}
-			// Older results counted timing entries as successful stops. Preserve
-			// the recorded cleanup failure rather than trusting those counts.
-			if resultFailureStage(row) == "cleanup" {
-				cell.ShutdownStatus = "failed"
+			if !row.Cleanup.Exact {
+				r.ShutdownStatus = "failed"
+			} else if r.ShutdownStatus != "failed" {
+				r.ShutdownStatus = "passed"
 			}
 		}
-		if row.Status != "passed" {
-			cell.Status = "failed"
-			stage := resultFailureStage(row)
-			if cell.FailureStage == "" || stage != "measurement" {
-				cell.FailureStage = stage
-			}
-			if row.Failure != nil {
-				cell.Failures = append(cell.Failures, row.Failure.Message)
-			}
-		}
-		cell.DatabaseDiagnostics = append(cell.DatabaseDiagnostics, row.DatabaseDiagnostics...)
-		if row.DroppedResourceSamples > 0 {
-			cell.BottleneckEvidence = append(cell.BottleneckEvidence, fmt.Sprintf("%d older periodic resource samples omitted to bound the result payload", row.DroppedResourceSamples))
-		}
+		r.DatabaseDiagnostics = append(r.DatabaseDiagnostics, row.DatabaseDiagnostics...)
+		r.ServerDurations = append(r.ServerDurations, serverDurationReports(row.Resources)...)
 		for _, phase := range row.Phases {
-			accumulator := phases[phase.Name]
-			if accumulator == nil {
-				accumulator = &phaseAccumulator{}
-				phases[phase.Name] = accumulator
+			merged := r.Phases[phase.Name]
+			merged.Name = phase.Name
+			if merged.StartedAt.IsZero() || phase.StartedAt.Before(merged.StartedAt) {
+				merged.StartedAt = phase.StartedAt
 			}
-			accumulator.workers++
-			accumulator.attempts += phase.Attempts
-			accumulator.successes += phase.Successes
-			accumulator.errors += phase.Errors
-			accumulator.bytes += phase.Bytes
-			accumulator.achievedRate += phase.AchievedRate
-			accumulator.durationMilliseconds = max(accumulator.durationMilliseconds, phase.DurationMilliseconds)
-			accumulator.concurrency += phase.Concurrency
-			for label, pair := range map[string]struct {
-				destination **durationHistogram
-				source      *durationHistogram
-			}{
-				"dns": {&accumulator.dns, phase.DNS}, "connect": {&accumulator.connect, phase.Connect},
-				"tls": {&accumulator.handshake, phase.TLS}, "first byte": {&accumulator.firstByte, phase.FirstByte},
-				"total": {&accumulator.total, phase.Total},
-			} {
-				if err := mergeDurationHistogram(pair.destination, pair.source); err != nil {
-					return cellReport{}, fmt.Errorf("cell %q phase %q %s: %w", cellID, phase.Name, label, err)
+			merged.DurationMilliseconds = max(merged.DurationMilliseconds, phase.DurationMilliseconds)
+			merged.Attempts += phase.Attempts
+			merged.Successes += phase.Successes
+			merged.Errors += phase.Errors
+			if err := mergeDurationHistogram(&merged.Total, phase.Total); err != nil {
+				return r, err
+			}
+			if phase.Visitor != nil {
+				if merged.Visitor == nil {
+					merged.Visitor = new(benchworkload.VisitorResult)
+				}
+				if err := merged.Visitor.Merge(*phase.Visitor); err != nil {
+					return r, err
+				}
+				if phase.Visitor.Err() != nil {
+					r.Status = "failed"
+					r.VisitorStatus = "failed"
 				}
 			}
+			r.Phases[phase.Name] = merged
 		}
-		cell.ServerDurations = append(cell.ServerDurations, serverDurationReports(row.Resources)...)
-		for _, sample := range row.Resources {
-			resourceSamples = append(resourceSamples, sample)
-			if sample.Error != "" {
-				cell.BottleneckEvidence = append(cell.BottleneckEvidence, fmt.Sprintf("metrics %s at %s unavailable: %s", sample.Identity, sample.Moment, sample.Error))
-				continue
-			}
-			for _, family := range sample.Metrics {
-				for _, metric := range family.Metric {
-					if metric.Gauge != nil {
-						key := sample.Role + "/" + metricIdentity(family.GetName(), metric).String()
-						value := metric.Gauge.GetValue()
-						previous, found := cell.ResourceMaximums[key]
-						if !found || value > previous {
-							cell.ResourceMaximums[key] = value
-						}
-					}
-				}
-			}
-		}
-	}
-	addDerivedResourceMaximums(cell.ResourceMaximums, resourceSamples)
-	cell.PublisherWorkers, cell.LoadWorkers = want["publisher"], want["load"]
-	if cell.VisitorStatus == "passed" && visitorWorkers != cell.LoadWorkers {
-		cell.VisitorStatus = "incomplete"
-	}
-	if cell.ShutdownStatus == "passed" && shutdownWorkers != cell.PublisherWorkers {
-		cell.ShutdownStatus = "incomplete"
 	}
 	for _, kind := range []string{"publisher", "load"} {
-		found := workerKindCount(seen, kind)
-		if want[kind] == 0 || found != want[kind] {
-			cell.Status = "failed"
-			if cell.FailureStage == "" || cell.FailureStage == "measurement" {
-				cell.FailureStage = "instrumentation"
-			}
-			cell.Failures = append(cell.Failures, fmt.Sprintf("expected %d %s workers, found %d", want[kind], kind, found))
-		}
-	}
-	if cell.Status == "passed" {
-		rejections, err := ingressSourceLimiterRejections(resourceSamples)
-		if err != nil {
-			cell.Status = "failed"
-			cell.Failures = append(cell.Failures, "ingress source limiter validation: "+err.Error())
-		} else if rejections > 0 {
-			cell.Status = "failed"
-			cell.Failures = append(cell.Failures, fmt.Sprintf("ingress source limiter rejected %g visitor connections", rejections))
-		}
-	}
-	for name, phase := range phases {
-		cell.Phases[name] = phaseReport{
-			DurationMilliseconds: phase.durationMilliseconds,
-			Attempts:             phase.attempts, Successes: phase.successes, Errors: phase.errors, Bytes: phase.bytes,
-			AchievedRate: phase.achievedRate, Concurrency: phase.concurrency,
-			DNSP95: histogramPercentile(phase.dns, 95), ConnectP95: histogramPercentile(phase.connect, 95),
-			TLSP95: histogramPercentile(phase.handshake, 95), FirstByteP50: histogramPercentile(phase.firstByte, 50),
-			FirstByteP95: histogramPercentile(phase.firstByte, 95), TotalP50: histogramPercentile(phase.total, 50),
-			TotalP95: histogramPercentile(phase.total, 95), TotalMaximum: histogramMaximum(phase.total),
-		}
-	}
-	if recovery, found := phases["recovery"]; found {
-		cell.Recovery = &recoveryReport{
-			Workers: recovery.workers, RecoveredWorkers: recovery.successes,
-			Attempts: recovery.attempts, Errors: recovery.errors, DurationMilliseconds: recovery.durationMilliseconds,
-		}
-	}
-	if fresh, found := cell.Phases["fresh"]; found && fresh.DurationMilliseconds > 0 {
-		cell.BandwidthBPS = float64(fresh.Bytes) * 1000 / fresh.DurationMilliseconds
-	}
-	cell.BottleneckEvidence = append(cell.BottleneckEvidence, resourceBottleneckEvidence(resourceSamples, cell.ResourceMaximums)...)
-	if bottleneck, found := bottleneckFromEvidence(cell.BottleneckEvidence); cell.Status != "passed" && found {
-		cell.Bottleneck = bottleneck
-	} else if cell.Status != "passed" && len(cell.Failures) != 0 {
-		cell.Bottleneck = classifyBenchmarkFailure(cell.Failures[0])
-	} else if churn, found := cell.Phases["lifecycle_churn"]; found && churn.AchievedRate+0.01 < float64(cell.LifecycleChurn) {
-		cell.Bottleneck = "publisher lifecycle churn"
-	}
-	if cell.FailureStage != "" && cell.FailureStage != "measurement" {
-		cell.Bottleneck = cell.FailureStage + " failure"
-	}
-	for _, diagnostic := range cell.DatabaseDiagnostics {
-		if diagnostic.Snapshot != nil {
-			var purposes []string
-			for purpose := range diagnostic.Snapshot.Connections {
-				purposes = append(purposes, purpose)
-			}
-			slices.Sort(purposes)
-			for _, purpose := range purposes {
-				counts := diagnostic.Snapshot.Connections[purpose]
-				cell.BottleneckEvidence = append(cell.BottleneckEvidence, fmt.Sprintf("local database clients %s (%s): %d open, %d connecting, %d opened, %d closed, %d failed connects", diagnostic.Identity, purpose, counts.Open, counts.Connecting, counts.Opened, counts.Closed, counts.Failed))
-			}
-			if pooler := diagnostic.Snapshot.Pooler; pooler != nil {
-				var settings []string
-				for key, value := range pooler.Settings {
-					settings = append(settings, key+"="+value)
-				}
-				slices.Sort(settings)
-				if len(settings) != 0 {
-					cell.BottleneckEvidence = append(cell.BottleneckEvidence, "PgBouncer settings "+diagnostic.Identity+": "+strings.Join(settings, ", "))
-				}
-				if clients := pooler.Clients; clients != nil {
-					cell.BottleneckEvidence = append(cell.BottleneckEvidence, fmt.Sprintf("PgBouncer clients %s: %d total (including observer), %d active, %d waiting, %d other, truncated=%t", diagnostic.Identity, clients.Total, clients.Active, clients.Waiting, clients.Other, clients.Truncated))
-				}
-				if pooler.Error != "" {
-					cell.BottleneckEvidence = append(cell.BottleneckEvidence, "PgBouncer inspection unavailable "+diagnostic.Identity+": "+pooler.Error)
-				}
+		if expected[kind] == 0 || counts[kind] != expected[kind] {
+			r.Status = "failed"
+			r.Incomplete = true
+			r.Failures = append(r.Failures, fmt.Sprintf("missing %s results: %d/%d", kind, counts[kind], expected[kind]))
+			if kind == "load" {
+				r.VisitorStatus = "incomplete"
+			} else {
+				r.ShutdownStatus = "incomplete"
 			}
 		}
-		if diagnostic.Snapshot != nil && len(diagnostic.Snapshot.ActiveOperations) != 0 {
-			var operations []string
-			for _, operation := range diagnostic.Snapshot.ActiveOperations[:min(3, len(diagnostic.Snapshot.ActiveOperations))] {
-				operations = append(operations, fmt.Sprintf("%s %.1fs", operation.Operation, operation.ElapsedSeconds))
-			}
-			cell.BottleneckEvidence = append(cell.BottleneckEvidence, fmt.Sprintf("local database activity %s: %d active operations, oldest: %s, truncated=%t", diagnostic.Identity, len(diagnostic.Snapshot.ActiveOperations), strings.Join(operations, ", "), diagnostic.Snapshot.OperationsTruncated))
-		}
-		if diagnostic.Error != "" {
-			cell.BottleneckEvidence = append(cell.BottleneckEvidence, "database snapshot "+diagnostic.Identity+": "+diagnostic.Error)
-			continue
-		}
-		if diagnostic.Snapshot == nil {
-			continue
-		}
-		blocked := 0
-		var oldest *float64
-		for _, session := range diagnostic.Snapshot.Sessions {
-			if len(session.BlockingPIDs) > 0 {
-				blocked++
-			}
-			if session.TransactionAgeSeconds != nil && (oldest == nil || *session.TransactionAgeSeconds > *oldest) {
-				value := *session.TransactionAgeSeconds
-				oldest = &value
-			}
-		}
-		oldestText := "unavailable"
-		if oldest != nil {
-			oldestText = fmt.Sprintf("%.1fs", *oldest)
-		}
-		cell.BottleneckEvidence = append(cell.BottleneckEvidence, fmt.Sprintf("database snapshot %s: %d blocked sessions, oldest transaction %s, truncated=%t", diagnostic.Identity, blocked, oldestText, diagnostic.Snapshot.Truncated))
 	}
-	return cell, nil
+	r.TargetID = target
+	r.PublisherWorkers = expected["publisher"]
+	r.LoadWorkers = expected["load"]
+	return r, nil
 }
 
-func ingressSourceLimiterRejections(samples []resourceSample) (float64, error) {
-	const metric = "tnl_source_limiter_rejections_total"
-	type pair struct {
-		ready, loaded       float64
-		hasReady, hasLoaded bool
+func applyPlanToReport(r *benchmarkReport, p benchmarkPlan) error {
+	if p.SchemaVersion != 4 || p.ProfileID == "" || p.Target.ID == "" {
+		return errors.New("invalid report plan")
 	}
-	byIdentity := make(map[string]pair)
-	for _, sample := range samples {
-		if sample.Role != "ingress" {
-			continue
+	r.Plan = &p
+	if r.TargetID != "" && r.TargetID != p.Target.ID {
+		return errors.New("result target differs from plan")
+	}
+	if r.PublisherWorkers != p.Target.PublisherWorkers || r.LoadWorkers != p.Target.LoadWorkers {
+		r.Status = "failed"
+		r.Incomplete = true
+	}
+	if r.ResultRows != p.Target.PublisherWorkers+p.Target.LoadWorkers {
+		r.Status = "failed"
+		r.Incomplete = true
+	}
+	for repetition := 1; repetition <= p.Target.Repetitions; repetition++ {
+		name := fmt.Sprintf("steady-%d", repetition)
+		phase, found := r.Phases[name]
+		if !found || phase.Visitor == nil || phase.Visitor.Workers != p.Target.Concurrency || phase.Visitor.QueueSlots != p.Target.QueueSlots || phase.Visitor.Rate != p.Target.FreshConnectionsPerSecond {
+			r.Status = "failed"
+			r.Incomplete = true
+			r.Failures = append(r.Failures, "missing or inconsistent "+name+" visitor measurements")
 		}
-		if sample.Moment != "ready" && sample.Moment != "loaded" {
-			continue
+	}
+	for _, interval := range r.ServerDurations {
+		if !interval.Complete {
+			r.Status = "failed"
+			r.Failures = append(r.Failures, interval.Identity+": "+interval.Error)
 		}
-		if sample.Error != "" {
-			return 0, fmt.Errorf("sample %s at %s: %s", sample.Identity, sample.Moment, sample.Error)
-		}
-		value, ok := scalarMetric(sample.Metrics, metric)
-		if !ok {
-			return 0, fmt.Errorf("sample %s at %s has no %s", sample.Identity, sample.Moment, metric)
-		}
-		current := byIdentity[sample.Identity]
-		switch sample.Moment {
-		case "ready":
-			if current.hasReady {
-				return 0, fmt.Errorf("sample %s repeats ready metrics", sample.Identity)
+	}
+	expectedProcesses := p.Topology.ControlProcesses + p.Topology.IngressProcesses + p.Topology.RelayServices*p.Topology.RelayProcessesPerService
+	for repetition := 1; repetition <= p.Target.Repetitions; repetition++ {
+		name := fmt.Sprintf("steady-%d", repetition)
+		count := 0
+		for _, interval := range r.ServerDurations {
+			if interval.Phase == name {
+				count++
 			}
-			current.ready, current.hasReady = value, true
-		case "loaded":
-			if current.hasLoaded {
-				return 0, fmt.Errorf("sample %s repeats loaded metrics", sample.Identity)
-			}
-			current.loaded, current.hasLoaded = value, true
-		default:
-			return 0, fmt.Errorf("sample %s has unknown moment %q", sample.Identity, sample.Moment)
 		}
-		byIdentity[sample.Identity] = current
-	}
-	if len(byIdentity) == 0 {
-		return 0, errors.New("no ingress metrics were collected")
-	}
-	var total float64
-	for identity, values := range byIdentity {
-		if !values.hasReady || !values.hasLoaded {
-			return 0, fmt.Errorf("sample %s does not have ready and loaded metrics", identity)
+		if count != expectedProcesses {
+			r.Status = "failed"
+			r.Incomplete = true
+			r.Failures = append(r.Failures, "missing server metric intervals for "+name)
 		}
-		if values.loaded < values.ready {
-			return 0, fmt.Errorf("sample %s counter reset while the cell ran", identity)
-		}
-		total += values.loaded - values.ready
 	}
-	return total, nil
+	return nil
 }
 
-// Each row owns its boundaries; failure diagnostics from another worker cannot
-// stand in for its final snapshot. Processes and phases are never pooled here.
+// Keep process identities and measurement windows separate. A restart, missing
+// scrape, or failed interval must not turn into an apparently zero latency.
 func serverDurationReports(samples []resourceSample) []processDurationReport {
-	type process struct{ role, identity string }
-	grouped := make(map[process]map[string]resourceSample)
-	duplicates := make(map[process]bool)
-	for _, sample := range samples {
-		switch sample.Moment {
-		case "before_activation", "activated", "ready", "loaded", "failure":
-		default:
-			continue
-		}
-		key := process{sample.Role, sample.Identity}
-		if grouped[key] == nil {
-			grouped[key] = make(map[string]resourceSample)
-		}
-		if _, exists := grouped[key][sample.Moment]; exists {
-			duplicates[key] = true
-		}
-		grouped[key][sample.Moment] = sample
+	type key struct{ role, identity, phase string }
+	type boundaries struct {
+		before, after *resourceSample
+		duplicate     bool
 	}
-	var result []processDurationReport
-	for key, moments := range grouped {
-		for _, phase := range []struct{ name, before, after string }{
-			{"activation", "before_activation", "activated"}, {"workload", "ready", "loaded"},
-		} {
-			before, hasBefore := moments[phase.before]
-			after, hasAfter := moments[phase.after]
-			if !hasBefore && !hasAfter {
+	groups := make(map[key]*boundaries)
+	for i := range samples {
+		s := &samples[i]
+		phase, before := strings.CutSuffix(s.Moment, "-before")
+		if !before {
+			var ok bool
+			phase, ok = strings.CutSuffix(s.Moment, "-after")
+			if !ok {
 				continue
 			}
-			interval := processDurationReport{Role: key.role, Identity: key.identity, Phase: phase.name, StartedAt: before.Timestamp}
-			if !hasAfter {
-				after = moments["failure"]
-			}
-			interval.EndedAt = after.Timestamp
-			switch {
-			case duplicates[key]:
-				interval.Error = "duplicate boundary snapshots"
-			case !hasBefore || after.Timestamp.IsZero():
-				interval.Error = "missing baseline or final snapshot"
-			case before.Error != "" || after.Error != "":
-				interval.Error = "boundary scrape unavailable: " + strings.TrimSpace(before.Error+" "+after.Error)
-			case !after.Timestamp.After(before.Timestamp):
-				interval.Error = "final snapshot does not follow baseline"
-			case len(before.Metrics) == 0 || len(after.Metrics) == 0:
-				interval.Error = "empty boundary scrape"
-			default:
-				var err error
-				interval.Durations, err = observability.DurationSummaries(before.Metrics, after.Metrics)
-				if err != nil {
-					interval.Error = err.Error()
-				} else if !hasAfter {
-					interval.Error = "incomplete interval ending at first failure"
-				} else {
-					interval.Complete = true
-				}
-			}
-			result = append(result, interval)
 		}
-		if len(moments) == 1 {
-			if failure, ok := moments["failure"]; ok {
-				result = append(result, processDurationReport{
-					Role: key.role, Identity: key.identity, Phase: "failure", EndedAt: failure.Timestamp,
-					Error: "failure snapshot has no measurement baseline",
-				})
-			}
+		k := key{s.Role, s.Identity, phase}
+		if groups[k] == nil {
+			groups[k] = new(boundaries)
 		}
-	}
-	sort.Slice(result, func(i, j int) bool {
-		if result[i].Identity != result[j].Identity {
-			return result[i].Identity < result[j].Identity
-		}
-		return result[i].Phase < result[j].Phase
-	})
-	return result
-}
-
-func addDerivedResourceMaximums(maximums map[string]float64, samples []resourceSample) {
-	byIdentity := make(map[string][]resourceSample)
-	for _, sample := range samples {
-		if sample.Error == "" {
-			byIdentity[sample.Identity] = append(byIdentity[sample.Identity], sample)
-		}
-	}
-	for _, identitySamples := range byIdentity {
-		sort.Slice(identitySamples, func(i, j int) bool {
-			return identitySamples[i].Timestamp.Before(identitySamples[j].Timestamp)
-		})
-		for index := 1; index < len(identitySamples); index++ {
-			previous, current := identitySamples[index-1], identitySamples[index]
-			previousCPU, previousOK := scalarMetric(previous.Metrics, "process_cpu_seconds_total")
-			currentCPU, currentOK := scalarMetric(current.Metrics, "process_cpu_seconds_total")
-			previousStart, hasPreviousStart := scalarMetric(previous.Metrics, "process_start_time_seconds")
-			currentStart, hasCurrentStart := scalarMetric(current.Metrics, "process_start_time_seconds")
-			elapsed := current.Timestamp.Sub(previous.Timestamp).Seconds()
-			if !previousOK || !currentOK || currentCPU < previousCPU || elapsed <= 0 ||
-				(hasPreviousStart && (!hasCurrentStart || previousStart != currentStart)) {
-				continue
-			}
-			key := current.Role + "/process_cpu_cores"
-			maximums[key] = max(maximums[key], (currentCPU-previousCPU)/elapsed)
-		}
-	}
-}
-
-func resourceBottleneckEvidence(samples []resourceSample, maximums map[string]float64) []string {
-	type snapshot struct {
-		role   string
-		ready  []*dto.MetricFamily
-		loaded []*dto.MetricFamily
-	}
-	byIdentity := make(map[string]*snapshot)
-	for _, sample := range samples {
-		if sample.Error != "" || (sample.Moment != "ready" && sample.Moment != "loaded") {
-			continue
-		}
-		current := byIdentity[sample.Identity]
-		if current == nil {
-			current = &snapshot{role: sample.Role}
-			byIdentity[sample.Identity] = current
-		}
-		if sample.Moment == "ready" {
-			current.ready = sample.Metrics
+		g := groups[k]
+		if before {
+			g.duplicate = g.duplicate || g.before != nil
+			g.before = s
 		} else {
-			current.loaded = sample.Metrics
+			g.duplicate = g.duplicate || g.after != nil
+			g.after = s
 		}
 	}
-	totals := make(map[string]float64)
-	for _, values := range byIdentity {
-		if values.ready == nil || values.loaded == nil {
-			continue
+	var reports []processDurationReport
+	for k, g := range groups {
+		r := processDurationReport{Role: k.role, Identity: k.identity, Phase: k.phase}
+		if g.before != nil {
+			r.StartedAt = g.before.Timestamp
 		}
-		before := make(map[string]float64)
-		for _, family := range values.ready {
-			if family.GetName() == "tnl_capacity_rejections_total" {
-				for _, metric := range family.Metric {
-					before[metricIdentity(family.GetName(), metric).String()] = metric.GetCounter().GetValue()
+		if g.after != nil {
+			r.EndedAt = g.after.Timestamp
+		}
+		switch {
+		case g.duplicate:
+			r.Error = "duplicate boundary snapshots"
+		case g.before == nil || g.after == nil:
+			r.Error = "missing baseline or final snapshot"
+		case g.before.Error != "" || g.after.Error != "":
+			r.Error = "boundary scrape unavailable"
+		case !r.EndedAt.After(r.StartedAt):
+			r.Error = "final snapshot does not follow baseline"
+		case len(g.before.Metrics) == 0 || len(g.after.Metrics) == 0:
+			r.Error = "empty boundary scrape"
+		default:
+			var err error
+			r.Durations, err = observability.DurationSummaries(g.before.Metrics, g.after.Metrics)
+			if err == nil && k.role == "ingress" && strings.HasPrefix(k.phase, "steady-") {
+				a, aok := scalarMetric(g.before.Metrics, "tnl_source_limiter_rejections_total")
+				b, bok := scalarMetric(g.after.Metrics, "tnl_source_limiter_rejections_total")
+				if !aok || !bok || b != a {
+					err = errors.New("source limiter rejected requests or its counter is missing/reset")
 				}
 			}
-		}
-		for _, family := range values.loaded {
-			if family.GetName() != "tnl_capacity_rejections_total" {
-				continue
-			}
-			for _, metric := range family.Metric {
-				labels := metricIdentity(family.GetName(), metric)
-				delta := metric.GetCounter().GetValue() - before[labels.String()]
-				if delta > 0 {
-					totals[values.role+"/"+string(labels["resource"])] += delta
-				}
+			if err != nil {
+				r.Error = err.Error()
+			} else {
+				r.Complete = true
 			}
 		}
+		reports = append(reports, r)
 	}
-	keys := make([]string, 0, len(totals))
-	for key := range totals {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	evidence := make([]string, 0, len(keys)+1)
-	for _, key := range keys {
-		parts := strings.SplitN(key, "/", 2)
-		evidence = append(evidence, fmt.Sprintf("%s %s capacity rejections increased by %g", parts[0], parts[1], totals[key]))
-	}
-	var peakKey string
-	for key, value := range maximums {
-		if strings.HasSuffix(key, "/process_cpu_cores") && (peakKey == "" || value > maximums[peakKey]) {
-			peakKey = key
+	sort.Slice(reports, func(i, j int) bool {
+		if reports[i].Identity != reports[j].Identity {
+			return reports[i].Identity < reports[j].Identity
 		}
-	}
-	if peakKey != "" {
-		evidence = append(evidence, fmt.Sprintf("peak %s was %.2f cores", strings.TrimSuffix(peakKey, "/process_cpu_cores"), maximums[peakKey]))
-	}
-	return evidence
-}
-
-func metricIdentity(name string, metric *dto.Metric) model.Metric {
-	labels := model.Metric{model.MetricNameLabel: model.LabelValue(name)}
-	for _, label := range metric.Label {
-		labels[model.LabelName(label.GetName())] = model.LabelValue(label.GetValue())
-	}
-	return labels
+		return reports[i].Phase < reports[j].Phase
+	})
+	return reports
 }
 
 func scalarMetric(families []*dto.MetricFamily, name string) (float64, bool) {
 	for _, family := range families {
-		if family.GetName() != name || len(family.Metric) != 1 || len(family.Metric[0].Label) != 0 {
+		if family.GetName() != name {
 			continue
 		}
-		metric := family.Metric[0]
-		switch {
-		case metric.Counter != nil:
-			return metric.Counter.GetValue(), true
-		case metric.Gauge != nil:
-			return metric.Gauge.GetValue(), true
-		case metric.Untyped != nil:
-			return metric.Untyped.GetValue(), true
+		var total float64
+		for _, metric := range family.Metric {
+			switch {
+			case metric.Counter != nil:
+				total += metric.Counter.GetValue()
+			case metric.Gauge != nil:
+				total += metric.Gauge.GetValue()
+			case metric.Untyped != nil:
+				total += metric.Untyped.GetValue()
+			}
 		}
+		return total, true
 	}
 	return 0, false
 }
 
-func bottleneckFromEvidence(evidence []string) (string, bool) {
-	for _, item := range evidence {
-		fields := strings.Fields(item)
-		if len(fields) >= 3 && fields[2] == "capacity" {
-			return fields[0] + " " + strings.ReplaceAll(fields[1], "_", " ") + " capacity", true
-		}
+func formatReportMarkdown(r benchmarkReport) string {
+	var out strings.Builder
+	fmt.Fprintf(&out, "# Benchmark result\n\nStatus: **%s**. Visitors: %s. Publisher shutdown: %s. Infrastructure: %s.\n\n", r.Status, r.VisitorStatus, r.ShutdownStatus, r.InfrastructureCleanup)
+	if r.Plan != nil {
+		fmt.Fprintf(&out, "Target: %d routes, %d fresh requests/sec, %d concurrent, %d waiting; %d repeated windows.\n\n", r.Plan.Target.Routes, r.Plan.Target.FreshConnectionsPerSecond, r.Plan.Target.Concurrency, r.Plan.Target.QueueSlots, r.Plan.Target.Repetitions)
 	}
-	return "", false
-}
-
-func classifyBenchmarkFailure(failure string) string {
-	lower := strings.ToLower(failure)
-	switch {
-	case strings.Contains(lower, "lifecycle churn"):
-		return "publisher lifecycle churn"
-	case strings.Contains(lower, "held stream"):
-		return "held visitor streams"
-	case strings.Contains(lower, "fresh visitor"):
-		return "fresh visitor throughput"
-	case strings.Contains(lower, "source limiter"):
-		return "ingress source limiter"
-	case strings.Contains(lower, "metrics"):
-		return "benchmark instrumentation"
-	default:
-		return "worker failure"
+	names := make([]string, 0, len(r.Phases))
+	for name := range r.Phases {
+		names = append(names, name)
 	}
-}
-
-func workerKindCount(seen map[string]struct{}, kind string) int {
-	count := 0
-	for key := range seen {
-		if strings.HasPrefix(key, kind+":") {
-			count++
-		}
-	}
-	return count
-}
-
-func capacitySummary(cells []cellReport) (highest, repeatable, saturation *capacityPoint) {
-	targets := make(map[string]*capacityPoint)
-	failed := make(map[string]bool)
-	for _, cell := range cells {
-		if cell.FailureStage != "" && cell.FailureStage != "measurement" {
+	sort.Strings(names)
+	fmt.Fprintln(&out, "| Phase | Offered | Successful | Failed | Missed | Queue expired | p95 total (ms) |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: |")
+	for _, name := range names {
+		p := r.Phases[name]
+		if p.Visitor == nil {
+			fmt.Fprintf(&out, "| %s | %d | %d | %d | - | - | %s |\n", name, p.Attempts, p.Successes, p.Errors, formatOptionalDuration(histogramPercentile(p.Total, 95), 1))
 			continue
 		}
-		point := targets[cell.Target]
-		if point == nil {
-			created := capacityPointFromCell(cell)
-			point = &created
-			targets[cell.Target] = point
-		}
-		point.Repetitions++
-		if cell.Status == "passed" {
-			point.Passed++
-		} else {
-			failed[cell.Target] = true
+		v := p.Visitor
+		fmt.Fprintf(&out, "| %s | %d | %d | %d | %d | %d | %s |\n", name, v.Scheduled, v.Successes, v.Failures, v.Missed, v.QueueExpired, formatOptionalDuration(histogramPercentile(&v.Total, 95), 1))
+	}
+	fmt.Fprintln(&out, "\nLatencies are approximate histogram percentiles; worker bucket counts are merged before computing percentiles.")
+	for _, process := range r.ServerDurations {
+		fmt.Fprintf(&out, "## %s %s / %s\n\ncomplete: %t; %s\n\n", process.Role, process.Identity, process.Phase, process.Complete, process.Error)
+		for _, d := range process.Durations {
+			fmt.Fprintf(&out, "- %s %v: %d observations; p95 %s ms\n", d.Name, d.Labels, d.Count, formatOptionalDuration(d.P95Seconds, 1000))
 		}
 	}
-	for target, point := range targets {
-		if point.Passed == point.Repetitions && (highest == nil || point.Sequence > highest.Sequence) {
-			copy := *point
-			highest = &copy
-		}
-		if point.Repetitions >= 2 && point.Passed == point.Repetitions && (repeatable == nil || point.Sequence > repeatable.Sequence) {
-			copy := *point
-			repeatable = &copy
-		}
-		if failed[target] && (saturation == nil || point.Sequence < saturation.Sequence) {
-			copy := *point
-			saturation = &copy
-		}
+	for _, failure := range r.Failures {
+		fmt.Fprintf(&out, "\n- %s\n", failure)
 	}
-	return highest, repeatable, saturation
+	return out.String()
 }
-
-func capacityRamps(cells []cellReport) []capacityRamp {
-	byAxis := make(map[string][]cellReport)
-	for _, cell := range cells {
-		byAxis[cell.Axis] = append(byAxis[cell.Axis], cell)
-	}
-	axes := make([]string, 0, len(byAxis))
-	for axis := range byAxis {
-		axes = append(axes, axis)
-	}
-	sort.Strings(axes)
-	result := make([]capacityRamp, 0, len(axes))
-	for _, axis := range axes {
-		highest, repeatable, saturation := capacitySummary(byAxis[axis])
-		result = append(result, capacityRamp{
-			Axis: axis, LastPassing: highest, LastRepeatablyPassing: repeatable, FirstFailing: saturation,
-		})
-	}
-	return result
-}
-
-func capacityPointFromCell(cell cellReport) capacityPoint {
-	value, unit := capacityValue(cell)
-	perDollar := float64(0)
-	if cell.MonthlyCostUSD > 0 {
-		perDollar = value / cell.MonthlyCostUSD
-	}
-	return capacityPoint{
-		Target: cell.Target, Axis: cell.Axis, Sequence: cell.Sequence, Routes: cell.Routes,
-		FreshRate: cell.FreshRate, HeldStreams: cell.HeldStreams,
-		LifecycleChurn: cell.LifecycleChurn, PayloadBytes: cell.PayloadBytes,
-		CapacityValue: value, CapacityUnit: unit, MonthlyCostUSD: cell.MonthlyCostUSD, CapacityPerDollar: perDollar,
-		Recovery: cell.Recovery,
-	}
-}
-
-func capacityValue(cell cellReport) (float64, string) {
-	switch cell.Axis {
-	case "lifecycle_churn":
-		if phase, found := cell.Phases["lifecycle_churn"]; found {
-			return phase.AchievedRate, "route sessions/s"
-		}
-		return float64(cell.LifecycleChurn), "route sessions/s"
-	case "fresh_connections":
-		if phase, found := cell.Phases["fresh"]; found {
-			return phase.AchievedRate, "connections/s"
-		}
-		return float64(cell.FreshRate), "connections/s"
-	case "held_streams":
-		return float64(cell.HeldStreams), "streams"
-	case "bandwidth":
-		return cell.BandwidthBPS, "bytes/s"
-	default:
-		return float64(cell.Routes), "routes"
-	}
-}
-
-func histogramMaximum(histogram *durationHistogram) float64 {
-	if histogram == nil {
-		return 0
-	}
-	return histogram.MaximumMilliseconds
-}
-
-func writeReportJSON(path string, report benchmarkReport) error {
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
-	if err != nil {
-		return fmt.Errorf("create report JSON: %w", err)
-	}
-	encoder := json.NewEncoder(file)
-	encoder.SetIndent("", "  ")
-	encodeErr := encoder.Encode(report)
-	closeErr := file.Close()
-	return errors.Join(encodeErr, closeErr)
-}
-
-func formatReportMarkdown(report benchmarkReport) string {
-	var output strings.Builder
-	fmt.Fprintf(&output, "# Fly Benchmark Report\n\nStatus: **%s**\n\n", report.Status)
-	if report.InfrastructureCleanup != "" {
-		fmt.Fprintf(&output, "Infrastructure cleanup: **%s**.\n\n", report.InfrastructureCleanup)
-	}
-	if report.Incomplete {
-		output.WriteString("The campaign ended before all planned cells produced results.\n\n")
-	}
-	fmt.Fprintf(&output, "Result rows: %d passed, %d failed, %d total.\n\n", report.PassedRows, report.FailedRows, report.ResultRows)
-	if report.ProfileID != "" {
-		fmt.Fprintf(&output, "Profile: `%s` in `%s`; %d control, %d ingress, %dx%d relay processes; certificates: %s.\n\n",
-			report.ProfileID, report.Region, report.Topology.ControlProcesses, report.Topology.IngressProcesses,
-			report.Topology.RelayServices, report.Topology.RelayProcessesPerService, report.CertificateAuthority)
-		fmt.Fprintf(&output, "Campaign spend estimate: **$%.4f expected, $%.4f maximum**.\n\n",
-			report.ExpectedSpendUSD, report.MaximumSpendUSD)
-	}
-	if len(report.CapacityRamps) == 1 {
-		writeCapacityPoint(&output, "Highest passing cell", report.HighestPassing)
-		writeCapacityPoint(&output, "Highest repeatably passing cell", report.HighestRepeatablyPassing)
-		writeCapacityPoint(&output, "First saturation point", report.FirstSaturation)
-	}
-	if len(report.CapacityRamps) != 0 {
-		output.WriteString("## Ramp Boundaries\n\n")
-		for _, ramp := range report.CapacityRamps {
-			fmt.Fprintf(&output, "### %s\n\n", ramp.Axis)
-			writeCapacityPoint(&output, "Last passing target", ramp.LastPassing)
-			writeCapacityPoint(&output, "Last repeatably passing target", ramp.LastRepeatablyPassing)
-			writeCapacityPoint(&output, "First failing target", ramp.FirstFailing)
-		}
-	}
-	output.WriteString("\nThese are observed benchmark boundaries, not product SLOs.\n\n")
-	output.WriteString("| Cell | Axis | Status | Routes | Churn/s | Fresh/s | Held | Payload | MiB/s | Monthly | Capacity/$ | Recovery | Bottleneck |\n")
-	output.WriteString("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |\n")
-	for _, cell := range report.Cells {
-		fmt.Fprintf(&output, "| %s | %s | %s | %d | %d | %d | %d | %d | %.2f | $%.2f | %.4f | %s | %s |\n",
-			cell.CellID, cell.Axis, cell.Status, cell.Routes, cell.LifecycleChurn, cell.FreshRate,
-			cell.HeldStreams, cell.PayloadBytes, cell.BandwidthBPS/(1<<20), cell.MonthlyCostUSD,
-			cell.CapacityPerDollar, formatRecovery(cell.Recovery), cell.Bottleneck)
-	}
-	for _, cell := range report.Cells {
-		fmt.Fprintf(&output, "\n## %s\n\n", cell.CellID)
-		fmt.Fprintf(&output, "Visitor workload: **%s**. Route-session shutdown: **%s**.\n\n", cell.VisitorStatus, cell.ShutdownStatus)
-		output.WriteString("Duration percentiles are approximate histogram estimates; n/a means no observations or an unbounded overflow bucket.\n\n")
-		output.WriteString("Server workload intervals bracket all load workers' fresh phases, after setup and before recovery or teardown. Each process is reported separately.\n\n")
-		output.WriteString("Activation intervals bracket the metrics-owning publisher worker's activation, not a synchronized fleet activation.\n\n")
-		output.WriteString("| Phase | Attempts | Successes | Errors | Rate | Concurrency | DNS p95 ms | Connect p95 ms | TLS p95 ms | TTFB p95 ms | Total p95 ms |\n")
-		output.WriteString("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n")
-		names := make([]string, 0, len(cell.Phases))
-		for name := range cell.Phases {
-			names = append(names, name)
-		}
-		sort.Strings(names)
-		for _, name := range names {
-			phase := cell.Phases[name]
-			fmt.Fprintf(&output, "| %s | %d | %d | %d | %.2f | %d | %s | %s | %s | %s | %s |\n",
-				name, phase.Attempts, phase.Successes, phase.Errors, phase.AchievedRate, phase.Concurrency,
-				formatOptionalDuration(phase.DNSP95, 1), formatOptionalDuration(phase.ConnectP95, 1),
-				formatOptionalDuration(phase.TLSP95, 1), formatOptionalDuration(phase.FirstByteP95, 1), formatOptionalDuration(phase.TotalP95, 1))
-		}
-		if len(cell.ServerDurations) == 0 {
-			output.WriteString("\nServer metrics: no measurement intervals were collected.\n")
-		}
-		for _, interval := range cell.ServerDurations {
-			fmt.Fprintf(&output, "\n### Server durations: %s / %s / %s\n\n", interval.Role, interval.Identity, interval.Phase)
-			fmt.Fprintf(&output, "Interval: %s to %s; complete: %t.\n\n", interval.StartedAt.Format(time.RFC3339Nano), interval.EndedAt.Format(time.RFC3339Nano), interval.Complete)
-			if interval.Error != "" {
-				fmt.Fprintf(&output, "Metrics unavailable or incomplete: %s.\n\n", interval.Error)
-			}
-			if len(interval.Durations) == 0 {
-				output.WriteString("No duration observations available.\n")
-				continue
-			}
-			output.WriteString("| Metric / labels | Count | Sum s | Mean ms | Approx p50 ms | Approx p95 ms | Approx p99 ms |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: |\n")
-			for _, duration := range interval.Durations {
-				labels, _ := json.Marshal(duration.Labels)
-				mean := "n/a"
-				if duration.Count > 0 {
-					mean = fmt.Sprintf("%.3f", duration.MeanSeconds*1000)
-				}
-				fmt.Fprintf(&output, "| %s %s | %d | %.6f | %s | %s | %s | %s |\n", duration.Name, strings.ReplaceAll(string(labels), "|", "\\|"), duration.Count,
-					duration.SumSeconds, mean, formatOptionalDuration(duration.P50Seconds, 1000), formatOptionalDuration(duration.P95Seconds, 1000), formatOptionalDuration(duration.P99Seconds, 1000))
-			}
-		}
-		for _, failure := range cell.Failures {
-			fmt.Fprintf(&output, "\nFailure: %s\n", failure)
-		}
-		for _, evidence := range cell.BottleneckEvidence {
-			fmt.Fprintf(&output, "\nBottleneck evidence: %s.\n", evidence)
-		}
-	}
-	return output.String()
-}
-
 func formatOptionalDuration(value *float64, scale float64) string {
 	if value == nil {
 		return "n/a"
 	}
-	return fmt.Sprintf("%.2f", *value*scale)
-}
-
-func writeCapacityPoint(output *strings.Builder, label string, point *capacityPoint) {
-	if point == nil {
-		fmt.Fprintf(output, "%s: not established.\n\n", label)
-		return
-	}
-	fmt.Fprintf(output, "%s: **%.2f %s** (%d routes, %d churn/s, %d fresh/s, %d held, %d-byte payload; %d/%d repetitions passed",
-		label, point.CapacityValue, point.CapacityUnit, point.Routes, point.LifecycleChurn,
-		point.FreshRate, point.HeldStreams, point.PayloadBytes, point.Passed, point.Repetitions)
-	if point.MonthlyCostUSD > 0 {
-		fmt.Fprintf(output, "; $%.2f/month, %.4f %s per monthly dollar", point.MonthlyCostUSD, point.CapacityPerDollar, point.CapacityUnit)
-	}
-	if point.Recovery != nil {
-		fmt.Fprintf(output, "; recovery %s", formatRecovery(point.Recovery))
-	}
-	output.WriteString(").\n\n")
-}
-
-func formatRecovery(recovery *recoveryReport) string {
-	if recovery == nil {
-		return "not triggered"
-	}
-	if recovery.RecoveredWorkers != recovery.Workers {
-		return fmt.Sprintf("not recovered (%d/%d)", recovery.RecoveredWorkers, recovery.Workers)
-	}
-	return fmt.Sprintf("%.0f ms (%d/%d)", recovery.DurationMilliseconds, recovery.RecoveredWorkers, recovery.Workers)
+	return fmt.Sprintf("%.3f", *value*scale)
 }

@@ -109,40 +109,14 @@ func TestFlyMachineRunUsesOneControlledCommand(t *testing.T) {
 	machine, err := platform.runMachine(t.Context(), machineSpec{
 		App: "relay-app", Name: "relay-a-1", Image: "registry/image:tag", Command: "/tnld serve",
 		Size: "performance-1x", Restart: "always", Env: map[string]string{"TNLD_ROLE": "relay"},
-		Ports: []string{"443:443/tcp", "443:443/udp"}, Volumes: []string{"vol_state:/state"},
+		Ports: []string{"443:443/tcp", "443:443/udp"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if machine.ID != "machine-1" || len(executor.calls) != 2 || executor.calls[0].args[3] != "/tnld serve" ||
-		!slices.Contains(executor.calls[0].args, "--autostop=off") || slices.Contains(executor.calls[0].args, "off") ||
-		!slices.Contains(executor.calls[0].args, "vol_state:/state") {
+		!slices.Contains(executor.calls[0].args, "--autostop=off") || slices.Contains(executor.calls[0].args, "off") {
 		t.Fatalf("machine = %#v, calls = %#v", machine, executor.calls)
-	}
-}
-
-func TestFlyCreatesAndDestroysExactVolume(t *testing.T) {
-	executor := &executorStub{responses: [][]byte{
-		[]byte(`{"id":"vol_123","name":"publisher_state_0","region":"sjc","size_gb":1}`), nil,
-	}}
-	platform := flyPlatform{binary: "fly", region: "sjc", executor: executor}
-	volume, err := platform.createVolume(t.Context(), "publisher-app", "publisher_state_0", 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if volume.ID != "vol_123" {
-		t.Fatalf("volume = %#v", volume)
-	}
-	if err := platform.destroyVolume(t.Context(), "publisher-app", volume.ID); err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Equal(executor.calls[0].args, []string{
-		"volumes", "create", "publisher_state_0", "--app", "publisher-app", "--region", "sjc",
-		"--size", "1", "--scheduled-snapshots=false", "--json", "--yes",
-	}) || !slices.Equal(executor.calls[1].args, []string{
-		"volumes", "destroy", "vol_123", "--app", "publisher-app", "--yes",
-	}) {
-		t.Fatalf("calls = %#v", executor.calls)
 	}
 }
 

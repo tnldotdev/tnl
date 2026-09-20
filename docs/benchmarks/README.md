@@ -1,269 +1,125 @@
-# Fly Route-Path Benchmark
+# Benchmarks
 
-`tnlbench` provisions an isolated, production-shaped tnl server on Fly and
-measures the complete route path: ingress, internal forwarding to a connected
-relay, the publisher, and its local service. It does not use or modify a
-production tnl deployment.
+Local runtime workloads and Fly use `internal/benchworkload` for publishers,
+visitors, origin responses, scheduling, duration histograms, and authenticated
+coordination. Runners own deployment, fault injection, resource collection, and
+infrastructure cleanup. The [assertion inventory](assertions.md) records the checks
+retained from the retired aggregate workload.
 
-The production profile uses:
+## Local workloads
 
-- Two control processes sharing one transient Fly Managed Postgres cluster.
-- Two ingress processes behind one public ingress address.
-- Fly PROXY v2 metadata preserving each visitor source address at ingress.
-- Two relay services, each with two relay processes behind one relay address.
-- Automatic control, relay transport, and route certificate issuance. A
-  benchmark-local authoritative resolver avoids stale recursive DNS during
-  validation and load; capacity suites use private Pebble ACME, while the small
-  compatibility suite uses Let's Encrypt.
-- A transient server-domain Route 53 zone and a nested managed deployment
-  domain zone.
+See [Contributing](../../CONTRIBUTING.md#runtime-load) for the canonical
+`go:test:load:runtime` task, resource limits, and smoke/reference/fault commands.
+Routine tests need no external infrastructure. Focused integration tests validate
+individual boundaries; larger load and fault runs are explicit opt-ins.
 
-Publisher generators share the built-in authority's permanent administrator
-identity and personal team. The runner assigns routes in stable 250-route bands
-and starts only the generators needed by a cell. Four encrypted 1 GiB Fly
-volumes retain publisher state and reusable route certificates between cells.
-The profile keeps every load worker below 40 fresh visitor connections per
-second so the ingress source limiter does not become the measured boundary.
+The smoke defaults to four routes, 16 fresh HTTPS requests/sec, 128 concurrent
+request workers, eight waiting slots, both publisher transports, and a 32KiB
+response. The reference uses 64 routes and 160 requests/sec with the same worker
+and queue budgets. Historical eight-worker results describe a different generator.
 
-## Plan
+## Fly plan and execution
 
-Planning is read-only. It does not call Fly, Route 53, or ACME. Always inspect
-the topology, worker counts, duration, and estimated spend before approving
-execution.
+Fly runs **one explicit target** per deployment. Repetitions are measurement
+windows using the same running publishers and cached certificates. Setup,
+measurement, publisher shutdown, and infrastructure cleanup are reported
+separately. A cold-start measurement uses a new invocation.
 
-```console
-BENCH_SUITE=smoke mise exec -- task go:bench-fly:plan
-BENCH_SUITE=scout mise exec -- task go:bench-fly:plan
-BENCH_SUITE=scout BENCH_AXIS=active_routes mise exec -- task go:bench-fly:plan
-BENCH_SUITE=confirm \
-  BENCH_ROUTES=500 \
-  BENCH_FRESH_CONNECTIONS_PER_SECOND=30 \
-  BENCH_HELD_STREAMS=1000 \
-  BENCH_LIFECYCLE_CHURN_PER_SECOND=5 \
-  BENCH_PAYLOAD_BYTES=262144 \
-  mise exec -- task go:bench-fly:plan
-```
-
-Set `BENCH_PLAN_FORMAT=json` for machine-readable output. Pricing is a dated
-estimate. The maximum includes one full month of the configured Managed
-Postgres cluster and publisher volumes plus two Route 53 hosted-zone charges in
-case cleanup fails. Resources retained longer than one month can exceed that
-estimate. The estimate excludes backups, DNS queries, image builds, public
-egress, and failed retries.
-
-The suites are:
-
-- `smoke`: one small cell that validates provisioning and the full data path.
-- `scout`: independent active-route, route-session lifecycle-churn,
-  fresh-connection, held-stream, and bandwidth ramps.
-- `confirm`: three repetitions of one explicitly supplied target.
-- `compatibility`: one minimal cell against Let's Encrypt for public-CA
-  compatibility, not capacity discovery.
-
-`BENCH_AXIS` (or `--axis`) selects one axis already present in the suite. The
-planner preserves its targets, order, and worker shapes and recalculates result
-counts, duration, and spend before execution. An unknown or absent axis is an
-error. Omitting it runs the entire suite. Axis selection does not change DNS
-resolution: correctness and measured visitor requests still use public route DNS.
-
-## Prerequisites
-
-Execution requires:
-
-- `flyctl` authenticated to the organization selected by `BENCH_FLY_ORG`, with
-  access to Fly Managed Postgres in the profile region. Set
-  `BENCH_FLY_BINARY` if it is not on `PATH`.
-- AWS credentials in the standard environment variables with permission to
-  create and delete Route 53 hosted zones and update the parent zone.
-- An existing public Route 53 parent zone and its bare hosted-zone ID.
-- An ACME account email. Capacity suites use it with private Pebble, while the
-  compatibility suite submits it to Let's Encrypt.
-
-The benchmark tasks load `.env.bench` automatically. Create the ignored local
-file with owner-only permissions, then fill in the benchmark settings and AWS
-credentials:
+`benchmarks/fly.json` contains infrastructure only: region, replicated server
+topology, machine sizes, Managed PostgreSQL, and generator limits. Both `plan` and
+`run` use the same workload options. There is no automatic scouting, inferred
+capacity ranking, pricing, or capacity-per-dollar calculation.
 
 ```console
-install -m 0600 .env.bench.example .env.bench
+mise exec -- task go:bench-fly:plan
+mise exec -- env BENCH_SUITE=target BENCH_ROUTES=64 BENCH_FRESH_CONNECTIONS_PER_SECOND=160 BENCH_DURATION=30s BENCH_REPETITIONS=3 task go:bench-fly:plan
 ```
 
-The runner copies the active AWS credentials into encrypted Fly secrets on the
-control app because control manages benchmark DNS and certificates. It creates
-a built-in login token for publisher authentication and never writes generated
-credentials or AWS credentials to the run manifest. Keep `.env.bench` at mode
-`0600`, use dedicated least-privilege credentials, and do not add
-`BENCH_APPROVED` to the file.
+The plan is read-only. It prints the target, resource counts and sizes, generator
+budgets, and execution bounds. Review that plan before approving execution.
 
-Validate Fly access, Managed Postgres access, AWS credentials, the parent
-hosted zone, domain, and ACME email without creating resources:
+Execution requires explicit `BENCH_SUITE` and `BENCH_APPROVED=1`, plus:
+
+- Fly CLI access to `BENCH_FLY_ORG` and Managed PostgreSQL in the selected region.
+- AWS credentials with Route 53 access.
+- `BENCH_PARENT_DOMAIN` and bare `BENCH_PARENT_ZONE_ID` for an existing public zone.
+- `BENCH_ACME_EMAIL` for certificate issuance.
+
+Task loads local infrastructure settings from `.env.bench`. Credentials are passed
+through platform secrets and excluded from the ownership manifest. Access checks
+run inside `run` before resources are created.
+
+After explicit approval of the smoke plan:
 
 ```console
-mise exec -- task go:bench-fly:preflight
+mise exec -- env BENCH_SUITE=smoke BENCH_APPROVED=1 task go:bench-fly:run
 ```
 
-## Execute
+To check public certificate issuance, plan a smoke with
+`BENCH_CERTIFICATE_AUTHORITY=letsencrypt` and obtain approval for that plan. Other
+runs use private Pebble with real DNS validation. Public-CA checks remain small.
 
-Execution creates paid Fly and AWS resources. A plan is not approval. Set both
-`BENCH_SUITE` and `BENCH_APPROVED=1` on the execution command after reviewing
-that exact suite's plan. Review and approve again if the suite, overrides,
-resources, or estimated cost ceiling changes.
+## Workload options
+
+| Setting                              | Default | Meaning                                                    |
+| ------------------------------------ | ------: | ---------------------------------------------------------- |
+| `BENCH_SUITE`                        |   smoke | `smoke` or `target`; execution requires explicit selection |
+| `BENCH_ROUTES`                       |       4 | Published routes                                           |
+| `BENCH_FRESH_CONNECTIONS_PER_SECOND` |      16 | Total offered fresh requests/sec                           |
+| `BENCH_HELD_STREAMS`                 |       4 | Held visitor streams                                       |
+| `BENCH_CONCURRENCY`                  |     128 | Total fresh-request concurrency                            |
+| `BENCH_QUEUE_SLOTS`                  |       8 | Total waiting slots, independently distributed             |
+| `BENCH_PAYLOAD_BYTES`                |   32768 | Verified response payload                                  |
+| `BENCH_WARMUP`                       |      5s | Setup settling time                                        |
+| `BENCH_DURATION`                     |     10s | Fixed offering window                                      |
+| `BENCH_REPETITIONS`                  |       1 | Measurement windows in the same deployment                 |
+| `BENCH_CERTIFICATE_AUTHORITY`        |  pebble | `pebble` or small `letsencrypt` smoke                      |
+
+Fly distributes visitors before reaching the per-source connection limit. The
+infrastructure profile permits 30 fresh requests/sec per generator; 160/sec needs
+six visitor Machines, with the 128 concurrent workers and eight waiting slots
+distributed across them. The request budget is five seconds including queue delay.
+Held-stream opening has its own five-second deadline, separate from stream lifetime.
+
+The coordinator owns phase barriers and waits for every participant before
+measuring. Publishers stay alive across windows and abort the run on unexpected
+exit. Client state is private run-local storage; no publisher Fly volumes are
+created. Each publisher process embeds the shared origin handler, so its resource
+observations include the origin.
+
+## Results
+
+Artifacts are written beneath `bench-results/<run-id>/`:
+
+- `plan.json`: exact infrastructure and target.
+- `manifest.json`: owned resources, progress, and cleanup outcome.
+- `results.jsonl`: participant results, shared visitor measurements, and metrics.
+- `report.json` and `report.md`: merged window summaries and per-process metrics.
+- `diagnostics/`: bounded, redacted snapshots on failure.
+
+Scheduled, started, completed, successful, failed, timed-out, missed, and
+queue-expired requests are distinct. Queue delay, DNS, connect, TLS, first body
+byte, and total duration are measured. Histograms merge bucket counts, never
+worker percentiles. Offering and drain durations remain separate. Normal windows
+require zero failures, missed offers, and expired queued requests.
+
+Local fault artifacts additionally retain request timestamps, fault boundaries,
+drop counters, cgroup CPU/throttling/memory/network observations, raw `.prom`
+scrapes, usage reconciliation, and container exit evidence. Blackhole disruptions
+are reported even when subsequent recovery and final verification pass.
+
+Result and configuration formats are replaced directly; old campaign results
+remain historical artifacts rather than inputs to this reporter.
+
+## Cleanup and reporting
+
+The runner records ownership durably and cleans up after success or failure.
+Interrupted cleanup is resumable and verifies exact resource ownership before
+mutation. Control must be removed before deleting its PostgreSQL cluster.
 
 ```console
-BENCH_APPROVED=1 mise exec -- task go:bench-fly:run
+mise exec -- env BENCH_RUN=bench-results/<run-id> task go:bench-fly:cleanup
+mise exec -- env BENCH_RUN=bench-results/<run-id> task go:bench-fly:report
 ```
 
-For an approved active-route-only scout, use the same selection as the plan:
-
-```console
-BENCH_SUITE=scout BENCH_AXIS=active_routes BENCH_APPROVED=1 mise exec -- task go:bench-fly:run
-```
-
-The runner creates `bench-results/<run-id>/` before provisioning and records
-each resource in `manifest.json` as soon as creation starts. It provisions Fly
-Managed Postgres, builds one benchmark-only image, migrates with the direct
-database URL, and serves through the pooled database URL. It waits for every
-Route 53 authoritative name server to publish each delegated zone and server
-address, starts and probes every process, executes cells sequentially, saves
-results, removes all recorded resources, then writes reports including the
-infrastructure cleanup outcome. The first control
-process establishes the public control endpoint before the other control
-process starts, avoiding concurrent initial certificate issuance.
-
-A measured workload saturation result allows later cells only when every load
-worker demonstrates recovery. Setup, activation, churn warmup, instrumentation,
-and cleanup failures stop the campaign and trigger cleanup. Activation consumes
-failures as routes start and aborts after two minutes without another route
-becoming ready (`tnlbench publisher --no-progress-timeout`). Partial worker
-results are collected without waiting for the remaining workers. Setup failures
-are reported separately and do not establish saturation boundaries.
-
-Each cell uses bounded activation, DNS readiness, visitor measurement, then
-bounded route-session shutdown. Normal shutdown honors the same per-generator
-`tnlbench publisher --parallel` limit as activation (16 by default): it cancels
-and awaits one publisher in each available slot before starting another stop.
-Successful shutdown requires the publishers to finish, including their control
-API close acknowledgments. Close failures remain fatal to the cell; the runner
-does not start the next cell with uncertain prior-session state. The overall
-two-minute shutdown deadline still cancels any remaining routes on expiration.
-
-For `smoke`, `scout`, and `confirm`, the runner starts a private Pebble Machine
-without a public Fly port. Pebble performs normal DNS-01 and TLS-ALPN-01
-validation. Pebble and load workers use a loopback resolver that sends benchmark
-lookups directly to the Route 53 authoritative name servers. Address queries
-return the first valid authoritative answer and finish within two seconds;
-TXT challenge queries retain bounded propagation retries. This avoids stale
-recursive caches without bypassing DNS or challenge checks. The runner combines
-the static Pebble API root with Pebble's
-dynamic issuance root, installs that bundle only in benchmark Machines, and uses
-it for host-side readiness checks without modifying the operator trust store.
-`compatibility` omits Pebble and uses Let's Encrypt, so keep that suite small to
-avoid public CA rate limits.
-
-Each publisher exchanges the same built-in login token, resolves the same
-personal member namespace, and uses its own persistent client-state volume.
-Routes remain enabled between cells while route sessions stop, allowing later
-cells to reuse route state and certificates. Lifecycle churn uses deterministic
-prewarmed routes instead of creating identities or certificates during the
-measured phase. Each active route has an independent churn route so generator
-concurrency does not impose the measured lifecycle-rate boundary.
-
-Managed Postgres credentials remain only in runner memory and encrypted Fly
-secrets. The manifest records the generated cluster identity and configuration,
-publisher volume IDs, and cleanup progress, but never a connection URL or
-password.
-
-The run directory contains:
-
-- `manifest.json`: non-secret resource identities and cleanup progress.
-- `plan.json`: the exact expanded plan used by the run.
-- `results.jsonl`: one schema-version-6 row per publisher or load worker.
-- `report.json` and `report.md`: schema-version-3 capacity, recovery,
-  bottleneck-evidence, monthly-cost, and capacity-per-dollar summaries.
-- `diagnostics/<role>.txt`: redacted Fly Machine status and logs when a server
-  or workload worker fails to start.
-
-The manifest remains after successful cleanup as an audit record. A successful
-run ends with manifest status `cleaned`.
-
-## Recover
-
-The runner attempts cleanup with a separate timeout after an error or interrupt.
-If the process is killed, the network is unavailable, or cleanup reports an
-error, rerun cleanup from the repository root with the same Fly and AWS access:
-
-```console
-BENCH_RUN=bench-results/<run-id> mise exec -- task go:bench-fly:cleanup
-```
-
-Cleanup is resumable. It acts only on exact app names, publisher volume IDs,
-the generated Managed Postgres cluster, and hosted-zone identities recorded for
-the run. It verifies live ownership before mutation and polls until Fly confirms
-the database is absent. Control Machines are removed before the database. Do
-not hand-edit a manifest to target unrelated resources.
-
-To regenerate reports from collected rows without provisioning anything:
-
-```console
-BENCH_RUN=bench-results/<run-id> mise exec -- task go:bench-fly:report
-```
-
-## Interpret Results
-
-Each worker records activation, deactivation, lifecycle-churn, or visitor
-phases, correctness failures, fixed latency histograms, retained route counts,
-and process metrics. The first publisher samples before activation, every five
-seconds through execution and cleanup, and at the ready/loaded boundaries.
-Setup failures retain partial activation counts and the collected metrics. The
-periodic sample window is bounded to 1 MiB to keep result uploads small; any
-omitted older samples are counted in the result and reported explicitly.
-
-Before correctness checks, each load worker records a `dns_readiness` setup
-phase for its assigned hostnames, with at most eight concurrent lookups and a
-five-minute overall deadline within the existing worker timeout. Readiness
-retries only DNS propagation and records duration, successes, and errors even
-when setup fails. Correctness and measured visitor requests still perform their
-normal lookups and retain their existing strict failure criteria. A configured
-public-address override skips the DNS-readiness phase.
-
-Before canceling publishers after an activation failure or no-progress timeout,
-each publisher requests a bounded database snapshot from every control's private
-observability listener and records any collection errors. Snapshots survive in
-`results.jsonl` and `report.json`, with a summary in `report.md`. They include
-PostgreSQL wait events and blocking-session relationships; control request and
-local pgx pool metrics provide the surrounding context. Collection has its own
-five-second deadline, including when the workload context has expired.
-Snapshots also include per-purpose local connection lifecycle counts and, when
-the runtime user can access the PgBouncer admin console, actual pooler settings
-and aggregate client counts. Unavailable pooler inspection is explicit; a plan's
-documented limits are not substituted for observations. Failed-cell logs include
-both configured relay services.
-
-Every worker phase shares a single first-failure capture, including teardown;
-the first failed stop captures database and pool evidence before its slot starts
-another stop. Deactivation records actual successes, errors, and per-stop
-durations, including failed attempts, rather than treating timing entries as
-successful closes. A cancellation joined with a close error remains a failure.
-Reports show visitor workload, route-session shutdown, and infrastructure
-cleanup outcomes separately while retaining the strict overall cell result.
-
-Fresh-connection and lifecycle-churn cells pass only when they complete without
-operation errors and sustain at least 95 percent of the assigned target rate.
-Lifecycle-churn routes are created and brought to readiness before load, so the
-measured phase covers route-session start/stop work rather than first-use route
-or certificate setup. Stored routes are removed with transient Managed Postgres
-after the campaign. Reports merge histogram buckets rather than averaging
-worker percentiles.
-
-After a load worker observes visitor errors or misses its target rate, it first
-releases held streams and then sends one low-rate visitor probe at a time for up
-to 30 seconds. The report records how many saturated workers recovered and the
-slowest observed time until a successful response. This measures post-load
-service recovery; it is not a relay-failure or existing-stream survival test.
-Churn cells also run this visitor recovery check after their visitor measurement.
-
-The report identifies the last passing target, last target that passed every
-repetition, and first failing target independently for each axis. It records
-direct capacity-rejection counter changes and peak sampled process CPU as
-bottleneck evidence, and reports axis capacity divided by estimated monthly
-topology cost. These boundaries describe this benchmark profile and run only;
-they are not an availability SLO or general production capacity guarantee.
+Cleanup failures remain failures and retain resource identities in the manifest.

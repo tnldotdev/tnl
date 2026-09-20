@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/benchworkload"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 )
 
@@ -94,13 +95,13 @@ func TestDatabaseDiagnosticMaximumShapeRoundTrip(t *testing.T) {
 	if len(body) > 2<<20 {
 		t.Fatalf("failure result exceeds coordinator budget: %d bytes", len(body))
 	}
-	coordinator := httptest.NewServer(coordinatorHandler("secret", newCoordinatorState("cell-1", 1, 1, 1)))
+	coordinator := httptest.NewServer(benchworkload.NewCoordinator().Handler("secret"))
 	defer coordinator.Close()
-	client, err := newCoordinatorClient(coordinator.URL, "secret")
+	client, err := benchworkload.NewCoordination(coordinator.URL, "secret")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := client.postResult(t.Context(), result); err != nil {
+	if err := client.Put(t.Context(), "result.load-0", result); err != nil {
 		t.Fatalf("coordinator rejected maximum-shaped failure diagnostics: %v", err)
 	}
 	t.Logf("maximum snapshot: %d bytes; result with eight snapshots and metrics windows: %d of %d bytes", len(encoded)+1, len(body), 2<<20)

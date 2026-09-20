@@ -16,6 +16,7 @@ import (
 
 	dto "github.com/prometheus/client_model/go"
 
+	"github.com/tnldotdev/tnl/internal/benchworkload"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/observability"
 )
@@ -56,23 +57,19 @@ func TestNonzeroFailedPublisherCollectsFailureMetricsWithoutRoutineMetrics(t *te
 		_, _ = w.Write([]byte("tnl_database_pool_acquired_connections 4\n"))
 	}))
 	defer metrics.Close()
-	state := newCoordinatorState("early", 2, 1, 1)
-	coordinator := httptest.NewServer(coordinatorHandler("secret", state))
+	coordinator := httptest.NewServer(benchworkload.NewCoordinator().Handler("secret"))
 	defer coordinator.Close()
 	command := publisherCommand{
-		workerCommand: workerCommand{CellID: "early", Suite: "scout", Axis: "active_routes", Repetition: 1, WorkerIndex: 1, WorkerCount: 2, CoordinatorURL: coordinator.URL, CoordinatorToken: "secret"},
-		ControlCAFile: filepath.Join(t.TempDir(), "missing-ca"), Routes: 1, AssignedRoutes: 1, PayloadBytes: 16, Timeout: time.Second,
+		workerCommand: workerCommand{CellID: "early", WorkerIndex: 1, WorkerCount: 2, CoordinatorURL: coordinator.URL, CoordinatorToken: "secret", Timeout: time.Second},
+		ControlCAFile: filepath.Join(t.TempDir(), "missing-ca"), Routes: 2, PayloadBytes: 16,
 		MetricsURLs: []string{metrics.URL + "/metrics#control"}, DiagnosticURLs: []string{metrics.URL + "/debug/database"},
 	}
 	if err := command.run(t.Context()); err == nil {
 		t.Fatal("expected setup failure")
 	}
-	data, err := coordinatorResults(t.Context(), &coordinatorClient{baseURL: coordinator.URL, token: "secret"}, true)
-	if err != nil {
-		t.Fatal(err)
-	}
+	client, _ := benchworkload.NewCoordination(coordinator.URL, "secret")
 	var result benchmarkResult
-	if err := json.Unmarshal(data, &result); err != nil {
+	if found, err := client.Get(t.Context(), "result.publisher-1", &result); err != nil || !found {
 		t.Fatal(err)
 	}
 	if result.Failure.Stage != "setup" || len(result.Resources) != 1 || result.Resources[0].Moment != "failure" ||
@@ -81,16 +78,16 @@ func TestNonzeroFailedPublisherCollectsFailureMetricsWithoutRoutineMetrics(t *te
 		result.DatabaseDiagnostics[0].Snapshot.Sessions[0].TransactionAgeSeconds != nil {
 		t.Fatalf("result=%+v", result)
 	}
-	reportResult := reportTestResult("early", 0, 1, "publisher", 1, 2, "failed", time.Millisecond)
+	reportResult := passedTestResult(resultWorker{Kind: "publisher", Index: 1, Count: 2})
 	reportResult.DatabaseDiagnostics = result.DatabaseDiagnostics
 	report, err := buildReport([]benchmarkResult{reportResult})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(report.Cells) != 1 || !strings.Contains(strings.Join(report.Cells[0].BottleneckEvidence, "\n"), "oldest transaction unavailable") {
+	if len(report.DatabaseDiagnostics) != 1 || report.DatabaseDiagnostics[0].Snapshot.Sessions[0].TransactionAgeSeconds != nil {
 		t.Fatalf("report did not preserve unavailable database age: %+v", report)
 	}
-	data, err = json.Marshal(controlstate.DatabaseSession{})
+	data, err := json.Marshal(controlstate.DatabaseSession{})
 	if err != nil || !strings.Contains(string(data), `"transaction_age_seconds":null`) || !strings.Contains(string(data), `"query_age_seconds":null`) {
 		t.Fatalf("unavailable database metadata = %s, %v", data, err)
 	}
@@ -179,14 +176,14 @@ func TestProductionMetricsRoundTripSummarizesWorkloadOnly(t *testing.T) {
 	defer server.Close()
 	endpoints := []string{server.URL + "/metrics#control"}
 	metrics.ObserveOperation("HeartbeatRouteSession", nil, time.Second) // Setup.
-	resources := sampleBoundaryResources(t.Context(), endpoints, "ready")
+	resources := sampleBoundaryResources(t.Context(), endpoints, "steady-1-before")
 	for range 3 {
 		metrics.ObserveOperation("HeartbeatRouteSession", nil, 10*time.Millisecond)
 	}
 	metrics.ObserveOperation("HeartbeatRouteSession", errors.New("failed"), 3*time.Minute)
 	canceled, cancel := context.WithCancel(t.Context())
 	cancel()
-	resources = append(resources, sampleBoundaryResources(canceled, endpoints, "loaded")...)
+	resources = append(resources, sampleBoundaryResources(canceled, endpoints, "steady-1-after")...)
 	metrics.ObserveOperation("HeartbeatRouteSession", nil, time.Hour) // Cleanup.
 	encoded, err := json.Marshal(resources)
 	if err != nil {
@@ -210,7 +207,7 @@ func TestProductionMetricsRoundTripSummarizesWorkloadOnly(t *testing.T) {
 			t.Fatalf("overflow error observations = %+v", summary)
 		}
 	}
-	text := formatReportMarkdown(benchmarkReport{Cells: []cellReport{{ServerDurations: reports}}})
+	text := formatReportMarkdown(benchmarkReport{ServerDurations: reports})
 	for _, want := range []string{"approximate histogram", "HeartbeatRouteSession", "complete: true", "n/a"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("markdown missing %q: %s", want, text)
@@ -254,7 +251,7 @@ func TestPeriodicEvictionPreservesProductionMeasurementBoundaries(t *testing.T) 
 	}))
 	defer server.Close()
 	endpoints := []string{server.URL + "#control"}
-	samples := sampleBoundaryResources(t.Context(), endpoints, "before_activation")
+	samples := sampleBoundaryResources(t.Context(), endpoints, "activation-before")
 	large.Store(true)
 	sampler := startResourceSampler(t.Context(), endpoints, time.Millisecond)
 	defer sampler.Stop()
@@ -268,7 +265,7 @@ func TestPeriodicEvictionPreservesProductionMeasurementBoundaries(t *testing.T) 
 	samples = append(samples, sampler.Stop()...)
 	large.Store(false)
 	metrics.ObserveOperation("CreateRouteSession", nil, 2*time.Millisecond)
-	samples = append(samples, sampleBoundaryResources(t.Context(), endpoints, "activated")...)
+	samples = append(samples, sampleBoundaryResources(t.Context(), endpoints, "activation-after")...)
 	if sampler.dropped == 0 {
 		t.Fatal("test did not evict periodic samples")
 	}

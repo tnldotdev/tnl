@@ -1,13 +1,14 @@
 package main
 
 import (
-	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/benchworkload"
 )
 
 func TestLoadCapturesFirstVisitorFailureBeforeNextRequest(t *testing.T) {
@@ -42,19 +43,22 @@ func TestLoadCapturesFirstVisitorFailureBeforeNextRequest(t *testing.T) {
 		}
 	}))
 	defer observability.Close()
-	state := newCoordinatorState("failure", 1, 1, 2)
-	server := httptest.NewServer(coordinatorHandler("secret", state))
+	server := httptest.NewServer(benchworkload.NewCoordinator().Handler("secret"))
 	defer server.Close()
-	client, err := newCoordinatorClient(server.URL, "secret")
+	client, err := benchworkload.NewCoordination(server.URL, "secret")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := client.publisherReady(t.Context(), 0, []benchmarkRouteRegistration{{Index: 0, Hostname: "first.example"}, {Index: 1, Hostname: "second.example"}}); err != nil {
+	urls := []string{"https://first.example", "https://second.example"}
+	if err := client.Put(t.Context(), "routes", urls); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Put(t.Context(), "phase-0", benchworkload.Phase{Name: "correctness", URLs: urls}); err != nil {
 		t.Fatal(err)
 	}
 	command := loadCommand{
-		workerCommand: workerCommand{CellID: "failure", Suite: "scout", Axis: "active_routes", Repetition: 1, WorkerCount: 1, CoordinatorURL: server.URL, CoordinatorToken: "secret"},
-		Routes:        2, PublicAddress: listener.Addr().String(), PayloadBytes: 4, Timeout: time.Second,
+		workerCommand: workerCommand{CellID: "failure", WorkerCount: 1, CoordinatorURL: server.URL, CoordinatorToken: "secret", Timeout: time.Second},
+		Routes:        2, PublicAddress: listener.Addr().String(), PayloadBytes: 4,
 		MetricsURLs: []string{observability.URL + "/metrics#control"}, DiagnosticURLs: []string{observability.URL + "/debug/database"},
 	}
 	if err := command.run(t.Context()); err == nil {
@@ -63,12 +67,8 @@ func TestLoadCapturesFirstVisitorFailureBeforeNextRequest(t *testing.T) {
 	if diagnostics.Load() != 1 || metrics.Load() != 1 || visitors.Load() != 2 {
 		t.Fatalf("visitors=%d diagnostics=%d metrics=%d", visitors.Load(), diagnostics.Load(), metrics.Load())
 	}
-	data, err := coordinatorResults(t.Context(), client, true)
-	if err != nil {
-		t.Fatal(err)
-	}
 	var result benchmarkResult
-	if err := json.Unmarshal(data, &result); err != nil {
+	if found, err := client.Get(t.Context(), "result.load-0", &result); err != nil || !found {
 		t.Fatal(err)
 	}
 	if len(result.DatabaseDiagnostics) != 1 || len(result.DatabaseDiagnostics[0].Snapshot.ActiveOperations) != 1 || len(result.Resources) != 1 || result.Resources[0].Moment != "failure" {

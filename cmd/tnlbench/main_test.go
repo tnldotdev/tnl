@@ -1,129 +1,43 @@
 package main
 
 import (
-	"context"
-	"errors"
-	"slices"
 	"testing"
-	"testing/synctest"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/controlclient"
-	"github.com/tnldotdev/tnl/internal/credentials"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/internal/benchworkload"
 )
 
 func TestLoadValidationProtectsSourceLimiter(t *testing.T) {
-	valid := loadCommand{
-		workerCommand: workerCommand{
-			CellID: "cell", Suite: "smoke", Axis: "smoke", Repetition: 1, CoordinatorURL: "http://coordinator.internal:8080",
-			CoordinatorToken: "secret", WorkerCount: 1,
-		},
-		Routes: 1, TotalFreshRate: 30, TotalHeldStreams: 1,
-		FreshRate: 30, HeldStreams: 1, Warmup: 1, Duration: 1,
-		PayloadBytes: 1, Timeout: 1,
-	}
-	if err := valid.Validate(); err != nil {
+	c := loadCommand{workerCommand: workerCommand{CellID: "target", CoordinatorURL: "http://coordinator.internal:8080", CoordinatorToken: "token", WorkerCount: 1, Timeout: time.Minute}, Routes: 4, FreshRate: 30, HeldStreams: 4, Concurrency: 128, QueueSlots: 8, PayloadBytes: 32768}
+	if err := c.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	valid.FreshRate = 40
-	if err := valid.Validate(); err == nil {
-		t.Fatal("source-limiter rate was accepted")
+	c.FreshRate = 40
+	if c.Validate() == nil {
+		t.Fatal("accepted source-limiter rate")
 	}
-	valid.FreshRate = 30
-	valid.ResolverAddress = "missing-port"
-	if err := valid.Validate(); err == nil {
-		t.Fatal("invalid resolver address was accepted")
+	c.FreshRate = 30
+	c.ResolverAddress = "missing-port"
+	if c.Validate() == nil {
+		t.Fatal("accepted invalid resolver")
 	}
 }
 
-func TestPublisherRouteShardingUsesStableBands(t *testing.T) {
-	var all []int
-	for worker := range 5 {
-		indexes := benchmarkRouteIndexes(43, 10, 5, worker)
-		for _, index := range indexes {
-			if index/10 != worker {
-				t.Fatalf("route %d assigned to worker %d", index, worker)
+func TestAssignmentsCoverEachRouteAndPreserveBudgets(t *testing.T) {
+	seen := make(map[int]bool)
+	workers, queue, rate := 0, 0, 0
+	for i := range 6 {
+		for _, index := range benchworkload.RouteIndexes(43, 6, i) {
+			if seen[index] {
+				t.Fatal("duplicate route")
 			}
+			seen[index] = true
 		}
-		all = append(all, indexes...)
+		workers += benchworkload.Assignment(128, 6, i)
+		queue += benchworkload.Assignment(8, 6, i)
+		rate += benchworkload.Assignment(160, 6, i)
 	}
-	slices.Sort(all)
-	want := make([]int, 43)
-	for index := range want {
-		want[index] = index
+	if len(seen) != 43 || workers != 128 || queue != 8 || rate != 160 {
+		t.Fatal("assignments changed workload")
 	}
-	if !slices.Equal(all, want) {
-		t.Fatalf("routes = %v", all)
-	}
-	if got := benchmarkRouteIndexes(2, 10, 4, 3); len(got) != 0 {
-		t.Fatalf("invalid publisher layout routes = %v", got)
-	}
-}
-
-func TestPublisherValidationAcceptsOneStableBand(t *testing.T) {
-	loginToken, err := credentials.NewLoginToken()
-	if err != nil {
-		t.Fatal(err)
-	}
-	command := publisherCommand{
-		workerCommand: workerCommand{
-			CellID: "cell", Suite: "smoke", Axis: "smoke", Repetition: 1, CoordinatorURL: "http://coordinator.internal:8080",
-			CoordinatorToken: "secret", WorkerCount: 1,
-		},
-		ServerURL: "https://control.example.com", LoginToken: string(loginToken), HostnameSuffix: "routes.example.com",
-		Routes: 2, AssignedRoutes: 2, RoutesPerPublisher: 10, RoutesPerChurn: 10, StateRoot: "/state",
-		FreshRate: 2, Parallel: 1, PayloadBytes: 1, Timeout: 1,
-	}
-	if err := command.Validate(); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestPublisherDiscoveryRetriesUnavailableControl(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		attempts := 0
-		want := controlv1.ControlDiscovery{AuthorityEndpoint: "https://control.example.test"}
-		got, err := retryBenchmarkDiscovery(t.Context(), time.Minute, func(context.Context) (controlv1.ControlDiscovery, error) {
-			attempts++
-			if attempts == 1 {
-				return controlv1.ControlDiscovery{}, controlclient.ErrUnavailable
-			}
-			return want, nil
-		})
-		if err != nil || got.AuthorityEndpoint != want.AuthorityEndpoint || attempts != 2 {
-			t.Fatalf("discovery = %#v, attempts = %d, error = %v", got, attempts, err)
-		}
-
-		wantErr := errors.New("invalid discovery response")
-		_, err = retryBenchmarkDiscovery(t.Context(), time.Minute, func(context.Context) (controlv1.ControlDiscovery, error) {
-			return controlv1.ControlDiscovery{}, wantErr
-		})
-		if !errors.Is(err, wantErr) {
-			t.Fatalf("discovery error = %v, want %v", err, wantErr)
-		}
-	})
-}
-
-func TestStopRoutesWaitsForPublisherAndPreservesDurableRoute(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		canceled := make(chan struct{})
-		done := make(chan error, 1)
-		processes := []*routeProcess{{index: 7, routeID: "route_1", cancel: func() { close(canceled) }, done: done}}
-		finished := make(chan error, 1)
-		go func() { _, err := stopRoutes(t.Context(), processes, 1, nil); finished <- err }()
-		synctest.Wait()
-		select {
-		case <-canceled:
-		default:
-			t.Error("publisher was not canceled")
-		}
-		done <- nil
-		if err := <-finished; err != nil {
-			t.Fatal(err)
-		}
-		if processes[0].routeID != "route_1" {
-			t.Fatal("durable route identity changed while stopping its route session")
-		}
-	})
 }

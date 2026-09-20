@@ -11,6 +11,7 @@ import (
 	"time"
 
 	mdns "github.com/miekg/dns"
+	"github.com/tnldotdev/tnl/internal/benchworkload"
 )
 
 func TestDNSReadinessRetriesPropagationAndRecordsPhase(t *testing.T) {
@@ -86,14 +87,13 @@ func TestDNSReadinessBoundsParallelLookups(t *testing.T) {
 func TestLoadPostsDNSReadinessFailureWithoutMeasuringTraffic(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
-	state := newCoordinatorState("cell-1", 1, 1, 1)
-	coordinator := httptest.NewServer(coordinatorHandler("secret", state))
+	coordinator := httptest.NewServer(benchworkload.NewCoordinator().Handler("secret"))
 	defer coordinator.Close()
-	client, err := newCoordinatorClient(coordinator.URL, "secret")
+	client, err := benchworkload.NewCoordination(coordinator.URL, "secret")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := client.publisherReady(ctx, 0, []benchmarkRouteRegistration{{Index: 0, Hostname: "missing.example.test"}}); err != nil {
+	if err := client.Put(ctx, "routes", []string{"https://missing.example.test"}); err != nil {
 		t.Fatal(err)
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -115,17 +115,16 @@ func TestLoadPostsDNSReadinessFailureWithoutMeasuringTraffic(t *testing.T) {
 		}
 	}()
 	command := loadCommand{
-		workerCommand: workerCommand{CellID: "cell-1", Suite: "scout", Repetition: 1, WorkerCount: 1, CoordinatorURL: coordinator.URL, CoordinatorToken: "secret"},
-		Routes:        1, ResolverAddress: listener.Addr().String(), Timeout: time.Minute,
+		workerCommand: workerCommand{CellID: "cell-1", WorkerCount: 1, CoordinatorURL: coordinator.URL, CoordinatorToken: "secret", Timeout: time.Minute},
+		Routes:        1, ResolverAddress: listener.Addr().String(),
 	}
 	if err := command.run(ctx); err == nil {
 		t.Fatal("DNS setup failure unexpectedly passed")
 	}
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	result, found := state.results["load:0"]
-	if !found || result.Status != "failed" || resultFailureStage(result) != "setup" || len(result.Phases) != 2 ||
-		result.Phases[0].Name != "dns_readiness" || result.Phases[0].Errors != 1 || result.Phases[1].Name != "worker" {
+	var result benchmarkResult
+	found, err := client.Get(t.Context(), "result.load-0", &result)
+	if err != nil || !found || result.Status != "failed" || len(result.Phases) != 1 ||
+		result.Phases[0].Name != "dns_readiness" || result.Phases[0].Errors != 1 {
 		t.Fatalf("setup result lost DNS evidence or ran measurement: %+v", result)
 	}
 }

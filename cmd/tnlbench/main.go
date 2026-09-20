@@ -6,18 +6,19 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/alecthomas/kong"
+	"github.com/tnldotdev/tnl/internal/benchworkload"
 )
 
 type benchmarkCLI struct {
-	Plan        planCommand        `cmd:"" help:"Expand and price a benchmark suite without creating resources."`
-	Preflight   preflightCommand   `cmd:"" help:"Validate benchmark credentials and infrastructure without creating resources."`
+	Plan        planCommand        `cmd:"" help:"Describe one workload and its infrastructure without creating resources."`
 	Run         runCommand         `cmd:"" help:"Provision, execute, collect, and clean up an approved Fly benchmark."`
 	Cleanup     cleanupCommand     `cmd:"" help:"Remove resources recorded by an interrupted benchmark run."`
-	Coordinator coordinatorCommand `cmd:"" help:"Coordinate one benchmark cell."`
+	Coordinator coordinatorCommand `cmd:"" help:"Serve workload phase coordination."`
 	Publisher   publisherCommand   `cmd:"" help:"Create and hold one shard of benchmark routes."`
-	Load        loadCommand        `cmd:"" help:"Generate visitor load for one benchmark cell."`
+	Load        loadCommand        `cmd:"" help:"Generate fresh and held visitor requests."`
 	Report      reportCommand      `cmd:"" help:"Merge worker results and write report artifacts."`
 	Resolver    resolverCommand    `cmd:"" help:"Resolve benchmark hostnames through authoritative DNS."`
 }
@@ -31,8 +32,6 @@ func main() {
 	switch parsed.Command() {
 	case "plan":
 		err = commands.Plan.run(os.Stdout)
-	case "preflight":
-		err = commands.Preflight.run(ctx, os.Stdout)
 	case "run":
 		err = commands.Run.run(ctx, os.Stdout)
 	case "cleanup":
@@ -57,30 +56,21 @@ func main() {
 }
 
 type workerCommand struct {
-	CellID           string `name:"cell-id" env:"TNL_BENCH_CELL_ID" required:"" help:"Expanded benchmark cell ID."`
-	Suite            string `name:"suite" env:"TNL_BENCH_SUITE" required:"" help:"Benchmark suite name."`
-	Axis             string `name:"axis" env:"TNL_BENCH_AXIS" required:"" help:"Independent workload ramp axis."`
-	Repetition       int    `name:"repetition" env:"TNL_BENCH_REPETITION" required:"" help:"One-based repetition."`
-	CoordinatorURL   string `name:"coordinator-url" env:"TNL_BENCH_COORDINATOR_URL" required:"" help:"Coordinator HTTP origin."`
-	CoordinatorToken string `name:"coordinator-token" env:"TNL_BENCH_COORDINATOR_TOKEN" required:"" help:"Coordinator bearer token."`
-	WorkerIndex      int    `name:"worker-index" env:"TNL_BENCH_WORKER_INDEX" help:"Zero-based worker index."`
-	WorkerCount      int    `name:"worker-count" env:"TNL_BENCH_WORKER_COUNT" required:"" help:"Total workers of this kind."`
-	Sequence         int    `name:"sequence" env:"TNL_BENCH_SEQUENCE" help:"Zero-based suite cell sequence."`
+	CellID           string        `name:"cell-id" env:"TNL_BENCH_CELL_ID" required:"" help:"Expanded benchmark cell ID."`
+	CoordinatorURL   string        `name:"coordinator-url" env:"TNL_BENCH_COORDINATOR_URL" required:"" help:"Coordinator HTTP origin."`
+	CoordinatorToken string        `name:"coordinator-token" env:"TNL_BENCH_COORDINATOR_TOKEN" required:"" help:"Coordinator bearer token."`
+	WorkerIndex      int           `name:"worker-index" env:"TNL_BENCH_WORKER_INDEX" help:"Zero-based worker index."`
+	WorkerCount      int           `name:"worker-count" env:"TNL_BENCH_WORKER_COUNT" required:"" help:"Total workers of this kind."`
+	Timeout          time.Duration `name:"timeout" env:"TNL_BENCH_TIMEOUT" default:"30m" help:"Worker deadline."`
 }
 
 func (c workerCommand) validate() error {
-	if c.Repetition <= 0 {
-		return fmt.Errorf("repetition must be positive")
+	if c.Timeout <= 0 {
+		return fmt.Errorf("worker deadline must be positive")
 	}
 	if c.WorkerCount <= 0 || c.WorkerIndex < 0 || c.WorkerIndex >= c.WorkerCount {
 		return fmt.Errorf("worker index must identify one configured worker")
 	}
-	if c.Sequence < 0 {
-		return fmt.Errorf("cell sequence must not be negative")
-	}
-	if !validBenchmarkAxis(c.Axis) {
-		return fmt.Errorf("benchmark axis is invalid")
-	}
-	_, err := newCoordinatorClient(c.CoordinatorURL, c.CoordinatorToken)
+	_, err := benchworkload.NewCoordination(c.CoordinatorURL, c.CoordinatorToken)
 	return err
 }
