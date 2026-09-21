@@ -34,72 +34,75 @@ type Session struct {
 }
 
 // Dial performs the client side of the shared tunnelv1 handshake.
-func Dial(ctx context.Context, transport muxsession.Session, hello tunnelv1.Message) (*Session, error) {
+func Dial(ctx context.Context, transport muxsession.Session, hello tunnelv1.Message) (result *Session, err error) {
 	if transport == nil {
 		return nil, errors.New("tunnel: transport session is required")
 	}
 	if hello.Type != tunnelv1.Hello {
 		return nil, errors.New("tunnel: hello message is required")
 	}
+	defer func() {
+		if err != nil {
+			err = errors.Join(controlContextError(ctx, err), transport.Close())
+		}
+	}()
 	control, err := transport.OpenStream(ctx)
 	if err != nil {
-		_ = transport.Close()
 		return nil, fmt.Errorf("tunnel: open control stream: %w", err)
 	}
-	if err := setHandshakeDeadline(ctx, control); err != nil {
-		_ = control.Close()
-		_ = transport.Close()
+	finish, err := setupDeadline(ctx, control)
+	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		err = errors.Join(err, finish())
+		if err != nil {
+			result = nil
+		}
+	}()
 	if err := tunnelv1.WriteControl(control, hello); err != nil {
-		_ = control.Close()
-		_ = transport.Close()
 		return nil, fmt.Errorf("tunnel: write hello: %w", err)
 	}
 	response, err := tunnelv1.ReadControl(control)
 	if err != nil {
-		_ = control.Close()
-		_ = transport.Close()
 		return nil, fmt.Errorf("tunnel: read hello response: %w", err)
 	}
 	if response.Type == tunnelv1.Error {
-		_ = control.Close()
-		_ = transport.Close()
 		return nil, &ProtocolError{Code: response.Code}
 	}
 	if response.Type != tunnelv1.HelloAccepted {
-		_ = control.Close()
-		_ = transport.Close()
 		return nil, errors.New("tunnel: unexpected hello response")
-	}
-	if err := control.SetDeadline(time.Time{}); err != nil {
-		_ = control.Close()
-		_ = transport.Close()
-		return nil, fmt.Errorf("tunnel: clear control deadline: %w", err)
 	}
 	return &Session{transport: transport, control: control}, nil
 }
 
 // Accept performs the server side of the shared tunnelv1 handshake.
-func Accept(ctx context.Context, transport muxsession.Session, authenticate AuthenticateFunc) (*Session, tunnelv1.Message, error) {
+func Accept(ctx context.Context, transport muxsession.Session, authenticate AuthenticateFunc) (result *Session, message tunnelv1.Message, err error) {
 	if transport == nil || authenticate == nil {
 		return nil, tunnelv1.Message{}, errors.New("tunnel: transport session and authenticator are required")
 	}
+	defer func() {
+		if err != nil {
+			err = errors.Join(controlContextError(ctx, err), transport.Close())
+		}
+	}()
 	control, err := transport.AcceptStream(ctx)
 	if err != nil {
-		_ = transport.Close()
 		return nil, tunnelv1.Message{}, fmt.Errorf("tunnel: accept control stream: %w", err)
 	}
-	if err := setHandshakeDeadline(ctx, control); err != nil {
-		_ = control.Close()
-		_ = transport.Close()
+	finish, err := setupDeadline(ctx, control)
+	if err != nil {
 		return nil, tunnelv1.Message{}, err
 	}
+	defer func() {
+		err = errors.Join(err, finish())
+		if err != nil {
+			result = nil
+		}
+	}()
 	hello, err := tunnelv1.ReadControl(control)
 	if err != nil || hello.Type != tunnelv1.Hello {
 		_ = writeProtocolError(control, tunnelv1.InvalidMessage)
-		_ = control.Close()
-		_ = transport.Close()
 		if err != nil {
 			return nil, tunnelv1.Message{}, fmt.Errorf("tunnel: read hello: %w", err)
 		}
@@ -112,21 +115,12 @@ func Accept(ctx context.Context, transport muxsession.Session, authenticate Auth
 			code = protocolError.Code
 		}
 		_ = writeProtocolError(control, code)
-		_ = control.Close()
-		_ = transport.Close()
 		return nil, tunnelv1.Message{}, err
 	}
 	if err := tunnelv1.WriteControl(control, tunnelv1.Message{
 		Type: tunnelv1.HelloAccepted, ProtocolVersion: tunnelv1.Version,
 	}); err != nil {
-		_ = control.Close()
-		_ = transport.Close()
 		return nil, tunnelv1.Message{}, fmt.Errorf("tunnel: write hello response: %w", err)
-	}
-	if err := control.SetDeadline(time.Time{}); err != nil {
-		_ = control.Close()
-		_ = transport.Close()
-		return nil, tunnelv1.Message{}, fmt.Errorf("tunnel: clear control deadline: %w", err)
 	}
 	return &Session{transport: transport, control: control}, hello, nil
 }
@@ -223,31 +217,35 @@ func (s *Session) openAcknowledgedStream(
 	ctx context.Context,
 	kind string,
 	writeHeader func(muxsession.Stream) error,
-) (muxsession.Stream, error) {
+) (result muxsession.Stream, err error) {
 	stream, err := s.transport.OpenStream(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("tunnel: open %s stream: %w", kind, err)
 	}
-	if err := setHandshakeDeadline(ctx, stream); err != nil {
-		_ = stream.Close()
+	defer func() {
+		if err != nil {
+			err = errors.Join(controlContextError(ctx, err), stream.Close())
+		}
+	}()
+	finish, err := setupDeadline(ctx, stream)
+	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		err = errors.Join(err, finish())
+		if err != nil {
+			result = nil
+		}
+	}()
 	if err := writeHeader(stream); err != nil {
-		_ = stream.Close()
 		return nil, fmt.Errorf("tunnel: write %s stream header: %w", kind, err)
 	}
 	response, err := tunnelv1.ReadStreamResponse(stream)
 	if err != nil {
-		_ = stream.Close()
 		return nil, fmt.Errorf("tunnel: read %s stream response: %w", kind, err)
 	}
 	if response.Type == tunnelv1.StreamRejected {
-		_ = stream.Close()
 		return nil, &ProtocolError{Code: response.Code}
-	}
-	if err := stream.SetDeadline(time.Time{}); err != nil {
-		_ = stream.Close()
-		return nil, fmt.Errorf("tunnel: clear %s stream deadline: %w", kind, err)
 	}
 	return stream, nil
 }
@@ -366,7 +364,9 @@ func (s *Session) Err() error { return s.transport.Err() }
 
 func (s *Session) Close() error {
 	s.closeOnce.Do(func() {
-		s.closeErr = errors.Join(s.control.Close(), s.transport.Close())
+		// The transport owns all streams. Closing a control stream first can
+		// block enqueueing its FIN behind a failed transport writer.
+		s.closeErr = s.transport.Close()
 	})
 	return s.closeErr
 }
@@ -385,7 +385,17 @@ func setHandshakeDeadline(ctx context.Context, connection net.Conn) error {
 	return nil
 }
 
-func setContextDeadline(ctx context.Context, connection net.Conn) (func(), error) {
+func setupDeadline(ctx context.Context, connection net.Conn) (func() error, error) {
+	setupCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
+	finish, err := setContextDeadline(setupCtx, connection)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	return func() error { err := finish(); cancel(); return err }, nil
+}
+
+func setContextDeadline(ctx context.Context, connection net.Conn) (func() error, error) {
 	if err := context.Cause(ctx); err != nil {
 		return nil, err
 	}
@@ -398,11 +408,11 @@ func setContextDeadline(ctx context.Context, connection net.Conn) (func(), error
 		_ = connection.SetDeadline(time.Now())
 		close(interrupted)
 	})
-	return func() {
+	return func() error {
 		if !stop() {
 			<-interrupted
 		}
-		_ = connection.SetDeadline(time.Time{})
+		return errors.Join(context.Cause(ctx), connection.SetDeadline(time.Time{}))
 	}, nil
 }
 

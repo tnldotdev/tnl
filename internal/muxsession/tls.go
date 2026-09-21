@@ -15,6 +15,10 @@ import (
 
 const defaultMaxIncomingStreams = 4096
 
+// FIN/RST queueing in yamux does not honor stream deadlines. If it cannot
+// enqueue even a control frame in this interval, abort the owned transport.
+const streamCloseTimeout = time.Second
+
 // TLSYamuxConfig configures the raw TLS/TCP plus yamux transport.
 type TLSYamuxConfig struct {
 	MaxIncomingStreams int
@@ -126,9 +130,12 @@ type acceptResult struct {
 }
 
 type yamuxSession struct {
-	session  *yamux.Session
-	accepted chan acceptResult
-	done     <-chan struct{}
+	session   *yamux.Session
+	network   net.Conn
+	accepted  chan acceptResult
+	done      <-chan struct{}
+	closeOnce sync.Once
+	closeErr  error
 
 	mu  sync.Mutex
 	err error
@@ -150,6 +157,7 @@ func newYamuxSession(network net.Conn, client bool, maxIncoming int) (Session, e
 	}
 	result := &yamuxSession{
 		session:  session,
+		network:  network,
 		accepted: make(chan acceptResult),
 		done:     session.CloseChan(),
 	}
@@ -163,7 +171,7 @@ func (s *yamuxSession) OpenStream(ctx context.Context) (Stream, error) {
 		s.recordError(err)
 		return nil, normalizeYamuxError(err)
 	}
-	return &yamuxStream{Stream: stream}, nil
+	return &yamuxStream{Stream: stream, owner: s}, nil
 }
 
 func (s *yamuxSession) AcceptStream(ctx context.Context) (Stream, error) {
@@ -178,9 +186,21 @@ func (s *yamuxSession) AcceptStream(ctx context.Context) (Stream, error) {
 }
 
 func (s *yamuxSession) Close() error {
-	err := s.session.Close()
-	s.recordError(err)
-	return normalizeYamuxError(err)
+	s.closeOnce.Do(func() {
+		// Close the socket before TLS close-notify or yamux cleanup can wait
+		// behind an outstanding write. Session shutdown joins its I/O loops.
+		network := s.network
+		if secure, ok := network.(*tls.Conn); ok {
+			network = secure.NetConn()
+		}
+		err := network.Close()
+		if errors.Is(err, net.ErrClosed) {
+			err = nil
+		}
+		s.closeErr = normalizeYamuxError(errors.Join(err, s.session.Close()))
+		s.recordError(s.closeErr)
+	})
+	return s.closeErr
 }
 
 func (s *yamuxSession) Done() <-chan struct{} { return s.done }
@@ -207,7 +227,7 @@ func (s *yamuxSession) acceptLoop() {
 			return
 		}
 		select {
-		case s.accepted <- acceptResult{stream: &yamuxStream{Stream: stream}}:
+		case s.accepted <- acceptResult{stream: &yamuxStream{Stream: stream, owner: s}}:
 		case <-s.done:
 			_ = stream.Close()
 			return
@@ -240,16 +260,31 @@ func normalizeYamuxError(err error) error {
 
 type yamuxStream struct {
 	*yamux.Stream
+	owner *yamuxSession
 }
 
 func (s *yamuxStream) Close() error {
-	return normalizeYamuxError(s.Stream.Close())
+	return s.closeBounded(s.Stream.Close)
 }
 
 func (s *yamuxStream) CloseWrite() error {
-	return normalizeYamuxError(s.Stream.CloseWrite())
+	return s.closeBounded(s.Stream.CloseWrite)
 }
 
 func (s *yamuxStream) Reset(code uint32) error {
-	return normalizeYamuxError(s.Stream.ResetWithError(code))
+	return s.closeBounded(func() error { return s.Stream.ResetWithError(code) })
+}
+
+func (s *yamuxStream) closeBounded(closeStream func() error) error {
+	done := make(chan struct{})
+	var abortErr error
+	timer := time.AfterFunc(streamCloseTimeout, func() {
+		abortErr = errors.Join(errors.New("muxsession: stream cleanup blocked transport writer"), s.owner.Close())
+		close(done)
+	})
+	err := closeStream()
+	if !timer.Stop() {
+		<-done
+	}
+	return errors.Join(normalizeYamuxError(err), abortErr)
 }

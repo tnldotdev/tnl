@@ -170,13 +170,13 @@ func (b forwardingBackend) Open(ctx context.Context, visitorConnectionID string)
 			return stream, nil
 		}
 		var protocolError *tunnel.ProtocolError
-		if errors.As(err, &protocolError) {
+		if errors.As(err, &protocolError) || ctx.Err() != nil && session.Err() == nil {
 			return nil, err
 		}
 		b.forwarder.invalidate(b.target.key(), session)
 		// Another visitor may populate the pool before our retry, so even the
 		// second attempt can reuse a session. Exhaustion is an ordinary error.
-		if !reused || attempt == 1 {
+		if !reused || attempt == 1 || ctx.Err() != nil {
 			return nil, fmt.Errorf("ingress: open internal forwarding stream: %w", err)
 		}
 	}
