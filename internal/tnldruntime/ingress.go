@@ -144,7 +144,7 @@ func (d *daemon) startIngressRuntime(
 		forwardingTLS.MinVersion = tls.VersionTLS13
 	}
 	forwarder, err := ingress.NewForwarder(ingress.ForwarderConfig{
-		TLSConfig: forwardingTLS, ClusterSecret: runtimeConfig.clusterSecret,
+		TLSConfig: forwardingTLS, ClusterSecret: runtimeConfig.clusterSecret, Observer: metrics,
 	})
 	if err != nil {
 		return err
@@ -184,7 +184,7 @@ func (d *daemon) startIngressRuntime(
 			return backends, true
 		},
 		RequireProxyHeader: settings.requireProxyHeader, MaxConnections: publicCapacity,
-		MaxRouteConnections: routeCapacity, Metrics: metrics,
+		MaxRouteConnections: routeCapacity, Metrics: metrics, Observer: metrics,
 		OpenUsage:       usage.Open,
 		ObserveRecovery: recovery.Observe,
 		OnError:         func(err error) { log.Printf("ingress connection: %v", err) },

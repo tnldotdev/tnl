@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/netip"
 	"sync"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/routebackend"
@@ -20,12 +21,14 @@ type ForwarderConfig struct {
 	TLSConfig       *tls.Config
 	ClusterSecret   string
 	TransportConfig muxsession.TLSYamuxConfig
+	Observer        OperationObserver
 }
 
 // Forwarder pools authenticated sessions to exact relay processes and creates
 // route backends that open acknowledged internal-forwarding streams.
 type Forwarder struct {
 	connector relayConnector
+	observer  OperationObserver
 
 	mu        sync.Mutex
 	sessions  map[relaySessionKey]*relaySession
@@ -39,7 +42,9 @@ func NewForwarder(config ForwarderConfig) (*Forwarder, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newForwarder(connector), nil
+	f := newForwarder(connector)
+	f.observer = config.Observer
+	return f, nil
 }
 
 func newForwarder(connector relayConnector) *Forwarder {
@@ -165,7 +170,9 @@ func (b forwardingBackend) Open(ctx context.Context, visitorConnectionID string)
 		if err != nil {
 			return nil, err
 		}
+		started := time.Now()
 		stream, err := session.OpenInternalForwardingStream(ctx, header)
+		b.forwarder.observe("IngressForwardingAck", err, started)
 		if err == nil {
 			return stream, nil
 		}
@@ -173,7 +180,7 @@ func (b forwardingBackend) Open(ctx context.Context, visitorConnectionID string)
 		if errors.As(err, &protocolError) || ctx.Err() != nil && session.Err() == nil {
 			return nil, err
 		}
-		b.forwarder.invalidate(b.target.key(), session)
+		err = errors.Join(err, b.forwarder.invalidate(b.target.key(), session))
 		// Another visitor may populate the pool before our retry, so even the
 		// second attempt can reuse a session. Exhaustion is an ordinary error.
 		if !reused || attempt == 1 || ctx.Err() != nil {
@@ -239,6 +246,7 @@ func (f *Forwarder) session(ctx context.Context, target relayTarget) (*tunnel.Se
 		f.mu.Unlock()
 		_ = closeRelaySessions(obsolete)
 
+		started := time.Now()
 		transport, err := f.connector.Connect(connectCtx, target)
 		var session *tunnel.Session
 		if err == nil {
@@ -248,6 +256,7 @@ func (f *Forwarder) session(ctx context.Context, target relayTarget) (*tunnel.Se
 			})
 		}
 		cancel()
+		f.observe("IngressRelayConnect", err, started)
 
 		f.mu.Lock()
 		current := !f.closed && f.sessions[key] == entry
@@ -287,7 +296,7 @@ func (f *Forwarder) removeSupersededLocked(current relaySessionKey) []*relaySess
 	return obsolete
 }
 
-func (f *Forwarder) invalidate(key relaySessionKey, session *tunnel.Session) {
+func (f *Forwarder) invalidate(key relaySessionKey, session *tunnel.Session) error {
 	f.mu.Lock()
 	entry := f.sessions[key]
 	if entry != nil && entry.session == session {
@@ -298,7 +307,17 @@ func (f *Forwarder) invalidate(key relaySessionKey, session *tunnel.Session) {
 	f.mu.Unlock()
 	if entry != nil {
 		entry.cancel()
-		_ = session.Close()
+		started := time.Now()
+		err := session.Close()
+		f.observe("IngressForwardingCleanup", err, started)
+		return err
+	}
+	return nil
+}
+
+func (f *Forwarder) observe(operation string, err error, started time.Time) {
+	if f.observer != nil {
+		f.observer.ObserveOperation(operation, err, time.Since(started))
 	}
 }
 

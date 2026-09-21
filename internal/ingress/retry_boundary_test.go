@@ -10,6 +10,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/tnldotdev/tnl/internal/routebackend"
 )
 
 func TestIngressRetryBoundary(t *testing.T) {
@@ -44,6 +47,77 @@ func TestIngressRetryBoundary(t *testing.T) {
 				t.Fatalf("first opens=%d, ID=%q", first.opens.Load(), first.visitorConnectionID())
 			}
 		})
+	}
+}
+
+type waitingBackend struct{ entered chan struct{} }
+
+type contextBackend struct{ routebackend.Backend }
+
+func (b contextBackend) Open(ctx context.Context, id string) (net.Conn, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return b.Backend.Open(ctx, id)
+}
+
+func (b waitingBackend) Open(ctx context.Context, _ string) (net.Conn, error) {
+	if b.entered != nil {
+		close(b.entered)
+	}
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestIngressStalledAttemptLeavesFallbackBudget(t *testing.T) {
+	for _, stage := range []string{"open", "proxy_write"} {
+		t.Run(stage, func(t *testing.T) {
+			var first routebackend.Backend = waitingBackend{}
+			if stage == "proxy_write" {
+				a, b := net.Pipe()
+				ownIngressConn(t, a)
+				ownIngressConn(t, b)
+				first = singleBackend{a} // Peer never reads the PROXY header.
+			}
+			fallback := newTLSBackend(t)
+			config := routeConfig(first, contextBackend{fallback})
+			config.OpenTimeout = 200 * time.Millisecond
+			_, address := startIngress(t, config)
+			client := ingressClient(t, address, "route.example", "")
+			if err := client.SetDeadline(time.Now().Add(time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			if err := client.Handshake(); err != nil {
+				t.Fatal(err)
+			}
+			exchangePing(t, client)
+			if result := ingressAwait(t, fallback.result); result.err != nil {
+				t.Fatal(result.err)
+			}
+		})
+	}
+}
+
+func TestForcedDrainCancelsPendingOpen(t *testing.T) {
+	entered := make(chan struct{})
+	config := routeConfig(waitingBackend{entered: entered})
+	config.OpenTimeout = time.Minute
+	server, address := startIngress(t, config)
+	client := ingressClient(t, address, "route.example", "")
+	handshake := ingressWorker(t, func() { _ = client.Close() }, client.Handshake)
+	ingressAwait(t, entered)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := server.Drain(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	ingressAwait(t, handshake)
+	joined := make(chan struct{})
+	go func() { server.active.Wait(); close(joined) }()
+	select {
+	case <-joined:
+	case <-time.After(time.Second):
+		t.Fatal("forced drain retained a pending backend open")
 	}
 }
 

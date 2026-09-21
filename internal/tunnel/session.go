@@ -418,7 +418,7 @@ func setContextDeadline(ctx context.Context, connection net.Conn) (func() error,
 
 func controlContextError(ctx context.Context, err error) error {
 	if cause := context.Cause(ctx); cause != nil {
-		return cause
+		return errors.Join(cause, err)
 	}
 	return err
 }

@@ -24,6 +24,8 @@ import (
 
 const defaultOpenTimeout = 10 * time.Second
 
+const alternateAttemptTimeout = time.Second
+
 const visitorConnectionIDPrefix = "visitor_connection_"
 
 type Route struct {
@@ -72,15 +74,18 @@ type Config struct {
 	MaxRouteConnections  int
 	OpenTimeout          time.Duration
 	Metrics              Metrics
+	Observer             OperationObserver
 	OpenUsage            func(string, uint64, netip.Addr, time.Time) UsageConnection
 	ObserveRecovery      func(string, uint64, uint64, time.Time)
 	OnError              func(error)
 }
 
 type Server struct {
-	listener net.Listener
-	config   Config
-	limiter  *sourcelimiter.Limiter
+	listener    net.Listener
+	config      Config
+	limiter     *sourcelimiter.Limiter
+	openContext context.Context
+	cancelOpens context.CancelFunc
 
 	mu          sync.Mutex
 	connections map[net.Conn]struct{}
@@ -124,10 +129,13 @@ func New(listener net.Listener, config Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	openContext, cancelOpens := context.WithCancel(context.Background())
 	return &Server{
 		listener:    listener,
 		config:      config,
 		limiter:     limiter,
+		openContext: openContext,
+		cancelOpens: cancelOpens,
 		connections: make(map[net.Conn]struct{}),
 		backends:    make(map[net.Conn]struct{}),
 		byRoute:     make(map[string]int),
@@ -185,6 +193,7 @@ func (s *Server) Drain(ctx context.Context) error {
 	}()
 	select {
 	case <-wait:
+		s.cancelOpens()
 		return nil
 	case <-ctx.Done():
 		s.closeConnections()
@@ -312,7 +321,8 @@ func (s *Server) handle(public net.Conn) error {
 	if err != nil {
 		return fmt.Errorf("ingress: create visitor connection ID: %w", err)
 	}
-	openCtx, cancel := context.WithTimeout(context.Background(), s.config.OpenTimeout)
+	openCtx, cancel := context.WithTimeout(s.openContext, s.config.OpenTimeout)
+	defer cancel()
 	var (
 		stream       net.Conn
 		committed    int64
@@ -320,13 +330,21 @@ func (s *Server) handle(public net.Conn) error {
 		lastErr      error
 		opened       bool
 	)
-	for _, backend := range backends {
+	for index, backend := range backends {
+		if err := openCtx.Err(); err != nil {
+			lastErr = errors.Join(lastErr, err)
+			break
+		}
 		if backend == nil {
 			lastErr = errors.New("ingress: route backend is nil")
 			continue
 		}
-		candidate, openErr := backend.Open(openCtx, visitorConnectionID)
+		attemptCtx, stopAttempt := backendAttemptContext(openCtx, len(backends)-index)
+		started := time.Now()
+		candidate, openErr := backend.Open(attemptCtx, visitorConnectionID)
 		if openErr != nil {
+			stopAttempt()
+			s.observeAttempt(index, openErr, started)
 			lastErr = fmt.Errorf("ingress: open route: %w", openErr)
 			continue
 		}
@@ -336,18 +354,15 @@ func (s *Server) handle(public net.Conn) error {
 		}
 		if !s.trackBackend(candidate) {
 			_ = candidate.Close()
+			stopAttempt()
 			cancel()
 			return net.ErrClosed
 		}
-		if writeErr := writeAll(candidate, header); writeErr != nil {
-			lastErr = fmt.Errorf("ingress: write proxy header: %w", writeErr)
-			s.releaseBackend(candidate)
-			continue
-		}
-		written, writeErr := writeAllCount(candidate, hello.Prefix)
+		written, writeErr := writeSetup(attemptCtx, candidate, header, hello.Prefix)
+		stopAttempt()
+		s.observeAttempt(index, writeErr, started)
 		if writeErr != nil && written == 0 {
-			lastErr = fmt.Errorf("ingress: write ClientHello: %w", writeErr)
-			s.releaseBackend(candidate)
+			lastErr = errors.Join(writeErr, s.releaseBackend(candidate))
 			continue
 		}
 		stream = candidate
@@ -363,7 +378,6 @@ func (s *Server) handle(public net.Conn) error {
 		return lastErr
 	}
 	defer s.releaseBackend(stream)
-	defer stream.Close()
 	if usage != nil {
 		usage.StreamOpened(time.Now().UTC())
 		usage.AddIngress(committed, time.Now().UTC())
@@ -477,8 +491,7 @@ func (s *Server) trackBackend(connection net.Conn) bool {
 	return true
 }
 
-func (s *Server) releaseBackend(connection net.Conn) {
-	_ = connection.Close()
+func (s *Server) releaseBackend(connection net.Conn) error {
 	s.mu.Lock()
 	delete(s.backends, connection)
 	active := len(s.backends)
@@ -486,6 +499,12 @@ func (s *Server) releaseBackend(connection net.Conn) {
 	if s.config.Metrics != nil {
 		s.config.Metrics.SetIngressStreams(active)
 	}
+	started := time.Now()
+	err := connection.Close()
+	if s.config.Observer != nil {
+		s.config.Observer.ObserveOperation("IngressBackendCleanup", err, time.Since(started))
+	}
+	return err
 }
 
 func (s *Server) admitRoute(routeID string) (string, bool) {
@@ -508,6 +527,7 @@ func (s *Server) releaseRoute(routeID string) {
 }
 
 func (s *Server) closeConnections() {
+	s.cancelOpens()
 	s.mu.Lock()
 	connections := make([]net.Conn, 0, len(s.connections)+len(s.backends))
 	for connection := range s.connections {
@@ -520,6 +540,50 @@ func (s *Server) closeConnections() {
 	for _, connection := range connections {
 		_ = connection.Close()
 	}
+}
+
+func backendAttemptContext(ctx context.Context, remaining int) (context.Context, context.CancelFunc) {
+	if remaining <= 1 {
+		return context.WithCancel(ctx)
+	}
+	deadline, _ := ctx.Deadline()
+	// Reserve a share for each alternate even under a short overall deadline.
+	return context.WithTimeout(ctx, min(alternateAttemptTimeout, time.Until(deadline)/time.Duration(remaining)))
+}
+
+func (s *Server) observeAttempt(index int, err error, started time.Time) {
+	if s.config.Observer == nil {
+		return
+	}
+	s.config.Observer.ObserveOperation("IngressBackendAttempt", err, time.Since(started))
+	if index != 0 {
+		s.config.Observer.ObserveOperation("IngressFallback", err, time.Since(started))
+	}
+}
+
+// Only PROXY metadata and a zero-byte ClientHello failure can be retried.
+// Stop and join the interrupt before clearing deadlines for the live stream.
+func writeSetup(ctx context.Context, connection net.Conn, header, prefix []byte) (written int64, err error) {
+	deadline, _ := ctx.Deadline()
+	if err = connection.SetDeadline(deadline); err != nil {
+		return
+	}
+	done := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() { _ = connection.SetDeadline(time.Now()); close(done) })
+	defer func() {
+		if !stop() {
+			<-done
+		}
+		err = errors.Join(err, ctx.Err(), connection.SetDeadline(time.Time{}))
+	}()
+	if err = writeAll(connection, header); err != nil {
+		return 0, fmt.Errorf("ingress: write proxy header: %w", err)
+	}
+	written, err = writeAllCount(connection, prefix)
+	if err != nil {
+		err = fmt.Errorf("ingress: write ClientHello: %w", err)
+	}
+	return
 }
 
 type readerConn struct {
