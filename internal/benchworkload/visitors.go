@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptrace"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -40,8 +41,15 @@ func (v Visitor) client() (*http.Client, *http.Transport) {
 }
 
 func (v Visitor) Request(parent context.Context, url string, scheduled time.Time) (result RequestResult) {
-	result.Scheduled, result.Started = scheduled, time.Now()
+	result.URL = url
+	result.Started = time.Now()
+	scheduled = localSchedule(result.Started, scheduled)
+	result.Scheduled = scheduled
 	result.QueueDelay = result.Started.Sub(scheduled)
+	if result.QueueDelay < 0 {
+		result.Error = "invalid timing: request started before its scheduled slot"
+		return
+	}
 	if result.QueueDelay >= RequestTimeout {
 		result.QueueExpired, result.Error = true, "request expired in queue"
 		return
@@ -153,6 +161,9 @@ func runVisitors(ctx context.Context, config VisitorConfig, urls []string, reque
 	if config.Start.IsZero() {
 		config.Start = time.Now()
 	}
+	// Coordination serializes UTC timestamps without a monotonic component.
+	// Rebase once; subsequent wall-clock adjustments must not move the slots.
+	config.Start = localSchedule(time.Now(), config.Start)
 	result.StartedAt, result.OfferDuration = config.Start, config.Duration
 	end := config.Start.Add(config.Duration)
 	type job struct {
@@ -170,7 +181,7 @@ func runVisitors(ctx context.Context, config VisitorConfig, urls []string, reque
 			for job := range jobs {
 				row := request(ctx, job.url, job.at)
 				mu.Lock()
-				result.observe(row)
+				result.Observe(row)
 				if config.OnResult != nil {
 					config.OnResult(row)
 				}
@@ -208,6 +219,10 @@ func runVisitors(ctx context.Context, config VisitorConfig, urls []string, reque
 	return result, ctx.Err()
 }
 
+func localSchedule(now, scheduled time.Time) time.Time {
+	return now.Add(scheduled.Sub(now))
+}
+
 func WaitUntil(ctx context.Context, at time.Time) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -230,7 +245,15 @@ type HeldStream struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 	err    error
+	bytes  atomic.Int64
 }
+
+type heldSink struct{ stream *HeldStream }
+
+func (s heldSink) Write(p []byte) (int, error) { s.stream.bytes.Add(int64(len(p))); return len(p), nil }
+
+// BytesReceived distinguishes ongoing delivery from a stalled, still-open socket.
+func (s *HeldStream) BytesReceived() int64 { return s.bytes.Load() }
 
 func (v Visitor) Hold(parent context.Context, url string) (*HeldStream, error) {
 	ctx, cancel := context.WithCancel(parent)
@@ -264,7 +287,7 @@ func (v Visitor) Hold(parent context.Context, url string) (*HeldStream, error) {
 	}
 	stream := &HeldStream{cancel: cancel, done: make(chan struct{})}
 	go func() {
-		_, stream.err = io.Copy(io.Discard, response.Body)
+		_, stream.err = io.Copy(heldSink{stream}, response.Body)
 		_ = response.Body.Close()
 		transport.CloseIdleConnections()
 		close(stream.done)

@@ -79,6 +79,11 @@ func (h *Histogram) Merge(other Histogram) error {
 	if len(other.BoundsMilliseconds) != len(other.Counts) || len(other.Counts) == 0 {
 		return errors.New("invalid histogram layout")
 	}
+	for _, value := range []float64{other.SumMilliseconds, other.MinimumMilliseconds, other.MaximumMilliseconds} {
+		if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+			return errors.New("invalid histogram duration")
+		}
+	}
 	var previous uint64
 	for i, count := range other.Counts {
 		if count < previous || count > other.Count || math.IsNaN(other.BoundsMilliseconds[i]) || math.IsInf(other.BoundsMilliseconds[i], 0) || (i > 0 && other.BoundsMilliseconds[i] <= other.BoundsMilliseconds[i-1]) {
@@ -106,6 +111,7 @@ func (h *Histogram) Merge(other Histogram) error {
 }
 
 type RequestResult struct {
+	URL          string        `json:"url,omitempty"`
 	Scheduled    time.Time     `json:"scheduled"`
 	Started      time.Time     `json:"started"`
 	FirstByte    time.Time     `json:"first_body_byte,omitzero"`
@@ -145,8 +151,15 @@ type VisitorResult struct {
 	FailuresSample []RequestResult `json:"failure_samples,omitempty"`
 }
 
-func (r *VisitorResult) observe(request RequestResult) {
-	r.QueueDelay.Observe(request.QueueDelay)
+// Observe adds one completed or queue-expired request to a local summary.
+func (r *VisitorResult) Observe(request RequestResult) {
+	invalid := request.QueueDelay < 0 || request.Duration < 0 || request.DNS < 0 || request.Connect < 0 || request.TLS < 0 || !request.FirstByte.IsZero() && request.FirstByte.Before(request.Scheduled)
+	if invalid {
+		request.Error = "invalid negative request timing: " + request.Error
+	}
+	if request.QueueDelay >= 0 {
+		r.QueueDelay.Observe(request.QueueDelay)
+	}
 	if request.QueueExpired {
 		r.QueueExpired++
 	} else {
