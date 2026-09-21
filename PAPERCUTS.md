@@ -4,3 +4,4 @@
 - The shared publisher smoke initially passed `t.TempDir()` directly to client state; Linux creates that directory with permissions broader than the required 0700. Passing a new child directory lets client state create it with its normal private permissions.
 - `task lint` ran staticcheck while the JavaScript typecheck build removed `packages/tnl/dist`, causing Go's `./...` directory walk to fail intermittently. Root lint/test/build tasks now run their Go and JavaScript stages sequentially.
 - The Linux race smoke exposed a runner polling race after the successful coordinator closed HTTP but before the race runtime exited. Polling external-fault requests only for an external-fault scenario avoids mistaking that shutdown interval for workload failure.
+- `task format-check` hides the paths reported by `goimports` because it captures them in a command substitution. Run `mise exec -- goimports -l .` to identify formatting drift after the task fails.

@@ -179,6 +179,33 @@ func TestCancellationDoesNotHideJoinedCloseFailure(t *testing.T) {
 	}
 }
 
+func TestAssignmentsPartitionRoutesAndBalanceBudgets(t *testing.T) {
+	seen := make(map[int]bool)
+	for worker := range 6 {
+		for _, index := range RouteIndexes(43, 6, worker) {
+			if seen[index] {
+				t.Fatal("duplicate route")
+			}
+			seen[index] = true
+		}
+	}
+	if len(seen) != 43 {
+		t.Fatalf("assigned routes = %d, want 43", len(seen))
+	}
+
+	for _, test := range []struct{ total, workers int }{{1, 4}, {80, 3}, {1000, 4}} {
+		sum, minimum, maximum := 0, test.total, 0
+		for index := range test.workers {
+			value := Assignment(test.total, test.workers, index)
+			sum += value
+			minimum, maximum = min(minimum, value), max(maximum, value)
+		}
+		if sum != test.total || maximum-minimum > 1 {
+			t.Fatalf("assignment %d/%d = total %d, range %d..%d", test.total, test.workers, sum, minimum, maximum)
+		}
+	}
+}
+
 func TestCoordinatorImmutableEventsAndFailureUnblock(t *testing.T) {
 	server := httptest.NewServer(NewCoordinator().Handler("token"))
 	defer server.Close()

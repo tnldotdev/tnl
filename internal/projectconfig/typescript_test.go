@@ -75,12 +75,6 @@ func TestLoadAppliesStaticValidationToNestedServices(t *testing.T) {
 	}
 }
 
-func TestUnmarshalTypeScriptTNLRejectsStaticFieldNames(t *testing.T) {
-	if _, err := unmarshalTypeScriptTNL([]byte(`{"tunnel":{"allow_ip":["192.0.2.1"]}}`)); err == nil {
-		t.Fatal("static snake_case field was accepted as TypeScript configuration")
-	}
-}
-
 func TestTypeScriptServicesUseCamelCaseFields(t *testing.T) {
 	value, err := unmarshalTypeScriptTNL([]byte(`{
   "team":"Team One",

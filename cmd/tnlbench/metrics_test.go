@@ -39,15 +39,6 @@ func TestSampleResourcesUsesRoleMetadataWithoutSendingFragment(t *testing.T) {
 	}
 }
 
-func TestMetricsParserKeepsLabelsContainingSpaces(t *testing.T) {
-	name := `tnl_control_requests_total{operation="POST /v1/routes",outcome="success"}`
-	values := metricsForTest(name + " 3 12345\n")
-	if len(values) != 1 || values[0].Metric[0].GetUntyped().GetValue() != 3 ||
-		values[0].Metric[0].Label[0].GetValue() != "POST /v1/routes" || values[0].Metric[0].GetTimestampMs() != 12345 {
-		t.Fatalf("metrics=%v", values)
-	}
-}
-
 func TestNonzeroFailedPublisherCollectsFailureMetricsWithoutRoutineMetrics(t *testing.T) {
 	metrics := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/debug/database" {

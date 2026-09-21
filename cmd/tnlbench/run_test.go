@@ -13,8 +13,6 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
-
-	"github.com/tnldotdev/tnl/internal/benchworkload"
 )
 
 func TestRunValidationRequiresBothPaidResourceGates(t *testing.T) {
@@ -103,20 +101,6 @@ func TestManifestCleanupOwnershipChecks(t *testing.T) {
 	manifest.Apps[0].Name = "production-control"
 	if err := validateManifestResources(manifest); err == nil {
 		t.Fatal("cleanup accepted an app outside the run prefix")
-	}
-}
-
-func TestBalancedAssignmentPreservesTotals(t *testing.T) {
-	for _, test := range []struct{ total, workers int }{{1, 4}, {80, 3}, {1000, 4}} {
-		sum, minimum, maximum := 0, test.total, 0
-		for index := range test.workers {
-			value := benchworkload.Assignment(test.total, test.workers, index)
-			sum += value
-			minimum, maximum = min(minimum, value), max(maximum, value)
-		}
-		if sum != test.total || maximum-minimum > 1 {
-			t.Fatalf("assignment %d/%d = total %d, range %d..%d", test.total, test.workers, sum, minimum, maximum)
-		}
 	}
 }
 
