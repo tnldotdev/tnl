@@ -22,7 +22,8 @@ const composeArgs = [
 function docker(args, quiet = false) {
   return execFileSync("docker", args, {
     encoding: "utf8",
-    timeout: 180_000,
+    // A fresh CI runner compiles the race binary and dependencies inside Docker.
+    timeout: args.includes("build") ? 600_000 : 180_000,
     stdio: ["ignore", "pipe", quiet ? "pipe" : "inherit"],
   });
 }
