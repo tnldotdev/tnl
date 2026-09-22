@@ -410,3 +410,71 @@ Evidence is retained in:
 
 - `bench-results/resource-attribution-routes-1000-relay-kill-1/`
 - `bench-results/resource-attribution-routes-1000-relay-kill-fallback250-1/`
+
+## 2026-09-22 — Hosted Beta Workload Target
+
+This is a planning target, not observed production demand or a production sizing
+claim. The hosted product is still a free beta. Its documented use cases are
+webhooks, OAuth callbacks, demos, mobile development, and showing somebody a
+local service. Those uses imply many idle routes, bursty small requests, larger
+browser asset loads, and long-lived HMR or application streams. Named services,
+parallel worktrees, durable routes, and ephemeral previews mean active route
+sessions can exceed the number of developers currently interacting with a URL.
+
+The hosted economics model supplies the only explicit demand inputs: its first
+planning tier is 10,000 monthly active developers, paid usage is assumed to
+average 3–5GiB per active developer, and a possible allowance is 10GiB. None of
+those values is a forecast. For capacity planning, use these conservative
+translations:
+
+- Allow up to 1,000 concurrent route sessions, representing 10% of the first
+  monthly-active tier publishing one service at once, or fewer developers with
+  multiple named services and worktrees.
+- At 5GiB per developer, 10,000 developers transfer 50TiB/month, approximately
+  170Mbit/sec averaged over every hour. Concentrating development traffic into
+  working periods and retaining burst headroom makes 1Gbit/sec a reasonable
+  hosted-cell peak target.
+- Model two long-lived visitor streams per active route for HMR, WebSockets, or
+  mobile sessions. This produces 2,000 held streams without treating the relay's
+  4,096-stream admission limit as an operating target.
+- Model 500 fresh visitor TCP connections/sec. At a 256KiB verified response per
+  connection, this offers exactly 125MiB/sec, or approximately 1.05Gbit/sec of
+  response payload before protocol overhead. A fresh connection is not the same
+  as one HTTP request when a browser uses keep-alive.
+
+The primary hosted-cell qualification target is therefore:
+
+| Dimension                  |                                             Target |
+| -------------------------- | -------------------------------------------------: |
+| Active route sessions      |                                              1,000 |
+| Fresh visitor connections  |                                            500/sec |
+| Held visitor streams       |                                              2,000 |
+| Verified response payload  |                                  256KiB/connection |
+| Offered response bandwidth |                          125MiB/sec (1.05Gbit/sec) |
+| Fresh-request workers      |                                                512 |
+| Waiting slots              |                                                 32 |
+| Measurement                | Three five-minute windows after a 30-second warmup |
+
+This target fits the existing Fly benchmark profile: four publisher generators
+hold 250 routes each, and 17 visitor generators stay below 30 fresh
+connections/sec per source. The read-only plan command is:
+
+```console
+mise exec -- env BENCH_SUITE=target BENCH_ROUTES=1000 BENCH_FRESH_CONNECTIONS_PER_SECOND=500 BENCH_HELD_STREAMS=2000 BENCH_CONCURRENCY=512 BENCH_QUEUE_SLOTS=32 BENCH_PAYLOAD_BYTES=262144 BENCH_WARMUP=30s BENCH_DURATION=5m BENCH_REPETITIONS=3 task go:bench-fly:plan
+```
+
+Passing requires zero failed, timed-out, missed, or queue-expired fresh requests;
+complete verified payloads and exact usage reconciliation; p95 total request
+latency below 100ms and maximum below one second in the benchmark region; and no
+OOM, memory-pressure, routing-backlog, or capacity-rejection event. Healthy
+ingress and relay processes should remain below 70% CPU and cgroup memory; a
+process loss must keep every surviving ingress and relay process below 80%. An
+abrupt relay loss must preserve every fresh visitor started after process exit
+and repair all route sessions within 60 seconds.
+
+The target intentionally combines route state, fresh-connection churn, held
+streams, and bandwidth. If it fails, isolate those axes at 1,000 routes before
+changing the target or infrastructure. Separate follow-ups still need to cover a
+single hot public route, request-upload bandwidth for webhooks, bidirectional
+WebSocket traffic, and multi-hour endurance. Do not execute the Fly target
+without the benchmark approval gate.
