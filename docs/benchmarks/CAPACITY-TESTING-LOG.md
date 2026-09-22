@@ -172,3 +172,42 @@ authorization was correlated with a specific rejected socket.
 Follow-up: separate visitor, active route-challenge, and standalone service
 admission budgets, retain bounded ClientHello inspection, and repeat the original
 256-start workload at default source rate/burst. Preserve all failed runs above.
+
+## 2026-09-22 — Independent Admission Fix At 256 Routes
+
+Commit `51e1f6c` separated the bounded ClientHello inspection stage, ordinary
+visitor source/concurrency limits, active route-challenge concurrency, and
+standalone service handoff capacity. Deterministic tests cover fake/stale
+challenge rejection, global and per-hostname challenge bounds, challenge
+deadlines, inspection timeout cleanup, service capacity ownership through close,
+and forced drain. The full formatting, lint, routine, race, PostgreSQL integration,
+generation, and build sequence passed before the capacity rerun.
+
+The original failed profile was then repeated without admission or workload
+overrides: `ROUTES=256 START_PARALLEL=256 READY_TIMEOUT=5m RPS=160 DURATION=60s`.
+The retained process configuration reports the production defaults: ClientHello
+limit 1,024, challenge limit 1,024, per-hostname challenge limit eight, visitor
+source rate 50/sec, and visitor burst 200.
+
+- Activation installed 256 certificates from exactly 256 CA orders in 19.166s.
+  Publisher readiness p95/max was 17.048/17.067s. There were no invalid or
+  replacement orders, visitor source rejections, or capacity rejections.
+- All 28,800 scheduled visitor requests succeeded: 9,600 in each steady,
+  relay-restart, and shutdown window. There were zero failures, timeouts, missed
+  offers, or queue expiry. Raw-sample p95/max latencies were 4.857/7.368ms,
+  4.900/13.845ms, and 4.856/10.418ms respectively.
+- Relay restart preserved every fresh request. All publisher connections repaired
+  in 16.703s; every-route correctness probes passed. Preexisting held streams
+  were disrupted as expected and were not replayed.
+- Final accounting reconciled 29,448/29,448 successful streams including probes
+  and held streams, with zero active route sessions, publisher connections, or
+  reservations. Every component exited zero; the Compose project left no owned
+  containers, networks, or volumes.
+- Activation throttling remained confined to PostgreSQL/Pebble without affecting
+  certificate correctness or timing. No application process throttled during
+  steady traffic, and no process recorded an OOM kill.
+
+Evidence retained in `bench-results/capacity-routes-256-default-fixed-1.log` and
+`bench-results/capacity-routes-256-default-fixed-1/`. This validates the production
+admission-policy correction for this workload; it does not yet establish the
+maximum route count or throughput envelope.
