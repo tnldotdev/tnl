@@ -3,6 +3,7 @@ package tnldconfig
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"net/mail"
 	"net/netip"
@@ -106,6 +107,8 @@ type Config struct {
 	RelayAddress         string `name:"relay-address" env:"TNLD_RELAY_ADDRESS" help:"Relay address advertised by this relay service."`
 	InternalRelayAddress string `name:"internal-relay-address" env:"TNLD_INTERNAL_RELAY_ADDRESS" help:"Internal hostname and port advertised by this relay process."`
 
+	SourceConnectionRate     float64       `name:"source-connection-rate" env:"TNLD_SOURCE_CONNECTION_RATE" default:"50" help:"New connections per second per source IPv4 address or IPv6 /64, per ingress process."`
+	SourceConnectionBurst    int           `name:"source-connection-burst" env:"TNLD_SOURCE_CONNECTION_BURST" default:"200" help:"New connection burst allowance per source IPv4 address or IPv6 /64, per ingress process."`
 	VisitorConnectionLimit   int64         `name:"visitor-connection-limit" env:"TNLD_VISITOR_CONNECTION_LIMIT" default:"20000" help:"Maximum concurrent visitor connections."`
 	RouteConnectionLimit     int64         `name:"route-connection-limit" env:"TNLD_ROUTE_CONNECTION_LIMIT" default:"500" help:"Maximum concurrent visitor connections per route."`
 	PublisherConnectionLimit int64         `name:"publisher-connection-limit" env:"TNLD_PUBLISHER_CONNECTION_LIMIT" default:"1000" help:"Maximum publisher connections held by one relay process."`
@@ -182,6 +185,9 @@ func (c Config) Validate() error {
 		if err := validateListenAddress(address); err != nil {
 			return fmt.Errorf("%s listen address: %w", name, err)
 		}
+	}
+	if c.SourceConnectionRate <= 0 || math.IsNaN(c.SourceConnectionRate) || math.IsInf(c.SourceConnectionRate, 0) || c.SourceConnectionBurst <= 0 {
+		return errors.New("source connection rate and burst must be positive and finite")
 	}
 	if c.VisitorConnectionLimit <= 0 || c.RouteConnectionLimit <= 0 || c.PublisherConnectionLimit <= 0 ||
 		c.RelayStreamCapacity <= 0 || c.QUICMaxIncomingStreams <= 0 {

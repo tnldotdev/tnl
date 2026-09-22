@@ -72,6 +72,8 @@ type ingressRuntimeConfig struct {
 }
 
 type ingressSettings struct {
+	sourceConnectionRate   float64
+	sourceConnectionBurst  int
 	visitorConnectionLimit int64
 	routeConnectionLimit   int64
 	requireProxyHeader     bool
@@ -82,6 +84,8 @@ type ingressSettings struct {
 
 func ingressSettingsFrom(cfg tnldconfig.Config) ingressSettings {
 	return ingressSettings{
+		sourceConnectionRate:   cfg.SourceConnectionRate,
+		sourceConnectionBurst:  cfg.SourceConnectionBurst,
 		visitorConnectionLimit: cfg.VisitorConnectionLimit,
 		routeConnectionLimit:   cfg.RouteConnectionLimit,
 		requireProxyHeader:     cfg.RequireProxyHeader,
@@ -184,6 +188,7 @@ func (d *daemon) startIngressRuntime(
 			return backends, true
 		},
 		RequireProxyHeader: settings.requireProxyHeader, MaxConnections: publicCapacity,
+		SourceConnectionRate: settings.sourceConnectionRate, SourceConnectionBurst: settings.sourceConnectionBurst,
 		MaxRouteConnections: routeCapacity, Metrics: metrics, Observer: metrics,
 		OpenUsage:       usage.Open,
 		ObserveRecovery: recovery.Observe,

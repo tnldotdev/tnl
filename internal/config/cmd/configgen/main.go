@@ -174,6 +174,8 @@ func primitiveSchema(valueType reflect.Type, duration bool) *jsonschema.Schema {
 		return &jsonschema.Schema{Type: "boolean"}
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		return &jsonschema.Schema{Type: "integer"}
+	case reflect.Float64:
+		return &jsonschema.Schema{Type: "number"}
 	case reflect.Slice:
 		return &jsonschema.Schema{Type: "array", Items: primitiveSchema(valueType.Elem(), false)}
 	default:
@@ -191,6 +193,9 @@ func defaultValue(value string, valueType reflect.Type, duration bool) any {
 		return parsed
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		parsed, _ := strconv.ParseInt(value, 10, 64)
+		return parsed
+	case reflect.Float64:
+		parsed, _ := strconv.ParseFloat(value, 64)
 		return parsed
 	default:
 		return value

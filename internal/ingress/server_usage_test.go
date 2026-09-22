@@ -9,10 +9,10 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/routebackend"
-	"github.com/tnldotdev/tnl/internal/sourcelimiter"
 )
 
 func TestIngressRoutesTLSWithProxyMetadata(t *testing.T) {
@@ -90,6 +90,46 @@ func TestIngressUsesProvisioningRouteOnlyForACMETLSALPN(t *testing.T) {
 	}
 }
 
+func TestIngressConfiguredSourceRefill(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	synctest.Test(t, func(t *testing.T) {
+		server, err := New(listener, Config{
+			Lookup:         func(string) (Route, bool) { return Route{}, false },
+			MaxConnections: 8, MaxRouteConnections: 2,
+			SourceConnectionRate: 2.5, SourceConnectionBurst: 2,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer server.cancelOpens()
+		source := netip.MustParseAddr("198.51.100.1")
+		if !server.limiter.Allow(source) {
+			t.Fatal("configured burst rejected the first connection")
+		}
+		if !server.limiter.Allow(source) {
+			t.Fatal("configured burst rejected the second connection")
+		}
+		if server.limiter.Allow(source) {
+			t.Fatal("configured burst accepted a third connection")
+		}
+		time.Sleep(399 * time.Millisecond)
+		if server.limiter.Allow(source) {
+			t.Fatal("source refilled before the configured interval")
+		}
+		time.Sleep(time.Millisecond)
+		if !server.limiter.Allow(source) {
+			t.Fatal("configured rate did not refill one token")
+		}
+		if server.limiter.Allow(source) {
+			t.Fatal("configured rate refilled more than one token")
+		}
+	})
+}
+
 func TestIngressEnforcesProxySourceLimitsAndRouteAllowlistInOrder(t *testing.T) {
 	backend, usage := newTLSBackend(t), newUsageRecorder()
 	metrics := &testMetrics{entriesChanged: make(chan int, 8)}
@@ -98,13 +138,8 @@ func TestIngressEnforcesProxySourceLimitsAndRouteAllowlistInOrder(t *testing.T) 
 		lookups.Add(1)
 		return Route{ID: "route_test", RouteVersion: 1, Backends: []routebackend.Backend{backend}, AllowedIPPrefixes: []netip.Prefix{netip.MustParsePrefix("198.51.100.0/24")}}, host == "route.example"
 	}}
-	server, address := startIngress(t, config, func(server *Server) {
-		var err error
-		server.limiter, err = sourcelimiter.New(sourcelimiter.Config{Rate: 0.000001, Burst: 1, MaxEntries: 8, IdleExpiration: time.Hour, Shards: 4, OnEntriesChanged: metrics.SetSourceLimiterEntries})
-		if err != nil {
-			t.Fatal(err)
-		}
-	})
+	config.SourceConnectionRate, config.SourceConnectionBurst = 0.000001, 1
+	server, address := startIngress(t, config)
 	malformed := ingressClient(t, address, "route.example", "198.51.100.1:40001")
 	// Write malformed bytes on the underlying connection, before TLS.
 	_, _ = malformed.NetConn().Write([]byte("not TLS"))

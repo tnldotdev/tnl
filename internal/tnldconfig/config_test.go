@@ -161,6 +161,7 @@ func TestConfigControlHostnameRejectsURLAndPort(t *testing.T) {
 		ClusterSecret: testClusterSecret, IngressID: "ingress-1",
 		IngressListen: ":443", MetricsListen: "127.0.0.1:9090",
 		VisitorConnectionLimit: 1, RouteConnectionLimit: 1, PublisherConnectionLimit: 1,
+		SourceConnectionRate: 50, SourceConnectionBurst: 200,
 		RelayStreamCapacity: 1, QUICMaxIncomingStreams: 1,
 		IngressLeaseDuration: 30 * time.Second, RelayLeaseDuration: 30 * time.Second,
 		LeaseRenewalInterval: 10 * time.Second, ControlRetryInterval: time.Second,

@@ -61,6 +61,7 @@ func standalonePublishConfig(t *testing.T, databaseURL, publicAddress, relayUDPA
 		ACMEDirectoryURL: directoryURL, ACMEEmail: "integration@example.test", ACMEAcceptTerms: true, ACMEProfile: "tlsserver",
 		LoginToken: testLoginToken, StorageKey: testStorageKey, AccessTokenLifetime: 5 * time.Minute, RefreshTokenLifetime: time.Hour,
 		VisitorConnectionLimit: 100, RouteConnectionLimit: 100, PublisherConnectionLimit: 10,
+		SourceConnectionRate: 50, SourceConnectionBurst: 200,
 		RelayStreamCapacity: 100, QUICMaxIncomingStreams: 100, QUICIdleTimeout: time.Minute,
 		IngressLeaseDuration: 5 * time.Second,
 		RelayLeaseDuration:   5 * time.Second, LeaseRenewalInterval: time.Second,

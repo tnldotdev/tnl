@@ -2070,24 +2070,28 @@ internal hostname and port; Config Check Limits describes its validation gap.
 
 #### Capacity, Policy, And Timing
 
-| Flag / file key                                               | Environment                       | Default | Applies | Behavior                                                      |
-| ------------------------------------------------------------- | --------------------------------- | ------- | ------- | ------------------------------------------------------------- |
-| `--visitor-connection-limit` / `visitor_connection_limit`     | `TNLD_VISITOR_CONNECTION_LIMIT`   | `20000` | S/I     | Maximum concurrent visitor connections.                       |
-| `--route-connection-limit` / `route_connection_limit`         | `TNLD_ROUTE_CONNECTION_LIMIT`     | `500`   | S/I     | Maximum concurrent visitor connections per route.             |
-| `--publisher-connection-limit` / `publisher_connection_limit` | `TNLD_PUBLISHER_CONNECTION_LIMIT` | `1000`  | S/R     | Maximum publisher connections held by one relay process.      |
-| `--relay-stream-capacity` / `relay_stream_capacity`           | `TNLD_RELAY_STREAM_CAPACITY`      | `4096`  | S/R     | Maximum concurrent visitor streams held by one relay process. |
-| `--require-proxy-header` / `require_proxy_header`             | `TNLD_REQUIRE_PROXY_HEADER`       | false   | S/I     | Require one trusted outer PROXY v2 header on public ingress.  |
-| `--quic-max-incoming-streams` / `quic_max_incoming_streams`   | `TNLD_QUIC_MAX_INCOMING_STREAMS`  | `4096`  | S/R     | Maximum incoming QUIC streams per publisher connection.       |
-| `--quic-idle-timeout` / `quic_idle_timeout`                   | `TNLD_QUIC_IDLE_TIMEOUT`          | `45s`   | S/R     | Publisher connection QUIC idle timeout.                       |
-| `--ingress-lease-duration` / `ingress_lease_duration`         | `TNLD_INGRESS_LEASE_DURATION`     | `30s`   | S/C     | Ingress lease duration granted by control.                    |
-| `--relay-lease-duration` / `relay_lease_duration`             | `TNLD_RELAY_LEASE_DURATION`       | `30s`   | S/C     | Relay lease duration granted by control.                      |
-| `--lease-renewal-interval` / `lease_renewal_interval`         | `TNLD_LEASE_RENEWAL_INTERVAL`     | `10s`   | S/I/R   | Ingress and relay lease renewal frequency.                    |
-| `--control-retry-interval` / `control_retry_interval`         | `TNLD_CONTROL_RETRY_INTERVAL`     | `1s`    | S/I/R   | Delay before retrying a transient control failure.            |
-| `--routing-table-wait` / `routing_table_wait`                 | `TNLD_ROUTING_TABLE_WAIT`         | `25s`   | S/I     | Maximum wait for ingress routing-table updates.               |
-| `--drain-timeout` / `drain_timeout`                           | `TNLD_DRAIN_TIMEOUT`              | `30s`   | all     | Graceful connection drain deadline.                           |
+| Flag / file key                                               | Environment                       | Default | Applies | Behavior                                                                      |
+| ------------------------------------------------------------- | --------------------------------- | ------- | ------- | ----------------------------------------------------------------------------- |
+| `--source-connection-rate` / `source_connection_rate`         | `TNLD_SOURCE_CONNECTION_RATE`     | `50`    | S/I     | New connections/sec per source IPv4 address or IPv6 /64, per ingress process. |
+| `--source-connection-burst` / `source_connection_burst`       | `TNLD_SOURCE_CONNECTION_BURST`    | `200`   | S/I     | Token-bucket burst allowance for each source on each ingress process.         |
+| `--visitor-connection-limit` / `visitor_connection_limit`     | `TNLD_VISITOR_CONNECTION_LIMIT`   | `20000` | S/I     | Maximum concurrent visitor connections.                                       |
+| `--route-connection-limit` / `route_connection_limit`         | `TNLD_ROUTE_CONNECTION_LIMIT`     | `500`   | S/I     | Maximum concurrent visitor connections per route.                             |
+| `--publisher-connection-limit` / `publisher_connection_limit` | `TNLD_PUBLISHER_CONNECTION_LIMIT` | `1000`  | S/R     | Maximum publisher connections held by one relay process.                      |
+| `--relay-stream-capacity` / `relay_stream_capacity`           | `TNLD_RELAY_STREAM_CAPACITY`      | `4096`  | S/R     | Maximum concurrent visitor streams held by one relay process.                 |
+| `--require-proxy-header` / `require_proxy_header`             | `TNLD_REQUIRE_PROXY_HEADER`       | false   | S/I     | Require one trusted outer PROXY v2 header on public ingress.                  |
+| `--quic-max-incoming-streams` / `quic_max_incoming_streams`   | `TNLD_QUIC_MAX_INCOMING_STREAMS`  | `4096`  | S/R     | Maximum incoming QUIC streams per publisher connection.                       |
+| `--quic-idle-timeout` / `quic_idle_timeout`                   | `TNLD_QUIC_IDLE_TIMEOUT`          | `45s`   | S/R     | Publisher connection QUIC idle timeout.                                       |
+| `--ingress-lease-duration` / `ingress_lease_duration`         | `TNLD_INGRESS_LEASE_DURATION`     | `30s`   | S/C     | Ingress lease duration granted by control.                                    |
+| `--relay-lease-duration` / `relay_lease_duration`             | `TNLD_RELAY_LEASE_DURATION`       | `30s`   | S/C     | Relay lease duration granted by control.                                      |
+| `--lease-renewal-interval` / `lease_renewal_interval`         | `TNLD_LEASE_RENEWAL_INTERVAL`     | `10s`   | S/I/R   | Ingress and relay lease renewal frequency.                                    |
+| `--control-retry-interval` / `control_retry_interval`         | `TNLD_CONTROL_RETRY_INTERVAL`     | `1s`    | S/I/R   | Delay before retrying a transient control failure.                            |
+| `--routing-table-wait` / `routing_table_wait`                 | `TNLD_ROUTING_TABLE_WAIT`         | `25s`   | S/I     | Maximum wait for ingress routing-table updates.                               |
+| `--drain-timeout` / `drain_timeout`                           | `TNLD_DRAIN_TIMEOUT`              | `30s`   | all     | Graceful connection drain deadline.                                           |
 
 All connection and stream capacities must be positive, including fields not
-used by the selected role. All timing values must be positive.
+used by the selected role. Source connection rate must be positive and finite;
+fractional rates are supported. Source connection burst must be a positive integer.
+All timing values must be positive.
 `lease_renewal_interval` must be shorter than both lease durations.
 `routing_table_wait` must be a whole-second duration no greater than 25 seconds.
 

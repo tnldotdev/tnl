@@ -297,6 +297,7 @@ func unusedUDPAddress(t *testing.T) string {
 func splitTestConfig(role tnldconfig.Role, metricsAddress string) tnldconfig.Config {
 	return tnldconfig.Config{
 		Role: role, MetricsListen: metricsAddress,
+		SourceConnectionRate: 50, SourceConnectionBurst: 200,
 		VisitorConnectionLimit: 100, RouteConnectionLimit: 10, PublisherConnectionLimit: 10,
 		RelayStreamCapacity: 100, QUICMaxIncomingStreams: 100, QUICIdleTimeout: time.Minute,
 		IngressLeaseDuration: 2 * time.Second,

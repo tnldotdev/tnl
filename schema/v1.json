@@ -445,6 +445,16 @@
           "type": "string",
           "description": "Internal hostname and port advertised by this relay process."
         },
+        "source_connection_rate": {
+          "type": "number",
+          "description": "New connections per second per source IPv4 address or IPv6 /64, per ingress process.",
+          "default": 50
+        },
+        "source_connection_burst": {
+          "type": "integer",
+          "description": "New connection burst allowance per source IPv4 address or IPv6 /64, per ingress process.",
+          "default": 200
+        },
         "visitor_connection_limit": {
           "type": "integer",
           "description": "Maximum concurrent visitor connections.",

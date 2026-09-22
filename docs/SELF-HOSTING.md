@@ -112,6 +112,28 @@ address through `TNLD_INGRESS_IPV4_ADDRESSES` or
 `TNLD_INGRESS_IPV6_ADDRESSES`. If you leave these settings empty, control does
 not manage public route DNS. You must publish the records yourself.
 
+## Ingress Source Connection Limits
+
+Each ingress process applies a token bucket to new connections from each source
+IPv4 address or IPv6 /64. `TNLD_SOURCE_CONNECTION_RATE` sets the sustained rate
+(default **50 connections/sec**, positive finite values including fractions), and
+`TNLD_SOURCE_CONNECTION_BURST` sets the bucket size (default **200**, a positive
+integer). Standalone uses the same settings. These are process-local limits;
+replicas do not share buckets, and visitors behind one source address share its
+allowance across routes.
+
+When `TNLD_REQUIRE_PROXY_HEADER` is enabled, ingress uses the source from the
+trusted outer PROXY v2 header. Source limiting happens before route lookup and IP
+policy checks. It counts new connections rather than HTTP requests on an existing
+connection. `tnl_source_limiter_rejections_total` and `tnl_source_limiter_entries`
+report rejected attempts and tracked source count.
+
+For example, four sources offering 320 fresh connections/sec each can use
+`TNLD_SOURCE_CONNECTION_RATE=400` with the default burst. Record both values when
+comparing throughput measurements; a larger burst can temporarily hide a
+sustained-rate limit. Visitor/route connection limits and relay capacities remain
+independent settings; see the [CLI reference](CLI-REFERENCE.md#capacity-policy-and-timing).
+
 ## Publisher HTTP Limits
 
 Route TLS terminates at the publisher, which accepts HTTP/1.1 and HTTP/2 and

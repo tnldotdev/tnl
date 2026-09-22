@@ -62,22 +62,24 @@ type Metrics interface {
 }
 
 type Config struct {
-	Lookup               LookupFunc
-	LookupChallenge      BackendLookupFunc
-	ServerHostname       string
-	HandleControl        func(net.Conn) bool
-	RelayHostname        string
-	HandleRelay          func(net.Conn) bool
-	HandleRelayChallenge func(net.Conn) bool
-	RequireProxyHeader   bool
-	MaxConnections       int
-	MaxRouteConnections  int
-	OpenTimeout          time.Duration
-	Metrics              Metrics
-	Observer             OperationObserver
-	OpenUsage            func(string, uint64, netip.Addr, time.Time) UsageConnection
-	ObserveRecovery      func(string, uint64, uint64, time.Time)
-	OnError              func(error)
+	Lookup                LookupFunc
+	LookupChallenge       BackendLookupFunc
+	ServerHostname        string
+	HandleControl         func(net.Conn) bool
+	RelayHostname         string
+	HandleRelay           func(net.Conn) bool
+	HandleRelayChallenge  func(net.Conn) bool
+	RequireProxyHeader    bool
+	SourceConnectionRate  float64
+	SourceConnectionBurst int
+	MaxConnections        int
+	MaxRouteConnections   int
+	OpenTimeout           time.Duration
+	Metrics               Metrics
+	Observer              OperationObserver
+	OpenUsage             func(string, uint64, netip.Addr, time.Time) UsageConnection
+	ObserveRecovery       func(string, uint64, uint64, time.Time)
+	OnError               func(error)
 }
 
 type Server struct {
@@ -120,6 +122,7 @@ func New(listener net.Listener, config Config) (*Server, error) {
 		config.OpenTimeout = defaultOpenTimeout
 	}
 	limiter, err := sourcelimiter.New(sourcelimiter.Config{
+		Rate: config.SourceConnectionRate, Burst: config.SourceConnectionBurst,
 		OnEntriesChanged: func(entries int) {
 			if config.Metrics != nil {
 				config.Metrics.SetSourceLimiterEntries(entries)
