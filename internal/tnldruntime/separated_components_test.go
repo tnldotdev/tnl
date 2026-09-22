@@ -69,6 +69,7 @@ func TestSeparatedRuntimeComponent(t *testing.T) {
 			serviceHTTPClient: splitTestServiceHTTPClient(t, separatedRoots(t, "roots.pem"), "control:9443"),
 			relayClientTLS:    separatedRelayTLS(t), owner: newRuntimeTopology(t)}
 		process := startIntegrationProcessWithOptions(t, cfg, options)
+		defer captureSeparatedFailure(t, component)
 		waitForProcessReady(t, process)
 		readyName := component + ".ready"
 		if component == "relay-a" && *runtimeLoadScenario == "relay-kill" {

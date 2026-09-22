@@ -120,3 +120,55 @@ Retained local evidence:
 Classification: neither point reached a server, admission, generator, database,
 origin, publisher, or host capacity limit. They establish ready-route overhead
 and fault correctness at fixed traffic, not maximum capacity.
+
+## 2026-09-22 — Certificate Validation Shares The Visitor Source Bucket
+
+The original 256-route attempt on clean `9b769d9` failed before visitor traffic.
+Unlike the four-at-a-time 64/128 runs, it launched all 256 publishers concurrently.
+Pebble validates each certificate three times from the same IP. Ingress applied
+its 50/sec, burst-200 source bucket before inspecting the ClientHello, so it
+rejected ACME checks as well as ordinary visitors.
+
+An identical diagnostic reproduction and two single-variable experiments used
+`ROUTES=256 START_PARALLEL=256 READY_TIMEOUT=5m RPS=160 DURATION=60s`. The code
+remained `9b769d9` plus failure diagnostics; resource quotas, four certificate
+workers, visitor deadlines, source count, worker count, and queue size were fixed.
+
+| Source rate / burst | Accepted checks | Source rejections | Invalid orders | Total orders | Outcome                                            |
+| ------------------- | --------------: | ----------------: | -------------: | -----------: | -------------------------------------------------- |
+| 50 / 200            |             525 |               741 |            260 |          422 | Publisher certificate issuance failed              |
+| 400 / 200           |             799 |                95 |             42 |          298 | All publishers ready; extra-order invariant failed |
+| 50 / 1024           |             768 |                 0 |              0 |          256 | Complete workload passed                           |
+
+Every row reconciles exactly: accepted plus source-rejected checks equals three
+times the CA order count. Increasing **only burst** eliminated invalid orders
+and replacement issuance at the original sustained rate. CPU throttling in
+PostgreSQL/Pebble persisted in the passing run, so it did not require a resource
+increase. This establishes source-budget coupling as the cause for this workload;
+it does not characterize public-CA source distribution or maximum server capacity.
+
+The passing burst-only run verified activation in 19.189s and completed
+28,800/28,800 visitor requests (9,600 each in steady, restart, and shutdown),
+with zero failures, timeouts, missed offers, queue expiry, or source rejections.
+Exact raw-sample p95/max latencies were 3.861/12.763ms, 4.029/8.575ms, and
+3.959/9.999ms respectively. Recovery took 16.713s; final accounting reconciled
+29,448 successful streams including probes/held streams, and zero active
+sessions, publisher connections, or reservations remained. All owned containers
+exited zero and were removed. This is an explicitly overridden admission profile.
+
+Evidence retained under `bench-results/` (each prefix has a log and directory):
+
+- `capacity-routes-256-160rps-1`: original failure, no post-activation metrics.
+- `capacity-routes-256-diagnostic-1`: identical reproduction with failure counters.
+- `capacity-routes-256-source400-1`: rate-only comparison, still failed.
+- `capacity-routes-256-burst1024-1`: burst-only comparison, passed.
+
+The temporary ACME authorization-response recorder produced no error details:
+the worker stops on an invalid order before fetching authorization again. It is
+not retained as permanent tooling. Failure-time local actor metric/resource
+capture and persisted order errors are retained. No individual failed
+authorization was correlated with a specific rejected socket.
+
+Follow-up: separate visitor, active route-challenge, and standalone service
+admission budgets, retain bounded ClientHello inspection, and repeat the original
+256-start workload at default source rate/burst. Preserve all failed runs above.

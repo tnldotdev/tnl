@@ -10,6 +10,7 @@ x-runtime: &runtime
   volumes:
     - artifacts:/artifacts:ro
     - coordination:/load
+    - ${RESULTS:?results directory required}:/results
   environment: &environment
     PATH: /artifacts:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
   command:

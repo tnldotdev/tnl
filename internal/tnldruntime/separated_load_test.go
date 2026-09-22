@@ -75,7 +75,7 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 		defer cancel()
 		err := database.QueryRowContext(ctx, `SELECT jsonb_build_object('sessions',
 			(SELECT jsonb_agg(jsonb_build_object('state', state, 'route_id', route_id, 'version', route_version, 'expires_at', publisher_expires_at)) FROM control.route_sessions),
-			'orders', (SELECT jsonb_agg(jsonb_build_object('state', state, 'route_id', route_id, 'attempts', attempts, 'available_at', available_at, 'claimed', work_owner IS NOT NULL)) FROM control.acme_orders))::text`).Scan(&states)
+			'orders', (SELECT jsonb_agg(jsonb_build_object('state', state, 'route_id', route_id, 'attempts', attempts, 'available_at', available_at, 'claimed', work_owner IS NOT NULL, 'last_error', last_error)) FROM control.acme_orders))::text`).Scan(&states)
 		t.Logf("separated_failure_state=%s error=%v", states, err)
 	}()
 	for _, name := range []string{"control", "ingress", "relay-a", "relay-b", "app", "pebble"} {
