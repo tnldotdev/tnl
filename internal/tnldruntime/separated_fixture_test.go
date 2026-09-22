@@ -154,9 +154,8 @@ func separatedConfig(t *testing.T, component string) tnldconfig.Config {
 	cfg := splitTestConfig(role, "0.0.0.0:9090")
 	cfg.IngressLeaseDuration, cfg.RelayLeaseDuration = 30*time.Second, 30*time.Second
 	cfg.LeaseRenewalInterval, cfg.DrainTimeout = 10*time.Second, 5*time.Second
-	cfg.VisitorConnectionLimit, cfg.RouteConnectionLimit = 20000, 500
-	cfg.PublisherConnectionLimit, cfg.RelayStreamCapacity = 1000, 4096
-	cfg.QUICMaxIncomingStreams, cfg.QUICIdleTimeout = 4096, 45*time.Second
+	runtimeLoadAdmission.apply(&cfg)
+	cfg.QUICIdleTimeout = 45 * time.Second
 	cfg.ClusterSecret = testClusterSecret
 	switch role {
 	case tnldconfig.RoleControl:
