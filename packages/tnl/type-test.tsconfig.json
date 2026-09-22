@@ -4,6 +4,7 @@
     "declaration": false,
     "lib": ["DOM", "DOM.Iterable", "ESNext"],
     "noEmit": true,
+    "noUncheckedIndexedAccess": false,
     "skipLibCheck": true,
     "types": ["node", "react", "react-dom"]
   },

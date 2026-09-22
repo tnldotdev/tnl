@@ -10,7 +10,7 @@ export interface ProjectServiceMetadata {
 
 export interface ProjectMetadata {
   readonly memberNamespace: string;
-  readonly services: Readonly<Record<string, ProjectServiceMetadata>>;
+  readonly services: Readonly<Record<string, ProjectServiceMetadata | undefined>>;
 }
 
 export interface ProjectRuntime extends ProjectMetadata {
@@ -51,7 +51,8 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
       service.hostname,
       `${description} service ${JSON.stringify(name)} hostname`,
     );
-    if (service.url !== `https://${hostname}`) {
+    const url: `https://${string}` = `https://${hostname}`;
+    if (service.url !== url) {
       throw new Error(`${description} service ${JSON.stringify(name)} has an invalid URL`);
     }
     if (hostnames.has(hostname)) {
@@ -61,7 +62,7 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
     services[name] = Object.freeze({
       memberNamespace: serviceMemberNamespace,
       hostname,
-      url: service.url as `https://${string}`,
+      url,
     });
   }
 

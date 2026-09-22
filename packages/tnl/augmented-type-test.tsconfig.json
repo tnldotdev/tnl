@@ -4,7 +4,7 @@
     "declaration": false,
     "lib": ["DOM", "DOM.Iterable", "ESNext"],
     "noEmit": true,
-    "skipLibCheck": true,
+    "skipLibCheck": false,
     "types": []
   },
   "files": ["runtime-augmented-type-test.ts"]

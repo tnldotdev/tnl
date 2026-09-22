@@ -86,10 +86,7 @@ func Render(metadata Metadata) ([]byte, []byte, error) {
 	if err := metadata.Validate(); err != nil {
 		return nil, nil, err
 	}
-	jsonData, err := json.MarshalIndent(map[string]any{
-		"memberNamespace": metadata.MemberNamespace, "runningUnderTnlDev": metadata.RunningUnderTnlDev,
-		"serviceDirectories": metadata.ServiceDirectories, "services": metadata.Services, "version": metadata.Version,
-	}, "", "  ")
+	jsonData, err := json.MarshalIndent(metadata, "", "  ")
 	if err != nil {
 		return nil, nil, fmt.Errorf("encode project metadata: %w", err)
 	}

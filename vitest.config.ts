@@ -4,9 +4,9 @@ import { defineConfig } from "vitest/config";
 const sourceDirectory = fileURLToPath(new URL("packages/tnl/src/", import.meta.url));
 
 export default defineConfig(({ mode }) => ({
-  resolve:
-    mode === "coverage"
-      ? {
+  ...(mode === "coverage"
+    ? {
+        resolve: {
           alias: [
             // Internal tests normally exercise dist too; coverage deliberately uses the
             // same source graph as the public aliases below. Framework subprocesses
@@ -28,8 +28,9 @@ export default defineConfig(({ mode }) => ({
               replacement: `${sourceDirectory}index.ts`,
             },
           ],
-        }
-      : undefined,
+        },
+      }
+    : {}),
   test: {
     clearMocks: true,
     coverage: {

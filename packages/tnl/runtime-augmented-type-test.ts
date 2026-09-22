@@ -6,10 +6,12 @@ declare module "@tnldotdev/tnl" {
     readonly services: {
       readonly api: {
         readonly hostname: "api.member.example";
+        readonly memberNamespace: "member.example";
         readonly url: "https://api.member.example";
       };
       readonly web: {
         readonly hostname: "web.member.example";
+        readonly memberNamespace: "member.example";
         readonly url: "https://web.member.example";
       };
     };
@@ -24,6 +26,7 @@ void tnl.services.api;
 if (tnl) {
   tnl.memberNamespace satisfies "member.example";
   tnl.services.api.hostname satisfies "api.member.example";
+  tnl.services.api.memberNamespace satisfies "member.example";
   tnl.services.api.url satisfies "https://api.member.example";
   tnl.runningUnderTnlDev satisfies boolean;
 

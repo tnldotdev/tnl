@@ -61,7 +61,7 @@ export type CanonicalLoopbackTarget = `http://${string}`;
 
 export function readDevelopmentContext(
   environment: TnlDevEnvironment = process.env,
-  cwd = process.cwd(),
+  cwd: string = process.cwd(),
 ): DevelopmentContext {
   const protocol = environment.TNL_DEV_PROTOCOL;
   if (protocol !== undefined) {
@@ -181,8 +181,10 @@ function parseBootstrapEnvironment(environment: TnlDevEnvironment): TnlDevBootst
     throw new Error(`TNL_DEV_SOCKET is required by tnl dev protocol ${protocolVersion}`);
   }
   const rawPort = environment.TNL_DEV_PORT;
-  const port = rawPort === undefined ? undefined : parseListenerPort(rawPort, "TNL_DEV_PORT");
-  return Object.freeze({ port, socket });
+  if (rawPort === undefined) {
+    return Object.freeze({ socket });
+  }
+  return Object.freeze({ port: parseListenerPort(rawPort, "TNL_DEV_PORT"), socket });
 }
 
 function discoverDevSocket(
@@ -248,7 +250,8 @@ function parseAssignment(
     "tnl dev returned member namespace",
   );
   const hostname = requiredHostname(object.hostname, "tnl dev returned public hostname");
-  if (object.publicURL !== `https://${hostname}`) {
+  const publicURL: `https://${string}` = `https://${hostname}`;
+  if (object.publicURL !== publicURL) {
     throw new Error("tnl dev returned an invalid public URL");
   }
   const project = parseProjectRuntime(object.project, "tnl dev project metadata");
@@ -275,7 +278,7 @@ function parseAssignment(
     hostname,
     memberNamespace,
     project,
-    publicURL: object.publicURL as `https://${string}`,
+    publicURL,
     service: object.service,
     tunnelID: object.tunnelID as `tunnel_${string}`,
   });
@@ -523,5 +526,5 @@ function canonicalPath(value: string): string {
 }
 
 function isMissing(error: unknown): boolean {
-  return (error as NodeJS.ErrnoException).code === "ENOENT";
+  return error !== null && typeof error === "object" && "code" in error && error.code === "ENOENT";
 }

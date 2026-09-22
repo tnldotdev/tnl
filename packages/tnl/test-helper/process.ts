@@ -44,7 +44,7 @@ export function startTestProcess(
       if (grouped) process.kill(-child.pid, value);
       else child.kill(value);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+      if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) throw error;
     }
   };
   let closing: Promise<void> | undefined;

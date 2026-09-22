@@ -23,11 +23,11 @@ type Service struct {
 // Metadata is the generated .tnl/project.json contract. ServiceDirectories is
 // private discovery data and is deliberately omitted from public declarations.
 type Metadata struct {
-	Version            int                `json:"version"`
 	MemberNamespace    string             `json:"memberNamespace"`
-	Services           map[string]Service `json:"services"`
 	RunningUnderTnlDev bool               `json:"runningUnderTnlDev"`
 	ServiceDirectories map[string]string  `json:"serviceDirectories"`
+	Services           map[string]Service `json:"services"`
+	Version            int                `json:"version"`
 }
 
 // PublicMetadata is the value exposed by @tnldotdev/tnl.
