@@ -345,13 +345,22 @@ func runSeparatedVisitor(t *testing.T, ctx context.Context, component string, ra
 			progress[i] = stream.BytesReceived()
 		}
 		if phase.Duration == 0 {
+			interval := max(time.Duration(float64(time.Second)/runtimeLoadAdmission.SourceConnectionRate), time.Nanosecond)
+			pacer := time.NewTicker(interval)
 			for i := index - 1; i < len(phase.URLs); i += 4 {
+				select {
+				case <-ctx.Done():
+					pacer.Stop()
+					return
+				case <-pacer.C:
+				}
 				row := visitor.Request(ctx, phase.URLs[i], time.Now())
 				if row.Error != "" {
 					t.Error(row.Error)
 				}
 				result.Requests = append(result.Requests, row)
 			}
+			pacer.Stop()
 		} else {
 			result.Cohorts = make(map[string]benchworkload.VisitorResult)
 			cfg := benchworkload.VisitorConfig{Rate: localRate,
