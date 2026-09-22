@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/proxyproto"
 	"github.com/tnldotdev/tnl/internal/routebackend"
 )
 
@@ -70,14 +71,24 @@ func (b waitingBackend) Open(ctx context.Context, _ string) (net.Conn, error) {
 }
 
 func TestIngressStalledAttemptLeavesFallbackBudget(t *testing.T) {
-	for _, stage := range []string{"open", "proxy_write"} {
+	for _, stage := range []string{"open", "proxy_write", "hello_write"} {
 		t.Run(stage, func(t *testing.T) {
 			var first routebackend.Backend = waitingBackend{}
-			if stage == "proxy_write" {
+			if stage != "open" {
 				a, b := net.Pipe()
 				ownIngressConn(t, a)
 				ownIngressConn(t, b)
 				first = singleBackend{a} // Peer never reads the PROXY header.
+				if stage == "hello_write" {
+					ctx, cancel := context.WithCancel(t.Context())
+					ingressWorker(t, func() { cancel(); _ = b.Close() }, func() error {
+						if _, _, err := proxyproto.Decode(b); err != nil {
+							return err
+						}
+						<-ctx.Done()
+						return nil
+					})
+				}
 			}
 			fallback := newTLSBackend(t)
 			config := routeConfig(first, contextBackend{fallback})
@@ -101,7 +112,7 @@ func TestIngressStalledAttemptLeavesFallbackBudget(t *testing.T) {
 func TestForcedDrainCancelsPendingOpen(t *testing.T) {
 	entered := make(chan struct{})
 	config := routeConfig(waitingBackend{entered: entered})
-	config.OpenTimeout = time.Minute
+	config.OpenTimeout = 2 * time.Second
 	server, address := startIngress(t, config)
 	client := ingressClient(t, address, "route.example", "")
 	handshake := ingressWorker(t, func() { _ = client.Close() }, client.Handshake)
@@ -114,11 +125,30 @@ func TestForcedDrainCancelsPendingOpen(t *testing.T) {
 	ingressAwait(t, handshake)
 	joined := make(chan struct{})
 	go func() { server.active.Wait(); close(joined) }()
+	t.Cleanup(func() { ingressAwait(t, joined) })
 	select {
 	case <-joined:
 	case <-time.After(time.Second):
 		t.Fatal("forced drain retained a pending backend open")
 	}
+}
+
+func TestIngressBothBackendsUnavailable(t *testing.T) {
+	first, second := make(chan struct{}), make(chan struct{})
+	config := routeConfig(waitingBackend{first}, waitingBackend{second})
+	config.OpenTimeout = 200 * time.Millisecond
+	_, address := startIngress(t, config)
+	client := ingressClient(t, address, "route.example", "")
+	_ = client.SetDeadline(time.Now().Add(time.Second))
+	started := time.Now()
+	if err := client.Handshake(); err == nil {
+		t.Fatal("unavailable relays completed TLS")
+	}
+	if time.Since(started) > 750*time.Millisecond {
+		t.Fatal("opening exceeded the configured overall budget")
+	}
+	ingressAwait(t, first)
+	ingressAwait(t, second)
 }
 
 type failAfterProxyBackend struct {
