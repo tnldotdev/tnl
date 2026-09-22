@@ -13,8 +13,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  integration:
-    name: Go integration
+  postgres:
+    name: PostgreSQL integration
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -49,14 +49,85 @@ jobs:
       - name: Install pinned tools
         run: go install github.com/letsencrypt/pebble/v2/cmd/pebble@v2.10.1
 
-      - name: Allow local authoritative DNS and HTTPS test listeners
-        run: sudo sysctl --write net.ipv4.ip_unprivileged_port_start=53
-
       - name: Run integration tests
         run: task go:test:integration
+
+  binary:
+    name: Binary integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            .github/workflows/integration.yml
+
+      - name: Set up pnpm and Node
+        uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
+        with:
+          runtime: node@22.23.2
+          cache: true
+          require-lockfile: true
+
+      - name: Install Task
+        uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.53.1
+          repo-token: ""
+          checksum: a54a408f6861ff921f6e87774180db31bacd8c1e7c944ca696db9fea49a82fc7
+
+      - name: Install pinned tools
+        run: go install github.com/letsencrypt/pebble/v2/cmd/pebble@v2.10.1
+
+      - name: Allow local HTTPS test listeners
+        run: sudo sysctl --write net.ipv4.ip_unprivileged_port_start=443
 
       - name: Run binary integration tests
         run: task go:test:integration:binary
 
+  dns:
+    name: DNS integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Task
+        uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.53.1
+          repo-token: ""
+          checksum: a54a408f6861ff921f6e87774180db31bacd8c1e7c944ca696db9fea49a82fc7
+
       - name: Run DNS integration test
         run: task go:test:integration:dns
+
+  integration:
+    name: Go integration
+    if: always()
+    needs: [postgres, binary, dns]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Verify integration jobs passed
+        env:
+          POSTGRES_RESULT: ${{ needs.postgres.result }}
+          BINARY_RESULT: ${{ needs.binary.result }}
+          DNS_RESULT: ${{ needs.dns.result }}
+        run: |
+          test "$POSTGRES_RESULT" = success
+          test "$BINARY_RESULT" = success
+          test "$DNS_RESULT" = success

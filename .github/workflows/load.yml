@@ -22,10 +22,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  load:
-    name: Database and runtime workloads
+  database:
+    name: Database workload
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -61,6 +61,30 @@ jobs:
           ROUTES: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1000' || '32' }}
         run: task go:test:load:database DELAY="$DELAY" ROUTES="$ROUTES"
 
+  runtime:
+    name: Runtime workloads
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
+        with:
+          runtime: node@22.23.2
+          cache: false
+          require-lockfile: true
+
+      - name: Install Task
+        uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.53.1
+          repo-token: ""
+          checksum: a54a408f6861ff921f6e87774180db31bacd8c1e7c944ca696db9fea49a82fc7
+
       - name: Run runtime smoke
         run: task go:test:load:runtime RACE=1 RESULTS=bench-results/ci-smoke
 
@@ -79,3 +103,17 @@ jobs:
           path: bench-results/ci-*
           if-no-files-found: ignore
           retention-days: 7
+
+  load:
+    name: Load tests
+    if: always()
+    needs: [database, runtime]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Verify workload jobs passed
+        env:
+          DATABASE_RESULT: ${{ needs.database.result }}
+          RUNTIME_RESULT: ${{ needs.runtime.result }}
+        run: test "$DATABASE_RESULT" = success && test "$RUNTIME_RESULT" = success
