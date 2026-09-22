@@ -31,6 +31,7 @@ type PublisherConfig struct {
 	ReadyTimeout, StopTimeout time.Duration
 	DrainTime                 time.Duration
 	OnFailure                 func()
+	Observe                   func(int, publisher.Event) error
 }
 
 type PublishedRoute struct {
@@ -190,6 +191,11 @@ func (g *Publishers) Start(ctx context.Context, indexes []int) ([]PublishedRoute
 			ready := make(chan struct{})
 			var once sync.Once
 			cfg.Observe = func(event publisher.Event) error {
+				if g.config.Observe != nil {
+					if err := g.config.Observe(index, event); err != nil {
+						return err
+					}
+				}
 				if event.Type == publisher.EventReady {
 					once.Do(func() {
 						process.ready = PublishedRoute{Index: index, Ready: event, Activation: time.Since(began)}

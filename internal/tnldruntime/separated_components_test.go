@@ -190,8 +190,9 @@ func runSeparatedApp(t *testing.T, ctx context.Context) {
 }
 
 type separatedPublishers struct {
-	URLs  []string
-	Ready []publisher.Event
+	URLs      []string
+	Ready     []publisher.Event
+	Fallbacks int64
 }
 
 func runSeparatedPublishers(t *testing.T, ctx context.Context, count int) {
@@ -210,11 +211,25 @@ func runSeparatedPublishers(t *testing.T, ctx context.Context, count int) {
 			}
 		}
 	}
+	transport := "mixed"
+	if *runtimeLoadScenario == "udp-fallback" {
+		transport = "auto"
+	}
+	var fallbacks atomic.Int64
 	group, err := benchworkload.OpenPublishers(ctx, benchworkload.PublisherConfig{
 		Server: "https://control." + separatedDomain, LoginToken: testLoginToken,
 		Domain: "routes." + separatedDomain, StateRoot: filepath.Join(t.TempDir(), "state"), Target: "http://127.0.0.1:8080",
 		HTTPClient: separatedHTTP(t), RelayTLS: separatedRelayTLS(t), AllowedIPPrefixes: prefixes,
-		Transport: "mixed", Parallel: 4, ReadyTimeout: 30 * time.Second, StopTimeout: 10 * time.Second, DrainTime: time.Second,
+		Transport: transport, Parallel: 4, ReadyTimeout: 30 * time.Second, StopTimeout: 10 * time.Second, DrainTime: time.Second,
+		Observe: func(index int, event publisher.Event) error {
+			if event.Type == publisher.EventTransportFallback {
+				fallbacks.Add(1)
+			}
+			if event.Type == publisher.EventTransportFallback || event.Type == publisher.EventReady {
+				t.Logf("publisher_transport index=%d event=%s transport=%s", index, event.Type, event.Transport)
+			}
+			return nil
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -249,6 +264,7 @@ func runSeparatedPublishers(t *testing.T, ctx context.Context, count int) {
 		t.Logf("separated_activation index=%d launch_to_ready=%s", route.Index, route.Activation)
 	}
 	t.Logf("separated_activation_total=%s", time.Since(started))
+	result.Fallbacks = fallbacks.Load()
 	separatedWrite(t, "publishers.ready", result)
 	for _, phase := range []string{"close-half", "close-all"} {
 		if !separatedRead(t, monitor, phase, nil) {
@@ -272,8 +288,11 @@ func runSeparatedPublishers(t *testing.T, ctx context.Context, count int) {
 type separatedRestart struct{ Started, Exited, Restored time.Time }
 type separatedVisitorResult struct {
 	benchworkload.VisitorResult
-	Requests      []benchworkload.RequestResult
-	HeldSurviving int
+	Requests            []benchworkload.RequestResult
+	HeldSurviving       int
+	HealthyHeld         int
+	HealthyHeldProgress int
+	Cohorts             map[string]benchworkload.VisitorResult
 }
 
 func runSeparatedVisitor(t *testing.T, ctx context.Context, component string, rate int) {
@@ -290,7 +309,15 @@ func runSeparatedVisitor(t *testing.T, ctx context.Context, component string, ra
 	index, _ := strconv.Atoi(strings.TrimPrefix(component, "visitor-"))
 	visitor := benchworkload.Visitor{Roots: separatedRoots(t, "route-roots.pem"), Address: "ingress:443", PayloadBytes: 32768}
 	localRate := benchworkload.Assignment(rate, 4, index-1)
+	cohortByURL := make(map[string]string)
+	for i, url := range publishers.URLs {
+		cohortByURL[url] = "quic"
+		if i%2 != 0 || *runtimeLoadScenario == "udp-fallback" {
+			cohortByURL[url] = "tls-tcp"
+		}
+	}
 	var streams []*benchworkload.HeldStream
+	var healthy []*benchworkload.HeldStream
 	for i := index - 1; i < min(8, len(publishers.URLs)); i += 4 {
 		stream, err := visitor.Hold(ctx, publishers.URLs[i])
 		if err != nil {
@@ -313,6 +340,24 @@ func runSeparatedVisitor(t *testing.T, ctx context.Context, component string, ra
 			break
 		}
 		result := separatedVisitorResult{}
+		if phase.OpenHeld {
+			for i := index - 1; i < min(8, len(phase.URLs)); i += 4 {
+				stream, err := visitor.Hold(ctx, phase.URLs[i])
+				if err != nil {
+					t.Fatal(err)
+				}
+				healthy = append(healthy, stream)
+				t.Cleanup(func() {
+					if err := stream.Close(); err != nil {
+						t.Error(err)
+					}
+				})
+			}
+		}
+		progress := make([]int64, len(healthy))
+		for i, stream := range healthy {
+			progress[i] = stream.BytesReceived()
+		}
 		if phase.Duration == 0 {
 			for i := index - 1; i < len(phase.URLs); i += 4 {
 				row := visitor.Request(ctx, phase.URLs[i], time.Now())
@@ -322,10 +367,18 @@ func runSeparatedVisitor(t *testing.T, ctx context.Context, component string, ra
 				result.Requests = append(result.Requests, row)
 			}
 		} else {
+			result.Cohorts = make(map[string]benchworkload.VisitorResult)
 			cfg := benchworkload.VisitorConfig{Rate: localRate,
 				Workers: benchworkload.Assignment(*runtimeLoadWorkers, 4, index-1), QueueSlots: benchworkload.Assignment(*runtimeLoadQueue, 4, index-1),
 				Start: phase.Start.Add(time.Duration(index-1) * time.Second / time.Duration(rate)), Duration: phase.Duration,
-				OnResult: func(row benchworkload.RequestResult) { result.Requests = append(result.Requests, row) },
+				OnResult: func(row benchworkload.RequestResult) {
+					result.Requests = append(result.Requests, row)
+					name := cohortByURL[row.URL]
+					cohort := result.Cohorts[name]
+					cohort.Scheduled++
+					cohort.Observe(row)
+					result.Cohorts[name] = cohort
+				},
 			}
 			var err error
 			result.VisitorResult, err = visitor.Run(ctx, cfg, phase.URLs)
@@ -333,12 +386,31 @@ func runSeparatedVisitor(t *testing.T, ctx context.Context, component string, ra
 				t.Fatal(err)
 			}
 		}
+		for i, stream := range healthy {
+			if stream.Alive() {
+				result.HealthyHeld++
+			}
+			if stream.Alive() && stream.BytesReceived() > progress[i] {
+				result.HealthyHeldProgress++
+			}
+			if phase.Duration > 0 && (!stream.Alive() || stream.BytesReceived() <= progress[i]) {
+				t.Error("healthy-path held stream stopped delivering")
+			}
+			if phase.CloseHeld {
+				if err := stream.Close(); err != nil {
+					t.Error(err)
+				}
+			}
+		}
+		if phase.CloseHeld {
+			healthy = nil
+		}
 		for _, stream := range streams {
 			if stream.Alive() {
 				result.HeldSurviving++
 			}
-			if phase.Name == "steady" && !stream.Alive() {
-				t.Error("held stream ended before fault")
+			if (phase.Name == "steady" || runtimeEarlyFault(*runtimeLoadScenario) && phase.CloseHeld) && !stream.Alive() {
+				t.Error("held stream ended before its permitted close boundary")
 			}
 			if phase.CloseHeld {
 				if err := stream.Close(); err != nil {

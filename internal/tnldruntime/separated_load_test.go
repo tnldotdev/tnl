@@ -29,13 +29,16 @@ type separatedSnapshot struct {
 }
 
 var (
-	runtimeLoadRoutes   = flag.Int("tnl-runtime-load-routes", 4, "runtime load route count")
-	runtimeLoadRPS      = flag.Int("tnl-runtime-load-rps", 16, "runtime load offered requests/second")
-	runtimeLoadDuration = flag.Duration("tnl-runtime-load-duration", 10*time.Second, "runtime measurement window")
-	runtimeLoadWorkers  = flag.Int("tnl-runtime-load-workers", 128, "total visitor concurrency across four containers")
-	runtimeLoadQueue    = flag.Int("tnl-runtime-load-queue", 8, "total waiting slots across four containers")
-	runtimeLoadScenario = flag.String("tnl-runtime-load-scenario", "relay-restart", "relay-restart, relay-kill, or forwarding-blackhole")
-	runtimeLoadTrace    = flag.Bool("tnl-runtime-load-trace", false, "trace certificate provisioning")
+	runtimeLoadRoutes      = flag.Int("tnl-runtime-load-routes", 4, "runtime load route count")
+	runtimeLoadRPS         = flag.Int("tnl-runtime-load-rps", 16, "runtime load offered requests/second")
+	runtimeLoadDuration    = flag.Duration("tnl-runtime-load-duration", 10*time.Second, "runtime measurement window")
+	runtimeLoadWorkers     = flag.Int("tnl-runtime-load-workers", 128, "total visitor concurrency across four containers")
+	runtimeLoadQueue       = flag.Int("tnl-runtime-load-queue", 8, "total waiting slots across four containers")
+	runtimeLoadScenario    = flag.String("tnl-runtime-load-scenario", "relay-restart", "relay-restart, relay-kill, forwarding-blackhole, publisher-blackhole, udp-fallback, latency, or packet-loss")
+	runtimeLoadNetworkPath = flag.String("tnl-runtime-load-network-path", "forwarding", "forwarding or publisher impairment path")
+	runtimeLoadRTT         = flag.Duration("tnl-runtime-load-rtt", 20*time.Millisecond, "added round-trip latency")
+	runtimeLoadLoss        = flag.Float64("tnl-runtime-load-loss", 0.1, "packet loss percent in each direction")
+	runtimeLoadTrace       = flag.Bool("tnl-runtime-load-trace", false, "trace certificate provisioning")
 )
 
 func TestLoadSeparatedRuntime(t *testing.T) {
@@ -74,6 +77,12 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 	for _, name := range []string{"control", "ingress", "relay-a", "relay-b", "app", "pebble"} {
 		separatedWait(t, name+".ready", 30*time.Second, nil)
 	}
+	var initialFault separatedRestart
+	if runtimeEarlyFault(*runtimeLoadScenario) {
+		separatedWrite(t, "fault.request", *runtimeLoadScenario)
+		separatedWait(t, "fault.applied", 15*time.Second, &initialFault)
+		t.Logf("network_impairment scenario=%s path=%s added_rtt=%s loss_percent=%g active_before_publishing=true", *runtimeLoadScenario, *runtimeLoadNetworkPath, *runtimeLoadRTT, *runtimeLoadLoss)
+	}
 	activation := time.Now()
 	stopTrace := func() {}
 	if *runtimeLoadTrace {
@@ -88,6 +97,12 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 	stopTrace()
 	if len(publishers.Ready) != routes {
 		t.Fatal("publisher count mismatch")
+	}
+	if *runtimeLoadScenario == "udp-fallback" && publishers.Fallbacks != int64(routes) {
+		t.Fatalf("fallback events=%d want=%d", publishers.Fallbacks, routes)
+	}
+	if *runtimeLoadScenario == "udp-fallback" {
+		separatedWait(t, "udp.cleaned", 15*time.Second, nil)
 	}
 	for _, ready := range publishers.Ready {
 		waitForReadyPublisherConnections(t, database, ready.RouteID, ready.RouteVersion, 2)
@@ -111,6 +126,8 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 		before := separatedCapture(t, database, phase+"-before")
 		stopSamples := sampleSeparatedGauges(t, phase)
 		start := time.Now().Add(time.Second)
+		var restart separatedRestart
+		var repaired time.Time
 		window := duration
 		if phase == "relay-restart" {
 			window = max(window, 40*time.Second)
@@ -118,19 +135,37 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 		if phase == "relay-kill" {
 			window = max(window, 80*time.Second)
 		}
-		if phase == "forwarding-blackhole" {
+		if runtimeBlackhole(phase) {
 			window = max(window, 50*time.Second)
+			if phase == "publisher-blackhole" {
+				window = max(window, 80*time.Second)
+			}
+			separatedWrite(t, "fault.request", phase)
+			separatedWait(t, "fault.applied", 15*time.Second, &restart)
+			// These held streams are opened through the healthy path while the
+			// drop is installed, before the measured offer window begins.
+			separatedProbe(t, &sequence, benchworkload.Phase{Name: phase + "-healthy-held", URLs: publishers.URLs, OpenHeld: true})
+			start = time.Now().Add(time.Second)
+		}
+		if phase == *runtimeLoadScenario && runtimeEarlyFault(phase) {
+			restart = initialFault
 		}
 		urls := publishers.URLs
 		if phase == "shutdown" {
 			urls = urls[len(urls)/2:]
 		}
-		separatedWrite(t, fmt.Sprintf("phase-%d", sequence), benchworkload.Phase{Name: phase, Start: start, Duration: window, URLs: urls, CloseHeld: phase == *runtimeLoadScenario})
+		separatedWrite(t, fmt.Sprintf("phase-%d", sequence), benchworkload.Phase{Name: phase, Start: start, Duration: window, URLs: urls, CloseHeld: phase == *runtimeLoadScenario && !runtimeEarlyFault(phase)})
 		sequence++
 		waitUntilIntegrationTime(t, start.Add(time.Second))
-		var restart separatedRestart
-		var repaired time.Time
-		if phase == "relay-kill" || phase == "forwarding-blackhole" {
+		if phase == "publisher-blackhole" {
+			waitForIntegrationCondition(t, 65*time.Second, func(ctx context.Context) (bool, error) {
+				var count int
+				err := database.QueryRowContext(ctx, `SELECT count(*) FROM control.route_session_connections WHERE connected_relay_id='relay-a-1' AND state='ready'`).Scan(&count)
+				return count == 0, err
+			})
+			t.Logf("publisher_connection_loss_detected elapsed_since_drop=%s", time.Since(restart.Exited))
+		}
+		if phase == "relay-kill" {
 			var oldRun string
 			if err := database.QueryRowContext(integrationOperationContext(t), `SELECT relay_run_id FROM control.relay_leases WHERE relay_id = 'relay-a-1'`).Scan(&oldRun); err != nil {
 				t.Fatal(err)
@@ -140,45 +175,20 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 			var restored time.Time
 			separatedWait(t, "fault.restored", 45*time.Second, &restored)
 			restart.Restored = restored
-			if phase == "relay-kill" {
-				separatedWait(t, "relay-a.restarted", 10*time.Second, nil)
-				waitForIntegrationCondition(t, 25*time.Second, func(ctx context.Context) (bool, error) {
-					var current string
-					err := database.QueryRowContext(ctx, `SELECT relay_run_id FROM control.relay_leases WHERE relay_id='relay-a-1' AND lease_expires_at>now() AND NOT draining`).Scan(&current)
-					return current != "" && current != oldRun, err
-				})
-				for _, ready := range publishers.Ready {
-					waitForReadyPublisherConnections(t, database, ready.RouteID, ready.RouteVersion, 2)
-				}
-			} else {
-				// Let opens begun inside the blackhole exhaust their existing 10s
-				// forwarding budget. Fresh visitor deadlines stay at five seconds.
-				waitUntilIntegrationTime(t, restored.Add(10*time.Second))
-			}
-			waitForIngressRoutingCurrent(t, database, 1)
-			repaired = time.Now()
-			for _, ready := range publishers.Ready {
-				assertRouteVersion(t, database, ready.RouteID, ready.RouteVersion)
-			}
+			separatedWait(t, "relay-a.restarted", 10*time.Second, nil)
+			waitForIntegrationCondition(t, 25*time.Second, func(ctx context.Context) (bool, error) {
+				var current string
+				err := database.QueryRowContext(ctx, `SELECT relay_run_id FROM control.relay_leases WHERE relay_id='relay-a-1' AND lease_expires_at>now() AND NOT draining`).Scan(&current)
+				return current != "" && current != oldRun, err
+			})
+			repaired = separatedWaitForRecovery(t, database, publishers)
 		}
 		switch phase {
 		case "relay-restart":
 			separatedWrite(t, "relay-a.restart", time.Now())
 			separatedWait(t, "relay-a.stopped", 10*time.Second, &restart)
 			separatedWait(t, "relay-a.restarted", 10*time.Second, nil)
-			waitForIntegrationCondition(t, 25*time.Second, func(ctx context.Context) (bool, error) {
-				var count int
-				err := database.QueryRowContext(ctx, `SELECT count(*) FROM control.route_session_connections c
-					JOIN control.relay_leases l ON l.relay_id = c.connected_relay_id AND l.relay_run_id = c.connected_relay_run_id
-					AND l.relay_lease_revision = c.connected_relay_lease_revision
-					WHERE c.state = 'ready' AND NOT l.draining AND l.lease_expires_at > now()`).Scan(&count)
-				return count == routes*2, err
-			})
-			waitForIngressRoutingCurrent(t, database, 1)
-			repaired = time.Now()
-			for _, ready := range publishers.Ready {
-				assertRouteVersion(t, database, ready.RouteID, ready.RouteVersion)
-			}
+			repaired = separatedWaitForRecovery(t, database, publishers)
 		case "shutdown":
 			separatedWrite(t, "close-half", time.Now())
 			var elapsed time.Duration
@@ -202,19 +212,23 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 		}
 		after := separatedCapture(t, database, phase+"-after")
 		separatedReportResources(t, phase, before, after)
-		separatedReportVisitors(t, phase, results, restart, repaired)
+		if !runtimeControlledFault(phase) {
+			separatedReportVisitors(t, phase, results, restart, repaired)
+		}
+		if phase == "steady" && runtimeBlackhole(*runtimeLoadScenario) {
+			assertRelayOpenedVisitors(t, before, after, "relay-a")
+		}
 		// Cover every live route, not only routes sampled late in a traffic window.
-		name := phase + "-correctness"
-		separatedWrite(t, fmt.Sprintf("phase-%d", sequence), benchworkload.Phase{Name: name, URLs: urls})
-		sequence++
-		for i := 1; i <= 4; i++ {
-			var result separatedVisitorResult
-			separatedWait(t, fmt.Sprintf("%s.visitor-%d", name, i), time.Duration((len(urls)+3)/4)*5*time.Second+time.Second, &result)
-			for _, row := range result.Requests {
-				if row.Error != "" {
-					t.Errorf("%s: %s", name, row.Error)
-				}
+		separatedProbe(t, &sequence, benchworkload.Phase{Name: phase + "-correctness", URLs: urls})
+		if runtimeControlledFault(phase) {
+			if runtimeBlackhole(phase) {
+				assertRelayOpenedVisitors(t, before, after, "relay-b")
 			}
+			separatedWrite(t, "fault.release", true)
+			separatedWait(t, "fault.restored", 15*time.Second, &restart.Restored)
+			repaired = separatedWaitForRecovery(t, database, publishers)
+			separatedProbe(t, &sequence, benchworkload.Phase{Name: phase + "-restored", URLs: publishers.URLs, CloseHeld: true})
+			separatedReportVisitors(t, phase, results, restart, repaired)
 		}
 	}
 	separatedWrite(t, fmt.Sprintf("phase-%d", sequence), benchworkload.Phase{Done: true})
@@ -239,6 +253,9 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 	})
 	waitForIngressRoutingCurrent(t, database, 1)
 	separatedCapture(t, database, "final")
+	if got := separatedResource(t, "control").CAOrders; got != int64(routes) {
+		t.Errorf("certificate issuance changed during workload: got %d want %d", got, routes)
+	}
 	// Stop ingress while control and PostgreSQL remain available. Its production
 	// reporter flushes final checkpoints and marks this process run complete.
 	separatedWrite(t, "ingress.stop", time.Now())
@@ -285,8 +302,17 @@ func separatedLoadParameters(t *testing.T) (int, int, time.Duration) {
 	if *runtimeLoadWorkers < 4 || *runtimeLoadWorkers > 4096 || *runtimeLoadQueue < 0 || *runtimeLoadQueue > 4096 {
 		t.Fatal("invalid visitor concurrency or queue")
 	}
-	if !slices.Contains([]string{"relay-restart", "relay-kill", "forwarding-blackhole"}, *runtimeLoadScenario) {
+	if !slices.Contains([]string{"relay-restart", "relay-kill", "forwarding-blackhole", "publisher-blackhole", "udp-fallback", "latency", "packet-loss"}, *runtimeLoadScenario) {
 		t.Fatal("invalid runtime scenario")
+	}
+	if !slices.Contains([]string{"forwarding", "publisher"}, *runtimeLoadNetworkPath) {
+		t.Fatal("invalid network path")
+	}
+	if *runtimeLoadScenario == "latency" && !slices.Contains([]time.Duration{20 * time.Millisecond, 50 * time.Millisecond, 100 * time.Millisecond}, *runtimeLoadRTT) {
+		t.Fatal("invalid RTT")
+	}
+	if *runtimeLoadScenario == "packet-loss" && *runtimeLoadLoss != 0.1 && *runtimeLoadLoss != 1 {
+		t.Fatal("invalid packet loss")
 	}
 	return routes, rate, duration
 }
@@ -385,7 +411,18 @@ func separatedReportVisitors(t *testing.T, phase string, results []separatedVisi
 	var first, firstExit time.Time
 	failures, missed, total, surviving := 0, 0, 0, 0
 	var merged benchworkload.VisitorResult
+	cohorts := make(map[string]benchworkload.VisitorResult)
+	healthy, progressing := 0, 0
 	for _, result := range results {
+		healthy += result.HealthyHeld
+		progressing += result.HealthyHeldProgress
+		for name, summary := range result.Cohorts {
+			cohort := cohorts[name]
+			if err := cohort.Merge(summary); err != nil {
+				t.Fatal(err)
+			}
+			cohorts[name] = cohort
+		}
 		if err := merged.Merge(result.VisitorResult); err != nil {
 			t.Fatal(err)
 		}
@@ -398,7 +435,7 @@ func separatedReportVisitors(t *testing.T, phase string, results []separatedVisi
 				if failures <= 3 {
 					t.Logf("separated_request_failure phase=%s started=%s error=%s", phase, row.Started, row.Error)
 				}
-				if phase != *runtimeLoadScenario || !row.Started.Before(repaired) {
+				if runtimeControlledFault(phase) || phase != *runtimeLoadScenario || !row.Started.Before(repaired) {
 					t.Errorf("visitor failed in %s after recovery=%t", phase, !row.Started.Before(repaired))
 				}
 				continue
@@ -427,6 +464,17 @@ func separatedReportVisitors(t *testing.T, phase string, results []separatedVisi
 	if missed != 0 || total == 0 {
 		t.Errorf("phase %s: missed=%d requests=%d", phase, missed, total)
 	}
+	if data, err := json.Marshal(cohorts); err != nil {
+		t.Fatal(err)
+	} else if err := os.WriteFile(filepath.Join("/results", phase+"-cohorts.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if runtimeBlackhole(phase) {
+		t.Logf("healthy_held_streams alive=%d progressing=%d", healthy, progressing)
+		if healthy == 0 || progressing != healthy {
+			t.Error("healthy-path held streams did not survive")
+		}
+	}
 	if phase == *runtimeLoadScenario {
 		if first.IsZero() || firstExit.IsZero() {
 			t.Error("no successful visitor during recovery")
@@ -448,6 +496,31 @@ func separatedReportVisitors(t *testing.T, phase string, results []separatedVisi
 		if err := os.WriteFile(filepath.Join("/results", phase+"-recovery.json"), data, 0o644); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func assertRelayOpenedVisitors(t *testing.T, before, after separatedSnapshot, role string) {
+	t.Helper()
+	count := func(snapshot separatedSnapshot) uint64 {
+		var count uint64
+		for _, family := range snapshot.Metrics[role] {
+			if family.GetName() != "tnl_operation_duration_seconds" {
+				continue
+			}
+			for _, metric := range family.Metric {
+				labels := make(map[string]string)
+				for _, label := range metric.Label {
+					labels[label.GetName()] = label.GetValue()
+				}
+				if labels["operation"] == "RelayOpenVisitorStream" && labels["outcome"] == "success" {
+					count += metric.GetHistogram().GetSampleCount()
+				}
+			}
+		}
+		return count
+	}
+	if count(after) <= count(before) {
+		t.Errorf("%s accepted no visitor streams during measurement", role)
 	}
 }
 

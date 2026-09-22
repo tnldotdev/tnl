@@ -28,6 +28,9 @@ x-runtime: &runtime
         -tnl-runtime-load-workers='${WORKERS:-128}' \
         -tnl-runtime-load-queue='${QUEUE:-8}' \
         -tnl-runtime-load-scenario='${SCENARIO:-relay-restart}' \
+        -tnl-runtime-load-network-path='${NETWORK_PATH:-forwarding}' \
+        -tnl-runtime-load-rtt='${RTT:-20ms}' \
+        -tnl-runtime-load-loss='${LOSS:-0.1}' \
         -tnl-runtime-load-trace='${TRACE:-0}' \
         -tnl-runtime-load-duration='${DURATION:-10s}'
 
@@ -111,6 +114,7 @@ services:
 
   relay-a:
     <<: *runtime
+    cap_add: [NET_ADMIN]
     cpus: "${RELAY_A_CPUS:-1}"
     mem_limit: "${RELAY_A_MEMORY:-256m}"
     memswap_limit: "${RELAY_A_MEMORY:-256m}"
@@ -123,6 +127,7 @@ services:
 
   relay-b:
     <<: *runtime
+    cap_add: [NET_ADMIN]
     cpus: "${RELAY_B_CPUS:-1}"
     mem_limit: "${RELAY_B_MEMORY:-256m}"
     memswap_limit: "${RELAY_B_MEMORY:-256m}"
@@ -135,6 +140,7 @@ services:
 
   publishers:
     <<: *runtime
+    cap_add: [NET_ADMIN]
     cpus: "${PUBLISHER_CPUS:-2}"
     mem_limit: "${PUBLISHER_MEMORY:-512m}"
     memswap_limit: "${PUBLISHER_MEMORY:-512m}"
@@ -205,6 +211,9 @@ services:
       - "-tnl-runtime-load-workers=${WORKERS:-128}"
       - "-tnl-runtime-load-queue=${QUEUE:-8}"
       - "-tnl-runtime-load-scenario=${SCENARIO:-relay-restart}"
+      - "-tnl-runtime-load-network-path=${NETWORK_PATH:-forwarding}"
+      - "-tnl-runtime-load-rtt=${RTT:-20ms}"
+      - "-tnl-runtime-load-loss=${LOSS:-0.1}"
       - "-tnl-runtime-load-trace=${TRACE:-0}"
       - "-tnl-runtime-load-duration=${DURATION:-10s}"
 

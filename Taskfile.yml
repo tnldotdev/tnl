@@ -240,6 +240,10 @@ tasks:
       WORKERS: '{{default "128" .WORKERS}}'
       QUEUE: '{{default "8" .QUEUE}}'
       SCENARIO: '{{default "relay-restart" .SCENARIO}}'
+      NETWORK_PATH: '{{default "forwarding" .NETWORK_PATH}}'
+      RTT: '{{default "20ms" .RTT}}'
+      LOSS: '{{default "0.1" .LOSS}}'
+      SEED: '{{default "0" .SEED}}'
       TRACE: '{{default "0" .TRACE}}'
       RACE: '{{default "0" .RACE}}'
       RESULTS: '{{default (printf "bench-results/runtime-%s" (now | date "20060102-150405")) .RESULTS}}'
@@ -250,6 +254,10 @@ tasks:
       WORKERS: "{{.WORKERS}}"
       QUEUE: "{{.QUEUE}}"
       SCENARIO: "{{.SCENARIO}}"
+      NETWORK_PATH: "{{.NETWORK_PATH}}"
+      RTT: "{{.RTT}}"
+      LOSS: "{{.LOSS}}"
+      SEED: "{{.SEED}}"
       TRACE: "{{.TRACE}}"
       RACE: "{{.RACE}}"
       RESULTS: "{{.ROOT_DIR}}/{{.RESULTS}}"

@@ -221,6 +221,7 @@ type Phase struct {
 	Duration  time.Duration `json:"duration"`
 	URLs      []string      `json:"urls"`
 	CloseHeld bool          `json:"close_held,omitempty"`
+	OpenHeld  bool          `json:"open_held,omitempty"`
 	Done      bool          `json:"done,omitempty"`
 }
 
