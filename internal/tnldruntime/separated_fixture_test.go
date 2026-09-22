@@ -155,6 +155,7 @@ func separatedConfig(t *testing.T, component string) tnldconfig.Config {
 	cfg.IngressLeaseDuration, cfg.RelayLeaseDuration = 30*time.Second, 30*time.Second
 	cfg.LeaseRenewalInterval, cfg.DrainTimeout = 10*time.Second, 5*time.Second
 	runtimeLoadAdmission.apply(&cfg)
+	cfg.RouteCertificateWorkers = *runtimeLoadCertificateWorkers
 	cfg.QUICIdleTimeout = 45 * time.Second
 	cfg.ClusterSecret = testClusterSecret
 	switch role {

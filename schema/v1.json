@@ -329,6 +329,11 @@
           "description": "ACME certificate profile.",
           "default": "tlsserver"
         },
+        "route_certificate_workers": {
+          "type": "integer",
+          "description": "Concurrent route certificate workers per control process (1-8).",
+          "default": 4
+        },
         "oidc_issuer": {
           "type": "string",
           "description": "OIDC issuer used by the authority."

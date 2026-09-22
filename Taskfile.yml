@@ -236,6 +236,8 @@ tasks:
     vars:
       ROUTES: '{{default "4" .ROUTES}}'
       START_PARALLEL: '{{default "4" .START_PARALLEL}}'
+      READY_TIMEOUT: '{{default "30s" .READY_TIMEOUT}}'
+      ROUTE_CERTIFICATE_WORKERS: '{{default "4" .ROUTE_CERTIFICATE_WORKERS}}'
       RPS: '{{default "16" .RPS}}'
       DURATION: '{{default "10s" .DURATION}}'
       WORKERS: '{{default "128" .WORKERS}}'
@@ -258,6 +260,8 @@ tasks:
     env:
       ROUTES: "{{.ROUTES}}"
       START_PARALLEL: "{{.START_PARALLEL}}"
+      READY_TIMEOUT: "{{.READY_TIMEOUT}}"
+      ROUTE_CERTIFICATE_WORKERS: "{{.ROUTE_CERTIFICATE_WORKERS}}"
       RPS: "{{.RPS}}"
       DURATION: "{{.DURATION}}"
       WORKERS: "{{.WORKERS}}"

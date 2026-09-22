@@ -228,7 +228,7 @@ func runSeparatedPublishers(t *testing.T, ctx context.Context, count int) {
 		Domain: "routes." + separatedDomain, StateRoot: filepath.Join(t.TempDir(), "state"), Target: "http://127.0.0.1:8080",
 		HTTPClient: client, RelayTLS: separatedRelayTLS(t), AllowedIPPrefixes: prefixes,
 		Transport: transport, Parallel: 4, StartParallel: *runtimeLoadStartParallel,
-		ReadyTimeout: 30 * time.Second, StopTimeout: 10 * time.Second, DrainTime: time.Second,
+		ReadyTimeout: *runtimeLoadReadyTimeout, StopTimeout: 10 * time.Second, DrainTime: time.Second,
 		Observe: func(index int, event publisher.Event) error {
 			if event.Type == publisher.EventTransportFallback {
 				fallbacks.Add(1)

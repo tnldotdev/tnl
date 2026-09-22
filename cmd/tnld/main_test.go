@@ -78,7 +78,7 @@ func TestResolveConfigFileRespectsEnvironmentAndFlags(t *testing.T) {
 	t.Setenv("TNLD_METRICS_LISTEN", "env:2")
 	t.Setenv("TNLD_SOURCE_CONNECTION_RATE", "100.5")
 	base := tnldconfig.Config{
-		Role: tnldconfig.RoleRelay, MetricsListen: "env:2", RelayStreamCapacity: 99,
+		Role: tnldconfig.RoleRelay, MetricsListen: "env:2", RelayStreamCapacity: 99, RouteCertificateWorkers: 4,
 		ControlHostname: "control.example.com", ClusterSecret: "0123456789abcdef0123456789abcdef",
 		RelayServiceID: "relay-test", RelayID: "relay-test", RelayAddress: "relay.example.com:443",
 		InternalRelayAddress: "relay.internal:9443", RelayTCPListen: ":443", RelayUDPListen: ":443",

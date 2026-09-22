@@ -1986,6 +1986,7 @@ host-and-port values require brackets.
 | `--acme-email` / `acme_email`                                     | `TNLD_ACME_EMAIL`                   | empty                                            | S/C     | Required plain ACME account email.                                     |
 | `--acme-accept-terms` / `acme_accept_terms`                       | `TNLD_ACME_ACCEPT_TERMS`            | false                                            | S/C     | Must be true to accept the ACME directory terms.                       |
 | `--acme-profile` / `acme_profile`                                 | `TNLD_ACME_PROFILE`                 | `tlsserver`                                      | S/C     | Certificate profile containing lowercase letters, digits, and hyphens. |
+| `--route-certificate-workers` / `route_certificate_workers`       | `TNLD_ROUTE_CERTIFICATE_WORKERS`    | `4`                                              | S/C     | Concurrent route certificate workers per control process, from 1–8.    |
 
 Certificate and key overrides must be supplied as pairs. Control overrides are
 forbidden in I/R. Relay overrides are valid only in S/R. A static control

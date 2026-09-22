@@ -31,6 +31,27 @@ func TestParseStandaloneDerivesAddresses(t *testing.T) {
 		config.IngressListen != ":443" || config.RelayTCPListen != ":443" || config.RelayUDPListen != ":443" {
 		t.Fatalf("standalone listeners = %#v", config)
 	}
+	if config.RouteCertificateWorkers != 4 {
+		t.Fatalf("route certificate workers = %d, want 4", config.RouteCertificateWorkers)
+	}
+}
+
+func TestParseRouteCertificateWorkers(t *testing.T) {
+	base := []string{
+		"--role", "standalone",
+		"--database-url", "postgres://tnl:secret@database.example/tnl",
+		"--server-domain", "tnl.example.com",
+		"--managed-deployment-domain", "tunnels.example.com",
+		"--acme-email", "operator@example.com",
+		"--acme-accept-terms",
+		"--login-token", testLoginToken,
+		"--storage-key", testStorageKey,
+	}
+	for _, value := range []string{"0", "9"} {
+		if _, err := Parse(append(base, "--route-certificate-workers", value)); err == nil {
+			t.Fatalf("route certificate worker count %s was accepted", value)
+		}
+	}
 }
 
 func TestParseRequiresValidStorageKey(t *testing.T) {

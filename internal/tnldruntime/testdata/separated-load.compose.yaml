@@ -25,6 +25,8 @@ x-runtime: &runtime
         -tnl-separated-component="$${SEPARATED_COMPONENT}" \
         -tnl-runtime-load-routes='${ROUTES:-4}' \
         -tnl-runtime-load-start-parallel='${START_PARALLEL:-4}' \
+        -tnl-runtime-load-ready-timeout='${READY_TIMEOUT:-30s}' \
+        -tnl-runtime-load-route-certificate-workers='${ROUTE_CERTIFICATE_WORKERS:-4}' \
         -tnl-runtime-load-rps='${RPS:-16}' \
         -tnl-runtime-load-workers='${WORKERS:-128}' \
         -tnl-runtime-load-queue='${QUEUE:-8}' \
@@ -216,6 +218,8 @@ services:
       - -tnl-separated-component=coordinator
       - "-tnl-runtime-load-routes=${ROUTES:-4}"
       - "-tnl-runtime-load-start-parallel=${START_PARALLEL:-4}"
+      - "-tnl-runtime-load-ready-timeout=${READY_TIMEOUT:-30s}"
+      - "-tnl-runtime-load-route-certificate-workers=${ROUTE_CERTIFICATE_WORKERS:-4}"
       - "-tnl-runtime-load-rps=${RPS:-16}"
       - "-tnl-runtime-load-workers=${WORKERS:-128}"
       - "-tnl-runtime-load-queue=${QUEUE:-8}"

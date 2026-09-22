@@ -75,6 +75,7 @@ type Config struct {
 	ACMEEmail                 string `name:"acme-email" env:"TNLD_ACME_EMAIL" help:"ACME account contact email."`
 	ACMEAcceptTerms           bool   `name:"acme-accept-terms" env:"TNLD_ACME_ACCEPT_TERMS" help:"Explicitly accept the ACME directory terms."`
 	ACMEProfile               string `name:"acme-profile" env:"TNLD_ACME_PROFILE" default:"tlsserver" help:"ACME certificate profile."`
+	RouteCertificateWorkers   int    `name:"route-certificate-workers" env:"TNLD_ROUTE_CERTIFICATE_WORKERS" default:"4" help:"Concurrent route certificate workers per control process (1-8)."`
 
 	OIDCIssuer           string        `name:"oidc-issuer" env:"TNLD_OIDC_ISSUER" help:"OIDC issuer used by the authority."`
 	OIDCClientID         string        `name:"oidc-client-id" env:"TNLD_OIDC_CLIENT_ID" help:"OIDC client ID used by the authority."`
@@ -188,6 +189,9 @@ func (c Config) Validate() error {
 	}
 	if c.SourceConnectionRate <= 0 || math.IsNaN(c.SourceConnectionRate) || math.IsInf(c.SourceConnectionRate, 0) || c.SourceConnectionBurst <= 0 {
 		return errors.New("source connection rate and burst must be positive and finite")
+	}
+	if c.RouteCertificateWorkers < 1 || c.RouteCertificateWorkers > 8 {
+		return errors.New("route certificate workers must be between 1 and 8")
 	}
 	if c.VisitorConnectionLimit <= 0 || c.RouteConnectionLimit <= 0 || c.PublisherConnectionLimit <= 0 ||
 		c.RelayStreamCapacity <= 0 || c.QUICMaxIncomingStreams <= 0 {

@@ -161,18 +161,20 @@ func serveWithRelayClientTLS(
 			if err != nil {
 				return err
 			}
-			routeWorkerID, err := opaqueid.New("route_certificate_worker_")
-			if err != nil {
-				return fmt.Errorf("create route certificate worker identity: %w", err)
+			for index := range cfg.RouteCertificateWorkers {
+				routeWorkerID, err := opaqueid.New("route_certificate_worker_")
+				if err != nil {
+					return fmt.Errorf("create route certificate worker identity: %w", err)
+				}
+				routeWorker, err := certificates.NewRouteWorker(database, certificates.RouteConfig{
+					WorkerID: routeWorkerID, Profile: cfg.ACMEProfile,
+					HTTPClient: acmeHTTPClient, DNSChallenges: routeDNSChallenges,
+				})
+				if err != nil {
+					return err
+				}
+				d.forward(fmt.Sprintf("run route certificate worker %d", index+1), runAsync(func() error { return routeWorker.Run(lifetime) }))
 			}
-			routeWorker, err := certificates.NewRouteWorker(database, certificates.RouteConfig{
-				WorkerID: routeWorkerID, Profile: cfg.ACMEProfile,
-				HTTPClient: acmeHTTPClient, DNSChallenges: routeDNSChallenges,
-			})
-			if err != nil {
-				return err
-			}
-			d.forward("run route certificate worker", runAsync(func() error { return routeWorker.Run(lifetime) }))
 			if relayDNSChallenges != nil {
 				relayWorkerID, err := opaqueid.New("relay_certificate_worker_")
 				if err != nil {

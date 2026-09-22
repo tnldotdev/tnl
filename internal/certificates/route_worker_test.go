@@ -99,6 +99,38 @@ func TestRouteWorkerAdvancesTLSALPNOrder(t *testing.T) {
 	}
 }
 
+func TestRouteWorkerReusesACMEClient(t *testing.T) {
+	account := controlstate.ACMEAccount{
+		DirectoryURL:  "https://acme.example.test/directory",
+		AccountURL:    "https://acme.example.test/account/1",
+		AccountKeyDER: []byte("account-key-1"),
+	}
+	var created int
+	worker := &RouteWorker{client: func(controlstate.ACMEAccount) (acmeAPI, error) {
+		created++
+		return &acmeStub{}, nil
+	}}
+	first, err := worker.clientFor(account)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := worker.clientFor(account)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second || created != 1 {
+		t.Fatalf("same account clients = %p, %p; creations = %d", first, second, created)
+	}
+	account.AccountURL = "https://acme.example.test/account/2"
+	third, err := worker.clientFor(account)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third == second || created != 2 {
+		t.Fatalf("changed account client = %p; previous = %p; creations = %d", third, second, created)
+	}
+}
+
 func TestRouteWorkerAdvancesDNSOrderAndCleansPresentation(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	const hostname = "route.example.test"

@@ -42,10 +42,17 @@ type RouteStore interface {
 }
 
 type RouteWorker struct {
-	store  RouteStore
-	config RouteConfig
-	now    func() time.Time
-	client acmeClientFactory
+	store        RouteStore
+	config       RouteConfig
+	now          func() time.Time
+	client       acmeClientFactory
+	clientKey    routeACMEClientKey
+	cachedClient acmeAPI
+}
+
+type routeACMEClientKey struct {
+	directoryURL, accountURL string
+	accountKey               [sha256.Size]byte
 }
 
 func NewRouteWorker(store RouteStore, config RouteConfig) (*RouteWorker, error) {
@@ -82,7 +89,7 @@ func (w *RouteWorker) processOne(ctx context.Context) (bool, error) {
 	if err != nil || !found {
 		return found, err
 	}
-	client, err := w.client(work.Account)
+	client, err := w.clientFor(work.Account)
 	if err == nil && work.Account.AccountURL == "" {
 		err = errors.New("certificates: route worker ACME account is not registered")
 	}
@@ -103,6 +110,23 @@ func (w *RouteWorker) processOne(ctx context.Context) (bool, error) {
 		return true, err
 	}
 	return true, nil
+}
+
+func (w *RouteWorker) clientFor(account controlstate.ACMEAccount) (acmeAPI, error) {
+	key := routeACMEClientKey{
+		directoryURL: account.DirectoryURL,
+		accountURL:   account.AccountURL,
+		accountKey:   sha256.Sum256(account.AccountKeyDER),
+	}
+	if w.cachedClient != nil && key == w.clientKey {
+		return w.cachedClient, nil
+	}
+	client, err := w.client(account)
+	if err != nil {
+		return nil, err
+	}
+	w.clientKey, w.cachedClient = key, client
+	return client, nil
 }
 
 func (w *RouteWorker) advance(ctx context.Context, client acmeAPI, work *controlstate.ACMEOrderWork, now time.Time) error {

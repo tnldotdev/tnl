@@ -234,6 +234,7 @@ Its five-second budget includes queue waiting; requests are never retried.
 ```console
 mise exec -- task go:test:load:runtime RACE=1 RESULTS=bench-results/runtime-smoke
 mise exec -- task go:test:load:runtime ROUTES=64 START_PARALLEL=64 RPS=160 DURATION=30s RESULTS=bench-results/runtime-reference
+mise exec -- env DATABASE_CPUS=4 CONTROL_CPUS=2 task go:test:load:runtime ROUTES=1000 START_PARALLEL=1000 ROUTE_CERTIFICATE_WORKERS=8 PUBLISHER_CONNECTION_LIMIT=1200 SOURCE_CONNECTION_RATE=1000 SOURCE_CONNECTION_BURST=4000 RPS=4 RESULTS=bench-results/runtime-cold-1000
 mise exec -- env PUBLISHER_CPUS=0.25 task go:test:load:runtime ROUTES=64 RPS=160 DURATION=30s RESULTS=bench-results/runtime-publisher-025
 mise exec -- task go:test:load:runtime SCENARIO=relay-kill RESULTS=bench-results/runtime-kill
 mise exec -- task go:test:load:runtime SCENARIO=forwarding-blackhole RESULTS=bench-results/runtime-blackhole
@@ -282,8 +283,11 @@ capacity-boundary experiments prove enforcement. Resource snapshots record
 effective CPU/memory allocations separately.
 Declare overrides before each experiment and keep them fixed across its healthy
 and fault windows; changing admission settings defines a new measured profile.
-The runtime workload bounds remain 4–128 routes and 4–500 requests/sec while
-larger profiles and bounded long-run reporting are developed.
+The runtime workload bounds are 4–1,000 routes and 4–500 requests/sec. The
+1,000-route cold-start profile raises relay connection capacity because every
+route holds one connection on each relay service. Local Pebble validates from one
+source address, so that profile also declares source-rate headroom explicitly;
+it does not represent the default admission profile.
 
 `SCENARIO=relay-restart` is the default graceful restart. `relay-kill` uses Docker
 SIGKILL, leaves the relay down longer than its 30-second lease, and requires a new
@@ -326,9 +330,12 @@ sweeps remain opt-in.
 `TRACE=1` retains certificate HTTP metadata and persisted challenge/order sampling
 for provisioning diagnosis. It adds inspection work; reference measurements leave
 it disabled. `START_PARALLEL` bounds concurrently activating publishers (default
-4, range 1–128); the 64-route reference explicitly uses 64. Each publisher retains
-its 30-second readiness deadline from launch. Shutdown uses four concurrent stops
-and a ten-second per-publisher deadline, independently of startup concurrency.
+4, range 1–1,000); the 64-route reference explicitly uses 64. `READY_TIMEOUT`
+sets each publisher's deadline from launch (default 30s, range 30s–5m); use a
+non-default value only to characterize a known miss. Shutdown uses four concurrent
+stops and a ten-second per-publisher deadline, independently of startup concurrency.
+`ROUTE_CERTIFICATE_WORKERS` selects the control process's certificate worker count
+(default 4, range 1–8) so larger trials can compare bounded issuance concurrency.
 
 `activation.json` retains exact launch-to-ready durations, whole-group readiness,
 verified activation time, CA order count, and certificate-work attempt count.
