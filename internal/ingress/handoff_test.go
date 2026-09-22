@@ -108,7 +108,7 @@ func TestIngressExactSNIHandoffs(t *testing.T) {
 	}
 }
 
-func TestIngressHandoffsUsePublicSourceLimit(t *testing.T) {
+func TestIngressHandoffsHaveIndependentCapacityHeldUntilClose(t *testing.T) {
 	for _, test := range []struct {
 		name, hostname string
 		configure      func(*Config, func(net.Conn) bool)
@@ -121,27 +121,47 @@ func TestIngressHandoffsUsePublicSourceLimit(t *testing.T) {
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			handled := make(chan struct{}, 1)
+			handled := make(chan net.Conn, 2)
 			metrics := new(testMetrics)
-			config := Config{SourceConnectionRate: 0.000001, SourceConnectionBurst: 1, Metrics: metrics}
+			config := Config{SourceConnectionRate: 0.000001, SourceConnectionBurst: 1, Metrics: metrics,
+				MaxControlConnections: 1, MaxRelayConnections: 1}
 			test.configure(&config, func(connection net.Conn) bool {
-				_ = connection.Close()
-				handled <- struct{}{}
+				handled <- connection
 				return true
 			})
 			server, address := startIngress(t, config)
+			// Exhaust the same visitor source bucket first.
+			ordinary := ingressClient(t, address, "route.example", "")
+			_ = ordinary.Handshake()
+			_ = ordinary.Close()
+			ordinary = ingressClient(t, address, "route.example", "")
+			_ = ordinary.Handshake()
+			_ = ordinary.Close()
+			if metrics.sourceLimiterRejections.Load() != 1 {
+				t.Fatal("ordinary source bucket was not exhausted")
+			}
 			client := ingressClient(t, address, test.hostname, "")
-			_ = client.Handshake()
-			_ = client.Close()
-			ingressAwait(t, handled)
-			client = ingressClient(t, address, test.hostname, "")
-			_ = client.Handshake()
-			_ = client.Close()
+			handshake := ingressWorker(t, func() { _ = client.Close() }, client.Handshake)
+			owned := ingressAwait(t, handled)
+			t.Cleanup(func() { _ = owned.Close() })
+			blocked := ingressClient(t, address, test.hostname, "")
+			if err := blocked.Handshake(); err == nil {
+				t.Fatal("service capacity was not enforced")
+			}
+			_ = blocked.Close()
 			select {
 			case <-handled:
-				t.Fatal("handoff bypassed the public source limit")
+				t.Fatal("handoff slot released before its owner closed the connection")
 			default:
 			}
+			_ = owned.Close()
+			_ = owned.Close() // Closing twice must release the slot only once.
+			_ = ingressAwait(t, handshake)
+			next := ingressClient(t, address, test.hostname, "")
+			nextHandshake := ingressWorker(t, func() { _ = next.Close() }, next.Handshake)
+			nextOwned := ingressAwait(t, handled)
+			_ = nextOwned.Close()
+			_ = ingressAwait(t, nextHandshake)
 			if server.limiter.Entries() != 1 || metrics.sourceLimiterRejections.Load() != 1 {
 				t.Fatalf("source limiter entries=%d rejections=%d", server.limiter.Entries(), metrics.sourceLimiterRejections.Load())
 			}

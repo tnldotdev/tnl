@@ -108,21 +108,26 @@ type Config struct {
 	RelayAddress         string `name:"relay-address" env:"TNLD_RELAY_ADDRESS" help:"Relay address advertised by this relay service."`
 	InternalRelayAddress string `name:"internal-relay-address" env:"TNLD_INTERNAL_RELAY_ADDRESS" help:"Internal hostname and port advertised by this relay process."`
 
-	SourceConnectionRate     float64       `name:"source-connection-rate" env:"TNLD_SOURCE_CONNECTION_RATE" default:"50" help:"New connections per second per source IPv4 address or IPv6 /64, per ingress process."`
-	SourceConnectionBurst    int           `name:"source-connection-burst" env:"TNLD_SOURCE_CONNECTION_BURST" default:"200" help:"New connection burst allowance per source IPv4 address or IPv6 /64, per ingress process."`
-	VisitorConnectionLimit   int64         `name:"visitor-connection-limit" env:"TNLD_VISITOR_CONNECTION_LIMIT" default:"20000" help:"Maximum concurrent visitor connections."`
-	RouteConnectionLimit     int64         `name:"route-connection-limit" env:"TNLD_ROUTE_CONNECTION_LIMIT" default:"500" help:"Maximum concurrent visitor connections per route."`
-	PublisherConnectionLimit int64         `name:"publisher-connection-limit" env:"TNLD_PUBLISHER_CONNECTION_LIMIT" default:"1000" help:"Maximum publisher connections held by one relay process."`
-	RelayStreamCapacity      int64         `name:"relay-stream-capacity" env:"TNLD_RELAY_STREAM_CAPACITY" default:"4096" help:"Maximum concurrent visitor streams held by one relay process."`
-	RequireProxyHeader       bool          `name:"require-proxy-header" env:"TNLD_REQUIRE_PROXY_HEADER" help:"Require one trusted outer PROXY v2 header on public ingress."`
-	QUICMaxIncomingStreams   int64         `name:"quic-max-incoming-streams" env:"TNLD_QUIC_MAX_INCOMING_STREAMS" default:"4096" help:"Maximum incoming QUIC streams per publisher connection."`
-	QUICIdleTimeout          time.Duration `name:"quic-idle-timeout" env:"TNLD_QUIC_IDLE_TIMEOUT" default:"45s" help:"Publisher connection QUIC idle timeout."`
-	IngressLeaseDuration     time.Duration `name:"ingress-lease-duration" env:"TNLD_INGRESS_LEASE_DURATION" default:"30s" help:"Control-owned ingress lease duration."`
-	RelayLeaseDuration       time.Duration `name:"relay-lease-duration" env:"TNLD_RELAY_LEASE_DURATION" default:"30s" help:"Control-owned relay lease duration."`
-	LeaseRenewalInterval     time.Duration `name:"lease-renewal-interval" env:"TNLD_LEASE_RENEWAL_INTERVAL" default:"10s" help:"Ingress and relay lease renewal interval."`
-	ControlRetryInterval     time.Duration `name:"control-retry-interval" env:"TNLD_CONTROL_RETRY_INTERVAL" default:"1s" help:"Delay before retrying a transient control failure."`
-	RoutingTableWait         time.Duration `name:"routing-table-wait" env:"TNLD_ROUTING_TABLE_WAIT" default:"25s" help:"Maximum wait for ingress routing-table updates."`
-	DrainTimeout             time.Duration `name:"drain-timeout" env:"TNLD_DRAIN_TIMEOUT" default:"30s" help:"Graceful connection drain deadline."`
+	SourceConnectionRate             float64       `name:"source-connection-rate" env:"TNLD_SOURCE_CONNECTION_RATE" default:"50" help:"New visitor connections per second per source IPv4 address or IPv6 /64, per ingress process."`
+	SourceConnectionBurst            int           `name:"source-connection-burst" env:"TNLD_SOURCE_CONNECTION_BURST" default:"200" help:"Visitor connection burst allowance per source IPv4 address or IPv6 /64, per ingress process."`
+	ClientHelloConnectionLimit       int           `name:"client-hello-connection-limit" env:"TNLD_CLIENT_HELLO_CONNECTION_LIMIT" default:"1024" help:"Maximum simultaneous public connection metadata and TLS ClientHello inspections."`
+	ChallengeConnectionLimit         int           `name:"challenge-connection-limit" env:"TNLD_CHALLENGE_CONNECTION_LIMIT" default:"1024" help:"Maximum concurrent route certificate validation connections per ingress process."`
+	ChallengeHostnameConnectionLimit int           `name:"challenge-hostname-connection-limit" env:"TNLD_CHALLENGE_HOSTNAME_CONNECTION_LIMIT" default:"8" help:"Maximum concurrent route certificate validation connections per hostname on each ingress process."`
+	StandaloneControlConnectionLimit int           `name:"standalone-control-connection-limit" env:"TNLD_STANDALONE_CONTROL_CONNECTION_LIMIT" default:"1024" help:"Maximum control connections handed off by standalone, held until close."`
+	StandaloneRelayConnectionLimit   int           `name:"standalone-relay-connection-limit" env:"TNLD_STANDALONE_RELAY_CONNECTION_LIMIT" default:"4096" help:"Maximum relay TCP connections handed off by standalone, held until close."`
+	VisitorConnectionLimit           int64         `name:"visitor-connection-limit" env:"TNLD_VISITOR_CONNECTION_LIMIT" default:"20000" help:"Maximum concurrent visitor connections."`
+	RouteConnectionLimit             int64         `name:"route-connection-limit" env:"TNLD_ROUTE_CONNECTION_LIMIT" default:"500" help:"Maximum concurrent visitor connections per route."`
+	PublisherConnectionLimit         int64         `name:"publisher-connection-limit" env:"TNLD_PUBLISHER_CONNECTION_LIMIT" default:"1000" help:"Maximum publisher connections held by one relay process."`
+	RelayStreamCapacity              int64         `name:"relay-stream-capacity" env:"TNLD_RELAY_STREAM_CAPACITY" default:"4096" help:"Maximum concurrent visitor streams held by one relay process."`
+	RequireProxyHeader               bool          `name:"require-proxy-header" env:"TNLD_REQUIRE_PROXY_HEADER" help:"Require one trusted outer PROXY v2 header on public ingress."`
+	QUICMaxIncomingStreams           int64         `name:"quic-max-incoming-streams" env:"TNLD_QUIC_MAX_INCOMING_STREAMS" default:"4096" help:"Maximum incoming QUIC streams per publisher connection."`
+	QUICIdleTimeout                  time.Duration `name:"quic-idle-timeout" env:"TNLD_QUIC_IDLE_TIMEOUT" default:"45s" help:"Publisher connection QUIC idle timeout."`
+	IngressLeaseDuration             time.Duration `name:"ingress-lease-duration" env:"TNLD_INGRESS_LEASE_DURATION" default:"30s" help:"Control-owned ingress lease duration."`
+	RelayLeaseDuration               time.Duration `name:"relay-lease-duration" env:"TNLD_RELAY_LEASE_DURATION" default:"30s" help:"Control-owned relay lease duration."`
+	LeaseRenewalInterval             time.Duration `name:"lease-renewal-interval" env:"TNLD_LEASE_RENEWAL_INTERVAL" default:"10s" help:"Ingress and relay lease renewal interval."`
+	ControlRetryInterval             time.Duration `name:"control-retry-interval" env:"TNLD_CONTROL_RETRY_INTERVAL" default:"1s" help:"Delay before retrying a transient control failure."`
+	RoutingTableWait                 time.Duration `name:"routing-table-wait" env:"TNLD_ROUTING_TABLE_WAIT" default:"25s" help:"Maximum wait for ingress routing-table updates."`
+	DrainTimeout                     time.Duration `name:"drain-timeout" env:"TNLD_DRAIN_TIMEOUT" default:"30s" help:"Graceful connection drain deadline."`
 }
 
 func (c Config) Validate() error {
@@ -189,6 +194,10 @@ func (c Config) Validate() error {
 	}
 	if c.SourceConnectionRate <= 0 || math.IsNaN(c.SourceConnectionRate) || math.IsInf(c.SourceConnectionRate, 0) || c.SourceConnectionBurst <= 0 {
 		return errors.New("source connection rate and burst must be positive and finite")
+	}
+	if c.ClientHelloConnectionLimit <= 0 || c.ChallengeConnectionLimit <= 0 || c.ChallengeHostnameConnectionLimit <= 0 ||
+		c.StandaloneControlConnectionLimit <= 0 || c.StandaloneRelayConnectionLimit <= 0 {
+		return errors.New("ingress admission capacities must be positive")
 	}
 	if c.RouteCertificateWorkers < 1 || c.RouteCertificateWorkers > 8 {
 		return errors.New("route certificate workers must be between 1 and 8")

@@ -72,26 +72,36 @@ type ingressRuntimeConfig struct {
 }
 
 type ingressSettings struct {
-	sourceConnectionRate   float64
-	sourceConnectionBurst  int
-	visitorConnectionLimit int64
-	routeConnectionLimit   int64
-	requireProxyHeader     bool
-	leaseRenewalInterval   time.Duration
-	controlRetryInterval   time.Duration
-	routingTableWait       time.Duration
+	clientHelloConnectionLimit       int
+	challengeConnectionLimit         int
+	challengeHostnameConnectionLimit int
+	standaloneControlConnectionLimit int
+	standaloneRelayConnectionLimit   int
+	sourceConnectionRate             float64
+	sourceConnectionBurst            int
+	visitorConnectionLimit           int64
+	routeConnectionLimit             int64
+	requireProxyHeader               bool
+	leaseRenewalInterval             time.Duration
+	controlRetryInterval             time.Duration
+	routingTableWait                 time.Duration
 }
 
 func ingressSettingsFrom(cfg tnldconfig.Config) ingressSettings {
 	return ingressSettings{
-		sourceConnectionRate:   cfg.SourceConnectionRate,
-		sourceConnectionBurst:  cfg.SourceConnectionBurst,
-		visitorConnectionLimit: cfg.VisitorConnectionLimit,
-		routeConnectionLimit:   cfg.RouteConnectionLimit,
-		requireProxyHeader:     cfg.RequireProxyHeader,
-		leaseRenewalInterval:   cfg.LeaseRenewalInterval,
-		controlRetryInterval:   cfg.ControlRetryInterval,
-		routingTableWait:       cfg.RoutingTableWait,
+		clientHelloConnectionLimit:       cfg.ClientHelloConnectionLimit,
+		challengeConnectionLimit:         cfg.ChallengeConnectionLimit,
+		challengeHostnameConnectionLimit: cfg.ChallengeHostnameConnectionLimit,
+		standaloneControlConnectionLimit: cfg.StandaloneControlConnectionLimit,
+		standaloneRelayConnectionLimit:   cfg.StandaloneRelayConnectionLimit,
+		sourceConnectionRate:             cfg.SourceConnectionRate,
+		sourceConnectionBurst:            cfg.SourceConnectionBurst,
+		visitorConnectionLimit:           cfg.VisitorConnectionLimit,
+		routeConnectionLimit:             cfg.RouteConnectionLimit,
+		requireProxyHeader:               cfg.RequireProxyHeader,
+		leaseRenewalInterval:             cfg.LeaseRenewalInterval,
+		controlRetryInterval:             cfg.ControlRetryInterval,
+		routingTableWait:                 cfg.RoutingTableWait,
 	}
 }
 
@@ -188,7 +198,12 @@ func (d *daemon) startIngressRuntime(
 			return backends, true
 		},
 		RequireProxyHeader: settings.requireProxyHeader, MaxConnections: publicCapacity,
-		SourceConnectionRate: settings.sourceConnectionRate, SourceConnectionBurst: settings.sourceConnectionBurst,
+		MaxClientHelloConnections:       settings.clientHelloConnectionLimit,
+		MaxChallengeConnections:         settings.challengeConnectionLimit,
+		MaxHostnameChallengeConnections: settings.challengeHostnameConnectionLimit,
+		MaxControlConnections:           settings.standaloneControlConnectionLimit,
+		MaxRelayConnections:             settings.standaloneRelayConnectionLimit,
+		SourceConnectionRate:            settings.sourceConnectionRate, SourceConnectionBurst: settings.sourceConnectionBurst,
 		MaxRouteConnections: routeCapacity, Metrics: metrics, Observer: metrics,
 		OpenUsage:       usage.Open,
 		ObserveRecovery: recovery.Observe,

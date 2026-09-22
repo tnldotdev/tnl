@@ -1,8 +1,10 @@
 package tnldconfig
 
 import (
+	"strconv"
 	"testing"
 
+	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/sourcelimiter"
 )
 
@@ -50,4 +52,33 @@ func TestSourceConnectionLimits(t *testing.T) {
 			t.Fatalf("flag source limits = %g/%d", cfg.SourceConnectionRate, cfg.SourceConnectionBurst)
 		}
 	})
+}
+
+func TestIndependentAdmissionLimits(t *testing.T) {
+	base := []string{"--role", "ingress", "--control-hostname", "control.example.test",
+		"--cluster-secret", testClusterSecret, "--ingress-id", "ingress-1"}
+	for _, test := range []struct {
+		flag     string
+		value    func(Config) int
+		fallback int
+	}{
+		{"client-hello-connection-limit", func(c Config) int { return c.ClientHelloConnectionLimit }, ingress.DefaultClientHelloConnectionLimit},
+		{"challenge-connection-limit", func(c Config) int { return c.ChallengeConnectionLimit }, ingress.DefaultChallengeConnectionLimit},
+		{"challenge-hostname-connection-limit", func(c Config) int { return c.ChallengeHostnameConnectionLimit }, ingress.DefaultChallengeHostnameConnectionLimit},
+		{"standalone-control-connection-limit", func(c Config) int { return c.StandaloneControlConnectionLimit }, ingress.DefaultControlConnectionLimit},
+		{"standalone-relay-connection-limit", func(c Config) int { return c.StandaloneRelayConnectionLimit }, ingress.DefaultRelayConnectionLimit},
+	} {
+		t.Run(test.flag, func(t *testing.T) {
+			cfg, err := Parse(base)
+			if err != nil || test.value(cfg) != test.fallback {
+				t.Fatalf("default=%d error=%v", test.value(cfg), err)
+			}
+			for _, value := range []int{-1, 0, 7} {
+				cfg, err := Parse(append(append([]string{}, base...), "--"+test.flag+"="+strconv.Itoa(value)))
+				if value <= 0 && err == nil || value > 0 && (err != nil || test.value(cfg) != value) {
+					t.Fatalf("input=%d parsed=%d error=%v", value, test.value(cfg), err)
+				}
+			}
+		})
+	}
 }

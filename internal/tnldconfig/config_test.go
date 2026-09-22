@@ -183,6 +183,8 @@ func TestConfigControlHostnameRejectsURLAndPort(t *testing.T) {
 		IngressListen: ":443", MetricsListen: "127.0.0.1:9090",
 		VisitorConnectionLimit: 1, RouteConnectionLimit: 1, PublisherConnectionLimit: 1,
 		SourceConnectionRate: 50, SourceConnectionBurst: 200,
+		ClientHelloConnectionLimit: 1024, ChallengeConnectionLimit: 1024, ChallengeHostnameConnectionLimit: 8,
+		StandaloneControlConnectionLimit: 1024, StandaloneRelayConnectionLimit: 4096,
 		RelayStreamCapacity: 1, QUICMaxIncomingStreams: 1,
 		IngressLeaseDuration: 30 * time.Second, RelayLeaseDuration: 30 * time.Second,
 		LeaseRenewalInterval: 10 * time.Second, ControlRetryInterval: time.Second,

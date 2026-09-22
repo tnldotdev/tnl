@@ -39,6 +39,8 @@ func TestIntegrationStandaloneLifecycle(t *testing.T) {
 		AccessTokenLifetime:     5 * time.Minute, RefreshTokenLifetime: time.Hour,
 		VisitorConnectionLimit: 100, RouteConnectionLimit: 10, PublisherConnectionLimit: 10,
 		SourceConnectionRate: 50, SourceConnectionBurst: 200,
+		ClientHelloConnectionLimit: 1024, ChallengeConnectionLimit: 1024, ChallengeHostnameConnectionLimit: 8,
+		StandaloneControlConnectionLimit: 1024, StandaloneRelayConnectionLimit: 4096,
 		RelayStreamCapacity: 100, QUICMaxIncomingStreams: 100, QUICIdleTimeout: time.Minute,
 		IngressLeaseDuration: 3 * time.Second,
 		RelayLeaseDuration:   3 * time.Second, LeaseRenewalInterval: time.Second,

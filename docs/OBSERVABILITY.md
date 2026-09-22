@@ -132,9 +132,15 @@ the process role.
   `ingress` or `relay` stage. Standalone exports both stages separately.
 - `tnl_capacity_rejections_total{resource}` reports operations rejected because
   a resource is full. Resources are `public_connections`, `route_connections`,
-  `publisher_connections`, or `relay_streams`.
+  `client_hello_connections`, `challenge_connections`,
+  `challenge_hostname_connections`, `control_connections`,
+  `relay_tcp_connections`, `publisher_connections`, or `relay_streams`.
+  `public_connections` now counts ordinary visitors after classification;
+  `draining` records classified connections rejected during ingress drain.
 - `tnl_source_limiter_rejections_total` and `tnl_source_limiter_entries` report
-  excessive connection attempts and source-IP table usage.
+  excessive ordinary visitor connection attempts and visitor source-IP table
+  usage. Active route certificate checks and standalone control/relay handoffs
+  have independent admission budgets and do not consume these source tokens.
 - `tnl_ip_allowlist_denials_total` reports visitor connections rejected by route
   IP policy without route or source labels.
 - `tnl_forwarded_bytes_total{direction}` reports bytes forwarded through the

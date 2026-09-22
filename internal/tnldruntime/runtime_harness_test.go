@@ -299,6 +299,8 @@ func splitTestConfig(role tnldconfig.Role, metricsAddress string) tnldconfig.Con
 		Role: role, MetricsListen: metricsAddress,
 		RouteCertificateWorkers: 4,
 		SourceConnectionRate:    50, SourceConnectionBurst: 200,
+		ClientHelloConnectionLimit: 1024, ChallengeConnectionLimit: 1024, ChallengeHostnameConnectionLimit: 8,
+		StandaloneControlConnectionLimit: 1024, StandaloneRelayConnectionLimit: 4096,
 		VisitorConnectionLimit: 100, RouteConnectionLimit: 10, PublisherConnectionLimit: 10,
 		RelayStreamCapacity: 100, QUICMaxIncomingStreams: 100, QUICIdleTimeout: time.Minute,
 		IngressLeaseDuration: 2 * time.Second,

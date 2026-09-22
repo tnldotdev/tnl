@@ -52,14 +52,14 @@ func TestDrainDeadlineForcesBackendClosed(t *testing.T) {
 func TestAdmissionRegistersBeforeDrainWait(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		// Admission is entirely in memory; a real listener adds no behavior here.
-		server := &Server{config: Config{MaxConnections: 1}, connections: make(map[net.Conn]struct{})}
+		server := &Server{config: Config{MaxClientHelloConnections: 1}, connections: make(map[net.Conn]struct{})}
 		a, b := net.Pipe()
 		ownIngressConn(t, a)
 		ownIngressConn(t, b)
 		if !server.admit(a) {
 			t.Fatal("connection not admitted")
 		}
-		release := sync.OnceFunc(func() { server.release(a); server.active.Done() })
+		release := sync.OnceFunc(func() { server.finishInspection(); server.release(a); server.active.Done() })
 		waited := make(chan struct{})
 		t.Cleanup(func() { release(); ingressAwait(t, waited) })
 		go func() { server.active.Wait(); close(waited) }()

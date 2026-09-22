@@ -112,28 +112,52 @@ address through `TNLD_INGRESS_IPV4_ADDRESSES` or
 `TNLD_INGRESS_IPV6_ADDRESSES`. If you leave these settings empty, control does
 not manage public route DNS. You must publish the records yourself.
 
-## Ingress Source Connection Limits
+## Ingress Admission Limits
 
-Each ingress process applies a token bucket to new public TCP connections from
-each source IPv4 address or IPv6 /64. `TNLD_SOURCE_CONNECTION_RATE` sets the
-sustained rate (default **50 connections/sec**, positive finite values including
-fractions), and `TNLD_SOURCE_CONNECTION_BURST` sets the bucket size (default
-**200**, a positive integer). These are process-local limits; replicas do not
-share buckets, and connections behind one source address share its allowance.
+Ingress inspects the TLS ClientHello before assigning a connection to an
+independent admission budget. All limits are process-local; replicas do not
+share counters or source buckets.
 
-When `TNLD_REQUIRE_PROXY_HEADER` is enabled, ingress uses the source from the
-trusted outer PROXY v2 header. Source limiting happens before TLS ClientHello
-inspection, route lookup, and IP policy checks. It counts new TCP connections,
-including malformed TLS attempts after connection metadata is accepted, rather
-than HTTP requests on an existing connection. A required malformed or missing
-PROXY v2 header is rejected before source limiting.
-`tnl_source_limiter_rejections_total` and `tnl_source_limiter_entries` report
-rejected attempts and tracked source count.
+| Stage or traffic                    | Default bound                                      | Setting                                                                       |
+| ----------------------------------- | -------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Metadata/ClientHello inspection     | 1,024 simultaneous inspections                     | `TNLD_CLIENT_HELLO_CONNECTION_LIMIT`                                          |
+| Ordinary visitors                   | 50 new connections/sec/source, burst 200           | `TNLD_SOURCE_CONNECTION_RATE`, `TNLD_SOURCE_CONNECTION_BURST`                 |
+| Ordinary visitors                   | 20,000 concurrent connections, 500 per route       | `TNLD_VISITOR_CONNECTION_LIMIT`, `TNLD_ROUTE_CONNECTION_LIMIT`                |
+| Active route certificate challenges | 1,024 concurrent checks, eight per hostname        | `TNLD_CHALLENGE_CONNECTION_LIMIT`, `TNLD_CHALLENGE_HOSTNAME_CONNECTION_LIMIT` |
+| Standalone control hostname         | 1,024 concurrent connections, held until close     | `TNLD_STANDALONE_CONTROL_CONNECTION_LIMIT`                                    |
+| Standalone relay hostname           | 4,096 concurrent TCP connections, held until close | `TNLD_STANDALONE_RELAY_CONNECTION_LIMIT`                                      |
 
-Standalone multiplexes public routes, the control API, and TLS/TCP publisher
-connections on one public listener, so all three consume the same source
-allowance. QUIC publisher connections use the separate UDP listener. Account for
-administrative and publisher traffic when lowering standalone source limits.
+The shared inspection stage is bounded before launching handlers, including
+connections that send no data. Metadata and ClientHello reads each have a
+five-second deadline; the ClientHello is bounded to 64KiB and eight records.
+Malformed input releases its inspection slot without allocating a source bucket.
+
+Only ordinary visitors consume the source token bucket. Sources are IPv4
+addresses or IPv6 /64s; when `TNLD_REQUIRE_PROXY_HEADER` is enabled, ingress
+uses the source in the trusted outer PROXY v2 header. The positive, finite source
+rate supports fractions; burst and concurrency bounds are positive integers.
+Source limiting precedes ordinary route lookup and IP policy checks and counts
+connections, not HTTP requests on an existing connection. Visitors behind one
+source share its allowance across routes.
+
+Route certificate checks require **only** `acme-tls/1` ALPN and an exact active
+challenge in the current ingress routing table. Unknown, expired, or removed
+challenges are rejected; ACME ALPN never falls back to ordinary routing. Active
+checks use their own global/per-hostname concurrency budget and a ten-second
+connection deadline, including backend opening and byte forwarding. They consume
+neither the visitor source bucket nor visitor connection/route capacity.
+
+Standalone control and relay-hostname connections have separate budgets from
+visitors, route challenges, and each other. Their slots remain held after
+handoff until the receiving HTTP or relay server closes the connection. Existing
+TLS, authentication, and publisher-connection capacity checks still apply.
+Infrastructure-hostname certificate checks use these service budgets; their TLS
+certificate source verifies the active challenge. QUIC publishers use a separate
+UDP listener. The shared initial inspection stage can still become full.
+
+`tnl_source_limiter_rejections_total` and `tnl_source_limiter_entries` describe
+ordinary visitor source limiting. `tnl_capacity_rejections_total{resource}`
+distinguishes inspection, challenge, visitor, and service capacity rejections.
 
 For example, four sources offering 320 fresh connections/sec each can use
 `TNLD_SOURCE_CONNECTION_RATE=400` with the default burst. Record both values when

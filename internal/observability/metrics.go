@@ -57,10 +57,10 @@ func New(role string) *Metrics {
 			Name: "tnl_capacity_rejections_total", Help: "Operations rejected because a bounded resource was full.",
 		}, []string{"resource"}),
 		sourceLimiterRejects: prometheus.NewCounter(prometheus.CounterOpts{
-			Name: "tnl_source_limiter_rejections_total", Help: "Ingress starts rejected by per-source limiting.",
+			Name: "tnl_source_limiter_rejections_total", Help: "Ordinary visitor starts rejected by per-source limiting.",
 		}),
 		sourceLimiterEntries: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "tnl_source_limiter_entries", Help: "Current bounded per-source limiter entries.",
+			Name: "tnl_source_limiter_entries", Help: "Current bounded ordinary visitor source limiter entries.",
 		}),
 		ipAllowlistDenials: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "tnl_ip_allowlist_denials_total", Help: "Ingress connections denied by route IP policy.",

@@ -163,7 +163,7 @@ func TestIngressEnforcesProxySourceLimitsAndRouteAllowlistInOrder(t *testing.T) 
 		policies += u.policyDenials
 		streams += u.streams
 	}
-	if policies != 1 || streams != 1 || metrics.sourceLimiterRejections.Load() != 1 || metrics.sourceLimiterEntries.Load() != 3 || metrics.ipAllowlistDenials.Load() != 1 || lookups.Load() != 2 || backend.opens.Load() != 1 {
+	if policies != 1 || streams != 1 || metrics.sourceLimiterRejections.Load() != 1 || metrics.sourceLimiterEntries.Load() != 2 || metrics.ipAllowlistDenials.Load() != 1 || lookups.Load() != 2 || backend.opens.Load() != 1 {
 		t.Fatalf("policy=%d streams=%d limiter=%d entries=%d allowlist=%d lookups=%d opens=%d", policies, streams, metrics.sourceLimiterRejections.Load(), metrics.sourceLimiterEntries.Load(), metrics.ipAllowlistDenials.Load(), lookups.Load(), backend.opens.Load())
 	}
 	server.mu.Lock()

@@ -260,6 +260,12 @@ does not create more source IPs.
 Admission limits are independent Task inputs, passed as `-tnl-runtime-load-*`
 flags into the same production configuration used by `tnld`:
 
+`CLIENT_HELLO_CONNECTION_LIMIT` (1,024), `CHALLENGE_CONNECTION_LIMIT` (1,024),
+and `CHALLENGE_HOSTNAME_CONNECTION_LIMIT` (eight) bound initial inspection and
+active route validation separately. They also appear in `admission-limits.json`.
+Source rate/burst apply to ordinary visitors after classification; Pebble's
+active TLS-ALPN checks do not consume visitor tokens.
+
 | Task input                   | Default | Scope                                                                        |
 | ---------------------------- | ------: | ---------------------------------------------------------------------------- |
 | `SOURCE_CONNECTION_RATE`     |      50 | New connections/sec per source IPv4 address or IPv6 /64, per ingress process |
@@ -285,9 +291,9 @@ Declare overrides before each experiment and keep them fixed across its healthy
 and fault windows; changing admission settings defines a new measured profile.
 The runtime workload bounds are 4–1,000 routes and 4–500 requests/sec. The
 1,000-route cold-start profile raises relay connection capacity because every
-route holds one connection on each relay service. Local Pebble validates from one
-source address, so that profile also declares source-rate headroom explicitly;
-it does not represent the default admission profile.
+route holds one connection on each relay service. It does not represent the
+default admission profile. Local Pebble validates from one source address;
+challenge concurrency and deadlines apply independently of visitor source rate.
 
 `SCENARIO=relay-restart` is the default graceful restart. `relay-kill` uses Docker
 SIGKILL, leaves the relay down longer than its 30-second lease, and requires a new

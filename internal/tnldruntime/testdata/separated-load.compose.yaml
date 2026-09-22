@@ -33,6 +33,9 @@ x-runtime: &runtime
         -tnl-runtime-load-queue='${QUEUE:-8}' \
         -tnl-runtime-load-source-connection-rate='${SOURCE_CONNECTION_RATE:-50}' \
         -tnl-runtime-load-source-connection-burst='${SOURCE_CONNECTION_BURST:-200}' \
+        -tnl-runtime-load-client-hello-connection-limit='${CLIENT_HELLO_CONNECTION_LIMIT:-1024}' \
+        -tnl-runtime-load-challenge-connection-limit='${CHALLENGE_CONNECTION_LIMIT:-1024}' \
+        -tnl-runtime-load-challenge-hostname-connection-limit='${CHALLENGE_HOSTNAME_CONNECTION_LIMIT:-8}' \
         -tnl-runtime-load-visitor-connection-limit='${VISITOR_CONNECTION_LIMIT:-20000}' \
         -tnl-runtime-load-route-connection-limit='${ROUTE_CONNECTION_LIMIT:-500}' \
         -tnl-runtime-load-publisher-connection-limit='${PUBLISHER_CONNECTION_LIMIT:-1000}' \
@@ -226,6 +229,9 @@ services:
       - "-tnl-runtime-load-queue=${QUEUE:-8}"
       - "-tnl-runtime-load-source-connection-rate=${SOURCE_CONNECTION_RATE:-50}"
       - "-tnl-runtime-load-source-connection-burst=${SOURCE_CONNECTION_BURST:-200}"
+      - "-tnl-runtime-load-client-hello-connection-limit=${CLIENT_HELLO_CONNECTION_LIMIT:-1024}"
+      - "-tnl-runtime-load-challenge-connection-limit=${CHALLENGE_CONNECTION_LIMIT:-1024}"
+      - "-tnl-runtime-load-challenge-hostname-connection-limit=${CHALLENGE_HOSTNAME_CONNECTION_LIMIT:-8}"
       - "-tnl-runtime-load-visitor-connection-limit=${VISITOR_CONNECTION_LIMIT:-20000}"
       - "-tnl-runtime-load-route-connection-limit=${ROUTE_CONNECTION_LIMIT:-500}"
       - "-tnl-runtime-load-publisher-connection-limit=${PUBLISHER_CONNECTION_LIMIT:-1000}"

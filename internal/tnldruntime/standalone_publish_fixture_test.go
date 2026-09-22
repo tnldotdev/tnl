@@ -63,6 +63,8 @@ func standalonePublishConfig(t *testing.T, databaseURL, publicAddress, relayUDPA
 		LoginToken:              testLoginToken, StorageKey: testStorageKey, AccessTokenLifetime: 5 * time.Minute, RefreshTokenLifetime: time.Hour,
 		VisitorConnectionLimit: 100, RouteConnectionLimit: 100, PublisherConnectionLimit: 10,
 		SourceConnectionRate: 50, SourceConnectionBurst: 200,
+		ClientHelloConnectionLimit: 1024, ChallengeConnectionLimit: 1024, ChallengeHostnameConnectionLimit: 8,
+		StandaloneControlConnectionLimit: 1024, StandaloneRelayConnectionLimit: 4096,
 		RelayStreamCapacity: 100, QUICMaxIncomingStreams: 100, QUICIdleTimeout: time.Minute,
 		IngressLeaseDuration: 5 * time.Second,
 		RelayLeaseDuration:   5 * time.Second, LeaseRenewalInterval: time.Second,

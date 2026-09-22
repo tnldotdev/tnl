@@ -62,24 +62,29 @@ type Metrics interface {
 }
 
 type Config struct {
-	Lookup                LookupFunc
-	LookupChallenge       BackendLookupFunc
-	ServerHostname        string
-	HandleControl         func(net.Conn) bool
-	RelayHostname         string
-	HandleRelay           func(net.Conn) bool
-	HandleRelayChallenge  func(net.Conn) bool
-	RequireProxyHeader    bool
-	SourceConnectionRate  float64
-	SourceConnectionBurst int
-	MaxConnections        int
-	MaxRouteConnections   int
-	OpenTimeout           time.Duration
-	Metrics               Metrics
-	Observer              OperationObserver
-	OpenUsage             func(string, uint64, netip.Addr, time.Time) UsageConnection
-	ObserveRecovery       func(string, uint64, uint64, time.Time)
-	OnError               func(error)
+	Lookup                          LookupFunc
+	LookupChallenge                 BackendLookupFunc
+	ServerHostname                  string
+	HandleControl                   func(net.Conn) bool
+	RelayHostname                   string
+	HandleRelay                     func(net.Conn) bool
+	HandleRelayChallenge            func(net.Conn) bool
+	RequireProxyHeader              bool
+	SourceConnectionRate            float64
+	SourceConnectionBurst           int
+	MaxConnections                  int
+	MaxRouteConnections             int
+	MaxClientHelloConnections       int
+	MaxChallengeConnections         int
+	MaxHostnameChallengeConnections int
+	MaxControlConnections           int
+	MaxRelayConnections             int
+	OpenTimeout                     time.Duration
+	Metrics                         Metrics
+	Observer                        OperationObserver
+	OpenUsage                       func(string, uint64, netip.Addr, time.Time) UsageConnection
+	ObserveRecovery                 func(string, uint64, uint64, time.Time)
+	OnError                         func(error)
 }
 
 type Server struct {
@@ -93,6 +98,9 @@ type Server struct {
 	connections map[net.Conn]struct{}
 	backends    map[net.Conn]struct{}
 	byRoute     map[string]int
+	byChallenge map[string]int
+	pending     int
+	admitted    [connectionKinds]int
 	serving     bool
 	closing     bool
 	done        chan struct{}
@@ -105,6 +113,9 @@ func New(listener net.Listener, config Config) (*Server, error) {
 	}
 	if config.MaxConnections <= 0 || config.MaxRouteConnections <= 0 {
 		return nil, errors.New("ingress: connection limits must be positive")
+	}
+	if err := admissionDefaults(&config); err != nil {
+		return nil, err
 	}
 	if config.ServerHostname == "" != (config.HandleControl == nil) {
 		return nil, errors.New("ingress: control hostname and handler must be configured together")
@@ -142,6 +153,7 @@ func New(listener net.Listener, config Config) (*Server, error) {
 		connections: make(map[net.Conn]struct{}),
 		backends:    make(map[net.Conn]struct{}),
 		byRoute:     make(map[string]int),
+		byChallenge: make(map[string]int),
 		done:        make(chan struct{}),
 	}, nil
 }
@@ -169,15 +181,15 @@ func (s *Server) Serve() error {
 		}
 		if !s.admit(connection) {
 			_ = connection.Close()
-			if s.config.Metrics != nil {
-				s.config.Metrics.IncCapacityRejection("public_connections")
-			}
+			s.rejectCapacity("client_hello_connections")
 			continue
 		}
 		go func() {
 			defer s.active.Done()
 			defer s.release(connection)
-			if err := s.handle(connection); err != nil && s.config.OnError != nil {
+			finishInspection := sync.OnceFunc(s.finishInspection)
+			defer finishInspection()
+			if err := s.handle(connection, finishInspection); err != nil && s.config.OnError != nil {
 				s.config.OnError(err)
 			}
 		}()
@@ -216,21 +228,15 @@ func (s *Server) Ready() bool {
 func (s *Server) Load() int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return int64(len(s.connections))
+	return int64(s.admitted[visitorConnection])
 }
 
-func (s *Server) handle(public net.Conn) error {
+func (s *Server) handle(public net.Conn, finishInspection func()) error {
 	if err := public.SetReadDeadline(time.Now().Add(router.ClientHelloReadTimeout)); err != nil {
 		return nil
 	}
 	source, destination, reader, err := s.connectionMetadata(public)
 	if err != nil {
-		return nil
-	}
-	if !s.limiter.Allow(source.Addr()) {
-		if s.config.Metrics != nil {
-			s.config.Metrics.IncSourceLimiterRejection()
-		}
 		return nil
 	}
 	_ = public.SetReadDeadline(time.Time{})
@@ -244,8 +250,9 @@ func (s *Server) handle(public net.Conn) error {
 		return nil
 	}
 	hello.ServerName = serverName
+	finishInspection()
 	if hello.ServerName == s.config.ServerHostname {
-		if !s.handoff(public, source, destination, hello, s.config.HandleControl) {
+		if !s.handoff(public, source, destination, hello, controlConnection, s.config.HandleControl) {
 			return nil
 		}
 		// The HTTP server owns control connections after a successful handoff.
@@ -257,21 +264,33 @@ func (s *Server) handle(public net.Conn) error {
 		if hello.ACMETLSALPN && s.config.HandleRelayChallenge != nil {
 			handler = s.config.HandleRelayChallenge
 		}
-		if !s.handoff(public, source, destination, hello, handler) {
+		if !s.handoff(public, source, destination, hello, relayConnection, handler) {
 			return nil
 		}
 		// The selected relay-hostname handler owns the connection after a successful handoff.
 		s.transfer(public)
 		return nil
 	}
-	route, ok := s.config.Lookup(hello.ServerName)
-	backends := route.Backends
-	routeID := route.ID
-	challenge := hello.ACMETLSALPN && s.config.LookupChallenge != nil
-	// Challenge lookup replaces ordinary routing to prevent fallback.
+	var route Route
+	var backends []routebackend.Backend
+	var ok bool
+	challenge := hello.ACMETLSALPN
+	// An ALPN claim alone cannot authorize challenge forwarding. Require an
+	// exact, currently live challenge from control; never fall back to a route.
 	if challenge {
+		if s.config.LookupChallenge == nil {
+			return nil
+		}
 		backends, ok = s.config.LookupChallenge(hello.ServerName)
-		routeID = hello.ServerName
+	} else {
+		if !s.limiter.Allow(source.Addr()) {
+			if s.config.Metrics != nil {
+				s.config.Metrics.IncSourceLimiterRejection()
+			}
+			return nil
+		}
+		route, ok = s.config.Lookup(hello.ServerName)
+		backends = route.Backends
 	}
 	if !ok || len(backends) == 0 {
 		return nil
@@ -292,18 +311,26 @@ func (s *Server) handle(public net.Conn) error {
 		}
 		return nil
 	}
-	var admitted bool
-	routeID, admitted = s.admitRoute(routeID)
-	if !admitted {
-		if s.config.Metrics != nil {
-			s.config.Metrics.IncCapacityRejection("route_connections")
-		}
+	kind, key := visitorConnection, route.ID
+	if challenge {
+		kind, key = challengeConnection, hello.ServerName
+	}
+	release, rejected := s.admitClass(kind, key)
+	if release == nil {
+		s.rejectCapacity(rejected)
 		if usage != nil {
 			usage.CapacityDenied(time.Now().UTC())
 		}
 		return nil
 	}
-	defer s.releaseRoute(routeID)
+	defer release()
+	var challengeDeadline time.Time
+	if challenge {
+		challengeDeadline = time.Now().Add(challengeConnectionTimeout)
+		if err := public.SetDeadline(challengeDeadline); err != nil {
+			return err
+		}
+	}
 
 	if usage != nil {
 		usage.VisitorStreamOpening(time.Now().UTC())
@@ -324,7 +351,11 @@ func (s *Server) handle(public net.Conn) error {
 	if err != nil {
 		return fmt.Errorf("ingress: create visitor connection ID: %w", err)
 	}
-	openCtx, cancel := context.WithTimeout(s.openContext, s.config.OpenTimeout)
+	openTimeout := s.config.OpenTimeout
+	if challenge {
+		openTimeout = min(openTimeout, time.Until(challengeDeadline))
+	}
+	openCtx, cancel := context.WithTimeout(s.openContext, openTimeout)
 	defer cancel()
 	var (
 		stream       net.Conn
@@ -392,6 +423,11 @@ func (s *Server) handle(public net.Conn) error {
 	if committedErr != nil {
 		return fmt.Errorf("ingress: write ClientHello after %d bytes: %w", committed, committedErr)
 	}
+	if challenge {
+		if err := stream.SetDeadline(challengeDeadline); err != nil {
+			return err
+		}
+	}
 	replayed := &readerConn{Conn: public, reader: hello.Remainder}
 	var observeIngress, observeEgress func(int64)
 	if usage != nil {
@@ -423,13 +459,23 @@ func (s *Server) handoff(
 	public net.Conn,
 	source, destination netip.AddrPort,
 	hello router.ClientHello,
+	kind connectionKind,
 	handler func(net.Conn) bool,
 ) bool {
-	connection := &readerConn{
+	release, rejected := s.admitClass(kind, "")
+	if release == nil {
+		s.rejectCapacity(rejected)
+		return false
+	}
+	connection := &admittedConn{readerConn: &readerConn{
 		Conn:   &addressConn{Conn: public, remote: source, local: destination},
 		reader: hello.Replay(),
+	}, release: release}
+	if !handler(connection) {
+		release()
+		return false
 	}
-	return handler(connection)
+	return true
 }
 
 func (s *Server) connectionMetadata(public net.Conn) (netip.AddrPort, netip.AddrPort, io.Reader, error) {
@@ -454,9 +500,10 @@ func (s *Server) connectionMetadata(public net.Conn) (netip.AddrPort, netip.Addr
 func (s *Server) admit(connection net.Conn) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closing || len(s.connections) >= s.config.MaxConnections {
+	if s.closing || s.pending >= s.config.MaxClientHelloConnections {
 		return false
 	}
+	s.pending++
 	s.connections[connection] = struct{}{}
 	// Register before launch so Drain cannot miss an accepted handler.
 	s.active.Add(1)
@@ -508,25 +555,6 @@ func (s *Server) releaseBackend(connection net.Conn) error {
 		s.config.Observer.ObserveOperation("IngressBackendCleanup", err, time.Since(started))
 	}
 	return err
-}
-
-func (s *Server) admitRoute(routeID string) (string, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.byRoute[routeID] >= s.config.MaxRouteConnections {
-		return routeID, false
-	}
-	s.byRoute[routeID]++
-	return routeID, true
-}
-
-func (s *Server) releaseRoute(routeID string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.byRoute[routeID]--
-	if s.byRoute[routeID] == 0 {
-		delete(s.byRoute, routeID)
-	}
 }
 
 func (s *Server) closeConnections() {

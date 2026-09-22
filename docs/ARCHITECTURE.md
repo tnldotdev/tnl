@@ -137,6 +137,13 @@ roots. Relays authenticate publishers with short-lived publisher connection
 credentials.
 
 The visitor path is `visitor -> ingress -> relay -> publisher -> local service`.
+Ingress bounds concurrent metadata/ClientHello inspection before classification.
+Ordinary visitors, active route certificate challenges, and standalone service
+handoffs use independent admission budgets. Route challenges require exact active
+routing-table state and ACME-only ALPN, have global/per-hostname concurrency
+bounds and a connection deadline, and never fall back to ordinary route lookup.
+Only ordinary visitors consume the visitor source token bucket. Handoff capacity
+remains occupied until the receiving server closes the connection.
 Ingress creates exactly one PROXY v2 metadata header. Relay preserves that
 header and route TLS bytes unchanged; route TLS terminates at the publisher.
 Ingress may try another relay before sending the first visitor byte, never

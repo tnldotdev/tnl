@@ -84,6 +84,8 @@ func TestResolveConfigFileRespectsEnvironmentAndFlags(t *testing.T) {
 		InternalRelayAddress: "relay.internal:9443", RelayTCPListen: ":443", RelayUDPListen: ":443",
 		VisitorConnectionLimit: 1, RouteConnectionLimit: 1, PublisherConnectionLimit: 1, QUICMaxIncomingStreams: 1,
 		SourceConnectionRate: 100.5, SourceConnectionBurst: 7,
+		ClientHelloConnectionLimit: 1024, ChallengeConnectionLimit: 1024, ChallengeHostnameConnectionLimit: 8,
+		StandaloneControlConnectionLimit: 1024, StandaloneRelayConnectionLimit: 4096,
 		QUICIdleTimeout: time.Second, IngressLeaseDuration: 3 * time.Second,
 		RelayLeaseDuration: 3 * time.Second, LeaseRenewalInterval: time.Second, ControlRetryInterval: time.Second,
 		RoutingTableWait: time.Second, DrainTimeout: time.Second,
