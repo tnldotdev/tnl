@@ -237,6 +237,10 @@ mise exec -- task go:test:load:runtime ROUTES=64 RPS=160 DURATION=30s RESULTS=be
 mise exec -- env PUBLISHER_CPUS=0.25 task go:test:load:runtime ROUTES=64 RPS=160 DURATION=30s RESULTS=bench-results/runtime-publisher-025
 mise exec -- task go:test:load:runtime SCENARIO=relay-kill RESULTS=bench-results/runtime-kill
 mise exec -- task go:test:load:runtime SCENARIO=forwarding-blackhole RESULTS=bench-results/runtime-blackhole
+mise exec -- task go:test:load:runtime SCENARIO=publisher-blackhole RESULTS=bench-results/runtime-publisher-blackhole
+mise exec -- task go:test:load:runtime SCENARIO=udp-fallback RESULTS=bench-results/runtime-udp-fallback
+mise exec -- task go:test:load:runtime SCENARIO=latency NETWORK_PATH=forwarding RTT=100ms RESULTS=bench-results/runtime-forwarding-rtt100
+mise exec -- task go:test:load:runtime SCENARIO=packet-loss NETWORK_PATH=publisher LOSS=1 RESULTS=bench-results/runtime-publisher-loss1
 ```
 
 `WORKERS` and `QUEUE` independently set total visitor concurrency and waiting
@@ -246,17 +250,48 @@ request histograms use production buckets and merge counts across generators.
 First-byte timing means the first response **body** byte.
 
 One coordinator supplies the phase sequence. Every route receives correctness
-probes after each traffic window. Held streams must survive steady traffic; fault
-windows retain all disruptions and require successful post-recovery traffic.
+probes after each traffic window. Held streams must survive steady traffic;
+restart windows retain all disruptions and require successful post-recovery traffic.
 Missed offers fail every window. Four real source IPs preserve the normal
 50-new-connections/sec source limit; concurrency does not create more source IPs.
 
 `SCENARIO=relay-restart` is the default graceful restart. `relay-kill` uses Docker
 SIGKILL, leaves the relay down longer than its 30-second lease, and requires a new
 process run ID after restart. `forwarding-blackhole` drops only ingress-to-relay-a
-TCP port 8443 for 15 seconds and verifies nonzero packet-drop counters. Control,
-publisher, and relay-b paths remain available. Fault windows last at least 40, 80,
-and 50 seconds respectively, while request and production deadlines are unchanged.
+TCP port 8443. `publisher-blackhole` drops publisher-to-relay-a TCP and UDP port
+443 and measures detection using the existing transport timers. Control and
+relay-b remain reachable. Blackholes stay installed through the entire traffic
+window and every-route correctness probes; each installed rule must drop packets.
+Fresh requests must have zero failures, timeouts, missed offers, and queue expiry
+while the fault is active. Healthy-path held streams opened under the fault must
+keep receiving bytes. Pre-existing held-stream disruption is recorded separately.
+Fault windows last at least 40 seconds for graceful restart, 80 seconds for kill
+and publisher blackhole, and 50 seconds for forwarding blackhole.
+
+`udp-fallback` blocks both relay UDP addresses before publishing, uses automatic
+transport selection, and requires a fallback event for each publisher and two ready
+connections per route. The runner verifies that abandoned QUIC attempts leave no
+publisher UDP sockets. Traffic and held streams use TLS/TCP through restoration.
+
+Latency and loss experiments are explicit opt-in runs. `NETWORK_PATH=forwarding`
+targets internal forwarding; `NETWORK_PATH=publisher` targets publisher connections.
+`SCENARIO=latency` accepts `RTT=20ms`, `50ms`, or `100ms`, split equally between
+both directions. `SCENARIO=packet-loss` accepts `LOSS=0.1` or `1` percent in each
+direction. These impairments start before publishing, so activation and the
+steady/scenario windows include the impairment; restoration precedes final probes
+and shutdown traffic. They retain failures rather than adjusting workload budgets.
+`SEED=<positive uint32>` requests a reproducible netem seed when the installed
+kernel/iproute2 supports it; the default `0` records an unseeded experiment.
+
+The runner retains targeted filters, qdisc packet/drop counters, and TCP RTT
+observations. Counters must demonstrate both directions of an exercised path;
+an unused alternate may have zero packets. Visitor artifacts include separate
+QUIC/TCP cohort summaries. Scheduling and durations use a local monotonic epoch;
+cross-process wall timestamps are correlation evidence, not precise elapsed clocks.
+The authenticated phase barriers establish whether requests occurred under a fault.
+All owned rules/qdiscs are restored on failure, including watchdog expiry, with
+cleanup failures retained. Scheduled/manual CI runs the fault smokes; latency/loss
+sweeps remain opt-in.
 
 `TRACE=1` retains certificate HTTP metadata and persisted challenge/order sampling
 for provisioning diagnosis. It adds inspection work; reference measurements leave

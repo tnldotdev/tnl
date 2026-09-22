@@ -224,8 +224,6 @@ func runSeparatedPublishers(t *testing.T, ctx context.Context, count int) {
 		Observe: func(index int, event publisher.Event) error {
 			if event.Type == publisher.EventTransportFallback {
 				fallbacks.Add(1)
-			}
-			if event.Type == publisher.EventTransportFallback || event.Type == publisher.EventReady {
 				t.Logf("publisher_transport index=%d event=%s transport=%s", index, event.Type, event.Transport)
 			}
 			return nil
@@ -316,20 +314,8 @@ func runSeparatedVisitor(t *testing.T, ctx context.Context, component string, ra
 			cohortByURL[url] = "tls-tcp"
 		}
 	}
-	var streams []*benchworkload.HeldStream
+	streams := openSeparatedHeld(t, ctx, visitor, publishers.URLs, index-1)
 	var healthy []*benchworkload.HeldStream
-	for i := index - 1; i < min(8, len(publishers.URLs)); i += 4 {
-		stream, err := visitor.Hold(ctx, publishers.URLs[i])
-		if err != nil {
-			t.Fatal(err)
-		}
-		streams = append(streams, stream)
-		t.Cleanup(func() {
-			if err := stream.Close(); err != nil {
-				t.Error(err)
-			}
-		})
-	}
 	separatedWrite(t, component+".ready", time.Now())
 	for sequence := 0; ; sequence++ {
 		var phase benchworkload.Phase
@@ -341,18 +327,7 @@ func runSeparatedVisitor(t *testing.T, ctx context.Context, component string, ra
 		}
 		result := separatedVisitorResult{}
 		if phase.OpenHeld {
-			for i := index - 1; i < min(8, len(phase.URLs)); i += 4 {
-				stream, err := visitor.Hold(ctx, phase.URLs[i])
-				if err != nil {
-					t.Fatal(err)
-				}
-				healthy = append(healthy, stream)
-				t.Cleanup(func() {
-					if err := stream.Close(); err != nil {
-						t.Error(err)
-					}
-				})
-			}
+			healthy = append(healthy, openSeparatedHeld(t, ctx, visitor, phase.URLs, index-1)...)
 		}
 		progress := make([]int64, len(healthy))
 		for i, stream := range healthy {
@@ -422,6 +397,24 @@ func runSeparatedVisitor(t *testing.T, ctx context.Context, component string, ra
 	}
 	separatedWrite(t, component+".done", !t.Failed())
 	<-lifecycle.Done()
+}
+
+func openSeparatedHeld(t *testing.T, ctx context.Context, visitor benchworkload.Visitor, urls []string, index int) []*benchworkload.HeldStream {
+	t.Helper()
+	var streams []*benchworkload.HeldStream
+	for _, i := range benchworkload.RouteIndexes(min(8, len(urls)), 4, index) {
+		stream, err := visitor.Hold(ctx, urls[i])
+		if err != nil {
+			t.Fatal(err)
+		}
+		streams = append(streams, stream)
+		t.Cleanup(func() {
+			if err := stream.Close(); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	return streams
 }
 
 // Decode resources through a bounded request; no Docker socket is mounted in a
