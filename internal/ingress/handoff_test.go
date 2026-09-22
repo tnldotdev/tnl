@@ -107,3 +107,44 @@ func TestIngressExactSNIHandoffs(t *testing.T) {
 		})
 	}
 }
+
+func TestIngressHandoffsUsePublicSourceLimit(t *testing.T) {
+	for _, test := range []struct {
+		name, hostname string
+		configure      func(*Config, func(net.Conn) bool)
+	}{
+		{"control", "control.example", func(config *Config, handoff func(net.Conn) bool) {
+			config.ServerHostname, config.HandleControl = "control.example", handoff
+		}},
+		{"relay", "relay.example", func(config *Config, handoff func(net.Conn) bool) {
+			config.RelayHostname, config.HandleRelay = "relay.example", handoff
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			handled := make(chan struct{}, 1)
+			metrics := new(testMetrics)
+			config := Config{SourceConnectionRate: 0.000001, SourceConnectionBurst: 1, Metrics: metrics}
+			test.configure(&config, func(connection net.Conn) bool {
+				_ = connection.Close()
+				handled <- struct{}{}
+				return true
+			})
+			server, address := startIngress(t, config)
+			client := ingressClient(t, address, test.hostname, "")
+			_ = client.Handshake()
+			_ = client.Close()
+			ingressAwait(t, handled)
+			client = ingressClient(t, address, test.hostname, "")
+			_ = client.Handshake()
+			_ = client.Close()
+			select {
+			case <-handled:
+				t.Fatal("handoff bypassed the public source limit")
+			default:
+			}
+			if server.limiter.Entries() != 1 || metrics.sourceLimiterRejections.Load() != 1 {
+				t.Fatalf("source limiter entries=%d rejections=%d", server.limiter.Entries(), metrics.sourceLimiterRejections.Load())
+			}
+		})
+	}
+}

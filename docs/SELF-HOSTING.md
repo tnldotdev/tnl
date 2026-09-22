@@ -114,19 +114,26 @@ not manage public route DNS. You must publish the records yourself.
 
 ## Ingress Source Connection Limits
 
-Each ingress process applies a token bucket to new connections from each source
-IPv4 address or IPv6 /64. `TNLD_SOURCE_CONNECTION_RATE` sets the sustained rate
-(default **50 connections/sec**, positive finite values including fractions), and
-`TNLD_SOURCE_CONNECTION_BURST` sets the bucket size (default **200**, a positive
-integer). Standalone uses the same settings. These are process-local limits;
-replicas do not share buckets, and visitors behind one source address share its
-allowance across routes.
+Each ingress process applies a token bucket to new public TCP connections from
+each source IPv4 address or IPv6 /64. `TNLD_SOURCE_CONNECTION_RATE` sets the
+sustained rate (default **50 connections/sec**, positive finite values including
+fractions), and `TNLD_SOURCE_CONNECTION_BURST` sets the bucket size (default
+**200**, a positive integer). These are process-local limits; replicas do not
+share buckets, and connections behind one source address share its allowance.
 
 When `TNLD_REQUIRE_PROXY_HEADER` is enabled, ingress uses the source from the
-trusted outer PROXY v2 header. Source limiting happens before route lookup and IP
-policy checks. It counts new connections rather than HTTP requests on an existing
-connection. `tnl_source_limiter_rejections_total` and `tnl_source_limiter_entries`
-report rejected attempts and tracked source count.
+trusted outer PROXY v2 header. Source limiting happens before TLS ClientHello
+inspection, route lookup, and IP policy checks. It counts new TCP connections,
+including malformed TLS attempts after connection metadata is accepted, rather
+than HTTP requests on an existing connection. A required malformed or missing
+PROXY v2 header is rejected before source limiting.
+`tnl_source_limiter_rejections_total` and `tnl_source_limiter_entries` report
+rejected attempts and tracked source count.
+
+Standalone multiplexes public routes, the control API, and TLS/TCP publisher
+connections on one public listener, so all three consume the same source
+allowance. QUIC publisher connections use the separate UDP listener. Account for
+administrative and publisher traffic when lowering standalone source limits.
 
 For example, four sources offering 320 fresh connections/sec each can use
 `TNLD_SOURCE_CONNECTION_RATE=400` with the default burst. Record both values when

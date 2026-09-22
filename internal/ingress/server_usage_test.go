@@ -132,7 +132,7 @@ func TestIngressConfiguredSourceRefill(t *testing.T) {
 
 func TestIngressEnforcesProxySourceLimitsAndRouteAllowlistInOrder(t *testing.T) {
 	backend, usage := newTLSBackend(t), newUsageRecorder()
-	metrics := &testMetrics{entriesChanged: make(chan int, 8)}
+	metrics := new(testMetrics)
 	var lookups atomic.Int32
 	config := Config{RequireProxyHeader: true, Metrics: metrics, OpenUsage: usage.Open, Lookup: func(host string) (Route, bool) {
 		lookups.Add(1)
@@ -144,11 +144,6 @@ func TestIngressEnforcesProxySourceLimitsAndRouteAllowlistInOrder(t *testing.T) 
 	// Write malformed bytes on the underlying connection, before TLS.
 	_, _ = malformed.NetConn().Write([]byte("not TLS"))
 	_ = malformed.Close()
-	for ingressAwait(t, metrics.entriesChanged) != 1 {
-	}
-	if lookups.Load() != 0 {
-		t.Fatal("malformed connection looked up route")
-	}
 	allowed := ingressClient(t, address, "route.example", "198.51.100.2:40002")
 	exchangePing(t, allowed)
 	result := ingressAwait(t, backend.result)
@@ -168,8 +163,8 @@ func TestIngressEnforcesProxySourceLimitsAndRouteAllowlistInOrder(t *testing.T) 
 		policies += u.policyDenials
 		streams += u.streams
 	}
-	if policies != 1 || streams != 1 || metrics.sourceLimiterRejections.Load() != 1 || metrics.ipAllowlistDenials.Load() != 1 || lookups.Load() != 2 || backend.opens.Load() != 1 {
-		t.Fatalf("policy=%d streams=%d limiter=%d allowlist=%d lookups=%d opens=%d", policies, streams, metrics.sourceLimiterRejections.Load(), metrics.ipAllowlistDenials.Load(), lookups.Load(), backend.opens.Load())
+	if policies != 1 || streams != 1 || metrics.sourceLimiterRejections.Load() != 1 || metrics.sourceLimiterEntries.Load() != 3 || metrics.ipAllowlistDenials.Load() != 1 || lookups.Load() != 2 || backend.opens.Load() != 1 {
+		t.Fatalf("policy=%d streams=%d limiter=%d entries=%d allowlist=%d lookups=%d opens=%d", policies, streams, metrics.sourceLimiterRejections.Load(), metrics.sourceLimiterEntries.Load(), metrics.ipAllowlistDenials.Load(), lookups.Load(), backend.opens.Load())
 	}
 	server.mu.Lock()
 	defer server.mu.Unlock()
