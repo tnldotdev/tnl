@@ -211,3 +211,31 @@ Evidence retained in `bench-results/capacity-routes-256-default-fixed-1.log` and
 `bench-results/capacity-routes-256-default-fixed-1/`. This validates the production
 admission-policy correction for this workload; it does not yet establish the
 maximum route count or throughput envelope.
+
+## 2026-09-22 — Route Scaling At 512 Routes
+
+The next point used committed revision `ece297a` and the same default-admission
+profile, with only `ROUTES` and `START_PARALLEL` raised from 256 to 512. Activation
+installed 512 certificates from exactly 512 CA orders in 32.312s; publisher
+readiness p95/max was 31.896/32.007s. Source and capacity rejections remained zero.
+
+- All 28,800 scheduled requests succeeded with zero failures, timeouts, missed
+  offers, or queue expiry. Steady, relay-restart, and shutdown p95/max latencies
+  were 4.859/9.286ms, 4.929/11.427ms, and 4.864/10.766ms.
+- Relay restart preserved fresh traffic and repaired all publisher connections in
+  26.737s. Every-route correctness probes passed; held-stream disruption retained
+  the expected no-replay behavior.
+- Final accounting reconciled 30,088/30,088 successful streams, with zero active
+  sessions, publisher connections, or reservations. Every component exited zero
+  and all owned Docker resources were removed.
+- Peak publisher memory was 266.9MiB of 512MiB. Peak PostgreSQL memory was
+  271.4MiB of 512MiB, and peak active-relay memory was 141.4MiB of 256MiB. No
+  process recorded an OOM kill. Application processes did not materially throttle;
+  PostgreSQL throttled during activation and recovery while correctness and
+  visitor timing remained intact.
+
+Evidence retained in `bench-results/capacity-routes-512-160rps-1.log` and
+`bench-results/capacity-routes-512-160rps-1/`. The measured active-relay memory
+slope places 1,000 routes near the current 256MiB relay limit, so insert a
+768-route point before attempting 1,000 rather than extrapolating through that
+resource boundary.
