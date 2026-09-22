@@ -171,13 +171,14 @@ func (c *Controller) runOnce(ctx context.Context) error {
 	if err := c.register(ctx); err != nil {
 		return err
 	}
-	if err := c.loadSnapshot(ctx); err != nil {
+	acknowledge := make(chan struct{}, 1)
+	if err := c.loadSnapshot(ctx, acknowledge); err != nil {
 		return err
 	}
 	cycleCtx, cancel := context.WithCancel(ctx)
 	results := make(chan error, 2)
-	go func() { results <- c.renewLoop(cycleCtx) }()
-	go func() { results <- c.routingLoop(cycleCtx) }()
+	go func() { results <- c.renewLoop(cycleCtx, acknowledge) }()
+	go func() { results <- c.routingLoop(cycleCtx, acknowledge) }()
 	err := <-results
 	cancel()
 	err = errors.Join(err, <-results)
@@ -198,19 +199,41 @@ func (c *Controller) register(ctx context.Context) error {
 	return c.setLease(lease)
 }
 
-func (c *Controller) renewLoop(ctx context.Context) error {
-	ticker := time.NewTicker(c.renewalInterval)
-	defer ticker.Stop()
+func (c *Controller) renewLoop(ctx context.Context, acknowledge <-chan struct{}) error {
+	periodic := time.NewTimer(c.renewalInterval)
+	defer periodic.Stop()
+	acknowledged := c.Lease().RoutingTableRevision
 	for {
+		urgent := false
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-ticker.C:
+		case <-acknowledge:
+			// Combine challenge bursts without delaying a periodic renewal.
+			// Routing keeps applying pages while this one renewal path waits.
+			batch := time.NewTimer(min(100*time.Millisecond, c.renewalInterval))
+			select {
+			case <-ctx.Done():
+				batch.Stop()
+				return nil
+			case <-batch.C:
+				urgent = true
+			case <-periodic.C:
+			}
+			batch.Stop()
+		case <-periodic.C:
+		}
+		select {
+		case <-acknowledge:
+		default:
 		}
 		lease := c.Lease()
 		revision, initialized := c.routingTable.Revision()
 		if !initialized {
 			return ErrRoutingTableNotInitialized
+		}
+		if urgent && revision <= acknowledged {
+			continue
 		}
 		connections := c.load()
 		if connections < 0 {
@@ -232,10 +255,12 @@ func (c *Controller) renewLoop(ctx context.Context) error {
 		if err := c.setLease(lease); err != nil {
 			return err
 		}
+		acknowledged = revision
+		periodic.Reset(c.renewalInterval)
 	}
 }
 
-func (c *Controller) routingLoop(ctx context.Context) error {
+func (c *Controller) routingLoop(ctx context.Context, acknowledge chan<- struct{}) error {
 	for {
 		revision, initialized := c.routingTable.Revision()
 		if !initialized {
@@ -265,7 +290,7 @@ func (c *Controller) routingLoop(ctx context.Context) error {
 				c.routingStatus.CaughtUp = false
 				c.mu.Unlock()
 				c.markRoutingTableCurrent(false)
-				if err := c.loadSnapshot(ctx); err != nil {
+				if err := c.loadSnapshot(ctx, acknowledge); err != nil {
 					return err
 				}
 				continue
@@ -281,10 +306,20 @@ func (c *Controller) routingLoop(ctx context.Context) error {
 			return fmt.Errorf("ingress: apply routing-table page: %w", err)
 		}
 		c.routingChecked(page.ThroughRevision, page.NextRevision, !page.More)
+		requestChallengeAcknowledgment(page.Events, acknowledge)
 	}
 }
 
-func (c *Controller) loadSnapshot(ctx context.Context) error {
+func requestChallengeAcknowledgment(events []ingressv1.IngressRoutingTableEvent, acknowledge chan<- struct{}) {
+	if slices.ContainsFunc(events, func(event ingressv1.IngressRoutingTableEvent) bool { return event.Kind == ingressv1.ChallengeUpsert }) {
+		select {
+		case acknowledge <- struct{}{}:
+		default:
+		}
+	}
+}
+
+func (c *Controller) loadSnapshot(ctx context.Context, acknowledge chan<- struct{}) error {
 	lease := c.Lease()
 	started := time.Now()
 	snapshot, err := c.client.GetIngressRoutingTableSnapshot(
@@ -308,6 +343,7 @@ func (c *Controller) loadSnapshot(ctx context.Context) error {
 		c.routingUpdateFailed()
 		return fmt.Errorf("ingress: apply routing-table snapshot: %w", err)
 	}
+	requestChallengeAcknowledgment(snapshot.Entries, acknowledge)
 	c.routingChecked(snapshot.ThroughRevision, snapshot.ThroughRevision, false)
 	c.markRoutingTableCurrent(true)
 	return nil

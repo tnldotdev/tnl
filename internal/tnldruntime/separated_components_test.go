@@ -36,6 +36,7 @@ func TestSeparatedRuntimeComponent(t *testing.T) {
 	waitForIntegrationCondition(t, 30*time.Second, func(ctx context.Context) (bool, error) { return coordination.Get(ctx, "coordinator.ready", nil) })
 	var orders atomic.Int64
 	serveSeparatedResources(t, orders.Load)
+	separatedWrite(t, component+".resources-ready", true)
 	switch component {
 	case "pebble":
 		runSeparatedPebble(t, ctx)
@@ -53,9 +54,6 @@ func TestSeparatedRuntimeComponent(t *testing.T) {
 			return
 		}
 		client := separatedHTTP(t)
-		if component == "control" && *runtimeLoadTrace {
-			traceRuntimeCertificateHTTP(t, client, time.Now())
-		}
 		base := client.Transport
 		client.Transport = splitACMERoundTripFunc(func(request *http.Request) (*http.Response, error) {
 			if request.Method == http.MethodPost && request.URL.Path == "/order-plz" {
@@ -64,6 +62,9 @@ func TestSeparatedRuntimeComponent(t *testing.T) {
 			return base.RoundTrip(request)
 		})
 		cfg := separatedConfig(t, component)
+		if component != "control" {
+			separatedWrite(t, component+".admission-limits", separatedAdmissionFrom(cfg))
+		}
 		options := integrationProcessOptions{acmeHTTPClient: client,
 			serviceHTTPClient: splitTestServiceHTTPClient(t, separatedRoots(t, "roots.pem"), "control:9443"),
 			relayClientTLS:    separatedRelayTLS(t), owner: newRuntimeTopology(t)}
@@ -190,9 +191,11 @@ func runSeparatedApp(t *testing.T, ctx context.Context) {
 }
 
 type separatedPublishers struct {
-	URLs      []string
-	Ready     []publisher.Event
-	Fallbacks int64
+	URLs               []string
+	Ready              []publisher.Event
+	Fallbacks          int64
+	Activation         []time.Duration
+	ActivationDuration time.Duration
 }
 
 func runSeparatedPublishers(t *testing.T, ctx context.Context, count int) {
@@ -216,11 +219,16 @@ func runSeparatedPublishers(t *testing.T, ctx context.Context, count int) {
 		transport = "auto"
 	}
 	var fallbacks atomic.Int64
+	client := separatedHTTP(t)
+	if *runtimeLoadTrace {
+		traceRuntimeCertificateHTTP(t, client, time.Now())
+	}
 	group, err := benchworkload.OpenPublishers(ctx, benchworkload.PublisherConfig{
 		Server: "https://control." + separatedDomain, LoginToken: testLoginToken,
 		Domain: "routes." + separatedDomain, StateRoot: filepath.Join(t.TempDir(), "state"), Target: "http://127.0.0.1:8080",
-		HTTPClient: separatedHTTP(t), RelayTLS: separatedRelayTLS(t), AllowedIPPrefixes: prefixes,
-		Transport: transport, Parallel: 4, ReadyTimeout: 30 * time.Second, StopTimeout: 10 * time.Second, DrainTime: time.Second,
+		HTTPClient: client, RelayTLS: separatedRelayTLS(t), AllowedIPPrefixes: prefixes,
+		Transport: transport, Parallel: 4, StartParallel: *runtimeLoadStartParallel,
+		ReadyTimeout: 30 * time.Second, StopTimeout: 10 * time.Second, DrainTime: time.Second,
 		Observe: func(index int, event publisher.Event) error {
 			if event.Type == publisher.EventTransportFallback {
 				fallbacks.Add(1)
@@ -254,10 +262,12 @@ func runSeparatedPublishers(t *testing.T, ctx context.Context, count int) {
 	result := separatedPublishers{URLs: make([]string, count), Ready: make([]publisher.Event, count)}
 	started := time.Now()
 	ready, err := group.Start(monitor, benchworkload.RouteIndexes(count, 1, 0))
+	result.ActivationDuration = time.Since(started)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, route := range ready {
+		result.Activation = append(result.Activation, route.Activation)
 		result.Ready[route.Index], result.URLs[route.Index] = route.Ready, route.Ready.PublicURL
 		t.Logf("separated_activation index=%d launch_to_ready=%s", route.Index, route.Activation)
 	}

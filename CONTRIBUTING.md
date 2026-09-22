@@ -233,7 +233,7 @@ Its five-second budget includes queue waiting; requests are never retried.
 
 ```console
 mise exec -- task go:test:load:runtime RACE=1 RESULTS=bench-results/runtime-smoke
-mise exec -- task go:test:load:runtime ROUTES=64 RPS=160 DURATION=30s RESULTS=bench-results/runtime-reference
+mise exec -- task go:test:load:runtime ROUTES=64 START_PARALLEL=64 RPS=160 DURATION=30s RESULTS=bench-results/runtime-reference
 mise exec -- env PUBLISHER_CPUS=0.25 task go:test:load:runtime ROUTES=64 RPS=160 DURATION=30s RESULTS=bench-results/runtime-publisher-025
 mise exec -- task go:test:load:runtime SCENARIO=relay-kill RESULTS=bench-results/runtime-kill
 mise exec -- task go:test:load:runtime SCENARIO=forwarding-blackhole RESULTS=bench-results/runtime-blackhole
@@ -252,8 +252,38 @@ First-byte timing means the first response **body** byte.
 One coordinator supplies the phase sequence. Every route receives correctness
 probes after each traffic window. Held streams must survive steady traffic;
 restart windows retain all disruptions and require successful post-recovery traffic.
-Missed offers fail every window. Four real source IPs preserve the normal
-50-new-connections/sec source limit; concurrency does not create more source IPs.
+Missed offers fail every window. Four real source IPs use the default
+50-new-connections/sec source limit unless explicitly overridden; concurrency
+does not create more source IPs.
+
+Admission limits are independent Task inputs, passed as `-tnl-runtime-load-*`
+flags into the same production configuration used by `tnld`:
+
+| Task input                   | Default | Scope                                                                        |
+| ---------------------------- | ------: | ---------------------------------------------------------------------------- |
+| `SOURCE_CONNECTION_RATE`     |      50 | New connections/sec per source IPv4 address or IPv6 /64, per ingress process |
+| `SOURCE_CONNECTION_BURST`    |     200 | Source token-bucket size on each ingress process                             |
+| `VISITOR_CONNECTION_LIMIT`   |   20000 | Concurrent visitor connections per ingress process                           |
+| `ROUTE_CONNECTION_LIMIT`     |     500 | Concurrent visitor connections per route on each ingress process             |
+| `PUBLISHER_CONNECTION_LIMIT` |    1000 | Publisher connections per relay process                                      |
+| `RELAY_STREAM_CAPACITY`      |    4096 | Concurrent visitor streams per relay process                                 |
+| `QUIC_MAX_INCOMING_STREAMS`  |    4096 | Incoming QUIC streams per publisher connection                               |
+
+For a small configuration check above the default sustained source rate:
+
+```console
+mise exec -- task go:test:load:runtime RPS=240 DURATION=30s SOURCE_CONNECTION_RATE=400 RESULTS=bench-results/runtime-source-override
+```
+
+`admission-limits.json` retains requested values before component startup and
+the role-applicable process configuration reported by ingress and both relays.
+A mismatch fails the run. This proves configuration propagation; individual
+capacity-boundary experiments prove enforcement. Resource snapshots record
+effective CPU/memory allocations separately.
+Declare overrides before each experiment and keep them fixed across its healthy
+and fault windows; changing admission settings defines a new measured profile.
+The runtime workload bounds remain 4–128 routes and 4–500 requests/sec while
+larger profiles and bounded long-run reporting are developed.
 
 `SCENARIO=relay-restart` is the default graceful restart. `relay-kill` uses Docker
 SIGKILL, leaves the relay down longer than its 30-second lease, and requires a new
@@ -295,8 +325,20 @@ sweeps remain opt-in.
 
 `TRACE=1` retains certificate HTTP metadata and persisted challenge/order sampling
 for provisioning diagnosis. It adds inspection work; reference measurements leave
-it disabled. Activation retains a 30-second per-publisher deadline, with four
-concurrent starts and a ten-second per-publisher shutdown deadline.
+it disabled. `START_PARALLEL` bounds concurrently activating publishers (default
+4, range 1–128); the 64-route reference explicitly uses 64. Each publisher retains
+its 30-second readiness deadline from launch. Shutdown uses four concurrent stops
+and a ten-second per-publisher deadline, independently of startup concurrency.
+
+`activation.json` retains exact launch-to-ready durations, whole-group readiness,
+verified activation time, CA order count, and certificate-work attempt count.
+The log reports nearest-rank min/p50/p95/max timings. `activation-before*` and
+`activation-after*` artifacts retain component resources and production metrics.
+Verified activation waits for two ready connections per route, installed
+certificates, and all live ingress processes to acknowledge the routing revision
+captured at the barrier. Later heartbeats do not advance that barrier's target.
+Compare startup concurrency explicitly: increasing it reduces whole-group wall
+time without necessarily reducing an individual publisher's activation latency.
 
 | Component     | CPU quota | Memory limit | Overrides                            |
 | ------------- | --------: | -----------: | ------------------------------------ |

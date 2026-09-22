@@ -24,6 +24,19 @@ type separatedAdmissionLimits struct {
 	QUICMaxIncomingStreams   int64   `json:"quic_max_incoming_streams"`
 }
 
+type separatedIngressAdmissionLimits struct {
+	SourceConnectionRate   float64 `json:"source_connection_rate"`
+	SourceConnectionBurst  int     `json:"source_connection_burst"`
+	VisitorConnectionLimit int64   `json:"visitor_connection_limit"`
+	RouteConnectionLimit   int64   `json:"route_connection_limit"`
+}
+
+type separatedRelayAdmissionLimits struct {
+	PublisherConnectionLimit int64 `json:"publisher_connection_limit"`
+	RelayStreamCapacity      int64 `json:"relay_stream_capacity"`
+	QUICMaxIncomingStreams   int64 `json:"quic_max_incoming_streams"`
+}
+
 var runtimeLoadAdmission separatedAdmissionLimits
 
 func init() {
@@ -52,11 +65,25 @@ func separatedAdmissionFrom(cfg tnldconfig.Config) separatedAdmissionLimits {
 	}
 }
 
-func recordSeparatedAdmission(t *testing.T, components map[string]separatedAdmissionLimits) {
+func (limits separatedAdmissionLimits) ingress() separatedIngressAdmissionLimits {
+	return separatedIngressAdmissionLimits{
+		SourceConnectionRate: limits.SourceConnectionRate, SourceConnectionBurst: limits.SourceConnectionBurst,
+		VisitorConnectionLimit: limits.VisitorConnectionLimit, RouteConnectionLimit: limits.RouteConnectionLimit,
+	}
+}
+
+func (limits separatedAdmissionLimits) relay() separatedRelayAdmissionLimits {
+	return separatedRelayAdmissionLimits{
+		PublisherConnectionLimit: limits.PublisherConnectionLimit, RelayStreamCapacity: limits.RelayStreamCapacity,
+		QUICMaxIncomingStreams: limits.QUICMaxIncomingStreams,
+	}
+}
+
+func recordSeparatedAdmission(t *testing.T, components map[string]any) {
 	t.Helper()
 	data, err := json.MarshalIndent(struct {
-		Requested  separatedAdmissionLimits            `json:"requested"`
-		Components map[string]separatedAdmissionLimits `json:"components"`
+		Requested  separatedAdmissionLimits `json:"requested"`
+		Components map[string]any           `json:"component_configuration"`
 	}{runtimeLoadAdmission, components}, "", "  ")
 	if err != nil {
 		t.Fatal(err)
@@ -68,15 +95,22 @@ func recordSeparatedAdmission(t *testing.T, components map[string]separatedAdmis
 
 func verifySeparatedAdmission(t *testing.T) {
 	t.Helper()
-	components := make(map[string]separatedAdmissionLimits)
+	components := make(map[string]any)
 	for _, component := range []string{"ingress", "relay-a", "relay-b"} {
 		var applied separatedAdmissionLimits
 		separatedWait(t, component+".admission-limits", 15*time.Second, &applied)
-		components[component] = applied
-		recordSeparatedAdmission(t, components)
-		if applied != runtimeLoadAdmission {
-			t.Fatalf("%s admission limits = %+v; requested %+v", component, applied, runtimeLoadAdmission)
+		var matches bool
+		if component == "ingress" {
+			components[component] = applied.ingress()
+			matches = applied.ingress() == runtimeLoadAdmission.ingress()
+		} else {
+			components[component] = applied.relay()
+			matches = applied.relay() == runtimeLoadAdmission.relay()
 		}
-		t.Logf("separated_admission component=%s limits=%+v", component, applied)
+		recordSeparatedAdmission(t, components)
+		if !matches {
+			t.Fatalf("%s admission configuration = %+v; requested %+v", component, components[component], runtimeLoadAdmission)
+		}
+		t.Logf("separated_admission component=%s configuration=%+v", component, components[component])
 	}
 }

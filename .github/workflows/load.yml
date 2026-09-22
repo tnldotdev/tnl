@@ -91,7 +91,7 @@ jobs:
       - name: Run reference and fault workloads
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: |
-          task go:test:load:runtime ROUTES=64 RPS=160 DURATION=30s RESULTS=bench-results/ci-reference
+          task go:test:load:runtime ROUTES=64 START_PARALLEL=64 RPS=160 DURATION=30s RESULTS=bench-results/ci-reference
           task go:test:load:runtime SCENARIO=relay-kill RESULTS=bench-results/ci-relay-kill
           task go:test:load:runtime SCENARIO=forwarding-blackhole RESULTS=bench-results/ci-forwarding-blackhole
           task go:test:load:runtime SCENARIO=publisher-blackhole RESULTS=bench-results/ci-publisher-blackhole

@@ -15,8 +15,9 @@ individual boundaries; larger load and fault runs are explicit opt-ins.
 
 The smoke defaults to four routes, 16 fresh HTTPS requests/sec, 128 concurrent
 request workers, eight waiting slots, both publisher transports, and a 32KiB
-response. The reference uses 64 routes and 160 requests/sec with the same worker
-and queue budgets. Historical eight-worker results describe a different generator.
+response. The reference uses 64 routes, 64 concurrent publisher starts, and 160
+requests/sec with the same visitor worker and queue budgets. Historical
+eight-worker results describe a different generator.
 
 ## Fly plan and execution
 

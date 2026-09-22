@@ -26,8 +26,10 @@ type PublisherConfig struct {
 	RelayTLS                                      *tls.Config
 	AllowedIPPrefixes                             []string
 	// mixed forces alternating QUIC/TLS-TCP cohorts; auto uses production fallback.
-	Transport                 string
-	Parallel                  int
+	Transport string
+	Parallel  int
+	// StartParallel overrides Parallel for activation only; shutdown stays bounded separately.
+	StartParallel             int
 	ReadyTimeout, StopTimeout time.Duration
 	DrainTime                 time.Duration
 	OnFailure                 func()
@@ -69,7 +71,7 @@ type Publishers struct {
 }
 
 func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers, retErr error) {
-	if config.Parallel < 1 || config.ReadyTimeout <= 0 || config.StopTimeout <= 0 || config.DrainTime < 0 {
+	if config.Parallel < 1 || config.StartParallel < 0 || config.ReadyTimeout <= 0 || config.StopTimeout <= 0 || config.DrainTime < 0 {
 		return nil, errors.New("publisher concurrency and deadlines must be positive")
 	}
 	if config.Transport != "auto" && config.Transport != "mixed" && config.Transport != "quic" && config.Transport != "tcp" {
@@ -165,7 +167,11 @@ func (g *Publishers) Start(ctx context.Context, indexes []int) ([]PublishedRoute
 		process *routeProcess
 		err     error
 	}
-	activated := make(chan activation, g.config.Parallel)
+	parallel := g.config.StartParallel
+	if parallel == 0 {
+		parallel = g.config.Parallel
+	}
+	activated := make(chan activation, parallel)
 	start := func(index int) {
 		routeCtx, cancel := context.WithCancel(g.ctx)
 		process := &routeProcess{index: index, cancel: cancel, done: make(chan struct{})}
@@ -236,7 +242,7 @@ func (g *Publishers) Start(ctx context.Context, indexes []int) ([]PublishedRoute
 	var firstErr error
 	var capture sync.Once
 	for next < len(indexes) || active > 0 {
-		for firstErr == nil && next < len(indexes) && active < g.config.Parallel {
+		for firstErr == nil && next < len(indexes) && active < parallel {
 			if ctx.Err() != nil {
 				firstErr = ctx.Err()
 				break

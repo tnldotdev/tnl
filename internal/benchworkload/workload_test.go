@@ -125,7 +125,7 @@ func TestPublisherStartupBoundsAndUnexpectedExit(t *testing.T) {
 		defer cancel()
 		var active, peak atomic.Int64
 		fail := make(chan struct{})
-		g := &Publishers{config: PublisherConfig{Parallel: 2, ReadyTimeout: 30 * time.Second, StopTimeout: 10 * time.Second}, ctx: ctx, cancel: cancel, failures: make(chan error, 1), namespace: "example.test"}
+		g := &Publishers{config: PublisherConfig{Parallel: 1, StartParallel: 2, ReadyTimeout: 30 * time.Second, StopTimeout: 10 * time.Second}, ctx: ctx, cancel: cancel, failures: make(chan error, 1), namespace: "example.test"}
 		g.run = func(ctx context.Context, config publisher.Config) error {
 			current := active.Add(1)
 			for old := peak.Load(); current > old; old = peak.Load() {

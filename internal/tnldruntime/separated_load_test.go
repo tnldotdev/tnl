@@ -29,16 +29,17 @@ type separatedSnapshot struct {
 }
 
 var (
-	runtimeLoadRoutes      = flag.Int("tnl-runtime-load-routes", 4, "runtime load route count")
-	runtimeLoadRPS         = flag.Int("tnl-runtime-load-rps", 16, "runtime load offered requests/second")
-	runtimeLoadDuration    = flag.Duration("tnl-runtime-load-duration", 10*time.Second, "runtime measurement window")
-	runtimeLoadWorkers     = flag.Int("tnl-runtime-load-workers", 128, "total visitor concurrency across four containers")
-	runtimeLoadQueue       = flag.Int("tnl-runtime-load-queue", 8, "total waiting slots across four containers")
-	runtimeLoadScenario    = flag.String("tnl-runtime-load-scenario", "relay-restart", "relay-restart, relay-kill, forwarding-blackhole, publisher-blackhole, udp-fallback, latency, or packet-loss")
-	runtimeLoadNetworkPath = flag.String("tnl-runtime-load-network-path", "forwarding", "forwarding or publisher impairment path")
-	runtimeLoadRTT         = flag.Duration("tnl-runtime-load-rtt", 20*time.Millisecond, "added round-trip latency")
-	runtimeLoadLoss        = flag.Float64("tnl-runtime-load-loss", 0.1, "packet loss percent in each direction")
-	runtimeLoadTrace       = flag.Bool("tnl-runtime-load-trace", false, "trace certificate provisioning")
+	runtimeLoadRoutes        = flag.Int("tnl-runtime-load-routes", 4, "runtime load route count")
+	runtimeLoadStartParallel = flag.Int("tnl-runtime-load-start-parallel", 4, "maximum concurrently activating publishers (1-128)")
+	runtimeLoadRPS           = flag.Int("tnl-runtime-load-rps", 16, "runtime load offered requests/second")
+	runtimeLoadDuration      = flag.Duration("tnl-runtime-load-duration", 10*time.Second, "runtime measurement window")
+	runtimeLoadWorkers       = flag.Int("tnl-runtime-load-workers", 128, "total visitor concurrency across four containers")
+	runtimeLoadQueue         = flag.Int("tnl-runtime-load-queue", 8, "total waiting slots across four containers")
+	runtimeLoadScenario      = flag.String("tnl-runtime-load-scenario", "relay-restart", "relay-restart, relay-kill, forwarding-blackhole, publisher-blackhole, udp-fallback, latency, or packet-loss")
+	runtimeLoadNetworkPath   = flag.String("tnl-runtime-load-network-path", "forwarding", "forwarding or publisher impairment path")
+	runtimeLoadRTT           = flag.Duration("tnl-runtime-load-rtt", 20*time.Millisecond, "added round-trip latency")
+	runtimeLoadLoss          = flag.Float64("tnl-runtime-load-loss", 0.1, "packet loss percent in each direction")
+	runtimeLoadTrace         = flag.Bool("tnl-runtime-load-trace", false, "trace certificate provisioning")
 )
 
 func TestLoadSeparatedRuntime(t *testing.T) {
@@ -47,6 +48,7 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 		t.Skip("run task go:test:load:runtime")
 	}
 	routes, rate, duration := separatedLoadParameters(t)
+	recordSeparatedAdmission(t, nil)
 	token, err := os.ReadFile("/load/coordinator-token")
 	if err != nil {
 		t.Fatal(err)
@@ -77,12 +79,17 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 	for _, name := range []string{"control", "ingress", "relay-a", "relay-b", "app", "pebble"} {
 		separatedWait(t, name+".ready", 30*time.Second, nil)
 	}
+	verifySeparatedAdmission(t)
 	var initialFault separatedRestart
 	if runtimeEarlyFault(*runtimeLoadScenario) {
 		separatedWrite(t, "fault.request", *runtimeLoadScenario)
 		separatedWait(t, "fault.applied", 15*time.Second, &initialFault)
 		t.Logf("network_impairment scenario=%s path=%s added_rtt=%s loss_percent=%g active_before_publishing=true", *runtimeLoadScenario, *runtimeLoadNetworkPath, *runtimeLoadRTT, *runtimeLoadLoss)
 	}
+	for _, component := range separatedComponents {
+		separatedWait(t, component+".resources-ready", 30*time.Second, nil)
+	}
+	activationBefore := separatedCapture(t, database, "activation-before")
 	activation := time.Now()
 	stopTrace := func() {}
 	if *runtimeLoadTrace {
@@ -91,9 +98,9 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 	defer stopTrace()
 	separatedWrite(t, "publish.start", activation)
 	var publishers separatedPublishers
-	// Publishers keep the existing individual 30s checks. This only bounds the
-	// whole sequence of four-publisher groups, including IPC and inspection.
-	separatedWait(t, "publishers.ready", time.Duration((routes+3)/4)*30*time.Second+10*time.Second, &publishers)
+	// Each publisher retains its 30s readiness deadline, starting at launch.
+	parallel := min(routes, *runtimeLoadStartParallel)
+	separatedWait(t, "publishers.ready", time.Duration((routes+parallel-1)/parallel)*30*time.Second+10*time.Second, &publishers)
 	stopTrace()
 	if len(publishers.Ready) != routes {
 		t.Fatal("publisher count mismatch")
@@ -109,7 +116,8 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 	}
 	waitForIngressRoutingCurrent(t, database, 1)
 	var orders, installed, distinctRoutes int
-	if err := database.QueryRowContext(integrationOperationContext(t), `SELECT count(*), count(*) FILTER (WHERE state = 'installed'), count(DISTINCT route_id) FROM control.acme_orders`).Scan(&orders, &installed, &distinctRoutes); err != nil {
+	var workerAttempts int64
+	if err := database.QueryRowContext(integrationOperationContext(t), `SELECT count(*), count(*) FILTER (WHERE state = 'installed'), count(DISTINCT route_id), coalesce(sum(attempts), 0) FROM control.acme_orders`).Scan(&orders, &installed, &distinctRoutes, &workerAttempts); err != nil {
 		t.Fatal(err)
 	}
 	caOrders := separatedResource(t, "control").CAOrders
@@ -117,6 +125,16 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 		t.Fatalf("duplicate/incomplete issuance: routes=%d orders=%d installed=%d distinct=%d CA=%d", routes, orders, installed, distinctRoutes, caOrders)
 	}
 	t.Logf("separated_activation_verified routes=%d installed=%d CA_new_orders=%d elapsed=%s", routes, installed, caOrders, time.Since(activation))
+	activationElapsed := time.Since(activation)
+	durations := slices.Sorted(slices.Values(publishers.Activation))
+	if len(durations) != routes {
+		t.Fatal("incomplete activation timings")
+	}
+	t.Logf("separated_activation_summary routes=%d parallel=%d min=%s p50=%s p95=%s max=%s publishers_ready=%s verified=%s",
+		routes, parallel, durations[0], durations[(routes-1)/2], durations[(95*routes+99)/100-1], durations[routes-1], publishers.ActivationDuration, activationElapsed)
+	separatedArtifact(t, "activation", map[string]any{"parallel": parallel, "launch_to_ready": durations,
+		"publishers_ready": publishers.ActivationDuration, "verified": activationElapsed, "ca_orders": caOrders, "certificate_work_attempts": workerAttempts})
+	separatedReportResources(t, "activation", activationBefore, separatedCapture(t, database, "activation-after"))
 	separatedWrite(t, "visitors.start", time.Now())
 	for i := 1; i <= 4; i++ {
 		separatedWait(t, fmt.Sprintf("visitor-%d.ready", i), 15*time.Second, nil)
@@ -289,9 +307,15 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 
 func separatedLoadParameters(t *testing.T) (int, int, time.Duration) {
 	t.Helper()
+	// Validate admission inputs with the production configuration rules before
+	// any component starts work, including the coordinator and visitors.
+	separatedConfig(t, "ingress")
 	routes, rate, duration := *runtimeLoadRoutes, *runtimeLoadRPS, *runtimeLoadDuration
 	if routes < 4 || routes > 128 {
 		t.Fatal("separated runtime load routes must be between 4 and 128")
+	}
+	if *runtimeLoadStartParallel < 1 || *runtimeLoadStartParallel > 128 {
+		t.Fatal("publisher startup concurrency must be between 1 and 128")
 	}
 	if rate < 4 || rate > 500 {
 		t.Fatal("separated runtime load requests per second must be between 4 and 500")

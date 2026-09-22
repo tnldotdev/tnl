@@ -10,3 +10,6 @@
 - Runtime evidence is written by a root container into host-mounted `bench-results`; mode `0600` prevents GitHub's artifact uploader from reading an otherwise successful run.
 - The typing migration found that pinned TypeScript 7 does not expose the old `transpileModule` API and Node 22 does not strip types from `--eval`. The embedded loader is now compiled through the pinned `tsc` CLI before Go embeds it.
 - Full declaration checking currently fails inside Next.js/Vite/Vitest dependencies; framework projects retain `skipLibCheck`, while handwritten sources and public contract tests use the stricter compiler settings.
+- Cold-activation resource snapshots ran before every visitor's resource listener started. The runtime now waits for explicit resource-listener readiness before taking its activation baseline.
+- Faster activation exposed a moving-target test barrier: publisher heartbeats could advance the global routing revision just after ingress acknowledged it. Capture the required revision once when entering the barrier, then wait for that revision with the existing deadline.
+- The separated workload's certificate HTTP trace was attached to control's ACME client, whose paths never matched its filters. Attach it to the publisher's control client to capture issuance and installation timings.

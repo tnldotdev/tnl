@@ -235,10 +235,18 @@ tasks:
     desc: Run per-component constrained real visitor/recovery/shutdown load
     vars:
       ROUTES: '{{default "4" .ROUTES}}'
+      START_PARALLEL: '{{default "4" .START_PARALLEL}}'
       RPS: '{{default "16" .RPS}}'
       DURATION: '{{default "10s" .DURATION}}'
       WORKERS: '{{default "128" .WORKERS}}'
       QUEUE: '{{default "8" .QUEUE}}'
+      SOURCE_CONNECTION_RATE: '{{default "50" .SOURCE_CONNECTION_RATE}}'
+      SOURCE_CONNECTION_BURST: '{{default "200" .SOURCE_CONNECTION_BURST}}'
+      VISITOR_CONNECTION_LIMIT: '{{default "20000" .VISITOR_CONNECTION_LIMIT}}'
+      ROUTE_CONNECTION_LIMIT: '{{default "500" .ROUTE_CONNECTION_LIMIT}}'
+      PUBLISHER_CONNECTION_LIMIT: '{{default "1000" .PUBLISHER_CONNECTION_LIMIT}}'
+      RELAY_STREAM_CAPACITY: '{{default "4096" .RELAY_STREAM_CAPACITY}}'
+      QUIC_MAX_INCOMING_STREAMS: '{{default "4096" .QUIC_MAX_INCOMING_STREAMS}}'
       SCENARIO: '{{default "relay-restart" .SCENARIO}}'
       NETWORK_PATH: '{{default "forwarding" .NETWORK_PATH}}'
       RTT: '{{default "20ms" .RTT}}'
@@ -249,10 +257,18 @@ tasks:
       RESULTS: '{{default (printf "bench-results/runtime-%s" (now | date "20060102-150405")) .RESULTS}}'
     env:
       ROUTES: "{{.ROUTES}}"
+      START_PARALLEL: "{{.START_PARALLEL}}"
       RPS: "{{.RPS}}"
       DURATION: "{{.DURATION}}"
       WORKERS: "{{.WORKERS}}"
       QUEUE: "{{.QUEUE}}"
+      SOURCE_CONNECTION_RATE: "{{.SOURCE_CONNECTION_RATE}}"
+      SOURCE_CONNECTION_BURST: "{{.SOURCE_CONNECTION_BURST}}"
+      VISITOR_CONNECTION_LIMIT: "{{.VISITOR_CONNECTION_LIMIT}}"
+      ROUTE_CONNECTION_LIMIT: "{{.ROUTE_CONNECTION_LIMIT}}"
+      PUBLISHER_CONNECTION_LIMIT: "{{.PUBLISHER_CONNECTION_LIMIT}}"
+      RELAY_STREAM_CAPACITY: "{{.RELAY_STREAM_CAPACITY}}"
+      QUIC_MAX_INCOMING_STREAMS: "{{.QUIC_MAX_INCOMING_STREAMS}}"
       SCENARIO: "{{.SCENARIO}}"
       NETWORK_PATH: "{{.NETWORK_PATH}}"
       RTT: "{{.RTT}}"

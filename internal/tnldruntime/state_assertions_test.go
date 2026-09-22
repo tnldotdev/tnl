@@ -38,13 +38,19 @@ func inspectStandaloneTestDatabase(t *testing.T, databaseURL string) *sql.DB {
 
 func waitForIngressRoutingCurrent(t *testing.T, database *sql.DB, expected int) {
 	t.Helper()
+	// Wait for the state that preceded this barrier. Ongoing publisher heartbeats
+	// must not move its goal past an ingress's otherwise sufficient acknowledgment.
+	var revision int64
+	if err := database.QueryRowContext(integrationOperationContext(t), `SELECT current_revision FROM control.ingress_routing_table_clock`).Scan(&revision); err != nil {
+		t.Fatal(err)
+	}
 	waitForIntegrationCondition(t, 10*time.Second, func(ctx context.Context) (bool, error) {
 		var current, applied int
 		err := database.QueryRowContext(ctx, `
-			SELECT count(*), count(*) FILTER (WHERE leases.routing_table_revision >= clock.current_revision)
-			FROM control.ingress_leases AS leases CROSS JOIN control.ingress_routing_table_clock AS clock
+			SELECT count(*), count(*) FILTER (WHERE leases.routing_table_revision >= $1)
+			FROM control.ingress_leases AS leases
 			WHERE NOT leases.draining AND leases.lease_expires_at > now()
-		`).Scan(&current, &applied)
+		`, revision).Scan(&current, &applied)
 		return err == nil && current == expected && applied == expected, err
 	})
 }
