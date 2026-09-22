@@ -117,7 +117,7 @@ type Config struct {
 	StandaloneRelayConnectionLimit   int           `name:"standalone-relay-connection-limit" env:"TNLD_STANDALONE_RELAY_CONNECTION_LIMIT" default:"4096" help:"Maximum relay TCP connections handed off by standalone, held until close."`
 	VisitorConnectionLimit           int64         `name:"visitor-connection-limit" env:"TNLD_VISITOR_CONNECTION_LIMIT" default:"20000" help:"Maximum concurrent visitor connections."`
 	RouteConnectionLimit             int64         `name:"route-connection-limit" env:"TNLD_ROUTE_CONNECTION_LIMIT" default:"500" help:"Maximum concurrent visitor connections per route."`
-	PublisherConnectionLimit         int64         `name:"publisher-connection-limit" env:"TNLD_PUBLISHER_CONNECTION_LIMIT" default:"1000" help:"Maximum publisher connections held by one relay process."`
+	PublisherConnectionLimit         int64         `name:"publisher-connection-limit" env:"TNLD_PUBLISHER_CONNECTION_LIMIT" default:"4000" help:"Maximum publisher connections held by one relay process."`
 	RelayStreamCapacity              int64         `name:"relay-stream-capacity" env:"TNLD_RELAY_STREAM_CAPACITY" default:"4096" help:"Maximum concurrent visitor streams held by one relay process."`
 	RequireProxyHeader               bool          `name:"require-proxy-header" env:"TNLD_REQUIRE_PROXY_HEADER" help:"Require one trusted outer PROXY v2 header on public ingress."`
 	QUICMaxIncomingStreams           int64         `name:"quic-max-incoming-streams" env:"TNLD_QUIC_MAX_INCOMING_STREAMS" default:"4096" help:"Maximum incoming QUIC streams per publisher connection."`

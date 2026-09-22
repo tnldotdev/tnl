@@ -54,7 +54,7 @@ func init() {
 	flag.IntVar(&runtimeLoadAdmission.SourceConnectionBurst, "tnl-runtime-load-source-connection-burst", sourcelimiter.DefaultBurst, "new connection burst per source on each ingress process")
 	flag.Int64Var(&runtimeLoadAdmission.VisitorConnectionLimit, "tnl-runtime-load-visitor-connection-limit", 20000, "maximum visitor connections per ingress process")
 	flag.Int64Var(&runtimeLoadAdmission.RouteConnectionLimit, "tnl-runtime-load-route-connection-limit", 500, "maximum visitor connections per route on each ingress process")
-	flag.Int64Var(&runtimeLoadAdmission.PublisherConnectionLimit, "tnl-runtime-load-publisher-connection-limit", 1000, "maximum publisher connections per relay process")
+	flag.Int64Var(&runtimeLoadAdmission.PublisherConnectionLimit, "tnl-runtime-load-publisher-connection-limit", 4000, "maximum publisher connections per relay process")
 	flag.Int64Var(&runtimeLoadAdmission.RelayStreamCapacity, "tnl-runtime-load-relay-stream-capacity", 4096, "maximum visitor streams per relay process")
 	flag.Int64Var(&runtimeLoadAdmission.QUICMaxIncomingStreams, "tnl-runtime-load-quic-max-incoming-streams", 4096, "maximum incoming QUIC streams per publisher connection")
 }

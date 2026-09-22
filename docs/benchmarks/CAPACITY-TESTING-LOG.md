@@ -97,10 +97,11 @@ Results:
 - Four-way activation took 2m59.55s and 5m55.68s. Per-publisher p95 readiness was
   11.25s and 11.30s, so total setup was constrained by configured activation
   parallelism/certificate workflow rather than worsening per-route readiness.
-- At steady state, publisher memory was 56.4MiB for 64 routes and 79.1MiB for
-  128; active-relay memory was 30.4MiB and 36.4MiB; PostgreSQL was 119.3MiB and
-  146.7MiB. Control and ingress memory remained approximately flat. These two
-  points are insufficient to assume a linear slope through 1,000 routes.
+- At steady state, publisher client-generator memory was 56.4MiB for 64 routes
+  and 79.1MiB for 128; active-relay memory was 30.4MiB and 36.4MiB; PostgreSQL
+  was 119.3MiB and 146.7MiB. Control and ingress memory remained approximately
+  flat. These two points are insufficient to assume a linear slope through 1,000
+  routes.
 - Steady ingress CPU was 8.57s/60s and 7.15s/60s; active-relay CPU was
   9.89s/60s and 8.30s/60s. No application process throttled. PostgreSQL had
   minor activation/recovery throttling under its one-CPU quota without visitor
@@ -228,17 +229,19 @@ readiness p95/max was 31.896/32.007s. Source and capacity rejections remained ze
 - Final accounting reconciled 30,088/30,088 successful streams, with zero active
   sessions, publisher connections, or reservations. Every component exited zero
   and all owned Docker resources were removed.
-- Peak publisher memory was 266.9MiB of 512MiB. Peak PostgreSQL memory was
-  271.4MiB of 512MiB, and peak active-relay memory was 141.4MiB of 256MiB. No
-  process recorded an OOM kill. Application processes did not materially throttle;
-  PostgreSQL throttled during activation and recovery while correctness and
-  visitor timing remained intact.
+- Peak publisher client-generator memory was 266.9MiB of 512MiB. Peak PostgreSQL
+  memory was 271.4MiB of 512MiB. Relay-a's cgroup peak reached 141.4MiB of
+  256MiB after its graceful restart; later clean-process attribution established
+  that this retained sequential relay incarnations and is not a single-relay
+  footprint. No process recorded an OOM kill. Application processes did not
+  materially throttle; PostgreSQL throttled during activation and recovery while
+  correctness and visitor timing remained intact.
 
 Evidence retained in `bench-results/capacity-routes-512-160rps-1.log` and
-`bench-results/capacity-routes-512-160rps-1/`. The measured active-relay memory
-slope places 1,000 routes near the current 256MiB relay limit, so insert a
-768-route point before attempting 1,000 rather than extrapolating through that
-resource boundary.
+`bench-results/capacity-routes-512-160rps-1/`. At the time, the retained cgroup
+peak appeared to place 1,000 routes near the 256MiB relay limit, so the campaign
+inserted a 768-route point before attempting 1,000. Later attribution below
+supersedes that interpretation.
 
 ## 2026-09-22 — Route Scaling At 768 Routes
 
@@ -256,9 +259,11 @@ remained zero.
 - Final accounting reconciled 30,728/30,728 successful streams with zero active
   sessions, publisher connections, or reservations. Every component exited zero
   and all owned Docker resources were removed.
-- Peak active-relay memory reached 220.1MiB of 256MiB (86%). Publishers reached
-  393.5MiB of 512MiB (77%), PostgreSQL 338.4MiB of 512MiB, and control 175.2MiB
-  of 512MiB. There were no OOM kills.
+- Relay-a's retained cgroup peak reached 220.1MiB of 256MiB after graceful
+  restart; this combines sequential relay incarnations rather than measuring one
+  live relay. The publisher client generator reached 393.5MiB of 512MiB (77%),
+  PostgreSQL 338.4MiB of 512MiB, and control 175.2MiB of 512MiB. There were no
+  OOM kills.
 - PostgreSQL used 0.948 CPU during activation and accumulated 232.0 CPU-seconds of
   quota throttling under its one-CPU limit. Activation approximately doubled from
   the 512-route point while application processes retained substantial CPU
@@ -266,10 +271,9 @@ remained zero.
 
 Evidence retained in `bench-results/capacity-routes-768-160rps-1.log` and
 `bench-results/capacity-routes-768-160rps-1/`. This is a passing point but not a
-production recommendation with failure headroom: relay memory is already above
-the campaign's 80% warning threshold. Run 1,000 once at defaults to identify the
-actual first boundary, preserving a failure if it occurs, before declaring a
-larger resource profile.
+production recommendation with failure headroom. The then-apparent relay warning
+threshold motivated a 1,000-route default run; later clean-process evidence below
+shows that graceful-restart peak was not a valid relay memory boundary.
 
 ## 2026-09-22 - Route Scaling At 1,000 Routes
 
@@ -305,19 +309,104 @@ runtime smoke passed before the same 1,000-route profile was repeated.
   route sessions, publisher connections, or reservations. Every component exited
   zero, and the Compose project left no containers, networks, or volumes.
 - Both relays held exactly 1,000 ready publisher connections before traffic, which
-  exactly consumes the default per-process publisher connection limit. Peak
-  relay-a memory reached 256/256MiB without an OOM kill. Publishers reached
-  508.2/512MiB, PostgreSQL 498.3/512MiB, and control 298.4/512MiB.
+  exactly consumed the then-current default per-process publisher connection
+  limit. Before graceful restart, relay-a used 180.6MiB with a 181.3MiB cgroup
+  peak and relay-b used 167.5MiB. Relay-a's later 256MiB cgroup peak retained
+  sequential relay incarnations and is not single-process usage. The publisher
+  client generator reached 508.2/512MiB, PostgreSQL 498.3/512MiB, and control
+  298.4/512MiB.
 - PostgreSQL accumulated 546.2 CPU-seconds of quota throttling, including 505.7
   during activation under its one-CPU quota. No application process materially
   throttled, and no process recorded an OOM kill.
 
 Evidence is retained in `bench-results/capacity-routes-1000-default-1.log`,
 `bench-results/capacity-routes-1000-default-1/`, and
-`bench-results/capacity-routes-1000-default-paced-1/`. The default topology can
-complete the 1,000-route workload, but this is its hard configured publisher
-connection boundary and it has effectively no relay, publisher, or database
-memory headroom. Do not treat 1,000 routes as a production operating point or run
-a larger default-resource route profile. A larger route-count experiment must
-explicitly raise publisher connection and memory limits; production guidance
-still requires a lower, repeated point with failure headroom.
+`bench-results/capacity-routes-1000-default-paced-1/`. The tested revision can
+complete the 1,000-route workload and reached its configured publisher-connection
+boundary, but the raw cgroup peaks did not establish relay or PostgreSQL memory
+exhaustion. The publisher figure belongs to the client generator, not the tnl
+server. Do not treat 1,000 routes as a production operating point; production
+guidance still requires repeated failure-headroom measurements.
+
+## 2026-09-22 — Resource Attribution And Abrupt Relay Loss At 1,000 Routes
+
+Resource attribution was added on base revision `9929963`. It records cgroup v2
+memory categories and pressure/OOM events at every phase boundary, and records
+PostgreSQL shared-memory allocation, shared buffers, backends, block activity,
+and temporary bytes. The following values are post-steady-window
+`memory.current` measurements from the passing 256, 512, 768, and 1,000-route
+runs. The final row is an ordinary least-squares fit across those four points,
+not an extrapolated capacity claim.
+
+|    Routes |  Relay-a |  Relay-b | Publisher generator | PostgreSQL |
+| --------: | -------: | -------: | ------------------: | ---------: |
+|       256 |  58.6MiB |  44.7MiB |            147.0MiB |   152.1MiB |
+|       512 |  90.5MiB |  78.8MiB |            253.9MiB |   205.2MiB |
+|       768 | 136.2MiB | 117.1MiB |            389.7MiB |   241.0MiB |
+|     1,000 | 180.6MiB | 167.5MiB |            504.2MiB |   299.7MiB |
+| KiB/route |    169.2 |    166.9 |               496.6 |      196.6 |
+
+- Relay process RSS fits were 155.8 and 162.3KiB/route. Each relay also added
+  approximately four goroutines and 0.5 file descriptors per route. The two
+  relay fits and their different intercepts are a useful range, not one exact
+  per-route allocation constant.
+- The publisher column measures the client generator, not the tnl server. Its
+  approximately 497KiB/route slope determines local harness memory needs only.
+- PostgreSQL's cgroup slope is not an anonymous resident-set slope. In the final
+  attribution run it used 477.4MiB with a 501.7MiB peak, but only 43.7MiB was
+  anonymous memory; 414.7MiB was file-backed, including 100.7MiB shared memory.
+  PostgreSQL reported 143.0MiB allocated shared memory and 128MiB shared buffers.
+  There were no cgroup pressure or OOM events.
+
+Two abrupt relay-loss runs then used the same 1,000-route, 160-request/sec,
+32KiB-response profile with four visitor sources, 128 total workers, eight total
+waiting slots, and a diagnostic 768MiB publisher-generator limit. The first run
+used ingress's original one-second preferred-relay attempt budget:
+
+- The full workload scheduled 32,000 requests. It started 31,973, succeeded on
+  31,972, returned one EOF, and missed 27 offers. In the 12,800-request fault
+  window, maximum request latency was 1,025.088ms and maximum queue delay was
+  214.959ms.
+- The missed offers came from the bounded visitor worker/queue configuration,
+  not visitor CPU saturation or server admission. The one EOF was already in
+  flight when the relay process exited and was not replayed, preserving the
+  retry-boundary invariant.
+- The first successful response arrived 920.727ms after process exit. The
+  replacement relay was restored 31.220s after exit and every route was verified
+  repaired 51.597s after exit. All 2,500 post-recovery correctness requests
+  succeeded.
+
+Ingress's preferred-relay attempt budget was then reduced to 250ms. The default
+per-relay publisher connection limit was independently raised from 1,000 to
+4,000 so route-count experiments no longer stop at the old arbitrary admission
+boundary. The repeated full workload produced:
+
+- All 32,000 scheduled requests started and succeeded, with zero failures,
+  timeouts, missed offers, queue expiry, or source-limit rejections. The fault
+  window's maximum request latency was 257.479ms and maximum queue delay was
+  4.032ms. All 3,656 failed preferred-relay backend attempts fell within the
+  250ms duration histogram bucket.
+- The first successful response arrived 159.126ms after relay process exit. The
+  replacement was restored 31.225s after exit and every route was verified
+  repaired 51.582s after exit. The shorter visitor fallback therefore fixes the
+  request-level interruption without changing full route-session repair time.
+- Before the fault, relay-a used 173.4MiB with a 174.6MiB cgroup peak and relay-b
+  used 166.7MiB with a 167.8MiB peak. After repair, the clean replacement used
+  146.1MiB with a 147.5MiB peak; the surviving relay used 210.6MiB with a
+  212.3MiB peak after carrying failover traffic. The survivor reached 83% of its
+  256MiB limit but recorded no memory-pressure or OOM event.
+- Both relays again held 1,000 ready publisher connections. All 2,500 correctness
+  requests succeeded, final usage reconciled 34,508/34,508 successful streams,
+  every component exited zero, and cleanup left no owned Docker resources.
+
+The 250ms attempt budget removed the observed harness backpressure while retaining
+the no-replay boundary, but a request that has crossed that boundary can still
+fail if its connected relay dies. The 4,000 publisher-connection default was
+propagated and admitted this 1,000-route run; it does not establish 4,000-route
+capacity. One passing abrupt-loss run is also insufficient production guidance,
+especially with the surviving relay at 83% of its memory limit.
+
+Evidence is retained in:
+
+- `bench-results/resource-attribution-routes-1000-relay-kill-1/`
+- `bench-results/resource-attribution-routes-1000-relay-kill-fallback250-1/`

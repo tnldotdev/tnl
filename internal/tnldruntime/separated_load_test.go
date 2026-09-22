@@ -149,6 +149,7 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 		start := time.Now().Add(time.Second)
 		var restart separatedRestart
 		var repaired time.Time
+		var oldRelayRun string
 		window := duration
 		if phase == "relay-restart" {
 			window = max(window, 40*time.Second)
@@ -171,6 +172,14 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 		if phase == *runtimeLoadScenario && runtimeEarlyFault(phase) {
 			restart = initialFault
 		}
+		if phase == "relay-kill" {
+			if err := database.QueryRowContext(integrationOperationContext(t), `SELECT relay_run_id FROM control.relay_leases WHERE relay_id = 'relay-a-1'`).Scan(&oldRelayRun); err != nil {
+				t.Fatal(err)
+			}
+			separatedWrite(t, "fault.request", phase)
+			separatedWait(t, "fault.applied", 15*time.Second, &restart)
+			start = time.Now().Add(time.Second)
+		}
 		urls := publishers.URLs
 		if phase == "shutdown" {
 			urls = urls[len(urls)/2:]
@@ -187,12 +196,6 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 			t.Logf("publisher_connection_loss_detected elapsed_since_drop=%s", time.Since(restart.Exited))
 		}
 		if phase == "relay-kill" {
-			var oldRun string
-			if err := database.QueryRowContext(integrationOperationContext(t), `SELECT relay_run_id FROM control.relay_leases WHERE relay_id = 'relay-a-1'`).Scan(&oldRun); err != nil {
-				t.Fatal(err)
-			}
-			separatedWrite(t, "fault.request", phase)
-			separatedWait(t, "fault.applied", 15*time.Second, &restart)
 			var restored time.Time
 			separatedWait(t, "fault.restored", 45*time.Second, &restored)
 			restart.Restored = restored
@@ -200,7 +203,7 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 			waitForIntegrationCondition(t, 25*time.Second, func(ctx context.Context) (bool, error) {
 				var current string
 				err := database.QueryRowContext(ctx, `SELECT relay_run_id FROM control.relay_leases WHERE relay_id='relay-a-1' AND lease_expires_at>now() AND NOT draining`).Scan(&current)
-				return current != "" && current != oldRun, err
+				return current != "" && current != oldRelayRun, err
 			})
 			repaired = separatedWaitForRecovery(t, database, publishers)
 		}
@@ -372,6 +375,18 @@ func separatedCapture(t *testing.T, database *sql.DB, name string) separatedSnap
 	if err != nil {
 		t.Fatal(err)
 	}
+	postgres.Postgres = &separatedPostgresResources{}
+	if err := database.QueryRowContext(integrationOperationContext(t), `SELECT
+		(SELECT coalesce(sum(allocated_size), 0)::bigint FROM pg_shmem_allocations),
+		pg_size_bytes(current_setting('shared_buffers')),
+		numbackends, blks_read, blks_hit, temp_bytes
+		FROM pg_stat_database WHERE datname = current_database()`).Scan(
+		&postgres.Postgres.SharedMemoryBytes, &postgres.Postgres.SharedBuffersBytes,
+		&postgres.Postgres.Backends, &postgres.Postgres.BlocksRead,
+		&postgres.Postgres.BlocksHit, &postgres.Postgres.TempBytes,
+	); err != nil {
+		t.Fatal(err)
+	}
 	postgres.NetworkNamespace = "postgres"
 	result.Resources["postgres"] = postgres
 	for _, role := range []string{"control", "ingress", "relay-a", "relay-b"} {
@@ -408,19 +423,30 @@ func separatedReportResources(t *testing.T, phase string, before, after separate
 	for _, component := range append(slices.Clone(separatedComponents), "postgres", "coordinator") {
 		a, b := before.Resources[component], after.Resources[component]
 		if a.ProcessRunID != b.ProcessRunID {
-			t.Logf("separated_resource phase=%s component=%s interval_reset=true before_run=%s after_run=%s memory=%d peak=%d oom_kills=%d", phase, component, a.ProcessRunID, b.ProcessRunID, b.Memory, b.Peak, b.OOMKills)
+			t.Logf("separated_resource phase=%s component=%s interval_reset=true before_run=%s after_run=%s memory=%d peak=%d memory_anon=%d memory_file=%d memory_kernel=%d memory_kernel_stack=%d memory_pagetables=%d memory_sock=%d memory_slab=%d memory_shmem=%d memory_file_dirty=%d memory_file_writeback=%d memory_high_events=%d memory_max_events=%d oom_events=%d oom_kills=%d",
+				phase, component, a.ProcessRunID, b.ProcessRunID, b.Memory, b.Peak,
+				b.MemoryAnon, b.MemoryFile, b.MemoryKernel, b.MemoryKernelStack, b.MemoryPageTables, b.MemorySock, b.MemorySlab, b.MemoryShmem,
+				b.MemoryFileDirty, b.MemoryFileWriteback, b.MemoryHighEvents, b.MemoryMaxEvents, b.OOMEvents, b.OOMKills)
 			if b.OOMKills != 0 {
 				t.Errorf("%s OOM after restart", component)
 			}
 			continue
 		}
 		seconds := b.At.Sub(a.At).Seconds()
-		t.Logf("separated_resource phase=%s component=%s interval=%.3fs quota=%q memory_limit=%q cpu_seconds=%.6f cpu_cores=%.4f throttled_seconds=%.6f throttled_periods=%d/%d memory=%d peak=%d oom_kills=%d rx_bytes=%d tx_bytes=%d gomaxprocs=%d network_namespace=%s",
+		t.Logf("separated_resource phase=%s component=%s interval=%.3fs quota=%q memory_limit=%q cpu_seconds=%.6f cpu_cores=%.4f throttled_seconds=%.6f throttled_periods=%d/%d memory=%d peak=%d memory_anon=%d memory_file=%d memory_kernel=%d memory_kernel_stack=%d memory_pagetables=%d memory_sock=%d memory_slab=%d memory_shmem=%d memory_file_dirty=%d memory_file_writeback=%d memory_high_events=%d memory_max_events=%d oom_events=%d oom_kills=%d rx_bytes=%d tx_bytes=%d gomaxprocs=%d network_namespace=%s",
 			phase, component, seconds, b.CPUQuota, b.MemoryLimit, float64(b.CPUUsec-a.CPUUsec)/1e6, float64(b.CPUUsec-a.CPUUsec)/1e6/seconds,
-			float64(b.ThrottledUsec-a.ThrottledUsec)/1e6, b.ThrottledPeriods-a.ThrottledPeriods, b.Periods-a.Periods, b.Memory, b.Peak, b.OOMKills-a.OOMKills,
+			float64(b.ThrottledUsec-a.ThrottledUsec)/1e6, b.ThrottledPeriods-a.ThrottledPeriods, b.Periods-a.Periods, b.Memory, b.Peak,
+			b.MemoryAnon, b.MemoryFile, b.MemoryKernel, b.MemoryKernelStack, b.MemoryPageTables, b.MemorySock, b.MemorySlab, b.MemoryShmem,
+			b.MemoryFileDirty, b.MemoryFileWriteback, b.MemoryHighEvents-a.MemoryHighEvents, b.MemoryMaxEvents-a.MemoryMaxEvents,
+			b.OOMEvents-a.OOMEvents, b.OOMKills-a.OOMKills,
 			b.ReceiveBytes-a.ReceiveBytes, b.SendBytes-a.SendBytes, b.GOMAXPROCS, b.NetworkNamespace)
 		if b.OOMKills > a.OOMKills {
 			t.Errorf("%s OOM in %s", component, phase)
+		}
+		if component == "postgres" && a.Postgres != nil && b.Postgres != nil {
+			t.Logf("separated_postgres phase=%s shared_memory=%d shared_buffers=%d backends=%d blocks_read=%d blocks_hit=%d temp_bytes=%d",
+				phase, b.Postgres.SharedMemoryBytes, b.Postgres.SharedBuffersBytes, b.Postgres.Backends,
+				b.Postgres.BlocksRead-a.Postgres.BlocksRead, b.Postgres.BlocksHit-a.Postgres.BlocksHit, b.Postgres.TempBytes-a.Postgres.TempBytes)
 		}
 	}
 	for _, role := range []string{"control", "ingress", "relay-a", "relay-b"} {
@@ -463,12 +489,17 @@ func separatedReportVisitors(t *testing.T, phase string, results []separatedVisi
 		surviving += result.HeldSurviving
 		for _, row := range result.Requests {
 			total++
+			if phase == "relay-kill" {
+				if err := validateRelayKillVisitor(row, restart.Exited); err != nil {
+					t.Error(err)
+				}
+			}
 			if row.Error != "" {
 				failures++
 				if failures <= 3 {
 					t.Logf("separated_request_failure phase=%s started=%s error=%s", phase, row.Started, row.Error)
 				}
-				if runtimeControlledFault(phase) || phase != *runtimeLoadScenario || !row.Started.Before(repaired) {
+				if phase != "relay-kill" && (runtimeControlledFault(phase) || phase != *runtimeLoadScenario || !row.Started.Before(repaired)) {
 					t.Errorf("visitor failed in %s after recovery=%t", phase, !row.Started.Before(repaired))
 				}
 				continue
@@ -530,6 +561,19 @@ func separatedReportVisitors(t *testing.T, phase string, results []separatedVisi
 			t.Fatal(err)
 		}
 	}
+}
+
+func validateRelayKillVisitor(row benchworkload.RequestResult, relayExited time.Time) error {
+	if relayExited.IsZero() {
+		return fmt.Errorf("relay-kill visitor has no relay exit boundary")
+	}
+	if row.Started.Before(relayExited) {
+		return fmt.Errorf("relay-kill visitor started before relay exit")
+	}
+	if row.Error != "" {
+		return fmt.Errorf("relay-kill visitor failed after relay exit: %s", row.Error)
+	}
+	return nil
 }
 
 func assertRelayOpenedVisitors(t *testing.T, before, after separatedSnapshot, role string) {

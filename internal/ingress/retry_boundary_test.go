@@ -92,14 +92,18 @@ func TestIngressStalledAttemptLeavesFallbackBudget(t *testing.T) {
 			}
 			fallback := newTLSBackend(t)
 			config := routeConfig(first, contextBackend{fallback})
-			config.OpenTimeout = 200 * time.Millisecond
+			config.OpenTimeout = 2 * time.Second
 			_, address := startIngress(t, config)
 			client := ingressClient(t, address, "route.example", "")
-			if err := client.SetDeadline(time.Now().Add(time.Second)); err != nil {
+			if err := client.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
 				t.Fatal(err)
 			}
+			started := time.Now()
 			if err := client.Handshake(); err != nil {
 				t.Fatal(err)
+			}
+			if elapsed := time.Since(started); elapsed > 900*time.Millisecond {
+				t.Fatalf("fallback took %s; first relay attempt exceeded its budget", elapsed)
 			}
 			exchangePing(t, client)
 			if result := ingressAwait(t, fallback.result); result.err != nil {

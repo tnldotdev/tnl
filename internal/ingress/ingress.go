@@ -24,7 +24,9 @@ import (
 
 const defaultOpenTimeout = 10 * time.Second
 
-const alternateAttemptTimeout = time.Second
+// Keep a failed preferred relay from consuming the visitor concurrency budget
+// while a ready publisher connection exists through the alternate relay.
+const alternateAttemptTimeout = 250 * time.Millisecond
 
 const visitorConnectionIDPrefix = "visitor_connection_"
 

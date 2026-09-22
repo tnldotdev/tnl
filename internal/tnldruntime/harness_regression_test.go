@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/miekg/dns"
+	"github.com/tnldotdev/tnl/internal/benchworkload"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
 )
@@ -290,6 +291,58 @@ func TestTopologyCleanupKeepsControlUntilAllIncarnationsDrain(t *testing.T) {
 	want := []string{"old relay", "old control", "publisher", "ingress", "replacement relay", "replacement control", "resources"}
 	if strings.Join(events, ",") != strings.Join(want, ",") {
 		t.Fatalf("cleanup order = %v, want %v", events, want)
+	}
+}
+
+func TestSeparatedResourceFilesCaptureMemoryAttribution(t *testing.T) {
+	files := map[string]string{
+		"/sys/fs/cgroup/cpu.max":        "100000 100000",
+		"/sys/fs/cgroup/memory.max":     "536870912",
+		"/sys/fs/cgroup/cpu.stat":       "usage_usec 11\nnr_periods 12\nnr_throttled 13\nthrottled_usec 14\n",
+		"/sys/fs/cgroup/memory.current": "15",
+		"/sys/fs/cgroup/memory.peak":    "16",
+		"/sys/fs/cgroup/memory.events":  "low 17\nhigh 18\nmax 19\noom 20\noom_kill 21\noom_group_kill 22\n",
+		"/sys/fs/cgroup/memory.stat":    "anon 23\nfile 24\nkernel 25\nkernel_stack 26\npagetables 27\nsock 28\nslab 29\nshmem 30\nfile_dirty 31\nfile_writeback 32\n",
+		"/proc/net/dev":                 "Inter-| Receive | Transmit\nlo: 1 0 0 0 0 0 0 0 2 0 0 0 0 0 0 0\neth0: 33 0 0 0 0 0 0 0 34 0 0 0 0 0 0 0\n",
+	}
+	resources, err := readSeparatedResourceFiles(func(path string) (string, error) {
+		value, ok := files[path]
+		if !ok {
+			return "", fmt.Errorf("unexpected resource file %q", path)
+		}
+		return value, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resources.CPUQuota != "100000 100000" || resources.MemoryLimit != "536870912" ||
+		resources.CPUUsec != 11 || resources.Periods != 12 || resources.ThrottledPeriods != 13 || resources.ThrottledUsec != 14 ||
+		resources.Memory != 15 || resources.Peak != 16 || resources.MemoryLowEvents != 17 || resources.MemoryHighEvents != 18 ||
+		resources.MemoryMaxEvents != 19 || resources.OOMEvents != 20 || resources.OOMKills != 21 || resources.OOMGroupKills != 22 ||
+		resources.MemoryAnon != 23 || resources.MemoryFile != 24 || resources.MemoryKernel != 25 || resources.MemoryKernelStack != 26 ||
+		resources.MemoryPageTables != 27 || resources.MemorySock != 28 || resources.MemorySlab != 29 || resources.MemoryShmem != 30 ||
+		resources.MemoryFileDirty != 31 || resources.MemoryFileWriteback != 32 || resources.ReceiveBytes != 33 || resources.SendBytes != 34 {
+		t.Fatalf("resource evidence = %+v", resources)
+	}
+}
+
+func TestRelayKillFreshVisitorContract(t *testing.T) {
+	exited := time.Unix(100, 0)
+	for _, test := range []struct {
+		name    string
+		row     benchworkload.RequestResult
+		wantErr bool
+	}{
+		{name: "success after exit", row: benchworkload.RequestResult{Started: exited.Add(time.Millisecond)}},
+		{name: "started before exit", row: benchworkload.RequestResult{Started: exited.Add(-time.Millisecond)}, wantErr: true},
+		{name: "partial response after exit", row: benchworkload.RequestResult{Started: exited.Add(time.Millisecond), Error: "unexpected EOF"}, wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateRelayKillVisitor(test.row, exited)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("validation error = %v, want error %t", err, test.wantErr)
+			}
+		})
 	}
 }
 

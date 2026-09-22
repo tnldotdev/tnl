@@ -14,3 +14,5 @@
 - Faster activation exposed a moving-target test barrier: publisher heartbeats could advance the global routing revision just after ingress acknowledged it. Capture the required revision once when entering the barrier, then wait for that revision with the existing deadline.
 - The separated workload's certificate HTTP trace was attached to control's ACME client, whose paths never matched its filters. Attach it to the publisher's control client to capture issuance and installation timings.
 - Cleaning a named separated-load Compose project still requires a dummy `RESULTS` value because Compose interpolates required volume variables before `down`; pass an existing scratch path during interrupted-run cleanup.
+- `task generate` prints `No config found, using defaults` from Oxfmt even when generation succeeds, making the successful command look partially misconfigured.
+- Running `task test` and `task lint` concurrently races their shared JavaScript clean/build output and can make Vite fixtures fail to resolve `@tnldotdev/tnl`; run them serially.

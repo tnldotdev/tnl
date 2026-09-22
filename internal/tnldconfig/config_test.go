@@ -34,6 +34,9 @@ func TestParseStandaloneDerivesAddresses(t *testing.T) {
 	if config.RouteCertificateWorkers != 4 {
 		t.Fatalf("route certificate workers = %d, want 4", config.RouteCertificateWorkers)
 	}
+	if config.PublisherConnectionLimit != 4000 {
+		t.Fatalf("publisher connection limit = %d, want 4000", config.PublisherConnectionLimit)
+	}
 }
 
 func TestParseRouteCertificateWorkers(t *testing.T) {

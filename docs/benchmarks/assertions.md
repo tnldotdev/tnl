@@ -10,6 +10,7 @@ local coordinator, not the shared publisher or visitor implementation.
 | Every elapsed offer counted; bounded queue and request deadline                  | Shared visitor scheduler                    |
 | Held streams alive before fault; breaks and survivors recorded                   | Shared visitor / scenario                   |
 | Fresh visitors succeed while a forwarding or publisher-path drop stays installed | Coordinator phase barriers / shared visitor |
+| Fresh visitors succeed after abrupt relay process exit                           | Coordinator phase barriers / shared visitor |
 | Healthy-path held streams survive and receive bytes during a blackhole           | Shared held-stream byte counter / scenario  |
 | Actual UDP drops force TCP fallback and abandoned QUIC sockets close             | Publisher observations / deployment runner  |
 | Targeted latency/loss reaches both directions of an exercised path               | Deployment runner qdisc/filter evidence     |

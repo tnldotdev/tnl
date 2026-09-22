@@ -1344,7 +1344,7 @@ $ tnl admin relays list --server https://control.example.test
 |  lease revision         9                                    |
 |  relay address          relay.example.test:443               |
 |  internal address       relay.internal.example.test:8443     |
-|  publisher connections  12 / 1000                            |
+|  publisher connections  12 / 4000                            |
 |  visitor streams        48 / 4096                            |
 |  lease expires          2030-01-01T12:00:30Z                 |
 |  drain deadline         2030-01-01T12:01:00Z                 |
@@ -2082,7 +2082,7 @@ internal hostname and port; Config Check Limits describes its validation gap.
 | `--standalone-relay-connection-limit` / `standalone_relay_connection_limit`     | `TNLD_STANDALONE_RELAY_CONNECTION_LIMIT`   | `4096`  | S       | Maximum handed-off relay TCP connections, held until close.                           |
 | `--visitor-connection-limit` / `visitor_connection_limit`                       | `TNLD_VISITOR_CONNECTION_LIMIT`            | `20000` | S/I     | Maximum concurrent visitor connections.                                               |
 | `--route-connection-limit` / `route_connection_limit`                           | `TNLD_ROUTE_CONNECTION_LIMIT`              | `500`   | S/I     | Maximum concurrent visitor connections per route.                                     |
-| `--publisher-connection-limit` / `publisher_connection_limit`                   | `TNLD_PUBLISHER_CONNECTION_LIMIT`          | `1000`  | S/R     | Maximum publisher connections held by one relay process.                              |
+| `--publisher-connection-limit` / `publisher_connection_limit`                   | `TNLD_PUBLISHER_CONNECTION_LIMIT`          | `4000`  | S/R     | Maximum publisher connections held by one relay process.                              |
 | `--relay-stream-capacity` / `relay_stream_capacity`                             | `TNLD_RELAY_STREAM_CAPACITY`               | `4096`  | S/R     | Maximum concurrent visitor streams held by one relay process.                         |
 | `--require-proxy-header` / `require_proxy_header`                               | `TNLD_REQUIRE_PROXY_HEADER`                | false   | S/I     | Require one trusted outer PROXY v2 header on public ingress.                          |
 | `--quic-max-incoming-streams` / `quic_max_incoming_streams`                     | `TNLD_QUIC_MAX_INCOMING_STREAMS`           | `4096`  | S/R     | Maximum incoming QUIC streams per publisher connection.                               |

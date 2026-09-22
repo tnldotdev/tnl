@@ -498,7 +498,7 @@
         "publisher_connection_limit": {
           "type": "integer",
           "description": "Maximum publisher connections held by one relay process.",
-          "default": 1000
+          "default": 4000
         },
         "relay_stream_capacity": {
           "type": "integer",

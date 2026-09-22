@@ -234,9 +234,9 @@ Its five-second budget includes queue waiting; requests are never retried.
 ```console
 mise exec -- task go:test:load:runtime RACE=1 RESULTS=bench-results/runtime-smoke
 mise exec -- task go:test:load:runtime ROUTES=64 START_PARALLEL=64 RPS=160 DURATION=30s RESULTS=bench-results/runtime-reference
-mise exec -- env DATABASE_CPUS=4 CONTROL_CPUS=2 task go:test:load:runtime ROUTES=1000 START_PARALLEL=1000 ROUTE_CERTIFICATE_WORKERS=8 PUBLISHER_CONNECTION_LIMIT=1200 SOURCE_CONNECTION_RATE=1000 SOURCE_CONNECTION_BURST=4000 RPS=4 RESULTS=bench-results/runtime-cold-1000
+mise exec -- env DATABASE_CPUS=4 CONTROL_CPUS=2 task go:test:load:runtime ROUTES=1000 START_PARALLEL=1000 ROUTE_CERTIFICATE_WORKERS=8 SOURCE_CONNECTION_RATE=1000 SOURCE_CONNECTION_BURST=4000 RPS=4 RESULTS=bench-results/runtime-cold-1000
 mise exec -- env PUBLISHER_CPUS=0.25 task go:test:load:runtime ROUTES=64 RPS=160 DURATION=30s RESULTS=bench-results/runtime-publisher-025
-mise exec -- task go:test:load:runtime SCENARIO=relay-kill RESULTS=bench-results/runtime-kill
+mise exec -- task go:test:load:runtime SCENARIO=relay-kill RPS=160 RESULTS=bench-results/runtime-kill
 mise exec -- task go:test:load:runtime SCENARIO=forwarding-blackhole RESULTS=bench-results/runtime-blackhole
 mise exec -- task go:test:load:runtime SCENARIO=publisher-blackhole RESULTS=bench-results/runtime-publisher-blackhole
 mise exec -- task go:test:load:runtime SCENARIO=udp-fallback RESULTS=bench-results/runtime-udp-fallback
@@ -272,7 +272,7 @@ active TLS-ALPN checks do not consume visitor tokens.
 | `SOURCE_CONNECTION_BURST`    |     200 | Source token-bucket size on each ingress process                             |
 | `VISITOR_CONNECTION_LIMIT`   |   20000 | Concurrent visitor connections per ingress process                           |
 | `ROUTE_CONNECTION_LIMIT`     |     500 | Concurrent visitor connections per route on each ingress process             |
-| `PUBLISHER_CONNECTION_LIMIT` |    1000 | Publisher connections per relay process                                      |
+| `PUBLISHER_CONNECTION_LIMIT` |    4000 | Publisher connections per relay process                                      |
 | `RELAY_STREAM_CAPACITY`      |    4096 | Concurrent visitor streams per relay process                                 |
 | `QUIC_MAX_INCOMING_STREAMS`  |    4096 | Incoming QUIC streams per publisher connection                               |
 
@@ -289,22 +289,29 @@ capacity-boundary experiments prove enforcement. Resource snapshots record
 effective CPU/memory allocations separately.
 Declare overrides before each experiment and keep them fixed across its healthy
 and fault windows; changing admission settings defines a new measured profile.
-The runtime workload bounds are 4–1,000 routes and 4–500 requests/sec. The
-1,000-route cold-start profile raises relay connection capacity because every
-route holds one connection on each relay service. It does not represent the
-default admission profile. Local Pebble validates from one source address;
-challenge concurrency and deadlines apply independently of visitor source rate.
+The runtime workload bounds are 4–1,000 routes and 4–500 requests/sec. This
+ceiling is below the default relay publisher-connection capacity and keeps the
+routine local topology within its explicit resource profile; testing 4,000 routes
+requires a separately declared load profile. Local Pebble validates from one
+source address; challenge concurrency and deadlines apply independently of
+visitor source rate.
 
 `SCENARIO=relay-restart` is the default graceful restart. `relay-kill` uses Docker
 SIGKILL, leaves the relay down longer than its 30-second lease, and requires a new
-process run ID after restart. `forwarding-blackhole` drops only ingress-to-relay-a
+process run ID after restart. The relay exits before the measured fresh-request
+window begins, and every measured visitor must succeed through the alternate.
+Preexisting held streams still cross the abrupt failure boundary and are not
+replayed. Ingress gives a preferred relay at most 250ms before trying the
+alternate. `forwarding-blackhole` drops only ingress-to-relay-a
 TCP port 8443. `publisher-blackhole` drops publisher-to-relay-a TCP and UDP port
 443 and measures detection using the existing transport timers. Control and
 relay-b remain reachable. Blackholes stay installed through the entire traffic
 window and every-route correctness probes; each installed rule must drop packets.
-Fresh requests must have zero failures, timeouts, missed offers, and queue expiry
-while the fault is active. Healthy-path held streams opened under the fault must
-keep receiving bytes. Pre-existing held-stream disruption is recorded separately.
+Every scenario requires zero missed offers and queue expiry. Controlled faults
+also require zero request failures and timeouts while active. Relay-kill requires
+the same for every fresh request started after process exit. Healthy-path held
+streams opened under a controlled fault must keep receiving bytes. Pre-existing
+held-stream disruption is recorded separately.
 Fault windows last at least 40 seconds for graceful restart, 80 seconds for kill
 and publisher blackhole, and 50 seconds for forwarding blackhole.
 

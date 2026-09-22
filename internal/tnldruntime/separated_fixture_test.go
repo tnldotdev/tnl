@@ -186,16 +186,32 @@ func separatedConfig(t *testing.T, component string) tnldconfig.Config {
 }
 
 type separatedResources struct {
-	ProcessRunID              string
-	NetworkNamespace          string
-	At                        time.Time
-	CPUQuota, MemoryLimit     string
-	CPUUsec, ThrottledUsec    uint64
-	Periods, ThrottledPeriods uint64
-	Memory, Peak, OOMKills    uint64
-	ReceiveBytes, SendBytes   uint64
-	GOMAXPROCS                int
-	CAOrders                  int64
+	ProcessRunID                                       string
+	NetworkNamespace                                   string
+	At                                                 time.Time
+	CPUQuota, MemoryLimit                              string
+	CPUUsec, ThrottledUsec                             uint64
+	Periods, ThrottledPeriods                          uint64
+	Memory, Peak                                       uint64
+	MemoryAnon, MemoryFile, MemoryKernel               uint64
+	MemoryKernelStack, MemoryPageTables, MemorySock    uint64
+	MemorySlab, MemoryShmem                            uint64
+	MemoryFileDirty, MemoryFileWriteback               uint64
+	MemoryLowEvents, MemoryHighEvents, MemoryMaxEvents uint64
+	OOMEvents, OOMKills, OOMGroupKills                 uint64
+	ReceiveBytes, SendBytes                            uint64
+	GOMAXPROCS                                         int
+	CAOrders                                           int64
+	Postgres                                           *separatedPostgresResources `json:",omitempty"`
+}
+
+type separatedPostgresResources struct {
+	SharedMemoryBytes  int64
+	SharedBuffersBytes int64
+	Backends           int64
+	BlocksRead         int64
+	BlocksHit          int64
+	TempBytes          int64
 }
 
 func readSeparatedResources() (separatedResources, error) {
@@ -220,8 +236,17 @@ func readSeparatedResourceFiles(read func(string) (string, error)) (separatedRes
 		return r, err
 	}
 	for file, values := range map[string]map[string]*uint64{
-		"cpu.stat":      {"usage_usec": &r.CPUUsec, "throttled_usec": &r.ThrottledUsec, "nr_periods": &r.Periods, "nr_throttled": &r.ThrottledPeriods},
-		"memory.events": {"oom_kill": &r.OOMKills},
+		"cpu.stat": {"usage_usec": &r.CPUUsec, "throttled_usec": &r.ThrottledUsec, "nr_periods": &r.Periods, "nr_throttled": &r.ThrottledPeriods},
+		"memory.events": {
+			"low": &r.MemoryLowEvents, "high": &r.MemoryHighEvents, "max": &r.MemoryMaxEvents,
+			"oom": &r.OOMEvents, "oom_kill": &r.OOMKills, "oom_group_kill": &r.OOMGroupKills,
+		},
+		"memory.stat": {
+			"anon": &r.MemoryAnon, "file": &r.MemoryFile, "kernel": &r.MemoryKernel,
+			"kernel_stack": &r.MemoryKernelStack, "pagetables": &r.MemoryPageTables,
+			"sock": &r.MemorySock, "slab": &r.MemorySlab, "shmem": &r.MemoryShmem,
+			"file_dirty": &r.MemoryFileDirty, "file_writeback": &r.MemoryFileWriteback,
+		},
 	} {
 		text, err := read("/sys/fs/cgroup/" + file)
 		if err != nil {
