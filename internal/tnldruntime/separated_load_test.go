@@ -197,7 +197,7 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join("/results", phase+"-visitors.json"), data, 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join("/results", phase+"-visitors.json"), data, 0o644); err != nil {
 			t.Fatal(err)
 		}
 		after := separatedCapture(t, database, phase+"-after")
@@ -325,7 +325,7 @@ func separatedCapture(t *testing.T, database *sql.DB, name string) separatedSnap
 		if err != nil || response.StatusCode != http.StatusOK {
 			t.Fatalf("metrics %s: %v status=%d", role, err, response.StatusCode)
 		}
-		if err := os.WriteFile(filepath.Join("/results", name+"-"+role+".prom"), data, 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join("/results", name+"-"+role+".prom"), data, 0o644); err != nil {
 			t.Fatal(err)
 		}
 		families, err := observability.ParseMetrics(bytes.NewReader(data))
@@ -338,7 +338,7 @@ func separatedCapture(t *testing.T, database *sql.DB, name string) separatedSnap
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join("/results", name+".json"), data, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join("/results", name+".json"), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return result
@@ -421,7 +421,7 @@ func separatedReportVisitors(t *testing.T, phase string, results []separatedVisi
 		format(merged.Total.Percentile(50)), format(merged.Total.Percentile(95)), merged.Total.MaximumMilliseconds, format(merged.FirstByte.Percentile(95)), merged.OfferDuration, merged.DrainDuration)
 	if data, err := json.Marshal(merged); err != nil {
 		t.Fatal(err)
-	} else if err := os.WriteFile(filepath.Join("/results", phase+"-summary.json"), data, 0o600); err != nil {
+	} else if err := os.WriteFile(filepath.Join("/results", phase+"-summary.json"), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if missed != 0 || total == 0 {
@@ -445,7 +445,7 @@ func separatedReportVisitors(t *testing.T, phase string, results []separatedVisi
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join("/results", phase+"-recovery.json"), data, 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join("/results", phase+"-recovery.json"), data, 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}

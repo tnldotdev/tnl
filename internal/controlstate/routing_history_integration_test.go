@@ -198,8 +198,22 @@ func TestIntegrationRoutingRetentionCancellationAndGuard(t *testing.T) {
 	if err := gate.Rollback(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if batch, err := f.database.PruneIngressRoutingHistory(ctx, 0); err != nil || batch.Deleted != 1 {
-		t.Fatalf("retry: %+v %v", batch, err)
+	for {
+		batch, err := f.database.PruneIngressRoutingHistory(ctx, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !batch.Busy {
+			if batch.Deleted != 1 {
+				t.Fatalf("retry: %+v", batch)
+			}
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("cleanup remained busy: %v", ctx.Err())
+		case <-time.After(time.Millisecond):
+		}
 	}
 }
 
