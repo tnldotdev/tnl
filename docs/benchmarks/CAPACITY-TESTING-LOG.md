@@ -270,3 +270,54 @@ production recommendation with failure headroom: relay memory is already above
 the campaign's 80% warning threshold. Run 1,000 once at defaults to identify the
 actual first boundary, preserving a failure if it occurs, before declaring a
 larger resource profile.
+
+## 2026-09-22 - Route Scaling At 1,000 Routes
+
+The first 1,000-route attempt used committed revision `7611dc0`, default admission
+and resource limits, 1,000-way activation, and the same 160 RPS/60-second windows.
+All 1,000 publishers became ready, all 28,800 scheduled requests succeeded, and
+final accounting reconciled. The test nevertheless failed because each of the
+four visitor sources sent its 250-route correctness share immediately after a
+traffic window. That synthetic burst exceeded the default per-source burst of
+200: the steady correctness sweep had 69 EOFs and the relay-restart sweep had 76,
+matching cumulative source-limit counters of 69 and 145. The 500-route shutdown
+sweep passed. This retained failure is a harness-induced admission event, not a
+server route-capacity failure.
+
+Commit `61cbe9f` paced only zero-duration correctness probes at the configured
+per-source rate. It did not change the 160 RPS measured traffic, visitor deadline,
+route coverage, admission settings, or resource limits. A four-route separated
+runtime smoke passed before the same 1,000-route profile was repeated.
+
+- Activation installed 1,000 certificates from exactly 1,000 CA orders in
+  2m6.876s. Publisher readiness p50/p95/max was
+  1m59.163s/2m3.037s/2m3.667s.
+- All 28,800 scheduled requests succeeded with zero failures, timeouts, missed
+  offers, or queue expiry. Steady, relay-restart, and shutdown p95/max latencies
+  were 4.876/11.255ms, 4.998/18.785ms, and 4.865/11.451ms.
+- All 2,500 live-route correctness requests succeeded. Each full 1,000-route
+  sweep took 4.98s, consistent with four sources paced at 50 requests/sec. Source
+  and capacity rejections remained zero.
+- Relay restart preserved every fresh request. The first successful body arrived
+  9.113ms after process exit, and all publisher connections repaired in 23.734s.
+  Preexisting held streams were disrupted as expected and were not replayed.
+- Final accounting reconciled 31,308/31,308 successful streams, with zero active
+  route sessions, publisher connections, or reservations. Every component exited
+  zero, and the Compose project left no containers, networks, or volumes.
+- Both relays held exactly 1,000 ready publisher connections before traffic, which
+  exactly consumes the default per-process publisher connection limit. Peak
+  relay-a memory reached 256/256MiB without an OOM kill. Publishers reached
+  508.2/512MiB, PostgreSQL 498.3/512MiB, and control 298.4/512MiB.
+- PostgreSQL accumulated 546.2 CPU-seconds of quota throttling, including 505.7
+  during activation under its one-CPU quota. No application process materially
+  throttled, and no process recorded an OOM kill.
+
+Evidence is retained in `bench-results/capacity-routes-1000-default-1.log`,
+`bench-results/capacity-routes-1000-default-1/`, and
+`bench-results/capacity-routes-1000-default-paced-1/`. The default topology can
+complete the 1,000-route workload, but this is its hard configured publisher
+connection boundary and it has effectively no relay, publisher, or database
+memory headroom. Do not treat 1,000 routes as a production operating point or run
+a larger default-resource route profile. A larger route-count experiment must
+explicitly raise publisher connection and memory limits; production guidance
+still requires a lower, repeated point with failure headroom.
