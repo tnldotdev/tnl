@@ -6,32 +6,48 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { promisify } from "node:util";
-import { nativePackageName as platformPackageName } from "../packages/tnl/lib/launcher.mjs";
+import { nativeTargets } from "../packages/tnl/src/internal/native-targets.ts";
+import {
+  npmPackageMetadataSchema,
+  packageManifestSchema,
+  type PackageManifest,
+  type PackedPackage,
+} from "./npm-artifacts.ts";
+import { parseJSON } from "./validation.ts";
 
 const execFileAsync = promisify(execFile);
 const packageDirectoryArgument = process.argv[2];
-assert(packageDirectoryArgument, "usage: node scripts/verify-tnl-install.mjs PACKAGE_DIRECTORY");
+assert(packageDirectoryArgument, "usage: node scripts/verify-tnl-install.ts PACKAGE_DIRECTORY");
 
 const packageDirectory = path.resolve(packageDirectoryArgument);
-const metadata = JSON.parse(
+const metadata = parseJSON(
   await readFile(path.join(packageDirectory, "tnl-npm-packages.json"), "utf8"),
+  npmPackageMetadataSchema,
+  "npm package metadata",
 );
-const nativePackageName = platformPackageName(process.platform, process.arch);
-exactlyOne(
-  metadata.packages.filter((entry) => entry.name === nativePackageName),
-  `${process.platform}-${process.arch} native package`,
+const target = nativeTargets.find(
+  ({ platform, architecture }) => platform === process.platform && architecture === process.arch,
+);
+assert(target, `unsupported installation target ${process.platform}-${process.arch}`);
+assert.equal(
+  metadata.packages.filter((entry) => entry.name === target.packageName).length,
+  1,
+  `expected exactly one ${process.platform}-${process.arch} native package`,
 );
 
 const registry = await startRegistry();
 try {
-  for (const packageManager of ["npm", "pnpm"]) {
+  for (const packageManager of ["npm", "pnpm"] as const) {
     await verifyPackageManager(packageManager, registry.url);
   }
 } finally {
   await registry.close();
 }
 
-async function verifyPackageManager(packageManager, registryURL) {
+async function verifyPackageManager(
+  packageManager: "npm" | "pnpm",
+  registryURL: string,
+): Promise<void> {
   const consumer = await mkdtemp(path.join(tmpdir(), `tnl-${packageManager}-consumer-`));
   try {
     await writeFile(
@@ -110,14 +126,17 @@ if (typeof tnl !== "function") throw new Error("missing Vite integration");
 }
 
 async function startRegistry() {
-  const packages = new Map();
-  const tarballs = new Map();
+  const packages = new Map<
+    string,
+    { entry: PackedPackage; manifest: PackageManifest; tarballPathname: string }
+  >();
+  const tarballs = new Map<string, string>();
   for (const entry of metadata.packages) {
     const tarballPath = path.join(packageDirectory, entry.tarball);
     const { stdout } = await execFileAsync("tar", ["-xOzf", tarballPath, "package/package.json"], {
       maxBuffer: 1024 * 1024,
     });
-    const manifest = JSON.parse(stdout);
+    const manifest = parseJSON(stdout, packageManifestSchema, "packed manifest");
     assert.equal(manifest.name, entry.name);
     assert.equal(manifest.version, metadata.version);
     const tarballPathname = `/tarballs/${entry.tarball}`;
@@ -169,7 +188,7 @@ async function startRegistry() {
       response.end(error instanceof Error ? error.message : String(error));
     }
   });
-  await new Promise((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(0, "127.0.0.1", resolve);
   });
@@ -178,13 +197,13 @@ async function startRegistry() {
   return {
     url: `http://127.0.0.1:${address.port}`,
     close: () =>
-      new Promise((resolve, reject) =>
+      new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),
       ),
   };
 }
 
-async function run(command, arguments_, cwd) {
+async function run(command: string, arguments_: readonly string[], cwd: string) {
   try {
     return await execFileAsync(command, arguments_, {
       cwd,
@@ -201,9 +220,4 @@ async function run(command, arguments_, cwd) {
     }
     throw error;
   }
-}
-
-function exactlyOne(values, description) {
-  assert.equal(values.length, 1, `expected exactly one ${description}`);
-  return values[0];
 }

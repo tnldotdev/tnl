@@ -18,17 +18,46 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { promisify } from "node:util";
-import { nativeTargets } from "../packages/tnl/lib/native-targets.mjs";
+import * as z from "zod";
+import { nativeTargets } from "../packages/tnl/src/internal/native-targets.ts";
+import { packageManifestSchema, type PackedPackage } from "./npm-artifacts.ts";
+import { parseJSON } from "./validation.ts";
+
+const releaseMetadataSchema = z.object({ version: z.string(), commit: z.string() });
+const artifactSchema = z.object({
+  type: z.string(),
+  path: z.string(),
+  extra: z.optional(z.object({ ID: z.optional(z.string()) })),
+  goos: z.optional(z.string()),
+  goarch: z.optional(z.string()),
+});
+const packResultSchema = z.array(
+  z.object({
+    name: z.string(),
+    version: z.string(),
+    filename: z.string(),
+    integrity: z.string(),
+    files: z.array(z.object({ path: z.string() })),
+  }),
+);
+
+type PackOptions = {
+  readonly packageName: string;
+  readonly requiredFiles: readonly string[];
+} & ({ readonly kind: "native"; readonly binarySha256: string } | { readonly kind: "launcher" });
 
 const execFileAsync = promisify(execFile);
 const root = path.resolve(import.meta.dirname, "..");
 const outputArgument = process.argv[2];
 const expectedVersion = process.argv[3];
-assert(outputArgument, "usage: node scripts/pack-tnl.mjs OUTPUT_DIRECTORY [EXPECTED_VERSION]");
+assert(outputArgument, "usage: node scripts/pack-tnl.ts OUTPUT_DIRECTORY [EXPECTED_VERSION]");
 
 const outputDirectory = path.resolve(outputArgument);
-const metadata = await readJson(path.join(root, "dist", "metadata.json"));
-const artifacts = await readJson(path.join(root, "dist", "artifacts.json"));
+const metadata = await readJson(path.join(root, "dist", "metadata.json"), releaseMetadataSchema);
+const artifacts = await readJson(
+  path.join(root, "dist", "artifacts.json"),
+  z.array(artifactSchema),
+);
 assertValidVersion(metadata.version);
 if (expectedVersion !== undefined) {
   assert.equal(
@@ -50,7 +79,7 @@ const targets = nativeTargets.map(({ platform, architecture, packageName }) => (
 await rm(outputDirectory, { force: true, recursive: true });
 await mkdir(outputDirectory, { recursive: true });
 const stagingRoot = await mkdtemp(path.join(tmpdir(), "tnl-npm-packages-"));
-const packedPackages = [];
+const packedPackages: PackedPackage[] = [];
 
 try {
   for (const target of targets) {
@@ -98,20 +127,21 @@ try {
     await chmod(path.join(stage, "bin", "tnl"), 0o755);
 
     const manifestPath = path.join(stage, "package.json");
-    const manifest = await readJson(manifestPath);
+    const manifest = await readJson(manifestPath, packageManifestSchema);
     assert.equal(manifest.name, target.packageName);
     assert.deepEqual(manifest.os, [target.operatingSystem]);
     assert.deepEqual(manifest.cpu, [target.architecture]);
     manifest.version = metadata.version;
+    const binarySha256 = sha256(binary);
     manifest.tnl = {
-      binarySha256: sha256(binary),
+      binarySha256,
       commit: metadata.commit,
     };
     await writeJson(manifestPath, manifest);
 
     packedPackages.push(
       await packAndVerify(stage, {
-        binarySha256: manifest.tnl.binarySha256,
+        binarySha256,
         kind: "native",
         packageName: target.packageName,
         requiredFiles: [
@@ -132,10 +162,10 @@ try {
   }
 
   const launcherStage = path.join(stagingRoot, "tnl");
-  await copyTemplate("tnl", launcherStage, ["package.json", "README.md", "bin", "dist", "lib"]);
+  await copyTemplate("tnl", launcherStage, ["package.json", "README.md", "dist"]);
   await copyLegalFiles(launcherStage);
   const launcherManifestPath = path.join(launcherStage, "package.json");
-  const launcherManifest = await readJson(launcherManifestPath);
+  const launcherManifest = await readJson(launcherManifestPath, packageManifestSchema);
   assert.equal(launcherManifest.name, "@tnldotdev/tnl");
   launcherManifest.version = metadata.version;
   launcherManifest.optionalDependencies = Object.fromEntries(
@@ -143,7 +173,7 @@ try {
   );
   launcherManifest.tnl = { commit: metadata.commit };
   await writeJson(launcherManifestPath, launcherManifest);
-  await chmod(path.join(launcherStage, "bin", "tnl.mjs"), 0o755);
+  await chmod(path.join(launcherStage, "dist", "bin", "tnl.js"), 0o755);
   packedPackages.push(
     await packAndVerify(launcherStage, {
       kind: "launcher",
@@ -153,9 +183,18 @@ try {
         "NOTICE",
         "README.md",
         "THIRD_PARTY_LICENSES.txt",
-        "bin/tnl.mjs",
+        "dist/bin/tnl.d.ts",
+        "dist/bin/tnl.js",
+        "dist/config.d.ts",
+        "dist/config.js",
+        "dist/config.gen.d.ts",
+        "dist/config.gen.js",
         "dist/internal/dev.d.ts",
         "dist/internal/dev.js",
+        "dist/internal/launcher.d.ts",
+        "dist/internal/launcher.js",
+        "dist/internal/native-targets.d.ts",
+        "dist/internal/native-targets.js",
         "dist/internal/runtime.d.ts",
         "dist/internal/runtime.js",
         "dist/index.d.ts",
@@ -164,10 +203,6 @@ try {
         "dist/next.js",
         "dist/vite.d.ts",
         "dist/vite.js",
-        "lib/config.d.ts",
-        "lib/config.mjs",
-        "lib/launcher.mjs",
-        "lib/native-targets.mjs",
         "package.json",
       ],
     }),
@@ -182,7 +217,11 @@ try {
   await rm(stagingRoot, { force: true, recursive: true });
 }
 
-async function copyTemplate(sourceDirectory, destination, entries) {
+async function copyTemplate(
+  sourceDirectory: string,
+  destination: string,
+  entries: readonly string[],
+): Promise<void> {
   const source = path.join(root, "packages", sourceDirectory);
   await mkdir(destination, { recursive: true });
   for (const entry of entries) {
@@ -190,19 +229,22 @@ async function copyTemplate(sourceDirectory, destination, entries) {
   }
 }
 
-async function copyLegalFiles(destination) {
+async function copyLegalFiles(destination: string): Promise<void> {
   for (const file of ["LICENSE", "NOTICE", "THIRD_PARTY_LICENSES.txt"]) {
     await copyFile(path.join(root, file), path.join(destination, file));
   }
 }
 
-async function packAndVerify(stage, options) {
+async function packAndVerify(stage: string, options: PackOptions): Promise<PackedPackage> {
   const { stdout } = await execFileAsync(
     "npm",
     ["pack", "--ignore-scripts", "--json", "--pack-destination", outputDirectory],
     { cwd: stage, maxBuffer: 10 * 1024 * 1024 },
   );
-  const packResult = exactlyOne(JSON.parse(stdout), `${options.packageName} npm pack result`);
+  const packResult = exactlyOne(
+    parseJSON(stdout, packResultSchema, "npm pack result"),
+    `${options.packageName} npm pack result`,
+  );
   assert.equal(packResult.name, options.packageName);
   assert.equal(packResult.version, metadata.version);
   const packedFiles = new Set(packResult.files.map((file) => file.path));
@@ -222,7 +264,10 @@ async function packAndVerify(stage, options) {
   );
   await mkdir(extractionDirectory);
   await execFileAsync("tar", ["-xzf", tarball, "-C", extractionDirectory]);
-  const packedManifest = await readJson(path.join(extractionDirectory, "package", "package.json"));
+  const packedManifest = await readJson(
+    path.join(extractionDirectory, "package", "package.json"),
+    packageManifestSchema,
+  );
   assert.equal(packedManifest.version, metadata.version);
   assert(!JSON.stringify(packedManifest).includes("workspace:"));
   for (const lifecycle of ["preinstall", "install", "postinstall"]) {
@@ -243,6 +288,7 @@ async function packAndVerify(stage, options) {
     );
     assert.equal(sha256(await readFile(packedBinary)), options.binarySha256);
   } else {
+    assert(packedManifest.exports, "launcher must define public exports");
     assert.deepEqual(Object.keys(packedManifest.exports).sort(), [
       ".",
       "./config",
@@ -253,7 +299,9 @@ async function packAndVerify(stage, options) {
       packedManifest.optionalDependencies,
       Object.fromEntries(targets.map((target) => [target.packageName, metadata.version])),
     );
-    const launcherStat = await stat(path.join(extractionDirectory, "package", "bin", "tnl.mjs"));
+    const launcherStat = await stat(
+      path.join(extractionDirectory, "package", "dist", "bin", "tnl.js"),
+    );
     assert.notEqual(launcherStat.mode & 0o111, 0, "@tnldotdev/tnl launcher is not executable");
   }
 
@@ -265,12 +313,14 @@ async function packAndVerify(stage, options) {
   };
 }
 
-function exactlyOne(values, description) {
+function exactlyOne<T>(values: readonly T[], description: string): T {
   assert.equal(values.length, 1, `expected exactly one ${description}`);
-  return values[0];
+  const [value] = values;
+  assert(value !== undefined, `missing ${description}`);
+  return value;
 }
 
-function assertValidVersion(version) {
+function assertValidVersion(version: string): void {
   assert.equal(typeof version, "string", "GoReleaser version must be a string");
   const match = version.match(
     /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/,
@@ -284,14 +334,14 @@ function assertValidVersion(version) {
   }
 }
 
-function sha256(value) {
+function sha256(value: Uint8Array): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-async function readJson(file) {
-  return JSON.parse(await readFile(file, "utf8"));
+async function readJson<Output>(file: string, schema: z.ZodType<Output>): Promise<Output> {
+  return parseJSON(await readFile(file, "utf8"), schema, file);
 }
 
-async function writeJson(file, value) {
+async function writeJson(file: string, value: unknown): Promise<void> {
   await writeFile(file, `${JSON.stringify(value, null, 2)}\n`);
 }

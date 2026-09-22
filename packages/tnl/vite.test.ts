@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { runInNewContext } from "node:vm";
 import type { ConfigEnv, Plugin, UserConfig } from "vite";
 import { describe, expect, test } from "vitest";
+import * as z from "zod";
 import {
   createProjectFixture,
   temporaryDirectory,
@@ -169,14 +170,11 @@ test(
         `/?token=${encodeURIComponent(token)}`,
         { origin: "https://api.member.example", protocol: "vite-hmr" },
       );
-      const message = JSON.parse(socketMessage) as { type?: string };
+      const message = z.object({ type: z.string() }).parse(JSON.parse(socketMessage));
       expect(message.type).toBe("connected");
       const updateMessage = waitForWebSocketMessage(socket, 30_000);
       await writeFile(source, originalSource.replace("Vite fixture", "Vite fixture HMR"));
-      const update = JSON.parse(await updateMessage) as {
-        type?: string;
-        updates?: { acceptedPath?: string; path?: string }[];
-      };
+      const update: unknown = JSON.parse(await updateMessage);
       expect(update).toMatchObject({
         type: "update",
         updates: [expect.objectContaining({ acceptedPath: "/src/main.ts", path: "/src/main.ts" })],
@@ -201,7 +199,7 @@ test("registers the actual next port selected by Vite", async () => {
     });
     const target = await fixture.request(1);
     expect(target.path).toBe("/v1/target");
-    const selectedTarget = (target.body as { target: string }).target;
+    const selectedTarget = z.object({ target: z.string() }).parse(target.body).target;
     expect(selectedTarget).toMatch(/^http:\/\/127\.0\.0\.1:[0-9]+$/);
     const selectedPort = Number(new URL(selectedTarget).port);
     expect(selectedPort).toBeGreaterThan(port);

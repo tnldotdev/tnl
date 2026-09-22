@@ -353,7 +353,21 @@ the private development socket is not an extension API. The
 [compatibility matrix](.github/workflows/checks.yml) tests supported framework
 versions.
 
-`packages/tnl/lib/native-targets.mjs` lists the native npm targets. When adding a
+All npm runtime code, including the launcher and config helper, compiles from
+`packages/tnl/src` into `dist`. Repository tools run as TypeScript using the pinned
+Node.js version and are checked by `tsconfig.tooling.json`. Keep JSON and other
+external values `unknown` until validated; tooling uses Zod schemas and inferred
+types for the fields it consumes.
+
+The shared compiler configuration enforces strict optional properties, checked
+indexed access, control flow, and unused symbols. Lint rejects explicit `any`,
+non-null assertions, and unexplained type suppressions. Public type tests also
+check missing dictionary entries with `noUncheckedIndexedAccess` disabled, so
+consumer safety does not depend on that flag. Framework projects retain
+`skipLibCheck` for incompatible upstream Next.js/Vite/Vitest declarations; source
+checking remains strict.
+
+`packages/tnl/src/internal/native-targets.ts` lists the native npm targets. When adding a
 target, also add its native package template, GoReleaser artifact, launcher test
 expectations, and package checks. Preserve checks for archive equality, license
 files, public exports, and publishing native packages before the launcher.
@@ -363,14 +377,15 @@ files, public exports, and publishing native packages before the launcher.
 Edit source contracts, then run `task generate` and `task format` through mise.
 Do not hand-edit generated output.
 
-| Source                                                                                                          | Committed output                                                                         |
-| --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| Five HTTP OpenAPI sources under `api/*/v1`                                                                      | Models, clients, and server interfaces under `pkg/api/*`                                 |
-| `internal/controlstate/migrations` and `queries`                                                                | `internal/controlstate/controlstatedb`                                                   |
-| `internal/clientstate/migrations` and `queries`                                                                 | `internal/clientstate/clientstatedb`                                                     |
-| `internal/config` and its generator, `internal/projectconfig` key mappings, `scripts/generate-config-types.mjs` | `schema/v1.json`, `internal/projectconfig/keys.gen.json`, `packages/tnl/lib/config.d.ts` |
+| Source                                                                                                         | Committed output                                                                            |
+| -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Five HTTP OpenAPI sources under `api/*/v1`                                                                     | Models, clients, and server interfaces under `pkg/api/*`                                    |
+| `internal/controlstate/migrations` and `queries`                                                               | `internal/controlstate/controlstatedb`                                                      |
+| `internal/clientstate/migrations` and `queries`                                                                | `internal/clientstate/clientstatedb`                                                        |
+| `internal/config` and its generator, `internal/projectconfig` key mappings, `scripts/generate-config-types.ts` | `schema/v1.json`, `internal/projectconfig/keys.gen.json`, `packages/tnl/src/config.gen.ts`  |
+| `internal/projectconfig/loader.ts`, `scripts/generate-projectconfig-loader.ts`                                 | `internal/projectconfig/loader.mjs`, compiled JavaScript embedded by Go for Node's `--eval` |
 
-`packages/tnl/src` is handwritten; `packages/tnl/dist` is disposable build
+`packages/tnl/src` is handwritten except `config.gen.ts`; `packages/tnl/dist` is disposable build
 output. Project-local `.tnl/project.json` and `.tnl/project.d.ts` are generated
 by the CLI, not repository code generation. Their user workflow belongs in the
 [package guide](packages/tnl/README.md).

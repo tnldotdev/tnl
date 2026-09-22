@@ -3,15 +3,15 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { nativePackageName, resolveNativeBinary } from "./lib/launcher.mjs";
-import { nativeTargets } from "./lib/native-targets.mjs";
+import { nativePackageName, resolveNativeBinary } from "./dist/internal/launcher.js";
+import { nativeTargets } from "./dist/internal/native-targets.js";
 
 const targets = [
   ["darwin", "arm64", "@tnldotdev/tnl-darwin-arm64"],
   ["darwin", "x64", "@tnldotdev/tnl-darwin-x64"],
   ["linux", "arm64", "@tnldotdev/tnl-linux-arm64"],
   ["linux", "x64", "@tnldotdev/tnl-linux-x64"],
-];
+] as const;
 
 test("selects the native package for each supported target", () => {
   for (const [platform, architecture, expected] of targets) {
@@ -30,7 +30,7 @@ test("catalog matches independent targets and native manifests", () => {
   );
   assert(Object.isFrozen(nativeTargets));
   for (const [platform, architecture, name] of targets) {
-    const manifest = JSON.parse(
+    const manifest = jsonRecord(
       readFileSync(
         new URL(`./native/${platform}-${architecture}/package.json`, import.meta.url),
         "utf8",
@@ -46,7 +46,11 @@ test("native binary resolution preserves installation checks", (t) => {
   const directory = mkdtempSync(path.join(tmpdir(), "tnl-launcher-test-"));
   t.after(() => rmSync(directory, { force: true, recursive: true }));
   const manifestPath = path.join(directory, "package.json");
-  const options = { platform: "linux", architecture: "x64", resolve: () => manifestPath };
+  const options = {
+    platform: "linux",
+    architecture: "x64",
+    resolve: () => manifestPath,
+  } satisfies NonNullable<Parameters<typeof resolveNativeBinary>[0]>;
   assert.throws(
     () =>
       resolveNativeBinary({
@@ -57,9 +61,13 @@ test("native binary resolution preserves installation checks", (t) => {
       }),
     /without disabling optional dependencies/,
   );
-  const launcherManifest = JSON.parse(
+  const launcherManifest = jsonRecord(
     readFileSync(new URL("./package.json", import.meta.url), "utf8"),
   );
+  for (const manifest of [null, {}, { version: 1 }]) {
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+    assert.throws(() => resolveNativeBinary(options), /invalid shape/);
+  }
   writeFileSync(manifestPath, JSON.stringify({ version: "wrong-version" }));
   assert.throws(() => resolveNativeBinary(options), /does not match/);
   writeFileSync(manifestPath, JSON.stringify({ version: launcherManifest.version }));
@@ -77,3 +85,9 @@ test("rejects unsupported targets", () => {
     /unsupported platform win32-x64; tnl supports macOS and Linux on arm64 and x64/,
   );
 });
+
+function jsonRecord(serialized: string): Record<string, unknown> {
+  const value = JSON.parse(serialized) as unknown;
+  assert(value !== null && typeof value === "object" && !Array.isArray(value));
+  return value as Record<string, unknown>;
+}

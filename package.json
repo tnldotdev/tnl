@@ -7,13 +7,13 @@
     "clean": "pnpm --recursive --if-present run clean",
     "format": "oxfmt --write '**/*'",
     "format:check": "oxfmt --check '**/*'",
-    "lint": "oxlint --deny-warnings internal/projectconfig/loader.mjs packages scripts vitest.config.ts",
-    "pack": "node scripts/verify-packages.mjs",
+    "lint": "oxlint --deny-warnings --report-unused-disable-directives internal/projectconfig/loader.ts packages scripts vitest.config.ts",
+    "pack": "node scripts/verify-packages.ts",
     "test": "pnpm build && pnpm test:run",
-    "test:run": "vitest run && node --test packages/tnl/launcher.test.mjs",
+    "test:run": "vitest run && node --test packages/tnl/launcher.test.ts",
     "test:coverage": "pnpm build && vitest run --coverage --mode coverage",
     "typecheck": "pnpm build && pnpm typecheck:run",
-    "typecheck:run": "tsc --project packages/tnl/type-test.tsconfig.json && tsc --project packages/tnl/augmented-type-test.tsconfig.json && tsc --project tsconfig.test.json"
+    "typecheck:run": "tsc --project packages/tnl/type-test.tsconfig.json && tsc --project packages/tnl/augmented-type-test.tsconfig.json && tsc --project tsconfig.test.json && tsc --project tsconfig.tooling.json"
   },
   "devDependencies": {
     "@types/node": "22.20.3",
@@ -26,7 +26,8 @@
     "oxlint": "1.82.0",
     "typescript": "7.0.2",
     "vitest": "5.0.0",
-    "ws": "8.21.3"
+    "ws": "8.21.3",
+    "zod": "4.6.0"
   },
   "engines": {
     "node": ">=22.18"

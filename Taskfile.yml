@@ -150,8 +150,8 @@ tasks:
   go:generate-check:
     cmds:
       - task: go:generate
-      - git diff --exit-code HEAD -- pkg/api internal/clientstate/clientstatedb internal/controlstate/controlstatedb internal/projectconfig/keys.gen.json packages/tnl/lib/config.d.ts schema/v1.json
-      - test -z "$(git ls-files --others --exclude-standard -- pkg/api internal/clientstate/clientstatedb internal/controlstate/controlstatedb internal/projectconfig/keys.gen.json packages/tnl/lib/config.d.ts schema/v1.json)"
+      - git diff --exit-code HEAD -- pkg/api internal/clientstate/clientstatedb internal/controlstate/controlstatedb internal/projectconfig/keys.gen.json internal/projectconfig/loader.mjs packages/tnl/src/config.gen.ts schema/v1.json
+      - test -z "$(git ls-files --others --exclude-standard -- pkg/api internal/clientstate/clientstatedb internal/controlstate/controlstatedb internal/projectconfig/keys.gen.json internal/projectconfig/loader.mjs packages/tnl/src/config.gen.ts schema/v1.json)"
 
   go:format:
     cmds:
@@ -192,7 +192,7 @@ tasks:
     vars:
       RUN: '{{default "^TestIntegration" .RUN}}'
     cmds:
-      - node scripts/run-go-tests-with-postgres.mjs -- go test -race -v ./internal/controlapi ./internal/controlstate ./internal/certificates ./internal/dnscontroller ./internal/tnldruntime -run='{{.RUN}}' -count=1 -timeout=15m -args -tnl-test-tier=integration
+      - node scripts/run-go-tests-with-postgres.ts -- go test -race -v ./internal/controlapi ./internal/controlstate ./internal/certificates ./internal/dnscontroller ./internal/tnldruntime -run='{{.RUN}}' -count=1 -timeout=15m -args -tnl-test-tier=integration
 
   go:test:integration:binary:
     desc: Run Linux binary integration tests
@@ -201,7 +201,7 @@ tasks:
       - sh: test "$(uname -s)" = Linux
         msg: Binary integration tests require Linux
     cmds:
-      - node scripts/run-go-tests-with-postgres.mjs -- go test -race -v ./internal/tnldruntime -run='^TestBinaryIntegration' -count=1 -timeout=15m -args -tnl-test-tier=binary
+      - node scripts/run-go-tests-with-postgres.ts -- go test -race -v ./internal/tnldruntime -run='^TestBinaryIntegration' -count=1 -timeout=15m -args -tnl-test-tier=binary
 
   go:test:integration:dns:
     desc: Run the authoritative DNS integration test in disposable Linux containers
@@ -229,7 +229,7 @@ tasks:
       RETENTION: '{{default "0s" .RETENTION}}'
       RUN: '{{default "^TestLoad" .RUN}}'
     cmds:
-      - node scripts/run-go-tests-with-postgres.mjs -- go test -v ./internal/controlstate -run='{{.RUN}}' -count=1 -timeout=20m -args -tnl-test-tier=database-load -tnl-load-delay='{{.DELAY}}' -tnl-load-routes='{{.ROUTES}}' -tnl-load-history='{{.HISTORY}}' -tnl-load-duration='{{.DURATION}}' -tnl-load-retention='{{.RETENTION}}'
+      - node scripts/run-go-tests-with-postgres.ts -- go test -v ./internal/controlstate -run='{{.RUN}}' -count=1 -timeout=20m -args -tnl-test-tier=database-load -tnl-load-delay='{{.DELAY}}' -tnl-load-routes='{{.ROUTES}}' -tnl-load-history='{{.HISTORY}}' -tnl-load-duration='{{.DURATION}}' -tnl-load-retention='{{.RETENTION}}'
 
   go:test:load:runtime:
     desc: Run per-component constrained real visitor/recovery/shutdown load
@@ -262,7 +262,7 @@ tasks:
       RACE: "{{.RACE}}"
       RESULTS: "{{.ROOT_DIR}}/{{.RESULTS}}"
     cmds:
-      - node scripts/runtime-load.mjs
+      - node scripts/runtime-load.ts
 
   go:test:fuzz:
     desc: Fuzz all Go parser and policy boundaries
@@ -346,8 +346,8 @@ tasks:
   release:npm-package:
     desc: Package the tnl release binaries for npm
     cmds:
-      - node scripts/pack-tnl.mjs dist/npm
-      - node scripts/verify-tnl-install.mjs dist/npm
+      - node scripts/pack-tnl.ts dist/npm
+      - node scripts/verify-tnl-install.ts dist/npm
 
   workflows:lint:
     cmds:

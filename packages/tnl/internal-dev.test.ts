@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 import { describe, expect, test } from "vitest";
+import * as z from "zod";
 import {
   canonicalLoopbackTarget,
   discoverProject,
@@ -338,12 +339,16 @@ describe("protocol v1", () => {
 });
 
 test("socket identity matches the shared Go fixture", async () => {
-  const vectors = JSON.parse(
-    await readFile(
-      new URL("../../cmd/tnl/testdata/dev-socket-vectors.json", import.meta.url),
-      "utf8",
-    ),
-  ) as Array<{ projectRoot: string; service: string; digest: string }>;
+  const vectors = z
+    .array(z.object({ projectRoot: z.string(), service: z.string(), digest: z.string() }))
+    .parse(
+      JSON.parse(
+        await readFile(
+          new URL("../../cmd/tnl/testdata/dev-socket-vectors.json", import.meta.url),
+          "utf8",
+        ),
+      ),
+    );
   expect(vectors).not.toHaveLength(0);
   for (const vector of vectors) {
     expect(socketIdentity(vector.projectRoot, vector.service)).toBe(vector.digest);

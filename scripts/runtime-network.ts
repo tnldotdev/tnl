@@ -1,15 +1,28 @@
 // Target only the transport under experiment; control, DNS, and resource
 // collection keep their ordinary paths. Each returned endpoint owns its qdisc.
-export function impairmentEndpoints(path, addresses) {
-  if (!["forwarding", "publisher"].includes(path)) throw new Error("invalid network path");
+export type ImpairmentScenario = "latency" | "packet-loss";
+export type NetworkPath = "forwarding" | "publisher";
+export type RuntimeService = "ingress" | "publishers" | "relay-a" | "relay-b";
+
+export interface ImpairmentEndpoint {
+  readonly filters: string[][];
+  readonly service: RuntimeService;
+}
+
+export function impairmentEndpoints(
+  path: string | undefined,
+  addresses: Readonly<Record<RuntimeService, string>>,
+): [ImpairmentEndpoint, ...ImpairmentEndpoint[]] {
+  if (path !== "forwarding" && path !== "publisher") throw new Error("invalid network path");
   const source = path === "forwarding" ? "ingress" : "publishers";
   const port = path === "forwarding" ? "8443" : "443";
   const protocols = path === "forwarding" ? ["6"] : ["6", "17"];
-  const endpoints = [{ service: source, filters: [] }];
-  for (const relay of ["relay-a", "relay-b"]) {
-    const reverse = { service: relay, filters: [] };
+  const forward: ImpairmentEndpoint = { service: source, filters: [] };
+  const endpoints: [ImpairmentEndpoint, ...ImpairmentEndpoint[]] = [forward];
+  for (const relay of ["relay-a", "relay-b"] as const) {
+    const reverse: ImpairmentEndpoint = { service: relay, filters: [] };
     for (const protocol of protocols) {
-      endpoints[0].filters.push([
+      forward.filters.push([
         "match",
         "ip",
         "dst",
@@ -47,10 +60,15 @@ export function impairmentEndpoints(path, addresses) {
   return endpoints;
 }
 
-export function netemOptions(scenario, rtt, loss, seed) {
-  let options;
+export function netemOptions(
+  scenario: ImpairmentScenario,
+  rtt: string | undefined,
+  loss: string | undefined,
+  seed: string | undefined,
+): string[] {
+  let options: string[];
   if (scenario === "latency") {
-    if (!["20ms", "50ms", "100ms"].includes(rtt))
+    if (rtt !== "20ms" && rtt !== "50ms" && rtt !== "100ms")
       throw new Error("RTT must be 20ms, 50ms, or 100ms");
     options = ["delay", `${Number.parseInt(rtt, 10) / 2}ms`];
   } else if (scenario === "packet-loss") {

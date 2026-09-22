@@ -15,5 +15,5 @@
     "packages/tnl/fixtures/**/*.ts",
     "packages/tnl/fixtures/**/*.tsx"
   ],
-  "exclude": ["**/.next/**", "**/dist/**", "**/node_modules/**"]
+  "exclude": ["**/.next/**", "**/dist/**", "**/node_modules/**", "packages/tnl/launcher.test.ts"]
 }

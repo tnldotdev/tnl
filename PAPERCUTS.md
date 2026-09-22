@@ -8,3 +8,5 @@
 - The monotonic schedule regression initially used `testing/synctest`, whose synthetic timestamps do not retain a real monotonic clock reading. Use real `time.Now` values for serialization/rebasing assertions; keep fake time for scheduling and cancellation behavior.
 - `task format-check` hides the paths reported by `goimports` because it captures them in a command substitution. Run `mise exec -- goimports -l .` to identify formatting drift after the task fails.
 - Runtime evidence is written by a root container into host-mounted `bench-results`; mode `0600` prevents GitHub's artifact uploader from reading an otherwise successful run.
+- The typing migration found that pinned TypeScript 7 does not expose the old `transpileModule` API and Node 22 does not strip types from `--eval`. The embedded loader is now compiled through the pinned `tsc` CLI before Go embeds it.
+- Full declaration checking currently fails inside Next.js/Vite/Vitest dependencies; framework projects retain `skipLibCheck`, while handwritten sources and public contract tests use the stricter compiler settings.

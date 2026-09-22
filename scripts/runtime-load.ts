@@ -1,11 +1,38 @@
-import { spawn, execFileSync } from "node:child_process";
+import assert from "node:assert/strict";
+import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { impairmentEndpoints, netemOptions } from "./runtime-network.mjs";
+import * as z from "zod";
+import { impairmentEndpoints, netemOptions, type RuntimeService } from "./runtime-network.ts";
+import { parseJSON } from "./validation.ts";
 
-const results = process.env.RESULTS;
-if (!results) throw new Error("RESULTS is required");
+const faultSchema = z.enum([
+  "relay-kill",
+  "forwarding-blackhole",
+  "publisher-blackhole",
+  "udp-fallback",
+  "latency",
+  "packet-loss",
+]);
+type Fault = z.infer<typeof faultSchema>;
+const containerSchema = z.object({
+  Id: z.string(),
+  Name: z.string(),
+  Config: z.object({ Labels: z.object({ "com.docker.compose.service": z.string() }) }),
+  State: z.object({ Running: z.boolean(), ExitCode: z.number().int() }),
+  NetworkSettings: z.object({
+    Networks: z.record(z.string(), z.object({ IPAddress: z.string() })),
+  }),
+});
+const qdiscsSchema = z.array(z.looseObject({ kind: z.string(), packets: z.optional(z.number()) }));
+type FaultEvents = {
+  "fault.applied": { Started: string; Exited: string };
+  "fault.restored": string;
+  "udp.cleaned": boolean;
+};
+
+const results = z.string().min(1).parse(process.env.RESULTS);
 if (existsSync(results) && readdirSync(results).length !== 0)
   throw new Error(
     "RESULTS must be a fresh or empty directory; preserve earlier experiment artifacts",
@@ -20,7 +47,7 @@ const composeArgs = [
   "--file",
   "internal/tnldruntime/testdata/separated-load.compose.yaml",
 ];
-function docker(args, quiet = false) {
+function docker(args: readonly string[], quiet = false): string {
   return execFileSync("docker", args, {
     encoding: "utf8",
     // A fresh CI runner compiles the race binary and dependencies inside Docker.
@@ -28,43 +55,61 @@ function docker(args, quiet = false) {
     stdio: ["ignore", "pipe", quiet ? "pipe" : "inherit"],
   });
 }
-const compose = (args, quiet = false) => docker([...composeArgs, ...args], quiet);
-let logs;
+const compose = (args: readonly string[], quiet = false) =>
+  docker([...composeArgs, ...args], quiet);
+let logs: ChildProcess | undefined;
 let stopping = false;
-let token;
-let endpoint;
-let faultTask;
-let faultError;
+let coordinatorConnection: { readonly token: string; readonly endpoint: string } | undefined;
+let faultTask: Promise<void> | undefined;
+let faultError: unknown;
 let intentionalRelayExit = false;
 let faultStarted = false;
 let interrupted = false;
-const externalFault = [
-  "relay-kill",
-  "forwarding-blackhole",
-  "publisher-blackhole",
-  "udp-fallback",
-  "latency",
-  "packet-loss",
-].includes(process.env.SCENARIO);
+const externalFault = faultSchema.safeParse(process.env.SCENARIO).success;
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"])
   process.on(signal, () => {
     interrupted = true;
   });
 
-async function event(name, value) {
-  const response = await fetch(`${endpoint}/v1/events/${name}`, {
-    method: value === undefined ? "GET" : "PUT",
-    headers: { Authorization: `Bearer ${token}` },
-    body: value === undefined ? undefined : JSON.stringify(value),
+async function eventRequest(name: string, body?: string): Promise<Response> {
+  assert(coordinatorConnection, "coordinator connection is not configured");
+  return fetch(`${coordinatorConnection.endpoint}/v1/events/${name}`, {
+    method: body === undefined ? "GET" : "PUT",
+    headers: { Authorization: `Bearer ${coordinatorConnection.token}` },
+    ...(body === undefined ? {} : { body }),
     signal: AbortSignal.timeout(15_000),
   });
-  if (response.status === 404) return undefined;
-  if (!response.ok) throw new Error(`coordinator ${name}: HTTP ${response.status}`);
-  if (response.status === 204) return;
-  return response.json();
 }
 
-async function interruptibleSleep(ms) {
+async function readEvent<Output>(
+  name: string,
+  schema: z.ZodType<Output>,
+): Promise<Output | undefined> {
+  const response = await eventRequest(name);
+  if (response.status === 404) return undefined;
+  if (!response.ok) throw new Error(`coordinator ${name}: HTTP ${response.status}`);
+  return parseJSON(await response.text(), schema, `coordinator ${name}`);
+}
+
+async function event<Name extends keyof FaultEvents>(
+  name: Name,
+  value: FaultEvents[Name],
+): Promise<void> {
+  const response = await eventRequest(name, JSON.stringify(value));
+  if (!response.ok) throw new Error(`coordinator ${name}: HTTP ${response.status}`);
+}
+
+function inspect(ids: readonly string[]): z.infer<typeof containerSchema>[] {
+  return parseJSON(docker(["inspect", ...ids]), z.array(containerSchema), "Docker inspection");
+}
+
+function containerID(containers: ReadonlyMap<string, string>, service: string): string {
+  const id = containers.get(service);
+  assert(id, `${service} container is missing`);
+  return id;
+}
+
+async function interruptibleSleep(ms: number): Promise<void> {
   const until = Date.now() + ms;
   while (Date.now() < until) {
     if (stopping || interrupted) throw new Error("runtime workload interrupted");
@@ -74,9 +119,9 @@ async function interruptibleSleep(ms) {
 
 // Restore every owned mutation even when setup or evidence collection fails.
 // Keep the original failure alongside cleanup failures.
-async function withFaultCleanup(run) {
-  const undo = [];
-  const failures = [];
+async function withFaultCleanup(run: (undo: string[][]) => Promise<void>): Promise<void> {
+  const undo: string[][] = [];
+  const failures: unknown[] = [];
   try {
     await run(undo);
   } catch (error) {
@@ -92,17 +137,18 @@ async function withFaultCleanup(run) {
   if (failures.length) throw new AggregateError(failures, "runtime fault failed");
 }
 
-async function applyFault(scenario, containers) {
+async function applyFault(scenario: Fault, containers: ReadonlyMap<string, string>): Promise<void> {
   const started = new Date().toISOString();
-  const address = (service) => {
-    const container = JSON.parse(docker(["inspect", containers[service]]))[0];
-    const value = Object.values(container.NetworkSettings.Networks)[0].IPAddress;
+  const address = (service: RuntimeService) => {
+    const [container] = inspect([containerID(containers, service)]);
+    assert(container, `${service} inspection is missing`);
+    const value = Object.values(container.NetworkSettings.Networks)[0]?.IPAddress;
     if (!value) throw new Error(`${service} has no IPv4 address`);
     return value;
   };
-  const waitForEvent = async (name) => {
+  const waitForEvent = async (name: "publishers.ready" | "fault.release") => {
     const deadline = Date.now() + 600_000;
-    while (!(await event(name))) {
+    while (!(await readEvent(name, z.unknown()))) {
       if (Date.now() >= deadline) throw new Error("active-fault measurement exceeded watchdog");
       await interruptibleSleep(250);
     }
@@ -110,7 +156,9 @@ async function applyFault(scenario, containers) {
   if (scenario === "relay-kill") {
     intentionalRelayExit = true;
     compose(["kill", "--signal", "SIGKILL", "relay-a"]);
-    const state = JSON.parse(docker(["inspect", containers["relay-a"]]))[0].State;
+    const [relay] = inspect([containerID(containers, "relay-a")]);
+    assert(relay, "relay inspection is missing");
+    const state = relay.State;
     if (state.Running || state.ExitCode !== 137)
       throw new Error("relay kill did not produce the expected process exit");
     await event("fault.applied", { Started: started, Exited: new Date().toISOString() });
@@ -120,12 +168,13 @@ async function applyFault(scenario, containers) {
     intentionalRelayExit = false;
   } else if (["forwarding-blackhole", "publisher-blackhole", "udp-fallback"].includes(scenario)) {
     const service = scenario === "forwarding-blackhole" ? "ingress" : "publishers";
-    const relays = scenario === "udp-fallback" ? ["relay-a", "relay-b"] : ["relay-a"];
+    const relays: RuntimeService[] =
+      scenario === "udp-fallback" ? ["relay-a", "relay-b"] : ["relay-a"];
     const protocols =
       scenario === "publisher-blackhole"
         ? ["tcp", "udp"]
         : [scenario === "udp-fallback" ? "udp" : "tcp"];
-    const rules = [];
+    const rules: string[][] = [];
     await withFaultCleanup(async (undo) => {
       for (const relay of relays)
         for (const protocol of protocols) {
@@ -181,16 +230,19 @@ async function applyFault(scenario, containers) {
       )
         throw new Error("blackhole rule dropped no packets");
     });
-  } else if (["latency", "packet-loss"].includes(scenario)) {
-    const addresses = Object.fromEntries(
-      ["ingress", "publishers", "relay-a", "relay-b"].map((service) => [service, address(service)]),
-    );
+  } else if (scenario === "latency" || scenario === "packet-loss") {
+    const addresses = {
+      ingress: address("ingress"),
+      publishers: address("publishers"),
+      "relay-a": address("relay-a"),
+      "relay-b": address("relay-b"),
+    };
     const endpoints = impairmentEndpoints(process.env.NETWORK_PATH, addresses);
     const options = netemOptions(scenario, process.env.RTT, process.env.LOSS, process.env.SEED);
     await withFaultCleanup(async (undo) => {
-      const matched = new Set();
+      const matched = new Set<RuntimeService>();
       for (const endpoint of endpoints) {
-        const tc = (...args) => compose(["exec", "-T", endpoint.service, "tc", ...args]);
+        const tc = (...args: string[]) => compose(["exec", "-T", endpoint.service, "tc", ...args]);
         tc(
           "qdisc",
           "add",
@@ -203,7 +255,7 @@ async function applyFault(scenario, containers) {
           "bands",
           "3",
           "priomap",
-          ...Array(16).fill("0"),
+          ...Array.from({ length: 16 }, () => "0"),
         );
         undo.push(["exec", "-T", endpoint.service, "tc", "qdisc", "del", "dev", "eth0", "root"]);
         tc("qdisc", "add", "dev", "eth0", "parent", "1:3", "handle", "30:", "netem", ...options);
@@ -244,35 +296,36 @@ async function applyFault(scenario, containers) {
       await event("fault.applied", { Started: started, Exited: new Date().toISOString() });
       await waitForEvent("fault.release");
       for (const endpoint of endpoints) {
-        const evidence = {};
-        for (const command of ["qdisc", "filter"])
-          evidence[command] = JSON.parse(
-            compose([
-              "exec",
-              "-T",
-              endpoint.service,
-              "tc",
-              "-j",
-              "-s",
-              command,
-              "show",
-              "dev",
-              "eth0",
-            ]),
-          );
-        evidence.tcp = compose(["exec", "-T", endpoint.service, "ss", "-tin"]);
+        const tc = (command: "qdisc" | "filter") =>
+          compose([
+            "exec",
+            "-T",
+            endpoint.service,
+            "tc",
+            "-j",
+            "-s",
+            command,
+            "show",
+            "dev",
+            "eth0",
+          ]);
+        const evidence = {
+          qdisc: parseJSON(tc("qdisc"), qdiscsSchema, "tc qdisc evidence"),
+          filter: parseJSON(tc("filter"), z.array(z.unknown()), "tc filter evidence"),
+          tcp: compose(["exec", "-T", endpoint.service, "ss", "-tin"]),
+        };
         writeFileSync(
           join(results, `${endpoint.service}-netem.json`),
           JSON.stringify(evidence, null, 2),
         );
-        if (evidence.qdisc.some((q) => q.kind === "netem" && q.packets > 0))
+        if (evidence.qdisc.some((q) => q.kind === "netem" && (q.packets ?? 0) > 0))
           matched.add(endpoint.service);
       }
       // A healthy route may use only one relay. Require both directions of an
       // exercised path, while retaining zero counters for the unused alternate.
       if (
         !matched.has(endpoints[0].service) ||
-        !["relay-a", "relay-b"].some((service) => matched.has(service))
+        !(["relay-a", "relay-b"] as const).some((service) => matched.has(service))
       )
         throw new Error("netem did not impair both directions of a visitor path");
     });
@@ -312,23 +365,30 @@ try {
     stdio: ["ignore", "inherit", "inherit"],
   });
   const ids = compose(["ps", "--all", "--quiet"]).trim().split(/\s+/);
-  const containers = {};
-  for (const container of JSON.parse(docker(["inspect", ...ids])))
-    containers[container.Config.Labels["com.docker.compose.service"]] = container.Id;
-  endpoint = `http://${compose(["port", "coordinator", "8080"]).trim()}`;
-  token = compose(["exec", "-T", "coordinator", "cat", "/load/coordinator-token"]).trim();
+  const containers = new Map(
+    inspect(ids).map((container) => [
+      container.Config.Labels["com.docker.compose.service"],
+      container.Id,
+    ]),
+  );
+  coordinatorConnection = {
+    endpoint: `http://${compose(["port", "coordinator", "8080"]).trim()}`,
+    token: compose(["exec", "-T", "coordinator", "cat", "/load/coordinator-token"]).trim(),
+  };
   const deadline = Date.now() + 20 * 60_000;
   for (;;) {
     if (interrupted) throw new Error("runtime workload interrupted");
     if (faultError) throw faultError;
     if (Date.now() > deadline) throw new Error("runtime workload exceeded 20 minutes");
-    const states = JSON.parse(docker(["inspect", ...ids]));
-    const coordinator = states.find((c) => c.Id === containers.coordinator);
+    const states = inspect(ids);
+    const coordinatorID = containerID(containers, "coordinator");
+    const coordinator = states.find((c) => c.Id === coordinatorID);
+    assert(coordinator, "coordinator inspection is missing");
     for (const container of states) {
-      if (container.Id === containers.coordinator) continue;
+      if (container.Id === coordinatorID) continue;
       if (container.State.Running) continue;
       if (
-        container.Id === containers["relay-a"] &&
+        container.Id === containerID(containers, "relay-a") &&
         intentionalRelayExit &&
         container.State.ExitCode === 137
       )
@@ -340,7 +400,7 @@ try {
       break;
     }
     if (externalFault && !faultStarted) {
-      const scenario = await event("fault.request");
+      const scenario = await readEvent("fault.request", faultSchema);
       if (scenario) {
         faultStarted = true;
         faultTask = applyFault(scenario, containers).catch((error) => {
@@ -360,11 +420,13 @@ try {
     console.error(faultError);
     status = 1;
   }
-  const cleanup = (args) => {
+  const cleanup = (args: readonly string[]) => {
     try {
       return compose(args, true);
     } catch (error) {
-      console.error(`cleanup ${args.join(" ")}: ${error.message}`);
+      console.error(
+        `cleanup ${args.join(" ")}: ${error instanceof Error ? error.message : String(error)}`,
+      );
       status = 1;
       return "";
     }
@@ -383,8 +445,9 @@ try {
     cleanup(["stop", ...services]);
   writeFileSync(join(results, "containers.json"), cleanup(["ps", "--all", "--format", "json"]));
   if (logs && logs.exitCode === null && logs.signalCode === null) {
-    const exited = new Promise((resolve) => logs.once("exit", resolve));
-    logs.kill("SIGTERM");
+    const process = logs;
+    const exited = new Promise<void>((resolve) => process.once("exit", () => resolve()));
+    process.kill("SIGTERM");
     await exited;
   }
   cleanup(["down", "--volumes", "--remove-orphans"]);

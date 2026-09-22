@@ -4,6 +4,8 @@ import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { packageManifestSchema } from "./npm-artifacts.ts";
+import { parseJSON } from "./validation.ts";
 
 const run = promisify(execFile);
 const root = path.resolve(import.meta.dirname, "..");
@@ -26,8 +28,9 @@ try {
   }
   const tarball = path.join(directory, filename);
   const { stdout: manifestData } = await run("tar", ["-xOzf", tarball, "package/package.json"]);
-  const manifest = JSON.parse(manifestData);
+  const manifest = parseJSON(manifestData, packageManifestSchema, "packed manifest");
   assert.equal(manifest.name, packageName);
+  assert(manifest.exports, "package must define public exports");
   assert.deepEqual(Object.keys(manifest.exports).sort(), [".", "./config", "./next", "./vite"]);
   assert(!JSON.stringify(manifest).includes("workspace:"));
 

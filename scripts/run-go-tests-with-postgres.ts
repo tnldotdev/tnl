@@ -1,11 +1,11 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import process from "node:process";
 
 const separator = process.argv.indexOf("--", 2);
 if (separator === -1 || separator === process.argv.length - 1) {
-  throw new Error("usage: node scripts/run-go-tests-with-postgres.mjs -- COMMAND [ARGUMENTS...]");
+  throw new Error("usage: node scripts/run-go-tests-with-postgres.ts -- COMMAND [ARGUMENTS...]");
 }
 
 const root = path.resolve(import.meta.dirname, "..");
@@ -14,11 +14,12 @@ const container = `tnl-test-postgres-${identity}`;
 const image =
   "postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94";
 const command = process.argv[separator + 1];
+if (command === undefined) throw new Error("test command is required");
 const arguments_ = process.argv.slice(separator + 2);
-let testProcess;
+let testProcess: ChildProcess | undefined;
 let stopping = false;
 
-for (const signal of ["SIGINT", "SIGTERM"]) {
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, async () => {
     if (stopping) return;
     stopping = true;
@@ -91,16 +92,15 @@ async function removeContainer() {
   await run("docker", ["rm", "--force", container], false, true);
 }
 
-function output(executable, arguments_) {
-  return new Promise((resolve, reject) => {
+function output(executable: string, arguments_: readonly string[]): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
     const child = spawn(executable, arguments_, {
-      encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
     let stderr = "";
-    child.stdout.on("data", (data) => (stdout += data));
-    child.stderr.on("data", (data) => (stderr += data));
+    child.stdout.setEncoding("utf8").on("data", (data: string) => (stdout += data));
+    child.stderr.setEncoding("utf8").on("data", (data: string) => (stderr += data));
     child.once("error", reject);
     child.once("close", (code) => {
       if (code === 0) resolve(stdout);
@@ -109,8 +109,13 @@ function output(executable, arguments_) {
   });
 }
 
-function run(executable, arguments_, inherited = false, allowFailure = false) {
-  return new Promise((resolve, reject) => {
+function run(
+  executable: string,
+  arguments_: readonly string[],
+  inherited = false,
+  allowFailure = false,
+): Promise<number> {
+  return new Promise<number>((resolve, reject) => {
     const child = spawn(executable, arguments_, { stdio: inherited ? "inherit" : "ignore" });
     if (inherited) testProcess = child;
     child.once("error", reject);

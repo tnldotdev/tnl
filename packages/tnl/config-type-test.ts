@@ -1,4 +1,9 @@
-import { defineConfig, type TnlConfigInput } from "@tnldotdev/tnl/config";
+import {
+  defineConfig,
+  type TnlConfig,
+  type TnlConfigContext,
+  type TnlConfigInput,
+} from "@tnldotdev/tnl/config";
 
 const staticConfig = {
   tunnel: { allowIP: ["192.0.2.0/24"], subdomain: "review", requestLimit: 750 },
@@ -10,6 +15,17 @@ const dynamicConfig = defineConfig(async ({ cwd, env, worktree }) => ({
   ...staticConfig,
   tunnel: { subdomain: `${env.USER ?? "user"}-${worktree.label}-${cwd.length}` },
 }));
+
+declare const environment: TnlConfigContext["env"];
+environment.ARBITRARY_VARIABLE satisfies string | undefined;
+// @ts-expect-error Environment variables need not exist.
+environment.ARBITRARY_VARIABLE satisfies string;
+
+declare const services: NonNullable<TnlConfig["services"]>;
+// @ts-expect-error Configured services need not exist for an arbitrary name.
+services.arbitraryService.directory satisfies string | undefined;
+const service = services.arbitraryService;
+if (service) service.directory satisfies string | undefined;
 
 const literalConfig = defineConfig({
   dev: { port: 4173 },

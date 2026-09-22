@@ -2,10 +2,10 @@ import { constants, accessSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import process from "node:process";
-import { nativeTargets } from "./native-targets.mjs";
+import { nativeTargets } from "./native-targets.js";
 
 const require = createRequire(import.meta.url);
-const launcherManifest = new URL("../package.json", import.meta.url);
+const launcherManifest = new URL("../../package.json", import.meta.url);
 
 const nativePackages = new Map(
   nativeTargets.map(({ platform, architecture, packageName }) => [
@@ -14,7 +14,20 @@ const nativePackages = new Map(
   ]),
 );
 
-export function nativePackageName(platform, architecture) {
+interface NativeBinaryOptions {
+  readonly architecture?: NodeJS.Architecture;
+  readonly platform?: NodeJS.Platform;
+  readonly resolve?: (specifier: string) => string;
+}
+
+interface PackageManifest {
+  readonly version: string;
+}
+
+export function nativePackageName(
+  platform: NodeJS.Platform,
+  architecture: NodeJS.Architecture,
+): string {
   const packageName = nativePackages.get(`${platform}-${architecture}`);
   if (packageName === undefined) {
     throw new Error(
@@ -24,13 +37,14 @@ export function nativePackageName(platform, architecture) {
   return packageName;
 }
 
-export function resolveNativeBinary({
-  architecture = process.arch,
-  platform = process.platform,
-  resolve = require.resolve,
-} = {}) {
+export function resolveNativeBinary(options: NativeBinaryOptions = {}): string {
+  const {
+    architecture = process.arch,
+    platform = process.platform,
+    resolve = require.resolve,
+  } = options;
   const packageName = nativePackageName(platform, architecture);
-  let nativeManifestPath;
+  let nativeManifestPath: string;
   try {
     nativeManifestPath = resolve(`${packageName}/package.json`);
   } catch (error) {
@@ -60,6 +74,15 @@ export function resolveNativeBinary({
   return binary;
 }
 
-function readManifest(file) {
-  return JSON.parse(readFileSync(file, "utf8"));
+function readManifest(file: string | URL): PackageManifest {
+  const value = JSON.parse(readFileSync(file, "utf8")) as unknown;
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    !("version" in value) ||
+    typeof value.version !== "string"
+  ) {
+    throw new Error("package manifest has an invalid shape");
+  }
+  return { version: value.version };
 }

@@ -9,12 +9,10 @@
     "directory": "packages/tnl"
   },
   "bin": {
-    "tnl": "bin/tnl.mjs"
+    "tnl": "dist/bin/tnl.js"
   },
   "files": [
-    "bin",
     "dist",
-    "lib",
     "NOTICE",
     "THIRD_PARTY_LICENSES.txt"
   ],
@@ -27,8 +25,9 @@
       "default": "./dist/index.js"
     },
     "./config": {
-      "types": "./lib/config.d.ts",
-      "import": "./lib/config.mjs"
+      "types": "./dist/config.d.ts",
+      "import": "./dist/config.js",
+      "default": "./dist/config.js"
     },
     "./next": {
       "types": "./dist/next.d.ts",
@@ -46,7 +45,7 @@
   },
   "scripts": {
     "build": "pnpm run clean && tsc --project tsconfig.json",
-    "clean": "node ../../scripts/clean-package.mjs",
+    "clean": "node ../../scripts/clean-package.ts",
     "prepack": "pnpm run build"
   },
   "devDependencies": {

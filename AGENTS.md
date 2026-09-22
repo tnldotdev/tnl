@@ -299,6 +299,7 @@ Frames follow this general form:
 - PostgreSQL-backed targets must create, use, and remove digest-pinned disposable PostgreSQL themselves.
 - Use environment variables only for Task/Compose orchestration and resource limits; pass test-binary settings as flags.
 - Package `test` and `typecheck` scripts build explicitly; `*:run` variants reuse an existing build.
+- Author Node tooling and npm runtime code in TypeScript. Keep strict compiler and lint checks enabled; validate external data before narrowing it. The embedded project-config loader JavaScript is generated from `internal/projectconfig/loader.ts`.
 
 # Architecture
 

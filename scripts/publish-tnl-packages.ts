@@ -5,18 +5,50 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { promisify } from "node:util";
-import { nativeTargets } from "../packages/tnl/lib/native-targets.mjs";
+import * as z from "zod";
+import {
+  nativeTargets,
+  type NativePlatform,
+  type NativeArchitecture,
+} from "../packages/tnl/src/internal/native-targets.ts";
+import {
+  npmPackageMetadataSchema,
+  packageManifestSchema,
+  type PackedPackage,
+} from "./npm-artifacts.ts";
+import { parseJSON, parseValue } from "./validation.ts";
+
+type ExpectedPackage =
+  | { readonly name: string; readonly kind: "launcher" }
+  | {
+      readonly name: string;
+      readonly kind: "native";
+      readonly os: NativePlatform;
+      readonly cpu: NativeArchitecture;
+    };
+
+const registryPackageSchema = z.object({
+  "dist-tags": z.optional(z.record(z.string(), z.string())),
+  versions: z.optional(
+    z.record(
+      z.string(),
+      z.object({
+        dist: z.optional(z.object({ integrity: z.optional(z.string()) })),
+      }),
+    ),
+  ),
+});
 
 const execFileAsync = promisify(execFile);
 const packageDirectoryArgument = process.argv[2];
 const expectedVersion = process.argv[3];
 assert(
   packageDirectoryArgument && expectedVersion,
-  "usage: node scripts/publish-tnl-packages.mjs PACKAGE_DIRECTORY EXPECTED_VERSION",
+  "usage: node scripts/publish-tnl-packages.ts PACKAGE_DIRECTORY EXPECTED_VERSION",
 );
 
-const expectedPackages = [
-  ...nativeTargets.map(({ platform, architecture, packageName }) => ({
+const expectedPackages: readonly ExpectedPackage[] = [
+  ...nativeTargets.map(({ platform, architecture, packageName }): ExpectedPackage => ({
     name: packageName,
     kind: "native",
     os: platform,
@@ -25,8 +57,10 @@ const expectedPackages = [
   { name: "@tnldotdev/tnl", kind: "launcher" },
 ];
 const packageDirectory = path.resolve(packageDirectoryArgument);
-const metadata = JSON.parse(
+const metadata = parseJSON(
   await readFile(path.join(packageDirectory, "tnl-npm-packages.json"), "utf8"),
+  npmPackageMetadataSchema,
+  "npm package metadata",
 );
 assert.equal(metadata.version, expectedVersion);
 assert.deepEqual(
@@ -68,7 +102,7 @@ for (const package_ of unpublished) {
   await publish(package_, distTag);
 }
 
-async function verifyLocalPackage(expected) {
+async function verifyLocalPackage(expected: ExpectedPackage): Promise<PackedPackage> {
   const entry = metadata.packages.find(({ name }) => name === expected.name);
   assert(entry !== undefined);
   assert.equal(
@@ -88,7 +122,7 @@ async function verifyLocalPackage(expected) {
   const { stdout } = await execFileAsync("tar", ["-xOzf", tarball, "package/package.json"], {
     maxBuffer: 1024 * 1024,
   });
-  const manifest = JSON.parse(stdout);
+  const manifest = parseJSON(stdout, packageManifestSchema, "packed manifest");
   assert.equal(manifest.name, expected.name);
   assert.equal(manifest.version, expectedVersion);
   for (const lifecycle of ["preinstall", "install", "postinstall"]) {
@@ -98,6 +132,7 @@ async function verifyLocalPackage(expected) {
     assert.deepEqual(manifest.os, [expected.os]);
     assert.deepEqual(manifest.cpu, [expected.cpu]);
   } else {
+    assert(manifest.exports, "launcher must define public exports");
     assert.deepEqual(Object.keys(manifest.exports).sort(), [".", "./config", "./next", "./vite"]);
     assert.deepEqual(
       manifest.optionalDependencies,
@@ -107,31 +142,33 @@ async function verifyLocalPackage(expected) {
           .map(({ name }) => [name, expectedVersion]),
       ),
     );
-    assert.deepEqual(manifest.bin, { tnl: "bin/tnl.mjs" });
+    assert.deepEqual(manifest.bin, { tnl: "dist/bin/tnl.js" });
   }
   return { ...entry, integrity, tarball };
 }
 
-async function publish(package_, tag) {
+async function publish(package_: PackedPackage, tag: "next" | "latest"): Promise<void> {
   await execFileAsync("npm", ["publish", package_.tarball, "--access", "public", "--tag", tag]);
   process.stdout.write(`${package_.name}@${expectedVersion} published with ${tag}\n`);
 }
 
-async function registryPackage(packageName) {
+async function registryPackage(
+  packageName: string,
+): Promise<z.infer<typeof registryPackageSchema> | null> {
   const url = new URL(`https://registry.npmjs.org/${encodeURIComponent(packageName)}`);
-  url.searchParams.set("cache-bust", Date.now());
+  url.searchParams.set("cache-bust", String(Date.now()));
   const response = await fetch(url, { signal: AbortSignal.timeout(10_000) });
   if (response.status === 404) {
     return null;
   }
   assert(response.ok, `npm registry returned ${response.status} for ${packageName}`);
-  return await response.json();
+  return parseValue(await response.json(), registryPackageSchema, "npm registry response");
 }
 
-function compareVersions(left, right) {
+function compareVersions(left: string, right: string): number {
   const parsedLeft = parseVersion(left);
   const parsedRight = parseVersion(right);
-  for (let index = 0; index < 3; index += 1) {
+  for (const index of [0, 1, 2] as const) {
     if (parsedLeft.release[index] !== parsedRight.release[index]) {
       return parsedLeft.release[index] < parsedRight.release[index] ? -1 : 1;
     }
@@ -166,13 +203,16 @@ function compareVersions(left, right) {
   return 0;
 }
 
-function parseVersion(value) {
+function parseVersion(value: string): {
+  release: readonly [number, number, number];
+  prerelease: string[];
+} {
   const match = value.match(
     /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/,
   );
   assert(match, `invalid npm version ${value}`);
   return {
-    release: match.slice(1, 4).map(Number),
+    release: [Number(match[1]), Number(match[2]), Number(match[3])],
     prerelease: match[4]?.split(".") ?? [],
   };
 }

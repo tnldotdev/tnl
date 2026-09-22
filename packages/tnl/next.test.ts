@@ -1,6 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
+import * as z from "zod";
 import {
   createProjectFixture,
   temporaryDirectory,
@@ -268,7 +269,7 @@ test(
         "/_next/hmr?id=tnl-test",
         { origin: "https://api.member.example" },
       );
-      const message = JSON.parse(socketMessage) as { type?: string };
+      const message = z.object({ type: z.optional(z.string()) }).parse(JSON.parse(socketMessage));
       expect(["isrManifest", "turbopack-connected"]).toContain(message.type);
       // Startup frames can arrive together; either accepted frame confirms the connection.
       let updateMessage = waitForWebSocketMessage(socket, 30_000);
@@ -278,7 +279,9 @@ test(
       );
       let updateType = "";
       while (updateType !== "built") {
-        const update = JSON.parse(await updateMessage) as { type?: string };
+        const update = z
+          .object({ type: z.optional(z.string()) })
+          .parse(JSON.parse(await updateMessage));
         updateType = update.type ?? "";
         if (updateType !== "built") {
           updateMessage = waitForWebSocketMessage(socket, 30_000);
@@ -306,7 +309,7 @@ test("registers the actual fallback port selected by Next.js", { timeout: 60_000
   try {
     await occupyPort(3000);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EADDRINUSE") {
+    if (!(error instanceof Error && "code" in error && error.code === "EADDRINUSE")) {
       throw error;
     }
   }
@@ -319,7 +322,7 @@ test("registers the actual fallback port selected by Next.js", { timeout: 60_000
     });
     const registration = await fixture.request(1);
     expect(registration.path).toBe("/v1/target");
-    const target = (registration.body as { target: string }).target;
+    const target = z.object({ target: z.string() }).parse(registration.body).target;
     expect(target).toMatch(/^http:\/\/127\.0\.0\.1:[0-9]+$/);
     const selectedPort = Number(new URL(target).port);
     expect(selectedPort).toBeGreaterThan(3000);

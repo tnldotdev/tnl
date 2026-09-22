@@ -415,7 +415,7 @@ func newIntegrationBinaryDevProject(t *testing.T, repositoryRoot, name string) i
 		os.WriteFile(filepath.Join(project.root, "package.json"), []byte(`{"private":true,"type":"module"}`), 0o600)); err != nil {
 		t.Fatal(err)
 	}
-	writeIntegrationDevConfig(t, project, map[string]any{"command": []string{"node", filepath.Join(packageDirectory, "fixtures", "vite", "dev-binary.mjs"), project.reportPath}, "startup_timeout": "30s"})
+	writeIntegrationDevConfig(t, project, map[string]any{"command": []string{"node", filepath.Join(packageDirectory, "fixtures", "vite", "dev-binary.ts"), project.reportPath}, "startup_timeout": "30s"})
 	return project
 }
 
