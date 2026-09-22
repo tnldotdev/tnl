@@ -239,3 +239,34 @@ Evidence retained in `bench-results/capacity-routes-512-160rps-1.log` and
 slope places 1,000 routes near the current 256MiB relay limit, so insert a
 768-route point before attempting 1,000 rather than extrapolating through that
 resource boundary.
+
+## 2026-09-22 — Route Scaling At 768 Routes
+
+The inserted 768-route point used committed revision `29e0618`, default admission
+and resource limits, 768-way activation, and the same 160 RPS/60-second windows.
+Activation installed 768 certificates from exactly 768 CA orders in 64.732s;
+publisher readiness p95/max was 61.511/61.632s. Source and capacity rejections
+remained zero.
+
+- All 28,800 scheduled requests succeeded with zero failures, timeouts, missed
+  offers, or queue expiry. Steady, relay-restart, and shutdown p95/max latencies
+  were 4.863/10.730ms, 4.969/19.693ms, and 4.865/9.112ms.
+- Relay restart preserved fresh traffic and repaired all publisher connections in
+  27.059s. Every-route probes passed and no visitor bytes were replayed.
+- Final accounting reconciled 30,728/30,728 successful streams with zero active
+  sessions, publisher connections, or reservations. Every component exited zero
+  and all owned Docker resources were removed.
+- Peak active-relay memory reached 220.1MiB of 256MiB (86%). Publishers reached
+  393.5MiB of 512MiB (77%), PostgreSQL 338.4MiB of 512MiB, and control 175.2MiB
+  of 512MiB. There were no OOM kills.
+- PostgreSQL used 0.948 CPU during activation and accumulated 232.0 CPU-seconds of
+  quota throttling under its one-CPU limit. Activation approximately doubled from
+  the 512-route point while application processes retained substantial CPU
+  headroom during visitor phases.
+
+Evidence retained in `bench-results/capacity-routes-768-160rps-1.log` and
+`bench-results/capacity-routes-768-160rps-1/`. This is a passing point but not a
+production recommendation with failure headroom: relay memory is already above
+the campaign's 80% warning threshold. Run 1,000 once at defaults to identify the
+actual first boundary, preserving a failure if it occurs, before declaring a
+larger resource profile.
