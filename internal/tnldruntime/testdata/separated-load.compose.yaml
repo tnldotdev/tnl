@@ -31,6 +31,11 @@ x-runtime: &runtime
         -tnl-runtime-load-rps='${RPS:-16}' \
         -tnl-runtime-load-workers='${WORKERS:-128}' \
         -tnl-runtime-load-queue='${QUEUE:-8}' \
+        -tnl-runtime-load-held-streams='${HELD_STREAMS:-8}' \
+        -tnl-runtime-load-direct-path='${DIRECT_PATH:-0}' \
+        -tnl-runtime-load-bandwidth-direction='${BANDWIDTH_DIRECTION:-}' \
+        -tnl-runtime-load-bandwidth-mbits-per-second='${BANDWIDTH_MBITS_PER_SECOND:-100}' \
+        -tnl-runtime-load-bandwidth-streams='${BANDWIDTH_STREAMS:-64}' \
         -tnl-runtime-load-source-connection-rate='${SOURCE_CONNECTION_RATE:-50}' \
         -tnl-runtime-load-source-connection-burst='${SOURCE_CONNECTION_BURST:-200}' \
         -tnl-runtime-load-client-hello-connection-limit='${CLIENT_HELLO_CONNECTION_LIMIT:-1024}' \
@@ -227,6 +232,11 @@ services:
       - "-tnl-runtime-load-rps=${RPS:-16}"
       - "-tnl-runtime-load-workers=${WORKERS:-128}"
       - "-tnl-runtime-load-queue=${QUEUE:-8}"
+      - "-tnl-runtime-load-held-streams=${HELD_STREAMS:-8}"
+      - "-tnl-runtime-load-direct-path=${DIRECT_PATH:-0}"
+      - "-tnl-runtime-load-bandwidth-direction=${BANDWIDTH_DIRECTION:-}"
+      - "-tnl-runtime-load-bandwidth-mbits-per-second=${BANDWIDTH_MBITS_PER_SECOND:-100}"
+      - "-tnl-runtime-load-bandwidth-streams=${BANDWIDTH_STREAMS:-64}"
       - "-tnl-runtime-load-source-connection-rate=${SOURCE_CONNECTION_RATE:-50}"
       - "-tnl-runtime-load-source-connection-burst=${SOURCE_CONNECTION_BURST:-200}"
       - "-tnl-runtime-load-client-hello-connection-limit=${CLIENT_HELLO_CONNECTION_LIMIT:-1024}"

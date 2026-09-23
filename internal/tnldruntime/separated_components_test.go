@@ -179,14 +179,30 @@ func runSeparatedPebble(t *testing.T, ctx context.Context) {
 }
 
 func runSeparatedApp(t *testing.T, ctx context.Context) {
+	handler := benchworkload.Origin(32768)
 	listener, err := net.Listen("tcp", ":8080")
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := &http.Server{ReadHeaderTimeout: time.Second, Handler: benchworkload.Origin(32768)}
-	done := make(chan struct{})
+	server := &http.Server{ReadHeaderTimeout: time.Second, Handler: handler}
+	tlsListener, err := net.Listen("tcp", ":8444")
+	if err != nil {
+		_ = listener.Close()
+		t.Fatal(err)
+	}
+	tlsServer := &http.Server{ReadHeaderTimeout: time.Second, ReadTimeout: 30 * time.Second, Handler: handler}
+	done, tlsDone := make(chan struct{}), make(chan struct{})
 	go func() { defer close(done); _ = server.Serve(listener) }()
-	t.Cleanup(func() { _ = server.Close(); <-done })
+	go func() {
+		defer close(tlsDone)
+		_ = tlsServer.ServeTLS(tlsListener, "/load/direct.pem", "/load/direct.key")
+	}()
+	t.Cleanup(func() {
+		_ = server.Close()
+		_ = tlsServer.Close()
+		<-done
+		<-tlsDone
+	})
 	separatedWrite(t, "app.ready", time.Now())
 	<-ctx.Done()
 }
@@ -297,6 +313,7 @@ func runSeparatedPublishers(t *testing.T, ctx context.Context, count int) {
 type separatedRestart struct{ Started, Exited, Restored time.Time }
 type separatedVisitorResult struct {
 	benchworkload.VisitorResult
+	Bandwidth           *benchworkload.BandwidthResult
 	Requests            []benchworkload.RequestResult
 	HeldSurviving       int
 	HealthyHeld         int
@@ -317,6 +334,7 @@ func runSeparatedVisitor(t *testing.T, ctx context.Context, component string, ra
 	}
 	index, _ := strconv.Atoi(strings.TrimPrefix(component, "visitor-"))
 	visitor := benchworkload.Visitor{Roots: separatedRoots(t, "route-roots.pem"), Address: "ingress:443", PayloadBytes: 32768}
+	directVisitor := benchworkload.Visitor{Roots: separatedRoots(t, "roots.pem"), Address: "publishers:8444", PayloadBytes: 32768}
 	localRate := benchworkload.Assignment(rate, 4, index-1)
 	cohortByURL := make(map[string]string)
 	for i, url := range publishers.URLs {
@@ -325,7 +343,7 @@ func runSeparatedVisitor(t *testing.T, ctx context.Context, component string, ra
 			cohortByURL[url] = "tls-tcp"
 		}
 	}
-	streams := openSeparatedHeld(t, ctx, visitor, publishers.URLs, index-1)
+	var streams []*benchworkload.HeldStream
 	var healthy []*benchworkload.HeldStream
 	separatedWrite(t, component+".ready", time.Now())
 	for sequence := 0; ; sequence++ {
@@ -337,8 +355,15 @@ func runSeparatedVisitor(t *testing.T, ctx context.Context, component string, ra
 			break
 		}
 		result := separatedVisitorResult{}
+		phaseVisitor := visitor
+		if phase.Direct {
+			phaseVisitor = directVisitor
+		}
+		if phase.HeldStreams > 0 {
+			streams = append(streams, openSeparatedHeld(t, ctx, visitor, phase.URLs, phase.HeldStreams, index-1)...)
+		}
 		if phase.OpenHeld {
-			healthy = append(healthy, openSeparatedHeld(t, ctx, visitor, phase.URLs, index-1)...)
+			healthy = append(healthy, openSeparatedHeld(t, ctx, visitor, phase.URLs, min(8, len(phase.URLs)), index-1)...)
 		}
 		progress := make([]int64, len(healthy))
 		for i, stream := range healthy {
@@ -354,13 +379,33 @@ func runSeparatedVisitor(t *testing.T, ctx context.Context, component string, ra
 					return
 				case <-pacer.C:
 				}
-				row := visitor.Request(ctx, phase.URLs[i], time.Now())
+				row := phaseVisitor.Request(ctx, phase.URLs[i], time.Now())
 				if row.Error != "" {
 					t.Error(row.Error)
 				}
 				result.Requests = append(result.Requests, row)
 			}
 			pacer.Stop()
+		} else if phase.Bandwidth != nil {
+			localConfig := *phase.Bandwidth
+			localConfig.Start, localConfig.Duration = phase.Start, phase.Duration
+			localConfig.Streams, localConfig.BytesPerSecond = 0, 0
+			var localURLs []string
+			for stream := index - 1; stream < phase.Bandwidth.Streams; stream += 4 {
+				localConfig.Streams++
+				localConfig.BytesPerSecond += phase.Bandwidth.BytesPerSecond / int64(phase.Bandwidth.Streams)
+				if int64(stream) < phase.Bandwidth.BytesPerSecond%int64(phase.Bandwidth.Streams) {
+					localConfig.BytesPerSecond++
+				}
+				localURLs = append(localURLs, phase.URLs[stream%len(phase.URLs)])
+			}
+			if localConfig.Streams > 0 {
+				bandwidth, err := phaseVisitor.Bandwidth(ctx, localConfig, localURLs)
+				result.Bandwidth = &bandwidth
+				if err != nil {
+					t.Error(err)
+				}
+			}
 		} else {
 			result.Cohorts = make(map[string]benchworkload.VisitorResult)
 			cfg := benchworkload.VisitorConfig{Rate: localRate,
@@ -369,6 +414,9 @@ func runSeparatedVisitor(t *testing.T, ctx context.Context, component string, ra
 				OnResult: func(row benchworkload.RequestResult) {
 					result.Requests = append(result.Requests, row)
 					name := cohortByURL[row.URL]
+					if phase.Direct {
+						name = "direct"
+					}
 					cohort := result.Cohorts[name]
 					cohort.Scheduled++
 					cohort.Observe(row)
@@ -376,7 +424,7 @@ func runSeparatedVisitor(t *testing.T, ctx context.Context, component string, ra
 				},
 			}
 			var err error
-			result.VisitorResult, err = visitor.Run(ctx, cfg, phase.URLs)
+			result.VisitorResult, err = phaseVisitor.Run(ctx, cfg, phase.URLs)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -419,11 +467,19 @@ func runSeparatedVisitor(t *testing.T, ctx context.Context, component string, ra
 	<-lifecycle.Done()
 }
 
-func openSeparatedHeld(t *testing.T, ctx context.Context, visitor benchworkload.Visitor, urls []string, index int) []*benchworkload.HeldStream {
+func openSeparatedHeld(t *testing.T, ctx context.Context, visitor benchworkload.Visitor, urls []string, total, index int) []*benchworkload.HeldStream {
 	t.Helper()
 	var streams []*benchworkload.HeldStream
-	for _, i := range benchworkload.RouteIndexes(min(8, len(urls)), 4, index) {
-		stream, err := visitor.Hold(ctx, urls[i])
+	interval := max(time.Duration(float64(time.Second)/runtimeLoadAdmission.SourceConnectionRate), time.Nanosecond)
+	pacer := time.NewTicker(interval)
+	defer pacer.Stop()
+	for i := index; i < total; i += 4 {
+		select {
+		case <-ctx.Done():
+			return streams
+		case <-pacer.C:
+		}
+		stream, err := visitor.Hold(ctx, urls[i%len(urls)])
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -226,9 +226,10 @@ HTTP coordination are shared with deployed benchmarks through `internal/benchwor
 Production `publisher.Run` and `clientauth` own publishing and session refresh.
 
 The default smoke has four routes, both QUIC and TLS/TCP, 16 fresh requests/sec,
-ten-second steady/shutdown windows, **128 visitor workers**, and **eight waiting
-slots** across the four visitor containers. Every request uses fresh verified
-HTTP/1.1 TLS and validates the origin-observed hostname and 32KiB response.
+ten-second steady/shutdown windows, **128 visitor workers**, **eight waiting
+slots**, and **eight held streams** across the four visitor containers. Every
+request uses fresh verified HTTP/1.1 TLS and validates the origin-observed
+hostname and 32KiB response.
 Its five-second budget includes queue waiting; requests are never retried.
 
 ```console
@@ -242,6 +243,7 @@ mise exec -- task go:test:load:runtime SCENARIO=publisher-blackhole RESULTS=benc
 mise exec -- task go:test:load:runtime SCENARIO=udp-fallback RESULTS=bench-results/runtime-udp-fallback
 mise exec -- task go:test:load:runtime SCENARIO=latency NETWORK_PATH=forwarding RTT=100ms RESULTS=bench-results/runtime-forwarding-rtt100
 mise exec -- task go:test:load:runtime SCENARIO=packet-loss NETWORK_PATH=publisher LOSS=1 RESULTS=bench-results/runtime-publisher-loss1
+mise exec -- task go:test:load:runtime DIRECT_PATH=1 BANDWIDTH_DIRECTION=downstream BANDWIDTH_MBITS_PER_SECOND=100 BANDWIDTH_STREAMS=64 RESULTS=bench-results/runtime-capacity-smoke
 ```
 
 `WORKERS` and `QUEUE` independently set total visitor concurrency and waiting
@@ -249,6 +251,23 @@ slots. Fixed offer windows count scheduled, started, completed, failed, timed-ou
 missed, and queue-expired work. Offering and drain durations are separate. Successful
 request histograms use production buckets and merge counts across generators.
 First-byte timing means the first response **body** byte.
+
+`HELD_STREAMS` sets the total held streams across the four visitor containers.
+`DIRECT_PATH=1` adds a fresh-request phase against the same origin over a direct
+local TLS listener. Setting `BANDWIDTH_DIRECTION` to `downstream`, `upstream`, or
+`bidirectional` adds matched direct and tunneled phases. The decimal Mbit/sec
+target applies per direction and is divided over `BANDWIDTH_STREAMS`; in the
+bidirectional case that many streams run in each direction. Transfers use paced,
+deterministic payloads and rotate upstream requests below the production 30-second
+request read timeout. The workload fails on any corrupt, incomplete, rejected, or
+timed-out transfer, and when exact bytes complete more than one second after the
+requested measurement window.
+
+Bandwidth summaries record target rate, exact expected and transferred application
+bytes, elapsed time, failures, and achieved rate. Existing phase resource snapshots
+include all visitor containers, so the direct phase shows whether generators have
+headroom before interpreting the tunneled result. This local topology validates the
+harness and provides a local profile; it is not a production sizing result.
 
 One coordinator supplies the phase sequence. Every route receives correctness
 probes after each traffic window. Held streams must survive steady traffic;

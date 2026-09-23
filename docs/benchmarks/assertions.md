@@ -7,6 +7,8 @@ local coordinator, not the shared publisher or visitor implementation.
 | Assertion                                                                        | Owner after migration                       |
 | -------------------------------------------------------------------------------- | ------------------------------------------- |
 | Verified route TLS, observed hostname, complete deterministic response           | Shared visitor                              |
+| Direct and tunneled bandwidth transfer exact bytes within the phase budget       | Shared bandwidth visitor / origin           |
+| Direct TLS baseline uses the same visitor and origin behavior as the tnl path    | Local coordinator / shared workload         |
 | Every elapsed offer counted; bounded queue and request deadline                  | Shared visitor scheduler                    |
 | Held streams alive before fault; breaks and survivors recorded                   | Shared visitor / scenario                   |
 | Fresh visitors succeed while a forwarding or publisher-path drop stays installed | Coordinator phase barriers / shared visitor |

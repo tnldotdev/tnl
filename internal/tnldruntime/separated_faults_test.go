@@ -3,10 +3,7 @@ package tnldruntime
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -30,10 +27,19 @@ func separatedProbe(t *testing.T, sequence *int, phase benchworkload.Phase) {
 	separatedWrite(t, fmt.Sprintf("phase-%d", *sequence), phase)
 	*sequence = *sequence + 1
 	var results []separatedVisitorResult
+	held := 0
+	timeout := time.Duration((len(phase.URLs)+3)/4+2)*5*time.Second + time.Second
+	heldTotal := phase.HeldStreams
+	if phase.OpenHeld {
+		heldTotal = min(8, len(phase.URLs))
+	}
+	heldTimeout := time.Duration(float64(benchworkload.Assignment(heldTotal, 4, 0))/runtimeLoadAdmission.SourceConnectionRate*float64(time.Second)) + 10*time.Second
+	timeout = max(timeout, heldTimeout)
 	for i := 1; i <= 4; i++ {
 		var result separatedVisitorResult
-		separatedWait(t, fmt.Sprintf("%s.visitor-%d", phase.Name, i), time.Duration((len(phase.URLs)+3)/4+2)*5*time.Second+time.Second, &result)
+		separatedWait(t, fmt.Sprintf("%s.visitor-%d", phase.Name, i), timeout, &result)
 		results = append(results, result)
+		held += result.HeldSurviving
 		for _, row := range result.Requests {
 			if row.Error != "" {
 				t.Errorf("%s: %s", phase.Name, row.Error)
@@ -43,13 +49,10 @@ func separatedProbe(t *testing.T, sequence *int, phase benchworkload.Phase) {
 			t.Errorf("%s: visitor-%d opened no healthy held stream", phase.Name, i)
 		}
 	}
-	data, err := json.Marshal(results)
-	if err != nil {
-		t.Fatal(err)
+	if phase.HeldStreams > 0 && held != phase.HeldStreams {
+		t.Errorf("%s opened %d held streams, want %d", phase.Name, held, phase.HeldStreams)
 	}
-	if err := os.WriteFile(filepath.Join("/results", phase.Name+"-visitors.json"), data, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	separatedResult(t, phase.Name+"-visitors", results)
 }
 
 func separatedWaitForRecovery(t *testing.T, database *sql.DB, publishers separatedPublishers) time.Time {

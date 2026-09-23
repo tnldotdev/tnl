@@ -15,9 +15,11 @@ Routine tests need no external infrastructure. Large load and fault tests are
 explicit opt-in runs.
 
 The smoke workload uses four routes, 16 fresh visitor connections per second,
-128 request workers, eight waiting slots, both publisher transports, and a 32KiB
-response. The reference workload uses 64 routes and 160 fresh visitor connections
-per second with the same worker and queue limits.
+128 request workers, eight waiting slots, eight held streams, both publisher
+transports, and a 32KiB response. Optional local capacity phases use the same
+visitor and origin code for a direct TLS baseline and paced upstream, downstream,
+or bidirectional transfers. The reference workload uses 64 routes and 160 fresh
+visitor connections per second with the same worker and queue limits.
 
 ## deployed workloads
 

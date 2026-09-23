@@ -124,7 +124,7 @@ func TestSeparatedRuntimeSetup(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(separatedDirectory, "roots.pem"), ca.certificatePEM, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	for _, role := range []string{"control", "relay-a", "relay-b", "pebble"} {
+	for _, role := range []string{"control", "relay-a", "relay-b", "pebble", "direct"} {
 		hostname := role + "." + separatedDomain
 		if role == "pebble" {
 			hostname = "pebble"

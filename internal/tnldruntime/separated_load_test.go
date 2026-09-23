@@ -37,6 +37,11 @@ var (
 	runtimeLoadDuration           = flag.Duration("tnl-runtime-load-duration", 10*time.Second, "runtime measurement window")
 	runtimeLoadWorkers            = flag.Int("tnl-runtime-load-workers", 128, "total visitor concurrency across four containers")
 	runtimeLoadQueue              = flag.Int("tnl-runtime-load-queue", 8, "total waiting slots across four containers")
+	runtimeLoadHeldStreams        = flag.Int("tnl-runtime-load-held-streams", 8, "total held visitor streams")
+	runtimeLoadDirectPath         = flag.Bool("tnl-runtime-load-direct-path", false, "measure fresh requests directly against the local service")
+	runtimeLoadBandwidthDirection = flag.String("tnl-runtime-load-bandwidth-direction", "", "optional downstream, upstream, or bidirectional bandwidth measurement")
+	runtimeLoadBandwidthMbits     = flag.Int64("tnl-runtime-load-bandwidth-mbits-per-second", 100, "bandwidth target in decimal megabits/second per direction")
+	runtimeLoadBandwidthStreams   = flag.Int("tnl-runtime-load-bandwidth-streams", 64, "bandwidth streams per direction")
 	runtimeLoadScenario           = flag.String("tnl-runtime-load-scenario", "relay-restart", "relay-restart, relay-kill, forwarding-blackhole, publisher-blackhole, udp-fallback, latency, or packet-loss")
 	runtimeLoadNetworkPath        = flag.String("tnl-runtime-load-network-path", "forwarding", "forwarding or publisher impairment path")
 	runtimeLoadRTT                = flag.Duration("tnl-runtime-load-rtt", 20*time.Millisecond, "added round-trip latency")
@@ -65,7 +70,7 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 	t.Cleanup(func() { _ = server.Close(); <-serverDone })
 	separatedWrite(t, "coordinator.ready", true)
 	database := inspectStandaloneTestDatabase(t, testutil.PostgresURL(t))
-	t.Logf("separated_load routes=%d rps=%d sources=4 workers=%d queue=%d payload=32768 phase_duration=%s", routes, rate, *runtimeLoadWorkers, *runtimeLoadQueue, duration)
+	t.Logf("separated_load routes=%d rps=%d held=%d sources=4 workers=%d queue=%d payload=32768 phase_duration=%s", routes, rate, *runtimeLoadHeldStreams, *runtimeLoadWorkers, *runtimeLoadQueue, duration)
 	defer func() {
 		if !t.Failed() {
 			return
@@ -143,6 +148,27 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 		separatedWait(t, fmt.Sprintf("visitor-%d.ready", i), 15*time.Second, nil)
 	}
 	sequence := 0
+	if *runtimeLoadDirectPath {
+		separatedCapacityPhase(t, database, &sequence, benchworkload.Phase{
+			Name: "direct-fresh", Direct: true, URLs: []string{"https://direct." + separatedDomain},
+		}, duration)
+	}
+	if *runtimeLoadBandwidthDirection != "" {
+		bandwidth := &benchworkload.BandwidthConfig{
+			Direction: *runtimeLoadBandwidthDirection, Streams: *runtimeLoadBandwidthStreams,
+			BytesPerSecond: *runtimeLoadBandwidthMbits * 1_000_000 / 8,
+		}
+		direct := separatedCapacityPhase(t, database, &sequence, benchworkload.Phase{
+			Name: "direct-bandwidth", Direct: true, URLs: []string{"https://direct." + separatedDomain}, Bandwidth: bandwidth,
+		}, duration)
+		tunneled := separatedCapacityPhase(t, database, &sequence, benchworkload.Phase{
+			Name: "tunnel-bandwidth", URLs: publishers.URLs, Bandwidth: bandwidth,
+		}, duration)
+		t.Logf("separated_bandwidth_comparison direction=%s direct_elapsed=%s tunnel_elapsed=%s", bandwidth.Direction, direct.Elapsed, tunneled.Elapsed)
+	}
+	if *runtimeLoadHeldStreams > 0 {
+		separatedProbe(t, &sequence, benchworkload.Phase{Name: "initial-held", URLs: publishers.URLs, HeldStreams: *runtimeLoadHeldStreams})
+	}
 	for _, phase := range []string{"steady", *runtimeLoadScenario, "shutdown"} {
 		before := separatedCapture(t, database, phase+"-before")
 		stopSamples := sampleSeparatedGauges(t, phase)
@@ -220,20 +246,8 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 			t.Logf("separated_partial_shutdown publishers=%d elapsed=%s", routes/2, elapsed)
 		}
 		waitUntilIntegrationTime(t, start.Add(window))
-		var results []separatedVisitorResult
-		for i := 1; i <= 4; i++ {
-			var result separatedVisitorResult
-			separatedWait(t, fmt.Sprintf("%s.visitor-%d", phase, i), 15*time.Second, &result)
-			results = append(results, result)
-		}
+		results := separatedCollectVisitors(t, phase, 15*time.Second)
 		stopSamples()
-		data, err := json.Marshal(results)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join("/results", phase+"-visitors.json"), data, 0o644); err != nil {
-			t.Fatal(err)
-		}
 		after := separatedCapture(t, database, phase+"-after")
 		separatedReportResources(t, phase, before, after)
 		if !runtimeControlledFault(phase) {
@@ -338,6 +352,17 @@ func separatedLoadParameters(t *testing.T) (int, int, time.Duration) {
 	if *runtimeLoadWorkers < 4 || *runtimeLoadWorkers > 4096 || *runtimeLoadQueue < 0 || *runtimeLoadQueue > 4096 {
 		t.Fatal("invalid visitor concurrency or queue")
 	}
+	if *runtimeLoadHeldStreams < 0 || *runtimeLoadHeldStreams > 4096 {
+		t.Fatal("held streams must be between 0 and 4096")
+	}
+	if *runtimeLoadBandwidthDirection != "" {
+		if !slices.Contains([]string{benchworkload.BandwidthDownstream, benchworkload.BandwidthUpstream, benchworkload.BandwidthBidirectional}, *runtimeLoadBandwidthDirection) {
+			t.Fatal("invalid bandwidth direction")
+		}
+		if *runtimeLoadBandwidthStreams < 4 || *runtimeLoadBandwidthStreams > 4096 || *runtimeLoadBandwidthMbits < 1 || *runtimeLoadBandwidthMbits > 10_000 {
+			t.Fatal("invalid bandwidth rate or stream count")
+		}
+	}
 	if !slices.Contains([]string{"relay-restart", "relay-kill", "forwarding-blackhole", "publisher-blackhole", "udp-fallback", "latency", "packet-loss"}, *runtimeLoadScenario) {
 		t.Fatal("invalid runtime scenario")
 	}
@@ -351,6 +376,79 @@ func separatedLoadParameters(t *testing.T) (int, int, time.Duration) {
 		t.Fatal("invalid packet loss")
 	}
 	return routes, rate, duration
+}
+
+func separatedCapacityPhase(t *testing.T, database *sql.DB, sequence *int, phase benchworkload.Phase, duration time.Duration) benchworkload.BandwidthResult {
+	t.Helper()
+	before := separatedCapture(t, database, phase.Name+"-before")
+	stopSamples := sampleSeparatedGauges(t, phase.Name)
+	phase.Start, phase.Duration = time.Now().Add(time.Second), duration
+	separatedWrite(t, fmt.Sprintf("phase-%d", *sequence), phase)
+	*sequence = *sequence + 1
+	waitUntilIntegrationTime(t, phase.Start.Add(duration))
+	results := separatedCollectVisitors(t, phase.Name, 30*time.Second)
+	stopSamples()
+	separatedReportResources(t, phase.Name, before, separatedCapture(t, database, phase.Name+"-after"))
+	if phase.Bandwidth == nil {
+		separatedReportVisitors(t, phase.Name, results, separatedRestart{}, time.Time{})
+		return benchworkload.BandwidthResult{}
+	}
+	aggregate := benchworkload.BandwidthResult{
+		Direction: phase.Bandwidth.Direction, StreamsPerDirection: phase.Bandwidth.Streams,
+		TargetBytesPerSecond: phase.Bandwidth.BytesPerSecond, TargetDuration: duration, StartedAt: phase.Start,
+	}
+	for _, result := range results {
+		if result.Bandwidth == nil {
+			t.Error("bandwidth visitor returned no result")
+			continue
+		}
+		bandwidth := result.Bandwidth
+		aggregate.Elapsed = max(aggregate.Elapsed, bandwidth.Elapsed)
+		aggregate.ExpectedUploadBytes += bandwidth.ExpectedUploadBytes
+		aggregate.UploadBytes += bandwidth.UploadBytes
+		aggregate.ExpectedDownloadBytes += bandwidth.ExpectedDownloadBytes
+		aggregate.DownloadBytes += bandwidth.DownloadBytes
+		aggregate.Failures += bandwidth.Failures
+		for _, sample := range bandwidth.FailureSamples {
+			if len(aggregate.FailureSamples) < 8 {
+				aggregate.FailureSamples = append(aggregate.FailureSamples, sample)
+			}
+		}
+	}
+	if err := aggregate.Err(); err != nil {
+		t.Error(err)
+	}
+	seconds := aggregate.Elapsed.Seconds()
+	aggregate.UploadBytesPerSecond = float64(aggregate.UploadBytes) / seconds
+	aggregate.DownloadBytesPerSecond = float64(aggregate.DownloadBytes) / seconds
+	uploadMbits, downloadMbits := aggregate.UploadBytesPerSecond*8/1_000_000, aggregate.DownloadBytesPerSecond*8/1_000_000
+	t.Logf("separated_bandwidth phase=%s direction=%s streams_per_direction=%d target_mbits_per_second=%d upload_mbits_per_second=%.3f download_mbits_per_second=%.3f failures=%d elapsed=%s",
+		phase.Name, aggregate.Direction, aggregate.StreamsPerDirection, *runtimeLoadBandwidthMbits, uploadMbits, downloadMbits, aggregate.Failures, aggregate.Elapsed)
+	separatedResult(t, phase.Name+"-summary", aggregate)
+	return aggregate
+}
+
+func separatedCollectVisitors(t *testing.T, phase string, timeout time.Duration) []separatedVisitorResult {
+	t.Helper()
+	var results []separatedVisitorResult
+	for i := 1; i <= 4; i++ {
+		var result separatedVisitorResult
+		separatedWait(t, fmt.Sprintf("%s.visitor-%d", phase, i), timeout, &result)
+		results = append(results, result)
+	}
+	separatedResult(t, phase+"-visitors", results)
+	return results
+}
+
+func separatedResult(t *testing.T, name string, value any) {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join("/results", name+".json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func separatedCapture(t *testing.T, database *sql.DB, name string) separatedSnapshot {
@@ -520,19 +618,11 @@ func separatedReportVisitors(t *testing.T, phase string, results []separatedVisi
 	}
 	t.Logf("separated_visitors phase=%s requests=%d success=%d failures=%d missed=%d p50=%s p95=%s maximum=%.3fms first_body_byte_p95=%s offer=%s drain=%s", phase, total, merged.Successes, failures, missed,
 		format(merged.Total.Percentile(50)), format(merged.Total.Percentile(95)), merged.Total.MaximumMilliseconds, format(merged.FirstByte.Percentile(95)), merged.OfferDuration, merged.DrainDuration)
-	if data, err := json.Marshal(merged); err != nil {
-		t.Fatal(err)
-	} else if err := os.WriteFile(filepath.Join("/results", phase+"-summary.json"), data, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	separatedResult(t, phase+"-summary", merged)
 	if missed != 0 || total == 0 {
 		t.Errorf("phase %s: missed=%d requests=%d", phase, missed, total)
 	}
-	if data, err := json.Marshal(cohorts); err != nil {
-		t.Fatal(err)
-	} else if err := os.WriteFile(filepath.Join("/results", phase+"-cohorts.json"), data, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	separatedResult(t, phase+"-cohorts", cohorts)
 	if runtimeBlackhole(phase) {
 		t.Logf("healthy_held_streams alive=%d progressing=%d", healthy, progressing)
 		if healthy == 0 || progressing != healthy {
@@ -548,18 +638,12 @@ func separatedReportVisitors(t *testing.T, phase string, results []separatedVisi
 		} else {
 			t.Logf("separated_recovery first_body_after_stop=%s first_body_after_exit=%s runtime_exit=%s all_connections_repaired=%s held_surviving=%d", first.Sub(restart.Started), firstExit.Sub(restart.Exited), restart.Exited.Sub(restart.Started), repaired.Sub(restart.Started), surviving)
 		}
-		data, err := json.Marshal(struct {
+		separatedResult(t, phase+"-recovery", struct {
 			Scenario                                          string
 			Fault                                             separatedRestart
 			FirstSuccessfulBodyAfterApplied, VerifiedRecovery time.Time
 			HeldSurviving                                     int
 		}{phase, restart, firstExit, repaired, surviving})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join("/results", phase+"-recovery.json"), data, 0o644); err != nil {
-			t.Fatal(err)
-		}
 	}
 }
 

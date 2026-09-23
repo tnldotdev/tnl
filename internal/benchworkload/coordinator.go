@@ -216,13 +216,16 @@ func (c *Coordination) request(ctx context.Context, method, name string, wait bo
 // Phase is sent by the coordinator. Participants do not carry their own copy of
 // the scenario sequence. A zero duration requests correctness probes only.
 type Phase struct {
-	Name      string        `json:"name"`
-	Start     time.Time     `json:"start"`
-	Duration  time.Duration `json:"duration"`
-	URLs      []string      `json:"urls"`
-	CloseHeld bool          `json:"close_held,omitempty"`
-	OpenHeld  bool          `json:"open_held,omitempty"`
-	Done      bool          `json:"done,omitempty"`
+	Name        string           `json:"name"`
+	Start       time.Time        `json:"start"`
+	Duration    time.Duration    `json:"duration"`
+	URLs        []string         `json:"urls"`
+	Bandwidth   *BandwidthConfig `json:"bandwidth,omitempty"`
+	Direct      bool             `json:"direct,omitempty"`
+	HeldStreams int              `json:"held_streams,omitempty"`
+	CloseHeld   bool             `json:"close_held,omitempty"`
+	OpenHeld    bool             `json:"open_held,omitempty"`
+	Done        bool             `json:"done,omitempty"`
 }
 
 func Assignment(total, count, index int) int {

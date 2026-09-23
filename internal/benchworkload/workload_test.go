@@ -94,6 +94,55 @@ func TestVisitorVerifiesTLSHostAndPayloadAndHeldLifetime(t *testing.T) {
 	}
 }
 
+func TestBandwidthPacesAndVerifiesBothDirections(t *testing.T) {
+	server := httptest.NewTLSServer(Origin(1))
+	defer server.Close()
+	roots := x509.NewCertPool()
+	roots.AddCert(server.Certificate())
+	config := BandwidthConfig{
+		Direction:      BandwidthBidirectional,
+		Streams:        2,
+		BytesPerSecond: 64_000,
+		Start:          time.Now().Add(10 * time.Millisecond),
+		Duration:       40 * time.Millisecond,
+	}
+	result, err := (Visitor{Roots: roots}).Bandwidth(t.Context(), config, []string{server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.UploadBytes != 2560 || result.DownloadBytes != 2560 || result.Failures != 0 {
+		t.Fatalf("unexpected bandwidth result: %+v", result)
+	}
+	if result.UploadBytesPerSecond <= 0 || result.DownloadBytesPerSecond <= 0 {
+		t.Fatalf("missing achieved rates: %+v", result)
+	}
+	if result.Elapsed < config.Duration {
+		t.Fatalf("bandwidth completed without pacing: %s", result.Elapsed)
+	}
+}
+
+func TestBandwidthRejectsInvalidConfigurationAndPayload(t *testing.T) {
+	config := BandwidthConfig{Direction: "sideways", Streams: 1, BytesPerSecond: 1, Start: time.Now(), Duration: time.Second}
+	if _, err := (Visitor{}).Bandwidth(t.Context(), config, []string{"https://example.test"}); err == nil {
+		t.Fatal("accepted invalid bandwidth direction")
+	}
+	verifier := payloadVerifier{}
+	if _, err := verifier.Write([]byte{0, 1, 3}); err == nil || verifier.Bytes() != 0 {
+		t.Fatalf("accepted invalid deterministic payload: bytes=%d error=%v", verifier.Bytes(), err)
+	}
+}
+
+func TestBandwidthRejectsLateExactTransfer(t *testing.T) {
+	result := BandwidthResult{TargetDuration: time.Second, Elapsed: 2*time.Second + time.Nanosecond}
+	if err := result.Err(); err == nil {
+		t.Fatal("accepted a transfer outside its completion budget")
+	}
+	result.Elapsed = 2 * time.Second
+	if err := result.Err(); err != nil {
+		t.Fatalf("rejected a transfer at its completion budget: %v", err)
+	}
+}
+
 func TestFirstBodyByteExcludesHeaderOnlyResponse(t *testing.T) {
 	headers := make(chan struct{})
 	body := make(chan struct{})

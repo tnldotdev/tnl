@@ -5,6 +5,7 @@ package benchworkload
 import (
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -20,6 +21,10 @@ func Origin(size int) http.Handler {
 	body := Payload(size)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-TNL-Bench-Host", r.Host)
+		if r.URL.Path == bandwidthPath {
+			serveBandwidth(w, r)
+			return
+		}
 		if r.URL.Path != "/hold" {
 			_, _ = w.Write(body)
 			return
@@ -42,4 +47,41 @@ func Origin(size int) http.Handler {
 			}
 		}
 	})
+}
+
+func serveBandwidth(w http.ResponseWriter, r *http.Request) {
+	direction := r.Header.Get(bandwidthDirectionHeader)
+	if direction != BandwidthDownstream && direction != BandwidthUpstream {
+		http.Error(w, "invalid bandwidth direction", http.StatusBadRequest)
+		return
+	}
+	rate, rateErr := strconv.ParseInt(r.Header.Get(bandwidthRateHeader), 10, 64)
+	durationValue, durationErr := strconv.ParseInt(r.Header.Get(bandwidthDurationHeader), 10, 64)
+	duration := time.Duration(durationValue)
+	if rateErr != nil || rate < 1 || rate > maxBandwidthStreamRate || durationErr != nil || duration <= 0 || duration > bandwidthSegmentDuration {
+		http.Error(w, "invalid bandwidth rate or duration", http.StatusBadRequest)
+		return
+	}
+	expected := bytesForDuration(rate, duration)
+	if direction == BandwidthUpstream {
+		if r.Method != http.MethodPost || r.ContentLength != expected {
+			http.Error(w, "invalid bandwidth upload", http.StatusBadRequest)
+			return
+		}
+		verifier := payloadVerifier{}
+		if _, err := io.Copy(&verifier, r.Body); err != nil || verifier.Bytes() != expected {
+			http.Error(w, "invalid bandwidth payload", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set(bandwidthBytesHeader, strconv.FormatInt(verifier.Bytes(), 10))
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "invalid bandwidth download", http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Length", strconv.FormatInt(expected, 10))
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.Copy(w, newPacedPayloadReader(r.Context(), rate, expected))
 }
