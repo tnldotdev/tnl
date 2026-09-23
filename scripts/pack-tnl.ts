@@ -120,7 +120,7 @@ try {
     );
 
     const stage = path.join(stagingRoot, target.sourceDirectory);
-    await copyTemplate(target.sourceDirectory, stage, ["package.json", "README.md"]);
+    await copyTemplate(target.sourceDirectory, stage, ["package.json", "readme.md"]);
     await copyLegalFiles(stage);
     await mkdir(path.join(stage, "bin"));
     await copyFile(binaryPath, path.join(stage, "bin", "tnl"));
@@ -147,7 +147,7 @@ try {
         requiredFiles: [
           "LICENSE",
           "NOTICE",
-          "README.md",
+          "readme.md",
           "THIRD_PARTY_LICENSES.txt",
           "bin/tnl",
           "package.json",
@@ -162,7 +162,7 @@ try {
   }
 
   const launcherStage = path.join(stagingRoot, "tnl");
-  await copyTemplate("tnl", launcherStage, ["package.json", "README.md", "dist"]);
+  await copyTemplate("tnl", launcherStage, ["package.json", "readme.md", "dist"]);
   await copyLegalFiles(launcherStage);
   const launcherManifestPath = path.join(launcherStage, "package.json");
   const launcherManifest = await readJson(launcherManifestPath, packageManifestSchema);
@@ -181,7 +181,7 @@ try {
       requiredFiles: [
         "LICENSE",
         "NOTICE",
-        "README.md",
+        "readme.md",
         "THIRD_PARTY_LICENSES.txt",
         "dist/bin/tnl.d.ts",
         "dist/bin/tnl.js",

@@ -1,4 +1,4 @@
-# Browser ClientHello Fixtures
+# browser clienthello fixtures
 
 These TLS records were captured on macOS 26.6.2 from fresh browser profiles
 connecting to `route.example` through a local HTTP CONNECT recorder. The

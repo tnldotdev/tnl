@@ -1,10 +1,12 @@
-# Local Agentic Development
+# local agentic development
+
+Audience: tnl maintainers. This is not user documentation.
 
 Status: product problem statement and direction. Current capabilities below are
 grounded in the implementation and tests; desired outcomes are not a description
 of shipped behavior.
 
-## North Star
+## north star
 
 Every worktree gets stable, working HTTPS addresses automatically, and tnl knows
 what is running across all of them.
@@ -18,7 +20,7 @@ The normal entry point remains `tnl dev`. A developer runs the application, gets
 its addresses, and works. An agent can discover those same addresses and their
 state without scraping terminal output.
 
-## Problem
+## problem
 
 Local development increasingly means several versions of an application running
 at once. A developer may review one change while multiple coding agents implement
@@ -43,7 +45,7 @@ worktrees.
 
 **Serving the wrong worktree is a worse failure than failing to start.**
 
-## Primary User And Scope
+## primary user and scope
 
 The primary user is a developer working locally, with agents acting on their
 behalf. The first-class workflow is several local worktrees, each containing one
@@ -60,13 +62,13 @@ may still be necessary. Infer conventional setups where reliable, preserve
 explicit project settings, and report ambiguity rather than silently starting
 the wrong application.
 
-The local experience should work with both hosted `tnl.dev` and a self-hosted tnl
-server. CI, remote coding agents, and PR integrations are subsequent uses of the
-same capabilities, rather than prerequisites for local value.
+The local experience should work with both a hosted and a self-hosted tnl server.
+CI, remote coding agents, and PR integrations are subsequent uses of the same
+capabilities, rather than prerequisites for local value.
 
-## What Already Works
+## what already works
 
-### Framework Listener Discovery And Port Fallback
+### framework listener discovery and port fallback
 
 The Next.js and Vite integrations register the listener the framework actually
 bound, rather than assuming its preferred port:
@@ -86,7 +88,7 @@ integrate into the wider workflow. tnl does not need a competing port allocator
 for these frameworks. Arbitrary commands with hard-coded ports do not gain the
 same discovery guarantee automatically.
 
-### Host Configuration, HMR, And Service Addresses
+### host configuration, hmr, and service addresses
 
 Next.js receives the assigned hostname in `allowedDevOrigins`; Vite receives it
 in `allowedHosts`. Tests exercise host/origin restrictions, development assets,
@@ -110,7 +112,7 @@ generated metadata without contacting tnl, and remain inactive during production
 builds and Vite preview. Tunnel options belong in project configuration rather
 than separate framework-plugin settings.
 
-### Independent Processes And Concurrent Services
+### independent processes and concurrent services
 
 A framework does not have to be a child of `tnl dev`. With generated project
 metadata, it can discover the matching private project-service socket when its
@@ -126,7 +128,7 @@ Different services have separate sockets and locks and can run concurrently.
 Duplicate `tnl dev` invocations for the same project service currently fail with
 an already-running error.
 
-### Stable Local Naming And Status
+### stable local naming and status
 
 Default non-ephemeral hostnames use worktree labels, with a service prefix where
 applicable. A label combines the worktree directory name with a hash of its
@@ -143,9 +145,9 @@ including project, service, process ID, URL, target, and lifecycle state where
 available. Local heartbeats identify stale records. The opportunity is to extend
 this inventory into a coordinated workflow, not introduce a second status store.
 
-## Desired Experience And Remaining Gaps
+## desired experience and remaining gaps
 
-### Stable Addresses Without Manual Identity
+### stable addresses without manual identity
 
 Restarting an application, agent, terminal session, or machine should preserve
 the address of the same project service. Adding another worktree should assign
@@ -167,7 +169,7 @@ A stable URL is a durable address, not a promise that the application continues
 running after the developer closes the laptop. Session cleanup and release of
 the address are different operations.
 
-### Idempotent Start, Discovery, And Stop
+### idempotent start, discovery, and stop
 
 A human or agent requesting an already-running project service should discover
 its current state and URL. Concurrent requests should converge on one intended
@@ -189,7 +191,7 @@ that happens to reuse an old process ID or port.
 Extend existing locks, registration, and process cleanup. The current private
 development socket is an integration detail, not a supported agent API.
 
-### Readiness That Browser Agents Can Trust
+### readiness that browser agents can trust
 
 Framework registration proves where the listener is; the current local target
 check proves TCP reachability. Neither establishes application-level HTTP
@@ -212,7 +214,7 @@ Expose what was actually verified. An HTTP response is not proof that checkout,
 login, or every dependency works. Browser assertions and business correctness
 remain the responsibility of browser agents and application tests.
 
-### One Coherent Multi-Service Project
+### one coherent multi-service project
 
 Project configuration and runtime service URLs already exist, but development
 commands select one service at a time. Multiple configured services currently
@@ -233,7 +235,7 @@ package scripts and task runners can continue to manage complex build graphs,
 databases, and dependencies. Arbitrary application URLs, CORS policy, and
 third-party credentials cannot be safely rewritten by inference alone.
 
-### An Agent Interface And A Useful Human Inventory
+### an agent interface and a useful human inventory
 
 Agents need structured development lifecycle information as well as the
 existing JSON status snapshot. `tnl dev` currently emits human lifecycle output
@@ -253,9 +255,9 @@ Keep operational metadata separate from browser-safe project metadata. Process
 identifiers, local paths, agent attribution, and credentials do not belong in
 the application's browser bundle.
 
-## Ownership, Access, And Handoff
+## ownership, access, and handoff
 
-### Agents Act On Behalf Of The Developer
+### agents act on behalf of the developer
 
 The team remains the ownership and authorization boundary. Personal work
 defaults to the personal team; an organization project can select its team once
@@ -271,7 +273,7 @@ control credentials out of framework children and browser metadata. The current
 integration boundary is not a sandbox against an agent with the developer's
 full operating-system access.
 
-### Safe Development First, Easy Sharing Next
+### safe development first, easy sharing next
 
 Retain the current-IP default for local development and the explicit public
 opt-in. Network access policy is not application authentication, and a browser
@@ -285,7 +287,7 @@ publisher-side route TLS termination when designing HTTP review access.
 Guest review is a subsequent product capability, not a prerequisite for solving
 local concurrent development.
 
-### Continuity Before Seamless Cutover
+### continuity before seamless cutover
 
 Preserve the URL when an agent stops and a human or another agent resumes the
 work. Brief interruption is acceptable initially; accidental takeover or a
@@ -295,22 +297,22 @@ Do not require overlapping route sessions or migration of live visitor
 connections for the initial experience. A later seamless handoff must respect
 route versions, explicit ownership, and the existing retry boundary.
 
-## Hosted And Self-Hosted Scope
+## hosted and self-hosted scope
 
 Local discovery, port fallback, stable local naming, lifecycle coordination,
 service metadata, and machine-readable status should provide the same developer
-experience against hosted `tnl.dev` and self-hosted servers.
+experience against hosted and self-hosted servers.
 
-Hosted tnl can subsequently add account-backed cross-machine discovery, review
-links, and remote-agent integrations. Those may require authority and control
-API changes. Self-hosting continues to require its existing operator setup;
-zero per-worktree configuration does not mean zero server infrastructure.
+A hosted provider can subsequently add account-backed cross-machine discovery,
+review links, and remote-agent integrations. Those may require authority and
+control API changes. Self-hosting continues to require its existing operator
+setup; zero per-worktree configuration does not mean zero server infrastructure.
 
 A GitHub App, CI workflow, remote dashboard, or new server-side preview object
 must not be required to get the local benefit. External integrations should
 consume supported lifecycle and status interfaces.
 
-## Observable Success Criteria
+## observable success criteria
 
 These are product acceptance scenarios, including existing behavior that must
 continue to work:
@@ -344,7 +346,7 @@ continue to work:
     another machine can retain the URL. Ambiguous continuation is explicit and
     does not claim another active environment.
 
-## Sequence And Boundaries
+## sequence and boundaries
 
 First, complete the local coordination loop: idempotent startup, structured
 development events, HTTP and route readiness observations, ownership-aware
@@ -369,34 +371,34 @@ transport, and any new server records belong in a subsequent implementation
 design. The product requirement is automatic, reliable coordination using the
 smallest extension of the existing model.
 
-## Implementation Evidence
+## implementation evidence
 
 - **Next.js listener, origins, runtime, and HMR:**
-  [implementation](../packages/tnl/src/next.ts) and
-  [tests](../packages/tnl/next.test.ts), including
+  [implementation](../../../packages/tnl/src/next.ts) and
+  [tests](../../../packages/tnl/next.test.ts), including
   `registers the actual fallback port selected by Next.js`.
 - **Vite listener, host filtering, runtime, and HMR:**
-  [implementation](../packages/tnl/src/vite.ts) and
-  [tests](../packages/tnl/vite.test.ts), including
+  [implementation](../../../packages/tnl/src/vite.ts) and
+  [tests](../../../packages/tnl/vite.test.ts), including
   `registers the actual next port selected by Vite`.
 - **Metadata and independent socket discovery:**
-  [development integration](../packages/tnl/src/internal/dev.ts),
-  [integration protocol tests](../packages/tnl/internal-dev.test.ts), and
-  [browser runtime tests](../packages/tnl/runtime.test.ts).
+  [development integration](../../../packages/tnl/src/internal/dev.ts),
+  [integration protocol tests](../../../packages/tnl/internal-dev.test.ts), and
+  [browser runtime tests](../../../packages/tnl/runtime.test.ts).
 - **Integration setup and current limits:**
-  [package guide](https://md.cormo-turtle.ts.net/git/tnldotdev/tnl/packages/tnl/README.md).
+  [package guide](https://md.cormo-turtle.ts.net/git/tnldotdev/tnl/packages/tnl/readme.md).
 - **Duplicate services and exact target registration:**
-  [bootstrap tests](../cmd/tnl/dev_bootstrap_test.go), particularly
+  [bootstrap tests](../../../cmd/tnl/dev_bootstrap_test.go), particularly
   `TestDevBootstrapTimesOutAndClosesIdempotently` and
   `TestDevBootstrapReturnsTargetMismatchDiagnostic`.
 - **Naming and service selection:**
-  [worktree labels](../internal/projectconfig/worktree.go),
-  [label tests](../internal/projectconfig/worktree_test.go), and
-  [CLI configuration](../cmd/tnl/config.go).
+  [worktree labels](../../../internal/projectconfig/worktree.go),
+  [label tests](../../../internal/projectconfig/worktree_test.go), and
+  [CLI configuration](../../../cmd/tnl/config.go).
 - **Current development lifecycle and TCP startup checks:**
-  [development command](../cmd/tnl/dev.go) and
-  [local proxy](../internal/localproxy/proxy.go).
+  [development command](../../../cmd/tnl/dev.go) and
+  [local proxy](../../../internal/localproxy/proxy.go).
 - **Existing machine-readable local inventory:**
-  [status command](../cmd/tnl/status.go),
-  [status tests](../cmd/tnl/status_test.go), and
-  [local tunnel state](../internal/clientstate/tunnels.go).
+  [status command](../../../cmd/tnl/status.go),
+  [status tests](../../../cmd/tnl/status_test.go), and
+  [local tunnel state](../../../internal/clientstate/tunnels.go).

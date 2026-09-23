@@ -1,6 +1,6 @@
-# Contributing
+# contributing
 
-## Development
+## development
 
 Run commands from the repository root with the toolchain pinned in `mise.toml`:
 
@@ -29,7 +29,7 @@ Prepare the integration prerequisites below before running that tier.
 `HEAD`; intentional uncommitted generated changes also appear as drift.
 `format-check` is read-only. `format` applies Goimports and Oxfmt.
 
-### Test Tiers
+### test tiers
 
 | Tier               | Command after `mise exec --`      | Prerequisites and scope                                                                    |
 | ------------------ | --------------------------------- | ------------------------------------------------------------------------------------------ |
@@ -62,7 +62,7 @@ Task supplies `GOFLAGS=-tags=ts_omit_ssh`. Preserve it for direct Go commands:
 mise exec -- env GOFLAGS=-tags=ts_omit_ssh go test ./internal/tunnel
 ```
 
-### Local Load Tests
+### local load tests
 
 Run database load tests with `mise exec -- task go:test:load:database`. Task
 creates and removes their PostgreSQL container; CI uses the same command.
@@ -197,7 +197,7 @@ pools. It logs production query/guard/operation histograms and verifies final
 accounting. Use it to separate sequential round-trip cost from the competing
 pool users and recovery burst in the cadence workload.
 
-### Bounded Shutdown Load
+### bounded shutdown load
 
 `RUN='^TestLoadShutdown$'` closes half the ready sessions with 16 workers while
 48 workers heartbeat the other half, two ingress sources send cumulative usage
@@ -217,12 +217,12 @@ an end-to-end publisher test. For example:
 mise exec -- task go:test:load:database ROUTES=1000 DELAY=5ms RUN='^TestLoadShutdown$'
 ```
 
-### Runtime Load
+### runtime load
 
 `task go:test:load:runtime` runs one separated topology: control, ingress, two
 relays, a publisher group, four visitor containers, a local service, Pebble/DNS,
 PostgreSQL, and a coordinator. Publishers, visitors, histograms, and authenticated
-HTTP coordination are shared with Fly through `internal/benchworkload`.
+HTTP coordination are shared with deployed benchmarks through `internal/benchworkload`.
 Production `publisher.Run` and `clientauth` own publishing and session refresh.
 
 The default smoke has four routes, both QUIC and TLS/TCP, 16 fresh requests/sec,
@@ -396,10 +396,10 @@ and cleans its containers, networks, temporary keys/state, and volumes. Use a fr
 `RESULTS` path per experiment to preserve earlier evidence. Only the selected relay
 SIGKILL is an expected early exit. Go build/module caches persist in dedicated
 Docker volumes; databases, keys, publisher state, and coordination are fresh per
-run. The origin has a separate cgroup locally; Fly embeds it in each publisher
-process, so publisher resource costs include the origin there.
+run. The origin has a separate cgroup locally. A deployed publisher includes the
+origin, so its resource measurements include both.
 
-### JavaScript Package
+### javascript package
 
 `pnpm test` and `pnpm typecheck` build explicitly. Their `:run` variants and
 direct Vitest runs do not. Build once before focused tests:
@@ -434,7 +434,7 @@ target, also add its native package template, GoReleaser artifact, launcher test
 expectations, and package checks. Preserve checks for archive equality, license
 files, public exports, and publishing native packages before the launcher.
 
-### Generated Sources
+### generated sources
 
 Edit source contracts, then run `task generate` and `task format` through mise.
 Do not hand-edit generated output.
@@ -450,9 +450,9 @@ Do not hand-edit generated output.
 `packages/tnl/src` is handwritten except `config.gen.ts`; `packages/tnl/dist` is disposable build
 output. Project-local `.tnl/project.json` and `.tnl/project.d.ts` are generated
 by the CLI, not repository code generation. Their user workflow belongs in the
-[package guide](packages/tnl/README.md).
+[package guide](packages/tnl/readme.md).
 
-## Local Stack
+## local stack
 
 The local stack builds this checkout and runs PostgreSQL, Pebble, and standalone
 `tnld`. It uses `127.0.0.1.nip.io` for public route namespaces and publishes ports
@@ -469,12 +469,12 @@ mise exec -- task local:tnl -- team current
 roots. `mise exec -- task local:down` preserves PostgreSQL state;
 `mise exec -- task local:reset` removes trust, containers, volumes, and `.local`.
 
-Fly benchmarks are separate from local validation. Execution requires explicit
-approval and the [benchmark gates](docs/benchmarks/README.md).
+Deployed benchmarks are separate from local validation. Execution requires
+explicit approval and the [benchmark gates](docs/benchmarks/readme.md).
 
-## Engineering Rules
+## engineering rules
 
-- Follow [Architecture](docs/ARCHITECTURE.md) for package and API ownership and
+- Follow [Architecture](docs/architecture.md) for package and API ownership and
   [AGENTS.md](AGENTS.md) for canonical terminology and CLI presentation rules.
 - Prefer the smallest design that completes the current phase.
 - Reuse the service that already owns a behavior, along with generated
@@ -486,9 +486,10 @@ approval and the [benchmark gates](docs/benchmarks/README.md).
 - Add tests for behavior, boundaries, and regressions. Do not add tautological
   tests solely to increase test counts.
 - Keep release approval and publishing procedures in the
-  [release guide](docs/RELEASES.md), not local development recipes.
+  [maintainer release guide](docs/maintainers/releasing.md), not local development
+  recipes.
 
-## Dependencies And Notices
+## dependencies and notices
 
 Every dependency must have a compatible license and a clear purpose. Direct
 runtime dependencies that require attribution must add their notices to

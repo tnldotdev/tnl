@@ -1,4 +1,4 @@
-# Papercuts
+# papercuts
 
 - Adding a project tunnel setting requires updating `internal/config/cmd/configgen/main.go` as well as `config.Tunnel`: the handwritten tunnel schema overrides reflected struct tags, so generation can silently omit a new field from JSON Schema and TypeScript declarations.
 - The shared publisher smoke initially passed `t.TempDir()` directly to client state; Linux creates that directory with permissions broader than the required 0700. Passing a new child directory lets client state create it with its normal private permissions.
@@ -16,3 +16,5 @@
 - Cleaning a named separated-load Compose project still requires a dummy `RESULTS` value because Compose interpolates required volume variables before `down`; pass an existing scratch path during interrupted-run cleanup.
 - `task generate` prints `No config found, using defaults` from Oxfmt even when generation succeeds, making the successful command look partially misconfigured.
 - Running `task test` and `task lint` concurrently races their shared JavaScript clean/build output and can make Vite fixtures fail to resolve `@tnldotdev/tnl`; run them serially.
+- The documentation rename inventory missed tracked `.agents` files in the default file search. Use `git ls-files` to include hidden tracked paths when checking repository-wide filename changes.
+- On a case-insensitive macOS filesystem, lowercasing a documentation filename on disk leaves Git tracking the old spelling. Record case-only renames through a temporary name with `git mv` so Linux checkouts get the correct paths too.

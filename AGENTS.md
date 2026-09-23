@@ -278,20 +278,23 @@ Frames follow this general form:
 
 # Development Workflow
 
+- Use lowercase documentation filenames and headings. Keep `AGENTS.md` and
+  `SKILL.md` uppercase for automatic agent discovery.
+
 # Tests and Benchmarks
 
 - Routine tests cover deterministic invariants without external infrastructure.
 - Integration tests use the smallest real setup needed to verify a boundary.
 - Runtime tests use one separated local topology and default to small smoke workloads.
-- Large load/fault sweeps and Fly benchmarks are explicit opt-in runs.
-- Local runtime and Fly share publisher, visitor, and measurement implementations.
+- Large load and fault sweeps and deployed benchmarks are explicit opt-in runs.
+- Local and deployed benchmarks share publisher, visitor, and measurement implementations.
 - Add coverage at the lowest sufficient layer; migrate unique assertions before retiring overlapping tests.
 
 # Development Commands
 
 - Use the versions in `mise.toml`. Bootstrap with `mise trust`, `mise install`, then `mise exec -- pnpm install --frozen-lockfile`; run repository commands from the root through `mise exec --`.
 - The Taskfile injects `GOFLAGS=-tags=ts_omit_ssh`. Preserve it for direct Go commands.
-- Follow [CONTRIBUTING.md](CONTRIBUTING.md) for the validation sequence, generated-source ownership, local stack, and test-tier prerequisites.
+- Follow [contributing.md](contributing.md) for the validation sequence, generated-source ownership, local stack, and test-tier prerequisites.
 - `task generate-check` regenerates files before comparing generated paths to `HEAD`; it is not read-only. `task format-check` is read-only.
 - Task targets are the public test interface; use `go:test:integration:*` and `go:test:load:*`, and have CI call the same targets.
 - Use `-tnl-*` flags for Go test selection and inputs. Never introduce `TNL_TEST_*` environment variables.
@@ -304,7 +307,7 @@ Frames follow this general form:
 # Architecture
 
 - `cmd/tnl` is the client CLI, `cmd/tnld` is the server process, and `cmd/tnlbench` is the benchmark driver. Product releases contain `tnl` and `tnld`.
-- Follow [Architecture](docs/ARCHITECTURE.md) for runtime invariants, trust boundaries, and package/API ownership. Operational procedures and current capability limitations belong in [Self-Hosting](docs/SELF-HOSTING.md).
+- Follow [Architecture](docs/architecture.md) for runtime invariants, trust boundaries, and package/API ownership. Operational procedures and current capability limitations belong in [Self-Hosting](docs/self-hosting.md).
 
 # Contracts and State
 
@@ -316,8 +319,8 @@ Frames follow this general form:
 # Operational Safety
 
 - The local stack order is `task local:up`, `task local:trust`, then `task local:login`. `local:trust` modifies the macOS login keychain; `local:down` preserves state, while `local:reset` removes trust, containers, volumes, and `.local`.
-- Never execute the Fly benchmark without explicit approval. Planning is read-only, but execution requires `BENCH_SUITE` and `BENCH_APPROVED=1` and uses paid persistent Fly and DNS resources. Explicit continuing approval covers retries of the same expanded plan during one debugging session; do not ask again unless the suite, overrides, resources, or cost ceiling change.
+- Never execute a deployed benchmark without explicit approval. Planning is read-only, but execution requires `BENCH_SUITE` and `BENCH_APPROVED=1` and creates billable compute, database, and DNS resources. Explicit continuing approval covers retries of the same plan during one debugging session; ask again if the suite, overrides, resources, or spending limit changes.
 - For release/version/tag work, load and follow `.agents/skills/tnl-release/SKILL.md`; do not duplicate or improvise its approval gates.
 - Keep GitHub Actions SHA-pinned with explicit permissions, timeouts, and `persist-credentials: false`; retain `actionlint` and `zizmor` checks.
 - CI publishes release artifacts and images but does not deploy production. Production Compose images must remain digest-pinned.
-- Release archives and native npm packages must retain all required dependency license and legal files; see `CONTRIBUTING.md`.
+- Release archives and native npm packages must retain all required dependency license and legal files; see `contributing.md`.

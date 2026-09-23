@@ -1,4 +1,6 @@
-# Webhook Development Plan
+# webhook development plan
+
+Audience: tnl maintainers. This is not user documentation.
 
 Status: planned; implementation has not started.
 
@@ -7,7 +9,7 @@ durable delivery history, inspection, and replay across restarts. Start with
 Stripe, GitHub, and Resend, with a small provider-neutral base that accommodates
 CLI, HTTP API, or SDK integrations.
 
-## 1. Implementation Scope
+## 1. implementation scope
 
 All webhook orchestration, capture, storage, and replay belongs in the local
 client. Provider credentials remain managed by their existing CLIs. Provider
@@ -18,9 +20,9 @@ client-state database, publisher lifecycle, private development socket, and
 shared CLI renderer. Use the repository's pinned mise toolchain and normal
 generation and validation workflow.
 
-## 2. Developer Experience
+## 2. developer experience
 
-### Configuration
+### configuration
 
 Add a named webhook map under `tnl.dev.webhooks`:
 
@@ -82,7 +84,7 @@ Configuration rules:
 Generate JSON Schema and TypeScript configuration declarations through the
 existing pipeline.
 
-### Project And Worktree Scope
+### project and worktree scope
 
 Use the existing project resolution:
 
@@ -97,7 +99,7 @@ For `--all-worktrees`, associate related checkouts using the Git common director
 and the project's relative location inside the worktree. This keeps separate
 projects inside a monorepo distinct.
 
-### Commands
+### commands
 
 | Command                                     | Behavior                                              |
 | ------------------------------------------- | ----------------------------------------------------- |
@@ -119,7 +121,7 @@ Those requests appear in ordinary delivery history. A generic `tnl webhook test`
 wrapper is outside the initial command surface because provider event-generation
 capabilities differ substantially.
 
-### Finding An Old Request
+### finding an old request
 
 ```sh
 tnl webhook list
@@ -164,7 +166,7 @@ duration, and whether the request was an original delivery or local replay.
 IDs remain copyable; commands accept unique prefixes and reject ambiguous
 matches.
 
-### Inspection
+### inspection
 
 ```sh
 tnl webhook inspect dlv_abc123
@@ -186,7 +188,7 @@ The default view includes:
 Body and header content is explicitly requested. Human and JSON output share
 redaction rules.
 
-## 3. Package Design And Extensibility
+## 3. package design and extensibility
 
 Use a small application package with independent provider adapters:
 
@@ -210,7 +212,7 @@ internal/webhookdev/
 
 Introduce shared CLI execution and signing helpers where actual reuse exists.
 
-### Ownership
+### ownership
 
 | Component         | Owns                                                                      |
 | ----------------- | ------------------------------------------------------------------------- |
@@ -226,7 +228,7 @@ CLI presentation, or concrete SQLite code.
 
 Provider adapters register at the CLI composition root.
 
-### Provider Capabilities
+### provider capabilities
 
 Separate capabilities instead of one large interface:
 
@@ -245,7 +247,7 @@ Adapters own provider-specific requests and response decoding.
 A future provider can use HTTP or an SDK without changing the history store or
 replay engine. Providers unable to support a capability report that explicitly.
 
-## 4. Initial Provider Adapters
+## 4. initial provider adapters
 
 | Provider | Endpoint management                   | Secret behavior               | Local replay                  |
 | -------- | ------------------------------------- | ----------------------------- | ----------------------------- |
@@ -270,9 +272,9 @@ remote endpoint.
 Native provider replay can be added later as a separate capability. The initial
 replay command uses captured requests consistently across all three providers.
 
-## 5. Development Lifecycle
+## 5. development lifecycle
 
-### Startup
+### startup
 
 1. Resolve and validate effective configuration.
 2. Acquire the existing project/service development lock.
@@ -294,7 +296,7 @@ notifications drive the manager without blocking publisher coordination.
 If activation partially fails, roll back activated endpoints and report the
 failure.
 
-### Initially Active Endpoints
+### initially active endpoints
 
 GitHub supports creation with `active: false`.
 
@@ -307,7 +309,7 @@ that short interval.
 Creation intents and ownership markers allow recovery when a process dies after
 remote creation but before recording the returned endpoint ID.
 
-### Shutdown And Recovery
+### shutdown and recovery
 
 For normal shutdown:
 
@@ -329,7 +331,7 @@ Use one initial recovery policy across providers: clean up stale owned
 endpoints and create fresh ones. Captured history remains useful independently
 of those endpoints.
 
-### Route IP Policy
+### route ip policy
 
 When the route is restricted, combine existing allowed addresses with:
 
@@ -344,11 +346,11 @@ route public.
 This remains a hostname-wide IP policy, which the documentation and status
 output will explain.
 
-## 6. SQLite History And Protection
+## 6. sqlite history and protection
 
 Add a client-state migration with two main tables.
 
-### Endpoint Ownership
+### endpoint ownership
 
 Store:
 
@@ -360,7 +362,7 @@ Store:
 - Creation intent and lifecycle state.
 - Tunnel ID, timestamps, and cleanup status.
 
-### Deliveries
+### deliveries
 
 Store queryable metadata:
 
@@ -382,7 +384,7 @@ Delivery rows contain enough historical identity to survive remote endpoint
 cleanup. Their lifetime must not depend on the endpoint ownership row remaining
 present.
 
-### Protection
+### protection
 
 Reuse the existing `clientstate` `Seal`/`Open` abstraction, with protection
 contexts bound to the delivery ID and payload field.
@@ -396,7 +398,7 @@ contexts bound to the delivery ID and payload field.
 - Keep payload search local: filter metadata first, then decrypt candidate
   bodies in batches.
 
-### Retention
+### retention
 
 Initial limits:
 
@@ -407,9 +409,9 @@ Initial limits:
 Prune incrementally during writes/startup and through the explicit `prune`
 command. `status` reports retained count, bytes, and oldest delivery.
 
-## 7. Capture And Replay
+## 7. capture and replay
 
-### Capture
+### capture
 
 Propagate a generic observer through:
 
@@ -440,7 +442,7 @@ session status; completed records appear in history after commit. Graceful
 shutdown flushes the writer. An abrupt process kill can lose in-flight or queued
 captures.
 
-### Replay
+### replay
 
 ```sh
 tnl webhook replay dlv_abc123
@@ -475,7 +477,7 @@ still applies because event identity is preserved.
 Truncated or incomplete requests remain inspectable and receive a clear
 non-replayable reason.
 
-## 8. Local IPC And Output
+## 8. local ipc and output
 
 Reuse the existing private development Unix socket for:
 
@@ -503,9 +505,9 @@ Output rules:
 - Stable diagnostics for missing sessions, incomplete captures, provider
   errors, ambiguous IDs, and pending cleanup.
 
-## 9. Implementation Phases
+## 9. implementation phases
 
-### Phase 1: Configuration And Contracts
+### phase 1: configuration and contracts
 
 Update:
 
@@ -516,7 +518,7 @@ Update:
 
 Define normalized webhook specifications and narrow application interfaces.
 
-### Phase 2: Durable History
+### phase 2: durable history
 
 Add:
 
@@ -527,7 +529,7 @@ Add:
 
 Regenerate `clientstatedb`; keep generated files generator-owned.
 
-### Phase 3: Provider-Neutral Lifecycle And Adapters
+### phase 3: provider-neutral lifecycle and adapters
 
 Implement the manager and subprocess helper, then Stripe as the first
 end-to-end integration.
@@ -535,7 +537,7 @@ end-to-end integration.
 Add GitHub and Resend using the same contracts. Verify shared lifecycle
 behavior through an adapter conformance suite.
 
-### Phase 4: Development Integration And Capture
+### phase 4: development integration and capture
 
 Update:
 
@@ -546,7 +548,7 @@ Update:
 
 Keep lifecycle helpers separate from the main command loop.
 
-### Phase 5: Replay And CLI
+### phase 5: replay and cli
 
 Add focused command/output files for:
 
@@ -559,16 +561,16 @@ Add focused command/output files for:
 
 Implement provider signing and the shared replay executor.
 
-### Phase 6: Documentation And Verification
+### phase 6: documentation and verification
 
 Document configuration, provider authentication, history scope, retention,
 cleanup, replay semantics, and worktree behavior in:
 
-- [CLI reference](https://md.cormo-turtle.ts.net/git/tnldotdev/tnl/docs/CLI-REFERENCE.md).
-- [Architecture](https://md.cormo-turtle.ts.net/git/tnldotdev/tnl/docs/ARCHITECTURE.md).
-- [Package guide](https://md.cormo-turtle.ts.net/git/tnldotdev/tnl/packages/tnl/README.md).
+- [CLI reference](https://md.cormo-turtle.ts.net/git/tnldotdev/tnl/docs/cli-reference.md).
+- [Architecture](https://md.cormo-turtle.ts.net/git/tnldotdev/tnl/docs/architecture.md).
+- [Package guide](https://md.cormo-turtle.ts.net/git/tnldotdev/tnl/packages/tnl/readme.md).
 
-## 10. Tests And Completion Criteria
+## 10. tests and completion criteria
 
 Meaningful coverage includes:
 
@@ -610,7 +612,7 @@ The key acceptance scenario: receive a webhook, stop `tnl dev`, restart it with
 fresh endpoints and secrets, locate the old delivery, replay it successfully,
 and inspect both the original and replay results.
 
-## Encryption Follow-Up
+## encryption follow-up
 
 Keep protection simple for this implementation: reuse the existing backend.
 **macOS provides Keychain-backed AES-GCM protection; the current non-macOS

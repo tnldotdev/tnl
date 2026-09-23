@@ -1,4 +1,4 @@
-# Runtime workload assertion inventory
+# runtime workload assertion inventory
 
 The separated topology is the canonical runtime workload. These checks must survive
 the retirement of the aggregate workload; database-specific checks belong to the
