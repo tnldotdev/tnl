@@ -7,30 +7,32 @@ can publish safe operating limits.
 
 ## 2026-09-23 bandwidth
 
-The separated local topology sustained 800 Mbit/sec upstream and 800 Mbit/sec
-downstream simultaneously through one active relay path. The direct path achieved
-799.078 Mbit/sec in each direction and the tunneled path achieved 798.686
-Mbit/sec in each direction. Each path transferred exactly 3,000,000,000 bytes in
-each direction with zero transfer failures.
-
-This is a demonstrated local passing point, not a capacity limit. The highest
-step still had CPU and memory headroom, so the experiment did not find a
-throughput knee or first limiting resource.
+| Result                  | Observation                                                                                               |
+| ----------------------- | --------------------------------------------------------------------------------------------------------- |
+| Strongest passing point | 800 Mbit/sec upstream and downstream simultaneously through one active relay path                         |
+| Direct path             | 799.078 Mbit/sec per direction                                                                            |
+| Tunneled path           | 798.686 Mbit/sec per direction                                                                            |
+| Exact transfer          | 3,000,000,000 bytes in each direction on each path                                                        |
+| Correctness             | Zero transfer failures, incomplete payloads, or byte mismatches                                           |
+| Limiting resource       | None found; the highest step retained CPU and memory headroom                                             |
+| Interpretation          | Demonstrated local passing point, not a capacity limit, throughput knee, or production operating envelope |
 
 ### profile
 
-- Four active route sessions and four low-rate fresh requests per second.
-- No held streams during the bandwidth phases.
-- Thirty-second measurement windows with 64 streams per active direction.
-- One control process, one ingress process, and two relay processes belonging to
-  separate relay services.
-- One-CPU quotas and 256 MiB memory limits for ingress and each relay.
-- Four visitor containers and a separately constrained local service.
-- Docker Desktop VM exposing 14 CPUs and 8,318,976,000 bytes of memory.
-
-Ingress selected `relay-a` for the measured visitor traffic. `relay-b` retained
-publisher connections but remained effectively idle. The result therefore
-describes one active relay path, not aggregate two-relay throughput.
+| Dimension               | Value                                                                                   |
+| ----------------------- | --------------------------------------------------------------------------------------- |
+| Active route sessions   | 4                                                                                       |
+| Background fresh rate   | 4 requests/sec                                                                          |
+| Held streams            | 0 during bandwidth phases                                                               |
+| Measurement window      | 30 seconds                                                                              |
+| Bandwidth streams       | 64 per active direction                                                                 |
+| Server topology         | 1 control process, 1 ingress process, 2 relay processes in separate relay services      |
+| Active visitor path     | Ingress through `relay-a`; `relay-b` retained publisher connections but was mostly idle |
+| Ingress resources       | 1 CPU, 256 MiB memory                                                                   |
+| Per-relay resources     | 1 CPU, 256 MiB memory                                                                   |
+| Traffic generators      | 4 visitor containers and a separately constrained local service                         |
+| Docker Desktop VM       | 14 CPUs, 8,318,976,000 bytes of memory                                                  |
+| Topology interpretation | One active relay path, not aggregate two-relay or highly available throughput           |
 
 ### rates
 
@@ -50,9 +52,11 @@ carried the displayed rate upstream and downstream simultaneously.
 |    400 | Bidirectional | 399.439 |  399.151 |              1,500,000,000 |
 |    800 | Bidirectional | 799.078 |  798.686 |              3,000,000,000 |
 
-Every row transferred exactly its expected application bytes with zero failures.
-The 800 Mbit/sec summaries completed in 30.035 seconds direct and 30.049 seconds
-tunneled.
+| Completion check at 800 Mbit/sec |  Direct | Tunneled |
+| -------------------------------- | ------: | -------: |
+| Elapsed                          | 30.035s |  30.049s |
+| Bytes per direction              |    3 GB |     3 GB |
+| Failures                         |       0 |        0 |
 
 ### server resources
 
@@ -67,48 +71,45 @@ time.
 |         400 Mbit/sec |             0.4421 |                  0.5329 |
 |         800 Mbit/sec |             0.4567 |                  0.6263 |
 
-At 800 Mbit/sec per direction, ingress used about 34.3 MiB current and
-36.6 MiB peak charged memory. The active relay used about 43.2 MiB current and
-45.4 MiB peak. Neither component throttled or recorded memory-pressure or OOM
-events. The direct phase met the same offered rate with the same visitor and
-origin containers, demonstrating generator headroom at the tested point.
+| 800 Mbit/sec component | CPU quota | Mean cores | Current memory | Peak memory | Throttling | Memory pressure / OOM |
+| ---------------------- | --------: | ---------: | -------------: | ----------: | ---------- | --------------------- |
+| Ingress                |         1 |     0.4567 |       34.3 MiB |    36.6 MiB | None       | None                  |
+| Active relay           |         1 |     0.6263 |       43.2 MiB |    45.4 MiB | None       | None                  |
+
+| Generator check | Observation                                                                                        |
+| --------------- | -------------------------------------------------------------------------------------------------- |
+| Direct baseline | The same visitor and origin containers met the 800 Mbit/sec-per-direction target without failures. |
 
 ### provenance and evidence
 
-The runs used base commit `f446e681bf5e70f9170b082aea9518681cddf532` plus
-the uncommitted precursor to `162af12`. That commit landed the direct-path and
-bandwidth harness and added an explicit one-second completion grace. Every
-retained run completed within that final budget.
-
-Raw summaries, cgroup snapshots, production metrics, admission settings, and
-container-exit evidence remain local under these ignored paths:
-
-- `bench-results/capacity-local-{downstream,upstream,bidirectional}-{100,200,400}/`
-- `bench-results/capacity-local-bidirectional-800/`
-- `bench-results/capacity-local-bandwidth-20260923/findings.md`
-
-One preliminary 200 Mbit/sec attempt is excluded. It used `BENCH_DURATION` and
-`BENCH_ARTIFACT_DIR`, which are not inputs to the local Task target, so the target
-selected its default duration and result path. The retained trials use the
-documented `DURATION` and `RESULTS` Task variables.
+| Item                  | Value                                                                                                                                                                                        |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Base source           | `f446e681bf5e70f9170b082aea9518681cddf532`                                                                                                                                                   |
+| Workload source       | Uncommitted precursor to `162af12`                                                                                                                                                           |
+| Landed harness        | `162af12`; added the direct path, bandwidth workload, and explicit one-second completion grace                                                                                               |
+| Completion budget     | Every retained run completed within the final harness budget                                                                                                                                 |
+| 100-400 evidence      | `bench-results/capacity-local-{downstream,upstream,bidirectional}-{100,200,400}/`                                                                                                            |
+| 800 evidence          | `bench-results/capacity-local-bidirectional-800/`                                                                                                                                            |
+| Detailed local report | `bench-results/capacity-local-bandwidth-20260923/findings.md`                                                                                                                                |
+| Retained artifacts    | Exact summaries, cgroup snapshots, production metrics, admission settings, and container-exit evidence                                                                                       |
+| Excluded trial        | One preliminary 200 Mbit/sec attempt used `BENCH_DURATION` and `BENCH_ARTIFACT_DIR`, which are not local Task inputs; retained trials use the documented `DURATION` and `RESULTS` variables. |
 
 ### qualifications
 
-- Each point is one 30-second trial rather than a five-minute measurement or a
-  repeated boundary result.
-- The highest point passed with headroom and does not identify a bandwidth limit.
-- The topology had one ingress process and one active relay path; it was not the
-  smallest highly available deployment from the capacity testing plan.
-- No bandwidth phase ran with a relay, ingress process, control process, or
-  PostgreSQL boundary unavailable.
-- These measurements do not establish production hardware sizing, network cost,
-  WAN behavior, endurance, or a safe operating limit.
+| Area                 | Qualification                                                                                        |
+| -------------------- | ---------------------------------------------------------------------------------------------------- |
+| Duration             | One 30-second trial per point, not a five-minute measurement                                         |
+| Repetition           | No repeated boundary result                                                                          |
+| Bandwidth boundary   | Highest point passed with headroom; no limit was identified                                          |
+| Topology             | One ingress process and one active relay path, not the smallest highly available deployment          |
+| Degraded operation   | No bandwidth phase ran with a relay, ingress, control, or PostgreSQL boundary unavailable            |
+| Production relevance | Does not establish hardware sizing, network cost, WAN behavior, endurance, or a safe operating limit |
 
 ### next workload
 
-Open visitor streams are the next isolated dimension. The harness must first
-retain opening duration, requested/opened/surviving counts, progress after
-opening, and before/after resources. The local staircase can then increase held
-streams while fresh traffic and byte rate stay low. Fresh visitor connections
-and route sessions follow; combined and degraded tests wait until all four
-dimensions have repeated passing points.
+| Order | Dimension                 | Next action                                                                                                          |
+| ----: | ------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+|     1 | Open visitor streams      | Retain opening duration, requested/opened/surviving counts, byte progress, and before/after resources; run staircase |
+|     2 | Fresh visitor connections | Search with held streams and bandwidth disabled                                                                      |
+|     3 | Active route sessions     | Revisit the existing local route boundary on the landed harness                                                      |
+|     4 | Combined and degraded     | Wait until all four isolated dimensions have repeated passing points                                                 |
