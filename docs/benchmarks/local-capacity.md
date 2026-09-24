@@ -105,11 +105,72 @@ time.
 | Degraded operation   | No bandwidth phase ran with a relay, ingress, control, or PostgreSQL boundary unavailable            |
 | Production relevance | Does not establish hardware sizing, network cost, WAN behavior, endurance, or a safe operating limit |
 
-### next workload
+## 2026-09-24 local 1 cpu / 2 gib server-role screens
 
-| Order | Dimension                 | Next action                                                                                                          |
-| ----: | ------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-|     1 | Open visitor streams      | Retain opening duration, requested/opened/surviving counts, byte progress, and before/after resources; run staircase |
-|     2 | Fresh visitor connections | Search with held streams and bandwidth disabled                                                                      |
-|     3 | Active route sessions     | Revisit the existing local route boundary on the landed harness                                                      |
-|     4 | Combined and degraded     | Wait until all four isolated dimensions have repeated passing points                                                 |
+Control, ingress, and each relay had a one-CPU quota and a 2 GiB cgroup limit.
+The separated local topology had one ingress process and two relay services,
+but traffic used mostly `relay-a`. Docker Desktop had 14 CPUs and 8,318,976,000
+bytes of memory. All points below are local screens, not repeatable operating
+limits for a highly available deployment. Each run retained its own direct
+baseline, admission settings, component resources, metrics, and exit evidence.
+Generator and PostgreSQL overrides varied by dimension and are listed below.
+
+| Dimension                                       | Observed point                                                                    | Result                                                                                                 | Boundary or qualification                                                                                                       |
+| ----------------------------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| Open visitor streams                            | 4,000 with default 4,096 relay-stream and 500-per-route publisher request limits  | 10-second steady screen passed                                                                         | Configured relay-stream limit is near this point.                                                                               |
+| Open visitor streams                            | 6,400 with relay-stream limit 8,192                                               | 10-second steady screen passed                                                                         | No resource boundary established.                                                                                               |
+| Open visitor streams                            | 8,000 with relay-stream limit 16,384 and per-route ingress/publisher limits 1,000 | 10-second screen passed; five-minute tunneled steady phase had 8,000 surviving and progressing streams | The long run failed the final 10-second zero-active-state cleanup check; it is **not** a complete passing run.                  |
+| Open visitor streams                            | 9,600 with the same raised limits                                                 | Failed during tunneled opening/steady traffic                                                          | The direct baseline passed; tunneled opening took up to 2m09s and only 485 streams survived to the first steady result.         |
+| Fresh visitor connections                       | 400, 800, 1,600, 2,000 per second                                                 | Each 30-second direct and tunneled screen passed with zero failed, timed-out, or missed offers         | At 2,000 the active relay was close to its one-CPU quota; no failed traffic point was found.                                    |
+| Active route sessions                           | 1,000                                                                             | 30-second direct and tunneled screen and final accounting passed                                       | The test harness currently caps routes at 1,000; no server-role limit was found.                                                |
+| Bandwidth, simultaneous upstream and downstream | 1,600, 2,000, 2,400 Mbit/sec **per direction**                                    | Exact bytes passed in 30-second direct and tunneled screens                                            | At 2,400 the tunneled transfer finished in 30.963s, just inside the one-second grace.                                           |
+| Bandwidth, simultaneous upstream and downstream | 2,600 Mbit/sec **per direction**                                                  | Direct path passed; tunneled path failed the completion budget                                         | Exact 9.75 GB in each direction took 34.193s through the tunnel, past the 31-second budget. The active relay was CPU-throttled. |
+
+### stream profile and resource boundary
+
+| Item                                                      | Observation                                                                                                                                                                                                                                                                                                    |
+| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Workload                                                  | 16 routes, four visitor sources, 4 fresh requests/sec, 32 KiB forwarding buffers, direct TLS baseline; short screens used 10-second windows.                                                                                                                                                                   |
+| Longer 8,000-stream run                                   | Two-minute warmup and five-minute measurement on each direct and tunneled path; all 8,000 tunneled streams survived and received more bytes over the measurement.                                                                                                                                              |
+| Active relay during five-minute 8,000-stream steady phase | Sampled maximum 1,378 MB; 0.989 mean CPU cores and 49 seconds of quota throttling.                                                                                                                                                                                                                             |
+| Ingress during the same phase                             | Sampled maximum 872 MB; 0.998 mean CPU cores and 357 seconds of quota throttling.                                                                                                                                                                                                                              |
+| Resource correctness                                      | No cgroup memory-limit events or OOM kills in the long 8,000-stream measurement. CPU, not the 2 GiB process memory limit, was saturated in this traffic pattern.                                                                                                                                               |
+| Configured limits                                         | At 8,000 streams with the publisher's default 500 concurrent requests per route, held streams progressed but fresh requests received HTTP 503. Raising that explicit request limit to 1,000 eliminated those 503s in the short screen. This is a configured publisher limit, not a measured server-role limit. |
+| Generators                                                | Stream screens used 512 MiB to 1 GiB per visitor, 512 MiB to 1 GiB for the local service, and 2 to 3 GiB for publishers; these are separate from the 1 CPU / 2 GiB server-role profile.                                                                                                                        |
+
+### fresh traffic, routes, and bandwidth details
+
+| Workload                     | Direct result                                | Tunneled result                                               | Resource or method detail                                                                                                                                                                  |
+| ---------------------------- | -------------------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2,000 fresh connections/sec  | 60,000/60,000 successful in 30s, p95 2.444ms | 60,000/60,000 successful in 30s, p95 8.967ms                  | Ingress 0.895 mean cores; active relay 0.963, with 2.65s of quota throttling. Source rate/burst were explicitly raised to 1,000/4,000 per source; visitor workers and queue were 512 each. |
+| 1,000 active route sessions  | 120/120 successful in 30s                    | 120/120 successful in 30s, plus 1,000/1,000 live-route probes | Activation verified in 32.794s with 1,000 certificate orders. PostgreSQL had 2 CPUs / 2 GiB, publisher generator 2 CPUs / 3 GiB, and source rate/burst 500/2,000.                          |
+| 1,600 Mbit/sec bidirectional | 6 GB per direction in 30.044s                | 6 GB per direction in 30.057s                                 | Active relay 0.964 mean cores, 1.09s quota throttling.                                                                                                                                     |
+| 2,000 Mbit/sec bidirectional | 7.5 GB per direction in 30.032s              | 7.5 GB per direction in 30.060s                               | Active relay 0.968 mean cores, 19.98s quota throttling.                                                                                                                                    |
+| 2,400 Mbit/sec bidirectional | 9 GB per direction in 30.042s                | 9 GB per direction in 30.963s                                 | Active relay 0.955 mean cores, 33.51s quota throttling; one-off pass with only 0.037s to spare.                                                                                            |
+| 2,600 Mbit/sec bidirectional | 9.75 GB per direction in 30.037s             | 9.75 GB per direction in 34.193s                              | Active relay 0.929 mean cores over the longer interval, 34.37s quota throttling. This fails the exact-byte completion budget despite zero byte mismatches.                                 |
+
+Bandwidth runs used four routes, 64 streams per direction, no held streams,
+4 background fresh requests/sec, and separately constrained local-service,
+publisher, and visitor generators (4, 4, and 2 CPUs respectively). The
+original 800 Mbit/sec measurement above used the earlier 256 MiB ingress/relay
+profile; do not merge its resource numbers with these runs. The initial
+1,600-requests/sec fresh trial OOM-killed only the 128 MiB test coordinator
+while collecting direct-path results. Its rerun with a separately expanded
+512 MiB coordinator passed; the server-role resources did not change.
+
+| Evidence                                  | Ignored local artifact directory                                                                                            |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Stream screens and longer phase           | `bench-results/capacity-profile-1cpu-2g-streams-{4000-screen,6400-screen,8000-tuned-screen,9600-tuned-screen,8000-full-1}/` |
+| Fresh connection screens                  | `bench-results/capacity-profile-1cpu-2g-fresh-{400-screen,800-screen,1600-coordinator512,2000-screen}/`                     |
+| Route session screen                      | `bench-results/capacity-profile-1cpu-2g-routes-1000-screen/`                                                                |
+| Bandwidth screens and first late transfer | `bench-results/capacity-profile-1cpu-2g-bandwidth-{1600-bidi,2000-bidi,2400-bidi,2600-bidi}/`                               |
+
+### remaining validation
+
+| Dimension         | Required before reporting a repeatable local point                                                                                 |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Streams           | Repeat a clean, full-length point below the 8,000-stream CPU/cleanup failure and retain the first-minute/last-minute memory curve. |
+| Fresh connections | Repeat the strongest clean point and measure for five minutes; the existing runtime fresh-window limit is two minutes.             |
+| Route sessions    | Extend the harness beyond 1,000, verify PostgreSQL and generator headroom, then repeat the best passing point.                     |
+| Bandwidth         | Repeat near the 2,400/2,600 completion boundary and run longer direct/tunneled transfers before choosing a passing point.          |
+| Combined/degraded | Only after the isolated boundaries are repeated; this local topology does not establish production limits.                         |
