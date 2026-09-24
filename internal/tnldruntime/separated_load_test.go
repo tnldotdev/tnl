@@ -411,8 +411,12 @@ func separatedLoadParameters(t *testing.T) (int, int, time.Duration) {
 	if rate < 4 || rate > 2000 {
 		t.Fatal("separated runtime load requests per second must be between 4 and 2000")
 	}
-	if duration < 10*time.Second || duration > 2*time.Minute {
-		t.Fatal("separated runtime load phase duration must be between 10s and 2m")
+	maxDuration := 2 * time.Minute
+	if *runtimeLoadCapacityOnly {
+		maxDuration = 5 * time.Minute
+	}
+	if duration < 10*time.Second || duration > maxDuration {
+		t.Fatalf("separated runtime load phase duration must be between 10s and %s", maxDuration)
 	}
 	if *runtimeLoadWorkers < 4 || *runtimeLoadWorkers > 4096 || *runtimeLoadQueue < 0 || *runtimeLoadQueue > 4096 {
 		t.Fatal("invalid visitor concurrency or queue")
@@ -523,6 +527,30 @@ func separatedCollectVisitors(t *testing.T, phase string, timeout time.Duration)
 	for i := 1; i <= 4; i++ {
 		var result separatedVisitorResult
 		separatedWait(t, fmt.Sprintf("%s.visitor-%d", phase, i), timeout, &result)
+		if result.RequestsFile != "" {
+			path := filepath.Join("/results", result.RequestsFile)
+			file, err := os.Open(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			decoder := json.NewDecoder(file)
+			for {
+				var row benchworkload.RequestResult
+				if err := decoder.Decode(&row); err != nil {
+					if err == io.EOF {
+						break
+					}
+					t.Fatal(err)
+				}
+				result.Requests = append(result.Requests, row)
+			}
+			if err := file.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if len(result.Requests) != result.Completed+result.QueueExpired {
+				t.Fatalf("%s request artifact: got %d rows, want %d", path, len(result.Requests), result.Completed+result.QueueExpired)
+			}
+		}
 		results = append(results, result)
 	}
 	separatedResult(t, phase+"-visitors", results)

@@ -267,6 +267,13 @@ shutdown and usage accounting. Its ingress uses the production 30-second
 drain deadline, with a matching final-routing and shutdown wait; the smaller
 fault workload retains its five-second ingress drain fixture. Ingress shutdown
 elapsed time is retained in `ingress-shutdown.json`.
+Capacity-only `DURATION` accepts up to five minutes per fresh phase (direct,
+steady tunneled, and shutdown tunneled); fault workloads retain the two-minute
+maximum. Raise the coordinator's separate memory limit for longer high-rate
+fresh runs. Above 25,000 requests per visitor and phase, visitors write their
+individual results to `<phase>-visitor-<n>-requests.jsonl` in `RESULTS` and
+send bounded summaries through coordination; the coordinator reads the rows
+back for the same request-level assertions and retained `-visitors.json`.
 During the tunneled warmup and long held-stream measurements, per-component CPU,
 memory, memory-limit events, and open file descriptors are sampled every five
 seconds into `<phase>-resource-samples.jsonl`, written incrementally so samples

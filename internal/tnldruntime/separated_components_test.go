@@ -1,8 +1,10 @@
 package tnldruntime
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -321,6 +323,7 @@ type separatedVisitorResult struct {
 	benchworkload.VisitorResult
 	Bandwidth           *benchworkload.BandwidthResult
 	Requests            []benchworkload.RequestResult
+	RequestsFile        string `json:"requests_file,omitempty"`
 	HeldRequested       int
 	HeldOpened          int
 	HeldSurviving       int
@@ -438,11 +441,31 @@ func runSeparatedVisitor(t *testing.T, ctx context.Context, component string, ra
 			}
 		} else {
 			result.Cohorts = make(map[string]benchworkload.VisitorResult)
+			var requestFile *os.File
+			var requestWriter *bufio.Writer
+			var requestEncoder *json.Encoder
+			var requestError error
+			if *runtimeLoadCapacityOnly && int64(localRate)*int64(phase.Duration)/int64(time.Second) > 25_000 {
+				result.RequestsFile = fmt.Sprintf("%s-%s-requests.jsonl", phase.Name, component)
+				var err error
+				requestFile, err = os.Create(filepath.Join("/results", result.RequestsFile))
+				if err != nil {
+					t.Fatal(err)
+				}
+				requestWriter = bufio.NewWriter(requestFile)
+				requestEncoder = json.NewEncoder(requestWriter)
+			}
 			cfg := benchworkload.VisitorConfig{Rate: localRate,
 				Workers: benchworkload.Assignment(*runtimeLoadWorkers, 4, index-1), QueueSlots: benchworkload.Assignment(*runtimeLoadQueue, 4, index-1),
 				Start: phase.Start.Add(time.Duration(index-1) * time.Second / time.Duration(rate)), Duration: phase.Duration,
 				OnResult: func(row benchworkload.RequestResult) {
-					result.Requests = append(result.Requests, row)
+					if requestEncoder != nil {
+						if requestError == nil {
+							requestError = requestEncoder.Encode(row)
+						}
+					} else {
+						result.Requests = append(result.Requests, row)
+					}
 					name := cohortByURL[row.URL]
 					if phase.Direct {
 						name = "direct"
@@ -455,6 +478,12 @@ func runSeparatedVisitor(t *testing.T, ctx context.Context, component string, ra
 			}
 			var err error
 			result.VisitorResult, err = phaseVisitor.Run(ctx, cfg, phase.URLs)
+			if requestWriter != nil {
+				requestError = errors.Join(requestError, requestWriter.Flush(), requestFile.Close())
+			}
+			if requestError != nil {
+				t.Fatal(requestError)
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
