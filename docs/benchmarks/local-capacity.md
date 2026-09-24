@@ -127,7 +127,7 @@ Generator and PostgreSQL overrides varied by dimension and are listed below.
 | Active route sessions                           | 1,000, 2,000, 3,000, 4,000                                                        | 30-second direct and tunneled screens and final accounting passed at each point                                           | At 4,000 both relay processes held 4,000 ready publisher connections, exactly their configured per-process limit; no server-role memory limit was found. |
 | Active route sessions                           | 5,000 and 6,000 with relay connection capacity raised to 8,000                    | 5,000 passed once; 6,000 passed twice with the production 30-second ingress drain profile                                 | The five-second fixture had failed final usage flush at 5,500 and 6,000. With production drain timing, all 6,000 routes and usage reconciled.            |
 | Active route sessions                           | 7,000 and 8,000 with separate publisher/Pebble headroom                           | 7,000 passed once; 8,000 passed twice with live-route probes and final accounting                                         | At 8,000 each relay reached its then-configured 8,000 publisher connections and the former harness cap; no server-role memory limit was found.           |
-| Active route sessions                           | 9,000 and 10,000 with relay capacity raised to 10,000                             | 9,000 passed once; 10,000 completed three times, with one additional run failing publisher readiness                      | The 10,000-route runs reached the new harness and configured relay-connection ceilings; the intermittent activation failure is unresolved.               |
+| Active route sessions                           | 9,000 and 10,000 with relay capacity raised to 10,000                             | 9,000 passed once; 10,000 completed five times, with one additional run failing publisher readiness                       | The 10,000-route runs reached the new harness and configured relay-connection ceilings; the intermittent activation failure is unresolved.               |
 | Bandwidth, simultaneous upstream and downstream | 1,600, 2,000, 2,200 Mbit/sec **per direction**                                    | Exact bytes passed in 30-second direct and tunneled screens; 2,200 passed three times                                     | 2,200 is the highest repeated short-window local point, not a long-duration operating limit.                                                             |
 | Bandwidth, simultaneous upstream and downstream | 2,200 Mbit/sec **per direction**, five minutes                                    | Two complete runs passed direct/tunneled exact bytes and final accounting                                                 | The active relay ran near its CPU quota and was heavily throttled in both runs; this is a repeated local passing point, not an operating limit.          |
 | Bandwidth, simultaneous upstream and downstream | 2,400 Mbit/sec **per direction**                                                  | Passed once; failed on repeat                                                                                             | Tunneled transfers finished in 30.963s and 31.012s against a 31-second budget, while the direct path passed both times.                                  |
@@ -161,7 +161,7 @@ Generator and PostgreSQL overrides varied by dimension and are listed below.
 | 7,000 active route sessions                | 120/120 successful in 30s                             | 120/120 successful in 30s and 7,000/7,000 live-route probes                                             | One complete run: activation verified in 3m52.686s with 7,000 certificate orders; final usage and zero active sessions/connections reconciled. Both relays stayed below 640 MB in steady traffic. Publisher readiness used 2m and Pebble had 512 MiB, independently of the server-role profile.                                                |
 | 8,000 active route sessions                | 120/120 successful in 30s per repeat                  | 120/120 successful in 30s and 8,000/8,000 live-route probes per repeat                                  | Two complete runs: activation verified in 4m44.683s-4m54.981s with 8,000 certificate orders each, followed by exact accounting and clean shutdown. Both relays stayed below 756 MB, while each held exactly 8,000 ready publisher connections, matching its configured capacity.                                                               |
 | 9,000 active route sessions                | 120/120 successful in 30s                             | 120/120 successful in 30s and 9,000/9,000 live-route probes                                             | One complete run: activation verified in 5m56.739s with 9,000 certificate orders, exact final usage and zero active sessions/connections. Both relays stayed below 813 MB; the publisher generator peaked at 3.27 GB against its separate 4 GiB limit.                                                                                         |
-| 10,000 active route sessions               | 120/120 successful in 30s per complete run            | 120/120 successful in 30s and 10,000/10,000 live-route probes per complete run                          | Three complete runs: activation verified in 6m59.877s-7m18.382s, 10,000 certificate orders each, clean shutdown and exact accounting. One intervening run stopped during activation when a publisher exceeded a 2m readiness deadline. Both relays stayed below 900 MB in the complete runs; publisher generator peaked at 3.63 GB.            |
+| 10,000 active route sessions               | 120/120 successful in 30s per complete run            | 120/120 successful in 30s and 10,000/10,000 live-route probes per complete run                          | Five complete runs: activation verified in 6m57.455s-7m18.382s, 10,000 certificate orders each, clean shutdown and exact accounting. One intervening run stopped during activation when a publisher exceeded a 2m readiness deadline. Both relays stayed below 900 MB in the complete runs; publisher generator peaked at 3.63 GB.             |
 | 1,600 Mbit/sec bidirectional               | 6 GB per direction in 30.044s                         | 6 GB per direction in 30.057s                                                                           | Active relay 0.964 mean cores, 1.09s quota throttling.                                                                                                                                                                                                                                                                                         |
 | 2,000 Mbit/sec bidirectional               | 7.5 GB per direction in 30.032s                       | 7.5 GB per direction in 30.060s                                                                         | Active relay 0.968 mean cores, 19.98s quota throttling.                                                                                                                                                                                                                                                                                        |
 | 2,200 Mbit/sec bidirectional               | 8.25 GB per direction in 30.032-30.039s               | 8.25 GB per direction in 30.066-30.092s                                                                 | Three clean identical 30-second runs; active relay used about 0.968 mean cores and accumulated 24-26s quota throttling in each run.                                                                                                                                                                                                            |
@@ -221,9 +221,10 @@ raised those ceilings to 10,000.
 At 10,000 routes, the first complete run passed with `READY_TIMEOUT=2m`;
 the identical next run exceeded that deadline for publisher 5,793 while
 certificate work was still active and never reached visitor traffic. Two
-further complete runs passed with `READY_TIMEOUT=5m`; their slowest individual
-publisher took 1m03s-1m06s, so they do not establish whether the earlier
-straggler would have recovered within five minutes. This is **three complete
+further complete runs passed with `READY_TIMEOUT=5m` and two later 2m
+diagnostic runs passed; the slowest individual publisher in these passing
+runs took about 1m03s-1m06s. They do not establish whether the earlier
+straggler would have recovered within five minutes. This is **five complete
 passes and one incomplete activation run**, not an unqualified repeatable
 operating limit. Ten thousand is the current harness cap and configured
 publisher-connection capacity per relay, not an observed server resource
@@ -231,28 +232,88 @@ limit. The route screens offered just 4 fresh requests/sec plus correctness
 probes and ran for 30 seconds per traffic phase; route endurance and combined
 traffic at this count remain untested.
 
-| Evidence                               | Ignored local artifact directory                                                                                                                                                                                                                                                                                                                                                  |
-| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Stream screens and longer phases       | `bench-results/capacity-profile-1cpu-2g-streams-{4000-screen,6400-screen,6400-full-1,6400-full-2,6400-full-3,8000-tuned-screen,9600-tuned-screen,8000-full-1}/`                                                                                                                                                                                                                   |
-| Fresh connection screens and long runs | `bench-results/capacity-profile-1cpu-2g-fresh-{400-screen,800-screen,1600-coordinator512,2000-screen,2000-long-1,2000-long-2,2000-long-3}/`                                                                                                                                                                                                                                       |
-| Route session screens                  | `bench-results/capacity-profile-1cpu-2g-routes-{1000-screen,2000-screen,3000-screen,4000-screen,5000-tuned-screen,5500-tuned-screen,6000-tuned-screen,6000-prod-drain,6000-prod-drain-routing,6000-prod-drain-repeat,7000-screen,7000-ready2m,7000-pebble512,8000-ceiling-1,8000-ceiling-2,9000-ceiling10000-1,10000-ceiling-1,10000-ceiling-2,10000-ready5m-1,10000-ready5m-2}/` |
-| Bandwidth screens and longer transfers | `bench-results/capacity-profile-1cpu-2g-bandwidth-{1600-bidi,2000-bidi,2200-bidi-1,2200-bidi-2,2200-bidi-3,2200-bidi-long-1,2200-bidi-long-2,2400-bidi,2400-bidi-repeat-2,2400-bidi-long-1,2600-bidi}/`                                                                                                                                                                           |
+Failure-time diagnostics now capture a single publisher's non-secret route,
+certificate-order/authorization, connected-relay, and ingress revision state
+before group cancellation. A deliberately short 30s-readiness run verified
+the artifact: its selected route had an installed certificate and two ready
+publisher connections, but its route session was still `starting`. That
+forced deadline is not a reproduction or explanation of the earlier 2m stall.
+
+| Evidence                               | Ignored local artifact directory                                                                                                                                                                                                                                                                                                                                                                                                               |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Stream screens and longer phases       | `bench-results/capacity-profile-1cpu-2g-streams-{4000-screen,6400-screen,6400-full-1,6400-full-2,6400-full-3,8000-tuned-screen,9600-tuned-screen,8000-full-1}/`                                                                                                                                                                                                                                                                                |
+| Fresh connection screens and long runs | `bench-results/capacity-profile-1cpu-2g-fresh-{400-screen,800-screen,1600-coordinator512,2000-screen,2000-long-1,2000-long-2,2000-long-3}/`                                                                                                                                                                                                                                                                                                    |
+| Route session screens                  | `bench-results/capacity-profile-1cpu-2g-routes-{1000-screen,2000-screen,3000-screen,4000-screen,5000-tuned-screen,5500-tuned-screen,6000-tuned-screen,6000-prod-drain,6000-prod-drain-routing,6000-prod-drain-repeat,7000-screen,7000-ready2m,7000-pebble512,8000-ceiling-1,8000-ceiling-2,9000-ceiling10000-1,10000-ceiling-1,10000-ceiling-2,10000-ready5m-1,10000-ready5m-2,10000-diagnostic-1,10000-diagnostic-2,10000-snapshot-focused}/` |
+| Bandwidth screens and longer transfers | `bench-results/capacity-profile-1cpu-2g-bandwidth-{1600-bidi,2000-bidi,2200-bidi-1,2200-bidi-2,2200-bidi-3,2200-bidi-long-1,2200-bidi-long-2,2400-bidi,2400-bidi-repeat-2,2400-bidi-long-1,2600-bidi}/`                                                                                                                                                                                                                                        |
+
+### simultaneous local work
+
+The combined workload holds routes and streams while offering fresh connections
+and paced upstream/downstream bandwidth **at the same time**. The direct local
+TLS path and tunneled path each had a two-minute fresh-request warmup and
+five-minute combined measurement. All three trials passed exact-byte checks,
+held-stream progress, offered fresh work, clean close, and final usage
+reconciliation; the shared resource boundary appeared before correctness failed.
+
+| Routes | Fresh/sec | Held streams | Mbit/sec per direction | Direct/tunneled fresh p95                                   | Active relay CPU and throttling      |
+| -----: | --------: | -----------: | ---------------------: | ----------------------------------------------------------- | ------------------------------------ |
+|    500 |       125 |          400 |                    140 | 2.440ms / 4.878ms; 37,500/37,500 successful on each path    | 0.811 mean cores, 0.09s throttling   |
+|  1,000 |       250 |          800 |                    275 | 2.438ms / 5.597ms; 75,000/75,000 successful on each path    | 0.990 mean cores, 20.17s throttling  |
+|  2,000 |       500 |        1,600 |                    550 | 2.436ms / 70.639ms; 150,000/150,000 successful on each path | 0.997 mean cores, 181.01s throttling |
+
+All held streams survived and progressed. At the 2,000-route point, bandwidth
+completed at 549.223 Mbit/sec per direction tunneled against 549.888 direct;
+at 500 routes it completed at 139.940 against 139.979. The ingress used
+0.652-0.846 mean cores across these tunneled measurements, with no OOM events.
+The 1,000-route step showed relay CPU pressure and the 2,000-route step showed
+a sustained latency knee, despite both passing correctness. The 500-route
+point was measured only once, so it is a promising lower screen, not a
+repeatable operating limit. Ignored local evidence is in
+`bench-results/capacity-profile-1cpu-2g-combined-{25pct-1,12pct-1,6pct-1}/`.
+
+### replicated-process local comparison
+
+Two matched runs at the 500-route combined point used two control processes,
+two ingress processes, and two relay services with one relay process each.
+Control, ingress, and each relay still had 1 CPU / 2 GiB per process; separate
+generator and database resources matched the single-control/ingress run.
+Shared Docker DNS names distributed traffic; each process had its own resource
+and metrics address. Over five minutes both ingresses served visitor traffic:
+19,771/19,649 successful backend attempts in the first run and 19,636/19,784
+in the second. Each run completed all 37,500 tunneled fresh requests, kept all
+400 held streams progressing, transferred exact bytes at 140 Mbit/sec per
+direction, reconciled final usage, and reached zero active state. Tunneled
+fresh-request p95 was 4.881ms and 4.886ms (2.440ms direct in the first run),
+versus 4.878ms tunneled in the matched single-ingress run. Ingresses averaged
+0.446/0.437 and 0.451/0.470 CPU cores; the active relay averaged 0.823 and
+0.856 cores, versus 0.811 in the single-ingress run. Evidence:
+`bench-results/capacity-profile-1cpu-2g-combined-ha-6pct-{1,2}/`.
+
+This verifies a replicated control/ingress process boundary with real
+publisher and visitor traffic, not a highly available deployment: PostgreSQL
+is one disposable process, Docker DNS is not a health-aware ingress address,
+and the local processes share one Docker host. Both runs still concentrated
+visitor traffic on the first relay. A third trial was interrupted during
+activation, before it offered visitor traffic; its incomplete snapshot is not
+a failed five-minute capacity measurement. These runs do not establish a
+deployed combined capacity limit.
 
 ### remaining validation
 
-| Dimension         | Next boundary or qualification                                                                                                                                                                                                                         |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Streams           | The 6,400-stream point passed three full runs with leveling memory. The higher 8,000-stream trial saturated ingress/relay CPU and failed cleanup; do not infer a safe operating limit.                                                                 |
-| Fresh connections | 2,000/sec passed two complete five-minute direct and tunneled runs with a near-saturated active relay. Find a genuine failure point and assess headroom before setting any operating limit.                                                            |
-| Route sessions    | 10,000 completed three times but one identical 2m-readiness attempt failed during activation. Diagnose the straggler, test route endurance and mixed traffic, and reassess the 10,000-route harness/relay ceilings before setting any operating limit. |
-| Bandwidth         | 2,200 Mbit/sec per direction passed three 30-second trials and two five-minute direct/tunneled runs. The single five-minute 2,400 Mbit/sec trial missed its tunneled deadline. Assess headroom before setting an operating point.                      |
-| Combined/degraded | Only after the isolated boundaries are repeated; this local topology does not establish production limits.                                                                                                                                             |
+| Dimension         | Next boundary or qualification                                                                                                                                                                                                                                                                            |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Streams           | The 6,400-stream point passed three full runs with leveling memory. The higher 8,000-stream trial saturated ingress/relay CPU and failed cleanup; do not infer a safe operating limit.                                                                                                                    |
+| Fresh connections | 2,000/sec passed two complete five-minute direct and tunneled runs with a near-saturated active relay. Find a genuine failure point and assess headroom before setting any operating limit.                                                                                                               |
+| Route sessions    | 10,000 completed five times but one identical 2m-readiness attempt failed during activation. Diagnose the straggler, test route endurance and mixed traffic, and reassess the 10,000-route harness/relay ceilings before setting any operating limit.                                                     |
+| Bandwidth         | 2,200 Mbit/sec per direction passed three 30-second trials and two five-minute direct/tunneled runs. The single five-minute 2,400 Mbit/sec trial missed its tunneled deadline. Assess headroom before setting an operating point.                                                                         |
+| Combined/degraded | A 500-route simultaneous point passed twice with replicated control/ingress processes, but traffic still concentrated on one relay. The single-ingress 1,000/2,000-route steps showed relay CPU/latency pressure. Test balanced relay traffic on an actual health-aware deployment before setting limits. |
 
 The isolated local staircase is sufficient to identify relay CPU pressure in
 the fresh-connection and bandwidth profiles and to choose the high-route
 certificate-readiness straggler for investigation. It has not found a server
 resource limit for active route sessions: the highest tested count reached
 configured harness and relay limits. It does not establish safe production
-limits, simultaneous capacity across dimensions, or a highly available
-deployment's behavior. Further isolated short screens alone would not close
-those gaps.
+limits or a highly available deployment's behavior. The combined local screens
+now locate a shared CPU bottleneck, with two replicated-process passes at the
+lower-headroom point but no balanced-relay measurement.
+Further isolated short screens alone would not close those gaps.

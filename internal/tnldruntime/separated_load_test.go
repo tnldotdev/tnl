@@ -43,6 +43,7 @@ var (
 	runtimeLoadHeapProfile        = flag.Bool("tnl-runtime-load-heap-profile", false, "capture live Go heap profiles after steady held traffic")
 	runtimeLoadCapacityOnly       = flag.Bool("tnl-runtime-load-capacity-only", false, "measure direct and tunneled capacity without a fault phase")
 	runtimeLoadCombined           = flag.Bool("tnl-runtime-load-combined", false, "measure fresh connections, held streams, and bidirectional bandwidth at the same time")
+	runtimeLoadHATopology         = flag.Bool("tnl-runtime-load-ha-topology", false, "run two control and two ingress processes in the local separated topology")
 	runtimeLoadDirectPath         = flag.Bool("tnl-runtime-load-direct-path", false, "measure fresh requests directly against the local service")
 	runtimeLoadBandwidthDirection = flag.String("tnl-runtime-load-bandwidth-direction", "", "optional downstream, upstream, or bidirectional bandwidth measurement")
 	runtimeLoadBandwidthMbits     = flag.Int64("tnl-runtime-load-bandwidth-mbits-per-second", 100, "bandwidth target in decimal megabits/second per direction")
@@ -89,7 +90,7 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 			'orders', (SELECT jsonb_agg(jsonb_build_object('state', state, 'route_id', route_id, 'attempts', attempts, 'available_at', available_at, 'claimed', work_owner IS NOT NULL, 'last_error', last_error)) FROM control.acme_orders))::text`).Scan(&states)
 		t.Logf("separated_failure_state=%s error=%v", states, err)
 	}()
-	for _, name := range []string{"control", "ingress", "relay-a", "relay-b", "app", "pebble"} {
+	for _, name := range append(separatedServerRoles(), "app", "pebble") {
 		separatedWait(t, name+".ready", 30*time.Second, nil)
 	}
 	verifySeparatedAdmission(t)
@@ -99,7 +100,7 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 		separatedWait(t, "fault.applied", 15*time.Second, &initialFault)
 		t.Logf("network_impairment scenario=%s path=%s added_rtt=%s loss_percent=%g active_before_publishing=true", *runtimeLoadScenario, *runtimeLoadNetworkPath, *runtimeLoadRTT, *runtimeLoadLoss)
 	}
-	for _, component := range separatedComponents {
+	for _, component := range separatedActiveComponents() {
 		separatedWait(t, component+".resources-ready", 30*time.Second, nil)
 	}
 	activationBefore := separatedCapture(t, database, "activation-before")
@@ -128,13 +129,13 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 	for _, ready := range publishers.Ready {
 		waitForReadyPublisherConnections(t, database, ready.RouteID, ready.RouteVersion, 2)
 	}
-	waitForIngressRoutingCurrent(t, database, 1)
+	waitForIngressRoutingCurrent(t, database, len(separatedIngresses()))
 	var orders, installed, distinctRoutes int
 	var workerAttempts int64
 	if err := database.QueryRowContext(integrationOperationContext(t), `SELECT count(*), count(*) FILTER (WHERE state = 'installed'), count(DISTINCT route_id), coalesce(sum(attempts), 0) FROM control.acme_orders`).Scan(&orders, &installed, &distinctRoutes, &workerAttempts); err != nil {
 		t.Fatal(err)
 	}
-	caOrders := separatedResource(t, "control").CAOrders
+	caOrders := separatedCAOrders(t)
 	activationElapsed := time.Since(activation)
 	durations := slices.Sorted(slices.Values(publishers.Activation))
 	if len(durations) != routes {
@@ -316,6 +317,9 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 			assertSeparatedNoRejections(t, phase, before, after)
 			assertSeparatedNoMemoryLimitEvents(t, phase, before, after)
 		}
+		if phase == "steady" && *runtimeLoadHATopology {
+			assertSeparatedIngressTraffic(t, before, after)
+		}
 		if visitorPhase.Combined {
 			separatedReportBandwidth(t, phase, start, window, visitorPhase.Bandwidth, results, true)
 		}
@@ -365,20 +369,22 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 	if *runtimeLoadCapacityOnly {
 		routingTimeout = 30 * time.Second
 	}
-	waitForIngressRoutingCurrentWithin(t, database, 1, routingTimeout)
+	waitForIngressRoutingCurrentWithin(t, database, len(separatedIngresses()), routingTimeout)
 	separatedCapture(t, database, "final")
-	if got := separatedResource(t, "control").CAOrders; got != int64(routes) {
+	if got := separatedCAOrders(t); got != int64(routes) {
 		t.Errorf("certificate issuance changed during workload: got %d want %d", got, routes)
 	}
 	// Stop ingress while control and PostgreSQL remain available. Its production
 	// reporter flushes final checkpoints and marks this process run complete.
 	stoppingIngress := time.Now()
-	separatedWrite(t, "ingress.stop", stoppingIngress)
 	ingressStopTimeout := 10 * time.Second
 	if *runtimeLoadCapacityOnly {
 		ingressStopTimeout = 35 * time.Second
 	}
-	separatedWait(t, "ingress.stopped", ingressStopTimeout, nil)
+	for _, ingress := range separatedIngresses() {
+		separatedWrite(t, ingress+".stop", time.Now())
+		separatedWait(t, ingress+".stopped", ingressStopTimeout, nil)
+	}
 	ingressStopElapsed := time.Since(stoppingIngress)
 	t.Logf("separated_ingress_shutdown elapsed=%s", ingressStopElapsed)
 	separatedResult(t, "ingress-shutdown", map[string]any{"elapsed": ingressStopElapsed.String()})
@@ -467,6 +473,9 @@ func separatedLoadParameters(t *testing.T) (int, int, time.Duration) {
 	if *runtimeLoadCombined && (!*runtimeLoadCapacityOnly || !*runtimeLoadDirectPath || *runtimeLoadHeldStreams == 0 || *runtimeLoadHeldWarmup == 0 || *runtimeLoadHeldMeasure == 0 || *runtimeLoadBandwidthDirection != benchworkload.BandwidthBidirectional ||
 		(*runtimeLoadBandwidthMeasure != 0 && *runtimeLoadBandwidthMeasure != *runtimeLoadHeldMeasure)) {
 		t.Fatal("combined workload requires capacity-only, direct path, held warmup/measurement, and matched bidirectional bandwidth")
+	}
+	if *runtimeLoadHATopology && !*runtimeLoadCapacityOnly {
+		t.Fatal("local HA topology currently requires a capacity-only workload")
 	}
 	if !slices.Contains([]string{"relay-restart", "relay-kill", "forwarding-blackhole", "publisher-blackhole", "udp-fallback", "latency", "packet-loss"}, *runtimeLoadScenario) {
 		t.Fatal("invalid runtime scenario")
@@ -635,7 +644,7 @@ func separatedReportHeld(t *testing.T, phase string, results []separatedVisitorR
 
 func assertSeparatedNoRejections(t *testing.T, phase string, before, after separatedSnapshot) {
 	t.Helper()
-	for _, role := range []string{"ingress", "relay-a", "relay-b"} {
+	for _, role := range append(separatedIngresses(), "relay-a", "relay-b") {
 		for _, name := range []string{"tnl_capacity_rejections_total", "tnl_source_limiter_rejections_total"} {
 			count := func(snapshot separatedSnapshot) float64 {
 				var total float64
@@ -655,9 +664,38 @@ func assertSeparatedNoRejections(t *testing.T, phase string, before, after separ
 	}
 }
 
+func assertSeparatedIngressTraffic(t *testing.T, before, after separatedSnapshot) {
+	t.Helper()
+	for _, role := range separatedIngresses() {
+		count := func(snapshot separatedSnapshot) uint64 {
+			var total uint64
+			for _, family := range snapshot.Metrics[role] {
+				if family.GetName() != "tnl_operation_duration_seconds" {
+					continue
+				}
+				for _, metric := range family.Metric {
+					labels := make(map[string]string)
+					for _, label := range metric.Label {
+						labels[label.GetName()] = label.GetValue()
+					}
+					if labels["operation"] == "IngressBackendAttempt" && labels["outcome"] == "success" {
+						total += metric.GetHistogram().GetSampleCount()
+					}
+				}
+			}
+			return total
+		}
+		if delta := count(after) - count(before); delta == 0 {
+			t.Errorf("%s accepted no visitor connections during steady traffic", role)
+		} else {
+			t.Logf("separated_ingress_traffic role=%s backend_attempts=%d", role, delta)
+		}
+	}
+}
+
 func assertSeparatedNoMemoryLimitEvents(t *testing.T, phase string, before, after separatedSnapshot) {
 	t.Helper()
-	for _, component := range []string{"ingress", "relay-a", "relay-b", "app", "publishers", "visitor-1", "visitor-2", "visitor-3", "visitor-4"} {
+	for _, component := range append(separatedIngresses(), "relay-a", "relay-b", "app", "publishers", "visitor-1", "visitor-2", "visitor-3", "visitor-4") {
 		a, b := before.Resources[component], after.Resources[component]
 		if b.MemoryMaxEvents > a.MemoryMaxEvents || b.OOMKills > a.OOMKills {
 			t.Errorf("%s: %s memory limit events=%d OOM kills=%d", phase, component, b.MemoryMaxEvents-a.MemoryMaxEvents, b.OOMKills-a.OOMKills)
@@ -685,7 +723,7 @@ func separatedCapture(t *testing.T, database *sql.DB, name string) separatedSnap
 	}
 	coordinator.NetworkNamespace = "coordinator"
 	result.Resources["coordinator"] = coordinator
-	for _, component := range separatedComponents {
+	for _, component := range separatedActiveComponents() {
 		result.Resources[component] = separatedResource(t, component)
 	}
 	// Read the PostgreSQL process's own cgroup/proc files through the disposable
@@ -712,8 +750,8 @@ func separatedCapture(t *testing.T, database *sql.DB, name string) separatedSnap
 	}
 	postgres.NetworkNamespace = "postgres"
 	result.Resources["postgres"] = postgres
-	for _, role := range []string{"control", "ingress", "relay-a", "relay-b"} {
-		response, err := integrationGET(integrationOperationContext(t), &http.Client{Timeout: 2 * time.Second}, "http://"+role+":9090/metrics")
+	for _, role := range separatedServerRoles() {
+		response, err := integrationGET(integrationOperationContext(t), &http.Client{Timeout: 2 * time.Second}, "http://"+separatedInspectionAddress(role)+":9090/metrics")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -743,7 +781,7 @@ func separatedCapture(t *testing.T, database *sql.DB, name string) separatedSnap
 
 func separatedReportResources(t *testing.T, phase string, before, after separatedSnapshot) {
 	t.Helper()
-	for _, component := range append(slices.Clone(separatedComponents), "postgres", "coordinator") {
+	for _, component := range append(separatedActiveComponents(), "postgres", "coordinator") {
 		a, b := before.Resources[component], after.Resources[component]
 		if a.ProcessRunID != b.ProcessRunID {
 			t.Logf("separated_resource phase=%s component=%s interval_reset=true before_run=%s after_run=%s memory=%d peak=%d fds=%d memory_anon=%d memory_file=%d memory_kernel=%d memory_kernel_stack=%d memory_pagetables=%d memory_sock=%d memory_slab=%d memory_shmem=%d memory_file_dirty=%d memory_file_writeback=%d memory_high_events=%d memory_max_events=%d oom_events=%d oom_kills=%d",
@@ -772,7 +810,7 @@ func separatedReportResources(t *testing.T, phase string, before, after separate
 				b.Postgres.BlocksRead-a.Postgres.BlocksRead, b.Postgres.BlocksHit-a.Postgres.BlocksHit, b.Postgres.TempBytes-a.Postgres.TempBytes)
 		}
 	}
-	for _, role := range []string{"control", "ingress", "relay-a", "relay-b"} {
+	for _, role := range separatedServerRoles() {
 		if role == "relay-a" && (phase == "relay-restart" || phase == "relay-kill") {
 			continue
 		} // New runtime registry.
@@ -927,11 +965,11 @@ func sampleSeparatedGauges(t *testing.T, phase string) func() {
 				return
 			case <-ticker.C:
 			}
-			for _, role := range []string{"control", "ingress", "relay-a", "relay-b"} {
+			for _, role := range separatedServerRoles() {
 				if (phase == "relay-restart" || phase == "relay-kill") && role == "relay-a" {
 					continue
 				}
-				response, err := integrationGET(ctx, client, "http://"+role+":9090/metrics")
+				response, err := integrationGET(ctx, client, "http://"+separatedInspectionAddress(role)+":9090/metrics")
 				if err != nil {
 					if ctx.Err() == nil {
 						t.Errorf("gauge sample %s: %v", role, err)

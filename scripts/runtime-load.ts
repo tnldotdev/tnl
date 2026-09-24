@@ -33,6 +33,7 @@ type FaultEvents = {
 };
 
 const results = z.string().min(1).parse(process.env.RESULTS);
+const haTopology = z.enum(["0", "1"]).parse(process.env.HA_TOPOLOGY ?? "0") === "1";
 if (existsSync(results) && readdirSync(results).length !== 0)
   throw new Error(
     "RESULTS must be a fresh or empty directory; preserve earlier experiment artifacts",
@@ -40,6 +41,7 @@ if (existsSync(results) && readdirSync(results).length !== 0)
 mkdirSync(results, { recursive: true });
 const composeArgs = [
   "compose",
+  ...(haTopology ? ["--profile", "ha"] : []),
   "--ansi",
   "never",
   "--progress",
@@ -349,7 +351,9 @@ try {
     "up",
     "--detach",
     "control",
+    ...(haTopology ? ["control-b"] : []),
     "ingress",
+    ...(haTopology ? ["ingress-b"] : []),
     "relay-a",
     "relay-b",
     "publishers",
@@ -438,8 +442,8 @@ try {
   for (const services of [
     ["visitor-1", "visitor-2", "visitor-3", "visitor-4"],
     ["app", "publishers"],
-    ["ingress", "relay-a", "relay-b"],
-    ["control", "pebble", "coordinator"],
+    ["ingress", ...(haTopology ? ["ingress-b"] : []), "relay-a", "relay-b"],
+    ["control", ...(haTopology ? ["control-b"] : []), "pebble", "coordinator"],
     ["postgres"],
   ])
     cleanup(["stop", ...services]);

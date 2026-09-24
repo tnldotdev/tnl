@@ -37,6 +37,7 @@ x-runtime: &runtime
         -tnl-runtime-load-heap-profile='${HEAP_PROFILE:-0}' \
         -tnl-runtime-load-capacity-only='${CAPACITY_ONLY:-0}' \
         -tnl-runtime-load-combined='${COMBINED:-0}' \
+        -tnl-runtime-load-ha-topology='${HA_TOPOLOGY:-0}' \
         -tnl-runtime-load-direct-path='${DIRECT_PATH:-0}' \
         -tnl-runtime-load-bandwidth-direction='${BANDWIDTH_DIRECTION:-}' \
         -tnl-runtime-load-bandwidth-mbits-per-second='${BANDWIDTH_MBITS_PER_SECOND:-100}' \
@@ -126,7 +127,20 @@ services:
       SEPARATED_COMPONENT: control
     networks:
       default:
-        aliases: [control.split.integration.test]
+        aliases: [control-a, control.split.integration.test]
+
+  control-b:
+    <<: *runtime
+    profiles: [ha]
+    cpus: "${CONTROL_CPUS:-1}"
+    mem_limit: "${CONTROL_MEMORY:-2g}"
+    memswap_limit: "${CONTROL_MEMORY:-2g}"
+    environment:
+      <<: *environment
+      SEPARATED_COMPONENT: control-b
+    networks:
+      default:
+        aliases: [control, control.split.integration.test]
 
   ingress:
     <<: *runtime
@@ -137,6 +151,23 @@ services:
     environment:
       <<: *environment
       SEPARATED_COMPONENT: ingress
+    networks:
+      default:
+        aliases: [ingress-a]
+
+  ingress-b:
+    <<: *runtime
+    profiles: [ha]
+    cap_add: [NET_ADMIN]
+    cpus: "${INGRESS_CPUS:-1}"
+    mem_limit: "${INGRESS_MEMORY:-2g}"
+    memswap_limit: "${INGRESS_MEMORY:-2g}"
+    environment:
+      <<: *environment
+      SEPARATED_COMPONENT: ingress-b
+    networks:
+      default:
+        aliases: [ingress]
 
   relay-a:
     <<: *runtime
@@ -245,6 +276,7 @@ services:
       - "-tnl-runtime-load-heap-profile=${HEAP_PROFILE:-0}"
       - "-tnl-runtime-load-capacity-only=${CAPACITY_ONLY:-0}"
       - "-tnl-runtime-load-combined=${COMBINED:-0}"
+      - "-tnl-runtime-load-ha-topology=${HA_TOPOLOGY:-0}"
       - "-tnl-runtime-load-direct-path=${DIRECT_PATH:-0}"
       - "-tnl-runtime-load-bandwidth-direction=${BANDWIDTH_DIRECTION:-}"
       - "-tnl-runtime-load-bandwidth-mbits-per-second=${BANDWIDTH_MBITS_PER_SECOND:-100}"

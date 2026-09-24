@@ -318,6 +318,20 @@ requested measurement window.
 `BANDWIDTH_MEASURE` optionally sets a separate bandwidth window per direct and
 tunneled path, up to five minutes; `DURATION` continues to control fresh and
 shutdown phases. This keeps longer transfers within the runtime watchdog.
+`COMBINED=1` with `CAPACITY_ONLY=1`, `DIRECT_PATH=1`, nonzero `HELD_STREAMS`,
+`HELD_WARMUP` and `HELD_MEASURE`, and bidirectional `BANDWIDTH_DIRECTION`
+offers fresh requests and transfers bandwidth **while** the held streams are
+progressing. Set `BANDWIDTH_MEASURE` to the held measurement window (or leave it
+unset); the same load first runs directly against the local service, then
+through ingress and a relay. Separate fresh, held, and bandwidth summaries
+and resource samples retain all three checks for each path.
+`HA_TOPOLOGY=1` adds a second control and ingress process with the same per-role
+resource limits. Shared Docker DNS names distribute control and visitor
+connections, while unique inspection addresses retain per-process metrics.
+Both ingress processes must acknowledge routing, serve visitor connections,
+flush usage, and complete shutdown. The disposable PostgreSQL is still a
+single instance and local Docker DNS is not a health-aware public address;
+this measures the replicated-process boundary, not deployed HA behavior.
 
 Bandwidth summaries record target rate, exact expected and transferred application
 bytes, elapsed time, failures, and achieved rate. Existing phase resource snapshots

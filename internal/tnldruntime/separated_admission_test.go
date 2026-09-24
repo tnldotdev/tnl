@@ -120,11 +120,11 @@ func verifySeparatedAdmission(t *testing.T) {
 		t.Fatalf("publisher request limit = %d, want %d", publisherLimit, runtimeLoadAdmission.PublisherRequestLimit)
 	}
 	components["publishers"] = map[string]int{"request_limit": publisherLimit}
-	for _, component := range []string{"ingress", "relay-a", "relay-b"} {
+	for _, component := range append(separatedIngresses(), "relay-a", "relay-b") {
 		var applied separatedAdmissionLimits
 		separatedWait(t, component+".admission-limits", 15*time.Second, &applied)
 		var matches bool
-		if component == "ingress" {
+		if component == "ingress" || component == "ingress-b" {
 			components[component] = applied.ingress()
 			matches = applied.ingress() == runtimeLoadAdmission.ingress()
 		} else {

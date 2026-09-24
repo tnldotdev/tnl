@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/pprof"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -32,6 +33,55 @@ const separatedDomain = "split.integration.test"
 var separatedComponent = flag.String("tnl-separated-component", "", "separated runtime load component")
 
 var separatedComponents = []string{"control", "ingress", "relay-a", "relay-b", "publishers", "visitor-1", "visitor-2", "visitor-3", "visitor-4", "app", "pebble"}
+
+func separatedIngresses() []string {
+	if *runtimeLoadHATopology {
+		return []string{"ingress", "ingress-b"}
+	}
+	return []string{"ingress"}
+}
+
+func separatedControls() []string {
+	if *runtimeLoadHATopology {
+		return []string{"control", "control-b"}
+	}
+	return []string{"control"}
+}
+
+func separatedServerRoles() []string {
+	return append(append(separatedControls(), separatedIngresses()...), "relay-a", "relay-b")
+}
+
+func separatedActiveComponents() []string {
+	components := slices.Clone(separatedComponents)
+	if *runtimeLoadHATopology {
+		components = append(components, "control-b", "ingress-b")
+	}
+	return components
+}
+
+func separatedCAOrders(t *testing.T) int64 {
+	t.Helper()
+	var orders int64
+	for _, name := range separatedControls() {
+		orders += separatedResource(t, name).CAOrders
+	}
+	return orders
+}
+
+// Shared client hostnames may resolve to either process. Inspection always
+// targets one specific process so per-role measurements are not duplicated.
+func separatedInspectionAddress(component string) string {
+	if *runtimeLoadHATopology {
+		switch component {
+		case "control":
+			return "control-a"
+		case "ingress":
+			return "ingress-a"
+		}
+	}
+	return component
+}
 
 func separatedCoordination(t *testing.T) *benchworkload.Coordination {
 	t.Helper()
@@ -149,13 +199,19 @@ func TestSeparatedRuntimeSetup(t *testing.T) {
 func separatedConfig(t *testing.T, component string) tnldconfig.Config {
 	t.Helper()
 	role := tnldconfig.Role(component)
+	if component == "control-b" {
+		role = tnldconfig.RoleControl
+	}
+	if component == "ingress-b" {
+		role = tnldconfig.RoleIngress
+	}
 	if strings.HasPrefix(component, "relay-") {
 		role = tnldconfig.RoleRelay
 	}
 	cfg := splitTestConfig(role, "0.0.0.0:9090")
 	cfg.IngressLeaseDuration, cfg.RelayLeaseDuration = 30*time.Second, 30*time.Second
 	cfg.LeaseRenewalInterval, cfg.DrainTimeout = 10*time.Second, 5*time.Second
-	if component == "ingress" && *runtimeLoadCapacityOnly {
+	if role == tnldconfig.RoleIngress && *runtimeLoadCapacityOnly {
 		cfg.DrainTimeout = 30 * time.Second
 	}
 	runtimeLoadAdmission.apply(&cfg)
@@ -173,7 +229,7 @@ func separatedConfig(t *testing.T, component string) tnldconfig.Config {
 		cfg.LoginToken, cfg.StorageKey = testLoginToken, testStorageKey
 		cfg.AccessTokenLifetime, cfg.RefreshTokenLifetime = 5*time.Minute, time.Hour
 	case tnldconfig.RoleIngress:
-		cfg.ControlHostname, cfg.IngressID = "control."+separatedDomain, "ingress-separated"
+		cfg.ControlHostname, cfg.IngressID = "control."+separatedDomain, component+"-separated"
 		cfg.IngressListen = "0.0.0.0:443"
 	case tnldconfig.RoleRelay:
 		cfg.ControlHostname = "control." + separatedDomain

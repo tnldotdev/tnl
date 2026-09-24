@@ -48,7 +48,7 @@ func TestSeparatedRuntimeComponent(t *testing.T) {
 		runSeparatedPublishers(t, ctx, routes)
 	case "visitor-1", "visitor-2", "visitor-3", "visitor-4":
 		runSeparatedVisitor(t, ctx, component, rate)
-	case "control", "ingress", "relay-a", "relay-b":
+	case "control", "control-b", "ingress", "ingress-b", "relay-a", "relay-b":
 		if !separatedRead(t, ctx, "pebble.ready", nil) {
 			return
 		}
@@ -82,8 +82,8 @@ func TestSeparatedRuntimeComponent(t *testing.T) {
 			}
 		}
 		separatedWrite(t, readyName, time.Now())
-		if component == "ingress" {
-			if !separatedRead(t, ctx, "ingress.stop", nil) {
+		if component == "ingress" || component == "ingress-b" {
+			if !separatedRead(t, ctx, component+".stop", nil) {
 				return
 			}
 			if *runtimeLoadCapacityOnly {
@@ -91,7 +91,7 @@ func TestSeparatedRuntimeComponent(t *testing.T) {
 			} else {
 				stopIntegrationProcess(t, process)
 			}
-			separatedWrite(t, "ingress.stopped", time.Now())
+			separatedWrite(t, component+".stopped", time.Now())
 			<-ctx.Done()
 			return
 		}
@@ -590,7 +590,7 @@ func openSeparatedHeld(t *testing.T, ctx context.Context, visitor benchworkload.
 func separatedResource(t *testing.T, component string) separatedResources {
 	t.Helper()
 	client := &http.Client{Timeout: 2 * time.Second}
-	address := component + ":9091"
+	address := separatedInspectionAddress(component) + ":9091"
 	if component == "app" {
 		address = "publishers:9092"
 	}
