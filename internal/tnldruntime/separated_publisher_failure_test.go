@@ -4,19 +4,20 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 )
 
-// Capture unfinished publisher state before the publisher group cancels its
-// processes. Select only non-secret fields; the disposable database disappears
-// when the separated workload stops.
-func captureSeparatedPublisherFailure(database *sql.DB) error {
+// Capture the failed publisher's state before the group cancels its processes.
+// Select only non-secret fields; the disposable database disappears on cleanup.
+func captureSeparatedPublisherFailure(database *sql.DB, index int) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	rows, err := database.QueryContext(ctx, `SELECT jsonb_build_object(
+	var state string
+	err := database.QueryRowContext(ctx, `SELECT jsonb_build_object(
 		'hostname', r.canonical_hostname, 'session_state', s.state,
 		'session_created_at', s.created_at, 'session_ready_at', s.ready_at,
 		'certificate_installed_at', s.certificate_installed_at,
@@ -25,6 +26,11 @@ func captureSeparatedPublisherFailure(database *sql.DB) error {
 		'order_available_at', o.available_at, 'order_updated_at', o.updated_at,
 		'order_error_present', o.last_error IS NOT NULL,
 		'ready_connections', connections.ready,
+		'routing_table_head', (SELECT current_revision FROM control.ingress_routing_table_clock),
+		'ingress_applied_revision', (SELECT min(routing_table_revision) FROM control.ingress_leases
+			WHERE NOT draining AND lease_expires_at > now()),
+		'route_routing_revision', (SELECT max(routing_table_revision) FROM control.ingress_routing_table_events
+			WHERE route_id = r.id AND route_version = s.route_version AND event_kind = 'route_upsert'),
 		'authorizations', (SELECT jsonb_agg(jsonb_build_object(
 			'state', a.state, 'attempts', a.attempts, 'claimed', a.work_owner IS NOT NULL,
 			'work_expires_at', a.work_expires_at, 'available_at', a.available_at,
@@ -36,33 +42,18 @@ func captureSeparatedPublisherFailure(database *sql.DB) error {
 	LEFT JOIN LATERAL (SELECT * FROM control.acme_orders WHERE route_id = r.id ORDER BY created_at DESC LIMIT 1) o ON true
 	LEFT JOIN LATERAL (SELECT count(*) AS ready FROM control.route_session_connections
 		WHERE route_session_id = s.id AND state = 'ready') connections ON true
-	WHERE r.canonical_hostname LIKE 'tnlbench-r%' AND
-		(s.id IS NULL OR s.state <> 'ready' OR s.certificate_installed_at IS NULL
-		 OR o.state IS DISTINCT FROM 'installed' OR connections.ready <> 2)
-	ORDER BY r.canonical_hostname LIMIT 1501`)
-	if err != nil {
+	WHERE r.canonical_hostname LIKE $1 LIMIT 1`, fmt.Sprintf("tnlbench-r%06d.%%", index)).Scan(&state)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	var unfinished []json.RawMessage
-	for rows.Next() {
-		var value string
-		if err := rows.Scan(&value); err != nil {
-			_ = rows.Close()
-			return err
-		}
-		unfinished = append(unfinished, json.RawMessage(value))
-	}
-	err = rows.Err()
-	_ = rows.Close()
-	if err != nil {
-		return err
-	}
-	const limit = 1500
 	result := struct {
-		CapturedAt time.Time         `json:"captured_at"`
-		Truncated  bool              `json:"truncated"`
-		Unfinished []json.RawMessage `json:"unfinished"`
-	}{time.Now(), len(unfinished) > limit, unfinished[:min(len(unfinished), limit)]}
+		CapturedAt time.Time       `json:"captured_at"`
+		Index      int             `json:"index"`
+		Route      json.RawMessage `json:"route,omitempty"`
+	}{CapturedAt: time.Now(), Index: index}
+	if err == nil {
+		result.Route = json.RawMessage(state)
+	}
 	data, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		return err

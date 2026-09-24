@@ -36,6 +36,7 @@ x-runtime: &runtime
         -tnl-runtime-load-held-measure='${HELD_MEASURE:-0s}' \
         -tnl-runtime-load-heap-profile='${HEAP_PROFILE:-0}' \
         -tnl-runtime-load-capacity-only='${CAPACITY_ONLY:-0}' \
+        -tnl-runtime-load-combined='${COMBINED:-0}' \
         -tnl-runtime-load-direct-path='${DIRECT_PATH:-0}' \
         -tnl-runtime-load-bandwidth-direction='${BANDWIDTH_DIRECTION:-}' \
         -tnl-runtime-load-bandwidth-mbits-per-second='${BANDWIDTH_MBITS_PER_SECOND:-100}' \
@@ -243,6 +244,7 @@ services:
       - "-tnl-runtime-load-held-measure=${HELD_MEASURE:-0s}"
       - "-tnl-runtime-load-heap-profile=${HEAP_PROFILE:-0}"
       - "-tnl-runtime-load-capacity-only=${CAPACITY_ONLY:-0}"
+      - "-tnl-runtime-load-combined=${COMBINED:-0}"
       - "-tnl-runtime-load-direct-path=${DIRECT_PATH:-0}"
       - "-tnl-runtime-load-bandwidth-direction=${BANDWIDTH_DIRECTION:-}"
       - "-tnl-runtime-load-bandwidth-mbits-per-second=${BANDWIDTH_MBITS_PER_SECOND:-100}"

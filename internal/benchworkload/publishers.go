@@ -34,6 +34,7 @@ type PublisherConfig struct {
 	ReadyTimeout, StopTimeout time.Duration
 	DrainTime                 time.Duration
 	OnFailure                 func()
+	OnActivationFailure       func(index int)
 	Observe                   func(int, publisher.Event) error
 }
 
@@ -259,6 +260,9 @@ func (g *Publishers) Start(ctx context.Context, indexes []int) ([]PublishedRoute
 		value := <-activated
 		active--
 		if value.err != nil {
+			if firstErr == nil && g.config.OnActivationFailure != nil {
+				g.config.OnActivationFailure(value.process.index)
+			}
 			firstErr = errors.Join(firstErr, value.err)
 		} else {
 			result = append(result, value.process.ready)

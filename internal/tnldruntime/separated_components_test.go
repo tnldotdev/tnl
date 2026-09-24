@@ -255,8 +255,8 @@ func runSeparatedPublishers(t *testing.T, ctx context.Context, count int) {
 		Transport: transport, Parallel: 4, StartParallel: *runtimeLoadStartParallel,
 		RequestLimit: runtimeLoadAdmission.PublisherRequestLimit,
 		ReadyTimeout: *runtimeLoadReadyTimeout, StopTimeout: 10 * time.Second, DrainTime: time.Second,
-		OnFailure: func() {
-			if err := captureSeparatedPublisherFailure(inspect); err != nil {
+		OnActivationFailure: func(index int) {
+			if err := captureSeparatedPublisherFailure(inspect, index); err != nil {
 				t.Logf("publisher failure snapshot: %v", err)
 			}
 		},
@@ -426,6 +426,13 @@ func runSeparatedVisitor(t *testing.T, ctx context.Context, component string, ra
 			}
 			pacer.Stop()
 		} else if phase.Bandwidth != nil {
+			var freshDone chan error
+			if phase.Combined {
+				freshDone = make(chan error, 1)
+				go func() {
+					freshDone <- runSeparatedVisitorFresh(ctx, phaseVisitor, phase, component, rate, localRate, index, cohortByURL, &result)
+				}()
+			}
 			localConfig := *phase.Bandwidth
 			localConfig.Start, localConfig.Duration = phase.Start, phase.Duration
 			localConfig.Streams, localConfig.BytesPerSecond = 0, 0
@@ -445,52 +452,13 @@ func runSeparatedVisitor(t *testing.T, ctx context.Context, component string, ra
 					t.Error(err)
 				}
 			}
-		} else {
-			result.Cohorts = make(map[string]benchworkload.VisitorResult)
-			var requestFile *os.File
-			var requestWriter *bufio.Writer
-			var requestEncoder *json.Encoder
-			var requestError error
-			if *runtimeLoadCapacityOnly && int64(localRate)*int64(phase.Duration)/int64(time.Second) > 25_000 {
-				result.RequestsFile = fmt.Sprintf("%s-%s-requests.jsonl", phase.Name, component)
-				var err error
-				requestFile, err = os.Create(filepath.Join("/results", result.RequestsFile))
-				if err != nil {
-					t.Fatal(err)
+			if freshDone != nil {
+				if err := <-freshDone; err != nil {
+					t.Error(err)
 				}
-				requestWriter = bufio.NewWriter(requestFile)
-				requestEncoder = json.NewEncoder(requestWriter)
 			}
-			cfg := benchworkload.VisitorConfig{Rate: localRate,
-				Workers: benchworkload.Assignment(*runtimeLoadWorkers, 4, index-1), QueueSlots: benchworkload.Assignment(*runtimeLoadQueue, 4, index-1),
-				Start: phase.Start.Add(time.Duration(index-1) * time.Second / time.Duration(rate)), Duration: phase.Duration,
-				OnResult: func(row benchworkload.RequestResult) {
-					if requestEncoder != nil {
-						if requestError == nil {
-							requestError = requestEncoder.Encode(row)
-						}
-					} else {
-						result.Requests = append(result.Requests, row)
-					}
-					name := cohortByURL[row.URL]
-					if phase.Direct {
-						name = "direct"
-					}
-					cohort := result.Cohorts[name]
-					cohort.Scheduled++
-					cohort.Observe(row)
-					result.Cohorts[name] = cohort
-				},
-			}
-			var err error
-			result.VisitorResult, err = phaseVisitor.Run(ctx, cfg, phase.URLs)
-			if requestWriter != nil {
-				requestError = errors.Join(requestError, requestWriter.Flush(), requestFile.Close())
-			}
-			if requestError != nil {
-				t.Fatal(requestError)
-			}
-			if err != nil {
+		} else {
+			if err := runSeparatedVisitorFresh(ctx, phaseVisitor, phase, component, rate, localRate, index, cohortByURL, &result); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -544,6 +512,51 @@ func runSeparatedVisitor(t *testing.T, ctx context.Context, component string, ra
 	}
 	separatedWrite(t, component+".done", !t.Failed())
 	<-lifecycle.Done()
+}
+
+func runSeparatedVisitorFresh(ctx context.Context, visitor benchworkload.Visitor, phase benchworkload.Phase, component string, rate, localRate, index int, cohortByURL map[string]string, result *separatedVisitorResult) error {
+	result.Cohorts = make(map[string]benchworkload.VisitorResult)
+	var requestFile *os.File
+	var requestWriter *bufio.Writer
+	var requestEncoder *json.Encoder
+	var requestError error
+	if *runtimeLoadCapacityOnly && int64(localRate)*int64(phase.Duration)/int64(time.Second) > 25_000 {
+		result.RequestsFile = fmt.Sprintf("%s-%s-requests.jsonl", phase.Name, component)
+		var err error
+		requestFile, err = os.Create(filepath.Join("/results", result.RequestsFile))
+		if err != nil {
+			return err
+		}
+		requestWriter = bufio.NewWriter(requestFile)
+		requestEncoder = json.NewEncoder(requestWriter)
+	}
+	cfg := benchworkload.VisitorConfig{Rate: localRate,
+		Workers: benchworkload.Assignment(*runtimeLoadWorkers, 4, index-1), QueueSlots: benchworkload.Assignment(*runtimeLoadQueue, 4, index-1),
+		Start: phase.Start.Add(time.Duration(index-1) * time.Second / time.Duration(rate)), Duration: phase.Duration,
+		OnResult: func(row benchworkload.RequestResult) {
+			if requestEncoder != nil {
+				if requestError == nil {
+					requestError = requestEncoder.Encode(row)
+				}
+			} else {
+				result.Requests = append(result.Requests, row)
+			}
+			name := cohortByURL[row.URL]
+			if phase.Direct {
+				name = "direct"
+			}
+			cohort := result.Cohorts[name]
+			cohort.Scheduled++
+			cohort.Observe(row)
+			result.Cohorts[name] = cohort
+		},
+	}
+	var err error
+	result.VisitorResult, err = visitor.Run(ctx, cfg, phase.URLs)
+	if requestWriter != nil {
+		requestError = errors.Join(requestError, requestWriter.Flush(), requestFile.Close())
+	}
+	return errors.Join(err, requestError)
 }
 
 func openSeparatedHeld(t *testing.T, ctx context.Context, visitor benchworkload.Visitor, urls []string, total, index int) []*benchworkload.HeldStream {

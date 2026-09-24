@@ -42,6 +42,7 @@ var (
 	runtimeLoadHeldMeasure        = flag.Duration("tnl-runtime-load-held-measure", 0, "optional held-stream measurement per path (0s-5m)")
 	runtimeLoadHeapProfile        = flag.Bool("tnl-runtime-load-heap-profile", false, "capture live Go heap profiles after steady held traffic")
 	runtimeLoadCapacityOnly       = flag.Bool("tnl-runtime-load-capacity-only", false, "measure direct and tunneled capacity without a fault phase")
+	runtimeLoadCombined           = flag.Bool("tnl-runtime-load-combined", false, "measure fresh connections, held streams, and bidirectional bandwidth at the same time")
 	runtimeLoadDirectPath         = flag.Bool("tnl-runtime-load-direct-path", false, "measure fresh requests directly against the local service")
 	runtimeLoadBandwidthDirection = flag.String("tnl-runtime-load-bandwidth-direction", "", "optional downstream, upstream, or bidirectional bandwidth measurement")
 	runtimeLoadBandwidthMbits     = flag.Int64("tnl-runtime-load-bandwidth-mbits-per-second", 100, "bandwidth target in decimal megabits/second per direction")
@@ -158,7 +159,7 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 			Name: "direct-fresh", Direct: true, URLs: []string{"https://direct." + separatedDomain},
 		}, duration)
 	}
-	if *runtimeLoadBandwidthDirection != "" {
+	if *runtimeLoadBandwidthDirection != "" && !*runtimeLoadCombined {
 		bandwidthDuration := duration
 		if *runtimeLoadBandwidthMeasure > 0 {
 			bandwidthDuration = *runtimeLoadBandwidthMeasure
@@ -191,7 +192,12 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 			if *runtimeLoadHeldWarmup > 0 {
 				separatedCapacityPhase(t, database, &sequence, benchworkload.Phase{Name: "direct-held-warmup", Direct: true, URLs: directURLs}, *runtimeLoadHeldWarmup)
 			}
-			separatedCapacityPhase(t, database, &sequence, benchworkload.Phase{Name: "direct-held-steady", Direct: true, URLs: directURLs}, heldDuration)
+			directPhase := benchworkload.Phase{Name: "direct-held-steady", Direct: true, URLs: directURLs}
+			if *runtimeLoadCombined {
+				directPhase.Combined = true
+				directPhase.Bandwidth = separatedBandwidthConfig()
+			}
+			separatedCapacityPhase(t, database, &sequence, directPhase, heldDuration)
 			separatedProbe(t, &sequence, benchworkload.Phase{Name: "direct-held-close", Direct: true, URLs: directURLs, CloseHeld: true})
 		}
 		before := separatedCapture(t, database, "initial-held-before")
@@ -256,7 +262,12 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 		if phase == "shutdown" {
 			urls = urls[len(urls)/2:]
 		}
-		separatedWrite(t, fmt.Sprintf("phase-%d", sequence), benchworkload.Phase{Name: phase, Start: start, Duration: window, URLs: urls, CloseHeld: phase == *runtimeLoadScenario && !runtimeEarlyFault(phase)})
+		visitorPhase := benchworkload.Phase{Name: phase, Start: start, Duration: window, URLs: urls, CloseHeld: phase == *runtimeLoadScenario && !runtimeEarlyFault(phase)}
+		if phase == "steady" && *runtimeLoadCombined {
+			visitorPhase.Combined = true
+			visitorPhase.Bandwidth = separatedBandwidthConfig()
+		}
+		separatedWrite(t, fmt.Sprintf("phase-%d", sequence), visitorPhase)
 		sequence++
 		waitUntilIntegrationTime(t, start.Add(time.Second))
 		if phase == "publisher-blackhole" {
@@ -304,6 +315,9 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 			separatedReportHeld(t, phase, results, *runtimeLoadHeldStreams, false, true, false)
 			assertSeparatedNoRejections(t, phase, before, after)
 			assertSeparatedNoMemoryLimitEvents(t, phase, before, after)
+		}
+		if visitorPhase.Combined {
+			separatedReportBandwidth(t, phase, start, window, visitorPhase.Bandwidth, results, true)
 		}
 		if phase == "steady" && *runtimeLoadHeapProfile {
 			captureSeparatedHeapProfiles(t, database, after)
@@ -450,6 +464,10 @@ func separatedLoadParameters(t *testing.T) (int, int, time.Duration) {
 	if *runtimeLoadBandwidthMeasure < 0 || *runtimeLoadBandwidthMeasure > 5*time.Minute || (*runtimeLoadBandwidthMeasure > 0 && *runtimeLoadBandwidthDirection == "") {
 		t.Fatal("invalid bandwidth measurement duration")
 	}
+	if *runtimeLoadCombined && (!*runtimeLoadCapacityOnly || !*runtimeLoadDirectPath || *runtimeLoadHeldStreams == 0 || *runtimeLoadHeldWarmup == 0 || *runtimeLoadHeldMeasure == 0 || *runtimeLoadBandwidthDirection != benchworkload.BandwidthBidirectional ||
+		(*runtimeLoadBandwidthMeasure != 0 && *runtimeLoadBandwidthMeasure != *runtimeLoadHeldMeasure)) {
+		t.Fatal("combined workload requires capacity-only, direct path, held warmup/measurement, and matched bidirectional bandwidth")
+	}
 	if !slices.Contains([]string{"relay-restart", "relay-kill", "forwarding-blackhole", "publisher-blackhole", "udp-fallback", "latency", "packet-loss"}, *runtimeLoadScenario) {
 		t.Fatal("invalid runtime scenario")
 	}
@@ -485,18 +503,30 @@ func separatedCapacityPhase(t *testing.T, database *sql.DB, sequence *int, phase
 	stopResources()
 	after := separatedCapture(t, database, phase.Name+"-after")
 	separatedReportResources(t, phase.Name, before, after)
-	if phase.Bandwidth == nil {
+	if phase.Bandwidth == nil || phase.Combined {
 		separatedReportVisitors(t, phase.Name, results, separatedRestart{}, time.Time{})
 		if phase.Name == "direct-held-steady" || phase.Name == "direct-held-warmup" || phase.Name == "tunnel-held-warmup" {
 			separatedReportHeld(t, phase.Name, results, *runtimeLoadHeldStreams, false, true, false)
 			assertSeparatedNoRejections(t, phase.Name, before, after)
 			assertSeparatedNoMemoryLimitEvents(t, phase.Name, before, after)
 		}
-		return benchworkload.BandwidthResult{}
+		if phase.Bandwidth == nil {
+			return benchworkload.BandwidthResult{}
+		}
 	}
+	return separatedReportBandwidth(t, phase.Name, phase.Start, duration, phase.Bandwidth, results, phase.Combined)
+}
+
+func separatedBandwidthConfig() *benchworkload.BandwidthConfig {
+	return &benchworkload.BandwidthConfig{Direction: *runtimeLoadBandwidthDirection,
+		Streams: *runtimeLoadBandwidthStreams, BytesPerSecond: *runtimeLoadBandwidthMbits * 1_000_000 / 8}
+}
+
+func separatedReportBandwidth(t *testing.T, name string, start time.Time, duration time.Duration, config *benchworkload.BandwidthConfig, results []separatedVisitorResult, combined bool) benchworkload.BandwidthResult {
+	t.Helper()
 	aggregate := benchworkload.BandwidthResult{
-		Direction: phase.Bandwidth.Direction, StreamsPerDirection: phase.Bandwidth.Streams,
-		TargetBytesPerSecond: phase.Bandwidth.BytesPerSecond, TargetDuration: duration, StartedAt: phase.Start,
+		Direction: config.Direction, StreamsPerDirection: config.Streams,
+		TargetBytesPerSecond: config.BytesPerSecond, TargetDuration: duration, StartedAt: start,
 	}
 	for _, result := range results {
 		if result.Bandwidth == nil {
@@ -524,8 +554,12 @@ func separatedCapacityPhase(t *testing.T, database *sql.DB, sequence *int, phase
 	aggregate.DownloadBytesPerSecond = float64(aggregate.DownloadBytes) / seconds
 	uploadMbits, downloadMbits := aggregate.UploadBytesPerSecond*8/1_000_000, aggregate.DownloadBytesPerSecond*8/1_000_000
 	t.Logf("separated_bandwidth phase=%s direction=%s streams_per_direction=%d target_mbits_per_second=%d upload_mbits_per_second=%.3f download_mbits_per_second=%.3f failures=%d elapsed=%s",
-		phase.Name, aggregate.Direction, aggregate.StreamsPerDirection, *runtimeLoadBandwidthMbits, uploadMbits, downloadMbits, aggregate.Failures, aggregate.Elapsed)
-	separatedResult(t, phase.Name+"-summary", aggregate)
+		name, aggregate.Direction, aggregate.StreamsPerDirection, *runtimeLoadBandwidthMbits, uploadMbits, downloadMbits, aggregate.Failures, aggregate.Elapsed)
+	summaryName := name + "-summary"
+	if combined {
+		summaryName = name + "-bandwidth-summary"
+	}
+	separatedResult(t, summaryName, aggregate)
 	return aggregate
 }
 

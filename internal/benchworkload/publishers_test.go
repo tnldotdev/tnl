@@ -17,11 +17,17 @@ func TestActivationTimeoutRetainsPartialSuccessAndCapturesBeforeCancel(t *testin
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		var captured bool
+		failedIndex := -1
 		group := &Publishers{ctx: ctx, cancel: cancel, namespace: "test", failures: make(chan error, 1), config: PublisherConfig{Parallel: 1, ReadyTimeout: 30 * time.Second, StopTimeout: 10 * time.Second, OnFailure: func() {
 			if ctx.Err() != nil {
 				t.Error("canceled before failure snapshot")
 			}
 			captured = true
+		}, OnActivationFailure: func(index int) {
+			if ctx.Err() != nil {
+				t.Error("canceled before failed publisher was identified")
+			}
+			failedIndex = index
 		}}}
 		group.run = func(ctx context.Context, c publisher.Config) error {
 			if strings.Contains(c.Hostname, "r000000") {
@@ -32,8 +38,8 @@ func TestActivationTimeoutRetainsPartialSuccessAndCapturesBeforeCancel(t *testin
 		}
 		started := time.Now()
 		ready, err := group.Start(t.Context(), []int{0, 1, 2})
-		if err == nil || len(ready) != 1 || len(group.processes) != 2 || !captured || time.Since(started) != 30*time.Second {
-			t.Fatalf("partial activation: ready=%v started=%d captured=%t err=%v", ready, len(group.processes), captured, err)
+		if err == nil || len(ready) != 1 || len(group.processes) != 2 || !captured || failedIndex != 1 || time.Since(started) != 30*time.Second {
+			t.Fatalf("partial activation: ready=%v started=%d captured=%t failed_index=%d err=%v", ready, len(group.processes), captured, failedIndex, err)
 		}
 		if _, err := group.Stop(t.Context(), []int{0, 1}); err != nil {
 			t.Fatal(err)

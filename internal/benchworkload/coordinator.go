@@ -221,6 +221,7 @@ type Phase struct {
 	Duration    time.Duration    `json:"duration"`
 	URLs        []string         `json:"urls"`
 	Bandwidth   *BandwidthConfig `json:"bandwidth,omitempty"`
+	Combined    bool             `json:"combined,omitempty"`
 	Direct      bool             `json:"direct,omitempty"`
 	HeldStreams int              `json:"held_streams,omitempty"`
 	CloseHeld   bool             `json:"close_held,omitempty"`
