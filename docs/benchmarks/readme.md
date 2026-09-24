@@ -4,7 +4,10 @@ Local and deployed benchmarks use `internal/benchworkload` for publishers,
 visitors, origin responses, scheduling, measurements, and coordination. Each
 runner owns setup, fault injection, resource collection, and cleanup.
 
-The [assertion inventory](assertions.md) lists the behavior each workload checks.
+The [capacity testing plan](capacity-plan.md) defines the campaign method, the
+[local capacity checkpoints](local-capacity.md) record qualifying local results,
+and the [assertion inventory](assertions.md) lists the behavior each workload
+checks.
 
 ## local workloads
 
