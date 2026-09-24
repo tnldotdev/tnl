@@ -315,7 +315,12 @@ type separatedVisitorResult struct {
 	benchworkload.VisitorResult
 	Bandwidth           *benchworkload.BandwidthResult
 	Requests            []benchworkload.RequestResult
+	HeldRequested       int
+	HeldOpened          int
 	HeldSurviving       int
+	HeldProgressing     int
+	HeldClosed          int
+	HeldOpeningDuration time.Duration
 	HealthyHeld         int
 	HealthyHeldProgress int
 	Cohorts             map[string]benchworkload.VisitorResult
@@ -344,6 +349,7 @@ func runSeparatedVisitor(t *testing.T, ctx context.Context, component string, ra
 		}
 	}
 	var streams []*benchworkload.HeldStream
+	var directStreams []*benchworkload.HeldStream
 	var healthy []*benchworkload.HeldStream
 	separatedWrite(t, component+".ready", time.Now())
 	for sequence := 0; ; sequence++ {
@@ -360,10 +366,27 @@ func runSeparatedVisitor(t *testing.T, ctx context.Context, component string, ra
 			phaseVisitor = directVisitor
 		}
 		if phase.HeldStreams > 0 {
-			streams = append(streams, openSeparatedHeld(t, ctx, visitor, phase.URLs, phase.HeldStreams, index-1)...)
+			result.HeldRequested = benchworkload.Assignment(phase.HeldStreams, 4, index-1)
+			openedAt := time.Now()
+			opened := openSeparatedHeld(t, ctx, phaseVisitor, phase.URLs, phase.HeldStreams, index-1)
+			result.HeldOpeningDuration = time.Since(openedAt)
+			result.HeldOpened = len(opened)
+			if phase.Direct {
+				directStreams = append(directStreams, opened...)
+			} else {
+				streams = append(streams, opened...)
+			}
 		}
 		if phase.OpenHeld {
 			healthy = append(healthy, openSeparatedHeld(t, ctx, visitor, phase.URLs, min(8, len(phase.URLs)), index-1)...)
+		}
+		measured := streams
+		if phase.Direct {
+			measured = directStreams
+		}
+		beforeBytes := make([]int64, len(measured))
+		for i, stream := range measured {
+			beforeBytes[i] = stream.BytesReceived()
 		}
 		progress := make([]int64, len(healthy))
 		for i, stream := range healthy {
@@ -448,17 +471,28 @@ func runSeparatedVisitor(t *testing.T, ctx context.Context, component string, ra
 		if phase.CloseHeld {
 			healthy = nil
 		}
-		for _, stream := range streams {
+		for i, stream := range measured {
 			if stream.Alive() {
 				result.HeldSurviving++
 			}
-			if (phase.Name == "steady" || runtimeEarlyFault(*runtimeLoadScenario) && phase.CloseHeld) && !stream.Alive() {
+			if stream.Alive() && stream.BytesReceived() > beforeBytes[i] {
+				result.HeldProgressing++
+			}
+			if (phase.Name == "steady" || phase.Name == "direct-held-steady" || strings.HasSuffix(phase.Name, "held-warmup") || runtimeEarlyFault(*runtimeLoadScenario) && phase.CloseHeld) && !stream.Alive() {
 				t.Error("held stream ended before its permitted close boundary")
 			}
 			if phase.CloseHeld {
 				if err := stream.Close(); err != nil {
 					t.Error(err)
 				}
+				result.HeldClosed++
+			}
+		}
+		if phase.CloseHeld {
+			if phase.Direct {
+				directStreams = nil
+			} else {
+				streams = nil
 			}
 		}
 		separatedWrite(t, phase.Name+"."+component, result)

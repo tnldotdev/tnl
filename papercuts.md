@@ -19,3 +19,4 @@
 - The documentation rename inventory missed tracked `.agents` files in the default file search. Use `git ls-files` to include hidden tracked paths when checking repository-wide filename changes.
 - On a case-insensitive macOS filesystem, lowercasing a documentation filename on disk leaves Git tracking the old spelling. Record case-only renames through a temporary name with `git mv` so Linux checkouts get the correct paths too.
 - Runtime load inputs are Task variables such as `DURATION` and `RESULTS`, not `BENCH_DURATION` or `BENCH_ARTIFACT_DIR`; misspelled environment inputs silently fall back to defaults and can produce misleading capacity evidence.
+- When a runtime component is OOM-killed, the runner stops the coordinator before its test cleanup can serialize in-memory samples; write long-phase resource samples incrementally to the result directory so failure evidence survives.

@@ -375,11 +375,11 @@ try {
     endpoint: `http://${compose(["port", "coordinator", "8080"]).trim()}`,
     token: compose(["exec", "-T", "coordinator", "cat", "/load/coordinator-token"]).trim(),
   };
-  const deadline = Date.now() + 20 * 60_000;
+  const deadline = Date.now() + (process.env.HELD_MEASURE === "0s" ? 20 : 30) * 60_000;
   for (;;) {
     if (interrupted) throw new Error("runtime workload interrupted");
     if (faultError) throw faultError;
-    if (Date.now() > deadline) throw new Error("runtime workload exceeded 20 minutes");
+    if (Date.now() > deadline) throw new Error("runtime workload exceeded watchdog deadline");
     const states = inspect(ids);
     const coordinatorID = containerID(containers, "coordinator");
     const coordinator = states.find((c) => c.Id === coordinatorID);

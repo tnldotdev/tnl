@@ -254,7 +254,32 @@ First-byte timing means the first response **body** byte.
 
 `HELD_STREAMS` sets the total held streams across the four visitor containers.
 `DIRECT_PATH=1` adds a fresh-request phase against the same origin over a direct
-local TLS listener. Setting `BANDWIDTH_DIRECTION` to `downstream`, `upstream`, or
+local TLS listener. When held streams are requested it also opens, measures, and
+closes the same count over direct TLS before opening the tunneled streams.
+The results retain requested, opened, surviving, and progressing counts, maximum
+per-visitor opening duration, and resources before and after each opening phase.
+`HELD_WARMUP` and `HELD_MEASURE` optionally set separate held-stream warmup
+(up to two minutes) and measurement (up to five minutes) windows per path;
+the ordinary `DURATION` still controls fresh, recovery, and shutdown traffic.
+During the tunneled warmup and long held-stream measurements, per-component CPU,
+memory, memory-limit events, and open file descriptors are sampled every five
+seconds into `<phase>-resource-samples.jsonl`, written incrementally so samples
+survive a component exit. Completed phases also retain a JSON array and resource
+trends with first- and last-minute mean memory and measured CPU. This makes
+memory leveling visible independently of the container's cumulative memory
+peak. Resource-limit events fail held phases; there is no fixed
+percentage-of-memory pass threshold.
+`HEAP_PROFILE=1` captures test-only Go heap profiles after steady traffic and
+forces GC in each profiled process; run it as a separate diagnostic trial, not as
+one of the repeated capacity measurements.
+
+For example, a longer stream measurement with generator memory held fixed:
+
+```console
+mise exec -- env APP_MEMORY=256m VISITOR_MEMORY=256m PUBLISHER_MEMORY=1024m task go:test:load:runtime ROUTES=16 START_PARALLEL=16 RPS=4 DURATION=30s HELD_STREAMS=1200 HELD_WARMUP=2m HELD_MEASURE=5m DIRECT_PATH=1 SOURCE_CONNECTION_RATE=500 SOURCE_CONNECTION_BURST=2000 RESULTS=bench-results/capacity-held-1200
+```
+
+Setting `BANDWIDTH_DIRECTION` to `downstream`, `upstream`, or
 `bidirectional` adds matched direct and tunneled phases. The decimal Mbit/sec
 target applies per direction and is divided over `BANDWIDTH_STREAMS`; in the
 bidirectional case that many streams run in each direction. Transfers use paced,

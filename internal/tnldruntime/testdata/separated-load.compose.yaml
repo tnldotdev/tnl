@@ -20,7 +20,7 @@ x-runtime: &runtime
       exec /artifacts/runtime.test \
         -test.v \
         -test.run='^TestSeparatedRuntimeComponent$$' \
-        -test.timeout=20m \
+        -test.timeout=30m \
         -tnl-test-tier=runtime-load \
         -tnl-test-postgres-url='postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable' \
         -tnl-separated-component="$${SEPARATED_COMPONENT}" \
@@ -32,6 +32,9 @@ x-runtime: &runtime
         -tnl-runtime-load-workers='${WORKERS:-128}' \
         -tnl-runtime-load-queue='${QUEUE:-8}' \
         -tnl-runtime-load-held-streams='${HELD_STREAMS:-8}' \
+        -tnl-runtime-load-held-warmup='${HELD_WARMUP:-0s}' \
+        -tnl-runtime-load-held-measure='${HELD_MEASURE:-0s}' \
+        -tnl-runtime-load-heap-profile='${HEAP_PROFILE:-0}' \
         -tnl-runtime-load-direct-path='${DIRECT_PATH:-0}' \
         -tnl-runtime-load-bandwidth-direction='${BANDWIDTH_DIRECTION:-}' \
         -tnl-runtime-load-bandwidth-mbits-per-second='${BANDWIDTH_MBITS_PER_SECOND:-100}' \
@@ -221,7 +224,7 @@ services:
       - /artifacts/runtime.test
       - -test.v
       - -test.run=^TestLoadSeparatedRuntime$$
-      - -test.timeout=15m
+      - -test.timeout=30m
       - -tnl-test-tier=runtime-load
       - -tnl-test-postgres-url=postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable
       - -tnl-separated-component=coordinator
@@ -233,6 +236,9 @@ services:
       - "-tnl-runtime-load-workers=${WORKERS:-128}"
       - "-tnl-runtime-load-queue=${QUEUE:-8}"
       - "-tnl-runtime-load-held-streams=${HELD_STREAMS:-8}"
+      - "-tnl-runtime-load-held-warmup=${HELD_WARMUP:-0s}"
+      - "-tnl-runtime-load-held-measure=${HELD_MEASURE:-0s}"
+      - "-tnl-runtime-load-heap-profile=${HEAP_PROFILE:-0}"
       - "-tnl-runtime-load-direct-path=${DIRECT_PATH:-0}"
       - "-tnl-runtime-load-bandwidth-direction=${BANDWIDTH_DIRECTION:-}"
       - "-tnl-runtime-load-bandwidth-mbits-per-second=${BANDWIDTH_MBITS_PER_SECOND:-100}"

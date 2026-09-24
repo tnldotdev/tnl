@@ -34,7 +34,7 @@ func separatedProbe(t *testing.T, sequence *int, phase benchworkload.Phase) {
 		heldTotal = min(8, len(phase.URLs))
 	}
 	heldTimeout := time.Duration(float64(benchworkload.Assignment(heldTotal, 4, 0))/runtimeLoadAdmission.SourceConnectionRate*float64(time.Second)) + 10*time.Second
-	timeout = max(timeout, heldTimeout)
+	timeout = max(timeout, heldTimeout+time.Duration(benchworkload.Assignment(heldTotal, 4, 0))*100*time.Millisecond)
 	for i := 1; i <= 4; i++ {
 		var result separatedVisitorResult
 		separatedWait(t, fmt.Sprintf("%s.visitor-%d", phase.Name, i), timeout, &result)
@@ -53,6 +53,12 @@ func separatedProbe(t *testing.T, sequence *int, phase benchworkload.Phase) {
 		t.Errorf("%s opened %d held streams, want %d", phase.Name, held, phase.HeldStreams)
 	}
 	separatedResult(t, phase.Name+"-visitors", results)
+	if phase.HeldStreams > 0 {
+		separatedReportHeld(t, phase.Name, results, phase.HeldStreams, true, false, false)
+	}
+	if phase.Name == "direct-held-close" {
+		separatedReportHeld(t, phase.Name, results, *runtimeLoadHeldStreams, false, false, true)
+	}
 }
 
 func separatedWaitForRecovery(t *testing.T, database *sql.DB, publishers separatedPublishers) time.Time {

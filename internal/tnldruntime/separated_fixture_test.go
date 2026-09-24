@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/pprof"
 	"strconv"
 	"strings"
 	"testing"
@@ -201,6 +202,7 @@ type separatedResources struct {
 	OOMEvents, OOMKills, OOMGroupKills                 uint64
 	ReceiveBytes, SendBytes                            uint64
 	GOMAXPROCS                                         int
+	OpenFileDescriptors                                int
 	CAOrders                                           int64
 	Postgres                                           *separatedPostgresResources `json:",omitempty"`
 }
@@ -221,6 +223,11 @@ func readSeparatedResources() (separatedResources, error) {
 	})
 	r.GOMAXPROCS = runtime.GOMAXPROCS(0)
 	r.ProcessRunID = separatedObserverRunID
+	if err == nil {
+		var files []os.DirEntry
+		files, err = os.ReadDir("/proc/self/fd")
+		r.OpenFileDescriptors = len(files)
+	}
 	return r, err
 }
 
@@ -307,7 +314,20 @@ func serveSeparatedResources(t *testing.T, orders func() int64) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := &http.Server{ReadHeaderTimeout: time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := &http.Server{ReadHeaderTimeout: time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/heap" && *runtimeLoadHeapProfile {
+			// Profiling forces GC only in explicitly selected diagnostic runs.
+			runtime.GC()
+			w.Header().Set("Content-Type", "application/octet-stream")
+			if err := pprof.WriteHeapProfile(w); err != nil {
+				t.Error(err)
+			}
+			return
+		}
+		if r.URL.Path != "/resources" {
+			http.NotFound(w, r)
+			return
+		}
 		value, err := readSeparatedResources()
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)

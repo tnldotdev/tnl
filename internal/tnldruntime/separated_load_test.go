@@ -38,6 +38,9 @@ var (
 	runtimeLoadWorkers            = flag.Int("tnl-runtime-load-workers", 128, "total visitor concurrency across four containers")
 	runtimeLoadQueue              = flag.Int("tnl-runtime-load-queue", 8, "total waiting slots across four containers")
 	runtimeLoadHeldStreams        = flag.Int("tnl-runtime-load-held-streams", 8, "total held visitor streams")
+	runtimeLoadHeldWarmup         = flag.Duration("tnl-runtime-load-held-warmup", 0, "optional held-stream warmup per path (0s-2m)")
+	runtimeLoadHeldMeasure        = flag.Duration("tnl-runtime-load-held-measure", 0, "optional held-stream measurement per path (0s-5m)")
+	runtimeLoadHeapProfile        = flag.Bool("tnl-runtime-load-heap-profile", false, "capture live Go heap profiles after steady held traffic")
 	runtimeLoadDirectPath         = flag.Bool("tnl-runtime-load-direct-path", false, "measure fresh requests directly against the local service")
 	runtimeLoadBandwidthDirection = flag.String("tnl-runtime-load-bandwidth-direction", "", "optional downstream, upstream, or bidirectional bandwidth measurement")
 	runtimeLoadBandwidthMbits     = flag.Int64("tnl-runtime-load-bandwidth-mbits-per-second", 100, "bandwidth target in decimal megabits/second per direction")
@@ -70,7 +73,7 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 	t.Cleanup(func() { _ = server.Close(); <-serverDone })
 	separatedWrite(t, "coordinator.ready", true)
 	database := inspectStandaloneTestDatabase(t, testutil.PostgresURL(t))
-	t.Logf("separated_load routes=%d rps=%d held=%d sources=4 workers=%d queue=%d payload=32768 phase_duration=%s", routes, rate, *runtimeLoadHeldStreams, *runtimeLoadWorkers, *runtimeLoadQueue, duration)
+	t.Logf("separated_load routes=%d rps=%d held=%d held_warmup=%s held_measure=%s sources=4 workers=%d queue=%d payload=32768 phase_duration=%s", routes, rate, *runtimeLoadHeldStreams, *runtimeLoadHeldWarmup, *runtimeLoadHeldMeasure, *runtimeLoadWorkers, *runtimeLoadQueue, duration)
 	defer func() {
 		if !t.Failed() {
 			return
@@ -167,16 +170,49 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 		t.Logf("separated_bandwidth_comparison direction=%s direct_elapsed=%s tunnel_elapsed=%s", bandwidth.Direction, direct.Elapsed, tunneled.Elapsed)
 	}
 	if *runtimeLoadHeldStreams > 0 {
+		heldDuration := duration
+		if *runtimeLoadHeldMeasure > 0 {
+			heldDuration = *runtimeLoadHeldMeasure
+		}
+		if *runtimeLoadDirectPath {
+			directURLs := []string{"https://direct." + separatedDomain}
+			before := separatedCapture(t, database, "direct-held-open-before")
+			separatedProbe(t, &sequence, benchworkload.Phase{Name: "direct-held-open", Direct: true, URLs: directURLs, HeldStreams: *runtimeLoadHeldStreams})
+			after := separatedCapture(t, database, "direct-held-open-after")
+			separatedReportResources(t, "direct-held-open", before, after)
+			assertSeparatedNoRejections(t, "direct-held-open", before, after)
+			assertSeparatedNoMemoryLimitEvents(t, "direct-held-open", before, after)
+			if *runtimeLoadHeldWarmup > 0 {
+				separatedCapacityPhase(t, database, &sequence, benchworkload.Phase{Name: "direct-held-warmup", Direct: true, URLs: directURLs}, *runtimeLoadHeldWarmup)
+			}
+			separatedCapacityPhase(t, database, &sequence, benchworkload.Phase{Name: "direct-held-steady", Direct: true, URLs: directURLs}, heldDuration)
+			separatedProbe(t, &sequence, benchworkload.Phase{Name: "direct-held-close", Direct: true, URLs: directURLs, CloseHeld: true})
+		}
+		before := separatedCapture(t, database, "initial-held-before")
 		separatedProbe(t, &sequence, benchworkload.Phase{Name: "initial-held", URLs: publishers.URLs, HeldStreams: *runtimeLoadHeldStreams})
+		after := separatedCapture(t, database, "initial-held-after")
+		separatedReportResources(t, "initial-held", before, after)
+		assertSeparatedNoRejections(t, "initial-held", before, after)
+		assertSeparatedNoMemoryLimitEvents(t, "initial-held", before, after)
+		if *runtimeLoadHeldWarmup > 0 {
+			separatedCapacityPhase(t, database, &sequence, benchworkload.Phase{Name: "tunnel-held-warmup", URLs: publishers.URLs}, *runtimeLoadHeldWarmup)
+		}
 	}
 	for _, phase := range []string{"steady", *runtimeLoadScenario, "shutdown"} {
 		before := separatedCapture(t, database, phase+"-before")
 		stopSamples := sampleSeparatedGauges(t, phase)
+		stopResources := func() {}
+		if phase == "steady" && *runtimeLoadHeldMeasure > 0 {
+			stopResources = sampleSeparatedResources(t, phase)
+		}
 		start := time.Now().Add(time.Second)
 		var restart separatedRestart
 		var repaired time.Time
 		var oldRelayRun string
 		window := duration
+		if phase == "steady" && *runtimeLoadHeldStreams > 0 && *runtimeLoadHeldMeasure > 0 {
+			window = *runtimeLoadHeldMeasure
+		}
 		if phase == "relay-restart" {
 			window = max(window, 40*time.Second)
 		}
@@ -248,10 +284,19 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 		waitUntilIntegrationTime(t, start.Add(window))
 		results := separatedCollectVisitors(t, phase, 15*time.Second)
 		stopSamples()
+		stopResources()
 		after := separatedCapture(t, database, phase+"-after")
 		separatedReportResources(t, phase, before, after)
 		if !runtimeControlledFault(phase) {
 			separatedReportVisitors(t, phase, results, restart, repaired)
+		}
+		if phase == "steady" && *runtimeLoadHeldStreams > 0 {
+			separatedReportHeld(t, phase, results, *runtimeLoadHeldStreams, false, true, false)
+			assertSeparatedNoRejections(t, phase, before, after)
+			assertSeparatedNoMemoryLimitEvents(t, phase, before, after)
+		}
+		if phase == "steady" && *runtimeLoadHeapProfile {
+			captureSeparatedHeapProfiles(t, database, after)
 		}
 		if phase == "steady" && runtimeBlackhole(*runtimeLoadScenario) {
 			assertRelayOpenedVisitors(t, before, after, "relay-a")
@@ -355,6 +400,13 @@ func separatedLoadParameters(t *testing.T) (int, int, time.Duration) {
 	if *runtimeLoadHeldStreams < 0 || *runtimeLoadHeldStreams > 4096 {
 		t.Fatal("held streams must be between 0 and 4096")
 	}
+	if *runtimeLoadHeldWarmup < 0 || *runtimeLoadHeldWarmup > 2*time.Minute || *runtimeLoadHeldMeasure < 0 || *runtimeLoadHeldMeasure > 5*time.Minute ||
+		(*runtimeLoadHeldStreams == 0 && (*runtimeLoadHeldWarmup != 0 || *runtimeLoadHeldMeasure != 0)) {
+		t.Fatal("invalid held-stream warmup or measurement duration")
+	}
+	if *runtimeLoadHeapProfile && *runtimeLoadHeldStreams == 0 {
+		t.Fatal("heap profiling requires held streams")
+	}
 	if *runtimeLoadBandwidthDirection != "" {
 		if !slices.Contains([]string{benchworkload.BandwidthDownstream, benchworkload.BandwidthUpstream, benchworkload.BandwidthBidirectional}, *runtimeLoadBandwidthDirection) {
 			t.Fatal("invalid bandwidth direction")
@@ -382,15 +434,26 @@ func separatedCapacityPhase(t *testing.T, database *sql.DB, sequence *int, phase
 	t.Helper()
 	before := separatedCapture(t, database, phase.Name+"-before")
 	stopSamples := sampleSeparatedGauges(t, phase.Name)
+	stopResources := func() {}
+	if *runtimeLoadHeldMeasure > 0 && (phase.Name == "direct-held-steady" || phase.Name == "tunnel-held-warmup") {
+		stopResources = sampleSeparatedResources(t, phase.Name)
+	}
 	phase.Start, phase.Duration = time.Now().Add(time.Second), duration
 	separatedWrite(t, fmt.Sprintf("phase-%d", *sequence), phase)
 	*sequence = *sequence + 1
 	waitUntilIntegrationTime(t, phase.Start.Add(duration))
 	results := separatedCollectVisitors(t, phase.Name, 30*time.Second)
 	stopSamples()
-	separatedReportResources(t, phase.Name, before, separatedCapture(t, database, phase.Name+"-after"))
+	stopResources()
+	after := separatedCapture(t, database, phase.Name+"-after")
+	separatedReportResources(t, phase.Name, before, after)
 	if phase.Bandwidth == nil {
 		separatedReportVisitors(t, phase.Name, results, separatedRestart{}, time.Time{})
+		if phase.Name == "direct-held-steady" || phase.Name == "direct-held-warmup" || phase.Name == "tunnel-held-warmup" {
+			separatedReportHeld(t, phase.Name, results, *runtimeLoadHeldStreams, false, true, false)
+			assertSeparatedNoRejections(t, phase.Name, before, after)
+			assertSeparatedNoMemoryLimitEvents(t, phase.Name, before, after)
+		}
 		return benchworkload.BandwidthResult{}
 	}
 	aggregate := benchworkload.BandwidthResult{
@@ -438,6 +501,72 @@ func separatedCollectVisitors(t *testing.T, phase string, timeout time.Duration)
 	}
 	separatedResult(t, phase+"-visitors", results)
 	return results
+}
+
+type separatedHeldSummary struct {
+	Requested       int           `json:"requested"`
+	Opened          int           `json:"opened"`
+	Surviving       int           `json:"surviving"`
+	Progressing     int           `json:"progressing"`
+	Closed          int           `json:"closed"`
+	OpeningDuration time.Duration `json:"opening_duration"`
+}
+
+func separatedReportHeld(t *testing.T, phase string, results []separatedVisitorResult, expected int, opening, measuring, closing bool) {
+	t.Helper()
+	var summary separatedHeldSummary
+	for _, result := range results {
+		summary.Requested += result.HeldRequested
+		summary.Opened += result.HeldOpened
+		summary.Surviving += result.HeldSurviving
+		summary.Progressing += result.HeldProgressing
+		summary.Closed += result.HeldClosed
+		summary.OpeningDuration = max(summary.OpeningDuration, result.HeldOpeningDuration)
+	}
+	t.Logf("separated_held phase=%s requested=%d opened=%d surviving=%d progressing=%d closed=%d opening_duration=%s", phase,
+		summary.Requested, summary.Opened, summary.Surviving, summary.Progressing, summary.Closed, summary.OpeningDuration)
+	separatedResult(t, phase+"-held-summary", summary)
+	if opening && (summary.Requested != expected || summary.Opened != expected || summary.Surviving != expected) {
+		t.Errorf("%s: requested=%d opened=%d surviving=%d, want %d", phase, summary.Requested, summary.Opened, summary.Surviving, expected)
+	}
+	if measuring && (summary.Surviving != expected || summary.Progressing != expected) {
+		t.Errorf("%s: surviving=%d progressing=%d, want %d", phase, summary.Surviving, summary.Progressing, expected)
+	}
+	if closing && summary.Closed != expected {
+		t.Errorf("%s: closed=%d, want %d", phase, summary.Closed, expected)
+	}
+}
+
+func assertSeparatedNoRejections(t *testing.T, phase string, before, after separatedSnapshot) {
+	t.Helper()
+	for _, role := range []string{"ingress", "relay-a", "relay-b"} {
+		for _, name := range []string{"tnl_capacity_rejections_total", "tnl_source_limiter_rejections_total"} {
+			count := func(snapshot separatedSnapshot) float64 {
+				var total float64
+				for _, family := range snapshot.Metrics[role] {
+					if family.GetName() == name {
+						for _, metric := range family.Metric {
+							total += metric.GetCounter().GetValue()
+						}
+					}
+				}
+				return total
+			}
+			if delta := count(after) - count(before); delta != 0 {
+				t.Errorf("%s: %s %s changed by %g", phase, role, name, delta)
+			}
+		}
+	}
+}
+
+func assertSeparatedNoMemoryLimitEvents(t *testing.T, phase string, before, after separatedSnapshot) {
+	t.Helper()
+	for _, component := range []string{"ingress", "relay-a", "relay-b", "app", "publishers", "visitor-1", "visitor-2", "visitor-3", "visitor-4"} {
+		a, b := before.Resources[component], after.Resources[component]
+		if b.MemoryMaxEvents > a.MemoryMaxEvents || b.OOMKills > a.OOMKills {
+			t.Errorf("%s: %s memory limit events=%d OOM kills=%d", phase, component, b.MemoryMaxEvents-a.MemoryMaxEvents, b.OOMKills-a.OOMKills)
+		}
+	}
 }
 
 func separatedResult(t *testing.T, name string, value any) {
@@ -521,8 +650,8 @@ func separatedReportResources(t *testing.T, phase string, before, after separate
 	for _, component := range append(slices.Clone(separatedComponents), "postgres", "coordinator") {
 		a, b := before.Resources[component], after.Resources[component]
 		if a.ProcessRunID != b.ProcessRunID {
-			t.Logf("separated_resource phase=%s component=%s interval_reset=true before_run=%s after_run=%s memory=%d peak=%d memory_anon=%d memory_file=%d memory_kernel=%d memory_kernel_stack=%d memory_pagetables=%d memory_sock=%d memory_slab=%d memory_shmem=%d memory_file_dirty=%d memory_file_writeback=%d memory_high_events=%d memory_max_events=%d oom_events=%d oom_kills=%d",
-				phase, component, a.ProcessRunID, b.ProcessRunID, b.Memory, b.Peak,
+			t.Logf("separated_resource phase=%s component=%s interval_reset=true before_run=%s after_run=%s memory=%d peak=%d fds=%d memory_anon=%d memory_file=%d memory_kernel=%d memory_kernel_stack=%d memory_pagetables=%d memory_sock=%d memory_slab=%d memory_shmem=%d memory_file_dirty=%d memory_file_writeback=%d memory_high_events=%d memory_max_events=%d oom_events=%d oom_kills=%d",
+				phase, component, a.ProcessRunID, b.ProcessRunID, b.Memory, b.Peak, b.OpenFileDescriptors,
 				b.MemoryAnon, b.MemoryFile, b.MemoryKernel, b.MemoryKernelStack, b.MemoryPageTables, b.MemorySock, b.MemorySlab, b.MemoryShmem,
 				b.MemoryFileDirty, b.MemoryFileWriteback, b.MemoryHighEvents, b.MemoryMaxEvents, b.OOMEvents, b.OOMKills)
 			if b.OOMKills != 0 {
@@ -531,9 +660,9 @@ func separatedReportResources(t *testing.T, phase string, before, after separate
 			continue
 		}
 		seconds := b.At.Sub(a.At).Seconds()
-		t.Logf("separated_resource phase=%s component=%s interval=%.3fs quota=%q memory_limit=%q cpu_seconds=%.6f cpu_cores=%.4f throttled_seconds=%.6f throttled_periods=%d/%d memory=%d peak=%d memory_anon=%d memory_file=%d memory_kernel=%d memory_kernel_stack=%d memory_pagetables=%d memory_sock=%d memory_slab=%d memory_shmem=%d memory_file_dirty=%d memory_file_writeback=%d memory_high_events=%d memory_max_events=%d oom_events=%d oom_kills=%d rx_bytes=%d tx_bytes=%d gomaxprocs=%d network_namespace=%s",
+		t.Logf("separated_resource phase=%s component=%s interval=%.3fs quota=%q memory_limit=%q cpu_seconds=%.6f cpu_cores=%.4f throttled_seconds=%.6f throttled_periods=%d/%d memory=%d peak=%d fds=%d memory_anon=%d memory_file=%d memory_kernel=%d memory_kernel_stack=%d memory_pagetables=%d memory_sock=%d memory_slab=%d memory_shmem=%d memory_file_dirty=%d memory_file_writeback=%d memory_high_events=%d memory_max_events=%d oom_events=%d oom_kills=%d rx_bytes=%d tx_bytes=%d gomaxprocs=%d network_namespace=%s",
 			phase, component, seconds, b.CPUQuota, b.MemoryLimit, float64(b.CPUUsec-a.CPUUsec)/1e6, float64(b.CPUUsec-a.CPUUsec)/1e6/seconds,
-			float64(b.ThrottledUsec-a.ThrottledUsec)/1e6, b.ThrottledPeriods-a.ThrottledPeriods, b.Periods-a.Periods, b.Memory, b.Peak,
+			float64(b.ThrottledUsec-a.ThrottledUsec)/1e6, b.ThrottledPeriods-a.ThrottledPeriods, b.Periods-a.Periods, b.Memory, b.Peak, b.OpenFileDescriptors,
 			b.MemoryAnon, b.MemoryFile, b.MemoryKernel, b.MemoryKernelStack, b.MemoryPageTables, b.MemorySock, b.MemorySlab, b.MemoryShmem,
 			b.MemoryFileDirty, b.MemoryFileWriteback, b.MemoryHighEvents-a.MemoryHighEvents, b.MemoryMaxEvents-a.MemoryMaxEvents,
 			b.OOMEvents-a.OOMEvents, b.OOMKills-a.OOMKills,

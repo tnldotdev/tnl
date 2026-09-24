@@ -243,6 +243,9 @@ tasks:
       WORKERS: '{{default "128" .WORKERS}}'
       QUEUE: '{{default "8" .QUEUE}}'
       HELD_STREAMS: '{{default "8" .HELD_STREAMS}}'
+      HELD_WARMUP: '{{default "0s" .HELD_WARMUP}}'
+      HELD_MEASURE: '{{default "0s" .HELD_MEASURE}}'
+      HEAP_PROFILE: '{{default "0" .HEAP_PROFILE}}'
       DIRECT_PATH: '{{default "0" .DIRECT_PATH}}'
       BANDWIDTH_DIRECTION: '{{default "" .BANDWIDTH_DIRECTION}}'
       BANDWIDTH_MBITS_PER_SECOND: '{{default "100" .BANDWIDTH_MBITS_PER_SECOND}}'
@@ -275,6 +278,9 @@ tasks:
       WORKERS: "{{.WORKERS}}"
       QUEUE: "{{.QUEUE}}"
       HELD_STREAMS: "{{.HELD_STREAMS}}"
+      HELD_WARMUP: "{{.HELD_WARMUP}}"
+      HELD_MEASURE: "{{.HELD_MEASURE}}"
+      HEAP_PROFILE: "{{.HEAP_PROFILE}}"
       DIRECT_PATH: "{{.DIRECT_PATH}}"
       BANDWIDTH_DIRECTION: "{{.BANDWIDTH_DIRECTION}}"
       BANDWIDTH_MBITS_PER_SECOND: "{{.BANDWIDTH_MBITS_PER_SECOND}}"
