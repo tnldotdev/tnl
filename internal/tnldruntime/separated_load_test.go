@@ -384,8 +384,8 @@ func separatedLoadParameters(t *testing.T) (int, int, time.Duration) {
 	// any component starts work, including the coordinator and visitors.
 	separatedConfig(t, "ingress")
 	routes, rate, duration := *runtimeLoadRoutes, *runtimeLoadRPS, *runtimeLoadDuration
-	if routes < 4 || routes > 1000 {
-		t.Fatal("separated runtime load routes must be between 4 and 1000")
+	if routes < 4 || routes > 8000 {
+		t.Fatal("separated runtime load routes must be between 4 and 8000")
 	}
 	if *runtimeLoadStartParallel < 1 || *runtimeLoadStartParallel > 1000 {
 		t.Fatal("publisher startup concurrency must be between 1 and 1000")
