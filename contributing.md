@@ -289,11 +289,13 @@ generators separate headroom and use a fresh results directory at each step:
 mise exec -- env APP_MEMORY=512m APP_CPUS=2 VISITOR_MEMORY=512m PUBLISHER_MEMORY=2048m task go:test:load:runtime CAPACITY_ONLY=1 ROUTES=16 START_PARALLEL=16 RPS=4 DURATION=30s HELD_STREAMS=4000 HELD_WARMUP=2m HELD_MEASURE=5m DIRECT_PATH=1 SOURCE_CONNECTION_RATE=500 SOURCE_CONNECTION_BURST=2000 RESULTS=bench-results/capacity-streams-4000
 ```
 
-The default relay stream capacity is 4,096. Above it, pass an explicit
-`RELAY_STREAM_CAPACITY` and record the applied limits from
-`admission-limits.json`; above the per-route ingress limit, also adjust
-`ROUTE_CONNECTION_LIMIT`. These are distinct configured-capacity profiles
-even when CPU and memory stay fixed.
+The default relay stream capacity is 4,096 and the publisher's local proxy
+accepts 500 concurrent requests per route, including held streams. Above
+those limits, pass explicit `RELAY_STREAM_CAPACITY` and
+`PUBLISHER_REQUEST_LIMIT` values; also adjust `ROUTE_CONNECTION_LIMIT` above
+the per-route ingress limit. Record applied settings from
+`admission-limits.json`. These are distinct configured-capacity profiles even
+when CPU and memory stay fixed.
 
 Setting `BANDWIDTH_DIRECTION` to `downstream`, `upstream`, or
 `bidirectional` adds matched direct and tunneled phases. The decimal Mbit/sec
@@ -333,6 +335,7 @@ active TLS-ALPN checks do not consume visitor tokens.
 | `VISITOR_CONNECTION_LIMIT`   |   20000 | Concurrent visitor connections per ingress process                           |
 | `ROUTE_CONNECTION_LIMIT`     |     500 | Concurrent visitor connections per route on each ingress process             |
 | `PUBLISHER_CONNECTION_LIMIT` |    4000 | Publisher connections per relay process                                      |
+| `PUBLISHER_REQUEST_LIMIT`    |     500 | Concurrent requests forwarded by each publisher route                        |
 | `RELAY_STREAM_CAPACITY`      |    4096 | Concurrent visitor streams per relay process                                 |
 | `QUIC_MAX_INCOMING_STREAMS`  |    4096 | Incoming QUIC streams per publisher connection                               |
 

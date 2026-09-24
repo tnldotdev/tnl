@@ -277,7 +277,9 @@ func (v Visitor) Hold(parent context.Context, url string) (*HeldStream, error) {
 		err = errors.Join(err, context.DeadlineExceeded)
 	}
 	if err == nil && (one[0] != 't' || response.StatusCode != http.StatusOK || response.Header.Get("X-TNL-Bench-Host") != request.URL.Host || response.TLS == nil || len(response.TLS.VerifiedChains) == 0) {
-		err = errors.New("invalid held-stream opening")
+		err = fmt.Errorf("invalid held-stream opening: status=%d first_byte=%q host_match=%t verified_tls=%t",
+			response.StatusCode, one[0], response.Header.Get("X-TNL-Bench-Host") == request.URL.Host,
+			response.TLS != nil && len(response.TLS.VerifiedChains) > 0)
 	}
 	if err != nil {
 		cancel()

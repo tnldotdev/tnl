@@ -26,8 +26,9 @@ type PublisherConfig struct {
 	RelayTLS                                      *tls.Config
 	AllowedIPPrefixes                             []string
 	// mixed forces alternating QUIC/TLS-TCP cohorts; auto uses production fallback.
-	Transport string
-	Parallel  int
+	Transport    string
+	Parallel     int
+	RequestLimit int
 	// StartParallel overrides Parallel for activation only; shutdown stays bounded separately.
 	StartParallel             int
 	ReadyTimeout, StopTimeout time.Duration
@@ -149,7 +150,8 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 	return &Publishers{config: config, database: database, ctx: groupCtx, cancel: cancel,
 		namespace: membership.ManagedLabel + "." + domain.CanonicalDomain, failures: make(chan error, 1), run: publisher.Run,
 		base: publisher.Config{Control: auth.Control, State: store, Target: config.Target, DrainTime: config.DrainTime,
-			TeamID: team.Id, MembershipID: membership.Id, DomainID: domain.Id, RouteScope: controlv1.Member,
+			RequestLimit: config.RequestLimit,
+			TeamID:       team.Id, MembershipID: membership.Id, DomainID: domain.Id, RouteScope: controlv1.Member,
 			PolicyRevision: uint64(team.PolicyRevision), AllowedIPPrefixes: config.AllowedIPPrefixes,
 			QUICConnector: muxsession.QUICConnector{TLSConfig: config.RelayTLS},
 			TCPConnector:  muxsession.TLSYamuxConnector{TLSConfig: config.RelayTLS},

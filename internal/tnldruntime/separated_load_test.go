@@ -408,6 +408,9 @@ func separatedLoadParameters(t *testing.T) (int, int, time.Duration) {
 	if *runtimeLoadHeldStreams < 0 || *runtimeLoadHeldStreams > 20000 {
 		t.Fatal("held streams must be between 0 and 20000")
 	}
+	if runtimeLoadAdmission.PublisherRequestLimit < 1 {
+		t.Fatal("publisher request limit must be positive")
+	}
 	if *runtimeLoadHeldWarmup < 0 || *runtimeLoadHeldWarmup > 2*time.Minute || *runtimeLoadHeldMeasure < 0 || *runtimeLoadHeldMeasure > 5*time.Minute ||
 		(*runtimeLoadHeldStreams == 0 && (*runtimeLoadHeldWarmup != 0 || *runtimeLoadHeldMeasure != 0)) {
 		t.Fatal("invalid held-stream warmup or measurement duration")

@@ -26,6 +26,7 @@ type separatedAdmissionLimits struct {
 	PublisherConnectionLimit         int64   `json:"publisher_connection_limit"`
 	RelayStreamCapacity              int64   `json:"relay_stream_capacity"`
 	QUICMaxIncomingStreams           int64   `json:"quic_max_incoming_streams"`
+	PublisherRequestLimit            int     `json:"publisher_request_limit"`
 }
 
 type separatedIngressAdmissionLimits struct {
@@ -57,6 +58,7 @@ func init() {
 	flag.Int64Var(&runtimeLoadAdmission.PublisherConnectionLimit, "tnl-runtime-load-publisher-connection-limit", 4000, "maximum publisher connections per relay process")
 	flag.Int64Var(&runtimeLoadAdmission.RelayStreamCapacity, "tnl-runtime-load-relay-stream-capacity", 4096, "maximum visitor streams per relay process")
 	flag.Int64Var(&runtimeLoadAdmission.QUICMaxIncomingStreams, "tnl-runtime-load-quic-max-incoming-streams", 4096, "maximum incoming QUIC streams per publisher connection")
+	flag.IntVar(&runtimeLoadAdmission.PublisherRequestLimit, "tnl-runtime-load-publisher-request-limit", 500, "maximum concurrent requests handled by each publisher route")
 }
 
 func (limits separatedAdmissionLimits) apply(cfg *tnldconfig.Config) {
@@ -112,6 +114,12 @@ func recordSeparatedAdmission(t *testing.T, components map[string]any) {
 func verifySeparatedAdmission(t *testing.T) {
 	t.Helper()
 	components := make(map[string]any)
+	var publisherLimit int
+	separatedWait(t, "publishers.request-limit", 15*time.Second, &publisherLimit)
+	if publisherLimit != runtimeLoadAdmission.PublisherRequestLimit {
+		t.Fatalf("publisher request limit = %d, want %d", publisherLimit, runtimeLoadAdmission.PublisherRequestLimit)
+	}
+	components["publishers"] = map[string]int{"request_limit": publisherLimit}
 	for _, component := range []string{"ingress", "relay-a", "relay-b"} {
 		var applied separatedAdmissionLimits
 		separatedWait(t, component+".admission-limits", 15*time.Second, &applied)

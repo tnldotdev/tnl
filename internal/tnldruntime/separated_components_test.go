@@ -216,6 +216,7 @@ type separatedPublishers struct {
 }
 
 func runSeparatedPublishers(t *testing.T, ctx context.Context, count int) {
+	separatedWrite(t, "publishers.request-limit", runtimeLoadAdmission.PublisherRequestLimit)
 	if !separatedRead(t, ctx, "publish.start", nil) {
 		return
 	}
@@ -245,6 +246,7 @@ func runSeparatedPublishers(t *testing.T, ctx context.Context, count int) {
 		Domain: "routes." + separatedDomain, StateRoot: filepath.Join(t.TempDir(), "state"), Target: "http://127.0.0.1:8080",
 		HTTPClient: client, RelayTLS: separatedRelayTLS(t), AllowedIPPrefixes: prefixes,
 		Transport: transport, Parallel: 4, StartParallel: *runtimeLoadStartParallel,
+		RequestLimit: runtimeLoadAdmission.PublisherRequestLimit,
 		ReadyTimeout: *runtimeLoadReadyTimeout, StopTimeout: 10 * time.Second, DrainTime: time.Second,
 		Observe: func(index int, event publisher.Event) error {
 			if event.Type == publisher.EventTransportFallback {
@@ -385,6 +387,7 @@ func runSeparatedVisitor(t *testing.T, ctx context.Context, component string, ra
 			measured = directStreams
 		}
 		beforeBytes := make([]int64, len(measured))
+		endedEarly := 0
 		for i, stream := range measured {
 			beforeBytes[i] = stream.BytesReceived()
 		}
@@ -479,7 +482,7 @@ func runSeparatedVisitor(t *testing.T, ctx context.Context, component string, ra
 				result.HeldProgressing++
 			}
 			if (phase.Name == "steady" || phase.Name == "direct-held-steady" || strings.HasSuffix(phase.Name, "held-warmup") || runtimeEarlyFault(*runtimeLoadScenario) && phase.CloseHeld) && !stream.Alive() {
-				t.Error("held stream ended before its permitted close boundary")
+				endedEarly++
 			}
 			if phase.CloseHeld {
 				if err := stream.Close(); err != nil {
@@ -487,6 +490,9 @@ func runSeparatedVisitor(t *testing.T, ctx context.Context, component string, ra
 				}
 				result.HeldClosed++
 			}
+		}
+		if endedEarly > 0 {
+			t.Errorf("%d held streams ended before their permitted close boundary", endedEarly)
 		}
 		if phase.CloseHeld {
 			if phase.Direct {

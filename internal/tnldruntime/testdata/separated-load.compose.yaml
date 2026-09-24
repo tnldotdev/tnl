@@ -48,6 +48,7 @@ x-runtime: &runtime
         -tnl-runtime-load-visitor-connection-limit='${VISITOR_CONNECTION_LIMIT:-20000}' \
         -tnl-runtime-load-route-connection-limit='${ROUTE_CONNECTION_LIMIT:-500}' \
         -tnl-runtime-load-publisher-connection-limit='${PUBLISHER_CONNECTION_LIMIT:-4000}' \
+        -tnl-runtime-load-publisher-request-limit='${PUBLISHER_REQUEST_LIMIT:-500}' \
         -tnl-runtime-load-relay-stream-capacity='${RELAY_STREAM_CAPACITY:-4096}' \
         -tnl-runtime-load-quic-max-incoming-streams='${QUIC_MAX_INCOMING_STREAMS:-4096}' \
         -tnl-runtime-load-scenario='${SCENARIO:-relay-restart}' \
@@ -253,6 +254,7 @@ services:
       - "-tnl-runtime-load-visitor-connection-limit=${VISITOR_CONNECTION_LIMIT:-20000}"
       - "-tnl-runtime-load-route-connection-limit=${ROUTE_CONNECTION_LIMIT:-500}"
       - "-tnl-runtime-load-publisher-connection-limit=${PUBLISHER_CONNECTION_LIMIT:-4000}"
+      - "-tnl-runtime-load-publisher-request-limit=${PUBLISHER_REQUEST_LIMIT:-500}"
       - "-tnl-runtime-load-relay-stream-capacity=${RELAY_STREAM_CAPACITY:-4096}"
       - "-tnl-runtime-load-quic-max-incoming-streams=${QUIC_MAX_INCOMING_STREAMS:-4096}"
       - "-tnl-runtime-load-scenario=${SCENARIO:-relay-restart}"
